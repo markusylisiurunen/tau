@@ -1,5 +1,7 @@
 import { spawnSync } from "node:child_process";
-import { resolve } from "node:path";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseCliArgs } from "../dist/core/cli.js";
 
@@ -33,6 +35,23 @@ describe("cli", () => {
     expect(() => parseCliArgs(["--persona", "demo:ultra"])).toThrow(
       "invalid reasoning level 'ultra'",
     );
+  });
+
+  it("rejects invalid auth arguments before creating credential storage", () => {
+    const home = mkdtempSync(join(tmpdir(), "tau-auth-cli-home-"));
+    try {
+      const mainPath = resolve(process.cwd(), "dist/main.js");
+      const result = spawnSync(process.execPath, [mainPath, "auth", "list", "--bogus"], {
+        encoding: "utf8",
+        env: { ...process.env, HOME: home },
+      });
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('unknown auth list option "--bogus"');
+      expect(existsSync(join(home, ".config", "tau"))).toBe(false);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it.each(["rpc", "serve"])("rejects --debug in %s mode", (mode) => {

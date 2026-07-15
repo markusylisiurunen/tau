@@ -6,6 +6,7 @@ import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import type { RuntimeConfigResult } from "./core/config/index.js";
 import type {
+  AuthCliCommand,
   AuthPromptFn,
   CliOptions,
   Config,
@@ -28,6 +29,7 @@ import {
   loadRuntimeBootstrap,
   loadRuntimeConfig,
   NookCliError,
+  parseAuthCliArgs,
   parseCliArgs,
   parsePersonaString,
   printDebugInfo,
@@ -624,15 +626,19 @@ let themes: ThemeDefinition[] = [];
 let runtimeBootstrap: RuntimeBootstrap | undefined;
 
 if (argv[0] === "auth") {
-  if (argv.includes("--help") || argv.includes("-h")) {
+  let command: AuthCliCommand;
+  try {
+    command = parseAuthCliArgs(argv.slice(1));
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error((err as Error).message);
+    process.exit(1);
+  }
+
+  if (command.type === "help") {
     printAuthHelp();
     process.exit(0);
   }
-
-  const subcommand = argv[1];
-  const providerArg = argv[2];
-  const accountIndex = argv.indexOf("--account");
-  const accountId = accountIndex >= 0 ? argv[accountIndex + 1] : undefined;
 
   const authPath = getAuthPath();
   const authStorage = new AuthStorage(authPath);
@@ -644,25 +650,23 @@ if (argv[0] === "auth") {
     });
 
   try {
-    if (subcommand === "login") {
+    if (command.type === "login") {
       await runLoginCommand({
-        providerArg,
+        providerArg: command.providerArg,
         authStorage,
         authPath,
         prompt,
       });
-    } else if (subcommand === "logout") {
+    } else if (command.type === "logout") {
       await runLogoutCommand({
-        providerArg,
-        accountId,
+        providerArg: command.providerArg,
+        accountId: command.accountId,
         authStorage,
         authPath,
         prompt,
       });
-    } else if (subcommand === "list") {
-      await runListCommand({ authStorage });
     } else {
-      throw new Error(`unknown auth subcommand "${subcommand ?? ""}"`);
+      await runListCommand({ authStorage });
     }
     process.exit(0);
   } catch (err) {

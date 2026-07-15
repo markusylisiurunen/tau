@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { AuthStorage } from "../dist/core/auth/auth_storage.js";
-import { runLoginCommand, runLogoutCommand } from "../dist/core/auth/cli.js";
+import { parseAuthCliArgs, runLoginCommand, runLogoutCommand } from "../dist/core/auth/cli.js";
 
 function toBase64Url(value) {
   return Buffer.from(value, "utf-8")
@@ -40,6 +40,33 @@ function createTempAuthPath() {
 }
 
 describe("auth cli", () => {
+  it("parses complete auth subcommands", () => {
+    expect(parseAuthCliArgs(["login", "codex"])).toEqual({
+      type: "login",
+      providerArg: "codex",
+    });
+    expect(parseAuthCliArgs(["list"])).toEqual({ type: "list" });
+    expect(parseAuthCliArgs(["logout", "codex", "--account", "user@example.com"])).toEqual({
+      type: "logout",
+      providerArg: "codex",
+      accountId: "user@example.com",
+    });
+  });
+
+  it.each([
+    [["list", "--bogus"], 'unknown auth list option "--bogus"'],
+    [["list", "extra"], 'unexpected auth list argument "extra"'],
+    [["login", "codex", "extra"], 'unexpected auth login argument "extra"'],
+    [["logout", "codex", "--account", "wanted", "--force"], 'unknown auth logout option "--force"'],
+    [
+      ["logout", "codex", "--account", "first", "--account", "second"],
+      'duplicate auth logout option "--account"',
+    ],
+    [["logout", "codex", "--account"], 'missing value for auth logout option "--account"'],
+  ])("rejects invalid arguments %#", (args, message) => {
+    expect(() => parseAuthCliArgs(args)).toThrow(message);
+  });
+
   it("stores credentials on login and removes them on logout", async () => {
     const fx = createTempAuthPath();
     try {

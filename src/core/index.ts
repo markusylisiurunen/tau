@@ -1,9 +1,16 @@
-export type { AuthLog, AuthLoginHandler, AuthPromptFn, OAuthProviderSpec } from "./auth/index.js";
+export type {
+  AuthCliCommand,
+  AuthLog,
+  AuthLoginHandler,
+  AuthPromptFn,
+  OAuthProviderSpec,
+} from "./auth/index.js";
 export {
   AuthManager,
   AuthStorage,
   formatCodexAuthError,
   getAuthPath,
+  parseAuthCliArgs,
   runListCommand,
   runLoginCommand,
   runLogoutCommand,

@@ -20,6 +20,12 @@ export type OAuthProviderSpec = {
   label: string;
 };
 
+export type AuthCliCommand =
+  | { type: "help" }
+  | { type: "login"; providerArg?: string }
+  | { type: "list" }
+  | { type: "logout"; providerArg?: string; accountId: string };
+
 export const SUPPORTED_OAUTH_PROVIDERS: OAuthProviderSpec[] = [
   { id: "openai-codex", cliId: "codex", label: "OpenAI Codex (ChatGPT Plus/Pro)" },
 ];
@@ -36,6 +42,87 @@ const DEFAULT_LOGIN_HANDLERS: Partial<Record<OAuthProvider, AuthLoginHandler>> =
 
 const chalk = new Chalk({ level: process.stdout.isTTY ? 2 : 0 });
 const BAR_WIDTH = 10;
+
+export function parseAuthCliArgs(args: string[]): AuthCliCommand {
+  const [subcommand, ...subcommandArgs] = args;
+
+  if (subcommand === "--help" || subcommand === "-h") {
+    if (subcommandArgs.length > 0) {
+      throw new Error(`unexpected auth argument "${subcommandArgs[0]}"`);
+    }
+    return { type: "help" };
+  }
+
+  if (subcommand === "login") {
+    const [providerArg, ...extraArgs] = subcommandArgs;
+    if (providerArg?.startsWith("-")) {
+      throw new Error(`unknown auth login option "${providerArg}"`);
+    }
+    if (extraArgs.length > 0) {
+      const extra = extraArgs[0];
+      throw new Error(
+        extra?.startsWith("-")
+          ? `unknown auth login option "${extra}"`
+          : `unexpected auth login argument "${extra}"`,
+      );
+    }
+    return { type: "login", ...(providerArg ? { providerArg } : {}) };
+  }
+
+  if (subcommand === "list") {
+    const extra = subcommandArgs[0];
+    if (extra !== undefined) {
+      throw new Error(
+        extra.startsWith("-")
+          ? `unknown auth list option "${extra}"`
+          : `unexpected auth list argument "${extra}"`,
+      );
+    }
+    return { type: "list" };
+  }
+
+  if (subcommand === "logout") {
+    let index = 0;
+    let providerArg: string | undefined;
+    if (subcommandArgs[index] && !subcommandArgs[index]!.startsWith("-")) {
+      providerArg = subcommandArgs[index];
+      index += 1;
+    }
+
+    let accountId: string | undefined;
+    while (index < subcommandArgs.length) {
+      const argument = subcommandArgs[index]!;
+      if (argument !== "--account") {
+        throw new Error(
+          argument.startsWith("-")
+            ? `unknown auth logout option "${argument}"`
+            : `unexpected auth logout argument "${argument}"`,
+        );
+      }
+      if (accountId !== undefined) {
+        throw new Error('duplicate auth logout option "--account"');
+      }
+
+      const value = subcommandArgs[index + 1];
+      if (!value || value.startsWith("--")) {
+        throw new Error('missing value for auth logout option "--account"');
+      }
+      accountId = value;
+      index += 2;
+    }
+
+    if (!accountId) {
+      throw new Error("missing --account <id> for logout");
+    }
+    return {
+      type: "logout",
+      ...(providerArg ? { providerArg } : {}),
+      accountId,
+    };
+  }
+
+  throw new Error(`unknown auth subcommand "${subcommand ?? ""}"`);
+}
 
 function normalizeProvider(value: string): string {
   return value.trim().toLowerCase();

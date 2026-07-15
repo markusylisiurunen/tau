@@ -41,23 +41,38 @@ export class TauCredentialStore implements CredentialStore {
       return current?.credential;
     }
 
-    this.options.authStorage.update((data) => {
-      if (!data.providers[providerId]) {
-        data.providers[providerId] = { accounts: [] };
+    const accountId =
+      current?.accountId ?? getCredentialAccountId(next) ?? getDefaultAccountId(providerId);
+    const expected = current
+      ? storedAccountFromCredential(current.credential, current.accountId)
+      : undefined;
+    const nextAccount = storedAccountFromCredential(next, accountId);
+    const stored = this.options.authStorage.update((data): StoredAccount | undefined => {
+      const provider = data.providers[providerId];
+      const existing = provider?.accounts.find((entry) => entry.accountId === accountId);
+      if (expected) {
+        if (!existing) {
+          return undefined;
+        }
+        if (!hasSameStoredCredentialGeneration(existing, expected)) {
+          return existing;
+        }
+      } else if (existing) {
+        return existing;
       }
-      const provider = data.providers[providerId]!;
-      const accountId =
-        current?.accountId ?? getCredentialAccountId(next) ?? getDefaultAccountId(providerId);
-      const account = storedAccountFromCredential(next, accountId);
-      const existingIndex = provider.accounts.findIndex((entry) => entry.accountId === accountId);
+
+      const target = provider ?? { accounts: [] };
+      data.providers[providerId] = target;
+      const existingIndex = target.accounts.findIndex((entry) => entry.accountId === accountId);
       if (existingIndex >= 0) {
-        provider.accounts[existingIndex] = account;
+        target.accounts[existingIndex] = nextAccount;
       } else {
-        provider.accounts = [account];
+        target.accounts.push(nextAccount);
       }
+      return nextAccount;
     });
 
-    return next;
+    return stored ? credentialFromStoredAccount(stored) : undefined;
   }
 
   async delete(providerId: string): Promise<void> {
@@ -165,6 +180,26 @@ function credentialFromStoredAccount(account: StoredAccount): Credential {
     ...(account.enterpriseUrl ? { enterpriseUrl: account.enterpriseUrl } : {}),
     ...(account.projectId ? { projectId: account.projectId } : {}),
   };
+}
+
+function hasSameStoredCredentialGeneration(a: StoredAccount, b: StoredAccount): boolean {
+  if (a.type !== b.type || a.accountId !== b.accountId) {
+    return false;
+  }
+  if (a.type === "api_key" && b.type === "api_key") {
+    return a.key === b.key;
+  }
+  if (a.type !== "oauth" || b.type !== "oauth") {
+    return false;
+  }
+  return (
+    a.providerAccountId === b.providerAccountId &&
+    a.access === b.access &&
+    a.refresh === b.refresh &&
+    a.expires === b.expires &&
+    a.enterpriseUrl === b.enterpriseUrl &&
+    a.projectId === b.projectId
+  );
 }
 
 function storedAccountFromCredential(credential: Credential, accountId: string): StoredAccount {

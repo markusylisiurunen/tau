@@ -3239,6 +3239,52 @@ describe("SessionChatController", () => {
     );
   });
 
+  it("blocks prompts and session replacement until a local diff review is recorded", async () => {
+    const session = new FakeSession();
+    const nextSession = new FakeSession();
+    const createSession = vi.fn(async () => nextSession);
+    const recordStarted = deferred();
+    const releaseRecord = deferred();
+    const record = session.record;
+    session.record = vi.fn(async (...args) => {
+      recordStarted.resolve();
+      await releaseRecord.promise;
+      return await record(...args);
+    });
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      createSession,
+      targetLabel: "ssh host tau rpc",
+      defaultDiffTool: { command: "inline-diff-tool" },
+      diffToolLauncher: launchInlineDiffTool,
+    });
+    controller.start();
+
+    const review = controller.onUserInput("/diff -- src/main.ts");
+    await recordStarted.promise;
+
+    await controller.onUserInput("start another turn");
+    await controller.onUserInput("/new");
+
+    expect(session.submit).not.toHaveBeenCalled();
+    expect(session.queue).not.toHaveBeenCalled();
+    expect(createSession).not.toHaveBeenCalled();
+    expect(view.systems).toContainEqual({
+      text: "wait for tau to become idle before submitting input",
+      kind: "warn",
+      options: undefined,
+    });
+
+    releaseRecord.resolve();
+    await review;
+
+    expect(session.record).toHaveBeenCalledTimes(1);
+    expect(session.closeEphemeralContext).toHaveBeenCalledWith("ephemeral-1");
+  });
+
   it("shows the diff review card while a model-launched diff_review tool is active", async () => {
     const session = new FakeSession();
     const view = new FakeView();
@@ -3637,6 +3683,75 @@ describe("SessionChatController", () => {
     expect(view.systems).toContainEqual(
       expect.objectContaining({ text: "session id: session-2", kind: "muted" }),
     );
+  });
+
+  it("serializes concurrent new-session requests", async () => {
+    const session = new FakeSession();
+    const nextSession = new FakeSession();
+    nextSession.id = "session-2";
+    nextSession.snapshotValue = {
+      ...nextSession.snapshotValue,
+      sessionId: "session-2",
+    };
+    const sessionCreated = deferred();
+    const createSession = vi.fn(async () => await sessionCreated.promise);
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      createSession,
+      targetLabel: "ssh host tau rpc",
+    });
+    controller.start();
+
+    const firstNewSession = controller.onUserInput("/new");
+    await waitUntil(() => createSession.mock.calls.length === 1);
+    await controller.onUserInput("/new");
+
+    expect(createSession).toHaveBeenCalledTimes(1);
+    expect(session.unobserve).not.toHaveBeenCalled();
+    expect(view.systems).toContainEqual({
+      text: "wait for tau to become idle before submitting input",
+      kind: "warn",
+      options: undefined,
+    });
+
+    sessionCreated.resolve(nextSession);
+    await firstNewSession;
+
+    expect(session.unobserve).toHaveBeenCalledTimes(1);
+    expect(nextSession.listeners.size).toBe(1);
+    expect(nextSession.pendingUserMessagesListeners.size).toBe(1);
+  });
+
+  it("unobserves a newly created session when its initial snapshot fails", async () => {
+    const session = new FakeSession();
+    const nextSession = new FakeSession();
+    nextSession.snapshot = vi.fn(async () => {
+      throw new Error("snapshot unavailable");
+    });
+    const createSession = vi.fn(async () => nextSession);
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      createSession,
+      targetLabel: "ssh host tau rpc",
+    });
+    controller.start();
+
+    await controller.onUserInput("/new");
+
+    expect(nextSession.unobserve).toHaveBeenCalledTimes(1);
+    expect(session.unobserve).not.toHaveBeenCalled();
+    expect(session.listeners.size).toBe(1);
+    expect(view.systems).toContainEqual({
+      text: "new session failed: snapshot unavailable",
+      kind: "error",
+      options: undefined,
+    });
   });
 
   it("rewinds session history from the selected user message", async () => {

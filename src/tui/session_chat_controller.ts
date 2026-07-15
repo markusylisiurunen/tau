@@ -136,6 +136,7 @@ export class SessionChatController {
   private isStreaming = false;
   private submittedTurnInProgress = false;
   private manualCompactionInProgress = false;
+  private sessionReplacementInProgress = false;
   private isBashMode = false;
   private isBashIncognito = false;
   private isMemoryMode = false;
@@ -201,8 +202,8 @@ export class SessionChatController {
       startTurnTimer: () => this.startTurnTimer(),
       stopTurnTimer: () => this.stopTurnTimer(),
       getDiffToolConfig: () => this.resolveDiffToolConfig(),
-      startSession: (args) => this.startDiffReviewBridge(args),
-      onReviewReturned: (review) => void this.handleReturnedDiffReview(review),
+      startSession: (args) => this.startDiffReviewBridge(args, this.session, this.snapshot),
+      onReviewReturned: (review) => this.handleReturnedDiffReview(review, this.session),
     });
   }
 
@@ -270,7 +271,7 @@ export class SessionChatController {
       return true;
     }
 
-    if (this.manualCompactionInProgress) {
+    if (this.isBlockingSessionOperationActive()) {
       return false;
     }
 
@@ -314,6 +315,10 @@ export class SessionChatController {
     this.lastEmptySubmitAt = undefined;
 
     if (this.isSessionOperationActive()) {
+      if (this.isBlockingSessionOperationActive()) {
+        this.view.addSystemMessage("wait for tau to become idle before submitting input", "warn");
+        return;
+      }
       if (trimmed.startsWith("/") && this.isSingleLineInput(text)) {
         const parsed = this.commandRegistry.parse(trimmed);
         if (parsed.type !== "unknown") {
@@ -622,6 +627,11 @@ export class SessionChatController {
 
     if (!this.isSessionOperationActive()) {
       await this.submitUserText(trimmed);
+      return;
+    }
+
+    if (this.isBlockingSessionOperationActive()) {
+      this.view.addSystemMessage("wait for tau to become idle before submitting input", "warn");
       return;
     }
 
@@ -998,7 +1008,10 @@ export class SessionChatController {
 
   private async createNewSession(): Promise<void> {
     if (this.isSessionOperationActive()) {
-      this.view.addSystemMessage("cannot create a new session while a turn is running", "warn");
+      this.view.addSystemMessage(
+        "cannot create a new session while another session operation is running",
+        "warn",
+      );
       return;
     }
 
@@ -1007,21 +1020,38 @@ export class SessionChatController {
       return;
     }
 
+    const createInput: SessionProtocolCreateParams = {
+      executionEnvironment: this.createExecutionEnvironmentInputFromSnapshot(),
+      personaId: this.snapshot.settings.personaId,
+      ...(this.snapshot.settings.reasoning !== undefined
+        ? { reasoning: this.snapshot.settings.reasoning }
+        : {}),
+    };
+    this.sessionReplacementInProgress = true;
+    this.refreshStatus();
+
+    let nextSession: TauSdkSession | undefined;
+    let nextEventUnsubscribe: (() => void) | undefined;
+    let nextPendingUserMessagesUnsubscribe: (() => void) | undefined;
+    let installed = false;
     try {
-      const previousUnsubscribe = this.eventUnsubscribe;
-      const previousPendingUserMessagesUnsubscribe = this.pendingUserMessagesUnsubscribe;
+      nextSession = await this.createSession(createInput);
+      const nextSnapshot = await nextSession.snapshot();
+      nextEventUnsubscribe = nextSession.onDelta((delta) => this.onSdkDelta(delta));
+      nextPendingUserMessagesUnsubscribe = nextSession.onPendingUserMessages((message) =>
+        this.onSdkPendingUserMessages(message),
+      );
+
       const previousSession = this.session;
-      const nextSession = await this.createSession({
-        executionEnvironment: this.createExecutionEnvironmentInputFromSnapshot(),
-        personaId: this.snapshot.settings.personaId,
-        ...(this.snapshot.settings.reasoning !== undefined
-          ? { reasoning: this.snapshot.settings.reasoning }
-          : {}),
-      });
-      this.eventUnsubscribe = undefined;
-      this.pendingUserMessagesUnsubscribe = undefined;
-      previousUnsubscribe?.();
-      previousPendingUserMessagesUnsubscribe?.();
+      this.eventUnsubscribe?.();
+      this.pendingUserMessagesUnsubscribe?.();
+      this.session = nextSession;
+      this.snapshot = nextSnapshot;
+      this.observedSessionRevision = nextSnapshot.revision;
+      this.eventUnsubscribe = nextEventUnsubscribe;
+      this.pendingUserMessagesUnsubscribe = nextPendingUserMessagesUnsubscribe;
+      installed = true;
+
       try {
         await previousSession.unobserve();
       } catch (detachError) {
@@ -1030,21 +1060,22 @@ export class SessionChatController {
           "warn",
         );
       }
-      this.session = nextSession;
-      this.snapshot = await this.session.snapshot();
-      this.observedSessionRevision = this.snapshot.revision;
-      this.eventUnsubscribe = this.session.onDelta((delta) => this.onSdkDelta(delta));
-      this.pendingUserMessagesUnsubscribe = this.session.onPendingUserMessages((message) =>
-        this.onSdkPendingUserMessages(message),
-      );
+
       this.view.resetToolUiSession();
       this.assistantMessages = [];
       this.startLocalUiSession();
       this.addSessionIdentityMessage();
       this.renderSnapshot(this.snapshot);
-      this.refreshStatus();
     } catch (error) {
+      if (!installed && nextSession) {
+        nextEventUnsubscribe?.();
+        nextPendingUserMessagesUnsubscribe?.();
+        await nextSession.unobserve().catch(() => undefined);
+      }
       this.view.addSystemMessage(`new session failed: ${(error as Error).message}`, "error");
+    } finally {
+      this.sessionReplacementInProgress = false;
+      this.refreshStatus();
     }
   }
 
@@ -1432,7 +1463,17 @@ export class SessionChatController {
   }
 
   private isSessionOperationActive(): boolean {
-    return this.isStreaming || this.submittedTurnInProgress || this.manualCompactionInProgress;
+    return (
+      this.isStreaming || this.submittedTurnInProgress || this.isBlockingSessionOperationActive()
+    );
+  }
+
+  private isBlockingSessionOperationActive(): boolean {
+    return (
+      this.manualCompactionInProgress ||
+      this.sessionReplacementInProgress ||
+      this.diffReviewService.isActive()
+    );
   }
 
   private async recoverFromRevisionGap(): Promise<void> {
@@ -2040,18 +2081,21 @@ export class SessionChatController {
       return;
     }
 
-    await this.diffReviewService.start(argsText);
+    const session = this.session;
+    const snapshot = this.snapshot;
+    await this.diffReviewService.start(argsText, {
+      startSession: (args) => this.startDiffReviewBridge(args, session, snapshot),
+      onReviewReturned: (review) => this.handleReturnedDiffReview(review, session),
+    });
   }
 
   private isDiffReviewIdle(): boolean {
     return (
-      !this.isStreaming &&
-      !this.submittedTurnInProgress &&
+      !this.isSessionOperationActive() &&
       !this.listenRecording &&
       !this.listenTransition &&
       !this.isTranscribingListen &&
-      !this.speakTask &&
-      !this.diffReviewService.isActive()
+      !this.speakTask
     );
   }
 
@@ -2059,26 +2103,30 @@ export class SessionChatController {
     return this.config.diffTool ?? this.defaultDiffTool;
   }
 
-  private async startDiffReviewBridge(args: {
-    source: DiffReviewSnapshotSource;
-    diffTool: DiffToolConfig;
-    signal: AbortSignal;
-  }): Promise<StartedDiffReviewBridge> {
+  private async startDiffReviewBridge(
+    args: {
+      source: DiffReviewSnapshotSource;
+      diffTool: DiffToolConfig;
+      signal: AbortSignal;
+    },
+    session: TauSdkSession,
+    sessionSnapshot: SessionProtocolSnapshot,
+  ): Promise<StartedDiffReviewBridge> {
     const snapshot = await captureDiffReviewSnapshot({
-      cwd: this.snapshot.executionEnvironment.cwd,
+      cwd: sessionSnapshot.executionEnvironment.cwd,
       source: args.source,
       signal: args.signal,
-      deps: createSessionDiffReviewSnapshotDeps(this.session),
+      deps: createSessionDiffReviewSnapshotDeps(session),
     });
-    const ephemeral = await this.session.createEphemeralContext({
+    const ephemeral = await session.createEphemeralContext({
       instructions: buildDiffReviewInstructions(snapshot),
       tools: ["bash", "view_image"],
     });
     const bridge = new DiffReviewBridge({
       snapshot,
-      contextWindow: this.snapshot.bootstrap.model.contextWindow,
+      contextWindow: sessionSnapshot.bootstrap.model.contextWindow,
       submitThreadMessage: (options) =>
-        this.session.submitEphemeralThread({
+        session.submitEphemeralThread({
           contextId: ephemeral.contextId,
           threadId: options.threadId,
           ...(options.forkFromThreadId ? { forkFromThreadId: options.forkFromThreadId } : {}),
@@ -2087,7 +2135,7 @@ export class SessionChatController {
       deps: this.deps,
       ...(this.diffToolLauncher ? { toolLauncher: this.diffToolLauncher } : {}),
     });
-    const unsubscribeEphemeral = this.session.onEphemeral((message) => {
+    const unsubscribeEphemeral = session.onEphemeral((message) => {
       const event = message.event;
       if (
         event.type !== "ephemeral-agent.thread-update" ||
@@ -2111,7 +2159,7 @@ export class SessionChatController {
       await bridge.launchTool(args.diffTool);
     } catch (error) {
       unsubscribeEphemeral();
-      await this.session.closeEphemeralContext(ephemeral.contextId).catch(() => undefined);
+      await session.closeEphemeralContext(ephemeral.contextId).catch(() => undefined);
       await bridge.cancel("launch_failed").catch(() => undefined);
       await bridge.close().catch(() => undefined);
       throw error;
@@ -2119,13 +2167,16 @@ export class SessionChatController {
 
     const result = bridge.result.finally(async () => {
       unsubscribeEphemeral();
-      await this.session.closeEphemeralContext(ephemeral.contextId).catch(() => undefined);
+      await session.closeEphemeralContext(ephemeral.contextId).catch(() => undefined);
     });
 
     return { bridge, result };
   }
 
-  private async handleReturnedDiffReview(review: DiffReviewReturnedReview): Promise<void> {
+  private async handleReturnedDiffReview(
+    review: DiffReviewReturnedReview,
+    session: TauSdkSession,
+  ): Promise<void> {
     const model: ChatMessageModel = {
       type: "user",
       text: review.review,
@@ -2137,10 +2188,12 @@ export class SessionChatController {
     }
 
     try {
-      const result = await this.session.record(formatDiffReviewUserMessage(review), {
+      const result = await session.record(formatDiffReviewUserMessage(review), {
         historyEntryId: review.historyEntryId,
       });
-      this.syncRenderedHistory(result.snapshot);
+      if (this.session === session) {
+        this.syncRenderedHistory(result.snapshot);
+      }
     } catch (error) {
       this.view.addSystemMessage(
         `failed to add diff review to session: ${(error as Error).message}`,

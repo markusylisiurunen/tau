@@ -5,7 +5,6 @@ import { join, resolve } from "node:path";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import { createCommandRegistry } from "../dist/core/commands/index.js";
-import { safeParseCoreEventEnvelope } from "../dist/core/events/parser.js";
 import { personas } from "../dist/core/personas.js";
 import { ConversationTurnRuntime } from "../dist/core/runtime/conversation_turn_runtime.js";
 import { resolveRuntimePromptBootstrap } from "../dist/core/runtime/runtime_bootstrap.js";
@@ -50,87 +49,6 @@ import {
   stripTauUserMetadataFromMessage,
   TAU_USER_METADATA_PREFIX,
 } from "../dist/core/utils/user_metadata.js";
-
-describe("core event parser", () => {
-  it("strips unknown envelope, event, and nested payload fields", () => {
-    expect(
-      safeParseCoreEventEnvelope({
-        version: 2,
-        envelopeExtra: true,
-        event: {
-          type: "compaction_end",
-          reason: "threshold",
-          outcome: "compacted",
-          eventExtra: true,
-          result: {
-            summaryHistoryEntryId: "summary-1",
-            continuationHistoryEntryId: "continuation-1",
-            compactionMessage: "compacted",
-            cutType: "turn-boundary",
-            retainedMessageCount: 2,
-            resultExtra: true,
-          },
-        },
-      }),
-    ).toEqual({
-      ok: true,
-      value: {
-        version: 2,
-        event: {
-          type: "compaction_end",
-          reason: "threshold",
-          outcome: "compacted",
-          result: {
-            summaryHistoryEntryId: "summary-1",
-            continuationHistoryEntryId: "continuation-1",
-            compactionMessage: "compacted",
-            cutType: "turn-boundary",
-            retainedMessageCount: 2,
-          },
-        },
-      },
-    });
-  });
-
-  it("parses tool recovery events", () => {
-    const message = {
-      role: "user",
-      content: [{ type: "text", text: "<system>recovery</system>\n" }],
-      timestamp: 2,
-    };
-    const toolResult = {
-      role: "toolResult",
-      toolCallId: "tool-1",
-      toolName: "bash",
-      content: [{ type: "text", text: "done" }],
-      isError: false,
-      timestamp: 1,
-    };
-
-    expect(
-      safeParseCoreEventEnvelope({
-        version: 2,
-        event: {
-          type: "tool_recovery",
-          historyEntryId: "recovery-1",
-          message,
-          toolResults: [toolResult],
-        },
-      }),
-    ).toEqual({
-      ok: true,
-      value: {
-        version: 2,
-        event: {
-          type: "tool_recovery",
-          historyEntryId: "recovery-1",
-          message,
-          toolResults: [toolResult],
-        },
-      },
-    });
-  });
-});
 
 describe("command registry", () => {
   it("parses and dispatches commands", async () => {

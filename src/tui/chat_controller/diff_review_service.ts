@@ -36,8 +36,10 @@ export type DiffReviewServiceOptions = {
     diffTool: DiffToolConfig;
     signal: AbortSignal;
   }) => Promise<StartedDiffReviewBridge>;
-  onReviewReturned: (review: DiffReviewReturnedReview) => void;
+  onReviewReturned: (review: DiffReviewReturnedReview) => Promise<void>;
 };
+
+type LocalDiffReviewCallbacks = Pick<DiffReviewServiceOptions, "startSession" | "onReviewReturned">;
 
 type DiffReviewState = {
   phase: "preparing" | "active";
@@ -65,7 +67,7 @@ export class DiffReviewService {
     diffTool: DiffToolConfig;
     signal: AbortSignal;
   }) => Promise<StartedDiffReviewBridge>;
-  private readonly onReviewReturned: (review: DiffReviewReturnedReview) => void;
+  private readonly onReviewReturned: (review: DiffReviewReturnedReview) => Promise<void>;
   private state?: DiffReviewState;
 
   constructor(options: DiffReviewServiceOptions) {
@@ -93,7 +95,13 @@ export class DiffReviewService {
       : "diff review active, finish in the tool or press esc to cancel";
   }
 
-  async start(argsText: string): Promise<void> {
+  async start(
+    argsText: string,
+    callbacks: LocalDiffReviewCallbacks = {
+      startSession: this.startSession,
+      onReviewReturned: this.onReviewReturned,
+    },
+  ): Promise<void> {
     if (this.state) {
       this.view.addSystemMessage("diff review is already active.", "warn");
       return;
@@ -156,7 +164,7 @@ export class DiffReviewService {
     this.interruptLifecycle.beginBusyTask(busyTask);
 
     try {
-      const started = await this.startSession({
+      const started = await callbacks.startSession({
         source: { kind: "git_diff", diffArgs },
         diffTool,
         signal: abortController.signal,
@@ -170,7 +178,7 @@ export class DiffReviewService {
       this.attachStartedSession(state, started);
 
       const result = await started.result;
-      this.handleResult(state, result);
+      await this.handleResult(state, result, callbacks.onReviewReturned);
     } catch (error) {
       if (abortController.signal.aborted) {
         finalizeDiffReviewMessage(state, this.view, "cancelled");
@@ -312,7 +320,11 @@ export class DiffReviewService {
     this.refreshStatus();
   }
 
-  private handleResult(state: DiffReviewState, result: DiffReviewResult): void {
+  private async handleResult(
+    state: DiffReviewState,
+    result: DiffReviewResult,
+    onReviewReturned: (review: DiffReviewReturnedReview) => Promise<void>,
+  ): Promise<void> {
     if (result.status === "returned") {
       state.messageFinalized = true;
       this.view.replaceMessage(state.messageId, {
@@ -320,7 +332,7 @@ export class DiffReviewService {
         text: result.review,
         kind: "review",
       });
-      this.onReviewReturned({
+      await onReviewReturned({
         diffCommand: state.diffCommand,
         reviewedFiles: state.reviewedFiles,
         review: result.review,

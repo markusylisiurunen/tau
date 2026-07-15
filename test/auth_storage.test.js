@@ -1,4 +1,14 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -49,6 +59,16 @@ function createTempAuthPath() {
     authPath: join(dir, "auth.json"),
     cleanup: () => rmSync(dir, { recursive: true, force: true }),
   };
+}
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
 }
 
 beforeEach(() => {
@@ -110,9 +130,300 @@ describe("AuthStorage", () => {
       fx.cleanup();
     }
   });
+
+  it("enforces owner-only permissions before reading auth storage", () => {
+    const fx = createTempAuthPath();
+    try {
+      writeFileSync(fx.authPath, JSON.stringify({ providers: {} }), { mode: 0o644 });
+      chmodSync(fx.dir, 0o755);
+      chmodSync(fx.authPath, 0o644);
+
+      const storage = new AuthStorage(fx.authPath);
+
+      expect(storage.getInvalidReason()).toBeUndefined();
+      expect(statSync(fx.dir).mode & 0o777).toBe(0o700);
+      expect(statSync(fx.authPath).mode & 0o777).toBe(0o600);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("rejects auth storage not owned by the current user before reading it", () => {
+    const fx = createTempAuthPath();
+    const getuid = vi.spyOn(process, "getuid").mockReturnValue(process.getuid() + 1);
+    try {
+      writeFileSync(fx.authPath, JSON.stringify({ providers: {} }), { mode: 0o600 });
+
+      const storage = new AuthStorage(fx.authPath);
+
+      expect(storage.getInvalidReason()).toContain(
+        "auth storage directory is not owned by the current user",
+      );
+    } finally {
+      getuid.mockRestore();
+      fx.cleanup();
+    }
+  });
+
+  it("rejects symlinked auth storage before reading it", () => {
+    const fx = createTempAuthPath();
+    try {
+      const targetPath = join(fx.dir, "target.json");
+      writeFileSync(targetPath, JSON.stringify({ providers: {} }), { mode: 0o600 });
+      symlinkSync(targetPath, fx.authPath);
+
+      const storage = new AuthStorage(fx.authPath);
+
+      expect(storage.getInvalidReason()).toContain("auth storage file is not a regular file");
+      expect(lstatSync(fx.authPath).isSymbolicLink()).toBe(true);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("cleans stale auth temporaries during initialization and mutation", () => {
+    const fx = createTempAuthPath();
+    try {
+      const startupTemp = join(fx.dir, "auth.json.00000000-0000-4000-8000-000000000001.tmp");
+      writeFileSync(startupTemp, "stale", { mode: 0o600 });
+      const storage = new AuthStorage(fx.authPath);
+      expect(() => lstatSync(startupTemp)).toThrow(expect.objectContaining({ code: "ENOENT" }));
+
+      const mutationTemp = join(fx.dir, "auth.json.00000000-0000-4000-8000-000000000002.tmp");
+      writeFileSync(mutationTemp, "stale", { mode: 0o600 });
+      storage.update((data) => {
+        data.providers = {};
+      });
+      expect(() => lstatSync(mutationTemp)).toThrow(expect.objectContaining({ code: "ENOENT" }));
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("recovers an auth lock owned by a process that no longer exists", () => {
+    const fx = createTempAuthPath();
+    try {
+      const lockPath = `${fx.authPath}.lock`;
+      mkdirSync(lockPath);
+      writeFileSync(
+        join(lockPath, "owner.json"),
+        JSON.stringify({ pid: 2_147_483_647, token: "stale-owner", createdAt: 1 }),
+        { mode: 0o600 },
+      );
+
+      const storage = new AuthStorage(fx.authPath);
+      storage.update((data) => {
+        data.providers = {};
+      });
+
+      expect(storage.getInvalidReason()).toBeUndefined();
+      expect(() => lstatSync(lockPath)).toThrow(expect.objectContaining({ code: "ENOENT" }));
+    } finally {
+      fx.cleanup();
+    }
+  });
 });
 
 describe("AuthManager and TauCredentialStore", () => {
+  it("does not restore an account removed during an in-flight refresh", async () => {
+    const fx = createTempAuthPath();
+    try {
+      const originalAccess = createAccessToken({
+        accountId: "acct-race",
+        email: "user@example.com",
+        plan: "plus",
+      });
+      const refreshedAccess = createAccessToken({
+        accountId: "acct-race",
+        email: "user@example.com",
+        plan: "pro",
+      });
+      writeFileSync(
+        fx.authPath,
+        JSON.stringify({
+          providers: {
+            "openai-codex": {
+              accounts: [
+                {
+                  type: "oauth",
+                  accountId: "acct-race",
+                  providerAccountId: "acct-race",
+                  access: originalAccess,
+                  refresh: "refresh-race",
+                  expires: 1,
+                },
+              ],
+            },
+          },
+        }),
+        { mode: 0o600 },
+      );
+      const refreshStarted = deferred();
+      const releaseRefresh = deferred();
+      refreshOpenAICodexToken.mockImplementation(async () => {
+        refreshStarted.resolve();
+        return await releaseRefresh.promise;
+      });
+
+      const listingStorage = new AuthStorage(fx.authPath);
+      const listing = new AuthManager(listingStorage).listProviderAccounts();
+      await refreshStarted.promise;
+
+      const logoutStorage = new AuthStorage(fx.authPath);
+      new AuthManager(logoutStorage).removeAccount("openai-codex", "acct-race");
+      releaseRefresh.resolve({
+        access: refreshedAccess,
+        refresh: "refresh-race-next",
+        expires: Number.MAX_SAFE_INTEGER,
+        accountId: "acct-race",
+      });
+
+      await expect(listing).resolves.toEqual([]);
+      const saved = JSON.parse(readFileSync(fx.authPath, "utf8"));
+      expect(saved.providers["openai-codex"].accounts).toEqual([]);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("does not let credential-store refresh restore a deleted account", async () => {
+    const fx = createTempAuthPath();
+    try {
+      writeFileSync(
+        fx.authPath,
+        JSON.stringify({
+          providers: {
+            "openai-codex": {
+              accounts: [
+                {
+                  type: "oauth",
+                  accountId: "acct-modify-race",
+                  providerAccountId: "acct-modify-race",
+                  access: "access-original",
+                  refresh: "refresh-original",
+                  expires: 1,
+                },
+              ],
+            },
+          },
+        }),
+        { mode: 0o600 },
+      );
+      getOAuthApiKey.mockImplementation(async (_provider, providers) => ({
+        apiKey: providers["openai-codex"].access,
+        newCredentials: providers["openai-codex"],
+      }));
+      const refreshStarted = deferred();
+      const releaseRefresh = deferred();
+      const store = new TauCredentialStore({
+        authStorage: new AuthStorage(fx.authPath),
+        getConfig: () => ({}),
+      });
+      const refresh = store.modify("openai-codex", async (current) => {
+        refreshStarted.resolve();
+        await releaseRefresh.promise;
+        return {
+          ...current,
+          access: "access-refreshed",
+          refresh: "refresh-refreshed",
+          expires: 100,
+        };
+      });
+      await refreshStarted.promise;
+
+      const logoutStorage = new AuthStorage(fx.authPath);
+      new AuthManager(logoutStorage).removeAccount("openai-codex", "acct-modify-race");
+      releaseRefresh.resolve();
+
+      await expect(refresh).resolves.toBeUndefined();
+      const saved = JSON.parse(readFileSync(fx.authPath, "utf8"));
+      expect(saved.providers["openai-codex"].accounts).toEqual([]);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("does not let a later parallel refresh overwrite a newer credential generation", async () => {
+    const fx = createTempAuthPath();
+    try {
+      writeFileSync(
+        fx.authPath,
+        JSON.stringify({
+          providers: {
+            "openai-codex": {
+              accounts: [
+                {
+                  type: "oauth",
+                  accountId: "acct-parallel",
+                  providerAccountId: "acct-parallel",
+                  access: "access-original",
+                  refresh: "refresh-original",
+                  expires: 1,
+                },
+              ],
+            },
+          },
+        }),
+        { mode: 0o600 },
+      );
+      const bothRefreshesStarted = deferred();
+      const refreshes = [deferred(), deferred()];
+      let refreshCallCount = 0;
+      getOAuthApiKey.mockImplementation(async () => {
+        const callIndex = refreshCallCount++;
+        if (refreshCallCount === 2) {
+          bothRefreshesStarted.resolve();
+        }
+        return await refreshes[callIndex].promise;
+      });
+
+      const firstRead = new TauCredentialStore({
+        authStorage: new AuthStorage(fx.authPath),
+        getConfig: () => ({}),
+      }).read("openai-codex");
+      const secondRead = new TauCredentialStore({
+        authStorage: new AuthStorage(fx.authPath),
+        getConfig: () => ({}),
+      }).read("openai-codex");
+      await bothRefreshesStarted.promise;
+
+      refreshes[0].resolve({
+        apiKey: "api-newer",
+        newCredentials: {
+          access: "access-newer",
+          refresh: "refresh-newer",
+          expires: 100,
+          accountId: "acct-parallel",
+        },
+      });
+      await expect(firstRead).resolves.toMatchObject({
+        type: "oauth",
+        access: "access-newer",
+        refresh: "refresh-newer",
+      });
+
+      refreshes[1].resolve({
+        apiKey: "api-stale",
+        newCredentials: {
+          access: "access-stale",
+          refresh: "refresh-stale",
+          expires: 200,
+          accountId: "acct-parallel",
+        },
+      });
+      await expect(secondRead).resolves.toBeUndefined();
+
+      const saved = JSON.parse(readFileSync(fx.authPath, "utf8"));
+      expect(saved.providers["openai-codex"].accounts[0]).toMatchObject({
+        access: "access-newer",
+        refresh: "refresh-newer",
+        expires: 100,
+      });
+    } finally {
+      fx.cleanup();
+    }
+  });
+
   it("refreshes codex account identity before listing plans", async () => {
     const fx = createTempAuthPath();
     try {

@@ -85,15 +85,21 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
     const accounts = getAccounts(authStorage);
     if (accounts.length === 0) return [];
 
-    return Promise.all(
-      accounts.map(async (account) => {
+    const accountInfo = await Promise.all(
+      accounts.map(async (account): Promise<AuthAccountInfo | undefined> => {
         const refreshedAccount = await this.refreshAccountIdentity(authStorage, account);
+        if (!refreshedAccount) {
+          return undefined;
+        }
         const usage = await this.getUsageSnapshot(authStorage, refreshedAccount, {
           forceRefresh: true,
         });
-        const currentAccount =
-          getAccounts(authStorage).find((entry) => entry.accountId === account.accountId) ??
-          refreshedAccount;
+        const currentAccount = getAccounts(authStorage).find(
+          (entry) => entry.accountId === account.accountId,
+        );
+        if (!currentAccount) {
+          return undefined;
+        }
         const identity = decodeIdentity(currentAccount.access);
         return {
           provider: PROVIDER_ID,
@@ -104,6 +110,7 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
         } satisfies AuthAccountInfo;
       }),
     );
+    return accountInfo.filter((account): account is AuthAccountInfo => account !== undefined);
   }
 
   async selectAccount(authStorage: AuthStorage): Promise<AuthProviderSelection | undefined> {
@@ -169,10 +176,13 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
     });
     if (!result) return undefined;
 
-    if (shouldUpdateAccount(account, result.newCredentials)) {
-      updateStoredOAuthAccount(authStorage, account.accountId, (current) =>
-        mergeUpdatedCredentials(current, result.newCredentials),
-      );
+    const updateResult = updateStoredOAuthAccount(authStorage, account, (current) =>
+      shouldUpdateAccount(current, result.newCredentials)
+        ? mergeUpdatedCredentials(current, result.newCredentials)
+        : current,
+    );
+    if (updateResult.status !== "updated") {
+      return undefined;
     }
 
     return result.apiKey;
@@ -229,23 +239,18 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
   private async refreshAccountIdentity(
     authStorage: AuthStorage,
     account: CodexAccount,
-  ): Promise<CodexAccount> {
+  ): Promise<CodexAccount | undefined> {
     try {
       const refreshedCredentials = await refreshOpenAICodexToken(account.refresh);
-      const refreshedAccount = mergeUpdatedCredentials(account, refreshedCredentials);
-      if (shouldUpdateAccount(account, refreshedCredentials)) {
-        updateStoredOAuthAccount(authStorage, account.accountId, (current) =>
-          mergeUpdatedCredentials(current, refreshedCredentials),
-        );
-      }
-      return (
-        getAccounts(authStorage).find((entry) => entry.accountId === account.accountId) ??
-        refreshedAccount
+      const updateResult = updateStoredOAuthAccount(authStorage, account, (current) =>
+        shouldUpdateAccount(current, refreshedCredentials)
+          ? mergeUpdatedCredentials(current, refreshedCredentials)
+          : current,
       );
+      return updateResult.status === "missing" ? undefined : updateResult.account;
     } catch {
-      return (
-        getAccounts(authStorage).find((entry) => entry.accountId === account.accountId) ?? account
-      );
+      authStorage.reload();
+      return getAccounts(authStorage).find((entry) => entry.accountId === account.accountId);
     }
   }
 
@@ -260,7 +265,7 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
     },
   ): Promise<AuthAccountUsage | undefined> {
     const now = nowSeconds();
-    let usage = account.usage;
+    const usage = account.usage;
     const shouldRefresh =
       Boolean(options?.forceRefresh) ||
       (Boolean(options?.refreshIfMissing) && !usage) ||
@@ -277,12 +282,14 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
       const refreshedUsage = await fetchUsage(apiKey, refreshedAccount.providerAccountId);
       if (!refreshedUsage) return usage;
 
-      usage = refreshedUsage;
-      updateStoredOAuthAccount(authStorage, account.accountId, (current) => ({
+      const updateResult = updateStoredOAuthAccount(authStorage, refreshedAccount, (current) => ({
         ...current,
         usage: refreshedUsage,
       }));
-      return usage;
+      if (updateResult.status === "missing") {
+        return undefined;
+      }
+      return updateResult.status === "changed" ? updateResult.account.usage : refreshedUsage;
     } catch (error) {
       if (error instanceof UnexpectedUsageWindowError) {
         throw error;
@@ -534,22 +541,45 @@ function hasActivePrimaryWindow(usage: AuthAccountUsage | undefined, now: number
   return Boolean(primary && primary.resetAt > now);
 }
 
+type StoredOAuthAccountUpdateResult =
+  | { status: "missing" }
+  | { status: "changed"; account: CodexAccount }
+  | { status: "updated"; account: CodexAccount };
+
 function updateStoredOAuthAccount(
   authStorage: AuthStorage,
-  accountId: string,
+  expected: CodexAccount,
   update: (account: CodexAccount) => CodexAccount,
-): void {
-  authStorage.update((data) => {
+): StoredOAuthAccountUpdateResult {
+  return authStorage.update((data): StoredOAuthAccountUpdateResult => {
     const accounts = ensureProvider(data, PROVIDER_ID).accounts;
     const index = accounts.findIndex(
-      (entry) => entry.type === "oauth" && entry.accountId === accountId,
+      (entry) => entry.type === "oauth" && entry.accountId === expected.accountId,
     );
-    if (index < 0) return;
+    if (index < 0) return { status: "missing" };
 
     const account = accounts[index];
-    if (account?.type !== "oauth") return;
-    accounts[index] = update(account);
+    if (account?.type !== "oauth") return { status: "missing" };
+    if (!hasSameCredentialGeneration(account, expected)) {
+      return { status: "changed", account };
+    }
+
+    const updated = update(account);
+    accounts[index] = updated;
+    return { status: "updated", account: updated };
   });
+}
+
+function hasSameCredentialGeneration(a: CodexAccount, b: CodexAccount): boolean {
+  return (
+    a.accountId === b.accountId &&
+    a.providerAccountId === b.providerAccountId &&
+    a.access === b.access &&
+    a.refresh === b.refresh &&
+    a.expires === b.expires &&
+    a.enterpriseUrl === b.enterpriseUrl &&
+    a.projectId === b.projectId
+  );
 }
 
 function clampPercent(value: unknown): number {

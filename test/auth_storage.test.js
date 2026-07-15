@@ -131,14 +131,23 @@ describe("AuthStorage", () => {
     }
   });
 
-  it("enforces owner-only permissions before reading auth storage", () => {
+  it("enforces owner-only permissions under a restrictive umask", () => {
     const fx = createTempAuthPath();
     try {
       writeFileSync(fx.authPath, JSON.stringify({ providers: {} }), { mode: 0o644 });
       chmodSync(fx.dir, 0o755);
       chmodSync(fx.authPath, 0o644);
 
-      const storage = new AuthStorage(fx.authPath);
+      const previousUmask = process.umask(0o777);
+      let storage;
+      try {
+        storage = new AuthStorage(fx.authPath);
+        storage.update((data) => {
+          data.providers = {};
+        });
+      } finally {
+        process.umask(previousUmask);
+      }
 
       expect(storage.getInvalidReason()).toBeUndefined();
       expect(statSync(fx.dir).mode & 0o777).toBe(0o700);

@@ -219,34 +219,39 @@ async function acquireSnapshotLock(
     token: randomUUID(),
     createdAt: Date.now(),
   };
+  const candidatePath = `${lockPath}.candidate.${owner.token}`;
   const startedAt = Date.now();
 
-  while (true) {
-    try {
-      await mkdir(lockPath, { mode: PRIVATE_DIRECTORY_MODE });
+  try {
+    await mkdir(candidatePath, { mode: PRIVATE_DIRECTORY_MODE });
+    await chmod(candidatePath, PRIVATE_DIRECTORY_MODE);
+    const ownerPath = join(candidatePath, SNAPSHOT_LOCK_OWNER_FILENAME);
+    await writeFile(ownerPath, JSON.stringify(owner), {
+      encoding: "utf8",
+      flag: "wx",
+      mode: PRIVATE_FILE_MODE,
+    });
+    await chmod(ownerPath, PRIVATE_FILE_MODE);
+
+    while (true) {
       try {
-        await writeFile(join(lockPath, SNAPSHOT_LOCK_OWNER_FILENAME), JSON.stringify(owner), {
-          encoding: "utf8",
-          flag: "wx",
-          mode: PRIVATE_FILE_MODE,
-        });
+        await rename(candidatePath, lockPath);
+        return owner;
       } catch (error) {
-        await rm(lockPath, { recursive: true, force: true });
-        throw error;
+        if (!isLockExists(error)) {
+          throw error;
+        }
+        if (await recoverStaleSnapshotLock(lockPath)) {
+          continue;
+        }
+        if (Date.now() - startedAt >= SNAPSHOT_LOCK_TIMEOUT_MS) {
+          throw new Error(`timed out waiting for stored session snapshot lock: ${sessionId}`);
+        }
+        await sleep(SNAPSHOT_LOCK_RETRY_MS);
       }
-      return owner;
-    } catch (error) {
-      if (!isAlreadyExists(error)) {
-        throw error;
-      }
-      if (await recoverStaleSnapshotLock(lockPath)) {
-        continue;
-      }
-      if (Date.now() - startedAt >= SNAPSHOT_LOCK_TIMEOUT_MS) {
-        throw new Error(`timed out waiting for stored session snapshot lock: ${sessionId}`);
-      }
-      await sleep(SNAPSHOT_LOCK_RETRY_MS);
     }
+  } finally {
+    await rm(candidatePath, { recursive: true, force: true });
   }
 }
 
@@ -397,8 +402,12 @@ function isNotFound(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 
-function isAlreadyExists(error: unknown): boolean {
-  return error instanceof Error && "code" in error && error.code === "EEXIST";
+function isLockExists(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    (error.code === "EEXIST" || error.code === "ENOTEMPTY")
+  );
 }
 
 function sleep(ms: number): Promise<void> {

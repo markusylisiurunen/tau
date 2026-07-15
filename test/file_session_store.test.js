@@ -165,7 +165,7 @@ describe("FileSessionStore", () => {
 
   it("uses owner-only permissions for snapshot directories and files", async () => {
     await withTempStore(async (store, directory) => {
-      const previousUmask = process.umask(0o022);
+      const previousUmask = process.umask(0o777);
       try {
         await store.commitSessionSnapshot(createSnapshot("session-1", "private"));
       } finally {

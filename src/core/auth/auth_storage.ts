@@ -226,34 +226,39 @@ function acquireAuthLock(lockPath: string): AuthLockOwner {
     token: randomUUID(),
     createdAt: Date.now(),
   };
+  const candidatePath = `${lockPath}.candidate.${owner.token}`;
   const startedAt = Date.now();
 
-  while (true) {
-    try {
-      mkdirSync(lockPath, { mode: PRIVATE_DIRECTORY_MODE });
+  try {
+    mkdirSync(candidatePath, { mode: PRIVATE_DIRECTORY_MODE });
+    chmodSync(candidatePath, PRIVATE_DIRECTORY_MODE);
+    const ownerPath = join(candidatePath, AUTH_LOCK_OWNER_FILENAME);
+    writeFileSync(ownerPath, JSON.stringify(owner), {
+      encoding: "utf8",
+      flag: "wx",
+      mode: PRIVATE_FILE_MODE,
+    });
+    chmodSync(ownerPath, PRIVATE_FILE_MODE);
+
+    while (true) {
       try {
-        writeFileSync(join(lockPath, AUTH_LOCK_OWNER_FILENAME), JSON.stringify(owner), {
-          encoding: "utf8",
-          flag: "wx",
-          mode: PRIVATE_FILE_MODE,
-        });
+        renameSync(candidatePath, lockPath);
+        return owner;
       } catch (error) {
-        rmSync(lockPath, { recursive: true, force: true });
-        throw error;
+        if (!isLockExists(error)) {
+          throw error;
+        }
+        if (recoverStaleAuthLock(lockPath)) {
+          continue;
+        }
+        if (Date.now() - startedAt >= AUTH_LOCK_TIMEOUT_MS) {
+          throw new Error("timed out waiting for auth storage lock");
+        }
+        sleepSync(AUTH_LOCK_RETRY_MS);
       }
-      return owner;
-    } catch (error) {
-      if (!isAlreadyExists(error)) {
-        throw error;
-      }
-      if (recoverStaleAuthLock(lockPath)) {
-        continue;
-      }
-      if (Date.now() - startedAt >= AUTH_LOCK_TIMEOUT_MS) {
-        throw new Error("timed out waiting for auth storage lock");
-      }
-      sleepSync(AUTH_LOCK_RETRY_MS);
     }
+  } finally {
+    rmSync(candidatePath, { recursive: true, force: true });
   }
 }
 
@@ -384,6 +389,10 @@ function isNotFound(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 
-function isAlreadyExists(error: unknown): boolean {
-  return error instanceof Error && "code" in error && error.code === "EEXIST";
+function isLockExists(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    (error.code === "EEXIST" || error.code === "ENOTEMPTY")
+  );
 }

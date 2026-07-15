@@ -138,9 +138,16 @@ describe("model catalog", () => {
           {
             providers: {
               openai: {
+                headers: {
+                  "x-route": "global-provider",
+                },
                 models: [
                   {
                     id: "gpt-5.9-custom",
+                    baseUrl: "https://model.example/v1",
+                    headers: {
+                      "x-route": "global-model",
+                    },
                     contextWindow: 100000,
                     maxTokens: 1000,
                   },
@@ -159,6 +166,11 @@ describe("model catalog", () => {
           {
             providers: {
               openai: {
+                baseUrl: "https://project-provider.example/v1",
+                headers: {
+                  "x-route": "project-provider",
+                  "x-tenant": "project",
+                },
                 models: [
                   {
                     id: "gpt-5.9-custom",
@@ -203,6 +215,11 @@ describe("model catalog", () => {
       expect(resolver.errors).toEqual([]);
       const model = resolver.resolveModel("openai", "gpt-5.9-custom");
       expect(model).toBeTruthy();
+      expect(model.baseUrl).toBe("https://model.example/v1");
+      expect(model.headers).toEqual({
+        "x-route": "global-model",
+        "x-tenant": "project",
+      });
       expect(model.contextWindow).toBe(200000);
       expect(model.maxTokens).toBe(1000);
       expect(model.cost.tiers).toEqual([

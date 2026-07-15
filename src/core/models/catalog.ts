@@ -429,6 +429,7 @@ export function loadModelResolver(options: {
   }
 
   const providerPatches = new Map<string, ModelPatch>();
+  const modelPatches = new Map<string, ModelPatch[]>();
   const errors: string[] = [];
 
   for (const level of levels) {
@@ -455,48 +456,39 @@ export function loadModelResolver(options: {
 
       const providerPatch = createProviderPatch(providerConfig);
       if (Object.keys(providerPatch).length > 0) {
-        const mergedProviderPatch = mergeProviderPatch(
-          providerPatches.get(providerName),
-          providerPatch,
+        providerPatches.set(
+          providerName,
+          mergeProviderPatch(providerPatches.get(providerName), providerPatch),
         );
-        providerPatches.set(providerName, mergedProviderPatch);
-
-        for (const [key, candidate] of modelsByKey.entries()) {
-          if (candidate.provider !== providerName) {
-            continue;
-          }
-
-          modelsByKey.set(key, applyModelPatch(candidate, mergedProviderPatch));
-        }
       }
 
       for (const modelConfig of providerConfig.models ?? []) {
         const key = modelKey(providerName, modelConfig.id);
-        const providerPatchForModel = providerPatches.get(providerName);
-        const existing =
-          modelsByKey.get(key) ??
-          createSyntheticModel(providerName, modelConfig.id, providerTemplates);
-
-        if (!existing) {
-          errors.push(
-            `${level.modelsPath}: provider '${providerName}' does not have bundled defaults to derive model '${modelConfig.id}'.`,
-          );
-          continue;
+        if (!modelsByKey.has(key)) {
+          const synthetic = createSyntheticModel(providerName, modelConfig.id, providerTemplates);
+          if (!synthetic) {
+            errors.push(
+              `${level.modelsPath}: provider '${providerName}' does not have bundled defaults to derive model '${modelConfig.id}'.`,
+            );
+            continue;
+          }
+          modelsByKey.set(key, synthetic);
         }
 
-        const withProviderDefaults = providerPatchForModel
-          ? applyModelPatch(existing, providerPatchForModel)
-          : existing;
-        const next = applyModelPatch(withProviderDefaults, createModelPatch(modelConfig));
-
-        modelsByKey.set(key, {
-          ...next,
-          id: modelConfig.id,
-          name: next.name || modelConfig.id,
-          provider: providerName,
-        });
+        const patches = modelPatches.get(key) ?? [];
+        patches.push(createModelPatch(modelConfig));
+        modelPatches.set(key, patches);
       }
     }
+  }
+
+  for (const [key, baseModel] of modelsByKey.entries()) {
+    const providerPatch = providerPatches.get(baseModel.provider);
+    let resolved = providerPatch ? applyModelPatch(baseModel, providerPatch) : baseModel;
+    for (const modelPatch of modelPatches.get(key) ?? []) {
+      resolved = applyModelPatch(resolved, modelPatch);
+    }
+    modelsByKey.set(key, resolved);
   }
 
   const resolveConfiguredModel: ModelResolver = (providerRaw, modelIdRaw) => {

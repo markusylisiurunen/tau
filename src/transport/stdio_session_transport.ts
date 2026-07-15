@@ -40,6 +40,22 @@ type ProcessExitInfo = {
 export type SessionProtocolSpawnedProcess = ChildProcessWithoutNullStreams;
 
 const CLOSE_TIMEOUT_MS = 2_000;
+const STDERR_DIAGNOSTIC_MAX_BYTES = 64 * 1024;
+const STDERR_TRUNCATION_MARKER = "[stderr truncated; showing tail]\n";
+const STDERR_TRUNCATION_MARKER_BYTES = Buffer.byteLength(STDERR_TRUNCATION_MARKER, "utf8");
+
+function truncateUtf8Tail(value: string, maxBytes: number): string {
+  const buffer = Buffer.from(value, "utf8");
+  if (buffer.byteLength <= maxBytes) {
+    return value;
+  }
+
+  let start = buffer.byteLength - maxBytes;
+  while (start < buffer.byteLength && (buffer[start]! & 0xc0) === 0x80) {
+    start += 1;
+  }
+  return buffer.subarray(start).toString("utf8");
+}
 
 export class StdioSessionProtocolTransport implements SessionProtocolTransport {
   private readonly process;
@@ -55,6 +71,7 @@ export class StdioSessionProtocolTransport implements SessionProtocolTransport {
   private readyValue?: SessionProtocolReadyMessage;
   private readonly stdoutBuffer = new LineBuffer();
   private stderrBuffer = "";
+  private stderrTruncated = false;
   private connectPromise?: Promise<void>;
   private closePromise?: Promise<void>;
   private isConnected = false;
@@ -254,13 +271,20 @@ export class StdioSessionProtocolTransport implements SessionProtocolTransport {
   };
 
   private readonly handleStderrData = (chunk: string | Buffer): void => {
-    this.stderrBuffer += chunk.toString();
+    const next = `${this.stderrBuffer}${chunk.toString()}`;
+    const maxTailBytes = STDERR_DIAGNOSTIC_MAX_BYTES - STDERR_TRUNCATION_MARKER_BYTES;
+    if (this.stderrTruncated || Buffer.byteLength(next, "utf8") > STDERR_DIAGNOSTIC_MAX_BYTES) {
+      this.stderrBuffer = truncateUtf8Tail(next, maxTailBytes);
+      this.stderrTruncated = true;
+      return;
+    }
+    this.stderrBuffer = next;
   };
 
   private readonly handleProcessError = (error: Error): void => {
     this.failTransport(
       new TauProcessError("tau rpc process transport failure", {
-        stderr: this.stderrBuffer,
+        stderr: this.getStderrDiagnostic(),
         cause: error,
       }),
     );
@@ -302,9 +326,15 @@ export class StdioSessionProtocolTransport implements SessionProtocolTransport {
       new TauProcessError(message, {
         exitCode: exit.code,
         signal: exit.signal,
-        stderr: this.stderrBuffer,
+        stderr: this.getStderrDiagnostic(),
       }),
     );
+  }
+
+  private getStderrDiagnostic(): string {
+    return this.stderrTruncated
+      ? `${STDERR_TRUNCATION_MARKER}${this.stderrBuffer}`
+      : this.stderrBuffer;
   }
 
   private handleSessionProtocolLine(line: string): void {

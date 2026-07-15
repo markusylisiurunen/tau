@@ -1395,6 +1395,31 @@ describe("sdk_client", () => {
     await expect(session.interrupt()).rejects.toBeInstanceOf(TauTransportError);
   });
 
+  it("retains a bounded stderr tail when the rpc subprocess exits", async () => {
+    const child = new FakeChildProcess();
+    const { client } = await createConnectedClient(child);
+    const session = await client.sessions.observe("session-1");
+    await expect(session.snapshot()).resolves.toEqual(createSnapshot("session-1"));
+
+    const snapshotPromise = session.snapshot();
+    await waitForRequest(child, (request) => request.method === "session.snapshot");
+
+    child.writeStderr("discarded-head\n");
+    child.writeStderr("é".repeat(35_000));
+    child.writeStderr("\nretained-tail\n");
+    child.exit(9, null);
+
+    const error = await snapshotPromise.catch((cause) => cause);
+    expect(error).toBeInstanceOf(TauProcessError);
+    expect(error.stderr.startsWith("[stderr truncated; showing tail]\n")).toBe(true);
+    expect(error.stderr.endsWith("\nretained-tail\n")).toBe(true);
+    expect(error.stderr).not.toContain("discarded-head");
+    expect(error.stderr).not.toContain("�");
+    expect(Buffer.byteLength(error.stderr, "utf8")).toBeLessThanOrEqual(64 * 1024);
+
+    await client.close();
+  });
+
   it("close is idempotent", async () => {
     const child = new FakeChildProcess();
     const { client } = await createConnectedClient(child);

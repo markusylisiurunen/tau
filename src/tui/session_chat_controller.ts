@@ -136,6 +136,7 @@ export class SessionChatController {
   private isStreaming = false;
   private submittedTurnInProgress = false;
   private manualCompactionInProgress = false;
+  private localDiffReviewInProgress = false;
   private sessionReplacementInProgress = false;
   private isBashMode = false;
   private isBashIncognito = false;
@@ -1037,10 +1038,23 @@ export class SessionChatController {
     try {
       nextSession = await this.createSession(createInput);
       const nextSnapshot = await nextSession.snapshot();
-      nextEventUnsubscribe = nextSession.onDelta((delta) => this.onSdkDelta(delta));
-      nextPendingUserMessagesUnsubscribe = nextSession.onPendingUserMessages((message) =>
-        this.onSdkPendingUserMessages(message),
-      );
+      const pendingDeltas: SessionProtocolDeltaMessage[] = [];
+      const pendingUserMessages: SessionProtocolPendingUserMessagesMessage[] = [];
+      let forwardEvents = false;
+      nextEventUnsubscribe = nextSession.onDelta((delta) => {
+        if (forwardEvents) {
+          this.onSdkDelta(delta);
+        } else {
+          pendingDeltas.push(delta);
+        }
+      });
+      nextPendingUserMessagesUnsubscribe = nextSession.onPendingUserMessages((message) => {
+        if (forwardEvents) {
+          this.onSdkPendingUserMessages(message);
+        } else {
+          pendingUserMessages.push(message);
+        }
+      });
 
       const previousSession = this.session;
       this.eventUnsubscribe?.();
@@ -1052,6 +1066,19 @@ export class SessionChatController {
       this.pendingUserMessagesUnsubscribe = nextPendingUserMessagesUnsubscribe;
       installed = true;
 
+      this.view.resetToolUiSession();
+      this.assistantMessages = [];
+      this.startLocalUiSession();
+      this.addSessionIdentityMessage();
+      this.renderSnapshot(this.snapshot);
+      for (const delta of pendingDeltas) {
+        this.onSdkDelta(delta);
+      }
+      for (const message of pendingUserMessages) {
+        this.onSdkPendingUserMessages(message);
+      }
+      forwardEvents = true;
+
       try {
         await previousSession.unobserve();
       } catch (detachError) {
@@ -1060,12 +1087,6 @@ export class SessionChatController {
           "warn",
         );
       }
-
-      this.view.resetToolUiSession();
-      this.assistantMessages = [];
-      this.startLocalUiSession();
-      this.addSessionIdentityMessage();
-      this.renderSnapshot(this.snapshot);
     } catch (error) {
       if (!installed && nextSession) {
         nextEventUnsubscribe?.();
@@ -1471,8 +1492,8 @@ export class SessionChatController {
   private isBlockingSessionOperationActive(): boolean {
     return (
       this.manualCompactionInProgress ||
-      this.sessionReplacementInProgress ||
-      this.diffReviewService.isActive()
+      this.localDiffReviewInProgress ||
+      this.sessionReplacementInProgress
     );
   }
 
@@ -2083,10 +2104,17 @@ export class SessionChatController {
 
     const session = this.session;
     const snapshot = this.snapshot;
-    await this.diffReviewService.start(argsText, {
-      startSession: (args) => this.startDiffReviewBridge(args, session, snapshot),
-      onReviewReturned: (review) => this.handleReturnedDiffReview(review, session),
-    });
+    this.localDiffReviewInProgress = true;
+    this.refreshStatus();
+    try {
+      await this.diffReviewService.start(argsText, {
+        startSession: (args) => this.startDiffReviewBridge(args, session, snapshot),
+        onReviewReturned: (review) => this.handleReturnedDiffReview(review, session),
+      });
+    } finally {
+      this.localDiffReviewInProgress = false;
+      this.refreshStatus();
+    }
   }
 
   private isDiffReviewIdle(): boolean {

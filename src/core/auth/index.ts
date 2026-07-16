@@ -2,8 +2,15 @@ export { AuthManager } from "./auth_manager.js";
 export { formatCodexAuthError } from "./auth_messages.js";
 export { getAuthPath } from "./auth_paths.js";
 export { AuthStorage } from "./auth_storage.js";
-export type { AuthLog, AuthLoginHandler, AuthPromptFn, OAuthProviderSpec } from "./cli.js";
+export type {
+  AuthCliCommand,
+  AuthLog,
+  AuthLoginHandler,
+  AuthPromptFn,
+  OAuthProviderSpec,
+} from "./cli.js";
 export {
+  parseAuthCliArgs,
   runListCommand,
   runLoginCommand,
   runLogoutCommand,

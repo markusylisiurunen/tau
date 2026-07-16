@@ -3,8 +3,6 @@ import type { AssistantPartialSnapshot } from "../session/message_accumulator.js
 import type { SubagentUiEvent } from "../subagents/types.js";
 import type { ToolUiEvent } from "../tools/registry.js";
 
-export type CoreEventVersion = 2;
-
 export type CoreAssistantStartEvent = {
   type: "assistant_start";
   historyEntryId: string;
@@ -109,24 +107,3 @@ export type RunnerToolResultEvent = {
   type: "tool_result";
   message: ToolResultMessage;
 };
-
-export type RunnerEvent =
-  | CoreNoticeEvent
-  | RunnerAssistantPartialEvent
-  | CoreToolUiEvent
-  | RunnerToolResultEvent;
-
-export type CoreEventEnvelope = {
-  version: CoreEventVersion;
-  event: CoreEvent;
-};
-
-export const CORE_EVENT_VERSION: CoreEventVersion = 2;
-
-export function wrapCoreEvent(event: CoreEvent): CoreEventEnvelope {
-  return { version: CORE_EVENT_VERSION, event };
-}
-
-export function serializeCoreEvent(event: CoreEvent): string {
-  return JSON.stringify(wrapCoreEvent(event));
-}

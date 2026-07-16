@@ -107,9 +107,3 @@ export type RunnerToolResultEvent = {
   type: "tool_result";
   message: ToolResultMessage;
 };
-
-export type RunnerEvent =
-  | CoreNoticeEvent
-  | RunnerAssistantPartialEvent
-  | CoreToolUiEvent
-  | RunnerToolResultEvent;

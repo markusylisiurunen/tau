@@ -1965,6 +1965,47 @@ describe("telegram adapter", () => {
         entry.message === "telegram poll failed" &&
         String(entry.data?.cause).includes("telegram getUpdates returned"),
     },
+    {
+      name: "Telegram rejects getUpdates with a conflict",
+      handlers: {
+        setMyCommands: async () => createJsonResponse({ ok: true, result: true }),
+        getUpdates: async ({ call }) =>
+          call === 1
+            ? createJsonResponse(
+                {
+                  ok: false,
+                  error_code: 409,
+                  description: "Conflict: terminated by other getUpdates request",
+                },
+                409,
+              )
+            : pendingTelegramCall(),
+      },
+      expectWarning: (entry) =>
+        entry.level === "warn" &&
+        entry.message === "telegram poll failed" &&
+        entry.data?.cause ===
+          "telegram getUpdates failed: HTTP 409: Conflict: terminated by other getUpdates request",
+    },
+    {
+      name: "getUpdates encounters a network failure",
+      handlers: {
+        setMyCommands: async () => createJsonResponse({ ok: true, result: true }),
+        getUpdates: async ({ call }) => {
+          if (call !== 1) {
+            return pendingTelegramCall();
+          }
+
+          const cause = Object.assign(new Error("socket disconnected"), { code: "ECONNRESET" });
+          throw new TypeError("fetch failed", { cause });
+        },
+      },
+      expectWarning: (entry) =>
+        entry.level === "warn" &&
+        entry.message === "telegram poll failed" &&
+        entry.data?.cause ===
+          "telegram getUpdates network request failed: fetch failed: socket disconnected (ECONNRESET)",
+    },
   ])("logs a clear warning when $name", async ({ handlers, expectWarning }) => {
     const managerHarness = createSessionManagerHarness();
     const logs = [];

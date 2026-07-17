@@ -60,7 +60,8 @@ describe("telegram runtime", () => {
           expect(Object.keys(options.projects)).toEqual(["alpha"]);
           options.onLog?.({
             level: "warn",
-            message: "adapter ready",
+            message: "telegram poll failed",
+            data: { cause: "telegram getUpdates failed: HTTP 409: Conflict" },
           });
           return telegramHandle;
         }),
@@ -69,7 +70,7 @@ describe("telegram runtime", () => {
 
     expect(events).toEqual(["start-telegram:token-1:bot-one"]);
     expect(logs).toEqual([
-      "[telegram:bot-one:warn] adapter ready",
+      "[telegram:bot-one:warn] telegram poll failed: telegram getUpdates failed: HTTP 409: Conflict",
       "tau telegram adapter enabled (bot-one)",
     ]);
 

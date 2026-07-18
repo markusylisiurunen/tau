@@ -106,8 +106,10 @@ export function createLocalToolExecutionBackend(
   const spawnCapture = deps?.spawn ?? spawnWithCapture;
   const resolvePath = (path: string): string => resolve(cwdProvider(), path);
   const resolveCwd = (cwd?: string): string => (cwd ? resolve(cwdProvider(), cwd) : cwdProvider());
-  const resolveEnvironment = (env?: Record<string, string>): NodeJS.ProcessEnv =>
-    sanitizeEnvironment({ ...envProvider(), ...env });
+  const resolveEnvironment = (env?: Record<string, string>): NodeJS.ProcessEnv => ({
+    ...sanitizeEnvironment(envProvider()),
+    ...env,
+  });
 
   return {
     async dispose() {},

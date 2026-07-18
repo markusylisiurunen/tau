@@ -159,7 +159,7 @@ await session.submit("summarize the PR");
 await client.close();
 ```
 
-Local execution environments accept optional `env` overrides for tool processes. The overrides are sanitized with the host environment and persisted in the session snapshot, so use them for non-secret configuration such as credential-store paths rather than tokens or passwords.
+Local execution environments accept optional `env` overrides for tool processes. Tau sanitizes inherited host variables first, then overlays these explicit values unchanged, including names such as `GH_TOKEN`. All overrides are persisted in the session snapshot, so clients are responsible for protecting the session store when passing secrets.
 
 When the host config defines a Cloudflare Sandbox bridge, SDK callers can create a session bound to an already-provisioned sandbox:
 

@@ -167,7 +167,7 @@ Enabled tools execute directly. Persona and subagent tool lists determine tool a
 
 Prompt/context tag style: use dash-case for XML-like tag names in prompt text (for example `<available-skills>`, `<tool-call>`, `<tool-result>`, `<last-assistant-message-verbatim>`). Do not introduce new snake_case tag names.
 
-**Bash limits**: 1MB raw capture (tail of output, stdout/stderr merged in arrival order), 60s timeout. No TTY/stdin (interactive prompts and editors will hang or fail). Environment sanitized by dropping vars that match sensitive key patterns, git is forced non-interactive (no prompt/editor/pager, batch-mode ssh).
+**Bash limits**: 1MB raw capture (tail of output, stdout/stderr merged in arrival order), 60s timeout. No TTY/stdin (interactive prompts and editors will hang or fail). Inherited host environment variables matching sensitive key patterns are dropped; explicit local execution-environment overrides are then applied unchanged. Git is forced non-interactive (no prompt/editor/pager, batch-mode ssh).
 
 **Model context truncation**: Truncation follows a `num_bytes / 6` token heuristic.
 

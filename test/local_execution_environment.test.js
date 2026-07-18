@@ -25,25 +25,45 @@ describe("LocalExecutionEnvironment", () => {
     expect(result.truncated).toBe(false);
   });
 
-  it("scopes environment variables to local tool processes", async () => {
+  it("scopes explicit environment variables without filtering sensitive names", async () => {
     const cwd = process.cwd();
     const environment = new LocalExecutionEnvironment({
       cwd,
       home: process.env.HOME ?? cwd,
-      env: { GH_CONFIG_DIR: "/srv/cowork/gh" },
-      backend: createLocalToolExecutionBackend(),
+      env: {
+        GH_CONFIG_DIR: "/srv/cowork/gh",
+        SESSION_TOKEN: "session-secret",
+      },
+      backend: createLocalToolExecutionBackend({
+        env: {
+          cwd: () => cwd,
+          home: () => cwd,
+          platform: () => process.platform,
+          nodeVersion: () => process.version,
+          env: () => ({
+            PATH: process.env.PATH,
+            HOST_TOKEN: "host-secret",
+            VISIBLE_HOST_VALUE: "visible",
+          }),
+        },
+      }),
     });
 
     const result = await environment
       .getToolExecutionBackend()
-      .runBash('printf "%s" "$GH_CONFIG_DIR"');
+      .runBash(
+        `node -e 'process.stdout.write([process.env.HOST_TOKEN ?? "unset", process.env.SESSION_TOKEN, process.env.VISIBLE_HOST_VALUE].join("|"))'`,
+      );
 
-    expect(result.stdout).toBe("/srv/cowork/gh");
+    expect(result.stdout).toBe("unset|session-secret|visible");
     expect(environment.snapshot()).toEqual({
       kind: "local",
       cwd,
       home: process.env.HOME ?? cwd,
-      env: { GH_CONFIG_DIR: "/srv/cowork/gh" },
+      env: {
+        GH_CONFIG_DIR: "/srv/cowork/gh",
+        SESSION_TOKEN: "session-secret",
+      },
     });
   });
 

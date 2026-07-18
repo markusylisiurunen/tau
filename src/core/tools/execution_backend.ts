@@ -339,7 +339,9 @@ export function scopeToolExecutionBackend(
   const resolvePath = (path: string): string => resolve(workingDirectory, path);
   const resolveCwd = (cwd?: string): string =>
     cwd ? resolve(workingDirectory, cwd) : workingDirectory;
-  const mergeEnvironment = (overrides?: Record<string, string>): { env?: Record<string, string> } => {
+  const mergeEnvironment = (
+    overrides?: Record<string, string>,
+  ): { env?: Record<string, string> } => {
     const merged = { ...env, ...overrides };
     return Object.keys(merged).length > 0 ? { env: merged } : {};
   };

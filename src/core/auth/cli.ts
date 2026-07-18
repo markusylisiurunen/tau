@@ -1,21 +1,16 @@
-import type { OAuthCredentials, OAuthPrompt, OAuthProvider } from "@earendil-works/pi-ai";
-import { loginOpenAICodex } from "@earendil-works/pi-ai/oauth";
+import type { AuthInteraction, AuthPrompt, OAuthCredential } from "@earendil-works/pi-ai";
+import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
 import { Chalk } from "chalk";
-import { CODEX_ORIGINATOR } from "../utils/codex.js";
 import { AuthManager } from "./auth_manager.js";
 import type { AuthStorage } from "./auth_storage.js";
 
 export type AuthLog = (message: string) => void;
-export type AuthPromptFn = (prompt: OAuthPrompt) => Promise<string>;
+export type AuthPromptFn = (prompt: AuthPrompt) => Promise<string>;
 
-export type AuthLoginHandler = (callbacks: {
-  onAuth: (info: { url: string; instructions?: string }) => void;
-  onPrompt: (prompt: OAuthPrompt) => Promise<string>;
-  onProgress?: (message: string) => void;
-}) => Promise<OAuthCredentials>;
+export type AuthLoginHandler = (interaction: AuthInteraction) => Promise<OAuthCredential>;
 
 export type OAuthProviderSpec = {
-  id: OAuthProvider;
+  id: string;
   cliId: string;
   label: string;
 };
@@ -30,14 +25,13 @@ export const SUPPORTED_OAUTH_PROVIDERS: OAuthProviderSpec[] = [
   { id: "openai-codex", cliId: "codex", label: "OpenAI Codex (ChatGPT Plus/Pro)" },
 ];
 
-const DEFAULT_LOGIN_HANDLERS: Partial<Record<OAuthProvider, AuthLoginHandler>> = {
-  "openai-codex": (callbacks) =>
-    loginOpenAICodex({
-      onAuth: callbacks.onAuth,
-      onPrompt: callbacks.onPrompt,
-      onProgress: callbacks.onProgress,
-      originator: CODEX_ORIGINATOR,
-    }),
+const openaiCodexOAuth = openaiCodexProvider().auth.oauth;
+if (!openaiCodexOAuth) {
+  throw new Error("OpenAI Codex provider is missing OAuth support");
+}
+
+const DEFAULT_LOGIN_HANDLERS: Partial<Record<string, AuthLoginHandler>> = {
+  "openai-codex": (interaction) => openaiCodexOAuth.login(interaction),
 };
 
 const chalk = new Chalk({ level: process.stdout.isTTY ? 2 : 0 });
@@ -138,11 +132,14 @@ async function promptForProvider(
   prompt: AuthPromptFn,
   log: AuthLog,
   providers: OAuthProviderSpec[],
-): Promise<OAuthProvider> {
+): Promise<string> {
   log("select a provider:\n");
   log(formatProviderList(providers));
   log("");
-  const selection = await prompt({ message: `enter number (1-${providers.length}):` });
+  const selection = await prompt({
+    type: "text",
+    message: `enter number (1-${providers.length}):`,
+  });
   const index = Number.parseInt(selection, 10) - 1;
   if (!Number.isFinite(index) || index < 0 || index >= providers.length) {
     throw new Error("invalid selection.");
@@ -153,7 +150,7 @@ async function promptForProvider(
 function resolveProvider(
   providerArg: string | undefined,
   providers: OAuthProviderSpec[],
-): OAuthProvider | undefined {
+): string | undefined {
   if (!providerArg) return undefined;
   const normalized = normalizeProvider(providerArg);
   const resolved = providers.find(
@@ -173,7 +170,7 @@ export async function runLoginCommand(options: {
   prompt: AuthPromptFn;
   log?: AuthLog;
   providers?: OAuthProviderSpec[];
-  loginHandlers?: Partial<Record<OAuthProvider, AuthLoginHandler>>;
+  loginHandlers?: Partial<Record<string, AuthLoginHandler>>;
 }): Promise<void> {
   const log = options.log ?? console.log;
   const providers = options.providers ?? SUPPORTED_OAUTH_PROVIDERS;
@@ -183,9 +180,7 @@ export async function runLoginCommand(options: {
     provider = await promptForProvider(options.prompt, log, providers);
   }
 
-  const handlers = { ...DEFAULT_LOGIN_HANDLERS, ...options.loginHandlers } as Partial<
-    Record<OAuthProvider, AuthLoginHandler>
-  >;
+  const handlers = { ...DEFAULT_LOGIN_HANDLERS, ...options.loginHandlers };
   const handler = handlers[provider];
 
   if (!handler) {
@@ -195,26 +190,33 @@ export async function runLoginCommand(options: {
 
   log(`logging in to ${provider}...`);
 
-  const credentials = (await handler({
-    onAuth: (info) => {
-      log("");
-      if (provider === "openai-codex") {
+  const credentials = await handler({
+    prompt: options.prompt,
+    notify: (event) => {
+      if (event.type === "auth_url") {
+        log("");
         log("copy this url into your browser to complete login:");
-      } else {
-        log("open this url in your browser:");
-      }
-      log(info.url);
-      if (info.instructions) {
-        log(info.instructions);
-      }
-      if (provider === "openai-codex") {
+        log(event.url);
+        if (event.instructions) {
+          log(event.instructions);
+        }
         log("if the browser callback fails, you'll be prompted to paste the redirect url/code.");
+        log("");
+        return;
       }
-      log("");
+
+      if (event.type === "device_code") {
+        log("");
+        log("open this url in your browser:");
+        log(event.verificationUri);
+        log(`enter code: ${event.userCode}`);
+        log("");
+        return;
+      }
+
+      log(event.message);
     },
-    onPrompt: async (prompt) => options.prompt(prompt),
-    onProgress: (message) => log(message),
-  })) as OAuthCredentials;
+  });
 
   const authManager = new AuthManager(options.authStorage);
   authManager.addOAuthAccount(provider, credentials);

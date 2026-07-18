@@ -49,7 +49,7 @@ to use the OpenAI Codex subscription provider (`openai-codex`), run:
 tau auth login codex
 ```
 
-this prints a login URL and starts a local callback server on `127.0.0.1:1455`. complete the login in your browser and tau will store tokens in `~/.config/tau/auth.json`. if port `1455` is already in use, or the browser callback fails, tau will prompt you to paste the redirect URL/code. if you see token refresh errors later, run the login command again to re-authenticate.
+this prompts you to choose browser or device-code login. browser login prints a URL and starts a local callback server on `127.0.0.1:1455`; if the callback fails, tau prompts you to paste the redirect URL/code. device-code login prints a verification URL and code instead. tau stores tokens in `~/.config/tau/auth.json`. if you see token refresh errors later, run the login command again to re-authenticate.
 
 to list authenticated accounts and usage:
 

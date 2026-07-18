@@ -13,16 +13,23 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@earendil-works/pi-ai/oauth", async (importOriginal) => {
-  const actual = await importOriginal();
-  return {
-    ...actual,
-    getOAuthApiKey: vi.fn(),
-    refreshOpenAICodexToken: vi.fn(),
-  };
-});
+const { codexLogin, codexRefresh, codexToAuth } = vi.hoisted(() => ({
+  codexLogin: vi.fn(),
+  codexRefresh: vi.fn(),
+  codexToAuth: vi.fn(),
+}));
 
-const { getOAuthApiKey, refreshOpenAICodexToken } = await import("@earendil-works/pi-ai/oauth");
+vi.mock("@earendil-works/pi-ai/providers/openai-codex", () => ({
+  openaiCodexProvider: () => ({
+    auth: {
+      oauth: {
+        login: codexLogin,
+        refresh: codexRefresh,
+        toAuth: codexToAuth,
+      },
+    },
+  }),
+}));
 
 import { AuthManager } from "../dist/core/auth/auth_manager.js";
 import { AuthStorage } from "../dist/core/auth/auth_storage.js";
@@ -72,7 +79,11 @@ function deferred() {
 }
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  codexLogin.mockReset();
+  codexRefresh.mockReset().mockImplementation(async (credential) => credential);
+  codexToAuth.mockReset().mockImplementation(async (credential) => ({
+    apiKey: credential.access,
+  }));
 });
 
 afterEach(() => {
@@ -269,7 +280,7 @@ describe("AuthManager and TauCredentialStore", () => {
       );
       const refreshStarted = deferred();
       const releaseRefresh = deferred();
-      refreshOpenAICodexToken.mockImplementation(async () => {
+      codexRefresh.mockImplementation(async () => {
         refreshStarted.resolve();
         return await releaseRefresh.promise;
       });
@@ -281,6 +292,7 @@ describe("AuthManager and TauCredentialStore", () => {
       const logoutStorage = new AuthStorage(fx.authPath);
       new AuthManager(logoutStorage).removeAccount("openai-codex", "acct-race");
       releaseRefresh.resolve({
+        type: "oauth",
         access: refreshedAccess,
         refresh: "refresh-race-next",
         expires: Number.MAX_SAFE_INTEGER,
@@ -318,10 +330,6 @@ describe("AuthManager and TauCredentialStore", () => {
         }),
         { mode: 0o600 },
       );
-      getOAuthApiKey.mockImplementation(async (_provider, providers) => ({
-        apiKey: providers["openai-codex"].access,
-        newCredentials: providers["openai-codex"],
-      }));
       const refreshStarted = deferred();
       const releaseRefresh = deferred();
       const store = new TauCredentialStore({
@@ -378,7 +386,7 @@ describe("AuthManager and TauCredentialStore", () => {
       const bothRefreshesStarted = deferred();
       const refreshes = [deferred(), deferred()];
       let refreshCallCount = 0;
-      getOAuthApiKey.mockImplementation(async () => {
+      codexRefresh.mockImplementation(async () => {
         const callIndex = refreshCallCount++;
         if (refreshCallCount === 2) {
           bothRefreshesStarted.resolve();
@@ -397,13 +405,11 @@ describe("AuthManager and TauCredentialStore", () => {
       await bothRefreshesStarted.promise;
 
       refreshes[0].resolve({
-        apiKey: "api-newer",
-        newCredentials: {
-          access: "access-newer",
-          refresh: "refresh-newer",
-          expires: 100,
-          accountId: "acct-parallel",
-        },
+        type: "oauth",
+        access: "access-newer",
+        refresh: "refresh-newer",
+        expires: 100,
+        accountId: "acct-parallel",
       });
       await expect(firstRead).resolves.toMatchObject({
         type: "oauth",
@@ -412,13 +418,11 @@ describe("AuthManager and TauCredentialStore", () => {
       });
 
       refreshes[1].resolve({
-        apiKey: "api-stale",
-        newCredentials: {
-          access: "access-stale",
-          refresh: "refresh-stale",
-          expires: 200,
-          accountId: "acct-parallel",
-        },
+        type: "oauth",
+        access: "access-stale",
+        refresh: "refresh-stale",
+        expires: 200,
+        accountId: "acct-parallel",
       });
       await expect(secondRead).resolves.toBeUndefined();
 
@@ -470,16 +474,13 @@ describe("AuthManager and TauCredentialStore", () => {
         ),
       );
 
-      refreshOpenAICodexToken.mockResolvedValue({
+      codexRefresh.mockResolvedValue({
+        type: "oauth",
         access: refreshedAccess,
         refresh: "refresh-plan-next",
         expires: Number.MAX_SAFE_INTEGER,
         accountId: "acct-plan",
       });
-      getOAuthApiKey.mockImplementation(async (_provider, providers) => ({
-        apiKey: providers["openai-codex"].access,
-        newCredentials: providers["openai-codex"],
-      }));
       vi.stubGlobal(
         "fetch",
         vi.fn(async () => ({
@@ -566,13 +567,9 @@ describe("AuthManager and TauCredentialStore", () => {
         ),
       );
 
-      getOAuthApiKey.mockImplementation(async (_provider, providers) => {
-        const account = providers["openai-codex"];
-        return {
-          apiKey: account.refresh === "refresh-exhausted" ? "api-exhausted" : "api-next",
-          newCredentials: account,
-        };
-      });
+      codexToAuth.mockImplementation(async (credential) => ({
+        apiKey: credential.refresh === "refresh-exhausted" ? "api-exhausted" : "api-next",
+      }));
 
       vi.stubGlobal(
         "fetch",
@@ -606,6 +603,55 @@ describe("AuthManager and TauCredentialStore", () => {
 
       expect(credential?.type).toBe("oauth");
       expect(credential?.refresh).toBe("refresh-next");
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("lists stored credential metadata without resolving credentials", async () => {
+    const fx = createTempAuthPath();
+    try {
+      writeFileSync(
+        fx.authPath,
+        JSON.stringify({
+          providers: {
+            "openai-codex": {
+              accounts: [
+                {
+                  type: "oauth",
+                  accountId: "acct-list",
+                  access: "access-list",
+                  refresh: "refresh-list",
+                  expires: 0,
+                },
+              ],
+            },
+            anthropic: {
+              accounts: [
+                {
+                  type: "api_key",
+                  accountId: "anthropic:default",
+                  key: "secret-key",
+                },
+              ],
+            },
+            empty: { accounts: [] },
+          },
+        }),
+        { mode: 0o600 },
+      );
+
+      const store = new TauCredentialStore({
+        authStorage: new AuthStorage(fx.authPath),
+        getConfig: () => ({}),
+      });
+
+      await expect(store.list()).resolves.toEqual([
+        { providerId: "openai-codex", type: "oauth" },
+        { providerId: "anthropic", type: "api_key" },
+      ]);
+      expect(codexRefresh).not.toHaveBeenCalled();
+      expect(codexToAuth).not.toHaveBeenCalled();
     } finally {
       fx.cleanup();
     }
@@ -712,11 +758,6 @@ describe("AuthManager and TauCredentialStore", () => {
         ),
       );
 
-      getOAuthApiKey.mockImplementation(async (_provider, providers) => ({
-        apiKey: providers["openai-codex"].access,
-        newCredentials: providers["openai-codex"],
-      }));
-
       let sessionId = "session-1";
       const storage = new AuthStorage(fx.authPath);
       const store = new TauCredentialStore({
@@ -803,10 +844,6 @@ describe("AuthManager and TauCredentialStore", () => {
         ),
       );
 
-      getOAuthApiKey.mockImplementation(async (_provider, providers) => ({
-        apiKey: providers["openai-codex"].access,
-        newCredentials: providers["openai-codex"],
-      }));
       vi.stubGlobal(
         "fetch",
         vi.fn(async (_url, init) => {
@@ -882,16 +919,6 @@ describe("AuthManager and TauCredentialStore", () => {
           2,
         ),
       );
-
-      getOAuthApiKey.mockResolvedValue({
-        apiKey: "new-access",
-        newCredentials: {
-          access: "old-access",
-          refresh: "old-refresh",
-          expires: 0,
-          accountId: "provider-old",
-        },
-      });
 
       vi.stubGlobal(
         "fetch",

@@ -1,5 +1,5 @@
-import type { OAuthCredentials, OAuthProvider } from "@earendil-works/pi-ai";
-import { getOAuthApiKey, refreshOpenAICodexToken } from "@earendil-works/pi-ai/oauth";
+import type { OAuthCredential } from "@earendil-works/pi-ai";
+import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
 import type { AuthStorage } from "../auth_storage.js";
 import { decodeJwtPayload } from "../jwt.js";
 import type { AuthProviderAdapter, AuthProviderSelection } from "../provider_adapter.js";
@@ -16,6 +16,15 @@ const PROVIDER_LABEL = "OpenAI Codex";
 const USAGE_ENDPOINT = "https://chatgpt.com/backend-api/wham/usage";
 const FORCED_ACCOUNT_ENV = "TAU_CODEX_ACCOUNT";
 const ALLOWED_USAGE_WINDOW_SECONDS = new Set([5 * 60 * 60, 7 * 24 * 60 * 60]);
+const openaiCodexOAuth = getOpenAICodexOAuth();
+
+function getOpenAICodexOAuth() {
+  const oauth = openaiCodexProvider().auth.oauth;
+  if (!oauth) {
+    throw new Error("OpenAI Codex provider is missing OAuth support");
+  }
+  return oauth;
+}
 
 class UnexpectedUsageWindowError extends Error {
   constructor(name: "primary" | "secondary", windowSeconds: number) {
@@ -34,11 +43,11 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
   readonly id = PROVIDER_ID;
   readonly label = PROVIDER_LABEL;
 
-  validateOAuthCredentials(credentials: OAuthCredentials): void {
+  validateOAuthCredentials(credentials: OAuthCredential): void {
     assertCodexClaims(credentials);
   }
 
-  addOAuthAccount(authStorage: AuthStorage, credentials: OAuthCredentials): void {
+  addOAuthAccount(authStorage: AuthStorage, credentials: OAuthCredential): void {
     const claims = assertCodexClaims(credentials);
     const accountId = claims.accountId;
     const account: CodexAccount = {
@@ -171,21 +180,21 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
     const account = getAccounts(authStorage).find((entry) => entry.accountId === accountId);
     if (!account) return undefined;
 
-    const result = await getOAuthApiKey(PROVIDER_ID as OAuthProvider, {
-      [PROVIDER_ID]: toOAuthCredentials(account),
-    });
-    if (!result) return undefined;
+    let credential = toOAuthCredential(account);
+    if (Date.now() >= credential.expires) {
+      credential = await openaiCodexOAuth.refresh(credential);
+    }
 
     const updateResult = updateStoredOAuthAccount(authStorage, account, (current) =>
-      shouldUpdateAccount(current, result.newCredentials)
-        ? mergeUpdatedCredentials(current, result.newCredentials)
+      shouldUpdateAccount(current, credential)
+        ? mergeUpdatedCredentials(current, credential)
         : current,
     );
     if (updateResult.status !== "updated") {
       return undefined;
     }
 
-    return result.apiKey;
+    return (await openaiCodexOAuth.toAuth(toOAuthCredential(updateResult.account))).apiKey;
   }
 
   getForcedAccountId(authStorage: AuthStorage): string | undefined {
@@ -241,7 +250,7 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
     account: CodexAccount,
   ): Promise<CodexAccount | undefined> {
     try {
-      const refreshedCredentials = await refreshOpenAICodexToken(account.refresh);
+      const refreshedCredentials = await openaiCodexOAuth.refresh(toOAuthCredential(account));
       const updateResult = updateStoredOAuthAccount(authStorage, account, (current) =>
         shouldUpdateAccount(current, refreshedCredentials)
           ? mergeUpdatedCredentials(current, refreshedCredentials)
@@ -349,8 +358,9 @@ function readForcedAccountIdentifier(): { raw: string; identifier: string } | un
   return identifier ? { raw, identifier } : undefined;
 }
 
-function toOAuthCredentials(account: CodexAccount): OAuthCredentials {
-  const credentials: OAuthCredentials = {
+function toOAuthCredential(account: CodexAccount): OAuthCredential {
+  const credential: OAuthCredential = {
+    type: "oauth",
     refresh: account.refresh,
     access: account.access,
     expires: account.expires,
@@ -358,12 +368,12 @@ function toOAuthCredentials(account: CodexAccount): OAuthCredentials {
     projectId: account.projectId,
   };
   if (account.providerAccountId) {
-    credentials.accountId = account.providerAccountId;
+    credential.accountId = account.providerAccountId;
   }
-  return credentials;
+  return credential;
 }
 
-function assertCodexClaims(credentials: OAuthCredentials): {
+function assertCodexClaims(credentials: OAuthCredential): {
   accountId: string;
   email: string;
   plan: string;
@@ -592,7 +602,7 @@ function normalizeNumber(value: unknown): number {
   return typeof value === "number" && !Number.isNaN(value) ? Math.round(value) : 0;
 }
 
-function shouldUpdateAccount(current: CodexAccount, updated: OAuthCredentials): boolean {
+function shouldUpdateAccount(current: CodexAccount, updated: OAuthCredential): boolean {
   const updatedAccountId = normalizeString(updated.accountId);
   const updatedEnterpriseUrl = normalizeString(updated.enterpriseUrl);
   const updatedProjectId = normalizeString(updated.projectId);
@@ -606,7 +616,7 @@ function shouldUpdateAccount(current: CodexAccount, updated: OAuthCredentials): 
   );
 }
 
-function mergeUpdatedCredentials(account: CodexAccount, updated: OAuthCredentials): CodexAccount {
+function mergeUpdatedCredentials(account: CodexAccount, updated: OAuthCredential): CodexAccount {
   return {
     ...account,
     access: updated.access,

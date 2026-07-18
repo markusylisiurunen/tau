@@ -1,4 +1,4 @@
-import type { OAuthCredentials } from "@earendil-works/pi-ai";
+import type { OAuthCredential } from "@earendil-works/pi-ai";
 import type { AuthStorage } from "./auth_storage.js";
 import type { AuthProviderAdapter } from "./provider_adapter.js";
 import { OpenAICodexAdapter } from "./providers/openai_codex.js";
@@ -53,7 +53,7 @@ export class AuthManager {
     return results;
   }
 
-  addOAuthAccount(providerId: string, credentials: OAuthCredentials): void {
+  addOAuthAccount(providerId: string, credentials: OAuthCredential): void {
     const adapter = this.adapters.get(providerId);
     if (!adapter) {
       throw new Error(`unsupported auth provider "${providerId}"`);

@@ -92,28 +92,28 @@ describe("model stream option resolution", () => {
     });
   });
 
-  test.each([
-    "xhigh",
-    "max",
-  ])("clamps unsupported openai %s reasoning in response options", (reasoning) => {
-    expect(
-      resolveOpenAIResponsesOptions(
-        {
-          api: "openai-codex-responses",
-          provider: "openai-codex",
-          id: "gpt-5-mini",
-        },
-        {
-          reasoning,
-          serviceTier: "priority",
-        },
-      ),
-    ).toEqual({
-      transport: "websocket-cached",
-      reasoningEffort: "high",
-      serviceTier: "priority",
-    });
-  });
+  test.each(["xhigh", "max"])(
+    "clamps unsupported openai %s reasoning in response options",
+    (reasoning) => {
+      expect(
+        resolveOpenAIResponsesOptions(
+          {
+            api: "openai-codex-responses",
+            provider: "openai-codex",
+            id: "gpt-5-mini",
+          },
+          {
+            reasoning,
+            serviceTier: "priority",
+          },
+        ),
+      ).toEqual({
+        transport: "websocket-cached",
+        reasoningEffort: "high",
+        serviceTier: "priority",
+      });
+    },
+  );
 
   test("resolves GPT-5.6 models through the pi-ai models runtime", () => {
     const runtime = new ModelRuntime();

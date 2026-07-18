@@ -63,7 +63,12 @@ export interface ToolExecutionBackend {
   dispose(): Promise<void>;
   runBash(
     command: string,
-    options?: { timeoutMs?: number; signal?: AbortSignal; cwd?: string },
+    options?: {
+      timeoutMs?: number;
+      signal?: AbortSignal;
+      cwd?: string;
+      env?: Record<string, string>;
+    },
   ): Promise<BashExecutionResult>;
   runNodeScript(
     script: string,
@@ -72,6 +77,7 @@ export interface ToolExecutionBackend {
       timeoutMs?: number;
       signal?: AbortSignal;
       cwd?: string;
+      env?: Record<string, string>;
       maxCaptureBytes?: number | null;
     },
   ): Promise<BashExecutionResult>;
@@ -100,6 +106,8 @@ export function createLocalToolExecutionBackend(
   const spawnCapture = deps?.spawn ?? spawnWithCapture;
   const resolvePath = (path: string): string => resolve(cwdProvider(), path);
   const resolveCwd = (cwd?: string): string => (cwd ? resolve(cwdProvider(), cwd) : cwdProvider());
+  const resolveEnvironment = (env?: Record<string, string>): NodeJS.ProcessEnv =>
+    sanitizeEnvironment({ ...envProvider(), ...env });
 
   return {
     async dispose() {},
@@ -118,7 +126,7 @@ export function createLocalToolExecutionBackend(
         shell: true,
         stdio: ["ignore", "pipe", "pipe"],
         env: {
-          ...sanitizeEnvironment(envProvider()),
+          ...resolveEnvironment(options.env),
           GIT_TERMINAL_PROMPT: "0",
           GIT_EDITOR: "true",
           GIT_SEQUENCE_EDITOR: "true",
@@ -174,7 +182,7 @@ export function createLocalToolExecutionBackend(
 
       const result = await spawnCapture("node", ["-e", script, ...args], {
         stdio: ["ignore", "pipe", "pipe"],
-        env: sanitizeEnvironment(envProvider()),
+        env: resolveEnvironment(options.env),
         detached: true,
         killProcessGroup: true,
         cwd,
@@ -326,10 +334,15 @@ export function createLocalToolExecutionBackend(
 export function scopeToolExecutionBackend(
   backend: ToolExecutionBackend,
   workingDirectory: string,
+  env?: Record<string, string>,
 ): ToolExecutionBackend {
   const resolvePath = (path: string): string => resolve(workingDirectory, path);
   const resolveCwd = (cwd?: string): string =>
     cwd ? resolve(workingDirectory, cwd) : workingDirectory;
+  const mergeEnvironment = (overrides?: Record<string, string>): { env?: Record<string, string> } => {
+    const merged = { ...env, ...overrides };
+    return Object.keys(merged).length > 0 ? { env: merged } : {};
+  };
 
   return {
     dispose() {
@@ -339,12 +352,14 @@ export function scopeToolExecutionBackend(
       return backend.runBash(command, {
         ...options,
         cwd: resolveCwd(options.cwd),
+        ...mergeEnvironment(options.env),
       });
     },
     runNodeScript(script, args = [], options = {}) {
       return backend.runNodeScript(script, args, {
         ...options,
         cwd: resolveCwd(options.cwd),
+        ...mergeEnvironment(options.env),
       });
     },
     readFile(path) {

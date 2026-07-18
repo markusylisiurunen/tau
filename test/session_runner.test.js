@@ -976,7 +976,7 @@ describe("session execution backend plumbing", () => {
     const backend = {
       async dispose() {},
       async runBash(command, options = {}) {
-        calls.push(["runBash", command, options.cwd]);
+        calls.push(["runBash", command, options.cwd, options.env]);
         return {
           output: "",
           stdout: "",
@@ -1016,10 +1016,12 @@ describe("session execution backend plumbing", () => {
       },
     };
 
-    const scoped = scopeToolExecutionBackend(backend, "/remote/work");
+    const scoped = scopeToolExecutionBackend(backend, "/remote/work", {
+      GH_CONFIG_DIR: "/srv/cowork/gh",
+    });
 
     await scoped.runBash("pwd");
-    await scoped.runBash("pwd", { cwd: "subdir" });
+    await scoped.runBash("pwd", { cwd: "subdir", env: { EXTRA: "value" } });
     await scoped.readFile("src/a.ts");
     await scoped.readFileBinary("asset.bin");
     await scoped.writeFile("out.txt", "ok");
@@ -1033,8 +1035,13 @@ describe("session execution backend plumbing", () => {
     });
 
     expect(calls).toEqual([
-      ["runBash", "pwd", "/remote/work"],
-      ["runBash", "pwd", "/remote/work/subdir"],
+      ["runBash", "pwd", "/remote/work", { GH_CONFIG_DIR: "/srv/cowork/gh" }],
+      [
+        "runBash",
+        "pwd",
+        "/remote/work/subdir",
+        { GH_CONFIG_DIR: "/srv/cowork/gh", EXTRA: "value" },
+      ],
       ["readFile", "/remote/work/src/a.ts"],
       ["readFileBinary", "/remote/work/asset.bin"],
       ["writeFile", "/remote/work/out.txt", "ok"],

@@ -25,6 +25,28 @@ describe("LocalExecutionEnvironment", () => {
     expect(result.truncated).toBe(false);
   });
 
+  it("scopes environment variables to local tool processes", async () => {
+    const cwd = process.cwd();
+    const environment = new LocalExecutionEnvironment({
+      cwd,
+      home: process.env.HOME ?? cwd,
+      env: { GH_CONFIG_DIR: "/srv/cowork/gh" },
+      backend: createLocalToolExecutionBackend(),
+    });
+
+    const result = await environment
+      .getToolExecutionBackend()
+      .runBash('printf "%s" "$GH_CONFIG_DIR"');
+
+    expect(result.stdout).toBe("/srv/cowork/gh");
+    expect(environment.snapshot()).toEqual({
+      kind: "local",
+      cwd,
+      home: process.env.HOME ?? cwd,
+      env: { GH_CONFIG_DIR: "/srv/cowork/gh" },
+    });
+  });
+
   it("resolves runtime bootstrap through the local execution backend", async () => {
     const cwd = process.cwd();
     const environment = new LocalExecutionEnvironment({
@@ -94,12 +116,14 @@ describe("LocalExecutionEnvironment", () => {
       kind: "local",
       cwd: "/repo",
       home: "/stored/home",
+      env: { GH_CONFIG_DIR: "/stored/gh" },
     });
 
     expect(environment.snapshot()).toEqual({
       kind: "local",
       cwd: "/repo",
       home: "/stored/home",
+      env: { GH_CONFIG_DIR: "/stored/gh" },
     });
   });
 

@@ -227,12 +227,17 @@ params (required):
 {
   "executionEnvironment": {
     "kind": "local",
-    "cwd": "/repo"
+    "cwd": "/repo",
+    "env": {
+      "GH_CONFIG_DIR": "/srv/cowork/gh"
+    }
   }
 }
 ```
 
-creates a new hosted session in the selected execution environment and returns its identity. Clients call `session.observe` to establish observation and receive the authoritative initial state. Tau resolves config/content from the selected execution environment cwd before creating the runtime, then stores current settings, bootstrap metadata, lightweight catalog metadata, and prompt composition metadata in the snapshot. Prompt bodies and other large execution-environment content are loaded lazily when used. `session.reload` resolves config/content again and replaces the authoritative snapshot. For local execution environments the `cwd` is resolved on the host, not on the client:
+Creates a new hosted session in the selected execution environment and returns its identity. Clients call `session.observe` to establish observation and receive the authoritative initial state. Tau resolves config/content from the selected execution environment cwd before creating the runtime, then stores current settings, bootstrap metadata, lightweight catalog metadata, and prompt composition metadata in the snapshot. Prompt bodies and other large execution-environment content are loaded lazily when used. `session.reload` resolves config/content again and replaces the authoritative snapshot.
+
+For local execution environments, `cwd` is resolved on the host, not on the client. They also accept optional `env` overrides for tool processes. Tau sanitizes the merged environment and persists the overrides in the session snapshot, so clients should pass non-secret configuration rather than tokens or passwords.
 
 Cloudflare Sandbox execution environments use host-configured bridge ids and already-provisioned sandbox ids. The `cwd` is a real path inside that sandbox:
 

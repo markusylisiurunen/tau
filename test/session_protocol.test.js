@@ -75,7 +75,13 @@ describe("session_protocol", () => {
         type: "request",
         id: "req-create",
         method: "session.create",
-        params: { executionEnvironment: { kind: "local", cwd: "/repo" } },
+        params: {
+          executionEnvironment: {
+            kind: "local",
+            cwd: "/repo",
+            env: { GH_CONFIG_DIR: "/srv/cowork/gh" },
+          },
+        },
       }),
     );
     expect(create).toEqual({
@@ -85,7 +91,13 @@ describe("session_protocol", () => {
         type: "request",
         id: "req-create",
         method: "session.create",
-        params: { executionEnvironment: { kind: "local", cwd: "/repo" } },
+        params: {
+          executionEnvironment: {
+            kind: "local",
+            cwd: "/repo",
+            env: { GH_CONFIG_DIR: "/srv/cowork/gh" },
+          },
+        },
       },
     });
 
@@ -699,14 +711,22 @@ describe("session_protocol", () => {
     });
     expect(
       validateSessionProtocolParams("session.create", {
-        executionEnvironment: { kind: "local", cwd: "/repo" },
+        executionEnvironment: {
+          kind: "local",
+          cwd: "/repo",
+          env: { GH_CONFIG_DIR: "/srv/cowork/gh" },
+        },
         personaId: "coder",
         reasoning: "high",
       }),
     ).toEqual({
       ok: true,
       value: {
-        executionEnvironment: { kind: "local", cwd: "/repo" },
+        executionEnvironment: {
+          kind: "local",
+          cwd: "/repo",
+          env: { GH_CONFIG_DIR: "/srv/cowork/gh" },
+        },
         personaId: "coder",
         reasoning: "high",
       },

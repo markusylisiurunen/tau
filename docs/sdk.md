@@ -150,11 +150,16 @@ const session = await client.sessions.create({
   executionEnvironment: {
     kind: "local",
     cwd: "/srv/workspaces/repo",
+    env: {
+      GH_CONFIG_DIR: "/srv/cowork/gh",
+    },
   },
 });
 await session.submit("summarize the PR");
 await client.close();
 ```
+
+Local execution environments accept optional `env` overrides for tool processes. The overrides are sanitized with the host environment and persisted in the session snapshot, so use them for non-secret configuration such as credential-store paths rather than tokens or passwords.
 
 When the host config defines a Cloudflare Sandbox bridge, SDK callers can create a session bound to an already-provisioned sandbox:
 

@@ -10,14 +10,21 @@ import { ToolBackendExecutionEnvironment } from "./tool_backend_execution_enviro
 export class LocalExecutionEnvironment extends ToolBackendExecutionEnvironment<SessionProtocolLocalExecutionEnvironmentSnapshot> {
   readonly kind = "local" as const;
 
-  constructor(options: { cwd: string; home: string; backend: ToolExecutionBackend }) {
+  constructor(options: {
+    cwd: string;
+    home: string;
+    env?: Record<string, string>;
+    backend: ToolExecutionBackend;
+  }) {
     super({
       snapshot: {
         kind: "local",
         cwd: options.cwd,
         home: options.home,
+        ...(options.env && Object.keys(options.env).length > 0 ? { env: options.env } : {}),
       },
       backend: options.backend,
+      env: options.env,
     });
   }
 }
@@ -40,7 +47,7 @@ export class LocalExecutionEnvironmentResolver implements ExecutionEnvironmentRe
     if (input.kind !== "local") {
       throw new Error(`unsupported execution environment kind '${input.kind}'`);
     }
-    return this.createLocalEnvironment(input.cwd);
+    return this.createLocalEnvironment(input.cwd, this.home, input.env ?? {});
   }
 
   canRestore(snapshot: SessionProtocolExecutionEnvironmentSnapshot): boolean {
@@ -51,13 +58,18 @@ export class LocalExecutionEnvironmentResolver implements ExecutionEnvironmentRe
     if (snapshot.kind !== "local") {
       throw new Error(`unsupported execution environment kind '${snapshot.kind}'`);
     }
-    return this.createLocalEnvironment(snapshot.cwd, snapshot.home);
+    return this.createLocalEnvironment(snapshot.cwd, snapshot.home, snapshot.env ?? {});
   }
 
-  private createLocalEnvironment(cwd: string, home = this.home): LocalExecutionEnvironment {
+  private createLocalEnvironment(
+    cwd: string,
+    home: string,
+    env: Record<string, string>,
+  ): LocalExecutionEnvironment {
     return new LocalExecutionEnvironment({
       cwd,
       home,
+      env,
       backend: this.toolBackend,
     });
   }

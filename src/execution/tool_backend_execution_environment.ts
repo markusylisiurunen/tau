@@ -35,12 +35,13 @@ export class ToolBackendExecutionEnvironment<TSnapshot extends BackendExecutionS
   constructor(options: {
     snapshot: TSnapshot;
     backend: ToolExecutionBackend;
+    env?: Record<string, string>;
   }) {
     this.environmentSnapshot = options.snapshot;
     this.cwd = options.snapshot.cwd;
     this.home = options.snapshot.home;
     this.backend = options.backend;
-    this.scopedBackend = scopeToolExecutionBackend(options.backend, this.cwd);
+    this.scopedBackend = scopeToolExecutionBackend(options.backend, this.cwd, options.env);
     this.toolRegistry = ToolCatalog.createRegistry(this.scopedBackend);
   }
 

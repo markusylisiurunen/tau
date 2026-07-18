@@ -92,6 +92,7 @@ export type SessionProtocolInitializeParams = {
 export type SessionProtocolLocalExecutionEnvironmentInput = {
   kind: "local";
   cwd: string;
+  env?: Record<string, string>;
 };
 
 export type SessionProtocolCloudflareSandboxExecutionEnvironmentInput = {
@@ -471,6 +472,7 @@ export type SessionProtocolLocalExecutionEnvironmentSnapshot = {
   kind: "local";
   cwd: string;
   home: string;
+  env?: Record<string, string>;
 };
 
 export type SessionProtocolCloudflareSandboxExecutionEnvironmentSnapshot = {
@@ -1197,11 +1199,18 @@ const sessionProtocolClientToolResultParamsSchema = z.discriminatedUnion("ok", [
 ]);
 
 const absolutePathSchema = nonEmptyStringSchema.refine((value) => value.startsWith("/"));
+const environmentVariableNameSchema = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
+const environmentVariableValueSchema = z.string().refine((value) => !value.includes("\0"));
+const environmentVariablesSchema = z.record(
+  environmentVariableNameSchema,
+  environmentVariableValueSchema,
+);
 
 const sessionProtocolLocalExecutionEnvironmentInputSchema = z
   .object({
     kind: z.literal("local"),
     cwd: absolutePathSchema,
+    env: environmentVariablesSchema.optional(),
   })
   .strip();
 
@@ -1368,6 +1377,7 @@ const sessionProtocolLocalExecutionEnvironmentSnapshotSchema = z
     kind: z.literal("local"),
     cwd: nonEmptyStringSchema,
     home: nonEmptyStringSchema,
+    env: environmentVariablesSchema.optional(),
   })
   .strip();
 

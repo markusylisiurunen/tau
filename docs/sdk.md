@@ -150,11 +150,16 @@ const session = await client.sessions.create({
   executionEnvironment: {
     kind: "local",
     cwd: "/srv/workspaces/repo",
+    env: {
+      GH_CONFIG_DIR: "/srv/cowork/gh",
+    },
   },
 });
 await session.submit("summarize the PR");
 await client.close();
 ```
+
+Local execution environments accept optional `env` overrides for tool processes. Tau sanitizes inherited host variables first, then overlays these explicit values unchanged, including names such as `GH_TOKEN`. All overrides are persisted in the session snapshot, so clients are responsible for protecting the session store when passing secrets.
 
 When the host config defines a Cloudflare Sandbox bridge, SDK callers can create a session bound to an already-provisioned sandbox:
 

@@ -289,7 +289,7 @@ In TUI mode, `--debug` respects `--persona` and `--no-agent-context-files`, so y
 - `tau serve [--host <host>] [--port <port>] [--auth-token <token>]` - Host session protocol over WebSocket (`TAU_WS_AUTH_TOKEN` can provide the token)
 - `tau attach [--session <id> | --new --cwd <path>] [--auth-token <token>] ws://host:port` - Run the terminal UI against a WebSocket session host
 - `tau attach [--session <id> | --new --cwd <path>] -- <command...>` - Run the terminal UI against a session-protocol command, for example `ssh vps 'tau rpc'`; without `--session` or `--new`, attach lists hosted sessions and prompts for a selection, and new sessions require a host-local execution cwd
-- `tau auth login codex` - OAuth login for ChatGPT Plus/Pro; stores `~/.config/tau/auth.json`
+- `tau auth login codex` - Browser or device-code OAuth login for ChatGPT Plus/Pro; stores `~/.config/tau/auth.json`
 - `tau auth list` - List authenticated accounts and usage windows
 - `tau auth logout codex --account <email>` - Remove stored OAuth credentials
 - `tau usage` - Summarize usage logs from `~/.config/tau/logs/`

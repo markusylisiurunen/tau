@@ -73,6 +73,7 @@ describe("auth cli", () => {
       const authStorage = new AuthStorage(fx.authPath);
       const accountId = "acct-123";
       const credentials = {
+        type: "oauth",
         access: createAccessToken({
           accountId,
           email: "user@example.com",
@@ -135,10 +136,14 @@ describe("auth cli", () => {
         },
         log: () => {},
         loginHandlers: {
-          "openai-codex": async (callbacks) => {
-            const input = await callbacks.onPrompt({ message: "Paste code:" });
+          "openai-codex": async (interaction) => {
+            const input = await interaction.prompt({
+              type: "manual_code",
+              message: "Paste code:",
+            });
             const accountId = `acct-${input}`;
             return {
+              type: "oauth",
               access: createAccessToken({
                 accountId,
                 email: `user+${input}@example.com`,

@@ -1,4 +1,4 @@
-import type { OAuthCredentials } from "@earendil-works/pi-ai";
+import type { OAuthCredential } from "@earendil-works/pi-ai";
 import type { AuthStorage } from "./auth_storage.js";
 import type { AuthAccountInfo } from "./types.js";
 
@@ -10,8 +10,8 @@ export type AuthProviderSelection = {
 export interface AuthProviderAdapter {
   id: string;
   label: string;
-  validateOAuthCredentials?: (credentials: OAuthCredentials) => void;
-  addOAuthAccount: (authStorage: AuthStorage, credentials: OAuthCredentials) => void;
+  validateOAuthCredentials?: (credentials: OAuthCredential) => void;
+  addOAuthAccount: (authStorage: AuthStorage, credentials: OAuthCredential) => void;
   removeAccount: (authStorage: AuthStorage, accountId: string) => boolean;
   listAccountInfo: (authStorage: AuthStorage) => Promise<AuthAccountInfo[]>;
   selectAccount: (authStorage: AuthStorage) => Promise<AuthProviderSelection | undefined>;

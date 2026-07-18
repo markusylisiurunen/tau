@@ -643,11 +643,25 @@ if (argv[0] === "auth") {
   const authPath = getAuthPath();
   const authStorage = new AuthStorage(authPath);
   const rl = createInterface({ input: process.stdin, output: process.stdout });
-  const prompt: AuthPromptFn = (question) =>
-    new Promise((resolve) => {
-      const suffix = question.placeholder ? ` (${question.placeholder})` : "";
-      rl.question(`${question.message}${suffix} `, resolve);
-    });
+  const ask = (question: string): Promise<string> =>
+    new Promise((resolve) => rl.question(question, resolve));
+  const prompt: AuthPromptFn = async (question) => {
+    if (question.type === "select") {
+      console.log(question.message);
+      question.options.forEach((option, index) => {
+        console.log(`  ${index + 1}. ${option.label}`);
+      });
+      const answer = await ask(`enter number (1-${question.options.length}): `);
+      const option = question.options[Number.parseInt(answer, 10) - 1];
+      if (!option) {
+        throw new Error("invalid selection.");
+      }
+      return option.id;
+    }
+
+    const suffix = question.placeholder ? ` (${question.placeholder})` : "";
+    return ask(`${question.message}${suffix} `);
+  };
 
   try {
     if (command.type === "login") {

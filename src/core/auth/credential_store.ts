@@ -1,4 +1,4 @@
-import type { Credential, CredentialStore } from "@earendil-works/pi-ai";
+import type { Credential, CredentialInfo, CredentialStore } from "@earendil-works/pi-ai";
 import type { Config } from "../config/schema.js";
 import { getApiKeyForProvider } from "../config/schema.js";
 import { resolveProviderApiKey } from "../models/catalog.js";
@@ -29,6 +29,21 @@ export class TauCredentialStore implements CredentialStore {
     }
 
     return this.readConfiguredCredential(providerId);
+  }
+
+  async list(): Promise<readonly CredentialInfo[]> {
+    this.options.authStorage.reload();
+    const invalidReason = this.options.authStorage.getInvalidReason();
+    if (invalidReason) {
+      throw new Error(invalidReason);
+    }
+
+    return Object.entries(this.options.authStorage.getData().providers).flatMap(
+      ([providerId, provider]) => {
+        const account = provider.accounts[0];
+        return account ? [{ providerId, type: account.type }] : [];
+      },
+    );
   }
 
   async modify(

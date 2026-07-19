@@ -60,12 +60,15 @@ type SessionProtocolPendingUserMessageRequest =
 type SessionProtocolLiveSessionState = {
   activeSubmit?: SessionProtocolActiveSubmit;
   activeBash?: SessionProtocolActiveBash;
-  activeSamples: Set<SessionProtocolActiveSample>;
   revision: number;
   pendingSteeringSubmits: Array<SessionProtocolPendingRequest<"session.steer">>;
   pendingQueuedSubmits: Array<SessionProtocolPendingRequest<"session.queue">>;
   listeners: Set<(message: SessionProtocolPendingUserMessagesMessage) => void>;
 };
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
 
 type SessionProtocolHandlerSessionState = {
   session: TauHostedSession;
@@ -89,7 +92,6 @@ function getSessionLiveState(session: TauHostedSession): SessionProtocolLiveSess
   let state = sessionLiveStates.get(session);
   if (!state) {
     state = {
-      activeSamples: new Set(),
       revision: 1,
       pendingSteeringSubmits: [],
       pendingQueuedSubmits: [],
@@ -315,15 +317,10 @@ export class SessionProtocolHandler {
       }
       if (interruptActiveTurns) {
         state.session.interruptMaintenance();
+        state.session.interruptSamples();
       }
       if (interruptActiveTurns && state.live.activeBash) {
         state.live.activeBash.abortController.abort();
-      }
-      if (interruptActiveTurns) {
-        for (const sample of state.live.activeSamples) {
-          sample.abortController.abort();
-          samplePromises.add(sample.promise);
-        }
       }
     }
 
@@ -625,15 +622,16 @@ export class SessionProtocolHandler {
     }
 
     const abortController = new AbortController();
-    let activeSample: SessionProtocolActiveSample;
-    const promise = this.executeSample(state, request, abortController.signal).finally(() => {
-      state.live.activeSamples.delete(activeSample);
-      this.activeSamples.delete(activeSample);
-    });
-    activeSample = { abortController, promise };
-    state.live.activeSamples.add(activeSample);
+    const activeSample = {
+      abortController,
+      promise: this.executeSample(state, request, abortController.signal),
+    };
     this.activeSamples.add(activeSample);
-    await promise;
+    try {
+      await activeSample.promise;
+    } finally {
+      this.activeSamples.delete(activeSample);
+    }
   }
 
   private async handleRetry(
@@ -1117,13 +1115,14 @@ export class SessionProtocolHandler {
       });
       this.sendMessage(createSessionProtocolSuccessResponse(request.id, "session.sample", result));
     } catch (error) {
+      const cancelled = signal.aborted || isAbortError(error);
       this.sendMessage(
         createSessionProtocolErrorResponse(
           request.id,
-          signal.aborted
+          cancelled
             ? SESSION_PROTOCOL_ERROR_CODES.cancelled
             : SESSION_PROTOCOL_ERROR_CODES.internalError,
-          signal.aborted ? "model sample was cancelled" : "failed to sample model",
+          cancelled ? "model sample was cancelled" : "failed to sample model",
           { cause: error instanceof Error ? error.message : String(error) },
         ),
       );
@@ -1143,10 +1142,7 @@ export class SessionProtocolHandler {
     const interruptedMaintenance = state.session.interruptMaintenance();
     const interruptedBash = Boolean(state.live.activeBash);
     state.live.activeBash?.abortController.abort();
-    const interruptedSamples = state.live.activeSamples.size > 0;
-    for (const sample of state.live.activeSamples) {
-      sample.abortController.abort();
-    }
+    const interruptedSamples = state.session.interruptSamples();
     this.rejectPendingSteeringSubmits(state, "session was interrupted");
 
     const result: SessionProtocolResultByMethod["session.interrupt"] = {

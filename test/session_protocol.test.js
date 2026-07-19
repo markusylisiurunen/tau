@@ -428,12 +428,24 @@ describe("session_protocol", () => {
       api: "openai-responses",
       provider: "openai",
       model: "gpt-5.6-sol",
+      responseModel: "gpt-5.6-sol-2026-07-01",
+      responseId: "response-1",
+      diagnostics: [
+        {
+          type: "provider-retry",
+          timestamp: 1,
+          error: { name: "Error", message: "retryable", code: 429 },
+          details: { attempt: 1 },
+        },
+      ],
       stopReason: "stop",
       usage: {
         input: 42,
         output: 9,
         cacheRead: 0,
         cacheWrite: 0,
+        cacheWrite1h: 0,
+        reasoning: 3,
         totalTokens: 51,
         cost: {
           input: 0.0001,
@@ -513,6 +525,14 @@ describe("session_protocol", () => {
     expect(
       validateSessionProtocolResult("session.sample", {
         message: { role: "assistant", content: [] },
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({ code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest }),
+    });
+    expect(
+      validateSessionProtocolResult("session.sample", {
+        message: { ...sampledMessage, diagnostics: [{}] },
       }),
     ).toEqual({
       ok: false,

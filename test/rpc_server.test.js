@@ -121,6 +121,8 @@ function createHarness(options = {}) {
     let pendingTurnResult = { aborted: false };
     let pendingTurn = null;
     let reasoning = bootstrap.persona.settings.reasoning;
+    const sampleAbortControllers = new Set();
+    const samplePromises = new Set();
 
     const emitDelta = (delta) => {
       for (const handler of deltaHandlers) {
@@ -249,10 +251,23 @@ function createHarness(options = {}) {
         });
       },
       async sample(sampleOptions) {
-        if (options.sample) {
-          return await options.sample(sampleOptions);
+        const abortController = new AbortController();
+        const signal = sampleOptions.signal
+          ? AbortSignal.any([sampleOptions.signal, abortController.signal])
+          : abortController.signal;
+        sampleAbortControllers.add(abortController);
+        const promise = Promise.resolve().then(() =>
+          options.sample
+            ? options.sample({ ...sampleOptions, signal })
+            : { message: fauxAssistantMessage("sampled") },
+        );
+        samplePromises.add(promise);
+        try {
+          return await promise;
+        } finally {
+          sampleAbortControllers.delete(abortController);
+          samplePromises.delete(promise);
         }
-        return { message: fauxAssistantMessage("sampled") };
       },
       async setReasoning(nextReasoning) {
         reasoning = nextReasoning;
@@ -308,7 +323,19 @@ function createHarness(options = {}) {
         return true;
       },
       interruptMaintenance: vi.fn(() => false),
-      waitForActiveWork: vi.fn(async () => {}),
+      interruptSamples: vi.fn(() => {
+        let interrupted = false;
+        for (const abortController of sampleAbortControllers) {
+          if (!abortController.signal.aborted) {
+            abortController.abort();
+            interrupted = true;
+          }
+        }
+        return interrupted;
+      }),
+      waitForActiveWork: vi.fn(async () => {
+        await Promise.allSettled(samplePromises);
+      }),
       terminateSubagent: vi.fn(async () => ({ found: true })),
       async submitEphemeralThread(submitOptions) {
         if (options.submitEphemeralThread) {
@@ -1416,7 +1443,7 @@ describe("rpc_server", () => {
       sample: ({ signal }) =>
         new Promise((_resolve, reject) => {
           sampleStarted = true;
-          signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
         }),
     });
 

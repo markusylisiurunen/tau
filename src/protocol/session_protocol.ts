@@ -1018,7 +1018,23 @@ const sampleUserMessageSchema = z
     timestamp: z.number().finite(),
   })
   .strip();
-const assistantMessageSchema = z
+const sampleDiagnosticErrorSchema = z
+  .object({
+    name: z.string().optional(),
+    message: z.string(),
+    stack: z.string().optional(),
+    code: z.union([z.string(), z.number()]).optional(),
+  })
+  .strip();
+const sampleDiagnosticSchema = z
+  .object({
+    type: z.string(),
+    timestamp: z.number().finite(),
+    error: sampleDiagnosticErrorSchema.optional(),
+    details: z.record(z.string(), z.unknown()).optional(),
+  })
+  .strip();
+const sampleAssistantMessageSchema = z
   .object({
     role: z.literal("assistant"),
     content: z.array(
@@ -1029,7 +1045,7 @@ const assistantMessageSchema = z
     model: nonEmptyStringSchema,
     responseModel: nonEmptyStringSchema.optional(),
     responseId: nonEmptyStringSchema.optional(),
-    diagnostics: z.array(z.unknown()).optional(),
+    diagnostics: z.array(sampleDiagnosticSchema).optional(),
     usage: sampleUsageSchema,
     stopReason: z.enum(["stop", "length", "toolUse", "error", "aborted"]),
     errorMessage: z.string().optional(),
@@ -1050,7 +1066,7 @@ const sampleToolResultMessageSchema = z
   .strip();
 const sampleMessageSchema = z.union([
   sampleUserMessageSchema,
-  assistantMessageSchema,
+  sampleAssistantMessageSchema,
   sampleToolResultMessageSchema,
 ]) as z.ZodType<Message>;
 
@@ -2183,7 +2199,7 @@ const sessionProtocolExecResultSchema = z
 
 const sessionProtocolSampleResultSchema = z
   .object({
-    message: assistantMessageSchema,
+    message: sampleAssistantMessageSchema,
   })
   .strip();
 

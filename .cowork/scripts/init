@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+npm ci
+(cd src/diff_tool/app && npm ci)
+npm run build

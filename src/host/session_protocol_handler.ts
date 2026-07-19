@@ -42,6 +42,11 @@ type SessionProtocolActiveBash = {
   promise: Promise<void>;
 };
 
+type SessionProtocolActiveSample = {
+  abortController: AbortController;
+  promise: Promise<void>;
+};
+
 type SessionProtocolPendingRequest<Method extends "session.queue" | "session.steer"> = {
   id: string;
   handler: SessionProtocolHandler;
@@ -55,6 +60,7 @@ type SessionProtocolPendingUserMessageRequest =
 type SessionProtocolLiveSessionState = {
   activeSubmit?: SessionProtocolActiveSubmit;
   activeBash?: SessionProtocolActiveBash;
+  activeSamples: Set<SessionProtocolActiveSample>;
   revision: number;
   pendingSteeringSubmits: Array<SessionProtocolPendingRequest<"session.steer">>;
   pendingQueuedSubmits: Array<SessionProtocolPendingRequest<"session.queue">>;
@@ -83,6 +89,7 @@ function getSessionLiveState(session: TauHostedSession): SessionProtocolLiveSess
   let state = sessionLiveStates.get(session);
   if (!state) {
     state = {
+      activeSamples: new Set(),
       revision: 1,
       pendingSteeringSubmits: [],
       pendingQueuedSubmits: [],
@@ -160,6 +167,7 @@ export class SessionProtocolHandler {
   private readonly host: TauSessionHost;
   private readonly send: (message: SessionProtocolOutgoingMessage) => void;
   private readonly sessionStates = new Map<string, SessionProtocolHandlerSessionState>();
+  private readonly activeSamples = new Set<SessionProtocolActiveSample>();
   private initialized = false;
   private clientToolRegistration?: {
     attachSession: (sessionId: string) => void;
@@ -216,6 +224,9 @@ export class SessionProtocolHandler {
           return;
         case "session.exec":
           await this.handleExec(request);
+          return;
+        case "session.sample":
+          await this.handleSample(request);
           return;
         case "session.interrupt":
           await this.handleInterrupt(request);
@@ -290,6 +301,11 @@ export class SessionProtocolHandler {
     const interruptActiveTurns = mode === "interrupt" || shutdownHost;
 
     const states = [...this.sessionStates.values()];
+    const samplePromises = new Set<Promise<void>>();
+    for (const sample of this.activeSamples) {
+      sample.abortController.abort();
+      samplePromises.add(sample.promise);
+    }
 
     for (const state of states) {
       this.unsubscribeSessionListeners(state);
@@ -302,6 +318,12 @@ export class SessionProtocolHandler {
       }
       if (interruptActiveTurns && state.live.activeBash) {
         state.live.activeBash.abortController.abort();
+      }
+      if (interruptActiveTurns) {
+        for (const sample of state.live.activeSamples) {
+          sample.abortController.abort();
+          samplePromises.add(sample.promise);
+        }
       }
     }
 
@@ -317,6 +339,7 @@ export class SessionProtocolHandler {
         states.map((state) => getSessionMutationQueueState(state.session).queue),
       );
     }
+    await Promise.allSettled(samplePromises);
 
     this.sessionStates.clear();
     this.clientToolRegistration?.unregister();
@@ -587,6 +610,30 @@ export class SessionProtocolHandler {
       });
       this.schedulePendingSubmitDrains(state);
     }
+  }
+
+  private async handleSample(
+    request: Extract<SessionProtocolRequestMessage, { method: "session.sample" }>,
+  ): Promise<void> {
+    const state = await this.getSessionState(request.params.sessionId);
+    if (!state) {
+      this.sendSessionNotFound(request.id, request.params.sessionId);
+      return;
+    }
+    if (this.closed) {
+      return;
+    }
+
+    const abortController = new AbortController();
+    let activeSample: SessionProtocolActiveSample;
+    const promise = this.executeSample(state, request, abortController.signal).finally(() => {
+      state.live.activeSamples.delete(activeSample);
+      this.activeSamples.delete(activeSample);
+    });
+    activeSample = { abortController, promise };
+    state.live.activeSamples.add(activeSample);
+    this.activeSamples.add(activeSample);
+    await promise;
   }
 
   private async handleRetry(
@@ -1057,6 +1104,32 @@ export class SessionProtocolHandler {
     }
   }
 
+  private async executeSample(
+    state: SessionProtocolHandlerSessionState,
+    request: Extract<SessionProtocolRequestMessage, { method: "session.sample" }>,
+    signal: AbortSignal,
+  ): Promise<void> {
+    try {
+      const result = await state.session.sample({
+        context: request.params.context,
+        options: request.params.options,
+        signal,
+      });
+      this.sendMessage(createSessionProtocolSuccessResponse(request.id, "session.sample", result));
+    } catch (error) {
+      this.sendMessage(
+        createSessionProtocolErrorResponse(
+          request.id,
+          signal.aborted
+            ? SESSION_PROTOCOL_ERROR_CODES.cancelled
+            : SESSION_PROTOCOL_ERROR_CODES.internalError,
+          signal.aborted ? "model sample was cancelled" : "failed to sample model",
+          { cause: error instanceof Error ? error.message : String(error) },
+        ),
+      );
+    }
+  }
+
   private async handleInterrupt(
     request: Extract<SessionProtocolRequestMessage, { method: "session.interrupt" }>,
   ): Promise<void> {
@@ -1070,11 +1143,20 @@ export class SessionProtocolHandler {
     const interruptedMaintenance = state.session.interruptMaintenance();
     const interruptedBash = Boolean(state.live.activeBash);
     state.live.activeBash?.abortController.abort();
+    const interruptedSamples = state.live.activeSamples.size > 0;
+    for (const sample of state.live.activeSamples) {
+      sample.abortController.abort();
+    }
     this.rejectPendingSteeringSubmits(state, "session was interrupted");
 
     const result: SessionProtocolResultByMethod["session.interrupt"] = {
-      interrupted: interruptedTurn || interruptedMaintenance || interruptedBash,
-      isTurnRunning: state.session.isTurnRunning || interruptedMaintenance || interruptedBash,
+      interrupted:
+        interruptedTurn || interruptedMaintenance || interruptedBash || interruptedSamples,
+      isTurnRunning:
+        state.session.isTurnRunning ||
+        interruptedMaintenance ||
+        interruptedBash ||
+        interruptedSamples,
     };
 
     this.sendMessage(createSessionProtocolSuccessResponse(request.id, "session.interrupt", result));

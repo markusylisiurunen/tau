@@ -1,4 +1,11 @@
-import type { Message, TextContent, ThinkingContent, ToolCall } from "@earendil-works/pi-ai";
+import type {
+  AssistantMessage,
+  Message,
+  TextContent,
+  ThinkingContent,
+  Tool,
+  ToolCall,
+} from "@earendil-works/pi-ai";
 import { type ZodError, z } from "zod";
 
 export const SESSION_PROTOCOL_VERSION = 1 as const;
@@ -16,6 +23,7 @@ export const SESSION_PROTOCOL_METHODS = [
   "session.cancelPendingMessages",
   "session.retry",
   "session.exec",
+  "session.sample",
   "session.interrupt",
   "session.snapshot",
   "session.setReasoning",
@@ -143,6 +151,19 @@ export type SessionProtocolExecParams = SessionProtocolSessionIdParams & {
   cwd?: string;
   timeoutMs?: number;
 };
+export type SessionProtocolSampleContext = {
+  systemPrompt: string;
+  messages: Message[];
+  tools?: Tool[];
+};
+export type SessionProtocolSampleOptions = {
+  reasoning?: SessionProtocolReasoningEffort;
+  maxTokens?: number;
+};
+export type SessionProtocolSampleParams = SessionProtocolSessionIdParams & {
+  context: SessionProtocolSampleContext;
+  options: SessionProtocolSampleOptions;
+};
 
 export type SessionProtocolSetReasoningParams = SessionProtocolSessionIdParams & {
   reasoning: SessionProtocolReasoningEffort;
@@ -226,6 +247,7 @@ export type SessionProtocolParamsByMethod = {
   "session.cancelPendingMessages": SessionProtocolCancelPendingMessagesParams;
   "session.retry": SessionProtocolRetryParams;
   "session.exec": SessionProtocolExecParams;
+  "session.sample": SessionProtocolSampleParams;
   "session.interrupt": SessionProtocolSessionIdParams;
   "session.snapshot": SessionProtocolSessionIdParams;
   "session.setReasoning": SessionProtocolSetReasoningParams;
@@ -304,6 +326,10 @@ export type SessionProtocolExecResult = {
   stderr: string;
   exitCode: number | null;
   truncated: boolean;
+};
+
+export type SessionProtocolSampleResult = {
+  message: AssistantMessage;
 };
 
 export type SessionProtocolSessionLifecycle = "idle" | "running";
@@ -656,6 +682,7 @@ export type SessionProtocolResultByMethod = {
   "session.cancelPendingMessages": SessionProtocolCancelPendingMessagesResult;
   "session.retry": SessionProtocolRetryResult;
   "session.exec": SessionProtocolExecResult;
+  "session.sample": SessionProtocolSampleResult;
   "session.interrupt": SessionProtocolInterruptResult;
   "session.snapshot": SessionProtocolSnapshot;
   "session.setReasoning": SessionProtocolSettingsUpdateResult;
@@ -930,6 +957,103 @@ const sessionProtocolRequestIdSchema = nonEmptyStringSchema;
 const nullableSessionProtocolRequestIdSchema = sessionProtocolRequestIdSchema.nullable();
 const messageSchema = z.custom<Message>(isMessage);
 
+const sampleTextContentSchema = z
+  .object({
+    type: z.literal("text"),
+    text: z.string(),
+    textSignature: z.string().optional(),
+  })
+  .strip();
+const sampleImageContentSchema = z
+  .object({
+    type: z.literal("image"),
+    data: z.string(),
+    mimeType: nonEmptyStringSchema,
+  })
+  .strip();
+const sampleThinkingContentSchema = z
+  .object({
+    type: z.literal("thinking"),
+    thinking: z.string(),
+    thinkingSignature: z.string().optional(),
+    redacted: z.boolean().optional(),
+  })
+  .strip();
+const sampleToolCallSchema = z
+  .object({
+    type: z.literal("toolCall"),
+    id: nonEmptyStringSchema,
+    name: nonEmptyStringSchema,
+    arguments: z.record(z.string(), z.unknown()),
+    thoughtSignature: z.string().optional(),
+  })
+  .strip();
+const sampleUsageSchema = z
+  .object({
+    input: z.number().int().nonnegative(),
+    output: z.number().int().nonnegative(),
+    cacheRead: z.number().int().nonnegative(),
+    cacheWrite: z.number().int().nonnegative(),
+    cacheWrite1h: z.number().int().nonnegative().optional(),
+    reasoning: z.number().int().nonnegative().optional(),
+    totalTokens: z.number().int().nonnegative(),
+    cost: z
+      .object({
+        input: z.number().nonnegative(),
+        output: z.number().nonnegative(),
+        cacheRead: z.number().nonnegative(),
+        cacheWrite: z.number().nonnegative(),
+        total: z.number().nonnegative(),
+      })
+      .strip(),
+  })
+  .strip();
+const sampleUserMessageSchema = z
+  .object({
+    role: z.literal("user"),
+    content: z.union([
+      z.string(),
+      z.array(z.union([sampleTextContentSchema, sampleImageContentSchema])),
+    ]),
+    timestamp: z.number().finite(),
+  })
+  .strip();
+const assistantMessageSchema = z
+  .object({
+    role: z.literal("assistant"),
+    content: z.array(
+      z.union([sampleTextContentSchema, sampleThinkingContentSchema, sampleToolCallSchema]),
+    ),
+    api: nonEmptyStringSchema,
+    provider: nonEmptyStringSchema,
+    model: nonEmptyStringSchema,
+    responseModel: nonEmptyStringSchema.optional(),
+    responseId: nonEmptyStringSchema.optional(),
+    diagnostics: z.array(z.unknown()).optional(),
+    usage: sampleUsageSchema,
+    stopReason: z.enum(["stop", "length", "toolUse", "error", "aborted"]),
+    errorMessage: z.string().optional(),
+    timestamp: z.number().finite(),
+  })
+  .strip() as z.ZodType<AssistantMessage>;
+const sampleToolResultMessageSchema = z
+  .object({
+    role: z.literal("toolResult"),
+    toolCallId: nonEmptyStringSchema,
+    toolName: nonEmptyStringSchema,
+    content: z.array(z.union([sampleTextContentSchema, sampleImageContentSchema])),
+    details: z.unknown().optional(),
+    addedToolNames: z.array(nonEmptyStringSchema).optional(),
+    isError: z.boolean(),
+    timestamp: z.number().finite(),
+  })
+  .strip();
+const sampleMessageSchema = z.union([
+  sampleUserMessageSchema,
+  assistantMessageSchema,
+  sampleToolResultMessageSchema,
+]) as z.ZodType<Message>;
+
 const sessionProtocolReadyMessageSchema = z
   .object({
     version: z.literal(SESSION_PROTOCOL_VERSION),
@@ -1062,12 +1186,6 @@ const sessionProtocolExecParamsSchema = z
   })
   .strip();
 
-const sessionProtocolSessionIdParamsSchema = z
-  .object({
-    sessionId: nonEmptyStringSchema,
-  })
-  .strip();
-
 const sessionProtocolReasoningEffortSchema = z.enum([
   "none",
   "minimal",
@@ -1077,6 +1195,39 @@ const sessionProtocolReasoningEffortSchema = z.enum([
   "xhigh",
   "max",
 ]);
+
+const sessionProtocolSampleToolSchema = z
+  .object({
+    name: nonEmptyStringSchema,
+    description: z.string(),
+    parameters: z.record(z.string(), z.unknown()),
+  })
+  .strip();
+
+const sessionProtocolSampleParamsSchema = z
+  .object({
+    sessionId: nonEmptyStringSchema,
+    context: z
+      .object({
+        systemPrompt: z.string(),
+        messages: z.array(sampleMessageSchema),
+        tools: z.array(sessionProtocolSampleToolSchema).optional(),
+      })
+      .strip(),
+    options: z
+      .object({
+        reasoning: sessionProtocolReasoningEffortSchema.optional(),
+        maxTokens: z.number().int().positive().optional(),
+      })
+      .strip(),
+  })
+  .strip();
+
+const sessionProtocolSessionIdParamsSchema = z
+  .object({
+    sessionId: nonEmptyStringSchema,
+  })
+  .strip();
 
 const sessionProtocolSetReasoningParamsSchema = z
   .object({
@@ -2030,6 +2181,12 @@ const sessionProtocolExecResultSchema = z
   })
   .strip();
 
+const sessionProtocolSampleResultSchema = z
+  .object({
+    message: assistantMessageSchema,
+  })
+  .strip();
+
 const sessionProtocolInterruptResultSchema = z
   .object({
     interrupted: z.boolean(),
@@ -2877,6 +3034,10 @@ export function validateSessionProtocolParams(
   params: unknown,
 ): SessionProtocolParamsValidationResult<SessionProtocolExecParams>;
 export function validateSessionProtocolParams(
+  method: "session.sample",
+  params: unknown,
+): SessionProtocolParamsValidationResult<SessionProtocolSampleParams>;
+export function validateSessionProtocolParams(
   method: "session.interrupt",
   params: unknown,
 ): SessionProtocolParamsValidationResult<SessionProtocolSessionIdParams>;
@@ -2965,6 +3126,8 @@ export function validateSessionProtocolParams(
       return validateUserMessageParams(method, params);
     case "session.exec":
       return validateExecParams(params);
+    case "session.sample":
+      return validateSampleParams(params);
     case "session.list":
       return validateNoParams(method, params);
     case "session.cancelPendingMessages":
@@ -3062,6 +3225,8 @@ export function validateSessionProtocolResult(
       return validateResult(method, result, sessionProtocolRetryResultSchema);
     case "session.exec":
       return validateResult(method, result, sessionProtocolExecResultSchema);
+    case "session.sample":
+      return validateResult(method, result, sessionProtocolSampleResultSchema);
     case "session.interrupt":
       return validateResult(method, result, sessionProtocolInterruptResultSchema);
   }
@@ -3214,6 +3379,26 @@ function validateExecParams(
       ...(parsed.data.timeoutMs !== undefined ? { timeoutMs: parsed.data.timeoutMs } : {}),
     },
   };
+}
+
+function validateSampleParams(
+  params: unknown,
+): SessionProtocolParamsValidationResult<SessionProtocolSampleParams> {
+  const parsed = sessionProtocolSampleParamsSchema.safeParse(params);
+  if (!parsed.success) {
+    const message = hasIssue(parsed.error, [], "invalid_type")
+      ? "session.sample params must be an object"
+      : hasIssue(parsed.error, ["sessionId"])
+        ? "session.sample params.sessionId must be a non-empty string"
+        : hasIssue(parsed.error, ["context"])
+          ? "session.sample params.context must include a system prompt and messages"
+          : hasIssue(parsed.error, ["options"])
+            ? "session.sample params.options must be an object"
+            : `session.sample params are invalid: ${formatZodError(parsed.error)}`;
+    return invalidParams(message);
+  }
+
+  return { ok: true, value: parsed.data };
 }
 
 function validateSetReasoningParams(

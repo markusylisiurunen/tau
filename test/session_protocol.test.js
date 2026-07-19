@@ -418,6 +418,108 @@ describe("session_protocol", () => {
     });
   });
 
+  it("round-trips sampled assistant messages into later sampling contexts", () => {
+    const sampledMessage = {
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "Classifying the request..." },
+        { type: "text", text: "authentication" },
+      ],
+      api: "openai-responses",
+      provider: "openai",
+      model: "gpt-5.6-sol",
+      stopReason: "stop",
+      usage: {
+        input: 42,
+        output: 9,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 51,
+        cost: {
+          input: 0.0001,
+          output: 0.0002,
+          cacheRead: 0,
+          cacheWrite: 0,
+          total: 0.0003,
+        },
+      },
+      timestamp: 1,
+    };
+
+    expect(validateSessionProtocolResult("session.sample", { message: sampledMessage })).toEqual({
+      ok: true,
+      value: { message: sampledMessage },
+    });
+
+    expect(
+      validateSessionProtocolParams("session.sample", {
+        sessionId: "session-1",
+        context: {
+          systemPrompt: "Classify support tickets.",
+          messages: [
+            {
+              role: "user",
+              content: [{ type: "text", text: "I cannot log in" }],
+              timestamp: 0,
+            },
+            sampledMessage,
+          ],
+          tools: [
+            {
+              name: "lookup_ticket",
+              description: "Look up a ticket.",
+              parameters: { type: "object", properties: {} },
+            },
+          ],
+        },
+        options: { reasoning: "low", maxTokens: 500, temperature: 0 },
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        sessionId: "session-1",
+        context: {
+          systemPrompt: "Classify support tickets.",
+          messages: [
+            {
+              role: "user",
+              content: [{ type: "text", text: "I cannot log in" }],
+              timestamp: 0,
+            },
+            sampledMessage,
+          ],
+          tools: [
+            {
+              name: "lookup_ticket",
+              description: "Look up a ticket.",
+              parameters: { type: "object", properties: {} },
+            },
+          ],
+        },
+        options: { reasoning: "low", maxTokens: 500 },
+      },
+    });
+
+    expect(
+      validateSessionProtocolParams("session.sample", {
+        sessionId: "session-1",
+        context: { systemPrompt: "system", messages: [] },
+        options: { maxTokens: 0 },
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({ code: SESSION_PROTOCOL_ERROR_CODES.invalidParams }),
+    });
+    expect(
+      validateSessionProtocolResult("session.sample", {
+        message: { role: "assistant", content: [] },
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({ code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest }),
+    });
+  });
+
   it("returns structured parse and validation errors", () => {
     const malformed = parseSessionProtocolRequestLine("{not-json}");
     expect(malformed.ok).toBe(false);

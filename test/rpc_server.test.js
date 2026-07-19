@@ -1,4 +1,5 @@
 import { PassThrough } from "node:stream";
+import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import { RpcServer, runRpcServer } from "../dist/core/modes/rpc_server.js";
 import { EphemeralThreadBusyError } from "../dist/host/session_host.js";
@@ -246,6 +247,12 @@ function createHarness(options = {}) {
         return createProtocolExecResult({
           command: runOptions.command,
         });
+      },
+      async sample(sampleOptions) {
+        if (options.sample) {
+          return await options.sample(sampleOptions);
+        }
+        return { message: fauxAssistantMessage("sampled") };
       },
       async setReasoning(nextReasoning) {
         reasoning = nextReasoning;
@@ -1401,6 +1408,56 @@ describe("rpc_server", () => {
 
     const secondSubmitEvent = harness.lines.find((line) => deltaHasNotice(line, "streaming"));
     expect(secondSubmitEvent).toBeDefined();
+  });
+
+  it("cancels active model samples through session.interrupt", async () => {
+    let sampleStarted = false;
+    const harness = createHarness({
+      sample: ({ signal }) =>
+        new Promise((_resolve, reject) => {
+          sampleStarted = true;
+          signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+        }),
+    });
+
+    const sample = harness.server.handleLine(
+      request("sample", "session.sample", {
+        sessionId: "session-1",
+        context: {
+          systemPrompt: "Classify the request.",
+          messages: [
+            {
+              role: "user",
+              content: [{ type: "text", text: "I cannot log in" }],
+              timestamp: 0,
+            },
+          ],
+        },
+        options: {},
+      }),
+    );
+    await waitFor(() => sampleStarted);
+
+    await harness.server.handleLine(
+      request("interrupt-sample", "session.interrupt", { sessionId: "session-1" }),
+    );
+    await sample;
+
+    expect(harness.lines.find((line) => line.id === "sample")).toEqual(
+      expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({
+          code: SESSION_PROTOCOL_ERROR_CODES.cancelled,
+          message: "model sample was cancelled",
+        }),
+      }),
+    );
+    expect(harness.lines.find((line) => line.id === "interrupt-sample")).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: { interrupted: true, isTurnRunning: true },
+      }),
+    );
   });
 
   it("handles interrupt, snapshot, unsupported methods, and malformed lines", async () => {

@@ -77,6 +77,8 @@ describe("sdk npm pack types", () => {
           "export type ThinkingContent = { type: 'thinking'; thinking: string };",
           "export type ToolCall = { type: 'tool-call'; id: string; name: string; input: unknown };",
           "export type Message = { role: string; content: unknown; api?: string; provider?: string; model?: string; stopReason?: string; usage?: unknown; timestamp?: number };",
+          "export type AssistantMessage = Message & { role: 'assistant'; content: unknown[]; api: string; provider: string; model: string; stopReason: string; usage: unknown; timestamp: number };",
+          "export type Tool = { name: string; description: string; parameters: Record<string, unknown> };",
           "",
         ].join("\n"),
       );
@@ -85,7 +87,7 @@ describe("sdk npm pack types", () => {
       writeFileSync(
         validFixturePath,
         [
-          'import type { SessionProtocolSnapshot, SessionProtocolTransport, TauSdkClient, TauSdkCreateSessionInput, TauSdkDelta, TauSdkInitializeParams, TauSdkRequestId, TauSdkSessionExecResult, TauSdkSessionSetReasoningResult, TauSdkReadyMessage, TauSdkTransportClientOptions, TauSdkUserTextProjection } from "@markusylisiurunen/tau/sdk";',
+          'import type { SessionProtocolSnapshot, SessionProtocolTransport, TauSdkClient, TauSdkCreateSessionInput, TauSdkDelta, TauSdkInitializeParams, TauSdkRequestId, TauSdkSessionExecResult, TauSdkSessionSampleInput, TauSdkSessionSampleResult, TauSdkSessionSetReasoningResult, TauSdkReadyMessage, TauSdkTransportClientOptions, TauSdkUserTextProjection } from "@markusylisiurunen/tau/sdk";',
           'import { StdioSessionProtocolTransport, applySessionProtocolDelta, createTauSdkClient, createTauSdkClientFromTransport, createTauSdkWebSocketClient, getTauUserDisplayText, getTauUserModelText, projectTauUserText } from "@markusylisiurunen/tau/sdk";',
           "",
           "const sdkDelta: TauSdkDelta = {",
@@ -115,6 +117,8 @@ describe("sdk npm pack types", () => {
           "const initializeParams: TauSdkInitializeParams = { client: { name: 'fixture', version: '1' } };",
           "const requestId: TauSdkRequestId = 'req-1';",
           "declare const execResult: TauSdkSessionExecResult;",
+          "const sampleInput: TauSdkSessionSampleInput = { context: { systemPrompt: 'system', messages: [] }, options: {} };",
+          "declare const sampleResult: TauSdkSessionSampleResult;",
           "declare const setReasoningResult: TauSdkSessionSetReasoningResult;",
           "declare const snapshot: SessionProtocolSnapshot;",
           "const patchedSnapshot = applySessionProtocolDelta(snapshot, sdkDelta);",
@@ -123,6 +127,7 @@ describe("sdk npm pack types", () => {
           "const modelText: string = getTauUserModelText('<system>hidden</system>\\nvisible');",
           "client.subscribe((delta) => { void delta.sessionId; });",
           "client.subscribeEphemeral((message) => { void message.sessionId; });",
+          "void client.sessions.observe('session-1').then((session) => session.sample(sampleInput));",
           "void createTauSdkClient({ cwd: '/repo' });",
           "void createTauSdkClientFromTransport(transport, transportOptions);",
           'void createTauSdkWebSocketClient({ url: "ws://localhost:8787", authToken: "secret" });',
@@ -131,6 +136,8 @@ describe("sdk npm pack types", () => {
           "void initializeParams;",
           "void requestId;",
           "void execResult;",
+          "void sampleInput;",
+          "void sampleResult;",
           "void setReasoningResult;",
           "void patchedSnapshot;",
           "void projectedUserText;",

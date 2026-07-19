@@ -150,6 +150,70 @@ describe("tool enablement", () => {
   });
 });
 
+describe("core session sampling", () => {
+  it("inherits persona settings, applies overrides, and leaves history unchanged", async () => {
+    const persona = {
+      ...personas[0],
+      settings: { ...personas[0].settings, reasoning: "medium", maxTokens: 1200 },
+    };
+    const session = new CoreSession({
+      persona,
+      systemPrompt: "tau system prompt",
+      subagentPrompts: {},
+      toolRegistry: new ToolRegistry([]),
+    });
+    session.addUserText("persisted conversation");
+    const historyBefore = session.rawHistoryEntries;
+    const sampledMessage = fauxAssistantMessage([
+      { type: "thinking", thinking: "checking" },
+      { type: "text", text: "sampled" },
+    ]);
+    const calls = [];
+    session.engine.modelRuntime.streamModel = (_model, context, options) => {
+      calls.push({ context, options });
+      return {
+        async *[Symbol.asyncIterator]() {},
+        async result() {
+          return sampledMessage;
+        },
+      };
+    };
+
+    const context = {
+      systemPrompt: "sampling system prompt",
+      messages: [
+        {
+          role: "user",
+          content: [{ type: "text", text: "sample this" }],
+          timestamp: 1,
+        },
+      ],
+    };
+    await expect(session.sample({ context, options: {} })).resolves.toBe(sampledMessage);
+    await expect(
+      session.sample({ context, options: { reasoning: "low", maxTokens: 400 } }),
+    ).resolves.toBe(sampledMessage);
+
+    expect(calls.map((call) => call.context)).toEqual([context, context]);
+    expect(calls[0].options).toEqual(
+      expect.objectContaining({
+        reasoning: "medium",
+        maxTokens: 1200,
+        sessionId: expect.stringMatching(/^sample-/),
+      }),
+    );
+    expect(calls[1].options).toEqual(
+      expect.objectContaining({
+        reasoning: "low",
+        maxTokens: 400,
+        sessionId: expect.stringMatching(/^sample-/),
+      }),
+    );
+    expect(calls[1].options.sessionId).not.toBe(calls[0].options.sessionId);
+    expect(session.rawHistoryEntries).toEqual(historyBefore);
+  });
+});
+
 describe("core session rewind APIs", () => {
   it("lists user rewind candidates and rewinds by history index", () => {
     const backend = createLocalToolExecutionBackend();

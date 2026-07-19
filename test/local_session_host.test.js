@@ -485,6 +485,70 @@ describe("LocalSessionHost", () => {
     );
   });
 
+  it("samples without changing or persisting session state", async () => {
+    const store = new MemorySessionStore();
+    const originalCommit = store.commitSessionSnapshot.bind(store);
+    store.commitSessionSnapshot = vi.fn(originalCommit);
+    const host = createHost(store);
+    const hostedSession = await host.createSession(localCreateInput);
+    const sampledMessage = {
+      role: "assistant",
+      api: "openai-responses",
+      provider: "openai",
+      model: "gpt-5.6-sol",
+      stopReason: "toolUse",
+      content: [fauxToolCall("lookup_ticket", { id: "123" })],
+      usage: {
+        input: 2,
+        output: 3,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 5,
+        cost: { input: 0.01, output: 0.02, cacheRead: 0, cacheWrite: 0, total: 0.03 },
+      },
+      timestamp: 1,
+    };
+    hostedSession.session.engine.modelRuntime.streamModel = () => ({
+      async *[Symbol.asyncIterator]() {},
+      async result() {
+        return sampledMessage;
+      },
+    });
+    const deltas = [];
+    hostedSession.onDelta((delta) => deltas.push(delta));
+    const before = await hostedSession.snapshot();
+    const commitsBeforeSample = store.commitSessionSnapshot.mock.calls.length;
+
+    await expect(
+      hostedSession.sample({
+        context: {
+          systemPrompt: "Use tools only when needed.",
+          messages: [
+            {
+              role: "user",
+              content: [{ type: "text", text: "Look up ticket 123" }],
+              timestamp: 0,
+            },
+          ],
+          tools: [
+            {
+              name: "lookup_ticket",
+              description: "Look up a ticket.",
+              parameters: { type: "object", properties: {} },
+            },
+          ],
+        },
+        options: {},
+      }),
+    ).resolves.toEqual({ message: sampledMessage });
+
+    expect(await hostedSession.snapshot()).toEqual(before);
+    expect(store.commitSessionSnapshot).toHaveBeenCalledTimes(commitsBeforeSample);
+    expect(await store.loadSession(hostedSession.sessionId)).toEqual(before);
+    expect(deltas).toEqual([]);
+    await host.shutdown();
+  });
+
   it("omits custom model headers from protocol snapshots", async () => {
     const store = new MemorySessionStore();
     const persona = {

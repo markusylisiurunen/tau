@@ -57,6 +57,8 @@ import type {
   SessionProtocolResolvePromptParams,
   SessionProtocolResolvePromptResult,
   SessionProtocolRewindResult,
+  SessionProtocolSampleParams,
+  SessionProtocolSampleResult,
   SessionProtocolSessionSummary,
   SessionProtocolSettingsUpdateResult,
   SessionProtocolSnapshot,
@@ -697,6 +699,15 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
       ...(options.signal !== undefined ? { signal: options.signal } : {}),
     });
+  }
+
+  async sample(
+    options: Omit<SessionProtocolSampleParams, "sessionId"> & {
+      signal?: AbortSignal;
+    },
+  ): Promise<SessionProtocolSampleResult> {
+    this.assertActive();
+    return { message: await this.session.sample(options) };
   }
 
   async setReasoning(reasoning: ReasoningEffort): Promise<SessionProtocolSettingsUpdateResult> {

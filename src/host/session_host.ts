@@ -26,6 +26,8 @@ import type {
   SessionProtocolResolvePromptResult,
   SessionProtocolRewindParams,
   SessionProtocolRewindResult,
+  SessionProtocolSampleParams,
+  SessionProtocolSampleResult,
   SessionProtocolSessionSummary,
   SessionProtocolSetPersonaParams,
   SessionProtocolSetReasoningParams,
@@ -57,6 +59,11 @@ export type TauHostedSession = {
       signal?: AbortSignal;
     },
   ): Promise<SessionProtocolExecResult>;
+  sample(
+    options: Omit<SessionProtocolSampleParams, "sessionId"> & {
+      signal?: AbortSignal;
+    },
+  ): Promise<SessionProtocolSampleResult>;
   setReasoning(
     reasoning: SessionProtocolSetReasoningParams["reasoning"],
   ): Promise<SessionProtocolSettingsUpdateResult>;

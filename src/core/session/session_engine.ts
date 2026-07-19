@@ -106,6 +106,15 @@ export type SessionCompactionOptions = {
   signal?: AbortSignal;
 };
 
+export type SessionSampleOptions = {
+  context: Context & { systemPrompt: string };
+  options: {
+    reasoning?: ReasoningEffort;
+    maxTokens?: number;
+  };
+  signal?: AbortSignal;
+};
+
 export type SessionCompactionResult = {
   compactionMessage: string;
   includedLastAssistant: boolean;
@@ -447,6 +456,30 @@ export class SessionEngine {
 
   get sessionIdValue(): string {
     return this.sessionId;
+  }
+
+  async sample(input: SessionSampleOptions): Promise<AssistantMessage> {
+    input.signal?.throwIfAborted();
+    const persona = {
+      ...this.persona,
+      settings: { ...this.persona.settings },
+    };
+    const sampleSessionId = `sample-${randomUUID()}`;
+    const stream = this.modelRuntime.streamModel(persona.model, structuredClone(input.context), {
+      ...this.getStreamingSettings(persona),
+      ...(input.options.reasoning !== undefined ? { reasoning: input.options.reasoning } : {}),
+      ...(input.options.maxTokens !== undefined ? { maxTokens: input.options.maxTokens } : {}),
+      sessionId: sampleSessionId,
+      ...(input.signal ? { signal: input.signal } : {}),
+    });
+
+    try {
+      const message = await stream.result();
+      input.signal?.throwIfAborted();
+      return message;
+    } finally {
+      cleanupSessionResources(sampleSessionId);
+    }
   }
 
   async compact(options: SessionCompactionOptions): Promise<SessionCompactionResult> {

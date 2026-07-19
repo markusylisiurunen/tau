@@ -549,6 +549,50 @@ describe("LocalSessionHost", () => {
     await host.shutdown();
   });
 
+  it.each([
+    ["direct session disposal", ({ hostedSession }) => hostedSession.dispose()],
+    ["host shutdown", ({ host }) => host.shutdown()],
+  ])("aborts and settles active samples before %s", async (_label, dispose) => {
+    const store = new MemorySessionStore();
+    const executionEnvironment = createTestExecutionEnvironment();
+    let sampleSettled = false;
+    executionEnvironment.dispose = vi.fn(async () => {
+      expect(sampleSettled).toBe(true);
+    });
+    const host = createHostForEnvironment(store, executionEnvironment);
+    const hostedSession = await host.createSession(localCreateInput);
+    let markSampleStarted;
+    const sampleStarted = new Promise((resolve) => {
+      markSampleStarted = resolve;
+    });
+    hostedSession.session.engine.modelRuntime.streamModel = (_model, _context, options) => ({
+      async *[Symbol.asyncIterator]() {},
+      async result() {
+        markSampleStarted();
+        await new Promise((resolve) => {
+          if (options.signal.aborted) {
+            resolve();
+            return;
+          }
+          options.signal.addEventListener("abort", resolve, { once: true });
+        });
+        sampleSettled = true;
+        return fauxAssistantMessage("sampled");
+      },
+    });
+
+    const sample = hostedSession.sample({
+      context: { systemPrompt: "Sample in isolation.", messages: [] },
+      options: {},
+    });
+    const sampleResult = expect(sample).rejects.toMatchObject({ name: "AbortError" });
+    await sampleStarted;
+
+    await expect(dispose({ host, hostedSession })).resolves.toBeUndefined();
+    await sampleResult;
+    expect(executionEnvironment.dispose).toHaveBeenCalledTimes(1);
+  });
+
   it("omits custom model headers from protocol snapshots", async () => {
     const store = new MemorySessionStore();
     const persona = {

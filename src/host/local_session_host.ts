@@ -457,6 +457,7 @@ export class LocalSessionHost implements TauSessionHost {
     for (const session of this.sessions) {
       session.interruptTurn();
       session.interruptMaintenance();
+      session.interruptSamples();
     }
 
     const settlementResults = await Promise.allSettled(
@@ -540,6 +541,8 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   private snapshotGeneration = 0;
   private readonly maintenanceAbortControllers = new Set<AbortController>();
   private readonly maintenancePromises = new Set<Promise<unknown>>();
+  private readonly sampleAbortControllers = new Set<AbortController>();
+  private readonly samplePromises = new Set<Promise<unknown>>();
   private activeTurnPromise?: Promise<SessionProtocolUserMessageTurnResult["turn"]>;
   private disposePromise?: Promise<void>;
   private disposing = false;
@@ -669,10 +672,22 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     return interrupted;
   }
 
+  interruptSamples(): boolean {
+    let interrupted = false;
+    for (const abortController of this.sampleAbortControllers) {
+      if (!abortController.signal.aborted) {
+        abortController.abort();
+        interrupted = true;
+      }
+    }
+    return interrupted;
+  }
+
   async waitForActiveWork(): Promise<void> {
     await Promise.allSettled([
       ...(this.activeTurnPromise ? [this.activeTurnPromise] : []),
       ...this.maintenancePromises,
+      ...this.samplePromises,
     ]);
     await this.runtimeEventQueue;
   }
@@ -707,7 +722,19 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     },
   ): Promise<SessionProtocolSampleResult> {
     this.assertActive();
-    return { message: await this.session.sample(options) };
+    const abortController = new AbortController();
+    const signal = options.signal
+      ? AbortSignal.any([options.signal, abortController.signal])
+      : abortController.signal;
+    this.sampleAbortControllers.add(abortController);
+    const promise = this.session.sample({ ...options, signal }).then((message) => ({ message }));
+    this.samplePromises.add(promise);
+    try {
+      return await promise;
+    } finally {
+      this.sampleAbortControllers.delete(abortController);
+      this.samplePromises.delete(promise);
+    }
   }
 
   async setReasoning(reasoning: ReasoningEffort): Promise<SessionProtocolSettingsUpdateResult> {
@@ -1056,6 +1083,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     const errors: unknown[] = [];
     this.runtime.interruptTurn();
     this.interruptMaintenance();
+    this.interruptSamples();
     try {
       await this.waitForActiveWork();
     } catch (error) {

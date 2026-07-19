@@ -1,0 +1,1 @@
+Use @@skill:deslop for additional cleanup guidance. Apply its principles while preserving the pull request's intended behavior and following the built-in workflow contract, repository instructions, verification requirements, and required pull request comment.

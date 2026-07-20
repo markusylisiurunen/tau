@@ -7,6 +7,7 @@ import {
   createTelegramSessionManager,
   TelegramSessionManagerError,
 } from "../dist/core/telegram/session_manager.js";
+import { SESSION_PROTOCOL_VERSION } from "../dist/protocol/session_protocol.js";
 import { createProtocolSnapshot } from "./helpers/session_protocol_fixtures.js";
 
 function deferred() {
@@ -64,9 +65,9 @@ function createClientHarness() {
 
   const client = {
     ready: {
-      version: 1,
+      version: SESSION_PROTOCOL_VERSION,
       type: "ready",
-      protocolVersion: 1,
+      protocolVersion: SESSION_PROTOCOL_VERSION,
       methods: [],
     },
     sessions: {
@@ -89,7 +90,7 @@ function createClientHarness() {
 
 function createPatchDelta(changes, revision = 1, reason = "tool-run") {
   return {
-    version: 1,
+    version: SESSION_PROTOCOL_VERSION,
     type: "session.delta",
     sessionId: "rpc-1",
     fromRevision: revision,
@@ -1377,7 +1378,7 @@ describe("telegram session manager", () => {
     });
 
     clientHarness.emitDelta({
-      version: 1,
+      version: SESSION_PROTOCOL_VERSION,
       type: "session.delta",
       sessionId: "rpc-1",
       fromRevision: 1,
@@ -1387,7 +1388,7 @@ describe("telegram session manager", () => {
     });
 
     clientHarness.emitDelta({
-      version: 1,
+      version: SESSION_PROTOCOL_VERSION,
       type: "session.delta",
       sessionId: "rpc-1",
       fromRevision: 2,

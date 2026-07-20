@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { SESSION_PROTOCOL_VERSION } from "../dist/protocol/session_protocol.js";
 import {
   createTauSdkClientFromTransport,
   TauSessionProtocolResponseError,
@@ -16,7 +17,7 @@ const localCreateInput = { executionEnvironment: { kind: "local", cwd: "/repo" }
 
 function createNoticeDelta(sessionId, revision, text) {
   return {
-    version: 1,
+    version: SESSION_PROTOCOL_VERSION,
     type: "session.delta",
     sessionId,
     fromRevision: revision,

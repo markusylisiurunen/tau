@@ -9,7 +9,10 @@ import {
   prependTauUserMetadata,
   stripTauUserDisplayText,
 } from "../dist/core/utils/user_metadata.js";
-import { applySessionProtocolDelta } from "../dist/protocol/session_protocol.js";
+import {
+  applySessionProtocolDelta,
+  SESSION_PROTOCOL_VERSION,
+} from "../dist/protocol/session_protocol.js";
 import { copyTextToClipboard } from "../dist/tui/clipboard.js";
 import { SessionChatController } from "../dist/tui/session_chat_controller.js";
 import {
@@ -132,7 +135,7 @@ function createAgentRun(overrides = {}) {
 
 function createMessageAppendDelta(sessionId, fromRevision, message, state = "committed") {
   return {
-    version: 1,
+    version: SESSION_PROTOCOL_VERSION,
     type: "session.delta",
     sessionId,
     fromRevision,
@@ -158,7 +161,7 @@ function createMessageAppendDelta(sessionId, fromRevision, message, state = "com
 
 function createMessageReplaceDelta(sessionId, fromRevision, message, reason = "assistant-message") {
   return {
-    version: 1,
+    version: SESSION_PROTOCOL_VERSION,
     type: "session.delta",
     sessionId,
     fromRevision,
@@ -179,7 +182,7 @@ function createMessageReplaceDelta(sessionId, fromRevision, message, reason = "a
 
 function createResetDelta(sessionId, fromRevision, snapshot, reason = "configuration") {
   return {
-    version: 1,
+    version: SESSION_PROTOCOL_VERSION,
     type: "session.delta",
     sessionId,
     fromRevision,
@@ -416,7 +419,7 @@ class FakeSession {
   submitEphemeralThread = vi.fn(async ({ contextId, threadId, message }) => {
     for (const listener of this.ephemeralListeners) {
       listener({
-        version: 1,
+        version: SESSION_PROTOCOL_VERSION,
         type: "session.ephemeral",
         sessionId: this.id,
         event: {
@@ -467,7 +470,7 @@ class FakeSession {
   onPendingUserMessages(listener) {
     this.pendingUserMessagesListeners.add(listener);
     listener({
-      version: 1,
+      version: SESSION_PROTOCOL_VERSION,
       type: "session.pendingUserMessages",
       sessionId: this.id,
       state: structuredClone(this.pendingUserMessagesValue),
@@ -1495,7 +1498,7 @@ describe("SessionChatController", () => {
     controller.start();
 
     const message = {
-      version: 1,
+      version: SESSION_PROTOCOL_VERSION,
       type: "session.pendingUserMessages",
       sessionId: session.id,
       state: {
@@ -1826,7 +1829,7 @@ describe("SessionChatController", () => {
     controller.start();
     const snapshotCallsBefore = snapshotSpy.mock.calls.length;
     const appendDelta = {
-      version: 1,
+      version: SESSION_PROTOCOL_VERSION,
       type: "session.delta",
       sessionId: session.id,
       fromRevision: 3,
@@ -1901,7 +1904,7 @@ describe("SessionChatController", () => {
 
     controller.start();
     const appendDelta = {
-      version: 1,
+      version: SESSION_PROTOCOL_VERSION,
       type: "session.delta",
       sessionId: session.id,
       fromRevision: 3,
@@ -2058,7 +2061,7 @@ describe("SessionChatController", () => {
 
     controller.start();
     const appendDelta = {
-      version: 1,
+      version: SESSION_PROTOCOL_VERSION,
       type: "session.delta",
       sessionId: session.id,
       fromRevision: 3,
@@ -2412,7 +2415,7 @@ describe("SessionChatController", () => {
     controller.start();
     const resetCount = view.resetToolUiSession.mock.calls.length;
     const delta = {
-      version: 1,
+      version: SESSION_PROTOCOL_VERSION,
       type: "session.delta",
       sessionId: session.id,
       fromRevision: 3,
@@ -2612,7 +2615,7 @@ describe("SessionChatController", () => {
     const resetCount = view.resetToolUiSession.mock.calls.length;
     view.subagentEvents.splice(0);
     const delta = {
-      version: 1,
+      version: SESSION_PROTOCOL_VERSION,
       type: "session.delta",
       sessionId: session.id,
       fromRevision: 3,

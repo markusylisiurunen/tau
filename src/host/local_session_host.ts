@@ -6,6 +6,7 @@ import type { CoreEvent } from "../core/events/types.js";
 import type { ModelResolver } from "../core/models/catalog.js";
 import type { PromptTemplate } from "../core/prompts.js";
 import { ChatRuntime, type ChatRuntimeEnvironment } from "../core/runtime/chat_runtime.js";
+import type { ConversationTurnResult } from "../core/runtime/conversation_turn_runtime.js";
 import type { CoreDeps } from "../core/runtime/deps.js";
 import type { RuntimePromptBootstrap } from "../core/runtime/runtime_bootstrap.js";
 import type { SessionPromptComposition } from "../core/runtime/session_prompt_composer.js";
@@ -519,7 +520,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   private draftAssistantMessage?: SessionProtocolMessage;
   private readonly messageStates = new Map<string, SessionProtocolMessage["state"]>();
   private readonly turnOutcomes = new Map<string, SessionProtocolTurnOutcome>();
-  private lastTurnAssistantMessage?: AssistantMessage;
   private restoredMessageIds?: Set<string>;
   private restoredTimelineMessageIds?: Set<string>;
   private readonly timelineExtras: SessionProtocolTimelineItem[] = [];
@@ -639,17 +639,28 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   }
 
   private async runTurnNow(): Promise<SessionProtocolTurnOutcome> {
-    const userHistoryEntryId = this.currentTurnUserHistoryEntryId();
-    this.lastTurnAssistantMessage = undefined;
+    const userMessage = this.session.rawHistoryEntries.findLast(
+      (entry) => entry.message.role === "user",
+    );
+    if (!userMessage) {
+      throw new Error("cannot run a turn without a user message");
+    }
+
+    let lastAssistantMessage: AssistantMessage | undefined;
     try {
       const result = await this.runtime.runTurn({
-        onEvent: (event) => this.recordTurnRuntimeEvent(event),
+        onEvent: async (event) => {
+          if (event.type === "assistant_final") {
+            lastAssistantMessage = event.message;
+          }
+          await this.enqueueRuntimeEvent(event);
+        },
       });
       if (result.aborted && this.draftAssistantMessage) {
         await this.interruptDraftAssistantMessage();
       }
-      const outcome = turnOutcomeFromResult(result, this.lastTurnAssistantMessage);
-      this.turnOutcomes.set(userHistoryEntryId, outcome);
+      const outcome = turnOutcomeFromResult(result, lastAssistantMessage);
+      this.turnOutcomes.set(userMessage.id, outcome);
       await this.emitSnapshotResetIfChanged("assistant-message");
       return outcome;
     } catch (error) {
@@ -1427,16 +1438,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     }
   }
 
-  private currentTurnUserHistoryEntryId(): string {
-    const entry = this.session.rawHistoryEntries.findLast(
-      (candidate) => candidate.message.role === "user",
-    );
-    if (!entry) {
-      throw new Error("cannot run a turn without a user message");
-    }
-    return entry.id;
-  }
-
   private assertActive(): void {
     if (this.disposing || this.disposed) {
       throw new Error(`session is shut down: ${this.committedSessionId}`);
@@ -1666,13 +1667,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         await this.recordSubagentUiEvent(event.event);
         return;
     }
-  }
-
-  private async recordTurnRuntimeEvent(event: CoreEvent): Promise<void> {
-    if (event.type === "assistant_final") {
-      this.lastTurnAssistantMessage = event.message;
-    }
-    await this.enqueueRuntimeEvent(event);
   }
 
   private async recordToolUiEvent(event: ToolUiEvent): Promise<void> {
@@ -1932,10 +1926,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 }
 
 function turnOutcomeFromResult(
-  result: {
-    aborted: boolean;
-    blocked?: { reason: "auto-compaction-failed"; message: string };
-  },
+  result: ConversationTurnResult,
   assistantMessage: AssistantMessage | undefined,
 ): SessionProtocolTurnOutcome {
   if (result.blocked) {

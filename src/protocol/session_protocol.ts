@@ -8,7 +8,7 @@ import type {
 } from "@earendil-works/pi-ai";
 import { type ZodError, z } from "zod";
 
-export const SESSION_PROTOCOL_VERSION = 1 as const;
+export const SESSION_PROTOCOL_VERSION = 2 as const;
 
 export const SESSION_PROTOCOL_METHODS = [
   "initialize",

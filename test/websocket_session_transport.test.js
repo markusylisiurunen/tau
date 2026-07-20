@@ -5,6 +5,7 @@ import {
   runWebSocketSessionServer,
   WebSocketSessionServer,
 } from "../dist/core/modes/websocket_server.js";
+import { SESSION_PROTOCOL_VERSION } from "../dist/protocol/session_protocol.js";
 import { createTauSdkClientFromTransport } from "../dist/sdk/index.js";
 import { WebSocketSessionProtocolTransport } from "../dist/transport/websocket_session_transport.js";
 import {
@@ -19,7 +20,7 @@ const localCreateInput = { executionEnvironment: { kind: "local", cwd: "/repo" }
 
 function createNoticeDelta(sessionId, revision, text) {
   return {
-    version: 1,
+    version: SESSION_PROTOCOL_VERSION,
     type: "session.delta",
     sessionId,
     fromRevision: revision,
@@ -246,12 +247,12 @@ function createControllableSocket() {
       const request = socket.sent.at(-1);
       if (request.method === "initialize") {
         socket.emitMessage({
-          version: 1,
+          version: SESSION_PROTOCOL_VERSION,
           type: "response",
           id: request.id,
           ok: true,
           result: {
-            protocolVersion: 1,
+            protocolVersion: SESSION_PROTOCOL_VERSION,
             methods: ["initialize"],
             alreadyInitialized: false,
           },
@@ -395,14 +396,14 @@ describe("WebSocketSessionProtocolTransport", () => {
     const connect = transport.connect({ client: { name: "test", version: "1" } }, 500);
     socket.emitOpen();
     socket.emitMessage({
-      version: 1,
+      version: SESSION_PROTOCOL_VERSION,
       type: "ready",
       methods: ["initialize"],
     });
     await connect;
 
     socket.emitMessage({
-      version: 1,
+      version: SESSION_PROTOCOL_VERSION,
       type: "response",
       id: "unknown-request",
       ok: true,
@@ -428,14 +429,14 @@ describe("WebSocketSessionProtocolTransport", () => {
     const connect = transport.connect({ client: { name: "test", version: "1" } }, 500);
     socket.emitOpen();
     socket.emitMessage({
-      version: 1,
+      version: SESSION_PROTOCOL_VERSION,
       type: "ready",
       methods: ["initialize"],
     });
     await connect;
 
     socket.emitMessage({
-      version: 1,
+      version: SESSION_PROTOCOL_VERSION,
       type: "response",
       id: "unknown-request",
       ok: false,
@@ -464,14 +465,14 @@ describe("WebSocketSessionProtocolTransport", () => {
     const connect = transport.connect({ client: { name: "test", version: "1" } }, 500);
     socket.emitOpen();
     socket.emitMessage({
-      version: 1,
+      version: SESSION_PROTOCOL_VERSION,
       type: "ready",
       methods: ["initialize"],
     });
     await connect;
 
     socket.emitMessage({
-      version: 1,
+      version: SESSION_PROTOCOL_VERSION,
       type: "response",
       id: "unknown-request",
       ok: false,

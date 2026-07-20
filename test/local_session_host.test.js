@@ -1329,11 +1329,56 @@ describe("LocalSessionHost", () => {
     expect(store.commitSessionSnapshot).not.toHaveBeenCalled();
   });
 
+  it("persists provider-error outcomes on the submitted user message", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const hostedSession = await host.createSession(localCreateInput);
+    const { userHistoryEntryId } = await hostedSession.record({
+      text: "trigger a provider error",
+      historyEntryId: "provider-error-user",
+    });
+    const message = {
+      ...assistantMessageWithToolCalls([]),
+      stopReason: "error",
+      errorMessage: "Service Unavailable",
+    };
+    hostedSession.runtime.runTurn = async (options) => {
+      hostedSession.session.addMessage(message, { historyEntryId: "provider-error-assistant" });
+      await options.onEvent({
+        type: "assistant_final",
+        historyEntryId: "provider-error-assistant",
+        message,
+      });
+      return { aborted: false };
+    };
+
+    const outcome = {
+      status: "failed",
+      stopReason: "error",
+      errorMessage: "Service Unavailable",
+    };
+    await expect(hostedSession.runTurn()).resolves.toEqual(outcome);
+    const snapshot = await hostedSession.snapshot();
+    expect(snapshot.messages.find((entry) => entry.id === userHistoryEntryId)?.turn).toEqual(
+      outcome,
+    );
+
+    await hostedSession.rewindToHistoryEntryId(userHistoryEntryId);
+    const replacement = await hostedSession.record({
+      text: "replace the rewound turn",
+      historyEntryId: userHistoryEntryId,
+    });
+    expect(
+      replacement.snapshot.messages.find((entry) => entry.id === userHistoryEntryId),
+    ).not.toHaveProperty("turn");
+  });
+
   it("keeps streamed assistant content and idles lifecycle when a turn fails mid-draft", async () => {
     const store = new MemorySessionStore();
     const host = createHost(store);
     const hostedSession = await host.createSession(localCreateInput);
     await hostedSession.snapshot();
+    await hostedSession.record({ text: "fail this turn" });
 
     const deltas = [];
     hostedSession.onDelta((delta) => deltas.push(delta));
@@ -1393,6 +1438,7 @@ describe("LocalSessionHost", () => {
     const host = createHost(store);
     const hostedSession = await host.createSession(localCreateInput);
     await hostedSession.snapshot();
+    await hostedSession.record({ text: "fail after final" });
 
     const deltas = [];
     hostedSession.onDelta((delta) => deltas.push(delta));
@@ -2536,7 +2582,7 @@ describe("LocalSessionHost", () => {
     const lateRecord = hostedSession.record({ text: "do not admit during disposal" });
     await dispose;
     await expect(lateRecord).rejects.toThrow("session is shut down");
-    await expect(turn).resolves.toMatchObject({ aborted: true });
+    await expect(turn).resolves.toMatchObject({ status: "aborted", stopReason: "aborted" });
     expect(
       hostedSession.session.rawHistoryEntries.some(
         (entry) =>

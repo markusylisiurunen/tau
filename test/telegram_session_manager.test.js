@@ -7,6 +7,7 @@ import {
   createTelegramSessionManager,
   TelegramSessionManagerError,
 } from "../dist/core/telegram/session_manager.js";
+import { SESSION_PROTOCOL_VERSION } from "../dist/protocol/session_protocol.js";
 import { createProtocolSnapshot } from "./helpers/session_protocol_fixtures.js";
 
 function deferred() {
@@ -64,9 +65,9 @@ function createClientHarness() {
 
   const client = {
     ready: {
-      version: 1,
+      version: SESSION_PROTOCOL_VERSION,
       type: "ready",
-      protocolVersion: 1,
+      protocolVersion: SESSION_PROTOCOL_VERSION,
       methods: [],
     },
     sessions: {
@@ -89,7 +90,7 @@ function createClientHarness() {
 
 function createPatchDelta(changes, revision = 1, reason = "tool-run") {
   return {
-    version: 1,
+    version: SESSION_PROTOCOL_VERSION,
     type: "session.delta",
     sessionId: "rpc-1",
     fromRevision: revision,
@@ -356,7 +357,7 @@ describe("telegram session manager", () => {
 
     clientHarness.submitDeferred.resolve({
       userHistoryEntryId: "history-system-msg",
-      turn: { aborted: false },
+      turn: { status: "completed", stopReason: "stop" },
     });
 
     await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
@@ -390,7 +391,7 @@ describe("telegram session manager", () => {
 
     clientHarness.submitDeferred.resolve({
       userHistoryEntryId: "history-system-msg-extra",
-      turn: { aborted: false },
+      turn: { status: "completed", stopReason: "stop" },
     });
 
     await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
@@ -426,11 +427,17 @@ describe("telegram session manager", () => {
     expect(clientHarness.session.steer).toHaveBeenCalledWith("steer it");
     expect(manager.getSession(created.id)?.state).toBe("running");
 
-    firstSubmit.resolve({ userHistoryEntryId: "history-1", turn: { aborted: false } });
+    firstSubmit.resolve({
+      userHistoryEntryId: "history-1",
+      turn: { status: "completed", stopReason: "stop" },
+    });
     await Promise.resolve();
     expect(manager.getSession(created.id)?.state).toBe("running");
 
-    steeringSubmit.resolve({ userHistoryEntryId: "history-2", turn: { aborted: false } });
+    steeringSubmit.resolve({
+      userHistoryEntryId: "history-2",
+      turn: { status: "completed", stopReason: "stop" },
+    });
     await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
   });
 
@@ -464,7 +471,7 @@ describe("telegram session manager", () => {
 
     clientHarness.submitDeferred.resolve({
       userHistoryEntryId: "history-1",
-      turn: { aborted: false },
+      turn: { status: "completed", stopReason: "stop" },
     });
 
     await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
@@ -519,7 +526,7 @@ describe("telegram session manager", () => {
     clientHarness.session.interrupt = vi.fn(async () => {
       clientHarness.submitDeferred.resolve({
         userHistoryEntryId: "history-interrupt",
-        turn: { aborted: true },
+        turn: { status: "aborted", stopReason: "aborted" },
       });
       return { interrupted: true, isTurnRunning: true };
     });
@@ -626,7 +633,7 @@ describe("telegram session manager", () => {
     clientHarness.session.interrupt = vi.fn(async () => {
       clientHarness.submitDeferred.resolve({
         userHistoryEntryId: "history-2",
-        turn: { aborted: true },
+        turn: { status: "aborted", stopReason: "aborted" },
       });
       return { interrupted: true, isTurnRunning: true };
     });
@@ -813,7 +820,7 @@ describe("telegram session manager", () => {
 
     runningClientHarness.submitDeferred.resolve({
       userHistoryEntryId: "history-running",
-      turn: { aborted: false },
+      turn: { status: "completed", stopReason: "stop" },
     });
     await waitFor(() => manager.getSession(running.id)?.state === "waiting-input");
     await manager.closeSession(running.id);
@@ -824,7 +831,7 @@ describe("telegram session manager", () => {
     clientHarness.session.interrupt = vi.fn(async () => {
       clientHarness.submitDeferred.resolve({
         userHistoryEntryId: "history-4",
-        turn: { aborted: true },
+        turn: { status: "aborted", stopReason: "aborted" },
       });
       return { interrupted: true, isTurnRunning: true };
     });
@@ -1226,7 +1233,7 @@ describe("telegram session manager", () => {
 
     clientHarness.submitDeferred.resolve({
       userHistoryEntryId: "history-progress",
-      turn: { aborted: false },
+      turn: { status: "completed", stopReason: "stop" },
     });
     await sendPromise;
 
@@ -1344,7 +1351,7 @@ describe("telegram session manager", () => {
 
     clientHarness.submitDeferred.resolve({
       userHistoryEntryId: "history-progress",
-      turn: { aborted: false },
+      turn: { status: "completed", stopReason: "stop" },
     });
     await sendPromise;
 
@@ -1371,7 +1378,7 @@ describe("telegram session manager", () => {
     });
 
     clientHarness.emitDelta({
-      version: 1,
+      version: SESSION_PROTOCOL_VERSION,
       type: "session.delta",
       sessionId: "rpc-1",
       fromRevision: 1,
@@ -1381,7 +1388,7 @@ describe("telegram session manager", () => {
     });
 
     clientHarness.emitDelta({
-      version: 1,
+      version: SESSION_PROTOCOL_VERSION,
       type: "session.delta",
       sessionId: "rpc-1",
       fromRevision: 2,
@@ -1392,7 +1399,7 @@ describe("telegram session manager", () => {
 
     clientHarness.submitDeferred.resolve({
       userHistoryEntryId: "history-progress",
-      turn: { aborted: false },
+      turn: { status: "completed", stopReason: "stop" },
     });
     await sendPromise;
 
@@ -1449,7 +1456,7 @@ describe("telegram session manager", () => {
 
     clientHarness.submitDeferred.resolve({
       userHistoryEntryId: "history-progress",
-      turn: { aborted: false },
+      turn: { status: "completed", stopReason: "stop" },
     });
     await sendPromise;
 
@@ -1472,7 +1479,7 @@ describe("telegram session manager", () => {
     const clientHarness = createClientHarness();
     clientHarness.submitDeferred.resolve({
       userHistoryEntryId: "history-3",
-      turn: { aborted: false },
+      turn: { status: "completed", stopReason: "stop" },
     });
 
     const manager = createTelegramSessionManager({

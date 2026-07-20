@@ -9,7 +9,10 @@ import {
   prependTauUserMetadata,
   stripTauUserDisplayText,
 } from "../dist/core/utils/user_metadata.js";
-import { applySessionProtocolDelta } from "../dist/protocol/session_protocol.js";
+import {
+  applySessionProtocolDelta,
+  SESSION_PROTOCOL_VERSION,
+} from "../dist/protocol/session_protocol.js";
 import { copyTextToClipboard } from "../dist/tui/clipboard.js";
 import { SessionChatController } from "../dist/tui/session_chat_controller.js";
 import {
@@ -132,7 +135,7 @@ function createAgentRun(overrides = {}) {
 
 function createMessageAppendDelta(sessionId, fromRevision, message, state = "committed") {
   return {
-    version: 1,
+    version: SESSION_PROTOCOL_VERSION,
     type: "session.delta",
     sessionId,
     fromRevision,
@@ -158,7 +161,7 @@ function createMessageAppendDelta(sessionId, fromRevision, message, state = "com
 
 function createMessageReplaceDelta(sessionId, fromRevision, message, reason = "assistant-message") {
   return {
-    version: 1,
+    version: SESSION_PROTOCOL_VERSION,
     type: "session.delta",
     sessionId,
     fromRevision,
@@ -179,7 +182,7 @@ function createMessageReplaceDelta(sessionId, fromRevision, message, reason = "a
 
 function createResetDelta(sessionId, fromRevision, snapshot, reason = "configuration") {
   return {
-    version: 1,
+    version: SESSION_PROTOCOL_VERSION,
     type: "session.delta",
     sessionId,
     fromRevision,
@@ -226,7 +229,10 @@ class FakeSession {
         message: createAssistantMessage(`session reply to ${text}`),
       },
     ]);
-    return { userHistoryEntryId: historyEntryId, turn: { aborted: false } };
+    return {
+      userHistoryEntryId: historyEntryId,
+      turn: { status: "completed", stopReason: "stop" },
+    };
   });
   retry = vi.fn(async () => {
     const historyEntryId = "assistant-retry";
@@ -251,7 +257,7 @@ class FakeSession {
         { id: historyEntryId, message },
       ],
     });
-    return { turn: { aborted: false } };
+    return { turn: { status: "completed", stopReason: "stop" } };
   });
   exec = vi.fn(async (command) => {
     if (command.includes("rev-parse --show-toplevel")) {
@@ -284,11 +290,11 @@ class FakeSession {
   });
   queue = vi.fn(async () => ({
     userHistoryEntryId: "queue-1",
-    turn: { aborted: false },
+    turn: { status: "completed", stopReason: "stop" },
   }));
   steer = vi.fn(async () => ({
     userHistoryEntryId: "steer-1",
-    turn: { aborted: false },
+    turn: { status: "completed", stopReason: "stop" },
   }));
   cancelPendingMessages = vi.fn(async () => ({ cancelled: [] }));
   interrupt = vi.fn(async () => ({ interrupted: true, isTurnRunning: false }));
@@ -413,7 +419,7 @@ class FakeSession {
   submitEphemeralThread = vi.fn(async ({ contextId, threadId, message }) => {
     for (const listener of this.ephemeralListeners) {
       listener({
-        version: 1,
+        version: SESSION_PROTOCOL_VERSION,
         type: "session.ephemeral",
         sessionId: this.id,
         event: {
@@ -464,7 +470,7 @@ class FakeSession {
   onPendingUserMessages(listener) {
     this.pendingUserMessagesListeners.add(listener);
     listener({
-      version: 1,
+      version: SESSION_PROTOCOL_VERSION,
       type: "session.pendingUserMessages",
       sessionId: this.id,
       state: structuredClone(this.pendingUserMessagesValue),
@@ -1403,11 +1409,11 @@ describe("SessionChatController", () => {
 
     session.submit = vi.fn(async (_text, options = {}) => ({
       userHistoryEntryId: options.historyEntryId ?? "queued-user",
-      turn: { aborted: false },
+      turn: { status: "completed", stopReason: "stop" },
     }));
     submitted.resolve({
       userHistoryEntryId: "user-delayed-response",
-      turn: { aborted: false },
+      turn: { status: "completed", stopReason: "stop" },
     });
     await flush();
 
@@ -1492,7 +1498,7 @@ describe("SessionChatController", () => {
     controller.start();
 
     const message = {
-      version: 1,
+      version: SESSION_PROTOCOL_VERSION,
       type: "session.pendingUserMessages",
       sessionId: session.id,
       state: {
@@ -1639,7 +1645,7 @@ describe("SessionChatController", () => {
 
     submitted.resolve({
       userHistoryEntryId: "user-pending-command",
-      turn: { aborted: false },
+      turn: { status: "completed", stopReason: "stop" },
     });
     await flush();
 
@@ -1823,7 +1829,7 @@ describe("SessionChatController", () => {
     controller.start();
     const snapshotCallsBefore = snapshotSpy.mock.calls.length;
     const appendDelta = {
-      version: 1,
+      version: SESSION_PROTOCOL_VERSION,
       type: "session.delta",
       sessionId: session.id,
       fromRevision: 3,
@@ -1898,7 +1904,7 @@ describe("SessionChatController", () => {
 
     controller.start();
     const appendDelta = {
-      version: 1,
+      version: SESSION_PROTOCOL_VERSION,
       type: "session.delta",
       sessionId: session.id,
       fromRevision: 3,
@@ -2055,7 +2061,7 @@ describe("SessionChatController", () => {
 
     controller.start();
     const appendDelta = {
-      version: 1,
+      version: SESSION_PROTOCOL_VERSION,
       type: "session.delta",
       sessionId: session.id,
       fromRevision: 3,
@@ -2409,7 +2415,7 @@ describe("SessionChatController", () => {
     controller.start();
     const resetCount = view.resetToolUiSession.mock.calls.length;
     const delta = {
-      version: 1,
+      version: SESSION_PROTOCOL_VERSION,
       type: "session.delta",
       sessionId: session.id,
       fromRevision: 3,
@@ -2609,7 +2615,7 @@ describe("SessionChatController", () => {
     const resetCount = view.resetToolUiSession.mock.calls.length;
     view.subagentEvents.splice(0);
     const delta = {
-      version: 1,
+      version: SESSION_PROTOCOL_VERSION,
       type: "session.delta",
       sessionId: session.id,
       fromRevision: 3,

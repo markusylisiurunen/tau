@@ -221,7 +221,7 @@ const unsubscribe = session.onDelta((delta) => {
 
 try {
   const result = await session.submit("summarize this repo");
-  console.log(result.userHistoryEntryId, result.turn.aborted);
+  console.log(result.userHistoryEntryId, result.turn.status);
 
   const sample = await session.sample({
     context: {

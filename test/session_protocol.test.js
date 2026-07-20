@@ -1164,20 +1164,20 @@ describe("session_protocol", () => {
 
     expect(
       validateSessionProtocolResult("session.retry", {
-        turn: { aborted: false },
+        turn: { status: "completed", stopReason: "stop" },
       }),
     ).toEqual({
       ok: true,
-      value: { turn: { aborted: false } },
+      value: { turn: { status: "completed", stopReason: "stop" } },
     });
     expect(
       validateSessionProtocolResult("session.retry", {
         userHistoryEntryId: "history-user",
-        turn: { aborted: false },
+        turn: { status: "completed", stopReason: "stop" },
       }),
     ).toEqual({
       ok: true,
-      value: { turn: { aborted: false } },
+      value: { turn: { status: "completed", stopReason: "stop" } },
     });
 
     expect(

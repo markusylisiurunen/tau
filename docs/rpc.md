@@ -64,7 +64,7 @@ WebSocket clients receive the same `ready`, `response`, `session.delta`, and `se
 every protocol message includes `version`.
 
 ```json
-{ "version": 1, "type": "..." }
+{ "version": 2, "type": "..." }
 ```
 
 server-to-client messages are:
@@ -85,7 +85,7 @@ when the rpc server starts, it immediately emits a `ready` line:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "type": "ready",
   "methods": [
     "initialize",
@@ -146,7 +146,7 @@ all requests use this envelope:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "type": "request",
   "id": "req-1",
   "method": "session.submit",
@@ -179,12 +179,12 @@ params (required):
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "type": "response",
   "id": "init-1",
   "ok": true,
   "result": {
-    "protocolVersion": 1,
+    "protocolVersion": 2,
     "methods": [
       "initialize",
       "session.create",
@@ -402,22 +402,19 @@ success result:
 {
   "userHistoryEntryId": "history-...",
   "turn": {
-    "aborted": false,
-    "blocked": {
-      "reason": "auto-compaction-failed",
-      "message": "optional failure message"
-    }
+    "status": "completed",
+    "stopReason": "stop"
   }
 }
 ```
 
-`turn.blocked` is omitted for normal completion. currently the only blocked reason is `auto-compaction-failed`, which means tau could not compact safely before continuing the turn.
+`turn` is a discriminated terminal outcome. completed turns include the model `stopReason`; failed turns use status `failed`, stop reason `error`, and an optional `errorMessage`; interrupted turns use status and stop reason `aborted`. blocked turns include a reason and message instead of a stop reason. currently the only blocked reason is `auto-compaction-failed`, which means tau could not compact safely before continuing the turn. The outcome is also persisted on the submitted user message in session snapshots.
 
 if another turn is already running, tau returns:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "type": "response",
   "id": "submit-2",
   "ok": false,
@@ -509,7 +506,8 @@ success result:
 ```json
 {
   "turn": {
-    "aborted": false
+    "status": "completed",
+    "stopReason": "stop"
   }
 }
 ```
@@ -837,7 +835,7 @@ observed-session changes are broadcast as `session.delta` messages:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "type": "session.delta",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "fromRevision": 1,
@@ -861,7 +859,7 @@ observed-session changes are broadcast as `session.delta` messages:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "type": "session.delta",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "fromRevision": null,
@@ -892,7 +890,7 @@ notes:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "type": "session.pendingUserMessages",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "state": {
@@ -915,7 +913,7 @@ Pending messages are shared across attached clients and survive client detach wh
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "type": "session.ephemeral",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "event": {
@@ -946,7 +944,7 @@ error responses use:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "type": "response",
   "id": "req-1",
   "ok": false,

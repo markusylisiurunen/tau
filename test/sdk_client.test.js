@@ -8,6 +8,7 @@ import {
 } from "../dist/protocol/session_protocol.js";
 import {
   createTauSdkClientFromTransport,
+  getTauSdkSessionTurnOutcome,
   TauProcessError,
   TauSessionClientError,
   TauTransportError,
@@ -236,12 +237,12 @@ class FakeSessionProtocolTransport {
         case "session.steer":
           return {
             userHistoryEntryId: params.historyEntryId ?? "entry-1",
-            turn: { aborted: false },
+            turn: { status: "completed", stopReason: "stop" },
           };
         case "session.cancelPendingMessages":
           return { cancelled: [] };
         case "session.retry":
-          return { turn: { aborted: false } };
+          return { turn: { status: "completed", stopReason: "stop" } };
         case "session.exec":
           return {
             output: "raw output",
@@ -449,6 +450,28 @@ async function createConnectedClient(child, options = {}) {
 }
 
 describe("sdk_client", () => {
+  it("reads a persisted turn outcome by user history entry id", () => {
+    const outcome = {
+      status: "failed",
+      stopReason: "error",
+      errorMessage: "Service Unavailable",
+    };
+    const snapshot = createProtocolSnapshot({
+      messages: [
+        {
+          id: "user-1",
+          state: "committed",
+          modelVisible: true,
+          message: { role: "user", content: "hello", timestamp: 1 },
+          turn: outcome,
+        },
+      ],
+    });
+
+    expect(getTauSdkSessionTurnOutcome(snapshot, "user-1")).toEqual(outcome);
+    expect(getTauSdkSessionTurnOutcome(snapshot, "missing")).toBeUndefined();
+  });
+
   it("keeps published sdk declarations free of core type imports", () => {
     const indexDeclaration = readFileSync(
       new URL("../dist/sdk/index.d.ts", import.meta.url),
@@ -524,7 +547,7 @@ describe("sdk_client", () => {
     await expect(readySession.submit("hello", { historyEntryId: "entry-custom" })).resolves.toEqual(
       {
         userHistoryEntryId: "entry-custom",
-        turn: { aborted: false },
+        turn: { status: "completed", stopReason: "stop" },
       },
     );
     expect(transport.requests.at(-1)).toEqual({
@@ -538,7 +561,7 @@ describe("sdk_client", () => {
 
     await expect(readySession.queue("queued")).resolves.toEqual({
       userHistoryEntryId: "entry-1",
-      turn: { aborted: false },
+      turn: { status: "completed", stopReason: "stop" },
     });
     expect(transport.requests.at(-1)).toEqual({
       method: "session.queue",
@@ -547,7 +570,7 @@ describe("sdk_client", () => {
 
     await expect(readySession.steer("steer")).resolves.toEqual({
       userHistoryEntryId: "entry-1",
-      turn: { aborted: false },
+      turn: { status: "completed", stopReason: "stop" },
     });
     expect(transport.requests.at(-1)).toEqual({
       method: "session.steer",
@@ -561,7 +584,7 @@ describe("sdk_client", () => {
     });
 
     await expect(readySession.retry()).resolves.toEqual({
-      turn: { aborted: false },
+      turn: { status: "completed", stopReason: "stop" },
     });
     expect(transport.requests.at(-1)).toEqual({
       method: "session.retry",
@@ -1101,13 +1124,13 @@ describe("sdk_client", () => {
           child.send(
             createSuccessResponse(second.id, {
               userHistoryEntryId: "history-2",
-              turn: { aborted: true },
+              turn: { status: "aborted", stopReason: "aborted" },
             }),
           );
           child.send(
             createSuccessResponse(first.id, {
               userHistoryEntryId: "history-1",
-              turn: { aborted: false },
+              turn: { status: "completed", stopReason: "stop" },
             }),
           );
         }
@@ -1115,7 +1138,9 @@ describe("sdk_client", () => {
 
       if (request.method === "session.retry") {
         retryRequests.push(request);
-        child.send(createSuccessResponse(request.id, { turn: { aborted: false } }));
+        child.send(
+          createSuccessResponse(request.id, { turn: { status: "completed", stopReason: "stop" } }),
+        );
       }
 
       if (request.method === "session.exec") {
@@ -1177,11 +1202,11 @@ describe("sdk_client", () => {
 
     await expect(firstSubmit).resolves.toEqual({
       userHistoryEntryId: "history-1",
-      turn: { aborted: false },
+      turn: { status: "completed", stopReason: "stop" },
     });
     await expect(secondSubmit).resolves.toEqual({
       userHistoryEntryId: "history-2",
-      turn: { aborted: true },
+      turn: { status: "aborted", stopReason: "aborted" },
     });
     expect(submitRequests.map((request) => request.params)).toEqual([
       { sessionId: "session-1", text: "first turn" },
@@ -1193,7 +1218,7 @@ describe("sdk_client", () => {
     ]);
 
     await expect(session.retry()).resolves.toEqual({
-      turn: { aborted: false },
+      turn: { status: "completed", stopReason: "stop" },
     });
     expect(retryRequests.map((request) => request.params)).toEqual([{ sessionId: "session-1" }]);
 

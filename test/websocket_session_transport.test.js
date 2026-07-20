@@ -5,6 +5,7 @@ import {
   runWebSocketSessionServer,
   WebSocketSessionServer,
 } from "../dist/core/modes/websocket_server.js";
+import { SESSION_PROTOCOL_VERSION } from "../dist/protocol/session_protocol.js";
 import { createTauSdkClientFromTransport } from "../dist/sdk/index.js";
 import { WebSocketSessionProtocolTransport } from "../dist/transport/websocket_session_transport.js";
 import {
@@ -19,7 +20,7 @@ const localCreateInput = { executionEnvironment: { kind: "local", cwd: "/repo" }
 
 function createNoticeDelta(sessionId, revision, text) {
   return {
-    version: 1,
+    version: SESSION_PROTOCOL_VERSION,
     type: "session.delta",
     sessionId,
     fromRevision: revision,
@@ -47,7 +48,7 @@ function createHostedSession(sessionId, sessions, options = {}) {
   let nextHistoryEntryId = 1;
   let running = false;
   let releaseTurn;
-  let pendingTurnResult = { aborted: false };
+  let pendingTurnResult = { status: "completed", stopReason: "stop" };
 
   const hostedSession = {
     get isTurnRunning() {
@@ -108,7 +109,7 @@ function createHostedSession(sessionId, sessions, options = {}) {
       } finally {
         running = false;
         releaseTurn = undefined;
-        pendingTurnResult = { aborted: false };
+        pendingTurnResult = { status: "completed", stopReason: "stop" };
       }
     },
     requestTurnBoundaryStop: vi.fn(() => running),
@@ -118,7 +119,7 @@ function createHostedSession(sessionId, sessions, options = {}) {
         return false;
       }
 
-      pendingTurnResult = { aborted: true };
+      pendingTurnResult = { status: "aborted", stopReason: "aborted" };
       releaseTurn();
       return true;
     }),
@@ -246,12 +247,12 @@ function createControllableSocket() {
       const request = socket.sent.at(-1);
       if (request.method === "initialize") {
         socket.emitMessage({
-          version: 1,
+          version: SESSION_PROTOCOL_VERSION,
           type: "response",
           id: request.id,
           ok: true,
           result: {
-            protocolVersion: 1,
+            protocolVersion: SESSION_PROTOCOL_VERSION,
             methods: ["initialize"],
             alreadyInitialized: false,
           },
@@ -311,7 +312,7 @@ describe("WebSocketSessionProtocolTransport", () => {
 
       await expect(session.submit("hello")).resolves.toEqual({
         userHistoryEntryId: "history-1",
-        turn: { aborted: false },
+        turn: { status: "completed", stopReason: "stop" },
       });
       await expect(session.exec("pwd")).resolves.toEqual({
         output: "/repo\n",
@@ -395,14 +396,14 @@ describe("WebSocketSessionProtocolTransport", () => {
     const connect = transport.connect({ client: { name: "test", version: "1" } }, 500);
     socket.emitOpen();
     socket.emitMessage({
-      version: 1,
+      version: SESSION_PROTOCOL_VERSION,
       type: "ready",
       methods: ["initialize"],
     });
     await connect;
 
     socket.emitMessage({
-      version: 1,
+      version: SESSION_PROTOCOL_VERSION,
       type: "response",
       id: "unknown-request",
       ok: true,
@@ -428,14 +429,14 @@ describe("WebSocketSessionProtocolTransport", () => {
     const connect = transport.connect({ client: { name: "test", version: "1" } }, 500);
     socket.emitOpen();
     socket.emitMessage({
-      version: 1,
+      version: SESSION_PROTOCOL_VERSION,
       type: "ready",
       methods: ["initialize"],
     });
     await connect;
 
     socket.emitMessage({
-      version: 1,
+      version: SESSION_PROTOCOL_VERSION,
       type: "response",
       id: "unknown-request",
       ok: false,
@@ -464,14 +465,14 @@ describe("WebSocketSessionProtocolTransport", () => {
     const connect = transport.connect({ client: { name: "test", version: "1" } }, 500);
     socket.emitOpen();
     socket.emitMessage({
-      version: 1,
+      version: SESSION_PROTOCOL_VERSION,
       type: "ready",
       methods: ["initialize"],
     });
     await connect;
 
     socket.emitMessage({
-      version: 1,
+      version: SESSION_PROTOCOL_VERSION,
       type: "response",
       id: "unknown-request",
       ok: false,

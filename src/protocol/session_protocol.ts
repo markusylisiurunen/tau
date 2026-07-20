@@ -8,7 +8,7 @@ import type {
 } from "@earendil-works/pi-ai";
 import { type ZodError, z } from "zod";
 
-export const SESSION_PROTOCOL_VERSION = 1 as const;
+export const SESSION_PROTOCOL_VERSION = 2 as const;
 
 export const SESSION_PROTOCOL_METHODS = [
   "initialize",
@@ -272,14 +272,28 @@ export type SessionProtocolInitializeResult = {
   alreadyInitialized: boolean;
 };
 
-export type SessionProtocolTurnResult = {
-  turn: {
-    aborted: boolean;
-    blocked?: {
+export type SessionProtocolTurnOutcome =
+  | {
+      status: "completed";
+      stopReason: "stop" | "length" | "toolUse";
+    }
+  | {
+      status: "failed";
+      stopReason: "error";
+      errorMessage?: string;
+    }
+  | {
+      status: "aborted";
+      stopReason: "aborted";
+    }
+  | {
+      status: "blocked";
       reason: "auto-compaction-failed";
       message: string;
     };
-  };
+
+export type SessionProtocolTurnResult = {
+  turn: SessionProtocolTurnOutcome;
 };
 
 export type SessionProtocolUserMessageTurnResult = SessionProtocolTurnResult & {
@@ -367,6 +381,7 @@ export type SessionProtocolMessage = {
   state: SessionProtocolMessageState;
   modelVisible: boolean;
   message: SessionProtocolMessagePayload;
+  turn?: SessionProtocolTurnOutcome;
 };
 
 export type SessionProtocolTimelineItem =
@@ -1595,12 +1610,42 @@ const sessionProtocolMessagePayloadSchema = z.union([
   sessionProtocolDraftAssistantMessageSchema,
 ]) as z.ZodType<SessionProtocolMessagePayload>;
 
+const sessionProtocolTurnOutcomeSchema = z.discriminatedUnion("status", [
+  z
+    .object({
+      status: z.literal("completed"),
+      stopReason: z.enum(["stop", "length", "toolUse"]),
+    })
+    .strip(),
+  z
+    .object({
+      status: z.literal("failed"),
+      stopReason: z.literal("error"),
+      errorMessage: z.string().optional(),
+    })
+    .strip(),
+  z
+    .object({
+      status: z.literal("aborted"),
+      stopReason: z.literal("aborted"),
+    })
+    .strip(),
+  z
+    .object({
+      status: z.literal("blocked"),
+      reason: z.literal("auto-compaction-failed"),
+      message: z.string(),
+    })
+    .strip(),
+]);
+
 const sessionProtocolMessageSchema = z
   .object({
     id: nonEmptyStringSchema,
     state: z.enum(["draft", "committed", "interrupted", "discarded"]),
     modelVisible: z.boolean(),
     message: sessionProtocolMessagePayloadSchema,
+    turn: sessionProtocolTurnOutcomeSchema.optional(),
   })
   .strip() as z.ZodType<SessionProtocolMessage>;
 
@@ -1743,6 +1788,13 @@ const sessionProtocolSnapshotSchema = z
           code: "custom",
           path: ["messages"],
           message: `duplicate message id '${message.id}'`,
+        });
+      }
+      if (message.turn && message.message.role !== "user") {
+        ctx.addIssue({
+          code: "custom",
+          path: ["messages"],
+          message: `turn outcome belongs to non-user message '${message.id}'`,
         });
       }
       messagesById.set(message.id, message);
@@ -2148,18 +2200,7 @@ const sessionProtocolListResultSchema = z
 
 const sessionProtocolSubmitResultSchema = z
   .object({
-    turn: z
-      .object({
-        aborted: z.boolean(),
-        blocked: z
-          .object({
-            reason: z.literal("auto-compaction-failed"),
-            message: z.string(),
-          })
-          .strip()
-          .optional(),
-      })
-      .strip(),
+    turn: sessionProtocolTurnOutcomeSchema,
   })
   .strip();
 

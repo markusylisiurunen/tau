@@ -118,7 +118,7 @@ function createHarness(options = {}) {
     let running = false;
     let nextHistoryId = 1;
     let releaseTurn;
-    let pendingTurnResult = { aborted: false };
+    let pendingTurnResult = { status: "completed", stopReason: "stop" };
     let pendingTurn = null;
     let reasoning = bootstrap.persona.settings.reasoning;
     const sampleAbortControllers = new Set();
@@ -237,7 +237,7 @@ function createHarness(options = {}) {
         } finally {
           running = false;
           pendingTurn = null;
-          pendingTurnResult = { aborted: false };
+          pendingTurnResult = { status: "completed", stopReason: "stop" };
         }
       },
       requestTurnBoundaryStop: vi.fn(() => running),
@@ -318,7 +318,7 @@ function createHarness(options = {}) {
         if (!running || !releaseTurn) {
           return false;
         }
-        pendingTurnResult = { aborted: true };
+        pendingTurnResult = { status: "aborted", stopReason: "aborted" };
         releaseTurn();
         return true;
       },
@@ -728,7 +728,7 @@ describe("rpc_server", () => {
         ok: true,
         result: {
           userHistoryEntryId: "history-1",
-          turn: { aborted: false },
+          turn: { status: "completed", stopReason: "stop" },
         },
       }),
     );
@@ -1129,7 +1129,7 @@ describe("rpc_server", () => {
         ok: true,
         result: expect.objectContaining({
           userHistoryEntryId: expect.any(String),
-          turn: { aborted: false },
+          turn: { status: "completed", stopReason: "stop" },
         }),
       }),
     );
@@ -1193,7 +1193,7 @@ describe("rpc_server", () => {
           ok: true,
           result: expect.objectContaining({
             userHistoryEntryId: steeringEntry.id,
-            turn: { aborted: false },
+            turn: { status: "completed", stopReason: "stop" },
           }),
         }),
       );
@@ -1543,7 +1543,7 @@ describe("rpc_server", () => {
         ok: true,
         result: {
           userHistoryEntryId: "history-1",
-          turn: { aborted: true },
+          turn: { status: "aborted", stopReason: "aborted" },
         },
       }),
     );
@@ -1643,7 +1643,7 @@ describe("rpc_server", () => {
       });
     const harness = createHarness({
       snapshotDelays: [snapshotBlocker],
-      runTurn: async () => ({ aborted: false }),
+      runTurn: async () => ({ status: "completed", stopReason: "stop" }),
     });
 
     const submitPromise = harness.server.handleLine(
@@ -1667,7 +1667,7 @@ describe("rpc_server", () => {
         ok: true,
         result: {
           userHistoryEntryId: "history-1",
-          turn: { aborted: false },
+          turn: { status: "completed", stopReason: "stop" },
         },
       }),
     );
@@ -1720,7 +1720,7 @@ describe("rpc_server", () => {
         ok: true,
         result: {
           userHistoryEntryId: queuedEntry.id,
-          turn: { aborted: false },
+          turn: { status: "completed", stopReason: "stop" },
         },
       }),
     );
@@ -1783,7 +1783,7 @@ describe("rpc_server", () => {
         ok: true,
         result: {
           userHistoryEntryId: queuedEntry.id,
-          turn: { aborted: false },
+          turn: { status: "completed", stopReason: "stop" },
         },
       }),
     );
@@ -1882,7 +1882,7 @@ describe("rpc_server", () => {
       expect.objectContaining({
         ok: true,
         result: expect.objectContaining({
-          turn: { aborted: true },
+          turn: { status: "aborted", stopReason: "aborted" },
         }),
       }),
     );

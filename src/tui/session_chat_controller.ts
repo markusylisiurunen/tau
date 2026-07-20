@@ -749,8 +749,13 @@ export class SessionChatController {
 
     try {
       const result = await task();
-      if (result.turn.blocked) {
-        this.view.addSystemMessage(`turn blocked: ${result.turn.blocked.message}`, "error");
+      if (result.turn.status === "blocked") {
+        this.view.addSystemMessage(`turn blocked: ${result.turn.message}`, "error");
+      } else if (result.turn.status === "failed") {
+        this.view.addSystemMessage(
+          `turn failed: ${result.turn.errorMessage ?? "model provider returned an error"}`,
+          "error",
+        );
       }
       await this.syncFromSessionSnapshot();
     } catch (error) {

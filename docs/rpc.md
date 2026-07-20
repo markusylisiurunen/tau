@@ -100,6 +100,7 @@ when the rpc server starts, it immediately emits a `ready` line:
     "session.cancelPendingMessages",
     "session.retry",
     "session.exec",
+    "session.sample",
     "session.interrupt",
     "session.snapshot",
     "session.setReasoning",
@@ -197,6 +198,7 @@ params (required):
       "session.cancelPendingMessages",
       "session.retry",
       "session.exec",
+      "session.sample",
       "session.interrupt",
       "session.snapshot",
       "session.setReasoning",
@@ -537,6 +539,64 @@ returns:
 }
 ```
 
+#### session.sample
+
+params (required):
+
+```json
+{
+  "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
+  "context": {
+    "systemPrompt": "Classify support tickets.",
+    "messages": [
+      {
+        "role": "user",
+        "content": [{ "type": "text", "text": "I cannot log in" }],
+        "timestamp": 1784463599000
+      }
+    ]
+  },
+  "options": {
+    "reasoning": "low",
+    "maxTokens": 500
+  }
+}
+```
+
+samples the current persona's model without using or mutating the Tau conversation. `context.systemPrompt`, `context.messages`, and `options` are required; `options.reasoning` and `options.maxTokens` are optional and override the active persona settings. `context.tools` may contain provider-neutral `{ name, description, parameters }` schemas. Tool calls can be returned in the assistant content but are never executed.
+
+The result contains the complete provider-neutral assistant message, including thinking, text, tool calls, provider/model/API identifiers, stop reason, usage/cost, and timestamp:
+
+```json
+{
+  "message": {
+    "role": "assistant",
+    "content": [{ "type": "text", "text": "authentication" }],
+    "api": "openai-responses",
+    "provider": "openai",
+    "model": "gpt-5.6-sol",
+    "stopReason": "stop",
+    "usage": {
+      "input": 42,
+      "output": 9,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 51,
+      "cost": {
+        "input": 0.0001,
+        "output": 0.0002,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0.0003
+      }
+    },
+    "timestamp": 1784463600000
+  }
+}
+```
+
+The returned message can be appended directly to the next request's `context.messages`. Sampling uses the session only for the active persona model, resolved credentials, model catalog, and persona stream defaults. It does not include the Tau system prompt or history, emit deltas, change snapshot revisions or `costTotal`, write session storage or Tau usage logs, or affect later turns. A terminal assistant message with `stopReason: "error"` is returned faithfully; failures before a final message use the normal protocol error response. `session.interrupt` cancels active samples.
+
 #### session.interrupt
 
 params (required):
@@ -554,7 +614,7 @@ returns:
 }
 ```
 
-`isTurnRunning` can still be `true` immediately after interrupt is requested while turn cleanup is still in progress.
+`isTurnRunning` can still be `true` immediately after interrupt is requested while active turn, command, maintenance, or sampling cleanup is still in progress.
 
 #### session.snapshot
 
@@ -904,7 +964,7 @@ error codes:
 - `invalid_params`: params failed method validation
 - `not_found`: requested session does not exist on this host
 - `busy`: overlapping idle-only `session.submit`/`session.retry`/`session.exec` or activity rejected while a mutating request is in progress
-- `cancelled`: a pending queued or steering request was explicitly cancelled
+- `cancelled`: a pending queued/steering request was cancelled or a model sample was interrupted
 - `internal_error`: unexpected runtime failure
 
 for lines that cannot produce a valid request id (for example malformed json), `id` is `null`.
@@ -917,6 +977,7 @@ for lines that cannot produce a valid request id (for example malformed json), `
 - `session.record`, `session.setReasoning`, `session.setPersona`, `session.reload`, `session.compact`, `session.prune`, `session.rewind`, `session.terminateSubagent`, `session.ephemeral.create`, and `session.ephemeral.close` run through a session-owned mutation queue (arrival order across clients observed to the same live session)
 - `session.setReasoning` updates settings immediately without interrupting an active turn; active turns keep their captured reasoning and the new setting applies to the next user-message turn
 - only one idle-only `session.submit`, `session.retry`, or `session.exec` can run at once (`busy` otherwise)
+- `session.sample` calls can run concurrently with each other and with normal session work; they never enter the mutation queue
 - `session.queue` can be accepted during active work and runs after the active turn settles
 - `session.steer` can be accepted during an active turn and runs at the next safe boundary after requesting the active turn to stop
 - `session.cancelPendingMessages` atomically removes pending queue and steering requests without interrupting active work

@@ -122,6 +122,7 @@ function createHostedSession(sessionId, sessions, options = {}) {
       return true;
     }),
     interruptMaintenance: vi.fn(() => false),
+    interruptSamples: vi.fn(() => false),
     async waitForActiveWork() {},
     async exec() {
       return createProtocolExecResult({

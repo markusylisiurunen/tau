@@ -26,6 +26,8 @@ import type {
   SessionProtocolResolvePromptResult,
   SessionProtocolRewindParams,
   SessionProtocolRewindResult,
+  SessionProtocolSampleParams,
+  SessionProtocolSampleResult,
   SessionProtocolSessionSummary,
   SessionProtocolSetPersonaParams,
   SessionProtocolSetReasoningParams,
@@ -49,6 +51,7 @@ export type TauHostedSession = {
   runTurn(): Promise<SessionProtocolTurnOutcome>;
   interruptTurn(): boolean;
   interruptMaintenance(): boolean;
+  interruptSamples(): boolean;
   waitForActiveWork(): Promise<void>;
   requestTurnBoundaryStop(): boolean;
   cancelTurnBoundaryStop(): boolean;
@@ -57,6 +60,11 @@ export type TauHostedSession = {
       signal?: AbortSignal;
     },
   ): Promise<SessionProtocolExecResult>;
+  sample(
+    options: Omit<SessionProtocolSampleParams, "sessionId"> & {
+      signal?: AbortSignal;
+    },
+  ): Promise<SessionProtocolSampleResult>;
   setReasoning(
     reasoning: SessionProtocolSetReasoningParams["reasoning"],
   ): Promise<SessionProtocolSettingsUpdateResult>;

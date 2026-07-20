@@ -1,4 +1,5 @@
 import { PassThrough } from "node:stream";
+import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import { RpcServer, runRpcServer } from "../dist/core/modes/rpc_server.js";
 import { EphemeralThreadBusyError } from "../dist/host/session_host.js";
@@ -120,6 +121,8 @@ function createHarness(options = {}) {
     let pendingTurnResult = { status: "completed", stopReason: "stop" };
     let pendingTurn = null;
     let reasoning = bootstrap.persona.settings.reasoning;
+    const sampleAbortControllers = new Set();
+    const samplePromises = new Set();
 
     const emitDelta = (delta) => {
       for (const handler of deltaHandlers) {
@@ -247,6 +250,25 @@ function createHarness(options = {}) {
           command: runOptions.command,
         });
       },
+      async sample(sampleOptions) {
+        const abortController = new AbortController();
+        const signal = sampleOptions.signal
+          ? AbortSignal.any([sampleOptions.signal, abortController.signal])
+          : abortController.signal;
+        sampleAbortControllers.add(abortController);
+        const promise = Promise.resolve().then(() =>
+          options.sample
+            ? options.sample({ ...sampleOptions, signal })
+            : { message: fauxAssistantMessage("sampled") },
+        );
+        samplePromises.add(promise);
+        try {
+          return await promise;
+        } finally {
+          sampleAbortControllers.delete(abortController);
+          samplePromises.delete(promise);
+        }
+      },
       async setReasoning(nextReasoning) {
         reasoning = nextReasoning;
         const snapshot = await hostedSession.snapshot();
@@ -301,7 +323,19 @@ function createHarness(options = {}) {
         return true;
       },
       interruptMaintenance: vi.fn(() => false),
-      waitForActiveWork: vi.fn(async () => {}),
+      interruptSamples: vi.fn(() => {
+        let interrupted = false;
+        for (const abortController of sampleAbortControllers) {
+          if (!abortController.signal.aborted) {
+            abortController.abort();
+            interrupted = true;
+          }
+        }
+        return interrupted;
+      }),
+      waitForActiveWork: vi.fn(async () => {
+        await Promise.allSettled(samplePromises);
+      }),
       terminateSubagent: vi.fn(async () => ({ found: true })),
       async submitEphemeralThread(submitOptions) {
         if (options.submitEphemeralThread) {
@@ -1401,6 +1435,56 @@ describe("rpc_server", () => {
 
     const secondSubmitEvent = harness.lines.find((line) => deltaHasNotice(line, "streaming"));
     expect(secondSubmitEvent).toBeDefined();
+  });
+
+  it("cancels active model samples through session.interrupt", async () => {
+    let sampleStarted = false;
+    const harness = createHarness({
+      sample: ({ signal }) =>
+        new Promise((_resolve, reject) => {
+          sampleStarted = true;
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        }),
+    });
+
+    const sample = harness.server.handleLine(
+      request("sample", "session.sample", {
+        sessionId: "session-1",
+        context: {
+          systemPrompt: "Classify the request.",
+          messages: [
+            {
+              role: "user",
+              content: [{ type: "text", text: "I cannot log in" }],
+              timestamp: 0,
+            },
+          ],
+        },
+        options: {},
+      }),
+    );
+    await waitFor(() => sampleStarted);
+
+    await harness.server.handleLine(
+      request("interrupt-sample", "session.interrupt", { sessionId: "session-1" }),
+    );
+    await sample;
+
+    expect(harness.lines.find((line) => line.id === "sample")).toEqual(
+      expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({
+          code: SESSION_PROTOCOL_ERROR_CODES.cancelled,
+          message: "model sample was cancelled",
+        }),
+      }),
+    );
+    expect(harness.lines.find((line) => line.id === "interrupt-sample")).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: { interrupted: true, isTurnRunning: true },
+      }),
+    );
   });
 
   it("handles interrupt, snapshot, unsupported methods, and malformed lines", async () => {

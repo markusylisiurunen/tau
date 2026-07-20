@@ -300,8 +300,14 @@ options:
   - sends `session.exec` with this session id
   - runs a raw command in the session execution environment and returns interleaved `output` plus split `stdout` and `stderr`
   - does not add output to session history
+- `sample({ context, options })`
+  - sends `session.sample` with this session id
+  - samples the active persona model against only the supplied system prompt, messages, and optional tool schemas
+  - `options.reasoning` and `options.maxTokens` optionally override persona defaults
+  - returns a complete assistant message that can be appended directly to a later sampling context
+  - does not mutate or persist the session, emit deltas, update session cost, execute returned tool calls, or write a Tau usage-log entry
 - `interrupt()`
-  - sends `session.interrupt` with this session id
+  - sends `session.interrupt` with this session id and cancels active samples as well as other active work
 - `snapshot()`
   - sends `session.snapshot` with this session id
   - returns raw recoverable session user text; renderers should use `getTauUserDisplayText()` or `projectTauUserText()` to hide Tau metadata and leading exact `<system>...</system>\n` blocks from user messages before showing them to users
@@ -339,6 +345,43 @@ options:
 - `closeEphemeralContext(contextId)`
   - sends `session.ephemeral.close` with this session id
   - closes non-persisted host-owned ephemeral agent state
+
+A one-off sampling call uses the same provider-neutral message shape for input and output:
+
+```ts
+const firstMessages = [
+  {
+    role: "user" as const,
+    content: [{ type: "text" as const, text: "I cannot log in" }],
+    timestamp: Date.now(),
+  },
+];
+const first = await session.sample({
+  context: {
+    systemPrompt: "Classify support tickets.",
+    messages: firstMessages,
+  },
+  options: { reasoning: "low", maxTokens: 500 },
+});
+
+const second = await session.sample({
+  context: {
+    systemPrompt: "Classify support tickets.",
+    messages: [
+      ...firstMessages,
+      first.message,
+      {
+        role: "user",
+        content: [{ type: "text", text: "Explain the classification." }],
+        timestamp: Date.now(),
+      },
+    ],
+  },
+  options: {},
+});
+```
+
+`context.tools` accepts provider-neutral tool schemas. Tau returns tool-call content but does not execute it. Calls can run concurrently and are cancelled by `session.interrupt()`, client shutdown, or host shutdown.
 
 ## deltas
 
@@ -407,4 +450,4 @@ all session client and transport errors extend `TauSessionClientError`.
 
 ## exported types
 
-The SDK entrypoint exports the public `TauSdk*` aliases for client/session interfaces, request and result shapes, streamed `TauSdkDelta` and `TauSdkEphemeral` messages, ephemeral agent tools, WebSocket options, session protocol method/request ids, and user-message projection helpers (`projectTauUserText`, `getTauUserModelText`, `getTauUserDisplayText`). It also re-exports the transport interfaces and errors needed to build custom protocol transports.
+The SDK entrypoint exports the public `TauSdk*` aliases for client/session interfaces, request and result shapes (including `TauSdkSessionSampleInput` and `TauSdkSessionSampleResult`), streamed `TauSdkDelta` and `TauSdkEphemeral` messages, ephemeral agent tools, WebSocket options, session protocol method/request ids, and user-message projection helpers (`projectTauUserText`, `getTauUserModelText`, `getTauUserDisplayText`). It also re-exports the transport interfaces and errors needed to build custom protocol transports.

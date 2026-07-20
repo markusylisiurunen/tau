@@ -25,6 +25,8 @@ import type {
   SessionProtocolResolvePromptResult,
   SessionProtocolRetryResult,
   SessionProtocolRewindResult,
+  SessionProtocolSampleParams,
+  SessionProtocolSampleResult,
   SessionProtocolSessionSummary,
   SessionProtocolSettingsUpdateResult,
   SessionProtocolSnapshot,
@@ -64,6 +66,8 @@ export type TauSdkSessionReloadResult = SessionProtocolReloadResult;
 export type TauSdkResolvePromptResult = SessionProtocolResolvePromptResult;
 export type TauSdkAutocompletePathsResult = SessionProtocolAutocompletePathsResult;
 export type TauSdkSessionRetryResult = SessionProtocolRetryResult;
+export type TauSdkSessionSampleInput = Omit<SessionProtocolSampleParams, "sessionId">;
+export type TauSdkSessionSampleResult = SessionProtocolSampleResult;
 export type TauSdkSessionTerminateSubagentResult = SessionProtocolTerminateSubagentResult;
 export type TauSdkSessionUnobserveResult = SessionProtocolUnobserveResult;
 export type TauSdkEphemeralAgentTool = SessionProtocolEphemeralAgentTool;
@@ -133,6 +137,7 @@ export type TauSdkSession = {
     command: string,
     options?: { cwd?: string; timeoutMs?: number },
   ): Promise<TauSdkSessionExecResult>;
+  sample(input: TauSdkSessionSampleInput): Promise<TauSdkSessionSampleResult>;
   interrupt(): Promise<TauSdkSessionInterruptResult>;
   snapshot(): Promise<TauSdkSessionSnapshotResult>;
   setReasoning(

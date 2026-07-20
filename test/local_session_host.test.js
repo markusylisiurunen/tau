@@ -178,7 +178,10 @@ function createStoredSnapshot(overrides = {}) {
       id: entry.id,
       state: "committed",
       modelVisible: true,
-      message: entry.message,
+      message: {
+        timestamp: entry.message.timestamp ?? 0,
+        ...entry.message,
+      },
     })),
   ];
   return {
@@ -483,6 +486,114 @@ describe("LocalSessionHost", () => {
         }),
       }),
     );
+  });
+
+  it("samples without changing or persisting session state", async () => {
+    const store = new MemorySessionStore();
+    const originalCommit = store.commitSessionSnapshot.bind(store);
+    store.commitSessionSnapshot = vi.fn(originalCommit);
+    const host = createHost(store);
+    const hostedSession = await host.createSession(localCreateInput);
+    const sampledMessage = {
+      role: "assistant",
+      api: "openai-responses",
+      provider: "openai",
+      model: "gpt-5.6-sol",
+      stopReason: "toolUse",
+      content: [fauxToolCall("lookup_ticket", { id: "123" })],
+      usage: {
+        input: 2,
+        output: 3,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 5,
+        cost: { input: 0.01, output: 0.02, cacheRead: 0, cacheWrite: 0, total: 0.03 },
+      },
+      timestamp: 1,
+    };
+    hostedSession.session.engine.modelRuntime.streamModel = () => ({
+      async *[Symbol.asyncIterator]() {},
+      async result() {
+        return sampledMessage;
+      },
+    });
+    const deltas = [];
+    hostedSession.onDelta((delta) => deltas.push(delta));
+    const before = await hostedSession.snapshot();
+    const commitsBeforeSample = store.commitSessionSnapshot.mock.calls.length;
+
+    await expect(
+      hostedSession.sample({
+        context: {
+          systemPrompt: "Use tools only when needed.",
+          messages: [
+            {
+              role: "user",
+              content: [{ type: "text", text: "Look up ticket 123" }],
+              timestamp: 0,
+            },
+          ],
+          tools: [
+            {
+              name: "lookup_ticket",
+              description: "Look up a ticket.",
+              parameters: { type: "object", properties: {} },
+            },
+          ],
+        },
+        options: {},
+      }),
+    ).resolves.toEqual({ message: sampledMessage });
+
+    expect(await hostedSession.snapshot()).toEqual(before);
+    expect(store.commitSessionSnapshot).toHaveBeenCalledTimes(commitsBeforeSample);
+    expect(await store.loadSession(hostedSession.sessionId)).toEqual(before);
+    expect(deltas).toEqual([]);
+    await host.shutdown();
+  });
+
+  it.each([
+    ["direct session disposal", ({ hostedSession }) => hostedSession.dispose()],
+    ["host shutdown", ({ host }) => host.shutdown()],
+  ])("aborts and settles active samples before %s", async (_label, dispose) => {
+    const store = new MemorySessionStore();
+    const executionEnvironment = createTestExecutionEnvironment();
+    let sampleSettled = false;
+    executionEnvironment.dispose = vi.fn(async () => {
+      expect(sampleSettled).toBe(true);
+    });
+    const host = createHostForEnvironment(store, executionEnvironment);
+    const hostedSession = await host.createSession(localCreateInput);
+    let markSampleStarted;
+    const sampleStarted = new Promise((resolve) => {
+      markSampleStarted = resolve;
+    });
+    hostedSession.session.engine.modelRuntime.streamModel = (_model, _context, options) => ({
+      async *[Symbol.asyncIterator]() {},
+      async result() {
+        markSampleStarted();
+        await new Promise((resolve) => {
+          if (options.signal.aborted) {
+            resolve();
+            return;
+          }
+          options.signal.addEventListener("abort", resolve, { once: true });
+        });
+        sampleSettled = true;
+        return fauxAssistantMessage("sampled");
+      },
+    });
+
+    const sample = hostedSession.sample({
+      context: { systemPrompt: "Sample in isolation.", messages: [] },
+      options: {},
+    });
+    const sampleResult = expect(sample).rejects.toMatchObject({ name: "AbortError" });
+    await sampleStarted;
+
+    await expect(dispose({ host, hostedSession })).resolves.toBeUndefined();
+    await sampleResult;
+    expect(executionEnvironment.dispose).toHaveBeenCalledTimes(1);
   });
 
   it("omits custom model headers from protocol snapshots", async () => {

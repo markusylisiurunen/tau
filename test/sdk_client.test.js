@@ -251,6 +251,26 @@ class FakeSessionProtocolTransport {
             exitCode: 0,
             truncated: false,
           };
+        case "session.sample":
+          return {
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "sampled" }],
+              api: "openai-responses",
+              provider: "openai",
+              model: "gpt-5.6-sol",
+              stopReason: "stop",
+              usage: {
+                input: 1,
+                output: 1,
+                cacheRead: 0,
+                cacheWrite: 0,
+                totalTokens: 2,
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+              },
+              timestamp: 1,
+            },
+          };
         case "session.record":
           return {
             snapshot: createProtocolSnapshot({
@@ -1040,7 +1060,25 @@ describe("sdk_client", () => {
     const submitRequests = [];
     const retryRequests = [];
     const execRequests = [];
+    const sampleRequests = [];
     const createdSessionId = "session-2";
+    const sampledMessage = {
+      role: "assistant",
+      content: [{ type: "text", text: "sampled" }],
+      api: "openai-responses",
+      provider: "openai",
+      model: "gpt-5.6-sol",
+      stopReason: "stop",
+      usage: {
+        input: 1,
+        output: 1,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 2,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      timestamp: 1,
+    };
 
     child.on("request", (request) => {
       if (request.method === "initialize") {
@@ -1116,6 +1154,11 @@ describe("sdk_client", () => {
           ),
         );
       }
+
+      if (request.method === "session.sample") {
+        sampleRequests.push(request);
+        child.send(createSuccessResponse(request.id, { message: sampledMessage }));
+      }
     });
 
     const transport = new StdioSessionProtocolTransport(child);
@@ -1188,6 +1231,24 @@ describe("sdk_client", () => {
     });
     expect(execRequests.map((request) => request.params)).toEqual([
       { sessionId: "session-1", command: "pwd" },
+    ]);
+
+    const sampleInput = {
+      context: {
+        systemPrompt: "Classify the request.",
+        messages: [
+          {
+            role: "user",
+            content: [{ type: "text", text: "I cannot log in" }],
+            timestamp: 0,
+          },
+        ],
+      },
+      options: { reasoning: "low", maxTokens: 100 },
+    };
+    await expect(session.sample(sampleInput)).resolves.toEqual({ message: sampledMessage });
+    expect(sampleRequests.map((request) => request.params)).toEqual([
+      { sessionId: "session-1", ...sampleInput },
     ]);
 
     expect(sessionDeltas).toEqual([

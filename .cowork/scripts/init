@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-npm ci
-(cd src/diff_tool/app && npm ci)
+"$(dirname "$0")/activate"
 npm run build

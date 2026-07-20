@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+rm -rf node_modules src/diff_tool/app/node_modules

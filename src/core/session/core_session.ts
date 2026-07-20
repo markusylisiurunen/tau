@@ -1,4 +1,4 @@
-import type { Message } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
 import type { Config } from "../config/index.js";
 import type { CoreEvent, CoreSubagentUiEvent } from "../events/types.js";
 import type { ModelResolver } from "../models/catalog.js";
@@ -15,6 +15,7 @@ import {
   SessionEngine,
   type SessionPruneOptions,
   type SessionPruneResult,
+  type SessionSampleOptions,
 } from "./session_engine.js";
 
 export type {
@@ -28,6 +29,7 @@ export type {
   SessionCompactionResult,
   SessionPruneOptions,
   SessionPruneResult,
+  SessionSampleOptions,
 };
 
 export type CoreSessionOptions = {
@@ -142,6 +144,10 @@ export class CoreSession {
 
   get sessionId(): string {
     return this.engine.sessionIdValue;
+  }
+
+  async sample(options: SessionSampleOptions): Promise<AssistantMessage> {
+    return await this.engine.sample(options);
   }
 
   async compact(options: SessionCompactionOptions): Promise<SessionCompactionResult> {

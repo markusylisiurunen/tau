@@ -158,7 +158,10 @@ export function createProtocolExecResult(overrides = {}) {
 
 function addMissingMessageDefaults(message) {
   if (message.role !== "assistant") {
-    return message;
+    return {
+      timestamp: message.timestamp ?? 0,
+      ...message,
+    };
   }
   return {
     api: message.api ?? "openai-responses",

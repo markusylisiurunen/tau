@@ -5,6 +5,7 @@ import type {
   SessionProtocolEphemeralAgentTool,
   SessionProtocolInitializeParams,
   SessionProtocolResultByMethod,
+  SessionProtocolSampleParams,
 } from "../protocol/session_protocol.js";
 import {
   SESSION_PROTOCOL_VERSION,
@@ -252,6 +253,13 @@ class TauSdkClientImpl implements TauSdkClient {
       ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
       ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
     });
+  }
+
+  sendSample(
+    sessionId: string,
+    input: Omit<SessionProtocolSampleParams, "sessionId">,
+  ): Promise<SessionProtocolResultByMethod["session.sample"]> {
+    return this.transport.request("session.sample", { sessionId, ...input });
   }
 
   sendInterrupt(sessionId: string): Promise<SessionProtocolResultByMethod["session.interrupt"]> {
@@ -567,6 +575,12 @@ class TauSdkSessionImpl implements TauSdkSession {
     options: { cwd?: string; timeoutMs?: number } = {},
   ): Promise<SessionProtocolResultByMethod["session.exec"]> {
     return await this.client.sendExec(this.activeSessionId(), command, options);
+  }
+
+  async sample(
+    input: Omit<SessionProtocolSampleParams, "sessionId">,
+  ): Promise<SessionProtocolResultByMethod["session.sample"]> {
+    return await this.client.sendSample(this.activeSessionId(), input);
   }
 
   async interrupt(): Promise<SessionProtocolResultByMethod["session.interrupt"]> {

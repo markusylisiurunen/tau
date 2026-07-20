@@ -42,6 +42,11 @@ type SessionProtocolActiveBash = {
   promise: Promise<void>;
 };
 
+type SessionProtocolActiveSample = {
+  abortController: AbortController;
+  promise: Promise<void>;
+};
+
 type SessionProtocolPendingRequest<Method extends "session.queue" | "session.steer"> = {
   id: string;
   handler: SessionProtocolHandler;
@@ -60,6 +65,10 @@ type SessionProtocolLiveSessionState = {
   pendingQueuedSubmits: Array<SessionProtocolPendingRequest<"session.queue">>;
   listeners: Set<(message: SessionProtocolPendingUserMessagesMessage) => void>;
 };
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
 
 type SessionProtocolHandlerSessionState = {
   session: TauHostedSession;
@@ -160,6 +169,7 @@ export class SessionProtocolHandler {
   private readonly host: TauSessionHost;
   private readonly send: (message: SessionProtocolOutgoingMessage) => void;
   private readonly sessionStates = new Map<string, SessionProtocolHandlerSessionState>();
+  private readonly activeSamples = new Set<SessionProtocolActiveSample>();
   private initialized = false;
   private clientToolRegistration?: {
     attachSession: (sessionId: string) => void;
@@ -216,6 +226,9 @@ export class SessionProtocolHandler {
           return;
         case "session.exec":
           await this.handleExec(request);
+          return;
+        case "session.sample":
+          await this.handleSample(request);
           return;
         case "session.interrupt":
           await this.handleInterrupt(request);
@@ -290,6 +303,11 @@ export class SessionProtocolHandler {
     const interruptActiveTurns = mode === "interrupt" || shutdownHost;
 
     const states = [...this.sessionStates.values()];
+    const samplePromises = new Set<Promise<void>>();
+    for (const sample of this.activeSamples) {
+      sample.abortController.abort();
+      samplePromises.add(sample.promise);
+    }
 
     for (const state of states) {
       this.unsubscribeSessionListeners(state);
@@ -299,6 +317,7 @@ export class SessionProtocolHandler {
       }
       if (interruptActiveTurns) {
         state.session.interruptMaintenance();
+        state.session.interruptSamples();
       }
       if (interruptActiveTurns && state.live.activeBash) {
         state.live.activeBash.abortController.abort();
@@ -317,6 +336,7 @@ export class SessionProtocolHandler {
         states.map((state) => getSessionMutationQueueState(state.session).queue),
       );
     }
+    await Promise.allSettled(samplePromises);
 
     this.sessionStates.clear();
     this.clientToolRegistration?.unregister();
@@ -586,6 +606,31 @@ export class SessionProtocolHandler {
         }
       });
       this.schedulePendingSubmitDrains(state);
+    }
+  }
+
+  private async handleSample(
+    request: Extract<SessionProtocolRequestMessage, { method: "session.sample" }>,
+  ): Promise<void> {
+    const state = await this.getSessionState(request.params.sessionId);
+    if (!state) {
+      this.sendSessionNotFound(request.id, request.params.sessionId);
+      return;
+    }
+    if (this.closed) {
+      return;
+    }
+
+    const abortController = new AbortController();
+    const activeSample = {
+      abortController,
+      promise: this.executeSample(state, request, abortController.signal),
+    };
+    this.activeSamples.add(activeSample);
+    try {
+      await activeSample.promise;
+    } finally {
+      this.activeSamples.delete(activeSample);
     }
   }
 
@@ -1057,6 +1102,33 @@ export class SessionProtocolHandler {
     }
   }
 
+  private async executeSample(
+    state: SessionProtocolHandlerSessionState,
+    request: Extract<SessionProtocolRequestMessage, { method: "session.sample" }>,
+    signal: AbortSignal,
+  ): Promise<void> {
+    try {
+      const result = await state.session.sample({
+        context: request.params.context,
+        options: request.params.options,
+        signal,
+      });
+      this.sendMessage(createSessionProtocolSuccessResponse(request.id, "session.sample", result));
+    } catch (error) {
+      const cancelled = signal.aborted || isAbortError(error);
+      this.sendMessage(
+        createSessionProtocolErrorResponse(
+          request.id,
+          cancelled
+            ? SESSION_PROTOCOL_ERROR_CODES.cancelled
+            : SESSION_PROTOCOL_ERROR_CODES.internalError,
+          cancelled ? "model sample was cancelled" : "failed to sample model",
+          { cause: error instanceof Error ? error.message : String(error) },
+        ),
+      );
+    }
+  }
+
   private async handleInterrupt(
     request: Extract<SessionProtocolRequestMessage, { method: "session.interrupt" }>,
   ): Promise<void> {
@@ -1070,11 +1142,17 @@ export class SessionProtocolHandler {
     const interruptedMaintenance = state.session.interruptMaintenance();
     const interruptedBash = Boolean(state.live.activeBash);
     state.live.activeBash?.abortController.abort();
+    const interruptedSamples = state.session.interruptSamples();
     this.rejectPendingSteeringSubmits(state, "session was interrupted");
 
     const result: SessionProtocolResultByMethod["session.interrupt"] = {
-      interrupted: interruptedTurn || interruptedMaintenance || interruptedBash,
-      isTurnRunning: state.session.isTurnRunning || interruptedMaintenance || interruptedBash,
+      interrupted:
+        interruptedTurn || interruptedMaintenance || interruptedBash || interruptedSamples,
+      isTurnRunning:
+        state.session.isTurnRunning ||
+        interruptedMaintenance ||
+        interruptedBash ||
+        interruptedSamples,
     };
 
     this.sendMessage(createSessionProtocolSuccessResponse(request.id, "session.interrupt", result));

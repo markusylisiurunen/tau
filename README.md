@@ -223,6 +223,21 @@ try {
   const result = await session.submit("summarize this repo");
   console.log(result.userHistoryEntryId, result.turn.aborted);
 
+  const sample = await session.sample({
+    context: {
+      systemPrompt: "Answer concisely.",
+      messages: [
+        {
+          role: "user",
+          content: [{ type: "text", text: "What model are you?" }],
+          timestamp: Date.now(),
+        },
+      ],
+    },
+    options: {},
+  });
+  console.log(sample.message.model);
+
   const snapshot = await session.snapshot();
   console.log(snapshot.sessionId, snapshot.messages.length);
 

@@ -955,23 +955,22 @@ const nonEmptyStringSchema = z
   .refine((value) => value.trim().length > 0);
 const sessionProtocolRequestIdSchema = nonEmptyStringSchema;
 const nullableSessionProtocolRequestIdSchema = sessionProtocolRequestIdSchema.nullable();
-const messageSchema = z.custom<Message>(isMessage);
 
-const sampleTextContentSchema = z
+const modelTextContentSchema = z
   .object({
     type: z.literal("text"),
     text: z.string(),
     textSignature: z.string().optional(),
   })
   .strip();
-const sampleImageContentSchema = z
+const modelImageContentSchema = z
   .object({
     type: z.literal("image"),
     data: z.string(),
     mimeType: nonEmptyStringSchema,
   })
   .strip();
-const sampleThinkingContentSchema = z
+const modelThinkingContentSchema = z
   .object({
     type: z.literal("thinking"),
     thinking: z.string(),
@@ -979,7 +978,7 @@ const sampleThinkingContentSchema = z
     redacted: z.boolean().optional(),
   })
   .strip();
-const sampleToolCallSchema = z
+const modelToolCallSchema = z
   .object({
     type: z.literal("toolCall"),
     id: nonEmptyStringSchema,
@@ -988,7 +987,7 @@ const sampleToolCallSchema = z
     thoughtSignature: z.string().optional(),
   })
   .strip();
-const sampleUsageSchema = z
+const modelUsageSchema = z
   .object({
     input: z.number().int().nonnegative(),
     output: z.number().int().nonnegative(),
@@ -1008,17 +1007,17 @@ const sampleUsageSchema = z
       .strip(),
   })
   .strip();
-const sampleUserMessageSchema = z
+const modelUserMessageSchema = z
   .object({
     role: z.literal("user"),
     content: z.union([
       z.string(),
-      z.array(z.union([sampleTextContentSchema, sampleImageContentSchema])),
+      z.array(z.union([modelTextContentSchema, modelImageContentSchema])),
     ]),
     timestamp: z.number().finite(),
   })
   .strip();
-const sampleDiagnosticErrorSchema = z
+const modelDiagnosticErrorSchema = z
   .object({
     name: z.string().optional(),
     message: z.string(),
@@ -1026,48 +1025,48 @@ const sampleDiagnosticErrorSchema = z
     code: z.union([z.string(), z.number()]).optional(),
   })
   .strip();
-const sampleDiagnosticSchema = z
+const modelDiagnosticSchema = z
   .object({
     type: z.string(),
     timestamp: z.number().finite(),
-    error: sampleDiagnosticErrorSchema.optional(),
+    error: modelDiagnosticErrorSchema.optional(),
     details: z.record(z.string(), z.unknown()).optional(),
   })
   .strip();
-const sampleAssistantMessageSchema = z
+const modelAssistantMessageSchema = z
   .object({
     role: z.literal("assistant"),
     content: z.array(
-      z.union([sampleTextContentSchema, sampleThinkingContentSchema, sampleToolCallSchema]),
+      z.union([modelTextContentSchema, modelThinkingContentSchema, modelToolCallSchema]),
     ),
     api: nonEmptyStringSchema,
     provider: nonEmptyStringSchema,
     model: nonEmptyStringSchema,
     responseModel: nonEmptyStringSchema.optional(),
     responseId: nonEmptyStringSchema.optional(),
-    diagnostics: z.array(sampleDiagnosticSchema).optional(),
-    usage: sampleUsageSchema,
+    diagnostics: z.array(modelDiagnosticSchema).optional(),
+    usage: modelUsageSchema,
     stopReason: z.enum(["stop", "length", "toolUse", "error", "aborted"]),
     errorMessage: z.string().optional(),
     timestamp: z.number().finite(),
   })
   .strip() as z.ZodType<AssistantMessage>;
-const sampleToolResultMessageSchema = z
+const modelToolResultMessageSchema = z
   .object({
     role: z.literal("toolResult"),
     toolCallId: nonEmptyStringSchema,
     toolName: nonEmptyStringSchema,
-    content: z.array(z.union([sampleTextContentSchema, sampleImageContentSchema])),
+    content: z.array(z.union([modelTextContentSchema, modelImageContentSchema])),
     details: z.unknown().optional(),
     addedToolNames: z.array(nonEmptyStringSchema).optional(),
     isError: z.boolean(),
     timestamp: z.number().finite(),
   })
   .strip();
-const sampleMessageSchema = z.union([
-  sampleUserMessageSchema,
-  sampleAssistantMessageSchema,
-  sampleToolResultMessageSchema,
+const modelMessageSchema = z.union([
+  modelUserMessageSchema,
+  modelAssistantMessageSchema,
+  modelToolResultMessageSchema,
 ]) as z.ZodType<Message>;
 
 const sessionProtocolReadyMessageSchema = z
@@ -1226,7 +1225,7 @@ const sessionProtocolSampleParamsSchema = z
     context: z
       .object({
         systemPrompt: z.string(),
-        messages: z.array(sampleMessageSchema),
+        messages: z.array(modelMessageSchema),
         tools: z.array(sessionProtocolSampleToolSchema).optional(),
       })
       .strip(),
@@ -1592,7 +1591,7 @@ const sessionProtocolDraftAssistantMessageSchema = z
 
 const sessionProtocolMessagePayloadSchema = z.union([
   sessionProtocolSystemMessageSchema,
-  messageSchema,
+  modelMessageSchema,
   sessionProtocolDraftAssistantMessageSchema,
 ]) as z.ZodType<SessionProtocolMessagePayload>;
 
@@ -2199,7 +2198,7 @@ const sessionProtocolExecResultSchema = z
 
 const sessionProtocolSampleResultSchema = z
   .object({
-    message: sampleAssistantMessageSchema,
+    message: modelAssistantMessageSchema,
   })
   .strip();
 
@@ -4068,28 +4067,6 @@ function invalidParams(message: string): SessionProtocolParamsValidationResult<n
     ok: false,
     error: createSessionProtocolError(SESSION_PROTOCOL_ERROR_CODES.invalidParams, message),
   };
-}
-
-function isMessage(value: unknown): value is Message {
-  if (!isRecord(value)) {
-    return false;
-  }
-
-  switch (value.role) {
-    case "user":
-      return typeof value.content === "string" || Array.isArray(value.content);
-    case "assistant":
-      return Array.isArray(value.content);
-    case "toolResult":
-      return (
-        typeof value.toolCallId === "string" &&
-        typeof value.toolName === "string" &&
-        typeof value.isError === "boolean" &&
-        Array.isArray(value.content)
-      );
-    default:
-      return false;
-  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

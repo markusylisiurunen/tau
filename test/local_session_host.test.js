@@ -178,7 +178,10 @@ function createStoredSnapshot(overrides = {}) {
       id: entry.id,
       state: "committed",
       modelVisible: true,
-      message: entry.message,
+      message: {
+        timestamp: entry.message.timestamp ?? 0,
+        ...entry.message,
+      },
     })),
   ];
   return {

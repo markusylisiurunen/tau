@@ -1,4 +1,4 @@
-import type { Message } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
 import type { Config } from "../config/index.js";
 import type { CoreEvent, CoreSubagentUiEvent } from "../events/types.js";
 import type { ModelResolver } from "../models/catalog.js";
@@ -146,7 +146,7 @@ export class CoreSession {
     return this.engine.sessionIdValue;
   }
 
-  async sample(options: SessionSampleOptions) {
+  async sample(options: SessionSampleOptions): Promise<AssistantMessage> {
     return await this.engine.sample(options);
   }
 

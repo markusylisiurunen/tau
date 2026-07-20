@@ -1446,6 +1446,7 @@ describe("session_protocol", () => {
           message: {
             role: "user",
             content: [{ type: "text", text: "hidden from default timeline" }],
+            timestamp: 0,
           },
         },
       ],
@@ -1572,13 +1573,21 @@ describe("session_protocol", () => {
             id: "entry-1",
             state: "committed",
             modelVisible: true,
-            message: { role: "user", content: [{ type: "text", text: "one" }] },
+            message: {
+              role: "user",
+              content: [{ type: "text", text: "one" }],
+              timestamp: 0,
+            },
           },
           {
             id: "entry-1",
             state: "committed",
             modelVisible: true,
-            message: { role: "user", content: [{ type: "text", text: "two" }] },
+            message: {
+              role: "user",
+              content: [{ type: "text", text: "two" }],
+              timestamp: 0,
+            },
           },
         ],
       }),

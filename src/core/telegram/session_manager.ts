@@ -873,16 +873,18 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       try {
         const result =
           mode === "steer" ? await tauSession.steer(payload) : await tauSession.submit(payload);
-        this.log(entry, result.turn.blocked ? "error" : "info", "message finished", {
+        this.log(entry, result.turn.status === "completed" ? "info" : "error", "message finished", {
           source,
-          aborted: result.turn.aborted,
-          blocked: result.turn.blocked,
+          turn: result.turn,
           userHistoryEntryId: result.userHistoryEntryId,
         });
 
         if (!entry.cancelRequested) {
-          if (result.turn.blocked) {
-            entry.record.error = result.turn.blocked.message;
+          if (result.turn.status === "failed" || result.turn.status === "blocked") {
+            entry.record.error =
+              result.turn.status === "failed"
+                ? (result.turn.errorMessage ?? "model provider returned an error")
+                : result.turn.message;
             this.setState(entry, "failed");
           } else if (!entry.activeSubmit || entry.activeSubmit === submitPromise) {
             this.setState(entry, "waiting-input");

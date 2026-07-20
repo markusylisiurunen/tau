@@ -26,6 +26,7 @@ export {
 } from "../transport/index.js";
 export { createTauSdkClient, createTauSdkWebSocketClient } from "./client.js";
 export { createTauSdkClientFromTransport } from "./session.js";
+export { getTauSdkSessionTurnOutcome } from "./turn_outcome.js";
 export type {
   TauSdkAutocompletePathsResult,
   TauSdkClient,
@@ -66,6 +67,7 @@ export type {
   TauSdkSessionSubmitResult,
   TauSdkSessionSummary,
   TauSdkSessionTerminateSubagentResult,
+  TauSdkSessionTurnOutcome,
   TauSdkSessionUnobserveResult,
   TauSdkSessionUserMessageOptions,
   TauSdkTransportClientOptions,

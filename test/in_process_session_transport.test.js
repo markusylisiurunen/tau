@@ -44,7 +44,7 @@ function createHostedSession(sessionId, sessions, options = {}) {
   let nextHistoryEntryId = 1;
   let running = false;
   let releaseTurn;
-  let pendingTurnResult = { aborted: false };
+  let pendingTurnResult = { status: "completed", stopReason: "stop" };
 
   const hostedSession = {
     get isTurnRunning() {
@@ -92,7 +92,7 @@ function createHostedSession(sessionId, sessions, options = {}) {
     },
     async runTurn() {
       running = true;
-      let result = { aborted: false };
+      let result = { status: "completed", stopReason: "stop" };
       try {
         for (const handler of deltaHandlers) {
           handler(createNoticeDelta(sessionId, historyEntries.length + 1, `running ${sessionId}`));
@@ -107,7 +107,7 @@ function createHostedSession(sessionId, sessions, options = {}) {
       } finally {
         running = false;
         releaseTurn = undefined;
-        pendingTurnResult = { aborted: false };
+        pendingTurnResult = { status: "completed", stopReason: "stop" };
       }
     },
     requestTurnBoundaryStop: vi.fn(() => running),
@@ -117,7 +117,7 @@ function createHostedSession(sessionId, sessions, options = {}) {
         return false;
       }
 
-      pendingTurnResult = { aborted: true };
+      pendingTurnResult = { status: "aborted", stopReason: "aborted" };
       releaseTurn();
       return true;
     }),
@@ -210,7 +210,7 @@ describe("InProcessSessionProtocolTransport", () => {
 
     await expect(session.submit("hello")).resolves.toEqual({
       userHistoryEntryId: "history-1",
-      turn: { aborted: false },
+      turn: { status: "completed", stopReason: "stop" },
     });
 
     expect(deltas).toEqual([createNoticeDelta("session-1", 2, "running session-1")]);
@@ -229,7 +229,7 @@ describe("InProcessSessionProtocolTransport", () => {
     );
 
     await expect(session.retry()).resolves.toEqual({
-      turn: { aborted: false },
+      turn: { status: "completed", stopReason: "stop" },
     });
 
     await expect(session.exec("pwd")).resolves.toEqual({
@@ -323,7 +323,7 @@ describe("InProcessSessionProtocolTransport", () => {
 
     await expect(session.submit("hello")).resolves.toEqual({
       userHistoryEntryId: "history-1",
-      turn: { aborted: false },
+      turn: { status: "completed", stopReason: "stop" },
     });
 
     expect(deltas).toHaveLength(1);

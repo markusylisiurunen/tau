@@ -47,7 +47,7 @@ function createHostedSession(sessionId, sessions, options = {}) {
   let nextHistoryEntryId = 1;
   let running = false;
   let releaseTurn;
-  let pendingTurnResult = { aborted: false };
+  let pendingTurnResult = { status: "completed", stopReason: "stop" };
 
   const hostedSession = {
     get isTurnRunning() {
@@ -108,7 +108,7 @@ function createHostedSession(sessionId, sessions, options = {}) {
       } finally {
         running = false;
         releaseTurn = undefined;
-        pendingTurnResult = { aborted: false };
+        pendingTurnResult = { status: "completed", stopReason: "stop" };
       }
     },
     requestTurnBoundaryStop: vi.fn(() => running),
@@ -118,7 +118,7 @@ function createHostedSession(sessionId, sessions, options = {}) {
         return false;
       }
 
-      pendingTurnResult = { aborted: true };
+      pendingTurnResult = { status: "aborted", stopReason: "aborted" };
       releaseTurn();
       return true;
     }),
@@ -310,7 +310,7 @@ describe("WebSocketSessionProtocolTransport", () => {
 
       await expect(session.submit("hello")).resolves.toEqual({
         userHistoryEntryId: "history-1",
-        turn: { aborted: false },
+        turn: { status: "completed", stopReason: "stop" },
       });
       await expect(session.exec("pwd")).resolves.toEqual({
         output: "/repo\n",

@@ -64,7 +64,7 @@ import type {
   SessionProtocolTerminateSubagentResult,
   SessionProtocolTimelineItem,
   SessionProtocolToolRun,
-  SessionProtocolUserMessageTurnResult,
+  SessionProtocolTurnOutcome,
 } from "../protocol/session_protocol.js";
 import {
   applySessionProtocolDelta,
@@ -515,6 +515,8 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   private persistedSnapshot?: SessionProtocolSnapshot;
   private draftAssistantMessage?: SessionProtocolMessage;
   private readonly messageStates = new Map<string, SessionProtocolMessage["state"]>();
+  private readonly turnOutcomes = new Map<string, SessionProtocolTurnOutcome>();
+  private lastTurnAssistantMessage?: AssistantMessage;
   private restoredMessageIds?: Set<string>;
   private restoredTimelineMessageIds?: Set<string>;
   private readonly timelineExtras: SessionProtocolTimelineItem[] = [];
@@ -538,7 +540,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   private snapshotGeneration = 0;
   private readonly maintenanceAbortControllers = new Set<AbortController>();
   private readonly maintenancePromises = new Set<Promise<unknown>>();
-  private activeTurnPromise?: Promise<SessionProtocolUserMessageTurnResult["turn"]>;
+  private activeTurnPromise?: Promise<SessionProtocolTurnOutcome>;
   private disposePromise?: Promise<void>;
   private disposing = false;
   private costTotal = 0;
@@ -618,7 +620,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     };
   }
 
-  async runTurn(): Promise<SessionProtocolUserMessageTurnResult["turn"]> {
+  async runTurn(): Promise<SessionProtocolTurnOutcome> {
     this.assertActive();
     const run = this.runTurnNow();
     this.activeTurnPromise = run;
@@ -631,7 +633,9 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     }
   }
 
-  private async runTurnNow(): Promise<SessionProtocolUserMessageTurnResult["turn"]> {
+  private async runTurnNow(): Promise<SessionProtocolTurnOutcome> {
+    const userHistoryEntryId = this.currentTurnUserHistoryEntryId();
+    this.lastTurnAssistantMessage = undefined;
     try {
       const result = await this.runtime.runTurn({
         onEvent: (event) => this.recordTurnRuntimeEvent(event),
@@ -639,8 +643,10 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       if (result.aborted && this.draftAssistantMessage) {
         await this.interruptDraftAssistantMessage();
       }
+      const outcome = turnOutcomeFromResult(result, this.lastTurnAssistantMessage);
+      this.turnOutcomes.set(userHistoryEntryId, outcome);
       await this.emitSnapshotResetIfChanged("assistant-message");
-      return result;
+      return outcome;
     } catch (error) {
       try {
         await this.cleanupFailedTurn();
@@ -1269,14 +1275,16 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         timestamp: 0,
       },
     };
-    const historyMessages = this.session.rawHistoryEntries.map(
-      (entry): SessionProtocolMessage => ({
+    const historyMessages = this.session.rawHistoryEntries.map((entry): SessionProtocolMessage => {
+      const turn = this.turnOutcomes.get(entry.id);
+      return {
         id: entry.id,
         state: this.messageStates.get(entry.id) ?? "committed",
         modelVisible: true,
         message: entry.message,
-      }),
-    );
+        ...(turn ? { turn } : {}),
+      };
+    });
     return [
       systemMessage,
       ...historyMessages,
@@ -1363,11 +1371,25 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     }
     this.draftAssistantMessage = snapshot.messages.find((message) => message.state === "draft");
     this.messageStates.clear();
+    this.turnOutcomes.clear();
     for (const message of snapshot.messages) {
       if (message.state !== "committed" && message.state !== "draft") {
         this.messageStates.set(message.id, message.state);
       }
+      if (message.turn) {
+        this.turnOutcomes.set(message.id, message.turn);
+      }
     }
+  }
+
+  private currentTurnUserHistoryEntryId(): string {
+    const entry = this.session.rawHistoryEntries.findLast(
+      (candidate) => candidate.message.role === "user",
+    );
+    if (!entry) {
+      throw new Error("cannot run a turn without a user message");
+    }
+    return entry.id;
   }
 
   private assertActive(): void {
@@ -1602,6 +1624,9 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   }
 
   private async recordTurnRuntimeEvent(event: CoreEvent): Promise<void> {
+    if (event.type === "assistant_final") {
+      this.lastTurnAssistantMessage = event.message;
+    }
     await this.enqueueRuntimeEvent(event);
   }
 
@@ -1859,6 +1884,34 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
     await this.emitSnapshotResetIfChanged("assistant-message");
   }
+}
+
+function turnOutcomeFromResult(
+  result: {
+    aborted: boolean;
+    blocked?: { reason: "auto-compaction-failed"; message: string };
+  },
+  assistantMessage: AssistantMessage | undefined,
+): SessionProtocolTurnOutcome {
+  if (result.blocked) {
+    return { status: "blocked", ...result.blocked };
+  }
+  if (result.aborted || assistantMessage?.stopReason === "aborted") {
+    return { status: "aborted", stopReason: "aborted" };
+  }
+  if (!assistantMessage) {
+    throw new Error("session turn completed without an assistant message");
+  }
+  if (assistantMessage.stopReason === "error") {
+    return {
+      status: "failed",
+      stopReason: "error",
+      ...(assistantMessage.errorMessage !== undefined
+        ? { errorMessage: assistantMessage.errorMessage }
+        : {}),
+    };
+  }
+  return { status: "completed", stopReason: assistantMessage.stopReason };
 }
 
 function cloneSessionProtocolSnapshot(snapshot: SessionProtocolSnapshot): SessionProtocolSnapshot {

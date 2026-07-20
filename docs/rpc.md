@@ -400,16 +400,13 @@ success result:
 {
   "userHistoryEntryId": "history-...",
   "turn": {
-    "aborted": false,
-    "blocked": {
-      "reason": "auto-compaction-failed",
-      "message": "optional failure message"
-    }
+    "status": "completed",
+    "stopReason": "stop"
   }
 }
 ```
 
-`turn.blocked` is omitted for normal completion. currently the only blocked reason is `auto-compaction-failed`, which means tau could not compact safely before continuing the turn.
+`turn` is a discriminated terminal outcome. completed turns include the model `stopReason`; failed turns use status `failed`, stop reason `error`, and an optional `errorMessage`; interrupted turns use status and stop reason `aborted`. blocked turns include a reason and message instead of a stop reason. currently the only blocked reason is `auto-compaction-failed`, which means tau could not compact safely before continuing the turn. The outcome is also persisted on the submitted user message in session snapshots.
 
 if another turn is already running, tau returns:
 
@@ -507,7 +504,8 @@ success result:
 ```json
 {
   "turn": {
-    "aborted": false
+    "status": "completed",
+    "stopReason": "stop"
   }
 }
 ```

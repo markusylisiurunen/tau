@@ -24,6 +24,7 @@ import {
   TauSessionProtocolResponseError,
   TauTransportError,
   createTauSdkClient,
+  getTauSdkSessionTurnOutcome,
 } from "@markusylisiurunen/tau/sdk";
 
 const client = await createTauSdkClient({
@@ -43,10 +44,14 @@ const unsubscribe = session.onDelta((delta) => {
 
 try {
   const submit = await session.submit("summarize this repository");
-  console.log(submit.userHistoryEntryId, submit.turn.aborted);
+  console.log(submit.userHistoryEntryId, submit.turn.status);
 
   const snapshot = await session.snapshot();
-  console.log(snapshot.sessionId, snapshot.messages.length);
+  const recoveredOutcome = getTauSdkSessionTurnOutcome(
+    snapshot,
+    submit.userHistoryEntryId,
+  );
+  console.log(snapshot.sessionId, recoveredOutcome?.status);
 
   await session.unobserve();
 } catch (error) {
@@ -277,6 +282,8 @@ options:
   - appends a user message without running an assistant turn
 - `submit(text, options?)`
   - sends `session.submit` with this session id
+  - returns a discriminated terminal turn outcome with `completed`, `failed`, `aborted`, or `blocked` status
+  - persists the same outcome on the submitted user message; use `getTauSdkSessionTurnOutcome(snapshot, userHistoryEntryId)` after reconnecting
 - `queue(text, options?)`
   - sends `session.queue` with this session id
   - accepts active-work queueing semantics from the session protocol

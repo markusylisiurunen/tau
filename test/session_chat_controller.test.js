@@ -226,7 +226,10 @@ class FakeSession {
         message: createAssistantMessage(`session reply to ${text}`),
       },
     ]);
-    return { userHistoryEntryId: historyEntryId, turn: { aborted: false } };
+    return {
+      userHistoryEntryId: historyEntryId,
+      turn: { status: "completed", stopReason: "stop" },
+    };
   });
   retry = vi.fn(async () => {
     const historyEntryId = "assistant-retry";
@@ -251,7 +254,7 @@ class FakeSession {
         { id: historyEntryId, message },
       ],
     });
-    return { turn: { aborted: false } };
+    return { turn: { status: "completed", stopReason: "stop" } };
   });
   exec = vi.fn(async (command) => {
     if (command.includes("rev-parse --show-toplevel")) {
@@ -284,11 +287,11 @@ class FakeSession {
   });
   queue = vi.fn(async () => ({
     userHistoryEntryId: "queue-1",
-    turn: { aborted: false },
+    turn: { status: "completed", stopReason: "stop" },
   }));
   steer = vi.fn(async () => ({
     userHistoryEntryId: "steer-1",
-    turn: { aborted: false },
+    turn: { status: "completed", stopReason: "stop" },
   }));
   cancelPendingMessages = vi.fn(async () => ({ cancelled: [] }));
   interrupt = vi.fn(async () => ({ interrupted: true, isTurnRunning: false }));
@@ -1403,11 +1406,11 @@ describe("SessionChatController", () => {
 
     session.submit = vi.fn(async (_text, options = {}) => ({
       userHistoryEntryId: options.historyEntryId ?? "queued-user",
-      turn: { aborted: false },
+      turn: { status: "completed", stopReason: "stop" },
     }));
     submitted.resolve({
       userHistoryEntryId: "user-delayed-response",
-      turn: { aborted: false },
+      turn: { status: "completed", stopReason: "stop" },
     });
     await flush();
 
@@ -1639,7 +1642,7 @@ describe("SessionChatController", () => {
 
     submitted.resolve({
       userHistoryEntryId: "user-pending-command",
-      turn: { aborted: false },
+      turn: { status: "completed", stopReason: "stop" },
     });
     await flush();
 

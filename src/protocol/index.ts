@@ -114,6 +114,7 @@ export type {
   SessionProtocolThinkingLevel,
   SessionProtocolTimelineItem,
   SessionProtocolToolRun,
+  SessionProtocolTurnOutcome,
   SessionProtocolTurnResult,
   SessionProtocolUnobserveParams,
   SessionProtocolUnobserveResult,

@@ -952,10 +952,7 @@ export class SessionProtocolHandler {
 
       const result: SessionProtocolResultByMethod[typeof method] = {
         userHistoryEntryId,
-        turn: {
-          aborted: turnResult.aborted,
-          ...(turnResult.blocked ? { blocked: turnResult.blocked } : {}),
-        },
+        turn: turnResult,
       };
 
       if (responseRequests) {
@@ -1011,10 +1008,7 @@ export class SessionProtocolHandler {
       await state.session.snapshot();
 
       const result: SessionProtocolResultByMethod["session.retry"] = {
-        turn: {
-          aborted: turnResult.aborted,
-          ...(turnResult.blocked ? { blocked: turnResult.blocked } : {}),
-        },
+        turn: turnResult,
       };
 
       this.sendMessage(createSessionProtocolSuccessResponse(requestId, "session.retry", result));

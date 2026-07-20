@@ -1362,6 +1362,15 @@ describe("LocalSessionHost", () => {
     expect(snapshot.messages.find((entry) => entry.id === userHistoryEntryId)?.turn).toEqual(
       outcome,
     );
+
+    await hostedSession.rewindToHistoryEntryId(userHistoryEntryId);
+    const replacement = await hostedSession.record({
+      text: "replace the rewound turn",
+      historyEntryId: userHistoryEntryId,
+    });
+    expect(
+      replacement.snapshot.messages.find((entry) => entry.id === userHistoryEntryId),
+    ).not.toHaveProperty("turn");
   });
 
   it("keeps streamed assistant content and idles lifecycle when a turn fails mid-draft", async () => {

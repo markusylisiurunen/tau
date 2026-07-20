@@ -1221,6 +1221,12 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     const messageIds = new Set(this.session.rawHistoryEntries.map((entry) => entry.id));
     messageIds.add("system");
 
+    for (const id of this.turnOutcomes.keys()) {
+      if (!messageIds.has(id)) {
+        this.turnOutcomes.delete(id);
+      }
+    }
+
     for (const [id, tool] of this.tools) {
       if (
         !messageIds.has(tool.call.messageId) ||

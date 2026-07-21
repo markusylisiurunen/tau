@@ -35,7 +35,7 @@ for built-in providers and features, use these `apiKeys` entries: `anthropic`, `
 
 `parallel` is only needed for `web_search`/`web_fetch` usage in sub-agents and can be provided through `apiKeys.parallel` or `PARALLEL_API_KEY` (`PARALLEL_API_KEY` takes precedence).
 
-`/listen` and Telegram audio transcription use Mistral by default (`apiKeys.mistral` or `MISTRAL_API_KEY`, with `MISTRAL_API_KEY` taking precedence). set `speechToText.provider` to `gemini` to use Gemini 3.5 Flash instead (`apiKeys.google` or `GEMINI_API_KEY`). `/listen` also requires `ffmpeg` on your system and is currently supported only on macOS.
+`/listen` and Telegram audio transcription use Mistral by default (`apiKeys.mistral` or `MISTRAL_API_KEY`, with `MISTRAL_API_KEY` taking precedence). set `speechToText.provider` to `gemini` to use Gemini 3.6 Flash instead (`apiKeys.google` or `GEMINI_API_KEY`). `/listen` also requires `ffmpeg` on your system and is currently supported only on macOS.
 
 `tau tool pdf-unpack` uses Mistral OCR (`apiKeys.mistral` or `MISTRAL_API_KEY`) and requires `pdftoppm` from Poppler on your system.
 
@@ -475,7 +475,7 @@ the prune commands drop bash tool results from the active context without summar
 
 `/listen` (or `ctrl+y`) starts microphone recording on macOS, including while the assistant is working. while recording, editor typing is disabled, and `ctrl+y` stops recording and starts transcription at the cursor using the configured speech-to-text provider. `esc` stops recording first without interrupting the assistant; press it again to interrupt active work. recording also auto-stops after 5 minutes. on Linux, `/listen` is currently unavailable and tau shows a warning.
 
-`/speak` rewrites the last assistant message into naturally speakable text with Gemini 3.5 Flash, synthesizes audio with Gemini 3.1 Flash TTS, and starts playing on macOS at 1.4x speed as soon as the first speech chunk is ready.
+`/speak` rewrites the last assistant message into naturally speakable text with Gemini 3.6 Flash, synthesizes audio with Gemini 3.1 Flash TTS, and starts playing on macOS at 1.4x speed as soon as the first speech chunk is ready.
 
 `/rewind` opens a picker over prior user messages in the current context. it truncates history from the selected message onward (including the selected message) and prefills the editor with that message so you can retry from there.
 
@@ -573,7 +573,7 @@ the `defaultPersona` field specifies which persona to use when starting the app.
 
 the `defaultTheme` field sets the theme id to load at startup. it must be non-empty, and matching is exact/case-sensitive. if not specified, it defaults to `gold`.
 
-`speechToText.provider` selects the `/listen` and Telegram audio transcription provider. supported values are `mistral` (default, uses Voxtral) and `gemini` (uses Gemini 3.5 Flash with minimal thinking).
+`speechToText.provider` selects the `/listen` and Telegram audio transcription provider. supported values are `mistral` (default, uses Voxtral) and `gemini` (uses Gemini 3.6 Flash with minimal thinking).
 
 `cloudflareSandbox.bridges` configures host-owned Cloudflare Sandbox bridge targets for hosted sessions. session requests refer to a bridge by id and a pre-existing sandbox id; Tau does not create sandboxes, clone repos, install dependencies, inject secrets, or run readiness checks during `session.create`. paths such as `cwd` are real paths inside the sandbox execution environment. Tau resolves session config/content from that execution environment cwd when creating the session and on `/reload`; bridge credentials stay on the host through either `apiKey` or `apiKeyEnv` and are not stored in session snapshots.
 

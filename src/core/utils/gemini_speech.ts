@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 const GEMINI_GENERATE_CONTENT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
-const DEFAULT_GEMINI_SPEECH_REWRITE_MODEL = "gemini-3.5-flash";
+const DEFAULT_GEMINI_SPEECH_REWRITE_MODEL = "gemini-3.6-flash";
 const DEFAULT_GEMINI_SPEECH_REWRITE_THINKING_LEVEL = "minimal";
 const DEFAULT_GEMINI_SPEECH_TTS_MODEL = "gemini-3.1-flash-tts-preview";
 const DEFAULT_GEMINI_TTS_VOICE_NAME = "Despina";

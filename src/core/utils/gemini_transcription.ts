@@ -2,7 +2,7 @@ import { z } from "zod";
 import { formatSpeechToTextContext, type SpeechToTextContext } from "./speech_to_text_context.js";
 
 const GEMINI_GENERATE_CONTENT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
-const DEFAULT_GEMINI_TRANSCRIPTION_MODEL = "gemini-3.5-flash";
+const DEFAULT_GEMINI_TRANSCRIPTION_MODEL = "gemini-3.6-flash";
 const DEFAULT_GEMINI_TRANSCRIPTION_THINKING_LEVEL = "minimal";
 const DEFAULT_GEMINI_AUDIO_MIME_TYPE = "audio/wav";
 

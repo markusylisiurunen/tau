@@ -69,6 +69,9 @@ describe("gemini speech", () => {
     expect(result.audio.subarray(8, 12).toString()).toBe("WAVE");
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0][0]).toContain(
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent",
+    );
 
     const rewriteRequest = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(rewriteRequest.contents[0].parts[0].text).toContain(

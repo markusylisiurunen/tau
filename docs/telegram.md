@@ -110,7 +110,7 @@ DM and group behavior matches the previous Telegram adapter:
 - limits: 10 attachments/turn, 20 MB/file, 50 MB/turn.
 - oversized Telegram replies are split into chunks capped at 95% of each Telegram API method's byte limit and sent 1 second apart.
 
-Telegram audio transcription uses Mistral by default and requires `MISTRAL_API_KEY` or `apiKeys.mistral` in normal Tau config. Set `speechToText.provider` to `gemini` to use Gemini 3.5 Flash instead, with `GEMINI_API_KEY` or `apiKeys.google`.
+Telegram audio transcription uses Mistral by default and requires `MISTRAL_API_KEY` or `apiKeys.mistral` in normal Tau config. Set `speechToText.provider` to `gemini` to use Gemini 3.6 Flash instead, with `GEMINI_API_KEY` or `apiKeys.google`.
 
 Optional per-bot allowlists:
 

@@ -110,17 +110,30 @@ export type TelegramBotConfig = {
 
 export type TelegramBotConfigMap = Record<string, TelegramBotConfig>;
 
-export type TelegramProjectConfig = {
-  repo: string;
-  ref?: string;
+type TelegramProjectBaseConfig = {
   workspaceRoot?: string;
-  workingDirectory?: string;
   description?: string;
   bootstrapCommands?: string[];
   backgroundBootstrapCommands?: string[];
+};
+
+export type TelegramRepositoryProjectConfig = TelegramProjectBaseConfig & {
+  repo: string;
+  ref?: string;
+  workingDirectory?: string;
   persona?: string;
   noAgentContextFiles?: boolean;
 };
+
+export type TelegramCompositeProjectConfig = TelegramProjectBaseConfig & {
+  projectIds: string[];
+  persona: string;
+  instructions?: string;
+};
+
+export type TelegramProjectConfig =
+  | TelegramRepositoryProjectConfig
+  | TelegramCompositeProjectConfig;
 
 type ConfigDiagnostics = {
   config: Config;

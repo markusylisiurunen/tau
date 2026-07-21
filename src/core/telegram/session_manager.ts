@@ -21,6 +21,7 @@ import { formatTauUserText } from "../utils/user_metadata.js";
 import {
   cleanupWorkspacePath as cleanupWorkspacePathOnDisk,
   cleanupWorkspaceRootsOnStartup,
+  type PreparedWorkspace,
   type PrepareWorkspaceOptions,
   prepareWorkspace,
   type RunBootstrapCommandsOptions,
@@ -258,10 +259,7 @@ export type TelegramSessionManagerOptions = {
   now?: () => Date;
   onLog?: (entry: WorkspaceLogEntry) => void;
   createClient: (options: TelegramSessionClientOptions) => Promise<TelegramSessionClient>;
-  prepareWorkspace?: (options: PrepareWorkspaceOptions) => Promise<{
-    workspacePath: string;
-    sessionCwd: string;
-  }>;
+  prepareWorkspace?: (options: PrepareWorkspaceOptions) => Promise<PreparedWorkspace>;
   runBootstrapCommands?: (options: RunBootstrapCommandsOptions) => Promise<void>;
   cleanupWorkspacePath?: (workspacePath: string) => Promise<void>;
 };
@@ -281,7 +279,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
   ) => Promise<TelegramSessionClient>;
   private readonly prepareWorkspace: (
     options: PrepareWorkspaceOptions,
-  ) => Promise<{ workspacePath: string; sessionCwd: string }>;
+  ) => Promise<PreparedWorkspace>;
   private readonly runBootstrapCommands: (options: RunBootstrapCommandsOptions) => Promise<void>;
   private readonly cleanupWorkspacePath: (workspacePath: string) => Promise<void>;
   private persistenceQueue: Promise<void> = Promise.resolve();
@@ -642,14 +640,20 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       projectId: entry.record.projectId,
       sessionId: entry.record.id,
     });
-    let sessionCwd = resolve(workspacePath, entry.project.workingDirectory ?? ".");
+    let sessionCwd = resolve(
+      workspacePath,
+      "repo" in entry.project ? (entry.project.workingDirectory ?? ".") : ".",
+    );
+    let memberBackgroundBootstrapCommands: PreparedWorkspace["memberBackgroundBootstrapCommands"];
     const shouldPrepareWorkspace = !(await pathIsDirectory(sessionCwd));
     if (shouldPrepareWorkspace) {
       const workspace = await this.prepareWorkspace({
         sessionId: entry.record.id,
         projectId: entry.record.projectId,
         project: entry.project,
+        projects: this.projects,
         workspaceRoot: entry.project.workspaceRoot ?? this.workspaceRoot,
+        defaultWorkspaceRoot: this.workspaceRoot,
         signal: entry.abortController.signal,
         onLog: (workspaceLog) => {
           this.log(
@@ -662,6 +666,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       });
       workspacePath = workspace.workspacePath;
       sessionCwd = workspace.sessionCwd;
+      memberBackgroundBootstrapCommands = workspace.memberBackgroundBootstrapCommands;
     }
     entry.record.workspacePath = workspacePath;
 
@@ -676,7 +681,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     this.setState(entry, "waiting-input");
     this.log(entry, "info", "session recovered", { tauSessionId, workspacePath });
     if (shouldPrepareWorkspace) {
-      this.startBackgroundBootstrap(entry, sessionCwd);
+      this.startBackgroundBootstrap(entry, sessionCwd, memberBackgroundBootstrapCommands);
     }
   }
 
@@ -724,7 +729,9 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
         sessionId: entry.record.id,
         projectId: entry.record.projectId,
         project: entry.project,
+        projects: this.projects,
         workspaceRoot: entry.project.workspaceRoot ?? this.workspaceRoot,
+        defaultWorkspaceRoot: this.workspaceRoot,
         signal: entry.abortController.signal,
         onLog: (workspaceLog) => {
           this.log(
@@ -782,7 +789,11 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
         durationMs: elapsedMs(sessionPreparationStart),
       });
 
-      this.startBackgroundBootstrap(entry, workspace.sessionCwd);
+      this.startBackgroundBootstrap(
+        entry,
+        workspace.sessionCwd,
+        workspace.memberBackgroundBootstrapCommands,
+      );
 
       if (!entry.cancelRequested && entry.record.state !== "failed") {
         this.setState(entry, "waiting-input");
@@ -803,27 +814,40 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     }
   }
 
-  private startBackgroundBootstrap(entry: SessionEntry, sessionCwd: string): void {
-    const commands = entry.project.backgroundBootstrapCommands;
-    if (!commands || commands.length === 0 || entry.backgroundBootstrapPromise) {
+  private startBackgroundBootstrap(
+    entry: SessionEntry,
+    sessionCwd: string,
+    memberCommandGroups: PreparedWorkspace["memberBackgroundBootstrapCommands"],
+  ): void {
+    const commandGroups = [...(memberCommandGroups ?? [])];
+    if (entry.project.backgroundBootstrapCommands) {
+      commandGroups.push({
+        commands: entry.project.backgroundBootstrapCommands,
+        cwd: sessionCwd,
+      });
+    }
+    if (commandGroups.length === 0 || entry.backgroundBootstrapPromise) {
       return;
     }
 
     let backgroundBootstrapPromise: Promise<void>;
-    backgroundBootstrapPromise = this.runBootstrapCommands({
-      commands,
-      cwd: sessionCwd,
-      signal: entry.abortController.signal,
-      mode: "background",
-      onLog: (workspaceLog) => {
-        this.log(
-          entry,
-          workspaceLog.level === "error" ? "error" : "info",
-          workspaceLog.message,
-          workspaceLog.data,
-        );
-      },
-    })
+    backgroundBootstrapPromise = (async () => {
+      for (const commandGroup of commandGroups) {
+        await this.runBootstrapCommands({
+          ...commandGroup,
+          signal: entry.abortController.signal,
+          mode: "background",
+          onLog: (workspaceLog) => {
+            this.log(
+              entry,
+              workspaceLog.level === "error" ? "error" : "info",
+              workspaceLog.message,
+              workspaceLog.data,
+            );
+          },
+        });
+      }
+    })()
       .catch((error) => {
         if (entry.cancelRequested) {
           this.log(entry, "info", "background bootstrap cancelled");
@@ -928,7 +952,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     if (entry.project.persona) {
       options.persona = entry.project.persona;
     }
-    if (entry.project.noAgentContextFiles !== undefined) {
+    if ("repo" in entry.project && entry.project.noAgentContextFiles !== undefined) {
       options.noAgentContextFiles = entry.project.noAgentContextFiles;
     }
     return options;

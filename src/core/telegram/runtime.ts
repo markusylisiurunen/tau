@@ -2,6 +2,10 @@ import type { SpeechToTextProvider } from "../config/schema.js";
 import { startTelegramAdapter, type TelegramAdapterHandle } from "./adapter.js";
 import type { TelegramConfig } from "./config.js";
 import {
+  createTelegramProjectPreferenceStore,
+  resolveTelegramProjectPreferencesPath,
+} from "./project_preferences.js";
+import {
   createTelegramSessionManager,
   resolveTelegramSessionStatePath,
   type TelegramSessionClient,
@@ -89,10 +93,13 @@ export async function startTelegramRuntime(
     createClient: options.createSessionClient,
   });
 
+  const projectPreferences = createTelegramProjectPreferenceStore(
+    resolveTelegramProjectPreferencesPath(options.config.workspaceRoot),
+  );
   const telegramAdapters: TelegramAdapterHandle[] = [];
 
   try {
-    await sessionManager.initialize();
+    await Promise.all([sessionManager.initialize(), projectPreferences.initialize()]);
 
     for (const [botId, botConfig] of Object.entries(options.config.bots)) {
       if (!botConfig.botToken) {
@@ -123,6 +130,7 @@ export async function startTelegramRuntime(
         geminiApiKey: options.geminiApiKey,
         mistralApiKey: options.mistralApiKey,
         sessionManager,
+        projectPreferences,
         onLog: (entry) => {
           options.onLog?.(`[telegram:${botId}:${entry.level}] ${entry.message}`);
         },

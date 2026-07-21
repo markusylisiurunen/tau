@@ -23,7 +23,7 @@ Telegram runner settings are loaded from the JSON file passed to `--config-file`
   "bots": {
     "ops": {
       "botToken": "123456:telegram-token",
-      "allowedProjectIds": ["tau"],
+      "allowedProjectIds": ["tau", "cowork", "tau_cowork"],
       "allowedUserIds": [123456789],
       "allowedChatIds": [123456789],
       "defaultProjectId": "tau",
@@ -37,42 +37,60 @@ Telegram runner settings are loaded from the JSON file passed to `--config-file`
       "repo": "markusylisiurunen/tau",
       "ref": "main",
       "workspaceRoot": "projects/tau",
-      "workingDirectory": "packages/core",
-      "description": "core runtime workspace",
+      "description": "Tau terminal client",
       "bootstrapCommands": ["npm ci"],
       "backgroundBootstrapCommands": ["npm run build"],
       "persona": "gpt-5.5-coder",
       "noAgentContextFiles": false
+    },
+    "cowork": {
+      "repo": "markusylisiurunen/cowork",
+      "ref": "main",
+      "description": "Cowork application",
+      "bootstrapCommands": ["npm ci"]
+    },
+    "tau_cowork": {
+      "projectIds": ["tau", "cowork"],
+      "persona": "gpt-5.6-sol-coder:high",
+      "description": "coordinated Tau and Cowork work",
+      "instructions": "Keep changes in the two repositories coordinated."
     }
   }
 }
 ```
 
-for `projects.<id>.persona`, use `<id>` or `<id>:<reasoning>`.
+Project ids must contain only lowercase letters, digits, and underscores and may be at most 28 characters, so Tau can register `/use_<projectId>` with Telegram. For `projects.<id>.persona`, use `<id>` or `<id>:<reasoning>`.
 
-Notes:
+Each project is exactly one of:
 
-- `projects.<id>.repo` must be GitHub `owner/repo` format.
+- A repository project with a GitHub `owner/repo` value and optional `ref`, `workspaceRoot`, `workingDirectory`, `description`, `bootstrapCommands`, `backgroundBootstrapCommands`, `persona`, and `noAgentContextFiles`.
+- A composite project with at least two unique repository `projectIds`, required `persona`, and optional `workspaceRoot`, `description`, `instructions`, `bootstrapCommands`, and `backgroundBootstrapCommands`. Composite projects cannot reference other composites.
+
+Repository project behavior:
+
 - Relative `workspaceRoot` values resolve from the Telegram config file directory.
-- `projects.<id>.workingDirectory` must be a relative path inside the cloned repository.
-- Tau starts each Telegram session from `workingDirectory` when configured, otherwise from the repo root.
-- `bootstrapCommands` run from the same session working directory and block readiness.
-- `backgroundBootstrapCommands` run from the same session working directory after a new or reconstructed workspace is ready and do not block readiness.
-- Preserved workspaces skip both bootstrap command lists during runner restart recovery.
-- failing `backgroundBootstrapCommands` are logged as warnings, but the session remains available.
-- `projects.<id>.ref` is optional, but recommended when every session should start from the same branch.
+- `workingDirectory` must be a relative path inside the cloned repository. Tau starts the session there when configured, otherwise at the repository root.
+- `bootstrapCommands` run from the session working directory and block readiness. `backgroundBootstrapCommands` start after readiness and do not block it.
+- `ref` is optional, but recommended when every session should start from the same branch.
 - Repositories use an automatic persistent bare cache at `<workspaceRoot>-repo-cache/<projectId>.git`: the first session initializes it with `gh repo clone <owner/repo> <cache> -- --bare`, later sessions run `git fetch --prune origin`, then each session workspace is cloned from the local cache with `git clone --shared`.
-- Tau persists Telegram session records at `<workspaceRoot>-sessions.json`. Runner startup removes workspace-root entries that are not referenced by persisted sessions, reconnects recoverable records to their Tau snapshots, reuses preserved session workspaces, and reconstructs a missing workspace from the repository cache before reconnecting.
-- On Telegram adapter startup, Tau also prunes stale `tau-telegram-attachments-*` directories under the system temp directory.
-- `systemMessage` is prepended to every submitted Telegram message inside a `<system>...</system>` block.
-- `bots.<botId>.systemMessage` is appended after `systemMessage` for Telegram-originated messages only, within the same `<system>...</system>` block.
+
+A composite session starts from a generated root containing each member in a directory named after its project id. Tau prepares members using their existing repository caches, runs member bootstrap commands in each member's configured working directory, writes a root `AGENTS.md` describing the workspace, and writes `.tau/config.json` with `agentContextFiles` for member AGENTS files from each repository root through its configured working directory. Composite bootstrap commands then run from the generated root. Member background commands run before composite background commands without blocking readiness.
+
+Child `.tau` configuration is not merged into the main composite session. The composite's required persona is authoritative and must be available from the generated root. Subagents launched with a child repository as their working directory resolve that repository's own Tau configuration normally.
+
+Preserved workspaces skip all bootstrap command lists during runner restart recovery. Failing background commands are logged as warnings, but the session remains available. Synchronous composite preparation is all-or-nothing and removes the generated workspace if any member or composite bootstrap step fails.
+
+Tau persists Telegram session records at `<workspaceRoot>-sessions.json` and project preferences at `<workspaceRoot>-project-preferences.json`. Runner startup removes workspace-root entries that are not referenced by persisted sessions, reconnects recoverable records to their Tau snapshots, reuses preserved session workspaces, and reconstructs a missing workspace from repository caches before reconnecting. On Telegram adapter startup, Tau also prunes stale `tau-telegram-attachments-*` directories under the system temp directory.
+
+`systemMessage` is prepended to every submitted Telegram message inside a `<system>...</system>` block. `bots.<botId>.systemMessage` is appended after `systemMessage` for Telegram-originated messages only, within the same block.
 
 ## Telegram behavior
 
 Supported slash commands:
 
-- `/new` creates a new session for the chat. If the chat already has an active session, the old session is closed and its workspace is cleaned up. `/new` uses `bots.<botId>.defaultProjectId` when set, otherwise it auto-selects when exactly one project is available to that bot.
-- `/status` returns a short natural-language paragraph about the active session, including model, reasoning effort, context usage, and cumulative cost when session details are available.
+- `/use_<projectId>` stores the project to use for future `/new` sessions in that Telegram DM or group. It does not create, close, or switch the active session. The preference survives runner restarts. `defaultProjectId` provides the initial preference, and a sole allowed project is selected automatically.
+- `/new` closes the active session, if any, cleans its workspace, and creates its replacement using the stored project preference.
+- `/status` reports the active session's project, including composite members, plus model, reasoning effort, context usage, and cumulative cost when available. If the next-session preference differs, it reports both. With no active session, it reports the current preference.
 - `/compact` summarizes older conversation context to reduce context usage.
 - `/interrupt` interrupts the active run.
 

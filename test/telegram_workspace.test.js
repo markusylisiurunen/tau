@@ -175,6 +175,152 @@ describe("telegram workspace", () => {
     );
   });
 
+  it("prepares composite workspaces with generated root context", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const bootstrapCalls = [];
+
+    spawnWithCaptureMock.mockImplementation(async (command, commandArgs, options) => {
+      if (command === "gh") {
+        await mkdir(commandArgs[3], { recursive: true });
+        return { exitCode: 0, output: "cached" };
+      }
+
+      if (command === "git") {
+        if (commandArgs[2] === "remote" && commandArgs[3] === "get-url") {
+          const repo = commandArgs[1].endsWith("tau.git") ? "tau" : "cowork";
+          return { exitCode: 0, output: `git@github.com:owner/${repo}.git\n` };
+        }
+
+        if (commandArgs[0] === "clone") {
+          const cachePath = commandArgs[2];
+          const memberPath = commandArgs[3];
+          await mkdir(memberPath, { recursive: true });
+          await writeFile(join(memberPath, "AGENTS.md"), "member instructions");
+          if (cachePath.endsWith("cowork.git")) {
+            await mkdir(join(memberPath, "packages", "core"), { recursive: true });
+            await writeFile(join(memberPath, "packages", "AGENTS.md"), "package instructions");
+            await writeFile(join(memberPath, "packages", "core", "AGENTS.md"), "core instructions");
+          }
+          return { exitCode: 0, output: "cloned from cache" };
+        }
+
+        return { exitCode: 0, output: "" };
+      }
+
+      if (options.shell) {
+        bootstrapCalls.push({ command, cwd: options.cwd });
+        return { exitCode: 0, output: "bootstrapped" };
+      }
+
+      throw new Error(`unexpected command: ${command}`);
+    });
+
+    const projects = {
+      tau: {
+        repo: "owner/tau",
+        bootstrapCommands: ["bootstrap tau"],
+        backgroundBootstrapCommands: ["watch tau"],
+      },
+      cowork: {
+        repo: "owner/cowork",
+        ref: "main",
+        workingDirectory: "packages/core",
+        bootstrapCommands: ["bootstrap cowork"],
+        backgroundBootstrapCommands: ["watch cowork"],
+      },
+      platform: {
+        projectIds: ["tau", "cowork"],
+        persona: "gpt-5.6-sol-coder:high",
+        bootstrapCommands: ["bootstrap platform"],
+        instructions: "Coordinate changes across both repositories.",
+      },
+    };
+    const result = await prepareWorkspace({
+      sessionId: "abc12345",
+      projectId: "platform",
+      project: projects.platform,
+      projects,
+      workspaceRoot,
+      defaultWorkspaceRoot: workspaceRoot,
+    });
+
+    expect(result.sessionCwd).toBe(result.workspacePath);
+    expect(bootstrapCalls).toEqual([
+      { command: "bootstrap tau", cwd: join(result.workspacePath, "tau") },
+      {
+        command: "bootstrap cowork",
+        cwd: join(result.workspacePath, "cowork", "packages", "core"),
+      },
+      { command: "bootstrap platform", cwd: result.workspacePath },
+    ]);
+    expect(result.memberBackgroundBootstrapCommands).toEqual([
+      { commands: ["watch tau"], cwd: join(result.workspacePath, "tau") },
+      {
+        commands: ["watch cowork"],
+        cwd: join(result.workspacePath, "cowork", "packages", "core"),
+      },
+    ]);
+
+    expect(
+      JSON.parse(await readFile(join(result.workspacePath, ".tau", "config.json"), "utf8")),
+    ).toEqual({
+      agentContextFiles: [
+        "tau/AGENTS.md",
+        "cowork/AGENTS.md",
+        "cowork/packages/AGENTS.md",
+        "cowork/packages/core/AGENTS.md",
+      ],
+    });
+    const agents = await readFile(join(result.workspacePath, "AGENTS.md"), "utf8");
+    expect(agents).toContain("`tau/`: repository `owner/tau`");
+    expect(agents).toContain("`cowork/`: repository `owner/cowork`, ref `main`");
+    expect(agents).toContain("Coordinate changes across both repositories.");
+    expect(agents).not.toContain("report verification");
+  });
+
+  it("removes a composite workspace when member preparation fails", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const workspacePath = join(workspaceRoot, "platform", "abc12345");
+
+    spawnWithCaptureMock.mockImplementation(async (command, commandArgs) => {
+      if (command === "gh") {
+        await mkdir(commandArgs[3], { recursive: true });
+        return { exitCode: 0, output: "cached" };
+      }
+      if (command === "git" && commandArgs[2] === "remote") {
+        return { exitCode: 0, output: "git@github.com:owner/repo.git\n" };
+      }
+      if (command === "git" && commandArgs[0] === "clone") {
+        if (commandArgs[2].endsWith("beta.git")) {
+          return { exitCode: 1, output: "clone failed" };
+        }
+        await mkdir(commandArgs[3], { recursive: true });
+        return { exitCode: 0, output: "cloned" };
+      }
+      return { exitCode: 0, output: "" };
+    });
+
+    const projects = {
+      alpha: { repo: "owner/alpha" },
+      beta: { repo: "owner/beta" },
+      platform: {
+        projectIds: ["alpha", "beta"],
+        persona: "gpt-5.6-sol-coder",
+      },
+    };
+    await expect(
+      prepareWorkspace({
+        sessionId: "abc12345",
+        projectId: "platform",
+        project: projects.platform,
+        projects,
+        workspaceRoot,
+        defaultWorkspaceRoot: workspaceRoot,
+      }),
+    ).rejects.toThrow("repository clone from cache failed");
+    await expect(readdir(workspacePath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("fetches an existing repository cache before cloning", async () => {
     const workspaceRoot = await createWorkspaceRoot();
     const cachePath = join(`${workspaceRoot}-repo-cache`, "tau.git");

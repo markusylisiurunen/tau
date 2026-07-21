@@ -128,8 +128,7 @@ function getWaitCostTotal(results: SubagentResult[]): number {
 }
 
 function formatAgentIdsDisplayTarget(ids: string[]): string {
-  const cleaned = ids.map((id) => id.trim()).filter(Boolean);
-  return cleaned.length > 0 ? cleaned.join(", ") : "(invalid arguments)";
+  return ids.join(", ");
 }
 
 function getWaitForAgentsDisplayTarget(raw: unknown): string {

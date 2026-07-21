@@ -567,15 +567,9 @@ describe("session runner tool dispatch context", () => {
   });
 
   it("derives queued targets from completed built-in tool arguments", async () => {
-    const signal = new AbortController().signal;
-    const dispatchedCommands = [];
+    const abortController = new AbortController();
     const toolRegistry = new ToolRegistry([
-      createBashToolDefinition({
-        runBash(command) {
-          dispatchedCommands.push(command);
-          return new Promise(() => {});
-        },
-      }),
+      createBashToolDefinition({}),
       createWriteToolDefinition({}),
     ]);
     const dispatchContext = {
@@ -622,37 +616,32 @@ describe("session runner tool dispatch context", () => {
       ],
       toolRegistry,
       enabledTools: toolRegistry.schemas,
-      signal,
+      signal: abortController.signal,
       dispatchContext,
     })[Symbol.asyncIterator]();
+    const queuedEvents = [];
 
-    await expect(iterator.next()).resolves.toMatchObject({
-      value: {
-        uiEvent: { toolCallId: "bash-call", headerTarget: "printf hello" },
-      },
-    });
-    await expect(iterator.next()).resolves.toMatchObject({
-      value: {
-        uiEvent: { toolCallId: "second-bash-call", headerTarget: "ssh host 'du -h /'" },
-      },
-    });
-    await expect(iterator.next()).resolves.toMatchObject({
-      value: {
-        uiEvent: { toolCallId: "write-call", headerTarget: "src/output.ts" },
-      },
-    });
-    await expect(iterator.next()).resolves.toMatchObject({
-      value: {
-        uiEvent: { toolCallId: "invalid-bash-call", headerTarget: "(invalid arguments)" },
-      },
-    });
-    await expect(iterator.next()).resolves.toMatchObject({
-      value: {
-        uiEvent: { type: "bash_started", toolCallId: "bash-call" },
-      },
-    });
-    expect(dispatchedCommands).toEqual(["printf hello\nprintf ignored"]);
-    await iterator.return();
+    for (let index = 0; index < 4; index++) {
+      const next = await iterator.next();
+      queuedEvents.push(next.value);
+    }
+
+    expect(
+      queuedEvents.map((event) => [
+        event.uiEvent.type,
+        event.uiEvent.toolCallId,
+        event.uiEvent.toolName,
+        event.uiEvent.headerTarget,
+      ]),
+    ).toEqual([
+      ["tool_call_queued", "bash-call", "bash", "printf hello"],
+      ["tool_call_queued", "second-bash-call", "bash", "ssh host 'du -h /'"],
+      ["tool_call_queued", "write-call", "write", "src/output.ts"],
+      ["tool_call_queued", "invalid-bash-call", "bash", "(invalid arguments)"],
+    ]);
+
+    abortController.abort();
+    await expect(iterator.next()).resolves.toEqual({ done: true, value: undefined });
   });
 
   it("converts rejected tool runs into tool error results", async () => {

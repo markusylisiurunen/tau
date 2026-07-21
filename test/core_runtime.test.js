@@ -640,11 +640,7 @@ describe("core session rewind APIs", () => {
 
   it("starts streamed tool calls early while preserving sequential execution", async () => {
     const firstCall = fauxToolCall("first_tool", {}, { id: "first-call" });
-    const secondCall = fauxToolCall(
-      "second_tool",
-      { displayTarget: "ssh host 'du -h /'" },
-      { id: "second-call" },
-    );
+    const secondCall = fauxToolCall("second_tool", {}, { id: "second-call" });
     const toolMessage = fauxAssistantMessage([firstCall, secondCall], {
       stopReason: "toolUse",
     });
@@ -667,7 +663,7 @@ describe("core session rewind APIs", () => {
     });
     let secondHasStarted = false;
 
-    const createDefinition = (name, dispatch) => ({
+    const createDefinition = (name, displayTarget, dispatch) => ({
       schema: {
         name,
         description: "test tool",
@@ -677,11 +673,11 @@ describe("core session rewind APIs", () => {
           additionalProperties: false,
         },
       },
-      getDisplayTarget: (toolCall) => toolCall.arguments.displayTarget ?? toolCall.name,
+      getDisplayTarget: () => displayTarget,
       dispatch,
     });
     const toolRegistry = new ToolRegistry([
-      createDefinition("first_tool", async (toolCall) => {
+      createDefinition("first_tool", "first_tool", async (toolCall) => {
         markFirstStarted();
         await firstRun;
         return {
@@ -697,7 +693,7 @@ describe("core session rewind APIs", () => {
           }),
         };
       }),
-      createDefinition("second_tool", async (toolCall) => {
+      createDefinition("second_tool", "ssh host 'du -h /'", async (toolCall) => {
         secondHasStarted = true;
         markSecondStarted();
         return {

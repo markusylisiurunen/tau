@@ -272,6 +272,8 @@ describe("telegram workspace", () => {
       ],
     });
     const agents = await readFile(join(result.workspacePath, "AGENTS.md"), "utf8");
+    expect(agents).toContain("This workspace contains multiple independent Git repositories:");
+    expect(agents).not.toContain("Telegram");
     expect(agents).toContain("`tau/`: repository `owner/tau`");
     expect(agents).toContain("`cowork/`: repository `owner/cowork`, ref `main`");
     expect(agents).toContain("Coordinate changes across both repositories.");

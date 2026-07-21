@@ -715,14 +715,13 @@ async function collectMemberAgentContextFiles(options: {
 }
 
 function formatCompositeAgentsFile(options: {
-  projectId: string;
   project: Extract<TelegramProjectConfig, { projectIds: string[] }>;
   projects: Record<string, TelegramProjectConfig>;
 }): string {
   const lines = [
     "# Multi-repository workspace",
     "",
-    `This generated workspace is the Telegram project \`${options.projectId}\` and contains multiple independent Git repositories:`,
+    "This workspace contains multiple independent Git repositories:",
     "",
   ];
 
@@ -757,7 +756,6 @@ function formatCompositeAgentsFile(options: {
 
 async function writeCompositeWorkspaceFiles(options: {
   workspacePath: string;
-  projectId: string;
   project: Extract<TelegramProjectConfig, { projectIds: string[] }>;
   projects: Record<string, TelegramProjectConfig>;
 }): Promise<void> {
@@ -848,7 +846,6 @@ export async function prepareWorkspace(
 
     await writeCompositeWorkspaceFiles({
       workspacePath,
-      projectId: options.projectId,
       project: options.project,
       projects: options.projects,
     });

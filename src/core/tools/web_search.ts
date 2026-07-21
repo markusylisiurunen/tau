@@ -113,6 +113,11 @@ function parseArgs(raw: unknown): { ok: true; data: WebSearchArgs } | { ok: fals
   return { ok: true, data: parsed.data };
 }
 
+function getWebSearchDisplayTarget(raw: unknown): string {
+  const parsedArgs = parseArgs(raw);
+  return parsedArgs.ok ? parsedArgs.data.objective : "(invalid arguments)";
+}
+
 function estimateParallelSearchCostUsd(
   maxResultsRequested: number | undefined,
   resultsReturned: number | undefined,
@@ -171,10 +176,11 @@ function formatSearchResults(response: ParallelSearchResponse): TruncationResult
 export function createWebSearchToolDefinition(config: Config): ToolDefinition {
   return {
     schema: WEB_SEARCH_TOOL,
+    getDisplayTarget: (toolCall) => getWebSearchDisplayTarget(toolCall.arguments),
     async dispatch(toolCall: ToolCall, signal?: AbortSignal): Promise<ToolDispatch> {
       const parsedArgs = parseArgs(toolCall.arguments);
       const objective = parsedArgs.ok ? parsedArgs.data.objective : "";
-      const headerTarget = objective || "(invalid arguments)";
+      const headerTarget = getWebSearchDisplayTarget(toolCall.arguments);
 
       const blocked = (reason: string): ToolDispatchResult => {
         const toolResult = createToolError(toolCall, reason);

@@ -61,6 +61,11 @@ function parseEditArgs(
   return { ok: true, data: parsed.data };
 }
 
+function getEditDisplayTarget(raw: unknown): string {
+  const parsedArgs = parseEditArgs(raw);
+  return parsedArgs.ok ? parsedArgs.data.path : "(invalid arguments)";
+}
+
 function countOccurrences(content: string, search: string): number {
   if (!search) return 0;
   let count = 0;
@@ -123,11 +128,12 @@ function buildEditUiText(args: {
 export function createEditToolDefinition(backend: ToolExecutionBackend): ToolDefinition {
   return {
     schema: EDIT_TOOL,
+    getDisplayTarget: (toolCall) => getEditDisplayTarget(toolCall.arguments),
     async dispatch(toolCall: ToolCall): Promise<ToolDispatch> {
       return createToolDispatch(async () => {
         const parsedArgs = parseEditArgs(toolCall.arguments);
         const path = parsedArgs.ok ? parsedArgs.data.path : "";
-        const headerTarget = path || "(invalid arguments)";
+        const headerTarget = getEditDisplayTarget(toolCall.arguments);
 
         const blocked = (reason: string): ToolDispatchResult => {
           const toolResult = createToolError(toolCall, reason);

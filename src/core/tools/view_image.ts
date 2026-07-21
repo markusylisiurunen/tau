@@ -58,6 +58,11 @@ function parseViewImageArgs(
   return { ok: true, data: parsed.data };
 }
 
+function getViewImageDisplayTarget(raw: unknown): string {
+  const parsedArgs = parseViewImageArgs(raw);
+  return parsedArgs.ok ? parsedArgs.data.path : "(invalid arguments)";
+}
+
 type SupportedImageType = (typeof SUPPORTED_IMAGE_TYPES)[number];
 
 type ImageEncodePlan =
@@ -234,11 +239,12 @@ function buildViewImageUiText(args: { mimeType: string; fullText: string }): Too
 export function createViewImageToolDefinition(backend: ToolExecutionBackend): ToolDefinition {
   return {
     schema: VIEW_IMAGE_TOOL,
+    getDisplayTarget: (toolCall) => getViewImageDisplayTarget(toolCall.arguments),
     async dispatch(toolCall: ToolCall): Promise<ToolDispatch> {
       return createToolDispatch(async () => {
         const parsedArgs = parseViewImageArgs(toolCall.arguments);
         const path = parsedArgs.ok ? parsedArgs.data.path : "";
-        const headerTarget = path || "(invalid arguments)";
+        const headerTarget = getViewImageDisplayTarget(toolCall.arguments);
 
         const blocked = (reason: string): ToolDispatchResult => {
           const toolResult = createToolError(toolCall, reason);

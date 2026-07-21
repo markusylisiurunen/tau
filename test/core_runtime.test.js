@@ -640,7 +640,11 @@ describe("core session rewind APIs", () => {
 
   it("starts streamed tool calls early while preserving sequential execution", async () => {
     const firstCall = fauxToolCall("first_tool", {}, { id: "first-call" });
-    const secondCall = fauxToolCall("second_tool", {}, { id: "second-call" });
+    const secondCall = fauxToolCall(
+      "second_tool",
+      { displayTarget: "ssh host 'du -h /'" },
+      { id: "second-call" },
+    );
     const toolMessage = fauxAssistantMessage([firstCall, secondCall], {
       stopReason: "toolUse",
     });
@@ -673,6 +677,7 @@ describe("core session rewind APIs", () => {
           additionalProperties: false,
         },
       },
+      getDisplayTarget: (toolCall) => toolCall.arguments.displayTarget ?? toolCall.name,
       dispatch,
     });
     const toolRegistry = new ToolRegistry([
@@ -775,6 +780,14 @@ describe("core session rewind APIs", () => {
 
     await Promise.all([firstStarted, secondQueued]);
     expect(
+      events.find(
+        (event) =>
+          event.type === "tool_ui" &&
+          event.uiEvent.type === "tool_call_queued" &&
+          event.uiEvent.toolCallId === secondCall.id,
+      ),
+    ).toMatchObject({ uiEvent: { headerTarget: "ssh host 'du -h /'" } });
+    expect(
       events
         .filter((event) => event.type === "tool_ui" && event.uiEvent.type === "tool_call_queued")
         .map((event) => event.uiEvent.toolCallId),
@@ -821,6 +834,7 @@ describe("core session rewind APIs", () => {
             additionalProperties: false,
           },
         },
+        getDisplayTarget: (toolCall) => toolCall.name,
         dispatch: async (call) => {
           executedSequences.push(call.arguments.sequence);
           return {
@@ -910,6 +924,7 @@ describe("core session rewind APIs", () => {
           description: "test tool",
           parameters: { type: "object", properties: {}, additionalProperties: false },
         },
+        getDisplayTarget: (toolCall) => toolCall.name,
         dispatch: async (call) => ({
           run: Promise.resolve({
             toolResult: {
@@ -986,6 +1001,7 @@ describe("core session rewind APIs", () => {
             additionalProperties: false,
           },
         },
+        getDisplayTarget: (toolCall) => toolCall.name,
         dispatch: async (call) => {
           executions += 1;
           return {
@@ -1119,6 +1135,7 @@ describe("core session rewind APIs", () => {
             additionalProperties: false,
           },
         },
+        getDisplayTarget: (toolCall) => toolCall.name,
         dispatch: async (call) => {
           executions += 1;
           return {
@@ -1211,6 +1228,7 @@ describe("core session rewind APIs", () => {
             additionalProperties: false,
           },
         },
+        getDisplayTarget: (toolCall) => toolCall.name,
         dispatch: async (call, signal) => {
           executions += 1;
           if (!signal.aborted) {
@@ -1320,6 +1338,7 @@ describe("core session rewind APIs", () => {
             additionalProperties: false,
           },
         },
+        getDisplayTarget: (toolCall) => toolCall.name,
         dispatch: async (call, signal) => {
           markToolStarted();
           await new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true }));
@@ -1387,6 +1406,7 @@ describe("core session rewind APIs", () => {
             additionalProperties: false,
           },
         },
+        getDisplayTarget: (toolCall) => toolCall.name,
         async dispatch(_toolCall, _signal, context) {
           toolContextReasoning.push(context.persona.settings.reasoning);
           session.setReasoning("high");
@@ -1488,6 +1508,7 @@ describe("core session rewind APIs", () => {
               additionalProperties: false,
             },
           },
+          getDisplayTarget: (toolCall) => toolCall.name,
           async dispatch(toolCall, _signal, context) {
             receivedOriginHistoryEntryId = context.originHistoryEntryId;
             return {

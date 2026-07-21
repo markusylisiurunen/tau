@@ -127,20 +127,27 @@ function getWaitCostTotal(results: SubagentResult[]): number {
   return results.reduce((sum, result) => sum + result.costTotal, 0);
 }
 
+function formatAgentIdsDisplayTarget(ids: string[]): string {
+  const cleaned = ids.map((id) => id.trim()).filter(Boolean);
+  return cleaned.length > 0 ? cleaned.join(", ") : "(invalid arguments)";
+}
+
+function getWaitForAgentsDisplayTarget(raw: unknown): string {
+  const parsedArgs = parseToolArgs(waitArgsSchema, raw);
+  return parsedArgs.ok ? formatAgentIdsDisplayTarget(parsedArgs.data.ids) : "(invalid arguments)";
+}
+
 export function createWaitForAgentsToolDefinition(): ToolDefinition {
   return {
     schema: WAIT_FOR_AGENTS_TOOL,
+    getDisplayTarget: (toolCall) => getWaitForAgentsDisplayTarget(toolCall.arguments),
     async dispatch(
       toolCall: ToolCall,
       signal: AbortSignal,
       context: ToolDispatchContext,
     ): Promise<ToolDispatch> {
       let ids: string[] = [];
-      const formatHeaderTarget = (entries: string[]): string => {
-        const cleaned = entries.map((id) => id.trim()).filter(Boolean);
-        return cleaned.length > 0 ? cleaned.join(", ") : "(invalid arguments)";
-      };
-      let headerTarget = "(invalid arguments)";
+      const headerTarget = getWaitForAgentsDisplayTarget(toolCall.arguments);
 
       const blocked = (reason: string): ToolDispatchResult => {
         const toolResult = createToolError(toolCall, reason);
@@ -160,7 +167,6 @@ export function createWaitForAgentsToolDefinition(): ToolDefinition {
       }
 
       ({ ids } = parsedArgs.data);
-      headerTarget = formatHeaderTarget(ids);
 
       const deduped: string[] = [];
       const seen = new Set<string>();
@@ -170,7 +176,7 @@ export function createWaitForAgentsToolDefinition(): ToolDefinition {
           deduped.push(id);
         }
       }
-      const dedupedTarget = formatHeaderTarget(deduped);
+      const dedupedTarget = formatAgentIdsDisplayTarget(deduped);
 
       if (!isMainToolDispatchContext(context)) {
         return createToolDispatch(() =>

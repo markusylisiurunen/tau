@@ -288,14 +288,18 @@ function prepareToolCall(
   return { type: "ready", toolCall, definition };
 }
 
-function createToolQueuedEvent(toolCall: ToolCall): CoreToolUiEvent {
+function createToolQueuedEvent(
+  prepared: Extract<PreparedToolCall, { type: "ready" }>,
+  context: ToolDispatchContext,
+): CoreToolUiEvent {
+  const { toolCall, definition } = prepared;
   return {
     type: "tool_ui",
     uiEvent: {
       type: "tool_call_queued",
       toolCallId: toolCall.id,
       toolName: toolCall.name,
-      headerTarget: toolCall.name,
+      headerTarget: definition.getDisplayTarget(toolCall, context),
     },
   };
 }
@@ -320,7 +324,9 @@ export class SequentialToolCallRunner implements AsyncIterable<ToolRunnerEvent> 
   enqueue(toolCall: ToolCall): CoreToolUiEvent | undefined {
     const prepared = prepareToolCall(toolCall, this.options);
     this.enqueuePrepared(prepared);
-    return prepared.type === "ready" ? createToolQueuedEvent(toolCall) : undefined;
+    return prepared.type === "ready"
+      ? createToolQueuedEvent(prepared, this.options.dispatchContext)
+      : undefined;
   }
 
   enqueueRejected(toolCall: ToolCall, message: string): void {
@@ -462,7 +468,7 @@ export async function* runToolCalls(
       break;
     }
     if (prepared.type === "ready") {
-      yield createToolQueuedEvent(prepared.toolCall);
+      yield createToolQueuedEvent(prepared, dispatchContext);
     }
   }
 

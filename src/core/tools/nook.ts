@@ -120,6 +120,15 @@ const nookArgsSchema = z
 
 type NookToolArgs = z.infer<typeof nookArgsSchema>;
 
+function formatNookDisplayTarget(args: NookToolArgs): string {
+  return [args.operation, args.site, args.template, args.key].filter(Boolean).join(" ");
+}
+
+function getNookDisplayTarget(raw: unknown): string {
+  const parsedArgs = nookArgsSchema.safeParse(raw);
+  return parsedArgs.success ? formatNookDisplayTarget(parsedArgs.data) : "(invalid arguments)";
+}
+
 const NOOK_UI_PREVIEW_HEAD_LINES = 3;
 const NOOK_UI_PREVIEW_TAIL_LINES = 3;
 
@@ -169,7 +178,7 @@ function buildUiEvent(
     type: "client_tool_finished",
     toolCallId: toolCall.id,
     toolName: TOOL_NAME_NOOK,
-    headerTarget: TOOL_NAME_NOOK,
+    headerTarget: getNookDisplayTarget(toolCall.arguments),
     status,
     uiText: buildNookUiText(message),
   };
@@ -178,6 +187,7 @@ function buildUiEvent(
 export function createNookToolDefinition(backend: ToolExecutionBackend): ToolDefinition {
   return {
     schema: NOOK_TOOL,
+    getDisplayTarget: (toolCall) => getNookDisplayTarget(toolCall.arguments),
     async dispatch(
       toolCall: ToolCall,
       _signal: AbortSignal,

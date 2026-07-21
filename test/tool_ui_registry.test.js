@@ -30,10 +30,11 @@ describe("ToolUiRegistry", () => {
       type: "tool_call_queued",
       toolCallId: "q1",
       toolName: "bash",
-      headerTarget: "bash",
+      headerTarget: "printf hello",
     });
     expect(queued).toContain("queued");
-    expect(queued).toContain("bash");
+    expect(queued).toContain("printf hello");
+    expect(queued).not.toContain("bash");
   });
 
   it("renders client tool completion events", () => {

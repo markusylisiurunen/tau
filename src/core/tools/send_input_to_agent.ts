@@ -56,11 +56,24 @@ function resolveSnapshotTarget(snapshot: SubagentStateSnapshot) {
   return { name: snapshot.name, title: snapshot.title };
 }
 
+function getSendInputDisplayTarget(raw: unknown, context: ToolDispatchContext): string {
+  const parsedArgs = parseToolArgs(sendInputArgsSchema, raw);
+  if (!parsedArgs.ok) {
+    return "(invalid arguments)";
+  }
+  const { id } = parsedArgs.data;
+  if (!isMainToolDispatchContext(context)) {
+    return id;
+  }
+  return context.subagentControlPlane.getSnapshot(id)?.title ?? id;
+}
+
 export function createSendInputToAgentToolDefinition(
   backend: ToolExecutionBackend,
 ): ToolDefinition {
   return {
     schema: SEND_INPUT_TO_AGENT_TOOL,
+    getDisplayTarget: (toolCall, context) => getSendInputDisplayTarget(toolCall.arguments, context),
     async dispatch(
       toolCall: ToolCall,
       signal: AbortSignal,
@@ -68,7 +81,7 @@ export function createSendInputToAgentToolDefinition(
     ): Promise<ToolDispatch> {
       let id = "";
       let prompt = "";
-      let headerTarget = "(invalid arguments)";
+      const headerTarget = getSendInputDisplayTarget(toolCall.arguments, context);
 
       const blocked = (
         reason: string,
@@ -93,7 +106,6 @@ export function createSendInputToAgentToolDefinition(
       }
 
       ({ id, prompt } = parsedArgs.data);
-      headerTarget = id;
 
       if (!isMainToolDispatchContext(context)) {
         return createToolDispatch(() =>

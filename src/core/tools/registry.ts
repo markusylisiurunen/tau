@@ -341,6 +341,7 @@ export function isSubagentToolDispatchContext(
 
 export interface ToolDefinition {
   readonly schema: Tool;
+  getDisplayTarget(toolCall: ToolCall, context: ToolDispatchContext): string;
   dispatch(
     toolCall: ToolCall,
     signal: AbortSignal,

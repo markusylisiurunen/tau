@@ -66,6 +66,11 @@ function parseListArgs(raw: unknown):
   return { ok: true, data: parsed.data };
 }
 
+function getListDisplayTarget(raw: unknown): string {
+  const parsedArgs = parseListArgs(raw);
+  return parsedArgs.ok ? parsedArgs.data.path : "(invalid arguments)";
+}
+
 function formatListToolResultText(entries: string[]): string {
   return entries.join("\n");
 }
@@ -101,11 +106,12 @@ function buildListUiText(args: {
 export function createListToolDefinition(backend: ToolExecutionBackend): ToolDefinition {
   return {
     schema: LIST_TOOL,
+    getDisplayTarget: (toolCall) => getListDisplayTarget(toolCall.arguments),
     async dispatch(toolCall: ToolCall): Promise<ToolDispatch> {
       return createToolDispatch(async () => {
         const parsedArgs = parseListArgs(toolCall.arguments);
         const path = parsedArgs.ok ? parsedArgs.data.path : "";
-        const headerTarget = path || "(invalid arguments)";
+        const headerTarget = getListDisplayTarget(toolCall.arguments);
 
         const blocked = (reason: string): ToolDispatchResult => {
           const toolResult = createToolError(toolCall, reason);

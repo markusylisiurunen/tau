@@ -292,7 +292,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
 
   registry.register("tool_call_queued", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "tool_call_queued" }>;
-    return buildToolQueuedView(context.theme, uiEvent.toolName);
+    return buildToolQueuedView(context.theme, uiEvent.headerTarget);
   });
 
   registry.register("client_tool_finished", (event, context) => {

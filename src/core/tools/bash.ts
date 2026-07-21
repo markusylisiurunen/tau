@@ -380,9 +380,18 @@ function parseBashArgs(raw: unknown):
   };
 }
 
+function getBashDisplayTarget(raw: unknown): string {
+  const parsedArgs = parseBashArgs(raw);
+  if (!parsedArgs.ok) {
+    return "(invalid arguments)";
+  }
+  return parsedArgs.data.commandForDisplay.split(/\r?\n/)[0] ?? parsedArgs.data.commandForDisplay;
+}
+
 export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDefinition {
   return {
     schema: BASH_TOOL,
+    getDisplayTarget: (toolCall) => getBashDisplayTarget(toolCall.arguments),
     async dispatch(
       toolCall: ToolCall,
       signal: AbortSignal,
@@ -392,7 +401,7 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
       const commandForDisplay = parsedArgs.ok
         ? parsedArgs.data.commandForDisplay
         : parsedArgs.commandForDisplay;
-      const headerTarget = commandForDisplay.split(/\r?\n/)[0] ?? commandForDisplay;
+      const headerTarget = getBashDisplayTarget(toolCall.arguments);
 
       const blocked = (reason: string): ToolDispatchResult => {
         const toolResult = createToolError(toolCall, reason);

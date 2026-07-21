@@ -10,10 +10,11 @@ import {
   pruneSessionHistory,
 } from "../dist/core/session/pruning.js";
 import { runModelSubturn, runToolCalls } from "../dist/core/session/runner.js";
-import { BASH_DEFAULT_TIMEOUT_MS } from "../dist/core/tools/bash.js";
+import { BASH_DEFAULT_TIMEOUT_MS, createBashToolDefinition } from "../dist/core/tools/bash.js";
 import { scopeToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
 import { ToolRegistry } from "../dist/core/tools/registry.js";
 import { TOOL_NAME_BASH, TOOL_NAME_EDIT } from "../dist/core/tools/tool_names.js";
+import { createWriteToolDefinition } from "../dist/core/tools/write.js";
 import { buildCompactionUserMessage } from "../dist/core/utils/compact.js";
 import { autocompleteProjectPathsWithBackend } from "../dist/core/utils/project_files.js";
 import { prependTauUserMetadata } from "../dist/core/utils/user_metadata.js";
@@ -425,6 +426,7 @@ describe("session runner tool dispatch context", () => {
           additionalProperties: false,
         },
       },
+      getDisplayTarget: () => "sleep 30",
       async dispatch(call) {
         return {
           startedUiEvent: {
@@ -473,6 +475,7 @@ describe("session runner tool dispatch context", () => {
           additionalProperties: false,
         },
       },
+      getDisplayTarget: () => "fast.txt",
       async dispatch(call) {
         fastDispatched = true;
         return {
@@ -524,13 +527,21 @@ describe("session runner tool dispatch context", () => {
     await expect(iterator.next()).resolves.toMatchObject({
       value: {
         type: "tool_ui",
-        uiEvent: { type: "tool_call_queued", toolCallId: "slow-call" },
+        uiEvent: {
+          type: "tool_call_queued",
+          toolCallId: "slow-call",
+          headerTarget: "sleep 30",
+        },
       },
     });
     await expect(iterator.next()).resolves.toMatchObject({
       value: {
         type: "tool_ui",
-        uiEvent: { type: "tool_call_queued", toolCallId: "fast-call" },
+        uiEvent: {
+          type: "tool_call_queued",
+          toolCallId: "fast-call",
+          headerTarget: "fast.txt",
+        },
       },
     });
     await expect(iterator.next()).resolves.toMatchObject({
@@ -555,6 +566,95 @@ describe("session runner tool dispatch context", () => {
     ).toEqual(["bash_execution", "write_success", "tool_result", "tool_result"]);
   });
 
+  it("derives queued targets from completed built-in tool arguments", async () => {
+    const signal = new AbortController().signal;
+    const dispatchedCommands = [];
+    const toolRegistry = new ToolRegistry([
+      createBashToolDefinition({
+        runBash(command) {
+          dispatchedCommands.push(command);
+          return new Promise(() => {});
+        },
+      }),
+      createWriteToolDefinition({}),
+    ]);
+    const dispatchContext = {
+      scope: "subagent",
+      config: {},
+      toolRegistry,
+      authPath: "/tmp/auth.json",
+      originHistoryEntryId: "history-1",
+      cwd: "/repo/subagent",
+      subagentContext: {
+        id: "subagent-1",
+        name: "default",
+        title: "default",
+        originHistoryEntryId: "history-1",
+        controlPlane: { recordEmitOutput: () => {} },
+      },
+    };
+    const iterator = runToolCalls({
+      toolCalls: [
+        {
+          id: "bash-call",
+          type: "toolCall",
+          name: "bash",
+          arguments: { command: "printf hello\nprintf ignored" },
+        },
+        {
+          id: "second-bash-call",
+          type: "toolCall",
+          name: "bash",
+          arguments: { command: "ssh host 'du -h /'" },
+        },
+        {
+          id: "write-call",
+          type: "toolCall",
+          name: "write",
+          arguments: { path: "src/output.ts", content: "content" },
+        },
+        {
+          id: "invalid-bash-call",
+          type: "toolCall",
+          name: "bash",
+          arguments: { command: 42 },
+        },
+      ],
+      toolRegistry,
+      enabledTools: toolRegistry.schemas,
+      signal,
+      dispatchContext,
+    })[Symbol.asyncIterator]();
+
+    await expect(iterator.next()).resolves.toMatchObject({
+      value: {
+        uiEvent: { toolCallId: "bash-call", headerTarget: "printf hello" },
+      },
+    });
+    await expect(iterator.next()).resolves.toMatchObject({
+      value: {
+        uiEvent: { toolCallId: "second-bash-call", headerTarget: "ssh host 'du -h /'" },
+      },
+    });
+    await expect(iterator.next()).resolves.toMatchObject({
+      value: {
+        uiEvent: { toolCallId: "write-call", headerTarget: "src/output.ts" },
+      },
+    });
+    await expect(iterator.next()).resolves.toMatchObject({
+      value: {
+        uiEvent: { toolCallId: "invalid-bash-call", headerTarget: "(invalid arguments)" },
+      },
+    });
+    await expect(iterator.next()).resolves.toMatchObject({
+      value: {
+        uiEvent: { type: "bash_started", toolCallId: "bash-call" },
+      },
+    });
+    expect(dispatchedCommands).toEqual(["printf hello\nprintf ignored"]);
+    await iterator.return();
+  });
+
   it("converts rejected tool runs into tool error results", async () => {
     const signal = new AbortController().signal;
     const toolCall = {
@@ -573,6 +673,7 @@ describe("session runner tool dispatch context", () => {
           additionalProperties: false,
         },
       },
+      getDisplayTarget: () => "fake_tool",
       async dispatch() {
         return { run: Promise.reject(new Error("run failed")) };
       },
@@ -648,6 +749,7 @@ describe("session runner tool dispatch context", () => {
           additionalProperties: false,
         },
       },
+      getDisplayTarget: () => "fake_tool",
       async dispatch(call, dispatchSignal, context) {
         receivedSignal = dispatchSignal;
         receivedContext = context;

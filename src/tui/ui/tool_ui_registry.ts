@@ -55,22 +55,26 @@ function buildSimpleToolRunningView(
   };
 }
 
-function buildToolQueuedView(theme: Theme, toolName: string): ToolOutputViewModel {
+function buildToolPendingView(
+  theme: Theme,
+  label: "preparing" | "queued",
+  toolName: string,
+): ToolOutputViewModel {
   const { palette, text } = theme;
-  const queuedColor = (s: string) => palette.textMuted(s);
+  const pendingColor = (s: string) => palette.textMuted(s);
 
   const header = buildToolHeaderLine({
-    bulletStyle: queuedColor,
+    bulletStyle: pendingColor,
     bullet: "⏵",
-    label: "queued",
+    label,
     labelStyle: palette.textMuted,
     accent: inlineText(toolName),
     accentStyle: palette.brandAccent,
   });
 
   return {
-    borderColor: queuedColor,
-    expanded: { title: queuedColor(text.bold(`queued ${toolName}`)) },
+    borderColor: pendingColor,
+    expanded: { title: pendingColor(text.bold(`${label} ${toolName}`)) },
     compact: { header },
   };
 }
@@ -122,7 +126,7 @@ function buildSimpleToolFinishedView(args: {
   theme: Theme;
   label: string;
   target: string;
-  status: "success" | "error";
+  status: "success" | "error" | "blocked";
   message?: string;
 }): ToolOutputViewModel {
   const { theme, label, target, status, message } = args;
@@ -131,11 +135,16 @@ function buildSimpleToolFinishedView(args: {
   const errorColor = (s: string) => palette.actionError(s);
   const isSuccess = status === "success";
   const borderColor = isSuccess ? successColor : errorColor;
+  const statusLabel = isSuccess
+    ? label
+    : status === "blocked"
+      ? `${label} blocked`
+      : `${label} failed`;
 
   const header = buildToolHeaderLine({
     bulletStyle: borderColor,
     bullet: isSuccess ? "✓" : "✗",
-    label: isSuccess ? label : `${label} failed`,
+    label: statusLabel,
     labelStyle: palette.textMuted,
     accent: inlineText(target),
     accentStyle: palette.brandAccent,
@@ -290,9 +299,25 @@ export class ToolUiRegistry {
 export function createToolUiRegistry(): ToolUiRegistry {
   const registry = new ToolUiRegistry();
 
+  registry.register("tool_call_streaming", (event, context) => {
+    const uiEvent = event as Extract<ToolUiEvent, { type: "tool_call_streaming" }>;
+    return buildToolPendingView(context.theme, "preparing", uiEvent.toolName);
+  });
+
   registry.register("tool_call_queued", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "tool_call_queued" }>;
-    return buildToolQueuedView(context.theme, uiEvent.headerTarget);
+    return buildToolPendingView(context.theme, "queued", uiEvent.headerTarget);
+  });
+
+  registry.register("tool_call_blocked", (event, context) => {
+    const uiEvent = event as Extract<ToolUiEvent, { type: "tool_call_blocked" }>;
+    return buildSimpleToolFinishedView({
+      theme: context.theme,
+      label: "tool call",
+      target: uiEvent.toolName,
+      status: "blocked",
+      message: uiEvent.reason,
+    });
   });
 
   registry.register("client_tool_finished", (event, context) => {

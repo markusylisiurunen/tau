@@ -17,6 +17,8 @@ export function getToolResultFirstLine(toolResult: ToolResultMessage): string {
 
 export function formatToolUiEventForProgress(uiEvent: ToolUiEvent): string | undefined {
   switch (uiEvent.type) {
+    case "tool_call_blocked":
+      return `tool blocked: ${uiEvent.toolName} (${normalizeOneLine(uiEvent.reason)})`;
     case "bash_started":
       return `bash running: ${uiEvent.command.replace(/\n/g, " ")}`;
     case "bash_execution":

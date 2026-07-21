@@ -160,9 +160,9 @@ describe("session runner tool dispatch context", () => {
           [
             { type: "text_delta", delta: "a" },
             { type: "text_delta", delta: "b" },
-            { type: "toolcall_start", contentIndex: 1 },
-            { type: "toolcall_delta", contentIndex: 1, delta: "{}" },
-            { type: "toolcall_end", contentIndex: 1, toolCall },
+            { type: "toolcall_start", contentIndex: 1, partial: finalMessage },
+            { type: "toolcall_delta", contentIndex: 1, delta: "{}", partial: finalMessage },
+            { type: "toolcall_end", contentIndex: 1, toolCall, partial: finalMessage },
           ],
           finalMessage,
         );
@@ -210,6 +210,12 @@ describe("session runner tool dispatch context", () => {
           },
         },
         {
+          type: "tool_call_streaming",
+          toolCallId: toolCall.id,
+          toolName: toolCall.name,
+          contentIndex: 1,
+        },
+        {
           type: "assistant_partial",
           snapshot: {
             text: "ab",
@@ -223,6 +229,150 @@ describe("session runner tool dispatch context", () => {
     } finally {
       now.mockRestore();
     }
+  });
+
+  it("replaces changed streamed identities and discards unfinished calls on failure", async () => {
+    const oldCall = {
+      id: "old-call",
+      type: "toolCall",
+      name: "write",
+      arguments: {},
+    };
+    const newCall = { ...oldCall, id: "new-call" };
+    const partial = {
+      role: "assistant",
+      content: [oldCall],
+      timestamp: 1,
+    };
+    const modelRuntime = {
+      streamModel() {
+        return createModelStream(
+          [
+            { type: "toolcall_start", contentIndex: 0, partial },
+            {
+              type: "toolcall_delta",
+              contentIndex: 0,
+              delta: "{}",
+              partial: { ...partial, content: [newCall] },
+            },
+          ],
+          undefined,
+          new Error("stream failed"),
+        );
+      },
+    };
+    const runner = runModelSubturn({
+      model: {},
+      context: {},
+      modelRuntime,
+      streamOptions: {},
+      signal: new AbortController().signal,
+      emitPartials: true,
+    });
+    const events = [];
+
+    await expect(async () => {
+      while (true) {
+        const next = await runner.next();
+        if (next.done) break;
+        events.push(next.value);
+      }
+    }).rejects.toThrow("stream failed");
+
+    expect(events).toEqual([
+      {
+        type: "tool_call_streaming",
+        toolCallId: "old-call",
+        toolName: "write",
+        contentIndex: 0,
+      },
+      {
+        type: "tool_call_streaming",
+        toolCallId: "new-call",
+        toolName: "write",
+        contentIndex: 0,
+      },
+      {
+        type: "tool_call_discarded",
+        toolCallId: "new-call",
+        contentIndex: 0,
+      },
+    ]);
+  });
+
+  it("discards completed calls still buffered behind earlier calls", async () => {
+    const earlierCall = {
+      id: "earlier-call",
+      type: "toolCall",
+      name: "bash",
+      arguments: {},
+    };
+    const laterCall = {
+      id: "later-call",
+      type: "toolCall",
+      name: "write",
+      arguments: {},
+    };
+    const partial = {
+      role: "assistant",
+      content: [earlierCall, laterCall],
+      timestamp: 1,
+    };
+    const modelRuntime = {
+      streamModel() {
+        return createModelStream(
+          [
+            { type: "toolcall_start", contentIndex: 0, partial },
+            { type: "toolcall_start", contentIndex: 1, partial },
+            { type: "toolcall_end", contentIndex: 1, toolCall: laterCall, partial },
+          ],
+          undefined,
+          new Error("stream failed"),
+        );
+      },
+    };
+    const runner = runModelSubturn({
+      model: {},
+      context: {},
+      modelRuntime,
+      streamOptions: {},
+      signal: new AbortController().signal,
+      emitPartials: true,
+    });
+    const events = [];
+
+    await expect(async () => {
+      while (true) {
+        const next = await runner.next();
+        if (next.done) break;
+        events.push(next.value);
+      }
+    }).rejects.toThrow("stream failed");
+
+    expect(events).toEqual([
+      {
+        type: "tool_call_streaming",
+        toolCallId: earlierCall.id,
+        toolName: earlierCall.name,
+        contentIndex: 0,
+      },
+      {
+        type: "tool_call_streaming",
+        toolCallId: laterCall.id,
+        toolName: laterCall.name,
+        contentIndex: 1,
+      },
+      {
+        type: "tool_call_discarded",
+        toolCallId: earlierCall.id,
+        contentIndex: 0,
+      },
+      {
+        type: "tool_call_discarded",
+        toolCallId: laterCall.id,
+        contentIndex: 1,
+      },
+    ]);
   });
 
   it("retries without exposing tool calls when early execution is disabled", async () => {
@@ -642,6 +792,55 @@ describe("session runner tool dispatch context", () => {
 
     abortController.abort();
     await expect(iterator.next()).resolves.toEqual({ done: true, value: undefined });
+  });
+
+  it("emits a terminal blocked event for calls rejected before dispatch", async () => {
+    const toolCall = {
+      id: "blocked-call",
+      type: "toolCall",
+      name: "disabled_tool",
+      arguments: {},
+    };
+    const events = [];
+    const toolRegistry = new ToolRegistry([]);
+    for await (const event of runToolCalls({
+      toolCalls: [toolCall],
+      toolRegistry,
+      enabledTools: [],
+      signal: new AbortController().signal,
+      dispatchContext: {
+        scope: "main",
+        config: {},
+        toolRegistry,
+        authPath: "/tmp/auth.json",
+        originHistoryEntryId: "history-1",
+        cwd: "/repo",
+      },
+    })) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      {
+        type: "tool_ui",
+        uiEvent: {
+          type: "tool_call_blocked",
+          toolCallId: toolCall.id,
+          toolName: toolCall.name,
+          headerTarget: toolCall.name,
+          reason: "Tool 'disabled_tool' is not enabled for this session.",
+        },
+      },
+      {
+        type: "notice",
+        severity: "error",
+        text: "Tool 'disabled_tool' is not enabled for this session.",
+      },
+      {
+        type: "tool_result",
+        message: expect.objectContaining({ toolCallId: toolCall.id, isError: true }),
+      },
+    ]);
   });
 
   it("converts rejected tool runs into tool error results", async () => {

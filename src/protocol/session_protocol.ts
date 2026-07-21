@@ -553,22 +553,32 @@ export type SessionProtocolSnapshot = {
   facets: Record<string, SessionProtocolFacet>;
 };
 
-export type SessionProtocolToolRun = {
+type SessionProtocolToolRunBase = {
   id: string;
   toolCallId: string;
   toolName: string;
-  call: {
-    messageId: string;
-    contentIndex: number;
-  };
-  status: "queued" | "running" | "succeeded" | "failed" | "blocked" | "cancelled";
-  startedAt?: number;
-  finishedAt?: number;
-  resultMessageId?: string;
-  summary?: string;
-  error?: string;
   facetIds: string[];
 };
+
+type SessionProtocolToolPosition = {
+  messageId: string;
+  contentIndex: number;
+};
+
+export type SessionProtocolToolRun =
+  | (SessionProtocolToolRunBase & {
+      status: "streaming";
+      origin: SessionProtocolToolPosition;
+    })
+  | (SessionProtocolToolRunBase & {
+      status: "queued" | "running" | "succeeded" | "failed" | "blocked" | "cancelled";
+      call: SessionProtocolToolPosition;
+      startedAt?: number;
+      finishedAt?: number;
+      resultMessageId?: string;
+      summary?: string;
+      error?: string;
+    });
 
 export type SessionProtocolAgentRun = {
   id: string;
@@ -1693,26 +1703,39 @@ const sessionProtocolTimelineItemSchema = z.discriminatedUnion("type", [
     .strip(),
 ]);
 
-const sessionProtocolToolRunSchema = z
+const sessionProtocolToolRunBaseSchema = z.object({
+  id: nonEmptyStringSchema,
+  toolCallId: nonEmptyStringSchema,
+  toolName: nonEmptyStringSchema,
+  facetIds: z.array(nonEmptyStringSchema),
+});
+
+const sessionProtocolToolPositionSchema = z
   .object({
-    id: nonEmptyStringSchema,
-    toolCallId: nonEmptyStringSchema,
-    toolName: nonEmptyStringSchema,
-    call: z
-      .object({
-        messageId: nonEmptyStringSchema,
-        contentIndex: z.number().int().nonnegative(),
-      })
-      .strip(),
-    status: z.enum(["queued", "running", "succeeded", "failed", "blocked", "cancelled"]),
-    startedAt: z.number().finite().optional(),
-    finishedAt: z.number().finite().optional(),
-    resultMessageId: nonEmptyStringSchema.optional(),
-    summary: z.string().optional(),
-    error: z.string().optional(),
-    facetIds: z.array(nonEmptyStringSchema),
+    messageId: nonEmptyStringSchema,
+    contentIndex: z.number().int().nonnegative(),
   })
   .strip();
+
+const sessionProtocolToolRunSchema = z.discriminatedUnion("status", [
+  sessionProtocolToolRunBaseSchema
+    .extend({
+      status: z.literal("streaming"),
+      origin: sessionProtocolToolPositionSchema,
+    })
+    .strip(),
+  sessionProtocolToolRunBaseSchema
+    .extend({
+      status: z.enum(["queued", "running", "succeeded", "failed", "blocked", "cancelled"]),
+      call: sessionProtocolToolPositionSchema,
+      startedAt: z.number().finite().optional(),
+      finishedAt: z.number().finite().optional(),
+      resultMessageId: nonEmptyStringSchema.optional(),
+      summary: z.string().optional(),
+      error: z.string().optional(),
+    })
+    .strip(),
+]);
 
 const sessionProtocolAgentUsageSchema = z
   .object({
@@ -1831,6 +1854,32 @@ const sessionProtocolSnapshotSchema = z
           message: `tool map key '${id}' does not match embedded identity`,
         });
       }
+      for (const facetId of tool.facetIds) {
+        const facet = snapshot.facets[facetId];
+        if (facet === undefined || facet.subject.type !== "tool" || facet.subject.id !== id) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["tools", id, "facetIds"],
+            message: `tool '${id}' references invalid facet '${facetId}'`,
+          });
+        }
+      }
+      if (tool.status === "streaming") {
+        const originMessage = messagesById.get(tool.origin.messageId);
+        if (
+          originMessage === undefined ||
+          originMessage.state !== "draft" ||
+          originMessage.message.role !== "assistant"
+        ) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["tools", id, "origin"],
+            message: `streaming tool '${id}' does not reference a draft assistant message`,
+          });
+        }
+        continue;
+      }
+
       const callMessage = messagesById.get(tool.call.messageId);
       if (callMessage === undefined) {
         ctx.addIssue({
@@ -1877,16 +1926,6 @@ const sessionProtocolSnapshotSchema = z
             code: "custom",
             path: ["tools", id, "resultMessageId"],
             message: `tool '${id}' does not match its result message`,
-          });
-        }
-      }
-      for (const facetId of tool.facetIds) {
-        const facet = snapshot.facets[facetId];
-        if (facet === undefined || facet.subject.type !== "tool" || facet.subject.id !== id) {
-          ctx.addIssue({
-            code: "custom",
-            path: ["tools", id, "facetIds"],
-            message: `tool '${id}' references invalid facet '${facetId}'`,
           });
         }
       }

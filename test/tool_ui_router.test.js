@@ -4,6 +4,7 @@ import { ToolUiRouter } from "../dist/tui/tool_ui_router.js";
 function createHarness() {
   const added = [];
   const replaced = [];
+  const removed = [];
   const messageIds = new Set();
   let renders = 0;
 
@@ -27,6 +28,12 @@ function createHarness() {
       replaced.push({ id, model });
       return true;
     },
+    removeMessages: (ids) => {
+      removed.push(...ids);
+      for (const id of ids) {
+        messageIds.delete(id);
+      }
+    },
   };
 
   const router = new ToolUiRouter({
@@ -40,6 +47,7 @@ function createHarness() {
     router,
     added,
     replaced,
+    removed,
     removeMessage: (id) => {
       messageIds.delete(id);
     },
@@ -231,6 +239,40 @@ describe("ToolUiRouter prune mutations", () => {
     expect(harness.added).toHaveLength(2);
     expect(harness.added.at(-1)).toMatchObject({ id: "write-1" });
     expect(harness.replaced).toHaveLength(0);
+  });
+});
+
+describe("ToolUiRouter snapshot reconciliation", () => {
+  it("removes tool cards that are no longer present in the snapshot", () => {
+    const harness = createHarness();
+    harness.router.handle({
+      type: "tool_call_streaming",
+      toolCallId: "stale-call",
+      toolName: "write",
+      headerTarget: "write",
+    });
+    harness.router.handle({
+      type: "tool_call_streaming",
+      toolCallId: "current-call",
+      toolName: "bash",
+      headerTarget: "bash",
+    });
+
+    harness.router.reconcileSession(["current-call"]);
+
+    expect(harness.removed).toEqual(["stale-call"]);
+    expect(getLatestEventsMap(harness.router).size).toBe(0);
+    harness.router.handle({
+      type: "tool_call_queued",
+      toolCallId: "current-call",
+      toolName: "bash",
+      headerTarget: "bash",
+    });
+    expect(harness.added.filter((entry) => entry.id === "current-call")).toHaveLength(1);
+    expect(harness.replaced.at(-1)).toMatchObject({
+      id: "current-call",
+      model: { event: { type: "tool_call_queued" } },
+    });
   });
 });
 

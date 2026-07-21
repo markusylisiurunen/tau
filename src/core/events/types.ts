@@ -26,6 +26,22 @@ export type CoreNoticeEvent = {
   text: string;
 };
 
+export type CoreToolCallStreamingEvent = {
+  type: "tool_call_streaming";
+  historyEntryId: string;
+  toolCallId: string;
+  toolName: string;
+  contentIndex: number;
+  replacesToolCallId?: string;
+};
+
+export type CoreToolCallDiscardedEvent = {
+  type: "tool_call_discarded";
+  historyEntryId: string;
+  toolCallId: string;
+  contentIndex: number;
+};
+
 export type CoreToolUiEvent = {
   type: "tool_ui";
   uiEvent: ToolUiEvent;
@@ -91,6 +107,8 @@ export type CoreEvent =
   | CoreAssistantFinalEvent
   | CoreAssistantPartialEvent
   | CoreNoticeEvent
+  | CoreToolCallStreamingEvent
+  | CoreToolCallDiscardedEvent
   | CoreToolUiEvent
   | CoreSubagentUiEvent
   | CoreToolResultEvent
@@ -101,6 +119,19 @@ export type CoreEvent =
 export type RunnerAssistantPartialEvent = {
   type: "assistant_partial";
   snapshot: AssistantPartialSnapshot;
+};
+
+export type RunnerToolCallStreamingEvent = {
+  type: "tool_call_streaming";
+  toolCallId: string;
+  toolName: string;
+  contentIndex: number;
+};
+
+export type RunnerToolCallDiscardedEvent = {
+  type: "tool_call_discarded";
+  toolCallId: string;
+  contentIndex: number;
 };
 
 export type RunnerToolResultEvent = {

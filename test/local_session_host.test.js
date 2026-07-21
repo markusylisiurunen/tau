@@ -22,8 +22,8 @@ function createEnvironment(now = Date.parse("2026-01-01T00:00:00.000Z")) {
 
 function createTestExecutionEnvironment(
   snapshot = { kind: "local", cwd: "/repo", home: "/home/user" },
+  toolBackend = createLocalToolExecutionBackend(),
 ) {
-  const toolBackend = createLocalToolExecutionBackend();
   const toolRegistry = ToolCatalog.createRegistry(toolBackend);
   return {
     resolveRuntimeConfig: async () => ({
@@ -1065,6 +1065,33 @@ describe("LocalSessionHost", () => {
     });
   });
 
+  it("removes streaming tool projections when their draft is interrupted", async () => {
+    const host = createHost(new MemorySessionStore());
+    const hostedSession = await host.createSession(localCreateInput);
+
+    await hostedSession.enqueueRuntimeEvent({
+      type: "assistant_start",
+      historyEntryId: "assistant-interrupted",
+    });
+    await hostedSession.enqueueRuntimeEvent({
+      type: "tool_call_streaming",
+      historyEntryId: "assistant-interrupted",
+      toolCallId: "streaming-call",
+      toolName: "write",
+      contentIndex: 0,
+    });
+    await hostedSession.interruptDraftAssistantMessage();
+
+    const snapshot = await hostedSession.snapshot();
+    expect(snapshot.tools).toEqual({});
+    expect(snapshot.facets).toEqual({});
+    expect(snapshot.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "assistant-interrupted", state: "interrupted" }),
+      ]),
+    );
+  });
+
   it("publishes later streamed tool calls as queued before they execute", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "tau-tool-streaming-"));
     const executionEnvironment = createTestExecutionEnvironment({
@@ -1098,11 +1125,30 @@ describe("LocalSessionHost", () => {
             if (response !== toolMessage) {
               return;
             }
-            yield { type: "text_delta", contentIndex: 0, delta: "running commands" };
-            yield { type: "toolcall_start", contentIndex: 1 };
-            yield { type: "toolcall_end", contentIndex: 1, toolCall: firstCall };
-            yield { type: "toolcall_start", contentIndex: 2 };
-            yield { type: "toolcall_end", contentIndex: 2, toolCall: secondCall };
+            const firstPartial = {
+              ...toolMessage,
+              content: [toolMessage.content[0], firstCall],
+            };
+            yield {
+              type: "text_delta",
+              contentIndex: 0,
+              delta: "running commands",
+              partial: firstPartial,
+            };
+            yield { type: "toolcall_start", contentIndex: 1, partial: firstPartial };
+            yield {
+              type: "toolcall_end",
+              contentIndex: 1,
+              toolCall: firstCall,
+              partial: firstPartial,
+            };
+            yield { type: "toolcall_start", contentIndex: 2, partial: toolMessage };
+            yield {
+              type: "toolcall_end",
+              contentIndex: 2,
+              toolCall: secondCall,
+              partial: toolMessage,
+            };
           },
           async result() {
             return response;
@@ -1157,6 +1203,118 @@ describe("LocalSessionHost", () => {
       );
 
       await turn;
+    } finally {
+      await host.shutdown();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("publishes streamed tool identity before arguments complete without starting execution", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "tau-tool-arguments-"));
+    const toolBackend = createLocalToolExecutionBackend();
+    const writeFile = vi.spyOn(toolBackend, "writeFile");
+    const executionEnvironment = createTestExecutionEnvironment(
+      { kind: "local", cwd, home: cwd },
+      toolBackend,
+    );
+    const host = createHostForEnvironment(new MemorySessionStore(), executionEnvironment);
+
+    try {
+      const hostedSession = await host.createSession({
+        executionEnvironment: { kind: "local", cwd },
+      });
+      const content = "streamed-content-must-not-leak";
+      const path = join(cwd, "notes.txt");
+      const toolCall = fauxToolCall("write", { path, content }, { id: "write-call" });
+      const toolMessage = fauxAssistantMessage([toolCall], { stopReason: "toolUse" });
+      const finalMessage = fauxAssistantMessage("done");
+      const responses = [toolMessage, finalMessage];
+      let markArgumentsStreaming;
+      const argumentsStreaming = new Promise((resolve) => {
+        markArgumentsStreaming = resolve;
+      });
+      let releaseArguments;
+      const argumentsReleased = new Promise((resolve) => {
+        releaseArguments = resolve;
+      });
+
+      hostedSession.runtime.session.engine.modelRuntime.streamModel = () => {
+        const response = responses.shift();
+        return {
+          async *[Symbol.asyncIterator]() {
+            if (response !== toolMessage) {
+              return;
+            }
+            const partialCall = { ...toolCall, arguments: {} };
+            const partial = { ...toolMessage, content: [partialCall] };
+            yield { type: "toolcall_start", contentIndex: 0, partial };
+            yield {
+              type: "toolcall_delta",
+              contentIndex: 0,
+              delta: JSON.stringify({ path }),
+              partial: {
+                ...partial,
+                content: [{ ...partialCall, arguments: { path } }],
+              },
+            };
+            markArgumentsStreaming();
+            await argumentsReleased;
+            yield {
+              type: "toolcall_delta",
+              contentIndex: 0,
+              delta: JSON.stringify({ content }),
+              partial: toolMessage,
+            };
+            yield {
+              type: "toolcall_end",
+              contentIndex: 0,
+              toolCall,
+              partial: toolMessage,
+            };
+          },
+          async result() {
+            return response;
+          },
+        };
+      };
+
+      const deltas = [];
+      hostedSession.onDelta((delta) => deltas.push(delta));
+      await hostedSession.record({ text: "write the file" });
+      const turn = hostedSession.runTurn();
+      await argumentsStreaming;
+
+      const streamingSnapshot = await hostedSession.snapshot();
+      expect(streamingSnapshot.tools[toolCall.id]).toEqual({
+        id: toolCall.id,
+        toolCallId: toolCall.id,
+        toolName: toolCall.name,
+        status: "streaming",
+        origin: { messageId: expect.any(String), contentIndex: 0 },
+        facetIds: [`tool-ui-${toolCall.id}`],
+      });
+      expect(streamingSnapshot.facets[`tool-ui-${toolCall.id}`].data.events).toEqual([
+        expect.objectContaining({ type: "tool_call_streaming", toolCallId: toolCall.id }),
+      ]);
+      expect(
+        streamingSnapshot.messages
+          .find((message) => message.state === "draft")
+          ?.message.content.some((item) => item.type === "toolCall"),
+      ).toBe(false);
+      expect(writeFile).not.toHaveBeenCalled();
+      expect(JSON.stringify(deltas)).not.toContain(content);
+
+      releaseArguments();
+      await turn;
+
+      const finalSnapshot = await hostedSession.snapshot();
+      expect(finalSnapshot.tools[toolCall.id]).toEqual(
+        expect.objectContaining({
+          status: "succeeded",
+          call: { contentIndex: 0, messageId: expect.any(String) },
+        }),
+      );
+      expect(writeFile).toHaveBeenCalledOnce();
     } finally {
       await host.shutdown();
       rmSync(cwd, { recursive: true, force: true });
@@ -2784,6 +2942,34 @@ describe("LocalSessionHost", () => {
           messageId: "assistant-draft",
         },
       ],
+      tools: {
+        "streaming-tool": {
+          id: "streaming-tool",
+          toolCallId: "streaming-tool",
+          toolName: "write",
+          status: "streaming",
+          origin: { messageId: "assistant-draft", contentIndex: 1 },
+          facetIds: ["tool-ui-streaming-tool"],
+        },
+      },
+      facets: {
+        "tool-ui-streaming-tool": {
+          id: "tool-ui-streaming-tool",
+          subject: { type: "tool", id: "streaming-tool" },
+          kind: "tau.tool-ui-events",
+          version: 1,
+          data: {
+            events: [
+              {
+                type: "tool_call_streaming",
+                toolCallId: "streaming-tool",
+                toolName: "write",
+                headerTarget: "write",
+              },
+            ],
+          },
+        },
+      },
     });
     await store.commitSessionSnapshot(storedSnapshot);
 
@@ -2795,6 +2981,8 @@ describe("LocalSessionHost", () => {
     }
     const snapshot = await recoveredSession.snapshot();
     expect(snapshot.lifecycle).toBe("idle");
+    expect(snapshot.tools).toEqual({});
+    expect(snapshot.facets).toEqual({});
     expect(snapshot.messages).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

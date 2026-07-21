@@ -635,7 +635,7 @@ returns current session state:
 - `executionEnvironment` (where tools/files/commands execute)
 - `messages` (complete synchronized transcript with stable message ids)
 - `timeline` (default render projection; may omit messages that still exist in `messages`)
-- `tools` (semantic tool execution state keyed by tool call id)
+- `tools` (semantic tool execution state keyed by tool call id; `streaming` runs expose only tool identity plus draft-message origin, while executable states reference a complete assistant `toolCall` through `call`)
 - `agents` (semantic subagent execution state)
 - `facets` (client-only structured metadata attached to session/message/tool/agent/operation subjects)
 

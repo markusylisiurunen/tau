@@ -1239,9 +1239,12 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     }
 
     for (const [id, tool] of this.tools) {
+      const messageId = tool.status === "streaming" ? tool.origin.messageId : tool.call.messageId;
       if (
-        !messageIds.has(tool.call.messageId) ||
-        (tool.resultMessageId !== undefined && !messageIds.has(tool.resultMessageId))
+        !messageIds.has(messageId) ||
+        (tool.status !== "streaming" &&
+          tool.resultMessageId !== undefined &&
+          !messageIds.has(tool.resultMessageId))
       ) {
         this.tools.delete(id);
       }
@@ -1474,6 +1477,15 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     return write;
   }
 
+  private removeToolRun(tool: SessionProtocolToolRun, changes: SessionProtocolChange[]): void {
+    this.tools.delete(tool.id);
+    for (const facetId of tool.facetIds) {
+      this.facets.delete(facetId);
+      changes.push({ type: "facet.remove", id: facetId });
+    }
+    changes.push({ type: "tool.remove", id: tool.id });
+  }
+
   private async recordRuntimeEvent(event: CoreEvent): Promise<void> {
     switch (event.type) {
       case "assistant_start": {
@@ -1496,6 +1508,70 @@ class LocalHostedSessionHandle implements LocalHostedSession {
           ],
           { persist: false },
         );
+        return;
+      }
+      case "tool_call_streaming": {
+        const changes: SessionProtocolChange[] = [];
+        if (event.replacesToolCallId) {
+          const replaced = this.tools.get(event.replacesToolCallId);
+          if (
+            replaced?.status === "streaming" &&
+            replaced.origin.messageId === event.historyEntryId &&
+            replaced.origin.contentIndex === event.contentIndex
+          ) {
+            this.removeToolRun(replaced, changes);
+          }
+        }
+
+        if (this.tools.has(event.toolCallId)) {
+          throw new Error(`duplicate protocol tool run '${event.toolCallId}'`);
+        }
+        const facetId = `tool-ui-${event.toolCallId}`;
+        const uiEvent: ToolUiEvent = {
+          type: "tool_call_streaming",
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
+          headerTarget: event.toolName,
+        };
+        const facet: SessionProtocolFacet = {
+          id: facetId,
+          subject: { type: "tool", id: event.toolCallId },
+          kind: "tau.tool-ui-events",
+          version: 1,
+          data: { events: [uiEvent] },
+        };
+        const tool: SessionProtocolToolRun = {
+          id: event.toolCallId,
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
+          status: "streaming",
+          origin: {
+            messageId: event.historyEntryId,
+            contentIndex: event.contentIndex,
+          },
+          facetIds: [facetId],
+        };
+        this.tools.set(tool.id, tool);
+        this.facets.set(facet.id, facet);
+        changes.push(
+          { type: "tool.set", tool: structuredClone(tool) },
+          { type: "facet.set", facet: structuredClone(facet) },
+        );
+        await this.emitPatch("tool-run", changes, { persist: false });
+        return;
+      }
+      case "tool_call_discarded": {
+        const tool = this.tools.get(event.toolCallId);
+        if (
+          tool?.status !== "streaming" ||
+          tool.origin.messageId !== event.historyEntryId ||
+          tool.origin.contentIndex !== event.contentIndex
+        ) {
+          return;
+        }
+        const changes: SessionProtocolChange[] = [];
+        this.removeToolRun(tool, changes);
+        await this.emitPatch("tool-run", changes, { persist: false });
         return;
       }
       case "assistant_partial": {
@@ -1560,10 +1636,18 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       }
       case "tool_result": {
         const existing = this.tools.get(event.message.toolCallId);
+        if (existing?.status === "streaming") {
+          throw new Error(`tool result arrived before '${event.message.toolCallId}' completed`);
+        }
         if (existing) {
           const nextTool: SessionProtocolToolRun = {
             ...existing,
-            status: event.message.isError ? "failed" : "succeeded",
+            status:
+              existing.status === "blocked"
+                ? "blocked"
+                : event.message.isError
+                  ? "failed"
+                  : "succeeded",
             finishedAt: event.message.timestamp,
             resultMessageId: event.historyEntryId,
           };
@@ -1611,12 +1695,17 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         ];
         for (const toolResult of event.toolResults) {
           const existing = this.tools.get(toolResult.toolCallId);
-          if (!existing) {
-            throw new Error(`missing protocol tool run for '${toolResult.toolCallId}'`);
+          if (!existing || existing.status === "streaming") {
+            throw new Error(`missing completed protocol tool run for '${toolResult.toolCallId}'`);
           }
           const nextTool: SessionProtocolToolRun = {
             ...existing,
-            status: toolResult.isError ? "failed" : "succeeded",
+            status:
+              existing.status === "blocked"
+                ? "blocked"
+                : toolResult.isError
+                  ? "failed"
+                  : "succeeded",
             finishedAt: toolResult.timestamp,
           };
           this.tools.set(nextTool.id, nextTool);
@@ -1701,6 +1790,10 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     tool: SessionProtocolToolRun,
     event: ToolUiEvent,
   ): SessionProtocolToolRun {
+    if (tool.status === "streaming") {
+      throw new Error(`tool UI event '${event.type}' arrived before tool call completion`);
+    }
+
     const next: SessionProtocolToolRun = {
       ...tool,
       facetIds: tool.facetIds.includes(`tool-ui-${tool.toolCallId}`)
@@ -1864,26 +1957,28 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       );
     for (const { content, index } of toolCalls) {
       const existing = this.tools.get(content.id);
-      const nextTool: SessionProtocolToolRun = {
-        ...(existing ?? {
-          id: content.id,
-          toolCallId: content.id,
-          status: "queued" as const,
-          facetIds: [],
-        }),
-        toolName: content.name,
-        call: {
-          messageId,
-          contentIndex: index,
-        },
-      };
+      const call = { messageId, contentIndex: index };
       if (
-        existing?.toolName === nextTool.toolName &&
-        existing.call.messageId === nextTool.call.messageId &&
-        existing.call.contentIndex === nextTool.call.contentIndex
+        existing &&
+        existing.status !== "streaming" &&
+        existing.toolName === content.name &&
+        existing.call.messageId === call.messageId &&
+        existing.call.contentIndex === call.contentIndex
       ) {
         continue;
       }
+
+      const nextTool: SessionProtocolToolRun =
+        existing && existing.status !== "streaming"
+          ? { ...existing, toolName: content.name, call }
+          : {
+              id: content.id,
+              toolCallId: content.id,
+              toolName: content.name,
+              status: "queued",
+              call,
+              facetIds: existing?.facetIds ?? [],
+            };
       this.tools.set(content.id, nextTool);
       changes.push({ type: "tool.set", tool: structuredClone(nextTool) });
     }
@@ -1901,7 +1996,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     this.session.addMessage(interruptedMessage, { historyEntryId: draft.id });
     this.messageStates.set(draft.id, "interrupted");
     this.draftAssistantMessage = undefined;
-    await this.emitPatch("assistant-stream", [
+    const changes: SessionProtocolChange[] = [
       {
         type: "message.replace",
         message: {
@@ -1912,7 +2007,13 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         },
       },
       { type: "lifecycle.set", lifecycle: "idle" },
-    ]);
+    ];
+    for (const tool of this.tools.values()) {
+      if (tool.status === "streaming" && tool.origin.messageId === draft.id) {
+        this.removeToolRun(tool, changes);
+      }
+    }
+    await this.emitPatch("assistant-stream", changes);
   }
 
   private async cleanupFailedTurn(): Promise<void> {
@@ -2040,6 +2141,22 @@ function normalizeRecoveredSnapshot(snapshot: SessionProtocolSnapshot): {
   const recovered = cloneSessionProtocolSnapshot(snapshot);
   let changed = recovered.lifecycle !== "idle";
   recovered.lifecycle = "idle";
+  const streamingToolIds = new Set(
+    Object.values(recovered.tools)
+      .filter((tool) => tool.status === "streaming")
+      .map((tool) => tool.id),
+  );
+  if (streamingToolIds.size > 0) {
+    changed = true;
+    recovered.tools = Object.fromEntries(
+      Object.entries(recovered.tools).filter(([id]) => !streamingToolIds.has(id)),
+    );
+    recovered.facets = Object.fromEntries(
+      Object.entries(recovered.facets).filter(
+        ([, facet]) => facet.subject.type !== "tool" || !streamingToolIds.has(facet.subject.id),
+      ),
+    );
+  }
   recovered.messages = recovered.messages.map((message) => {
     if (message.state !== "draft" || message.message.role !== "assistant") {
       return message;

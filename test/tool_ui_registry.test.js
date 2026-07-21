@@ -25,7 +25,16 @@ describe("ToolUiRegistry", () => {
   const theme = createTagTheme();
   const registry = createToolUiRegistry();
 
-  it("renders queued tool call events", () => {
+  it("renders generic tool call lifecycle events", () => {
+    const streaming = renderEvent(registry, theme, {
+      type: "tool_call_streaming",
+      toolCallId: "q1",
+      toolName: "write",
+      headerTarget: "write",
+    });
+    expect(streaming).toContain("preparing");
+    expect(streaming).toContain("write");
+
     const queued = renderEvent(registry, theme, {
       type: "tool_call_queued",
       toolCallId: "q1",
@@ -35,6 +44,16 @@ describe("ToolUiRegistry", () => {
     expect(queued).toContain("queued");
     expect(queued).toContain("printf hello");
     expect(queued).not.toContain("bash");
+
+    const blocked = renderEvent(registry, theme, {
+      type: "tool_call_blocked",
+      toolCallId: "q1",
+      toolName: "write",
+      headerTarget: "write",
+      reason: "disabled",
+    });
+    expect(blocked).toContain("tool call blocked");
+    expect(blocked).toContain("disabled");
   });
 
   it("renders client tool completion events", () => {

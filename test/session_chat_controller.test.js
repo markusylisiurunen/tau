@@ -2147,66 +2147,6 @@ describe("SessionChatController", () => {
     await controller.dispose();
   });
 
-  it("hydrates streaming tool calls from snapshot facets", async () => {
-    const baseSnapshot = createSnapshot();
-    const snapshot = updateSnapshot(baseSnapshot, {
-      lifecycle: "running",
-      messages: [
-        ...baseSnapshot.messages,
-        {
-          id: "assistant-draft",
-          state: "draft",
-          modelVisible: false,
-          message: { role: "assistant", content: [], timestamp: 1 },
-        },
-      ],
-      tools: {
-        "write-call": {
-          id: "write-call",
-          toolCallId: "write-call",
-          toolName: "write",
-          status: "streaming",
-          origin: { messageId: "assistant-draft", contentIndex: 0 },
-          facetIds: ["tool-ui-write-call"],
-        },
-      },
-      facets: {
-        "tool-ui-write-call": {
-          id: "tool-ui-write-call",
-          subject: { type: "tool", id: "write-call" },
-          kind: "tau.tool-ui-events",
-          version: 1,
-          data: {
-            events: [
-              {
-                type: "tool_call_streaming",
-                toolCallId: "write-call",
-                toolName: "write",
-                headerTarget: "write",
-              },
-            ],
-          },
-        },
-      },
-    });
-    const session = new FakeSession(snapshot);
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      view,
-      session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
-    });
-
-    controller.start();
-
-    expect(view.reconcileToolUiSession).toHaveBeenCalledWith(["write-call"]);
-    expect(view.toolEvents).toEqual([
-      expect.objectContaining({ type: "tool_call_streaming", toolCallId: "write-call" }),
-    ]);
-    await controller.dispose();
-  });
-
   it("replays snapshot tool UI facets in assistant tool-call order", async () => {
     const assistantMessage = createAssistantToolCallMessage([
       {
@@ -2231,6 +2171,12 @@ describe("SessionChatController", () => {
           modelVisible: true,
           message: assistantMessage,
         },
+        {
+          id: "assistant-draft",
+          state: "draft",
+          modelVisible: false,
+          message: { role: "assistant", content: [], timestamp: 1 },
+        },
       ],
       timeline: [
         {
@@ -2240,6 +2186,14 @@ describe("SessionChatController", () => {
         },
       ],
       tools: {
+        "write-call": {
+          id: "write-call",
+          toolCallId: "write-call",
+          toolName: "write",
+          status: "streaming",
+          origin: { messageId: "assistant-draft", contentIndex: 0 },
+          facetIds: ["tool-ui-write-call"],
+        },
         "tool-b": {
           id: "tool-b",
           toolCallId: "tool-b",
@@ -2258,6 +2212,22 @@ describe("SessionChatController", () => {
         },
       },
       facets: {
+        "tool-ui-write-call": {
+          id: "tool-ui-write-call",
+          subject: { type: "tool", id: "write-call" },
+          kind: "tau.tool-ui-events",
+          version: 1,
+          data: {
+            events: [
+              {
+                type: "tool_call_streaming",
+                toolCallId: "write-call",
+                toolName: "write",
+                headerTarget: "write",
+              },
+            ],
+          },
+        },
         "tool-ui-tool-b": {
           id: "tool-ui-tool-b",
           subject: { type: "tool", id: "tool-b" },
@@ -2303,7 +2273,14 @@ describe("SessionChatController", () => {
 
     controller.start();
 
-    expect(view.toolEvents.map((event) => event.toolCallId)).toEqual(["tool-a", "tool-b"]);
+    expect(view.reconcileToolUiSession).toHaveBeenCalledWith(
+      expect.arrayContaining(["tool-a", "tool-b", "write-call"]),
+    );
+    expect(view.toolEvents.map((event) => event.toolCallId)).toEqual([
+      "tool-a",
+      "tool-b",
+      "write-call",
+    ]);
     await controller.dispose();
   });
 

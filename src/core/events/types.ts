@@ -126,7 +126,6 @@ export type RunnerToolCallStreamingEvent = {
   toolCallId: string;
   toolName: string;
   contentIndex: number;
-  replacesToolCallId?: string;
 };
 
 export type RunnerToolCallDiscardedEvent = {

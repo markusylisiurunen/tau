@@ -1157,8 +1157,8 @@ export class SessionEngine {
     const toolStream = toolRunner[Symbol.asyncIterator]();
     const pendingToolResults: ToolResultMessage[] = [];
     const recoveryToolResults: ToolResultMessage[] = [];
-    const streamedToolCalls: ToolCall[] = [];
-    const streamedToolCallIds = new Set<string>();
+    const admittedToolCalls: ToolCall[] = [];
+    const admittedToolCallIds = new Set<string>();
     const streamingToolCallIdsByContentIndex = new Map<number, string>();
     let modelDone = false;
     let toolDone = false;
@@ -1196,7 +1196,7 @@ export class SessionEngine {
             void toolRunner.finish().catch(() => undefined);
 
             try {
-              const reconciliation = reconcileStreamedToolCalls(finalMessage, streamedToolCalls);
+              const reconciliation = reconcileAdmittedToolCalls(finalMessage, admittedToolCalls);
               finalMessage = reconciliation.message;
               toolRecoveryMode = reconciliation.recover
                 ? finalMessage.stopReason === "aborted" || signal.aborted
@@ -1268,7 +1268,7 @@ export class SessionEngine {
           );
           if (event.type === "tool_call_streaming") {
             const replacesToolCallId = streamingToolCallIdsByContentIndex.get(event.contentIndex);
-            if (signal.aborted || streamedToolCallIds.has(event.toolCallId)) {
+            if (signal.aborted || admittedToolCallIds.has(event.toolCallId)) {
               if (replacesToolCallId) {
                 streamingToolCallIdsByContentIndex.delete(event.contentIndex);
                 const discardedEvent: CoreEvent = {
@@ -1315,32 +1315,32 @@ export class SessionEngine {
               continue;
             }
             const admissionEvents: CoreToolUiEvent[] = [];
-            for (const streamedToolCall of event.snapshot.toolCalls.slice(
-              streamedToolCalls.length,
+            for (const admittedToolCall of event.snapshot.toolCalls.slice(
+              admittedToolCalls.length,
             )) {
-              const invalidId = !streamedToolCall.id.trim();
-              const duplicateId = streamedToolCallIds.has(streamedToolCall.id);
+              const invalidId = !admittedToolCall.id.trim();
+              const duplicateId = admittedToolCallIds.has(admittedToolCall.id);
               if (!invalidId && !duplicateId) {
-                streamedToolCallIds.add(streamedToolCall.id);
-                streamedToolCalls.push(streamedToolCall);
+                admittedToolCallIds.add(admittedToolCall.id);
+                admittedToolCalls.push(admittedToolCall);
                 for (const [contentIndex, toolCallId] of streamingToolCallIdsByContentIndex) {
-                  if (toolCallId === streamedToolCall.id) {
+                  if (toolCallId === admittedToolCall.id) {
                     streamingToolCallIdsByContentIndex.delete(contentIndex);
                     break;
                   }
                 }
-                admissionEvents.push(toolRunner.enqueue(streamedToolCall));
+                admissionEvents.push(toolRunner.enqueue(admittedToolCall));
                 continue;
               }
 
               const toolCall = {
-                ...streamedToolCall,
+                ...admittedToolCall,
                 id: `invalid-tool-call-${randomUUID()}`,
               };
               const message = invalidId
                 ? "Model returned a tool call with an empty ID."
-                : `Model returned duplicate tool call ID '${streamedToolCall.id}'.`;
-              streamedToolCalls.push(toolCall);
+                : `Model returned duplicate tool call ID '${admittedToolCall.id}'.`;
+              admittedToolCalls.push(toolCall);
               admissionEvents.push(toolRunner.enqueueRejected(toolCall, message));
             }
             const partialEvent: CoreEvent = {
@@ -1348,7 +1348,7 @@ export class SessionEngine {
               historyEntryId,
               snapshot: {
                 ...event.snapshot,
-                toolCalls: [...streamedToolCalls],
+                toolCalls: [...admittedToolCalls],
               },
             };
             this.emitEvent(partialEvent);
@@ -1404,7 +1404,7 @@ export class SessionEngine {
         const recoveryResultsByToolCallId = new Map(
           recoveryToolResults.map((toolResult) => [toolResult.toolCallId, toolResult]),
         );
-        const completeRecoveryToolResults = streamedToolCalls.map(
+        const completeRecoveryToolResults = admittedToolCalls.map(
           (toolCall): ToolResultMessage =>
             recoveryResultsByToolCallId.get(toolCall.id) ?? {
               role: "toolResult",
@@ -1422,7 +1422,7 @@ export class SessionEngine {
         );
         const recoveryMessage = buildToolRecoveryUserMessage({
           errorMessage: finalMessage.errorMessage,
-          toolCalls: streamedToolCalls,
+          toolCalls: admittedToolCalls,
           toolResults: completeRecoveryToolResults,
           continueOriginalRequest: toolRecoveryMode === "continue",
           timestamp,
@@ -1474,16 +1474,16 @@ function consumeSubturnRetry(budget: SubturnRetryBudget): boolean {
   return true;
 }
 
-function reconcileStreamedToolCalls(
+function reconcileAdmittedToolCalls(
   message: AssistantMessage,
-  streamedToolCalls: readonly ToolCall[],
+  admittedToolCalls: readonly ToolCall[],
 ): { message: AssistantMessage; recover: boolean } {
   const finalToolCalls = message.content.filter(
     (content): content is ToolCall => content.type === "toolCall",
   );
   const isTerminalFailure = message.stopReason === "error" || message.stopReason === "aborted";
 
-  if (streamedToolCalls.length === 0) {
+  if (admittedToolCalls.length === 0) {
     if (!isTerminalFailure && finalToolCalls.length > 0) {
       throw new Error(`model stream completed without toolcall_end for '${finalToolCalls[0]!.id}'`);
     }
@@ -1498,7 +1498,7 @@ function reconcileStreamedToolCalls(
     };
   }
 
-  if (message.stopReason === "toolUse" && isDeepStrictEqual(finalToolCalls, streamedToolCalls)) {
+  if (message.stopReason === "toolUse" && isDeepStrictEqual(finalToolCalls, admittedToolCalls)) {
     return { message, recover: false };
   }
 
@@ -1512,7 +1512,7 @@ function reconcileStreamedToolCalls(
       ...message,
       content: [
         ...message.content.filter((content) => content.type !== "toolCall"),
-        ...streamedToolCalls,
+        ...admittedToolCalls,
       ],
       ...(isTerminalFailure ? {} : { stopReason: "error" as const, errorMessage }),
     },

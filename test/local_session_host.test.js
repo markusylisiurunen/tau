@@ -1065,6 +1065,33 @@ describe("LocalSessionHost", () => {
     });
   });
 
+  it("removes streaming tool projections when their draft is interrupted", async () => {
+    const host = createHost(new MemorySessionStore());
+    const hostedSession = await host.createSession(localCreateInput);
+
+    await hostedSession.enqueueRuntimeEvent({
+      type: "assistant_start",
+      historyEntryId: "assistant-interrupted",
+    });
+    await hostedSession.enqueueRuntimeEvent({
+      type: "tool_call_streaming",
+      historyEntryId: "assistant-interrupted",
+      toolCallId: "streaming-call",
+      toolName: "write",
+      contentIndex: 0,
+    });
+    await hostedSession.interruptDraftAssistantMessage();
+
+    const snapshot = await hostedSession.snapshot();
+    expect(snapshot.tools).toEqual({});
+    expect(snapshot.facets).toEqual({});
+    expect(snapshot.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "assistant-interrupted", state: "interrupted" }),
+      ]),
+    );
+  });
+
   it("publishes later streamed tool calls as queued before they execute", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "tau-tool-streaming-"));
     const executionEnvironment = createTestExecutionEnvironment({

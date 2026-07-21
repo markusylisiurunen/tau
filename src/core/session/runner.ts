@@ -73,7 +73,7 @@ export async function* runModelSubturn(
 ): AsyncGenerator<ModelRunnerEvent, AssistantMessage, void> {
   const { model, context, modelRuntime, streamOptions, signal, emitPartials, retry } = options;
 
-  let hasEmittedToolCall = false;
+  let hasEmittedCompletedToolCall = false;
 
   const runAttempt = async function* (
     attemptOptions: TauStreamOptions,
@@ -82,25 +82,20 @@ export async function* runModelSubturn(
     const accumulator = emitPartials ? new MessageAccumulator() : undefined;
     let lastPartialEmittedAt = 0;
     let hasPendingPartial = false;
-    let emittedToolCallCount = 0;
+    let emittedCompletedToolCallCount = 0;
     const toolCallOrder: number[] = [];
     const completedToolCalls = new Map<
       number,
       Extract<AssistantMessageEvent, { type: "toolcall_end" }>
     >();
     const streamingToolCalls = new Map<number, StreamingToolCallIdentity>();
-    const streamingToolCallIndexesById = new Map<string, number>();
 
-    const updateStreamingToolCall = (
+    const trackStreamingToolCall = (
       event: Extract<
         AssistantMessageEvent,
         { type: "toolcall_start" | "toolcall_delta" | "toolcall_end" }
       >,
-    ): ModelRunnerEvent[] => {
-      if (!accumulator) {
-        return [];
-      }
-
+    ): RunnerToolCallStreamingEvent | RunnerToolCallDiscardedEvent | undefined => {
       const contentIndex = event.contentIndex;
       const current = streamingToolCalls.get(contentIndex);
       const next = getStreamingToolCallIdentity(event);
@@ -110,32 +105,25 @@ export async function* runModelSubturn(
         current.toolCallId === next.toolCallId &&
         current.toolName === next.toolName
       ) {
-        return [];
+        return undefined;
       }
 
-      const duplicateIndex = next ? streamingToolCallIndexesById.get(next.toolCallId) : undefined;
-      if (!next || (duplicateIndex !== undefined && duplicateIndex !== contentIndex)) {
+      const duplicate = next
+        ? [...streamingToolCalls].some(
+            ([index, identity]) =>
+              index !== contentIndex && identity.toolCallId === next.toolCallId,
+          )
+        : false;
+      if (!next || duplicate) {
         if (!current) {
-          return [];
+          return undefined;
         }
         streamingToolCalls.delete(contentIndex);
-        streamingToolCallIndexesById.delete(current.toolCallId);
-        return [{ type: "tool_call_discarded", toolCallId: current.toolCallId, contentIndex }];
+        return { type: "tool_call_discarded", toolCallId: current.toolCallId, contentIndex };
       }
 
-      if (current) {
-        streamingToolCallIndexesById.delete(current.toolCallId);
-      }
       streamingToolCalls.set(contentIndex, next);
-      streamingToolCallIndexesById.set(next.toolCallId, contentIndex);
-      return [
-        {
-          type: "tool_call_streaming",
-          ...next,
-          contentIndex,
-          ...(current ? { replacesToolCallId: current.toolCallId } : {}),
-        },
-      ];
+      return { type: "tool_call_streaming", ...next, contentIndex };
     };
 
     const discardStreamingToolCalls = (): RunnerToolCallDiscardedEvent[] => {
@@ -147,17 +135,7 @@ export async function* runModelSubturn(
           contentIndex,
         }));
       streamingToolCalls.clear();
-      streamingToolCallIndexesById.clear();
       return events;
-    };
-
-    const completeStreamingToolCall = (contentIndex: number): void => {
-      const identity = streamingToolCalls.get(contentIndex);
-      if (!identity) {
-        return;
-      }
-      streamingToolCalls.delete(contentIndex);
-      streamingToolCallIndexesById.delete(identity.toolCallId);
     };
 
     const emitPartialIfPending = async function* (): AsyncGenerator<ModelRunnerEvent, void, void> {
@@ -169,9 +147,9 @@ export async function* runModelSubturn(
       if (!snapshot.hasTextStarted && !snapshot.hasAnyThinking && snapshot.toolCalls.length === 0) {
         return;
       }
-      if (snapshot.toolCalls.length > emittedToolCallCount) {
-        hasEmittedToolCall = true;
-        emittedToolCallCount = snapshot.toolCalls.length;
+      if (snapshot.toolCalls.length > emittedCompletedToolCallCount) {
+        hasEmittedCompletedToolCall = true;
+        emittedCompletedToolCallCount = snapshot.toolCalls.length;
       }
       yield { type: "assistant_partial", snapshot };
       lastPartialEmittedAt = Date.now();
@@ -202,7 +180,8 @@ export async function* runModelSubturn(
           if (!accumulator) {
             continue;
           }
-          for (const streamingEvent of updateStreamingToolCall(event)) {
+          const streamingEvent = trackStreamingToolCall(event);
+          if (streamingEvent) {
             yield streamingEvent;
           }
           if (toolCallOrder.includes(event.contentIndex)) {
@@ -214,7 +193,11 @@ export async function* runModelSubturn(
         }
 
         if (event.type === "toolcall_delta") {
-          for (const streamingEvent of updateStreamingToolCall(event)) {
+          if (!accumulator) {
+            continue;
+          }
+          const streamingEvent = trackStreamingToolCall(event);
+          if (streamingEvent) {
             yield streamingEvent;
           }
           continue;
@@ -224,7 +207,8 @@ export async function* runModelSubturn(
           if (!accumulator) {
             continue;
           }
-          for (const streamingEvent of updateStreamingToolCall(event)) {
+          const streamingEvent = trackStreamingToolCall(event);
+          if (streamingEvent) {
             yield streamingEvent;
           }
           if (!toolCallOrder.includes(event.contentIndex)) {
@@ -242,7 +226,7 @@ export async function* runModelSubturn(
             }
             toolCallOrder.shift();
             completedToolCalls.delete(contentIndex);
-            completeStreamingToolCall(contentIndex);
+            streamingToolCalls.delete(contentIndex);
             accumulator.processEvent(completed);
             hasPendingPartial = true;
             yield* emitPartialIfPending();
@@ -301,7 +285,7 @@ export async function* runModelSubturn(
     try {
       const result = yield* runAttempt(streamOptions);
       if (
-        !hasEmittedToolCall &&
+        !hasEmittedCompletedToolCall &&
         attempt < maxRetries &&
         retry?.shouldRetryAfterError?.({ error: result, model })
       ) {
@@ -319,7 +303,7 @@ export async function* runModelSubturn(
       return result;
     } catch (error) {
       if (
-        !hasEmittedToolCall &&
+        !hasEmittedCompletedToolCall &&
         attempt < maxRetries &&
         retry?.shouldRetryAfterError?.({ error, model })
       ) {
@@ -367,7 +351,6 @@ type PreparedToolCall =
     }
   | {
       type: "rejected";
-      toolCall: ToolCall;
       message: string;
       result: ToolResultMessage;
     };
@@ -382,7 +365,6 @@ function prepareToolCall(
       `Tool '${toolCall.name}' is not enabled for this session.`;
     return {
       type: "rejected",
-      toolCall,
       message,
       result: createToolError(toolCall, message),
     };
@@ -397,7 +379,6 @@ function prepareToolCall(
       `Tool '${toolCall.name}' is not supported by tau.`;
     return {
       type: "rejected",
-      toolCall,
       message,
       result: createToolError(toolCall, message),
     };
@@ -422,14 +403,17 @@ function createToolQueuedEvent(
   };
 }
 
-function createToolBlockedEvent(toolCall: ToolCall, reason: string): CoreToolUiEvent {
+function createToolBlockedEvent(
+  result: Pick<ToolResultMessage, "toolCallId" | "toolName">,
+  reason: string,
+): CoreToolUiEvent {
   return {
     type: "tool_ui",
     uiEvent: {
       type: "tool_call_blocked",
-      toolCallId: toolCall.id,
-      toolName: toolCall.name,
-      headerTarget: toolCall.name,
+      toolCallId: result.toolCallId,
+      toolName: result.toolName,
+      headerTarget: result.toolName,
       reason,
     },
   };
@@ -457,17 +441,13 @@ export class SequentialToolCallRunner implements AsyncIterable<ToolRunnerEvent> 
     this.enqueuePrepared(prepared);
     return prepared.type === "ready"
       ? createToolQueuedEvent(prepared, this.options.dispatchContext)
-      : createToolBlockedEvent(toolCall, prepared.message);
+      : createToolBlockedEvent(prepared.result, prepared.message);
   }
 
   enqueueRejected(toolCall: ToolCall, message: string): CoreToolUiEvent {
-    this.enqueuePrepared({
-      type: "rejected",
-      toolCall,
-      message,
-      result: createToolError(toolCall, message),
-    });
-    return createToolBlockedEvent(toolCall, message);
+    const result = createToolError(toolCall, message);
+    this.enqueuePrepared({ type: "rejected", message, result });
+    return createToolBlockedEvent(result, message);
   }
 
   private enqueuePrepared(prepared: PreparedToolCall): void {
@@ -593,7 +573,7 @@ export async function* runToolCalls(
       continue;
     }
     resultsByIndex.set(index, prepared.result);
-    yield createToolBlockedEvent(prepared.toolCall, prepared.message);
+    yield createToolBlockedEvent(prepared.result, prepared.message);
     yield { type: "notice", severity: "error", text: prepared.message };
   }
 

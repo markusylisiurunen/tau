@@ -291,7 +291,6 @@ describe("session runner tool dispatch context", () => {
         toolCallId: "new-call",
         toolName: "write",
         contentIndex: 0,
-        replacesToolCallId: "old-call",
       },
       {
         type: "tool_call_discarded",

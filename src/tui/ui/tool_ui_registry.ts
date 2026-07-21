@@ -135,11 +135,16 @@ function buildSimpleToolFinishedView(args: {
   const errorColor = (s: string) => palette.actionError(s);
   const isSuccess = status === "success";
   const borderColor = isSuccess ? successColor : errorColor;
+  const statusLabel = isSuccess
+    ? label
+    : status === "blocked"
+      ? `${label} blocked`
+      : `${label} failed`;
 
   const header = buildToolHeaderLine({
     bulletStyle: borderColor,
     bullet: isSuccess ? "✓" : "✗",
-    label: isSuccess ? label : status === "blocked" ? `${label} blocked` : `${label} failed`,
+    label: statusLabel,
     labelStyle: palette.textMuted,
     accent: inlineText(target),
     accentStyle: palette.brandAccent,

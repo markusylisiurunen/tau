@@ -560,20 +560,19 @@ type SessionProtocolToolRunBase = {
   facetIds: string[];
 };
 
+type SessionProtocolToolPosition = {
+  messageId: string;
+  contentIndex: number;
+};
+
 export type SessionProtocolToolRun =
   | (SessionProtocolToolRunBase & {
       status: "streaming";
-      origin: {
-        messageId: string;
-        contentIndex: number;
-      };
+      origin: SessionProtocolToolPosition;
     })
   | (SessionProtocolToolRunBase & {
       status: "queued" | "running" | "succeeded" | "failed" | "blocked" | "cancelled";
-      call: {
-        messageId: string;
-        contentIndex: number;
-      };
+      call: SessionProtocolToolPosition;
       startedAt?: number;
       finishedAt?: number;
       resultMessageId?: string;
@@ -1711,27 +1710,24 @@ const sessionProtocolToolRunBaseSchema = z.object({
   facetIds: z.array(nonEmptyStringSchema),
 });
 
+const sessionProtocolToolPositionSchema = z
+  .object({
+    messageId: nonEmptyStringSchema,
+    contentIndex: z.number().int().nonnegative(),
+  })
+  .strip();
+
 const sessionProtocolToolRunSchema = z.discriminatedUnion("status", [
   sessionProtocolToolRunBaseSchema
     .extend({
       status: z.literal("streaming"),
-      origin: z
-        .object({
-          messageId: nonEmptyStringSchema,
-          contentIndex: z.number().int().nonnegative(),
-        })
-        .strip(),
+      origin: sessionProtocolToolPositionSchema,
     })
     .strip(),
   sessionProtocolToolRunBaseSchema
     .extend({
       status: z.enum(["queued", "running", "succeeded", "failed", "blocked", "cancelled"]),
-      call: z
-        .object({
-          messageId: nonEmptyStringSchema,
-          contentIndex: z.number().int().nonnegative(),
-        })
-        .strip(),
+      call: sessionProtocolToolPositionSchema,
       startedAt: z.number().finite().optional(),
       finishedAt: z.number().finite().optional(),
       resultMessageId: nonEmptyStringSchema.optional(),

@@ -64,4 +64,63 @@ describe("telegram cli", () => {
       },
     });
   });
+
+  it("loads composite projects that reference repository projects", () => {
+    const { path } = writeConfig({
+      bots: {
+        ops: {
+          botToken: "token",
+          allowedProjectIds: ["tau", "cowork", "tau_cowork"],
+        },
+      },
+      projects: {
+        tau: {
+          repo: "markusylisiurunen/tau",
+          ref: "main",
+        },
+        cowork: {
+          repo: "markusylisiurunen/cowork",
+          workingDirectory: "packages/server",
+        },
+        tau_cowork: {
+          projectIds: ["tau", "cowork"],
+          persona: "gpt-5.6-sol-coder:high",
+          instructions: "Keep changes coordinated.",
+        },
+      },
+    });
+
+    expect(loadTelegramConfig(path).projects.tau_cowork).toEqual({
+      projectIds: ["tau", "cowork"],
+      persona: "gpt-5.6-sol-coder:high",
+      instructions: "Keep changes coordinated.",
+    });
+  });
+
+  it("rejects project ids that cannot be Telegram command suffixes", () => {
+    const { path } = writeConfig({
+      bots: { ops: { botToken: "token" } },
+      projects: { "invalid-project": { repo: "owner/repo" } },
+    });
+
+    expect(() => loadTelegramConfig(path)).toThrow(
+      "project id 'invalid-project' must contain only lowercase letters, digits, and underscores",
+    );
+  });
+
+  it("rejects composite projects that reference another composite", () => {
+    const { path } = writeConfig({
+      bots: { ops: { botToken: "token" } },
+      projects: {
+        one: { repo: "owner/one" },
+        two: { repo: "owner/two" },
+        pair: { projectIds: ["one", "two"], persona: "gpt-5.6-sol-coder" },
+        nested: { projectIds: ["pair", "one"], persona: "gpt-5.6-sol-coder" },
+      },
+    });
+
+    expect(() => loadTelegramConfig(path)).toThrow(
+      "projects.nested.projectIds must reference repository projects, not composite project 'pair'",
+    );
+  });
 });

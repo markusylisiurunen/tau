@@ -1,6 +1,6 @@
-import { mkdir, readdir, rm, stat } from "node:fs/promises";
+import { mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
-import type { TelegramProjectConfig } from "../config/schema.js";
+import type { TelegramProjectConfig, TelegramRepositoryProjectConfig } from "../config/schema.js";
 import { spawnWithCapture } from "../utils/spawn_capture.js";
 
 export type WorkspaceLogLevel = "info" | "error";
@@ -15,7 +15,9 @@ export type PrepareWorkspaceOptions = {
   sessionId: string;
   projectId: string;
   project: TelegramProjectConfig;
+  projects: Record<string, TelegramProjectConfig>;
   workspaceRoot: string;
+  defaultWorkspaceRoot: string;
   signal?: AbortSignal;
   onLog?: (entry: WorkspaceLogEntry) => void;
 };
@@ -23,6 +25,10 @@ export type PrepareWorkspaceOptions = {
 export type PreparedWorkspace = {
   workspacePath: string;
   sessionCwd: string;
+  memberBackgroundBootstrapCommands?: Array<{
+    commands: string[];
+    cwd: string;
+  }>;
 };
 
 export type WorkspaceRootCleanupResult = {
@@ -575,21 +581,22 @@ export async function cleanupWorkspacePath(workspacePath: string): Promise<void>
   await rm(workspacePath, { recursive: true, force: true });
 }
 
-export async function prepareWorkspace(
-  options: PrepareWorkspaceOptions,
-): Promise<PreparedWorkspace> {
-  const workspaceStart = process.hrtime.bigint();
-  const workspacePath = resolveWorkspacePath({
-    workspaceRoot: options.workspaceRoot,
-    projectId: options.projectId,
-    sessionId: options.sessionId,
-  });
+function isRepositoryProject(
+  project: TelegramProjectConfig,
+): project is TelegramRepositoryProjectConfig {
+  return "repo" in project;
+}
 
-  await rm(workspacePath, { recursive: true, force: true });
-  await mkdir(dirname(workspacePath), { recursive: true });
-
+async function prepareRepositoryWorkspace(options: {
+  workspacePath: string;
+  cacheWorkspaceRoot: string;
+  projectId: string;
+  project: TelegramRepositoryProjectConfig;
+  signal?: AbortSignal;
+  onLog?: (entry: WorkspaceLogEntry) => void;
+}): Promise<string> {
   const cachePath = await prepareRepositoryCache({
-    workspaceRoot: options.workspaceRoot,
+    workspaceRoot: options.cacheWorkspaceRoot,
     projectId: options.projectId,
     repo: options.project.repo,
     signal: options.signal,
@@ -598,17 +605,20 @@ export async function prepareWorkspace(
 
   await cloneRepositoryFromCache({
     cachePath,
-    workspacePath,
+    workspacePath: options.workspacePath,
     signal: options.signal,
     onLog: options.onLog,
   });
 
   if (options.project.ref) {
     const checkoutStart = process.hrtime.bigint();
-    log(options.onLog, "info", "checking out ref", { ref: options.project.ref });
+    log(options.onLog, "info", "checking out ref", {
+      projectId: options.projectId,
+      ref: options.project.ref,
+    });
     const checkoutResult = await runCommand({
       command: "git",
-      commandArgs: ["-C", workspacePath, "checkout", options.project.ref],
+      commandArgs: ["-C", options.workspacePath, "checkout", options.project.ref],
       signal: options.signal,
     });
 
@@ -622,20 +632,22 @@ export async function prepareWorkspace(
     }
 
     log(options.onLog, "info", "ref checkout complete", {
+      projectId: options.projectId,
       ref: options.project.ref,
       durationMs: elapsedMs(checkoutStart),
     });
   }
 
-  let sessionCwd = workspacePath;
+  let projectCwd = options.workspacePath;
   if (options.project.workingDirectory) {
     const configuredPath = options.project.workingDirectory;
-    const resolvedPath = resolve(workspacePath, configuredPath);
+    const resolvedPath = resolve(options.workspacePath, configuredPath);
 
-    if (!isInsideWorkspace(workspacePath, resolvedPath)) {
+    if (!isInsideWorkspace(options.workspacePath, resolvedPath)) {
       log(options.onLog, "error", "project working directory escapes workspace", {
+        projectId: options.projectId,
         workingDirectory: configuredPath,
-        sessionCwd: resolvedPath,
+        projectCwd: resolvedPath,
       });
       throw new Error("project workingDirectory must resolve inside the repository workspace");
     }
@@ -650,26 +662,215 @@ export async function prepareWorkspace(
       throw new Error(`project workingDirectory is not a directory: ${configuredPath}`);
     }
 
-    sessionCwd = resolvedPath;
+    projectCwd = resolvedPath;
     log(options.onLog, "info", "using project working directory", {
+      projectId: options.projectId,
       workingDirectory: configuredPath,
-      sessionCwd,
+      projectCwd,
     });
   }
 
   await runBootstrapCommands({
     commands: options.project.bootstrapCommands ?? [],
-    cwd: sessionCwd,
+    cwd: projectCwd,
     signal: options.signal,
     onLog: options.onLog,
     mode: "sync",
   });
 
-  log(options.onLog, "info", "workspace prepared", {
-    workspacePath,
-    sessionCwd,
-    durationMs: elapsedMs(workspaceStart),
+  return projectCwd;
+}
+
+async function pathIsFile(path: string): Promise<boolean> {
+  const stats = await stat(path).catch((error) => {
+    if (getErrorCode(error) === "ENOENT") {
+      return undefined;
+    }
+    throw error;
+  });
+  return stats?.isFile() ?? false;
+}
+
+async function collectMemberAgentContextFiles(options: {
+  workspacePath: string;
+  memberProjectId: string;
+  project: TelegramRepositoryProjectConfig;
+}): Promise<string[]> {
+  const memberPath = join(options.workspacePath, options.memberProjectId);
+  const candidates = [join(memberPath, "AGENTS.md")];
+  let currentPath = memberPath;
+
+  for (const segment of options.project.workingDirectory?.split(/[\\/]/).filter(Boolean) ?? []) {
+    currentPath = join(currentPath, segment);
+    candidates.push(join(currentPath, "AGENTS.md"));
+  }
+
+  const contextFiles: string[] = [];
+  for (const candidate of candidates) {
+    if (await pathIsFile(candidate)) {
+      contextFiles.push(relative(options.workspacePath, candidate));
+    }
+  }
+  return contextFiles;
+}
+
+function formatCompositeAgentsFile(options: {
+  project: Extract<TelegramProjectConfig, { projectIds: string[] }>;
+  projects: Record<string, TelegramProjectConfig>;
+}): string {
+  const lines = [
+    "# Multi-repository workspace",
+    "",
+    "This workspace contains multiple independent Git repositories:",
+    "",
+  ];
+
+  for (const memberProjectId of options.project.projectIds) {
+    const memberProject = options.projects[memberProjectId];
+    if (!memberProject || !isRepositoryProject(memberProject)) {
+      throw new Error(`composite project references invalid member '${memberProjectId}'`);
+    }
+
+    const details = [
+      `repository \`${memberProject.repo}\``,
+      memberProject.ref ? `ref \`${memberProject.ref}\`` : "its default branch",
+      memberProject.description,
+      memberProject.workingDirectory
+        ? `working directory \`${memberProject.workingDirectory}\``
+        : undefined,
+    ].filter((detail): detail is string => detail !== undefined);
+    lines.push(`- \`${memberProjectId}/\`: ${details.join(", ")}`);
+  }
+
+  lines.push(
+    "",
+    "Each child directory is an independent Git repository. Instructions from AGENTS.md files inside each repository apply to work in that repository's subtree.",
+  );
+
+  if (options.project.instructions) {
+    lines.push("", "## Workspace instructions", "", options.project.instructions);
+  }
+
+  return `${lines.join("\n")}\n`;
+}
+
+async function writeCompositeWorkspaceFiles(options: {
+  workspacePath: string;
+  project: Extract<TelegramProjectConfig, { projectIds: string[] }>;
+  projects: Record<string, TelegramProjectConfig>;
+}): Promise<void> {
+  const agentContextFiles: string[] = [];
+  for (const memberProjectId of options.project.projectIds) {
+    const memberProject = options.projects[memberProjectId];
+    if (!memberProject || !isRepositoryProject(memberProject)) {
+      throw new Error(`composite project references invalid member '${memberProjectId}'`);
+    }
+    agentContextFiles.push(
+      ...(await collectMemberAgentContextFiles({
+        workspacePath: options.workspacePath,
+        memberProjectId,
+        project: memberProject,
+      })),
+    );
+  }
+
+  await mkdir(join(options.workspacePath, ".tau"), { recursive: true });
+  await Promise.all([
+    writeFile(join(options.workspacePath, "AGENTS.md"), formatCompositeAgentsFile(options), "utf8"),
+    writeFile(
+      join(options.workspacePath, ".tau", "config.json"),
+      `${JSON.stringify({ agentContextFiles }, null, 2)}\n`,
+      "utf8",
+    ),
+  ]);
+}
+
+export async function prepareWorkspace(
+  options: PrepareWorkspaceOptions,
+): Promise<PreparedWorkspace> {
+  const workspaceStart = process.hrtime.bigint();
+  const workspacePath = resolveWorkspacePath({
+    workspaceRoot: options.workspaceRoot,
+    projectId: options.projectId,
+    sessionId: options.sessionId,
   });
 
-  return { workspacePath, sessionCwd };
+  await rm(workspacePath, { recursive: true, force: true });
+  await mkdir(dirname(workspacePath), { recursive: true });
+
+  try {
+    if (isRepositoryProject(options.project)) {
+      const sessionCwd = await prepareRepositoryWorkspace({
+        workspacePath,
+        cacheWorkspaceRoot: options.workspaceRoot,
+        projectId: options.projectId,
+        project: options.project,
+        signal: options.signal,
+        onLog: options.onLog,
+      });
+
+      log(options.onLog, "info", "workspace prepared", {
+        workspacePath,
+        sessionCwd,
+        durationMs: elapsedMs(workspaceStart),
+      });
+      return { workspacePath, sessionCwd };
+    }
+
+    await mkdir(workspacePath, { recursive: true });
+    const memberBackgroundBootstrapCommands: NonNullable<
+      PreparedWorkspace["memberBackgroundBootstrapCommands"]
+    > = [];
+
+    for (const memberProjectId of options.project.projectIds) {
+      const memberProject = options.projects[memberProjectId];
+      if (!memberProject || !isRepositoryProject(memberProject)) {
+        throw new Error(`composite project references invalid member '${memberProjectId}'`);
+      }
+
+      const memberCwd = await prepareRepositoryWorkspace({
+        workspacePath: join(workspacePath, memberProjectId),
+        cacheWorkspaceRoot: memberProject.workspaceRoot ?? options.defaultWorkspaceRoot,
+        projectId: memberProjectId,
+        project: memberProject,
+        signal: options.signal,
+        onLog: options.onLog,
+      });
+      if (memberProject.backgroundBootstrapCommands) {
+        memberBackgroundBootstrapCommands.push({
+          commands: memberProject.backgroundBootstrapCommands,
+          cwd: memberCwd,
+        });
+      }
+    }
+
+    await writeCompositeWorkspaceFiles({
+      workspacePath,
+      project: options.project,
+      projects: options.projects,
+    });
+    await runBootstrapCommands({
+      commands: options.project.bootstrapCommands ?? [],
+      cwd: workspacePath,
+      signal: options.signal,
+      onLog: options.onLog,
+      mode: "sync",
+    });
+
+    log(options.onLog, "info", "workspace prepared", {
+      workspacePath,
+      sessionCwd: workspacePath,
+      durationMs: elapsedMs(workspaceStart),
+    });
+    return {
+      workspacePath,
+      sessionCwd: workspacePath,
+      ...(memberBackgroundBootstrapCommands.length > 0
+        ? { memberBackgroundBootstrapCommands }
+        : {}),
+    };
+  } catch (error) {
+    await rm(workspacePath, { recursive: true, force: true });
+    throw error;
+  }
 }

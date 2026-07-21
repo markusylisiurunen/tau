@@ -148,8 +148,9 @@ tau telegram --config-file <path>
 
 The Telegram command surface is intentionally small:
 
-- `/new` creates a new session for the chat, replacing the previous active session if one exists.
-- `/status` returns a short natural-language status paragraph for the active session, including model, reasoning effort, context usage, and cumulative cost when session details are available.
+- `/use_<projectId>` selects the configured project used by future `/new` sessions without changing the active session.
+- `/new` creates a session from the selected project, replacing the previous active session if one exists.
+- `/status` reports the active project and session details, plus a different next-session project preference when selected.
 - `/compact` summarizes older conversation context to reduce context usage.
 - `/interrupt` interrupts the active run.
 
@@ -157,7 +158,7 @@ The runner keeps tool and lifecycle progress quiet: Telegram receives command ac
 
 Telegram DM input supports plain text, voice/audio transcription with the transcript echoed back for verification, and attachment queueing (`image/*`, PDF, `.txt`, `.md`, `.json`, `.csv`, `.yaml`, `.yml`). allowed groups are opt-in via `allowedChatIds`; non-triggering group text/captions, attachments, audio transcripts, and processing errors are buffered as sender-attributed context and the most recent 50 messages since the previous bot-triggering turn are included when a bot mention triggers a turn. group commands accept explicit bot mentions on or around the command, such as `/status@botusername`, `/status @botusername`, or `@botusername /status`.
 
-Telegram config defines `bots`, `projects`, `workspaceRoot`, optional `systemMessage`, and optional `maxSessions`. repositories use persistent bare caches at `<workspaceRoot>-repo-cache/<projectId>.git`; active session records are persisted at `<workspaceRoot>-sessions.json`, their workspaces survive runner restarts, and unreferenced workspace entries are removed on startup. Tau reconnects preserved sessions to their corresponding snapshots. When creating or reconstructing a workspace, `bootstrapCommands` block initial readiness and `backgroundBootstrapCommands` start without blocking; preserved workspaces skip both on restart. for config details, see [docs/telegram.md](docs/telegram.md).
+Telegram config defines `bots`, `projects`, `workspaceRoot`, optional `systemMessage`, and optional `maxSessions`. Projects may describe one repository or compose several repository projects under a generated multi-repo root. Repositories use persistent bare caches at `<workspaceRoot>-repo-cache/<projectId>.git`; active session records and per-chat project preferences are persisted, workspaces survive runner restarts, and unreferenced workspace entries are removed on startup. Tau reconnects preserved sessions to their corresponding snapshots. When creating or reconstructing a workspace, `bootstrapCommands` block initial readiness and `backgroundBootstrapCommands` start without blocking; preserved workspaces skip both on restart. for config details, see [docs/telegram.md](docs/telegram.md).
 
 ## built-in tool commands
 
@@ -600,7 +601,7 @@ Telegram runner settings are in a separate config file passed to:
 tau telegram --config-file <path>
 ```
 
-see [docs/telegram.md](docs/telegram.md) for the config schema (`bots`, `projects`, `workspaceRoot`, optional `systemMessage`, optional `maxSessions`) and GitHub repo requirements (`owner/repo`, cached via `gh repo clone -- --bare`).
+see [docs/telegram.md](docs/telegram.md) for the config schema, project selection commands, repository and composite project definitions, and GitHub cache requirements.
 
 ### diff review tool
 

@@ -270,6 +270,45 @@ describe("telegram session manager", () => {
     await manager.closeSession(created.id);
   });
 
+  it("runs composite member background commands before composite commands", async () => {
+    const clientHarness = createClientHarness();
+    const runBootstrapCommands = vi.fn(async () => {});
+    const projects = {
+      alpha: { repo: "owner/alpha" },
+      beta: { repo: "owner/beta" },
+      platform: {
+        projectIds: ["alpha", "beta"],
+        persona: "gpt-5.6-sol-coder:high",
+        backgroundBootstrapCommands: ["watch platform"],
+      },
+    };
+
+    const manager = createTelegramSessionManager({
+      projects,
+      prepareWorkspace: vi.fn(async () => ({
+        workspacePath: "/tmp/ws/platform",
+        sessionCwd: "/tmp/ws/platform",
+        memberBackgroundBootstrapCommands: [
+          { commands: ["watch alpha"], cwd: "/tmp/ws/platform/alpha" },
+          { commands: ["watch beta"], cwd: "/tmp/ws/platform/beta" },
+        ],
+      })),
+      createClient: vi.fn(async () => clientHarness.client),
+      runBootstrapCommands,
+    });
+
+    const created = await manager.createSession({ projectId: "platform" });
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+    await waitFor(() => runBootstrapCommands.mock.calls.length === 3);
+
+    expect(runBootstrapCommands.mock.calls.map(([options]) => options)).toEqual([
+      expect.objectContaining({ commands: ["watch alpha"], cwd: "/tmp/ws/platform/alpha" }),
+      expect.objectContaining({ commands: ["watch beta"], cwd: "/tmp/ws/platform/beta" }),
+      expect.objectContaining({ commands: ["watch platform"], cwd: "/tmp/ws/platform" }),
+    ]);
+    await manager.closeSession(created.id);
+  });
+
   it("keeps the session usable when background bootstrap fails", async () => {
     const clientHarness = createClientHarness();
     const runBootstrapCommands = vi.fn(async () => {

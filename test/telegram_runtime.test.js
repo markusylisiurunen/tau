@@ -7,7 +7,10 @@ import { startTelegramRuntime } from "../dist/core/telegram/runtime.js";
 const workspaceRoot = join(tmpdir(), `tau-telegram-runtime-${process.pid}`);
 
 afterAll(async () => {
-  await rm(`${workspaceRoot}-sessions.json`, { force: true });
+  await Promise.all([
+    rm(`${workspaceRoot}-sessions.json`, { force: true }),
+    rm(`${workspaceRoot}-project-preferences.json`, { force: true }),
+  ]);
 });
 
 function createTelegramConfig(overrides = {}) {
@@ -74,6 +77,39 @@ describe("telegram runtime", () => {
 
     expect(telegramHandle.close).toHaveBeenCalledTimes(1);
     expect(events.slice(-1)).toEqual(["close-telegram:bot-one"]);
+  });
+
+  it("persists project preferences across runtime restarts", async () => {
+    const ownerId = "telegram:bot-one:chat:42";
+    const config = createTelegramConfig({
+      bots: { "bot-one": { botToken: "token-1" } },
+    });
+    let firstStore;
+    const firstRuntime = await startTelegramRuntime({
+      config,
+      createSessionClient: vi.fn(),
+      deps: {
+        startTelegramAdapter: vi.fn(async (options) => {
+          firstStore = options.projectPreferences;
+          return { close: vi.fn(async () => {}) };
+        }),
+      },
+    });
+
+    await firstStore.set(ownerId, "beta");
+    await firstRuntime.close();
+
+    const secondRuntime = await startTelegramRuntime({
+      config,
+      createSessionClient: vi.fn(),
+      deps: {
+        startTelegramAdapter: vi.fn(async (options) => {
+          expect(options.projectPreferences.get(ownerId)).toBe("beta");
+          return { close: vi.fn(async () => {}) };
+        }),
+      },
+    });
+    await secondRuntime.close();
   });
 
   it("rolls back previously started adapters on startup failure", async () => {

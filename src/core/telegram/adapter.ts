@@ -13,6 +13,7 @@ import {
 } from "../utils/speech_to_text_context.js";
 import { formatTauUserText, splitTauUserText } from "../utils/user_metadata.js";
 import { formatZodError } from "../utils/zod.js";
+import type { TelegramProjectPreferenceStore } from "./project_preferences.js";
 import {
   createScopedTelegramSessionManager,
   type TelegramSessionManager,
@@ -145,6 +146,7 @@ export type TelegramAdapterOptions = {
   geminiApiKey?: string;
   mistralApiKey?: string;
   sessionManager: TelegramSessionManager;
+  projectPreferences: TelegramProjectPreferenceStore;
   api?: TelegramApi;
   fetchImpl?: typeof fetch;
   onLog?: (entry: TelegramLogEntry) => void;
@@ -670,25 +672,35 @@ function formatTelegramSessionName(
   return `${session.projectId} session ${session.id}`;
 }
 
+function formatProjectLabel(projectId: string, project: TelegramProjectConfig): string {
+  return "projectIds" in project ? `${projectId} (${project.projectIds.join(", ")})` : projectId;
+}
+
 function formatSessionStatus(
   session: TelegramSessionRecord,
-  snapshot?: SessionProtocolSnapshot,
+  project: TelegramProjectConfig,
+  snapshot: SessionProtocolSnapshot | undefined,
+  preferredProjectId: string | undefined,
 ): string {
-  const sessionName = formatTelegramSessionName(session);
+  const projectStatus = `project: ${formatProjectLabel(session.projectId, project)}.`;
+  const preferenceStatus =
+    preferredProjectId && preferredProjectId !== session.projectId
+      ? ` new chats will use: ${preferredProjectId}.`
+      : "";
   if (session.state === "failed" && session.error) {
-    return `your ${sessionName} failed. ${ensureTerminalPunctuation(session.error)}`;
+    return `${projectStatus} your session ${session.id} failed. ${ensureTerminalPunctuation(session.error)}${preferenceStatus}`;
   }
 
-  const status = `your ${sessionName} is ${session.state}.`;
+  const status = `${projectStatus} your session ${session.id} is ${session.state}.`;
   if (!snapshot) {
-    return status;
+    return `${status}${preferenceStatus}`;
   }
 
   const model = snapshot.bootstrap.model.name || snapshot.bootstrap.model.id;
   const reasoning = snapshot.settings.reasoning ?? "none";
   const context = formatTelegramContextUsage(snapshot);
   const cost = formatTelegramSessionCost(getTelegramSessionCostTotal(snapshot));
-  return `${status} it is using ${model} with ${reasoning} reasoning. context usage is ${context}. cumulative cost is ${cost}.`;
+  return `${status} it is using ${model} with ${reasoning} reasoning. context usage is ${context}. cumulative cost is ${cost}.${preferenceStatus}`;
 }
 
 function ensureTerminalPunctuation(text: string): string {
@@ -1025,6 +1037,7 @@ class TelegramAdapterImpl {
   private readonly geminiApiKey?: string;
   private readonly mistralApiKey?: string;
   private readonly sessionManager: TelegramSessionManager;
+  private readonly projectPreferences: TelegramProjectPreferenceStore;
   private readonly enforceChatOwnership: boolean;
   private readonly botOwnerPrefix: string;
   private readonly allowedProjectIds: string[];
@@ -1078,6 +1091,7 @@ class TelegramAdapterImpl {
     this.geminiApiKey = options.geminiApiKey?.trim() || undefined;
     this.mistralApiKey = options.mistralApiKey?.trim() || undefined;
     this.sessionManager = options.sessionManager;
+    this.projectPreferences = options.projectPreferences;
     this.enforceChatOwnership = true;
     this.botOwnerPrefix = `telegram:${botId}`;
     this.allowedProjectIds = Object.keys(options.projects);
@@ -1140,7 +1154,7 @@ class TelegramAdapterImpl {
   }
 
   private createCommandDefinitions(): TelegramCommandDefinition[] {
-    return [
+    const definitions: TelegramCommandDefinition[] = [
       {
         command: "/new",
         description: "start a new session",
@@ -1170,6 +1184,17 @@ class TelegramAdapterImpl {
         handler: async (chatId) => this.handleInterrupt(chatId),
       },
     ];
+
+    for (const projectId of this.allowedProjectIds) {
+      definitions.push({
+        command: `/use_${projectId}`,
+        description: `use ${projectId} for new sessions`,
+        usage: `/use_${projectId}`,
+        handler: async (chatId, args) => this.handleUseProject(chatId, projectId, args),
+      });
+    }
+
+    return definitions;
   }
 
   private async syncCommands(): Promise<void> {
@@ -1941,7 +1966,7 @@ class TelegramAdapterImpl {
     if (!handler) {
       await this.reply(
         chatId,
-        "unsupported command. supported commands: /new, /status, /compact, /interrupt",
+        `unsupported command. supported commands: ${this.commandDefinitions.map((definition) => definition.command).join(", ")}`,
       );
       return;
     }
@@ -1964,36 +1989,54 @@ class TelegramAdapterImpl {
     return true;
   }
 
-  private resolveNewCommand(args: string[]): NewCommandResolution {
+  private getPreferredProjectId(chatId: number): string | undefined {
+    const storedProjectId = this.projectPreferences.get(this.ownerIdForChat(chatId));
+    if (storedProjectId && this.projects[storedProjectId]) {
+      return storedProjectId;
+    }
+    if (this.defaultProjectId) {
+      return this.defaultProjectId;
+    }
+
+    const projectIds = Object.keys(this.projects);
+    return projectIds.length === 1 ? projectIds[0] : undefined;
+  }
+
+  private resolveNewCommand(chatId: number, args: string[]): NewCommandResolution {
     if (args.length > 0) {
       return { error: "usage: /new" };
     }
 
-    const projectIds = Object.keys(this.projects);
-    if (this.defaultProjectId) {
-      if (!this.projects[this.defaultProjectId]) {
-        return {
-          error: `telegram.<botId>.defaultProjectId '${this.defaultProjectId}' is not configured`,
-        };
-      }
-      return { projectId: this.defaultProjectId };
+    const projectId = this.getPreferredProjectId(chatId);
+    if (projectId) {
+      return { projectId };
     }
-
-    if (projectIds.length === 1) {
-      return { projectId: projectIds[0]! };
-    }
-
-    if (projectIds.length === 0) {
+    if (this.allowedProjectIds.length === 0) {
       return { error: "no telegram projects configured" };
     }
 
-    return {
-      error: "multiple projects configured. set defaultProjectId for this bot before using /new",
-    };
+    return { error: "select a project with /use_<project> before using /new" };
+  }
+
+  private async handleUseProject(chatId: number, projectId: string, args: string[]): Promise<void> {
+    if (args.length > 0) {
+      await this.reply(chatId, `usage: /use_${projectId}`);
+      return;
+    }
+
+    try {
+      await this.projectPreferences.set(this.ownerIdForChat(chatId), projectId);
+      await this.reply(chatId, `new chats will use ${projectId}.`);
+    } catch (error) {
+      await this.reply(
+        chatId,
+        `failed to save project preference: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   private async handleNew(chatId: number, args: string[], sourceMessageId?: number): Promise<void> {
-    const parsed = this.resolveNewCommand(args);
+    const parsed = this.resolveNewCommand(chatId, args);
     if ("error" in parsed) {
       await this.reply(chatId, parsed.error);
       return;
@@ -2019,8 +2062,15 @@ class TelegramAdapterImpl {
   }
 
   private async handleStatus(chatId: number): Promise<void> {
-    const session = await this.requireActiveSession(chatId);
+    const preferredProjectId = this.getPreferredProjectId(chatId);
+    const session = this.getActiveSession(chatId);
     if (!session) {
+      await this.reply(
+        chatId,
+        preferredProjectId
+          ? `new chats will use: ${preferredProjectId}.`
+          : "no active session. select a project with /use_<project>.",
+      );
       return;
     }
 
@@ -2032,7 +2082,10 @@ class TelegramAdapterImpl {
       snapshot = undefined;
     }
 
-    await this.reply(chatId, formatSessionStatus(session, snapshot));
+    await this.reply(
+      chatId,
+      formatSessionStatus(session, this.projects[session.projectId]!, snapshot, preferredProjectId),
+    );
   }
 
   private async handleCompact(chatId: number, args: string[]): Promise<void> {

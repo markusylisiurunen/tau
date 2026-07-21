@@ -4,9 +4,19 @@ import { describe, expect, it, vi } from "vitest";
 import { startTelegramAdapter } from "../dist/core/telegram/adapter.js";
 
 async function startAdapter(options) {
+  const preferences = new Map();
+  const projectPreferences = options.projectPreferences ?? {
+    initialize: vi.fn(async () => {}),
+    get: vi.fn((ownerId) => preferences.get(ownerId)),
+    set: vi.fn(async (ownerId, projectId) => {
+      preferences.set(ownerId, projectId);
+    }),
+  };
+  await projectPreferences.initialize();
   return startTelegramAdapter({
     botId: "bot-default",
     ...options,
+    projectPreferences,
   });
 }
 
@@ -293,13 +303,14 @@ describe("telegram adapter", () => {
         { command: "status", description: "show active session status" },
         { command: "compact", description: "compact session context" },
         { command: "interrupt", description: "interrupt active run" },
+        { command: "use_demo", description: "use demo for new sessions" },
       ]);
     } finally {
       await adapter.close();
     }
   });
 
-  it("reports active session status with model, reasoning, context, and cost", async () => {
+  it("reports composite project status with model, reasoning, context, and cost", async () => {
     const apiHarness = createApiHarness([
       [
         {
@@ -327,7 +338,15 @@ describe("telegram adapter", () => {
 
     const adapter = await startAdapter({
       botToken: "token",
-      projects: { demo: { repo: "git@example.com:demo.git" } },
+      projects: {
+        alpha: { repo: "owner/alpha" },
+        beta: { repo: "owner/beta" },
+        platform: {
+          projectIds: ["alpha", "beta"],
+          persona: "gpt-5.6-sol-coder:high",
+        },
+      },
+      defaultProjectId: "platform",
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
       pollIntervalMs: 1,
@@ -339,8 +358,119 @@ describe("telegram adapter", () => {
         apiHarness.sendMessages.some((entry) => String(entry.text).includes("context usage")),
       );
       expect(apiHarness.sendMessages.map((entry) => entry.text)).toContain(
-        "your demo session s1 is waiting-input. it is using Claude Opus 4.6 with medium reasoning. context usage is 6.0% of 200k tokens. cumulative cost is $0.12.",
+        "project: platform (alpha, beta). your session s1 is waiting-input. it is using Claude Opus 4.6 with medium reasoning. context usage is 6.0% of 200k tokens. cumulative cost is $0.12.",
       );
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it("uses project selectors only for future sessions", async () => {
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: {
+            chat: { id: 18, type: "private" },
+            from: { id: 7 },
+            text: "/new",
+          },
+        },
+        {
+          update_id: 2,
+          message: {
+            chat: { id: 18, type: "private" },
+            from: { id: 7 },
+            text: "/use_beta",
+          },
+        },
+        {
+          update_id: 3,
+          message: {
+            chat: { id: 18, type: "private" },
+            from: { id: 7 },
+            text: "/status",
+          },
+        },
+        {
+          update_id: 4,
+          message: {
+            chat: { id: 18, type: "private" },
+            from: { id: 7 },
+            text: "/new",
+          },
+        },
+      ],
+    ]);
+    const managerHarness = createSessionManagerHarness();
+
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: {
+        alpha: { repo: "owner/alpha" },
+        beta: { repo: "owner/beta" },
+      },
+      defaultProjectId: "alpha",
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() => managerHarness.manager.createSession.mock.calls.length === 2);
+      expect(managerHarness.manager.createSession.mock.calls).toEqual([
+        [
+          {
+            projectId: "alpha",
+            ownerId: ownerIdForChat(18),
+          },
+        ],
+        [
+          {
+            projectId: "beta",
+            ownerId: ownerIdForChat(18),
+          },
+        ],
+      ]);
+      expect(managerHarness.manager.closeSession).toHaveBeenCalledTimes(1);
+      expect(apiHarness.sendMessages.map((entry) => entry.text)).toEqual([
+        "new chats will use beta.",
+        "project: alpha. your session s1 is waiting-input. new chats will use: beta.",
+      ]);
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it("reports the preferred project when there is no active session", async () => {
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: {
+            chat: { id: 19, type: "private" },
+            from: { id: 7 },
+            text: "/status",
+          },
+        },
+      ],
+    ]);
+    const managerHarness = createSessionManagerHarness();
+
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { alpha: { repo: "owner/alpha" }, beta: { repo: "owner/beta" } },
+      defaultProjectId: "alpha",
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() => apiHarness.sendMessages.length === 1);
+      expect(apiHarness.sendMessages[0].text).toBe("new chats will use: alpha.");
     } finally {
       await adapter.close();
     }
@@ -402,7 +532,7 @@ describe("telegram adapter", () => {
         { mode: "steer" },
       );
       expect(apiHarness.sendMessages.map((entry) => entry.text)).toContain(
-        "your demo session restored-session is waiting-input. it is using Claude Opus 4.6 with medium reasoning. context usage is 6.0% of 200k tokens. cumulative cost is $0.12.",
+        "project: demo. your session restored-session is waiting-input. it is using Claude Opus 4.6 with medium reasoning. context usage is 6.0% of 200k tokens. cumulative cost is $0.12.",
       );
     } finally {
       await adapter.close();
@@ -1201,7 +1331,7 @@ describe("telegram adapter", () => {
     try {
       await waitFor(() => apiHarness.sendMessages.length === 1);
       expect(apiHarness.sendMessages[0].text).toBe(
-        "unsupported command. supported commands: /new, /status, /compact, /interrupt",
+        "unsupported command. supported commands: /new, /status, /compact, /interrupt, /use_demo",
       );
       expect(managerHarness.manager.closeSession).not.toHaveBeenCalled();
     } finally {

@@ -1413,7 +1413,7 @@ export class SessionChatController {
   }
 
   private syncSnapshotToolAndAgentUi(snapshot: SessionProtocolSnapshot): void {
-    this.view.resetToolUiSession();
+    this.view.reconcileToolUiSession(Object.keys(snapshot.tools));
     for (const event of getToolUiEventsInModelOrder(snapshot)) {
       this.view.handleToolUiEvent(event);
     }
@@ -2581,10 +2581,14 @@ function getToolIdsInModelOrder(snapshot: SessionProtocolSnapshot): string[] {
   const messageOrder = new Map(snapshot.messages.map((message, index) => [message.id, index]));
   return Object.values(snapshot.tools)
     .sort((left, right) => {
-      const leftMessageIndex = messageOrder.get(left.call.messageId) ?? Number.MAX_SAFE_INTEGER;
-      const rightMessageIndex = messageOrder.get(right.call.messageId) ?? Number.MAX_SAFE_INTEGER;
+      const leftPosition = left.status === "streaming" ? left.origin : left.call;
+      const rightPosition = right.status === "streaming" ? right.origin : right.call;
+      const leftMessageIndex = messageOrder.get(leftPosition.messageId) ?? Number.MAX_SAFE_INTEGER;
+      const rightMessageIndex =
+        messageOrder.get(rightPosition.messageId) ?? Number.MAX_SAFE_INTEGER;
       return (
-        leftMessageIndex - rightMessageIndex || left.call.contentIndex - right.call.contentIndex
+        leftMessageIndex - rightMessageIndex ||
+        leftPosition.contentIndex - rightPosition.contentIndex
       );
     })
     .map((tool) => tool.id);

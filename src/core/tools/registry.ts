@@ -11,9 +11,20 @@ type ToolUiEventWithHeaderTarget = {
   headerTarget: string;
 } & (
   | {
+      type: "tool_call_streaming";
+      toolCallId: string;
+      toolName: string;
+    }
+  | {
       type: "tool_call_queued";
       toolCallId: string;
       toolName: string;
+    }
+  | {
+      type: "tool_call_blocked";
+      toolCallId: string;
+      toolName: string;
+      reason: string;
     }
   | {
       type: "bash_started";

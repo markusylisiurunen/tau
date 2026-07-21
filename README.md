@@ -737,7 +737,7 @@ tau connects your terminal to large language models, giving them tools to intera
 
 the model sees your messages, any file contents you've shared, and the results of tool calls. it doesn't have ambient access to your filesystem; it only sees what you show it or what it explicitly requests through tools.
 
-tool calls are displayed in the UI so you can see exactly what the model is doing. use `ctrl+o` to toggle between compact and detailed views.
+tool calls are displayed as soon as the model identifies the tool, before its arguments finish streaming, so you can see what the model is preparing and executing. use `ctrl+o` to toggle between compact and detailed views.
 
 ## tool output truncation
 

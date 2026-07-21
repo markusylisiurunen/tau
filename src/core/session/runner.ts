@@ -12,6 +12,8 @@ import type {
   CoreNoticeEvent,
   CoreToolUiEvent,
   RunnerAssistantPartialEvent,
+  RunnerToolCallDiscardedEvent,
+  RunnerToolCallStreamingEvent,
   RunnerToolResultEvent,
 } from "../events/types.js";
 import type { ToolDefinition, ToolDispatchContext, ToolRegistry } from "../tools/registry.js";
@@ -22,7 +24,11 @@ import { MessageAccumulator } from "./message_accumulator.js";
 
 const ASSISTANT_PARTIAL_MIN_INTERVAL_MS = 33;
 
-export type ModelRunnerEvent = CoreNoticeEvent | RunnerAssistantPartialEvent;
+export type ModelRunnerEvent =
+  | CoreNoticeEvent
+  | RunnerAssistantPartialEvent
+  | RunnerToolCallStreamingEvent
+  | RunnerToolCallDiscardedEvent;
 export type ToolRunnerEvent = CoreNoticeEvent | CoreToolUiEvent | RunnerToolResultEvent;
 export type RunnerEvent = ModelRunnerEvent | ToolRunnerEvent;
 
@@ -44,6 +50,24 @@ export type RunModelSubturnOptions = {
   retry?: RetryOptions;
 };
 
+type StreamingToolCallIdentity = {
+  toolCallId: string;
+  toolName: string;
+};
+
+function getStreamingToolCallIdentity(
+  event: Extract<
+    AssistantMessageEvent,
+    { type: "toolcall_start" | "toolcall_delta" | "toolcall_end" }
+  >,
+): StreamingToolCallIdentity | undefined {
+  const content = event.partial.content[event.contentIndex];
+  if (content?.type !== "toolCall" || !content.id.trim() || !content.name.trim()) {
+    return undefined;
+  }
+  return { toolCallId: content.id, toolName: content.name };
+}
+
 export async function* runModelSubturn(
   options: RunModelSubturnOptions,
 ): AsyncGenerator<ModelRunnerEvent, AssistantMessage, void> {
@@ -64,6 +88,77 @@ export async function* runModelSubturn(
       number,
       Extract<AssistantMessageEvent, { type: "toolcall_end" }>
     >();
+    const streamingToolCalls = new Map<number, StreamingToolCallIdentity>();
+    const streamingToolCallIndexesById = new Map<string, number>();
+
+    const updateStreamingToolCall = (
+      event: Extract<
+        AssistantMessageEvent,
+        { type: "toolcall_start" | "toolcall_delta" | "toolcall_end" }
+      >,
+    ): ModelRunnerEvent[] => {
+      if (!accumulator) {
+        return [];
+      }
+
+      const contentIndex = event.contentIndex;
+      const current = streamingToolCalls.get(contentIndex);
+      const next = getStreamingToolCallIdentity(event);
+      if (
+        current &&
+        next &&
+        current.toolCallId === next.toolCallId &&
+        current.toolName === next.toolName
+      ) {
+        return [];
+      }
+
+      const duplicateIndex = next ? streamingToolCallIndexesById.get(next.toolCallId) : undefined;
+      if (!next || (duplicateIndex !== undefined && duplicateIndex !== contentIndex)) {
+        if (!current) {
+          return [];
+        }
+        streamingToolCalls.delete(contentIndex);
+        streamingToolCallIndexesById.delete(current.toolCallId);
+        return [{ type: "tool_call_discarded", toolCallId: current.toolCallId, contentIndex }];
+      }
+
+      if (current) {
+        streamingToolCallIndexesById.delete(current.toolCallId);
+      }
+      streamingToolCalls.set(contentIndex, next);
+      streamingToolCallIndexesById.set(next.toolCallId, contentIndex);
+      return [
+        {
+          type: "tool_call_streaming",
+          ...next,
+          contentIndex,
+          ...(current ? { replacesToolCallId: current.toolCallId } : {}),
+        },
+      ];
+    };
+
+    const discardStreamingToolCalls = (): RunnerToolCallDiscardedEvent[] => {
+      const events = [...streamingToolCalls]
+        .sort(([left], [right]) => left - right)
+        .map(([contentIndex, identity]) => ({
+          type: "tool_call_discarded" as const,
+          toolCallId: identity.toolCallId,
+          contentIndex,
+        }));
+      streamingToolCalls.clear();
+      streamingToolCallIndexesById.clear();
+      return events;
+    };
+
+    const completeStreamingToolCall = (contentIndex: number): void => {
+      const identity = streamingToolCalls.get(contentIndex);
+      if (!identity) {
+        return;
+      }
+      streamingToolCalls.delete(contentIndex);
+      streamingToolCallIndexesById.delete(identity.toolCallId);
+    };
 
     const emitPartialIfPending = async function* (): AsyncGenerator<ModelRunnerEvent, void, void> {
       if (!accumulator || !hasPendingPartial) {
@@ -107,6 +202,9 @@ export async function* runModelSubturn(
           if (!accumulator) {
             continue;
           }
+          for (const streamingEvent of updateStreamingToolCall(event)) {
+            yield streamingEvent;
+          }
           if (toolCallOrder.includes(event.contentIndex)) {
             throw new Error(`model stream started tool call index ${event.contentIndex} twice`);
           }
@@ -115,10 +213,21 @@ export async function* runModelSubturn(
           continue;
         }
 
+        if (event.type === "toolcall_delta") {
+          for (const streamingEvent of updateStreamingToolCall(event)) {
+            yield streamingEvent;
+          }
+          continue;
+        }
+
         if (event.type === "toolcall_end") {
           if (!accumulator) {
             continue;
           }
+          for (const streamingEvent of updateStreamingToolCall(event)) {
+            yield streamingEvent;
+          }
+          completeStreamingToolCall(event.contentIndex);
           if (!toolCallOrder.includes(event.contentIndex)) {
             throw new Error(
               `model stream completed tool call at index ${event.contentIndex} without starting it`,
@@ -142,10 +251,16 @@ export async function* runModelSubturn(
       }
     } catch (error) {
       yield* emitPartialIfPending();
+      for (const discarded of discardStreamingToolCalls()) {
+        yield discarded;
+      }
       throw error;
     }
 
     yield* emitPartialIfPending();
+    for (const discarded of discardStreamingToolCalls()) {
+      yield discarded;
+    }
     return await stream.result();
   };
 
@@ -252,6 +367,7 @@ type PreparedToolCall =
     }
   | {
       type: "rejected";
+      toolCall: ToolCall;
       message: string;
       result: ToolResultMessage;
     };
@@ -266,6 +382,7 @@ function prepareToolCall(
       `Tool '${toolCall.name}' is not enabled for this session.`;
     return {
       type: "rejected",
+      toolCall,
       message,
       result: createToolError(toolCall, message),
     };
@@ -280,6 +397,7 @@ function prepareToolCall(
       `Tool '${toolCall.name}' is not supported by tau.`;
     return {
       type: "rejected",
+      toolCall,
       message,
       result: createToolError(toolCall, message),
     };
@@ -304,6 +422,19 @@ function createToolQueuedEvent(
   };
 }
 
+function createToolBlockedEvent(toolCall: ToolCall, reason: string): CoreToolUiEvent {
+  return {
+    type: "tool_ui",
+    uiEvent: {
+      type: "tool_call_blocked",
+      toolCallId: toolCall.id,
+      toolName: toolCall.name,
+      headerTarget: toolCall.name,
+      reason,
+    },
+  };
+}
+
 export class SequentialToolCallRunner implements AsyncIterable<ToolRunnerEvent> {
   private readonly events: ToolRunnerEvent[] = [];
   private readonly waiters: Array<{
@@ -321,20 +452,22 @@ export class SequentialToolCallRunner implements AsyncIterable<ToolRunnerEvent> 
     private readonly signal: AbortSignal,
   ) {}
 
-  enqueue(toolCall: ToolCall): CoreToolUiEvent | undefined {
+  enqueue(toolCall: ToolCall): CoreToolUiEvent {
     const prepared = prepareToolCall(toolCall, this.options);
     this.enqueuePrepared(prepared);
     return prepared.type === "ready"
       ? createToolQueuedEvent(prepared, this.options.dispatchContext)
-      : undefined;
+      : createToolBlockedEvent(toolCall, prepared.message);
   }
 
-  enqueueRejected(toolCall: ToolCall, message: string): void {
+  enqueueRejected(toolCall: ToolCall, message: string): CoreToolUiEvent {
     this.enqueuePrepared({
       type: "rejected",
+      toolCall,
       message,
       result: createToolError(toolCall, message),
     });
+    return createToolBlockedEvent(toolCall, message);
   }
 
   private enqueuePrepared(prepared: PreparedToolCall): void {
@@ -460,6 +593,7 @@ export async function* runToolCalls(
       continue;
     }
     resultsByIndex.set(index, prepared.result);
+    yield createToolBlockedEvent(prepared.toolCall, prepared.message);
     yield { type: "notice", severity: "error", text: prepared.message };
   }
 

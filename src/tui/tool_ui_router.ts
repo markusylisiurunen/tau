@@ -86,6 +86,16 @@ export class ToolUiRouter {
     this.latestToolEventsById.clear();
   }
 
+  reconcileSession(toolCallIds: readonly string[]): void {
+    const currentIds = new Set(toolCallIds);
+    const staleIds = [...this.latestToolEventsById.keys()].filter((id) => !currentIds.has(id));
+    this.resetSession();
+    if (staleIds.length > 0) {
+      this.chatContainer.removeMessages(staleIds);
+      this.requestRender();
+    }
+  }
+
   clearTransientState(): void {
     this.runningBashComponents.clear();
     this.runningSubagentTools.clear();

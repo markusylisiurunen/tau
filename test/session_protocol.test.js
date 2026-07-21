@@ -1718,6 +1718,49 @@ describe("session_protocol", () => {
       tools: { "tool-1": tool },
       agents: { "agent-1": agent },
     });
+    const streamingTool = {
+      id: "streaming-tool",
+      toolCallId: "streaming-tool",
+      toolName: "write",
+      status: "streaming",
+      origin: { messageId: "assistant-1", contentIndex: 2 },
+      facetIds: [],
+    };
+    const streamingResult = validateSessionProtocolResult("session.snapshot", {
+      ...snapshot,
+      messages: messages.map((message) =>
+        message.id === "assistant-1"
+          ? { ...message, message: { ...message.message, content: [] } }
+          : message,
+      ),
+      tools: { "streaming-tool": streamingTool },
+    });
+    expect(streamingResult).toEqual(
+      expect.objectContaining({
+        ok: true,
+        value: expect.objectContaining({
+          tools: { "streaming-tool": streamingTool },
+        }),
+      }),
+    );
+    expect(
+      validateSessionProtocolResult("session.snapshot", {
+        ...snapshot,
+        tools: {
+          "streaming-tool": {
+            ...streamingTool,
+            origin: { messageId: "user-1", contentIndex: 0 },
+          },
+        },
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        message: expect.stringContaining(
+          "streaming tool 'streaming-tool' does not reference a draft assistant message",
+        ),
+      }),
+    });
 
     expect(
       validateSessionProtocolResult("session.snapshot", {

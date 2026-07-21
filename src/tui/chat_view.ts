@@ -89,6 +89,7 @@ export interface ChatView {
   handleToolUiEvent(event: ToolUiEvent): void;
   handleSubagentEvent(event: SubagentUiEvent): void;
   resetToolUiSession(): void;
+  reconcileToolUiSession(toolCallIds: readonly string[]): void;
   resetToolUiSessionPreservingSubagents(): void;
   finalizeToolUiPending(reason: "aborted" | "interrupted"): void;
   clearToolUiTransientState(): void;
@@ -285,6 +286,11 @@ export class TuiChatView implements ChatView {
 
   resetToolUiSession(): void {
     this.toolUiRouter.resetSession();
+    this.subagentPanel.reset();
+  }
+
+  reconcileToolUiSession(toolCallIds: readonly string[]): void {
+    this.toolUiRouter.reconcileSession(toolCallIds);
     this.subagentPanel.reset();
   }
 

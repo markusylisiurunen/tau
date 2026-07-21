@@ -1159,6 +1159,7 @@ export class SessionEngine {
     const recoveryToolResults: ToolResultMessage[] = [];
     const streamedToolCalls: ToolCall[] = [];
     const streamedToolCallIds = new Set<string>();
+    const streamingToolCallIdsByContentIndex = new Map<number, string>();
     let modelDone = false;
     let toolDone = false;
     let shouldNoteProviderError = false;
@@ -1265,11 +1266,55 @@ export class SessionEngine {
             (result) => ({ source: "model" as const, result }),
             (error: unknown) => ({ source: "model_error" as const, error }),
           );
+          if (event.type === "tool_call_streaming") {
+            const replacesToolCallId = streamingToolCallIdsByContentIndex.get(event.contentIndex);
+            if (signal.aborted || streamedToolCallIds.has(event.toolCallId)) {
+              if (replacesToolCallId) {
+                streamingToolCallIdsByContentIndex.delete(event.contentIndex);
+                const discardedEvent: CoreEvent = {
+                  type: "tool_call_discarded",
+                  historyEntryId,
+                  toolCallId: replacesToolCallId,
+                  contentIndex: event.contentIndex,
+                };
+                this.emitEvent(discardedEvent);
+                yield discardedEvent;
+              }
+              continue;
+            }
+            streamingToolCallIdsByContentIndex.set(event.contentIndex, event.toolCallId);
+            const streamingEvent: CoreEvent = {
+              type: "tool_call_streaming",
+              historyEntryId,
+              toolCallId: event.toolCallId,
+              toolName: event.toolName,
+              contentIndex: event.contentIndex,
+              ...(replacesToolCallId ? { replacesToolCallId } : {}),
+            };
+            this.emitEvent(streamingEvent);
+            yield streamingEvent;
+            continue;
+          }
+          if (event.type === "tool_call_discarded") {
+            if (streamingToolCallIdsByContentIndex.get(event.contentIndex) !== event.toolCallId) {
+              continue;
+            }
+            streamingToolCallIdsByContentIndex.delete(event.contentIndex);
+            const discardedEvent: CoreEvent = {
+              type: "tool_call_discarded",
+              historyEntryId,
+              toolCallId: event.toolCallId,
+              contentIndex: event.contentIndex,
+            };
+            this.emitEvent(discardedEvent);
+            yield discardedEvent;
+            continue;
+          }
           if (event.type === "assistant_partial") {
             if (signal.aborted) {
               continue;
             }
-            const queuedEvents: CoreToolUiEvent[] = [];
+            const admissionEvents: CoreToolUiEvent[] = [];
             for (const streamedToolCall of event.snapshot.toolCalls.slice(
               streamedToolCalls.length,
             )) {
@@ -1278,10 +1323,13 @@ export class SessionEngine {
               if (!invalidId && !duplicateId) {
                 streamedToolCallIds.add(streamedToolCall.id);
                 streamedToolCalls.push(streamedToolCall);
-                const queuedEvent = toolRunner.enqueue(streamedToolCall);
-                if (queuedEvent) {
-                  queuedEvents.push(queuedEvent);
+                for (const [contentIndex, toolCallId] of streamingToolCallIdsByContentIndex) {
+                  if (toolCallId === streamedToolCall.id) {
+                    streamingToolCallIdsByContentIndex.delete(contentIndex);
+                    break;
+                  }
                 }
+                admissionEvents.push(toolRunner.enqueue(streamedToolCall));
                 continue;
               }
 
@@ -1293,7 +1341,7 @@ export class SessionEngine {
                 ? "Model returned a tool call with an empty ID."
                 : `Model returned duplicate tool call ID '${streamedToolCall.id}'.`;
               streamedToolCalls.push(toolCall);
-              toolRunner.enqueueRejected(toolCall, message);
+              admissionEvents.push(toolRunner.enqueueRejected(toolCall, message));
             }
             const partialEvent: CoreEvent = {
               type: "assistant_partial",
@@ -1305,9 +1353,9 @@ export class SessionEngine {
             };
             this.emitEvent(partialEvent);
             yield partialEvent;
-            for (const queuedEvent of queuedEvents) {
-              this.emitEvent(queuedEvent);
-              yield queuedEvent;
+            for (const admissionEvent of admissionEvents) {
+              this.emitEvent(admissionEvent);
+              yield admissionEvent;
             }
             continue;
           }

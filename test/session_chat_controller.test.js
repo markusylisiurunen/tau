@@ -610,6 +610,7 @@ class FakeView {
     this.subagentEvents.push(event);
   }
   resetToolUiSession = vi.fn();
+  reconcileToolUiSession = vi.fn();
   resetToolUiSessionPreservingSubagents() {}
   finalizeToolUiPending() {}
   clearToolUiTransientState() {}
@@ -2143,6 +2144,66 @@ describe("SessionChatController", () => {
       ]),
     );
 
+    await controller.dispose();
+  });
+
+  it("hydrates streaming tool calls from snapshot facets", async () => {
+    const baseSnapshot = createSnapshot();
+    const snapshot = updateSnapshot(baseSnapshot, {
+      lifecycle: "running",
+      messages: [
+        ...baseSnapshot.messages,
+        {
+          id: "assistant-draft",
+          state: "draft",
+          modelVisible: false,
+          message: { role: "assistant", content: [], timestamp: 1 },
+        },
+      ],
+      tools: {
+        "write-call": {
+          id: "write-call",
+          toolCallId: "write-call",
+          toolName: "write",
+          status: "streaming",
+          origin: { messageId: "assistant-draft", contentIndex: 0 },
+          facetIds: ["tool-ui-write-call"],
+        },
+      },
+      facets: {
+        "tool-ui-write-call": {
+          id: "tool-ui-write-call",
+          subject: { type: "tool", id: "write-call" },
+          kind: "tau.tool-ui-events",
+          version: 1,
+          data: {
+            events: [
+              {
+                type: "tool_call_streaming",
+                toolCallId: "write-call",
+                toolName: "write",
+                headerTarget: "write",
+              },
+            ],
+          },
+        },
+      },
+    });
+    const session = new FakeSession(snapshot);
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "ssh host tau rpc",
+    });
+
+    controller.start();
+
+    expect(view.reconcileToolUiSession).toHaveBeenCalledWith(["write-call"]);
+    expect(view.toolEvents).toEqual([
+      expect.objectContaining({ type: "tool_call_streaming", toolCallId: "write-call" }),
+    ]);
     await controller.dispose();
   });
 

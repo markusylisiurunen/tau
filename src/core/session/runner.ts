@@ -227,7 +227,6 @@ export async function* runModelSubturn(
           for (const streamingEvent of updateStreamingToolCall(event)) {
             yield streamingEvent;
           }
-          completeStreamingToolCall(event.contentIndex);
           if (!toolCallOrder.includes(event.contentIndex)) {
             throw new Error(
               `model stream completed tool call at index ${event.contentIndex} without starting it`,
@@ -243,6 +242,7 @@ export async function* runModelSubturn(
             }
             toolCallOrder.shift();
             completedToolCalls.delete(contentIndex);
+            completeStreamingToolCall(contentIndex);
             accumulator.processEvent(completed);
             hasPendingPartial = true;
             yield* emitPartialIfPending();

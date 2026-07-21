@@ -301,6 +301,81 @@ describe("session runner tool dispatch context", () => {
     ]);
   });
 
+  it("discards completed calls still buffered behind earlier calls", async () => {
+    const earlierCall = {
+      id: "earlier-call",
+      type: "toolCall",
+      name: "bash",
+      arguments: {},
+    };
+    const laterCall = {
+      id: "later-call",
+      type: "toolCall",
+      name: "write",
+      arguments: {},
+    };
+    const partial = {
+      role: "assistant",
+      content: [earlierCall, laterCall],
+      timestamp: 1,
+    };
+    const modelRuntime = {
+      streamModel() {
+        return createModelStream(
+          [
+            { type: "toolcall_start", contentIndex: 0, partial },
+            { type: "toolcall_start", contentIndex: 1, partial },
+            { type: "toolcall_end", contentIndex: 1, toolCall: laterCall, partial },
+          ],
+          undefined,
+          new Error("stream failed"),
+        );
+      },
+    };
+    const runner = runModelSubturn({
+      model: {},
+      context: {},
+      modelRuntime,
+      streamOptions: {},
+      signal: new AbortController().signal,
+      emitPartials: true,
+    });
+    const events = [];
+
+    await expect(async () => {
+      while (true) {
+        const next = await runner.next();
+        if (next.done) break;
+        events.push(next.value);
+      }
+    }).rejects.toThrow("stream failed");
+
+    expect(events).toEqual([
+      {
+        type: "tool_call_streaming",
+        toolCallId: earlierCall.id,
+        toolName: earlierCall.name,
+        contentIndex: 0,
+      },
+      {
+        type: "tool_call_streaming",
+        toolCallId: laterCall.id,
+        toolName: laterCall.name,
+        contentIndex: 1,
+      },
+      {
+        type: "tool_call_discarded",
+        toolCallId: earlierCall.id,
+        contentIndex: 0,
+      },
+      {
+        type: "tool_call_discarded",
+        toolCallId: laterCall.id,
+        contentIndex: 1,
+      },
+    ]);
+  });
+
   it("retries without exposing tool calls when early execution is disabled", async () => {
     const toolCall = {
       id: "tool-call-1",

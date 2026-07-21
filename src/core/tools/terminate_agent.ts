@@ -74,16 +74,22 @@ function getTerminateDurationMs(result: SubagentResult): number | undefined {
   return Math.max(0, finishedAt - result.startedAt);
 }
 
+function getTerminateAgentDisplayTarget(raw: unknown): string {
+  const parsedArgs = parseToolArgs(terminateArgsSchema, raw);
+  return parsedArgs.ok ? parsedArgs.data.id : "(invalid arguments)";
+}
+
 export function createTerminateAgentToolDefinition(): ToolDefinition {
   return {
     schema: TERMINATE_AGENT_TOOL,
+    getDisplayTarget: (toolCall) => getTerminateAgentDisplayTarget(toolCall.arguments),
     async dispatch(
       toolCall: ToolCall,
       signal: AbortSignal,
       context: ToolDispatchContext,
     ): Promise<ToolDispatch> {
       let id = "";
-      let headerTarget = "(invalid arguments)";
+      const headerTarget = getTerminateAgentDisplayTarget(toolCall.arguments);
 
       const blocked = (reason: string): ToolDispatchResult => {
         const toolResult = createToolError(toolCall, reason);
@@ -103,7 +109,6 @@ export function createTerminateAgentToolDefinition(): ToolDefinition {
       }
 
       ({ id } = parsedArgs.data);
-      headerTarget = id;
 
       if (!isMainToolDispatchContext(context)) {
         return createToolDispatch(() =>

@@ -663,7 +663,7 @@ describe("core session rewind APIs", () => {
     });
     let secondHasStarted = false;
 
-    const createDefinition = (name, dispatch) => ({
+    const createDefinition = (name, displayTarget, dispatch) => ({
       schema: {
         name,
         description: "test tool",
@@ -673,10 +673,11 @@ describe("core session rewind APIs", () => {
           additionalProperties: false,
         },
       },
+      getDisplayTarget: () => displayTarget,
       dispatch,
     });
     const toolRegistry = new ToolRegistry([
-      createDefinition("first_tool", async (toolCall) => {
+      createDefinition("first_tool", "first_tool", async (toolCall) => {
         markFirstStarted();
         await firstRun;
         return {
@@ -692,7 +693,7 @@ describe("core session rewind APIs", () => {
           }),
         };
       }),
-      createDefinition("second_tool", async (toolCall) => {
+      createDefinition("second_tool", "ssh host 'du -h /'", async (toolCall) => {
         secondHasStarted = true;
         markSecondStarted();
         return {
@@ -775,6 +776,14 @@ describe("core session rewind APIs", () => {
 
     await Promise.all([firstStarted, secondQueued]);
     expect(
+      events.find(
+        (event) =>
+          event.type === "tool_ui" &&
+          event.uiEvent.type === "tool_call_queued" &&
+          event.uiEvent.toolCallId === secondCall.id,
+      ),
+    ).toMatchObject({ uiEvent: { headerTarget: "ssh host 'du -h /'" } });
+    expect(
       events
         .filter((event) => event.type === "tool_ui" && event.uiEvent.type === "tool_call_queued")
         .map((event) => event.uiEvent.toolCallId),
@@ -821,6 +830,7 @@ describe("core session rewind APIs", () => {
             additionalProperties: false,
           },
         },
+        getDisplayTarget: (toolCall) => toolCall.name,
         dispatch: async (call) => {
           executedSequences.push(call.arguments.sequence);
           return {
@@ -910,6 +920,7 @@ describe("core session rewind APIs", () => {
           description: "test tool",
           parameters: { type: "object", properties: {}, additionalProperties: false },
         },
+        getDisplayTarget: (toolCall) => toolCall.name,
         dispatch: async (call) => ({
           run: Promise.resolve({
             toolResult: {
@@ -986,6 +997,7 @@ describe("core session rewind APIs", () => {
             additionalProperties: false,
           },
         },
+        getDisplayTarget: (toolCall) => toolCall.name,
         dispatch: async (call) => {
           executions += 1;
           return {
@@ -1119,6 +1131,7 @@ describe("core session rewind APIs", () => {
             additionalProperties: false,
           },
         },
+        getDisplayTarget: (toolCall) => toolCall.name,
         dispatch: async (call) => {
           executions += 1;
           return {
@@ -1211,6 +1224,7 @@ describe("core session rewind APIs", () => {
             additionalProperties: false,
           },
         },
+        getDisplayTarget: (toolCall) => toolCall.name,
         dispatch: async (call, signal) => {
           executions += 1;
           if (!signal.aborted) {
@@ -1320,6 +1334,7 @@ describe("core session rewind APIs", () => {
             additionalProperties: false,
           },
         },
+        getDisplayTarget: (toolCall) => toolCall.name,
         dispatch: async (call, signal) => {
           markToolStarted();
           await new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true }));
@@ -1387,6 +1402,7 @@ describe("core session rewind APIs", () => {
             additionalProperties: false,
           },
         },
+        getDisplayTarget: (toolCall) => toolCall.name,
         async dispatch(_toolCall, _signal, context) {
           toolContextReasoning.push(context.persona.settings.reasoning);
           session.setReasoning("high");
@@ -1488,6 +1504,7 @@ describe("core session rewind APIs", () => {
               additionalProperties: false,
             },
           },
+          getDisplayTarget: (toolCall) => toolCall.name,
           async dispatch(toolCall, _signal, context) {
             receivedOriginHistoryEntryId = context.originHistoryEntryId;
             return {

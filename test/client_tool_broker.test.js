@@ -38,6 +38,7 @@ describe("ClientToolBroker", () => {
     registration.attachSession("session-1");
 
     const definition = broker.getToolDefinitions("session-1")[0];
+    expect(definition.getDisplayTarget(createToolCall({ choice: "a" }), {})).toBe("local_picker");
     const result = await runTool(
       definition,
       createToolCall({ choice: "a" }),

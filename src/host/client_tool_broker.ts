@@ -361,6 +361,7 @@ function createClientToolDefinition(
 
   return {
     schema,
+    getDisplayTarget: () => tool.name,
     async dispatch(
       toolCall: ToolCall,
       signal: AbortSignal,

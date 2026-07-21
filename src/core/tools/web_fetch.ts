@@ -129,6 +129,11 @@ function parseArgs(raw: unknown): { ok: true; data: WebFetchArgs } | { ok: false
   return { ok: true, data: parsed.data };
 }
 
+function getWebFetchDisplayTarget(raw: unknown): string {
+  const parsedArgs = parseArgs(raw);
+  return parsedArgs.ok ? parsedArgs.data.url : "(invalid arguments)";
+}
+
 function estimateParallelExtractCostUsd(urlCount: number): number {
   return 0.001 * urlCount;
 }
@@ -199,10 +204,11 @@ function formatExtractResults(response: ExtractResponse): TruncationResult {
 export function createWebFetchToolDefinition(config: Config): ToolDefinition {
   return {
     schema: WEB_FETCH_TOOL,
+    getDisplayTarget: (toolCall) => getWebFetchDisplayTarget(toolCall.arguments),
     async dispatch(toolCall: ToolCall, signal?: AbortSignal): Promise<ToolDispatch> {
       const parsedArgs = parseArgs(toolCall.arguments);
       const url = parsedArgs.ok ? parsedArgs.data.url : "";
-      const headerTarget = url || "(invalid arguments)";
+      const headerTarget = getWebFetchDisplayTarget(toolCall.arguments);
 
       const blocked = (reason: string): ToolDispatchResult => {
         const toolResult = createToolError(toolCall, reason);

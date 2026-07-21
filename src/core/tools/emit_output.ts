@@ -51,6 +51,8 @@ function parseEmitOutputArgs(
 export function createEmitOutputToolDefinition(): ToolDefinition {
   return {
     schema: EMIT_OUTPUT_TOOL,
+    getDisplayTarget: (toolCall) =>
+      parseEmitOutputArgs(toolCall.arguments).ok ? TOOL_NAME_EMIT_OUTPUT : "(invalid arguments)",
     async dispatch(
       toolCall: ToolCall,
       _signal: AbortSignal,

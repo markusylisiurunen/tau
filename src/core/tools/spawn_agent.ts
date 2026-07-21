@@ -102,9 +102,15 @@ function formatAllowedLaunchModels(launchModels: string[]): string {
   return launchModels.map((entry) => `'${entry}'`).join(", ");
 }
 
+function getSpawnAgentDisplayTarget(raw: unknown): string {
+  const parsedArgs = parseToolArgs(spawnArgsSchema, raw);
+  return parsedArgs.ok ? parsedArgs.data.title : "(invalid arguments)";
+}
+
 export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): ToolDefinition {
   return {
     schema: SPAWN_AGENT_TOOL,
+    getDisplayTarget: (toolCall) => getSpawnAgentDisplayTarget(toolCall.arguments),
     async dispatch(
       toolCall: ToolCall,
       signal: AbortSignal,
@@ -112,7 +118,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
     ): Promise<ToolDispatch> {
       let name = "";
       let title = "";
-      let headerTarget = "(invalid arguments)";
+      const headerTarget = getSpawnAgentDisplayTarget(toolCall.arguments);
 
       const blocked = (reason: string, details?: { name?: string; title?: string }) => {
         const toolResult = createToolError(toolCall, reason);
@@ -135,7 +141,6 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
       const { prompt, model, workingDirectory } = parsedArgs.data;
       name = parsedArgs.data.name;
       title = parsedArgs.data.title;
-      headerTarget = title;
 
       if (!isMainToolDispatchContext(context)) {
         return createToolDispatch(() =>

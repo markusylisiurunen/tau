@@ -111,6 +111,11 @@ function parseGrepArgs(raw: unknown): { ok: true; data: GrepArgs } | { ok: false
   return { ok: true, data: parsed.data };
 }
 
+function getGrepDisplayTarget(raw: unknown): string {
+  const parsedArgs = parseGrepArgs(raw);
+  return parsedArgs.ok ? parsedArgs.data.pattern : "(invalid arguments)";
+}
+
 function buildGrepArgs(raw: z.infer<typeof grepArgsSchema>): {
   args: string[];
   paths: string[];
@@ -230,10 +235,11 @@ function buildGrepUiText(args: {
 export function createGrepToolDefinition(backend: ToolExecutionBackend): ToolDefinition {
   return {
     schema: GREP_TOOL,
+    getDisplayTarget: (toolCall) => getGrepDisplayTarget(toolCall.arguments),
     async dispatch(toolCall: ToolCall, signal?: AbortSignal): Promise<ToolDispatch> {
       const parsedArgs = parseGrepArgs(toolCall.arguments);
       const pattern = parsedArgs.ok ? parsedArgs.data.pattern : "";
-      const headerTarget = pattern || "(invalid arguments)";
+      const headerTarget = getGrepDisplayTarget(toolCall.arguments);
 
       const blocked = (reason: string): ToolDispatchResult => {
         const toolResult = createToolError(toolCall, reason);

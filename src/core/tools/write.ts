@@ -57,6 +57,11 @@ function parseWriteArgs(
   return { ok: true, data: parsed.data };
 }
 
+function getWriteDisplayTarget(raw: unknown): string {
+  const parsedArgs = parseWriteArgs(raw);
+  return parsedArgs.ok ? parsedArgs.data.path : "(invalid arguments)";
+}
+
 function buildWriteUiText(args: {
   bytes: number;
   lines: number;
@@ -96,11 +101,12 @@ function buildWriteUiText(args: {
 export function createWriteToolDefinition(backend: ToolExecutionBackend): ToolDefinition {
   return {
     schema: WRITE_TOOL,
+    getDisplayTarget: (toolCall) => getWriteDisplayTarget(toolCall.arguments),
     async dispatch(toolCall: ToolCall): Promise<ToolDispatch> {
       return createToolDispatch(async () => {
         const parsedArgs = parseWriteArgs(toolCall.arguments);
         const path = parsedArgs.ok ? parsedArgs.data.path : "";
-        const headerTarget = path || "(invalid arguments)";
+        const headerTarget = getWriteDisplayTarget(toolCall.arguments);
 
         const blocked = (reason: string): ToolDispatchResult => {
           const toolResult = createToolError(toolCall, reason);

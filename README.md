@@ -408,7 +408,7 @@ toggle visibility of the model's thinking with `ctrl+t`.
 
 reference files in your message with `@<path>` (for example, `@src/tui/session_chat_app.ts`). autocomplete helps you find the right path.
 
-reference skills with `@@skill:<name>` (for example, `@@skill:skill-name`). autocomplete will suggest available skills.
+reference skills with `@@skill:<name>` (for example, `@@skill:skill-name`). autocomplete will suggest available skills. exact skill references in active `AGENTS.md` instructions and already-active skill instructions also activate the referenced skill, including skills with `Trigger: explicit`. these references compose transitively, and each skill activates at most once per request so repeated or cyclic references terminate.
 
 to explicitly target a sub-agent, use `@@agent:<name>` (for example, `@@agent:default`).
 

@@ -562,12 +562,15 @@ export class SessionChatController {
     this.isStreaming = true;
     this.startTurnTimer();
     this.view.startWorkingIcon();
-    this.view.handleToolUiEvent({
-      type: "bash_started",
-      toolCallId,
-      command,
-      headerTarget,
-    });
+    this.view.handleToolUiEvent(
+      {
+        type: "bash_started",
+        toolCallId,
+        command,
+        headerTarget,
+      },
+      "local",
+    );
     this.refreshStatus();
 
     try {
@@ -590,26 +593,32 @@ export class SessionChatController {
         this.hiddenHistoryEntryIds.add(result.userHistoryEntryId);
         this.renderedMessageIds.push(result.userHistoryEntryId);
       }
-      this.view.handleToolUiEvent({
-        type: "bash_execution",
-        toolCallId,
-        command: result.command,
-        headerTarget,
-        exitCode: result.exitCode,
-        truncationInfo: result.truncationInfo,
-        uiText: result.uiText,
-        durationMs: result.durationMs,
-        labelOverride: options.labelOverride,
-      });
+      this.view.handleToolUiEvent(
+        {
+          type: "bash_execution",
+          toolCallId,
+          command: result.command,
+          headerTarget,
+          exitCode: result.exitCode,
+          truncationInfo: result.truncationInfo,
+          uiText: result.uiText,
+          durationMs: result.durationMs,
+          labelOverride: options.labelOverride,
+        },
+        "local",
+      );
       await this.syncFromSessionSnapshot();
     } catch (error) {
-      this.view.handleToolUiEvent({
-        type: "bash_blocked",
-        toolCallId,
-        command,
-        headerTarget,
-        reason: (error as Error).message || "bash failed",
-      });
+      this.view.handleToolUiEvent(
+        {
+          type: "bash_blocked",
+          toolCallId,
+          command,
+          headerTarget,
+          reason: (error as Error).message || "bash failed",
+        },
+        "local",
+      );
       await this.syncFromSessionSnapshot();
     } finally {
       this.isStreaming = false;
@@ -1283,7 +1292,7 @@ export class SessionChatController {
     this.observedSessionRevision = Math.max(this.observedSessionRevision, this.snapshot.revision);
 
     for (const event of nextEvents.slice(previousEvents.length)) {
-      this.view.handleToolUiEvent(event);
+      this.view.handleToolUiEvent(event, "session");
     }
     this.refreshStatus();
     return true;
@@ -1415,7 +1424,7 @@ export class SessionChatController {
   private syncSnapshotToolAndAgentUi(snapshot: SessionProtocolSnapshot): void {
     this.view.reconcileToolUiSession(Object.keys(snapshot.tools));
     for (const event of getToolUiEventsInModelOrder(snapshot)) {
-      this.view.handleToolUiEvent(event);
+      this.view.handleToolUiEvent(event, "session");
     }
 
     for (const agent of Object.values(snapshot.agents)) {

@@ -542,6 +542,7 @@ class FakeView {
   removed = [];
   systems = [];
   toolEvents = [];
+  toolEventOrigins = [];
   rewindPickerShows = [];
   rewindPickerHideCount = 0;
   removeMessagesFromCalls = [];
@@ -602,8 +603,9 @@ class FakeView {
   stopWorkingIcon() {
     this.workingIconStops += 1;
   }
-  handleToolUiEvent(event) {
+  handleToolUiEvent(event, origin) {
     this.toolEvents.push(event);
+    this.toolEventOrigins.push(origin);
   }
   subagentEvents = [];
   handleSubagentEvent(event) {
@@ -2402,6 +2404,7 @@ describe("SessionChatController", () => {
       "tool_call_queued",
       "bash_execution",
     ]);
+    expect(view.toolEventOrigins).toEqual(["session", "session"]);
     await controller.dispose();
   });
 
@@ -2494,6 +2497,7 @@ describe("SessionChatController", () => {
 
     expect(view.resetToolUiSession).toHaveBeenCalledTimes(resetCount);
     expect(view.toolEvents).toEqual([queuedEvent, startedEvent]);
+    expect(view.toolEventOrigins).toEqual(["session", "session"]);
     expect(view.status.footer.sessionCost).toBe("$0.42");
     expect(controller.snapshot.tools["tool-a"].status).toBe("running");
     await controller.dispose();
@@ -2744,6 +2748,7 @@ describe("SessionChatController", () => {
         }),
       ]),
     );
+    expect(view.toolEventOrigins).toEqual(["local", "local"]);
     expect(view.messages).not.toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -2782,6 +2787,7 @@ describe("SessionChatController", () => {
         }),
       ]),
     );
+    expect(view.toolEventOrigins).toEqual(["local", "local"]);
   });
 
   it("routes session maintenance commands through the session protocol", async () => {

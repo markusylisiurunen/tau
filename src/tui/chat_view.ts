@@ -11,7 +11,7 @@ import type { ToolUiEvent, ToolUiText } from "../core/tools/registry.js";
 import type { ReasoningEffort } from "../core/types.js";
 import type { SessionProtocolPendingUserMessage } from "../protocol/session_protocol.js";
 import { createAppTerminal } from "./terminal.js";
-import { ToolUiRouter } from "./tool_ui_router.js";
+import { type ToolUiEventOrigin, ToolUiRouter } from "./tool_ui_router.js";
 import { ChatContainerComponent } from "./ui/chat_container.js";
 import type { AssistantMessageModel, ChatMessageModel } from "./ui/chat_message_model.js";
 import { CustomEditor } from "./ui/custom_editor.js";
@@ -86,7 +86,7 @@ export interface ChatView {
   updateStatus(status: ChatViewStatus): void;
   startWorkingIcon(): void;
   stopWorkingIcon(): void;
-  handleToolUiEvent(event: ToolUiEvent): void;
+  handleToolUiEvent(event: ToolUiEvent, origin: ToolUiEventOrigin): void;
   handleSubagentEvent(event: SubagentUiEvent): void;
   resetToolUiSession(): void;
   reconcileToolUiSession(toolCallIds: readonly string[]): void;
@@ -275,8 +275,8 @@ export class TuiChatView implements ChatView {
     this.footer.stop();
   }
 
-  handleToolUiEvent(event: ToolUiEvent): void {
-    this.toolUiRouter.handle(event);
+  handleToolUiEvent(event: ToolUiEvent, origin: ToolUiEventOrigin): void {
+    this.toolUiRouter.handle(event, origin);
   }
 
   handleSubagentEvent(event: SubagentUiEvent): void {

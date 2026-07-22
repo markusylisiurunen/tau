@@ -45,6 +45,8 @@ function createHarness() {
 
   return {
     router,
+    handleSession: (event) => router.handle(event, "session"),
+    handleLocal: (event) => router.handle(event, "local"),
     added,
     replaced,
     removed,
@@ -103,13 +105,13 @@ describe("ToolUiRouter prune mutations", () => {
   it("patches existing tool cards by toolCallId and preserves the base event type", () => {
     const harness = createHarness();
 
-    harness.router.handle({
+    harness.handleSession({
       type: "bash_started",
       toolCallId: "bash-1",
       command: "echo hello",
     });
 
-    harness.router.handle({
+    harness.handleSession({
       type: "bash_execution",
       toolCallId: "bash-1",
       command: "echo hello",
@@ -135,7 +137,7 @@ describe("ToolUiRouter prune mutations", () => {
 
     const prunedContent =
       "[Tool result pruned] bash output removed (12 tokens). Re-run the command if needed.";
-    harness.router.handle({
+    harness.handleSession({
       type: "tool_pruned",
       toolCallId: "bash-1",
       content: prunedContent,
@@ -152,7 +154,7 @@ describe("ToolUiRouter prune mutations", () => {
   it("adds one-shot tool cards with ids and renders pruned content without tones", () => {
     const harness = createHarness();
 
-    harness.router.handle({
+    harness.handleSession({
       type: "write_success",
       toolCallId: "write-1",
       path: "notes.txt",
@@ -167,7 +169,7 @@ describe("ToolUiRouter prune mutations", () => {
 
     expect(harness.added.at(-1)).toMatchObject({ id: "write-1" });
 
-    harness.router.handle({
+    harness.handleSession({
       type: "tool_pruned",
       toolCallId: "write-1",
       content: "- old\n+ new",
@@ -184,7 +186,7 @@ describe("ToolUiRouter prune mutations", () => {
   it("patches blocked events that do not expose uiText", () => {
     const harness = createHarness();
 
-    harness.router.handle({
+    harness.handleSession({
       type: "bash_blocked",
       toolCallId: "bash-2",
       command: "echo hi",
@@ -193,7 +195,7 @@ describe("ToolUiRouter prune mutations", () => {
 
     const prunedContent =
       "[Tool result pruned] bash output removed (20 tokens). Re-run the command if needed.";
-    harness.router.handle({
+    harness.handleSession({
       type: "tool_pruned",
       toolCallId: "bash-2",
       content: prunedContent,
@@ -208,7 +210,7 @@ describe("ToolUiRouter prune mutations", () => {
   it("falls back to adding when cached tool ids are no longer present", () => {
     const harness = createHarness();
 
-    harness.router.handle({
+    harness.handleSession({
       type: "write_success",
       toolCallId: "write-1",
       path: "notes.txt",
@@ -223,7 +225,7 @@ describe("ToolUiRouter prune mutations", () => {
 
     harness.removeMessage("write-1");
 
-    harness.router.handle({
+    harness.handleSession({
       type: "write_success",
       toolCallId: "write-1",
       path: "notes.txt",
@@ -243,15 +245,21 @@ describe("ToolUiRouter prune mutations", () => {
 });
 
 describe("ToolUiRouter snapshot reconciliation", () => {
-  it("removes tool cards that are no longer present in the snapshot", () => {
+  it("rebuilds session cards while preserving local cards", () => {
     const harness = createHarness();
-    harness.router.handle({
+    harness.handleLocal({
+      type: "bash_started",
+      toolCallId: "local-call",
+      command: "pwd",
+      headerTarget: "pwd",
+    });
+    harness.handleSession({
       type: "tool_call_streaming",
       toolCallId: "stale-call",
       toolName: "write",
       headerTarget: "write",
     });
-    harness.router.handle({
+    harness.handleSession({
       type: "tool_call_streaming",
       toolCallId: "current-call",
       toolName: "bash",
@@ -261,18 +269,25 @@ describe("ToolUiRouter snapshot reconciliation", () => {
     harness.router.reconcileSession(["current-call"]);
 
     expect(harness.removed).toEqual(["stale-call"]);
-    expect(getLatestEventsMap(harness.router).size).toBe(0);
-    harness.router.handle({
+    expect([...getLatestEventsMap(harness.router).keys()]).toEqual(["local-call"]);
+    expect(getRunningBashMap(harness.router).has("local-call")).toBe(true);
+
+    harness.handleSession({
       type: "tool_call_queued",
       toolCallId: "current-call",
       toolName: "bash",
       headerTarget: "bash",
     });
+    harness.handleLocal(bashExecutionEvent("local-call", "pwd"));
+
     expect(harness.added.filter((entry) => entry.id === "current-call")).toHaveLength(1);
-    expect(harness.replaced.at(-1)).toMatchObject({
-      id: "current-call",
-      model: { event: { type: "tool_call_queued" } },
+    expect(findLatestReplacedEvent(harness.replaced, "current-call")).toMatchObject({
+      type: "tool_call_queued",
     });
+    expect(findLatestReplacedEvent(harness.replaced, "local-call")).toMatchObject({
+      type: "bash_execution",
+    });
+    expect(getRunningBashMap(harness.router).has("local-call")).toBe(false);
   });
 });
 
@@ -280,24 +295,24 @@ describe("ToolUiRouter lifecycle tracking", () => {
   it("tracks and untracks bash for execution and blocked lifecycles", () => {
     const harness = createHarness();
 
-    harness.router.handle({
+    harness.handleSession({
       type: "bash_started",
       toolCallId: "bash-exec",
       command: "echo one",
     });
     expect(getRunningBashMap(harness.router).has("bash-exec")).toBe(true);
 
-    harness.router.handle(bashExecutionEvent("bash-exec", "echo one"));
+    harness.handleSession(bashExecutionEvent("bash-exec", "echo one"));
     expect(getRunningBashMap(harness.router).has("bash-exec")).toBe(false);
 
-    harness.router.handle({
+    harness.handleSession({
       type: "bash_started",
       toolCallId: "bash-blocked",
       command: "echo two",
     });
     expect(getRunningBashMap(harness.router).has("bash-blocked")).toBe(true);
 
-    harness.router.handle({
+    harness.handleSession({
       type: "bash_blocked",
       toolCallId: "bash-blocked",
       command: "echo two",
@@ -421,16 +436,16 @@ describe("ToolUiRouter lifecycle tracking", () => {
     ];
 
     for (const entry of cases) {
-      harness.router.handle(entry.started);
+      harness.handleSession(entry.started);
       expect(getRunningSubagentMap(harness.router).has(entry.started.toolCallId)).toBe(true);
 
-      harness.router.handle(entry.terminal);
+      harness.handleSession(entry.terminal);
       expect(getRunningSubagentMap(harness.router).has(entry.started.toolCallId)).toBe(false);
 
-      harness.router.handle(entry.blockedStarted);
+      harness.handleSession(entry.blockedStarted);
       expect(getRunningSubagentMap(harness.router).has(entry.blockedStarted.toolCallId)).toBe(true);
 
-      harness.router.handle(entry.blocked);
+      harness.handleSession(entry.blocked);
       expect(getRunningSubagentMap(harness.router).has(entry.blockedStarted.toolCallId)).toBe(
         false,
       );
@@ -440,12 +455,12 @@ describe("ToolUiRouter lifecycle tracking", () => {
   it("finalizes pending bash and subagent entries with aborted reason", () => {
     const harness = createHarness();
 
-    harness.router.handle({
+    harness.handleSession({
       type: "bash_started",
       toolCallId: "bash-pending",
       command: "echo pending",
     });
-    harness.router.handle({
+    harness.handleSession({
       type: "spawn_agent_started",
       toolCallId: "spawn-pending",
       name: "default",
@@ -467,12 +482,12 @@ describe("ToolUiRouter lifecycle tracking", () => {
   it("finalizes pending bash and subagent entries with interrupted reason", () => {
     const harness = createHarness();
 
-    harness.router.handle({
+    harness.handleSession({
       type: "bash_started",
       toolCallId: "bash-pending-int",
       command: "echo pending int",
     });
-    harness.router.handle({
+    harness.handleSession({
       type: "wait_for_agents_started",
       toolCallId: "wait-pending-int",
       agentIds: ["agent-1", "agent-2"],
@@ -493,12 +508,12 @@ describe("ToolUiRouter lifecycle tracking", () => {
   it("clears transient maps and resetSession clears all cached tool state", () => {
     const harness = createHarness();
 
-    harness.router.handle({
+    harness.handleSession({
       type: "bash_started",
       toolCallId: "bash-1",
       command: "echo one",
     });
-    harness.router.handle({
+    harness.handleSession({
       type: "send_input_to_agent_started",
       toolCallId: "send-1",
       agentId: "agent-1",

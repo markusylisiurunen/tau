@@ -36,6 +36,8 @@ type ToolUiEventWithToolCallId = Extract<ToolUiEvent, { toolCallId: string }>;
 type ToolPrunedEvent = Extract<ToolUiEvent, { type: "tool_pruned" }>;
 type NonPrunedToolUiEvent = Exclude<ToolUiEventWithToolCallId, ToolPrunedEvent>;
 
+export type ToolUiEventOrigin = "session" | "local";
+
 type ToolUiEventType = ToolUiEvent["type"];
 type BashTerminalEventType = "bash_execution" | "bash_aborted" | "bash_blocked";
 type SubagentTerminalEventType =
@@ -74,6 +76,7 @@ export class ToolUiRouter {
   private runningBashComponents: Map<string, RunningBashComponent> = new Map();
   private runningSubagentTools: Map<string, RunningSubagentTool> = new Map();
   private latestToolEventsById: Map<string, ToolUiEventWithToolCallId> = new Map();
+  private sessionToolCallIds: Set<string> = new Set();
 
   constructor(options: { chatContainer: ChatContainerComponent; requestRender: () => void }) {
     this.chatContainer = options.chatContainer;
@@ -84,12 +87,19 @@ export class ToolUiRouter {
     this.runningBashComponents.clear();
     this.runningSubagentTools.clear();
     this.latestToolEventsById.clear();
+    this.sessionToolCallIds.clear();
   }
 
   reconcileSession(toolCallIds: readonly string[]): void {
     const currentIds = new Set(toolCallIds);
-    const staleIds = [...this.latestToolEventsById.keys()].filter((id) => !currentIds.has(id));
-    this.resetSession();
+    const staleIds = [...this.sessionToolCallIds].filter((id) => !currentIds.has(id));
+    for (const id of this.sessionToolCallIds) {
+      this.runningBashComponents.delete(id);
+      this.runningSubagentTools.delete(id);
+      this.latestToolEventsById.delete(id);
+    }
+    this.sessionToolCallIds.clear();
+
     if (staleIds.length > 0) {
       this.chatContainer.removeMessages(staleIds);
       this.requestRender();
@@ -122,7 +132,7 @@ export class ToolUiRouter {
     this.requestRender();
   }
 
-  handle(uiEvent: ToolUiEvent): void {
+  handle(uiEvent: ToolUiEvent, origin: ToolUiEventOrigin): void {
     if (uiEvent.type === "tool_pruned") {
       const updated = this.applyPrunedMutation(uiEvent);
       if (updated) {
@@ -131,6 +141,9 @@ export class ToolUiRouter {
       return;
     }
 
+    if (origin === "session") {
+      this.sessionToolCallIds.add(uiEvent.toolCallId);
+    }
     this.upsertToolMessage(uiEvent);
     this.updateRunningToolState(uiEvent);
     this.requestRender();

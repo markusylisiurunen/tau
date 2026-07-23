@@ -525,7 +525,7 @@ params (required):
 }
 ```
 
-runs a raw shell command through the session execution environment and returns captured output. `output` is stdout and stderr interleaved in arrival order; `stdout` and `stderr` are the split streams. `cwd` and `timeoutMs` are optional. `cwd` is the command working directory, not a confinement boundary; absolute paths are allowed when the execution environment permits them. The command does not add anything to session history; clients that want command output in model context should call `session.record` with their chosen text.
+runs a raw shell command through the session execution environment and returns captured output. `output` is stdout and stderr interleaved in arrival order; `stdout` and `stderr` are the split streams. `cwd` and `timeoutMs` are optional. `cwd` is the command working directory, not a confinement boundary; absolute paths are allowed when the execution environment permits them. Exec requests are independent side channels: multiple commands can run concurrently with each other and with session turns, mutations, samples, or ephemeral agents. They do not enter the session mutation queue, change snapshots, or emit deltas. Workspace races are allowed, so clients must coordinate commands when consistency matters. The command does not add anything to session history; clients that want command output in model context should call `session.record` with their chosen text.
 
 returns:
 
@@ -799,7 +799,7 @@ params (required):
 }
 ```
 
-creates a host-owned ephemeral agent context outside the persisted session timeline. The context inherits the hosted session persona and execution environment, appends the provided instructions, uses the requested tool set, and returns `{ "contextId" }`. These contexts are not persisted in `session.snapshot` and are not recoverable after disconnect or host restart.
+creates a host-owned ephemeral agent context outside the persisted session timeline. The context inherits the hosted session persona and execution environment, appends the provided instructions, uses the requested tool set, and returns `{ "contextId" }`. Ephemeral context creation, submission, and closure run independently of main-session turns and mutations. These contexts are not persisted in `session.snapshot` and are not recoverable after disconnect or host restart.
 
 #### session.ephemeral.submit
 
@@ -963,8 +963,8 @@ error codes:
 - `method_not_found`: unsupported method
 - `invalid_params`: params failed method validation
 - `not_found`: requested session does not exist on this host
-- `busy`: overlapping idle-only `session.submit`/`session.retry`/`session.exec` or activity rejected while a mutating request is in progress
-- `cancelled`: a pending queued/steering request was cancelled or a model sample was interrupted
+- `busy`: overlapping main-session turns, same-thread ephemeral submissions, or activity rejected while a mutating request is in progress
+- `cancelled`: a pending queued/steering request, execution command, or model sample was cancelled
 - `internal_error`: unexpected runtime failure
 
 for lines that cannot produce a valid request id (for example malformed json), `id` is `null`.
@@ -974,14 +974,15 @@ for lines that cannot produce a valid request id (for example malformed json), `
 `runRpcServer` handles incoming lines concurrently with explicit serialization for mutating transitions. this means:
 
 - multiple requests can be accepted before earlier ones complete
-- `session.record`, `session.setReasoning`, `session.setPersona`, `session.reload`, `session.compact`, `session.prune`, `session.rewind`, `session.terminateSubagent`, `session.ephemeral.create`, and `session.ephemeral.close` run through a session-owned mutation queue (arrival order across clients observed to the same live session)
+- `session.record`, `session.setReasoning`, `session.setPersona`, `session.reload`, `session.compact`, `session.prune`, `session.rewind`, and `session.terminateSubagent` run through a session-owned mutation queue (arrival order across clients observed to the same live session)
 - `session.setReasoning` updates settings immediately without interrupting an active turn; active turns keep their captured reasoning and the new setting applies to the next user-message turn
-- only one idle-only `session.submit`, `session.retry`, or `session.exec` can run at once (`busy` otherwise)
-- `session.sample` calls can run concurrently with each other and with normal session work; they never enter the mutation queue
-- `session.queue` can be accepted during active work and runs after the active turn settles
+- only one `session.submit` or `session.retry` turn can run at once (`busy` otherwise)
+- `session.exec` and `session.sample` calls can run concurrently with each other and with normal session work; they never enter the mutation queue
+- `session.ephemeral.create`, `session.ephemeral.submit`, and `session.ephemeral.close` manage independent, non-persisted contexts outside the main-session mutation queue; only overlapping submissions to the same ephemeral thread return `busy`
+- `session.queue` can be accepted during active main-session work and runs after the active turn settles
 - `session.steer` can be accepted during an active turn and runs at the next safe boundary after requesting the active turn to stop
 - `session.cancelPendingMessages` atomically removes pending queue and steering requests without interrupting active work
-- `session.submit`, `session.retry`, and `session.exec` are rejected with `busy` while a queued/running compact or prune mutation exists
+- `session.submit` and `session.retry` are rejected with `busy` while a queued/running main-session mutation exists
 - responses and deltas may still interleave
 
 clients should route responses by `id` and broadcast deltas by `sessionId`, not by arrival order alone.

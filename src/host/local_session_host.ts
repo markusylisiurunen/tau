@@ -457,6 +457,7 @@ export class LocalSessionHost implements TauSessionHost {
 
     for (const session of this.sessions) {
       session.interruptTurn();
+      session.interruptExecs();
       session.interruptMaintenance();
       session.interruptSamples();
     }
@@ -541,6 +542,8 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   private runtimeEventQueue: Promise<void> = Promise.resolve();
   private snapshotQueue: Promise<unknown> = Promise.resolve();
   private snapshotGeneration = 0;
+  private readonly execAbortControllers = new Set<AbortController>();
+  private readonly execPromises = new Set<Promise<unknown>>();
   private readonly maintenanceAbortControllers = new Set<AbortController>();
   private readonly maintenancePromises = new Set<Promise<unknown>>();
   private readonly sampleAbortControllers = new Set<AbortController>();
@@ -678,6 +681,17 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     return this.runtime.interruptTurn();
   }
 
+  interruptExecs(): boolean {
+    let interrupted = false;
+    for (const abortController of this.execAbortControllers) {
+      if (!abortController.signal.aborted) {
+        abortController.abort();
+        interrupted = true;
+      }
+    }
+    return interrupted;
+  }
+
   interruptMaintenance(): boolean {
     let interrupted = false;
     for (const abortController of this.maintenanceAbortControllers) {
@@ -703,6 +717,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   async waitForActiveWork(): Promise<void> {
     await Promise.allSettled([
       ...(this.activeTurnPromise ? [this.activeTurnPromise] : []),
+      ...this.execPromises,
       ...this.maintenancePromises,
       ...this.samplePromises,
     ]);
@@ -725,12 +740,24 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     },
   ): Promise<SessionProtocolExecResult> {
     this.assertActive();
+    const abortController = new AbortController();
+    const signal = options.signal
+      ? AbortSignal.any([options.signal, abortController.signal])
+      : abortController.signal;
+    this.execAbortControllers.add(abortController);
     const backend = this.executionEnvironment.getToolExecutionBackend();
-    return await backend.runBash(options.command, {
+    const promise = backend.runBash(options.command, {
       ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
       ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
-      ...(options.signal !== undefined ? { signal: options.signal } : {}),
+      signal,
     });
+    this.execPromises.add(promise);
+    try {
+      return await promise;
+    } finally {
+      this.execAbortControllers.delete(abortController);
+      this.execPromises.delete(promise);
+    }
   }
 
   async sample(
@@ -1099,6 +1126,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
     const errors: unknown[] = [];
     this.runtime.interruptTurn();
+    this.interruptExecs();
     this.interruptMaintenance();
     this.interruptSamples();
     try {

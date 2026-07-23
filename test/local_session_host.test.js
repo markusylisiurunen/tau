@@ -5,11 +5,13 @@ import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import { createLocalToolExecutionBackend, ToolCatalog } from "../dist/core/index.js";
 import { resolveModel } from "../dist/core/models/catalog.js";
+import { RpcServer } from "../dist/core/modes/rpc_server.js";
 import { personas } from "../dist/core/personas.js";
 import { prependTauUserMetadata } from "../dist/core/utils/user_metadata.js";
 import { HostedEphemeralAgentSession } from "../dist/host/hosted_ephemeral_agent_session.js";
 import { LocalSessionHost } from "../dist/host/local_session_host.js";
 import { EphemeralThreadBusyError } from "../dist/host/session_host.js";
+import { SESSION_PROTOCOL_VERSION } from "../dist/protocol/session_protocol.js";
 import { MemorySessionStore } from "../dist/store/memory_session_store.js";
 
 const localCreateInput = {
@@ -486,6 +488,229 @@ describe("LocalSessionHost", () => {
         }),
       }),
     );
+  });
+
+  it("completes a model-launched client tool through concurrent exec and ephemeral work", async () => {
+    const store = new MemorySessionStore();
+    const toolBackend = createLocalToolExecutionBackend();
+    vi.spyOn(toolBackend, "runBash").mockResolvedValue({
+      output: "diff output",
+      stdout: "diff output",
+      stderr: "",
+      exitCode: 0,
+      truncated: false,
+    });
+    const executionEnvironment = createTestExecutionEnvironment(
+      { kind: "local", cwd: "/repo", home: "/home/user" },
+      toolBackend,
+    );
+    const host = createHostForEnvironment(store, executionEnvironment);
+    const hostedSession = await host.createSession(localCreateInput);
+    const toolCall = fauxToolCall(
+      "diff_review",
+      { source: "git_diff", diffArgs: ["--", "src/main.ts"] },
+      { id: "diff-review-call" },
+    );
+    const toolMessage = fauxAssistantMessage([toolCall], { stopReason: "toolUse" });
+    const responses = [toolMessage, fauxAssistantMessage("parent resumed")];
+    hostedSession.runtime.session.engine.modelRuntime.streamModel = () => {
+      const response = responses.shift();
+      return {
+        async *[Symbol.asyncIterator]() {
+          if (response === toolMessage) {
+            yield { type: "toolcall_start", contentIndex: 0, partial: response };
+            yield {
+              type: "toolcall_end",
+              contentIndex: 0,
+              toolCall,
+              partial: response,
+            };
+          }
+        },
+        async result() {
+          return response;
+        },
+      };
+    };
+    const submitEphemeralThread = vi
+      .spyOn(HostedEphemeralAgentSession.prototype, "submitThreadMessage")
+      .mockResolvedValue({ threadId: "review-thread", response: "review complete" });
+    const lines = [];
+    let clientFlow;
+    const protocolRequest = (id, method, params) =>
+      JSON.stringify({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "request",
+        id,
+        method,
+        params,
+      });
+    const server = new RpcServer({
+      host,
+      send: (line) => {
+        const message = JSON.parse(line);
+        lines.push(message);
+        if (message.type !== "session.clientTool.call") {
+          return;
+        }
+        clientFlow = (async () => {
+          await server.handleLine(
+            protocolRequest("client-tool-ack", "session.clientTool.ack", {
+              sessionId: hostedSession.sessionId,
+              callId: message.callId,
+            }),
+          );
+          await server.handleLine(
+            protocolRequest("capture", "session.exec", {
+              sessionId: hostedSession.sessionId,
+              command: "git diff -- src/main.ts",
+            }),
+          );
+          await server.handleLine(
+            protocolRequest("ephemeral-create", "session.ephemeral.create", {
+              sessionId: hostedSession.sessionId,
+              instructions: "review the captured diff",
+              tools: ["bash", "view_image"],
+            }),
+          );
+          const contextId = lines.find((item) => item.id === "ephemeral-create").result.contextId;
+          await server.handleLine(
+            protocolRequest("ephemeral-submit", "session.ephemeral.submit", {
+              sessionId: hostedSession.sessionId,
+              contextId,
+              threadId: "review-thread",
+              message: "review the diff",
+            }),
+          );
+          await server.handleLine(
+            protocolRequest("ephemeral-close", "session.ephemeral.close", {
+              sessionId: hostedSession.sessionId,
+              contextId,
+            }),
+          );
+          await server.handleLine(
+            protocolRequest("client-tool-result", "session.clientTool.result", {
+              sessionId: hostedSession.sessionId,
+              callId: message.callId,
+              ok: true,
+              content: "review complete",
+            }),
+          );
+        })();
+      },
+    });
+
+    try {
+      await server.handleLine(
+        protocolRequest("initialize", "initialize", {
+          client: {
+            name: "diff-review-test",
+            version: "1.0.0",
+            tools: [
+              {
+                name: "diff_review",
+                description: "Review a diff in the client.",
+                parameters: { type: "object" },
+              },
+            ],
+          },
+        }),
+      );
+      await server.handleLine(
+        protocolRequest("observe", "session.observe", { sessionId: hostedSession.sessionId }),
+      );
+      await server.handleLine(
+        protocolRequest("submit", "session.submit", {
+          sessionId: hostedSession.sessionId,
+          text: "review this diff",
+        }),
+      );
+      expect(clientFlow).toBeDefined();
+      await clientFlow;
+
+      expect(toolBackend.runBash).toHaveBeenCalledWith(
+        "git diff -- src/main.ts",
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+      expect(submitEphemeralThread).toHaveBeenCalledWith({
+        contextId: expect.stringMatching(/^ephemeral-/),
+        threadId: "review-thread",
+        message: "review the diff",
+      });
+      expect(lines.find((item) => item.id === "ephemeral-close")).toEqual(
+        expect.objectContaining({ ok: true, result: { closed: true } }),
+      );
+      expect(lines.find((item) => item.id === "client-tool-result")).toEqual(
+        expect.objectContaining({ ok: true, result: { accepted: true } }),
+      );
+      expect(lines.find((item) => item.id === "submit")).toEqual(
+        expect.objectContaining({
+          ok: true,
+          result: expect.objectContaining({
+            turn: { status: "completed", stopReason: "stop" },
+          }),
+        }),
+      );
+      await expect(hostedSession.snapshot()).resolves.toEqual(
+        expect.objectContaining({
+          messages: expect.arrayContaining([
+            expect.objectContaining({
+              message: expect.objectContaining({
+                role: "assistant",
+                content: [{ type: "text", text: "parent resumed" }],
+              }),
+            }),
+          ]),
+        }),
+      );
+    } finally {
+      submitEphemeralThread.mockRestore();
+      await server.close();
+    }
+  });
+
+  it.each([
+    ["direct session disposal", ({ hostedSession }) => hostedSession.dispose()],
+    ["host shutdown", ({ host }) => host.shutdown()],
+  ])("aborts and settles active execs before %s", async (_label, dispose) => {
+    const store = new MemorySessionStore();
+    const toolBackend = createLocalToolExecutionBackend();
+    let execSettled = false;
+    let markExecStarted;
+    const execStarted = new Promise((resolve) => {
+      markExecStarted = resolve;
+    });
+    vi.spyOn(toolBackend, "runBash").mockImplementation(
+      async (_command, options) =>
+        await new Promise((_resolve, reject) => {
+          markExecStarted();
+          options.signal.addEventListener(
+            "abort",
+            () => {
+              execSettled = true;
+              reject(options.signal.reason);
+            },
+            { once: true },
+          );
+        }),
+    );
+    const executionEnvironment = createTestExecutionEnvironment(
+      { kind: "local", cwd: "/repo", home: "/home/user" },
+      toolBackend,
+    );
+    executionEnvironment.dispose = vi.fn(async () => {
+      expect(execSettled).toBe(true);
+    });
+    const host = createHostForEnvironment(store, executionEnvironment);
+    const hostedSession = await host.createSession(localCreateInput);
+
+    const exec = hostedSession.exec({ command: "sleep forever" });
+    const execResult = expect(exec).rejects.toMatchObject({ name: "AbortError" });
+    await execStarted;
+
+    await expect(dispose({ host, hostedSession })).resolves.toBeUndefined();
+    await execResult;
+    expect(executionEnvironment.dispose).toHaveBeenCalledTimes(1);
   });
 
   it("samples without changing or persisting session state", async () => {

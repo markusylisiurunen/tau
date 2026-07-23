@@ -36,8 +36,7 @@ type SessionProtocolActiveSubmit = {
   promise: Promise<void>;
 };
 
-type SessionProtocolActiveBash = {
-  requestId: SessionProtocolRequestId;
+type SessionProtocolActiveExec = {
   abortController: AbortController;
   promise: Promise<void>;
 };
@@ -59,7 +58,6 @@ type SessionProtocolPendingUserMessageRequest =
 
 type SessionProtocolLiveSessionState = {
   activeSubmit?: SessionProtocolActiveSubmit;
-  activeBash?: SessionProtocolActiveBash;
   revision: number;
   pendingSteeringSubmits: Array<SessionProtocolPendingRequest<"session.steer">>;
   pendingQueuedSubmits: Array<SessionProtocolPendingRequest<"session.queue">>;
@@ -159,9 +157,7 @@ type SessionProtocolMutationRequest = Extract<
       | "session.compact"
       | "session.prune"
       | "session.rewind"
-      | "session.terminateSubagent"
-      | "session.ephemeral.create"
-      | "session.ephemeral.close";
+      | "session.terminateSubagent";
   }
 >;
 
@@ -169,6 +165,7 @@ export class SessionProtocolHandler {
   private readonly host: TauSessionHost;
   private readonly send: (message: SessionProtocolOutgoingMessage) => void;
   private readonly sessionStates = new Map<string, SessionProtocolHandlerSessionState>();
+  private readonly activeExecs = new Set<SessionProtocolActiveExec>();
   private readonly activeSamples = new Set<SessionProtocolActiveSample>();
   private initialized = false;
   private clientToolRegistration?: {
@@ -303,6 +300,11 @@ export class SessionProtocolHandler {
     const interruptActiveTurns = mode === "interrupt" || shutdownHost;
 
     const states = [...this.sessionStates.values()];
+    const execPromises = new Set<Promise<void>>();
+    for (const exec of this.activeExecs) {
+      exec.abortController.abort();
+      execPromises.add(exec.promise);
+    }
     const samplePromises = new Set<Promise<void>>();
     for (const sample of this.activeSamples) {
       sample.abortController.abort();
@@ -316,11 +318,9 @@ export class SessionProtocolHandler {
         state.session.interruptTurn();
       }
       if (interruptActiveTurns) {
+        state.session.interruptExecs();
         state.session.interruptMaintenance();
         state.session.interruptSamples();
-      }
-      if (interruptActiveTurns && state.live.activeBash) {
-        state.live.activeBash.abortController.abort();
       }
     }
 
@@ -330,13 +330,10 @@ export class SessionProtocolHandler {
         states.map((state) => state.live.activeSubmit?.promise).filter((promise) => promise),
       );
       await Promise.allSettled(
-        states.map((state) => state.live.activeBash?.promise).filter((promise) => promise),
-      );
-      await Promise.allSettled(
         states.map((state) => getSessionMutationQueueState(state.session).queue),
       );
     }
-    await Promise.allSettled(samplePromises);
+    await Promise.allSettled([...execPromises, ...samplePromises]);
 
     this.sessionStates.clear();
     this.clientToolRegistration?.unregister();
@@ -456,7 +453,7 @@ export class SessionProtocolHandler {
     }
 
     const startedSubmit = await this.enqueueMutation(state, () => {
-      if (state.live.activeSubmit || state.session.isTurnRunning || state.live.activeBash) {
+      if (state.live.activeSubmit || state.session.isTurnRunning) {
         state.live.pendingQueuedSubmits.push({ id: randomUUID(), handler: this, request });
         publishPendingUserMessages(state.session, state.live);
         return undefined;
@@ -497,8 +494,7 @@ export class SessionProtocolHandler {
     }
 
     const startedSubmit = await this.enqueueMutation(state, () => {
-      const hasActiveSessionWork =
-        state.live.activeSubmit || state.session.isTurnRunning || state.live.activeBash;
+      const hasActiveSessionWork = state.live.activeSubmit || state.session.isTurnRunning;
       if (state.live.pendingSteeringSubmits.length > 0 || hasActiveSessionWork) {
         state.live.pendingSteeringSubmits.push({ id: randomUUID(), handler: this, request });
         publishPendingUserMessages(state.session, state.live);
@@ -581,31 +577,20 @@ export class SessionProtocolHandler {
       this.sendSessionNotFound(request.id, request.params.sessionId);
       return;
     }
-
-    if (
-      this.getPendingMutationCount(state) > 0 ||
-      state.live.activeSubmit ||
-      state.session.isTurnRunning ||
-      state.live.activeBash
-    ) {
-      this.sendSubmitBusy(state, request.id);
+    if (this.closed) {
       return;
     }
 
-    const activeBash = await this.enqueueMutation(state, () => this.startExec(state, request));
-    if (!activeBash) {
-      return;
-    }
-
+    const abortController = new AbortController();
+    const activeExec = {
+      abortController,
+      promise: this.executeExec(state, request, abortController.signal),
+    };
+    this.activeExecs.add(activeExec);
     try {
-      await activeBash.promise;
+      await activeExec.promise;
     } finally {
-      await this.enqueueMutation(state, () => {
-        if (state.live.activeBash === activeBash) {
-          state.live.activeBash = undefined;
-        }
-      });
-      this.schedulePendingSubmitDrains(state);
+      this.activeExecs.delete(activeExec);
     }
   }
 
@@ -791,7 +776,7 @@ export class SessionProtocolHandler {
       }
     | undefined
   > {
-    if (state.live.activeSubmit || state.session.isTurnRunning || state.live.activeBash) {
+    if (state.live.activeSubmit || state.session.isTurnRunning) {
       this.sendSubmitBusy(state, request.id);
       return undefined;
     }
@@ -817,7 +802,7 @@ export class SessionProtocolHandler {
     state: SessionProtocolHandlerSessionState,
     request: Extract<SessionProtocolRequestMessage, { method: "session.retry" }>,
   ) {
-    if (state.live.activeSubmit || state.session.isTurnRunning || state.live.activeBash) {
+    if (state.live.activeSubmit || state.session.isTurnRunning) {
       this.sendSubmitBusy(state, request.id);
       return undefined;
     }
@@ -829,22 +814,6 @@ export class SessionProtocolHandler {
     return {
       activeSubmit,
     };
-  }
-
-  private startExec(
-    state: SessionProtocolHandlerSessionState,
-    request: Extract<SessionProtocolRequestMessage, { method: "session.exec" }>,
-  ) {
-    if (state.live.activeSubmit || state.session.isTurnRunning || state.live.activeBash) {
-      this.sendSubmitBusy(state, request.id);
-      return undefined;
-    }
-
-    const abortController = new AbortController();
-    const promise = this.executeExec(state, request, abortController.signal);
-    const activeBash = { requestId: request.id, abortController, promise };
-    state.live.activeBash = activeBash;
-    return activeBash;
   }
 
   private schedulePendingSubmitDrains(state: SessionProtocolHandlerSessionState): void {
@@ -1083,13 +1052,14 @@ export class SessionProtocolHandler {
       });
       this.sendMessage(createSessionProtocolSuccessResponse(request.id, "session.exec", result));
     } catch (error) {
+      const cancelled = signal.aborted || isAbortError(error);
       this.sendMessage(
         createSessionProtocolErrorResponse(
           request.id,
-          signal.aborted
-            ? SESSION_PROTOCOL_ERROR_CODES.invalidRequest
+          cancelled
+            ? SESSION_PROTOCOL_ERROR_CODES.cancelled
             : SESSION_PROTOCOL_ERROR_CODES.internalError,
-          signal.aborted ? "execution command was interrupted" : "failed to run execution command",
+          cancelled ? "execution command was cancelled" : "failed to run execution command",
           { cause: error instanceof Error ? error.message : String(error) },
         ),
       );
@@ -1133,19 +1103,18 @@ export class SessionProtocolHandler {
     }
 
     const interruptedTurn = state.session.interruptTurn();
+    const interruptedExecs = state.session.interruptExecs();
     const interruptedMaintenance = state.session.interruptMaintenance();
-    const interruptedBash = Boolean(state.live.activeBash);
-    state.live.activeBash?.abortController.abort();
     const interruptedSamples = state.session.interruptSamples();
     this.rejectPendingSteeringSubmits(state, "session was interrupted");
 
     const result: SessionProtocolResultByMethod["session.interrupt"] = {
       interrupted:
-        interruptedTurn || interruptedMaintenance || interruptedBash || interruptedSamples,
+        interruptedTurn || interruptedExecs || interruptedMaintenance || interruptedSamples,
       isTurnRunning:
         state.session.isTurnRunning ||
+        interruptedExecs ||
         interruptedMaintenance ||
-        interruptedBash ||
         interruptedSamples,
     };
 
@@ -1293,15 +1262,19 @@ export class SessionProtocolHandler {
   private async handleEphemeralCreate(
     request: Extract<SessionProtocolRequestMessage, { method: "session.ephemeral.create" }>,
   ): Promise<void> {
-    await this.withSessionMutation(request, "ephemeral context created", async (mutationState) => {
-      const result = await mutationState.session.createEphemeralContext({
-        instructions: request.params.instructions,
-        tools: request.params.tools,
-      });
-      this.sendMessage(
-        createSessionProtocolSuccessResponse(request.id, "session.ephemeral.create", result),
-      );
+    const state = await this.getSessionState(request.params.sessionId);
+    if (!state) {
+      this.sendSessionNotFound(request.id, request.params.sessionId);
+      return;
+    }
+
+    const result = await state.session.createEphemeralContext({
+      instructions: request.params.instructions,
+      tools: request.params.tools,
     });
+    this.sendMessage(
+      createSessionProtocolSuccessResponse(request.id, "session.ephemeral.create", result),
+    );
   }
 
   private async handleEphemeralSubmit(
@@ -1341,12 +1314,16 @@ export class SessionProtocolHandler {
   private async handleEphemeralClose(
     request: Extract<SessionProtocolRequestMessage, { method: "session.ephemeral.close" }>,
   ): Promise<void> {
-    await this.withSessionMutation(request, "ephemeral context closed", async (mutationState) => {
-      const result = await mutationState.session.closeEphemeralContext(request.params.contextId);
-      this.sendMessage(
-        createSessionProtocolSuccessResponse(request.id, "session.ephemeral.close", result),
-      );
-    });
+    const state = await this.getSessionState(request.params.sessionId);
+    if (!state) {
+      this.sendSessionNotFound(request.id, request.params.sessionId);
+      return;
+    }
+
+    const result = await state.session.closeEphemeralContext(request.params.contextId);
+    this.sendMessage(
+      createSessionProtocolSuccessResponse(request.id, "session.ephemeral.close", result),
+    );
   }
 
   private async withSessionMutation(
@@ -1561,9 +1538,7 @@ export class SessionProtocolHandler {
     const message =
       this.getPendingMutationCount(state) > 0
         ? "a mutating session request is in progress"
-        : state.live.activeBash
-          ? "a bash command is already running"
-          : "a session turn is already running";
+        : "a session turn is already running";
 
     this.sendMessage(
       createSessionProtocolErrorResponse(id, SESSION_PROTOCOL_ERROR_CODES.busy, message),
@@ -1604,27 +1579,19 @@ export class SessionProtocolHandler {
     state: SessionProtocolHandlerSessionState,
   ): Promise<void> {
     const activeSubmit = state.live.activeSubmit;
-    const activeBash = state.live.activeBash;
-    if (!activeSubmit && !state.session.isTurnRunning && !activeBash) {
+    if (!activeSubmit && !state.session.isTurnRunning) {
       return;
     }
 
     state.session.interruptTurn();
-    activeBash?.abortController.abort();
-
-    if (!activeSubmit && !activeBash) {
+    if (!activeSubmit) {
       return;
     }
 
     try {
-      await activeSubmit?.promise;
+      await activeSubmit.promise;
     } catch {
       // ignore submit failure while finishing active mutation
-    }
-    try {
-      await activeBash?.promise;
-    } catch {
-      // ignore bash failure while finishing active mutation
     }
   }
 

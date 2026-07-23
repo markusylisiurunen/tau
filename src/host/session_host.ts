@@ -50,6 +50,7 @@ export type TauHostedSession = {
   ): Promise<SessionProtocolRecordResult>;
   runTurn(): Promise<SessionProtocolTurnOutcome>;
   interruptTurn(): boolean;
+  interruptExecs(): boolean;
   interruptMaintenance(): boolean;
   interruptSamples(): boolean;
   waitForActiveWork(): Promise<void>;

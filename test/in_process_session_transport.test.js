@@ -122,6 +122,7 @@ function createHostedSession(sessionId, sessions, options = {}) {
       releaseTurn();
       return true;
     }),
+    interruptExecs: vi.fn(() => false),
     interruptMaintenance: vi.fn(() => false),
     interruptSamples: vi.fn(() => false),
     async waitForActiveWork() {},

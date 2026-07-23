@@ -123,9 +123,7 @@ function createHostedSession(sessionId, sessions, options = {}) {
       releaseTurn();
       return true;
     }),
-    interruptExecs: vi.fn(() => false),
-    interruptMaintenance: vi.fn(() => false),
-    interruptSamples: vi.fn(() => false),
+    interruptActiveWork: vi.fn(() => hostedSession.interruptTurn()),
     async waitForActiveWork() {},
     async exec() {
       return createProtocolExecResult({

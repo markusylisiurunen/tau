@@ -36,16 +36,6 @@ type SessionProtocolActiveSubmit = {
   promise: Promise<void>;
 };
 
-type SessionProtocolActiveExec = {
-  abortController: AbortController;
-  promise: Promise<void>;
-};
-
-type SessionProtocolActiveSample = {
-  abortController: AbortController;
-  promise: Promise<void>;
-};
-
 type SessionProtocolPendingRequest<Method extends "session.queue" | "session.steer"> = {
   id: string;
   handler: SessionProtocolHandler;
@@ -165,8 +155,8 @@ export class SessionProtocolHandler {
   private readonly host: TauSessionHost;
   private readonly send: (message: SessionProtocolOutgoingMessage) => void;
   private readonly sessionStates = new Map<string, SessionProtocolHandlerSessionState>();
-  private readonly activeExecs = new Set<SessionProtocolActiveExec>();
-  private readonly activeSamples = new Set<SessionProtocolActiveSample>();
+  private readonly connectionAbortController = new AbortController();
+  private readonly activeSideChannels = new Set<Promise<void>>();
   private initialized = false;
   private clientToolRegistration?: {
     attachSession: (sessionId: string) => void;
@@ -300,27 +290,13 @@ export class SessionProtocolHandler {
     const interruptActiveTurns = mode === "interrupt" || shutdownHost;
 
     const states = [...this.sessionStates.values()];
-    const execPromises = new Set<Promise<void>>();
-    for (const exec of this.activeExecs) {
-      exec.abortController.abort();
-      execPromises.add(exec.promise);
-    }
-    const samplePromises = new Set<Promise<void>>();
-    for (const sample of this.activeSamples) {
-      sample.abortController.abort();
-      samplePromises.add(sample.promise);
-    }
+    const activeSideChannels = [...this.activeSideChannels];
+    this.connectionAbortController.abort();
 
     for (const state of states) {
       this.unsubscribeSessionListeners(state);
-
-      if (interruptActiveTurns && (state.live.activeSubmit || state.session.isTurnRunning)) {
-        state.session.interruptTurn();
-      }
       if (interruptActiveTurns) {
-        state.session.interruptExecs();
-        state.session.interruptMaintenance();
-        state.session.interruptSamples();
+        state.session.interruptActiveWork();
       }
     }
 
@@ -333,7 +309,7 @@ export class SessionProtocolHandler {
         states.map((state) => getSessionMutationQueueState(state.session).queue),
       );
     }
-    await Promise.allSettled([...execPromises, ...samplePromises]);
+    await Promise.allSettled(activeSideChannels);
 
     this.sessionStates.clear();
     this.clientToolRegistration?.unregister();
@@ -581,17 +557,7 @@ export class SessionProtocolHandler {
       return;
     }
 
-    const abortController = new AbortController();
-    const activeExec = {
-      abortController,
-      promise: this.executeExec(state, request, abortController.signal),
-    };
-    this.activeExecs.add(activeExec);
-    try {
-      await activeExec.promise;
-    } finally {
-      this.activeExecs.delete(activeExec);
-    }
+    await this.runSideChannel((signal) => this.executeExec(state, request, signal));
   }
 
   private async handleSample(
@@ -606,17 +572,7 @@ export class SessionProtocolHandler {
       return;
     }
 
-    const abortController = new AbortController();
-    const activeSample = {
-      abortController,
-      promise: this.executeSample(state, request, abortController.signal),
-    };
-    this.activeSamples.add(activeSample);
-    try {
-      await activeSample.promise;
-    } finally {
-      this.activeSamples.delete(activeSample);
-    }
+    await this.runSideChannel((signal) => this.executeSample(state, request, signal));
   }
 
   private async handleRetry(
@@ -1038,6 +994,16 @@ export class SessionProtocolHandler {
     }
   }
 
+  private async runSideChannel(operation: (signal: AbortSignal) => Promise<void>): Promise<void> {
+    const promise = operation(this.connectionAbortController.signal);
+    this.activeSideChannels.add(promise);
+    try {
+      await promise;
+    } finally {
+      this.activeSideChannels.delete(promise);
+    }
+  }
+
   private async executeExec(
     state: SessionProtocolHandlerSessionState,
     request: Extract<SessionProtocolRequestMessage, { method: "session.exec" }>,
@@ -1102,20 +1068,12 @@ export class SessionProtocolHandler {
       return;
     }
 
-    const interruptedTurn = state.session.interruptTurn();
-    const interruptedExecs = state.session.interruptExecs();
-    const interruptedMaintenance = state.session.interruptMaintenance();
-    const interruptedSamples = state.session.interruptSamples();
+    const interrupted = state.session.interruptActiveWork();
     this.rejectPendingSteeringSubmits(state, "session was interrupted");
 
     const result: SessionProtocolResultByMethod["session.interrupt"] = {
-      interrupted:
-        interruptedTurn || interruptedExecs || interruptedMaintenance || interruptedSamples,
-      isTurnRunning:
-        state.session.isTurnRunning ||
-        interruptedExecs ||
-        interruptedMaintenance ||
-        interruptedSamples,
+      interrupted,
+      isTurnRunning: state.session.isTurnRunning || interrupted,
     };
 
     this.sendMessage(createSessionProtocolSuccessResponse(request.id, "session.interrupt", result));
@@ -1486,7 +1444,10 @@ export class SessionProtocolHandler {
     }
 
     const session = await this.host.observeSession(sessionId);
-    return session ? this.registerSession(session) : undefined;
+    if (!session || this.closed) {
+      return undefined;
+    }
+    return this.registerSession(session);
   }
 
   private flushBufferedDeltasAfterSnapshot(

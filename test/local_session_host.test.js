@@ -713,6 +713,49 @@ describe("LocalSessionHost", () => {
     expect(executionEnvironment.dispose).toHaveBeenCalledTimes(1);
   });
 
+  it("rejects an exec when the backend resolves after interruption", async () => {
+    const store = new MemorySessionStore();
+    const toolBackend = createLocalToolExecutionBackend();
+    let markExecStarted;
+    const execStarted = new Promise((resolve) => {
+      markExecStarted = resolve;
+    });
+    vi.spyOn(toolBackend, "runBash").mockImplementation(
+      (_command, options) =>
+        new Promise((resolve) => {
+          markExecStarted();
+          options.signal.addEventListener(
+            "abort",
+            () =>
+              resolve({
+                output: "(tau) aborted",
+                stdout: "",
+                stderr: "(tau) aborted",
+                exitCode: 1,
+                truncated: false,
+              }),
+            { once: true },
+          );
+        }),
+    );
+    const executionEnvironment = createTestExecutionEnvironment(
+      { kind: "local", cwd: "/repo", home: "/home/user" },
+      toolBackend,
+    );
+    const host = createHostForEnvironment(store, executionEnvironment);
+    const hostedSession = await host.createSession(localCreateInput);
+
+    try {
+      const exec = hostedSession.exec({ command: "sleep forever" });
+      await execStarted;
+
+      expect(hostedSession.interruptExecs()).toBe(true);
+      await expect(exec).rejects.toMatchObject({ name: "AbortError" });
+    } finally {
+      await host.shutdown();
+    }
+  });
+
   it("samples without changing or persisting session state", async () => {
     const store = new MemorySessionStore();
     const originalCommit = store.commitSessionSnapshot.bind(store);

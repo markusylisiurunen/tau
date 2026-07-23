@@ -753,7 +753,9 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     });
     this.execPromises.add(promise);
     try {
-      return await promise;
+      const result = await promise;
+      signal.throwIfAborted();
+      return result;
     } finally {
       this.execAbortControllers.delete(abortController);
       this.execPromises.delete(promise);

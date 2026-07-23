@@ -258,7 +258,9 @@ function createHarness(options = {}) {
         );
         execPromises.add(promise);
         try {
-          return await promise;
+          const result = await promise;
+          signal.throwIfAborted();
+          return result;
         } finally {
           execAbortControllers.delete(abortController);
           execPromises.delete(promise);
@@ -527,6 +529,47 @@ describe("rpc_server", () => {
         },
       }),
     );
+  });
+
+  it("does not create ephemeral contexts after closing during session recovery", async () => {
+    const harness = createHarness();
+    let markObserveStarted;
+    let releaseObserve;
+    const observeStarted = new Promise((resolve) => {
+      markObserveStarted = resolve;
+    });
+    const observeBlocker = new Promise((resolve) => {
+      releaseObserve = resolve;
+    });
+    const lines = [];
+    const server = new RpcServer({
+      host: {
+        ...harness.host,
+        async observeSession(sessionId) {
+          markObserveStarted();
+          await observeBlocker;
+          return await harness.host.observeSession(sessionId);
+        },
+        shutdown: vi.fn(async () => {}),
+      },
+      send: (line) => lines.push(JSON.parse(line)),
+    });
+
+    const create = server.handleLine(
+      request("ephemeral-create", "session.ephemeral.create", {
+        sessionId: "session-1",
+        instructions: "review this",
+        tools: ["bash"],
+      }),
+    );
+    await observeStarted;
+
+    await server.close();
+    releaseObserve();
+    await create;
+
+    expect(harness.seededSession.createEphemeralContext).not.toHaveBeenCalled();
+    expect(lines.some((line) => line.id === "ephemeral-create")).toBe(false);
   });
 
   it("creates, uses, and closes ephemeral contexts during an active main turn", async () => {
@@ -1522,10 +1565,12 @@ describe("rpc_server", () => {
   it("cancels active execs through session.interrupt", async () => {
     let execStarted = false;
     const harness = createHarness({
-      exec: ({ signal }) =>
-        new Promise((_resolve, reject) => {
+      exec: ({ command, signal }) =>
+        new Promise((resolve) => {
           execStarted = true;
-          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+          signal.addEventListener("abort", () => resolve(createProtocolExecResult({ command })), {
+            once: true,
+          });
         }),
     });
 

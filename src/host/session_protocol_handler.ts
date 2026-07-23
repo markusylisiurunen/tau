@@ -1267,6 +1267,9 @@ export class SessionProtocolHandler {
       this.sendSessionNotFound(request.id, request.params.sessionId);
       return;
     }
+    if (this.closed) {
+      return;
+    }
 
     const result = await state.session.createEphemeralContext({
       instructions: request.params.instructions,

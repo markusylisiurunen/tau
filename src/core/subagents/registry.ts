@@ -122,5 +122,16 @@ export function formatSubagentsForPrompt(persona: Persona): string | undefined {
     return undefined;
   }
 
-  return `\n\n### Available sub-agents\n\nYou have access to the following sub-agents:\n\n${subagentLines.join("\n")}`;
+  return [
+    "",
+    "",
+    "### Available sub-agents",
+    "",
+    "You have access to the following sub-agents:",
+    "",
+    subagentLines.join("\n"),
+    "",
+    "Guidelines:",
+    "- Trigger: Follow the sub-agent's trigger sensitivity if specified; default is balanced. An exact `@@agent:<name>` reference in the user request, active AGENTS.md instructions, or instructions of an already-active skill explicitly activates that sub-agent. Do not infer sub-agent activation from generic language, keyword, or task overlap.",
+  ].join("\n");
 }

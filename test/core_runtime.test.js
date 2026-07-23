@@ -18,6 +18,7 @@ import {
   selectAutoCompactionCut,
 } from "../dist/core/session/compaction.js";
 import { CoreSession } from "../dist/core/session/core_session.js";
+import { formatSubagentsForPrompt } from "../dist/core/subagents/registry.js";
 import { ToolCatalog } from "../dist/core/tools/catalog.js";
 import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
 import { ToolRegistry } from "../dist/core/tools/registry.js";
@@ -35,6 +36,7 @@ import {
 import {
   buildEnvironmentTag,
   buildProjectContextBlock,
+  buildSkillsIndexBlock,
 } from "../dist/core/utils/context_builder.js";
 import { registerModelRuntimeProvider } from "../dist/core/utils/model_stream.js";
 import {
@@ -1678,6 +1680,35 @@ describe("context builder", () => {
     expect(block).toContain("Nested AGENTS.md files under the current working directory");
     expect(block).toContain('<file path="/repo/packages/path-only/AGENTS.md" />');
     expect(block).not.toContain('<file path="/repo/packages/full/AGENTS.md" />');
+  });
+
+  it("includes compositional explicit capability activation rules", () => {
+    const skillsBlock = buildSkillsIndexBlock([
+      {
+        name: "dependency",
+        description: "Dependency skill. Trigger: explicit.",
+        path: "/repo/.tau/skills/dependency/SKILL.md",
+      },
+    ]);
+    const personaPrompt = personas[0].systemPrompt;
+    const subagentsBlock = formatSubagentsForPrompt(personas[0]);
+
+    for (const prompt of [skillsBlock, personaPrompt]) {
+      expect(prompt).toContain("exact `@@skill:<name>` reference");
+      expect(prompt).toContain("active AGENTS.md instructions");
+      expect(prompt).toContain("instructions of an already-active skill");
+      expect(prompt).toContain("compose transitively");
+      expect(prompt).toContain("at most once per request");
+      expect(prompt).toContain("repeated or cyclic references do not reopen it");
+      expect(prompt).toContain("generic language, keyword, or task overlap");
+    }
+
+    for (const prompt of [subagentsBlock, personaPrompt]) {
+      expect(prompt).toContain("`@@agent:<name>` reference");
+      expect(prompt).toContain("active AGENTS.md instructions");
+      expect(prompt).toContain("instructions of an already-active skill");
+      expect(prompt).toContain("generic language, keyword, or task overlap");
+    }
   });
 });
 

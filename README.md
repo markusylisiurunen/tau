@@ -388,7 +388,7 @@ sub-agents and skills define when they should be activated via trigger sensitivi
 
 - **eager**: use proactively whenever the capability would help, even if not explicitly requested. example: a dedicated codebase investigation sub-agent.
 - **balanced**: use when the request clearly matches the capability. this is the default if not specified. good for skills that solve specific problems but shouldn't be assumed.
-- **explicit**: use only when the user specifically names or requests it. example: a web research sub-agent that should only run when asked.
+- **explicit**: use only when explicitly named. for skills and sub-agents, an exact `@@skill:<name>` reference or `@@agent:<name>` reference in the user request, active `AGENTS.md` instructions, or instructions of an already-active skill counts as explicit activation. skill references compose transitively, and each skill activates at most once per request so repeated or cyclic references terminate. generic language, keyword, or task overlap does not count.
 
 when you write custom skills, you can specify trigger sensitivity in the skill description. if not specified, the default is balanced. the model respects these levels and won't trigger a skill or sub-agent inappropriately.
 
@@ -408,9 +408,9 @@ toggle visibility of the model's thinking with `ctrl+t`.
 
 reference files in your message with `@<path>` (for example, `@src/tui/session_chat_app.ts`). autocomplete helps you find the right path.
 
-reference skills with `@@skill:<name>` (for example, `@@skill:skill-name`). autocomplete will suggest available skills.
+reference skills with `@@skill:<name>` (for example, `@@skill:skill-name`). autocomplete will suggest available skills. exact skill references in active `AGENTS.md` instructions and already-active skill instructions also activate the referenced skill, including skills with `Trigger: explicit`. these references compose transitively, and each skill activates at most once per request so repeated or cyclic references terminate.
 
-to explicitly target a sub-agent, use `@@agent:<name>` (for example, `@@agent:default`).
+reference sub-agents with `@@agent:<name>` (for example, `@@agent:default`). exact sub-agent references in active `AGENTS.md` instructions and already-active skill instructions also activate the referenced sub-agent, including sub-agents with `Trigger: explicit`.
 
 you can also pipe content directly:
 

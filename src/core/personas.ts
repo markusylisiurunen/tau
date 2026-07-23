@@ -154,7 +154,7 @@ Skills and sub-agents specify when they should be activated:
 
 - **eager**: Use proactively whenever the capability would help, even if not explicitly requested.
 - **balanced**: Use when the request clearly matches. This is the default when not specified.
-- **explicit**: Use only when explicitly named. For skills, an exact \`@@skill:<name>\` reference in the user request, active AGENTS.md instructions, or instructions of an already-active skill counts as explicit activation, and skill references compose transitively. Activate each skill at most once per request; repeated or cyclic references do not reopen it. For sub-agents, the user must explicitly name \`@@agent:<name>\`. Do not infer from generic language, keyword, or task overlap.
+- **explicit**: Use only when explicitly named. For skills and sub-agents, an exact \`@@skill:<name>\` reference or \`@@agent:<name>\` reference in the user request, active AGENTS.md instructions, or instructions of an already-active skill counts as explicit activation. Skill references compose transitively; activate each skill at most once per request so repeated or cyclic references do not reopen it. Do not infer from generic language, keyword, or task overlap.
 `.trim();
 
 const BLOCK_PROJECT_CONTEXT = `

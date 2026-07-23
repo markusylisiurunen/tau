@@ -12,7 +12,7 @@ Turn an overwhelming review scope into a two-phase guided review:
 
 Each review chunk should be small enough to understand in one sitting and large enough to preserve the relevant context.
 
-Use this skill only when the user explicitly asks for guided review, to split a diff into reviewable pieces, or to walk through changes step by step.
+Use this skill only after an exact `@@skill:guided-review` reference activates it under the trigger-sensitivity contract.
 
 ## Determine the review scope
 

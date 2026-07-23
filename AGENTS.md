@@ -264,7 +264,7 @@ Trigger sensitivity is a concept that guides how proactively the model should ac
 
 - **eager**: Use proactively whenever the capability would help, even if not explicitly requested. The model should consider using it for related problems.
 - **balanced**: Use when the request clearly matches the capability. This is the default if not specified. The model should activate it when appropriate, but not speculatively.
-- **explicit**: Use only when explicitly named. For skills, an exact @@skill:<name> reference in the user request, active AGENTS.md instructions, or instructions of an already-active skill counts as explicit activation, and references compose transitively. Activate each skill at most once per request; repeated or cyclic references do not reopen it. For subagents, the user must explicitly name @@agent:<name>. Do not infer from generic language, keyword, or task overlap.
+- **explicit**: Use only when explicitly named. For skills and subagents, an exact @@skill:<name> reference or @@agent:<name> reference in the user request, active AGENTS.md instructions, or instructions of an already-active skill counts as explicit activation. Skill references compose transitively; activate each skill at most once per request so repeated or cyclic references do not reopen it. Do not infer from generic language, keyword, or task overlap.
 
 **Built-in subagents:**
 

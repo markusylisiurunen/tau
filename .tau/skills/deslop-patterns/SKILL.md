@@ -41,7 +41,9 @@ Hunt Tau-specific drift across:
 - model catalog metadata, persona settings, reasoning levels, and provider adapters
 - truncation limits, token budgets, metadata descriptions, and the prompts that tell agents about them
 
-Parser and serializer behavior must be symmetric. Streaming and recovery must preserve one snapshot-owned source of truth. Do not hide protocol drift behind optional fields, permissive parsers, duplicate state, or client-specific shortcuts.
+Parser and serializer behavior must be symmetric. Collapse independently declared representations when their contracts are identical; keep a boundary-specific type only when it encodes a real semantic difference, with an explicit transformation. Derive values from canonical state instead of plumbing redundant metadata across layers.
+
+Streaming and recovery must preserve one snapshot-owned source of truth. Do not hide protocol drift behind optional fields, permissive parsers, duplicate state, or client-specific shortcuts.
 
 ## Tau regression surfaces
 

@@ -139,6 +139,7 @@ export function createFlySpriteToolExecutionBackend(options: {
           command,
           cwd: runOptions.cwd ?? options.cwd,
           timeoutMs: runOptions.timeoutMs,
+          env: runOptions.env,
         },
         { signal: runOptions.signal },
       );
@@ -152,6 +153,7 @@ export function createFlySpriteToolExecutionBackend(options: {
           args,
           cwd: runOptions.cwd ?? options.cwd,
           timeoutMs: runOptions.timeoutMs,
+          env: runOptions.env,
           maxCaptureBytes: runOptions.maxCaptureBytes,
         },
         { signal: runOptions.signal },
@@ -213,12 +215,14 @@ type FlySpriteWorkerRequestByMethod = {
     command: string;
     cwd: string;
     timeoutMs?: number;
+    env?: Record<string, string>;
   };
   nodeScript: {
     script: string;
     args: string[];
     cwd: string;
     timeoutMs?: number;
+    env?: Record<string, string>;
     maxCaptureBytes?: number | null;
   };
   readFile: {
@@ -601,9 +605,10 @@ async function handleLine(line) {
     }
 
     if (request.method === "exec") {
-      const result = await runCommand(request.id, "sh", ["-lc", request.command], {
+      const result = await runCommand(request.id, "bash", ["-lc", request.command], {
         cwd: request.cwd,
         timeoutMs: request.timeoutMs,
+        env: request.env,
       });
       respond(request.id, result);
       return;
@@ -613,6 +618,7 @@ async function handleLine(line) {
       const result = await runCommand(request.id, "node", ["-e", request.script, ...request.args], {
         cwd: request.cwd,
         timeoutMs: request.timeoutMs,
+        env: request.env,
         maxCaptureBytes: request.maxCaptureBytes,
       });
       respond(request.id, result);
@@ -681,6 +687,7 @@ function runCommand(id, command, args, options) {
 
     const child = spawn(command, args, {
       cwd: options.cwd,
+      env: { ...process.env, ...options.env },
       detached: true,
       stdio: ["ignore", "pipe", "pipe"],
     });

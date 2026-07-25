@@ -84,8 +84,15 @@ describe("Cloudflare Sandbox execution environment", () => {
       sandboxId: "sandbox-1",
       cwd: "/workspace/repo",
     });
+    const environment = new CloudflareSandboxExecutionEnvironment({
+      bridgeId: "default",
+      sandboxId: "sandbox-1",
+      cwd: "/workspace/repo",
+      home: "/home/sandbox",
+      backend,
+    });
 
-    await expect(backend.runBash("echo hello")).resolves.toEqual({
+    await expect(environment.getToolExecutionBackend().runBash("echo hello")).resolves.toEqual({
       output: "hello\n",
       stdout: "hello\n",
       stderr: "",
@@ -107,8 +114,9 @@ describe("Cloudflare Sandbox execution environment", () => {
       }),
     );
     expect(JSON.parse(requests[1].init.body)).toEqual({
-      argv: ["sh", "-lc", "echo hello"],
+      argv: ["bash", "-lc", "echo hello"],
       cwd: "/workspace/repo",
+      env: { HOME: "/home/sandbox" },
     });
   });
 
@@ -358,7 +366,7 @@ describe("Cloudflare Sandbox execution environment", () => {
 
     const execRequests = requests.filter((request) => request.url.endsWith("/exec"));
     expect(execRequests.map((request) => JSON.parse(request.init.body).argv)).toEqual([
-      ["sh", "-lc", "one"],
+      ["bash", "-lc", "one"],
       ["node", "-e", "process.stdout.write(process.argv[1])", "two"],
     ]);
     expect(execRequests.map((request) => request.init.headers["Session-Id"])).toEqual([

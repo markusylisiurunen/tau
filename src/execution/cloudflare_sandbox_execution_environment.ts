@@ -16,7 +16,6 @@ import {
   assertFileWithinMaxBytes,
   buildWriteFileResult,
   NODE_LIST_DIR_SCRIPT,
-  shellQuote,
 } from "./sandbox_tool_helpers.js";
 import { ToolBackendExecutionEnvironment } from "./tool_backend_execution_environment.js";
 
@@ -218,9 +217,15 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
     }
   };
 
-  const exec = async (
-    command: string,
-    runOptions: { timeoutMs?: number; signal?: AbortSignal; cwd?: string } = {},
+  const runCommand = async (
+    argv: string[],
+    runOptions: {
+      timeoutMs?: number;
+      signal?: AbortSignal;
+      cwd?: string;
+      env?: Record<string, string>;
+      maxCaptureBytes?: number | null;
+    } = {},
   ): Promise<BashExecutionResult> => {
     const cwd = runOptions.cwd ?? options.cwd;
     const signal = runOptions.signal
@@ -231,10 +236,12 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
 
       try {
         return await client.exec(sandboxId, {
-          argv: ["sh", "-lc", command],
+          argv,
           cwd,
           timeoutMs: runOptions.timeoutMs,
           signal,
+          env: runOptions.env,
+          maxCaptureBytes: runOptions.maxCaptureBytes,
           sessionId,
           onAbort: () => resetCommandSession(cwd),
         });
@@ -258,33 +265,12 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
       await resetAllCommandSessions();
     },
 
-    runBash: exec,
+    runBash(command, runOptions = {}) {
+      return runCommand(["bash", "-lc", command], runOptions);
+    },
 
-    async runNodeScript(script, args = [], runOptions = {}) {
-      const cwd = runOptions.cwd ?? options.cwd;
-      const signal = runOptions.signal
-        ? AbortSignal.any([runOptions.signal, disposeAbortController.signal])
-        : disposeAbortController.signal;
-      return await runQueued(cwd, signal, async () => {
-        const sessionId = await ensureCommandSession(cwd);
-
-        try {
-          return await client.exec(sandboxId, {
-            argv: ["node", "-e", script, ...args],
-            cwd,
-            timeoutMs: runOptions.timeoutMs,
-            signal,
-            maxCaptureBytes: runOptions.maxCaptureBytes,
-            sessionId,
-            onAbort: () => resetCommandSession(cwd),
-          });
-        } catch (err) {
-          if (isAbortError(err)) {
-            await resetCommandSession(cwd);
-          }
-          throw err;
-        }
-      });
+    runNodeScript(script, args = [], runOptions = {}) {
+      return runCommand(["node", "-e", script, ...args], runOptions);
     },
 
     async readFile(path) {
@@ -305,7 +291,7 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
       assertActive();
       const dir = dirname(path);
       if (dir && dir !== ".") {
-        await exec(`mkdir -p ${shellQuote(dir)}`);
+        await runCommand(["mkdir", "-p", dir]);
       }
       await client.writeFile(sandboxId, path, Buffer.from(content, "utf-8"));
       return buildWriteFileResult(path, content);
@@ -315,7 +301,7 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
       assertActive();
       const dir = dirname(path);
       if (dir && dir !== ".") {
-        await exec(`mkdir -p ${shellQuote(dir)}`);
+        await runCommand(["mkdir", "-p", dir]);
       }
       await client.writeFile(sandboxId, path, content);
       return { path, bytes: content.byteLength };
@@ -323,11 +309,11 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
 
     async listDir(path) {
       assertActive();
-      const result = await exec(`node -e ${shellQuote(NODE_LIST_DIR_SCRIPT)} ${shellQuote(path)}`);
+      const result = await runCommand(["node", "-e", NODE_LIST_DIR_SCRIPT, path]);
       if (result.exitCode !== 0) {
         throw new Error(result.output.trim() || `list failed for ${path}`);
       }
-      const entries = JSON.parse(result.output) as ListDirEntry[];
+      const entries = JSON.parse(result.stdout) as ListDirEntry[];
       return { path, entries };
     },
   };
@@ -374,6 +360,7 @@ export class CloudflareSandboxBridgeClient {
       cwd?: string;
       timeoutMs?: number;
       signal?: AbortSignal;
+      env?: Record<string, string>;
       maxCaptureBytes?: number | null;
       sessionId?: string;
       onAbort?: () => Promise<void>;
@@ -396,6 +383,7 @@ export class CloudflareSandboxBridgeClient {
         body: JSON.stringify({
           argv: options.argv,
           ...(options.cwd ? { cwd: options.cwd } : {}),
+          ...(options.env ? { env: options.env } : {}),
           ...(options.timeoutMs !== undefined ? { timeout_ms: options.timeoutMs } : {}),
         }),
         signal: controller.signal,

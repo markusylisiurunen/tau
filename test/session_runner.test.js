@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -1206,15 +1206,17 @@ describe("session execution backend plumbing", () => {
     const cwd = mkdtempSync(join(tmpdir(), "tau-sdk-backend-test-"));
     const session = {
       async exec(command, options) {
-        const output = execFileSync("/bin/sh", ["-c", command], {
+        const result = spawnSync("/bin/sh", ["-c", command], {
           cwd: options.cwd,
           encoding: "utf8",
         });
+        const stdout = `profile stdout\n${result.stdout}logout stdout\n`;
+        const stderr = `profile stderr\n${result.stderr}logout stderr\n`;
         return {
-          output,
-          stdout: output,
-          stderr: "",
-          exitCode: 0,
+          output: stdout + stderr,
+          stdout,
+          stderr,
+          exitCode: result.status,
           truncated: false,
         };
       },
@@ -1300,8 +1302,8 @@ describe("session execution backend plumbing", () => {
   it("autocompletes project paths from backend stdout and keeps partial results on non-zero exit", async () => {
     const calls = [];
     const backend = {
-      async runBash(command, options = {}) {
-        calls.push({ command, options });
+      async runNodeScript(script, args, options = {}) {
+        calls.push({ script, args, options });
         return {
           output: "src/a.ts\nrg warning on stderr\n",
           stdout: "src/a.ts\nsrc/nested/b.ts\n",
@@ -1319,7 +1321,8 @@ describe("session execution backend plumbing", () => {
     ).resolves.toEqual(["src/", "src/a.ts", "src/nested/", "src/nested/b.ts"]);
     expect(calls).toEqual([
       {
-        command: "rg --files --hidden --glob '!.git/'",
+        script: expect.stringContaining('spawn("rg", ["--files", "--hidden"'),
+        args: [],
         options: { cwd: ".", timeoutMs: 5000 },
       },
     ]);

@@ -25,6 +25,82 @@ describe("LocalExecutionEnvironment", () => {
     expect(result.truncated).toBe(false);
   });
 
+  it("runs Bash syntax through the execution environment login profile", async () => {
+    const home = await mkdtemp(join(tmpdir(), "tau-local-bash-home-"));
+    const repo = join(home, "repo");
+    await mkdir(repo);
+    await writeFile(
+      join(home, ".bash_profile"),
+      'export TAU_LOGIN_PROFILE=loaded\nprintf "profile output\\n"\n',
+      "utf8",
+    );
+    const environment = new LocalExecutionEnvironment({
+      cwd: repo,
+      home,
+      backend: createLocalToolExecutionBackend(),
+    });
+
+    try {
+      const result = await environment
+        .getToolExecutionBackend()
+        .runBash('values=(one two); printf "%s|%s|%s" "$TAU_LOGIN_PROFILE" "$HOME" "$PWD"');
+
+      expect(result.stdout).toBe(`profile output\nloaded|${home}|${repo}`);
+      expect(result.exitCode).toBe(0);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("spawns login Bash without changing execution controls", async () => {
+    const calls = [];
+    const signal = new AbortController().signal;
+    const backend = createLocalToolExecutionBackend({
+      spawn: async (command, args, options) => {
+        calls.push({ command, args, options });
+        return {
+          stdout: "",
+          stderr: "",
+          output: "",
+          exitCode: 0,
+          captureLimitExceeded: false,
+          timedOut: false,
+          aborted: false,
+          closeSignal: null,
+        };
+      },
+      env: {
+        cwd: () => "/repo",
+        home: () => "/home/user",
+        platform: () => process.platform,
+        nodeVersion: () => process.version,
+        env: () => ({ PATH: process.env.PATH }),
+      },
+    });
+
+    await backend.runBash("echo $VALUE", {
+      cwd: "subdir",
+      timeoutMs: 1234,
+      signal,
+      env: { VALUE: "set" },
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      command: "bash",
+      args: ["-lc", "echo $VALUE"],
+      options: {
+        cwd: "/repo/subdir",
+        detached: true,
+        killProcessGroup: true,
+        signal,
+        timeoutMs: 1234,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    });
+    expect(calls[0].options.env).toMatchObject({ VALUE: "set", GIT_TERMINAL_PROMPT: "0" });
+  });
+
   it("scopes explicit environment variables without filtering sensitive names", async () => {
     const cwd = process.cwd();
     const environment = new LocalExecutionEnvironment({

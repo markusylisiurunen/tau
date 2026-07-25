@@ -6,6 +6,20 @@ const MAX_ENTRY_COUNT = MAX_FILE_COUNT + MAX_DIRECTORY_COUNT;
 const RIPGREP_TIMEOUT_MS = 5000;
 const MAX_AUTOCOMPLETE_SCAN_ENTRIES = 50_000;
 
+const LIST_PROJECT_FILES_SCRIPT = `
+const { spawn } = require("node:child_process");
+const child = spawn("rg", ["--files", "--hidden", "--glob", "!.git/"], {
+  stdio: ["ignore", "inherit", "inherit"],
+});
+child.on("error", (error) => {
+  process.stderr.write(error.message + "\\n");
+  process.exitCode = 2;
+});
+child.on("exit", (code) => {
+  process.exitCode = code ?? 2;
+});
+`.trim();
+
 function listFilesFromOutput(stdout: string): string[] {
   const files: string[] = [];
   const seen = new Set<string>();
@@ -60,14 +74,15 @@ function combineEntries(files: Iterable<string>, dirs: Iterable<string>): string
 
 export async function loadProjectPathAutocompleteEntriesWithBackend(
   backend: {
-    runBash(
-      command: string,
+    runNodeScript(
+      script: string,
+      args?: string[],
       options?: { timeoutMs?: number; cwd?: string },
     ): Promise<{ output: string; stdout: string; exitCode: number | null }>;
   },
   options: { cwd?: string } = {},
 ): Promise<string[]> {
-  const res = await backend.runBash("rg --files --hidden --glob '!.git/'", {
+  const res = await backend.runNodeScript(LIST_PROJECT_FILES_SCRIPT, [], {
     ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
     timeoutMs: RIPGREP_TIMEOUT_MS,
   });
@@ -86,8 +101,9 @@ export function filterProjectPathAutocompleteEntries(
 
 export async function autocompleteProjectPathsWithBackend(
   backend: {
-    runBash(
-      command: string,
+    runNodeScript(
+      script: string,
+      args?: string[],
       options?: { timeoutMs?: number; cwd?: string },
     ): Promise<{ output: string; stdout: string; exitCode: number | null }>;
   },

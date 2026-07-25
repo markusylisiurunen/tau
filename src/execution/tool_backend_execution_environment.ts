@@ -41,7 +41,10 @@ export class ToolBackendExecutionEnvironment<TSnapshot extends BackendExecutionS
     this.cwd = options.snapshot.cwd;
     this.home = options.snapshot.home;
     this.backend = options.backend;
-    this.scopedBackend = scopeToolExecutionBackend(options.backend, this.cwd, options.env);
+    this.scopedBackend = scopeToolExecutionBackend(options.backend, this.cwd, {
+      ...options.env,
+      HOME: this.home,
+    });
     this.toolRegistry = ToolCatalog.createRegistry(this.scopedBackend);
   }
 

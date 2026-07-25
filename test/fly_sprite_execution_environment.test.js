@@ -1,4 +1,8 @@
+import { spawn as spawnChild } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import { personas } from "../dist/core/personas.js";
@@ -138,6 +142,45 @@ describe("Fly Sprite execution environment", () => {
     expect(sprite.calls[0].command).toBe("node");
     expect(sprite.calls[0].options).toEqual({ cwd: "/home/sprite/repo" });
     expect(requests.map((request) => request.command)).toEqual(["echo hello", "pwd"]);
+  });
+
+  it("runs commands through login Bash in the Sprite worker", async () => {
+    const home = await mkdtemp(join(tmpdir(), "tau-fly-bash-home-"));
+    const repo = join(home, "repo");
+    await mkdir(repo);
+    await writeFile(
+      join(home, ".bash_profile"),
+      'export TAU_LOGIN_PROFILE=loaded\nprintf "profile output\\n"\n',
+      "utf8",
+    );
+    const sprite = {
+      spawn(command, args, options) {
+        return spawnChild(command, args, {
+          ...options,
+          stdio: ["pipe", "pipe", "pipe"],
+        });
+      },
+    };
+    const backend = createFlySpriteToolExecutionBackend({ sprite, cwd: repo });
+    const environment = new FlySpriteExecutionEnvironment({
+      apiId: "default",
+      spriteName: "sprite-1",
+      cwd: repo,
+      home,
+      backend,
+    });
+
+    try {
+      const result = await environment
+        .getToolExecutionBackend()
+        .runBash('values=(one two); printf "%s|%s" "$TAU_LOGIN_PROFILE" "$HOME"');
+
+      expect(result.stdout).toBe(`profile output\nloaded|${home}`);
+      expect(result.exitCode).toBe(0);
+    } finally {
+      await environment.dispose();
+      await rm(home, { recursive: true, force: true });
+    }
   });
 
   it("resolves configured APIs through the SDK client factory", async () => {

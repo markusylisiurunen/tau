@@ -106,8 +106,7 @@ export function createLocalToolExecutionBackend(
           ? timeoutMs
           : undefined;
 
-      const result = await spawnCapture(command, [], {
-        shell: true,
+      const result = await spawnCapture("bash", ["-lc", command], {
         stdio: ["ignore", "pipe", "pipe"],
         env: {
           ...resolveEnvironment(options.env),

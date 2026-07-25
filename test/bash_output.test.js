@@ -11,7 +11,16 @@ import { tokensToBytes } from "../dist/core/utils/token.js";
 const backend = {
   async runBash() {
     return {
-      output: "/tmp/tau-bash-output-test.log\n",
+      output: "command output\n",
+      stdout: "command output\n",
+      exitCode: 0,
+      truncated: false,
+    };
+  },
+  async runNodeScript() {
+    return {
+      output: "/tmp/tau-bash-output-test.log",
+      stdout: "/tmp/tau-bash-output-test.log",
       exitCode: 0,
       truncated: false,
     };

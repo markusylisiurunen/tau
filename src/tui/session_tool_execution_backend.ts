@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { basename } from "node:path";
 import type { CoreDeps } from "../core/runtime/deps.js";
 import type {
@@ -29,18 +30,42 @@ export function createSdkToolExecutionBackend(options: {
     return result;
   };
 
+  const runNodeScript: ToolExecutionBackend["runNodeScript"] = async (
+    script,
+    args = [],
+    runOptions = {},
+  ) => {
+    const boundary = `__TAU_NODE_OUTPUT_${randomUUID()}__`;
+    const quotedBoundary = shellQuote(boundary);
+    const nodeCommand = ["node", "-e", script, ...args].map(shellQuote).join(" ");
+    const command = `printf %s ${quotedBoundary}; printf %s ${quotedBoundary} >&2; ${nodeCommand}; status=$?; printf %s ${quotedBoundary}; printf %s ${quotedBoundary} >&2; exit "$status"`;
+    const result = await runBash(command, runOptions);
+    const extractOutput = (output: string): string => {
+      const start = output.indexOf(boundary);
+      const end = output.indexOf(boundary, start + boundary.length);
+      if (start === -1 || end === -1) {
+        throw new Error("node helper returned invalid output boundaries");
+      }
+      return output.slice(start + boundary.length, end);
+    };
+    const stdout = extractOutput(result.stdout);
+    const stderr = extractOutput(result.stderr);
+    return {
+      ...result,
+      output: stdout + stderr,
+      stdout,
+      stderr,
+    };
+  };
+
   return {
     async dispose() {},
 
     runBash,
-
-    async runNodeScript(script, args = [], runOptions = {}) {
-      const command = ["node", "-e", script, ...args].map(shellQuote).join(" ");
-      return await runBash(command, runOptions);
-    },
+    runNodeScript,
 
     async readFile(path) {
-      const result = await runNodeHelper(runBash, READ_FILE_SCRIPT, [path], {
+      const result = await runNodeHelper(runNodeScript, READ_FILE_SCRIPT, [path], {
         cwd,
         timeoutMs: HELPER_TIMEOUT_MS,
       });
@@ -49,7 +74,7 @@ export function createSdkToolExecutionBackend(options: {
 
     async readFileBinary(path, readOptions = {}) {
       const result = await runNodeHelper(
-        runBash,
+        runNodeScript,
         READ_FILE_BINARY_SCRIPT,
         [path, String(readOptions.maxBytes ?? "")],
         { cwd, timeoutMs: HELPER_TIMEOUT_MS },
@@ -64,7 +89,7 @@ export function createSdkToolExecutionBackend(options: {
 
     async writeFile(path, content) {
       const result = await runNodeHelper(
-        runBash,
+        runNodeScript,
         WRITE_FILE_SCRIPT,
         [path, Buffer.from(content, "utf-8").toString("base64")],
         { cwd, timeoutMs: HELPER_TIMEOUT_MS },
@@ -75,7 +100,7 @@ export function createSdkToolExecutionBackend(options: {
 
     async writeFileBinary(path, content) {
       const result = await runNodeHelper(
-        runBash,
+        runNodeScript,
         WRITE_FILE_SCRIPT,
         [path, content.toString("base64")],
         { cwd, timeoutMs: HELPER_TIMEOUT_MS },
@@ -85,7 +110,7 @@ export function createSdkToolExecutionBackend(options: {
     },
 
     async listDir(path) {
-      const result = await runNodeHelper(runBash, LIST_DIR_SCRIPT, [path], {
+      const result = await runNodeHelper(runNodeScript, LIST_DIR_SCRIPT, [path], {
         cwd,
         timeoutMs: HELPER_TIMEOUT_MS,
       });
@@ -138,17 +163,18 @@ function throwIfAborted(signal?: AbortSignal): void {
 }
 
 async function runNodeHelper(
-  runBash: ToolExecutionBackend["runBash"],
+  runNodeScript: ToolExecutionBackend["runNodeScript"],
   script: string,
   args: string[],
   options: { cwd: string; timeoutMs: number },
 ): Promise<string> {
-  const command = ["node", "-e", script, ...args].map(shellQuote).join(" ");
-  const result = await runBash(command, options);
+  const result = await runNodeScript(script, args, options);
   if (result.exitCode !== 0) {
-    throw new Error(result.output.trim() || `${basename(args[0] ?? "helper")} failed`);
+    throw new Error(
+      result.stderr.trim() || result.stdout.trim() || `${basename(args[0] ?? "helper")} failed`,
+    );
   }
-  return result.output;
+  return result.stdout;
 }
 
 function shellQuote(value: string): string {

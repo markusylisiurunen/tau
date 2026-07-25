@@ -168,7 +168,9 @@ Enabled tools execute directly. Persona and subagent tool lists determine tool a
 
 Prompt/context tag style: use dash-case for XML-like tag names in prompt text (for example `<available-skills>`, `<tool-call>`, `<tool-result>`, `<last-assistant-message-verbatim>`). Do not introduce new snake_case tag names.
 
-**Bash limits**: 1MB raw capture (tail of output, stdout/stderr merged in arrival order), 60s timeout. No TTY/stdin (interactive prompts and editors will hang or fail). Inherited host environment variables matching sensitive key patterns are dropped; explicit local execution-environment overrides are then applied unchanged. Git is forced non-interactive (no prompt/editor/pager, batch-mode ssh).
+**Bash execution**: Every model `bash` call, direct `!`/`!!` command, and `session.exec` runs in a fresh non-interactive login Bash inside the session execution environment. Tau sets `HOME` from the execution environment snapshot, so Bash reads `/etc/profile` and then the first available `~/.bash_profile`, `~/.bash_login`, or `~/.profile`; `.bashrc` is loaded only when one of those files sources it. Shell state never persists between calls. Commands start from the backend's target-side environment and apply explicit execution-environment overrides; the local backend drops sensitive variables inherited from the Tau host. Git is forced non-interactive (no prompt/editor/pager, batch-mode ssh).
+
+**Bash limits**: 1MB raw capture (tail of output, stdout/stderr merged in arrival order), 60s timeout. No TTY/stdin (interactive prompts and editors will hang or fail).
 
 **Model context truncation**: Truncation follows a `num_bytes / 6` token heuristic.
 
@@ -312,8 +314,8 @@ In TUI mode, `--debug` respects `--persona` and `--no-agent-context-files`, so y
 - `/compact:summary-only`, `/compact:summary-and-last` - Manually compact history into a single synthetic user summary message with compaction-model-selected original user messages copied verbatim inside the summary (optionally includes last assistant message verbatim when available); automatic compaction is separate and keeps a retained recent tail
 - `/prune:earliest`, `/prune:largest`, `/prune:smart` - Prune tool results and compact edit call payloads/results
 - `/persona:<id>`, `/prompt:<id>`, `/theme:<id>`
-- `!<cmd>` - Direct bash execution (bypasses model)
-- `!!<cmd>` - Direct bash execution without adding output to the model context
+- `!<cmd>` - Direct login Bash execution (bypasses model)
+- `!!<cmd>` - Direct login Bash execution without adding output to the model context
 - `#<request>` - Memory mode for updating AGENTS.md (single-line only)
 
 Slash commands only trigger on single-line inputs. `/diff` launches the local diff tool and records returned review feedback without auto-running the assistant. Unknown slash-prefixed text is sent as a normal prompt.

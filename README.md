@@ -136,7 +136,9 @@ For stdio attach, use `--session <id>` before `--`:
 tau attach --session 0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3 -- ssh vps 'cd /path/to/repo && tau rpc'
 ```
 
-Session attach renders the authoritative session snapshot, streams recoverable `session.delta` updates and independently revisioned, non-persisted `session.pendingUserMessages` replacements, submits normal user input through `session.submit`, `session.queue`, and `session.steer`, supports steering/interruption, runs `!`/`!!` shell commands in the session execution environment, records `/listen` from the local microphone, speaks `/speak` locally, reloads session content with `/reload`, switches session personas with `/persona:<id>` or `Ctrl+P`, inserts session prompt templates with `/prompt:<id>`, compacts or prunes the session with `/compact:*` and `/prune:*`, creates a new session with `/new`, and exits with `/exit` or `Ctrl+C` twice.
+Session attach renders the authoritative session snapshot, streams recoverable `session.delta` updates and independently revisioned, non-persisted `session.pendingUserMessages` replacements, submits normal user input through `session.submit`, `session.queue`, and `session.steer`, supports steering/interruption, runs `!`/`!!` Bash commands in the session execution environment, records `/listen` from the local microphone, speaks `/speak` locally, reloads session content with `/reload`, switches session personas with `/persona:<id>` or `Ctrl+P`, inserts session prompt templates with `/prompt:<id>`, compacts or prunes the session with `/compact:*` and `/prune:*`, creates a new session with `/new`, and exits with `/exit` or `Ctrl+C` twice.
+
+Model `bash` tool calls, `!`/`!!`, and `session.exec` each run in a fresh, non-interactive login Bash belonging to the session execution environment. Tau sets `HOME` to the execution environment home, so Bash reads `/etc/profile` and then the first available user login file (`~/.bash_profile`, `~/.bash_login`, or `~/.profile`). `.bashrc` is loaded only when the login configuration sources it. Commands start from the backend's target-side environment and apply explicit execution-environment overrides; the local backend filters sensitive variables inherited from the Tau host. Shell state such as `cd`, exports, aliases, functions, and `nvm use` does not persist between calls.
 
 ## Telegram runner
 
@@ -464,8 +466,8 @@ tau supports slash commands for common actions:
 | `/persona:<id>` | switch to a different persona |
 | `/prompt:<id>` | insert a saved prompt template |
 | `/theme:<id>` | switch to a loaded theme |
-| `!<cmd>` | run a shell command directly |
-| `!!<cmd>` | run a shell command without adding output to the model context |
+| `!<cmd>` | run a login Bash command directly |
+| `!!<cmd>` | run a login Bash command without adding output to the model context |
 
 tau automatically compacts long sessions when provider-reported usage approaches the model context limit. automatic compaction summarizes older context, asks the compaction model to select original user messages to append verbatim inside the summary by history id, retains a recent tail verbatim, and inserts a hidden continuation note so the assistant continues without asking you to repeat context.
 

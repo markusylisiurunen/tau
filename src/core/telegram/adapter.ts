@@ -223,6 +223,7 @@ type ResolvedTelegramAdapterOptions = TelegramAdapterOptions & {
 const DEFAULT_POLL_INTERVAL_MS = 1000;
 const DEFAULT_REQUEST_TIMEOUT_SECONDS = 30;
 const MAX_COMMAND_PREVIEW_CHARS = 128;
+const MAX_PROVISION_DIAGNOSTIC_CHARS = 2_000;
 const DEFAULT_TELEGRAM_VOICE_MIME_TYPE = "audio/ogg";
 const DEFAULT_TELEGRAM_VOICE_FILE_NAME = "voice.ogg";
 const DEFAULT_TELEGRAM_AUDIO_MIME_TYPE = "audio/mpeg";
@@ -2595,6 +2596,23 @@ class TelegramAdapterImpl {
   }
 
   private onSessionEvent(event: TelegramSessionManagerEvent): void {
+    if (event.type === "session-provision-failed") {
+      if (!this.chatsBySession.has(event.sessionId)) {
+        return;
+      }
+
+      this.notifySession(
+        event.sessionId,
+        [
+          formatSessionHeadline(event.sessionId, "provision failed"),
+          `project: ${event.targetProjectId}`,
+          truncateText(event.diagnostic, MAX_PROVISION_DIAGNOSTIC_CHARS),
+          "the session remains available.",
+        ].join("\n"),
+      );
+      return;
+    }
+
     if (event.type === "session-progress") {
       if (!this.chatsBySession.has(event.sessionId)) {
         return;

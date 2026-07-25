@@ -113,8 +113,6 @@ export type TelegramBotConfigMap = Record<string, TelegramBotConfig>;
 type TelegramProjectBaseConfig = {
   workspaceRoot?: string;
   description?: string;
-  bootstrapCommands?: string[];
-  backgroundBootstrapCommands?: string[];
 };
 
 export type TelegramRepositoryProjectConfig = TelegramProjectBaseConfig & {

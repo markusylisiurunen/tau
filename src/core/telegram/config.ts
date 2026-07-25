@@ -48,16 +48,6 @@ const stringListSchema = z.array(nonEmptyStringSchema, {
   message: "must be an array of non-empty strings.",
 });
 
-const commandListSchema = z
-  .array(
-    z.string().refine((value) => value.trim().length > 0),
-    {
-      message: "must be a non-empty string array.",
-    },
-  )
-  .min(1, "must be a non-empty string array.")
-  .optional();
-
 const telegramTopLevelSchema = z
   .object({
     maxSessions: positiveIntegerSchema.optional(),
@@ -85,8 +75,6 @@ function createProjectBaseShape(configDir: string) {
   return {
     workspaceRoot: nonEmptyStringSchema.transform((value) => resolve(configDir, value)).optional(),
     description: nonEmptyStringSchema.optional(),
-    bootstrapCommands: commandListSchema,
-    backgroundBootstrapCommands: commandListSchema,
   };
 }
 

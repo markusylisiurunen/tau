@@ -1017,6 +1017,21 @@ describe("telegram adapter", () => {
         ),
       );
 
+      managerHarness.manager.emit({
+        type: "session-provision-failed",
+        sessionId: "s1",
+        projectId: "demo",
+        targetProjectId: "demo",
+        diagnostic: "provision exited with code 17\ndependencies failed",
+      });
+      await waitFor(() =>
+        apiHarness.sendMessages.some(
+          (entry) =>
+            String(entry.text).includes("dependencies failed") &&
+            String(entry.text).includes("the session remains available"),
+        ),
+      );
+
       expect(
         apiHarness.sendMessages.some((entry) =>
           String(entry.text).includes("session is being prepared"),

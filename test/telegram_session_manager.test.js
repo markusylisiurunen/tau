@@ -45,6 +45,13 @@ function createClientHarness() {
       return await submitDeferred.promise;
     }),
     interrupt: vi.fn(async () => ({ interrupted: true, isTurnRunning: true })),
+    exec: vi.fn(async () => ({
+      output: "",
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+      truncated: false,
+    })),
     snapshot: vi.fn(async () =>
       createProtocolSnapshot({
         sessionId: "rpc-1",
@@ -149,6 +156,7 @@ function createDemoSessionManager(clientHarness) {
     prepareWorkspace: vi.fn(async () => ({
       workspacePath: "/tmp/ws/demo",
       sessionCwd: "/tmp/ws/demo",
+      provisionTargets: [],
     })),
     createClient: vi.fn(async () => clientHarness.client),
   });
@@ -185,7 +193,11 @@ describe("telegram session manager", () => {
       },
       prepareWorkspace: vi.fn(async () => {
         await workspaceDeferred.promise;
-        return { workspacePath: "/tmp/ws/demo", sessionCwd: "/tmp/ws/demo" };
+        return {
+          workspacePath: "/tmp/ws/demo",
+          sessionCwd: "/tmp/ws/demo",
+          provisionTargets: [],
+        };
       }),
       createClient: vi.fn(async () => clientHarness.client),
     });
@@ -219,6 +231,7 @@ describe("telegram session manager", () => {
       prepareWorkspace: vi.fn(async () => ({
         workspacePath: "/tmp/ws/demo",
         sessionCwd: "/tmp/ws/demo/packages/core",
+        provisionTargets: [],
       })),
       createClient,
     });
@@ -233,111 +246,126 @@ describe("telegram session manager", () => {
     );
   });
 
-  it("starts background bootstrap commands without blocking readiness", async () => {
+  it("starts repository provisioning without blocking readiness", async () => {
     const clientHarness = createClientHarness();
-    const backgroundDeferred = deferred();
-    const runBootstrapCommands = vi.fn(async () => {
-      await backgroundDeferred.promise;
+    const provisionDeferred = deferred();
+    clientHarness.session.exec.mockImplementation(async () => {
+      await provisionDeferred.promise;
+      return { output: "", stdout: "", stderr: "", exitCode: 0, truncated: false };
     });
 
     const manager = createTelegramSessionManager({
-      projects: {
-        demo: {
-          repo: "git@example.com:demo.git",
-          backgroundBootstrapCommands: ["npm run build"],
-        },
-      },
+      projects: { demo: { repo: "git@example.com:demo.git" } },
       prepareWorkspace: vi.fn(async () => ({
         workspacePath: "/tmp/ws/demo",
         sessionCwd: "/tmp/ws/demo/packages/core",
+        provisionTargets: [
+          {
+            projectId: "demo",
+            repositoryRoot: "/tmp/ws/demo",
+            cwd: "/tmp/ws/demo/packages/core",
+          },
+        ],
       })),
       createClient: vi.fn(async () => clientHarness.client),
-      runBootstrapCommands,
     });
 
     const created = await manager.createSession({ projectId: "demo" });
     await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+    await waitFor(() => clientHarness.session.exec.mock.calls.length === 1);
 
-    expect(runBootstrapCommands).toHaveBeenCalledWith(
-      expect.objectContaining({
-        commands: ["npm run build"],
-        cwd: "/tmp/ws/demo/packages/core",
-        mode: "background",
-      }),
+    expect(clientHarness.session.exec).toHaveBeenCalledWith(
+      expect.stringContaining("/tmp/ws/demo/.tau/scripts/provision"),
+      { cwd: "/tmp/ws/demo/packages/core" },
     );
 
-    backgroundDeferred.resolve();
+    provisionDeferred.resolve();
     await manager.closeSession(created.id);
   });
 
-  it("runs composite member background commands before composite commands", async () => {
+  it("provisions each composite repository from its configured working directory", async () => {
     const clientHarness = createClientHarness();
-    const runBootstrapCommands = vi.fn(async () => {});
-    const projects = {
-      alpha: { repo: "owner/alpha" },
-      beta: { repo: "owner/beta" },
-      platform: {
-        projectIds: ["alpha", "beta"],
-        persona: "gpt-5.6-sol-coder:high",
-        backgroundBootstrapCommands: ["watch platform"],
-      },
-    };
-
     const manager = createTelegramSessionManager({
-      projects,
+      projects: {
+        alpha: { repo: "owner/alpha" },
+        beta: { repo: "owner/beta" },
+        platform: {
+          projectIds: ["alpha", "beta"],
+          persona: "gpt-5.6-sol-coder:high",
+        },
+      },
       prepareWorkspace: vi.fn(async () => ({
         workspacePath: "/tmp/ws/platform",
         sessionCwd: "/tmp/ws/platform",
-        memberBackgroundBootstrapCommands: [
-          { commands: ["watch alpha"], cwd: "/tmp/ws/platform/alpha" },
-          { commands: ["watch beta"], cwd: "/tmp/ws/platform/beta" },
+        provisionTargets: [
+          {
+            projectId: "alpha",
+            repositoryRoot: "/tmp/ws/platform/alpha",
+            cwd: "/tmp/ws/platform/alpha",
+          },
+          {
+            projectId: "beta",
+            repositoryRoot: "/tmp/ws/platform/beta",
+            cwd: "/tmp/ws/platform/beta/packages/core",
+          },
         ],
       })),
       createClient: vi.fn(async () => clientHarness.client),
-      runBootstrapCommands,
     });
 
     const created = await manager.createSession({ projectId: "platform" });
-    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
-    await waitFor(() => runBootstrapCommands.mock.calls.length === 3);
+    await waitFor(() => clientHarness.session.exec.mock.calls.length === 2);
 
-    expect(runBootstrapCommands.mock.calls.map(([options]) => options)).toEqual([
-      expect.objectContaining({ commands: ["watch alpha"], cwd: "/tmp/ws/platform/alpha" }),
-      expect.objectContaining({ commands: ["watch beta"], cwd: "/tmp/ws/platform/beta" }),
-      expect.objectContaining({ commands: ["watch platform"], cwd: "/tmp/ws/platform" }),
+    expect(clientHarness.session.exec.mock.calls).toEqual([
+      [
+        expect.stringContaining("/tmp/ws/platform/alpha/.tau/scripts/provision"),
+        { cwd: "/tmp/ws/platform/alpha" },
+      ],
+      [
+        expect.stringContaining("/tmp/ws/platform/beta/.tau/scripts/provision"),
+        { cwd: "/tmp/ws/platform/beta/packages/core" },
+      ],
     ]);
     await manager.closeSession(created.id);
   });
 
-  it("keeps the session usable when background bootstrap fails", async () => {
+  it("reports provision failures while keeping the session usable", async () => {
     const clientHarness = createClientHarness();
-    const runBootstrapCommands = vi.fn(async () => {
-      throw new Error("background boom");
+    clientHarness.session.exec.mockResolvedValue({
+      output: "dependencies failed",
+      stdout: "",
+      stderr: "dependencies failed",
+      exitCode: 17,
+      truncated: false,
     });
-
     const manager = createTelegramSessionManager({
-      projects: {
-        demo: {
-          repo: "git@example.com:demo.git",
-          backgroundBootstrapCommands: ["npm run build"],
-        },
-      },
+      projects: { demo: { repo: "git@example.com:demo.git" } },
       prepareWorkspace: vi.fn(async () => ({
         workspacePath: "/tmp/ws/demo",
         sessionCwd: "/tmp/ws/demo",
+        provisionTargets: [
+          {
+            projectId: "demo",
+            repositoryRoot: "/tmp/ws/demo",
+            cwd: "/tmp/ws/demo",
+          },
+        ],
       })),
       createClient: vi.fn(async () => clientHarness.client),
-      runBootstrapCommands,
     });
+    const events = [];
+    manager.onEvent((event) => events.push(event));
 
     const created = await manager.createSession({ projectId: "demo" });
-    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
-    await waitFor(() => {
-      const logs = manager.getLogs(created.id) ?? [];
-      return logs.some((entry) => entry.message === "background bootstrap failed");
-    });
+    await waitFor(() => events.some((event) => event.type === "session-provision-failed"));
 
-    expect(runBootstrapCommands).toHaveBeenCalledTimes(1);
+    expect(events).toContainEqual({
+      type: "session-provision-failed",
+      sessionId: created.id,
+      projectId: "demo",
+      targetProjectId: "demo",
+      diagnostic: "provision exited with code 17\ndependencies failed",
+    });
     expect(manager.getSession(created.id)?.state).toBe("waiting-input");
     await manager.closeSession(created.id);
   });
@@ -347,6 +375,7 @@ describe("telegram session manager", () => {
     const prepareWorkspace = vi.fn(async ({ sessionId }) => ({
       workspacePath: `/tmp/ws/${sessionId}`,
       sessionCwd: `/tmp/ws/${sessionId}`,
+      provisionTargets: [],
     }));
 
     const manager = createTelegramSessionManager({
@@ -382,6 +411,7 @@ describe("telegram session manager", () => {
       prepareWorkspace: vi.fn(async () => ({
         workspacePath: "/tmp/ws/demo",
         sessionCwd: "/tmp/ws/demo",
+        provisionTargets: [],
       })),
       createClient: vi.fn(async () => clientHarness.client),
     });
@@ -414,6 +444,7 @@ describe("telegram session manager", () => {
       prepareWorkspace: vi.fn(async () => ({
         workspacePath: "/tmp/ws/demo",
         sessionCwd: "/tmp/ws/demo",
+        provisionTargets: [],
       })),
       createClient: vi.fn(async () => clientHarness.client),
     });
@@ -452,6 +483,7 @@ describe("telegram session manager", () => {
       prepareWorkspace: vi.fn(async () => ({
         workspacePath: "/tmp/ws/demo",
         sessionCwd: "/tmp/ws/demo",
+        provisionTargets: [],
       })),
       createClient: vi.fn(async () => clientHarness.client),
     });
@@ -491,6 +523,7 @@ describe("telegram session manager", () => {
       prepareWorkspace: vi.fn(async () => ({
         workspacePath: "/tmp/ws/demo",
         sessionCwd: "/tmp/ws/demo",
+        provisionTargets: [],
       })),
       createClient: vi.fn(async () => clientHarness.client),
     });
@@ -531,6 +564,7 @@ describe("telegram session manager", () => {
       prepareWorkspace: vi.fn(async () => ({
         workspacePath: "/tmp/ws/demo",
         sessionCwd: "/tmp/ws/demo",
+        provisionTargets: [],
       })),
       createClient: vi.fn(async () => clientHarness.client),
     });
@@ -579,6 +613,7 @@ describe("telegram session manager", () => {
       prepareWorkspace: vi.fn(async () => ({
         workspacePath: "/tmp/ws/demo",
         sessionCwd: "/tmp/ws/demo",
+        provisionTargets: [],
       })),
       createClient: vi.fn(async () => clientHarness.client),
     });
@@ -615,6 +650,7 @@ describe("telegram session manager", () => {
       prepareWorkspace: vi.fn(async () => ({
         workspacePath: "/tmp/ws/demo",
         sessionCwd: "/tmp/ws/demo",
+        provisionTargets: [],
       })),
       createClient: vi.fn(async () => clientHarness.client),
     });
@@ -649,6 +685,7 @@ describe("telegram session manager", () => {
       prepareWorkspace: vi.fn(async () => ({
         workspacePath: "/tmp/ws/demo",
         sessionCwd: "/tmp/ws/demo",
+        provisionTargets: [],
       })),
       createClient: vi.fn(async () => clientHarness.client),
     });
@@ -686,6 +723,7 @@ describe("telegram session manager", () => {
       prepareWorkspace: vi.fn(async () => ({
         workspacePath: "/tmp/ws/demo",
         sessionCwd: "/tmp/ws/demo",
+        provisionTargets: [],
       })),
       createClient: vi.fn(async () => clientHarness.client),
     });
@@ -725,6 +763,7 @@ describe("telegram session manager", () => {
         return {
           workspacePath: `${workspaceRoot}/${projectId}/${sessionId}`,
           sessionCwd: `${workspaceRoot}/${projectId}/${sessionId}`,
+          provisionTargets: [],
         };
       }),
       createClient: vi.fn(async () => clientHarness.client),
@@ -756,6 +795,7 @@ describe("telegram session manager", () => {
       prepareWorkspace: vi.fn(async () => ({
         workspacePath: "/tmp/ws/demo",
         sessionCwd: "/tmp/ws/demo",
+        provisionTargets: [],
       })),
       createClient: vi.fn(async () => clientHarness.client),
       cleanupWorkspacePath,
@@ -790,6 +830,7 @@ describe("telegram session manager", () => {
         return {
           workspacePath: "/tmp/ws/demo",
           sessionCwd: "/tmp/ws/demo",
+          provisionTargets: [],
         };
       }),
       createClient: vi.fn(async () => createClientHarness().client),
@@ -822,6 +863,7 @@ describe("telegram session manager", () => {
       prepareWorkspace: vi.fn(async () => ({
         workspacePath: "/tmp/ws/demo",
         sessionCwd: "/tmp/ws/demo",
+        provisionTargets: [],
       })),
       createClient: vi.fn(async () => {
         const next = clients.shift();
@@ -885,6 +927,7 @@ describe("telegram session manager", () => {
       prepareWorkspace: vi.fn(async () => ({
         workspacePath: "/tmp/ws/demo",
         sessionCwd: "/tmp/ws/demo",
+        provisionTargets: [],
       })),
       createClient: vi.fn(async () => clientHarness.client),
       cleanupWorkspacePath,
@@ -941,6 +984,7 @@ describe("telegram session manager", () => {
       prepareWorkspace: vi.fn(async () => ({
         workspacePath: join(tempRoot, "workspaces", "demo"),
         sessionCwd: join(tempRoot, "workspaces", "demo"),
+        provisionTargets: [],
       })),
       createClient: vi.fn(async () => clientHarness.client),
     });
@@ -970,7 +1014,11 @@ describe("telegram session manager", () => {
     const firstManager = createTelegramSessionManager({
       projects: { demo: { repo: "git@example.com:demo.git" } },
       persistencePath,
-      prepareWorkspace: vi.fn(async () => ({ workspacePath, sessionCwd: workspacePath })),
+      prepareWorkspace: vi.fn(async () => ({
+        workspacePath,
+        sessionCwd: workspacePath,
+        provisionTargets: [],
+      })),
       createClient: vi.fn(async () => firstClientHarness.client),
     });
 
@@ -998,7 +1046,13 @@ describe("telegram session manager", () => {
       const recoveredClientHarness = createClientHarness();
       const prepareWorkspace = vi.fn(async () => {
         await mkdir(workspacePath, { recursive: true });
-        return { workspacePath, sessionCwd: workspacePath };
+        return {
+          workspacePath,
+          sessionCwd: workspacePath,
+          provisionTargets: [
+            { projectId: "demo", repositoryRoot: workspacePath, cwd: workspacePath },
+          ],
+        };
       });
       const recoveredManager = createTelegramSessionManager({
         projects: { demo: { repo: "git@example.com:demo.git" } },
@@ -1018,6 +1072,7 @@ describe("telegram session manager", () => {
         }),
       );
       expect(recoveredClientHarness.client.sessions.observe).toHaveBeenCalledWith("rpc-1");
+      await waitFor(() => recoveredClientHarness.session.exec.mock.calls.length === 1);
       expect(prepareWorkspace).toHaveBeenCalledWith(
         expect.objectContaining({ sessionId: created.id, projectId: "demo" }),
       );
@@ -1112,20 +1167,17 @@ describe("telegram session manager", () => {
 
     const clientHarness = createClientHarness();
     const prepareWorkspace = vi.fn();
-    const runBootstrapCommands = vi.fn();
     const manager = createTelegramSessionManager({
       projects: {
         demo: {
           repo: "git@example.com:demo.git",
           workspaceRoot: projectWorkspaceRoot,
-          backgroundBootstrapCommands: ["npm run dev"],
         },
       },
       workspaceRoot,
       persistencePath,
       prepareWorkspace,
       createClient: vi.fn(async () => clientHarness.client),
-      runBootstrapCommands,
     });
 
     try {
@@ -1135,7 +1187,7 @@ describe("telegram session manager", () => {
       expect(await readdir(join(projectWorkspaceRoot, "demo"))).toEqual(["active"]);
       expect(await readdir(workspaceRoot)).toEqual([]);
       expect(prepareWorkspace).not.toHaveBeenCalled();
-      expect(runBootstrapCommands).not.toHaveBeenCalled();
+      expect(clientHarness.session.exec).not.toHaveBeenCalled();
       expect(clientHarness.client.sessions.observe).toHaveBeenCalledWith("rpc-1");
     } finally {
       await manager.close();
@@ -1165,6 +1217,7 @@ describe("telegram session manager", () => {
       prepareWorkspace: vi.fn(async () => ({
         workspacePath: "/tmp/ws/demo",
         sessionCwd: "/tmp/ws/demo",
+        provisionTargets: [],
       })),
       createClient: vi.fn(async () => clientHarness.client),
       cleanupWorkspacePath,
@@ -1200,6 +1253,7 @@ describe("telegram session manager", () => {
       prepareWorkspace: vi.fn(async () => ({
         workspacePath: "/tmp/ws/demo",
         sessionCwd: "/tmp/ws/demo",
+        provisionTargets: [],
       })),
       createClient: vi.fn(async () => clientHarness.client),
     });
@@ -1456,6 +1510,7 @@ describe("telegram session manager", () => {
       prepareWorkspace: vi.fn(async () => ({
         workspacePath: "/tmp/ws/demo",
         sessionCwd: "/tmp/ws/demo",
+        provisionTargets: [],
       })),
       createClient: vi.fn(async () => clientHarness.client),
     });
@@ -1530,6 +1585,7 @@ describe("telegram session manager", () => {
       prepareWorkspace: vi.fn(async () => ({
         workspacePath: "/tmp/ws/demo",
         sessionCwd: "/tmp/ws/demo",
+        provisionTargets: [],
       })),
       createClient: vi.fn(async () => clientHarness.client),
     });

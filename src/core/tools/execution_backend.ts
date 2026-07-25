@@ -49,6 +49,16 @@ export type ListDirResult = {
   entries: ListDirEntry[];
 };
 
+export function applyCommandEnvironment(
+  argv: string[],
+  env: Record<string, string | undefined> | undefined,
+): string[] {
+  const assignments = Object.entries(env ?? {}).flatMap(([key, value]) =>
+    value === undefined ? [] : [`${key}=${value}`],
+  );
+  return assignments.length > 0 ? ["env", ...assignments, ...argv] : argv;
+}
+
 export interface ToolExecutionBackend {
   dispose(): Promise<void>;
   runBash(

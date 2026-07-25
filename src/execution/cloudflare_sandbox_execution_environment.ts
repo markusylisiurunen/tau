@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { dirname } from "node:path/posix";
-import type {
-  BashExecutionResult,
-  ListDirEntry,
-  ToolExecutionBackend,
+import {
+  applyCommandEnvironment,
+  type BashExecutionResult,
+  type ListDirEntry,
+  type ToolExecutionBackend,
 } from "../core/tools/execution_backend.js";
 import type {
   SessionProtocolCloudflareSandboxExecutionEnvironmentInput,
@@ -316,16 +317,6 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
       return { path, entries };
     },
   };
-}
-
-function applyCommandEnvironment(
-  argv: string[],
-  env: Record<string, string> | undefined,
-): string[] {
-  const entries = Object.entries(env ?? {});
-  return entries.length > 0
-    ? ["env", ...entries.map(([key, value]) => `${key}=${value}`), ...argv]
-    : argv;
 }
 
 async function waitForQueue(queue: Promise<void>, signal: AbortSignal): Promise<void> {

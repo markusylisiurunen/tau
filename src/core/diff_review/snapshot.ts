@@ -49,7 +49,8 @@ export type CaptureDiffReviewSnapshotOptions = {
   deps?: Partial<DiffSnapshotDeps>;
 };
 
-type DiffSnapshotDeps = Pick<CoreDeps, "spawn" | "env"> & {
+type DiffSnapshotDeps = Pick<CoreDeps, "spawn"> & {
+  env: Pick<CoreDeps["env"], "env">;
   fs: {
     readFile: (path: string) => string | Promise<string>;
   };

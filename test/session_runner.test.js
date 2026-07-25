@@ -1239,7 +1239,7 @@ describe("session execution backend plumbing", () => {
     }
   });
 
-  it("captures diff snapshots without login profile output", async () => {
+  it("captures no-HEAD diff snapshots with noisy errexit login profiles", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "tau-sdk-diff-test-"));
     const runGit = (args) => {
       const result = spawnSync("git", args, { cwd, encoding: "utf8" });
@@ -1249,7 +1249,7 @@ describe("session execution backend plumbing", () => {
     };
     const session = {
       async exec(command, options) {
-        const result = spawnSync("/bin/bash", ["-c", command], {
+        const result = spawnSync("/bin/bash", ["-c", `set -e\n${command}`], {
           cwd: options.cwd,
           encoding: "utf8",
         });
@@ -1267,25 +1267,20 @@ describe("session execution backend plumbing", () => {
 
     try {
       runGit(["init"]);
-      runGit(["config", "user.name", "Tau Tests"]);
-      runGit(["config", "user.email", "tau@example.com"]);
-      writeFileSync(join(cwd, "tracked.txt"), "before\n");
+      writeFileSync(join(cwd, "tracked.txt"), "tracked\n");
       runGit(["add", "tracked.txt"]);
-      runGit(["commit", "-m", "initial"]);
-      writeFileSync(join(cwd, "tracked.txt"), "after\n");
       writeFileSync(join(cwd, "untracked.txt"), "new\n");
 
       const backend = createSdkToolExecutionBackend({ session, cwd });
       const snapshot = await captureDiffReviewSnapshot({
         cwd,
         source: { kind: "git_diff", diffArgs: [] },
-        deps: createSdkDiffSnapshotDeps({ backend, cwd, home: cwd }),
+        deps: createSdkDiffSnapshotDeps({ backend, cwd }),
       });
 
       expect(snapshot.repoRoot).toBe(cwd);
       expect(snapshot.files.map((file) => file.path)).toEqual(["tracked.txt", "untracked.txt"]);
-      expect(snapshot.patch).toContain("-before");
-      expect(snapshot.patch).toContain("+after");
+      expect(snapshot.patch).toContain("+tracked");
       expect(snapshot.getFilePatch("untracked.txt")).toContain("+new");
       expect(snapshot.patch).not.toContain("profile stdout");
       expect(snapshot.patch).not.toContain("logout stdout");

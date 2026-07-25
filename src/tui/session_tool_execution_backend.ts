@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { basename } from "node:path";
 import type { CoreDeps } from "../core/runtime/deps.js";
-import type {
-  BashExecutionResult,
-  ListDirEntry,
-  ToolExecutionBackend,
+import {
+  applyCommandEnvironment,
+  type BashExecutionResult,
+  type ListDirEntry,
+  type ToolExecutionBackend,
 } from "../core/tools/execution_backend.js";
 import type { SpawnCaptureResult } from "../core/utils/spawn_capture.js";
 import type { TauSdkSession } from "../sdk/types.js";
@@ -34,10 +35,7 @@ export function createSdkToolExecutionBackend(options: {
     script,
     args = [],
     runOptions = {},
-  ) => {
-    const command = ["node", "-e", script, ...args].map(shellQuote).join(" ");
-    return await runFramedBashCommand(runBash, command, runOptions);
-  };
+  ) => await runFramedCommand(runBash, ["node", "-e", script, ...args], runOptions);
 
   return {
     async dispose() {},
@@ -103,15 +101,15 @@ export function createSdkToolExecutionBackend(options: {
 export function createSdkDiffSnapshotDeps(options: {
   backend: ToolExecutionBackend;
   cwd: string;
-  home: string;
-}): Pick<CoreDeps, "spawn" | "env"> & {
+}): Pick<CoreDeps, "spawn"> & {
+  env: Pick<CoreDeps["env"], "env">;
   fs: { readFile: (path: string) => Promise<string> };
 } {
   return {
     spawn: async (cmd, args, spawnOptions = {}): Promise<SpawnCaptureResult> => {
       throwIfAborted(spawnOptions.signal);
-      const command = [cmd, ...args].map(shellQuote).join(" ");
-      const result = await runFramedBashCommand(options.backend.runBash, command, {
+      const argv = applyCommandEnvironment([cmd, ...args], spawnOptions.env);
+      const result = await runFramedCommand(options.backend.runBash, argv, {
         cwd: spawnOptions.cwd ?? options.cwd,
         timeoutMs: spawnOptions.timeoutMs,
         signal: spawnOptions.signal,
@@ -120,7 +118,10 @@ export function createSdkDiffSnapshotDeps(options: {
       return {
         stdout: result.stdout,
         stderr: result.stderr,
-        ...(spawnOptions.captureOutput === "combined" ? { output: result.output } : {}),
+        ...(spawnOptions.captureOutput === "combined" ||
+        spawnOptions.captureOutput === "combined-and-split"
+          ? { output: result.output }
+          : {}),
         exitCode: result.exitCode,
         captureLimitExceeded: result.truncated,
         timedOut: false,
@@ -128,22 +129,16 @@ export function createSdkDiffSnapshotDeps(options: {
         closeSignal: null,
       };
     },
-    env: {
-      cwd: () => options.cwd,
-      home: () => options.home,
-      platform: () => process.platform,
-      nodeVersion: () => process.version,
-      env: () => ({}),
-    },
+    env: { env: () => ({}) },
     fs: {
       readFile: async (path) => (await options.backend.readFile(path)).content,
     },
   };
 }
 
-async function runFramedBashCommand(
+async function runFramedCommand(
   runBash: ToolExecutionBackend["runBash"],
-  command: string,
+  argv: string[],
   options: {
     timeoutMs?: number;
     signal?: AbortSignal;
@@ -153,7 +148,8 @@ async function runFramedBashCommand(
 ): Promise<BashExecutionResult> {
   const boundary = `__TAU_COMMAND_OUTPUT_${randomUUID()}__`;
   const quotedBoundary = shellQuote(boundary);
-  const framedCommand = `printf %s ${quotedBoundary}; printf %s ${quotedBoundary} >&2; ${command}; status=$?; printf %s ${quotedBoundary}; printf %s ${quotedBoundary} >&2; exit "$status"`;
+  const command = argv.map(shellQuote).join(" ");
+  const framedCommand = `printf %s ${quotedBoundary}; printf %s ${quotedBoundary} >&2; if ${command}; then status=0; else status=$?; fi; printf %s ${quotedBoundary}; printf %s ${quotedBoundary} >&2; exit "$status"`;
   const result = await runBash(framedCommand, options);
   const extractOutput = (output: string): string => {
     const start = output.indexOf(boundary);

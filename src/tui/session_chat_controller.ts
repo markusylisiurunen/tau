@@ -2162,11 +2162,7 @@ export class SessionChatController {
       cwd,
       source: args.source,
       signal: args.signal,
-      deps: createSdkDiffSnapshotDeps({
-        backend,
-        cwd,
-        home: sessionSnapshot.executionEnvironment.home,
-      }),
+      deps: createSdkDiffSnapshotDeps({ backend, cwd }),
     });
     const ephemeral = await session.createEphemeralContext({
       instructions: buildDiffReviewInstructions(snapshot),

@@ -121,8 +121,25 @@ function createHarness(options = {}) {
     let pendingTurnResult = { status: "completed", stopReason: "stop" };
     let pendingTurn = null;
     let reasoning = bootstrap.persona.settings.reasoning;
-    const sampleAbortControllers = new Set();
-    const samplePromises = new Set();
+    const ephemeralContexts = new Set();
+    const activeWorkAbortControllers = new Set();
+    const activeWorkPromises = new Set();
+
+    const runActiveWork = async (operation, externalSignal) => {
+      const abortController = new AbortController();
+      const signal = externalSignal
+        ? AbortSignal.any([externalSignal, abortController.signal])
+        : abortController.signal;
+      activeWorkAbortControllers.add(abortController);
+      const promise = operation(signal);
+      activeWorkPromises.add(promise);
+      try {
+        return await promise;
+      } finally {
+        activeWorkAbortControllers.delete(abortController);
+        activeWorkPromises.delete(promise);
+      }
+    };
 
     const emitDelta = (delta) => {
       for (const handler of deltaHandlers) {
@@ -243,31 +260,22 @@ function createHarness(options = {}) {
       requestTurnBoundaryStop: vi.fn(() => running),
       cancelTurnBoundaryStop: vi.fn(() => running),
       async exec(runOptions) {
-        if (options.exec) {
-          return await options.exec(runOptions);
-        }
-        return createProtocolExecResult({
-          command: runOptions.command,
-        });
+        return await runActiveWork(async (signal) => {
+          const result = options.exec
+            ? await options.exec({ ...runOptions, signal })
+            : createProtocolExecResult({ command: runOptions.command });
+          signal.throwIfAborted();
+          return result;
+        }, runOptions.signal);
       },
       async sample(sampleOptions) {
-        const abortController = new AbortController();
-        const signal = sampleOptions.signal
-          ? AbortSignal.any([sampleOptions.signal, abortController.signal])
-          : abortController.signal;
-        sampleAbortControllers.add(abortController);
-        const promise = Promise.resolve().then(() =>
-          options.sample
-            ? options.sample({ ...sampleOptions, signal })
-            : { message: fauxAssistantMessage("sampled") },
+        return await runActiveWork(
+          (signal) =>
+            options.sample
+              ? options.sample({ ...sampleOptions, signal })
+              : Promise.resolve({ message: fauxAssistantMessage("sampled") }),
+          sampleOptions.signal,
         );
-        samplePromises.add(promise);
-        try {
-          return await promise;
-        } finally {
-          sampleAbortControllers.delete(abortController);
-          samplePromises.delete(promise);
-        }
       },
       async setReasoning(nextReasoning) {
         reasoning = nextReasoning;
@@ -322,10 +330,9 @@ function createHarness(options = {}) {
         releaseTurn();
         return true;
       },
-      interruptMaintenance: vi.fn(() => false),
-      interruptSamples: vi.fn(() => {
-        let interrupted = false;
-        for (const abortController of sampleAbortControllers) {
+      interruptActiveWork: vi.fn(() => {
+        let interrupted = hostedSession.interruptTurn();
+        for (const abortController of activeWorkAbortControllers) {
           if (!abortController.signal.aborted) {
             abortController.abort();
             interrupted = true;
@@ -334,15 +341,23 @@ function createHarness(options = {}) {
         return interrupted;
       }),
       waitForActiveWork: vi.fn(async () => {
-        await Promise.allSettled(samplePromises);
+        await Promise.allSettled(activeWorkPromises);
       }),
       terminateSubagent: vi.fn(async () => ({ found: true })),
+      createEphemeralContext: vi.fn(async () => {
+        const contextId = `context-${ephemeralContexts.size + 1}`;
+        ephemeralContexts.add(contextId);
+        return { contextId };
+      }),
       async submitEphemeralThread(submitOptions) {
         if (options.submitEphemeralThread) {
           return await options.submitEphemeralThread(submitOptions);
         }
         return { threadId: submitOptions.threadId, response: "done" };
       },
+      closeEphemeralContext: vi.fn(async (contextId) => ({
+        closed: ephemeralContexts.delete(contextId),
+      })),
       releaseTurn: () => releaseTurn?.(),
       canReleaseTurn: () => Boolean(releaseTurn),
       emitNotice: (text, revision = historyEntries.length + 1) => {
@@ -495,6 +510,97 @@ describe("rpc_server", () => {
         },
       }),
     );
+  });
+
+  it("does not create ephemeral contexts after closing during session recovery", async () => {
+    const harness = createHarness();
+    let markObserveStarted;
+    let releaseObserve;
+    const observeStarted = new Promise((resolve) => {
+      markObserveStarted = resolve;
+    });
+    const observeBlocker = new Promise((resolve) => {
+      releaseObserve = resolve;
+    });
+    const lines = [];
+    const server = new RpcServer({
+      host: {
+        ...harness.host,
+        async observeSession(sessionId) {
+          markObserveStarted();
+          await observeBlocker;
+          return await harness.host.observeSession(sessionId);
+        },
+        shutdown: vi.fn(async () => {}),
+      },
+      send: (line) => lines.push(JSON.parse(line)),
+    });
+
+    const create = server.handleLine(
+      request("ephemeral-create", "session.ephemeral.create", {
+        sessionId: "session-1",
+        instructions: "review this",
+        tools: ["bash"],
+      }),
+    );
+    await observeStarted;
+
+    await server.close();
+    releaseObserve();
+    await create;
+
+    expect(harness.seededSession.createEphemeralContext).not.toHaveBeenCalled();
+    expect(lines.some((line) => line.id === "ephemeral-create")).toBe(false);
+  });
+
+  it("creates, uses, and closes ephemeral contexts during an active main turn", async () => {
+    const harness = createHarness();
+    const submit = harness.server.handleLine(
+      request("submit", "session.submit", {
+        sessionId: "session-1",
+        text: "keep the main turn active",
+      }),
+    );
+    await waitFor(() => harness.lines.some((line) => deltaHasNotice(line, "streaming")));
+
+    await harness.server.handleLine(
+      request("ephemeral-create", "session.ephemeral.create", {
+        sessionId: "session-1",
+        instructions: "review this",
+        tools: ["bash"],
+      }),
+    );
+    await harness.server.handleLine(
+      request("ephemeral-submit", "session.ephemeral.submit", {
+        sessionId: "session-1",
+        contextId: "context-1",
+        threadId: "thread-1",
+        message: "review",
+      }),
+    );
+    await harness.server.handleLine(
+      request("ephemeral-close", "session.ephemeral.close", {
+        sessionId: "session-1",
+        contextId: "context-1",
+      }),
+    );
+
+    expect(harness.seededSession.isTurnRunning).toBe(true);
+    expect(harness.lines.find((line) => line.id === "ephemeral-create")).toEqual(
+      expect.objectContaining({ ok: true, result: { contextId: "context-1" } }),
+    );
+    expect(harness.lines.find((line) => line.id === "ephemeral-submit")).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: { threadId: "thread-1", response: "done" },
+      }),
+    );
+    expect(harness.lines.find((line) => line.id === "ephemeral-close")).toEqual(
+      expect.objectContaining({ ok: true, result: { closed: true } }),
+    );
+
+    harness.releaseTurn();
+    await submit;
   });
 
   it("creates additional sessions and routes requests by session id", async () => {
@@ -1437,6 +1543,48 @@ describe("rpc_server", () => {
     expect(secondSubmitEvent).toBeDefined();
   });
 
+  it("cancels active execs through session.interrupt", async () => {
+    let execStarted = false;
+    const harness = createHarness({
+      exec: ({ command, signal }) =>
+        new Promise((resolve) => {
+          execStarted = true;
+          signal.addEventListener("abort", () => resolve(createProtocolExecResult({ command })), {
+            once: true,
+          });
+        }),
+    });
+
+    const execution = harness.server.handleLine(
+      request("exec", "session.exec", {
+        sessionId: "session-1",
+        command: "sleep forever",
+      }),
+    );
+    await waitFor(() => execStarted);
+
+    await harness.server.handleLine(
+      request("interrupt-exec", "session.interrupt", { sessionId: "session-1" }),
+    );
+    await execution;
+
+    expect(harness.lines.find((line) => line.id === "exec")).toEqual(
+      expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({
+          code: SESSION_PROTOCOL_ERROR_CODES.cancelled,
+          message: "execution command was cancelled",
+        }),
+      }),
+    );
+    expect(harness.lines.find((line) => line.id === "interrupt-exec")).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: { interrupted: true, isTurnRunning: true },
+      }),
+    );
+  });
+
   it("cancels active model samples through session.interrupt", async () => {
     let sampleStarted = false;
     const harness = createHarness({
@@ -1726,67 +1874,48 @@ describe("rpc_server", () => {
     );
   });
 
-  it("drains queued user messages after an active execution bash command", async () => {
-    let releaseExecution;
+  it("runs concurrent execs alongside main-session work", async () => {
+    const releaseExecutions = new Map();
     const harness = createHarness({
-      exec: async (runOptions) =>
-        await new Promise((resolve) => {
-          releaseExecution = () =>
-            resolve(
-              createProtocolExecResult({
-                command: runOptions.command,
-              }),
-            );
+      exec: ({ command }) =>
+        new Promise((resolve) => {
+          releaseExecutions.set(command, () => resolve(createProtocolExecResult({ command })));
         }),
     });
-
-    const execution = harness.server.handleLine(
-      request("exec-1", "session.exec", {
+    const submit = harness.server.handleLine(
+      request("submit", "session.submit", {
         sessionId: "session-1",
-        command: "pwd",
+        text: "keep the turn active",
       }),
     );
-    await waitFor(() => Boolean(releaseExecution));
+    await waitFor(() => harness.lines.some((line) => deltaHasNotice(line, "streaming")));
 
-    await harness.server.handleLine(
-      request("queue-1", "session.queue", {
-        sessionId: "session-1",
-        text: "after execution",
-      }),
-    );
-
-    expect(harness.lines.some((line) => line.type === "response" && line.id === "queue-1")).toBe(
-      false,
-    );
-
-    releaseExecution();
-    await execution;
-    await waitFor(() =>
-      harness.seededSession.session.historyEntries.some((entry) =>
-        entry.message.content[0].text.includes("after execution"),
+    const executions = ["first", "second"].map((command) =>
+      harness.server.handleLine(
+        request(`exec-${command}`, "session.exec", { sessionId: "session-1", command }),
       ),
     );
-
-    const queuedEntry = harness.seededSession.session.historyEntries.find((entry) =>
-      entry.message.content[0].text.includes("after execution"),
-    );
-    harness.releaseTurn();
-    await waitFor(() =>
-      harness.lines.some((line) => line.type === "response" && line.id === "queue-1"),
-    );
-
-    const queueResponse = harness.lines.find(
-      (line) => line.type === "response" && line.id === "queue-1",
-    );
-    expect(queueResponse).toEqual(
-      expect.objectContaining({
-        ok: true,
-        result: {
-          userHistoryEntryId: queuedEntry.id,
-          turn: { status: "completed", stopReason: "stop" },
-        },
+    await waitFor(() => releaseExecutions.size === 2);
+    await harness.server.handleLine(
+      request("reasoning", "session.setReasoning", {
+        sessionId: "session-1",
+        reasoning: "high",
       }),
     );
+
+    expect(harness.seededSession.isTurnRunning).toBe(true);
+    expect(harness.lines.find((line) => line.id === "reasoning")).toEqual(
+      expect.objectContaining({ ok: true }),
+    );
+    for (const release of releaseExecutions.values()) {
+      release();
+    }
+    await Promise.all(executions);
+    expect(harness.seededSession.isTurnRunning).toBe(true);
+    expect(harness.lines.filter((line) => line.id?.startsWith("exec-") && line.ok)).toHaveLength(2);
+
+    harness.releaseTurn();
+    await submit;
   });
 
   it("responds when a queued user message cannot be committed after the active turn", async () => {

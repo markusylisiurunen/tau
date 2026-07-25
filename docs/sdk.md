@@ -299,7 +299,8 @@ options:
 - `exec(command, options?)`
   - sends `session.exec` with this session id
   - runs a raw command in the session execution environment and returns interleaved `output` plus split `stdout` and `stderr`
-  - does not add output to session history
+  - runs independently and concurrently with session turns, mutations, other execs, samples, and ephemeral agents; callers own workspace coordination
+  - does not add output to session history or mutate the session snapshot
 - `sample({ context, options })`
   - sends `session.sample` with this session id
   - samples the active persona model against only the supplied system prompt, messages, and optional tool schemas
@@ -307,7 +308,7 @@ options:
   - returns a complete assistant message that can be appended directly to a later sampling context
   - does not mutate or persist the session, emit deltas, update session cost, execute returned tool calls, or write a Tau usage-log entry
 - `interrupt()`
-  - sends `session.interrupt` with this session id and cancels active samples as well as other active work
+  - sends `session.interrupt` with this session id and cancels active turns, execs, samples, and maintenance work
 - `snapshot()`
   - sends `session.snapshot` with this session id
   - returns raw recoverable session user text; renderers should use `getTauUserDisplayText()` or `projectTauUserText()` to hide Tau metadata and leading exact `<system>...</system>\n` blocks from user messages before showing them to users
@@ -338,7 +339,7 @@ options:
   - resolves with `{ found: boolean }`
 - `createEphemeralContext({ instructions, tools })`
   - sends `session.ephemeral.create` with this session id
-  - creates non-persisted host-owned agent context and returns `{ contextId }`
+  - creates a non-persisted host-owned agent context independently of main-session turns and mutations, and returns `{ contextId }`
 - `submitEphemeralThread({ contextId, threadId, forkFromThreadId?, message })`
   - sends `session.ephemeral.submit` with this session id
   - runs or continues an ephemeral host-owned agent thread and returns `{ threadId, response }`

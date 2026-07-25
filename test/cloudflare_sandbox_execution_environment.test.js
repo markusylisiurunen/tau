@@ -114,9 +114,8 @@ describe("Cloudflare Sandbox execution environment", () => {
       }),
     );
     expect(JSON.parse(requests[1].init.body)).toEqual({
-      argv: ["bash", "-lc", "echo hello"],
+      argv: ["env", "HOME=/home/sandbox", "bash", "-lc", "echo hello"],
       cwd: "/workspace/repo",
-      env: { HOME: "/home/sandbox" },
     });
   });
 

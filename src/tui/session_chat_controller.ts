@@ -34,7 +34,6 @@ import {
   hasAutoCompactionContinuationMetadata,
 } from "../core/utils/user_metadata.js";
 import { APP_VERSION } from "../core/version.js";
-import { shellQuote } from "../execution/sandbox_tool_helpers.js";
 import type {
   SessionProtocolCreateParams,
   SessionProtocolDeltaMessage,
@@ -82,7 +81,10 @@ import {
   transcribeListenAudio,
 } from "./listen_capture.js";
 import { formatDefaultMemoryModeFilePath, formatMemoryModeUserMessage } from "./memory_mode.js";
-import { createSdkToolExecutionBackend } from "./session_tool_execution_backend.js";
+import {
+  createSdkDiffSnapshotDeps,
+  createSdkToolExecutionBackend,
+} from "./session_tool_execution_backend.js";
 import { runSpeechPlaybackTask } from "./speech_playback.js";
 import type { ChatMessageModel } from "./ui/chat_message_model.js";
 
@@ -2154,11 +2156,17 @@ export class SessionChatController {
     session: TauSdkSession,
     sessionSnapshot: SessionProtocolSnapshot,
   ): Promise<StartedDiffReviewBridge> {
+    const cwd = sessionSnapshot.executionEnvironment.cwd;
+    const backend = createSdkToolExecutionBackend({ session, cwd });
     const snapshot = await captureDiffReviewSnapshot({
-      cwd: sessionSnapshot.executionEnvironment.cwd,
+      cwd,
       source: args.source,
       signal: args.signal,
-      deps: createSessionDiffReviewSnapshotDeps(session),
+      deps: createSdkDiffSnapshotDeps({
+        backend,
+        cwd,
+        home: sessionSnapshot.executionEnvironment.home,
+      }),
     });
     const ephemeral = await session.createEphemeralContext({
       instructions: buildDiffReviewInstructions(snapshot),
@@ -2367,63 +2375,6 @@ function getTimelineMessages(snapshot: SessionProtocolSnapshot): SessionProtocol
     const message = messagesById.get(item.messageId);
     return message ? [message] : [];
   });
-}
-
-function createSessionDiffReviewSnapshotDeps(session: TauSdkSession) {
-  return {
-    spawn: async (
-      cmd: string,
-      args: string[],
-      options: {
-        cwd?: string;
-        env?: NodeJS.ProcessEnv;
-        signal?: AbortSignal;
-        timeoutMs?: number;
-        maxCaptureBytes?: number;
-      } = {},
-    ) => {
-      void options.env;
-      void options.maxCaptureBytes;
-      if (options.signal?.aborted) {
-        return {
-          stdout: "",
-          stderr: "",
-          output: "",
-          exitCode: null,
-          captureLimitExceeded: false,
-          timedOut: false,
-          aborted: true,
-          closeSignal: null,
-        };
-      }
-      const command = [cmd, ...args].map(shellQuote).join(" ");
-      const result = await session.exec(command, {
-        ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
-        ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
-      });
-      return {
-        stdout: result.stdout,
-        stderr: result.stderr,
-        output: result.output,
-        exitCode: result.exitCode,
-        captureLimitExceeded: result.truncated,
-        timedOut: false,
-        aborted: options.signal?.aborted ?? false,
-        closeSignal: null,
-      };
-    },
-    env: createDefaultCoreDeps().env,
-    fs: {
-      readFile: async (path: string) => {
-        const script = "process.stdout.write(require('node:fs').readFileSync(process.argv[1]))";
-        const result = await session.exec(`node -e ${shellQuote(script)} ${shellQuote(path)}`);
-        if (result.exitCode !== 0) {
-          throw new Error(result.stderr || result.output || `failed to read ${path}`);
-        }
-        return result.stdout;
-      },
-    },
-  };
 }
 
 function isMessageInTimeline(snapshot: SessionProtocolSnapshot, messageId: string): boolean {

@@ -1,8 +1,9 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { captureDiffReviewSnapshot } from "../dist/core/diff_review/snapshot.js";
 import { prepareSessionCompaction } from "../dist/core/session/compaction.js";
 import { runDirectBashCommand } from "../dist/core/session/direct_bash.js";
 import {
@@ -18,7 +19,10 @@ import { createWriteToolDefinition } from "../dist/core/tools/write.js";
 import { buildCompactionUserMessage } from "../dist/core/utils/compact.js";
 import { autocompleteProjectPathsWithBackend } from "../dist/core/utils/project_files.js";
 import { prependTauUserMetadata } from "../dist/core/utils/user_metadata.js";
-import { createSdkToolExecutionBackend } from "../dist/tui/session_tool_execution_backend.js";
+import {
+  createSdkDiffSnapshotDeps,
+  createSdkToolExecutionBackend,
+} from "../dist/tui/session_tool_execution_backend.js";
 
 function createToolResult(toolCall, text) {
   return {
@@ -1230,6 +1234,61 @@ describe("session execution backend plumbing", () => {
         bytes: content.byteLength,
       });
       expect(readFileSync(join(cwd, "assets/image.bin"))).toEqual(content);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("captures diff snapshots without login profile output", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "tau-sdk-diff-test-"));
+    const runGit = (args) => {
+      const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+      if (result.status !== 0) {
+        throw new Error(result.stderr || result.stdout);
+      }
+    };
+    const session = {
+      async exec(command, options) {
+        const result = spawnSync("/bin/bash", ["-c", command], {
+          cwd: options.cwd,
+          encoding: "utf8",
+        });
+        const stdout = `profile stdout\n${result.stdout}logout stdout\n`;
+        const stderr = `profile stderr\n${result.stderr}logout stderr\n`;
+        return {
+          output: stdout + stderr,
+          stdout,
+          stderr,
+          exitCode: result.status,
+          truncated: false,
+        };
+      },
+    };
+
+    try {
+      runGit(["init"]);
+      runGit(["config", "user.name", "Tau Tests"]);
+      runGit(["config", "user.email", "tau@example.com"]);
+      writeFileSync(join(cwd, "tracked.txt"), "before\n");
+      runGit(["add", "tracked.txt"]);
+      runGit(["commit", "-m", "initial"]);
+      writeFileSync(join(cwd, "tracked.txt"), "after\n");
+      writeFileSync(join(cwd, "untracked.txt"), "new\n");
+
+      const backend = createSdkToolExecutionBackend({ session, cwd });
+      const snapshot = await captureDiffReviewSnapshot({
+        cwd,
+        source: { kind: "git_diff", diffArgs: [] },
+        deps: createSdkDiffSnapshotDeps({ backend, cwd, home: cwd }),
+      });
+
+      expect(snapshot.repoRoot).toBe(cwd);
+      expect(snapshot.files.map((file) => file.path)).toEqual(["tracked.txt", "untracked.txt"]);
+      expect(snapshot.patch).toContain("-before");
+      expect(snapshot.patch).toContain("+after");
+      expect(snapshot.getFilePatch("untracked.txt")).toContain("+new");
+      expect(snapshot.patch).not.toContain("profile stdout");
+      expect(snapshot.patch).not.toContain("logout stdout");
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }

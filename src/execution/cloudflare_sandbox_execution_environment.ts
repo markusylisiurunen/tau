@@ -236,11 +236,10 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
 
       try {
         return await client.exec(sandboxId, {
-          argv,
+          argv: applyCommandEnvironment(argv, runOptions.env),
           cwd,
           timeoutMs: runOptions.timeoutMs,
           signal,
-          env: runOptions.env,
           maxCaptureBytes: runOptions.maxCaptureBytes,
           sessionId,
           onAbort: () => resetCommandSession(cwd),
@@ -319,6 +318,16 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
   };
 }
 
+function applyCommandEnvironment(
+  argv: string[],
+  env: Record<string, string> | undefined,
+): string[] {
+  const entries = Object.entries(env ?? {});
+  return entries.length > 0
+    ? ["env", ...entries.map(([key, value]) => `${key}=${value}`), ...argv]
+    : argv;
+}
+
 async function waitForQueue(queue: Promise<void>, signal: AbortSignal): Promise<void> {
   signal.throwIfAborted();
   await new Promise<void>((resolve, reject) => {
@@ -360,7 +369,6 @@ export class CloudflareSandboxBridgeClient {
       cwd?: string;
       timeoutMs?: number;
       signal?: AbortSignal;
-      env?: Record<string, string>;
       maxCaptureBytes?: number | null;
       sessionId?: string;
       onAbort?: () => Promise<void>;
@@ -383,7 +391,6 @@ export class CloudflareSandboxBridgeClient {
         body: JSON.stringify({
           argv: options.argv,
           ...(options.cwd ? { cwd: options.cwd } : {}),
-          ...(options.env ? { env: options.env } : {}),
           ...(options.timeoutMs !== undefined ? { timeout_ms: options.timeoutMs } : {}),
         }),
         signal: controller.signal,

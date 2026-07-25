@@ -260,18 +260,24 @@ class FakeSession {
     return { turn: { status: "completed", stopReason: "stop" } };
   });
   exec = vi.fn(async (command) => {
-    if (command.includes("rev-parse --show-toplevel")) {
-      return createProtocolExecResult({ output: "/repo\n" });
+    let output = "";
+    if (command.includes("rev-parse") && command.includes("--show-toplevel")) {
+      output = "/repo\n";
+    } else if (command.includes("diff") && command.includes("--name-status")) {
+      output = "M\0src/main.ts\0";
+    } else if (command.includes("diff")) {
+      output = "diff --git a/src/main.ts b/src/main.ts\n";
     }
-    if (command.includes("diff --name-status")) {
-      return createProtocolExecResult({ output: "M\0src/main.ts\0" });
+
+    const boundary = command.match(/__TAU_COMMAND_OUTPUT_[0-9a-f-]+__/)?.[0];
+    if (!boundary) {
+      return createProtocolExecResult({ output });
     }
-    if (command.includes("diff")) {
-      return createProtocolExecResult({
-        output: "diff --git a/src/main.ts b/src/main.ts\n",
-      });
-    }
-    return createProtocolExecResult({ output: "" });
+    return createProtocolExecResult({
+      output,
+      stdout: `${boundary}${output}${boundary}`,
+      stderr: `${boundary}${boundary}`,
+    });
   });
   record = vi.fn(async (text, options = {}) => {
     this.operationLog.push("record");

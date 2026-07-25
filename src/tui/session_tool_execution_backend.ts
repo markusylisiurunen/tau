@@ -35,27 +35,8 @@ export function createSdkToolExecutionBackend(options: {
     args = [],
     runOptions = {},
   ) => {
-    const boundary = `__TAU_NODE_OUTPUT_${randomUUID()}__`;
-    const quotedBoundary = shellQuote(boundary);
-    const nodeCommand = ["node", "-e", script, ...args].map(shellQuote).join(" ");
-    const command = `printf %s ${quotedBoundary}; printf %s ${quotedBoundary} >&2; ${nodeCommand}; status=$?; printf %s ${quotedBoundary}; printf %s ${quotedBoundary} >&2; exit "$status"`;
-    const result = await runBash(command, runOptions);
-    const extractOutput = (output: string): string => {
-      const start = output.indexOf(boundary);
-      const end = output.indexOf(boundary, start + boundary.length);
-      if (start === -1 || end === -1) {
-        throw new Error("node helper returned invalid output boundaries");
-      }
-      return output.slice(start + boundary.length, end);
-    };
-    const stdout = extractOutput(result.stdout);
-    const stderr = extractOutput(result.stderr);
-    return {
-      ...result,
-      output: stdout + stderr,
-      stdout,
-      stderr,
-    };
+    const command = ["node", "-e", script, ...args].map(shellQuote).join(" ");
+    return await runFramedBashCommand(runBash, command, runOptions);
   };
 
   return {
@@ -123,22 +104,23 @@ export function createSdkDiffSnapshotDeps(options: {
   backend: ToolExecutionBackend;
   cwd: string;
   home: string;
-}): Pick<CoreDeps, "spawn" | "env"> {
+}): Pick<CoreDeps, "spawn" | "env"> & {
+  fs: { readFile: (path: string) => Promise<string> };
+} {
   return {
     spawn: async (cmd, args, spawnOptions = {}): Promise<SpawnCaptureResult> => {
       throwIfAborted(spawnOptions.signal);
       const command = [cmd, ...args].map(shellQuote).join(" ");
-      const result = await options.backend.runBash(command, {
+      const result = await runFramedBashCommand(options.backend.runBash, command, {
         cwd: spawnOptions.cwd ?? options.cwd,
         timeoutMs: spawnOptions.timeoutMs,
         signal: spawnOptions.signal,
       });
       throwIfAborted(spawnOptions.signal);
-      const output = result.output;
       return {
-        stdout: output,
-        stderr: "",
-        ...(spawnOptions.captureOutput === "combined" ? { output } : {}),
+        stdout: result.stdout,
+        stderr: result.stderr,
+        ...(spawnOptions.captureOutput === "combined" ? { output: result.output } : {}),
         exitCode: result.exitCode,
         captureLimitExceeded: result.truncated,
         timedOut: false,
@@ -151,8 +133,43 @@ export function createSdkDiffSnapshotDeps(options: {
       home: () => options.home,
       platform: () => process.platform,
       nodeVersion: () => process.version,
-      env: () => process.env,
+      env: () => ({}),
     },
+    fs: {
+      readFile: async (path) => (await options.backend.readFile(path)).content,
+    },
+  };
+}
+
+async function runFramedBashCommand(
+  runBash: ToolExecutionBackend["runBash"],
+  command: string,
+  options: {
+    timeoutMs?: number;
+    signal?: AbortSignal;
+    cwd?: string;
+    env?: Record<string, string>;
+  } = {},
+): Promise<BashExecutionResult> {
+  const boundary = `__TAU_COMMAND_OUTPUT_${randomUUID()}__`;
+  const quotedBoundary = shellQuote(boundary);
+  const framedCommand = `printf %s ${quotedBoundary}; printf %s ${quotedBoundary} >&2; ${command}; status=$?; printf %s ${quotedBoundary}; printf %s ${quotedBoundary} >&2; exit "$status"`;
+  const result = await runBash(framedCommand, options);
+  const extractOutput = (output: string): string => {
+    const start = output.indexOf(boundary);
+    const end = output.indexOf(boundary, start + boundary.length);
+    if (start === -1 || end === -1) {
+      throw new Error("command returned invalid output boundaries");
+    }
+    return output.slice(start + boundary.length, end);
+  };
+  const stdout = extractOutput(result.stdout);
+  const stderr = extractOutput(result.stderr);
+  return {
+    ...result,
+    output: stdout + stderr,
+    stdout,
+    stderr,
   };
 }
 

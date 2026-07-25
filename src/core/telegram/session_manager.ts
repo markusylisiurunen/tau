@@ -184,6 +184,13 @@ export type TelegramSessionManagerEvent =
       log: TelegramSessionLogEntry;
     }
   | {
+      type: "session-turn-failed";
+      sessionId: string;
+      projectId: string;
+      timestamp: string;
+      failure: Extract<SessionProtocolSubmitResult["turn"], { status: "failed" | "blocked" }>;
+    }
+  | {
       type: "session-progress";
       sessionId: string;
       projectId: string;
@@ -909,11 +916,13 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
 
         if (!entry.cancelRequested) {
           if (failure) {
-            entry.record.error =
-              failure.status === "failed"
-                ? (failure.errorMessage ?? "model provider returned an error")
-                : failure.message;
-            this.setState(entry, "failed");
+            this.emit({
+              type: "session-turn-failed",
+              sessionId: entry.record.id,
+              projectId: entry.record.projectId,
+              timestamp: this.now().toISOString(),
+              failure,
+            });
           } else if (!entry.activeSubmit || entry.activeSubmit === submitPromise) {
             this.setState(entry, "waiting-input");
           }

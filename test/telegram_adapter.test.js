@@ -30,6 +30,14 @@ async function waitFor(predicate, timeoutMs = 2000) {
   }
 }
 
+function deferred() {
+  let resolve;
+  const promise = new Promise((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
 function createJsonResponse(payload, status = 200) {
   return new Response(JSON.stringify(payload), {
     status,
@@ -1334,6 +1342,106 @@ describe("telegram adapter", () => {
         "unsupported command. supported commands: /new, /status, /compact, /interrupt, /use_demo",
       );
       expect(managerHarness.manager.closeSession).not.toHaveBeenCalled();
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it("reports a failed turn and keeps routing messages to the same session", async () => {
+    const nextUpdate = deferred();
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: {
+            message_id: 700,
+            chat: { id: 470, type: "private" },
+            from: { id: 7 },
+            text: "first",
+          },
+        },
+      ],
+      nextUpdate.promise,
+    ]);
+    const managerHarness = createSessionManagerHarness(
+      [
+        {
+          id: "s12",
+          projectId: "demo",
+          state: "waiting-input",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+      ],
+      { defaultOwnerId: ownerIdForChat(470) },
+    );
+
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() => managerHarness.manager.sendMessage.mock.calls.length === 1);
+
+      managerHarness.sessions.get("s12").state = "running";
+      managerHarness.manager.emit({
+        type: "session-state-changed",
+        sessionId: "s12",
+        projectId: "demo",
+        previousState: "waiting-input",
+        state: "running",
+        updatedAt: "2024-01-01T00:01:00.000Z",
+      });
+      managerHarness.manager.emit({
+        type: "session-turn-failed",
+        sessionId: "s12",
+        projectId: "demo",
+        timestamp: "2024-01-01T00:01:30.000Z",
+        failure: {
+          status: "failed",
+          stopReason: "error",
+          errorMessage: "OpenAI is unavailable",
+        },
+      });
+      managerHarness.sessions.get("s12").state = "waiting-input";
+      managerHarness.manager.emit({
+        type: "session-state-changed",
+        sessionId: "s12",
+        projectId: "demo",
+        previousState: "running",
+        state: "waiting-input",
+        updatedAt: "2024-01-01T00:02:00.000Z",
+      });
+
+      await waitFor(() =>
+        apiHarness.sendMessages.some(
+          (message) => message.text === "turn failed: OpenAI is unavailable",
+        ),
+      );
+
+      nextUpdate.resolve([
+        {
+          update_id: 2,
+          message: {
+            message_id: 701,
+            chat: { id: 470, type: "private" },
+            from: { id: 7 },
+            text: "second",
+          },
+        },
+      ]);
+      await waitFor(() => managerHarness.manager.sendMessage.mock.calls.length === 2);
+
+      expect(managerHarness.manager.sendMessage.mock.calls.map((call) => call[0])).toEqual([
+        "s12",
+        "s12",
+      ]);
+      expect(managerHarness.sessions.get("s12").state).toBe("waiting-input");
     } finally {
       await adapter.close();
     }

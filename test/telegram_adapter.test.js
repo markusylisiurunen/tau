@@ -1388,6 +1388,7 @@ describe("telegram adapter", () => {
     try {
       await waitFor(() => managerHarness.manager.sendMessage.mock.calls.length === 1);
 
+      vi.useFakeTimers();
       managerHarness.sessions.get("s12").state = "running";
       managerHarness.manager.emit({
         type: "session-state-changed",
@@ -1397,6 +1398,7 @@ describe("telegram adapter", () => {
         state: "running",
         updatedAt: "2024-01-01T00:01:00.000Z",
       });
+      const typingCountBeforeFailure = apiHarness.chatActions.length;
       managerHarness.manager.emit({
         type: "session-turn-failed",
         sessionId: "s12",
@@ -1408,6 +1410,9 @@ describe("telegram adapter", () => {
           errorMessage: "OpenAI is unavailable",
         },
       });
+      await vi.advanceTimersByTimeAsync(4_000);
+      expect(apiHarness.chatActions.length).toBeGreaterThan(typingCountBeforeFailure);
+
       managerHarness.sessions.get("s12").state = "waiting-input";
       managerHarness.manager.emit({
         type: "session-state-changed",
@@ -1417,6 +1422,10 @@ describe("telegram adapter", () => {
         state: "waiting-input",
         updatedAt: "2024-01-01T00:02:00.000Z",
       });
+      const typingCountAfterRun = apiHarness.chatActions.length;
+      await vi.advanceTimersByTimeAsync(8_000);
+      expect(apiHarness.chatActions).toHaveLength(typingCountAfterRun);
+      vi.useRealTimers();
 
       await waitFor(() =>
         apiHarness.sendMessages.some(
@@ -1443,6 +1452,7 @@ describe("telegram adapter", () => {
       ]);
       expect(managerHarness.sessions.get("s12").state).toBe("waiting-input");
     } finally {
+      vi.useRealTimers();
       await adapter.close();
     }
   });

@@ -480,6 +480,42 @@ describe("telegram session manager", () => {
     await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
   });
 
+  it("emits one failure event for a batched steering turn", async () => {
+    const clientHarness = createClientHarness();
+    const steeringTurn = deferred();
+    clientHarness.session.steer = vi.fn(async () => await steeringTurn.promise);
+    const manager = createDemoSessionManager(clientHarness);
+    const events = [];
+    manager.onEvent((event) => events.push(event));
+
+    const created = await manager.createSession({ projectId: "demo" });
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+
+    await manager.sendMessage(created.id, "first steering message", { mode: "steer" });
+    await manager.sendMessage(created.id, "second steering message", { mode: "steer" });
+    expect(clientHarness.session.steer).toHaveBeenCalledTimes(2);
+
+    steeringTurn.resolve({
+      userHistoryEntryId: "history-steering-batch",
+      turn: {
+        status: "failed",
+        stopReason: "error",
+        errorMessage: "OpenAI is unavailable",
+      },
+    });
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+
+    expect(events.filter((event) => event.type === "session-turn-failed")).toEqual([
+      expect.objectContaining({
+        sessionId: created.id,
+        failure: expect.objectContaining({
+          status: "failed",
+          errorMessage: "OpenAI is unavailable",
+        }),
+      }),
+    ]);
+  });
+
   it("returns from sendMessage immediately and rejects concurrent submits", async () => {
     const clientHarness = createClientHarness();
     const manager = createTelegramSessionManager({

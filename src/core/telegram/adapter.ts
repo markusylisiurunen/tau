@@ -2609,7 +2609,6 @@ class TelegramAdapterImpl {
         return;
       }
 
-      this.stopTypingIndicators(event.sessionId);
       this.notifySession(
         event.sessionId,
         event.failure.status === "failed"

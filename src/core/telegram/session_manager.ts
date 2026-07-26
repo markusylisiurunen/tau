@@ -161,6 +161,7 @@ type SessionEntry = {
   workspaceCleanupPromise?: Promise<void>;
   consumedFacetEventCounts: Map<string, number>;
   emittedAssistantMessageIds: Set<string>;
+  emittedTurnFailureIds: Set<string>;
 };
 
 export type TelegramSessionManagerEvent =
@@ -353,6 +354,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       cancelRequested: false,
       consumedFacetEventCounts: new Map(),
       emittedAssistantMessageIds: new Set(),
+      emittedTurnFailureIds: new Set(),
     };
 
     this.sessions.set(id, entry);
@@ -558,6 +560,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
         cancelRequested: false,
         consumedFacetEventCounts: new Map(),
         emittedAssistantMessageIds: new Set(),
+        emittedTurnFailureIds: new Set(),
       };
       this.sessions.set(record.id, entry);
     }
@@ -915,7 +918,8 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
         });
 
         if (!entry.cancelRequested) {
-          if (failure) {
+          if (failure && !entry.emittedTurnFailureIds.has(result.userHistoryEntryId)) {
+            entry.emittedTurnFailureIds.add(result.userHistoryEntryId);
             this.emit({
               type: "session-turn-failed",
               sessionId: entry.record.id,
@@ -923,7 +927,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
               timestamp: this.now().toISOString(),
               failure,
             });
-          } else if (!entry.activeSubmit || entry.activeSubmit === submitPromise) {
+          } else if (!failure && (!entry.activeSubmit || entry.activeSubmit === submitPromise)) {
             this.setState(entry, "waiting-input");
           }
         }

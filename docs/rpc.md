@@ -521,11 +521,12 @@ params (required):
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "command": "git diff -- src/main.ts",
   "cwd": "/repo",
-  "timeoutMs": 30000
+  "timeoutMs": 30000,
+  "maxCaptureBytes": 2097152
 }
 ```
 
-runs the command in a fresh, non-interactive login Bash belonging to the session execution environment and returns captured output. Tau sets `HOME` to the execution environment home, so Bash reads `/etc/profile` and then the first available user login file (`~/.bash_profile`, `~/.bash_login`, or `~/.profile`); `.bashrc` is loaded only when the login configuration sources it. Each call starts a new process, so shell state does not persist. `output` is stdout and stderr interleaved in arrival order; `stdout` and `stderr` are the split streams. `cwd` and `timeoutMs` are optional. `cwd` is the command working directory, not a confinement boundary; absolute paths are allowed when the execution environment permits them. Exec requests are independent side channels: multiple commands can run concurrently with each other and with session turns, mutations, samples, or ephemeral agents. They do not enter the session mutation queue, change snapshots, or emit deltas. Workspace races are allowed, so clients must coordinate commands when consistency matters. The command does not add anything to session history; clients that want command output in model context should call `session.record` with their chosen text.
+runs the command in a fresh, non-interactive login Bash belonging to the session execution environment and returns captured output. Tau sets `HOME` to the execution environment home, so Bash reads `/etc/profile` and then the first available user login file (`~/.bash_profile`, `~/.bash_login`, or `~/.profile`); `.bashrc` is loaded only when the login configuration sources it. Each call starts a new process, so shell state does not persist. `output` is stdout and stderr interleaved in arrival order; `stdout` and `stderr` are the split streams. `cwd`, `timeoutMs`, and `maxCaptureBytes` are optional. `maxCaptureBytes` overrides the default one-megabyte capture limit for this command, up to 16 MiB. `cwd` is the command working directory, not a confinement boundary; absolute paths are allowed when the execution environment permits them. Exec requests are independent side channels: multiple commands can run concurrently with each other and with session turns, mutations, samples, or ephemeral agents. They do not enter the session mutation queue, change snapshots, or emit deltas. Workspace races are allowed, so clients must coordinate commands when consistency matters. The command does not add anything to session history; clients that want command output in model context should call `session.record` with their chosen text.
 
 returns:
 

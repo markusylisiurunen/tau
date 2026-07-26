@@ -49,6 +49,15 @@ export type ListDirResult = {
   entries: ListDirEntry[];
 };
 
+export const NONINTERACTIVE_GIT_ENV = {
+  GIT_TERMINAL_PROMPT: "0",
+  GIT_EDITOR: "true",
+  GIT_SEQUENCE_EDITOR: "true",
+  GIT_PAGER: "cat",
+  GIT_ASKPASS: "true",
+  GIT_SSH_COMMAND: "ssh -o BatchMode=yes",
+} as const;
+
 export function applyCommandEnvironment(
   argv: string[],
   env: Record<string, string | undefined> | undefined,
@@ -57,6 +66,12 @@ export function applyCommandEnvironment(
     value === undefined ? [] : [`${key}=${value}`],
   );
   return assignments.length > 0 ? ["env", ...assignments, ...argv] : argv;
+}
+
+export function applyBashEnvironment(
+  env: Record<string, string> | undefined,
+): Record<string, string> {
+  return { ...env, ...NONINTERACTIVE_GIT_ENV };
 }
 
 export interface ToolExecutionBackend {
@@ -68,6 +83,7 @@ export interface ToolExecutionBackend {
       signal?: AbortSignal;
       cwd?: string;
       env?: Record<string, string>;
+      maxCaptureBytes?: number | null;
     },
   ): Promise<BashExecutionResult>;
   runNodeScript(
@@ -118,21 +134,16 @@ export function createLocalToolExecutionBackend(
 
       const result = await spawnCapture("bash", ["-lc", command], {
         stdio: ["ignore", "pipe", "pipe"],
-        env: {
-          ...resolveEnvironment(options.env),
-          GIT_TERMINAL_PROMPT: "0",
-          GIT_EDITOR: "true",
-          GIT_SEQUENCE_EDITOR: "true",
-          GIT_PAGER: "cat",
-          GIT_ASKPASS: "true",
-          GIT_SSH_COMMAND: "ssh -o BatchMode=yes",
-        },
+        env: resolveEnvironment(applyBashEnvironment(options.env)),
         detached: true,
         killProcessGroup: true,
         cwd,
         signal,
         timeoutMs: effectiveTimeoutMs,
-        maxCaptureBytes: BASH_MAX_CAPTURE_BYTES,
+        maxCaptureBytes:
+          options.maxCaptureBytes === null
+            ? undefined
+            : (options.maxCaptureBytes ?? BASH_MAX_CAPTURE_BYTES),
         maxCaptureMode: "ignore",
         maxCaptureStrategy: "tail",
         captureOutput: "combined-and-split",

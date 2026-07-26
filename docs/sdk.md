@@ -299,6 +299,7 @@ options:
 - `exec(command, options?)`
   - sends `session.exec` with this session id
   - runs a raw command in the session execution environment and returns interleaved `output` plus split `stdout` and `stderr`
+  - accepts optional `cwd`, `timeoutMs`, `maxCaptureBytes` (up to 16 MiB), and `signal`; aborting the signal interrupts active session work because the protocol has session-wide interruption
   - runs independently and concurrently with session turns, mutations, other execs, samples, and ephemeral agents; callers own workspace coordination
   - does not add output to session history or mutate the session snapshot
 - `sample({ context, options })`

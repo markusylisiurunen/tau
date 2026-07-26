@@ -150,6 +150,7 @@ export type SessionProtocolExecParams = SessionProtocolSessionIdParams & {
   command: string;
   cwd?: string;
   timeoutMs?: number;
+  maxCaptureBytes?: number;
 };
 export type SessionProtocolSampleContext = {
   systemPrompt: string;
@@ -1223,6 +1224,12 @@ const sessionProtocolExecParamsSchema = z
     command: nonEmptyStringSchema,
     cwd: nonEmptyStringSchema.optional(),
     timeoutMs: z.number().int().positive().optional(),
+    maxCaptureBytes: z
+      .number()
+      .int()
+      .positive()
+      .max(16 * 1024 * 1024)
+      .optional(),
   })
   .strip();
 
@@ -3461,7 +3468,9 @@ function validateExecParams(
             ? "session.exec params.cwd must be a non-empty string when provided"
             : hasIssue(parsed.error, ["timeoutMs"])
               ? "session.exec params.timeoutMs must be a positive integer when provided"
-              : `session.exec params are invalid: ${formatZodError(parsed.error)}`;
+              : hasIssue(parsed.error, ["maxCaptureBytes"])
+                ? "session.exec params.maxCaptureBytes must be a positive integer no greater than 16777216 when provided"
+                : `session.exec params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 
@@ -3472,6 +3481,9 @@ function validateExecParams(
       command: parsed.data.command,
       ...(parsed.data.cwd !== undefined ? { cwd: parsed.data.cwd } : {}),
       ...(parsed.data.timeoutMs !== undefined ? { timeoutMs: parsed.data.timeoutMs } : {}),
+      ...(parsed.data.maxCaptureBytes !== undefined
+        ? { maxCaptureBytes: parsed.data.maxCaptureBytes }
+        : {}),
     },
   };
 }

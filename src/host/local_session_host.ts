@@ -714,6 +714,9 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       const result = await backend.runBash(options.command, {
         ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
         ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+        ...(options.maxCaptureBytes !== undefined
+          ? { maxCaptureBytes: options.maxCaptureBytes }
+          : {}),
         signal,
       });
       signal.throwIfAborted();

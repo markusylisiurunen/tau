@@ -245,8 +245,9 @@ export function formatBashToolResultText(args: {
 export function formatBashUserMessageText(args: {
   command: string;
   truncationInfo: BashTruncationInfo;
+  exitCode: number | null;
 }): string {
-  const { command, truncationInfo } = args;
+  const { command, truncationInfo, exitCode } = args;
   const { model, captureTruncated, fullOutputPath } = truncationInfo;
 
   const outputForContext = model.content.trimEnd() || "(no output)";
@@ -254,7 +255,8 @@ export function formatBashUserMessageText(args: {
     model.truncated || captureTruncated
       ? `\n\n[Output truncated for context: ${model.outputLines} lines / ${formatBytes(model.outputBytes)} shown of ${model.totalLines} lines / ${formatBytes(model.totalBytes)} (full output estimate: ~${bytesToTokens(model.totalBytes)} tokens).${formatBashOutputFileHint({ path: fullOutputPath })}]`
       : "";
-  const bashContextText = `$ ${command}\n${outputForContext}${truncNote}`;
+  const exitNote = exitCode !== null && exitCode !== 0 ? `\n(exit ${exitCode})` : "";
+  const bashContextText = `$ ${command}\n${outputForContext}${truncNote}${exitNote}`;
   return `Bash command output:\n${bashContextText}`;
 }
 

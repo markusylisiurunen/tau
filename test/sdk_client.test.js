@@ -604,7 +604,11 @@ describe("sdk_client", () => {
     });
 
     await expect(
-      readySession.exec("git diff", { cwd: "/repo", timeoutMs: 30000 }),
+      readySession.exec("git diff", {
+        cwd: "/repo",
+        timeoutMs: 30000,
+        maxCaptureBytes: 2 * 1024 * 1024,
+      }),
     ).resolves.toEqual({
       output: "raw output",
       stdout: "raw output",
@@ -614,7 +618,13 @@ describe("sdk_client", () => {
     });
     expect(transport.requests.at(-1)).toEqual({
       method: "session.exec",
-      params: { sessionId: "session-1", command: "git diff", cwd: "/repo", timeoutMs: 30000 },
+      params: {
+        sessionId: "session-1",
+        command: "git diff",
+        cwd: "/repo",
+        timeoutMs: 30000,
+        maxCaptureBytes: 2 * 1024 * 1024,
+      },
     });
 
     await expect(readySession.record("review", { historyEntryId: "review-1" })).resolves.toEqual({
@@ -781,6 +791,44 @@ describe("sdk_client", () => {
 
     await client.close();
     expect(transport.closed).toBe(true);
+  });
+
+  it("interrupts an in-flight exec when its abort signal fires", async () => {
+    const transport = new FakeSessionProtocolTransport();
+    let finishExec;
+    transport.onRequest = async (method) => {
+      if (method === "session.exec") {
+        return await new Promise((resolve) => {
+          finishExec = resolve;
+        });
+      }
+      if (method === "session.interrupt") {
+        finishExec(createProtocolExecResult({ output: "cancelled" }));
+        return { interrupted: true, isTurnRunning: false };
+      }
+      return undefined;
+    };
+    const client = await createTauSdkClientFromTransport(transport);
+    const session = await client.sessions.observe("session-1");
+    const abortController = new AbortController();
+
+    const execution = session.exec("sleep 60", { signal: abortController.signal });
+    await vi.waitFor(() => {
+      expect(transport.requests).toContainEqual({
+        method: "session.exec",
+        params: { sessionId: "session-1", command: "sleep 60" },
+      });
+    });
+    abortController.abort();
+
+    await expect(execution).resolves.toMatchObject({ output: "cancelled" });
+    await vi.waitFor(() => {
+      expect(transport.requests).toContainEqual({
+        method: "session.interrupt",
+        params: { sessionId: "session-1" },
+      });
+    });
+    await client.close();
   });
 
   it("keeps pending user message updates newer than the observe bootstrap", async () => {

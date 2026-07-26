@@ -135,7 +135,12 @@ export type TauSdkSession = {
   retry(): Promise<TauSdkSessionRetryResult>;
   exec(
     command: string,
-    options?: { cwd?: string; timeoutMs?: number },
+    options?: {
+      cwd?: string;
+      timeoutMs?: number;
+      maxCaptureBytes?: number;
+      signal?: AbortSignal;
+    },
   ): Promise<TauSdkSessionExecResult>;
   sample(input: TauSdkSessionSampleInput): Promise<TauSdkSessionSampleResult>;
   interrupt(): Promise<TauSdkSessionInterruptResult>;

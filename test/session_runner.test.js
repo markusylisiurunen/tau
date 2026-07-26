@@ -1247,8 +1247,10 @@ describe("session execution backend plumbing", () => {
         throw new Error(result.stderr || result.stdout);
       }
     };
+    const execOptions = [];
     const session = {
       async exec(command, options) {
+        execOptions.push(options);
         const result = spawnSync("/bin/bash", ["-c", `set -e\n${command}`], {
           cwd: options.cwd,
           encoding: "utf8",
@@ -1284,6 +1286,9 @@ describe("session execution backend plumbing", () => {
       expect(snapshot.getFilePatch("untracked.txt")).toContain("+new");
       expect(snapshot.patch).not.toContain("profile stdout");
       expect(snapshot.patch).not.toContain("logout stdout");
+      expect(execOptions).toEqual(
+        expect.arrayContaining([expect.objectContaining({ maxCaptureBytes: expect.any(Number) })]),
+      );
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
@@ -1426,6 +1431,32 @@ describe("session execution backend plumbing", () => {
     });
 
     expect(addUserText).toHaveBeenCalledTimes(1);
+  });
+
+  it("records nonzero direct bash exit status in session history", async () => {
+    const addUserText = vi.fn(async () => "history-1");
+    const backend = {
+      async runBash() {
+        return {
+          output: "",
+          stdout: "",
+          stderr: "",
+          exitCode: 2,
+          truncated: false,
+        };
+      },
+    };
+
+    await runDirectBashCommand({
+      command: "false",
+      backend,
+      addToContext: true,
+      addUserText,
+    });
+
+    expect(addUserText).toHaveBeenCalledWith(
+      "Bash command output:\n$ false\n(no output)\n(exit 2)",
+    );
   });
 });
 

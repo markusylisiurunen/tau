@@ -245,13 +245,16 @@ class TauSdkClientImpl implements TauSdkClient {
   sendExec(
     sessionId: string,
     command: string,
-    options: { cwd?: string; timeoutMs?: number } = {},
+    options: { cwd?: string; timeoutMs?: number; maxCaptureBytes?: number } = {},
   ): Promise<SessionProtocolResultByMethod["session.exec"]> {
     return this.transport.request("session.exec", {
       sessionId,
       command,
       ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
       ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      ...(options.maxCaptureBytes !== undefined
+        ? { maxCaptureBytes: options.maxCaptureBytes }
+        : {}),
     });
   }
 
@@ -572,9 +575,24 @@ class TauSdkSessionImpl implements TauSdkSession {
 
   async exec(
     command: string,
-    options: { cwd?: string; timeoutMs?: number } = {},
+    options: {
+      cwd?: string;
+      timeoutMs?: number;
+      maxCaptureBytes?: number;
+      signal?: AbortSignal;
+    } = {},
   ): Promise<SessionProtocolResultByMethod["session.exec"]> {
-    return await this.client.sendExec(this.activeSessionId(), command, options);
+    const { signal, ...execOptions } = options;
+    signal?.throwIfAborted();
+    const onAbort = () => {
+      void this.interrupt();
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    try {
+      return await this.client.sendExec(this.activeSessionId(), command, execOptions);
+    } finally {
+      signal?.removeEventListener("abort", onAbort);
+    }
   }
 
   async sample(

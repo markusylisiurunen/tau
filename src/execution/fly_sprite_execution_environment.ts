@@ -1,8 +1,10 @@
+import { StringDecoder } from "node:string_decoder";
 import { type Sprite, SpritesClient } from "@fly/sprites";
-import type {
-  BashExecutionResult,
-  ListDirEntry,
-  ToolExecutionBackend,
+import {
+  applyBashEnvironment,
+  type BashExecutionResult,
+  type ListDirEntry,
+  type ToolExecutionBackend,
 } from "../core/tools/execution_backend.js";
 import type {
   SessionProtocolExecutionEnvironmentInput,
@@ -139,7 +141,8 @@ export function createFlySpriteToolExecutionBackend(options: {
           command,
           cwd: runOptions.cwd ?? options.cwd,
           timeoutMs: runOptions.timeoutMs,
-          env: runOptions.env,
+          env: applyBashEnvironment(runOptions.env),
+          maxCaptureBytes: runOptions.maxCaptureBytes,
         },
         { signal: runOptions.signal },
       );
@@ -172,6 +175,7 @@ export function createFlySpriteToolExecutionBackend(options: {
       const result = await worker.request("readFileBinary", {
         path,
         timeoutMs: HELPER_COMMAND_TIMEOUT_MS,
+        maxBytes: readOptions.maxBytes,
       });
       const content = Buffer.from(result.contentBase64, "base64");
       const bytes = result.bytes;
@@ -216,6 +220,7 @@ type FlySpriteWorkerRequestByMethod = {
     cwd: string;
     timeoutMs?: number;
     env?: Record<string, string>;
+    maxCaptureBytes?: number | null;
   };
   nodeScript: {
     script: string;
@@ -232,6 +237,7 @@ type FlySpriteWorkerRequestByMethod = {
   readFileBinary: {
     path: string;
     timeoutMs: number;
+    maxBytes?: number;
   };
   writeFile: {
     path: string;
@@ -300,6 +306,7 @@ class FlySpriteWorker {
   private command?: RunningSpriteCommand;
   private readyPromise?: Promise<void>;
   private readonly stdoutBuffer = new LineBuffer();
+  private stdoutDecoder = new StringDecoder("utf8");
   private nextRequestId = 1;
   private pendingRequests = new Map<number, FlySpritePendingRequest>();
   private closed = false;
@@ -369,10 +376,13 @@ class FlySpriteWorker {
     if (this.closed) {
       return;
     }
-    if (this.command) {
+    const command = this.command;
+    if (command) {
       await this.request("shutdown", {}).catch(() => undefined);
-      this.command.kill();
-      this.command = undefined;
+      command.kill();
+      if (this.command === command) {
+        this.command = undefined;
+      }
     }
     this.closed = true;
     this.rejectAllPending(new Error("Fly Sprite worker was disposed"));
@@ -394,6 +404,7 @@ class FlySpriteWorker {
     });
     this.command = command;
     this.stdoutBuffer.clear();
+    this.stdoutDecoder = new StringDecoder("utf8");
 
     return await new Promise<void>((resolve, reject) => {
       let settled = false;
@@ -443,7 +454,7 @@ class FlySpriteWorker {
   }
 
   private handleStdoutChunk(chunk: Buffer, onReady?: () => void): void {
-    for (const line of this.stdoutBuffer.push(chunk.toString("utf-8"))) {
+    for (const line of this.stdoutBuffer.push(this.stdoutDecoder.write(chunk))) {
       this.handleStdoutLine(line, onReady);
     }
   }
@@ -590,6 +601,11 @@ async function handleLine(line) {
 
   try {
     if (request.method === "shutdown") {
+      const active = [...running.values()];
+      for (const runningRequest of active) {
+        runningRequest.cancel("abort");
+      }
+      await Promise.all(active.map((runningRequest) => runningRequest.stopped));
       respond(request.id, { exitCode: 0 });
       process.exit(0);
       return;
@@ -609,6 +625,7 @@ async function handleLine(line) {
         cwd: request.cwd,
         timeoutMs: request.timeoutMs,
         env: request.env,
+        maxCaptureBytes: request.maxCaptureBytes,
       });
       respond(request.id, result);
       return;
@@ -632,6 +649,12 @@ async function handleLine(line) {
     }
 
     if (request.method === "readFileBinary") {
+      const stats = await fs.promises.stat(request.path);
+      if (request.maxBytes !== undefined && stats.size > request.maxBytes) {
+        throw new Error(
+          "file exceeds maximum size of " + request.maxBytes + " bytes (got " + stats.size + " bytes).",
+        );
+      }
       const content = await fs.promises.readFile(request.path);
       respond(request.id, {
         contentBase64: content.toString("base64"),
@@ -682,6 +705,10 @@ function runCommand(id, command, args, options) {
     let settled = false;
     let timer;
     let stopTimer;
+    let markStopped = () => {};
+    const stopped = new Promise((resolveStopped) => {
+      markStopped = resolveStopped;
+    });
     const maxCaptureBytes =
       options.maxCaptureBytes === undefined ? BASH_MAX_CAPTURE_BYTES : options.maxCaptureBytes;
 
@@ -733,6 +760,7 @@ function runCommand(id, command, args, options) {
       if (settled) return;
       settled = true;
       cleanup();
+      markStopped();
       let output = Buffer.concat(chunks).toString("utf-8");
       let stdout = Buffer.concat(stdoutChunks).toString("utf-8");
       let stderr = Buffer.concat(stderrChunks).toString("utf-8");
@@ -748,18 +776,24 @@ function runCommand(id, command, args, options) {
       resolve({ output, stdout, stderr, exitCode, truncated });
     };
 
-    const cancel = (reason) => {
-      if (reason === "timeout") timedOut = true;
-      if (reason === "abort") aborted = true;
+    const killProcessGroup = (signal) => {
       try {
-        process.kill(-child.pid);
+        process.kill(-child.pid, signal);
       } catch {
-        child.kill();
+        child.kill(signal);
       }
-      stopTimer = setTimeout(() => finish(null), COMMAND_STOP_GRACE_MS);
     };
 
-    running.set(id, { cancel });
+    const cancel = (reason) => {
+      if (settled) return;
+      if (reason === "timeout") timedOut = true;
+      if (reason === "abort") aborted = true;
+      killProcessGroup("SIGTERM");
+      if (stopTimer) clearTimeout(stopTimer);
+      stopTimer = setTimeout(() => killProcessGroup("SIGKILL"), COMMAND_STOP_GRACE_MS);
+    };
+
+    running.set(id, { cancel, stopped });
 
     if (options.timeoutMs && Number.isFinite(options.timeoutMs) && options.timeoutMs > 0) {
       timer = setTimeout(() => cancel("timeout"), options.timeoutMs);

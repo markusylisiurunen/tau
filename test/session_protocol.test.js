@@ -152,6 +152,7 @@ describe("session_protocol", () => {
           command: "git diff",
           cwd: "/repo",
           timeoutMs: 30000,
+          maxCaptureBytes: 2097152,
         },
       }),
     );
@@ -167,6 +168,7 @@ describe("session_protocol", () => {
           command: "git diff",
           cwd: "/repo",
           timeoutMs: 30000,
+          maxCaptureBytes: 2097152,
         },
       },
     });
@@ -953,6 +955,7 @@ describe("session_protocol", () => {
         command: "git diff",
         cwd: "/repo",
         timeoutMs: 30000,
+        maxCaptureBytes: 2097152,
       }),
     ).toEqual({
       ok: true,
@@ -961,6 +964,21 @@ describe("session_protocol", () => {
         command: "git diff",
         cwd: "/repo",
         timeoutMs: 30000,
+        maxCaptureBytes: 2097152,
+      },
+    });
+    expect(
+      validateSessionProtocolParams("session.exec", {
+        sessionId: "session-1",
+        command: "git diff",
+        maxCaptureBytes: 16 * 1024 * 1024 + 1,
+      }),
+    ).toEqual({
+      ok: false,
+      error: {
+        code: "invalid_params",
+        message:
+          "session.exec params.maxCaptureBytes must be a positive integer no greater than 16777216 when provided",
       },
     });
     expect(

@@ -18,14 +18,15 @@ export function createSdkToolExecutionBackend(options: {
 }): ToolExecutionBackend {
   const { session, cwd } = options;
 
-  const runBash = async (
-    command: string,
-    runOptions: { timeoutMs?: number; signal?: AbortSignal; cwd?: string } = {},
-  ): Promise<BashExecutionResult> => {
+  const runBash: ToolExecutionBackend["runBash"] = async (command, runOptions = {}) => {
     throwIfAborted(runOptions.signal);
     const result = await session.exec(command, {
       cwd: runOptions.cwd ?? cwd,
       ...(runOptions.timeoutMs !== undefined ? { timeoutMs: runOptions.timeoutMs } : {}),
+      ...(typeof runOptions.maxCaptureBytes === "number"
+        ? { maxCaptureBytes: runOptions.maxCaptureBytes }
+        : {}),
+      ...(runOptions.signal ? { signal: runOptions.signal } : {}),
     });
     throwIfAborted(runOptions.signal);
     return result;
@@ -113,6 +114,7 @@ export function createSdkDiffSnapshotDeps(options: {
         cwd: spawnOptions.cwd ?? options.cwd,
         timeoutMs: spawnOptions.timeoutMs,
         signal: spawnOptions.signal,
+        maxCaptureBytes: spawnOptions.maxCaptureBytes,
       });
       throwIfAborted(spawnOptions.signal);
       return {
@@ -144,17 +146,28 @@ async function runFramedCommand(
     signal?: AbortSignal;
     cwd?: string;
     env?: Record<string, string>;
+    maxCaptureBytes?: number | null;
   } = {},
 ): Promise<BashExecutionResult> {
   const boundary = `__TAU_COMMAND_OUTPUT_${randomUUID()}__`;
   const quotedBoundary = shellQuote(boundary);
   const command = argv.map(shellQuote).join(" ");
   const framedCommand = `printf %s ${quotedBoundary}; printf %s ${quotedBoundary} >&2; if ${command}; then status=0; else status=$?; fi; printf %s ${quotedBoundary}; printf %s ${quotedBoundary} >&2; exit "$status"`;
-  const result = await runBash(framedCommand, options);
+  const maxCaptureBytes =
+    typeof options.maxCaptureBytes === "number"
+      ? options.maxCaptureBytes + Buffer.byteLength(boundary) * 4
+      : options.maxCaptureBytes;
+  const result = await runBash(framedCommand, {
+    ...options,
+    ...(maxCaptureBytes === undefined ? {} : { maxCaptureBytes }),
+  });
   const extractOutput = (output: string): string => {
     const start = output.indexOf(boundary);
     const end = output.indexOf(boundary, start + boundary.length);
     if (start === -1 || end === -1) {
+      if (result.truncated) {
+        return "";
+      }
       throw new Error("command returned invalid output boundaries");
     }
     return output.slice(start + boundary.length, end);

@@ -1014,6 +1014,9 @@ export class SessionProtocolHandler {
         command: request.params.command,
         ...(request.params.cwd !== undefined ? { cwd: request.params.cwd } : {}),
         ...(request.params.timeoutMs !== undefined ? { timeoutMs: request.params.timeoutMs } : {}),
+        ...(request.params.maxCaptureBytes !== undefined
+          ? { maxCaptureBytes: request.params.maxCaptureBytes }
+          : {}),
         signal,
       });
       this.sendMessage(createSessionProtocolSuccessResponse(request.id, "session.exec", result));

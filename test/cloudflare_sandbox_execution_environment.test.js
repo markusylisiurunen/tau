@@ -114,7 +114,19 @@ describe("Cloudflare Sandbox execution environment", () => {
       }),
     );
     expect(JSON.parse(requests[1].init.body)).toEqual({
-      argv: ["env", "HOME=/home/sandbox", "bash", "-lc", "echo hello"],
+      argv: [
+        "env",
+        "HOME=/home/sandbox",
+        "GIT_TERMINAL_PROMPT=0",
+        "GIT_EDITOR=true",
+        "GIT_SEQUENCE_EDITOR=true",
+        "GIT_PAGER=cat",
+        "GIT_ASKPASS=true",
+        "GIT_SSH_COMMAND=ssh -o BatchMode=yes",
+        "bash",
+        "-lc",
+        "echo hello",
+      ],
       cwd: "/workspace/repo",
     });
   });
@@ -155,6 +167,34 @@ describe("Cloudflare Sandbox execution environment", () => {
 
     expect(requests[2].init.method).toBe("PUT");
     expect(Buffer.from(requests[2].init.body)).toEqual(content);
+  });
+
+  it("stops reading binary files when they exceed the requested limit", async () => {
+    let cancelled = false;
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(Buffer.alloc(8));
+        controller.enqueue(Buffer.alloc(8));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const client = new CloudflareSandboxBridgeClient({
+      bridgeId: "default",
+      baseUrl: "https://bridge.example",
+      fetch: async () => new Response(body),
+    });
+    const backend = createCloudflareSandboxToolExecutionBackend({
+      client,
+      sandboxId: "sandbox-1",
+      cwd: "/workspace/repo",
+    });
+
+    await expect(
+      backend.readFileBinary("/workspace/repo/large.bin", { maxBytes: 10 }),
+    ).rejects.toThrow("file exceeds maximum size of 10 B (got 16 B)");
+    expect(cancelled).toBe(true);
   });
 
   it("serializes bridge exec calls that share a command session", async () => {
@@ -365,7 +405,18 @@ describe("Cloudflare Sandbox execution environment", () => {
 
     const execRequests = requests.filter((request) => request.url.endsWith("/exec"));
     expect(execRequests.map((request) => JSON.parse(request.init.body).argv)).toEqual([
-      ["bash", "-lc", "one"],
+      [
+        "env",
+        "GIT_TERMINAL_PROMPT=0",
+        "GIT_EDITOR=true",
+        "GIT_SEQUENCE_EDITOR=true",
+        "GIT_PAGER=cat",
+        "GIT_ASKPASS=true",
+        "GIT_SSH_COMMAND=ssh -o BatchMode=yes",
+        "bash",
+        "-lc",
+        "one",
+      ],
       ["node", "-e", "process.stdout.write(process.argv[1])", "two"],
     ]);
     expect(execRequests.map((request) => request.init.headers["Session-Id"])).toEqual([
@@ -412,6 +463,26 @@ describe("Cloudflare Sandbox execution environment", () => {
       "tau-session-1",
       "tau-session-2",
     ]);
+  });
+
+  it("applies the command timeout while creating the bridge session", async () => {
+    const client = new CloudflareSandboxBridgeClient({
+      bridgeId: "default",
+      baseUrl: "https://bridge.example",
+      fetch: async (_url, init = {}) =>
+        await new Promise((_resolve, reject) => {
+          init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true });
+        }),
+    });
+    const backend = createCloudflareSandboxToolExecutionBackend({
+      client,
+      sandboxId: "sandbox-1",
+      cwd: "/workspace/repo",
+    });
+
+    await expect(backend.runBash("pwd", { timeoutMs: 10 })).rejects.toMatchObject({
+      name: "TimeoutError",
+    });
   });
 
   it("deletes the command session when bridge exec is aborted", async () => {

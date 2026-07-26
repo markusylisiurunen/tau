@@ -8,6 +8,7 @@ import {
   TelegramSessionManagerError,
 } from "../dist/core/telegram/session_manager.js";
 import { SESSION_PROTOCOL_VERSION } from "../dist/protocol/session_protocol.js";
+import { TauSessionProtocolResponseError } from "../dist/transport/errors.js";
 import { createProtocolSnapshot } from "./helpers/session_protocol_fixtures.js";
 
 function deferred() {
@@ -278,8 +279,72 @@ describe("telegram session manager", () => {
       expect.stringContaining("/tmp/ws/demo/.tau/scripts/provision"),
       { cwd: "/tmp/ws/demo/packages/core" },
     );
+    const provisionCommand = clientHarness.session.exec.mock.calls[0][0];
+    expect(provisionCommand).toContain('dd if="$provision_path" bs=2 count=1');
+    expect(provisionCommand).toContain(".tau/scripts/provision must start with a shebang");
 
     provisionDeferred.resolve();
+    await manager.closeSession(created.id);
+  });
+
+  it("restarts provisioning when a turn interrupt cancels its exec", async () => {
+    const clientHarness = createClientHarness();
+    const firstProvision = deferred();
+    clientHarness.session.exec
+      .mockImplementationOnce(async () => await firstProvision.promise)
+      .mockResolvedValue({
+        output: "",
+        stdout: "",
+        stderr: "",
+        exitCode: 0,
+        truncated: false,
+      });
+    clientHarness.session.interrupt = vi.fn(async () => {
+      firstProvision.reject(
+        new TauSessionProtocolResponseError({
+          requestId: "provision-1",
+          error: { code: "cancelled", message: "execution command was cancelled" },
+        }),
+      );
+      clientHarness.submitDeferred.resolve({
+        userHistoryEntryId: "history-interrupt",
+        turn: { status: "aborted", stopReason: "aborted" },
+      });
+      return { interrupted: true, isTurnRunning: true };
+    });
+
+    const manager = createTelegramSessionManager({
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      prepareWorkspace: vi.fn(async () => ({
+        workspacePath: "/tmp/ws/demo",
+        sessionCwd: "/tmp/ws/demo",
+        provisionTargets: [
+          {
+            projectId: "demo",
+            repositoryRoot: "/tmp/ws/demo",
+            cwd: "/tmp/ws/demo",
+          },
+        ],
+      })),
+      createClient: vi.fn(async () => clientHarness.client),
+    });
+
+    const created = await manager.createSession({ projectId: "demo" });
+    await waitFor(() => clientHarness.session.exec.mock.calls.length === 1);
+    await manager.sendMessage(created.id, "run");
+    await waitFor(() => manager.getSession(created.id)?.state === "running");
+
+    await manager.interruptSession(created.id);
+    await waitFor(() => clientHarness.session.exec.mock.calls.length === 2);
+
+    expect(manager.getProvisionFailures(created.id)).toEqual([]);
+    expect(manager.getLogs(created.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          message: "workspace provision restarting after session interrupt",
+        }),
+      ]),
+    );
     await manager.closeSession(created.id);
   });
 
@@ -359,13 +424,15 @@ describe("telegram session manager", () => {
     const created = await manager.createSession({ projectId: "demo" });
     await waitFor(() => events.some((event) => event.type === "session-provision-failed"));
 
-    expect(events).toContainEqual({
+    const failure = {
       type: "session-provision-failed",
       sessionId: created.id,
       projectId: "demo",
       targetProjectId: "demo",
       diagnostic: "provision exited with code 17\ndependencies failed",
-    });
+    };
+    expect(events).toContainEqual(failure);
+    expect(manager.getProvisionFailures(created.id)).toEqual([failure]);
     expect(manager.getSession(created.id)?.state).toBe("waiting-input");
     await manager.closeSession(created.id);
   });

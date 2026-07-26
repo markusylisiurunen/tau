@@ -1114,6 +1114,11 @@ class TelegramAdapterImpl {
     this.unsubscribeSessionEvents = this.sessionManager.onEvent((event) => {
       this.onSessionEvent(event);
     });
+    for (const sessionId of this.chatsBySession.keys()) {
+      for (const failure of this.sessionManager.getProvisionFailures(sessionId)) {
+        this.onSessionEvent(failure);
+      }
+    }
 
     void this.syncCommands();
     this.loopPromise = this.runLoop();

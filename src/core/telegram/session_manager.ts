@@ -161,6 +161,7 @@ type SessionEntry = {
   workspaceCleanupPromise?: Promise<void>;
   consumedFacetEventCounts: Map<string, number>;
   emittedAssistantMessageIds: Set<string>;
+  emittedTurnFailureIds: Set<string>;
 };
 
 export type TelegramSessionManagerEvent =
@@ -182,6 +183,13 @@ export type TelegramSessionManagerEvent =
       projectId: string;
       state: TelegramSessionState;
       log: TelegramSessionLogEntry;
+    }
+  | {
+      type: "session-turn-failed";
+      sessionId: string;
+      projectId: string;
+      timestamp: string;
+      failure: Extract<SessionProtocolSubmitResult["turn"], { status: "failed" | "blocked" }>;
     }
   | {
       type: "session-progress";
@@ -346,6 +354,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       cancelRequested: false,
       consumedFacetEventCounts: new Map(),
       emittedAssistantMessageIds: new Set(),
+      emittedTurnFailureIds: new Set(),
     };
 
     this.sessions.set(id, entry);
@@ -551,6 +560,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
         cancelRequested: false,
         consumedFacetEventCounts: new Map(),
         emittedAssistantMessageIds: new Set(),
+        emittedTurnFailureIds: new Set(),
       };
       this.sessions.set(record.id, entry);
     }
@@ -908,13 +918,16 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
         });
 
         if (!entry.cancelRequested) {
-          if (failure) {
-            entry.record.error =
-              failure.status === "failed"
-                ? (failure.errorMessage ?? "model provider returned an error")
-                : failure.message;
-            this.setState(entry, "failed");
-          } else if (!entry.activeSubmit || entry.activeSubmit === submitPromise) {
+          if (failure && !entry.emittedTurnFailureIds.has(result.userHistoryEntryId)) {
+            entry.emittedTurnFailureIds.add(result.userHistoryEntryId);
+            this.emit({
+              type: "session-turn-failed",
+              sessionId: entry.record.id,
+              projectId: entry.record.projectId,
+              timestamp: this.now().toISOString(),
+              failure,
+            });
+          } else if (!failure && (!entry.activeSubmit || entry.activeSubmit === submitPromise)) {
             this.setState(entry, "waiting-input");
           }
         }

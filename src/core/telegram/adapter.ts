@@ -2604,6 +2604,20 @@ class TelegramAdapterImpl {
       return;
     }
 
+    if (event.type === "session-turn-failed") {
+      if (!this.chatsBySession.has(event.sessionId)) {
+        return;
+      }
+
+      this.notifySession(
+        event.sessionId,
+        event.failure.status === "failed"
+          ? `turn failed: ${event.failure.errorMessage ?? "model provider returned an error"}`
+          : `turn blocked: ${event.failure.message}`,
+      );
+      return;
+    }
+
     if (event.type !== "session-state-changed") {
       return;
     }

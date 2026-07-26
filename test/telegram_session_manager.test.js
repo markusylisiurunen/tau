@@ -579,6 +579,42 @@ describe("telegram session manager", () => {
     await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
   });
 
+  it("emits one failure event for a batched steering turn", async () => {
+    const clientHarness = createClientHarness();
+    const steeringTurn = deferred();
+    clientHarness.session.steer = vi.fn(async () => await steeringTurn.promise);
+    const manager = createDemoSessionManager(clientHarness);
+    const events = [];
+    manager.onEvent((event) => events.push(event));
+
+    const created = await manager.createSession({ projectId: "demo" });
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+
+    await manager.sendMessage(created.id, "first steering message", { mode: "steer" });
+    await manager.sendMessage(created.id, "second steering message", { mode: "steer" });
+    expect(clientHarness.session.steer).toHaveBeenCalledTimes(2);
+
+    steeringTurn.resolve({
+      userHistoryEntryId: "history-steering-batch",
+      turn: {
+        status: "failed",
+        stopReason: "error",
+        errorMessage: "OpenAI is unavailable",
+      },
+    });
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+
+    expect(events.filter((event) => event.type === "session-turn-failed")).toEqual([
+      expect.objectContaining({
+        sessionId: created.id,
+        failure: expect.objectContaining({
+          status: "failed",
+          errorMessage: "OpenAI is unavailable",
+        }),
+      }),
+    ]);
+  });
+
   it("returns from sendMessage immediately and rejects concurrent submits", async () => {
     const clientHarness = createClientHarness();
     const manager = createTelegramSessionManager({
@@ -613,6 +649,132 @@ describe("telegram session manager", () => {
       turn: { status: "completed", stopReason: "stop" },
     });
 
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+  });
+
+  it("keeps a provider-failed turn recoverable and accepts the next message", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "tau-telegram-turn-failure-"));
+    const workspacePath = join(tempRoot, "workspaces", "demo", "session");
+    const persistencePath = join(tempRoot, "sessions.json");
+    await mkdir(workspacePath, { recursive: true });
+
+    const clientHarness = createClientHarness();
+    clientHarness.session.submit = vi
+      .fn()
+      .mockResolvedValueOnce({
+        userHistoryEntryId: "history-failed",
+        turn: {
+          status: "failed",
+          stopReason: "error",
+          errorMessage: "OpenAI is unavailable",
+        },
+      })
+      .mockResolvedValueOnce({
+        userHistoryEntryId: "history-completed",
+        turn: { status: "completed", stopReason: "stop" },
+      });
+
+    const manager = createTelegramSessionManager({
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      persistencePath,
+      prepareWorkspace: vi.fn(async () => ({ workspacePath, sessionCwd: workspacePath })),
+      createClient: vi.fn(async () => clientHarness.client),
+    });
+    const events = [];
+    manager.onEvent((event) => events.push(event));
+    let recoveredManager;
+
+    try {
+      const created = await manager.createSession({ projectId: "demo" });
+      await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+
+      await manager.sendMessage(created.id, "first");
+      await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+
+      expect(manager.getSession(created.id)?.error).toBeUndefined();
+      expect(clientHarness.client.close).not.toHaveBeenCalled();
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "session-turn-failed",
+          sessionId: created.id,
+          failure: {
+            status: "failed",
+            stopReason: "error",
+            errorMessage: "OpenAI is unavailable",
+          },
+        }),
+      );
+
+      await manager.sendMessage(created.id, "second");
+      await waitFor(() => clientHarness.session.submit.mock.calls.length === 2);
+      await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+      await manager.close();
+
+      const storedState = JSON.parse(await readFile(persistencePath, "utf8"));
+      expect(storedState.sessions).toEqual([
+        expect.objectContaining({ id: created.id, tauSessionId: "rpc-1" }),
+      ]);
+
+      const recoveredClientHarness = createClientHarness();
+      recoveredManager = createTelegramSessionManager({
+        projects: { demo: { repo: "git@example.com:demo.git" } },
+        persistencePath,
+        prepareWorkspace: vi.fn(async () => ({ workspacePath, sessionCwd: workspacePath })),
+        createClient: vi.fn(async () => recoveredClientHarness.client),
+      });
+      await recoveredManager.initialize();
+
+      expect(recoveredManager.getSession(created.id)?.state).toBe("waiting-input");
+      expect(recoveredClientHarness.client.sessions.observe).toHaveBeenCalledWith("rpc-1");
+    } finally {
+      await recoveredManager?.close();
+      await manager.close();
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a blocked turn active and accepts the next message", async () => {
+    const clientHarness = createClientHarness();
+    clientHarness.session.submit = vi
+      .fn()
+      .mockResolvedValueOnce({
+        userHistoryEntryId: "history-blocked",
+        turn: {
+          status: "blocked",
+          reason: "auto-compaction-failed",
+          message: "automatic compaction failed",
+        },
+      })
+      .mockResolvedValueOnce({
+        userHistoryEntryId: "history-completed",
+        turn: { status: "completed", stopReason: "stop" },
+      });
+    const manager = createDemoSessionManager(clientHarness);
+    const events = [];
+    manager.onEvent((event) => events.push(event));
+
+    const created = await manager.createSession({ projectId: "demo" });
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+
+    await manager.sendMessage(created.id, "first");
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+
+    expect(manager.getSession(created.id)?.error).toBeUndefined();
+    expect(clientHarness.client.close).not.toHaveBeenCalled();
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "session-turn-failed",
+        sessionId: created.id,
+        failure: {
+          status: "blocked",
+          reason: "auto-compaction-failed",
+          message: "automatic compaction failed",
+        },
+      }),
+    );
+
+    await manager.sendMessage(created.id, "second");
+    await waitFor(() => clientHarness.session.submit.mock.calls.length === 2);
     await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
   });
 

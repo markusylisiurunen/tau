@@ -677,7 +677,11 @@ describe("telegram session manager", () => {
     const manager = createTelegramSessionManager({
       projects: { demo: { repo: "git@example.com:demo.git" } },
       persistencePath,
-      prepareWorkspace: vi.fn(async () => ({ workspacePath, sessionCwd: workspacePath })),
+      prepareWorkspace: vi.fn(async () => ({
+        workspacePath,
+        sessionCwd: workspacePath,
+        provisionTargets: [],
+      })),
       createClient: vi.fn(async () => clientHarness.client),
     });
     const events = [];
@@ -719,7 +723,11 @@ describe("telegram session manager", () => {
       recoveredManager = createTelegramSessionManager({
         projects: { demo: { repo: "git@example.com:demo.git" } },
         persistencePath,
-        prepareWorkspace: vi.fn(async () => ({ workspacePath, sessionCwd: workspacePath })),
+        prepareWorkspace: vi.fn(async () => ({
+          workspacePath,
+          sessionCwd: workspacePath,
+          provisionTargets: [],
+        })),
         createClient: vi.fn(async () => recoveredClientHarness.client),
       });
       await recoveredManager.initialize();

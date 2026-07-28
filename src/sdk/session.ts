@@ -585,7 +585,7 @@ class TauSdkSessionImpl implements TauSdkSession {
     const { signal, ...execOptions } = options;
     signal?.throwIfAborted();
     const onAbort = () => {
-      void this.interrupt();
+      void this.interrupt().catch(() => {});
     };
     signal?.addEventListener("abort", onAbort, { once: true });
     try {

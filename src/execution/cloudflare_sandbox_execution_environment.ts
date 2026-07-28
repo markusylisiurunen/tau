@@ -452,7 +452,12 @@ export class CloudflareSandboxBridgeClient {
 
     const contentLength = Number(response.headers.get("Content-Length"));
     if (Number.isFinite(contentLength)) {
-      assertFileWithinMaxBytes(contentLength, maxBytes);
+      try {
+        assertFileWithinMaxBytes(contentLength, maxBytes);
+      } catch (error) {
+        await response.body?.cancel().catch(() => {});
+        throw error;
+      }
     }
     if (!response.body) {
       return Buffer.alloc(0);

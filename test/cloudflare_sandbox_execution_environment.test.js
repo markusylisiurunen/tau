@@ -197,6 +197,36 @@ describe("Cloudflare Sandbox execution environment", () => {
     expect(cancelled).toBe(true);
   });
 
+  it("cancels binary responses whose content length exceeds the requested limit", async () => {
+    let cancelled = false;
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(Buffer.alloc(16));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const client = new CloudflareSandboxBridgeClient({
+      bridgeId: "default",
+      baseUrl: "https://bridge.example",
+      fetch: async () =>
+        new Response(body, {
+          headers: { "Content-Length": "16" },
+        }),
+    });
+    const backend = createCloudflareSandboxToolExecutionBackend({
+      client,
+      sandboxId: "sandbox-1",
+      cwd: "/workspace/repo",
+    });
+
+    await expect(
+      backend.readFileBinary("/workspace/repo/large.bin", { maxBytes: 10 }),
+    ).rejects.toThrow("file exceeds maximum size of 10 B (got 16 B)");
+    expect(cancelled).toBe(true);
+  });
+
   it("serializes bridge exec calls that share a command session", async () => {
     const encoder = new TextEncoder();
     const requests = [];

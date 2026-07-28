@@ -297,11 +297,17 @@ options:
 - `retry()`
   - sends `session.retry` with this session id to run a turn without appending user text
 - `exec(command, options?)`
-  - sends `session.exec` with this session id
-  - runs a raw command in the session execution environment and returns interleaved `output` plus split `stdout` and `stderr`
-  - accepts optional `cwd`, `timeoutMs`, `maxCaptureBytes` (up to 16 MiB), and `signal`; aborting the signal interrupts active session work because the protocol has session-wide interruption
+  - sends `session.exec` with a generated exec id and runs the command in fresh non-interactive login Bash
+  - returns interleaved `output`, split `stdout` and `stderr`, exit/truncation fields, and explicit timeout/abort/signal termination metadata
+  - accepts optional `cwd`, `timeoutMs`, `maxCaptureBytes` (up to 16 MiB), and `signal`; aborting the signal sends targeted `session.cancelExec` and rejects without interrupting other session work
   - runs independently and concurrently with session turns, mutations, other execs, samples, and ephemeral agents; callers own workspace coordination
   - does not add output to session history or mutate the session snapshot
+- `execProcess(argv, options?)`
+  - sends `session.execProcess` with a generated exec id for direct machine-facing argv execution without Bash startup files
+  - accepts optional `cwd`, `env`, `timeoutMs`, `maxCaptureBytes`, and targeted `signal` cancellation
+- `readFile(path, { maxBytes })` / `writeFile(path, content)`
+  - transfer bounded execution-environment file content without shell framing or command-line payload encoding
+  - file content crosses the wire as base64 while the SDK exposes and accepts `Buffer`
 - `sample({ context, options })`
   - sends `session.sample` with this session id
   - samples the active persona model against only the supplied system prompt, messages, and optional tool schemas
@@ -391,7 +397,7 @@ const second = await session.sample({
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "type": "session.delta",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "fromRevision": 1,

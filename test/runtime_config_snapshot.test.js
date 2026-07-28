@@ -15,6 +15,27 @@ async function withTempHome(test) {
 }
 
 describe("runtime config snapshot", () => {
+  it("fails explicitly when the execution environment snapshot is truncated", async () => {
+    const backend = {
+      async runNodeScript() {
+        return {
+          output: '{"files":',
+          stdout: '{"files":',
+          stderr: "",
+          exitCode: 0,
+          truncated: true,
+          timedOut: false,
+          aborted: false,
+          closeSignal: null,
+        };
+      },
+    };
+
+    await expect(
+      loadRuntimeConfigFromToolBackend({ backend, cwd: "/repo", home: "/home/user" }),
+    ).rejects.toThrow("execution environment config snapshot exceeded the capture limit");
+  });
+
   it("loads project config and content through a tool backend", async () => {
     await withTempHome(async (home) => {
       const repo = join(home, "repo");

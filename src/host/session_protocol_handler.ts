@@ -20,6 +20,7 @@ import {
 } from "../protocol/session_protocol.js";
 import {
   EphemeralThreadBusyError,
+  SessionExecBusyError,
   type TauHostedSession,
   type TauSessionHost,
 } from "./session_host.js";
@@ -157,6 +158,7 @@ export class SessionProtocolHandler {
   private readonly sessionStates = new Map<string, SessionProtocolHandlerSessionState>();
   private readonly connectionAbortController = new AbortController();
   private readonly activeSideChannels = new Set<Promise<void>>();
+  private readonly activeExecAbortControllers = new Map<string, AbortController>();
   private initialized = false;
   private clientToolRegistration?: {
     attachSession: (sessionId: string) => void;
@@ -212,7 +214,17 @@ export class SessionProtocolHandler {
           await this.handleRetry(request);
           return;
         case "session.exec":
+        case "session.execProcess":
           await this.handleExec(request);
+          return;
+        case "session.cancelExec":
+          await this.handleCancelExec(request);
+          return;
+        case "session.readFile":
+          await this.handleReadFile(request);
+          return;
+        case "session.writeFile":
+          await this.handleWriteFile(request);
           return;
         case "session.sample":
           await this.handleSample(request);
@@ -546,18 +558,121 @@ export class SessionProtocolHandler {
   }
 
   private async handleExec(
-    request: Extract<SessionProtocolRequestMessage, { method: "session.exec" }>,
+    request: Extract<
+      SessionProtocolRequestMessage,
+      { method: "session.exec" | "session.execProcess" }
+    >,
+  ): Promise<void> {
+    const key = this.execKey(request.params.sessionId, request.params.execId);
+    if (this.activeExecAbortControllers.has(key)) {
+      this.sendMessage(
+        createSessionProtocolErrorResponse(
+          request.id,
+          SESSION_PROTOCOL_ERROR_CODES.busy,
+          `execution '${request.params.execId}' is already active`,
+        ),
+      );
+      return;
+    }
+
+    const abortController = new AbortController();
+    this.activeExecAbortControllers.set(key, abortController);
+    try {
+      const state = await this.getSessionState(request.params.sessionId);
+      if (!state) {
+        this.sendSessionNotFound(request.id, request.params.sessionId);
+        return;
+      }
+      if (this.closed) {
+        return;
+      }
+
+      await this.runSideChannel((signal) =>
+        this.executeExec(state, request, AbortSignal.any([signal, abortController.signal])),
+      );
+    } finally {
+      if (this.activeExecAbortControllers.get(key) === abortController) {
+        this.activeExecAbortControllers.delete(key);
+      }
+    }
+  }
+
+  private async handleCancelExec(
+    request: Extract<SessionProtocolRequestMessage, { method: "session.cancelExec" }>,
+  ): Promise<void> {
+    const key = this.execKey(request.params.sessionId, request.params.execId);
+    const localController = this.activeExecAbortControllers.get(key);
+    let cancelled = false;
+    if (localController && !localController.signal.aborted) {
+      localController.abort();
+      cancelled = true;
+    }
+
+    const state = await this.getSessionState(request.params.sessionId);
+    if (!state) {
+      this.sendSessionNotFound(request.id, request.params.sessionId);
+      return;
+    }
+    cancelled = state.session.cancelExec(request.params.execId) || cancelled;
+    this.sendMessage(
+      createSessionProtocolSuccessResponse(request.id, "session.cancelExec", { cancelled }),
+    );
+  }
+
+  private async handleReadFile(
+    request: Extract<SessionProtocolRequestMessage, { method: "session.readFile" }>,
   ): Promise<void> {
     const state = await this.getSessionState(request.params.sessionId);
     if (!state) {
       this.sendSessionNotFound(request.id, request.params.sessionId);
       return;
     }
-    if (this.closed) {
+    try {
+      const result = await state.session.readFile({
+        path: request.params.path,
+        maxBytes: request.params.maxBytes,
+      });
+      this.sendMessage(
+        createSessionProtocolSuccessResponse(request.id, "session.readFile", result),
+      );
+    } catch (error) {
+      this.sendMessage(
+        createSessionProtocolErrorResponse(
+          request.id,
+          SESSION_PROTOCOL_ERROR_CODES.internalError,
+          "failed to read execution-environment file",
+          { cause: error instanceof Error ? error.message : String(error) },
+        ),
+      );
+    }
+  }
+
+  private async handleWriteFile(
+    request: Extract<SessionProtocolRequestMessage, { method: "session.writeFile" }>,
+  ): Promise<void> {
+    const state = await this.getSessionState(request.params.sessionId);
+    if (!state) {
+      this.sendSessionNotFound(request.id, request.params.sessionId);
       return;
     }
-
-    await this.runSideChannel((signal) => this.executeExec(state, request, signal));
+    try {
+      const result = await state.session.writeFile({
+        path: request.params.path,
+        contentBase64: request.params.contentBase64,
+      });
+      this.sendMessage(
+        createSessionProtocolSuccessResponse(request.id, "session.writeFile", result),
+      );
+    } catch (error) {
+      this.sendMessage(
+        createSessionProtocolErrorResponse(
+          request.id,
+          SESSION_PROTOCOL_ERROR_CODES.internalError,
+          "failed to write execution-environment file",
+          { cause: error instanceof Error ? error.message : String(error) },
+        ),
+      );
+    }
   }
 
   private async handleSample(
@@ -994,6 +1109,10 @@ export class SessionProtocolHandler {
     }
   }
 
+  private execKey(sessionId: string, execId: string): string {
+    return `${sessionId}\0${execId}`;
+  }
+
   private async runSideChannel(operation: (signal: AbortSignal) => Promise<void>): Promise<void> {
     const promise = operation(this.connectionAbortController.signal);
     this.activeSideChannels.add(promise);
@@ -1006,29 +1125,43 @@ export class SessionProtocolHandler {
 
   private async executeExec(
     state: SessionProtocolHandlerSessionState,
-    request: Extract<SessionProtocolRequestMessage, { method: "session.exec" }>,
+    request: Extract<
+      SessionProtocolRequestMessage,
+      { method: "session.exec" | "session.execProcess" }
+    >,
     signal: AbortSignal,
   ): Promise<void> {
     try {
-      const result = await state.session.exec({
-        command: request.params.command,
+      const options = {
+        execId: request.params.execId,
         ...(request.params.cwd !== undefined ? { cwd: request.params.cwd } : {}),
         ...(request.params.timeoutMs !== undefined ? { timeoutMs: request.params.timeoutMs } : {}),
         ...(request.params.maxCaptureBytes !== undefined
           ? { maxCaptureBytes: request.params.maxCaptureBytes }
           : {}),
         signal,
-      });
-      this.sendMessage(createSessionProtocolSuccessResponse(request.id, "session.exec", result));
+      };
+      const result =
+        request.method === "session.exec"
+          ? await state.session.exec({ ...options, command: request.params.command })
+          : await state.session.execProcess({
+              ...options,
+              argv: request.params.argv,
+              ...(request.params.env !== undefined ? { env: request.params.env } : {}),
+            });
+      this.sendMessage(createSessionProtocolSuccessResponse(request.id, request.method, result));
     } catch (error) {
       const cancelled = signal.aborted || isAbortError(error);
+      const busy = error instanceof SessionExecBusyError;
       this.sendMessage(
         createSessionProtocolErrorResponse(
           request.id,
           cancelled
             ? SESSION_PROTOCOL_ERROR_CODES.cancelled
-            : SESSION_PROTOCOL_ERROR_CODES.internalError,
-          cancelled ? "execution command was cancelled" : "failed to run execution command",
+            : busy
+              ? SESSION_PROTOCOL_ERROR_CODES.busy
+              : SESSION_PROTOCOL_ERROR_CODES.internalError,
+          cancelled ? "execution was cancelled" : busy ? error.message : "failed to run execution",
           { cause: error instanceof Error ? error.message : String(error) },
         ),
       );

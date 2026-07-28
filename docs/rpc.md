@@ -64,7 +64,7 @@ WebSocket clients receive the same `ready`, `response`, `session.delta`, and `se
 every protocol message includes `version`.
 
 ```json
-{ "version": 2, "type": "..." }
+{ "version": 3, "type": "..." }
 ```
 
 server-to-client messages are:
@@ -85,7 +85,7 @@ when the rpc server starts, it immediately emits a `ready` line:
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "type": "ready",
   "methods": [
     "initialize",
@@ -100,6 +100,10 @@ when the rpc server starts, it immediately emits a `ready` line:
     "session.cancelPendingMessages",
     "session.retry",
     "session.exec",
+    "session.execProcess",
+    "session.cancelExec",
+    "session.readFile",
+    "session.writeFile",
     "session.sample",
     "session.interrupt",
     "session.snapshot",
@@ -146,7 +150,7 @@ all requests use this envelope:
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "type": "request",
   "id": "req-1",
   "method": "session.submit",
@@ -179,7 +183,7 @@ params (required):
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "type": "response",
   "id": "init-1",
   "ok": true,
@@ -198,6 +202,10 @@ params (required):
       "session.cancelPendingMessages",
       "session.retry",
       "session.exec",
+      "session.execProcess",
+      "session.cancelExec",
+      "session.readFile",
+      "session.writeFile",
       "session.sample",
       "session.interrupt",
       "session.snapshot",
@@ -414,7 +422,7 @@ if another turn is already running, tau returns:
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "type": "response",
   "id": "submit-2",
   "ok": false,
@@ -519,6 +527,7 @@ params (required):
 ```json
 {
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
+  "execId": "exec-0195d6e4",
   "command": "git diff -- src/main.ts",
   "cwd": "/repo",
   "timeoutMs": 30000,
@@ -526,7 +535,7 @@ params (required):
 }
 ```
 
-runs the command in a fresh, non-interactive login Bash belonging to the session execution environment and returns captured output. Tau sets `HOME` to the execution environment home, so Bash reads `/etc/profile` and then the first available user login file (`~/.bash_profile`, `~/.bash_login`, or `~/.profile`); `.bashrc` is loaded only when the login configuration sources it. Each call starts a new process, so shell state does not persist. `output` is stdout and stderr interleaved in arrival order; `stdout` and `stderr` are the split streams. `cwd`, `timeoutMs`, and `maxCaptureBytes` are optional. `maxCaptureBytes` overrides the default one-megabyte capture limit for this command, up to 16 MiB. `cwd` is the command working directory, not a confinement boundary; absolute paths are allowed when the execution environment permits them. Exec requests are independent side channels: multiple commands can run concurrently with each other and with session turns, mutations, samples, or ephemeral agents. They do not enter the session mutation queue, change snapshots, or emit deltas. Workspace races are allowed, so clients must coordinate commands when consistency matters. The command does not add anything to session history; clients that want command output in model context should call `session.record` with their chosen text.
+runs the command in a fresh, non-interactive login Bash belonging to the session execution environment and returns captured output. `execId` is required and must be unique among active executions in the session. Tau sets `HOME` to the execution environment home, so Bash reads `/etc/profile` and then the first available user login file (`~/.bash_profile`, `~/.bash_login`, or `~/.profile`). Bash also reads inherited `BASH_ENV` when set; otherwise `.bashrc` is loaded only when the login configuration sources it. Each call starts a new process, so shell state does not persist. `output` is stdout and stderr interleaved in arrival order; `stdout` and `stderr` are the split streams. `cwd`, `timeoutMs`, and `maxCaptureBytes` are optional. `maxCaptureBytes` overrides the default one-megabyte capture limit for this command, up to 16 MiB. `cwd` is the command working directory, not a confinement boundary; absolute paths are allowed when the execution environment permits them. Exec requests are independent side channels: multiple commands can run concurrently with each other and with session turns, mutations, samples, or ephemeral agents. They do not enter the session mutation queue, change snapshots, or emit deltas. Workspace races are allowed, so clients must coordinate commands when consistency matters. `session.cancelExec` targets one active exec by id; `session.interrupt` remains the explicit session-wide cancellation operation. The command does not add anything to session history; clients that want command output in model context should call `session.record` with their chosen text.
 
 returns:
 
@@ -536,9 +545,24 @@ returns:
   "stdout": "stdout only",
   "stderr": "stderr only",
   "exitCode": 0,
-  "truncated": false
+  "truncated": false,
+  "timedOut": false,
+  "aborted": false,
+  "closeSignal": null
 }
 ```
+
+#### session.execProcess
+
+runs a machine-facing argv command without starting Bash or loading shell profiles. Params require `sessionId`, a unique active `execId`, and a non-empty `argv`; optional `env`, `cwd`, `timeoutMs`, and `maxCaptureBytes` are applied directly in the execution environment. The result is the same captured execution shape as `session.exec`. Tau-controlled Git, Node, and other structured helper operations use this method so profile output cannot corrupt payloads.
+
+#### session.cancelExec
+
+params require `sessionId` and `execId`. Cancels only that active `session.exec` or `session.execProcess` operation and returns `{ "cancelled": boolean }`; it does not interrupt turns, samples, or other execs.
+
+#### session.readFile / session.writeFile
+
+`session.readFile` requires `sessionId`, `path`, and a positive `maxBytes` up to 16 MiB, and returns `{ contentBase64, bytes }`. `session.writeFile` requires `sessionId`, `path`, and bounded `contentBase64`, and returns `{ path, bytes }`. These operations transfer execution-environment files without shell commands or command-line payload encoding.
 
 #### session.sample
 
@@ -836,7 +860,7 @@ observed-session changes are broadcast as `session.delta` messages:
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "type": "session.delta",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "fromRevision": 1,
@@ -860,7 +884,7 @@ observed-session changes are broadcast as `session.delta` messages:
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "type": "session.delta",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "fromRevision": null,
@@ -891,7 +915,7 @@ notes:
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "type": "session.pendingUserMessages",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "state": {
@@ -914,7 +938,7 @@ Pending messages are shared across attached clients and survive client detach wh
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "type": "session.ephemeral",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "event": {
@@ -945,7 +969,7 @@ error responses use:
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "type": "response",
   "id": "req-1",
   "ok": false,
@@ -978,7 +1002,7 @@ for lines that cannot produce a valid request id (for example malformed json), `
 - `session.record`, `session.setReasoning`, `session.setPersona`, `session.reload`, `session.compact`, `session.prune`, `session.rewind`, and `session.terminateSubagent` run through a session-owned mutation queue (arrival order across clients observed to the same live session)
 - `session.setReasoning` updates settings immediately without interrupting an active turn; active turns keep their captured reasoning and the new setting applies to the next user-message turn
 - only one `session.submit` or `session.retry` turn can run at once (`busy` otherwise)
-- `session.exec` and `session.sample` calls can run concurrently with each other and with normal session work; they never enter the mutation queue
+- `session.exec`, `session.execProcess`, file transfers, and `session.sample` calls can run concurrently with each other and with normal session work; they never enter the mutation queue
 - `session.ephemeral.create`, `session.ephemeral.submit`, and `session.ephemeral.close` manage independent, non-persisted contexts outside the main-session mutation queue; only overlapping submissions to the same ephemeral thread return `busy`
 - `session.queue` can be accepted during active main-session work and runs after the active turn settles
 - `session.steer` can be accepted during an active turn and runs at the next safe boundary after requesting the active turn to stop

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -34,9 +34,12 @@ describe("LocalExecutionEnvironment", () => {
       'export TAU_LOGIN_PROFILE=loaded\nprintf "profile output\\n"\n',
       "utf8",
     );
+    const bashEnv = join(home, "bash-env");
+    await writeFile(bashEnv, 'printf "bash env output\\n"\n', "utf8");
     const environment = new LocalExecutionEnvironment({
       cwd: repo,
       home,
+      env: { BASH_ENV: bashEnv },
       backend: createLocalToolExecutionBackend(),
     });
 
@@ -45,8 +48,38 @@ describe("LocalExecutionEnvironment", () => {
         .getToolExecutionBackend()
         .runBash('values=(one two); printf "%s|%s|%s" "$TAU_LOGIN_PROFILE" "$HOME" "$PWD"');
 
-      expect(result.stdout).toBe(`profile output\nloaded|${home}|${repo}`);
+      expect(result.stdout).toBe(
+        `profile output\nbash env output\nloaded|${home}|${await realpath(repo)}`,
+      );
       expect(result.exitCode).toBe(0);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("runs machine processes directly with the scoped environment", async () => {
+    const home = await mkdtemp(join(tmpdir(), "tau-local-process-home-"));
+    const repo = join(home, "repo");
+    await mkdir(repo);
+    await writeFile(join(home, ".bash_profile"), 'printf "profile output\\n"\n', "utf8");
+    const environment = new LocalExecutionEnvironment({
+      cwd: repo,
+      home,
+      env: { TAU_PROCESS_VALUE: "scoped", BASH_ENV: join(home, ".bash_profile") },
+      backend: createLocalToolExecutionBackend(),
+    });
+
+    try {
+      const result = await environment
+        .getToolExecutionBackend()
+        .runProcess([
+          "node",
+          "-e",
+          'process.stdout.write([process.env.TAU_PROCESS_VALUE, process.env.HOME].join("|"))',
+        ]);
+
+      expect(result.stdout).toBe(`scoped|${home}`);
+      expect(result.output).not.toContain("profile output");
     } finally {
       await rm(home, { recursive: true, force: true });
     }

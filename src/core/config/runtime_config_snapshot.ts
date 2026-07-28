@@ -1,6 +1,10 @@
 import type { Stats } from "node:fs";
 import { dirname } from "node:path";
-import type { BashExecutionResult, ToolExecutionBackend } from "../tools/execution_backend.js";
+import {
+  type BashExecutionResult,
+  MAX_COMMAND_CAPTURE_BYTES,
+  type ToolExecutionBackend,
+} from "../tools/execution_backend.js";
 import type { ConfigDeps } from "./deps.js";
 import { loadRuntimeConfig, type RuntimeConfigResult } from "./runtime.js";
 
@@ -117,10 +121,13 @@ export async function loadRuntimeConfigFromToolBackend(options: {
   const result = await options.backend.runNodeScript(
     COLLECT_RUNTIME_CONFIG_SCRIPT,
     [options.cwd, options.home],
-    { cwd: options.cwd, timeoutMs: 30_000, maxCaptureBytes: null },
+    { cwd: options.cwd, timeoutMs: 30_000, maxCaptureBytes: MAX_COMMAND_CAPTURE_BYTES },
   );
   if (result.exitCode !== 0) {
     throw new Error(formatConfigSnapshotCommandFailure(result));
+  }
+  if (result.truncated) {
+    throw new Error("execution environment config snapshot exceeded the capture limit");
   }
 
   const snapshot = parseRuntimeConfigSnapshot(result.output);

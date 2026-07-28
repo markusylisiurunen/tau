@@ -98,6 +98,9 @@ describe("Cloudflare Sandbox execution environment", () => {
       stderr: "",
       exitCode: 0,
       truncated: false,
+      timedOut: false,
+      aborted: false,
+      closeSignal: null,
     });
 
     expect(requests).toHaveLength(2);
@@ -321,7 +324,7 @@ describe("Cloudflare Sandbox execution environment", () => {
     const second = backend.runBash("two", { signal: controller.signal });
     controller.abort();
 
-    await expect(second).rejects.toMatchObject({ name: "AbortError" });
+    await expect(second).resolves.toMatchObject({ aborted: true, exitCode: null });
     expect(execStreams).toHaveLength(1);
     execStreams[0].controller.enqueue(encoder.encode(execSse({ stdout: "one\n" }).join("")));
     execStreams[0].controller.close();
@@ -329,8 +332,10 @@ describe("Cloudflare Sandbox execution environment", () => {
     await backend.dispose();
   });
 
-  it("cancels active and queued commands and rejects new work on dispose", async () => {
+  it("cancels active and queued commands, awaits cleanup, and rejects new work on dispose", async () => {
     const requests = [];
+    const deleteStarted = deferred();
+    const releaseDelete = deferred();
     let execCount = 0;
     const fetchMock = async (url, init = {}) => {
       requests.push({ url: String(url), init });
@@ -352,6 +357,8 @@ describe("Cloudflare Sandbox execution environment", () => {
         });
       }
       if (String(url).includes("/v1/sandbox/sandbox-1/session/tau-session-1")) {
+        deleteStarted.resolve();
+        await releaseDelete.promise;
         return jsonResponse({});
       }
       return jsonResponse({ error: "not found" }, { status: 404 });
@@ -371,10 +378,18 @@ describe("Cloudflare Sandbox execution environment", () => {
     const first = backend.runBash("one");
     await waitFor(() => execCount === 1);
     const second = backend.runBash("two");
-    const firstResult = expect(first).rejects.toMatchObject({ name: "AbortError" });
-    const secondResult = expect(second).rejects.toMatchObject({ name: "AbortError" });
+    const firstResult = expect(first).resolves.toMatchObject({ aborted: true, exitCode: null });
+    const secondResult = expect(second).resolves.toMatchObject({ aborted: true, exitCode: null });
 
-    await backend.dispose();
+    let disposed = false;
+    const disposal = backend.dispose().then(() => {
+      disposed = true;
+    });
+    await deleteStarted.promise;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(disposed).toBe(false);
+    releaseDelete.resolve();
+    await disposal;
     await firstResult;
     await secondResult;
     expect(execCount).toBe(1);
@@ -510,8 +525,10 @@ describe("Cloudflare Sandbox execution environment", () => {
       cwd: "/workspace/repo",
     });
 
-    await expect(backend.runBash("pwd", { timeoutMs: 10 })).rejects.toMatchObject({
-      name: "TimeoutError",
+    await expect(backend.runBash("pwd", { timeoutMs: 10 })).resolves.toMatchObject({
+      timedOut: true,
+      exitCode: null,
+      stderr: expect.stringContaining("timed out after 10ms"),
     });
   });
 
@@ -553,8 +570,8 @@ describe("Cloudflare Sandbox execution environment", () => {
     await execStarted.promise;
     controller.abort();
 
-    await expect(run).rejects.toMatchObject({ name: "AbortError" });
-    expect(requests.some((request) => request.init.method === "DELETE")).toBe(true);
+    await expect(run).resolves.toMatchObject({ aborted: true, exitCode: null });
+    await waitFor(() => requests.some((request) => request.init.method === "DELETE"));
   });
 
   it("deletes every per-cwd command session on dispose", async () => {
@@ -630,9 +647,9 @@ describe("Cloudflare Sandbox execution environment", () => {
     const controller = new AbortController();
     controller.abort();
 
-    await expect(backend.runBash("sleep 10", { signal: controller.signal })).rejects.toMatchObject({
-      name: "AbortError",
-    });
+    await expect(backend.runBash("sleep 10", { signal: controller.signal })).resolves.toMatchObject(
+      { aborted: true, exitCode: null },
+    );
     expect(requests).toHaveLength(0);
   });
 
@@ -746,7 +763,7 @@ describe("Cloudflare Sandbox execution environment", () => {
     expect(JSON.parse(nodeScriptCalls[0].args[3])).toEqual(["/workspace/repo/docs/AGENTS.md"]);
     expect(nodeScriptCalls[0].options).toMatchObject({
       cwd: "/workspace/repo",
-      maxCaptureBytes: null,
+      maxCaptureBytes: 16 * 1024 * 1024,
     });
     expect(environment.snapshot()).toEqual({
       kind: "cloudflare-sandbox",

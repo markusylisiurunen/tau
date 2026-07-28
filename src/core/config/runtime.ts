@@ -1,7 +1,10 @@
 import { type LoadedModelResolver, loadModelResolver } from "../models/catalog.js";
 import { parsePersonaReference } from "../persona_reference.js";
 import type { PromptTemplate } from "../prompts.js";
-import type { ToolExecutionBackend } from "../tools/execution_backend.js";
+import {
+  MAX_COMMAND_CAPTURE_BYTES,
+  type ToolExecutionBackend,
+} from "../tools/execution_backend.js";
 import type { Persona, Skill } from "../types.js";
 import { loadAllContent, parsePrompt, type ThemeDefinition } from "./content_loader.js";
 import type { ConfigDeps } from "./deps.js";
@@ -131,13 +134,16 @@ export async function resolvePromptTemplateWithBackend(options: {
   const result = await options.backend.runNodeScript(
     COLLECT_PROMPT_TEMPLATE_CANDIDATES_SCRIPT,
     [options.cwd, options.home, options.promptId],
-    { cwd: options.cwd, timeoutMs: 10_000, maxCaptureBytes: null },
+    { cwd: options.cwd, timeoutMs: 10_000, maxCaptureBytes: MAX_COMMAND_CAPTURE_BYTES },
   );
   if (result.exitCode !== 0) {
     const output = result.output.trim();
     throw new Error(
       output ? `failed to resolve prompt template: ${output}` : "failed to resolve prompt template",
     );
+  }
+  if (result.truncated) {
+    throw new Error("execution environment prompt template snapshot exceeded the capture limit");
   }
 
   const candidates = parsePromptTemplateCandidates(result.output);

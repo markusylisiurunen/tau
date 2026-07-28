@@ -4,6 +4,7 @@ import {
   applyBashEnvironment,
   applyCommandEnvironment,
   type BashExecutionResult,
+  DEFAULT_COMMAND_CAPTURE_BYTES,
   type ListDirEntry,
   type ToolExecutionBackend,
 } from "../core/tools/execution_backend.js";
@@ -21,7 +22,6 @@ import {
 } from "./sandbox_tool_helpers.js";
 import { ToolBackendExecutionEnvironment } from "./tool_backend_execution_environment.js";
 
-const BASH_MAX_CAPTURE_BYTES = 1024 * 1024;
 const DEFAULT_HOME = "/home/sandbox";
 const HELPER_OPERATION_TIMEOUT_MS = 30_000;
 
@@ -143,6 +143,7 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
   const { client, sandboxId } = options;
   const commandSessions = new Map<string, Promise<{ id: string; cwd: string }>>();
   const commandQueues = new Map<string, Promise<void>>();
+  const cleanupPromises = new Set<Promise<void>>();
   const disposeAbortController = new AbortController();
   let disposed = false;
 
@@ -188,6 +189,15 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
     }
   };
 
+  const scheduleCommandSessionReset = (cwd: string): void => {
+    const cleanup = resetCommandSession(cwd);
+    cleanupPromises.add(cleanup);
+    void cleanup.then(
+      () => cleanupPromises.delete(cleanup),
+      () => cleanupPromises.delete(cleanup),
+    );
+  };
+
   const resetAllCommandSessions = async (): Promise<void> => {
     const sessionPromises = [...commandSessions.values()];
     commandSessions.clear();
@@ -231,32 +241,33 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
   };
 
   const runCommand = async (
-    argv: string[],
+    argv: [string, ...string[]],
     runOptions: {
       timeoutMs?: number;
       signal?: AbortSignal;
       cwd?: string;
       env?: Record<string, string>;
-      maxCaptureBytes?: number | null;
+      maxCaptureBytes?: number;
     } = {},
   ): Promise<BashExecutionResult> => {
+    assertActive();
     const cwd = runOptions.cwd ?? options.cwd;
-    const signals = [disposeAbortController.signal];
-    if (runOptions.signal) {
-      signals.push(runOptions.signal);
-    }
-    if (
+    const timeoutSignal =
       runOptions.timeoutMs !== undefined &&
       Number.isFinite(runOptions.timeoutMs) &&
       runOptions.timeoutMs > 0
-    ) {
-      signals.push(AbortSignal.timeout(runOptions.timeoutMs));
-    }
-    const signal = AbortSignal.any(signals);
-    return await runQueued(cwd, signal, async () => {
-      const sessionId = await ensureCommandSession(cwd, signal);
-
-      try {
+        ? AbortSignal.timeout(runOptions.timeoutMs)
+        : undefined;
+    const signal = AbortSignal.any(
+      [disposeAbortController.signal, runOptions.signal, timeoutSignal].filter(
+        (candidate): candidate is AbortSignal => candidate !== undefined,
+      ),
+    );
+    let sessionAcquired = false;
+    try {
+      return await runQueued(cwd, signal, async () => {
+        const sessionId = await ensureCommandSession(cwd, signal);
+        sessionAcquired = true;
         return await client.exec(sandboxId, {
           argv: applyCommandEnvironment(argv, runOptions.env),
           cwd,
@@ -264,17 +275,23 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
           signal,
           maxCaptureBytes: runOptions.maxCaptureBytes,
           sessionId,
-          onAbort: () => {
-            void resetCommandSession(cwd);
-          },
         });
-      } catch (err) {
-        if (signal.aborted || isAbortError(err)) {
-          void resetCommandSession(cwd);
-        }
-        throw err;
+      });
+    } catch (error) {
+      if (sessionAcquired && (signal.aborted || isAbortError(error))) {
+        scheduleCommandSessionReset(cwd);
       }
-    });
+      if (timeoutSignal?.aborted) {
+        return terminatedExecutionResult(
+          `(tau) timed out after ${runOptions.timeoutMs}ms`,
+          "timeout",
+        );
+      }
+      if (runOptions.signal?.aborted || disposeAbortController.signal.aborted) {
+        return terminatedExecutionResult("(tau) aborted", "abort");
+      }
+      throw error;
+    }
   };
 
   return {
@@ -286,6 +303,11 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
       disposeAbortController.abort();
       await Promise.allSettled(commandQueues.values());
       await resetAllCommandSessions();
+      await Promise.allSettled(cleanupPromises);
+    },
+
+    runProcess(argv, runOptions = {}) {
+      return runCommand(argv, runOptions);
     },
 
     runBash(command, runOptions = {}) {
@@ -391,9 +413,8 @@ export class CloudflareSandboxBridgeClient {
       cwd?: string;
       timeoutMs?: number;
       signal?: AbortSignal;
-      maxCaptureBytes?: number | null;
+      maxCaptureBytes?: number;
       sessionId?: string;
-      onAbort?: () => void;
     },
   ): Promise<BashExecutionResult> {
     const controller = new AbortController();
@@ -426,11 +447,6 @@ export class CloudflareSandboxBridgeClient {
       }
 
       return await parseExecSse(response.body, options.maxCaptureBytes);
-    } catch (err) {
-      if (controller.signal.aborted || isAbortError(err)) {
-        options.onAbort?.();
-      }
-      throw err;
     } finally {
       options.signal?.removeEventListener("abort", abort);
     }
@@ -553,9 +569,22 @@ export class CloudflareSandboxBridgeClient {
   }
 }
 
+function terminatedExecutionResult(note: string, reason: "timeout" | "abort"): BashExecutionResult {
+  return {
+    output: `${note}\n`,
+    stdout: "",
+    stderr: `${note}\n`,
+    exitCode: null,
+    truncated: false,
+    timedOut: reason === "timeout",
+    aborted: reason === "abort",
+    closeSignal: null,
+  };
+}
+
 async function parseExecSse(
   body: ReadableStream<Uint8Array>,
-  maxCaptureBytes: number | null = BASH_MAX_CAPTURE_BYTES,
+  maxCaptureBytes: number = DEFAULT_COMMAND_CAPTURE_BYTES,
 ): Promise<BashExecutionResult> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -626,6 +655,9 @@ async function parseExecSse(
     stderr: stderr.toString(),
     exitCode,
     truncated,
+    timedOut: false,
+    aborted: false,
+    closeSignal: null,
   };
 }
 
@@ -633,12 +665,12 @@ class ExecCaptureBuffer {
   private chunks: Buffer[] = [];
   private bytes = 0;
 
-  constructor(private readonly maxBytes: number | null) {}
+  constructor(private readonly maxBytes: number) {}
 
   append(value: string): boolean {
     let truncated = false;
     let nextValue = value;
-    if (this.maxBytes !== null && Buffer.byteLength(nextValue, "utf-8") > this.maxBytes) {
+    if (Buffer.byteLength(nextValue, "utf-8") > this.maxBytes) {
       truncated = true;
       while (Buffer.byteLength(nextValue, "utf-8") > this.maxBytes) {
         nextValue = nextValue.slice(Math.max(1, Math.floor(nextValue.length / 10)));
@@ -646,14 +678,14 @@ class ExecCaptureBuffer {
     }
 
     let chunk = Buffer.from(nextValue, "utf-8");
-    if (this.maxBytes !== null && chunk.byteLength > this.maxBytes) {
+    if (chunk.byteLength > this.maxBytes) {
       chunk = chunk.subarray(chunk.byteLength - this.maxBytes);
       truncated = true;
     }
 
     this.chunks.push(chunk);
     this.bytes += chunk.byteLength;
-    while (this.maxBytes !== null && this.bytes > this.maxBytes && this.chunks.length > 0) {
+    while (this.bytes > this.maxBytes && this.chunks.length > 0) {
       const removed = this.chunks.shift()!;
       this.bytes -= removed.byteLength;
       truncated = true;

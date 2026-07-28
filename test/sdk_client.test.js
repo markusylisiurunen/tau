@@ -244,13 +244,14 @@ class FakeSessionProtocolTransport {
         case "session.retry":
           return { turn: { status: "completed", stopReason: "stop" } };
         case "session.exec":
-          return {
-            output: "raw output",
-            stdout: "raw output",
-            stderr: "",
-            exitCode: 0,
-            truncated: false,
-          };
+        case "session.execProcess":
+          return createProtocolExecResult({ output: "raw output" });
+        case "session.cancelExec":
+          return { cancelled: true };
+        case "session.readFile":
+          return { contentBase64: Buffer.from("file").toString("base64"), bytes: 4 };
+        case "session.writeFile":
+          return { path: params.path, bytes: Buffer.from(params.contentBase64, "base64").length };
         case "session.sample":
           return {
             message: {
@@ -591,16 +592,16 @@ describe("sdk_client", () => {
       params: { sessionId: "session-1" },
     });
 
-    await expect(readySession.exec("pwd")).resolves.toEqual({
-      output: "raw output",
-      stdout: "raw output",
-      stderr: "",
-      exitCode: 0,
-      truncated: false,
-    });
+    await expect(readySession.exec("pwd")).resolves.toEqual(
+      createProtocolExecResult({ output: "raw output" }),
+    );
     expect(transport.requests.at(-1)).toEqual({
       method: "session.exec",
-      params: { sessionId: "session-1", command: "pwd" },
+      params: {
+        sessionId: "session-1",
+        execId: expect.any(String),
+        command: "pwd",
+      },
     });
 
     await expect(
@@ -609,21 +610,59 @@ describe("sdk_client", () => {
         timeoutMs: 30000,
         maxCaptureBytes: 2 * 1024 * 1024,
       }),
-    ).resolves.toEqual({
-      output: "raw output",
-      stdout: "raw output",
-      stderr: "",
-      exitCode: 0,
-      truncated: false,
-    });
+    ).resolves.toEqual(createProtocolExecResult({ output: "raw output" }));
     expect(transport.requests.at(-1)).toEqual({
       method: "session.exec",
       params: {
         sessionId: "session-1",
+        execId: expect.any(String),
         command: "git diff",
         cwd: "/repo",
         timeoutMs: 30000,
         maxCaptureBytes: 2 * 1024 * 1024,
+      },
+    });
+
+    await expect(
+      readySession.execProcess(["git", "status", "--short"], {
+        cwd: "/repo",
+        env: { HOME: "/home/user" },
+        timeoutMs: 30000,
+        maxCaptureBytes: 2 * 1024 * 1024,
+      }),
+    ).resolves.toEqual(createProtocolExecResult({ output: "raw output" }));
+    expect(transport.requests.at(-1)).toEqual({
+      method: "session.execProcess",
+      params: {
+        sessionId: "session-1",
+        execId: expect.any(String),
+        argv: ["git", "status", "--short"],
+        cwd: "/repo",
+        env: { HOME: "/home/user" },
+        timeoutMs: 30000,
+        maxCaptureBytes: 2 * 1024 * 1024,
+      },
+    });
+
+    await expect(readySession.readFile("/repo/file.txt", { maxBytes: 1024 })).resolves.toEqual({
+      contentBase64: Buffer.from("file").toString("base64"),
+      bytes: 4,
+    });
+    expect(transport.requests.at(-1)).toEqual({
+      method: "session.readFile",
+      params: { sessionId: "session-1", path: "/repo/file.txt", maxBytes: 1024 },
+    });
+
+    await expect(readySession.writeFile("/tmp/file.txt", Buffer.from("file"))).resolves.toEqual({
+      path: "/tmp/file.txt",
+      bytes: 4,
+    });
+    expect(transport.requests.at(-1)).toEqual({
+      method: "session.writeFile",
+      params: {
+        sessionId: "session-1",
+        path: "/tmp/file.txt",
+        contentBase64: Buffer.from("file").toString("base64"),
       },
     });
 
@@ -793,7 +832,7 @@ describe("sdk_client", () => {
     expect(transport.closed).toBe(true);
   });
 
-  it("interrupts an in-flight exec when its abort signal fires", async () => {
+  it("cancels only the in-flight exec whose abort signal fires", async () => {
     const transport = new FakeSessionProtocolTransport();
     let finishExec;
     transport.onRequest = async (method) => {
@@ -802,9 +841,9 @@ describe("sdk_client", () => {
           finishExec = resolve;
         });
       }
-      if (method === "session.interrupt") {
-        finishExec(createProtocolExecResult({ output: "cancelled" }));
-        return { interrupted: true, isTurnRunning: false };
+      if (method === "session.cancelExec") {
+        finishExec(createProtocolExecResult({ output: "cancelled", aborted: true }));
+        return { cancelled: true };
       }
       return undefined;
     };
@@ -816,22 +855,31 @@ describe("sdk_client", () => {
     await vi.waitFor(() => {
       expect(transport.requests).toContainEqual({
         method: "session.exec",
-        params: { sessionId: "session-1", command: "sleep 60" },
+        params: {
+          sessionId: "session-1",
+          execId: expect.any(String),
+          command: "sleep 60",
+        },
       });
     });
+    const execId = transport.requests.find((request) => request.method === "session.exec").params
+      .execId;
     abortController.abort();
 
-    await expect(execution).resolves.toMatchObject({ output: "cancelled" });
+    await expect(execution).rejects.toMatchObject({ name: "AbortError" });
     await vi.waitFor(() => {
       expect(transport.requests).toContainEqual({
-        method: "session.interrupt",
-        params: { sessionId: "session-1" },
+        method: "session.cancelExec",
+        params: { sessionId: "session-1", execId },
       });
     });
+    expect(transport.requests.some((request) => request.method === "session.interrupt")).toBe(
+      false,
+    );
     await client.close();
   });
 
-  it("consumes failures from an abort-triggered exec interrupt", async () => {
+  it("consumes failures from abort-triggered targeted cancellation", async () => {
     const transport = new FakeSessionProtocolTransport();
     let finishExec;
     transport.onRequest = async (method) => {
@@ -840,7 +888,7 @@ describe("sdk_client", () => {
           finishExec = resolve;
         });
       }
-      if (method === "session.interrupt") {
+      if (method === "session.cancelExec") {
         throw new Error("transport closed");
       }
       return undefined;
@@ -853,19 +901,21 @@ describe("sdk_client", () => {
     await vi.waitFor(() => {
       expect(transport.requests).toContainEqual({
         method: "session.exec",
-        params: { sessionId: "session-1", command: "sleep 60" },
+        params: {
+          sessionId: "session-1",
+          execId: expect.any(String),
+          command: "sleep 60",
+        },
       });
     });
     abortController.abort();
+    await expect(execution).rejects.toMatchObject({ name: "AbortError" });
     await vi.waitFor(() => {
-      expect(transport.requests).toContainEqual({
-        method: "session.interrupt",
-        params: { sessionId: "session-1" },
-      });
+      expect(transport.requests.some((request) => request.method === "session.cancelExec")).toBe(
+        true,
+      );
     });
     finishExec(createProtocolExecResult({ output: "finished" }));
-
-    await expect(execution).resolves.toMatchObject({ output: "finished" });
     await client.close();
   });
 
@@ -1308,15 +1358,11 @@ describe("sdk_client", () => {
     });
     expect(retryRequests.map((request) => request.params)).toEqual([{ sessionId: "session-1" }]);
 
-    await expect(session.exec("pwd")).resolves.toEqual({
-      output: "/repo\n",
-      stdout: "/repo\n",
-      stderr: "",
-      exitCode: 0,
-      truncated: false,
-    });
+    await expect(session.exec("pwd")).resolves.toEqual(
+      createProtocolExecResult({ output: "/repo\n" }),
+    );
     expect(execRequests.map((request) => request.params)).toEqual([
-      { sessionId: "session-1", command: "pwd" },
+      { sessionId: "session-1", execId: expect.any(String), command: "pwd" },
     ]);
 
     const sampleInput = {

@@ -1,13 +1,12 @@
-import { randomUUID } from "node:crypto";
 import { basename } from "node:path";
 import type { CoreDeps } from "../core/runtime/deps.js";
-import {
-  applyCommandEnvironment,
-  type BashExecutionResult,
-  type ListDirEntry,
-  type ToolExecutionBackend,
+import type {
+  CommandExecutionOptions,
+  ListDirEntry,
+  ToolExecutionBackend,
 } from "../core/tools/execution_backend.js";
 import type { SpawnCaptureResult } from "../core/utils/spawn_capture.js";
+import { SESSION_PROTOCOL_MAX_FILE_BYTES } from "../protocol/session_protocol.js";
 import type { TauSdkSession } from "../sdk/types.js";
 
 const HELPER_TIMEOUT_MS = 10_000;
@@ -19,74 +18,68 @@ export function createSdkToolExecutionBackend(options: {
   const { session, cwd } = options;
 
   const runBash: ToolExecutionBackend["runBash"] = async (command, runOptions = {}) => {
-    throwIfAborted(runOptions.signal);
     const result = await session.exec(command, {
       cwd: runOptions.cwd ?? cwd,
       ...(runOptions.timeoutMs !== undefined ? { timeoutMs: runOptions.timeoutMs } : {}),
-      ...(typeof runOptions.maxCaptureBytes === "number"
+      ...(runOptions.maxCaptureBytes !== undefined
         ? { maxCaptureBytes: runOptions.maxCaptureBytes }
         : {}),
       ...(runOptions.signal ? { signal: runOptions.signal } : {}),
     });
-    throwIfAborted(runOptions.signal);
+    runOptions.signal?.throwIfAborted();
     return result;
   };
 
-  const runNodeScript: ToolExecutionBackend["runNodeScript"] = async (
+  const runProcess: ToolExecutionBackend["runProcess"] = async (argv, runOptions = {}) => {
+    const result = await session.execProcess(argv, {
+      cwd: runOptions.cwd ?? cwd,
+      ...(runOptions.env !== undefined ? { env: runOptions.env } : {}),
+      ...(runOptions.timeoutMs !== undefined ? { timeoutMs: runOptions.timeoutMs } : {}),
+      ...(runOptions.maxCaptureBytes !== undefined
+        ? { maxCaptureBytes: runOptions.maxCaptureBytes }
+        : {}),
+      ...(runOptions.signal ? { signal: runOptions.signal } : {}),
+    });
+    runOptions.signal?.throwIfAborted();
+    return result;
+  };
+
+  const runNodeScript: ToolExecutionBackend["runNodeScript"] = (
     script,
     args = [],
     runOptions = {},
-  ) => await runFramedCommand(runBash, ["node", "-e", script, ...args], runOptions);
+  ) => runProcess(["node", "-e", script, ...args], runOptions);
 
   return {
     async dispose() {},
 
+    runProcess,
     runBash,
     runNodeScript,
 
     async readFile(path) {
-      const result = await runNodeHelper(runNodeScript, READ_FILE_SCRIPT, [path], {
-        cwd,
-        timeoutMs: HELPER_TIMEOUT_MS,
-      });
-      return { path, content: result };
+      const result = await session.readFile(path, { maxBytes: SESSION_PROTOCOL_MAX_FILE_BYTES });
+      return { path, content: Buffer.from(result.contentBase64, "base64").toString("utf-8") };
     },
 
     async readFileBinary(path, readOptions = {}) {
-      const result = await runNodeHelper(
-        runNodeScript,
-        READ_FILE_BINARY_SCRIPT,
-        [path, String(readOptions.maxBytes ?? "")],
-        { cwd, timeoutMs: HELPER_TIMEOUT_MS },
-      );
-      const parsed = JSON.parse(result) as { contentBase64: string; bytes: number };
+      const result = await session.readFile(path, {
+        maxBytes: readOptions.maxBytes ?? SESSION_PROTOCOL_MAX_FILE_BYTES,
+      });
       return {
         path,
-        content: Buffer.from(parsed.contentBase64, "base64"),
-        bytes: parsed.bytes,
+        content: Buffer.from(result.contentBase64, "base64"),
+        bytes: result.bytes,
       };
     },
 
     async writeFile(path, content) {
-      const result = await runNodeHelper(
-        runNodeScript,
-        WRITE_FILE_SCRIPT,
-        [path, Buffer.from(content, "utf-8").toString("base64")],
-        { cwd, timeoutMs: HELPER_TIMEOUT_MS },
-      );
-      const parsed = JSON.parse(result) as { path: string; bytes: number; lines: number };
-      return parsed;
+      const result = await session.writeFile(path, Buffer.from(content, "utf-8"));
+      return { ...result, lines: content.split("\n").length };
     },
 
     async writeFileBinary(path, content) {
-      const result = await runNodeHelper(
-        runNodeScript,
-        WRITE_FILE_SCRIPT,
-        [path, content.toString("base64")],
-        { cwd, timeoutMs: HELPER_TIMEOUT_MS },
-      );
-      const parsed = JSON.parse(result) as { path: string; bytes: number };
-      return { path: parsed.path, bytes: parsed.bytes };
+      return await session.writeFile(path, content);
     },
 
     async listDir(path) {
@@ -108,15 +101,17 @@ export function createSdkDiffSnapshotDeps(options: {
 } {
   return {
     spawn: async (cmd, args, spawnOptions = {}): Promise<SpawnCaptureResult> => {
-      throwIfAborted(spawnOptions.signal);
-      const argv = applyCommandEnvironment([cmd, ...args], spawnOptions.env);
-      const result = await runFramedCommand(options.backend.runBash, argv, {
+      spawnOptions.signal?.throwIfAborted();
+      const result = await options.backend.runProcess([cmd, ...args], {
         cwd: spawnOptions.cwd ?? options.cwd,
-        timeoutMs: spawnOptions.timeoutMs,
-        signal: spawnOptions.signal,
-        maxCaptureBytes: spawnOptions.maxCaptureBytes,
+        ...(spawnOptions.env ? { env: definedEnvironment(spawnOptions.env) } : {}),
+        ...(spawnOptions.timeoutMs !== undefined ? { timeoutMs: spawnOptions.timeoutMs } : {}),
+        ...(spawnOptions.maxCaptureBytes !== undefined
+          ? { maxCaptureBytes: spawnOptions.maxCaptureBytes }
+          : {}),
+        ...(spawnOptions.signal ? { signal: spawnOptions.signal } : {}),
       });
-      throwIfAborted(spawnOptions.signal);
+      spawnOptions.signal?.throwIfAborted();
       return {
         stdout: result.stdout,
         stderr: result.stderr,
@@ -126,9 +121,9 @@ export function createSdkDiffSnapshotDeps(options: {
           : {}),
         exitCode: result.exitCode,
         captureLimitExceeded: result.truncated,
-        timedOut: false,
-        aborted: false,
-        closeSignal: null,
+        timedOut: result.timedOut,
+        aborted: result.aborted,
+        closeSignal: result.closeSignal as NodeJS.Signals | null,
       };
     },
     env: { env: () => ({}) },
@@ -138,63 +133,22 @@ export function createSdkDiffSnapshotDeps(options: {
   };
 }
 
-async function runFramedCommand(
-  runBash: ToolExecutionBackend["runBash"],
-  argv: string[],
-  options: {
-    timeoutMs?: number;
-    signal?: AbortSignal;
-    cwd?: string;
-    env?: Record<string, string>;
-    maxCaptureBytes?: number | null;
-  } = {},
-): Promise<BashExecutionResult> {
-  const boundary = `__TAU_COMMAND_OUTPUT_${randomUUID()}__`;
-  const quotedBoundary = shellQuote(boundary);
-  const command = argv.map(shellQuote).join(" ");
-  const framedCommand = `printf %s ${quotedBoundary}; printf %s ${quotedBoundary} >&2; if ${command}; then status=0; else status=$?; fi; printf %s ${quotedBoundary}; printf %s ${quotedBoundary} >&2; exit "$status"`;
-  const maxCaptureBytes =
-    typeof options.maxCaptureBytes === "number"
-      ? options.maxCaptureBytes + Buffer.byteLength(boundary) * 4
-      : options.maxCaptureBytes;
-  const result = await runBash(framedCommand, {
-    ...options,
-    ...(maxCaptureBytes === undefined ? {} : { maxCaptureBytes }),
-  });
-  const extractOutput = (output: string): string => {
-    const start = output.indexOf(boundary);
-    const end = output.indexOf(boundary, start + boundary.length);
-    if (start === -1 || end === -1) {
-      if (result.truncated) {
-        return "";
-      }
-      throw new Error("command returned invalid output boundaries");
-    }
-    return output.slice(start + boundary.length, end);
-  };
-  const stdout = extractOutput(result.stdout);
-  const stderr = extractOutput(result.stderr);
-  return {
-    ...result,
-    output: stdout + stderr,
-    stdout,
-    stderr,
-  };
-}
-
-function throwIfAborted(signal?: AbortSignal): void {
-  if (signal?.aborted) {
-    throw new Error("operation aborted");
-  }
+function definedEnvironment(env: NodeJS.ProcessEnv): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined),
+  );
 }
 
 async function runNodeHelper(
   runNodeScript: ToolExecutionBackend["runNodeScript"],
   script: string,
   args: string[],
-  options: { cwd: string; timeoutMs: number },
+  options: CommandExecutionOptions & { cwd: string; timeoutMs: number },
 ): Promise<string> {
   const result = await runNodeScript(script, args, options);
+  if (result.truncated) {
+    throw new Error(`${basename(args[0] ?? "helper")} output exceeded the capture limit`);
+  }
   if (result.exitCode !== 0) {
     throw new Error(
       result.stderr.trim() || result.stdout.trim() || `${basename(args[0] ?? "helper")} failed`,
@@ -202,44 +156,6 @@ async function runNodeHelper(
   }
   return result.stdout;
 }
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
-}
-
-const READ_FILE_SCRIPT = `
-const fs = require("fs");
-process.stdout.write(fs.readFileSync(process.argv[1], "utf8"));
-`.trim();
-
-const READ_FILE_BINARY_SCRIPT = `
-const fs = require("fs");
-const path = process.argv[1];
-const maxRaw = process.argv[2];
-const maxBytes = maxRaw ? Number(maxRaw) : undefined;
-const content = fs.readFileSync(path);
-if (maxBytes !== undefined && Number.isFinite(maxBytes) && content.byteLength > maxBytes) {
-  throw new Error(\`file exceeds maximum size of \${maxBytes} bytes\`);
-}
-process.stdout.write(JSON.stringify({
-  contentBase64: content.toString("base64"),
-  bytes: content.byteLength,
-}));
-`.trim();
-
-const WRITE_FILE_SCRIPT = `
-const fs = require("fs");
-const path = require("path");
-const file = process.argv[1];
-const content = Buffer.from(process.argv[2], "base64");
-fs.mkdirSync(path.dirname(file), { recursive: true });
-fs.writeFileSync(file, content);
-process.stdout.write(JSON.stringify({
-  path: file,
-  bytes: content.byteLength,
-  lines: content.toString("utf8").split("\\n").length,
-}));
-`.trim();
 
 const LIST_DIR_SCRIPT = `
 const fs = require("fs");

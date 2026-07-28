@@ -18,6 +18,7 @@ import type {
   SessionProtocolPendingUserMessagesState,
   SessionProtocolPruneResult,
   SessionProtocolQueueResult,
+  SessionProtocolReadFileResult,
   SessionProtocolReadyMessage,
   SessionProtocolRecordResult,
   SessionProtocolReloadResult,
@@ -35,6 +36,7 @@ import type {
   SessionProtocolTerminateSubagentResult,
   SessionProtocolTurnOutcome,
   SessionProtocolUnobserveResult,
+  SessionProtocolWriteFileResult,
 } from "../protocol/session_protocol.js";
 import type { WebSocketSessionProtocolTransportOptions } from "../transport/index.js";
 
@@ -56,6 +58,8 @@ export type TauSdkSessionCancelPendingMessagesResult = SessionProtocolCancelPend
 export type TauSdkSessionRecordResult = SessionProtocolRecordResult;
 export type TauSdkSessionInterruptResult = SessionProtocolInterruptResult;
 export type TauSdkSessionExecResult = SessionProtocolExecResult;
+export type TauSdkSessionReadFileResult = SessionProtocolReadFileResult;
+export type TauSdkSessionWriteFileResult = SessionProtocolWriteFileResult;
 export type TauSdkSessionSnapshotResult = SessionProtocolSnapshot;
 export type TauSdkSessionSetReasoningResult = SessionProtocolSettingsUpdateResult;
 export type TauSdkSessionSetPersonaResult = SessionProtocolSnapshot;
@@ -142,6 +146,18 @@ export type TauSdkSession = {
       signal?: AbortSignal;
     },
   ): Promise<TauSdkSessionExecResult>;
+  execProcess(
+    argv: [string, ...string[]],
+    options?: {
+      cwd?: string;
+      env?: Record<string, string>;
+      timeoutMs?: number;
+      maxCaptureBytes?: number;
+      signal?: AbortSignal;
+    },
+  ): Promise<TauSdkSessionExecResult>;
+  readFile(path: string, options: { maxBytes: number }): Promise<TauSdkSessionReadFileResult>;
+  writeFile(path: string, content: Buffer): Promise<TauSdkSessionWriteFileResult>;
   sample(input: TauSdkSessionSampleInput): Promise<TauSdkSessionSampleResult>;
   interrupt(): Promise<TauSdkSessionInterruptResult>;
   snapshot(): Promise<TauSdkSessionSnapshotResult>;

@@ -45,6 +45,7 @@ import type {
   SessionProtocolEphemeralSubmitParams,
   SessionProtocolEphemeralSubmitResult,
   SessionProtocolExecParams,
+  SessionProtocolExecProcessParams,
   SessionProtocolExecResult,
   SessionProtocolFacet,
   SessionProtocolMessage,
@@ -52,6 +53,8 @@ import type {
   SessionProtocolPersonaSnapshot,
   SessionProtocolPruneParams,
   SessionProtocolPruneResult,
+  SessionProtocolReadFileParams,
+  SessionProtocolReadFileResult,
   SessionProtocolRecordParams,
   SessionProtocolRecordResult,
   SessionProtocolReloadResult,
@@ -68,17 +71,24 @@ import type {
   SessionProtocolTimelineItem,
   SessionProtocolToolRun,
   SessionProtocolTurnOutcome,
+  SessionProtocolWriteFileParams,
+  SessionProtocolWriteFileResult,
 } from "../protocol/session_protocol.js";
 import {
   applySessionProtocolDelta,
   createSessionProtocolDeltaMessage,
   createSessionProtocolEphemeralMessage,
+  SESSION_PROTOCOL_MAX_FILE_BYTES,
 } from "../protocol/session_protocol.js";
 import type { SessionStore } from "../store/session_store.js";
 import { ClientToolBroker } from "./client_tool_broker.js";
 import { createExecutionEnvironmentSubagentRuntimeResolver } from "./execution_runtime.js";
 import { HostedEphemeralAgentSession } from "./hosted_ephemeral_agent_session.js";
-import type { TauHostedSession, TauSessionHost } from "./session_host.js";
+import {
+  SessionExecBusyError,
+  type TauHostedSession,
+  type TauSessionHost,
+} from "./session_host.js";
 
 const PATH_AUTOCOMPLETE_CACHE_TTL_MS = 5_000;
 
@@ -541,6 +551,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   private snapshotGeneration = 0;
   private readonly activeWorkAbortControllers = new Set<AbortController>();
   private readonly activeWorkPromises = new Set<Promise<unknown>>();
+  private readonly activeExecAbortControllers = new Map<string, AbortController>();
   private activeTurnPromise?: Promise<SessionProtocolTurnOutcome>;
   private disposePromise?: Promise<void>;
   private disposing = false;
@@ -708,9 +719,8 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       signal?: AbortSignal;
     },
   ): Promise<SessionProtocolExecResult> {
-    this.assertActive();
-    const backend = this.executionEnvironment.getToolExecutionBackend();
-    return await this.runActiveWork(async (signal) => {
+    return await this.runExec(options.execId, options.signal, async (signal) => {
+      const backend = this.executionEnvironment.getToolExecutionBackend();
       const result = await backend.runBash(options.command, {
         ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
         ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
@@ -721,7 +731,67 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       });
       signal.throwIfAborted();
       return result;
-    }, options.signal);
+    });
+  }
+
+  async execProcess(
+    options: Omit<SessionProtocolExecProcessParams, "sessionId"> & {
+      signal?: AbortSignal;
+    },
+  ): Promise<SessionProtocolExecResult> {
+    return await this.runExec(options.execId, options.signal, async (signal) => {
+      const backend = this.executionEnvironment.getToolExecutionBackend();
+      const result = await backend.runProcess(options.argv, {
+        ...(options.env !== undefined ? { env: options.env } : {}),
+        ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
+        ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+        ...(options.maxCaptureBytes !== undefined
+          ? { maxCaptureBytes: options.maxCaptureBytes }
+          : {}),
+        signal,
+      });
+      signal.throwIfAborted();
+      return result;
+    });
+  }
+
+  cancelExec(execId: string): boolean {
+    const controller = this.activeExecAbortControllers.get(execId);
+    if (!controller || controller.signal.aborted) {
+      return false;
+    }
+    controller.abort();
+    return true;
+  }
+
+  async readFile(
+    options: Omit<SessionProtocolReadFileParams, "sessionId">,
+  ): Promise<SessionProtocolReadFileResult> {
+    this.assertActive();
+    return await this.runActiveWork(async (signal) => {
+      const result = await this.executionEnvironment
+        .getToolExecutionBackend()
+        .readFileBinary(options.path, { maxBytes: options.maxBytes });
+      signal.throwIfAborted();
+      return { contentBase64: result.content.toString("base64"), bytes: result.bytes };
+    });
+  }
+
+  async writeFile(
+    options: Omit<SessionProtocolWriteFileParams, "sessionId">,
+  ): Promise<SessionProtocolWriteFileResult> {
+    this.assertActive();
+    return await this.runActiveWork(async (signal) => {
+      const content = Buffer.from(options.contentBase64, "base64");
+      if (content.byteLength > SESSION_PROTOCOL_MAX_FILE_BYTES) {
+        throw new Error(`file exceeds maximum size of ${SESSION_PROTOCOL_MAX_FILE_BYTES} bytes`);
+      }
+      const result = await this.executionEnvironment
+        .getToolExecutionBackend()
+        .writeFileBinary(options.path, content);
+      signal.throwIfAborted();
+      return result;
+    });
   }
 
   async sample(
@@ -976,6 +1046,29 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   private async runMaintenance<T>(operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
     this.assertActive();
     return await this.runActiveWork(operation);
+  }
+
+  private async runExec<T>(
+    execId: string,
+    externalSignal: AbortSignal | undefined,
+    operation: (signal: AbortSignal) => Promise<T>,
+  ): Promise<T> {
+    this.assertActive();
+    if (this.activeExecAbortControllers.has(execId)) {
+      throw new SessionExecBusyError(execId);
+    }
+    const abortController = new AbortController();
+    this.activeExecAbortControllers.set(execId, abortController);
+    const signal = externalSignal
+      ? AbortSignal.any([externalSignal, abortController.signal])
+      : abortController.signal;
+    try {
+      return await this.runActiveWork(operation, signal);
+    } finally {
+      if (this.activeExecAbortControllers.get(execId) === abortController) {
+        this.activeExecAbortControllers.delete(execId);
+      }
+    }
   }
 
   private async runActiveWork<T>(

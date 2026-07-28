@@ -117,32 +117,37 @@ function createFakeSprite(handler, commandOptions = {}) {
   };
 }
 
+function executionResult(overrides = {}) {
+  const output = overrides.output ?? "";
+  return {
+    output,
+    stdout: overrides.stdout ?? output,
+    stderr: "",
+    exitCode: 0,
+    truncated: false,
+    timedOut: false,
+    aborted: false,
+    closeSignal: null,
+    ...overrides,
+  };
+}
+
 describe("Fly Sprite execution environment", () => {
   it("runs bash through a persistent SDK-backed worker", async () => {
     const requests = [];
     const sprite = createFakeSprite((request) => {
       requests.push(request);
       expect(request.method).toBe("exec");
-      return {
-        output: `${request.command}\n`,
-        stdout: `${request.command}\n`,
-        stderr: "",
-        exitCode: 0,
-        truncated: false,
-      };
+      return executionResult({ output: `${request.command}\n` });
     });
     const backend = createFlySpriteToolExecutionBackend({
       sprite,
       cwd: "/home/sprite/repo",
     });
 
-    await expect(backend.runBash("echo hello")).resolves.toEqual({
-      output: "echo hello\n",
-      stdout: "echo hello\n",
-      stderr: "",
-      exitCode: 0,
-      truncated: false,
-    });
+    await expect(backend.runBash("echo hello")).resolves.toEqual(
+      executionResult({ output: "echo hello\n" }),
+    );
     await expect(backend.runBash("pwd")).resolves.toMatchObject({
       output: "pwd\n",
     });
@@ -201,13 +206,7 @@ describe("Fly Sprite execution environment", () => {
   });
 
   it("resolves configured APIs through the SDK client factory", async () => {
-    const sprite = createFakeSprite(() => ({
-      output: "",
-      stdout: "",
-      stderr: "",
-      exitCode: 0,
-      truncated: false,
-    }));
+    const sprite = createFakeSprite(() => executionResult());
     const clients = [];
     const resolver = new FlySpriteExecutionEnvironmentResolver({
       apis: {
@@ -329,7 +328,7 @@ describe("Fly Sprite execution environment", () => {
     expect(nodeScriptCalls[0].args[0]).toBe("/home/sprite/repo");
     expect(nodeScriptCalls[0].options).toMatchObject({
       cwd: "/home/sprite/repo",
-      maxCaptureBytes: null,
+      maxCaptureBytes: 16 * 1024 * 1024,
     });
   });
 
@@ -366,13 +365,13 @@ describe("Fly Sprite execution environment", () => {
     const sprite = createFakeSprite((request) => {
       requests.push(request);
       if (request.method === "exec") {
-        return {
+        return executionResult({
           output: "(tau) aborted\n",
           stdout: "",
           stderr: "(tau) aborted\n",
           exitCode: null,
-          truncated: false,
-        };
+          aborted: true,
+        });
       }
       if (request.method === "cancel") {
         return { accepted: true };
@@ -386,13 +385,15 @@ describe("Fly Sprite execution environment", () => {
     const controller = new AbortController();
     controller.abort();
 
-    await expect(backend.runBash("sleep 10", { signal: controller.signal })).resolves.toEqual({
-      output: "(tau) aborted\n",
-      stdout: "",
-      stderr: "(tau) aborted\n",
-      exitCode: null,
-      truncated: false,
-    });
+    await expect(backend.runBash("sleep 10", { signal: controller.signal })).resolves.toEqual(
+      executionResult({
+        output: "(tau) aborted\n",
+        stdout: "",
+        stderr: "(tau) aborted\n",
+        exitCode: null,
+        aborted: true,
+      }),
+    );
 
     expect(requests.map((request) => request.method)).toEqual(["exec", "cancel"]);
     expect(requests[1].targetId).toBe(requests[0].id);

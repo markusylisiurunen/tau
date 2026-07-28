@@ -1,19 +1,35 @@
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { SESSION_PROTOCOL_MAX_EXEC_CAPTURE_BYTES } from "../../protocol/session_protocol.js";
 import type { CoreDeps } from "../runtime/deps.js";
 import { sanitizeEnvironment } from "../utils/sanitize_env.js";
 import { spawnWithCapture } from "../utils/spawn_capture.js";
 import { formatBytes } from "../utils/truncate.js";
 
-const BASH_MAX_CAPTURE_BYTES = 1024 * 1024; // 1MB
-const BASH_KILL_GRACE_MS = 2_000;
+export const DEFAULT_COMMAND_CAPTURE_BYTES = 1024 * 1024;
+export const MAX_COMMAND_CAPTURE_BYTES = SESSION_PROTOCOL_MAX_EXEC_CAPTURE_BYTES;
 
-export type BashExecutionResult = {
+const COMMAND_KILL_GRACE_MS = 2_000;
+
+export type CommandExecutionResult = {
   output: string;
   stdout: string;
   stderr: string;
   exitCode: number | null;
   truncated: boolean;
+  timedOut: boolean;
+  aborted: boolean;
+  closeSignal: string | null;
+};
+
+export type BashExecutionResult = CommandExecutionResult;
+
+export type CommandExecutionOptions = {
+  timeoutMs?: number;
+  signal?: AbortSignal;
+  cwd?: string;
+  env?: Record<string, string>;
+  maxCaptureBytes?: number;
 };
 
 export type ReadFileResult = {
@@ -76,27 +92,16 @@ export function applyBashEnvironment(
 
 export interface ToolExecutionBackend {
   dispose(): Promise<void>;
-  runBash(
-    command: string,
-    options?: {
-      timeoutMs?: number;
-      signal?: AbortSignal;
-      cwd?: string;
-      env?: Record<string, string>;
-      maxCaptureBytes?: number | null;
-    },
-  ): Promise<BashExecutionResult>;
+  runProcess(
+    argv: [string, ...string[]],
+    options?: CommandExecutionOptions,
+  ): Promise<CommandExecutionResult>;
+  runBash(command: string, options?: CommandExecutionOptions): Promise<BashExecutionResult>;
   runNodeScript(
     script: string,
     args?: string[],
-    options?: {
-      timeoutMs?: number;
-      signal?: AbortSignal;
-      cwd?: string;
-      env?: Record<string, string>;
-      maxCaptureBytes?: number | null;
-    },
-  ): Promise<BashExecutionResult>;
+    options?: CommandExecutionOptions,
+  ): Promise<CommandExecutionResult>;
   readFile(path: string): Promise<ReadFileResult>;
   readFileBinary(path: string, options?: { maxBytes?: number }): Promise<ReadFileBinaryResult>;
   writeFile(path: string, content: string): Promise<WriteFileResult>;
@@ -119,111 +124,77 @@ export function createLocalToolExecutionBackend(
     ...env,
   });
 
+  const runProcess = async (
+    argv: [string, ...string[]],
+    options: CommandExecutionOptions = {},
+  ): Promise<CommandExecutionResult> => {
+    const [command, ...args] = argv;
+    const effectiveTimeoutMs =
+      typeof options.timeoutMs === "number" &&
+      Number.isFinite(options.timeoutMs) &&
+      options.timeoutMs > 0
+        ? options.timeoutMs
+        : undefined;
+    const result = await spawnCapture(command, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: resolveEnvironment(options.env),
+      detached: true,
+      killProcessGroup: true,
+      cwd: resolveCwd(options.cwd),
+      signal: options.signal,
+      timeoutMs: effectiveTimeoutMs,
+      maxCaptureBytes: options.maxCaptureBytes ?? DEFAULT_COMMAND_CAPTURE_BYTES,
+      maxCaptureMode: "ignore",
+      maxCaptureStrategy: "tail",
+      captureOutput: "combined-and-split",
+      killGraceMs: COMMAND_KILL_GRACE_MS,
+    });
+
+    let output = result.output ?? "";
+    const stdout = result.stdout;
+    let stderr = result.stderr;
+    let terminationNote: string | undefined;
+    if (result.timedOut && effectiveTimeoutMs !== undefined) {
+      terminationNote = `(tau) timed out after ${effectiveTimeoutMs}ms`;
+    } else if (result.aborted) {
+      terminationNote = "(tau) aborted";
+    } else if (result.closeSignal) {
+      terminationNote = `(tau) terminated by signal ${result.closeSignal}`;
+    }
+
+    const note = terminationNote?.trim();
+    if (note && !output.includes(note)) {
+      const noteText = `${output && !output.endsWith("\n") ? "\n" : ""}${note}\n`;
+      output += noteText;
+      stderr += noteText;
+    }
+
+    return {
+      output,
+      stdout,
+      stderr,
+      exitCode: result.exitCode,
+      truncated: result.captureLimitExceeded,
+      timedOut: result.timedOut,
+      aborted: result.aborted,
+      closeSignal: result.closeSignal,
+    };
+  };
+
   return {
     async dispose() {},
 
-    async runBash(command, options = {}) {
-      const timeoutMs = options.timeoutMs;
-      const signal = options.signal;
-      const cwd = resolveCwd(options.cwd);
+    runProcess,
 
-      const effectiveTimeoutMs =
-        typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0
-          ? timeoutMs
-          : undefined;
-
-      const result = await spawnCapture("bash", ["-lc", command], {
-        stdio: ["ignore", "pipe", "pipe"],
-        env: resolveEnvironment(applyBashEnvironment(options.env)),
-        detached: true,
-        killProcessGroup: true,
-        cwd,
-        signal,
-        timeoutMs: effectiveTimeoutMs,
-        maxCaptureBytes:
-          options.maxCaptureBytes === null
-            ? undefined
-            : (options.maxCaptureBytes ?? BASH_MAX_CAPTURE_BYTES),
-        maxCaptureMode: "ignore",
-        maxCaptureStrategy: "tail",
-        captureOutput: "combined-and-split",
-        killGraceMs: BASH_KILL_GRACE_MS,
+    runBash(command, options = {}) {
+      return runProcess(["bash", "-lc", command], {
+        ...options,
+        env: applyBashEnvironment(options.env),
       });
-
-      let output = result.output ?? "";
-      const stdout = result.stdout;
-      let stderr = result.stderr;
-      const truncated = result.captureLimitExceeded;
-
-      let terminationNote: string | undefined;
-      if (result.timedOut && effectiveTimeoutMs !== undefined) {
-        terminationNote = `(tau) timed out after ${effectiveTimeoutMs}ms`;
-      } else if (result.aborted) {
-        terminationNote = "(tau) aborted";
-      } else if (result.closeSignal) {
-        terminationNote = `(tau) terminated by signal ${result.closeSignal}`;
-      }
-
-      const note = terminationNote?.trim();
-      if (note && !output.includes(note)) {
-        const noteText = `${output && !output.endsWith("\n") ? "\n" : ""}${note}\n`;
-        output += noteText;
-        stderr += noteText;
-      }
-
-      return { output, stdout, stderr, exitCode: result.exitCode, truncated };
     },
 
-    async runNodeScript(script, args = [], options = {}) {
-      const timeoutMs = options.timeoutMs;
-      const signal = options.signal;
-      const cwd = resolveCwd(options.cwd);
-
-      const effectiveTimeoutMs =
-        typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0
-          ? timeoutMs
-          : undefined;
-
-      const result = await spawnCapture("node", ["-e", script, ...args], {
-        stdio: ["ignore", "pipe", "pipe"],
-        env: resolveEnvironment(options.env),
-        detached: true,
-        killProcessGroup: true,
-        cwd,
-        signal,
-        timeoutMs: effectiveTimeoutMs,
-        maxCaptureBytes:
-          options.maxCaptureBytes === null
-            ? undefined
-            : (options.maxCaptureBytes ?? BASH_MAX_CAPTURE_BYTES),
-        maxCaptureMode: "ignore",
-        maxCaptureStrategy: "tail",
-        captureOutput: "combined-and-split",
-        killGraceMs: BASH_KILL_GRACE_MS,
-      });
-
-      let output = result.output ?? "";
-      const stdout = result.stdout;
-      let stderr = result.stderr;
-      const truncated = result.captureLimitExceeded;
-
-      let terminationNote: string | undefined;
-      if (result.timedOut && effectiveTimeoutMs !== undefined) {
-        terminationNote = `(tau) timed out after ${effectiveTimeoutMs}ms`;
-      } else if (result.aborted) {
-        terminationNote = "(tau) aborted";
-      } else if (result.closeSignal) {
-        terminationNote = `(tau) terminated by signal ${result.closeSignal}`;
-      }
-
-      const note = terminationNote?.trim();
-      if (note && !output.includes(note)) {
-        const noteText = `${output && !output.endsWith("\n") ? "\n" : ""}${note}\n`;
-        output += noteText;
-        stderr += noteText;
-      }
-
-      return { output, stdout, stderr, exitCode: result.exitCode, truncated };
+    runNodeScript(script, args = [], options = {}) {
+      return runProcess(["node", "-e", script, ...args], options);
     },
 
     async readFile(path) {
@@ -301,23 +272,24 @@ export function scopeToolExecutionBackend(
     return Object.keys(merged).length > 0 ? { env: merged } : {};
   };
 
+  const scopeCommandOptions = (options: CommandExecutionOptions): CommandExecutionOptions => ({
+    ...options,
+    cwd: resolveCwd(options.cwd),
+    ...mergeEnvironment(options.env),
+  });
+
   return {
     dispose() {
       return backend.dispose();
     },
+    runProcess(argv, options = {}) {
+      return backend.runProcess(argv, scopeCommandOptions(options));
+    },
     runBash(command, options = {}) {
-      return backend.runBash(command, {
-        ...options,
-        cwd: resolveCwd(options.cwd),
-        ...mergeEnvironment(options.env),
-      });
+      return backend.runBash(command, scopeCommandOptions(options));
     },
     runNodeScript(script, args = [], options = {}) {
-      return backend.runNodeScript(script, args, {
-        ...options,
-        cwd: resolveCwd(options.cwd),
-        ...mergeEnvironment(options.env),
-      });
+      return backend.runNodeScript(script, args, scopeCommandOptions(options));
     },
     readFile(path) {
       return backend.readFile(resolvePath(path));

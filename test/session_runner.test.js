@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -1209,20 +1209,11 @@ describe("session execution backend plumbing", () => {
   it("writes binary files through the SDK execution backend without text conversion", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "tau-sdk-backend-test-"));
     const session = {
-      async exec(command, options) {
-        const result = spawnSync("/bin/sh", ["-c", command], {
-          cwd: options.cwd,
-          encoding: "utf8",
-        });
-        const stdout = `profile stdout\n${result.stdout}logout stdout\n`;
-        const stderr = `profile stderr\n${result.stderr}logout stderr\n`;
-        return {
-          output: stdout + stderr,
-          stdout,
-          stderr,
-          exitCode: result.status,
-          truncated: false,
-        };
+      async writeFile(path, content) {
+        const target = join(cwd, path);
+        mkdirSync(join(cwd, "assets"), { recursive: true });
+        writeFileSync(target, content);
+        return { path, bytes: content.byteLength };
       },
     };
     const backend = createSdkToolExecutionBackend({ session, cwd });
@@ -1239,7 +1230,7 @@ describe("session execution backend plumbing", () => {
     }
   });
 
-  it("captures no-HEAD diff snapshots with noisy errexit login profiles", async () => {
+  it("captures no-HEAD diff snapshots through direct process execution", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "tau-sdk-diff-test-"));
     const runGit = (args) => {
       const result = spawnSync("git", args, { cwd, encoding: "utf8" });
@@ -1249,21 +1240,27 @@ describe("session execution backend plumbing", () => {
     };
     const execOptions = [];
     const session = {
-      async exec(command, options) {
+      async execProcess(argv, options) {
         execOptions.push(options);
-        const result = spawnSync("/bin/bash", ["-c", `set -e\n${command}`], {
+        const result = spawnSync(argv[0], argv.slice(1), {
           cwd: options.cwd,
+          env: { ...process.env, ...options.env },
           encoding: "utf8",
         });
-        const stdout = `profile stdout\n${result.stdout}logout stdout\n`;
-        const stderr = `profile stderr\n${result.stderr}logout stderr\n`;
         return {
-          output: stdout + stderr,
-          stdout,
-          stderr,
+          output: result.stdout + result.stderr,
+          stdout: result.stdout,
+          stderr: result.stderr,
           exitCode: result.status,
           truncated: false,
+          timedOut: false,
+          aborted: false,
+          closeSignal: result.signal,
         };
+      },
+      async readFile(path) {
+        const content = readFileSync(path);
+        return { contentBase64: content.toString("base64"), bytes: content.byteLength };
       },
     };
 
@@ -1280,15 +1277,72 @@ describe("session execution backend plumbing", () => {
         deps: createSdkDiffSnapshotDeps({ backend, cwd }),
       });
 
-      expect(snapshot.repoRoot).toBe(cwd);
+      expect(snapshot.repoRoot).toBe(realpathSync(cwd));
       expect(snapshot.files.map((file) => file.path)).toEqual(["tracked.txt", "untracked.txt"]);
       expect(snapshot.patch).toContain("+tracked");
       expect(snapshot.getFilePatch("untracked.txt")).toContain("+new");
-      expect(snapshot.patch).not.toContain("profile stdout");
-      expect(snapshot.patch).not.toContain("logout stdout");
       expect(execOptions).toEqual(
         expect.arrayContaining([expect.objectContaining({ maxCaptureBytes: expect.any(Number) })]),
       );
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves patch files larger than the default command capture limit", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "tau-sdk-large-patch-test-"));
+    const patch = [
+      "diff --git a/large.txt b/large.txt",
+      "new file mode 100644",
+      "--- /dev/null",
+      "+++ b/large.txt",
+      "@@ -0,0 +1 @@",
+      `+${"x".repeat(1_100_000)}`,
+      "",
+    ].join("\n");
+    const patchPath = join(cwd, "large.patch");
+    writeFileSync(patchPath, patch);
+    const runGit = (args) => {
+      const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+      if (result.status !== 0) throw new Error(result.stderr || result.stdout);
+    };
+    runGit(["init"]);
+
+    const session = {
+      async execProcess(argv, options) {
+        const result = spawnSync(argv[0], argv.slice(1), {
+          cwd: options.cwd,
+          env: { ...process.env, ...options.env },
+          encoding: "utf8",
+        });
+        return {
+          output: result.stdout + result.stderr,
+          stdout: result.stdout,
+          stderr: result.stderr,
+          exitCode: result.status,
+          truncated: false,
+          timedOut: false,
+          aborted: false,
+          closeSignal: result.signal,
+        };
+      },
+      async readFile(path, options) {
+        const content = readFileSync(path);
+        expect(content.byteLength).toBeLessThanOrEqual(options.maxBytes);
+        return { contentBase64: content.toString("base64"), bytes: content.byteLength };
+      },
+    };
+
+    try {
+      const backend = createSdkToolExecutionBackend({ session, cwd });
+      const snapshot = await captureDiffReviewSnapshot({
+        cwd,
+        source: { kind: "patch_files", patchFiles: [patchPath], scopeLabel: "large patch" },
+        deps: createSdkDiffSnapshotDeps({ backend, cwd }),
+      });
+
+      expect(Buffer.byteLength(snapshot.patch)).toBe(Buffer.byteLength(patch));
+      expect(snapshot.files.map((file) => file.path)).toEqual(["large.txt"]);
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }

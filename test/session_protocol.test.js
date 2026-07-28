@@ -149,6 +149,7 @@ describe("session_protocol", () => {
         method: "session.exec",
         params: {
           sessionId: "session-1",
+          execId: "exec-1",
           command: "git diff",
           cwd: "/repo",
           timeoutMs: 30000,
@@ -165,6 +166,7 @@ describe("session_protocol", () => {
         method: "session.exec",
         params: {
           sessionId: "session-1",
+          execId: "exec-1",
           command: "git diff",
           cwd: "/repo",
           timeoutMs: 30000,
@@ -943,15 +945,17 @@ describe("session_protocol", () => {
     expect(
       validateSessionProtocolParams("session.exec", {
         sessionId: "session-1",
+        execId: "exec-1",
         command: "pwd",
       }),
     ).toEqual({
       ok: true,
-      value: { sessionId: "session-1", command: "pwd" },
+      value: { sessionId: "session-1", execId: "exec-1", command: "pwd" },
     });
     expect(
       validateSessionProtocolParams("session.exec", {
         sessionId: "session-1",
+        execId: "exec-2",
         command: "git diff",
         cwd: "/repo",
         timeoutMs: 30000,
@@ -961,6 +965,7 @@ describe("session_protocol", () => {
       ok: true,
       value: {
         sessionId: "session-1",
+        execId: "exec-2",
         command: "git diff",
         cwd: "/repo",
         timeoutMs: 30000,
@@ -968,8 +973,64 @@ describe("session_protocol", () => {
       },
     });
     expect(
+      validateSessionProtocolParams("session.execProcess", {
+        sessionId: "session-1",
+        execId: "process-1",
+        argv: ["git", "status", "--short"],
+        env: { HOME: "/home/user" },
+        cwd: "/repo",
+        timeoutMs: 30000,
+        maxCaptureBytes: 2097152,
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        sessionId: "session-1",
+        execId: "process-1",
+        argv: ["git", "status", "--short"],
+        env: { HOME: "/home/user" },
+        cwd: "/repo",
+        timeoutMs: 30000,
+        maxCaptureBytes: 2097152,
+      },
+    });
+    expect(
+      validateSessionProtocolParams("session.cancelExec", {
+        sessionId: "session-1",
+        execId: "process-1",
+      }),
+    ).toEqual({
+      ok: true,
+      value: { sessionId: "session-1", execId: "process-1" },
+    });
+    expect(
+      validateSessionProtocolParams("session.readFile", {
+        sessionId: "session-1",
+        path: "/repo/patch.diff",
+        maxBytes: 2097152,
+      }),
+    ).toEqual({
+      ok: true,
+      value: { sessionId: "session-1", path: "/repo/patch.diff", maxBytes: 2097152 },
+    });
+    expect(
+      validateSessionProtocolParams("session.writeFile", {
+        sessionId: "session-1",
+        path: "/tmp/output.txt",
+        contentBase64: Buffer.from("output").toString("base64"),
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        sessionId: "session-1",
+        path: "/tmp/output.txt",
+        contentBase64: Buffer.from("output").toString("base64"),
+      },
+    });
+    expect(
       validateSessionProtocolParams("session.exec", {
         sessionId: "session-1",
+        execId: "exec-3",
         command: "git diff",
         maxCaptureBytes: 16 * 1024 * 1024 + 1,
       }),
@@ -1204,6 +1265,31 @@ describe("session_protocol", () => {
       ok: true,
       value: createProtocolExecResult({ command: "pwd" }),
     });
+    expect(validateSessionProtocolResult("session.cancelExec", { cancelled: true })).toEqual({
+      ok: true,
+      value: { cancelled: true },
+    });
+    expect(
+      validateSessionProtocolResult("session.readFile", {
+        contentBase64: Buffer.from("file").toString("base64"),
+        bytes: 4,
+      }),
+    ).toEqual({
+      ok: true,
+      value: { contentBase64: Buffer.from("file").toString("base64"), bytes: 4 },
+    });
+    expect(
+      validateSessionProtocolResult("session.readFile", {
+        contentBase64: Buffer.from("file").toString("base64"),
+        bytes: 3,
+      }),
+    ).toMatchObject({ ok: false });
+    expect(
+      validateSessionProtocolResult("session.writeFile", { path: "/tmp/file", bytes: 4 }),
+    ).toEqual({
+      ok: true,
+      value: { path: "/tmp/file", bytes: 4 },
+    });
     expect(
       validateSessionProtocolResult("session.autocompletePaths", {
         paths: ["src/main.ts", "src/tui/"],
@@ -1320,6 +1406,9 @@ describe("session_protocol", () => {
         stderr: "",
         exitCode: 0,
         truncated: false,
+        timedOut: false,
+        aborted: false,
+        closeSignal: null,
       }),
     ).toEqual({
       ok: true,
@@ -1329,6 +1418,9 @@ describe("session_protocol", () => {
         stderr: "",
         exitCode: 0,
         truncated: false,
+        timedOut: false,
+        aborted: false,
+        closeSignal: null,
       },
     });
 

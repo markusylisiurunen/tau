@@ -16,9 +16,12 @@ import type {
   SessionProtocolEphemeralSubmitParams,
   SessionProtocolEphemeralSubmitResult,
   SessionProtocolExecParams,
+  SessionProtocolExecProcessParams,
   SessionProtocolExecResult,
   SessionProtocolPruneParams,
   SessionProtocolPruneResult,
+  SessionProtocolReadFileParams,
+  SessionProtocolReadFileResult,
   SessionProtocolRecordParams,
   SessionProtocolRecordResult,
   SessionProtocolReloadResult,
@@ -35,9 +38,17 @@ import type {
   SessionProtocolSnapshot,
   SessionProtocolTerminateSubagentResult,
   SessionProtocolTurnOutcome,
+  SessionProtocolWriteFileParams,
+  SessionProtocolWriteFileResult,
 } from "../protocol/session_protocol.js";
 
 export class EphemeralThreadBusyError extends Error {}
+
+export class SessionExecBusyError extends Error {
+  constructor(execId: string) {
+    super(`execution '${execId}' is already active`);
+  }
+}
 
 export type TauHostedSession = {
   readonly sessionId: string;
@@ -59,6 +70,18 @@ export type TauHostedSession = {
       signal?: AbortSignal;
     },
   ): Promise<SessionProtocolExecResult>;
+  execProcess(
+    options: Omit<SessionProtocolExecProcessParams, "sessionId"> & {
+      signal?: AbortSignal;
+    },
+  ): Promise<SessionProtocolExecResult>;
+  cancelExec(execId: string): boolean;
+  readFile(
+    options: Omit<SessionProtocolReadFileParams, "sessionId">,
+  ): Promise<SessionProtocolReadFileResult>;
+  writeFile(
+    options: Omit<SessionProtocolWriteFileParams, "sessionId">,
+  ): Promise<SessionProtocolWriteFileResult>;
   sample(
     options: Omit<SessionProtocolSampleParams, "sessionId"> & {
       signal?: AbortSignal;

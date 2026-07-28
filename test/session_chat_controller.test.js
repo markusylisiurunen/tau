@@ -259,26 +259,20 @@ class FakeSession {
     });
     return { turn: { status: "completed", stopReason: "stop" } };
   });
-  exec = vi.fn(async (command) => {
+  exec = vi.fn(async (command) => createProtocolExecResult({ output: command }));
+  execProcess = vi.fn(async (argv) => {
     let output = "";
-    if (command.includes("rev-parse") && command.includes("--show-toplevel")) {
+    if (argv.includes("rev-parse") && argv.includes("--show-toplevel")) {
       output = "/repo\n";
-    } else if (command.includes("diff") && command.includes("--name-status")) {
+    } else if (argv.includes("diff") && argv.includes("--name-status")) {
       output = "M\0src/main.ts\0";
-    } else if (command.includes("diff")) {
+    } else if (argv.includes("diff")) {
       output = "diff --git a/src/main.ts b/src/main.ts\n";
     }
-
-    const boundary = command.match(/__TAU_COMMAND_OUTPUT_[0-9a-f-]+__/)?.[0];
-    if (!boundary) {
-      return createProtocolExecResult({ output });
-    }
-    return createProtocolExecResult({
-      output,
-      stdout: `${boundary}${output}${boundary}`,
-      stderr: `${boundary}${boundary}`,
-    });
+    return createProtocolExecResult({ output });
   });
+  readFile = vi.fn(async () => ({ contentBase64: "", bytes: 0 }));
+  writeFile = vi.fn(async (path, content) => ({ path, bytes: content.byteLength }));
   record = vi.fn(async (text, options = {}) => {
     this.operationLog.push("record");
     const historyEntryId = options.historyEntryId ?? "added-user";
@@ -3274,7 +3268,10 @@ describe("SessionChatController", () => {
     await waitUntil(() => session.record.mock.calls.length > 0);
 
     expect(session.submit).not.toHaveBeenCalled();
-    expect(session.exec).toHaveBeenCalledWith(expect.stringContaining("diff"), expect.any(Object));
+    expect(session.execProcess).toHaveBeenCalledWith(
+      expect.arrayContaining(["git", "diff"]),
+      expect.any(Object),
+    );
     expect(session.createEphemeralContext).toHaveBeenCalledWith({
       instructions: expect.stringContaining("src/main.ts"),
       tools: ["bash", "view_image"],

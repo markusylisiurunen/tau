@@ -152,6 +152,9 @@ export function createProtocolExecResult(overrides = {}) {
     stderr,
     exitCode: 0,
     truncated: false,
+    timedOut: false,
+    aborted: false,
+    closeSignal: null,
     ...resultOverrides,
   };
 }

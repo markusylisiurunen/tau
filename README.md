@@ -372,7 +372,7 @@ tau --persona opus-4.8-coder
 
 ## sub-agents
 
-some personas can run isolated sub-agents via the `spawn_agent`, `send_input_to_agent`, `wait_for_agents`, and `terminate_agent` tools. sub-agents report progress in the subagent panel, and `wait_for_agents` returns completed outputs as soon as at least one requested agent finishes.
+some personas can run isolated sub-agents via the `spawn_agent`, `send_input_to_agent`, `wait_for_agents`, and `terminate_agent` tools. sub-agents report progress in the subagent panel, and `wait_for_agents` returns final responses as soon as at least one requested agent finishes.
 
 the built-in `default` sub-agent is available unless disabled. it inherits the main persona's model, settings, tool access (minus sub-agent management tools), and system prompt. the inherited main prompt is wrapped with default sub-agent-specific rules, and those wrapper rules take precedence on conflicts. custom sub-agents can override model, reasoning, and tools.
 

@@ -1,4 +1,4 @@
-import type { GrepExecutionResult, WriteFileResult } from "../core/tools/execution_backend.js";
+import type { WriteFileResult } from "../core/tools/execution_backend.js";
 import { formatBytes } from "../core/utils/truncate.js";
 
 export const NODE_LIST_DIR_SCRIPT = [
@@ -32,36 +32,5 @@ export function buildWriteFileResult(path: string, content: string): WriteFileRe
     path,
     bytes: Buffer.byteLength(content, "utf-8"),
     lines: content.split("\n").length,
-  };
-}
-
-export function resolveSandboxGrepPaths(paths: readonly string[]): string[] {
-  return paths.map((path) => {
-    const cleaned = path.trim();
-    if (!cleaned) {
-      throw new Error("invalid grep path: empty path.");
-    }
-    return cleaned;
-  });
-}
-
-export function buildSandboxGrepDryRunResult(resolvedPaths: string[]): GrepExecutionResult {
-  return {
-    output: "",
-    exitCode: 0,
-    captureTruncated: false,
-    resolvedPaths,
-  };
-}
-
-export function buildSandboxGrepErrorResult(
-  err: unknown,
-  resolvedPaths: string[],
-): GrepExecutionResult {
-  return {
-    output: err instanceof Error ? err.message : String(err),
-    exitCode: 2,
-    captureTruncated: false,
-    resolvedPaths,
   };
 }

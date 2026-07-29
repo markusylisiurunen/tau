@@ -2289,9 +2289,6 @@ function agentRunFromSubagentEvent(
   if (event.type === "subagent_abort_requested" && existing) {
     return { ...existing, abortRequested: true };
   }
-  if (event.type === "subagent_emit_output" && existing) {
-    return { ...existing, progress: event.text };
-  }
   if (!state) {
     return undefined;
   }

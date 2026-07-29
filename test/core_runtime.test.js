@@ -25,9 +25,13 @@ import { ToolRegistry } from "../dist/core/tools/registry.js";
 import {
   TOOL_NAME_BASH,
   TOOL_NAME_EDIT,
-  TOOL_NAME_GREP,
-  TOOL_NAME_LIST,
-  TOOL_NAME_READ,
+  TOOL_NAME_NOOK,
+  TOOL_NAME_SEND_INPUT_TO_AGENT,
+  TOOL_NAME_SPAWN_AGENT,
+  TOOL_NAME_TERMINATE_AGENT,
+  TOOL_NAME_VIEW_IMAGE,
+  TOOL_NAME_WAIT_FOR_AGENTS,
+  TOOL_NAME_WRITE,
 } from "../dist/core/tools/tool_names.js";
 import {
   buildCompactionUserMessage,
@@ -130,24 +134,33 @@ describe("tool enablement", () => {
     const backend = createLocalToolExecutionBackend();
     const registry = ToolCatalog.createRegistry(backend);
 
+    const expectedTools = [
+      TOOL_NAME_BASH,
+      TOOL_NAME_WRITE,
+      TOOL_NAME_EDIT,
+      TOOL_NAME_VIEW_IMAGE,
+      TOOL_NAME_SPAWN_AGENT,
+      TOOL_NAME_SEND_INPUT_TO_AGENT,
+      TOOL_NAME_WAIT_FOR_AGENTS,
+      TOOL_NAME_TERMINATE_AGENT,
+      TOOL_NAME_NOOK,
+    ].sort();
     const allTools = registry.schemas.map((tool) => tool.name).sort();
     const enabled = registry
       .getEnabledToolSchemas()
       .map((tool) => tool.name)
       .sort();
 
-    expect(allTools).not.toContain(TOOL_NAME_READ);
-    expect(allTools).not.toContain(TOOL_NAME_GREP);
-    expect(allTools).not.toContain(TOOL_NAME_LIST);
-    expect(enabled).toEqual(allTools);
+    expect(allTools).toEqual(expectedTools);
+    expect(enabled).toEqual(expectedTools);
   });
 
   it("fails fast when a persona references an unregistered tool", () => {
     const backend = createLocalToolExecutionBackend();
     const registry = ToolCatalog.createRegistry(backend);
 
-    expect(() => registry.getEnabledToolSchemas([TOOL_NAME_READ])).toThrow(
-      "tool 'read' is not registered",
+    expect(() => registry.getEnabledToolSchemas(["unknown_tool"])).toThrow(
+      "tool 'unknown_tool' is not registered",
     );
   });
 });
@@ -1964,6 +1977,7 @@ describe("session prompt composer", () => {
 
 describe("summary formatting", () => {
   it("omits thinking, uses marker-newline format, and compacts edit calls", () => {
+    const inspectToolName = "inspect";
     const history = [
       {
         role: "user",
@@ -1978,7 +1992,7 @@ describe("summary formatting", () => {
           {
             type: "toolCall",
             id: "1",
-            name: TOOL_NAME_READ,
+            name: inspectToolName,
             arguments: { path: "README.md" },
           },
           {
@@ -1997,7 +2011,7 @@ describe("summary formatting", () => {
       {
         role: "toolResult",
         toolCallId: "1",
-        toolName: TOOL_NAME_READ,
+        toolName: inspectToolName,
         content: [{ type: "text", text: "output" }],
         isError: false,
         timestamp: 2,
@@ -2008,13 +2022,13 @@ describe("summary formatting", () => {
 
     expect(summary).toContain("[User]:\nhello");
     expect(summary).toContain("[Assistant]:\nhi");
-    expect(summary).toContain(`[Assistant tool calls]:\n${TOOL_NAME_READ}(path="README.md")`);
+    expect(summary).toContain(`[Assistant tool calls]:\n${inspectToolName}(path="README.md")`);
     expect(summary).toContain(`${TOOL_NAME_EDIT}(path="src/parser.ts")`);
     expect(summary).toContain("const stable = 0;");
     expect(summary).toContain("- const before = 1;");
     expect(summary).toContain("+ const after = 2;");
     expect(summary).toContain("return stable;");
-    expect(summary).toContain(`[Tool result]: ${TOOL_NAME_READ} (ok)\noutput`);
+    expect(summary).toContain(`[Tool result]: ${inspectToolName} (ok)\noutput`);
     expect(summary).not.toContain("hmm");
     expect(summary).not.toContain('oldText="const before = 1;"');
     expect(summary).not.toContain('newText="const after = 2;"');

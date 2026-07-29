@@ -657,13 +657,6 @@ describe("session runner tool dispatch context", () => {
       authPath: "/tmp/auth.json",
       originHistoryEntryId: "history-1",
       cwd: "/repo/subagent",
-      subagentContext: {
-        id: "subagent-1",
-        name: "default",
-        title: "default",
-        originHistoryEntryId: "history-1",
-        controlPlane: { recordEmitOutput: () => {} },
-      },
     };
 
     const iterator = runToolCalls({
@@ -729,13 +722,6 @@ describe("session runner tool dispatch context", () => {
       authPath: "/tmp/auth.json",
       originHistoryEntryId: "history-1",
       cwd: "/repo/subagent",
-      subagentContext: {
-        id: "subagent-1",
-        name: "default",
-        title: "default",
-        originHistoryEntryId: "history-1",
-        controlPlane: { recordEmitOutput: () => {} },
-      },
     };
     const iterator = runToolCalls({
       toolCalls: [
@@ -874,13 +860,6 @@ describe("session runner tool dispatch context", () => {
       authPath: "/tmp/auth.json",
       originHistoryEntryId: "history-1",
       cwd: "/repo/subagent",
-      subagentContext: {
-        id: "subagent-1",
-        name: "default",
-        title: "default",
-        originHistoryEntryId: "history-1",
-        controlPlane: { recordEmitOutput: () => {} },
-      },
     };
 
     const events = [];
@@ -955,13 +934,6 @@ describe("session runner tool dispatch context", () => {
       authPath: "/tmp/auth.json",
       originHistoryEntryId: "history-1",
       cwd: "/repo/subagent",
-      subagentContext: {
-        id: "subagent-1",
-        name: "default",
-        title: "default",
-        originHistoryEntryId: "history-1",
-        controlPlane: { recordEmitOutput: () => {} },
-      },
     };
 
     const events = [];
@@ -1295,15 +1267,6 @@ describe("session execution backend plumbing", () => {
         calls.push(["listDir", path]);
         return { path, entries: [] };
       },
-      async grep(options) {
-        calls.push(["grep", options.paths]);
-        return {
-          output: "",
-          exitCode: 0,
-          captureTruncated: false,
-          resolvedPaths: options.paths,
-        };
-      },
     };
 
     const scoped = scopeToolExecutionBackend(backend, "/remote/work", {
@@ -1317,12 +1280,6 @@ describe("session execution backend plumbing", () => {
     await scoped.writeFile("out.txt", "ok");
     await scoped.writeFileBinary("asset.bin", Buffer.from([1, 2]));
     await scoped.listDir(".");
-    await scoped.grep({
-      baseArgs: [],
-      pattern: "needle",
-      paths: ["src", "/tmp/file.ts"],
-      timeoutMs: 1000,
-    });
 
     expect(calls).toEqual([
       ["runBash", "pwd", "/remote/work", { GH_CONFIG_DIR: "/srv/cowork/gh" }],
@@ -1337,7 +1294,6 @@ describe("session execution backend plumbing", () => {
       ["writeFile", "/remote/work/out.txt", "ok"],
       ["writeFileBinary", "/remote/work/asset.bin", Buffer.from([1, 2])],
       ["listDir", "/remote/work"],
-      ["grep", ["/remote/work/src", "/tmp/file.ts"]],
     ]);
   });
 

@@ -2,7 +2,6 @@ import { basename } from "node:path";
 import type { CoreDeps } from "../core/runtime/deps.js";
 import type {
   BashExecutionResult,
-  GrepExecutionResult,
   ListDirEntry,
   ToolExecutionBackend,
 } from "../core/tools/execution_backend.js";
@@ -91,42 +90,6 @@ export function createSdkToolExecutionBackend(options: {
         timeoutMs: HELPER_TIMEOUT_MS,
       });
       return { path, entries: JSON.parse(result) as ListDirEntry[] };
-    },
-
-    async grep(grepOptions) {
-      const resolvedPaths = grepOptions.paths.map((path) => path.trim()).filter(Boolean);
-      if (grepOptions.dryRun) {
-        return {
-          output: "",
-          exitCode: 0,
-          captureTruncated: false,
-          resolvedPaths,
-        } satisfies GrepExecutionResult;
-      }
-
-      const command = ["rg", ...grepOptions.baseArgs, "--", grepOptions.pattern, ...resolvedPaths]
-        .map(shellQuote)
-        .join(" ");
-      try {
-        const result = await runBash(command, {
-          cwd,
-          timeoutMs: grepOptions.timeoutMs,
-          signal: grepOptions.signal,
-        });
-        return {
-          output: result.output,
-          exitCode: result.exitCode,
-          captureTruncated: result.truncated,
-          resolvedPaths,
-        } satisfies GrepExecutionResult;
-      } catch (error) {
-        return {
-          output: error instanceof Error ? error.message : String(error),
-          exitCode: 2,
-          captureTruncated: false,
-          resolvedPaths,
-        } satisfies GrepExecutionResult;
-      }
     },
   };
 }

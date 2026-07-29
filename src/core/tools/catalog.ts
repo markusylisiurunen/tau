@@ -2,7 +2,6 @@ import type { Config } from "../config/index.js";
 import type { SubagentToolName } from "../subagents/types.js";
 import { createBashToolDefinition } from "./bash.js";
 import { createEditToolDefinition } from "./edit.js";
-import { createEmitOutputToolDefinition } from "./emit_output.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import { createNookToolDefinition } from "./nook.js";
 import type { ToolDefinition } from "./registry.js";
@@ -24,8 +23,6 @@ import { createWebFetchToolDefinition } from "./web_fetch.js";
 import { createWebSearchToolDefinition } from "./web_search.js";
 import { createWriteToolDefinition } from "./write.js";
 
-const SUBAGENT_EMIT_OUTPUT_ENABLED = false;
-
 export const ToolCatalog = {
   createRegistry(backend: ToolExecutionBackend): ToolRegistry {
     return new ToolRegistry([
@@ -46,9 +43,7 @@ export const ToolCatalog = {
     config: Config,
     backend: ToolExecutionBackend,
   ): ToolRegistry {
-    const definitions: ToolDefinition[] = SUBAGENT_EMIT_OUTPUT_ENABLED
-      ? [createEmitOutputToolDefinition()]
-      : [];
+    const definitions: ToolDefinition[] = [];
     const seen = new Set<string>();
 
     const addTool = (tool: SubagentToolName): void => {

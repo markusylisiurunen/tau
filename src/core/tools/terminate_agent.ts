@@ -17,8 +17,8 @@ import { buildSubagentUiText, formatSubagentStatusLine } from "./subagent_ui.js"
 import { TOOL_NAME_TERMINATE_AGENT } from "./tool_names.js";
 
 const TERMINATE_AGENT_DESCRIPTION = [
-  "Terminate a running subagent and return its final status.",
-  "If the subagent already finished, this returns its latest status snapshot.",
+  "Terminate a running subagent and return its final status and response.",
+  "If the subagent already finished, this returns its latest result.",
 ].join(" ");
 
 const TERMINATE_AGENT_ID_DESCRIPTION = "Subagent id to terminate.";
@@ -44,7 +44,7 @@ function formatTerminateResult(result: SubagentResult): string {
     name: result.name,
     title: result.title,
     status: result.status,
-    outputs: result.outputs,
+    finalText: result.finalText,
     error: result.error,
   };
 
@@ -52,14 +52,8 @@ function formatTerminateResult(result: SubagentResult): string {
 }
 
 function formatTerminateOutput(result: SubagentResult): string {
-  const cleanedOutputs = result.outputs
-    .map((text) => text.trimEnd())
-    .filter((text) => text.trim().length > 0);
-  let body = cleanedOutputs.join("\n\n");
-  if (!body) {
-    const finalText = result.finalText?.trimEnd() ?? "";
-    body = finalText.trim().length > 0 ? finalText : "";
-  }
+  const finalText = result.finalText?.trimEnd() ?? "";
+  const body = finalText.trim().length > 0 ? finalText : "";
 
   if (result.status !== "success") {
     const errorLine = result.error ? `Error: ${result.error}` : `Status: ${result.status}`;

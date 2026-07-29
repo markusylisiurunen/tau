@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { dirname } from "node:path/posix";
 import type {
   BashExecutionResult,
-  GrepExecutionResult,
   ListDirEntry,
   ToolExecutionBackend,
 } from "../core/tools/execution_backend.js";
@@ -15,11 +14,8 @@ import type {
 import type { ExecutionEnvironmentResolver } from "./execution_environment.js";
 import {
   assertFileWithinMaxBytes,
-  buildSandboxGrepDryRunResult,
-  buildSandboxGrepErrorResult,
   buildWriteFileResult,
   NODE_LIST_DIR_SCRIPT,
-  resolveSandboxGrepPaths,
   shellQuote,
 } from "./sandbox_tool_helpers.js";
 import { ToolBackendExecutionEnvironment } from "./tool_backend_execution_environment.js";
@@ -333,33 +329,6 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
       }
       const entries = JSON.parse(result.output) as ListDirEntry[];
       return { path, entries };
-    },
-
-    async grep(grepOptions) {
-      assertActive();
-      const resolvedPaths = resolveSandboxGrepPaths(grepOptions.paths);
-
-      if (grepOptions.dryRun) {
-        return buildSandboxGrepDryRunResult(resolvedPaths);
-      }
-
-      const command = ["rg", ...grepOptions.baseArgs, "--", grepOptions.pattern, ...resolvedPaths]
-        .map(shellQuote)
-        .join(" ");
-      try {
-        const result = await exec(command, {
-          timeoutMs: grepOptions.timeoutMs,
-          signal: grepOptions.signal,
-        });
-        return {
-          output: result.output,
-          exitCode: result.exitCode,
-          captureTruncated: result.truncated,
-          resolvedPaths,
-        } satisfies GrepExecutionResult;
-      } catch (err) {
-        return buildSandboxGrepErrorResult(err, resolvedPaths);
-      }
     },
   };
 }

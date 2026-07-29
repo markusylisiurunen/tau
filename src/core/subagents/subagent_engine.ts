@@ -16,12 +16,7 @@ import {
   createLocalToolExecutionBackend,
   scopeToolExecutionBackend,
 } from "../tools/execution_backend.js";
-import type {
-  SubagentDispatchContext,
-  ToolDispatchContext,
-  ToolRegistry,
-  ToolUiEvent,
-} from "../tools/registry.js";
+import type { ToolDispatchContext, ToolRegistry, ToolUiEvent } from "../tools/registry.js";
 import { appendUsageLogEntry, getUsageCostTotal, getUsageTotals } from "../usage/logs.js";
 import { shouldAutoRetry } from "../utils/auto_retry.js";
 import { CODEX_ORIGINATOR, CODEX_USER_AGENT } from "../utils/codex.js";
@@ -91,7 +86,6 @@ export async function runSubagent(options: {
   sessionId?: string;
   personaId?: string;
   originHistoryEntryId: string;
-  subagentContext: SubagentDispatchContext;
   modelResolver: ModelResolver;
 }): Promise<SubagentRunResult> {
   const {
@@ -101,7 +95,6 @@ export async function runSubagent(options: {
     signal,
     onProgress,
     onToolUiEvent,
-    subagentContext,
     personaId,
     originHistoryEntryId,
     modelResolver,
@@ -317,7 +310,6 @@ export async function runSubagent(options: {
       originHistoryEntryId,
       cwd: runtimeConfig.workingDirectory,
       modelResolver,
-      subagentContext,
     };
 
     const toolRunner = runToolCalls({

@@ -100,19 +100,6 @@ export class SubagentPanelComponent implements Component {
           entry.lines.shift();
         }
       }
-      return;
-    }
-
-    if (event.type === "subagent_emit_output") {
-      const entry = this.entries.get(event.id);
-      if (!entry) return;
-      const text = event.text.trim();
-      if (text) {
-        entry.lines.push({ kind: "output", text });
-        if (entry.lines.length > MAX_PANEL_HISTORY) {
-          entry.lines.shift();
-        }
-      }
     }
   }
 

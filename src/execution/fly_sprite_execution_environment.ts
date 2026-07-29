@@ -1,7 +1,6 @@
 import { type Sprite, SpritesClient } from "@fly/sprites";
 import type {
   BashExecutionResult,
-  GrepExecutionResult,
   ListDirEntry,
   ToolExecutionBackend,
 } from "../core/tools/execution_backend.js";
@@ -12,12 +11,7 @@ import type {
   SessionProtocolFlySpriteExecutionEnvironmentSnapshot,
 } from "../protocol/session_protocol.js";
 import type { ExecutionEnvironmentResolver } from "./execution_environment.js";
-import {
-  assertFileWithinMaxBytes,
-  buildSandboxGrepDryRunResult,
-  buildSandboxGrepErrorResult,
-  resolveSandboxGrepPaths,
-} from "./sandbox_tool_helpers.js";
+import { assertFileWithinMaxBytes } from "./sandbox_tool_helpers.js";
 import { ToolBackendExecutionEnvironment } from "./tool_backend_execution_environment.js";
 
 const BASH_MAX_CAPTURE_BYTES = 1024 * 1024;
@@ -208,35 +202,6 @@ export function createFlySpriteToolExecutionBackend(options: {
       return { path, entries: result.entries };
     },
 
-    async grep(grepOptions) {
-      const resolvedPaths = resolveSandboxGrepPaths(grepOptions.paths);
-
-      if (grepOptions.dryRun) {
-        return buildSandboxGrepDryRunResult(resolvedPaths);
-      }
-
-      const result = await worker
-        .request(
-          "grep",
-          {
-            cwd: options.cwd,
-            baseArgs: grepOptions.baseArgs,
-            pattern: grepOptions.pattern,
-            paths: resolvedPaths,
-            timeoutMs: grepOptions.timeoutMs,
-          },
-          { signal: grepOptions.signal },
-        )
-        .catch((err) => buildSandboxGrepErrorResult(err, resolvedPaths));
-
-      return {
-        output: result.output,
-        exitCode: result.exitCode,
-        captureTruncated: "truncated" in result ? result.truncated : result.captureTruncated,
-        resolvedPaths,
-      } satisfies GrepExecutionResult;
-    },
-
     async dispose() {
       await worker.dispose();
     },
@@ -273,13 +238,6 @@ type FlySpriteWorkerRequestByMethod = {
     path: string;
     timeoutMs: number;
   };
-  grep: {
-    cwd: string;
-    baseArgs: string[];
-    pattern: string;
-    paths: string[];
-    timeoutMs: number;
-  };
   shutdown: Record<string, never>;
   cancel: {
     targetId: number;
@@ -304,7 +262,6 @@ type FlySpriteWorkerResultByMethod = {
   listDir: {
     entries: ListDirEntry[];
   };
-  grep: BashExecutionResult;
   shutdown: {
     exitCode: number;
   };
@@ -658,17 +615,6 @@ async function handleLine(line) {
         timeoutMs: request.timeoutMs,
         maxCaptureBytes: request.maxCaptureBytes,
       });
-      respond(request.id, result);
-      return;
-    }
-
-    if (request.method === "grep") {
-      const result = await runCommand(
-        request.id,
-        "rg",
-        [...request.baseArgs, "--", request.pattern, ...request.paths],
-        { cwd: request.cwd, timeoutMs: request.timeoutMs },
-      );
       respond(request.id, result);
       return;
     }

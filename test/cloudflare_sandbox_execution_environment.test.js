@@ -593,9 +593,6 @@ describe("Cloudflare Sandbox execution environment", () => {
       async listDir(path) {
         throw new Error(`listDir should not be called for prompt context: ${path}`);
       },
-      async grep() {
-        throw new Error("grep should not be called for prompt context");
-      },
     };
     const environment = new CloudflareSandboxExecutionEnvironment({
       bridgeId: "default",

@@ -2376,6 +2376,43 @@ describe("summary formatting", () => {
     expect(summary.length).toBeLessThan(longOutput.length);
     expect(history).toEqual(originalHistory);
   });
+
+  it("middle-truncates tool results embedded in recovery messages", () => {
+    const longOutput = `start & < ${"a".repeat(30000)} > end`;
+    const recoveryInstructions = [
+      "The previous assistant generation failed after tool execution had begun.",
+      "<tool-execution-records>",
+      '  <tool-execution-record tool-call-id="call-1" tool-name="custom_tool">',
+      "    <arguments-json>{}</arguments-json>",
+      "    <is-error>false</is-error>",
+      `    <result-text>start &amp; &lt; ${"a".repeat(30000)} &gt; end</result-text>`,
+      "  </tool-execution-record>",
+      "</tool-execution-records>",
+    ].join("\n");
+    const history = [
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: formatTauUserText({ text: "", hiddenSystemMessages: [recoveryInstructions] }),
+          },
+        ],
+        timestamp: 0,
+      },
+    ];
+    const originalHistory = structuredClone(history);
+
+    const summary = formatHistoryForCompaction(history);
+
+    expect(summary).toContain("<tool-execution-records>");
+    expect(summary).toContain('<tool-execution-record tool-call-id="call-1"');
+    expect(summary).toContain("<result-text>start &amp; &lt;");
+    expect(summary).toContain("&gt; end</result-text>");
+    expect(summary).toContain("tokens truncated");
+    expect(summary.length).toBeLessThan(longOutput.length);
+    expect(history).toEqual(originalHistory);
+  });
 });
 
 describe("compaction context message", () => {

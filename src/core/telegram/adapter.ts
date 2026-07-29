@@ -4,6 +4,7 @@ import { basename, extname, join } from "node:path";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { z } from "zod";
 import type { SessionProtocolSnapshot } from "../../protocol/session_protocol.js";
+import { TauSessionProtocolResponseError } from "../../transport/errors.js";
 import type { SpeechToTextProvider, TelegramProjectConfig } from "../config/schema.js";
 import { formatAdaptiveNumber, formatTokenWindow } from "../utils/format.js";
 import { transcribeAudio } from "../utils/speech_to_text.js";
@@ -2111,7 +2112,7 @@ class TelegramAdapterImpl {
     } catch (error) {
       this.log("error", "telegram session compaction failed", {
         sessionId: session.id,
-        cause: this.formatManagerError(error),
+        cause: this.formatManagerDiagnostic(error),
       });
       await this.reply(chatId, "session compaction failed. please try again.");
     } finally {
@@ -2876,6 +2877,24 @@ class TelegramAdapterImpl {
     }
 
     return error instanceof Error ? error.message : String(error);
+  }
+
+  private formatManagerDiagnostic(error: unknown): string {
+    const message = this.formatManagerError(error);
+    if (!(error instanceof TauSessionProtocolResponseError)) {
+      return message;
+    }
+
+    const data = error.data;
+    const cause =
+      typeof data === "object" &&
+      data !== null &&
+      "cause" in data &&
+      typeof data.cause === "string" &&
+      data.cause.trim()
+        ? data.cause.trim()
+        : undefined;
+    return cause && cause !== message ? `${message}: ${cause}` : message;
   }
 
   private async reply(

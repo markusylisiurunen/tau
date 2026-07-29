@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { describe, expect, it, vi } from "vitest";
 import { startTelegramAdapter } from "../dist/core/telegram/adapter.js";
+import { TauSessionProtocolResponseError } from "../dist/transport/errors.js";
 
 async function startAdapter(options) {
   const preferences = new Map();
@@ -1367,7 +1368,14 @@ describe("telegram adapter", () => {
     ]);
     const managerHarness = createSessionManagerHarness();
     managerHarness.manager.compactSession.mockRejectedValueOnce(
-      new Error("provider returned an oversized internal diagnostic"),
+      new TauSessionProtocolResponseError({
+        requestId: "compact-1",
+        error: {
+          code: "internal_error",
+          message: "session protocol request failed",
+          data: { cause: "provider returned an oversized internal diagnostic" },
+        },
+      }),
     );
     const logs = [];
     const adapter = await startAdapter({
@@ -1391,7 +1399,8 @@ describe("telegram adapter", () => {
         message: "telegram session compaction failed",
         data: {
           sessionId: "s1",
-          cause: "provider returned an oversized internal diagnostic",
+          cause:
+            "session protocol request failed: provider returned an oversized internal diagnostic",
         },
       });
     } finally {

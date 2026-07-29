@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import {
@@ -44,6 +45,7 @@ import { prependModelNotice, resolveModelNotice } from "../utils/model_notices.j
 import { ModelRuntime } from "../utils/model_stream.js";
 import type { TauStreamOptions } from "../utils/streaming_settings.js";
 import { parseStreamingSettings } from "../utils/streaming_settings.js";
+import { bytesToTokens } from "../utils/token.js";
 import {
   formatTauUserText,
   getAutoCompactionMetadataFromMessage,
@@ -784,15 +786,13 @@ export class SessionEngine {
   ): AsyncGenerator<CoreEvent, ProcessTurnResult, void> {
     let subturns = 0;
     let needsAnotherSubturn = false;
-    let autoCompactionAttempted = false;
     let retryBudget: SubturnRetryBudget = { remaining: MAX_SUBTURN_RETRIES };
     const originHistoryEntryId = this.getCurrentTurnUserHistoryEntryId();
     const turnSettings = this.captureTurnSettings();
 
     while (subturns < MAX_MODEL_SUBTURNS && !signal.aborted) {
       needsAnotherSubturn = false;
-      if (!autoCompactionAttempted && this.shouldRunAutoCompaction()) {
-        autoCompactionAttempted = true;
+      if (this.shouldRunAutoCompaction()) {
         const compactionResult = yield* this.runAutoCompactionIfNeeded(signal);
         if (compactionResult.blocked || compactionResult.aborted) {
           return compactionResult;
@@ -1049,7 +1049,7 @@ export class SessionEngine {
       return false;
     }
 
-    const usageTokens = this.getLatestFreshContextUsageTokens();
+    const usageTokens = this.getFreshContextUsageEstimateTokens();
     return usageTokens !== undefined && usageTokens > thresholdTokens;
   }
 
@@ -1061,20 +1061,37 @@ export class SessionEngine {
     return normalizeAutoCompactConfig(this.config.autoCompact);
   }
 
-  private getLatestFreshContextUsageTokens(): number | undefined {
+  private getFreshContextUsageEstimateTokens(): number | undefined {
     const boundaryIndex = this.findLatestAutoCompactionContinuationIndex();
     for (let index = this.historyEntries.length - 1; index > boundaryIndex; index -= 1) {
       const message = this.historyEntries[index]!.message;
-      if (message.role !== "assistant") {
+      if (
+        message.role !== "assistant" ||
+        message.stopReason === "error" ||
+        message.stopReason === "aborted"
+      ) {
         continue;
       }
-      const usage = (message as AssistantMessage).usage;
+
+      const usage = message.usage;
       if (!usage) {
-        return undefined;
+        continue;
       }
-      return (
-        (usage.input ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0) + (usage.output ?? 0)
-      );
+
+      const reportedUsage =
+        (usage.input ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0) + (usage.output ?? 0);
+      return this.historyEntries.slice(index + 1).reduce((total, entry) => {
+        const appendedMessage = stripTauUserMetadataFromMessage(entry.message);
+        if (
+          appendedMessage.role === "assistant" &&
+          (appendedMessage.stopReason === "error" || appendedMessage.stopReason === "aborted")
+        ) {
+          return total;
+        }
+
+        const contentBytes = Buffer.byteLength(JSON.stringify(appendedMessage.content), "utf8");
+        return total + Math.max(1, bytesToTokens(contentBytes));
+      }, reportedUsage);
     }
 
     return undefined;

@@ -1352,6 +1352,53 @@ describe("telegram adapter", () => {
     }
   });
 
+  it("keeps session compaction failures out of Telegram messages", async () => {
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: { chat: { id: 329, type: "private" }, from: { id: 7 }, text: "/new" },
+        },
+        {
+          update_id: 2,
+          message: { chat: { id: 329, type: "private" }, from: { id: 7 }, text: "/compact" },
+        },
+      ],
+    ]);
+    const managerHarness = createSessionManagerHarness();
+    managerHarness.manager.compactSession.mockRejectedValueOnce(
+      new Error("provider returned an oversized internal diagnostic"),
+    );
+    const logs = [];
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+      onLog: (entry) => logs.push(entry),
+    });
+
+    try {
+      await waitFor(() => apiHarness.sendMessages.length === 2);
+      expect(apiHarness.sendMessages.map((message) => message.text)).toEqual([
+        "compacting session...",
+        "session compaction failed. please try again.",
+      ]);
+      expect(logs).toContainEqual({
+        level: "error",
+        message: "telegram session compaction failed",
+        data: {
+          sessionId: "s1",
+          cause: "provider returned an oversized internal diagnostic",
+        },
+      });
+    } finally {
+      await adapter.close();
+    }
+  });
+
   it("rejects removed session-management commands", async () => {
     const apiHarness = createApiHarness([
       [
@@ -1389,6 +1436,7 @@ describe("telegram adapter", () => {
   });
 
   it("reports a failed turn and keeps routing messages to the same session", async () => {
+    const logs = [];
     const nextUpdate = deferred();
     const apiHarness = createApiHarness([
       [
@@ -1424,6 +1472,7 @@ describe("telegram adapter", () => {
       api: apiHarness.api,
       pollIntervalMs: 1,
       requestTimeoutSeconds: 1,
+      onLog: (entry) => logs.push(entry),
     });
 
     try {
@@ -1470,9 +1519,22 @@ describe("telegram adapter", () => {
 
       await waitFor(() =>
         apiHarness.sendMessages.some(
-          (message) => message.text === "turn failed: OpenAI is unavailable",
+          (message) => message.text === "turn failed. please try again.",
         ),
       );
+      expect(logs).toContainEqual({
+        level: "error",
+        message: "telegram session turn failed",
+        data: {
+          sessionId: "s12",
+          projectId: "demo",
+          failure: {
+            status: "failed",
+            stopReason: "error",
+            errorMessage: "OpenAI is unavailable",
+          },
+        },
+      });
 
       nextUpdate.resolve([
         {

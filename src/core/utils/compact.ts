@@ -1,5 +1,5 @@
 import type { AssistantMessage, Message, ToolResultMessage } from "@earendil-works/pi-ai";
-import { TOOL_NAME_BASH, TOOL_NAME_EDIT } from "../tools/tool_names.js";
+import { TOOL_NAME_EDIT } from "../tools/tool_names.js";
 import { buildLineDiff, collapseLongUnchangedDiffRuns } from "./line_diff.js";
 import { truncateForTokens } from "./truncate.js";
 import { stripTauUserMetadata } from "./user_metadata.js";
@@ -10,7 +10,7 @@ const SUMMARY_OPEN_TAG = "<summary>";
 const SUMMARY_CLOSE_TAG = "</summary>";
 const LAST_ASSISTANT_OPEN_TAG = "<last-assistant-message-verbatim>";
 const LAST_ASSISTANT_CLOSE_TAG = "</last-assistant-message-verbatim>";
-const COMPACTION_BASH_TOOL_RESULT_MAX_TOKENS = 4096;
+const COMPACTION_TOOL_RESULT_MAX_TOKENS = 2048;
 const COMPACTION_EDIT_UNCHANGED_CONTEXT_LINES = 8;
 
 function extractTextFromContent(content: Message["content"]): string {
@@ -108,13 +108,10 @@ function serializeToolResultMessage(message: ToolResultMessage): string {
   const outputText = extractTextFromContent(message.content);
   const status = message.isError ? "error" : "ok";
 
-  let content = outputText || "(no text output)";
-  if (message.toolName === TOOL_NAME_BASH) {
-    content = truncateForTokens(content, {
-      maxTokens: COMPACTION_BASH_TOOL_RESULT_MAX_TOKENS,
-      strategy: "middle",
-    }).content;
-  }
+  const content = truncateForTokens(outputText || "(no text output)", {
+    maxTokens: COMPACTION_TOOL_RESULT_MAX_TOKENS,
+    strategy: "middle",
+  }).content;
 
   return formatCompactionBlock(`[Tool result]: ${message.toolName} (${status})`, content);
 }

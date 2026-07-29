@@ -2109,7 +2109,11 @@ class TelegramAdapterImpl {
       await sessionManager.compactSession(session.id);
       await this.reply(chatId, "session compacted. previous context has been summarized.");
     } catch (error) {
-      await this.reply(chatId, this.formatManagerError(error));
+      this.log("error", "telegram session compaction failed", {
+        sessionId: session.id,
+        cause: this.formatManagerError(error),
+      });
+      await this.reply(chatId, "session compaction failed. please try again.");
     } finally {
       this.stopTypingIndicators(session.id);
     }
@@ -2632,12 +2636,12 @@ class TelegramAdapterImpl {
         return;
       }
 
-      this.notifySession(
-        event.sessionId,
-        event.failure.status === "failed"
-          ? `turn failed: ${event.failure.errorMessage ?? "model provider returned an error"}`
-          : `turn blocked: ${event.failure.message}`,
-      );
+      this.log("error", "telegram session turn failed", {
+        sessionId: event.sessionId,
+        projectId: event.projectId,
+        failure: event.failure,
+      });
+      this.notifySession(event.sessionId, "turn failed. please try again.");
       return;
     }
 

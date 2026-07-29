@@ -722,6 +722,239 @@ describe("core session rewind APIs", () => {
     }
   });
 
+  it("auto-compacts twice during one tool-heavy turn", async () => {
+    const faux = fauxProvider({
+      provider: "faux-auto-repeat",
+      models: [{ id: "faux-auto-repeat-model", contextWindow: 2000 }],
+    });
+    const unregisterFauxProvider = registerModelRuntimeProvider(faux.provider);
+
+    try {
+      faux.setResponses([
+        fauxAssistantMessage(compactionSummary("## Goal\nContinue", ["old-request"])),
+        withAssistantUsage(
+          fauxAssistantMessage([fauxToolCall("fake_tool", {}, { id: "fake-call" })], {
+            stopReason: "toolUse",
+          }),
+          1600,
+        ),
+        fauxAssistantMessage(compactionSummary("## Goal\nFinish", ["current-request"])),
+        fauxAssistantMessage("done"),
+      ]);
+      const toolRegistry = new ToolRegistry([
+        {
+          schema: {
+            name: "fake_tool",
+            description: "test tool",
+            parameters: { type: "object", properties: {}, additionalProperties: false },
+          },
+          getDisplayTarget: (toolCall) => toolCall.name,
+          async dispatch(toolCall) {
+            return {
+              run: Promise.resolve({
+                toolResult: {
+                  role: "toolResult",
+                  toolCallId: toolCall.id,
+                  toolName: toolCall.name,
+                  content: [{ type: "text", text: "ok" }],
+                  isError: false,
+                  timestamp: 2,
+                },
+              }),
+            };
+          },
+        },
+      ]);
+      const persona = {
+        id: "faux-auto-repeat",
+        label: "faux auto repeat",
+        model: faux.getModel(),
+        systemPrompt: "system",
+        settings: { reasoning: "none" },
+        skills: "*",
+        source: "builtin",
+      };
+      const session = new CoreSession({
+        persona,
+        systemPrompt: "system",
+        subagentPrompts: {},
+        toolRegistry,
+        config: {
+          autoCompact: { enabled: true, reserveTokens: 500, keepRecentTokens: 10 },
+        },
+      });
+
+      session.addUserText(`old request ${"x".repeat(10000)}`, {
+        historyEntryId: "old-request",
+      });
+      session.addMessage(assistantMessageWithUsage("old answer", 1600));
+      session.addUserText("current request", { historyEntryId: "current-request" });
+
+      const events = [];
+      for await (const event of session.events(new AbortController().signal)) {
+        events.push(event);
+      }
+
+      expect(
+        events.filter((event) => event.type === "compaction_end" && event.outcome === "compacted"),
+      ).toHaveLength(2);
+      expect(session.history.at(-1)?.content[0].text).toBe("done");
+    } finally {
+      unregisterFauxProvider();
+    }
+  });
+
+  it("auto-compacts before a tool result consumes the remaining reserve", async () => {
+    const faux = fauxProvider({
+      provider: "faux-auto-tool-delta",
+      models: [{ id: "faux-auto-tool-delta-model", contextWindow: 2000 }],
+    });
+    const unregisterFauxProvider = registerModelRuntimeProvider(faux.provider);
+
+    try {
+      const largeResult = `result start ${"z".repeat(1200)} result end`;
+      faux.setResponses([
+        withAssistantUsage(
+          fauxAssistantMessage([fauxToolCall("fake_tool", {}, { id: "fake-call" })], {
+            stopReason: "toolUse",
+          }),
+          1400,
+        ),
+        fauxAssistantMessage(compactionSummary("## Goal\nFinish")),
+        fauxAssistantMessage("done"),
+      ]);
+      const toolRegistry = new ToolRegistry([
+        {
+          schema: {
+            name: "fake_tool",
+            description: "test tool",
+            parameters: { type: "object", properties: {}, additionalProperties: false },
+          },
+          getDisplayTarget: (toolCall) => toolCall.name,
+          async dispatch(toolCall) {
+            return {
+              run: Promise.resolve({
+                toolResult: {
+                  role: "toolResult",
+                  toolCallId: toolCall.id,
+                  toolName: toolCall.name,
+                  content: [{ type: "text", text: largeResult }],
+                  isError: false,
+                  timestamp: 2,
+                },
+              }),
+            };
+          },
+        },
+      ]);
+      const persona = {
+        id: "faux-auto-tool-delta",
+        label: "faux auto tool delta",
+        model: faux.getModel(),
+        systemPrompt: "system",
+        settings: { reasoning: "none" },
+        skills: "*",
+        source: "builtin",
+      };
+      const session = new CoreSession({
+        persona,
+        systemPrompt: "system",
+        subagentPrompts: {},
+        toolRegistry,
+        config: {
+          autoCompact: { enabled: true, reserveTokens: 500, keepRecentTokens: 10 },
+        },
+      });
+      const modelContexts = [];
+      const streamModel = session.engine.modelRuntime.streamModel.bind(session.engine.modelRuntime);
+      session.engine.modelRuntime.streamModel = (model, context, options) => {
+        if (options.sessionId === session.sessionId) {
+          modelContexts.push(structuredClone(context));
+        }
+        return streamModel(model, context, options);
+      };
+
+      session.addUserText(`old request ${"x".repeat(6000)}`);
+      session.addMessage(assistantMessageWithUsage("old answer", 1000));
+      session.addUserText("current request");
+
+      const events = [];
+      for await (const event of session.events(new AbortController().signal)) {
+        events.push(event);
+      }
+
+      const toolResultIndex = events.findIndex((event) => event.type === "tool_result");
+      const compactionIndex = events.findIndex(
+        (event, index) => index > toolResultIndex && event.type === "compaction_start",
+      );
+      expect(toolResultIndex).toBeGreaterThan(-1);
+      expect(compactionIndex).toBeGreaterThan(toolResultIndex);
+      expect(modelContexts).toHaveLength(2);
+      expect(modelContexts[1].messages.find((message) => message.role === "toolResult")).toEqual(
+        expect.objectContaining({ content: [{ type: "text", text: largeResult }] }),
+      );
+    } finally {
+      unregisterFauxProvider();
+    }
+  });
+
+  it("uses the latest successful usage checkpoint when a new user message consumes the reserve", async () => {
+    const faux = fauxProvider({
+      provider: "faux-auto-user-delta",
+      models: [{ id: "faux-auto-user-delta-model", contextWindow: 2000 }],
+    });
+    const unregisterFauxProvider = registerModelRuntimeProvider(faux.provider);
+
+    try {
+      faux.setResponses([
+        fauxAssistantMessage(compactionSummary("## Goal\nAnswer the latest request")),
+        fauxAssistantMessage("done"),
+      ]);
+      const persona = {
+        id: "faux-auto-user-delta",
+        label: "faux auto user delta",
+        model: faux.getModel(),
+        systemPrompt: "system",
+        settings: { reasoning: "none" },
+        skills: "*",
+        source: "builtin",
+      };
+      const session = new CoreSession({
+        persona,
+        systemPrompt: "system",
+        subagentPrompts: {},
+        toolRegistry: new ToolRegistry([]),
+        config: {
+          autoCompact: { enabled: true, reserveTokens: 500, keepRecentTokens: 50 },
+        },
+      });
+
+      session.addUserText(`old request ${"x".repeat(6000)}`);
+      session.addMessage(assistantMessageWithUsage("old answer", 1400));
+      session.addMessage({
+        ...assistantMessageWithUsage("provider error", 0),
+        stopReason: "error",
+        errorMessage: "request failed",
+      });
+      session.addUserText(`current request ${"y".repeat(1200)}`);
+
+      const events = [];
+      for await (const event of session.events(new AbortController().signal)) {
+        events.push(event);
+      }
+
+      expect(events[0]).toEqual({ type: "compaction_start", reason: "threshold" });
+      expect(events).toContainEqual({
+        type: "compaction_end",
+        reason: "threshold",
+        outcome: "compacted",
+        result: expect.objectContaining({ cutType: "turn-boundary" }),
+      });
+    } finally {
+      unregisterFauxProvider();
+    }
+  });
+
   it("starts streamed tool calls early while preserving sequential execution", async () => {
     const firstCall = fauxToolCall("first_tool", {}, { id: "first-call" });
     const secondCall = fauxToolCall("second_tool", {}, { id: "second-call" });
@@ -2111,8 +2344,8 @@ describe("summary formatting", () => {
     expect(summary).not.toContain("  middle 9");
   });
 
-  it("middle-truncates bash tool results to 4096 tokens", () => {
-    const longOutput = "a".repeat(30000);
+  it("middle-truncates every compaction tool result to 2048 tokens without changing history", () => {
+    const longOutput = `start ${"a".repeat(30000)} end`;
     const history = [
       {
         role: "toolResult",
@@ -2122,13 +2355,26 @@ describe("summary formatting", () => {
         isError: false,
         timestamp: 0,
       },
+      {
+        role: "toolResult",
+        toolCallId: "custom-1",
+        toolName: "custom_tool",
+        content: [{ type: "text", text: longOutput }],
+        isError: false,
+        timestamp: 1,
+      },
     ];
+    const originalHistory = structuredClone(history);
 
     const summary = formatHistoryForCompaction(history);
 
     expect(summary).toContain(`[Tool result]: ${TOOL_NAME_BASH} (ok)`);
-    expect(summary).toContain("tokens truncated");
+    expect(summary).toContain("[Tool result]: custom_tool (ok)");
+    expect(summary.match(/tokens truncated/g)).toHaveLength(2);
+    expect(summary).toContain("start");
+    expect(summary).toContain("end");
     expect(summary.length).toBeLessThan(longOutput.length);
+    expect(history).toEqual(originalHistory);
   });
 });
 
@@ -2615,8 +2861,12 @@ function assistantMessage(text) {
 }
 
 function assistantMessageWithUsage(text, totalTokens) {
+  return withAssistantUsage(assistantMessage(text), totalTokens);
+}
+
+function withAssistantUsage(message, totalTokens) {
   return {
-    ...assistantMessage(text),
+    ...message,
     usage: {
       input: totalTokens,
       output: 0,

@@ -2,7 +2,7 @@
 
 The one-shot JavaScript runtime provides these globals:
 
-- `web.discover(url)`: discover direct Markdown representations and bounded raw `llms.txt` files for a documentation URL.
+- `web.discover(url)`: discover metadata for direct Markdown representations and `llms.txt` files for a documentation URL.
 - `web.search(query, options?)`: search the web and return relevant page highlights.
 - `web.fetch(urls, options?)`: retrieve highlights or bounded text from known URLs through the web extraction service.
 - `docs`: this document.
@@ -35,8 +35,7 @@ for (const representation of discovery.markdown) {
   );
 }
 for (const file of discovery.llmsTxt) {
-  console.log(`\n${file.url}\n${file.content}`);
-  if (file.truncated) console.log("[llms.txt truncated]");
+  console.log(`llms.txt: ${file.url} (${file.contentType})`);
 }
 ```
 
@@ -46,7 +45,7 @@ Discovery checks:
 2. Deterministic same-origin `.md` and `/index.md` paths.
 3. `/llms.txt` and `/<first-path-segment>/llms.txt`.
 
-`llms.txt` content is returned as bounded raw text. The API does not parse Markdown links, match entries to the requested page, or automatically follow anything listed there. Missing discovery files are omitted.
+Discovery returns metadata only. It does not return page or `llms.txt` bodies, parse Markdown links, match entries to the requested page, or automatically follow anything listed there. Missing discovery files are omitted.
 
 ### Response
 
@@ -64,14 +63,13 @@ Discovery checks:
   llmsTxt: [
     {
       url: string,
-      content: string,
-      truncated: boolean,
+      contentType: "text/markdown" | "text/x-markdown" | "text/plain",
     },
   ],
 }
 ```
 
-Discovery does not return the represented page body. Retrieve an explicit Markdown path with `curl` in a later Bash call:
+Retrieve an explicit Markdown or `llms.txt` URL with `curl` in a later Bash call:
 
 ```bash
 curl -fsSL -H 'Accept: text/markdown' \

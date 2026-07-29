@@ -1,8 +1,0 @@
-{
-  "name": "tau-code-mode-web-runtime",
-  "private": true,
-  "type": "module",
-  "dependencies": {
-    "exa-js": "2.16.3"
-  }
-}

@@ -1,11 +1,9 @@
 import { lookup } from "node:dns/promises";
 import { request as requestHttp } from "node:http";
 import { request as requestHttps } from "node:https";
-import { BlockList, isIP } from "node:net";
+import { BlockList, isIP, type LookupFunction } from "node:net";
 
 const DISCOVERY_TIMEOUT_MS = 8_000;
-const DISCOVERY_BODY_BYTES = 64 * 1024;
-const LLMS_TXT_CHARACTERS = 20_000;
 const MAX_REDIRECTS = 5;
 
 const blockedIpv4Addresses = new BlockList();
@@ -25,7 +23,7 @@ for (const [network, prefix] of [
   ["203.0.113.0", 24],
   ["224.0.0.0", 4],
   ["240.0.0.0", 4],
-]) {
+] as const) {
   blockedIpv4Addresses.addSubnet(network, prefix, "ipv4");
 }
 for (const [network, prefix] of [
@@ -39,12 +37,30 @@ for (const [network, prefix] of [
   ["fc00::", 7],
   ["fe80::", 10],
   ["ff00::", 8],
-]) {
+] as const) {
   blockedIpv6Addresses.addSubnet(network, prefix, "ipv6");
 }
 
-function parseWebUrl(value) {
-  let url;
+type ResolvedAddress = {
+  address: string;
+  family: 4 | 6;
+};
+
+export type DiscoveryMetadataResponse = {
+  url: string;
+  status: number;
+  contentType: string;
+  vary: string;
+  location?: string;
+};
+
+type DiscoveryRequest = (
+  url: URL,
+  options: { accept: string; sameOrigin?: string },
+) => Promise<DiscoveryMetadataResponse>;
+
+function parseWebUrl(value: string | URL): URL {
+  let url: URL;
   try {
     url = new URL(value);
   } catch {
@@ -63,11 +79,11 @@ function parseWebUrl(value) {
   return url;
 }
 
-function normalizedHostname(url) {
+function normalizedHostname(url: URL): string {
   return url.hostname.replace(/^\[|\]$/g, "");
 }
 
-function assertPublicAddress(address, family) {
+function assertPublicAddress(address: string, family: 4 | 6): void {
   const type = family === 6 ? "ipv6" : "ipv4";
   const blocked = family === 6 ? blockedIpv6Addresses : blockedIpv4Addresses;
   if (blocked.check(address, type)) {
@@ -75,12 +91,20 @@ function assertPublicAddress(address, family) {
   }
 }
 
-async function resolvePublicAddresses(url) {
+async function resolvePublicAddresses(url: URL): Promise<ResolvedAddress[]> {
   const hostname = normalizedHostname(url);
   const literalFamily = isIP(hostname);
-  const addresses = literalFamily
-    ? [{ address: hostname, family: literalFamily }]
-    : await lookup(hostname, { all: true, verbatim: true });
+  let addresses: ResolvedAddress[];
+  if (literalFamily === 4 || literalFamily === 6) {
+    addresses = [{ address: hostname, family: literalFamily }];
+  } else {
+    addresses = (await lookup(hostname, { all: true, verbatim: true })).map((entry) => {
+      if (entry.family !== 4 && entry.family !== 6) {
+        throw new Error(`web.discover received unsupported address family '${entry.family}'`);
+      }
+      return { address: entry.address, family: entry.family };
+    });
+  }
   if (addresses.length === 0) {
     throw new Error(`web.discover could not resolve '${hostname}'`);
   }
@@ -90,13 +114,13 @@ async function resolvePublicAddresses(url) {
   return addresses;
 }
 
-export async function assertPublicWebUrl(value) {
+export async function assertPublicWebUrl(value: string | URL): Promise<URL> {
   const url = parseWebUrl(value);
   await resolvePublicAddresses(url);
   return url;
 }
 
-function createPinnedLookup(addresses) {
+function createPinnedLookup(addresses: ResolvedAddress[]): LookupFunction {
   return (_hostname, options, callback) => {
     const requestedFamily = typeof options === "object" ? options.family : undefined;
     const matching = addresses.filter(
@@ -107,15 +131,23 @@ function createPinnedLookup(addresses) {
       callback(null, selected);
       return;
     }
-    callback(null, selected[0].address, selected[0].family);
+    const first = selected[0];
+    if (!first) {
+      callback(new Error("web.discover could not select a resolved address"), "", 4);
+      return;
+    }
+    callback(null, first.address, first.family);
   };
 }
 
-function requestOnce(url, options) {
+function requestOnce(
+  url: URL,
+  options: { accept: string; addresses: ResolvedAddress[] },
+): Promise<DiscoveryMetadataResponse> {
   return new Promise((resolve, reject) => {
     const transport = url.protocol === "https:" ? requestHttps : requestHttp;
     let settled = false;
-    const finish = (callback) => {
+    const finish = (callback: () => void): void => {
       if (settled) return;
       settled = true;
       callback();
@@ -132,39 +164,17 @@ function requestOnce(url, options) {
         lookup: createPinnedLookup(options.addresses),
       },
       (response) => {
-        const chunks = [];
-        let bytes = 0;
-        let truncated = false;
-        response.on("data", (chunk) => {
-          if (truncated) return;
-          const remaining = options.maxBytes - bytes;
-          if (chunk.length > remaining) {
-            if (remaining > 0) chunks.push(chunk.subarray(0, remaining));
-            bytes = options.maxBytes;
-            truncated = true;
-            response.destroy();
-            finish(() =>
-              resolve({
-                response,
-                body: Buffer.concat(chunks).toString("utf8"),
-                truncated,
-              }),
-            );
-            return;
-          }
-          chunks.push(chunk);
-          bytes += chunk.length;
-        });
-        response.on("end", () =>
-          finish(() =>
-            resolve({
-              response,
-              body: Buffer.concat(chunks).toString("utf8"),
-              truncated,
-            }),
-          ),
-        );
-        response.on("error", (error) => finish(() => reject(error)));
+        const result = {
+          url: url.toString(),
+          status: response.statusCode ?? 0,
+          contentType: (String(response.headers["content-type"] ?? "").split(";", 1)[0] ?? "")
+            .trim()
+            .toLowerCase(),
+          vary: String(response.headers.vary ?? ""),
+          ...(response.headers.location ? { location: response.headers.location } : {}),
+        };
+        response.destroy();
+        finish(() => resolve(result));
       },
     );
     request.setTimeout(DISCOVERY_TIMEOUT_MS, () => {
@@ -175,59 +185,52 @@ function requestOnce(url, options) {
   });
 }
 
-export async function requestPublicText(
-  value,
-  { accept, maxBytes = DISCOVERY_BODY_BYTES, redirects = MAX_REDIRECTS, sameOrigin } = {},
-) {
+export async function requestPublicMetadata(
+  value: string | URL,
+  {
+    accept,
+    redirects = MAX_REDIRECTS,
+    sameOrigin,
+  }: {
+    accept: string;
+    redirects?: number;
+    sameOrigin?: string;
+  },
+): Promise<DiscoveryMetadataResponse> {
   const url = parseWebUrl(value);
   const addresses = await resolvePublicAddresses(url);
-  const { response, body, truncated } = await requestOnce(url, {
-    accept,
-    maxBytes,
-    addresses,
-  });
-  const status = response.statusCode ?? 0;
-  if ([301, 302, 303, 307, 308].includes(status) && response.headers.location) {
+  const response = await requestOnce(url, { accept, addresses });
+  if ([301, 302, 303, 307, 308].includes(response.status) && response.location) {
     if (redirects === 0) throw new Error("web.discover followed too many redirects");
-    const redirectUrl = new URL(response.headers.location, url);
+    const redirectUrl = new URL(response.location, url);
     if (sameOrigin && redirectUrl.origin !== sameOrigin) {
       throw new Error("web.discover same-origin probe redirected to another origin");
     }
-    return requestPublicText(redirectUrl, {
+    return requestPublicMetadata(redirectUrl, {
       accept,
-      maxBytes,
       redirects: redirects - 1,
       sameOrigin,
     });
   }
-  return {
-    url: url.toString(),
-    status,
-    contentType: String(response.headers["content-type"] ?? "")
-      .split(";", 1)[0]
-      .trim()
-      .toLowerCase(),
-    contentEncoding: String(response.headers["content-encoding"] ?? "").toLowerCase(),
-    vary: String(response.headers.vary ?? ""),
-    body,
-    truncated,
-  };
+  return response;
 }
 
-function isMarkdownContentType(contentType) {
+function isMarkdownContentType(contentType: string): boolean {
   return contentType === "text/markdown" || contentType === "text/x-markdown";
 }
 
-function isTextDiscoveryResponse(response, allowPlainText) {
+function isTextDiscoveryResponse(
+  response: DiscoveryMetadataResponse,
+  allowPlainText: boolean,
+): boolean {
   return (
     response.status === 200 &&
-    (!response.contentEncoding || response.contentEncoding === "identity") &&
     (isMarkdownContentType(response.contentType) ||
       (allowPlainText && response.contentType === "text/plain"))
   );
 }
 
-function buildMarkdownCandidates(requestedUrl) {
+function buildMarkdownCandidates(requestedUrl: URL): URL[] {
   const candidate = new URL(requestedUrl);
   candidate.search = "";
   const path = candidate.pathname;
@@ -240,14 +243,18 @@ function buildMarkdownCandidates(requestedUrl) {
   });
 }
 
-function buildLlmsTxtCandidates(requestedUrl) {
+function buildLlmsTxtCandidates(requestedUrl: URL): URL[] {
   const root = new URL("/llms.txt", requestedUrl);
   const firstSegment = requestedUrl.pathname.split("/").filter(Boolean)[0];
   if (!firstSegment) return [root];
   return [root, new URL(`/${firstSegment}/llms.txt`, requestedUrl)];
 }
 
-async function optionalRequest(request, url, options) {
+async function optionalRequest(
+  request: DiscoveryRequest,
+  url: URL,
+  options: Parameters<DiscoveryRequest>[1],
+): Promise<DiscoveryMetadataResponse | undefined> {
   try {
     return await request(url, options);
   } catch {
@@ -256,13 +263,24 @@ async function optionalRequest(request, url, options) {
 }
 
 export async function discoverAgentContent(
-  value,
+  value: string,
   {
-    request = requestPublicText,
+    request = requestPublicMetadata,
     validate = assertPublicWebUrl,
-    llmsTxtCharacters = LLMS_TXT_CHARACTERS,
+  }: {
+    request?: DiscoveryRequest;
+    validate?: (value: string) => Promise<URL>;
   } = {},
-) {
+): Promise<{
+  requestedUrl: string;
+  markdown: Array<{
+    url: string;
+    via: "content-negotiation" | "markdown-path";
+    contentType: string;
+    varyAccept?: boolean;
+  }>;
+  llmsTxt: Array<{ url: string; contentType: string }>;
+}> {
   const requestedUrl = await validate(value);
   const negotiatedRequest = optionalRequest(request, requestedUrl, {
     accept: "text/markdown, text/plain;q=0.9, text/html;q=0.1",
@@ -278,7 +296,6 @@ export async function discoverAgentContent(
   const llmsTxtRequests = llmsTxtCandidates.map((url) =>
     optionalRequest(request, url, {
       accept: "text/plain, text/markdown;q=0.9",
-      maxBytes: Math.max(llmsTxtCharacters * 4, llmsTxtCharacters),
       sameOrigin: requestedUrl.origin,
     }),
   );
@@ -289,12 +306,12 @@ export async function discoverAgentContent(
   ]);
 
   const markdown = [];
-  const markdownUrls = new Set();
+  const markdownUrls = new Set<string>();
   if (negotiated && isTextDiscoveryResponse(negotiated, false)) {
     markdownUrls.add(negotiated.url);
     markdown.push({
       url: negotiated.url,
-      via: "content-negotiation",
+      via: "content-negotiation" as const,
       contentType: negotiated.contentType,
       varyAccept: negotiated.vary
         .split(",")
@@ -302,17 +319,13 @@ export async function discoverAgentContent(
     });
   }
   for (const response of markdownResponses) {
-    if (
-      !response ||
-      markdownUrls.has(response.url) ||
-      !isTextDiscoveryResponse(response, true)
-    ) {
+    if (!response || markdownUrls.has(response.url) || !isTextDiscoveryResponse(response, true)) {
       continue;
     }
     markdownUrls.add(response.url);
     markdown.push({
       url: response.url,
-      via: "markdown-path",
+      via: "markdown-path" as const,
       contentType: response.contentType,
     });
   }
@@ -320,11 +333,9 @@ export async function discoverAgentContent(
   const llmsTxt = [];
   for (const response of llmsTxtResponses) {
     if (!response || !isTextDiscoveryResponse(response, true)) continue;
-    const content = response.body.slice(0, llmsTxtCharacters);
     llmsTxt.push({
       url: response.url,
-      content,
-      truncated: response.truncated || content.length < response.body.length,
+      contentType: response.contentType,
     });
   }
 

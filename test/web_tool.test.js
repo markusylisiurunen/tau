@@ -1,14 +1,7 @@
-import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { getExaApiKey } from "../dist/core/config/index.js";
 import { createWebToolDefinition } from "../dist/core/tools/web.js";
-import {
-  assertPublicWebUrl,
-  discoverAgentContent,
-} from "../src/core/static/code_mode/web/discovery.mjs";
+import { assertPublicWebUrl, discoverAgentContent } from "../dist/core/tools/web_discovery.js";
 
 function createExecutionResult(output, exitCode = 0) {
   return {
@@ -25,11 +18,20 @@ function createExecutionResult(output, exitCode = 0) {
 
 function createBackend() {
   return {
-    runNodeScript: vi.fn(async () =>
-      createExecutionResult(JSON.stringify({ runnerPath: "/tmp/tau-web/runner.mjs" })),
-    ),
-    runBash: vi.fn(async () => createExecutionResult("program output\n")),
+    runNodeScript: vi.fn(async () => createExecutionResult("", 1)),
+    runBash: vi.fn(async () => createExecutionResult("", 1)),
     writeFile: vi.fn(),
+  };
+}
+
+function createDeps(client) {
+  return {
+    createExaClient: vi.fn(() => client),
+    discover: vi.fn(async (url) => ({
+      requestedUrl: url,
+      markdown: [{ url: `${url}.md`, via: "markdown-path", contentType: "text/plain" }],
+      llmsTxt: [],
+    })),
   };
 }
 
@@ -37,10 +39,11 @@ async function runTool(
   tool,
   arguments_,
   context = { scope: "subagent", cwd: "/project", config: { apiKeys: { exa: "exa-key" } } },
+  signal = new AbortController().signal,
 ) {
   const dispatch = await tool.dispatch(
     { id: "web-1", name: "web", arguments: arguments_ },
-    new AbortController().signal,
+    signal,
     context,
   );
   return { dispatch, result: await dispatch.run };
@@ -48,26 +51,6 @@ async function runTool(
 
 function getToolText(result) {
   return result.toolResult.content.find((block) => block.type === "text")?.text ?? "";
-}
-
-function runRunner(runnerPath, input) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [runnerPath], {
-      cwd: input.cwd,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk;
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk;
-    });
-    child.once("error", reject);
-    child.once("close", (exitCode) => resolve({ stdout, stderr, exitCode }));
-    child.stdin.end(JSON.stringify(input));
-  });
 }
 
 describe("Exa web code-mode tool", () => {
@@ -79,21 +62,14 @@ describe("Exa web code-mode tool", () => {
   });
 
   it("bundles documentation for only the bounded web API", () => {
-    const documentation = readFileSync(
-      join(process.cwd(), "src", "core", "static", "code_mode", "web", "documentation.md"),
-      "utf8",
-    );
+    const backend = createBackend();
+    const tool = createWebToolDefinition(backend, createDeps({}));
 
-    expect(documentation).toContain("web.discover(url)");
-    expect(documentation).toContain("web.search(query, options?)");
-    expect(documentation).toContain("web.fetch(urls, options?)");
-    expect(documentation).toContain("defaults to highlights");
-    expect(documentation).not.toContain("Exa");
-    expect(documentation).not.toContain("stream: true");
-    expect(documentation).not.toContain("Authorization");
+    expect(tool.schema.description).toContain("use web.discover first");
+    expect(tool.schema.description).toContain("receives web, docs, and console globals");
   });
 
-  it("discovers deterministic Markdown and raw llms.txt responses", async () => {
+  it("discovers only metadata for deterministic Markdown and llms.txt responses", async () => {
     const requestedUrl = "https://example.com/docs/getting-started";
     const responses = new Map([
       [
@@ -102,7 +78,7 @@ describe("Exa web code-mode tool", () => {
           status: 200,
           contentType: "text/markdown",
           vary: "Accept",
-          body: "# Negotiated",
+          body: "# Negotiated content that must not be returned",
         },
       ],
       [
@@ -110,6 +86,7 @@ describe("Exa web code-mode tool", () => {
         {
           status: 200,
           contentType: "text/html",
+          vary: "",
           body: "<html>fallback</html>",
         },
       ],
@@ -118,7 +95,8 @@ describe("Exa web code-mode tool", () => {
         {
           status: 200,
           contentType: "text/plain",
-          body: "# Explicit Markdown",
+          vary: "",
+          body: "# Explicit Markdown content that must not be returned",
         },
       ],
       [
@@ -126,6 +104,7 @@ describe("Exa web code-mode tool", () => {
         {
           status: 200,
           contentType: "text/plain",
+          vary: "",
           body: "# Example docs\n- [Getting started](/docs/getting-started/index.md)",
         },
       ],
@@ -134,6 +113,7 @@ describe("Exa web code-mode tool", () => {
         {
           status: 404,
           contentType: "text/plain",
+          vary: "",
           body: "not found",
         },
       ],
@@ -143,12 +123,7 @@ describe("Exa web code-mode tool", () => {
       calls.push({ url: url.toString(), accept: options.accept });
       const response = responses.get(url.toString());
       if (!response) throw new Error("unexpected URL");
-      return {
-        url: url.toString(),
-        contentEncoding: "",
-        truncated: false,
-        ...response,
-      };
+      return { url: url.toString(), ...response };
     });
 
     const discovered = await discoverAgentContent(requestedUrl, {
@@ -174,11 +149,12 @@ describe("Exa web code-mode tool", () => {
       llmsTxt: [
         {
           url: "https://example.com/llms.txt",
-          content: "# Example docs\n- [Getting started](/docs/getting-started/index.md)",
-          truncated: false,
+          contentType: "text/plain",
         },
       ],
     });
+    expect(JSON.stringify(discovered)).not.toContain("must not be returned");
+    expect(JSON.stringify(discovered)).not.toContain("Getting started");
     expect(calls.map((call) => call.url)).toEqual([
       requestedUrl,
       `${requestedUrl}.md`,
@@ -200,82 +176,134 @@ describe("Exa web code-mode tool", () => {
     );
   });
 
-  it("prepares its runtime once and returns console output", async () => {
+  it("runs generated code in a capability-limited sandbox", async () => {
     const backend = createBackend();
-    const tool = createWebToolDefinition(backend);
+    const deps = createDeps({});
+    const tool = createWebToolDefinition(backend, deps);
+    const { dispatch, result } = await runTool(tool, {
+      code: [
+        "console.log(typeof process, typeof fetch, typeof require, typeof _requestWeb);",
+        "try { console.log.constructor('return process')(); } catch { console.log('escape blocked'); }",
+        "return 'ignored';",
+      ].join("\n"),
+    });
 
-    expect(tool.schema.description).toContain(
-      "only when the user asks to browse or search the web, provides a URL, or otherwise clearly implies that web access is needed",
-    );
-    expect(tool.schema.description).toContain("use web.discover first");
-    expect(tool.schema.description).toContain("receives web, docs, and console globals");
-    expect(tool.schema.description).toContain(
-      "When all fields are needed, still flatten and label them compactly rather than serializing the response object",
-    );
-    expect(tool.schema.description).toContain(
-      "Emit JSON only when the user explicitly requests JSON or another machine-readable result",
-    );
-
-    const first = await runTool(tool, { code: "console.log(docs)" });
-    const second = await runTool(tool, { code: "console.log('again')" });
-
-    expect(first.dispatch.startedUiEvent).toMatchObject({
+    expect(dispatch.startedUiEvent).toMatchObject({
       type: "code_mode_started",
       toolName: "web",
       label: "web",
     });
-    expect(getToolText(first.result)).toBe("program output");
-    expect(first.result.uiEvent).toMatchObject({
-      type: "code_mode_finished",
-      toolName: "web",
-      status: "success",
-    });
-    expect(getToolText(second.result)).toBe("program output");
-    expect(backend.runNodeScript).toHaveBeenCalledTimes(1);
-    expect(backend.runBash).toHaveBeenCalledTimes(2);
-
-    const executionOptions = backend.runBash.mock.calls[0][1];
-    expect(backend.runBash.mock.calls[0][0]).toBe('exec "$0" "$@"');
-    expect(executionOptions.args).toEqual(["node", "/tmp/tau-web/runner.mjs"]);
-    expect(JSON.parse(executionOptions.stdin.toString("utf8"))).toEqual({
-      apiKey: "exa-key",
-      code: "console.log(docs)",
-      cwd: "/project",
-    });
+    expect(result.toolResult.isError).toBe(false);
+    expect(getToolText(result)).toContain("undefined undefined undefined undefined");
+    expect(getToolText(result)).toContain("escape blocked");
+    expect(getToolText(result)).not.toContain("ignored");
+    expect(backend.runNodeScript).not.toHaveBeenCalled();
+    expect(backend.runBash).not.toHaveBeenCalled();
+    expect(deps.createExaClient).toHaveBeenCalledWith("exa-key");
   });
 
-  it("middle-truncates program output at 8,192 estimated tokens", async () => {
+  it("runs search and fetch through the trusted provider client", async () => {
+    const client = {
+      search: vi.fn(async (query, options) => ({
+        results: [
+          {
+            title: JSON.stringify({ query, options }),
+            url: "https://search.example",
+            highlights: ["search highlight"],
+            score: 0.9,
+          },
+        ],
+        statuses: [{ id: "https://search.example", status: "success" }],
+        costDollars: { total: 1 },
+      })),
+      getContents: vi.fn(async (urls, options) => ({
+        results: [
+          {
+            title: JSON.stringify({ urls, options }),
+            url: urls[0],
+            text: "page text",
+            image: "https://image.example",
+            extras: { links: ["https://linked.example"] },
+          },
+        ],
+        statuses: [{ id: urls[0], status: "success" }],
+      })),
+    };
     const backend = createBackend();
-    backend.runBash.mockResolvedValue(createExecutionResult("x".repeat(60_000)));
-    const tool = createWebToolDefinition(backend);
+    const tool = createWebToolDefinition(backend, createDeps(client));
+    const { result } = await runTool(tool, {
+      code: [
+        "const search = await web.search('tau', { numResults: 2, userLocation: 'fi' });",
+        "console.log(search.results[0].title);",
+        "const text = await web.fetch(['https://example.com'], { mode: 'text', maxCharacters: 123, links: 2 });",
+        "console.log(text.results[0].title);",
+        "console.log(JSON.stringify(text.results[0]));",
+      ].join("\n"),
+    });
 
-    const { result } = await runTool(tool, { code: "console.log('large output')" });
-
-    expect(getToolText(result)).toContain("Output truncated for context");
+    expect(result.toolResult.isError).toBe(false);
+    expect(client.search).toHaveBeenCalledWith("tau", {
+      type: "auto",
+      numResults: 2,
+      userLocation: "FI",
+      contents: { highlights: true },
+    });
+    expect(client.getContents).toHaveBeenCalledWith(["https://example.com"], {
+      text: { maxCharacters: 123 },
+      extras: { links: 2 },
+    });
+    expect(getToolText(result)).toContain("page text");
+    expect(getToolText(result)).toContain("https://linked.example");
+    expect(getToolText(result)).not.toContain("costDollars");
+    expect(getToolText(result)).not.toContain("image.example");
   });
 
-  it("allows provider-independent programs without an Exa API key", async () => {
+  it("supports keyless documentation and discovery without constructing a provider client", async () => {
     const backend = createBackend();
-    const tool = createWebToolDefinition(backend);
+    const deps = createDeps({});
+    const tool = createWebToolDefinition(backend, deps);
     const { result } = await runTool(
       tool,
-      { code: "console.log(docs)" },
+      {
+        code: [
+          "console.log(docs.includes('web.discover(url)'));",
+          "const discovery = await web.discover('https://example.com/docs');",
+          "console.log(discovery.markdown[0].url);",
+        ].join("\n"),
+      },
       { scope: "main", cwd: "/project", config: {} },
     );
 
     expect(result.toolResult.isError).toBe(false);
-    expect(backend.runNodeScript).toHaveBeenCalledTimes(1);
-    expect(backend.runBash).toHaveBeenCalledTimes(1);
-    const executionOptions = backend.runBash.mock.calls[0][1];
-    expect(JSON.parse(executionOptions.stdin.toString("utf8"))).toEqual({
-      code: "console.log(docs)",
-      cwd: "/project",
-    });
+    expect(getToolText(result)).toContain("true");
+    expect(getToolText(result)).toContain("https://example.com/docs.md");
+    expect(deps.discover).toHaveBeenCalledWith("https://example.com/docs");
+    expect(deps.createExaClient).not.toHaveBeenCalled();
   });
 
-  it("rejects unknown arguments", async () => {
+  it("rejects unsupported options and missing credentials", async () => {
     const backend = createBackend();
-    const tool = createWebToolDefinition(backend);
+    const deps = createDeps({});
+    const tool = createWebToolDefinition(backend, deps);
+    const unsupported = await runTool(tool, {
+      code: "await web.search('tau', { stream: true })",
+    });
+    expect(unsupported.result.toolResult.isError).toBe(true);
+    expect(getToolText(unsupported.result)).toContain("does not support option 'stream'");
+
+    const missingKey = await runTool(
+      tool,
+      { code: "await web.search('tau')" },
+      { scope: "main", cwd: "/project", config: {} },
+    );
+    expect(missingKey.result.toolResult.isError).toBe(true);
+    expect(getToolText(missingKey.result)).toContain("Missing Exa API key.");
+  });
+
+  it("rejects unknown tool arguments without starting the sandbox", async () => {
+    const backend = createBackend();
+    const deps = createDeps({});
+    const tool = createWebToolDefinition(backend, deps);
     const { result } = await runTool(tool, {
       code: "console.log(docs)",
       objective: "legacy shape",
@@ -283,167 +311,30 @@ describe("Exa web code-mode tool", () => {
 
     expect(result.toolResult.isError).toBe(true);
     expect(getToolText(result)).toContain("Invalid arguments");
-    expect(backend.runNodeScript).not.toHaveBeenCalled();
+    expect(deps.createExaClient).not.toHaveBeenCalled();
   });
 
-  it("runs generated code through the bounded web API", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "tau-web-runner-test-"));
-    try {
-      const sourceRunner = join(
-        process.cwd(),
-        "src",
-        "core",
-        "static",
-        "code_mode",
-        "web",
-        "runner.mjs",
-      );
-      const runnerPath = join(directory, "runner.mjs");
-      writeFileSync(runnerPath, readFileSync(sourceRunner, "utf8"));
-      writeFileSync(
-        join(directory, "discovery.mjs"),
-        readFileSync(
-          join(process.cwd(), "src", "core", "static", "code_mode", "web", "discovery.mjs"),
-          "utf8",
-        ),
-      );
-      writeFileSync(join(directory, "documentation.md"), "# Tau web API\n");
-      const packageDirectory = join(directory, "node_modules", "exa-js");
-      mkdirSync(packageDirectory, { recursive: true });
-      writeFileSync(
-        join(packageDirectory, "package.json"),
-        JSON.stringify({ name: "exa-js", type: "module", exports: "./index.mjs" }),
-      );
-      writeFileSync(
-        join(packageDirectory, "index.mjs"),
-        [
-          "export default class Exa {",
-          "  constructor(apiKey) { this.apiKey = apiKey; }",
-          "  async search(query, options) {",
-          "    return {",
-          "      results: [{",
-          "        title: JSON.stringify({ query, options, authenticated: this.apiKey === 'exa-key' }),",
-          "        url: 'https://search.example',",
-          "        highlights: ['search highlight'],",
-          "        score: 0.9,",
-          "      }],",
-          "      statuses: [{ id: 'https://search.example', status: 'success' }],",
-          "      costDollars: { total: 1 },",
-          "    };",
-          "  }",
-          "  async getContents(urls, options) {",
-          "    return {",
-          "      results: [{",
-          "        title: JSON.stringify({ urls, options }),",
-          "        url: urls[0],",
-          "        text: 'page text',",
-          "        image: 'https://image.example',",
-          "        extras: { links: ['https://linked.example'] },",
-          "      }],",
-          "      statuses: [{ id: urls[0], status: 'success' }],",
-          "    };",
-          "  }",
-          "}",
-        ].join("\n"),
-      );
+  it("forwards cancellation to a running sandbox", async () => {
+    const backend = createBackend();
+    const tool = createWebToolDefinition(backend, createDeps({}));
+    const controller = new AbortController();
+    const run = runTool(
+      tool,
+      { code: "for (;;) {}" },
+      { scope: "main", cwd: "/project", config: {} },
+      controller.signal,
+    );
+    setTimeout(() => controller.abort(), 20);
 
-      const result = await runRunner(runnerPath, {
-        apiKey: "exa-key",
-        code: [
-          "console.log(docs.trim());",
-          "console.log(typeof exa, typeof web, typeof web.discover);",
-          "const search = await web.search('tau', { numResults: 2, userLocation: 'fi' });",
-          "console.log(search.results[0].title);",
-          "const highlights = await web.fetch('https://example.com');",
-          "console.log(highlights.results[0].title);",
-          "const text = await web.fetch(['https://example.com'], { mode: 'text', maxCharacters: 123, links: 2 });",
-          "console.log(text.results[0].title);",
-          "console.log(JSON.stringify(text.results[0]));",
-          "console.error('diagnostic');",
-          "return 'ignored';",
-        ].join("\n"),
-        cwd: directory,
-      });
+    const { result } = await run;
+    expect(result.toolResult.isError).toBe(true);
+  });
 
-      expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain("# Tau web API");
-      expect(result.stdout).toContain("undefined object function");
-      expect(result.stdout).toContain(
-        JSON.stringify({
-          query: "tau",
-          options: {
-            type: "auto",
-            numResults: 2,
-            userLocation: "FI",
-            contents: { highlights: true },
-          },
-          authenticated: true,
-        }),
-      );
-      expect(result.stdout).toContain(
-        JSON.stringify({
-          urls: ["https://example.com"],
-          options: { highlights: true },
-        }),
-      );
-      expect(result.stdout).toContain(
-        JSON.stringify({
-          urls: ["https://example.com"],
-          options: {
-            text: { maxCharacters: 123 },
-            extras: { links: 2 },
-          },
-        }),
-      );
-      expect(result.stdout).toContain(
-        JSON.stringify({
-          title: JSON.stringify({
-            urls: ["https://example.com"],
-            options: {
-              text: { maxCharacters: 123 },
-              extras: { links: 2 },
-            },
-          }),
-          url: "https://example.com",
-          text: "page text",
-          links: ["https://linked.example"],
-        }),
-      );
-      expect(result.stdout).not.toContain("costDollars");
-      expect(result.stdout).not.toContain("ignored");
-      expect(result.stderr).toContain("diagnostic");
+  it("middle-truncates large program output at 8,192 estimated tokens", async () => {
+    const backend = createBackend();
+    const tool = createWebToolDefinition(backend, createDeps({}));
+    const { result } = await runTool(tool, { code: "console.log('x'.repeat(60_000))" });
 
-      const unsupported = await runRunner(runnerPath, {
-        apiKey: "exa-key",
-        code: "await web.search('tau', { stream: true })",
-        cwd: directory,
-      });
-      expect(unsupported.exitCode).toBe(1);
-      expect(unsupported.stderr).toContain("does not support option 'stream'");
-
-      const missingKey = await runRunner(runnerPath, {
-        code: "await web.search('tau')",
-        cwd: directory,
-      });
-      expect(missingKey.exitCode).toBe(1);
-      expect(missingKey.stderr).toContain("Missing Exa API key.");
-
-      const privateDiscovery = await runRunner(runnerPath, {
-        code: "await web.discover('http://127.0.0.1/docs')",
-        cwd: directory,
-      });
-      expect(privateDiscovery.exitCode).toBe(1);
-      expect(privateDiscovery.stderr).toContain("only supports public web addresses");
-
-      const failed = await runRunner(runnerPath, {
-        apiKey: "exa-key",
-        code: "throw new Error('program failed')",
-        cwd: directory,
-      });
-      expect(failed.exitCode).toBe(1);
-      expect(failed.stderr).toContain("program failed");
-    } finally {
-      rmSync(directory, { recursive: true, force: true });
-    }
+    expect(getToolText(result)).toContain("Output truncated for context");
   });
 });

@@ -29,7 +29,11 @@ function createBackend() {
   };
 }
 
-async function runTool(tool, arguments_, context = { scope: "subagent", cwd: "/project" }) {
+async function runTool(
+  tool,
+  arguments_,
+  context = { scope: "subagent", cwd: "/project", config: { apiKeys: { exa: "exa-key" } } },
+) {
   const dispatch = await tool.dispatch(
     { id: "web-1", name: "web", arguments: arguments_ },
     new AbortController().signal,
@@ -72,7 +76,11 @@ describe("Exa web code-mode tool", () => {
 
   it("prepares its runtime once and returns console output", async () => {
     const backend = createBackend();
-    const tool = createWebToolDefinition({ apiKeys: { exa: "exa-key" } }, backend);
+    const tool = createWebToolDefinition(backend);
+
+    expect(tool.schema.description).toContain(
+      "only when the user asks to browse or search the web, provides a URL, or otherwise clearly implies that web access is needed",
+    );
 
     const first = await runTool(tool, { code: "console.log(docs)" });
     const second = await runTool(tool, { code: "console.log('again')" });
@@ -104,8 +112,12 @@ describe("Exa web code-mode tool", () => {
 
   it("fails before preparation when the Exa API key is missing", async () => {
     const backend = createBackend();
-    const tool = createWebToolDefinition({}, backend);
-    const { result } = await runTool(tool, { code: "console.log(docs)" });
+    const tool = createWebToolDefinition(backend);
+    const { result } = await runTool(
+      tool,
+      { code: "console.log(docs)" },
+      { scope: "main", cwd: "/project", config: {} },
+    );
 
     expect(result.toolResult.isError).toBe(true);
     expect(getToolText(result)).toContain("Missing Exa API key.");
@@ -115,7 +127,7 @@ describe("Exa web code-mode tool", () => {
 
   it("rejects unknown arguments", async () => {
     const backend = createBackend();
-    const tool = createWebToolDefinition({ apiKeys: { exa: "exa-key" } }, backend);
+    const tool = createWebToolDefinition(backend);
     const { result } = await runTool(tool, {
       code: "console.log(docs)",
       objective: "legacy shape",

@@ -1,4 +1,3 @@
-import type { Config } from "../config/index.js";
 import type { SubagentToolName } from "../subagents/types.js";
 import { createBashToolDefinition } from "./bash.js";
 import { createEditToolDefinition } from "./edit.js";
@@ -28,6 +27,7 @@ export const ToolCatalog = {
       createWriteToolDefinition(backend),
       createEditToolDefinition(backend),
       createViewImageToolDefinition(backend),
+      createWebToolDefinition(backend),
       createSpawnAgentToolDefinition(backend),
       createSendInputToAgentToolDefinition(backend),
       createWaitForAgentsToolDefinition(),
@@ -38,7 +38,6 @@ export const ToolCatalog = {
 
   createSubagentRegistry(
     allowedTools: SubagentToolName[],
-    config: Config,
     backend: ToolExecutionBackend,
   ): ToolRegistry {
     const definitions: ToolDefinition[] = [];
@@ -62,7 +61,7 @@ export const ToolCatalog = {
           definitions.push(createViewImageToolDefinition(backend));
           break;
         case TOOL_NAME_WEB:
-          definitions.push(createWebToolDefinition(config, backend));
+          definitions.push(createWebToolDefinition(backend));
           break;
       }
     };

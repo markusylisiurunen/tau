@@ -47,7 +47,7 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
 - **Nook** (`src/core/nook/`, `src/core/tools/nook.ts`, `src/nook/worker/`): Tau-integrated Cloudflare static mini-app platform with `tau nook` CLI, one configured `nook` model tool, bundled Worker/R2/Durable Object implementation, Nook-hosted templates, and injected browser JSON KV SDK. Follow `src/nook/AGENTS.md` for Nook-specific V0 constraints.
 - **ToolCatalog** (`src/core/tools/catalog.ts`): Builds the internal host tool registry; client-provided tools are advertised by attached clients and frozen per assistant turn by the session engine
 - **ToolExecutionBackend** (`src/core/tools/execution_backend.ts`): Generic filesystem/process backend used for local and hosted execution targets, including bash execution, Node script execution, file IO, and directory listing
-- **ToolRegistry** (`src/core/tools/registry.ts`): Tool registry type used by ToolCatalog for main-session host tools (bash, write, edit, view_image, spawn_agent, send_input_to_agent, wait_for_agents, terminate_agent) and sub-agent (configured allowed tools) registries; `diff_review` is advertised as a TUI client-provided tool
+- **ToolRegistry** (`src/core/tools/registry.ts`): Tool registry type used by ToolCatalog for main-session host tools (bash, write, edit, view_image, web, spawn_agent, send_input_to_agent, wait_for_agents, terminate_agent) and sub-agent (configured allowed tools) registries; `diff_review` is advertised as a TUI client-provided tool
 - **Code mode** (`src/core/tools/code_mode.ts`, `src/core/tools/web.ts`, `src/core/static/code_mode/web/`): Generic code-tool lifecycle plus the Exa-backed `web` implementation. The tool idempotently prepares a pinned Node runtime under the execution environment's `~/.cache/tau/code-mode`, launches one-shot JavaScript through login Bash, exposes `exa`, `docs`, and console globals, and returns stdout/stderr rather than JavaScript return values
 - **TUI**: Terminal rendering via `@earendil-works/pi-tui` with components in `src/tui/ui/`
 - **Chat UI models** (`src/tui/ui/chat_message_model.ts`): Typed message models and rendering glue for UI components
@@ -159,12 +159,12 @@ Execution environments and tool backends are intentionally dumb target adapters.
 | `send_input_to_agent` | Send input to an idle subagent |
 | `wait_for_agents` | Await completed subagent final responses, returning when at least one requested agent finishes |
 | `terminate_agent` | Stop a running subagent and return its final result |
-| `web` | Run one-shot JavaScript with the Exa SDK from a subagent |
+| `web` | Run one-shot JavaScript with the Exa SDK |
 | `nook` | Operate the configured Nook static mini-app platform |
 
 The TUI advertises `diff_review` as a client-provided tool; it is not a host tool registry entry. The `nook` host tool is automatically exposed only when effective Tau config contains `nook`.
 
-Enabled tools execute directly. Persona and subagent tool lists determine tool availability. Immediate tool-call argument schemas remain strict. The subagent-only `web` tool accepts one `code` string, runs it as one-shot JavaScript in the execution environment, and exposes its bundled Markdown SDK documentation through the `docs` global for progressive discovery; only console stdout/stderr becomes model-visible output.
+Enabled tools execute directly. Persona and subagent tool lists determine tool availability. Immediate tool-call argument schemas remain strict. The `web` tool accepts one `code` string, runs it as one-shot JavaScript in the execution environment, and exposes its bundled Markdown SDK documentation through the `docs` global for progressive discovery; only console stdout/stderr becomes model-visible output. Its description restricts use to requests that ask for or clearly imply web access.
 
 Prompt/context tag style: use dash-case for XML-like tag names in prompt text (for example `<available-skills>`, `<tool-call>`, `<tool-result>`, `<last-assistant-message-verbatim>`). Do not introduce new snake_case tag names.
 
@@ -205,7 +205,7 @@ Personas can be defined at user level (`~/.config/tau/personas/*.md`) and projec
 - `allowedReasoningLevels`: list of reasoning levels (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`) shown in the UI
 - `skills`: list of enabled skill names (matched by `name` in skill frontmatter), or `"*"` to enable all discovered skills. if omitted on custom personas, defaults to `"*"`; set `skills: []` to disable skills completely.
 - `subagents`: optional map of subagent definitions. The built-in `default` subagent is implicitly enabled unless `default: false` is provided. Custom subagents must be defined as `{ systemPrompt, description?, provider+model?, reasoning?, serviceTier?, tools?, launchModels? }` with lowercase-dash names (max 64 chars). `launchModels` values are allowlisted launch overrides in `<provider>/<model>:<effort>` format. Persona/subagent model ids may be unbundled as long as provider is known (Tau derives provider defaults when needed, and `models.json` can override fields). The `default` subagent cannot be overridden.
-- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `view_image`, `spawn_agent`, `send_input_to_agent`, `wait_for_agents`, `terminate_agent`; subagent tool lists additionally allow `web`. if omitted, defaults to `bash`, `write`, `edit`, `view_image` (and subagent tools when subagents are enabled).
+- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `view_image`, `web`, `spawn_agent`, `send_input_to_agent`, `wait_for_agents`, `terminate_agent`. if omitted, defaults to `bash`, `write`, `edit`, `view_image`, `web` (and subagent tools when subagents are enabled).
 
 On conflicts, the most specific level wins (built-ins are the base layer).
 
@@ -213,7 +213,7 @@ On conflicts, the most specific level wins (built-ins are the base layer).
 
 - **Global**: `~/.config/tau/config.json` (API keys, `defaultPersona`, `disableBuiltinPersonas`, `disableBuiltinThemes`, `defaultTheme`, `diffTool`, `builtInDiffTool`, `agentContextFiles`, `subagents`, `autoCompact`, `modelSystemNotices`, `speechToText`, `cloudflareSandbox`, `flySprites`). This level is only included when cwd is inside home.
   - `apiKeys` (optional): Map of provider id to API key (`apiKeys.<provider>`). Keys merge by provider id across config levels.
-  - `apiKeys.exa` (optional): Exa API key for the `web` JavaScript code-mode tool in subagents. `EXA_API_KEY` takes precedence.
+  - `apiKeys.exa` (optional): Exa API key for the `web` JavaScript code-mode tool. `EXA_API_KEY` takes precedence.
   - `apiKeys.mistral` (optional): Mistral API key for `/listen`, Telegram audio transcription, and PDF OCR.
   - `apiKeys.google` (optional): Google API key for Gemini chat models, `/speak`, and speech-to-text when `speechToText.provider` is `gemini`.
   - `defaultPersona` (optional): String persona reference used by default when starting the app. Accepts `<id>` or `<id>:<reasoning>` and matches are exact/case-sensitive. Overridden by `--persona` flag.
@@ -303,7 +303,7 @@ In TUI mode, `--debug` respects `--persona` and `--no-agent-context-files`, so y
 - `tau telegram --config-file <path>` - Run the Telegram bot adapter over local in-process Tau SDK sessions
 - `tau diff-tool [--help]` - Built-in browser diff review demo tool and reference implementation for the diff-review protocol
 - `TAU_CODEX_ACCOUNT` (env var) - Force a specific Codex account by email or account id (same matching as logout); disables failover
-- `EXA_API_KEY` (env var) - Optional override for `apiKeys.exa` used by the subagent `web` code-mode tool
+- `EXA_API_KEY` (env var) - Optional override for `apiKeys.exa` used by the `web` code-mode tool
 - `GEMINI_API_KEY` (env var) - Optional override for `apiKeys.google` used by Google Gemini models, `/speak`, and Google speech-to-text
 - `MISTRAL_API_KEY` (env var) - Optional override for Mistral `/listen` microphone transcription, Telegram audio transcription, and `tau tool pdf-unpack`
 

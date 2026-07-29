@@ -3,7 +3,6 @@ import { readFileSync } from "node:fs";
 import type { Tool } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { z } from "zod";
-import type { Config } from "../config/index.js";
 import { getExaApiKey } from "../config/index.js";
 import { formatZodError } from "../utils/zod.js";
 import {
@@ -21,6 +20,7 @@ const WEB_CODE_MODE_OUTPUT_TOKENS = 16_384;
 
 const WEB_DESCRIPTION = [
   "Run a one-shot JavaScript program with the Exa SDK in the execution environment.",
+  "Use this tool only when the user asks to browse or search the web, provides a URL, or otherwise clearly implies that web access is needed.",
   "Top-level await is supported. The program receives exa, docs, and console globals.",
   "Program output is the stdout and stderr written through console.log, console.error, and other console methods; returned values are ignored.",
   "To discover the complete supported SDK surface, run a program that prints docs with console.log(docs), then use that documentation in the next turn.",
@@ -219,20 +219,16 @@ function executeWebProgram(
   });
 }
 
-export function createWebToolDefinition(
-  config: Config,
-  backend: ToolExecutionBackend,
-): ToolDefinition {
+export function createWebToolDefinition(backend: ToolExecutionBackend): ToolDefinition {
   let preparedRuntime: Promise<WebRuntime> | undefined;
-  const apiKey = getExaApiKey(config);
 
   const implementation: CodeModeToolImplementation<WebArgs, WebRuntime> = {
     schema: WEB_TOOL,
     label: "web",
     outputPolicy: { maxTokens: WEB_CODE_MODE_OUTPUT_TOKENS },
     parseArguments: parseWebArguments,
-    prepare: async () => {
-      if (!apiKey) {
+    prepare: async ({ context }) => {
+      if (!getExaApiKey(context.config)) {
         throw new Error("Missing Exa API key.");
       }
       if (!preparedRuntime) {
@@ -244,6 +240,7 @@ export function createWebToolDefinition(
       return preparedRuntime;
     },
     execute: async ({ code, runtime, context, signal }) => {
+      const apiKey = getExaApiKey(context.config);
       if (!apiKey) {
         throw new Error("Missing Exa API key.");
       }

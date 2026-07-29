@@ -33,7 +33,7 @@ or store keys in `~/.config/tau/config.json`:
 
 for built-in providers and features, use these `apiKeys` entries: `anthropic`, `openai`, `google`, `exa`, and `mistral`. tau checks the matching `apiKeys.<provider>` entry before environment variables.
 
-`exa` is only needed for the `web` code-mode tool in sub-agents and can be provided through `apiKeys.exa` or `EXA_API_KEY` (`EXA_API_KEY` takes precedence).
+`exa` is only needed for the `web` code-mode tool and can be provided through `apiKeys.exa` or `EXA_API_KEY` (`EXA_API_KEY` takes precedence).
 
 `/listen` and Telegram audio transcription use Mistral by default (`apiKeys.mistral` or `MISTRAL_API_KEY`, with `MISTRAL_API_KEY` taking precedence). set `speechToText.provider` to `gemini` to use Gemini 3.6 Flash instead (`apiKeys.google` or `GEMINI_API_KEY`). `/listen` also requires `ffmpeg` on your system and is currently supported only on macOS.
 
@@ -382,7 +382,7 @@ the built-in `default` sub-agent is available unless disabled. it inherits the m
 
 sub-agent progress appears in a sticky panel. use `alt+down` to cycle active subagents and `ctrl+g` to terminate the selected one. tau caps active subagents at 8.
 
-to use `web` in a sub-agent, set `apiKeys.exa` in `~/.config/tau/config.json` (see above) or export `EXA_API_KEY`. `web` runs one-shot JavaScript with the Exa SDK in the session execution environment; its first use prepares a pinned runtime under `~/.cache/tau/code-mode`, and later calls reuse it. the tool description tells the model how to print the bundled SDK documentation before using the API.
+to use `web`, set `apiKeys.exa` in `~/.config/tau/config.json` (see above) or export `EXA_API_KEY`. `web` is available to main agents and sub-agents, and runs one-shot JavaScript with the Exa SDK in the session execution environment. its first use prepares a pinned runtime under `~/.cache/tau/code-mode`, and later calls reuse it. the tool description limits use to requests that ask for or clearly imply web access and tells the model how to print the bundled SDK documentation before using the API.
 
 ## trigger sensitivity
 
@@ -683,7 +683,7 @@ optional frontmatter fields:
         - openai/gpt-5.5:high
         - anthropic/claude-haiku-4-5:medium
   ```
-- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `view_image`, `spawn_agent`, `send_input_to_agent`, `wait_for_agents`, `terminate_agent`; sub-agent tool lists additionally allow `web`. if omitted, defaults to `bash`, `write`, `edit`, `view_image` (and subagent tools when subagents are enabled).
+- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `view_image`, `web`, `spawn_agent`, `send_input_to_agent`, `wait_for_agents`, `terminate_agent`. if omitted, defaults to `bash`, `write`, `edit`, `view_image`, `web` (and subagent tools when subagents are enabled).
 
 the markdown body becomes the system prompt.
 

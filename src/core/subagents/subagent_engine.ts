@@ -63,10 +63,9 @@ function getStreamingSettings(settings: SubagentRuntimeConfig["settings"]): TauS
 
 function buildToolRegistryForAllowedTools(
   allowedTools: SubagentToolName[],
-  config: Config,
   backend: ToolExecutionBackend,
 ): ToolRegistry {
-  return ToolCatalog.createSubagentRegistry(allowedTools, config, backend);
+  return ToolCatalog.createSubagentRegistry(allowedTools, backend);
 }
 
 function isToolCall(block: AssistantMessage["content"][number]): block is ToolCall {
@@ -113,7 +112,7 @@ export async function runSubagent(options: {
   const baseBackend = options.backend ?? createLocalToolExecutionBackend();
   const backend = scopeToolExecutionBackend(baseBackend, runtimeConfig.workingDirectory);
   const allowedTools = runtimeConfig.tools;
-  const toolRegistry = buildToolRegistryForAllowedTools(allowedTools, config, backend);
+  const toolRegistry = buildToolRegistryForAllowedTools(allowedTools, backend);
   const messages = options.messages ?? [];
   const promptWithModelNotice = prependModelNotice(
     prompt,

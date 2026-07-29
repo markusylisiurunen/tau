@@ -62,6 +62,7 @@ export function createCodeModeToolDefinition<TArgs, TRuntime>(
   return {
     schema: implementation.schema,
     getDisplayTarget: (toolCall) => implementation.parseArguments(toolCall.arguments).displayTarget,
+    getCodePreview: (toolCall) => implementation.parseArguments(toolCall.arguments).code,
     async dispatch(
       toolCall: ToolCall,
       signal: AbortSignal,

@@ -382,7 +382,7 @@ the built-in `default` sub-agent is available unless disabled. it inherits the m
 
 sub-agent progress appears in a sticky panel. use `alt+down` to cycle active subagents and `ctrl+g` to terminate the selected one. tau caps active subagents at 8.
 
-to use `web`, set `apiKeys.exa` in `~/.config/tau/config.json` (see above) or export `EXA_API_KEY`. `web` is available to main agents and sub-agents, and runs one-shot JavaScript with the Exa SDK in the session execution environment. its first use prepares a pinned runtime under `~/.cache/tau/code-mode`, and later calls reuse it. the tool description limits use to requests that ask for or clearly imply web access, asks the model to prefer concise plain text over raw JSON dumps even when all response fields are needed, and tells it how to print the bundled SDK documentation before using the API.
+to use `web`, set `apiKeys.exa` in `~/.config/tau/config.json` (see above) or export `EXA_API_KEY`. `web` is available to main agents and sub-agents, and runs one-shot JavaScript with bounded `web.search` and `web.fetch` APIs backed by Exa. search and fetch default to highlights, streaming is unsupported, and provider-specific details stay behind the bridge. its first use prepares a pinned runtime under `~/.cache/tau/code-mode`, and later calls reuse it. the tool description limits use to requests that ask for or clearly imply web access, asks the model to prefer concise plain text over raw JSON dumps even when all response fields are needed, and tells it how to print the bundled API documentation.
 
 ## trigger sensitivity
 
@@ -747,7 +747,7 @@ tool output is truncated using a `bytes / 6` token heuristic (shown as `…N tok
 
 - **bash (assistant)**: 8,192 token limit. if output exceeds this and `maxOutputTokens` is unset, output is middle-truncated to a 2,048-token gated preview. re-run with `maxOutputTokens` set to 8,192-16,384; if the user explicitly requests more, it may be set up to 65,536 (user requests are checked). bash captures the last 1MB of output.
 - **bash (user `!`)**: 65,536 token limit.
-- **web**: program stdout/stderr is middle-truncated to 16,384 tokens.
+- **web**: program stdout/stderr is middle-truncated to 8,192 tokens.
 
 ## creating a release
 

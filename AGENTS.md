@@ -48,7 +48,7 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
 - **ToolCatalog** (`src/core/tools/catalog.ts`): Builds the internal host tool registry; client-provided tools are advertised by attached clients and frozen per assistant turn by the session engine
 - **ToolExecutionBackend** (`src/core/tools/execution_backend.ts`): Generic filesystem/process backend used for local and hosted execution targets, including bash execution, Node script execution, file IO, and directory listing
 - **ToolRegistry** (`src/core/tools/registry.ts`): Tool registry type used by ToolCatalog for main-session host tools (bash, write, edit, view_image, web, spawn_agent, send_input_to_agent, wait_for_agents, terminate_agent) and sub-agent (configured allowed tools) registries; `diff_review` is advertised as a TUI client-provided tool
-- **Code mode** (`src/core/tools/code_mode.ts`, `src/core/tools/web.ts`, `src/core/static/code_mode/web/`): Generic code-tool lifecycle plus the Exa-backed `web` implementation. The tool idempotently prepares a pinned Node runtime under the execution environment's `~/.cache/tau/code-mode`, launches one-shot JavaScript through login Bash, exposes `exa`, `docs`, and console globals, and returns stdout/stderr rather than JavaScript return values
+- **Code mode** (`src/core/tools/code_mode.ts`, `src/core/tools/web.ts`, `src/core/static/code_mode/web/`): Generic code-tool lifecycle plus the Exa-backed `web` implementation. The tool idempotently prepares a pinned Node runtime under the execution environment's `~/.cache/tau/code-mode`, launches one-shot JavaScript through login Bash, exposes bounded `web`, `docs`, and console globals, and returns stdout/stderr rather than JavaScript return values
 - **TUI**: Terminal rendering via `@earendil-works/pi-tui` with components in `src/tui/ui/`
 - **Chat UI models** (`src/tui/ui/chat_message_model.ts`): Typed message models and rendering glue for UI components
 - **Tool output layout** (`src/tui/ui/tool_output.ts`): Shared compact/expanded tool UI layout and header building
@@ -159,12 +159,12 @@ Execution environments and tool backends are intentionally dumb target adapters.
 | `send_input_to_agent` | Send input to an idle subagent |
 | `wait_for_agents` | Await completed subagent final responses, returning when at least one requested agent finishes |
 | `terminate_agent` | Stop a running subagent and return its final result |
-| `web` | Run one-shot JavaScript with the Exa SDK |
+| `web` | Run one-shot JavaScript with bounded web search and retrieval APIs |
 | `nook` | Operate the configured Nook static mini-app platform |
 
 The TUI advertises `diff_review` as a client-provided tool; it is not a host tool registry entry. The `nook` host tool is automatically exposed only when effective Tau config contains `nook`.
 
-Enabled tools execute directly. Persona and subagent tool lists determine tool availability. Immediate tool-call argument schemas remain strict. The `web` tool accepts one `code` string, runs it as one-shot JavaScript in the execution environment, and exposes its bundled Markdown SDK documentation through the `docs` global for progressive discovery; only console stdout/stderr becomes model-visible output. Its description restricts use to requests that ask for or clearly imply web access and tells the model to prefer concise plain text over raw JSON dumps, including when all response fields are needed.
+Enabled tools execute directly. Persona and subagent tool lists determine tool availability. Immediate tool-call argument schemas remain strict. The `web` tool accepts one `code` string, runs it as one-shot JavaScript in the execution environment, and exposes concise documentation for its bounded `web.search` and `web.fetch` APIs through the `docs` global; only console stdout/stderr becomes model-visible output. Search and fetch default to highlights, streaming is unsupported, and provider-specific options and response fields stay behind the bridge. The tool description restricts use to requests that ask for or clearly imply web access and tells the model to prefer concise plain text over raw JSON dumps, including when all response fields are needed.
 
 Prompt/context tag style: use dash-case for XML-like tag names in prompt text (for example `<available-skills>`, `<tool-call>`, `<tool-result>`, `<last-assistant-message-verbatim>`). Do not introduce new snake_case tag names.
 
@@ -176,7 +176,7 @@ Prompt/context tag style: use dash-case for XML-like tag names in prompt text (f
 
 - **Bash (assistant)**: 8,192 token limit. Leave `maxOutputTokens` unset in most cases and prefer more scoped commands over larger output. If unset and output exceeds the limit, Tau returns a 2,048-token gated preview. Re-run with `maxOutputTokens` set to 8,192-16,384; up to 65,536 only when the user explicitly requests it.
 - **Bash (user/!/@/$)**: 65,536 token limit, middle-truncated when exceeded.
-- **Web code mode**: 16,384 token stdout/stderr limit (middle-truncated).
+- **Web code mode**: 8,192 token stdout/stderr limit (middle-truncated).
 
 **Tool UI preview formatting**:
 

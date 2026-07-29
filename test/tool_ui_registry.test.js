@@ -228,41 +228,78 @@ describe("ToolUiRegistry", () => {
   });
 
   it("renders code-mode tool events", () => {
+    const code = Array.from({ length: 12 }, (_, index) => `code line ${index + 1}`).join("\n");
+    const queued = renderEvent(registry, theme, {
+      type: "tool_call_queued",
+      toolCallId: "w1",
+      toolName: "web",
+      headerTarget: "code line 1",
+      code,
+    });
+    expect(queued).toContain("<textMuted>queued</textMuted> <brandAccent>web</brandAccent>");
+    expect(queued).toContain("code line 10");
+    expect(queued).not.toContain("code line 11");
+    expect(queued).toContain("2 more lines");
+
     const started = renderEvent(registry, theme, {
       type: "code_mode_started",
       toolCallId: "w1",
       toolName: "web",
       label: "web",
-      code: "console.log(docs)",
-      headerTarget: "console.log(docs)",
+      code,
+      headerTarget: "code line 1",
     });
-    expect(started).toContain("web");
+    expect(started).toContain("<textMuted>running</textMuted> <brandAccent>web</brandAccent>");
+    expect(started).toContain("code line 10");
+    expect(started).toContain("2 more lines");
 
     const finished = renderEvent(registry, theme, {
       type: "code_mode_finished",
       toolCallId: "w1",
       toolName: "web",
       label: "web",
-      code: "console.log(docs)",
-      headerTarget: "console.log(docs)",
+      code,
+      headerTarget: "code line 1",
       status: "success",
       uiText: {
-        previewLines: [{ text: "# Tau Exa web runtime" }],
+        previewLines: [{ text: "formatted result" }],
         statusLine: "exit 0",
-        fullLines: [{ text: "# Tau Exa web runtime" }],
+        fullLines: [{ text: "formatted result" }],
       },
     });
-    expect(finished).toContain("Tau Exa web runtime");
+    expect(finished).toContain("<textMuted>completed</textMuted> <brandAccent>web</brandAccent>");
+    expect(finished).toContain("code line 10");
+    expect(finished).toContain("2 more lines");
+    expect(finished).toContain("formatted result");
+
+    const failed = renderEvent(registry, theme, {
+      type: "code_mode_finished",
+      toolCallId: "w2",
+      toolName: "web",
+      label: "web",
+      code: "throw new Error('failed')",
+      headerTarget: "throw new Error('failed')",
+      status: "error",
+      uiText: {
+        previewLines: [{ text: "program failed" }],
+        statusLine: "exit 1",
+        fullLines: [{ text: "program failed" }],
+      },
+    });
+    expect(failed).toContain("<textMuted>failed</textMuted> <brandAccent>web</brandAccent>");
+    expect(failed).toContain("throw new Error('failed')");
 
     const blocked = renderEvent(registry, theme, {
       type: "code_mode_blocked",
-      toolCallId: "w2",
+      toolCallId: "w3",
       toolName: "web",
       label: "web",
       code: "console.log(docs)",
       headerTarget: "console.log(docs)",
       reason: "Missing Exa API key.",
     });
+    expect(blocked).toContain("<textMuted>blocked</textMuted> <brandAccent>web</brandAccent>");
+    expect(blocked).toContain("console.log(docs)");
     expect(blocked).toContain("Missing Exa API key.");
   });
 

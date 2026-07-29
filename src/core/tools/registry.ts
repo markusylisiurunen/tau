@@ -19,6 +19,7 @@ type ToolUiEventWithHeaderTarget = {
       type: "tool_call_queued";
       toolCallId: string;
       toolName: string;
+      code?: string;
     }
   | {
       type: "tool_call_blocked";
@@ -288,6 +289,7 @@ export function isMainToolDispatchContext(
 export interface ToolDefinition {
   readonly schema: Tool;
   getDisplayTarget(toolCall: ToolCall, context: ToolDispatchContext): string;
+  getCodePreview?(toolCall: ToolCall, context: ToolDispatchContext): string;
   dispatch(
     toolCall: ToolCall,
     signal: AbortSignal,

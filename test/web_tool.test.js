@@ -5,6 +5,10 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { getExaApiKey } from "../dist/core/config/index.js";
 import { createWebToolDefinition } from "../dist/core/tools/web.js";
+import {
+  assertPublicWebUrl,
+  discoverAgentContent,
+} from "../src/core/static/code_mode/web/discovery.mjs";
 
 function createExecutionResult(output, exitCode = 0) {
   return {
@@ -80,12 +84,120 @@ describe("Exa web code-mode tool", () => {
       "utf8",
     );
 
+    expect(documentation).toContain("web.discover(url)");
     expect(documentation).toContain("web.search(query, options?)");
     expect(documentation).toContain("web.fetch(urls, options?)");
     expect(documentation).toContain("defaults to highlights");
     expect(documentation).not.toContain("Exa");
     expect(documentation).not.toContain("stream: true");
     expect(documentation).not.toContain("Authorization");
+  });
+
+  it("discovers deterministic Markdown and raw llms.txt responses", async () => {
+    const requestedUrl = "https://example.com/docs/getting-started";
+    const responses = new Map([
+      [
+        requestedUrl,
+        {
+          status: 200,
+          contentType: "text/markdown",
+          vary: "Accept",
+          body: "# Negotiated",
+        },
+      ],
+      [
+        `${requestedUrl}.md`,
+        {
+          status: 200,
+          contentType: "text/html",
+          body: "<html>fallback</html>",
+        },
+      ],
+      [
+        `${requestedUrl}/index.md`,
+        {
+          status: 200,
+          contentType: "text/plain",
+          body: "# Explicit Markdown",
+        },
+      ],
+      [
+        "https://example.com/llms.txt",
+        {
+          status: 200,
+          contentType: "text/plain",
+          body: "# Example docs\n- [Getting started](/docs/getting-started/index.md)",
+        },
+      ],
+      [
+        "https://example.com/docs/llms.txt",
+        {
+          status: 404,
+          contentType: "text/plain",
+          body: "not found",
+        },
+      ],
+    ]);
+    const calls = [];
+    const request = vi.fn(async (url, options) => {
+      calls.push({ url: url.toString(), accept: options.accept });
+      const response = responses.get(url.toString());
+      if (!response) throw new Error("unexpected URL");
+      return {
+        url: url.toString(),
+        contentEncoding: "",
+        truncated: false,
+        ...response,
+      };
+    });
+
+    const discovered = await discoverAgentContent(requestedUrl, {
+      request,
+      validate: async (value) => new URL(value),
+    });
+
+    expect(discovered).toEqual({
+      requestedUrl,
+      markdown: [
+        {
+          url: requestedUrl,
+          via: "content-negotiation",
+          contentType: "text/markdown",
+          varyAccept: true,
+        },
+        {
+          url: `${requestedUrl}/index.md`,
+          via: "markdown-path",
+          contentType: "text/plain",
+        },
+      ],
+      llmsTxt: [
+        {
+          url: "https://example.com/llms.txt",
+          content: "# Example docs\n- [Getting started](/docs/getting-started/index.md)",
+          truncated: false,
+        },
+      ],
+    });
+    expect(calls.map((call) => call.url)).toEqual([
+      requestedUrl,
+      `${requestedUrl}.md`,
+      `${requestedUrl}/index.md`,
+      "https://example.com/llms.txt",
+      "https://example.com/docs/llms.txt",
+    ]);
+  });
+
+  it("allows public discovery targets and rejects private targets", async () => {
+    await expect(assertPublicWebUrl("https://8.8.8.8/docs")).resolves.toMatchObject({
+      hostname: "8.8.8.8",
+    });
+    await expect(assertPublicWebUrl("http://127.0.0.1/docs")).rejects.toThrow(
+      "only supports public web addresses",
+    );
+    await expect(assertPublicWebUrl("http://[::ffff:127.0.0.1]/docs")).rejects.toThrow(
+      "only supports public web addresses",
+    );
   });
 
   it("prepares its runtime once and returns console output", async () => {
@@ -95,6 +207,7 @@ describe("Exa web code-mode tool", () => {
     expect(tool.schema.description).toContain(
       "only when the user asks to browse or search the web, provides a URL, or otherwise clearly implies that web access is needed",
     );
+    expect(tool.schema.description).toContain("use web.discover first");
     expect(tool.schema.description).toContain("receives web, docs, and console globals");
     expect(tool.schema.description).toContain(
       "When all fields are needed, still flatten and label them compactly rather than serializing the response object",
@@ -141,7 +254,7 @@ describe("Exa web code-mode tool", () => {
     expect(getToolText(result)).toContain("Output truncated for context");
   });
 
-  it("fails before preparation when the Exa API key is missing", async () => {
+  it("allows provider-independent programs without an Exa API key", async () => {
     const backend = createBackend();
     const tool = createWebToolDefinition(backend);
     const { result } = await runTool(
@@ -150,10 +263,14 @@ describe("Exa web code-mode tool", () => {
       { scope: "main", cwd: "/project", config: {} },
     );
 
-    expect(result.toolResult.isError).toBe(true);
-    expect(getToolText(result)).toContain("Missing Exa API key.");
-    expect(backend.runNodeScript).not.toHaveBeenCalled();
-    expect(backend.runBash).not.toHaveBeenCalled();
+    expect(result.toolResult.isError).toBe(false);
+    expect(backend.runNodeScript).toHaveBeenCalledTimes(1);
+    expect(backend.runBash).toHaveBeenCalledTimes(1);
+    const executionOptions = backend.runBash.mock.calls[0][1];
+    expect(JSON.parse(executionOptions.stdin.toString("utf8"))).toEqual({
+      code: "console.log(docs)",
+      cwd: "/project",
+    });
   });
 
   it("rejects unknown arguments", async () => {
@@ -183,6 +300,13 @@ describe("Exa web code-mode tool", () => {
       );
       const runnerPath = join(directory, "runner.mjs");
       writeFileSync(runnerPath, readFileSync(sourceRunner, "utf8"));
+      writeFileSync(
+        join(directory, "discovery.mjs"),
+        readFileSync(
+          join(process.cwd(), "src", "core", "static", "code_mode", "web", "discovery.mjs"),
+          "utf8",
+        ),
+      );
       writeFileSync(join(directory, "documentation.md"), "# Tau web API\n");
       const packageDirectory = join(directory, "node_modules", "exa-js");
       mkdirSync(packageDirectory, { recursive: true });
@@ -227,7 +351,7 @@ describe("Exa web code-mode tool", () => {
         apiKey: "exa-key",
         code: [
           "console.log(docs.trim());",
-          "console.log(typeof exa, typeof web);",
+          "console.log(typeof exa, typeof web, typeof web.discover);",
           "const search = await web.search('tau', { numResults: 2, userLocation: 'fi' });",
           "console.log(search.results[0].title);",
           "const highlights = await web.fetch('https://example.com');",
@@ -243,7 +367,7 @@ describe("Exa web code-mode tool", () => {
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain("# Tau web API");
-      expect(result.stdout).toContain("undefined object");
+      expect(result.stdout).toContain("undefined object function");
       expect(result.stdout).toContain(
         JSON.stringify({
           query: "tau",
@@ -296,6 +420,20 @@ describe("Exa web code-mode tool", () => {
       });
       expect(unsupported.exitCode).toBe(1);
       expect(unsupported.stderr).toContain("does not support option 'stream'");
+
+      const missingKey = await runRunner(runnerPath, {
+        code: "await web.search('tau')",
+        cwd: directory,
+      });
+      expect(missingKey.exitCode).toBe(1);
+      expect(missingKey.stderr).toContain("Missing Exa API key.");
+
+      const privateDiscovery = await runRunner(runnerPath, {
+        code: "await web.discover('http://127.0.0.1/docs')",
+        cwd: directory,
+      });
+      expect(privateDiscovery.exitCode).toBe(1);
+      expect(privateDiscovery.stderr).toContain("only supports public web addresses");
 
       const failed = await runRunner(runnerPath, {
         apiKey: "exa-key",

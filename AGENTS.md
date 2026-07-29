@@ -164,7 +164,7 @@ Execution environments and tool backends are intentionally dumb target adapters.
 
 The TUI advertises `diff_review` as a client-provided tool; it is not a host tool registry entry. The `nook` host tool is automatically exposed only when effective Tau config contains `nook`.
 
-Enabled tools execute directly. Persona and subagent tool lists determine tool availability. Immediate tool-call argument schemas remain strict. The `web` tool accepts one `code` string, runs it as one-shot JavaScript in the execution environment, and exposes concise documentation for its bounded `web.search` and `web.fetch` APIs through the `docs` global; only console stdout/stderr becomes model-visible output. Search and fetch default to highlights, streaming is unsupported, and provider-specific options and response fields stay behind the bridge. The tool description restricts use to requests that ask for or clearly imply web access and tells the model to prefer concise plain text over raw JSON dumps, including when all response fields are needed.
+Enabled tools execute directly. Persona and subagent tool lists determine tool availability. Immediate tool-call argument schemas remain strict. The `web` tool accepts one `code` string, runs it as one-shot JavaScript in the execution environment, and exposes concise documentation for its bounded `web.discover`, `web.search`, and `web.fetch` APIs through the `docs` global; only console stdout/stderr becomes model-visible output. Discovery reports negotiated and deterministic Markdown representations plus bounded raw `llms.txt` files without parsing links; direct representation retrieval remains an explicit later `curl` call. Search and fetch default to highlights, streaming is unsupported, and provider-specific options and response fields stay behind the bridge. The tool description restricts use to requests that ask for or clearly imply web access and tells the model to prefer concise plain text over raw JSON dumps, including when all response fields are needed.
 
 Prompt/context tag style: use dash-case for XML-like tag names in prompt text (for example `<available-skills>`, `<tool-call>`, `<tool-result>`, `<last-assistant-message-verbatim>`). Do not introduce new snake_case tag names.
 
@@ -213,7 +213,7 @@ On conflicts, the most specific level wins (built-ins are the base layer).
 
 - **Global**: `~/.config/tau/config.json` (API keys, `defaultPersona`, `disableBuiltinPersonas`, `disableBuiltinThemes`, `defaultTheme`, `diffTool`, `builtInDiffTool`, `agentContextFiles`, `subagents`, `autoCompact`, `modelSystemNotices`, `speechToText`, `cloudflareSandbox`, `flySprites`). This level is only included when cwd is inside home.
   - `apiKeys` (optional): Map of provider id to API key (`apiKeys.<provider>`). Keys merge by provider id across config levels.
-  - `apiKeys.exa` (optional): Exa API key for the `web` JavaScript code-mode tool. `EXA_API_KEY` takes precedence.
+  - `apiKeys.exa` (optional): Exa API key for `web.search` and `web.fetch`; `web.discover` does not require one. `EXA_API_KEY` takes precedence.
   - `apiKeys.mistral` (optional): Mistral API key for `/listen`, Telegram audio transcription, and PDF OCR.
   - `apiKeys.google` (optional): Google API key for Gemini chat models, `/speak`, and speech-to-text when `speechToText.provider` is `gemini`.
   - `defaultPersona` (optional): String persona reference used by default when starting the app. Accepts `<id>` or `<id>:<reasoning>` and matches are exact/case-sensitive. Overridden by `--persona` flag.
@@ -303,7 +303,7 @@ In TUI mode, `--debug` respects `--persona` and `--no-agent-context-files`, so y
 - `tau telegram --config-file <path>` - Run the Telegram bot adapter over local in-process Tau SDK sessions
 - `tau diff-tool [--help]` - Built-in browser diff review demo tool and reference implementation for the diff-review protocol
 - `TAU_CODEX_ACCOUNT` (env var) - Force a specific Codex account by email or account id (same matching as logout); disables failover
-- `EXA_API_KEY` (env var) - Optional override for `apiKeys.exa` used by the `web` code-mode tool
+- `EXA_API_KEY` (env var) - Optional override for `apiKeys.exa` used by `web.search` and `web.fetch`
 - `GEMINI_API_KEY` (env var) - Optional override for `apiKeys.google` used by Google Gemini models, `/speak`, and Google speech-to-text
 - `MISTRAL_API_KEY` (env var) - Optional override for Mistral `/listen` microphone transcription, Telegram audio transcription, and `tau tool pdf-unpack`
 

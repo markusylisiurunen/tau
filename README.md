@@ -33,7 +33,7 @@ or store keys in `~/.config/tau/config.json`:
 
 for built-in providers and features, use these `apiKeys` entries: `anthropic`, `openai`, `google`, `exa`, and `mistral`. tau checks the matching `apiKeys.<provider>` entry before environment variables.
 
-`exa` is only needed for the `web` code-mode tool and can be provided through `apiKeys.exa` or `EXA_API_KEY` (`EXA_API_KEY` takes precedence).
+`exa` is only needed for `web.search` and `web.fetch`; `web.discover` works without it. provide the key through `apiKeys.exa` or `EXA_API_KEY` (`EXA_API_KEY` takes precedence).
 
 `/listen` and Telegram audio transcription use Mistral by default (`apiKeys.mistral` or `MISTRAL_API_KEY`, with `MISTRAL_API_KEY` taking precedence). set `speechToText.provider` to `gemini` to use Gemini 3.6 Flash instead (`apiKeys.google` or `GEMINI_API_KEY`). `/listen` also requires `ffmpeg` on your system and is currently supported only on macOS.
 
@@ -382,7 +382,7 @@ the built-in `default` sub-agent is available unless disabled. it inherits the m
 
 sub-agent progress appears in a sticky panel. use `alt+down` to cycle active subagents and `ctrl+g` to terminate the selected one. tau caps active subagents at 8.
 
-to use `web`, set `apiKeys.exa` in `~/.config/tau/config.json` (see above) or export `EXA_API_KEY`. `web` is available to main agents and sub-agents, and runs one-shot JavaScript with bounded `web.search` and `web.fetch` APIs backed by Exa. search and fetch default to highlights, streaming is unsupported, and provider-specific details stay behind the bridge. its first use prepares a pinned runtime under `~/.cache/tau/code-mode`, and later calls reuse it. the tool description limits use to requests that ask for or clearly imply web access, asks the model to prefer concise plain text over raw JSON dumps even when all response fields are needed, and tells it how to print the bundled API documentation.
+`web.discover` works without an API key. to use `web.search` and `web.fetch`, set `apiKeys.exa` in `~/.config/tau/config.json` (see above) or export `EXA_API_KEY`. `web` is available to main agents and sub-agents, and runs one-shot JavaScript with bounded `web.discover`, `web.search`, and `web.fetch` APIs; search and fetch are backed by Exa. discovery reports direct Markdown representations and bounded raw `llms.txt` files without parsing links, leaving direct retrieval to a later explicit `curl` call. search and fetch default to highlights, streaming is unsupported, and provider-specific details stay behind the bridge. its first use prepares a pinned runtime under `~/.cache/tau/code-mode`, and later calls reuse it. the tool description limits use to requests that ask for or clearly imply web access, asks the model to prefer concise plain text over raw JSON dumps even when all response fields are needed, and tells it how to print the bundled API documentation.
 
 ## trigger sensitivity
 

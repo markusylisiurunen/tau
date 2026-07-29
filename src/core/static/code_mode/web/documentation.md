@@ -2,8 +2,9 @@
 
 The one-shot JavaScript runtime provides these globals:
 
+- `web.discover(url)`: discover direct Markdown representations and bounded raw `llms.txt` files for a documentation URL.
 - `web.search(query, options?)`: search the web and return relevant page highlights.
-- `web.fetch(urls, options?)`: retrieve highlights or bounded text from known URLs.
+- `web.fetch(urls, options?)`: retrieve highlights or bounded text from known URLs through the web extraction service.
 - `docs`: this document.
 - `console`: program output. Only text written through console methods is returned; return values are ignored.
 
@@ -19,6 +20,65 @@ The API is designed for agent workflows and defaults to token-efficient retrieva
 - Cached content is accepted with live retrieval as fallback. Set `maxAgeHours` only when the task has a specific freshness requirement.
 - Responses contain only fields relevant to generated programs. Provider metadata, billing fields, images, and ranking internals are omitted.
 - Streaming is not supported. Each method resolves to one response object.
+
+## `web.discover(url)`
+
+Use discovery as a separate first step when the user provides a documentation URL and a direct agent-friendly representation may exist. Print a concise discovery report, then decide in the next turn whether to use `curl`, `web.fetch`, or another approach.
+
+```js
+const discovery = await web.discover("https://example.com/docs/getting-started");
+
+console.log(`Requested: ${discovery.requestedUrl}`);
+for (const representation of discovery.markdown) {
+  console.log(
+    `Markdown: ${representation.url} (${representation.via}, ${representation.contentType})`,
+  );
+}
+for (const file of discovery.llmsTxt) {
+  console.log(`\n${file.url}\n${file.content}`);
+  if (file.truncated) console.log("[llms.txt truncated]");
+}
+```
+
+Discovery checks:
+
+1. The original URL with Markdown content negotiation.
+2. Deterministic same-origin `.md` and `/index.md` paths.
+3. `/llms.txt` and `/<first-path-segment>/llms.txt`.
+
+`llms.txt` content is returned as bounded raw text. The API does not parse Markdown links, match entries to the requested page, or automatically follow anything listed there. Missing discovery files are omitted.
+
+### Response
+
+```js
+{
+  requestedUrl: string,
+  markdown: [
+    {
+      url: string,
+      via: "content-negotiation" | "markdown-path",
+      contentType: "text/markdown" | "text/x-markdown" | "text/plain",
+      varyAccept?: boolean,
+    },
+  ],
+  llmsTxt: [
+    {
+      url: string,
+      content: string,
+      truncated: boolean,
+    },
+  ],
+}
+```
+
+Discovery does not return the represented page body. Retrieve an explicit Markdown path with `curl` in a later Bash call:
+
+```bash
+curl -fsSL -H 'Accept: text/markdown' \
+  'https://example.com/docs/getting-started/index.md'
+```
+
+For content negotiation, request the original URL with the same header. Use `web.fetch` instead when extraction through the web search infrastructure is preferable.
 
 ## `web.search(query, options?)`
 

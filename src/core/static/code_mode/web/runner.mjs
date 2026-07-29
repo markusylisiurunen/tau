@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import Exa from "exa-js";
+import { discoverAgentContent } from "./discovery.mjs";
 
 const CHILD_SOURCE = String.raw`
 import { createWriteStream } from "node:fs";
@@ -57,6 +58,7 @@ function callWeb(method, args) {
 await initialized;
 
 const web = Object.freeze({
+  discover: (...args) => callWeb("discover", args),
   search: (...args) => callWeb("search", args),
   fetch: (...args) => callWeb("fetch", args),
 });
@@ -326,11 +328,19 @@ function normalizeResponse(response) {
 
 async function handleWebRequest(exa, request) {
   switch (request.method) {
+    case "discover": {
+      if (!Array.isArray(request.args) || request.args.length !== 1) {
+        throw new Error("web.discover expects one URL");
+      }
+      return discoverAgentContent(request.args[0]);
+    }
     case "search": {
+      if (!exa) throw new Error("Missing Exa API key.");
       const args = normalizeSearchArguments(request.args);
       return normalizeResponse(await exa.search(...args));
     }
     case "fetch": {
+      if (!exa) throw new Error("Missing Exa API key.");
       const args = normalizeFetchArguments(request.args);
       return normalizeResponse(await exa.getContents(...args));
     }
@@ -341,7 +351,7 @@ async function handleWebRequest(exa, request) {
 
 const input = JSON.parse(await readStdin());
 const documentation = await readFile(new URL("./documentation.md", import.meta.url), "utf8");
-const exa = new Exa(input.apiKey);
+const exa = input.apiKey ? new Exa(input.apiKey) : undefined;
 const child = spawn(
   process.execPath,
   ["--permission", "--no-warnings", "--input-type=module", "--eval", CHILD_SOURCE],

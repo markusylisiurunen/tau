@@ -21,6 +21,7 @@ const WEB_CODE_MODE_OUTPUT_TOKENS = 8_192;
 const WEB_DESCRIPTION = [
   "Run a one-shot JavaScript program to search the web and retrieve page content.",
   "Use this tool only when the user asks to browse or search the web, provides a URL, or otherwise clearly implies that web access is needed.",
+  "For documentation URLs, use web.discover first and print a concise discovery report before deciding in the next turn whether to use curl, web.fetch, or another approach.",
   "Top-level await is supported. The program receives web, docs, and console globals.",
   "Only text written through console methods is returned; program return values are ignored.",
   "Format results as concise, readable plain text instead of dumping raw JSON. Select only relevant fields when possible. When all fields are needed, still flatten and label them compactly rather than serializing the response object. Emit JSON only when the user explicitly requests JSON or another machine-readable result.",
@@ -64,6 +65,7 @@ function readRuntimeAsset(path: string): string {
 const WEB_RUNTIME_ASSETS: WebRuntimeAsset[] = [
   { path: "package.json", content: readRuntimeAsset("package.json") },
   { path: "package-lock.json", content: readRuntimeAsset("package-lock.json") },
+  { path: "discovery.mjs", content: readRuntimeAsset("discovery.mjs") },
   { path: "runner.mjs", content: readRuntimeAsset("runner.mjs") },
   { path: "documentation.md", content: readRuntimeAsset("documentation.md") },
 ];
@@ -200,7 +202,7 @@ function executeWebProgram(
   backend: ToolExecutionBackend,
   runtime: WebRuntime,
   code: string,
-  apiKey: string,
+  apiKey: string | undefined,
   context: ToolDispatchContext,
   signal: AbortSignal,
 ): Promise<BashExecutionResult> {
@@ -228,10 +230,7 @@ export function createWebToolDefinition(backend: ToolExecutionBackend): ToolDefi
     label: "web",
     outputPolicy: { maxTokens: WEB_CODE_MODE_OUTPUT_TOKENS },
     parseArguments: parseWebArguments,
-    prepare: async ({ context }) => {
-      if (!getExaApiKey(context.config)) {
-        throw new Error("Missing Exa API key.");
-      }
+    prepare: async () => {
       if (!preparedRuntime) {
         preparedRuntime = prepareWebRuntime(backend).catch((error) => {
           preparedRuntime = undefined;
@@ -242,9 +241,6 @@ export function createWebToolDefinition(backend: ToolExecutionBackend): ToolDefi
     },
     execute: async ({ code, runtime, context, signal }) => {
       const apiKey = getExaApiKey(context.config);
-      if (!apiKey) {
-        throw new Error("Missing Exa API key.");
-      }
       return executeWebProgram(backend, runtime, code, apiKey, context, signal);
     },
   };

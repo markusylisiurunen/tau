@@ -1,8 +1,9 @@
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { captureDiffReviewSnapshot } from "../dist/core/diff_review/snapshot.js";
 import { prepareSessionCompaction } from "../dist/core/session/compaction.js";
 import { runDirectBashCommand } from "../dist/core/session/direct_bash.js";
 import {
@@ -18,7 +19,10 @@ import { createWriteToolDefinition } from "../dist/core/tools/write.js";
 import { buildCompactionUserMessage } from "../dist/core/utils/compact.js";
 import { autocompleteProjectPathsWithBackend } from "../dist/core/utils/project_files.js";
 import { prependTauUserMetadata } from "../dist/core/utils/user_metadata.js";
-import { createSdkToolExecutionBackend } from "../dist/tui/session_tool_execution_backend.js";
+import {
+  createSdkDiffSnapshotDeps,
+  createSdkToolExecutionBackend,
+} from "../dist/tui/session_tool_execution_backend.js";
 
 function createToolResult(toolCall, text) {
   return {
@@ -1202,20 +1206,26 @@ describe("session compaction preparation", () => {
 });
 
 describe("session execution backend plumbing", () => {
-  it("writes binary files through the SDK execution backend without text conversion", async () => {
+  it("writes binary files through login Bash stdin without text conversion", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "tau-sdk-backend-test-"));
     const session = {
       async exec(command, options) {
-        const output = execFileSync("/bin/sh", ["-c", command], {
+        const result = spawnSync("/bin/bash", ["-lc", command, ...(options.args ?? [])], {
           cwd: options.cwd,
-          encoding: "utf8",
+          env: { ...process.env, ...options.env },
+          input: options.stdin,
         });
+        const stdout = result.stdout.toString("utf-8");
+        const stderr = result.stderr.toString("utf-8");
         return {
-          output,
-          stdout: output,
-          stderr: "",
-          exitCode: 0,
+          output: stdout + stderr,
+          stdout,
+          stderr,
+          exitCode: result.status,
           truncated: false,
+          timedOut: false,
+          aborted: false,
+          closeSignal: result.signal,
         };
       },
     };
@@ -1228,6 +1238,121 @@ describe("session execution backend plumbing", () => {
         bytes: content.byteLength,
       });
       expect(readFileSync(join(cwd, "assets/image.bin"))).toEqual(content);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("captures no-HEAD diff snapshots through automation-safe login Bash", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "tau-sdk-diff-test-"));
+    const runGit = (args) => {
+      const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+      if (result.status !== 0) {
+        throw new Error(result.stderr || result.stdout);
+      }
+    };
+    const execOptions = [];
+    const session = {
+      async exec(command, options) {
+        execOptions.push(options);
+        const result = spawnSync(
+          "/bin/bash",
+          ["-lc", `set -e\n${command}`, ...(options.args ?? [])],
+          {
+            cwd: options.cwd,
+            env: { ...process.env, ...options.env },
+            input: options.stdin,
+            encoding: "utf8",
+          },
+        );
+        return {
+          output: result.stdout + result.stderr,
+          stdout: result.stdout,
+          stderr: result.stderr,
+          exitCode: result.status,
+          truncated: false,
+          timedOut: false,
+          aborted: false,
+          closeSignal: result.signal,
+        };
+      },
+    };
+
+    try {
+      runGit(["init"]);
+      writeFileSync(join(cwd, "tracked.txt"), "tracked\n");
+      runGit(["add", "tracked.txt"]);
+      writeFileSync(join(cwd, "untracked.txt"), "new\n");
+
+      const backend = createSdkToolExecutionBackend({ session, cwd });
+      const snapshot = await captureDiffReviewSnapshot({
+        cwd,
+        source: { kind: "git_diff", diffArgs: [] },
+        deps: createSdkDiffSnapshotDeps({ backend, cwd }),
+      });
+
+      expect(snapshot.repoRoot).toBe(realpathSync(cwd));
+      expect(snapshot.files.map((file) => file.path)).toEqual(["tracked.txt", "untracked.txt"]);
+      expect(snapshot.patch).toContain("+tracked");
+      expect(snapshot.getFilePatch("untracked.txt")).toContain("+new");
+      expect(execOptions).toEqual(
+        expect.arrayContaining([expect.objectContaining({ maxCaptureBytes: expect.any(Number) })]),
+      );
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves patch files larger than the default command capture limit", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "tau-sdk-large-patch-test-"));
+    const patch = [
+      "diff --git a/large.txt b/large.txt",
+      "new file mode 100644",
+      "--- /dev/null",
+      "+++ b/large.txt",
+      "@@ -0,0 +1 @@",
+      `+${"x".repeat(1_100_000)}`,
+      "",
+    ].join("\n");
+    const patchPath = join(cwd, "large.patch");
+    writeFileSync(patchPath, patch);
+    const runGit = (args) => {
+      const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+      if (result.status !== 0) throw new Error(result.stderr || result.stdout);
+    };
+    runGit(["init"]);
+    const session = {
+      async exec(command, options) {
+        const result = spawnSync("/bin/bash", ["-lc", command, ...(options.args ?? [])], {
+          cwd: options.cwd,
+          env: { ...process.env, ...options.env },
+          input: options.stdin,
+          encoding: "utf8",
+          maxBuffer: 32 * 1024 * 1024,
+        });
+        return {
+          output: result.stdout + result.stderr,
+          stdout: result.stdout,
+          stderr: result.stderr,
+          exitCode: result.status,
+          truncated: false,
+          timedOut: false,
+          aborted: false,
+          closeSignal: result.signal,
+        };
+      },
+    };
+
+    try {
+      const backend = createSdkToolExecutionBackend({ session, cwd });
+      const snapshot = await captureDiffReviewSnapshot({
+        cwd,
+        source: { kind: "patch_files", patchFiles: [patchPath], scopeLabel: "large patch" },
+        deps: createSdkDiffSnapshotDeps({ backend, cwd }),
+      });
+
+      expect(Buffer.byteLength(snapshot.patch)).toBe(Buffer.byteLength(patch));
+      expect(snapshot.files.map((file) => file.path)).toEqual(["large.txt"]);
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
@@ -1300,8 +1425,8 @@ describe("session execution backend plumbing", () => {
   it("autocompletes project paths from backend stdout and keeps partial results on non-zero exit", async () => {
     const calls = [];
     const backend = {
-      async runBash(command, options = {}) {
-        calls.push({ command, options });
+      async runNodeScript(script, args, options = {}) {
+        calls.push({ script, args, options });
         return {
           output: "src/a.ts\nrg warning on stderr\n",
           stdout: "src/a.ts\nsrc/nested/b.ts\n",
@@ -1319,7 +1444,8 @@ describe("session execution backend plumbing", () => {
     ).resolves.toEqual(["src/", "src/a.ts", "src/nested/", "src/nested/b.ts"]);
     expect(calls).toEqual([
       {
-        command: "rg --files --hidden --glob '!.git/'",
+        script: expect.stringContaining('spawn("rg", ["--files", "--hidden"'),
+        args: [],
         options: { cwd: ".", timeoutMs: 5000 },
       },
     ]);
@@ -1369,6 +1495,32 @@ describe("session execution backend plumbing", () => {
     });
 
     expect(addUserText).toHaveBeenCalledTimes(1);
+  });
+
+  it("records nonzero direct bash exit status in session history", async () => {
+    const addUserText = vi.fn(async () => "history-1");
+    const backend = {
+      async runBash() {
+        return {
+          output: "",
+          stdout: "",
+          stderr: "",
+          exitCode: 2,
+          truncated: false,
+        };
+      },
+    };
+
+    await runDirectBashCommand({
+      command: "false",
+      backend,
+      addToContext: true,
+      addUserText,
+    });
+
+    expect(addUserText).toHaveBeenCalledWith(
+      "Bash command output:\n$ false\n(no output)\n(exit 2)",
+    );
   });
 });
 

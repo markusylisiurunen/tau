@@ -64,7 +64,7 @@ The protocol replaces `event` and `session_update` with one observed-session mes
 
 ```ts
 type SessionDeltaMessage = {
-  version: 2;
+  version: 3;
   type: "session.delta";
   sessionId: string;
   fromRevision: number | null;

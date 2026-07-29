@@ -244,13 +244,9 @@ class FakeSessionProtocolTransport {
         case "session.retry":
           return { turn: { status: "completed", stopReason: "stop" } };
         case "session.exec":
-          return {
-            output: "raw output",
-            stdout: "raw output",
-            stderr: "",
-            exitCode: 0,
-            truncated: false,
-          };
+          return createProtocolExecResult({ output: "raw output" });
+        case "session.cancelExec":
+          return { cancelled: true };
         case "session.sample":
           return {
             message: {
@@ -591,30 +587,41 @@ describe("sdk_client", () => {
       params: { sessionId: "session-1" },
     });
 
-    await expect(readySession.exec("pwd")).resolves.toEqual({
-      output: "raw output",
-      stdout: "raw output",
-      stderr: "",
-      exitCode: 0,
-      truncated: false,
-    });
+    await expect(readySession.exec("pwd")).resolves.toEqual(
+      createProtocolExecResult({ output: "raw output" }),
+    );
     expect(transport.requests.at(-1)).toEqual({
       method: "session.exec",
-      params: { sessionId: "session-1", command: "pwd" },
+      params: {
+        sessionId: "session-1",
+        execId: expect.any(String),
+        command: "pwd",
+      },
     });
 
     await expect(
-      readySession.exec("git diff", { cwd: "/repo", timeoutMs: 30000 }),
-    ).resolves.toEqual({
-      output: "raw output",
-      stdout: "raw output",
-      stderr: "",
-      exitCode: 0,
-      truncated: false,
-    });
+      readySession.exec("git diff", {
+        args: ["one", "two"],
+        env: { GIT_OPTIONAL_LOCKS: "0" },
+        stdin: Buffer.from("input"),
+        cwd: "/repo",
+        timeoutMs: 30000,
+        maxCaptureBytes: 2 * 1024 * 1024,
+      }),
+    ).resolves.toEqual(createProtocolExecResult({ output: "raw output" }));
     expect(transport.requests.at(-1)).toEqual({
       method: "session.exec",
-      params: { sessionId: "session-1", command: "git diff", cwd: "/repo", timeoutMs: 30000 },
+      params: {
+        sessionId: "session-1",
+        execId: expect.any(String),
+        command: "git diff",
+        args: ["one", "two"],
+        env: { GIT_OPTIONAL_LOCKS: "0" },
+        stdinBase64: Buffer.from("input").toString("base64"),
+        cwd: "/repo",
+        timeoutMs: 30000,
+        maxCaptureBytes: 2 * 1024 * 1024,
+      },
     });
 
     await expect(readySession.record("review", { historyEntryId: "review-1" })).resolves.toEqual({
@@ -781,6 +788,93 @@ describe("sdk_client", () => {
 
     await client.close();
     expect(transport.closed).toBe(true);
+  });
+
+  it("cancels only the in-flight exec whose abort signal fires", async () => {
+    const transport = new FakeSessionProtocolTransport();
+    let finishExec;
+    transport.onRequest = async (method) => {
+      if (method === "session.exec") {
+        return await new Promise((resolve) => {
+          finishExec = resolve;
+        });
+      }
+      if (method === "session.cancelExec") {
+        finishExec(createProtocolExecResult({ output: "cancelled", aborted: true }));
+        return { cancelled: true };
+      }
+      return undefined;
+    };
+    const client = await createTauSdkClientFromTransport(transport);
+    const session = await client.sessions.observe("session-1");
+    const abortController = new AbortController();
+
+    const execution = session.exec("sleep 60", { signal: abortController.signal });
+    await vi.waitFor(() => {
+      expect(transport.requests).toContainEqual({
+        method: "session.exec",
+        params: {
+          sessionId: "session-1",
+          execId: expect.any(String),
+          command: "sleep 60",
+        },
+      });
+    });
+    const execId = transport.requests.find((request) => request.method === "session.exec").params
+      .execId;
+    abortController.abort();
+
+    await expect(execution).rejects.toMatchObject({ name: "AbortError" });
+    await vi.waitFor(() => {
+      expect(transport.requests).toContainEqual({
+        method: "session.cancelExec",
+        params: { sessionId: "session-1", execId },
+      });
+    });
+    expect(transport.requests.some((request) => request.method === "session.interrupt")).toBe(
+      false,
+    );
+    await client.close();
+  });
+
+  it("consumes failures from abort-triggered targeted cancellation", async () => {
+    const transport = new FakeSessionProtocolTransport();
+    let finishExec;
+    transport.onRequest = async (method) => {
+      if (method === "session.exec") {
+        return await new Promise((resolve) => {
+          finishExec = resolve;
+        });
+      }
+      if (method === "session.cancelExec") {
+        throw new Error("transport closed");
+      }
+      return undefined;
+    };
+    const client = await createTauSdkClientFromTransport(transport);
+    const session = await client.sessions.observe("session-1");
+    const abortController = new AbortController();
+
+    const execution = session.exec("sleep 60", { signal: abortController.signal });
+    await vi.waitFor(() => {
+      expect(transport.requests).toContainEqual({
+        method: "session.exec",
+        params: {
+          sessionId: "session-1",
+          execId: expect.any(String),
+          command: "sleep 60",
+        },
+      });
+    });
+    abortController.abort();
+    await expect(execution).rejects.toMatchObject({ name: "AbortError" });
+    await vi.waitFor(() => {
+      expect(transport.requests.some((request) => request.method === "session.cancelExec")).toBe(
+        true,
+      );
+    });
+    finishExec(createProtocolExecResult({ output: "finished" }));
+    await client.close();
   });
 
   it("keeps pending user message updates newer than the observe bootstrap", async () => {
@@ -1222,15 +1316,11 @@ describe("sdk_client", () => {
     });
     expect(retryRequests.map((request) => request.params)).toEqual([{ sessionId: "session-1" }]);
 
-    await expect(session.exec("pwd")).resolves.toEqual({
-      output: "/repo\n",
-      stdout: "/repo\n",
-      stderr: "",
-      exitCode: 0,
-      truncated: false,
-    });
+    await expect(session.exec("pwd")).resolves.toEqual(
+      createProtocolExecResult({ output: "/repo\n" }),
+    );
     expect(execRequests.map((request) => request.params)).toEqual([
-      { sessionId: "session-1", command: "pwd" },
+      { sessionId: "session-1", execId: expect.any(String), command: "pwd" },
     ]);
 
     const sampleInput = {

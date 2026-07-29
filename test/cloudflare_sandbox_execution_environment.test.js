@@ -84,13 +84,27 @@ describe("Cloudflare Sandbox execution environment", () => {
       sandboxId: "sandbox-1",
       cwd: "/workspace/repo",
     });
+    const environment = new CloudflareSandboxExecutionEnvironment({
+      bridgeId: "default",
+      sandboxId: "sandbox-1",
+      cwd: "/workspace/repo",
+      home: "/home/sandbox",
+      backend,
+    });
 
-    await expect(backend.runBash("echo hello")).resolves.toEqual({
+    await expect(
+      environment.getToolExecutionBackend().runBash("echo hello", {
+        args: ["arg-zero", "arg-one"],
+      }),
+    ).resolves.toEqual({
       output: "hello\n",
       stdout: "hello\n",
       stderr: "",
       exitCode: 0,
       truncated: false,
+      timedOut: false,
+      aborted: false,
+      closeSignal: null,
     });
 
     expect(requests).toHaveLength(2);
@@ -107,9 +121,114 @@ describe("Cloudflare Sandbox execution environment", () => {
       }),
     );
     expect(JSON.parse(requests[1].init.body)).toEqual({
-      argv: ["sh", "-lc", "echo hello"],
+      argv: [
+        "env",
+        "HOME=/home/sandbox",
+        "GIT_TERMINAL_PROMPT=0",
+        "GIT_EDITOR=true",
+        "GIT_SEQUENCE_EDITOR=true",
+        "GIT_PAGER=cat",
+        "GIT_ASKPASS=true",
+        "GIT_SSH_COMMAND=ssh -o BatchMode=yes",
+        "bash",
+        "-lc",
+        "echo hello",
+        "arg-zero",
+        "arg-one",
+      ],
       cwd: "/workspace/repo",
     });
+  });
+
+  it("preserves UTF-8 characters split across bridge output events", async () => {
+    const character = Buffer.from("€", "utf-8");
+    const fetchMock = async (url) => {
+      if (String(url).endsWith("/v1/sandbox/sandbox-1/session")) {
+        return jsonResponse({ id: "tau-session-1" });
+      }
+      if (String(url).endsWith("/v1/sandbox/sandbox-1/exec")) {
+        return sseResponse([
+          `event: stdout\ndata: ${character.subarray(0, 1).toString("base64")}\n\n`,
+          `event: stdout\ndata: ${character.subarray(1).toString("base64")}\n\n`,
+          `event: exit\ndata: ${JSON.stringify({ exit_code: 0 })}\n\n`,
+        ]);
+      }
+      return jsonResponse({ error: "not found" }, { status: 404 });
+    };
+    const client = new CloudflareSandboxBridgeClient({
+      bridgeId: "default",
+      baseUrl: "https://bridge.example",
+      fetch: fetchMock,
+    });
+    const backend = createCloudflareSandboxToolExecutionBackend({
+      client,
+      sandboxId: "sandbox-1",
+      cwd: "/workspace/repo",
+    });
+
+    await expect(backend.runBash("printf €")).resolves.toMatchObject({
+      output: "€",
+      stdout: "€",
+      stderr: "",
+      truncated: false,
+    });
+  });
+
+  it("stages exec stdin through bridge file operations", async () => {
+    const requests = [];
+    const fetchMock = async (url, init = {}) => {
+      requests.push({ url: String(url), init });
+      if (init.method === "PUT") {
+        return new Response(null, { status: 200 });
+      }
+      if (String(url).endsWith("/v1/sandbox/sandbox-1/session")) {
+        return jsonResponse({ id: "tau-session-1" });
+      }
+      if (String(url).endsWith("/v1/sandbox/sandbox-1/exec")) {
+        return sseResponse(execSse({ stdout: "input", exitCode: 0 }));
+      }
+      return jsonResponse({ error: "not found" }, { status: 404 });
+    };
+    const backend = createCloudflareSandboxToolExecutionBackend({
+      client: new CloudflareSandboxBridgeClient({
+        bridgeId: "default",
+        baseUrl: "https://bridge.example",
+        fetch: fetchMock,
+      }),
+      sandboxId: "sandbox-1",
+      cwd: "/workspace/repo",
+    });
+
+    await expect(backend.runBash("cat", { stdin: Buffer.from("input") })).resolves.toMatchObject({
+      stdout: "input",
+    });
+
+    const writeRequest = requests.find((request) => request.init.method === "PUT");
+    expect(Buffer.from(writeRequest.init.body)).toEqual(Buffer.from("input"));
+    const execRequests = requests.filter((request) => request.url.endsWith("/exec"));
+    const command = JSON.parse(execRequests[0].init.body);
+    expect(command.argv).toEqual([
+      "env",
+      "GIT_TERMINAL_PROMPT=0",
+      "GIT_EDITOR=true",
+      "GIT_SEQUENCE_EDITOR=true",
+      "GIT_PAGER=cat",
+      "GIT_ASKPASS=true",
+      "GIT_SSH_COMMAND=ssh -o BatchMode=yes",
+      "bash",
+      "-c",
+      'exec "$@" < "$0"',
+      expect.stringMatching(/^\/tmp\/tau-exec-.*\.stdin$/),
+      "bash",
+      "-lc",
+      "cat",
+    ]);
+    expect(JSON.parse(execRequests[1].init.body).argv).toEqual([
+      "rm",
+      "-f",
+      "--",
+      command.argv[10],
+    ]);
   });
 
   it("writes binary files without text conversion", async () => {
@@ -148,6 +267,64 @@ describe("Cloudflare Sandbox execution environment", () => {
 
     expect(requests[2].init.method).toBe("PUT");
     expect(Buffer.from(requests[2].init.body)).toEqual(content);
+  });
+
+  it("stops reading binary files when they exceed the requested limit", async () => {
+    let cancelled = false;
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(Buffer.alloc(8));
+        controller.enqueue(Buffer.alloc(8));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const client = new CloudflareSandboxBridgeClient({
+      bridgeId: "default",
+      baseUrl: "https://bridge.example",
+      fetch: async () => new Response(body),
+    });
+    const backend = createCloudflareSandboxToolExecutionBackend({
+      client,
+      sandboxId: "sandbox-1",
+      cwd: "/workspace/repo",
+    });
+
+    await expect(
+      backend.readFileBinary("/workspace/repo/large.bin", { maxBytes: 10 }),
+    ).rejects.toThrow("file exceeds maximum size of 10 B (got 16 B)");
+    expect(cancelled).toBe(true);
+  });
+
+  it("cancels binary responses whose content length exceeds the requested limit", async () => {
+    let cancelled = false;
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(Buffer.alloc(16));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const client = new CloudflareSandboxBridgeClient({
+      bridgeId: "default",
+      baseUrl: "https://bridge.example",
+      fetch: async () =>
+        new Response(body, {
+          headers: { "Content-Length": "16" },
+        }),
+    });
+    const backend = createCloudflareSandboxToolExecutionBackend({
+      client,
+      sandboxId: "sandbox-1",
+      cwd: "/workspace/repo",
+    });
+
+    await expect(
+      backend.readFileBinary("/workspace/repo/large.bin", { maxBytes: 10 }),
+    ).rejects.toThrow("file exceeds maximum size of 10 B (got 16 B)");
+    expect(cancelled).toBe(true);
   });
 
   it("serializes bridge exec calls that share a command session", async () => {
@@ -244,7 +421,7 @@ describe("Cloudflare Sandbox execution environment", () => {
     const second = backend.runBash("two", { signal: controller.signal });
     controller.abort();
 
-    await expect(second).rejects.toMatchObject({ name: "AbortError" });
+    await expect(second).resolves.toMatchObject({ aborted: true, exitCode: null });
     expect(execStreams).toHaveLength(1);
     execStreams[0].controller.enqueue(encoder.encode(execSse({ stdout: "one\n" }).join("")));
     execStreams[0].controller.close();
@@ -252,8 +429,10 @@ describe("Cloudflare Sandbox execution environment", () => {
     await backend.dispose();
   });
 
-  it("cancels active and queued commands and rejects new work on dispose", async () => {
+  it("cancels active and queued commands, awaits cleanup, and rejects new work on dispose", async () => {
     const requests = [];
+    const deleteStarted = deferred();
+    const releaseDelete = deferred();
     let execCount = 0;
     const fetchMock = async (url, init = {}) => {
       requests.push({ url: String(url), init });
@@ -275,6 +454,8 @@ describe("Cloudflare Sandbox execution environment", () => {
         });
       }
       if (String(url).includes("/v1/sandbox/sandbox-1/session/tau-session-1")) {
+        deleteStarted.resolve();
+        await releaseDelete.promise;
         return jsonResponse({});
       }
       return jsonResponse({ error: "not found" }, { status: 404 });
@@ -294,10 +475,18 @@ describe("Cloudflare Sandbox execution environment", () => {
     const first = backend.runBash("one");
     await waitFor(() => execCount === 1);
     const second = backend.runBash("two");
-    const firstResult = expect(first).rejects.toMatchObject({ name: "AbortError" });
-    const secondResult = expect(second).rejects.toMatchObject({ name: "AbortError" });
+    const firstResult = expect(first).resolves.toMatchObject({ aborted: true, exitCode: null });
+    const secondResult = expect(second).resolves.toMatchObject({ aborted: true, exitCode: null });
 
-    await backend.dispose();
+    let disposed = false;
+    const disposal = backend.dispose().then(() => {
+      disposed = true;
+    });
+    await deleteStarted.promise;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(disposed).toBe(false);
+    releaseDelete.resolve();
+    await disposal;
     await firstResult;
     await secondResult;
     expect(execCount).toBe(1);
@@ -358,8 +547,34 @@ describe("Cloudflare Sandbox execution environment", () => {
 
     const execRequests = requests.filter((request) => request.url.endsWith("/exec"));
     expect(execRequests.map((request) => JSON.parse(request.init.body).argv)).toEqual([
-      ["sh", "-lc", "one"],
-      ["node", "-e", "process.stdout.write(process.argv[1])", "two"],
+      [
+        "env",
+        "GIT_TERMINAL_PROMPT=0",
+        "GIT_EDITOR=true",
+        "GIT_SEQUENCE_EDITOR=true",
+        "GIT_PAGER=cat",
+        "GIT_ASKPASS=true",
+        "GIT_SSH_COMMAND=ssh -o BatchMode=yes",
+        "bash",
+        "-lc",
+        "one",
+      ],
+      [
+        "env",
+        "GIT_TERMINAL_PROMPT=0",
+        "GIT_EDITOR=true",
+        "GIT_SEQUENCE_EDITOR=true",
+        "GIT_PAGER=cat",
+        "GIT_ASKPASS=true",
+        "GIT_SSH_COMMAND=ssh -o BatchMode=yes",
+        "bash",
+        "-lc",
+        'exec "$0" "$@"',
+        "node",
+        "-e",
+        "process.stdout.write(process.argv[1])",
+        "two",
+      ],
     ]);
     expect(execRequests.map((request) => request.init.headers["Session-Id"])).toEqual([
       "tau-session-1",
@@ -407,6 +622,28 @@ describe("Cloudflare Sandbox execution environment", () => {
     ]);
   });
 
+  it("applies the command timeout while creating the bridge session", async () => {
+    const client = new CloudflareSandboxBridgeClient({
+      bridgeId: "default",
+      baseUrl: "https://bridge.example",
+      fetch: async (_url, init = {}) =>
+        await new Promise((_resolve, reject) => {
+          init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true });
+        }),
+    });
+    const backend = createCloudflareSandboxToolExecutionBackend({
+      client,
+      sandboxId: "sandbox-1",
+      cwd: "/workspace/repo",
+    });
+
+    await expect(backend.runBash("pwd", { timeoutMs: 10 })).resolves.toMatchObject({
+      timedOut: true,
+      exitCode: null,
+      stderr: expect.stringContaining("timed out after 10ms"),
+    });
+  });
+
   it("deletes the command session when bridge exec is aborted", async () => {
     const requests = [];
     const execStarted = deferred();
@@ -445,8 +682,8 @@ describe("Cloudflare Sandbox execution environment", () => {
     await execStarted.promise;
     controller.abort();
 
-    await expect(run).rejects.toMatchObject({ name: "AbortError" });
-    expect(requests.some((request) => request.init.method === "DELETE")).toBe(true);
+    await expect(run).resolves.toMatchObject({ aborted: true, exitCode: null });
+    await waitFor(() => requests.some((request) => request.init.method === "DELETE"));
   });
 
   it("deletes every per-cwd command session on dispose", async () => {
@@ -522,9 +759,12 @@ describe("Cloudflare Sandbox execution environment", () => {
     const controller = new AbortController();
     controller.abort();
 
-    await expect(backend.runBash("sleep 10", { signal: controller.signal })).rejects.toMatchObject({
-      name: "AbortError",
-    });
+    await expect(backend.runBash("sleep 10", { signal: controller.signal })).resolves.toMatchObject(
+      {
+        aborted: true,
+        exitCode: null,
+      },
+    );
     expect(requests).toHaveLength(0);
   });
 
@@ -638,7 +878,7 @@ describe("Cloudflare Sandbox execution environment", () => {
     expect(JSON.parse(nodeScriptCalls[0].args[3])).toEqual(["/workspace/repo/docs/AGENTS.md"]);
     expect(nodeScriptCalls[0].options).toMatchObject({
       cwd: "/workspace/repo",
-      maxCaptureBytes: null,
+      maxCaptureBytes: 24 * 1024 * 1024,
     });
     expect(environment.snapshot()).toEqual({
       kind: "cloudflare-sandbox",

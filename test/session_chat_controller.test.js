@@ -259,19 +259,17 @@ class FakeSession {
     });
     return { turn: { status: "completed", stopReason: "stop" } };
   });
-  exec = vi.fn(async (command) => {
-    if (command.includes("rev-parse --show-toplevel")) {
-      return createProtocolExecResult({ output: "/repo\n" });
+  exec = vi.fn(async (command, options = {}) => {
+    const invocation = [command, ...(options.args ?? [])].join(" ");
+    let output = "";
+    if (invocation.includes("rev-parse") && invocation.includes("--show-toplevel")) {
+      output = "/repo\n";
+    } else if (invocation.includes("diff") && invocation.includes("--name-status")) {
+      output = "M\0src/main.ts\0";
+    } else if (invocation.includes("diff")) {
+      output = "diff --git a/src/main.ts b/src/main.ts\n";
     }
-    if (command.includes("diff --name-status")) {
-      return createProtocolExecResult({ output: "M\0src/main.ts\0" });
-    }
-    if (command.includes("diff")) {
-      return createProtocolExecResult({
-        output: "diff --git a/src/main.ts b/src/main.ts\n",
-      });
-    }
-    return createProtocolExecResult({ output: "" });
+    return createProtocolExecResult({ output });
   });
   record = vi.fn(async (text, options = {}) => {
     this.operationLog.push("record");
@@ -3268,7 +3266,10 @@ describe("SessionChatController", () => {
     await waitUntil(() => session.record.mock.calls.length > 0);
 
     expect(session.submit).not.toHaveBeenCalled();
-    expect(session.exec).toHaveBeenCalledWith(expect.stringContaining("diff"), expect.any(Object));
+    expect(session.exec).toHaveBeenCalledWith(
+      'exec "$0" "$@"',
+      expect.objectContaining({ args: ["git", "diff", "--", "src/main.ts"] }),
+    );
     expect(session.createEphemeralContext).toHaveBeenCalledWith({
       instructions: expect.stringContaining("src/main.ts"),
       tools: ["bash", "view_image"],

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type {
   SessionProtocolClientToolCallMessage,
   SessionProtocolClientToolCancelMessage,
@@ -244,15 +245,37 @@ class TauSdkClientImpl implements TauSdkClient {
 
   sendExec(
     sessionId: string,
+    execId: string,
     command: string,
-    options: { cwd?: string; timeoutMs?: number } = {},
+    options: {
+      args?: string[];
+      env?: Record<string, string>;
+      stdinBase64?: string;
+      cwd?: string;
+      timeoutMs?: number;
+      maxCaptureBytes?: number;
+    } = {},
   ): Promise<SessionProtocolResultByMethod["session.exec"]> {
     return this.transport.request("session.exec", {
       sessionId,
+      execId,
       command,
+      ...(options.args !== undefined ? { args: options.args } : {}),
+      ...(options.env !== undefined ? { env: options.env } : {}),
+      ...(options.stdinBase64 !== undefined ? { stdinBase64: options.stdinBase64 } : {}),
       ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
       ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      ...(options.maxCaptureBytes !== undefined
+        ? { maxCaptureBytes: options.maxCaptureBytes }
+        : {}),
     });
+  }
+
+  sendCancelExec(
+    sessionId: string,
+    execId: string,
+  ): Promise<SessionProtocolResultByMethod["session.cancelExec"]> {
+    return this.transport.request("session.cancelExec", { sessionId, execId });
   }
 
   sendSample(
@@ -572,9 +595,24 @@ class TauSdkSessionImpl implements TauSdkSession {
 
   async exec(
     command: string,
-    options: { cwd?: string; timeoutMs?: number } = {},
+    options: {
+      args?: string[];
+      env?: Record<string, string>;
+      stdin?: Buffer;
+      cwd?: string;
+      timeoutMs?: number;
+      maxCaptureBytes?: number;
+      signal?: AbortSignal;
+    } = {},
   ): Promise<SessionProtocolResultByMethod["session.exec"]> {
-    return await this.client.sendExec(this.activeSessionId(), command, options);
+    const { signal, stdin, ...execOptions } = options;
+    const execId = randomUUID();
+    return await this.runExecRequest(execId, signal, () =>
+      this.client.sendExec(this.activeSessionId(), execId, command, {
+        ...execOptions,
+        ...(stdin !== undefined ? { stdinBase64: stdin.toString("base64") } : {}),
+      }),
+    );
   }
 
   async sample(
@@ -794,6 +832,46 @@ class TauSdkSessionImpl implements TauSdkSession {
     this.ephemeralListeners.clear();
     this.pendingUserMessagesListeners.clear();
     this.bufferedDeltas.splice(0);
+  }
+
+  private async runExecRequest<T>(
+    execId: string,
+    signal: AbortSignal | undefined,
+    request: () => Promise<T>,
+  ): Promise<T> {
+    signal?.throwIfAborted();
+    if (!signal) {
+      return await request();
+    }
+
+    return await new Promise<T>((resolve, reject) => {
+      let settled = false;
+      const finish = (callback: () => void) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", onAbort);
+        callback();
+      };
+      const onAbort = () => {
+        void this.client.sendCancelExec(this.sessionId, execId).catch(() => {});
+        finish(() => reject(signal.reason));
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      let pending: Promise<T>;
+      try {
+        pending = request();
+      } catch (error) {
+        finish(() => reject(error));
+        return;
+      }
+      void pending.then(
+        (result) => finish(() => resolve(result)),
+        (error) => finish(() => reject(error)),
+      );
+      if (signal.aborted) {
+        onAbort();
+      }
+    });
   }
 
   private activeSessionId(): string {

@@ -149,9 +149,11 @@ describe("session_protocol", () => {
         method: "session.exec",
         params: {
           sessionId: "session-1",
+          execId: "exec-1",
           command: "git diff",
           cwd: "/repo",
           timeoutMs: 30000,
+          maxCaptureBytes: 2097152,
         },
       }),
     );
@@ -164,9 +166,11 @@ describe("session_protocol", () => {
         method: "session.exec",
         params: {
           sessionId: "session-1",
+          execId: "exec-1",
           command: "git diff",
           cwd: "/repo",
           timeoutMs: 30000,
+          maxCaptureBytes: 2097152,
         },
       },
     });
@@ -893,6 +897,18 @@ describe("session_protocol", () => {
         },
       },
     });
+    expect(
+      validateSessionProtocolParams("session.create", {
+        executionEnvironment: { kind: "local", cwd: "/repo", env: { HOME: "/tmp" } },
+      }),
+    ).toEqual({
+      ok: false,
+      error: {
+        code: "invalid_params",
+        message:
+          "session.create params.executionEnvironment.env must use valid environment variable names and string values without null bytes and cannot override HOME",
+      },
+    });
     expect(validateSessionProtocolParams("session.create", {})).toEqual({
       ok: false,
       error: expect.objectContaining({
@@ -941,27 +957,85 @@ describe("session_protocol", () => {
     expect(
       validateSessionProtocolParams("session.exec", {
         sessionId: "session-1",
+        execId: "exec-1",
         command: "pwd",
       }),
     ).toEqual({
       ok: true,
-      value: { sessionId: "session-1", command: "pwd" },
+      value: { sessionId: "session-1", execId: "exec-1", command: "pwd" },
     });
     expect(
       validateSessionProtocolParams("session.exec", {
         sessionId: "session-1",
+        execId: "exec-1",
         command: "git diff",
+        args: ["one", "two"],
+        env: { GIT_OPTIONAL_LOCKS: "0" },
+        stdinBase64: Buffer.from("input").toString("base64"),
         cwd: "/repo",
         timeoutMs: 30000,
+        maxCaptureBytes: 2097152,
       }),
     ).toEqual({
       ok: true,
       value: {
         sessionId: "session-1",
+        execId: "exec-1",
         command: "git diff",
+        args: ["one", "two"],
+        env: { GIT_OPTIONAL_LOCKS: "0" },
+        stdinBase64: Buffer.from("input").toString("base64"),
         cwd: "/repo",
         timeoutMs: 30000,
+        maxCaptureBytes: 2097152,
       },
+    });
+    expect(
+      validateSessionProtocolParams("session.exec", {
+        sessionId: "session-1",
+        execId: "exec-1",
+        command: "git diff",
+        maxCaptureBytes: 24 * 1024 * 1024 + 1,
+      }),
+    ).toEqual({
+      ok: false,
+      error: {
+        code: "invalid_params",
+        message:
+          "session.exec params.maxCaptureBytes must be a positive integer no greater than 25165824 when provided",
+      },
+    });
+    for (const [params, message] of [
+      [
+        { sessionId: "session-1", execId: "exec-1", command: "printf \0" },
+        "session.exec params.command must be a non-empty string without null bytes",
+      ],
+      [
+        { sessionId: "session-1", execId: "exec-1", command: "printf", args: ["a\0b"] },
+        "session.exec params.args must be an array of strings without null bytes when provided",
+      ],
+      [
+        { sessionId: "session-1", execId: "exec-1", command: "pwd", env: { HOME: "/tmp" } },
+        "session.exec params.env must use valid environment variable names and string values without null bytes and cannot override HOME",
+      ],
+      [
+        { sessionId: "session-1", execId: "exec-1", command: "pwd", cwd: "/repo\0bad" },
+        "session.exec params.cwd must be a non-empty string without null bytes when provided",
+      ],
+    ]) {
+      expect(validateSessionProtocolParams("session.exec", params)).toEqual({
+        ok: false,
+        error: { code: "invalid_params", message },
+      });
+    }
+    expect(
+      validateSessionProtocolParams("session.cancelExec", {
+        sessionId: "session-1",
+        execId: "exec-1",
+      }),
+    ).toEqual({
+      ok: true,
+      value: { sessionId: "session-1", execId: "exec-1" },
     });
     expect(
       validateSessionProtocolParams("session.record", {
@@ -1186,6 +1260,10 @@ describe("session_protocol", () => {
       ok: true,
       value: createProtocolExecResult({ command: "pwd" }),
     });
+    expect(validateSessionProtocolResult("session.cancelExec", { cancelled: true })).toEqual({
+      ok: true,
+      value: { cancelled: true },
+    });
     expect(
       validateSessionProtocolResult("session.autocompletePaths", {
         paths: ["src/main.ts", "src/tui/"],
@@ -1302,6 +1380,9 @@ describe("session_protocol", () => {
         stderr: "",
         exitCode: 0,
         truncated: false,
+        timedOut: false,
+        aborted: false,
+        closeSignal: null,
       }),
     ).toEqual({
       ok: true,
@@ -1311,6 +1392,9 @@ describe("session_protocol", () => {
         stderr: "",
         exitCode: 0,
         truncated: false,
+        timedOut: false,
+        aborted: false,
+        closeSignal: null,
       },
     });
 

@@ -164,7 +164,7 @@ await session.submit("summarize the PR");
 await client.close();
 ```
 
-Local execution environments accept optional `env` overrides for tool processes. Tau sanitizes inherited host variables first, then overlays these explicit values unchanged, including names such as `GH_TOKEN`. All overrides are persisted in the session snapshot, so clients are responsible for protecting the session store when passing secrets.
+Local execution environments accept optional `env` overrides for tool processes except `HOME`, which is owned by the execution environment. Tau sanitizes inherited host variables first, then overlays the accepted explicit values unchanged, including names such as `GH_TOKEN`. All overrides are persisted in the session snapshot, so clients are responsible for protecting the session store when passing secrets.
 
 When the host config defines a Cloudflare Sandbox bridge, SDK callers can create a session bound to an already-provisioned sandbox:
 
@@ -297,8 +297,11 @@ options:
 - `retry()`
   - sends `session.retry` with this session id to run a turn without appending user text
 - `exec(command, options?)`
-  - sends `session.exec` with this session id
-  - runs a raw command in the session execution environment and returns interleaved `output` plus split `stdout` and `stderr`
+  - sends `session.exec` with a generated exec id and runs the command in fresh non-interactive login Bash
+  - returns interleaved `output`, split `stdout` and `stderr`, exit/truncation fields, and explicit timeout/abort/signal termination metadata
+  - accepts optional exact Bash positional `args`, starting `env` overrides except execution-environment-owned `HOME`, binary `stdin`, `cwd`, `timeoutMs`, `maxCaptureBytes` (up to 24 MiB), and `signal`
+  - `args[0]` becomes Bash `$0` and the remaining values become `$@`; `exec "$0" "$@"` safely runs an exact executable after login initialization
+  - aborting `signal` sends targeted `session.cancelExec` and rejects without interrupting other session work
   - runs independently and concurrently with session turns, mutations, other execs, samples, and ephemeral agents; callers own workspace coordination
   - does not add output to session history or mutate the session snapshot
 - `sample({ context, options })`
@@ -390,7 +393,7 @@ const second = await session.sample({
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "type": "session.delta",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "fromRevision": 1,

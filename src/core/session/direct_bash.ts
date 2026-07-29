@@ -50,6 +50,7 @@ export async function runDirectBashCommand(
   const userMessageText = formatBashUserMessageText({
     command: options.command,
     truncationInfo,
+    exitCode,
   });
   const uiText = buildBashUiText({
     truncationInfo,

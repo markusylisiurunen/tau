@@ -48,7 +48,7 @@ function createRepoFixture() {
 
 function createSpawnResult(output, overrides = {}) {
   return {
-    stdout: "",
+    stdout: output,
     stderr: "",
     output,
     exitCode: 0,
@@ -338,7 +338,10 @@ describe("diff_review snapshot", () => {
       if (args[0] === "diff" && args[1] === "--name-status") {
         return createSpawnResult(`M\0${exactPath}\0`);
       }
-      return createSpawnResult(patch);
+      return createSpawnResult(patch, {
+        stderr: "warning: ambiguous ref\n",
+        output: `warning: ambiguous ref\n${patch}`,
+      });
     };
 
     const snapshot = await captureDiffReviewSnapshot({
@@ -357,6 +360,7 @@ describe("diff_review snapshot", () => {
         newPath: exactPath,
       },
     ]);
+    expect(snapshot.patch).not.toContain("ambiguous ref");
     expect(snapshot.getFilePatch(exactPath)).toBe(patch);
     expect(snapshot.getFilePatch(exactPath.trim())).toBeUndefined();
   });

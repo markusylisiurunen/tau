@@ -1,4 +1,8 @@
+import { spawn as spawnChild } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import { personas } from "../dist/core/personas.js";
@@ -18,6 +22,7 @@ class FakeSpriteCommand extends EventEmitter {
   constructor(handler, options = {}) {
     super();
     this.chunkSize = options.chunkSize;
+    this.byteChunkSize = options.byteChunkSize;
     this.stdin.on("data", (chunk) => {
       this.input += Buffer.from(chunk).toString("utf-8");
       this.drainInput(handler);
@@ -75,6 +80,14 @@ class FakeSpriteCommand extends EventEmitter {
 
   writeMessage(message) {
     const line = `${JSON.stringify(message)}\n`;
+    if (this.byteChunkSize !== undefined) {
+      const bytes = Buffer.from(line, "utf-8");
+      for (let index = 0; index < bytes.length; index += this.byteChunkSize) {
+        this.stdout.emit("data", bytes.subarray(index, index + this.byteChunkSize));
+      }
+      return;
+    }
+
     const chunkSize = this.chunkSize ?? line.length;
     for (let index = 0; index < line.length; index += chunkSize) {
       this.stdout.emit("data", Buffer.from(line.slice(index, index + chunkSize), "utf-8"));
@@ -104,32 +117,37 @@ function createFakeSprite(handler, commandOptions = {}) {
   };
 }
 
+function executionResult(overrides = {}) {
+  const output = overrides.output ?? "";
+  return {
+    output,
+    stdout: overrides.stdout ?? output,
+    stderr: "",
+    exitCode: 0,
+    truncated: false,
+    timedOut: false,
+    aborted: false,
+    closeSignal: null,
+    ...overrides,
+  };
+}
+
 describe("Fly Sprite execution environment", () => {
   it("runs bash through a persistent SDK-backed worker", async () => {
     const requests = [];
     const sprite = createFakeSprite((request) => {
       requests.push(request);
       expect(request.method).toBe("exec");
-      return {
-        output: `${request.command}\n`,
-        stdout: `${request.command}\n`,
-        stderr: "",
-        exitCode: 0,
-        truncated: false,
-      };
+      return executionResult({ output: `${request.command}\n` });
     });
     const backend = createFlySpriteToolExecutionBackend({
       sprite,
       cwd: "/home/sprite/repo",
     });
 
-    await expect(backend.runBash("echo hello")).resolves.toEqual({
-      output: "echo hello\n",
-      stdout: "echo hello\n",
-      stderr: "",
-      exitCode: 0,
-      truncated: false,
-    });
+    await expect(backend.runBash("echo hello")).resolves.toEqual(
+      executionResult({ output: "echo hello\n" }),
+    );
     await expect(backend.runBash("pwd")).resolves.toMatchObject({
       output: "pwd\n",
     });
@@ -138,16 +156,66 @@ describe("Fly Sprite execution environment", () => {
     expect(sprite.calls[0].command).toBe("node");
     expect(sprite.calls[0].options).toEqual({ cwd: "/home/sprite/repo" });
     expect(requests.map((request) => request.command)).toEqual(["echo hello", "pwd"]);
+    expect(requests[0].env).toEqual({
+      GIT_TERMINAL_PROMPT: "0",
+      GIT_EDITOR: "true",
+      GIT_SEQUENCE_EDITOR: "true",
+      GIT_PAGER: "cat",
+      GIT_ASKPASS: "true",
+      GIT_SSH_COMMAND: "ssh -o BatchMode=yes",
+    });
+  });
+
+  it("runs commands through login Bash in the Sprite worker", async () => {
+    const home = await mkdtemp(join(tmpdir(), "tau-fly-bash-home-"));
+    const repo = join(home, "repo");
+    await mkdir(repo);
+    await writeFile(join(home, ".bash_profile"), "export TAU_LOGIN_PROFILE=loaded\n", "utf8");
+    const sprite = {
+      spawn(command, args, options) {
+        return spawnChild(command, args, {
+          ...options,
+          stdio: ["pipe", "pipe", "pipe"],
+        });
+      },
+    };
+    const backend = createFlySpriteToolExecutionBackend({ sprite, cwd: repo });
+    const environment = new FlySpriteExecutionEnvironment({
+      apiId: "default",
+      spriteName: "sprite-1",
+      cwd: repo,
+      home,
+      backend,
+    });
+
+    try {
+      const result = await environment
+        .getToolExecutionBackend()
+        .runBash('values=(one two); printf "%s|%s|%s|" "$TAU_LOGIN_PROFILE" "$HOME" "$0"; cat', {
+          args: ["argument"],
+          stdin: Buffer.from("input"),
+        });
+
+      expect(result.stdout).toBe(`loaded|${home}|argument|input`);
+      expect(result.exitCode).toBe(0);
+
+      const truncated = await environment.getToolExecutionBackend().runBash("printf abc", {
+        maxCaptureBytes: 1,
+      });
+      expect(truncated).toMatchObject({
+        output: "c",
+        stdout: "c",
+        stderr: "",
+        truncated: true,
+      });
+    } finally {
+      await environment.dispose();
+      await rm(home, { recursive: true, force: true });
+    }
   });
 
   it("resolves configured APIs through the SDK client factory", async () => {
-    const sprite = createFakeSprite(() => ({
-      output: "",
-      stdout: "",
-      stderr: "",
-      exitCode: 0,
-      truncated: false,
-    }));
+    const sprite = createFakeSprite(() => executionResult());
     const clients = [];
     const resolver = new FlySpriteExecutionEnvironmentResolver({
       apis: {
@@ -269,7 +337,7 @@ describe("Fly Sprite execution environment", () => {
     expect(nodeScriptCalls[0].args[0]).toBe("/home/sprite/repo");
     expect(nodeScriptCalls[0].options).toMatchObject({
       cwd: "/home/sprite/repo",
-      maxCaptureBytes: null,
+      maxCaptureBytes: 24 * 1024 * 1024,
     });
   });
 
@@ -306,13 +374,13 @@ describe("Fly Sprite execution environment", () => {
     const sprite = createFakeSprite((request) => {
       requests.push(request);
       if (request.method === "exec") {
-        return {
+        return executionResult({
           output: "(tau) aborted\n",
           stdout: "",
           stderr: "(tau) aborted\n",
           exitCode: null,
-          truncated: false,
-        };
+          aborted: true,
+        });
       }
       if (request.method === "cancel") {
         return { accepted: true };
@@ -326,13 +394,15 @@ describe("Fly Sprite execution environment", () => {
     const controller = new AbortController();
     controller.abort();
 
-    await expect(backend.runBash("sleep 10", { signal: controller.signal })).resolves.toEqual({
-      output: "(tau) aborted\n",
-      stdout: "",
-      stderr: "(tau) aborted\n",
-      exitCode: null,
-      truncated: false,
-    });
+    await expect(backend.runBash("sleep 10", { signal: controller.signal })).resolves.toEqual(
+      executionResult({
+        output: "(tau) aborted\n",
+        stdout: "",
+        stderr: "(tau) aborted\n",
+        exitCode: null,
+        aborted: true,
+      }),
+    );
 
     expect(requests.map((request) => request.method)).toEqual(["exec", "cancel"]);
     expect(requests[1].targetId).toBe(requests[0].id);
@@ -371,7 +441,9 @@ describe("Fly Sprite execution environment", () => {
       path: "/home/sprite/repo/file.txt",
       content: "hello",
     });
-    await expect(backend.readFileBinary("/home/sprite/repo/image.png")).resolves.toMatchObject({
+    await expect(
+      backend.readFileBinary("/home/sprite/repo/image.png", { maxBytes: 10 }),
+    ).resolves.toMatchObject({
       path: "/home/sprite/repo/image.png",
       bytes: 5,
     });
@@ -399,18 +471,70 @@ describe("Fly Sprite execution environment", () => {
       "writeFile",
       "listDir",
     ]);
+    expect(requests[1].maxBytes).toBe(10);
     expect(requests[3].contentBase64).toBe(Buffer.from([0, 255]).toString("base64"));
   });
 
-  it("parses worker responses split across many small stdout chunks", async () => {
+  it("escalates cancellation when a Sprite command ignores SIGTERM", async () => {
+    const sprite = {
+      spawn(command, args, options) {
+        return spawnChild(command, args, {
+          ...options,
+          stdio: ["pipe", "pipe", "pipe"],
+        });
+      },
+    };
+    const backend = createFlySpriteToolExecutionBackend({ sprite, cwd: process.cwd() });
+    const abortController = new AbortController();
+
+    try {
+      const execution = backend.runBash('trap "" TERM; echo $$; while true; do sleep 1; done', {
+        signal: abortController.signal,
+      });
+      setTimeout(() => abortController.abort(), 500);
+      const result = await execution;
+      const pid = Number(result.stdout.trim().split("\n")[0]);
+
+      expect(result.stderr).toContain("(tau) aborted");
+      expect(() => process.kill(pid, 0)).toThrow();
+    } finally {
+      await backend.dispose();
+    }
+  });
+
+  it("rejects oversized binary files in the Sprite before encoding them", async () => {
+    const root = await mkdtemp(join(tmpdir(), "tau-fly-binary-limit-"));
+    const path = join(root, "large.bin");
+    await writeFile(path, Buffer.alloc(16));
+    const sprite = {
+      spawn(command, args, options) {
+        return spawnChild(command, args, {
+          ...options,
+          stdio: ["pipe", "pipe", "pipe"],
+        });
+      },
+    };
+    const backend = createFlySpriteToolExecutionBackend({ sprite, cwd: root });
+
+    try {
+      await expect(backend.readFileBinary(path, { maxBytes: 8 })).rejects.toThrow(
+        "file exceeds maximum size of 8 bytes (got 16 bytes)",
+      );
+    } finally {
+      await backend.dispose();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("parses UTF-8 worker responses split across byte chunks", async () => {
     const sprite = createFakeSprite(
       (request) => {
         if (request.method === "readFile") {
-          return { content: "hello from chunks" };
+          return { content: "hello from chunks 🔥" };
         }
         throw new Error(`unexpected ${request.method}`);
       },
-      { chunkSize: 1 },
+      { byteChunkSize: 1 },
     );
     const backend = createFlySpriteToolExecutionBackend({
       sprite,
@@ -419,7 +543,7 @@ describe("Fly Sprite execution environment", () => {
 
     await expect(backend.readFile("/home/sprite/repo/file.txt")).resolves.toEqual({
       path: "/home/sprite/repo/file.txt",
-      content: "hello from chunks",
+      content: "hello from chunks 🔥",
     });
   });
 });

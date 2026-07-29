@@ -73,11 +73,11 @@ export function getBashOutputPolicy(args: {
 export const BASH_DEFAULT_TIMEOUT_MS = 60_000;
 
 const BASH_DESCRIPTION = [
-  "Execute a shell command in the current working directory and return its output.",
+  "Execute a command in a fresh non-interactive login Bash in the current working directory and return its output.",
   "Interactive commands are not supported (no TTY/stdin); commands that prompt or open editors will hang or fail.",
 ].join(" ");
 
-const BASH_COMMAND_DESCRIPTION = "The shell command to execute.";
+const BASH_COMMAND_DESCRIPTION = "The Bash command to execute.";
 
 const BASH_WORKING_DIRECTORY_DESCRIPTION =
   "Working directory for the command. If omitted, uses the current working directory. Prefer this over `cd` in the command.";
@@ -132,17 +132,24 @@ export interface BashTruncationInfo {
   fullOutputPath?: string;
 }
 
-const BASH_TEMP_FILE_TEMPLATE = "/tmp/tau-bash-output.XXXXXX";
 const BASH_TEMP_FILE_TIMEOUT_MS = 2_000;
+const BASH_TEMP_FILE_SCRIPT = `
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const { randomUUID } = require("node:crypto");
+const file = path.join(os.tmpdir(), "tau-bash-output." + randomUUID());
+fs.closeSync(fs.openSync(file, "wx"));
+process.stdout.write(file);
+`.trim();
 
 async function createBashTempFilePath(backend: ToolExecutionBackend): Promise<string | undefined> {
   try {
-    const result = await backend.runBash(`mktemp ${BASH_TEMP_FILE_TEMPLATE}`, {
+    const result = await backend.runNodeScript(BASH_TEMP_FILE_SCRIPT, [], {
       timeoutMs: BASH_TEMP_FILE_TIMEOUT_MS,
     });
     if (result.exitCode !== 0) return undefined;
-    const path = result.output.trim().split(/\r?\n/)[0]?.trim();
-    return path || undefined;
+    return result.stdout.trim() || undefined;
   } catch {
     return undefined;
   }
@@ -238,8 +245,9 @@ export function formatBashToolResultText(args: {
 export function formatBashUserMessageText(args: {
   command: string;
   truncationInfo: BashTruncationInfo;
+  exitCode: number | null;
 }): string {
-  const { command, truncationInfo } = args;
+  const { command, truncationInfo, exitCode } = args;
   const { model, captureTruncated, fullOutputPath } = truncationInfo;
 
   const outputForContext = model.content.trimEnd() || "(no output)";
@@ -247,7 +255,8 @@ export function formatBashUserMessageText(args: {
     model.truncated || captureTruncated
       ? `\n\n[Output truncated for context: ${model.outputLines} lines / ${formatBytes(model.outputBytes)} shown of ${model.totalLines} lines / ${formatBytes(model.totalBytes)} (full output estimate: ~${bytesToTokens(model.totalBytes)} tokens).${formatBashOutputFileHint({ path: fullOutputPath })}]`
       : "";
-  const bashContextText = `$ ${command}\n${outputForContext}${truncNote}`;
+  const exitNote = exitCode !== null && exitCode !== 0 ? `\n(exit ${exitCode})` : "";
+  const bashContextText = `$ ${command}\n${outputForContext}${truncNote}${exitNote}`;
   return `Bash command output:\n${bashContextText}`;
 }
 

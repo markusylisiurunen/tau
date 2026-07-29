@@ -8,7 +8,9 @@ import type {
 } from "@earendil-works/pi-ai";
 import { type ZodError, z } from "zod";
 
-export const SESSION_PROTOCOL_VERSION = 2 as const;
+export const SESSION_PROTOCOL_VERSION = 3 as const;
+export const SESSION_PROTOCOL_MAX_EXEC_CAPTURE_BYTES = 24 * 1024 * 1024;
+export const SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES = 16 * 1024 * 1024;
 
 export const SESSION_PROTOCOL_METHODS = [
   "initialize",
@@ -23,6 +25,7 @@ export const SESSION_PROTOCOL_METHODS = [
   "session.cancelPendingMessages",
   "session.retry",
   "session.exec",
+  "session.cancelExec",
   "session.sample",
   "session.interrupt",
   "session.snapshot",
@@ -147,9 +150,17 @@ export type SessionProtocolRecordParams = SessionProtocolSessionIdParams & {
 };
 export type SessionProtocolRetryParams = SessionProtocolSessionIdParams;
 export type SessionProtocolExecParams = SessionProtocolSessionIdParams & {
+  execId: string;
   command: string;
+  args?: string[];
+  env?: Record<string, string>;
+  stdinBase64?: string;
   cwd?: string;
   timeoutMs?: number;
+  maxCaptureBytes?: number;
+};
+export type SessionProtocolCancelExecParams = SessionProtocolSessionIdParams & {
+  execId: string;
 };
 export type SessionProtocolSampleContext = {
   systemPrompt: string;
@@ -247,6 +258,7 @@ export type SessionProtocolParamsByMethod = {
   "session.cancelPendingMessages": SessionProtocolCancelPendingMessagesParams;
   "session.retry": SessionProtocolRetryParams;
   "session.exec": SessionProtocolExecParams;
+  "session.cancelExec": SessionProtocolCancelExecParams;
   "session.sample": SessionProtocolSampleParams;
   "session.interrupt": SessionProtocolSessionIdParams;
   "session.snapshot": SessionProtocolSessionIdParams;
@@ -340,6 +352,13 @@ export type SessionProtocolExecResult = {
   stderr: string;
   exitCode: number | null;
   truncated: boolean;
+  timedOut: boolean;
+  aborted: boolean;
+  closeSignal: string | null;
+};
+
+export type SessionProtocolCancelExecResult = {
+  cancelled: boolean;
 };
 
 export type SessionProtocolSampleResult = {
@@ -707,6 +726,7 @@ export type SessionProtocolResultByMethod = {
   "session.cancelPendingMessages": SessionProtocolCancelPendingMessagesResult;
   "session.retry": SessionProtocolRetryResult;
   "session.exec": SessionProtocolExecResult;
+  "session.cancelExec": SessionProtocolCancelExecResult;
   "session.sample": SessionProtocolSampleResult;
   "session.interrupt": SessionProtocolInterruptResult;
   "session.snapshot": SessionProtocolSnapshot;
@@ -980,6 +1000,49 @@ const nonEmptyStringSchema = z
   .refine((value) => value.trim().length > 0);
 const sessionProtocolRequestIdSchema = nonEmptyStringSchema;
 const nullableSessionProtocolRequestIdSchema = sessionProtocolRequestIdSchema.nullable();
+const absolutePathSchema = nonEmptyStringSchema.refine((value) => value.startsWith("/"));
+const environmentVariableNameSchema = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
+const environmentVariableValueSchema = z.string().refine((value) => !value.includes("\0"));
+const environmentVariablesSchema = z
+  .record(environmentVariableNameSchema, environmentVariableValueSchema)
+  .refine((value) => !("HOME" in value), "HOME is controlled by the execution environment");
+const processArgumentsSchema = z
+  .array(z.string())
+  .refine((values) => values.every((value) => !value.includes("\0")));
+const nonEmptyProcessStringSchema = nonEmptyStringSchema.refine((value) => !value.includes("\0"));
+const base64Schema = z.string().refine(isValidBase64, "must be valid base64");
+const boundedExecStdinBase64Schema = base64Schema
+  .max(4 * Math.ceil(SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES / 3))
+  .refine(
+    (value) => decodedBase64ByteLength(value) <= SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES,
+    "decoded content exceeds maximum size",
+  );
+
+function isValidBase64(value: string): boolean {
+  if (value.length % 4 !== 0) return false;
+  const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+  const contentLength = value.length - padding;
+  for (let index = 0; index < contentLength; index += 1) {
+    const code = value.charCodeAt(index);
+    const valid =
+      (code >= 65 && code <= 90) ||
+      (code >= 97 && code <= 122) ||
+      (code >= 48 && code <= 57) ||
+      code === 43 ||
+      code === 47;
+    if (!valid) return false;
+  }
+  for (let index = contentLength; index < value.length; index += 1) {
+    if (value.charCodeAt(index) !== 61) return false;
+  }
+  return true;
+}
+
+function decodedBase64ByteLength(value: string): number {
+  if (!value) return 0;
+  const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+  return (value.length * 3) / 4 - padding;
+}
 
 const modelTextContentSchema = z
   .object({
@@ -1220,9 +1283,26 @@ const sessionProtocolRecordParamsSchema = sessionProtocolUserMessageParamsSchema
 const sessionProtocolExecParamsSchema = z
   .object({
     sessionId: nonEmptyStringSchema,
-    command: nonEmptyStringSchema,
-    cwd: nonEmptyStringSchema.optional(),
+    execId: nonEmptyStringSchema,
+    command: nonEmptyProcessStringSchema,
+    args: processArgumentsSchema.optional(),
+    env: environmentVariablesSchema.optional(),
+    stdinBase64: boundedExecStdinBase64Schema.optional(),
+    cwd: nonEmptyProcessStringSchema.optional(),
     timeoutMs: z.number().int().positive().optional(),
+    maxCaptureBytes: z
+      .number()
+      .int()
+      .positive()
+      .max(SESSION_PROTOCOL_MAX_EXEC_CAPTURE_BYTES)
+      .optional(),
+  })
+  .strip();
+
+const sessionProtocolCancelExecParamsSchema = z
+  .object({
+    sessionId: nonEmptyStringSchema,
+    execId: nonEmptyStringSchema,
   })
   .strip();
 
@@ -1388,14 +1468,6 @@ const sessionProtocolClientToolResultParamsSchema = z.discriminatedUnion("ok", [
     })
     .strip(),
 ]);
-
-const absolutePathSchema = nonEmptyStringSchema.refine((value) => value.startsWith("/"));
-const environmentVariableNameSchema = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
-const environmentVariableValueSchema = z.string().refine((value) => !value.includes("\0"));
-const environmentVariablesSchema = z.record(
-  environmentVariableNameSchema,
-  environmentVariableValueSchema,
-);
 
 const sessionProtocolLocalExecutionEnvironmentInputSchema = z
   .object({
@@ -2273,6 +2345,15 @@ const sessionProtocolExecResultSchema = z
     stderr: z.string(),
     exitCode: z.number().int().nullable(),
     truncated: z.boolean(),
+    timedOut: z.boolean(),
+    aborted: z.boolean(),
+    closeSignal: z.string().nullable(),
+  })
+  .strip();
+
+const sessionProtocolCancelExecResultSchema = z
+  .object({
+    cancelled: z.boolean(),
   })
   .strip();
 
@@ -3129,6 +3210,10 @@ export function validateSessionProtocolParams(
   params: unknown,
 ): SessionProtocolParamsValidationResult<SessionProtocolExecParams>;
 export function validateSessionProtocolParams(
+  method: "session.cancelExec",
+  params: unknown,
+): SessionProtocolParamsValidationResult<SessionProtocolCancelExecParams>;
+export function validateSessionProtocolParams(
   method: "session.sample",
   params: unknown,
 ): SessionProtocolParamsValidationResult<SessionProtocolSampleParams>;
@@ -3221,6 +3306,8 @@ export function validateSessionProtocolParams(
       return validateUserMessageParams(method, params);
     case "session.exec":
       return validateExecParams(params);
+    case "session.cancelExec":
+      return validateCancelExecParams(params);
     case "session.sample":
       return validateSampleParams(params);
     case "session.list":
@@ -3320,6 +3407,8 @@ export function validateSessionProtocolResult(
       return validateResult(method, result, sessionProtocolRetryResultSchema);
     case "session.exec":
       return validateResult(method, result, sessionProtocolExecResultSchema);
+    case "session.cancelExec":
+      return validateResult(method, result, sessionProtocolCancelExecResultSchema);
     case "session.sample":
       return validateResult(method, result, sessionProtocolSampleResultSchema);
     case "session.interrupt":
@@ -3455,25 +3544,44 @@ function validateExecParams(
       ? "session.exec params must be an object"
       : hasIssue(parsed.error, ["sessionId"])
         ? "session.exec params.sessionId must be a non-empty string"
-        : hasIssue(parsed.error, ["command"])
-          ? "session.exec params.command must be a non-empty string"
-          : hasIssue(parsed.error, ["cwd"])
-            ? "session.exec params.cwd must be a non-empty string when provided"
-            : hasIssue(parsed.error, ["timeoutMs"])
-              ? "session.exec params.timeoutMs must be a positive integer when provided"
-              : `session.exec params are invalid: ${formatZodError(parsed.error)}`;
+        : hasIssue(parsed.error, ["execId"])
+          ? "session.exec params.execId must be a non-empty string"
+          : hasIssue(parsed.error, ["command"])
+            ? "session.exec params.command must be a non-empty string without null bytes"
+            : hasIssue(parsed.error, ["args"])
+              ? "session.exec params.args must be an array of strings without null bytes when provided"
+              : hasIssue(parsed.error, ["env"])
+                ? "session.exec params.env must use valid environment variable names and string values without null bytes and cannot override HOME"
+                : hasIssue(parsed.error, ["stdinBase64"])
+                  ? `session.exec params.stdinBase64 must be valid base64 encoding at most ${SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES} bytes`
+                  : hasIssue(parsed.error, ["cwd"])
+                    ? "session.exec params.cwd must be a non-empty string without null bytes when provided"
+                    : hasIssue(parsed.error, ["timeoutMs"])
+                      ? "session.exec params.timeoutMs must be a positive integer when provided"
+                      : hasIssue(parsed.error, ["maxCaptureBytes"])
+                        ? `session.exec params.maxCaptureBytes must be a positive integer no greater than ${SESSION_PROTOCOL_MAX_EXEC_CAPTURE_BYTES} when provided`
+                        : `session.exec params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 
-  return {
-    ok: true,
-    value: {
-      sessionId: parsed.data.sessionId,
-      command: parsed.data.command,
-      ...(parsed.data.cwd !== undefined ? { cwd: parsed.data.cwd } : {}),
-      ...(parsed.data.timeoutMs !== undefined ? { timeoutMs: parsed.data.timeoutMs } : {}),
-    },
-  };
+  return { ok: true, value: parsed.data };
+}
+
+function validateCancelExecParams(
+  params: unknown,
+): SessionProtocolParamsValidationResult<SessionProtocolCancelExecParams> {
+  const parsed = sessionProtocolCancelExecParamsSchema.safeParse(params);
+  if (!parsed.success) {
+    const message = hasIssue(parsed.error, [], "invalid_type")
+      ? "session.cancelExec params must be an object"
+      : hasIssue(parsed.error, ["sessionId"])
+        ? "session.cancelExec params.sessionId must be a non-empty string"
+        : hasIssue(parsed.error, ["execId"])
+          ? "session.cancelExec params.execId must be a non-empty string"
+          : `session.cancelExec params are invalid: ${formatZodError(parsed.error)}`;
+    return invalidParams(message);
+  }
+  return { ok: true, value: parsed.data };
 }
 
 function validateSampleParams(
@@ -3822,11 +3930,13 @@ function validateCreateParams(
           ? "session.create params.executionEnvironment.kind must be 'local', 'cloudflare-sandbox', or 'fly-sprite'"
           : hasIssue(parsed.error, ["executionEnvironment", "cwd"])
             ? "session.create params.executionEnvironment.cwd must be an absolute path"
-            : hasIssue(parsed.error, ["personaId"])
-              ? "session.create params.personaId must be a non-empty string"
-              : hasIssue(parsed.error, ["reasoning"])
-                ? "session.create params.reasoning must be one of none, minimal, low, medium, high, xhigh, or max"
-                : `session.create params are invalid: ${formatZodError(parsed.error)}`;
+            : hasIssue(parsed.error, ["executionEnvironment", "env"])
+              ? "session.create params.executionEnvironment.env must use valid environment variable names and string values without null bytes and cannot override HOME"
+              : hasIssue(parsed.error, ["personaId"])
+                ? "session.create params.personaId must be a non-empty string"
+                : hasIssue(parsed.error, ["reasoning"])
+                  ? "session.create params.reasoning must be one of none, minimal, low, medium, high, xhigh, or max"
+                  : `session.create params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 

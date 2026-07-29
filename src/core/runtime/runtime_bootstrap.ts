@@ -1,4 +1,7 @@
-import type { ToolExecutionBackend } from "../tools/execution_backend.js";
+import {
+  MAX_COMMAND_CAPTURE_BYTES,
+  type ToolExecutionBackend,
+} from "../tools/execution_backend.js";
 import type { Persona, Skill } from "../types.js";
 import { buildProjectContextBlock, buildSkillsIndexBlock } from "../utils/context_builder.js";
 import type { ChatRuntimePromptContext } from "./chat_runtime.js";
@@ -298,7 +301,7 @@ async function inspectRuntimePromptContext(
     {
       cwd: args.cwd,
       timeoutMs: RUNTIME_PROMPT_CONTEXT_TIMEOUT_MS,
-      maxCaptureBytes: null,
+      maxCaptureBytes: MAX_COMMAND_CAPTURE_BYTES,
     },
   );
   if (result.exitCode !== 0) {
@@ -308,6 +311,9 @@ async function inspectRuntimePromptContext(
         ? `failed to inspect execution environment prompt context: ${output}`
         : "failed to inspect execution environment prompt context",
     );
+  }
+  if (result.truncated) {
+    throw new Error("execution environment prompt context exceeded the capture limit");
   }
 
   let parsed: unknown;

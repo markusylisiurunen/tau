@@ -1,8 +1,11 @@
+import { StringDecoder } from "node:string_decoder";
 import { type Sprite, SpritesClient } from "@fly/sprites";
-import type {
-  BashExecutionResult,
-  ListDirEntry,
-  ToolExecutionBackend,
+import {
+  applyBashEnvironment,
+  type BashExecutionResult,
+  DEFAULT_COMMAND_CAPTURE_BYTES,
+  type ListDirEntry,
+  type ToolExecutionBackend,
 } from "../core/tools/execution_backend.js";
 import type {
   SessionProtocolExecutionEnvironmentInput,
@@ -14,7 +17,6 @@ import type { ExecutionEnvironmentResolver } from "./execution_environment.js";
 import { assertFileWithinMaxBytes } from "./sandbox_tool_helpers.js";
 import { ToolBackendExecutionEnvironment } from "./tool_backend_execution_environment.js";
 
-const BASH_MAX_CAPTURE_BYTES = 1024 * 1024;
 const DEFAULT_BASE_URL = "https://api.sprites.dev";
 const DEFAULT_HOME = "/home/sprite";
 const HELPER_COMMAND_TIMEOUT_MS = 30_000;
@@ -130,33 +132,33 @@ export function createFlySpriteToolExecutionBackend(options: {
   cwd: string;
 }): ToolExecutionBackend {
   const worker = new FlySpriteWorker(options.sprite, options.cwd);
+  const runBash: ToolExecutionBackend["runBash"] = async (command, runOptions = {}) =>
+    await worker.request(
+      "exec",
+      {
+        command,
+        args: runOptions.args,
+        stdinBase64: runOptions.stdin?.toString("base64"),
+        cwd: runOptions.cwd ?? options.cwd,
+        timeoutMs: runOptions.timeoutMs,
+        env: applyBashEnvironment(runOptions.env),
+        maxCaptureBytes: runOptions.maxCaptureBytes,
+      },
+      { signal: runOptions.signal },
+    );
+  const runNodeScript: ToolExecutionBackend["runNodeScript"] = (
+    script,
+    args = [],
+    runOptions = {},
+  ) =>
+    runBash('exec "$0" "$@"', {
+      ...runOptions,
+      args: ["node", "-e", script, ...args],
+    });
 
   return {
-    async runBash(command, runOptions = {}) {
-      return await worker.request(
-        "exec",
-        {
-          command,
-          cwd: runOptions.cwd ?? options.cwd,
-          timeoutMs: runOptions.timeoutMs,
-        },
-        { signal: runOptions.signal },
-      );
-    },
-
-    async runNodeScript(script, args = [], runOptions = {}) {
-      return await worker.request(
-        "nodeScript",
-        {
-          script,
-          args,
-          cwd: runOptions.cwd ?? options.cwd,
-          timeoutMs: runOptions.timeoutMs,
-          maxCaptureBytes: runOptions.maxCaptureBytes,
-        },
-        { signal: runOptions.signal },
-      );
-    },
+    runBash,
+    runNodeScript,
 
     async readFile(path) {
       const result = await worker.request("readFile", {
@@ -170,6 +172,7 @@ export function createFlySpriteToolExecutionBackend(options: {
       const result = await worker.request("readFileBinary", {
         path,
         timeoutMs: HELPER_COMMAND_TIMEOUT_MS,
+        maxBytes: readOptions.maxBytes,
       });
       const content = Buffer.from(result.contentBase64, "base64");
       const bytes = result.bytes;
@@ -211,15 +214,12 @@ export function createFlySpriteToolExecutionBackend(options: {
 type FlySpriteWorkerRequestByMethod = {
   exec: {
     command: string;
+    args?: string[];
+    stdinBase64?: string;
     cwd: string;
     timeoutMs?: number;
-  };
-  nodeScript: {
-    script: string;
-    args: string[];
-    cwd: string;
-    timeoutMs?: number;
-    maxCaptureBytes?: number | null;
+    env?: Record<string, string>;
+    maxCaptureBytes?: number;
   };
   readFile: {
     path: string;
@@ -228,6 +228,7 @@ type FlySpriteWorkerRequestByMethod = {
   readFileBinary: {
     path: string;
     timeoutMs: number;
+    maxBytes?: number;
   };
   writeFile: {
     path: string;
@@ -238,7 +239,9 @@ type FlySpriteWorkerRequestByMethod = {
     path: string;
     timeoutMs: number;
   };
-  shutdown: Record<string, never>;
+  shutdown: {
+    timeoutMs: number;
+  };
   cancel: {
     targetId: number;
   };
@@ -246,7 +249,6 @@ type FlySpriteWorkerRequestByMethod = {
 
 type FlySpriteWorkerResultByMethod = {
   exec: BashExecutionResult;
-  nodeScript: BashExecutionResult;
   readFile: {
     content: string;
   };
@@ -296,8 +298,10 @@ class FlySpriteWorker {
   private command?: RunningSpriteCommand;
   private readyPromise?: Promise<void>;
   private readonly stdoutBuffer = new LineBuffer();
+  private stdoutDecoder = new StringDecoder("utf8");
   private nextRequestId = 1;
   private pendingRequests = new Map<number, FlySpritePendingRequest>();
+  private disposePromise?: Promise<void>;
   private closed = false;
 
   constructor(
@@ -310,7 +314,7 @@ class FlySpriteWorker {
     params: FlySpriteWorkerRequestByMethod[M],
     options: { signal?: AbortSignal } = {},
   ): Promise<FlySpriteWorkerResultByMethod[M]> {
-    if (this.closed) {
+    if (this.closed && method !== "shutdown") {
       throw new Error("Fly Sprite worker is closed");
     }
 
@@ -362,15 +366,24 @@ class FlySpriteWorker {
   }
 
   async dispose(): Promise<void> {
-    if (this.closed) {
-      return;
+    if (!this.disposePromise) {
+      this.disposePromise = this.disposeNow();
     }
-    if (this.command) {
-      await this.request("shutdown", {}).catch(() => undefined);
-      this.command.kill();
-      this.command = undefined;
-    }
+    return await this.disposePromise;
+  }
+
+  private async disposeNow(): Promise<void> {
     this.closed = true;
+    const command = this.command;
+    if (command) {
+      await this.request("shutdown", { timeoutMs: HELPER_COMMAND_TIMEOUT_MS }).catch(
+        () => undefined,
+      );
+      command.kill();
+      if (this.command === command) {
+        this.command = undefined;
+      }
+    }
     this.rejectAllPending(new Error("Fly Sprite worker was disposed"));
   }
 
@@ -390,6 +403,7 @@ class FlySpriteWorker {
     });
     this.command = command;
     this.stdoutBuffer.clear();
+    this.stdoutDecoder = new StringDecoder("utf8");
 
     return await new Promise<void>((resolve, reject) => {
       let settled = false;
@@ -439,7 +453,7 @@ class FlySpriteWorker {
   }
 
   private handleStdoutChunk(chunk: Buffer, onReady?: () => void): void {
-    for (const line of this.stdoutBuffer.push(chunk.toString("utf-8"))) {
+    for (const line of this.stdoutBuffer.push(this.stdoutDecoder.write(chunk))) {
       this.handleStdoutLine(line, onReady);
     }
   }
@@ -565,7 +579,7 @@ const path = require("node:path");
 const readline = require("node:readline");
 const { spawn } = require("node:child_process");
 
-const BASH_MAX_CAPTURE_BYTES = ${BASH_MAX_CAPTURE_BYTES};
+const DEFAULT_COMMAND_CAPTURE_BYTES = ${DEFAULT_COMMAND_CAPTURE_BYTES};
 const COMMAND_STOP_GRACE_MS = ${COMMAND_STOP_GRACE_MS};
 const running = new Map();
 const rl = readline.createInterface({ input: process.stdin });
@@ -586,6 +600,11 @@ async function handleLine(line) {
 
   try {
     if (request.method === "shutdown") {
+      const active = [...running.values()];
+      for (const runningRequest of active) {
+        runningRequest.cancel("abort");
+      }
+      await Promise.all(active.map((runningRequest) => runningRequest.stopped));
       respond(request.id, { exitCode: 0 });
       process.exit(0);
       return;
@@ -601,20 +620,18 @@ async function handleLine(line) {
     }
 
     if (request.method === "exec") {
-      const result = await runCommand(request.id, "sh", ["-lc", request.command], {
-        cwd: request.cwd,
-        timeoutMs: request.timeoutMs,
-      });
-      respond(request.id, result);
-      return;
-    }
-
-    if (request.method === "nodeScript") {
-      const result = await runCommand(request.id, "node", ["-e", request.script, ...request.args], {
-        cwd: request.cwd,
-        timeoutMs: request.timeoutMs,
-        maxCaptureBytes: request.maxCaptureBytes,
-      });
+      const result = await runCommand(
+        request.id,
+        "bash",
+        ["-lc", request.command, ...(request.args ?? [])],
+        {
+          cwd: request.cwd,
+          timeoutMs: request.timeoutMs,
+          env: request.env,
+          maxCaptureBytes: request.maxCaptureBytes,
+          stdinBase64: request.stdinBase64,
+        },
+      );
       respond(request.id, result);
       return;
     }
@@ -626,7 +643,18 @@ async function handleLine(line) {
     }
 
     if (request.method === "readFileBinary") {
+      const stats = await fs.promises.stat(request.path);
+      if (request.maxBytes !== undefined && stats.size > request.maxBytes) {
+        throw new Error(
+          "file exceeds maximum size of " + request.maxBytes + " bytes (got " + stats.size + " bytes).",
+        );
+      }
       const content = await fs.promises.readFile(request.path);
+      if (request.maxBytes !== undefined && content.byteLength > request.maxBytes) {
+        throw new Error(
+          "file exceeds maximum size of " + request.maxBytes + " bytes (got " + content.byteLength + " bytes).",
+        );
+      }
       respond(request.id, {
         contentBase64: content.toString("base64"),
         bytes: content.byteLength,
@@ -676,24 +704,34 @@ function runCommand(id, command, args, options) {
     let settled = false;
     let timer;
     let stopTimer;
-    const maxCaptureBytes =
-      options.maxCaptureBytes === undefined ? BASH_MAX_CAPTURE_BYTES : options.maxCaptureBytes;
+    let markStopped = () => {};
+    const stopped = new Promise((resolveStopped) => {
+      markStopped = resolveStopped;
+    });
+    const maxCaptureBytes = options.maxCaptureBytes ?? DEFAULT_COMMAND_CAPTURE_BYTES;
 
     const child = spawn(command, args, {
       cwd: options.cwd,
+      env: { ...process.env, ...options.env },
       detached: true,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: [options.stdinBase64 === undefined ? "ignore" : "pipe", "pipe", "pipe"],
     });
+    if (options.stdinBase64 !== undefined) {
+      child.stdin.end(Buffer.from(options.stdinBase64, "base64"));
+    }
 
     const trimChunks = (targetChunks, targetBytes) => {
       let nextBytes = targetBytes;
-      while (
-        maxCaptureBytes !== null &&
-        nextBytes > maxCaptureBytes &&
-        targetChunks.length > 0
-      ) {
-        const removed = targetChunks.shift();
-        nextBytes -= removed.byteLength;
+      while (nextBytes > maxCaptureBytes && targetChunks.length > 0) {
+        const excessBytes = nextBytes - maxCaptureBytes;
+        const first = targetChunks[0];
+        if (first.byteLength <= excessBytes) {
+          targetChunks.shift();
+          nextBytes -= first.byteLength;
+        } else {
+          targetChunks[0] = first.subarray(excessBytes);
+          nextBytes -= excessBytes;
+        }
         truncated = true;
       }
       return nextBytes;
@@ -722,10 +760,11 @@ function runCommand(id, command, args, options) {
       if (stopTimer) clearTimeout(stopTimer);
     };
 
-    const finish = (exitCode) => {
+    const finish = (exitCode, closeSignal = null) => {
       if (settled) return;
       settled = true;
       cleanup();
+      markStopped();
       let output = Buffer.concat(chunks).toString("utf-8");
       let stdout = Buffer.concat(stdoutChunks).toString("utf-8");
       let stderr = Buffer.concat(stderrChunks).toString("utf-8");
@@ -738,21 +777,36 @@ function runCommand(id, command, args, options) {
         output += note;
         stderr += note;
       }
-      resolve({ output, stdout, stderr, exitCode, truncated });
+      resolve({
+        output,
+        stdout,
+        stderr,
+        exitCode,
+        truncated,
+        timedOut,
+        aborted,
+        closeSignal,
+      });
+    };
+
+    const killProcessGroup = (signal) => {
+      try {
+        process.kill(-child.pid, signal);
+      } catch {
+        child.kill(signal);
+      }
     };
 
     const cancel = (reason) => {
+      if (settled) return;
       if (reason === "timeout") timedOut = true;
       if (reason === "abort") aborted = true;
-      try {
-        process.kill(-child.pid);
-      } catch {
-        child.kill();
-      }
-      stopTimer = setTimeout(() => finish(null), COMMAND_STOP_GRACE_MS);
+      killProcessGroup("SIGTERM");
+      if (stopTimer) clearTimeout(stopTimer);
+      stopTimer = setTimeout(() => killProcessGroup("SIGKILL"), COMMAND_STOP_GRACE_MS);
     };
 
-    running.set(id, { cancel });
+    running.set(id, { cancel, stopped });
 
     if (options.timeoutMs && Number.isFinite(options.timeoutMs) && options.timeoutMs > 0) {
       timer = setTimeout(() => cancel("timeout"), options.timeoutMs);
@@ -764,7 +818,7 @@ function runCommand(id, command, args, options) {
       append(Buffer.from(err.message), "stderr");
       finish(1);
     });
-    child.on("close", finish);
+    child.on("close", (exitCode, closeSignal) => finish(exitCode, closeSignal));
   });
 }
 

@@ -49,7 +49,8 @@ export type CaptureDiffReviewSnapshotOptions = {
   deps?: Partial<DiffSnapshotDeps>;
 };
 
-type DiffSnapshotDeps = Pick<CoreDeps, "spawn" | "env"> & {
+type DiffSnapshotDeps = Pick<CoreDeps, "spawn"> & {
+  env: Pick<CoreDeps["env"], "env">;
   fs: {
     readFile: (path: string) => string | Promise<string>;
   };
@@ -554,7 +555,7 @@ async function runGitCommand(
     env: buildGitEnv(deps),
     timeoutMs: GIT_TIMEOUT_MS,
     signal,
-    captureOutput: "combined",
+    captureOutput: "combined-and-split",
     maxCaptureBytes: GIT_MAX_CAPTURE_BYTES,
     maxCaptureMode: "ignore",
   });
@@ -566,14 +567,14 @@ async function runGitCommand(
   }
 
   if (result.exitCode === 0) {
-    return result.output ?? "";
+    return result.stdout;
   }
 
   if (result.aborted) {
     throw new Error("diff review start aborted");
   }
 
-  const message = (result.output ?? "").trim();
+  const message = (result.stderr || result.stdout || result.output || "").trim();
   if (options.invalidRepoMessage && /not a git repository/i.test(message)) {
     throw new Error(options.invalidRepoMessage);
   }

@@ -2292,7 +2292,7 @@ describe("LocalSessionHost", () => {
     const store = new MemorySessionStore();
     const toolRegistry = ToolCatalog.createRegistry(createLocalToolExecutionBackend());
     const autocompleteOutput = "src/main.ts\nsrc/host/local_session_host.ts\nREADME.md\n";
-    const runBash = vi.fn(async () => ({
+    const runNodeScript = vi.fn(async () => ({
       output: autocompleteOutput,
       stdout: autocompleteOutput,
       stderr: "",
@@ -2327,7 +2327,7 @@ describe("LocalSessionHost", () => {
           unknownSkills: [],
         },
       }),
-      getToolExecutionBackend: () => ({ runBash }),
+      getToolExecutionBackend: () => ({ runNodeScript }),
       snapshot: () => ({ kind: "local", cwd: "/repo", home: "/home/user" }),
       dispose: async () => {},
     };
@@ -2341,7 +2341,7 @@ describe("LocalSessionHost", () => {
       paths: expect.arrayContaining(["src/host/local_session_host.ts"]),
     });
 
-    expect(runBash).toHaveBeenCalledTimes(1);
+    expect(runNodeScript).toHaveBeenCalledTimes(1);
   });
 
   it("recovers idle stored sessions with their durable session and history ids", async () => {

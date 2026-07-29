@@ -1,9 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { dirname } from "node:path/posix";
-import type {
-  BashExecutionResult,
-  ListDirEntry,
-  ToolExecutionBackend,
+import {
+  applyBashEnvironment,
+  applyCommandEnvironment,
+  type BashExecutionResult,
+  DEFAULT_COMMAND_CAPTURE_BYTES,
+  type ListDirEntry,
+  type ToolExecutionBackend,
 } from "../core/tools/execution_backend.js";
 import type {
   SessionProtocolCloudflareSandboxExecutionEnvironmentInput,
@@ -16,12 +19,11 @@ import {
   assertFileWithinMaxBytes,
   buildWriteFileResult,
   NODE_LIST_DIR_SCRIPT,
-  shellQuote,
 } from "./sandbox_tool_helpers.js";
 import { ToolBackendExecutionEnvironment } from "./tool_backend_execution_environment.js";
 
-const BASH_MAX_CAPTURE_BYTES = 1024 * 1024;
 const DEFAULT_HOME = "/home/sandbox";
+const HELPER_OPERATION_TIMEOUT_MS = 30_000;
 
 export type CloudflareSandboxBridgeConfig = {
   url: string;
@@ -141,6 +143,7 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
   const { client, sandboxId } = options;
   const commandSessions = new Map<string, Promise<{ id: string; cwd: string }>>();
   const commandQueues = new Map<string, Promise<void>>();
+  const cleanupPromises = new Set<Promise<void>>();
   const disposeAbortController = new AbortController();
   let disposed = false;
 
@@ -150,14 +153,20 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
     }
   };
 
-  const ensureCommandSession = async (cwd: string): Promise<string> => {
+  const createHelperSignal = (): AbortSignal =>
+    AbortSignal.any([
+      disposeAbortController.signal,
+      AbortSignal.timeout(HELPER_OPERATION_TIMEOUT_MS),
+    ]);
+
+  const ensureCommandSession = async (cwd: string, signal: AbortSignal): Promise<string> => {
     const existing = commandSessions.get(cwd);
     if (existing) {
       return (await existing).id;
     }
 
     const sessionPromise = client
-      .createSession(sandboxId, { cwd })
+      .createSession(sandboxId, { cwd, signal })
       .then((id) => ({ id, cwd }))
       .catch((err) => {
         if (commandSessions.get(cwd) === sessionPromise) {
@@ -174,8 +183,19 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
     commandSessions.delete(cwd);
     const session = await sessionPromise?.catch(() => undefined);
     if (session) {
-      await client.deleteSession(sandboxId, session.id).catch(() => {});
+      await client
+        .deleteSession(sandboxId, session.id, AbortSignal.timeout(HELPER_OPERATION_TIMEOUT_MS))
+        .catch(() => {});
     }
+  };
+
+  const scheduleCommandSessionReset = (cwd: string): void => {
+    const cleanup = resetCommandSession(cwd);
+    cleanupPromises.add(cleanup);
+    void cleanup.then(
+      () => cleanupPromises.delete(cleanup),
+      () => cleanupPromises.delete(cleanup),
+    );
   };
 
   const resetAllCommandSessions = async (): Promise<void> => {
@@ -185,7 +205,9 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
       sessionPromises.map(async (sessionPromise) => {
         const session = await sessionPromise.catch(() => undefined);
         if (session) {
-          await client.deleteSession(sandboxId, session.id).catch(() => {});
+          await client
+            .deleteSession(sandboxId, session.id, AbortSignal.timeout(HELPER_OPERATION_TIMEOUT_MS))
+            .catch(() => {});
         }
       }),
     );
@@ -218,34 +240,96 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
     }
   };
 
-  const exec = async (
-    command: string,
-    runOptions: { timeoutMs?: number; signal?: AbortSignal; cwd?: string } = {},
+  const runCommand = async (
+    argv: [string, ...string[]],
+    runOptions: {
+      timeoutMs?: number;
+      signal?: AbortSignal;
+      cwd?: string;
+      env?: Record<string, string>;
+      maxCaptureBytes?: number;
+      stdin?: Buffer;
+    } = {},
   ): Promise<BashExecutionResult> => {
+    assertActive();
     const cwd = runOptions.cwd ?? options.cwd;
-    const signal = runOptions.signal
-      ? AbortSignal.any([runOptions.signal, disposeAbortController.signal])
-      : disposeAbortController.signal;
-    return await runQueued(cwd, signal, async () => {
-      const sessionId = await ensureCommandSession(cwd);
-
-      try {
+    const timeoutSignal =
+      runOptions.timeoutMs !== undefined &&
+      Number.isFinite(runOptions.timeoutMs) &&
+      runOptions.timeoutMs > 0
+        ? AbortSignal.timeout(runOptions.timeoutMs)
+        : undefined;
+    const signal = AbortSignal.any(
+      [disposeAbortController.signal, runOptions.signal, timeoutSignal].filter(
+        (candidate): candidate is AbortSignal => candidate !== undefined,
+      ),
+    );
+    const stdinPath =
+      runOptions.stdin !== undefined ? `/tmp/tau-exec-${randomUUID()}.stdin` : undefined;
+    let sessionAcquired = false;
+    try {
+      return await runQueued(cwd, signal, async () => {
+        if (stdinPath && runOptions.stdin) {
+          await client.writeFile(sandboxId, stdinPath, runOptions.stdin, signal);
+        }
+        const sessionId = await ensureCommandSession(cwd, signal);
+        sessionAcquired = true;
+        const executionArgv: [string, ...string[]] = stdinPath
+          ? ["bash", "-c", 'exec "$@" < "$0"', stdinPath, ...argv]
+          : argv;
         return await client.exec(sandboxId, {
-          argv: ["sh", "-lc", command],
+          argv: applyCommandEnvironment(executionArgv, runOptions.env),
           cwd,
           timeoutMs: runOptions.timeoutMs,
           signal,
+          maxCaptureBytes: runOptions.maxCaptureBytes,
           sessionId,
-          onAbort: () => resetCommandSession(cwd),
         });
-      } catch (err) {
-        if (isAbortError(err)) {
-          await resetCommandSession(cwd);
-        }
-        throw err;
+      });
+    } catch (error) {
+      if (sessionAcquired && (signal.aborted || isAbortError(error))) {
+        scheduleCommandSessionReset(cwd);
       }
-    });
+      if (timeoutSignal?.aborted) {
+        return terminatedExecutionResult(
+          `(tau) timed out after ${runOptions.timeoutMs}ms`,
+          "timeout",
+        );
+      }
+      if (runOptions.signal?.aborted || disposeAbortController.signal.aborted) {
+        return terminatedExecutionResult("(tau) aborted", "abort");
+      }
+      throw error;
+    } finally {
+      if (stdinPath) {
+        await client
+          .exec(sandboxId, {
+            argv: ["rm", "-f", "--", stdinPath],
+            cwd,
+            timeoutMs: HELPER_OPERATION_TIMEOUT_MS,
+            signal: AbortSignal.timeout(HELPER_OPERATION_TIMEOUT_MS),
+            maxCaptureBytes: 1024,
+          })
+          .catch(() => {});
+      }
+    }
   };
+
+  const runBash: ToolExecutionBackend["runBash"] = (command, runOptions = {}) =>
+    runCommand(["bash", "-lc", command, ...(runOptions.args ?? [])], {
+      ...runOptions,
+      env: applyBashEnvironment(runOptions.env),
+    });
+
+  const runNodeScript: ToolExecutionBackend["runNodeScript"] = (
+    script,
+    args = [],
+    runOptions = {},
+  ) =>
+    runBash('exec "$0" "$@"', {
+      ...runOptions,
+      args: ["node", "-e", script, ...args],
+    });
 
   return {
     async dispose() {
@@ -256,46 +340,26 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
       disposeAbortController.abort();
       await Promise.allSettled(commandQueues.values());
       await resetAllCommandSessions();
+      await Promise.allSettled(cleanupPromises);
     },
 
-    runBash: exec,
-
-    async runNodeScript(script, args = [], runOptions = {}) {
-      const cwd = runOptions.cwd ?? options.cwd;
-      const signal = runOptions.signal
-        ? AbortSignal.any([runOptions.signal, disposeAbortController.signal])
-        : disposeAbortController.signal;
-      return await runQueued(cwd, signal, async () => {
-        const sessionId = await ensureCommandSession(cwd);
-
-        try {
-          return await client.exec(sandboxId, {
-            argv: ["node", "-e", script, ...args],
-            cwd,
-            timeoutMs: runOptions.timeoutMs,
-            signal,
-            maxCaptureBytes: runOptions.maxCaptureBytes,
-            sessionId,
-            onAbort: () => resetCommandSession(cwd),
-          });
-        } catch (err) {
-          if (isAbortError(err)) {
-            await resetCommandSession(cwd);
-          }
-          throw err;
-        }
-      });
-    },
+    runBash,
+    runNodeScript,
 
     async readFile(path) {
       assertActive();
-      const content = await client.readFile(sandboxId, path);
+      const content = await client.readFile(sandboxId, path, undefined, createHelperSignal());
       return { path, content: content.toString("utf-8") };
     },
 
     async readFileBinary(path, readOptions = {}) {
       assertActive();
-      const content = await client.readFile(sandboxId, path);
+      const content = await client.readFile(
+        sandboxId,
+        path,
+        readOptions.maxBytes,
+        createHelperSignal(),
+      );
       const bytes = content.byteLength;
       assertFileWithinMaxBytes(bytes, readOptions.maxBytes);
       return { path, content, bytes };
@@ -305,9 +369,9 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
       assertActive();
       const dir = dirname(path);
       if (dir && dir !== ".") {
-        await exec(`mkdir -p ${shellQuote(dir)}`);
+        await runBash('exec "$0" "$@"', { args: ["mkdir", "-p", dir] });
       }
-      await client.writeFile(sandboxId, path, Buffer.from(content, "utf-8"));
+      await client.writeFile(sandboxId, path, Buffer.from(content, "utf-8"), createHelperSignal());
       return buildWriteFileResult(path, content);
     },
 
@@ -315,19 +379,19 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
       assertActive();
       const dir = dirname(path);
       if (dir && dir !== ".") {
-        await exec(`mkdir -p ${shellQuote(dir)}`);
+        await runBash('exec "$0" "$@"', { args: ["mkdir", "-p", dir] });
       }
-      await client.writeFile(sandboxId, path, content);
+      await client.writeFile(sandboxId, path, content, createHelperSignal());
       return { path, bytes: content.byteLength };
     },
 
     async listDir(path) {
       assertActive();
-      const result = await exec(`node -e ${shellQuote(NODE_LIST_DIR_SCRIPT)} ${shellQuote(path)}`);
+      const result = await runNodeScript(NODE_LIST_DIR_SCRIPT, [path]);
       if (result.exitCode !== 0) {
         throw new Error(result.output.trim() || `list failed for ${path}`);
       }
-      const entries = JSON.parse(result.output) as ListDirEntry[];
+      const entries = JSON.parse(result.stdout) as ListDirEntry[];
       return { path, entries };
     },
   };
@@ -374,9 +438,8 @@ export class CloudflareSandboxBridgeClient {
       cwd?: string;
       timeoutMs?: number;
       signal?: AbortSignal;
-      maxCaptureBytes?: number | null;
+      maxCaptureBytes?: number;
       sessionId?: string;
-      onAbort?: () => Promise<void>;
     },
   ): Promise<BashExecutionResult> {
     const controller = new AbortController();
@@ -409,42 +472,81 @@ export class CloudflareSandboxBridgeClient {
       }
 
       return await parseExecSse(response.body, options.maxCaptureBytes);
-    } catch (err) {
-      if (isAbortError(err) && options.onAbort) {
-        await options.onAbort();
-      }
-      throw err;
     } finally {
       options.signal?.removeEventListener("abort", abort);
     }
   }
 
-  async readFile(sandboxId: string, path: string): Promise<Buffer> {
+  async readFile(
+    sandboxId: string,
+    path: string,
+    maxBytes?: number,
+    signal?: AbortSignal,
+  ): Promise<Buffer> {
     const response = await this.request(
       `/v1/sandbox/${encodeURIComponent(sandboxId)}/file/${encodeBridgeFilePath(path)}`,
-      { method: "GET" },
+      { method: "GET", signal },
     );
     if (!response.ok) {
       throw await this.createHttpError(response);
     }
-    return Buffer.from(await response.arrayBuffer());
+
+    const contentLength = Number(response.headers.get("Content-Length"));
+    if (Number.isFinite(contentLength)) {
+      try {
+        assertFileWithinMaxBytes(contentLength, maxBytes);
+      } catch (error) {
+        await response.body?.cancel().catch(() => {});
+        throw error;
+      }
+    }
+    if (!response.body) {
+      return Buffer.alloc(0);
+    }
+
+    const reader = response.body.getReader();
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = Buffer.from(value);
+      bytes += chunk.byteLength;
+      try {
+        assertFileWithinMaxBytes(bytes, maxBytes);
+      } catch (error) {
+        await reader.cancel().catch(() => {});
+        throw error;
+      }
+      chunks.push(chunk);
+    }
+    return Buffer.concat(chunks, bytes);
   }
 
-  async writeFile(sandboxId: string, path: string, content: Buffer): Promise<void> {
+  async writeFile(
+    sandboxId: string,
+    path: string,
+    content: Buffer,
+    signal?: AbortSignal,
+  ): Promise<void> {
     const response = await this.request(
       `/v1/sandbox/${encodeURIComponent(sandboxId)}/file/${encodeBridgeFilePath(path)}`,
-      { method: "PUT", body: content },
+      { method: "PUT", body: content, signal },
     );
     if (!response.ok) {
       throw await this.createHttpError(response);
     }
   }
 
-  async createSession(sandboxId: string, options: { cwd: string }): Promise<string> {
+  async createSession(
+    sandboxId: string,
+    options: { cwd: string; signal?: AbortSignal },
+  ): Promise<string> {
     const response = await this.request(`/v1/sandbox/${encodeURIComponent(sandboxId)}/session`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id: randomUUID(), cwd: options.cwd }),
+      signal: options.signal,
     });
     if (!response.ok) {
       throw await this.createHttpError(response);
@@ -456,10 +558,10 @@ export class CloudflareSandboxBridgeClient {
     return body.id;
   }
 
-  async deleteSession(sandboxId: string, sessionId: string): Promise<void> {
+  async deleteSession(sandboxId: string, sessionId: string, signal?: AbortSignal): Promise<void> {
     const response = await this.request(
       `/v1/sandbox/${encodeURIComponent(sandboxId)}/session/${encodeURIComponent(sessionId)}`,
-      { method: "DELETE" },
+      { method: "DELETE", signal },
     );
     if (!response.ok) {
       throw await this.createHttpError(response);
@@ -492,9 +594,22 @@ export class CloudflareSandboxBridgeClient {
   }
 }
 
+function terminatedExecutionResult(note: string, reason: "timeout" | "abort"): BashExecutionResult {
+  return {
+    output: `${note}\n`,
+    stdout: "",
+    stderr: `${note}\n`,
+    exitCode: null,
+    truncated: false,
+    timedOut: reason === "timeout",
+    aborted: reason === "abort",
+    closeSignal: null,
+  };
+}
+
 async function parseExecSse(
   body: ReadableStream<Uint8Array>,
-  maxCaptureBytes: number | null = BASH_MAX_CAPTURE_BYTES,
+  maxCaptureBytes: number = DEFAULT_COMMAND_CAPTURE_BYTES,
 ): Promise<BashExecutionResult> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -505,7 +620,7 @@ async function parseExecSse(
   let exitCode: number | null = null;
   let truncated = false;
 
-  const appendOutput = (target: "stdout" | "stderr", chunk: string) => {
+  const appendOutput = (target: "stdout" | "stderr", chunk: Buffer) => {
     truncated = output.append(chunk) || truncated;
     if (target === "stdout") {
       truncated = stdout.append(chunk) || truncated;
@@ -528,7 +643,7 @@ async function parseExecSse(
     const data = dataLines.join("\n");
 
     if (event === "stdout" || event === "stderr") {
-      appendOutput(event, Buffer.from(data, "base64").toString("utf-8"));
+      appendOutput(event, Buffer.from(data, "base64"));
     } else if (event === "exit") {
       const parsed = JSON.parse(data) as { exit_code?: unknown };
       exitCode = typeof parsed.exit_code === "number" ? parsed.exit_code : null;
@@ -565,6 +680,9 @@ async function parseExecSse(
     stderr: stderr.toString(),
     exitCode,
     truncated,
+    timedOut: false,
+    aborted: false,
+    closeSignal: null,
   };
 }
 
@@ -572,29 +690,22 @@ class ExecCaptureBuffer {
   private chunks: Buffer[] = [];
   private bytes = 0;
 
-  constructor(private readonly maxBytes: number | null) {}
+  constructor(private readonly maxBytes: number) {}
 
-  append(value: string): boolean {
+  append(value: Buffer): boolean {
+    this.chunks.push(value);
+    this.bytes += value.byteLength;
     let truncated = false;
-    let nextValue = value;
-    if (this.maxBytes !== null && Buffer.byteLength(nextValue, "utf-8") > this.maxBytes) {
-      truncated = true;
-      while (Buffer.byteLength(nextValue, "utf-8") > this.maxBytes) {
-        nextValue = nextValue.slice(Math.max(1, Math.floor(nextValue.length / 10)));
+    while (this.bytes > this.maxBytes && this.chunks.length > 0) {
+      const excessBytes = this.bytes - this.maxBytes;
+      const first = this.chunks[0]!;
+      if (first.byteLength <= excessBytes) {
+        this.chunks.shift();
+        this.bytes -= first.byteLength;
+      } else {
+        this.chunks[0] = first.subarray(excessBytes);
+        this.bytes -= excessBytes;
       }
-    }
-
-    let chunk = Buffer.from(nextValue, "utf-8");
-    if (this.maxBytes !== null && chunk.byteLength > this.maxBytes) {
-      chunk = chunk.subarray(chunk.byteLength - this.maxBytes);
-      truncated = true;
-    }
-
-    this.chunks.push(chunk);
-    this.bytes += chunk.byteLength;
-    while (this.maxBytes !== null && this.bytes > this.maxBytes && this.chunks.length > 0) {
-      const removed = this.chunks.shift()!;
-      this.bytes -= removed.byteLength;
       truncated = true;
     }
     return truncated;

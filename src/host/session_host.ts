@@ -39,6 +39,12 @@ import type {
 
 export class EphemeralThreadBusyError extends Error {}
 
+export class SessionExecBusyError extends Error {
+  constructor(execId: string) {
+    super(`execution '${execId}' is already active`);
+  }
+}
+
 export type TauHostedSession = {
   readonly sessionId: string;
   readonly isDisposed?: boolean;
@@ -59,6 +65,7 @@ export type TauHostedSession = {
       signal?: AbortSignal;
     },
   ): Promise<SessionProtocolExecResult>;
+  cancelExec(execId: string): boolean;
   sample(
     options: Omit<SessionProtocolSampleParams, "sessionId"> & {
       signal?: AbortSignal;

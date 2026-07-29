@@ -233,13 +233,9 @@ describe("InProcessSessionProtocolTransport", () => {
       turn: { status: "completed", stopReason: "stop" },
     });
 
-    await expect(session.exec("pwd")).resolves.toEqual({
-      output: "/repo\n",
-      stdout: "/repo\n",
-      stderr: "",
-      exitCode: 0,
-      truncated: false,
-    });
+    await expect(session.exec("pwd")).resolves.toEqual(
+      createProtocolExecResult({ output: "/repo\n" }),
+    );
 
     await expect(session.snapshot()).resolves.toEqual(
       createProtocolSnapshot({

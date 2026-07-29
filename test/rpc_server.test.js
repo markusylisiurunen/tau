@@ -2,7 +2,7 @@ import { PassThrough } from "node:stream";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import { RpcServer, runRpcServer } from "../dist/core/modes/rpc_server.js";
-import { EphemeralThreadBusyError } from "../dist/host/session_host.js";
+import { EphemeralThreadBusyError, SessionExecBusyError } from "../dist/host/session_host.js";
 import {
   SESSION_PROTOCOL_ERROR_CODES,
   SESSION_PROTOCOL_VERSION,
@@ -124,6 +124,7 @@ function createHarness(options = {}) {
     const ephemeralContexts = new Set();
     const activeWorkAbortControllers = new Set();
     const activeWorkPromises = new Set();
+    const activeExecAbortControllers = new Map();
 
     const runActiveWork = async (operation, externalSignal) => {
       const abortController = new AbortController();
@@ -260,13 +261,28 @@ function createHarness(options = {}) {
       requestTurnBoundaryStop: vi.fn(() => running),
       cancelTurnBoundaryStop: vi.fn(() => running),
       async exec(runOptions) {
-        return await runActiveWork(async (signal) => {
-          const result = options.exec
-            ? await options.exec({ ...runOptions, signal })
-            : createProtocolExecResult({ command: runOptions.command });
-          signal.throwIfAborted();
-          return result;
-        }, runOptions.signal);
+        const abortController = new AbortController();
+        activeExecAbortControllers.set(runOptions.execId, abortController);
+        try {
+          return await runActiveWork(
+            async (signal) => {
+              const result = options.exec
+                ? await options.exec({ ...runOptions, signal })
+                : createProtocolExecResult({ command: runOptions.command });
+              signal.throwIfAborted();
+              return result;
+            },
+            AbortSignal.any([runOptions.signal, abortController.signal]),
+          );
+        } finally {
+          activeExecAbortControllers.delete(runOptions.execId);
+        }
+      },
+      cancelExec(execId) {
+        const controller = activeExecAbortControllers.get(execId);
+        if (!controller || controller.signal.aborted) return false;
+        controller.abort();
+        return true;
       },
       async sample(sampleOptions) {
         return await runActiveWork(
@@ -627,6 +643,7 @@ describe("rpc_server", () => {
     await harness.server.handleLine(
       request("bash-created", "session.exec", {
         sessionId: "session-2",
+        execId: "exec-created",
         command: "pwd",
       }),
     );
@@ -636,7 +653,7 @@ describe("rpc_server", () => {
     expect(bash).toEqual(
       expect.objectContaining({
         ok: true,
-        result: { output: "/repo\n", stdout: "/repo\n", stderr: "", exitCode: 0, truncated: false },
+        result: createProtocolExecResult({ output: "/repo\n" }),
       }),
     );
 
@@ -1558,6 +1575,7 @@ describe("rpc_server", () => {
     const execution = harness.server.handleLine(
       request("exec", "session.exec", {
         sessionId: "session-1",
+        execId: "exec-1",
         command: "sleep forever",
       }),
     );
@@ -1573,7 +1591,7 @@ describe("rpc_server", () => {
         ok: false,
         error: expect.objectContaining({
           code: SESSION_PROTOCOL_ERROR_CODES.cancelled,
-          message: "execution command was cancelled",
+          message: "execution was cancelled",
         }),
       }),
     );
@@ -1582,6 +1600,85 @@ describe("rpc_server", () => {
         ok: true,
         result: { interrupted: true, isTurnRunning: true },
       }),
+    );
+  });
+
+  it("reports host-wide exec id collisions as busy", async () => {
+    const harness = createHarness({
+      exec: ({ execId }) => {
+        throw new SessionExecBusyError(execId);
+      },
+    });
+
+    await harness.server.handleLine(
+      request("exec", "session.exec", {
+        sessionId: "session-1",
+        execId: "shared-exec",
+        command: "pwd",
+      }),
+    );
+
+    expect(harness.lines.find((line) => line.id === "exec")).toEqual(
+      expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({
+          code: SESSION_PROTOCOL_ERROR_CODES.busy,
+          message: "execution 'shared-exec' is already active",
+        }),
+      }),
+    );
+  });
+
+  it("cancels one exec without interrupting concurrent session work", async () => {
+    const releases = new Map();
+    const harness = createHarness({
+      exec: ({ command, signal }) =>
+        new Promise((resolve) => {
+          const finish = () => resolve(createProtocolExecResult({ command }));
+          releases.set(command, finish);
+          signal.addEventListener("abort", finish, { once: true });
+        }),
+    });
+
+    const first = harness.server.handleLine(
+      request("exec-first", "session.exec", {
+        sessionId: "session-1",
+        execId: "exec-first",
+        command: "first",
+      }),
+    );
+    const second = harness.server.handleLine(
+      request("exec-second", "session.exec", {
+        sessionId: "session-1",
+        execId: "exec-second",
+        command: "second",
+      }),
+    );
+    await waitFor(() => releases.size === 2);
+
+    await harness.server.handleLine(
+      request("cancel-first", "session.cancelExec", {
+        sessionId: "session-1",
+        execId: "exec-first",
+      }),
+    );
+    await first;
+
+    expect(harness.lines.find((line) => line.id === "exec-first")).toEqual(
+      expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({ code: SESSION_PROTOCOL_ERROR_CODES.cancelled }),
+      }),
+    );
+    expect(harness.lines.find((line) => line.id === "cancel-first")).toEqual(
+      expect.objectContaining({ ok: true, result: { cancelled: true } }),
+    );
+    expect(harness.lines.some((line) => line.id === "exec-second")).toBe(false);
+
+    releases.get("second")();
+    await second;
+    expect(harness.lines.find((line) => line.id === "exec-second")).toEqual(
+      expect.objectContaining({ ok: true }),
     );
   });
 
@@ -1892,7 +1989,11 @@ describe("rpc_server", () => {
 
     const executions = ["first", "second"].map((command) =>
       harness.server.handleLine(
-        request(`exec-${command}`, "session.exec", { sessionId: "session-1", command }),
+        request(`exec-${command}`, "session.exec", {
+          sessionId: "session-1",
+          execId: `exec-${command}`,
+          command,
+        }),
       ),
     );
     await waitFor(() => releaseExecutions.size === 2);

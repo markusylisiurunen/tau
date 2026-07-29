@@ -2,7 +2,7 @@ import type { AssistantMessage, Message, ToolResultMessage } from "@earendil-wor
 import { TOOL_NAME_EDIT } from "../tools/tool_names.js";
 import { buildLineDiff, collapseLongUnchangedDiffRuns } from "./line_diff.js";
 import { truncateForTokens } from "./truncate.js";
-import { stripTauUserMetadata } from "./user_metadata.js";
+import { hasToolRecoveryMetadata, stripTauUserMetadata } from "./user_metadata.js";
 
 export const COMPACTION_SUMMARY_HEADER =
   "The conversation history before this point was compacted into the following summary:";
@@ -178,9 +178,10 @@ export function formatHistoryForCompaction(
 
   for (const message of history) {
     if (message.role === "user") {
-      const text = truncateToolRecoveryResults(
-        stripTauUserMetadata(extractTextFromContent(message.content)),
-      );
+      const userText = stripTauUserMetadata(extractTextFromContent(message.content));
+      const text = hasToolRecoveryMetadata(message)
+        ? truncateToolRecoveryResults(userText)
+        : userText;
       if (text) {
         const id = options?.userMessageIds?.get(message);
         const marker = id ? `[User id=${JSON.stringify(id)}]:` : "[User]:";

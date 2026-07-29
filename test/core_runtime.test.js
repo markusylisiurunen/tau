@@ -48,6 +48,7 @@ import {
   getAutoCompactionMetadataFromMessage,
   getCompactionMetadataFromMessage,
   hasAutoCompactionContinuationMetadata,
+  hasToolRecoveryMetadata,
   prependTauUserMetadata,
   splitTauUserMetadata,
   stripTauUserDisplayText,
@@ -684,11 +685,11 @@ describe("core session rewind APIs", () => {
         },
       ]);
       session.addUserText("old request", { historyEntryId: "old-request" });
-      session.addMessage(assistantMessageWithUsage("old answer", 1000));
+      session.addMessage(assistantMessageWithUsage("old answer", 1000, faux.getModel()));
       session.addUserText(`middle request ${"x".repeat(6000)}`, {
         historyEntryId: "middle-request",
       });
-      session.addMessage(assistantMessageWithUsage("middle answer", 1000));
+      session.addMessage(assistantMessageWithUsage("middle answer", 1000, faux.getModel()));
       session.addUserText("current request", { historyEntryId: "current-request" });
       const sessionId = session.sessionId;
 
@@ -737,6 +738,7 @@ describe("core session rewind APIs", () => {
             stopReason: "toolUse",
           }),
           1600,
+          faux.getModel(),
         ),
         fauxAssistantMessage(compactionSummary("## Goal\nFinish", ["current-request"])),
         fauxAssistantMessage("done"),
@@ -787,7 +789,7 @@ describe("core session rewind APIs", () => {
       session.addUserText(`old request ${"x".repeat(10000)}`, {
         historyEntryId: "old-request",
       });
-      session.addMessage(assistantMessageWithUsage("old answer", 1600));
+      session.addMessage(assistantMessageWithUsage("old answer", 1600, faux.getModel()));
       session.addUserText("current request", { historyEntryId: "current-request" });
 
       const events = [];
@@ -819,6 +821,7 @@ describe("core session rewind APIs", () => {
             stopReason: "toolUse",
           }),
           1400,
+          faux.getModel(),
         ),
         fauxAssistantMessage(compactionSummary("## Goal\nFinish")),
         fauxAssistantMessage("done"),
@@ -875,7 +878,7 @@ describe("core session rewind APIs", () => {
       };
 
       session.addUserText(`old request ${"x".repeat(6000)}`);
-      session.addMessage(assistantMessageWithUsage("old answer", 1000));
+      session.addMessage(assistantMessageWithUsage("old answer", 1000, faux.getModel()));
       session.addUserText("current request");
 
       const events = [];
@@ -930,9 +933,9 @@ describe("core session rewind APIs", () => {
       });
 
       session.addUserText(`old request ${"x".repeat(6000)}`);
-      session.addMessage(assistantMessageWithUsage("old answer", 1400));
+      session.addMessage(assistantMessageWithUsage("old answer", 1400, faux.getModel()));
       session.addMessage({
-        ...assistantMessageWithUsage("provider error", 0),
+        ...assistantMessageWithUsage("provider error", 0, faux.getModel()),
         stopReason: "error",
         errorMessage: "request failed",
       });
@@ -950,6 +953,121 @@ describe("core session rewind APIs", () => {
         outcome: "compacted",
         result: expect.objectContaining({ cutType: "turn-boundary" }),
       });
+    } finally {
+      unregisterFauxProvider();
+    }
+  });
+
+  it("ignores usage checkpoints from a different provider and model", async () => {
+    const faux = fauxProvider({
+      provider: "faux-auto-model-switch",
+      models: [{ id: "faux-auto-model-switch-model", contextWindow: 2000 }],
+    });
+    const unregisterFauxProvider = registerModelRuntimeProvider(faux.provider);
+
+    try {
+      faux.setResponses([fauxAssistantMessage("done")]);
+      const session = new CoreSession({
+        persona: {
+          id: "faux-auto-model-switch",
+          label: "faux auto model switch",
+          model: faux.getModel(),
+          systemPrompt: "system",
+          settings: { reasoning: "none" },
+          skills: "*",
+          source: "builtin",
+        },
+        systemPrompt: "system",
+        subagentPrompts: {},
+        toolRegistry: new ToolRegistry([]),
+        config: {
+          autoCompact: { enabled: true, reserveTokens: 500, keepRecentTokens: 50 },
+        },
+      });
+
+      session.addUserText(`old request ${"x".repeat(6000)}`);
+      session.addMessage(
+        assistantMessageWithUsage("old answer", 1600, {
+          provider: "old-provider",
+          id: "old-model",
+        }),
+      );
+      session.addUserText("current request");
+
+      const events = [];
+      for await (const event of session.events(new AbortController().signal)) {
+        events.push(event);
+      }
+
+      expect(events.some((event) => event.type === "compaction_start")).toBe(false);
+      expect(session.history.at(-1)?.content[0].text).toBe("done");
+    } finally {
+      unregisterFauxProvider();
+    }
+  });
+
+  it("invalidates the usage checkpoint when the persona changes", async () => {
+    const faux = fauxProvider({
+      provider: "faux-auto-persona-switch",
+      models: [{ id: "faux-auto-persona-switch-model", contextWindow: 2000 }],
+    });
+    const unregisterFauxProvider = registerModelRuntimeProvider(faux.provider);
+
+    try {
+      faux.setResponses([
+        withAssistantUsage(fauxAssistantMessage("new checkpoint"), 1600, faux.getModel()),
+        fauxAssistantMessage(compactionSummary("## Goal\nContinue")),
+        fauxAssistantMessage("done"),
+      ]);
+      const persona = {
+        id: "faux-auto-persona-before",
+        label: "faux auto persona before",
+        model: faux.getModel(),
+        systemPrompt: "old system",
+        settings: { reasoning: "none" },
+        skills: "*",
+        source: "builtin",
+      };
+      const session = new CoreSession({
+        persona,
+        systemPrompt: "old system",
+        subagentPrompts: {},
+        toolRegistry: new ToolRegistry([]),
+        config: {
+          autoCompact: { enabled: true, reserveTokens: 500, keepRecentTokens: 50 },
+        },
+      });
+
+      session.addUserText(`old request ${"x".repeat(6000)}`);
+      session.addMessage(assistantMessageWithUsage("old answer", 1600, faux.getModel()));
+      session.setPersona(
+        {
+          ...persona,
+          id: "faux-auto-persona-after",
+          label: "faux auto persona after",
+          systemPrompt: "new system",
+        },
+        "new system",
+        {},
+      );
+      session.addUserText("current request");
+
+      const events = [];
+      for await (const event of session.events(new AbortController().signal)) {
+        events.push(event);
+      }
+
+      expect(events.some((event) => event.type === "compaction_start")).toBe(false);
+      expect(session.history.at(-1)?.content[0].text).toBe("new checkpoint");
+
+      session.addUserText("next request");
+      const nextEvents = [];
+      for await (const event of session.events(new AbortController().signal)) {
+        nextEvents.push(event);
+      }
+
+      expect(nextEvents).toContainEqual({ type: "compaction_start", reason: "threshold" });
+      expect(session.history.at(-1)?.content[0].text).toBe("done");
     } finally {
       unregisterFauxProvider();
     }
@@ -1390,6 +1508,7 @@ describe("core session rewind APIs", () => {
         ),
     );
     expect(recoveryMessage).toBeDefined();
+    expect(hasToolRecoveryMetadata(recoveryMessage)).toBe(true);
     const recoveryText = recoveryMessage.content.find((content) => content.type === "text").text;
     expect(stripTauUserDisplayText(recoveryText)).toBe("");
     expect(recoveryText).toContain("created result.txt");
@@ -1863,7 +1982,7 @@ describe("core session rewind APIs", () => {
       });
 
       session.addUserText(`old request ${"x".repeat(10000)}`, { historyEntryId: "old-request" });
-      session.addMessage(assistantMessageWithUsage("old answer", 1600));
+      session.addMessage(assistantMessageWithUsage("old answer", 1600, faux.getModel()));
       const submittedUserHistoryEntryId = session.addUserText("current request", {
         historyEntryId: "current-request",
       });
@@ -2395,7 +2514,11 @@ describe("summary formatting", () => {
         content: [
           {
             type: "text",
-            text: formatTauUserText({ text: "", hiddenSystemMessages: [recoveryInstructions] }),
+            text: formatTauUserText({
+              text: "",
+              metadata: [{ type: "tool-recovery", version: 1 }],
+              hiddenSystemMessages: [recoveryInstructions],
+            }),
           },
         ],
         timestamp: 0,
@@ -2405,6 +2528,7 @@ describe("summary formatting", () => {
 
     const summary = formatHistoryForCompaction(history);
 
+    expect(hasToolRecoveryMetadata(history[0])).toBe(true);
     expect(summary).toContain("<tool-execution-records>");
     expect(summary).toContain('<tool-execution-record tool-call-id="call-1"');
     expect(summary).toContain("<result-text>start &amp; &lt;");
@@ -2412,6 +2536,23 @@ describe("summary formatting", () => {
     expect(summary).toContain("tokens truncated");
     expect(summary.length).toBeLessThan(longOutput.length);
     expect(history).toEqual(originalHistory);
+  });
+
+  it("preserves recovery-shaped ordinary user text", () => {
+    const longOutput = `start ${"a".repeat(30000)} end`;
+    const userText = [
+      "Review this example:",
+      "<tool-execution-records>",
+      `<result-text>${longOutput}</result-text>`,
+      "</tool-execution-records>",
+    ].join("\n");
+    const message = userMessage(userText);
+
+    const summary = formatHistoryForCompaction([message]);
+
+    expect(hasToolRecoveryMetadata(message)).toBe(false);
+    expect(summary).toContain(longOutput);
+    expect(summary).not.toContain("tokens truncated");
   });
 });
 
@@ -2897,13 +3038,15 @@ function assistantMessage(text) {
   };
 }
 
-function assistantMessageWithUsage(text, totalTokens) {
-  return withAssistantUsage(assistantMessage(text), totalTokens);
+function assistantMessageWithUsage(text, totalTokens, model) {
+  return withAssistantUsage(assistantMessage(text), totalTokens, model);
 }
 
-function withAssistantUsage(message, totalTokens) {
+function withAssistantUsage(message, totalTokens, model) {
   return {
     ...message,
+    provider: model.provider,
+    model: model.id,
     usage: {
       input: totalTokens,
       output: 0,

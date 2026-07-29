@@ -185,6 +185,7 @@ export class SessionEngine {
   private readonly eventListeners = new Set<(event: CoreEvent) => void>();
   private readonly subagentEventListeners = new Set<(event: CoreSubagentUiEvent) => void>();
   private historyEntries: HistoryEntry[] = [];
+  private autoCompactionUsageInvalidated = false;
   private sessionId: string = randomUUID();
 
   constructor(options: SessionEngineOptions) {
@@ -215,6 +216,7 @@ export class SessionEngine {
   reset(): void {
     this.closeProviderSessions();
     this.historyEntries = [];
+    this.autoCompactionUsageInvalidated = false;
     this.sessionId = randomUUID();
     this.subagentControlPlane.reset();
   }
@@ -225,6 +227,7 @@ export class SessionEngine {
       id: entry.id,
       message: structuredClone(entry.message),
     }));
+    this.autoCompactionUsageInvalidated = false;
     this.sessionId = input.sessionId;
     this.subagentControlPlane.reset();
   }
@@ -251,6 +254,9 @@ export class SessionEngine {
     systemPrompt: string,
     subagentPrompts: Record<string, string>,
   ): void {
+    if (!isDeepStrictEqual(this.persona, persona) || this.systemPrompt !== systemPrompt) {
+      this.autoCompactionUsageInvalidated = true;
+    }
     this.persona = persona;
     this.systemPrompt = systemPrompt;
     this.subagentPrompts = subagentPrompts;
@@ -657,6 +663,16 @@ export class SessionEngine {
     const id = this.createHistoryEntryId(preferredId);
     const entry: HistoryEntry = { id, message };
     this.historyEntries.push(entry);
+    if (
+      message.role === "assistant" &&
+      message.stopReason !== "error" &&
+      message.stopReason !== "aborted" &&
+      message.usage &&
+      message.provider === this.persona.model.provider &&
+      message.model === this.persona.model.id
+    ) {
+      this.autoCompactionUsageInvalidated = false;
+    }
     return entry;
   }
 
@@ -1062,6 +1078,10 @@ export class SessionEngine {
   }
 
   private getFreshContextUsageEstimateTokens(): number | undefined {
+    if (this.autoCompactionUsageInvalidated) {
+      return undefined;
+    }
+
     const boundaryIndex = this.findLatestAutoCompactionContinuationIndex();
     for (let index = this.historyEntries.length - 1; index > boundaryIndex; index -= 1) {
       const message = this.historyEntries[index]!.message;
@@ -1076,6 +1096,12 @@ export class SessionEngine {
       const usage = message.usage;
       if (!usage) {
         continue;
+      }
+      if (
+        message.provider !== this.persona.model.provider ||
+        message.model !== this.persona.model.id
+      ) {
+        return undefined;
       }
 
       const reportedUsage =
@@ -1593,6 +1619,7 @@ function buildToolRecoveryUserMessage(options: {
         type: "text",
         text: formatTauUserText({
           text: "",
+          metadata: [{ type: "tool-recovery", version: 1 }],
           hiddenSystemMessages: [recoveryInstructions],
         }),
       },

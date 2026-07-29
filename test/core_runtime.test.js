@@ -389,6 +389,75 @@ describe("core session rewind APIs", () => {
     }
   });
 
+  it("accepts a final response on model subturn 512", async () => {
+    let modelCalls = 0;
+    const toolRegistry = new ToolRegistry([
+      {
+        schema: {
+          name: "fake_tool",
+          description: "test tool",
+          parameters: { type: "object", properties: {}, additionalProperties: false },
+        },
+        getDisplayTarget: (toolCall) => toolCall.name,
+        dispatch: async (toolCall) => ({
+          run: Promise.resolve({
+            toolResult: {
+              role: "toolResult",
+              toolCallId: toolCall.id,
+              toolName: toolCall.name,
+              content: [{ type: "text", text: "done" }],
+              isError: false,
+              timestamp: 2,
+            },
+          }),
+        }),
+      },
+    ]);
+    const session = new CoreSession({
+      persona: { ...personas[0], tools: ["fake_tool"] },
+      systemPrompt: "system",
+      subagentPrompts: {},
+      toolRegistry,
+    });
+    session.engine.modelRuntime.streamModel = () => {
+      modelCalls += 1;
+      const toolCall =
+        modelCalls === 512
+          ? undefined
+          : fauxToolCall("fake_tool", {}, { id: `tool-call-${modelCalls}` });
+      const response = toolCall
+        ? fauxAssistantMessage([toolCall], { stopReason: "toolUse" })
+        : fauxAssistantMessage("done");
+      return {
+        async *[Symbol.asyncIterator]() {
+          if (toolCall) {
+            yield { type: "toolcall_start", contentIndex: 0, partial: response };
+            yield {
+              type: "toolcall_end",
+              contentIndex: 0,
+              toolCall,
+              partial: response,
+            };
+          }
+        },
+        async result() {
+          return response;
+        },
+      };
+    };
+
+    session.addUserText("keep going");
+    const notices = [];
+    for await (const event of session.events(new AbortController().signal)) {
+      if (event.type === "notice") {
+        notices.push(event.text);
+      }
+    }
+
+    expect(modelCalls).toBe(512);
+    expect(notices).not.toContain("stopped after 512 model subturns to avoid an infinite loop.");
+  });
+
   it("preserves the session id when compacting manually", async () => {
     const faux = fauxProvider({
       provider: "faux-manual-compact-session-id",

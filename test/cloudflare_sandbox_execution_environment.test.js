@@ -92,7 +92,11 @@ describe("Cloudflare Sandbox execution environment", () => {
       backend,
     });
 
-    await expect(environment.getToolExecutionBackend().runBash("echo hello")).resolves.toEqual({
+    await expect(
+      environment.getToolExecutionBackend().runBash("echo hello", {
+        args: ["arg-zero", "arg-one"],
+      }),
+    ).resolves.toEqual({
       output: "hello\n",
       stdout: "hello\n",
       stderr: "",
@@ -129,9 +133,68 @@ describe("Cloudflare Sandbox execution environment", () => {
         "bash",
         "-lc",
         "echo hello",
+        "arg-zero",
+        "arg-one",
       ],
       cwd: "/workspace/repo",
     });
+  });
+
+  it("stages exec stdin through bridge file operations", async () => {
+    const requests = [];
+    const fetchMock = async (url, init = {}) => {
+      requests.push({ url: String(url), init });
+      if (init.method === "PUT") {
+        return new Response(null, { status: 200 });
+      }
+      if (String(url).endsWith("/v1/sandbox/sandbox-1/session")) {
+        return jsonResponse({ id: "tau-session-1" });
+      }
+      if (String(url).endsWith("/v1/sandbox/sandbox-1/exec")) {
+        return sseResponse(execSse({ stdout: "input", exitCode: 0 }));
+      }
+      return jsonResponse({ error: "not found" }, { status: 404 });
+    };
+    const backend = createCloudflareSandboxToolExecutionBackend({
+      client: new CloudflareSandboxBridgeClient({
+        bridgeId: "default",
+        baseUrl: "https://bridge.example",
+        fetch: fetchMock,
+      }),
+      sandboxId: "sandbox-1",
+      cwd: "/workspace/repo",
+    });
+
+    await expect(backend.runBash("cat", { stdin: Buffer.from("input") })).resolves.toMatchObject({
+      stdout: "input",
+    });
+
+    const writeRequest = requests.find((request) => request.init.method === "PUT");
+    expect(Buffer.from(writeRequest.init.body)).toEqual(Buffer.from("input"));
+    const execRequests = requests.filter((request) => request.url.endsWith("/exec"));
+    const command = JSON.parse(execRequests[0].init.body);
+    expect(command.argv).toEqual([
+      "env",
+      "GIT_TERMINAL_PROMPT=0",
+      "GIT_EDITOR=true",
+      "GIT_SEQUENCE_EDITOR=true",
+      "GIT_PAGER=cat",
+      "GIT_ASKPASS=true",
+      "GIT_SSH_COMMAND=ssh -o BatchMode=yes",
+      "bash",
+      "-c",
+      'exec "$@" < "$0"',
+      expect.stringMatching(/^\/tmp\/tau-exec-.*\.stdin$/),
+      "bash",
+      "-lc",
+      "cat",
+    ]);
+    expect(JSON.parse(execRequests[1].init.body).argv).toEqual([
+      "rm",
+      "-f",
+      "--",
+      command.argv[10],
+    ]);
   });
 
   it("writes binary files without text conversion", async () => {
@@ -462,7 +525,22 @@ describe("Cloudflare Sandbox execution environment", () => {
         "-lc",
         "one",
       ],
-      ["node", "-e", "process.stdout.write(process.argv[1])", "two"],
+      [
+        "env",
+        "GIT_TERMINAL_PROMPT=0",
+        "GIT_EDITOR=true",
+        "GIT_SEQUENCE_EDITOR=true",
+        "GIT_PAGER=cat",
+        "GIT_ASKPASS=true",
+        "GIT_SSH_COMMAND=ssh -o BatchMode=yes",
+        "bash",
+        "-lc",
+        'exec "$0" "$@"',
+        "node",
+        "-e",
+        "process.stdout.write(process.argv[1])",
+        "two",
+      ],
     ]);
     expect(execRequests.map((request) => request.init.headers["Session-Id"])).toEqual([
       "tau-session-1",
@@ -648,7 +726,10 @@ describe("Cloudflare Sandbox execution environment", () => {
     controller.abort();
 
     await expect(backend.runBash("sleep 10", { signal: controller.signal })).resolves.toMatchObject(
-      { aborted: true, exitCode: null },
+      {
+        aborted: true,
+        exitCode: null,
+      },
     );
     expect(requests).toHaveLength(0);
   });
@@ -763,7 +844,7 @@ describe("Cloudflare Sandbox execution environment", () => {
     expect(JSON.parse(nodeScriptCalls[0].args[3])).toEqual(["/workspace/repo/docs/AGENTS.md"]);
     expect(nodeScriptCalls[0].options).toMatchObject({
       cwd: "/workspace/repo",
-      maxCaptureBytes: 16 * 1024 * 1024,
+      maxCaptureBytes: 24 * 1024 * 1024,
     });
     expect(environment.snapshot()).toEqual({
       kind: "cloudflare-sandbox",

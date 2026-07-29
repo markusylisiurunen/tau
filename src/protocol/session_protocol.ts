@@ -9,6 +9,8 @@ import type {
 import { type ZodError, z } from "zod";
 
 export const SESSION_PROTOCOL_VERSION = 3 as const;
+export const SESSION_PROTOCOL_MAX_EXEC_CAPTURE_BYTES = 24 * 1024 * 1024;
+export const SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES = 16 * 1024 * 1024;
 
 export const SESSION_PROTOCOL_METHODS = [
   "initialize",
@@ -23,10 +25,7 @@ export const SESSION_PROTOCOL_METHODS = [
   "session.cancelPendingMessages",
   "session.retry",
   "session.exec",
-  "session.execProcess",
   "session.cancelExec",
-  "session.readFile",
-  "session.writeFile",
   "session.sample",
   "session.interrupt",
   "session.snapshot",
@@ -149,33 +148,19 @@ export type SessionProtocolRecordParams = SessionProtocolSessionIdParams & {
   text: string;
   historyEntryId?: string;
 };
-export const SESSION_PROTOCOL_MAX_EXEC_CAPTURE_BYTES = 16 * 1024 * 1024;
-export const SESSION_PROTOCOL_MAX_FILE_BYTES = 16 * 1024 * 1024;
-
 export type SessionProtocolRetryParams = SessionProtocolSessionIdParams;
-type SessionProtocolExecOptions = SessionProtocolSessionIdParams & {
+export type SessionProtocolExecParams = SessionProtocolSessionIdParams & {
   execId: string;
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+  stdinBase64?: string;
   cwd?: string;
   timeoutMs?: number;
   maxCaptureBytes?: number;
 };
-export type SessionProtocolExecParams = SessionProtocolExecOptions & {
-  command: string;
-};
-export type SessionProtocolExecProcessParams = SessionProtocolExecOptions & {
-  argv: [string, ...string[]];
-  env?: Record<string, string>;
-};
 export type SessionProtocolCancelExecParams = SessionProtocolSessionIdParams & {
   execId: string;
-};
-export type SessionProtocolReadFileParams = SessionProtocolSessionIdParams & {
-  path: string;
-  maxBytes: number;
-};
-export type SessionProtocolWriteFileParams = SessionProtocolSessionIdParams & {
-  path: string;
-  contentBase64: string;
 };
 export type SessionProtocolSampleContext = {
   systemPrompt: string;
@@ -273,10 +258,7 @@ export type SessionProtocolParamsByMethod = {
   "session.cancelPendingMessages": SessionProtocolCancelPendingMessagesParams;
   "session.retry": SessionProtocolRetryParams;
   "session.exec": SessionProtocolExecParams;
-  "session.execProcess": SessionProtocolExecProcessParams;
   "session.cancelExec": SessionProtocolCancelExecParams;
-  "session.readFile": SessionProtocolReadFileParams;
-  "session.writeFile": SessionProtocolWriteFileParams;
   "session.sample": SessionProtocolSampleParams;
   "session.interrupt": SessionProtocolSessionIdParams;
   "session.snapshot": SessionProtocolSessionIdParams;
@@ -377,16 +359,6 @@ export type SessionProtocolExecResult = {
 
 export type SessionProtocolCancelExecResult = {
   cancelled: boolean;
-};
-
-export type SessionProtocolReadFileResult = {
-  contentBase64: string;
-  bytes: number;
-};
-
-export type SessionProtocolWriteFileResult = {
-  path: string;
-  bytes: number;
 };
 
 export type SessionProtocolSampleResult = {
@@ -754,10 +726,7 @@ export type SessionProtocolResultByMethod = {
   "session.cancelPendingMessages": SessionProtocolCancelPendingMessagesResult;
   "session.retry": SessionProtocolRetryResult;
   "session.exec": SessionProtocolExecResult;
-  "session.execProcess": SessionProtocolExecResult;
   "session.cancelExec": SessionProtocolCancelExecResult;
-  "session.readFile": SessionProtocolReadFileResult;
-  "session.writeFile": SessionProtocolWriteFileResult;
   "session.sample": SessionProtocolSampleResult;
   "session.interrupt": SessionProtocolInterruptResult;
   "session.snapshot": SessionProtocolSnapshot;
@@ -1031,21 +1000,40 @@ const nonEmptyStringSchema = z
   .refine((value) => value.trim().length > 0);
 const sessionProtocolRequestIdSchema = nonEmptyStringSchema;
 const nullableSessionProtocolRequestIdSchema = sessionProtocolRequestIdSchema.nullable();
+const absolutePathSchema = nonEmptyStringSchema.refine((value) => value.startsWith("/"));
 const environmentVariableNameSchema = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
 const environmentVariableValueSchema = z.string().refine((value) => !value.includes("\0"));
 const environmentVariablesSchema = z.record(
   environmentVariableNameSchema,
   environmentVariableValueSchema,
 );
-const base64Schema = z
-  .string()
+const base64Schema = z.string().refine(isValidBase64, "must be valid base64");
+const boundedExecStdinBase64Schema = base64Schema
+  .max(4 * Math.ceil(SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES / 3))
   .refine(
-    (value) => /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value),
-    "must be valid base64",
+    (value) => decodedBase64ByteLength(value) <= SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES,
+    "decoded content exceeds maximum size",
   );
-const boundedFileBase64Schema = base64Schema.max(
-  4 * Math.ceil(SESSION_PROTOCOL_MAX_FILE_BYTES / 3),
-);
+
+function isValidBase64(value: string): boolean {
+  if (value.length % 4 !== 0) return false;
+  const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+  const contentLength = value.length - padding;
+  for (let index = 0; index < contentLength; index += 1) {
+    const code = value.charCodeAt(index);
+    const valid =
+      (code >= 65 && code <= 90) ||
+      (code >= 97 && code <= 122) ||
+      (code >= 48 && code <= 57) ||
+      code === 43 ||
+      code === 47;
+    if (!valid) return false;
+  }
+  for (let index = contentLength; index < value.length; index += 1) {
+    if (value.charCodeAt(index) !== 61) return false;
+  }
+  return true;
+}
 
 function decodedBase64ByteLength(value: string): number {
   if (!value) return 0;
@@ -1289,31 +1277,22 @@ const sessionProtocolUserMessageParamsSchema = z
 
 const sessionProtocolRecordParamsSchema = sessionProtocolUserMessageParamsSchema;
 
-const sessionProtocolExecOptionsSchema = {
-  sessionId: nonEmptyStringSchema,
-  execId: nonEmptyStringSchema,
-  cwd: nonEmptyStringSchema.optional(),
-  timeoutMs: z.number().int().positive().optional(),
-  maxCaptureBytes: z
-    .number()
-    .int()
-    .positive()
-    .max(SESSION_PROTOCOL_MAX_EXEC_CAPTURE_BYTES)
-    .optional(),
-};
-
 const sessionProtocolExecParamsSchema = z
   .object({
-    ...sessionProtocolExecOptionsSchema,
+    sessionId: nonEmptyStringSchema,
+    execId: nonEmptyStringSchema,
     command: nonEmptyStringSchema,
-  })
-  .strip();
-
-const sessionProtocolExecProcessParamsSchema = z
-  .object({
-    ...sessionProtocolExecOptionsSchema,
-    argv: z.array(nonEmptyStringSchema).min(1),
+    args: z.array(z.string()).optional(),
     env: environmentVariablesSchema.optional(),
+    stdinBase64: boundedExecStdinBase64Schema.optional(),
+    cwd: nonEmptyStringSchema.optional(),
+    timeoutMs: z.number().int().positive().optional(),
+    maxCaptureBytes: z
+      .number()
+      .int()
+      .positive()
+      .max(SESSION_PROTOCOL_MAX_EXEC_CAPTURE_BYTES)
+      .optional(),
   })
   .strip();
 
@@ -1321,22 +1300,6 @@ const sessionProtocolCancelExecParamsSchema = z
   .object({
     sessionId: nonEmptyStringSchema,
     execId: nonEmptyStringSchema,
-  })
-  .strip();
-
-const sessionProtocolReadFileParamsSchema = z
-  .object({
-    sessionId: nonEmptyStringSchema,
-    path: nonEmptyStringSchema,
-    maxBytes: z.number().int().positive().max(SESSION_PROTOCOL_MAX_FILE_BYTES),
-  })
-  .strip();
-
-const sessionProtocolWriteFileParamsSchema = z
-  .object({
-    sessionId: nonEmptyStringSchema,
-    path: nonEmptyStringSchema,
-    contentBase64: boundedFileBase64Schema,
   })
   .strip();
 
@@ -1502,8 +1465,6 @@ const sessionProtocolClientToolResultParamsSchema = z.discriminatedUnion("ok", [
     })
     .strip(),
 ]);
-
-const absolutePathSchema = nonEmptyStringSchema.refine((value) => value.startsWith("/"));
 
 const sessionProtocolLocalExecutionEnvironmentInputSchema = z
   .object({
@@ -2393,24 +2354,6 @@ const sessionProtocolCancelExecResultSchema = z
   })
   .strip();
 
-const sessionProtocolReadFileResultSchema = z
-  .object({
-    contentBase64: boundedFileBase64Schema,
-    bytes: z.number().int().nonnegative().max(SESSION_PROTOCOL_MAX_FILE_BYTES),
-  })
-  .strip()
-  .refine((value) => decodedBase64ByteLength(value.contentBase64) === value.bytes, {
-    message: "bytes must match decoded contentBase64 length",
-    path: ["bytes"],
-  });
-
-const sessionProtocolWriteFileResultSchema = z
-  .object({
-    path: nonEmptyStringSchema,
-    bytes: z.number().int().nonnegative(),
-  })
-  .strip();
-
 const sessionProtocolSampleResultSchema = z
   .object({
     message: modelAssistantMessageSchema,
@@ -3264,21 +3207,9 @@ export function validateSessionProtocolParams(
   params: unknown,
 ): SessionProtocolParamsValidationResult<SessionProtocolExecParams>;
 export function validateSessionProtocolParams(
-  method: "session.execProcess",
-  params: unknown,
-): SessionProtocolParamsValidationResult<SessionProtocolExecProcessParams>;
-export function validateSessionProtocolParams(
   method: "session.cancelExec",
   params: unknown,
 ): SessionProtocolParamsValidationResult<SessionProtocolCancelExecParams>;
-export function validateSessionProtocolParams(
-  method: "session.readFile",
-  params: unknown,
-): SessionProtocolParamsValidationResult<SessionProtocolReadFileParams>;
-export function validateSessionProtocolParams(
-  method: "session.writeFile",
-  params: unknown,
-): SessionProtocolParamsValidationResult<SessionProtocolWriteFileParams>;
 export function validateSessionProtocolParams(
   method: "session.sample",
   params: unknown,
@@ -3372,14 +3303,8 @@ export function validateSessionProtocolParams(
       return validateUserMessageParams(method, params);
     case "session.exec":
       return validateExecParams(params);
-    case "session.execProcess":
-      return validateExecProcessParams(params);
     case "session.cancelExec":
       return validateCancelExecParams(params);
-    case "session.readFile":
-      return validateReadFileParams(params);
-    case "session.writeFile":
-      return validateWriteFileParams(params);
     case "session.sample":
       return validateSampleParams(params);
     case "session.list":
@@ -3478,14 +3403,9 @@ export function validateSessionProtocolResult(
     case "session.retry":
       return validateResult(method, result, sessionProtocolRetryResultSchema);
     case "session.exec":
-    case "session.execProcess":
       return validateResult(method, result, sessionProtocolExecResultSchema);
     case "session.cancelExec":
       return validateResult(method, result, sessionProtocolCancelExecResultSchema);
-    case "session.readFile":
-      return validateResult(method, result, sessionProtocolReadFileResultSchema);
-    case "session.writeFile":
-      return validateResult(method, result, sessionProtocolWriteFileResultSchema);
     case "session.sample":
       return validateResult(method, result, sessionProtocolSampleResultSchema);
     case "session.interrupt":
@@ -3617,56 +3537,31 @@ function validateExecParams(
 ): SessionProtocolParamsValidationResult<SessionProtocolExecParams> {
   const parsed = sessionProtocolExecParamsSchema.safeParse(params);
   if (!parsed.success) {
-    return invalidExecParams("session.exec", parsed.error);
+    const message = hasIssue(parsed.error, [], "invalid_type")
+      ? "session.exec params must be an object"
+      : hasIssue(parsed.error, ["sessionId"])
+        ? "session.exec params.sessionId must be a non-empty string"
+        : hasIssue(parsed.error, ["execId"])
+          ? "session.exec params.execId must be a non-empty string"
+          : hasIssue(parsed.error, ["command"])
+            ? "session.exec params.command must be a non-empty string"
+            : hasIssue(parsed.error, ["args"])
+              ? "session.exec params.args must be an array of strings when provided"
+              : hasIssue(parsed.error, ["env"])
+                ? "session.exec params.env must use valid environment variable names and string values without null bytes"
+                : hasIssue(parsed.error, ["stdinBase64"])
+                  ? `session.exec params.stdinBase64 must be valid base64 encoding at most ${SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES} bytes`
+                  : hasIssue(parsed.error, ["cwd"])
+                    ? "session.exec params.cwd must be a non-empty string when provided"
+                    : hasIssue(parsed.error, ["timeoutMs"])
+                      ? "session.exec params.timeoutMs must be a positive integer when provided"
+                      : hasIssue(parsed.error, ["maxCaptureBytes"])
+                        ? `session.exec params.maxCaptureBytes must be a positive integer no greater than ${SESSION_PROTOCOL_MAX_EXEC_CAPTURE_BYTES} when provided`
+                        : `session.exec params are invalid: ${formatZodError(parsed.error)}`;
+    return invalidParams(message);
   }
 
-  return {
-    ok: true,
-    value: {
-      sessionId: parsed.data.sessionId,
-      execId: parsed.data.execId,
-      command: parsed.data.command,
-      ...(parsed.data.cwd !== undefined ? { cwd: parsed.data.cwd } : {}),
-      ...(parsed.data.timeoutMs !== undefined ? { timeoutMs: parsed.data.timeoutMs } : {}),
-      ...(parsed.data.maxCaptureBytes !== undefined
-        ? { maxCaptureBytes: parsed.data.maxCaptureBytes }
-        : {}),
-    },
-  };
-}
-
-function validateExecProcessParams(
-  params: unknown,
-): SessionProtocolParamsValidationResult<SessionProtocolExecProcessParams> {
-  const parsed = sessionProtocolExecProcessParamsSchema.safeParse(params);
-  if (!parsed.success) {
-    if (hasIssue(parsed.error, ["argv"])) {
-      return invalidParams(
-        "session.execProcess params.argv must be a non-empty array of non-empty strings",
-      );
-    }
-    if (hasIssue(parsed.error, ["env"])) {
-      return invalidParams(
-        "session.execProcess params.env must use valid environment variable names and string values without null bytes",
-      );
-    }
-    return invalidExecParams("session.execProcess", parsed.error);
-  }
-
-  return {
-    ok: true,
-    value: {
-      sessionId: parsed.data.sessionId,
-      execId: parsed.data.execId,
-      argv: parsed.data.argv as [string, ...string[]],
-      ...(parsed.data.env !== undefined ? { env: parsed.data.env } : {}),
-      ...(parsed.data.cwd !== undefined ? { cwd: parsed.data.cwd } : {}),
-      ...(parsed.data.timeoutMs !== undefined ? { timeoutMs: parsed.data.timeoutMs } : {}),
-      ...(parsed.data.maxCaptureBytes !== undefined
-        ? { maxCaptureBytes: parsed.data.maxCaptureBytes }
-        : {}),
-    },
-  };
+  return { ok: true, value: parsed.data };
 }
 
 function validateCancelExecParams(
@@ -3684,66 +3579,6 @@ function validateCancelExecParams(
     return invalidParams(message);
   }
   return { ok: true, value: parsed.data };
-}
-
-function validateReadFileParams(
-  params: unknown,
-): SessionProtocolParamsValidationResult<SessionProtocolReadFileParams> {
-  const parsed = sessionProtocolReadFileParamsSchema.safeParse(params);
-  if (!parsed.success) {
-    const message = hasIssue(parsed.error, [], "invalid_type")
-      ? "session.readFile params must be an object"
-      : hasIssue(parsed.error, ["sessionId"])
-        ? "session.readFile params.sessionId must be a non-empty string"
-        : hasIssue(parsed.error, ["path"])
-          ? "session.readFile params.path must be a non-empty string"
-          : hasIssue(parsed.error, ["maxBytes"])
-            ? `session.readFile params.maxBytes must be a positive integer no greater than ${SESSION_PROTOCOL_MAX_FILE_BYTES}`
-            : `session.readFile params are invalid: ${formatZodError(parsed.error)}`;
-    return invalidParams(message);
-  }
-  return { ok: true, value: parsed.data };
-}
-
-function validateWriteFileParams(
-  params: unknown,
-): SessionProtocolParamsValidationResult<SessionProtocolWriteFileParams> {
-  const parsed = sessionProtocolWriteFileParamsSchema.safeParse(params);
-  if (!parsed.success) {
-    const message = hasIssue(parsed.error, [], "invalid_type")
-      ? "session.writeFile params must be an object"
-      : hasIssue(parsed.error, ["sessionId"])
-        ? "session.writeFile params.sessionId must be a non-empty string"
-        : hasIssue(parsed.error, ["path"])
-          ? "session.writeFile params.path must be a non-empty string"
-          : hasIssue(parsed.error, ["contentBase64"])
-            ? `session.writeFile params.contentBase64 must be valid base64 encoding at most ${SESSION_PROTOCOL_MAX_FILE_BYTES} bytes`
-            : `session.writeFile params are invalid: ${formatZodError(parsed.error)}`;
-    return invalidParams(message);
-  }
-  return { ok: true, value: parsed.data };
-}
-
-function invalidExecParams(
-  method: "session.exec" | "session.execProcess",
-  error: ZodError,
-): SessionProtocolParamsValidationResult<never> {
-  const message = hasIssue(error, [], "invalid_type")
-    ? `${method} params must be an object`
-    : hasIssue(error, ["sessionId"])
-      ? `${method} params.sessionId must be a non-empty string`
-      : hasIssue(error, ["execId"])
-        ? `${method} params.execId must be a non-empty string`
-        : hasIssue(error, ["command"])
-          ? `${method} params.command must be a non-empty string`
-          : hasIssue(error, ["cwd"])
-            ? `${method} params.cwd must be a non-empty string when provided`
-            : hasIssue(error, ["timeoutMs"])
-              ? `${method} params.timeoutMs must be a positive integer when provided`
-              : hasIssue(error, ["maxCaptureBytes"])
-                ? `${method} params.maxCaptureBytes must be a positive integer no greater than ${SESSION_PROTOCOL_MAX_EXEC_CAPTURE_BYTES} when provided`
-                : `${method} params are invalid: ${formatZodError(error)}`;
-  return invalidParams(message);
 }
 
 function validateSampleParams(

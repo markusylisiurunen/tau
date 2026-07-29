@@ -247,37 +247,23 @@ class TauSdkClientImpl implements TauSdkClient {
     sessionId: string,
     execId: string,
     command: string,
-    options: { cwd?: string; timeoutMs?: number; maxCaptureBytes?: number } = {},
+    options: {
+      args?: string[];
+      env?: Record<string, string>;
+      stdinBase64?: string;
+      cwd?: string;
+      timeoutMs?: number;
+      maxCaptureBytes?: number;
+    } = {},
   ): Promise<SessionProtocolResultByMethod["session.exec"]> {
     return this.transport.request("session.exec", {
       sessionId,
       execId,
       command,
-      ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
-      ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
-      ...(options.maxCaptureBytes !== undefined
-        ? { maxCaptureBytes: options.maxCaptureBytes }
-        : {}),
-    });
-  }
-
-  sendExecProcess(
-    sessionId: string,
-    execId: string,
-    argv: [string, ...string[]],
-    options: {
-      cwd?: string;
-      env?: Record<string, string>;
-      timeoutMs?: number;
-      maxCaptureBytes?: number;
-    } = {},
-  ): Promise<SessionProtocolResultByMethod["session.execProcess"]> {
-    return this.transport.request("session.execProcess", {
-      sessionId,
-      execId,
-      argv,
-      ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
+      ...(options.args !== undefined ? { args: options.args } : {}),
       ...(options.env !== undefined ? { env: options.env } : {}),
+      ...(options.stdinBase64 !== undefined ? { stdinBase64: options.stdinBase64 } : {}),
+      ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
       ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
       ...(options.maxCaptureBytes !== undefined
         ? { maxCaptureBytes: options.maxCaptureBytes }
@@ -290,22 +276,6 @@ class TauSdkClientImpl implements TauSdkClient {
     execId: string,
   ): Promise<SessionProtocolResultByMethod["session.cancelExec"]> {
     return this.transport.request("session.cancelExec", { sessionId, execId });
-  }
-
-  sendReadFile(
-    sessionId: string,
-    path: string,
-    maxBytes: number,
-  ): Promise<SessionProtocolResultByMethod["session.readFile"]> {
-    return this.transport.request("session.readFile", { sessionId, path, maxBytes });
-  }
-
-  sendWriteFile(
-    sessionId: string,
-    path: string,
-    contentBase64: string,
-  ): Promise<SessionProtocolResultByMethod["session.writeFile"]> {
-    return this.transport.request("session.writeFile", { sessionId, path, contentBase64 });
   }
 
   sendSample(
@@ -626,51 +596,22 @@ class TauSdkSessionImpl implements TauSdkSession {
   async exec(
     command: string,
     options: {
+      args?: string[];
+      env?: Record<string, string>;
+      stdin?: Buffer;
       cwd?: string;
       timeoutMs?: number;
       maxCaptureBytes?: number;
       signal?: AbortSignal;
     } = {},
   ): Promise<SessionProtocolResultByMethod["session.exec"]> {
-    const { signal, ...execOptions } = options;
+    const { signal, stdin, ...execOptions } = options;
     const execId = randomUUID();
     return await this.runExecRequest(execId, signal, () =>
-      this.client.sendExec(this.activeSessionId(), execId, command, execOptions),
-    );
-  }
-
-  async execProcess(
-    argv: [string, ...string[]],
-    options: {
-      cwd?: string;
-      env?: Record<string, string>;
-      timeoutMs?: number;
-      maxCaptureBytes?: number;
-      signal?: AbortSignal;
-    } = {},
-  ): Promise<SessionProtocolResultByMethod["session.execProcess"]> {
-    const { signal, ...execOptions } = options;
-    const execId = randomUUID();
-    return await this.runExecRequest(execId, signal, () =>
-      this.client.sendExecProcess(this.activeSessionId(), execId, argv, execOptions),
-    );
-  }
-
-  async readFile(
-    path: string,
-    options: { maxBytes: number },
-  ): Promise<SessionProtocolResultByMethod["session.readFile"]> {
-    return await this.client.sendReadFile(this.activeSessionId(), path, options.maxBytes);
-  }
-
-  async writeFile(
-    path: string,
-    content: Buffer,
-  ): Promise<SessionProtocolResultByMethod["session.writeFile"]> {
-    return await this.client.sendWriteFile(
-      this.activeSessionId(),
-      path,
-      content.toString("base64"),
+      this.client.sendExec(this.activeSessionId(), execId, command, {
+        ...execOptions,
+        ...(stdin !== undefined ? { stdinBase64: stdin.toString("base64") } : {}),
+      }),
     );
   }
 

@@ -278,23 +278,11 @@ function createHarness(options = {}) {
           activeExecAbortControllers.delete(runOptions.execId);
         }
       },
-      async execProcess(runOptions) {
-        return await hostedSession.exec({ ...runOptions, command: runOptions.argv.join(" ") });
-      },
       cancelExec(execId) {
         const controller = activeExecAbortControllers.get(execId);
         if (!controller || controller.signal.aborted) return false;
         controller.abort();
         return true;
-      },
-      async readFile() {
-        return { contentBase64: "", bytes: 0 };
-      },
-      async writeFile(writeOptions) {
-        return {
-          path: writeOptions.path,
-          bytes: Buffer.from(writeOptions.contentBase64, "base64").length,
-        };
       },
       async sample(sampleOptions) {
         return await runActiveWork(

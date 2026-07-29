@@ -1,15 +1,18 @@
 import { basename } from "node:path";
 import type { CoreDeps } from "../core/runtime/deps.js";
 import type {
-  CommandExecutionOptions,
+  BashExecutionOptions,
   ListDirEntry,
   ToolExecutionBackend,
 } from "../core/tools/execution_backend.js";
 import type { SpawnCaptureResult } from "../core/utils/spawn_capture.js";
-import { SESSION_PROTOCOL_MAX_FILE_BYTES } from "../protocol/session_protocol.js";
+import { SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES } from "../protocol/session_protocol.js";
 import type { TauSdkSession } from "../sdk/types.js";
 
 const HELPER_TIMEOUT_MS = 10_000;
+const MAX_FILE_BYTES = SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES;
+const MAX_FILE_READ_CAPTURE_BYTES = 4 * Math.ceil(MAX_FILE_BYTES / 3) + 1024;
+const EXEC_ARGUMENTS_COMMAND = 'exec "$0" "$@"';
 
 export function createSdkToolExecutionBackend(options: {
   session: TauSdkSession;
@@ -19,21 +22,10 @@ export function createSdkToolExecutionBackend(options: {
 
   const runBash: ToolExecutionBackend["runBash"] = async (command, runOptions = {}) => {
     const result = await session.exec(command, {
-      cwd: runOptions.cwd ?? cwd,
-      ...(runOptions.timeoutMs !== undefined ? { timeoutMs: runOptions.timeoutMs } : {}),
-      ...(runOptions.maxCaptureBytes !== undefined
-        ? { maxCaptureBytes: runOptions.maxCaptureBytes }
-        : {}),
-      ...(runOptions.signal ? { signal: runOptions.signal } : {}),
-    });
-    runOptions.signal?.throwIfAborted();
-    return result;
-  };
-
-  const runProcess: ToolExecutionBackend["runProcess"] = async (argv, runOptions = {}) => {
-    const result = await session.execProcess(argv, {
-      cwd: runOptions.cwd ?? cwd,
+      ...(runOptions.args !== undefined ? { args: runOptions.args } : {}),
       ...(runOptions.env !== undefined ? { env: runOptions.env } : {}),
+      ...(runOptions.stdin !== undefined ? { stdin: runOptions.stdin } : {}),
+      cwd: runOptions.cwd ?? cwd,
       ...(runOptions.timeoutMs !== undefined ? { timeoutMs: runOptions.timeoutMs } : {}),
       ...(runOptions.maxCaptureBytes !== undefined
         ? { maxCaptureBytes: runOptions.maxCaptureBytes }
@@ -48,38 +40,49 @@ export function createSdkToolExecutionBackend(options: {
     script,
     args = [],
     runOptions = {},
-  ) => runProcess(["node", "-e", script, ...args], runOptions);
+  ) =>
+    runBash(EXEC_ARGUMENTS_COMMAND, {
+      ...runOptions,
+      args: ["node", "-e", script, ...args],
+    });
 
   return {
     async dispose() {},
 
-    runProcess,
     runBash,
     runNodeScript,
 
     async readFile(path) {
-      const result = await session.readFile(path, { maxBytes: SESSION_PROTOCOL_MAX_FILE_BYTES });
-      return { path, content: Buffer.from(result.contentBase64, "base64").toString("utf-8") };
+      const result = await this.readFileBinary(path, { maxBytes: MAX_FILE_BYTES });
+      return { path, content: result.content.toString("utf-8") };
     },
 
     async readFileBinary(path, readOptions = {}) {
-      const result = await session.readFile(path, {
-        maxBytes: readOptions.maxBytes ?? SESSION_PROTOCOL_MAX_FILE_BYTES,
-      });
+      const result = await runNodeHelper(
+        runNodeScript,
+        READ_FILE_BINARY_SCRIPT,
+        [path, String(readOptions.maxBytes ?? MAX_FILE_BYTES)],
+        {
+          cwd,
+          timeoutMs: HELPER_TIMEOUT_MS,
+          maxCaptureBytes: MAX_FILE_READ_CAPTURE_BYTES,
+        },
+      );
+      const parsed = JSON.parse(result) as { contentBase64: string; bytes: number };
       return {
         path,
-        content: Buffer.from(result.contentBase64, "base64"),
-        bytes: result.bytes,
+        content: Buffer.from(parsed.contentBase64, "base64"),
+        bytes: parsed.bytes,
       };
     },
 
     async writeFile(path, content) {
-      const result = await session.writeFile(path, Buffer.from(content, "utf-8"));
+      const result = await writeFile(runNodeScript, cwd, path, Buffer.from(content, "utf-8"));
       return { ...result, lines: content.split("\n").length };
     },
 
     async writeFileBinary(path, content) {
-      return await session.writeFile(path, content);
+      return await writeFile(runNodeScript, cwd, path, content);
     },
 
     async listDir(path) {
@@ -102,7 +105,8 @@ export function createSdkDiffSnapshotDeps(options: {
   return {
     spawn: async (cmd, args, spawnOptions = {}): Promise<SpawnCaptureResult> => {
       spawnOptions.signal?.throwIfAborted();
-      const result = await options.backend.runProcess([cmd, ...args], {
+      const result = await options.backend.runBash(EXEC_ARGUMENTS_COMMAND, {
+        args: [cmd, ...args],
         cwd: spawnOptions.cwd ?? options.cwd,
         ...(spawnOptions.env ? { env: definedEnvironment(spawnOptions.env) } : {}),
         ...(spawnOptions.timeoutMs !== undefined ? { timeoutMs: spawnOptions.timeoutMs } : {}),
@@ -143,7 +147,7 @@ async function runNodeHelper(
   runNodeScript: ToolExecutionBackend["runNodeScript"],
   script: string,
   args: string[],
-  options: CommandExecutionOptions & { cwd: string; timeoutMs: number },
+  options: BashExecutionOptions & { cwd: string; timeoutMs: number },
 ): Promise<string> {
   const result = await runNodeScript(script, args, options);
   if (result.truncated) {
@@ -156,6 +160,49 @@ async function runNodeHelper(
   }
   return result.stdout;
 }
+
+async function writeFile(
+  runNodeScript: ToolExecutionBackend["runNodeScript"],
+  cwd: string,
+  path: string,
+  content: Buffer,
+): Promise<{ path: string; bytes: number }> {
+  if (content.byteLength > MAX_FILE_BYTES) {
+    throw new Error(`file exceeds maximum size of ${MAX_FILE_BYTES} bytes`);
+  }
+  const result = await runNodeHelper(runNodeScript, WRITE_FILE_SCRIPT, [path], {
+    cwd,
+    timeoutMs: HELPER_TIMEOUT_MS,
+    stdin: content,
+  });
+  return JSON.parse(result) as { path: string; bytes: number };
+}
+
+const READ_FILE_BINARY_SCRIPT = `
+const fs = require("fs");
+const path = process.argv[1];
+const maxBytes = Number(process.argv[2]);
+const stats = fs.statSync(path);
+if (!stats.isFile()) throw new Error("path is not a file");
+if (stats.size > maxBytes) {
+  throw new Error(\`file exceeds maximum size of \${maxBytes} bytes (got \${stats.size} bytes)\`);
+}
+const content = fs.readFileSync(path);
+process.stdout.write(JSON.stringify({
+  contentBase64: content.toString("base64"),
+  bytes: content.byteLength,
+}));
+`.trim();
+
+const WRITE_FILE_SCRIPT = `
+const fs = require("fs");
+const path = require("path");
+const file = process.argv[1];
+const content = fs.readFileSync(0);
+fs.mkdirSync(path.dirname(file), { recursive: true });
+fs.writeFileSync(file, content);
+process.stdout.write(JSON.stringify({ path: file, bytes: content.byteLength }));
+`.trim();
 
 const LIST_DIR_SCRIPT = `
 const fs = require("fs");

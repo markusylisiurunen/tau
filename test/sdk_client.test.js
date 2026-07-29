@@ -244,14 +244,9 @@ class FakeSessionProtocolTransport {
         case "session.retry":
           return { turn: { status: "completed", stopReason: "stop" } };
         case "session.exec":
-        case "session.execProcess":
           return createProtocolExecResult({ output: "raw output" });
         case "session.cancelExec":
           return { cancelled: true };
-        case "session.readFile":
-          return { contentBase64: Buffer.from("file").toString("base64"), bytes: 4 };
-        case "session.writeFile":
-          return { path: params.path, bytes: Buffer.from(params.contentBase64, "base64").length };
         case "session.sample":
           return {
             message: {
@@ -606,6 +601,9 @@ describe("sdk_client", () => {
 
     await expect(
       readySession.exec("git diff", {
+        args: ["one", "two"],
+        env: { HOME: "/home/user" },
+        stdin: Buffer.from("input"),
         cwd: "/repo",
         timeoutMs: 30000,
         maxCaptureBytes: 2 * 1024 * 1024,
@@ -617,52 +615,12 @@ describe("sdk_client", () => {
         sessionId: "session-1",
         execId: expect.any(String),
         command: "git diff",
-        cwd: "/repo",
-        timeoutMs: 30000,
-        maxCaptureBytes: 2 * 1024 * 1024,
-      },
-    });
-
-    await expect(
-      readySession.execProcess(["git", "status", "--short"], {
-        cwd: "/repo",
+        args: ["one", "two"],
         env: { HOME: "/home/user" },
-        timeoutMs: 30000,
-        maxCaptureBytes: 2 * 1024 * 1024,
-      }),
-    ).resolves.toEqual(createProtocolExecResult({ output: "raw output" }));
-    expect(transport.requests.at(-1)).toEqual({
-      method: "session.execProcess",
-      params: {
-        sessionId: "session-1",
-        execId: expect.any(String),
-        argv: ["git", "status", "--short"],
+        stdinBase64: Buffer.from("input").toString("base64"),
         cwd: "/repo",
-        env: { HOME: "/home/user" },
         timeoutMs: 30000,
         maxCaptureBytes: 2 * 1024 * 1024,
-      },
-    });
-
-    await expect(readySession.readFile("/repo/file.txt", { maxBytes: 1024 })).resolves.toEqual({
-      contentBase64: Buffer.from("file").toString("base64"),
-      bytes: 4,
-    });
-    expect(transport.requests.at(-1)).toEqual({
-      method: "session.readFile",
-      params: { sessionId: "session-1", path: "/repo/file.txt", maxBytes: 1024 },
-    });
-
-    await expect(readySession.writeFile("/tmp/file.txt", Buffer.from("file"))).resolves.toEqual({
-      path: "/tmp/file.txt",
-      bytes: 4,
-    });
-    expect(transport.requests.at(-1)).toEqual({
-      method: "session.writeFile",
-      params: {
-        sessionId: "session-1",
-        path: "/tmp/file.txt",
-        contentBase64: Buffer.from("file").toString("base64"),
       },
     });
 

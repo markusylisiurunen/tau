@@ -170,11 +170,7 @@ describe("Fly Sprite execution environment", () => {
     const home = await mkdtemp(join(tmpdir(), "tau-fly-bash-home-"));
     const repo = join(home, "repo");
     await mkdir(repo);
-    await writeFile(
-      join(home, ".bash_profile"),
-      'export TAU_LOGIN_PROFILE=loaded\nprintf "profile output\\n"\n',
-      "utf8",
-    );
+    await writeFile(join(home, ".bash_profile"), "export TAU_LOGIN_PROFILE=loaded\n", "utf8");
     const sprite = {
       spawn(command, args, options) {
         return spawnChild(command, args, {
@@ -195,9 +191,12 @@ describe("Fly Sprite execution environment", () => {
     try {
       const result = await environment
         .getToolExecutionBackend()
-        .runBash('values=(one two); printf "%s|%s" "$TAU_LOGIN_PROFILE" "$HOME"');
+        .runBash('values=(one two); printf "%s|%s|%s|" "$TAU_LOGIN_PROFILE" "$HOME" "$0"; cat', {
+          args: ["argument"],
+          stdin: Buffer.from("input"),
+        });
 
-      expect(result.stdout).toBe(`profile output\nloaded|${home}`);
+      expect(result.stdout).toBe(`loaded|${home}|argument|input`);
       expect(result.exitCode).toBe(0);
     } finally {
       await environment.dispose();
@@ -328,7 +327,7 @@ describe("Fly Sprite execution environment", () => {
     expect(nodeScriptCalls[0].args[0]).toBe("/home/sprite/repo");
     expect(nodeScriptCalls[0].options).toMatchObject({
       cwd: "/home/sprite/repo",
-      maxCaptureBytes: 16 * 1024 * 1024,
+      maxCaptureBytes: 24 * 1024 * 1024,
     });
   });
 

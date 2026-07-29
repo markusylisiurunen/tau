@@ -132,50 +132,33 @@ export function createFlySpriteToolExecutionBackend(options: {
   cwd: string;
 }): ToolExecutionBackend {
   const worker = new FlySpriteWorker(options.sprite, options.cwd);
+  const runBash: ToolExecutionBackend["runBash"] = async (command, runOptions = {}) =>
+    await worker.request(
+      "exec",
+      {
+        command,
+        args: runOptions.args,
+        stdinBase64: runOptions.stdin?.toString("base64"),
+        cwd: runOptions.cwd ?? options.cwd,
+        timeoutMs: runOptions.timeoutMs,
+        env: applyBashEnvironment(runOptions.env),
+        maxCaptureBytes: runOptions.maxCaptureBytes,
+      },
+      { signal: runOptions.signal },
+    );
+  const runNodeScript: ToolExecutionBackend["runNodeScript"] = (
+    script,
+    args = [],
+    runOptions = {},
+  ) =>
+    runBash('exec "$0" "$@"', {
+      ...runOptions,
+      args: ["node", "-e", script, ...args],
+    });
 
   return {
-    async runProcess(argv, runOptions = {}) {
-      return await worker.request(
-        "process",
-        {
-          argv,
-          cwd: runOptions.cwd ?? options.cwd,
-          timeoutMs: runOptions.timeoutMs,
-          env: runOptions.env,
-          maxCaptureBytes: runOptions.maxCaptureBytes,
-        },
-        { signal: runOptions.signal },
-      );
-    },
-
-    async runBash(command, runOptions = {}) {
-      return await worker.request(
-        "exec",
-        {
-          command,
-          cwd: runOptions.cwd ?? options.cwd,
-          timeoutMs: runOptions.timeoutMs,
-          env: applyBashEnvironment(runOptions.env),
-          maxCaptureBytes: runOptions.maxCaptureBytes,
-        },
-        { signal: runOptions.signal },
-      );
-    },
-
-    async runNodeScript(script, args = [], runOptions = {}) {
-      return await worker.request(
-        "nodeScript",
-        {
-          script,
-          args,
-          cwd: runOptions.cwd ?? options.cwd,
-          timeoutMs: runOptions.timeoutMs,
-          env: runOptions.env,
-          maxCaptureBytes: runOptions.maxCaptureBytes,
-        },
-        { signal: runOptions.signal },
-      );
-    },
+    runBash,
+    runNodeScript,
 
     async readFile(path) {
       const result = await worker.request("readFile", {
@@ -229,23 +212,10 @@ export function createFlySpriteToolExecutionBackend(options: {
 }
 
 type FlySpriteWorkerRequestByMethod = {
-  process: {
-    argv: [string, ...string[]];
-    cwd: string;
-    timeoutMs?: number;
-    env?: Record<string, string>;
-    maxCaptureBytes?: number;
-  };
   exec: {
     command: string;
-    cwd: string;
-    timeoutMs?: number;
-    env?: Record<string, string>;
-    maxCaptureBytes?: number;
-  };
-  nodeScript: {
-    script: string;
-    args: string[];
+    args?: string[];
+    stdinBase64?: string;
     cwd: string;
     timeoutMs?: number;
     env?: Record<string, string>;
@@ -278,9 +248,7 @@ type FlySpriteWorkerRequestByMethod = {
 };
 
 type FlySpriteWorkerResultByMethod = {
-  process: BashExecutionResult;
   exec: BashExecutionResult;
-  nodeScript: BashExecutionResult;
   readFile: {
     content: string;
   };
@@ -651,36 +619,19 @@ async function handleLine(line) {
       return;
     }
 
-    if (request.method === "process") {
-      const [command, ...args] = request.argv;
-      const result = await runCommand(request.id, command, args, {
-        cwd: request.cwd,
-        timeoutMs: request.timeoutMs,
-        env: request.env,
-        maxCaptureBytes: request.maxCaptureBytes,
-      });
-      respond(request.id, result);
-      return;
-    }
-
     if (request.method === "exec") {
-      const result = await runCommand(request.id, "bash", ["-lc", request.command], {
-        cwd: request.cwd,
-        timeoutMs: request.timeoutMs,
-        env: request.env,
-        maxCaptureBytes: request.maxCaptureBytes,
-      });
-      respond(request.id, result);
-      return;
-    }
-
-    if (request.method === "nodeScript") {
-      const result = await runCommand(request.id, "node", ["-e", request.script, ...request.args], {
-        cwd: request.cwd,
-        timeoutMs: request.timeoutMs,
-        env: request.env,
-        maxCaptureBytes: request.maxCaptureBytes,
-      });
+      const result = await runCommand(
+        request.id,
+        "bash",
+        ["-lc", request.command, ...(request.args ?? [])],
+        {
+          cwd: request.cwd,
+          timeoutMs: request.timeoutMs,
+          env: request.env,
+          maxCaptureBytes: request.maxCaptureBytes,
+          stdinBase64: request.stdinBase64,
+        },
+      );
       respond(request.id, result);
       return;
     }
@@ -763,8 +714,11 @@ function runCommand(id, command, args, options) {
       cwd: options.cwd,
       env: { ...process.env, ...options.env },
       detached: true,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: [options.stdinBase64 === undefined ? "ignore" : "pipe", "pipe", "pipe"],
     });
+    if (options.stdinBase64 !== undefined) {
+      child.stdin.end(Buffer.from(options.stdinBase64, "base64"));
+    }
 
     const trimChunks = (targetChunks, targetBytes) => {
       let nextBytes = targetBytes;

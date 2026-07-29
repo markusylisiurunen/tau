@@ -130,18 +130,6 @@ function createHostedSession(sessionId, sessions, options = {}) {
         output: "/repo\n",
       });
     },
-    async execProcess() {
-      return createProtocolExecResult({ output: "/repo\n" });
-    },
-    cancelExec() {
-      return false;
-    },
-    async readFile() {
-      return { contentBase64: "", bytes: 0 };
-    },
-    async writeFile(options) {
-      return { path: options.path, bytes: 0 };
-    },
     async snapshot() {
       return createProtocolSnapshot({
         sessionId,

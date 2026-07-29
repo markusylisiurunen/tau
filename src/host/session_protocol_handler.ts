@@ -214,17 +214,10 @@ export class SessionProtocolHandler {
           await this.handleRetry(request);
           return;
         case "session.exec":
-        case "session.execProcess":
           await this.handleExec(request);
           return;
         case "session.cancelExec":
           await this.handleCancelExec(request);
-          return;
-        case "session.readFile":
-          await this.handleReadFile(request);
-          return;
-        case "session.writeFile":
-          await this.handleWriteFile(request);
           return;
         case "session.sample":
           await this.handleSample(request);
@@ -558,10 +551,7 @@ export class SessionProtocolHandler {
   }
 
   private async handleExec(
-    request: Extract<
-      SessionProtocolRequestMessage,
-      { method: "session.exec" | "session.execProcess" }
-    >,
+    request: Extract<SessionProtocolRequestMessage, { method: "session.exec" }>,
   ): Promise<void> {
     const key = this.execKey(request.params.sessionId, request.params.execId);
     if (this.activeExecAbortControllers.has(key)) {
@@ -617,62 +607,6 @@ export class SessionProtocolHandler {
     this.sendMessage(
       createSessionProtocolSuccessResponse(request.id, "session.cancelExec", { cancelled }),
     );
-  }
-
-  private async handleReadFile(
-    request: Extract<SessionProtocolRequestMessage, { method: "session.readFile" }>,
-  ): Promise<void> {
-    const state = await this.getSessionState(request.params.sessionId);
-    if (!state) {
-      this.sendSessionNotFound(request.id, request.params.sessionId);
-      return;
-    }
-    try {
-      const result = await state.session.readFile({
-        path: request.params.path,
-        maxBytes: request.params.maxBytes,
-      });
-      this.sendMessage(
-        createSessionProtocolSuccessResponse(request.id, "session.readFile", result),
-      );
-    } catch (error) {
-      this.sendMessage(
-        createSessionProtocolErrorResponse(
-          request.id,
-          SESSION_PROTOCOL_ERROR_CODES.internalError,
-          "failed to read execution-environment file",
-          { cause: error instanceof Error ? error.message : String(error) },
-        ),
-      );
-    }
-  }
-
-  private async handleWriteFile(
-    request: Extract<SessionProtocolRequestMessage, { method: "session.writeFile" }>,
-  ): Promise<void> {
-    const state = await this.getSessionState(request.params.sessionId);
-    if (!state) {
-      this.sendSessionNotFound(request.id, request.params.sessionId);
-      return;
-    }
-    try {
-      const result = await state.session.writeFile({
-        path: request.params.path,
-        contentBase64: request.params.contentBase64,
-      });
-      this.sendMessage(
-        createSessionProtocolSuccessResponse(request.id, "session.writeFile", result),
-      );
-    } catch (error) {
-      this.sendMessage(
-        createSessionProtocolErrorResponse(
-          request.id,
-          SESSION_PROTOCOL_ERROR_CODES.internalError,
-          "failed to write execution-environment file",
-          { cause: error instanceof Error ? error.message : String(error) },
-        ),
-      );
-    }
   }
 
   private async handleSample(
@@ -1125,31 +1059,26 @@ export class SessionProtocolHandler {
 
   private async executeExec(
     state: SessionProtocolHandlerSessionState,
-    request: Extract<
-      SessionProtocolRequestMessage,
-      { method: "session.exec" | "session.execProcess" }
-    >,
+    request: Extract<SessionProtocolRequestMessage, { method: "session.exec" }>,
     signal: AbortSignal,
   ): Promise<void> {
     try {
-      const options = {
+      const result = await state.session.exec({
         execId: request.params.execId,
+        command: request.params.command,
+        ...(request.params.args !== undefined ? { args: request.params.args } : {}),
+        ...(request.params.env !== undefined ? { env: request.params.env } : {}),
+        ...(request.params.stdinBase64 !== undefined
+          ? { stdinBase64: request.params.stdinBase64 }
+          : {}),
         ...(request.params.cwd !== undefined ? { cwd: request.params.cwd } : {}),
         ...(request.params.timeoutMs !== undefined ? { timeoutMs: request.params.timeoutMs } : {}),
         ...(request.params.maxCaptureBytes !== undefined
           ? { maxCaptureBytes: request.params.maxCaptureBytes }
           : {}),
         signal,
-      };
-      const result =
-        request.method === "session.exec"
-          ? await state.session.exec({ ...options, command: request.params.command })
-          : await state.session.execProcess({
-              ...options,
-              argv: request.params.argv,
-              ...(request.params.env !== undefined ? { env: request.params.env } : {}),
-            });
-      this.sendMessage(createSessionProtocolSuccessResponse(request.id, request.method, result));
+      });
+      this.sendMessage(createSessionProtocolSuccessResponse(request.id, "session.exec", result));
     } catch (error) {
       const cancelled = signal.aborted || isAbortError(error);
       const busy = error instanceof SessionExecBusyError;

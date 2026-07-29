@@ -955,8 +955,11 @@ describe("session_protocol", () => {
     expect(
       validateSessionProtocolParams("session.exec", {
         sessionId: "session-1",
-        execId: "exec-2",
+        execId: "exec-1",
         command: "git diff",
+        args: ["one", "two"],
+        env: { HOME: "/home/user" },
+        stdinBase64: Buffer.from("input").toString("base64"),
         cwd: "/repo",
         timeoutMs: 30000,
         maxCaptureBytes: 2097152,
@@ -965,82 +968,39 @@ describe("session_protocol", () => {
       ok: true,
       value: {
         sessionId: "session-1",
-        execId: "exec-2",
+        execId: "exec-1",
         command: "git diff",
-        cwd: "/repo",
-        timeoutMs: 30000,
-        maxCaptureBytes: 2097152,
-      },
-    });
-    expect(
-      validateSessionProtocolParams("session.execProcess", {
-        sessionId: "session-1",
-        execId: "process-1",
-        argv: ["git", "status", "--short"],
+        args: ["one", "two"],
         env: { HOME: "/home/user" },
+        stdinBase64: Buffer.from("input").toString("base64"),
         cwd: "/repo",
         timeoutMs: 30000,
         maxCaptureBytes: 2097152,
-      }),
-    ).toEqual({
-      ok: true,
-      value: {
-        sessionId: "session-1",
-        execId: "process-1",
-        argv: ["git", "status", "--short"],
-        env: { HOME: "/home/user" },
-        cwd: "/repo",
-        timeoutMs: 30000,
-        maxCaptureBytes: 2097152,
-      },
-    });
-    expect(
-      validateSessionProtocolParams("session.cancelExec", {
-        sessionId: "session-1",
-        execId: "process-1",
-      }),
-    ).toEqual({
-      ok: true,
-      value: { sessionId: "session-1", execId: "process-1" },
-    });
-    expect(
-      validateSessionProtocolParams("session.readFile", {
-        sessionId: "session-1",
-        path: "/repo/patch.diff",
-        maxBytes: 2097152,
-      }),
-    ).toEqual({
-      ok: true,
-      value: { sessionId: "session-1", path: "/repo/patch.diff", maxBytes: 2097152 },
-    });
-    expect(
-      validateSessionProtocolParams("session.writeFile", {
-        sessionId: "session-1",
-        path: "/tmp/output.txt",
-        contentBase64: Buffer.from("output").toString("base64"),
-      }),
-    ).toEqual({
-      ok: true,
-      value: {
-        sessionId: "session-1",
-        path: "/tmp/output.txt",
-        contentBase64: Buffer.from("output").toString("base64"),
       },
     });
     expect(
       validateSessionProtocolParams("session.exec", {
         sessionId: "session-1",
-        execId: "exec-3",
+        execId: "exec-1",
         command: "git diff",
-        maxCaptureBytes: 16 * 1024 * 1024 + 1,
+        maxCaptureBytes: 24 * 1024 * 1024 + 1,
       }),
     ).toEqual({
       ok: false,
       error: {
         code: "invalid_params",
         message:
-          "session.exec params.maxCaptureBytes must be a positive integer no greater than 16777216 when provided",
+          "session.exec params.maxCaptureBytes must be a positive integer no greater than 25165824 when provided",
       },
+    });
+    expect(
+      validateSessionProtocolParams("session.cancelExec", {
+        sessionId: "session-1",
+        execId: "exec-1",
+      }),
+    ).toEqual({
+      ok: true,
+      value: { sessionId: "session-1", execId: "exec-1" },
     });
     expect(
       validateSessionProtocolParams("session.record", {
@@ -1268,27 +1228,6 @@ describe("session_protocol", () => {
     expect(validateSessionProtocolResult("session.cancelExec", { cancelled: true })).toEqual({
       ok: true,
       value: { cancelled: true },
-    });
-    expect(
-      validateSessionProtocolResult("session.readFile", {
-        contentBase64: Buffer.from("file").toString("base64"),
-        bytes: 4,
-      }),
-    ).toEqual({
-      ok: true,
-      value: { contentBase64: Buffer.from("file").toString("base64"), bytes: 4 },
-    });
-    expect(
-      validateSessionProtocolResult("session.readFile", {
-        contentBase64: Buffer.from("file").toString("base64"),
-        bytes: 3,
-      }),
-    ).toMatchObject({ ok: false });
-    expect(
-      validateSessionProtocolResult("session.writeFile", { path: "/tmp/file", bytes: 4 }),
-    ).toEqual({
-      ok: true,
-      value: { path: "/tmp/file", bytes: 4 },
     });
     expect(
       validateSessionProtocolResult("session.autocompletePaths", {

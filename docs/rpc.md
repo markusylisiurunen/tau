@@ -100,10 +100,7 @@ when the rpc server starts, it immediately emits a `ready` line:
     "session.cancelPendingMessages",
     "session.retry",
     "session.exec",
-    "session.execProcess",
     "session.cancelExec",
-    "session.readFile",
-    "session.writeFile",
     "session.sample",
     "session.interrupt",
     "session.snapshot",
@@ -202,10 +199,7 @@ params (required):
       "session.cancelPendingMessages",
       "session.retry",
       "session.exec",
-      "session.execProcess",
       "session.cancelExec",
-      "session.readFile",
-      "session.writeFile",
       "session.sample",
       "session.interrupt",
       "session.snapshot",
@@ -528,14 +522,21 @@ params (required):
 {
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "execId": "exec-0195d6e4",
-  "command": "git diff -- src/main.ts",
+  "command": "exec \"$0\" \"$@\"",
+  "args": ["git", "diff", "--", "src/main.ts"],
+  "env": { "GIT_OPTIONAL_LOCKS": "0" },
+  "stdinBase64": "aW5wdXQ=",
   "cwd": "/repo",
   "timeoutMs": 30000,
   "maxCaptureBytes": 2097152
 }
 ```
 
-runs the command in a fresh, non-interactive login Bash belonging to the session execution environment and returns captured output. `execId` is required and must be unique among active executions in the session. Tau sets `HOME` to the execution environment home, so Bash reads `/etc/profile` and then the first available user login file (`~/.bash_profile`, `~/.bash_login`, or `~/.profile`). Bash also reads inherited `BASH_ENV` when set; otherwise `.bashrc` is loaded only when the login configuration sources it. Each call starts a new process, so shell state does not persist. `output` is stdout and stderr interleaved in arrival order; `stdout` and `stderr` are the split streams. `cwd`, `timeoutMs`, and `maxCaptureBytes` are optional. `maxCaptureBytes` overrides the default one-megabyte capture limit for this command, up to 16 MiB. `cwd` is the command working directory, not a confinement boundary; absolute paths are allowed when the execution environment permits them. Exec requests are independent side channels: multiple commands can run concurrently with each other and with session turns, mutations, samples, or ephemeral agents. They do not enter the session mutation queue, change snapshots, or emit deltas. Workspace races are allowed, so clients must coordinate commands when consistency matters. `session.cancelExec` targets one active exec by id; `session.interrupt` remains the explicit session-wide cancellation operation. The command does not add anything to session history; clients that want command output in model context should call `session.record` with their chosen text.
+runs `command` in a fresh, non-interactive login Bash belonging to the session execution environment and returns captured output. `execId` is required and must be unique among active executions in the session. Optional `args` are appended after Bash's command string, so the first value becomes `$0` and the rest become `$@`; Tau uses `exec "$0" "$@"` with exact arguments for Node, Git, grep, and file helpers so those executables resolve from the same login-configured `PATH` as model commands without shell quoting. Optional `env` supplies the shell's starting environment overrides, and `stdinBase64` supplies up to 16 MiB of binary stdin.
+
+Tau sets `HOME` to the execution environment home, so Bash reads `/etc/profile` and then the first available user login file (`~/.bash_profile`, `~/.bash_login`, or `~/.profile`). Bash also reads inherited `BASH_ENV` when set; otherwise `.bashrc` is loaded only when the login configuration sources it. Login startup files must not write to stdout or stderr, read stdin, require a TTY, or terminate the shell unexpectedly. Tau does not filter or frame startup output. Each call starts a new process, so shell state does not persist.
+
+`output` is stdout and stderr interleaved in arrival order; `stdout` and `stderr` are the split streams. `args`, `env`, `stdinBase64`, `cwd`, `timeoutMs`, and `maxCaptureBytes` are optional. `maxCaptureBytes` overrides the default one-megabyte capture limit for this command, up to 24 MiB. `cwd` is the command working directory, not a confinement boundary; absolute paths are allowed when the execution environment permits them. Exec requests are independent side channels: multiple commands can run concurrently with each other and with session turns, mutations, samples, or ephemeral agents. They do not enter the session mutation queue, change snapshots, or emit deltas. Workspace races are allowed, so clients must coordinate commands when consistency matters. `session.cancelExec` targets one active exec by id; `session.interrupt` remains the explicit session-wide cancellation operation. The command does not add anything to session history; clients that want command output in model context should call `session.record` with their chosen text.
 
 returns:
 
@@ -552,17 +553,9 @@ returns:
 }
 ```
 
-#### session.execProcess
-
-runs a machine-facing argv command without starting Bash or loading shell profiles. Params require `sessionId`, a unique active `execId`, and a non-empty `argv`; optional `env`, `cwd`, `timeoutMs`, and `maxCaptureBytes` are applied directly in the execution environment. The result is the same captured execution shape as `session.exec`. Tau-controlled Git, Node, and other structured helper operations use this method so profile output cannot corrupt payloads.
-
 #### session.cancelExec
 
-params require `sessionId` and `execId`. Cancels only that active `session.exec` or `session.execProcess` operation and returns `{ "cancelled": boolean }`; it does not interrupt turns, samples, or other execs.
-
-#### session.readFile / session.writeFile
-
-`session.readFile` requires `sessionId`, `path`, and a positive `maxBytes` up to 16 MiB, and returns `{ contentBase64, bytes }`. `session.writeFile` requires `sessionId`, `path`, and bounded `contentBase64`, and returns `{ path, bytes }`. These operations transfer execution-environment files without shell commands or command-line payload encoding.
+params require `sessionId` and `execId`. Cancels only that active `session.exec` operation and returns `{ "cancelled": boolean }`; it does not interrupt turns, samples, or other execs.
 
 #### session.sample
 
@@ -1002,7 +995,7 @@ for lines that cannot produce a valid request id (for example malformed json), `
 - `session.record`, `session.setReasoning`, `session.setPersona`, `session.reload`, `session.compact`, `session.prune`, `session.rewind`, and `session.terminateSubagent` run through a session-owned mutation queue (arrival order across clients observed to the same live session)
 - `session.setReasoning` updates settings immediately without interrupting an active turn; active turns keep their captured reasoning and the new setting applies to the next user-message turn
 - only one `session.submit` or `session.retry` turn can run at once (`busy` otherwise)
-- `session.exec`, `session.execProcess`, file transfers, and `session.sample` calls can run concurrently with each other and with normal session work; they never enter the mutation queue
+- `session.exec` and `session.sample` calls can run concurrently with each other and with normal session work; they never enter the mutation queue, and `session.cancelExec` targets one exec without interrupting the others
 - `session.ephemeral.create`, `session.ephemeral.submit`, and `session.ephemeral.close` manage independent, non-persisted contexts outside the main-session mutation queue; only overlapping submissions to the same ephemeral thread return `busy`
 - `session.queue` can be accepted during active main-session work and runs after the active turn settles
 - `session.steer` can be accepted during an active turn and runs at the next safe boundary after requesting the active turn to stop

@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -1206,14 +1206,27 @@ describe("session compaction preparation", () => {
 });
 
 describe("session execution backend plumbing", () => {
-  it("writes binary files through the SDK execution backend without text conversion", async () => {
+  it("writes binary files through login Bash stdin without text conversion", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "tau-sdk-backend-test-"));
     const session = {
-      async writeFile(path, content) {
-        const target = join(cwd, path);
-        mkdirSync(join(cwd, "assets"), { recursive: true });
-        writeFileSync(target, content);
-        return { path, bytes: content.byteLength };
+      async exec(command, options) {
+        const result = spawnSync("/bin/bash", ["-lc", command, ...(options.args ?? [])], {
+          cwd: options.cwd,
+          env: { ...process.env, ...options.env },
+          input: options.stdin,
+        });
+        const stdout = result.stdout.toString("utf-8");
+        const stderr = result.stderr.toString("utf-8");
+        return {
+          output: stdout + stderr,
+          stdout,
+          stderr,
+          exitCode: result.status,
+          truncated: false,
+          timedOut: false,
+          aborted: false,
+          closeSignal: result.signal,
+        };
       },
     };
     const backend = createSdkToolExecutionBackend({ session, cwd });
@@ -1230,7 +1243,7 @@ describe("session execution backend plumbing", () => {
     }
   });
 
-  it("captures no-HEAD diff snapshots through direct process execution", async () => {
+  it("captures no-HEAD diff snapshots through automation-safe login Bash", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "tau-sdk-diff-test-"));
     const runGit = (args) => {
       const result = spawnSync("git", args, { cwd, encoding: "utf8" });
@@ -1240,13 +1253,18 @@ describe("session execution backend plumbing", () => {
     };
     const execOptions = [];
     const session = {
-      async execProcess(argv, options) {
+      async exec(command, options) {
         execOptions.push(options);
-        const result = spawnSync(argv[0], argv.slice(1), {
-          cwd: options.cwd,
-          env: { ...process.env, ...options.env },
-          encoding: "utf8",
-        });
+        const result = spawnSync(
+          "/bin/bash",
+          ["-lc", `set -e\n${command}`, ...(options.args ?? [])],
+          {
+            cwd: options.cwd,
+            env: { ...process.env, ...options.env },
+            input: options.stdin,
+            encoding: "utf8",
+          },
+        );
         return {
           output: result.stdout + result.stderr,
           stdout: result.stdout,
@@ -1257,10 +1275,6 @@ describe("session execution backend plumbing", () => {
           aborted: false,
           closeSignal: result.signal,
         };
-      },
-      async readFile(path) {
-        const content = readFileSync(path);
-        return { contentBase64: content.toString("base64"), bytes: content.byteLength };
       },
     };
 
@@ -1307,13 +1321,14 @@ describe("session execution backend plumbing", () => {
       if (result.status !== 0) throw new Error(result.stderr || result.stdout);
     };
     runGit(["init"]);
-
     const session = {
-      async execProcess(argv, options) {
-        const result = spawnSync(argv[0], argv.slice(1), {
+      async exec(command, options) {
+        const result = spawnSync("/bin/bash", ["-lc", command, ...(options.args ?? [])], {
           cwd: options.cwd,
           env: { ...process.env, ...options.env },
+          input: options.stdin,
           encoding: "utf8",
+          maxBuffer: 32 * 1024 * 1024,
         });
         return {
           output: result.stdout + result.stderr,
@@ -1325,11 +1340,6 @@ describe("session execution backend plumbing", () => {
           aborted: false,
           closeSignal: result.signal,
         };
-      },
-      async readFile(path, options) {
-        const content = readFileSync(path);
-        expect(content.byteLength).toBeLessThanOrEqual(options.maxBytes);
-        return { contentBase64: content.toString("base64"), bytes: content.byteLength };
       },
     };
 

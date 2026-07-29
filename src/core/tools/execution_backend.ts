@@ -11,7 +11,7 @@ export const MAX_COMMAND_CAPTURE_BYTES = SESSION_PROTOCOL_MAX_EXEC_CAPTURE_BYTES
 
 const COMMAND_KILL_GRACE_MS = 2_000;
 
-export type CommandExecutionResult = {
+export type BashExecutionResult = {
   output: string;
   stdout: string;
   stderr: string;
@@ -22,14 +22,14 @@ export type CommandExecutionResult = {
   closeSignal: string | null;
 };
 
-export type BashExecutionResult = CommandExecutionResult;
-
-export type CommandExecutionOptions = {
+export type BashExecutionOptions = {
   timeoutMs?: number;
   signal?: AbortSignal;
   cwd?: string;
   env?: Record<string, string>;
   maxCaptureBytes?: number;
+  args?: string[];
+  stdin?: Buffer;
 };
 
 export type ReadFileResult = {
@@ -92,16 +92,12 @@ export function applyBashEnvironment(
 
 export interface ToolExecutionBackend {
   dispose(): Promise<void>;
-  runProcess(
-    argv: [string, ...string[]],
-    options?: CommandExecutionOptions,
-  ): Promise<CommandExecutionResult>;
-  runBash(command: string, options?: CommandExecutionOptions): Promise<BashExecutionResult>;
+  runBash(command: string, options?: BashExecutionOptions): Promise<BashExecutionResult>;
   runNodeScript(
     script: string,
     args?: string[],
-    options?: CommandExecutionOptions,
-  ): Promise<CommandExecutionResult>;
+    options?: BashExecutionOptions,
+  ): Promise<BashExecutionResult>;
   readFile(path: string): Promise<ReadFileResult>;
   readFileBinary(path: string, options?: { maxBytes?: number }): Promise<ReadFileBinaryResult>;
   writeFile(path: string, content: string): Promise<WriteFileResult>;
@@ -124,20 +120,16 @@ export function createLocalToolExecutionBackend(
     ...env,
   });
 
-  const runProcess = async (
-    argv: [string, ...string[]],
-    options: CommandExecutionOptions = {},
-  ): Promise<CommandExecutionResult> => {
-    const [command, ...args] = argv;
+  const runBash: ToolExecutionBackend["runBash"] = async (command, options = {}) => {
     const effectiveTimeoutMs =
       typeof options.timeoutMs === "number" &&
       Number.isFinite(options.timeoutMs) &&
       options.timeoutMs > 0
         ? options.timeoutMs
         : undefined;
-    const result = await spawnCapture(command, args, {
-      stdio: ["ignore", "pipe", "pipe"],
-      env: resolveEnvironment(options.env),
+    const result = await spawnCapture("bash", ["-lc", command, ...(options.args ?? [])], {
+      stdio: options.stdin === undefined ? ["ignore", "pipe", "pipe"] : ["pipe", "pipe", "pipe"],
+      env: resolveEnvironment(applyBashEnvironment(options.env)),
       detached: true,
       killProcessGroup: true,
       cwd: resolveCwd(options.cwd),
@@ -148,6 +140,7 @@ export function createLocalToolExecutionBackend(
       maxCaptureStrategy: "tail",
       captureOutput: "combined-and-split",
       killGraceMs: COMMAND_KILL_GRACE_MS,
+      ...(options.stdin !== undefined ? { input: options.stdin } : {}),
     });
 
     let output = result.output ?? "";
@@ -181,21 +174,17 @@ export function createLocalToolExecutionBackend(
     };
   };
 
+  const runNodeScript: ToolExecutionBackend["runNodeScript"] = (script, args = [], options = {}) =>
+    runBash('exec "$0" "$@"', {
+      ...options,
+      args: ["node", "-e", script, ...args],
+    });
+
   return {
     async dispose() {},
 
-    runProcess,
-
-    runBash(command, options = {}) {
-      return runProcess(["bash", "-lc", command], {
-        ...options,
-        env: applyBashEnvironment(options.env),
-      });
-    },
-
-    runNodeScript(script, args = [], options = {}) {
-      return runProcess(["node", "-e", script, ...args], options);
-    },
+    runBash,
+    runNodeScript,
 
     async readFile(path) {
       const resolvedPath = resolvePath(path);
@@ -272,24 +261,23 @@ export function scopeToolExecutionBackend(
     return Object.keys(merged).length > 0 ? { env: merged } : {};
   };
 
-  const scopeCommandOptions = (options: CommandExecutionOptions): CommandExecutionOptions => ({
-    ...options,
-    cwd: resolveCwd(options.cwd),
-    ...mergeEnvironment(options.env),
-  });
-
   return {
     dispose() {
       return backend.dispose();
     },
-    runProcess(argv, options = {}) {
-      return backend.runProcess(argv, scopeCommandOptions(options));
-    },
     runBash(command, options = {}) {
-      return backend.runBash(command, scopeCommandOptions(options));
+      return backend.runBash(command, {
+        ...options,
+        cwd: resolveCwd(options.cwd),
+        ...mergeEnvironment(options.env),
+      });
     },
     runNodeScript(script, args = [], options = {}) {
-      return backend.runNodeScript(script, args, scopeCommandOptions(options));
+      return backend.runNodeScript(script, args, {
+        ...options,
+        cwd: resolveCwd(options.cwd),
+        ...mergeEnvironment(options.env),
+      });
     },
     readFile(path) {
       return backend.readFile(resolvePath(path));

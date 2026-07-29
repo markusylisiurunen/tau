@@ -248,6 +248,7 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
       cwd?: string;
       env?: Record<string, string>;
       maxCaptureBytes?: number;
+      stdin?: Buffer;
     } = {},
   ): Promise<BashExecutionResult> => {
     assertActive();
@@ -263,13 +264,21 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
         (candidate): candidate is AbortSignal => candidate !== undefined,
       ),
     );
+    const stdinPath =
+      runOptions.stdin !== undefined ? `/tmp/tau-exec-${randomUUID()}.stdin` : undefined;
     let sessionAcquired = false;
     try {
       return await runQueued(cwd, signal, async () => {
+        if (stdinPath && runOptions.stdin) {
+          await client.writeFile(sandboxId, stdinPath, runOptions.stdin, signal);
+        }
         const sessionId = await ensureCommandSession(cwd, signal);
         sessionAcquired = true;
+        const executionArgv: [string, ...string[]] = stdinPath
+          ? ["bash", "-c", 'exec "$@" < "$0"', stdinPath, ...argv]
+          : argv;
         return await client.exec(sandboxId, {
-          argv: applyCommandEnvironment(argv, runOptions.env),
+          argv: applyCommandEnvironment(executionArgv, runOptions.env),
           cwd,
           timeoutMs: runOptions.timeoutMs,
           signal,
@@ -291,8 +300,36 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
         return terminatedExecutionResult("(tau) aborted", "abort");
       }
       throw error;
+    } finally {
+      if (stdinPath) {
+        await client
+          .exec(sandboxId, {
+            argv: ["rm", "-f", "--", stdinPath],
+            cwd,
+            timeoutMs: HELPER_OPERATION_TIMEOUT_MS,
+            signal: AbortSignal.timeout(HELPER_OPERATION_TIMEOUT_MS),
+            maxCaptureBytes: 1024,
+          })
+          .catch(() => {});
+      }
     }
   };
+
+  const runBash: ToolExecutionBackend["runBash"] = (command, runOptions = {}) =>
+    runCommand(["bash", "-lc", command, ...(runOptions.args ?? [])], {
+      ...runOptions,
+      env: applyBashEnvironment(runOptions.env),
+    });
+
+  const runNodeScript: ToolExecutionBackend["runNodeScript"] = (
+    script,
+    args = [],
+    runOptions = {},
+  ) =>
+    runBash('exec "$0" "$@"', {
+      ...runOptions,
+      args: ["node", "-e", script, ...args],
+    });
 
   return {
     async dispose() {
@@ -306,20 +343,8 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
       await Promise.allSettled(cleanupPromises);
     },
 
-    runProcess(argv, runOptions = {}) {
-      return runCommand(argv, runOptions);
-    },
-
-    runBash(command, runOptions = {}) {
-      return runCommand(["bash", "-lc", command], {
-        ...runOptions,
-        env: applyBashEnvironment(runOptions.env),
-      });
-    },
-
-    runNodeScript(script, args = [], runOptions = {}) {
-      return runCommand(["node", "-e", script, ...args], runOptions);
-    },
+    runBash,
+    runNodeScript,
 
     async readFile(path) {
       assertActive();
@@ -344,7 +369,7 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
       assertActive();
       const dir = dirname(path);
       if (dir && dir !== ".") {
-        await runCommand(["mkdir", "-p", dir]);
+        await runBash('exec "$0" "$@"', { args: ["mkdir", "-p", dir] });
       }
       await client.writeFile(sandboxId, path, Buffer.from(content, "utf-8"), createHelperSignal());
       return buildWriteFileResult(path, content);
@@ -354,7 +379,7 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
       assertActive();
       const dir = dirname(path);
       if (dir && dir !== ".") {
-        await runCommand(["mkdir", "-p", dir]);
+        await runBash('exec "$0" "$@"', { args: ["mkdir", "-p", dir] });
       }
       await client.writeFile(sandboxId, path, content, createHelperSignal());
       return { path, bytes: content.byteLength };
@@ -362,7 +387,7 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
 
     async listDir(path) {
       assertActive();
-      const result = await runCommand(["node", "-e", NODE_LIST_DIR_SCRIPT, path]);
+      const result = await runNodeScript(NODE_LIST_DIR_SCRIPT, [path]);
       if (result.exitCode !== 0) {
         throw new Error(result.output.trim() || `list failed for ${path}`);
       }

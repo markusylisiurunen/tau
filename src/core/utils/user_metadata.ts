@@ -32,6 +32,11 @@ export type TauAutoCompactionContinuationUserMetadata = {
   version: 1;
 };
 
+export type TauToolRecoveryUserMetadata = {
+  type: "tool-recovery";
+  version: 1;
+};
+
 export type TauSummaryCompactionUserMetadata =
   | TauCompactionUserMetadata
   | TauAutoCompactionUserMetadata;
@@ -39,7 +44,8 @@ export type TauSummaryCompactionUserMetadata =
 export type TauUserMetadata =
   | TauCompactionUserMetadata
   | TauAutoCompactionUserMetadata
-  | TauAutoCompactionContinuationUserMetadata;
+  | TauAutoCompactionContinuationUserMetadata
+  | TauToolRecoveryUserMetadata;
 
 export type TauUserMetadataSplit = {
   metadata: TauUserMetadata[];
@@ -94,6 +100,8 @@ function parseMetadataRecord(value: unknown): TauUserMetadata {
       return parseAutoCompactionMetadataRecord(record);
     case "auto-compaction-continuation":
       return parseAutoCompactionContinuationMetadataRecord(record);
+    case "tool-recovery":
+      return parseToolRecoveryMetadataRecord(record);
     default:
       throw new Error("invalid tau user metadata: unknown record type");
   }
@@ -192,6 +200,18 @@ function parseAutoCompactionContinuationMetadataRecord(
   }
   return {
     type: "auto-compaction-continuation",
+    version: 1,
+  };
+}
+
+function parseToolRecoveryMetadataRecord(
+  record: Record<string, unknown>,
+): TauToolRecoveryUserMetadata {
+  if (record.version !== 1) {
+    throw new Error("invalid tau user metadata: unsupported tool recovery metadata version");
+  }
+  return {
+    type: "tool-recovery",
     version: 1,
   };
 }
@@ -380,6 +400,12 @@ export function getSummaryCompactionMetadataFromMessage(
 export function hasAutoCompactionContinuationMetadata(message: Message): boolean {
   return getTauUserMetadataFromMessage(message).some(
     (metadata) => metadata.type === "auto-compaction-continuation",
+  );
+}
+
+export function hasToolRecoveryMetadata(message: Message): boolean {
+  return getTauUserMetadataFromMessage(message).some(
+    (metadata) => metadata.type === "tool-recovery",
   );
 }
 

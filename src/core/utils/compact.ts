@@ -1,8 +1,8 @@
 import type { AssistantMessage, Message, ToolResultMessage } from "@earendil-works/pi-ai";
-import { TOOL_NAME_BASH, TOOL_NAME_EDIT } from "../tools/tool_names.js";
+import { TOOL_NAME_EDIT } from "../tools/tool_names.js";
 import { buildLineDiff, collapseLongUnchangedDiffRuns } from "./line_diff.js";
 import { truncateForTokens } from "./truncate.js";
-import { stripTauUserMetadata } from "./user_metadata.js";
+import { hasToolRecoveryMetadata, stripTauUserMetadata } from "./user_metadata.js";
 
 export const COMPACTION_SUMMARY_HEADER =
   "The conversation history before this point was compacted into the following summary:";
@@ -10,7 +10,10 @@ const SUMMARY_OPEN_TAG = "<summary>";
 const SUMMARY_CLOSE_TAG = "</summary>";
 const LAST_ASSISTANT_OPEN_TAG = "<last-assistant-message-verbatim>";
 const LAST_ASSISTANT_CLOSE_TAG = "</last-assistant-message-verbatim>";
-const COMPACTION_BASH_TOOL_RESULT_MAX_TOKENS = 4096;
+const TOOL_EXECUTION_RECORDS_OPEN_TAG = "<tool-execution-records>";
+const TOOL_EXECUTION_RECORDS_CLOSE_TAG = "</tool-execution-records>";
+const TOOL_RESULT_TEXT_PATTERN = /(<result-text>)([\s\S]*?)(<\/result-text>)/g;
+const COMPACTION_TOOL_RESULT_MAX_TOKENS = 2048;
 const COMPACTION_EDIT_UNCHANGED_CONTEXT_LINES = 8;
 
 function extractTextFromContent(content: Message["content"]): string {
@@ -32,6 +35,53 @@ function extractTextFromContent(content: Message["content"]): string {
 
 function formatCompactionBlock(marker: string, text: string): string {
   return `${marker}\n${text}`;
+}
+
+function escapeXmlText(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function unescapeXmlText(text: string): string {
+  return text.replace(/&(amp|lt|gt);/g, (_match, entity: string) => {
+    if (entity === "amp") return "&";
+    if (entity === "lt") return "<";
+    return ">";
+  });
+}
+
+function truncateToolRecoveryResults(text: string): string {
+  let output = "";
+  let cursor = 0;
+
+  while (cursor < text.length) {
+    const recordsStart = text.indexOf(TOOL_EXECUTION_RECORDS_OPEN_TAG, cursor);
+    if (recordsStart < 0) {
+      return output + text.slice(cursor);
+    }
+
+    const recordsContentStart = recordsStart + TOOL_EXECUTION_RECORDS_OPEN_TAG.length;
+    const recordsEnd = text.indexOf(TOOL_EXECUTION_RECORDS_CLOSE_TAG, recordsContentStart);
+    if (recordsEnd < 0) {
+      return output + text.slice(cursor);
+    }
+
+    const records = text
+      .slice(recordsContentStart, recordsEnd)
+      .replace(
+        TOOL_RESULT_TEXT_PATTERN,
+        (_match, openTag: string, escapedText: string, closeTag: string) => {
+          const content = truncateForTokens(unescapeXmlText(escapedText), {
+            maxTokens: COMPACTION_TOOL_RESULT_MAX_TOKENS,
+            strategy: "middle",
+          }).content;
+          return `${openTag}${escapeXmlText(content)}${closeTag}`;
+        },
+      );
+    output += text.slice(cursor, recordsContentStart) + records + TOOL_EXECUTION_RECORDS_CLOSE_TAG;
+    cursor = recordsEnd + TOOL_EXECUTION_RECORDS_CLOSE_TAG.length;
+  }
+
+  return output;
 }
 
 function formatToolCallArguments(argumentsValue: unknown): string {
@@ -108,13 +158,10 @@ function serializeToolResultMessage(message: ToolResultMessage): string {
   const outputText = extractTextFromContent(message.content);
   const status = message.isError ? "error" : "ok";
 
-  let content = outputText || "(no text output)";
-  if (message.toolName === TOOL_NAME_BASH) {
-    content = truncateForTokens(content, {
-      maxTokens: COMPACTION_BASH_TOOL_RESULT_MAX_TOKENS,
-      strategy: "middle",
-    }).content;
-  }
+  const content = truncateForTokens(outputText || "(no text output)", {
+    maxTokens: COMPACTION_TOOL_RESULT_MAX_TOKENS,
+    strategy: "middle",
+  }).content;
 
   return formatCompactionBlock(`[Tool result]: ${message.toolName} (${status})`, content);
 }
@@ -131,7 +178,10 @@ export function formatHistoryForCompaction(
 
   for (const message of history) {
     if (message.role === "user") {
-      const text = stripTauUserMetadata(extractTextFromContent(message.content));
+      const userText = stripTauUserMetadata(extractTextFromContent(message.content));
+      const text = hasToolRecoveryMetadata(message)
+        ? truncateToolRecoveryResults(userText)
+        : userText;
       if (text) {
         const id = options?.userMessageIds?.get(message);
         const marker = id ? `[User id=${JSON.stringify(id)}]:` : "[User]:";

@@ -723,8 +723,15 @@ function runCommand(id, command, args, options) {
     const trimChunks = (targetChunks, targetBytes) => {
       let nextBytes = targetBytes;
       while (nextBytes > maxCaptureBytes && targetChunks.length > 0) {
-        const removed = targetChunks.shift();
-        nextBytes -= removed.byteLength;
+        const excessBytes = nextBytes - maxCaptureBytes;
+        const first = targetChunks[0];
+        if (first.byteLength <= excessBytes) {
+          targetChunks.shift();
+          nextBytes -= first.byteLength;
+        } else {
+          targetChunks[0] = first.subarray(excessBytes);
+          nextBytes -= excessBytes;
+        }
         truncated = true;
       }
       return nextBytes;

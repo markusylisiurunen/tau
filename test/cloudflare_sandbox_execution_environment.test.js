@@ -140,6 +140,40 @@ describe("Cloudflare Sandbox execution environment", () => {
     });
   });
 
+  it("preserves UTF-8 characters split across bridge output events", async () => {
+    const character = Buffer.from("€", "utf-8");
+    const fetchMock = async (url) => {
+      if (String(url).endsWith("/v1/sandbox/sandbox-1/session")) {
+        return jsonResponse({ id: "tau-session-1" });
+      }
+      if (String(url).endsWith("/v1/sandbox/sandbox-1/exec")) {
+        return sseResponse([
+          `event: stdout\ndata: ${character.subarray(0, 1).toString("base64")}\n\n`,
+          `event: stdout\ndata: ${character.subarray(1).toString("base64")}\n\n`,
+          `event: exit\ndata: ${JSON.stringify({ exit_code: 0 })}\n\n`,
+        ]);
+      }
+      return jsonResponse({ error: "not found" }, { status: 404 });
+    };
+    const client = new CloudflareSandboxBridgeClient({
+      bridgeId: "default",
+      baseUrl: "https://bridge.example",
+      fetch: fetchMock,
+    });
+    const backend = createCloudflareSandboxToolExecutionBackend({
+      client,
+      sandboxId: "sandbox-1",
+      cwd: "/workspace/repo",
+    });
+
+    await expect(backend.runBash("printf €")).resolves.toMatchObject({
+      output: "€",
+      stdout: "€",
+      stderr: "",
+      truncated: false,
+    });
+  });
+
   it("stages exec stdin through bridge file operations", async () => {
     const requests = [];
     const fetchMock = async (url, init = {}) => {

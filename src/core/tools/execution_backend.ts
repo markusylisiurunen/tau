@@ -257,7 +257,11 @@ export function scopeToolExecutionBackend(
   const mergeEnvironment = (
     overrides?: Record<string, string>,
   ): { env?: Record<string, string> } => {
-    const merged = { ...env, ...overrides };
+    const merged = {
+      ...env,
+      ...overrides,
+      ...(env?.HOME !== undefined ? { HOME: env.HOME } : {}),
+    };
     return Object.keys(merged).length > 0 ? { env: merged } : {};
   };
 

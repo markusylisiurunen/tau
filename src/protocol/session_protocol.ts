@@ -1003,10 +1003,13 @@ const nullableSessionProtocolRequestIdSchema = sessionProtocolRequestIdSchema.nu
 const absolutePathSchema = nonEmptyStringSchema.refine((value) => value.startsWith("/"));
 const environmentVariableNameSchema = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
 const environmentVariableValueSchema = z.string().refine((value) => !value.includes("\0"));
-const environmentVariablesSchema = z.record(
-  environmentVariableNameSchema,
-  environmentVariableValueSchema,
-);
+const environmentVariablesSchema = z
+  .record(environmentVariableNameSchema, environmentVariableValueSchema)
+  .refine((value) => !("HOME" in value), "HOME is controlled by the execution environment");
+const processArgumentsSchema = z
+  .array(z.string())
+  .refine((values) => values.every((value) => !value.includes("\0")));
+const nonEmptyProcessStringSchema = nonEmptyStringSchema.refine((value) => !value.includes("\0"));
 const base64Schema = z.string().refine(isValidBase64, "must be valid base64");
 const boundedExecStdinBase64Schema = base64Schema
   .max(4 * Math.ceil(SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES / 3))
@@ -1281,11 +1284,11 @@ const sessionProtocolExecParamsSchema = z
   .object({
     sessionId: nonEmptyStringSchema,
     execId: nonEmptyStringSchema,
-    command: nonEmptyStringSchema,
-    args: z.array(z.string()).optional(),
+    command: nonEmptyProcessStringSchema,
+    args: processArgumentsSchema.optional(),
     env: environmentVariablesSchema.optional(),
     stdinBase64: boundedExecStdinBase64Schema.optional(),
-    cwd: nonEmptyStringSchema.optional(),
+    cwd: nonEmptyProcessStringSchema.optional(),
     timeoutMs: z.number().int().positive().optional(),
     maxCaptureBytes: z
       .number()
@@ -3544,15 +3547,15 @@ function validateExecParams(
         : hasIssue(parsed.error, ["execId"])
           ? "session.exec params.execId must be a non-empty string"
           : hasIssue(parsed.error, ["command"])
-            ? "session.exec params.command must be a non-empty string"
+            ? "session.exec params.command must be a non-empty string without null bytes"
             : hasIssue(parsed.error, ["args"])
-              ? "session.exec params.args must be an array of strings when provided"
+              ? "session.exec params.args must be an array of strings without null bytes when provided"
               : hasIssue(parsed.error, ["env"])
-                ? "session.exec params.env must use valid environment variable names and string values without null bytes"
+                ? "session.exec params.env must use valid environment variable names and string values without null bytes and cannot override HOME"
                 : hasIssue(parsed.error, ["stdinBase64"])
                   ? `session.exec params.stdinBase64 must be valid base64 encoding at most ${SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES} bytes`
                   : hasIssue(parsed.error, ["cwd"])
-                    ? "session.exec params.cwd must be a non-empty string when provided"
+                    ? "session.exec params.cwd must be a non-empty string without null bytes when provided"
                     : hasIssue(parsed.error, ["timeoutMs"])
                       ? "session.exec params.timeoutMs must be a positive integer when provided"
                       : hasIssue(parsed.error, ["maxCaptureBytes"])
@@ -3927,11 +3930,13 @@ function validateCreateParams(
           ? "session.create params.executionEnvironment.kind must be 'local', 'cloudflare-sandbox', or 'fly-sprite'"
           : hasIssue(parsed.error, ["executionEnvironment", "cwd"])
             ? "session.create params.executionEnvironment.cwd must be an absolute path"
-            : hasIssue(parsed.error, ["personaId"])
-              ? "session.create params.personaId must be a non-empty string"
-              : hasIssue(parsed.error, ["reasoning"])
-                ? "session.create params.reasoning must be one of none, minimal, low, medium, high, xhigh, or max"
-                : `session.create params are invalid: ${formatZodError(parsed.error)}`;
+            : hasIssue(parsed.error, ["executionEnvironment", "env"])
+              ? "session.create params.executionEnvironment.env must use valid environment variable names and string values without null bytes and cannot override HOME"
+              : hasIssue(parsed.error, ["personaId"])
+                ? "session.create params.personaId must be a non-empty string"
+                : hasIssue(parsed.error, ["reasoning"])
+                  ? "session.create params.reasoning must be one of none, minimal, low, medium, high, xhigh, or max"
+                  : `session.create params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 

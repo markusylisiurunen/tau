@@ -602,7 +602,7 @@ describe("sdk_client", () => {
     await expect(
       readySession.exec("git diff", {
         args: ["one", "two"],
-        env: { HOME: "/home/user" },
+        env: { GIT_OPTIONAL_LOCKS: "0" },
         stdin: Buffer.from("input"),
         cwd: "/repo",
         timeoutMs: 30000,
@@ -616,7 +616,7 @@ describe("sdk_client", () => {
         execId: expect.any(String),
         command: "git diff",
         args: ["one", "two"],
-        env: { HOME: "/home/user" },
+        env: { GIT_OPTIONAL_LOCKS: "0" },
         stdinBase64: Buffer.from("input").toString("base64"),
         cwd: "/repo",
         timeoutMs: 30000,

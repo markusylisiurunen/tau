@@ -620,7 +620,7 @@ async function parseExecSse(
   let exitCode: number | null = null;
   let truncated = false;
 
-  const appendOutput = (target: "stdout" | "stderr", chunk: string) => {
+  const appendOutput = (target: "stdout" | "stderr", chunk: Buffer) => {
     truncated = output.append(chunk) || truncated;
     if (target === "stdout") {
       truncated = stdout.append(chunk) || truncated;
@@ -643,7 +643,7 @@ async function parseExecSse(
     const data = dataLines.join("\n");
 
     if (event === "stdout" || event === "stderr") {
-      appendOutput(event, Buffer.from(data, "base64").toString("utf-8"));
+      appendOutput(event, Buffer.from(data, "base64"));
     } else if (event === "exit") {
       const parsed = JSON.parse(data) as { exit_code?: unknown };
       exitCode = typeof parsed.exit_code === "number" ? parsed.exit_code : null;
@@ -692,27 +692,20 @@ class ExecCaptureBuffer {
 
   constructor(private readonly maxBytes: number) {}
 
-  append(value: string): boolean {
+  append(value: Buffer): boolean {
+    this.chunks.push(value);
+    this.bytes += value.byteLength;
     let truncated = false;
-    let nextValue = value;
-    if (Buffer.byteLength(nextValue, "utf-8") > this.maxBytes) {
-      truncated = true;
-      while (Buffer.byteLength(nextValue, "utf-8") > this.maxBytes) {
-        nextValue = nextValue.slice(Math.max(1, Math.floor(nextValue.length / 10)));
-      }
-    }
-
-    let chunk = Buffer.from(nextValue, "utf-8");
-    if (chunk.byteLength > this.maxBytes) {
-      chunk = chunk.subarray(chunk.byteLength - this.maxBytes);
-      truncated = true;
-    }
-
-    this.chunks.push(chunk);
-    this.bytes += chunk.byteLength;
     while (this.bytes > this.maxBytes && this.chunks.length > 0) {
-      const removed = this.chunks.shift()!;
-      this.bytes -= removed.byteLength;
+      const excessBytes = this.bytes - this.maxBytes;
+      const first = this.chunks[0]!;
+      if (first.byteLength <= excessBytes) {
+        this.chunks.shift();
+        this.bytes -= first.byteLength;
+      } else {
+        this.chunks[0] = first.subarray(excessBytes);
+        this.bytes -= excessBytes;
+      }
       truncated = true;
     }
     return truncated;

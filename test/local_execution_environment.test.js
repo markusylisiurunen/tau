@@ -44,6 +44,7 @@ describe("LocalExecutionEnvironment", () => {
         .getToolExecutionBackend()
         .runBash(
           'values=(one two); printf "%s|%s|%s|%s" "$TAU_LOGIN_PROFILE" "$TAU_BASH_ENV" "$HOME" "$PWD"',
+          { env: { HOME: "/tmp/overridden-home" } },
         );
 
       expect(result.stdout).toBe(`loaded|loaded|${home}|${await realpath(repo)}`);

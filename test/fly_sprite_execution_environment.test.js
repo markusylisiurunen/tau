@@ -198,6 +198,16 @@ describe("Fly Sprite execution environment", () => {
 
       expect(result.stdout).toBe(`loaded|${home}|argument|input`);
       expect(result.exitCode).toBe(0);
+
+      const truncated = await environment.getToolExecutionBackend().runBash("printf abc", {
+        maxCaptureBytes: 1,
+      });
+      expect(truncated).toMatchObject({
+        output: "c",
+        stdout: "c",
+        stderr: "",
+        truncated: true,
+      });
     } finally {
       await environment.dispose();
       await rm(home, { recursive: true, force: true });

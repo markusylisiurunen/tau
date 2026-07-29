@@ -525,35 +525,29 @@ export function createToolUiRegistry(): ToolUiRegistry {
     });
   });
 
-  registry.register("web_search_started", (event, context) => {
-    const uiEvent = event as Extract<ToolUiEvent, { type: "web_search_started" }>;
-    return buildSimpleToolRunningView(context.theme, "web search", uiEvent.headerTarget);
+  registry.register("code_mode_started", (event, context) => {
+    const uiEvent = event as Extract<ToolUiEvent, { type: "code_mode_started" }>;
+    return buildSimpleToolRunningView(context.theme, uiEvent.label, uiEvent.headerTarget);
   });
 
-  registry.register("web_search_finished", (event, context) => {
-    const uiEvent = event as Extract<ToolUiEvent, { type: "web_search_finished" }>;
-    return buildSimpleToolFinishedView({
+  registry.register("code_mode_finished", (event, context) => {
+    const uiEvent = event as Extract<ToolUiEvent, { type: "code_mode_finished" }>;
+    return buildClientToolFinishedView({
       theme: context.theme,
-      label: "web search",
-      target: uiEvent.headerTarget,
+      toolName: uiEvent.label,
       status: uiEvent.status,
-      message: uiEvent.message,
+      uiText: uiEvent.uiText,
     });
   });
 
-  registry.register("web_fetch_started", (event, context) => {
-    const uiEvent = event as Extract<ToolUiEvent, { type: "web_fetch_started" }>;
-    return buildSimpleToolRunningView(context.theme, "web fetch", uiEvent.headerTarget);
-  });
-
-  registry.register("web_fetch_finished", (event, context) => {
-    const uiEvent = event as Extract<ToolUiEvent, { type: "web_fetch_finished" }>;
+  registry.register("code_mode_blocked", (event, context) => {
+    const uiEvent = event as Extract<ToolUiEvent, { type: "code_mode_blocked" }>;
     return buildSimpleToolFinishedView({
       theme: context.theme,
-      label: "web fetch",
+      label: uiEvent.label,
       target: uiEvent.headerTarget,
-      status: uiEvent.status,
-      message: uiEvent.message,
+      status: "error",
+      message: uiEvent.reason,
     });
   });
 

@@ -227,52 +227,43 @@ describe("ToolUiRegistry", () => {
     expect(terminateFailed).toContain("final status: aborted");
   });
 
-  it("renders web tool events", () => {
-    const searchStarted = renderEvent(registry, theme, {
-      type: "web_search_started",
+  it("renders code-mode tool events", () => {
+    const started = renderEvent(registry, theme, {
+      type: "code_mode_started",
       toolCallId: "w1",
-      objective: "latest tau release",
-      headerTarget: "latest tau release",
+      toolName: "web",
+      label: "web",
+      code: "console.log(docs)",
+      headerTarget: "console.log(docs)",
     });
-    expect(searchStarted).toContain("web search");
+    expect(started).toContain("web");
 
-    const searchFinished = renderEvent(registry, theme, {
-      type: "web_search_finished",
+    const finished = renderEvent(registry, theme, {
+      type: "code_mode_finished",
       toolCallId: "w1",
-      objective: "latest tau release",
-      headerTarget: "latest tau release",
+      toolName: "web",
+      label: "web",
+      code: "console.log(docs)",
+      headerTarget: "console.log(docs)",
       status: "success",
+      uiText: {
+        previewLines: [{ text: "# Tau Exa web runtime" }],
+        statusLine: "exit 0",
+        fullLines: [{ text: "# Tau Exa web runtime" }],
+      },
     });
-    expect(searchFinished).toContain("web search");
+    expect(finished).toContain("Tau Exa web runtime");
 
-    const searchFailed = renderEvent(registry, theme, {
-      type: "web_search_finished",
-      toolCallId: "w1b",
-      objective: "latest tau release",
-      headerTarget: "latest tau release",
-      status: "error",
-      message: "missing Parallel API key.",
-    });
-    expect(searchFailed).toContain("missing Parallel API key.");
-
-    const fetchStarted = renderEvent(registry, theme, {
-      type: "web_fetch_started",
+    const blocked = renderEvent(registry, theme, {
+      type: "code_mode_blocked",
       toolCallId: "w2",
-      url: "https://example.com",
-      headerTarget: "https://example.com",
+      toolName: "web",
+      label: "web",
+      code: "console.log(docs)",
+      headerTarget: "console.log(docs)",
+      reason: "Missing Exa API key.",
     });
-    expect(fetchStarted).toContain("web fetch");
-
-    const fetchFinished = renderEvent(registry, theme, {
-      type: "web_fetch_finished",
-      toolCallId: "w2",
-      url: "https://example.com",
-      headerTarget: "https://example.com",
-      status: "error",
-      message: "request failed",
-    });
-    expect(fetchFinished).toContain("web fetch");
-    expect(fetchFinished).toContain("request failed");
+    expect(blocked).toContain("Missing Exa API key.");
   });
 
   it("renders file tool events", () => {

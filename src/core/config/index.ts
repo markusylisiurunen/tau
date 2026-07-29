@@ -27,10 +27,10 @@ export type {
 export {
   DEFAULT_AUTO_COMPACT_CONFIG,
   getApiKeyForProvider,
+  getExaApiKey,
   getGoogleApiKey,
   getMistralApiKey,
   getNookAccessClientSecret,
-  getParallelApiKey,
   loadConfig,
   normalizeAutoCompactConfig,
 } from "./schema.js";

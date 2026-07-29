@@ -14,7 +14,7 @@ you'll need an API key from at least one provider. set it via environment variab
 
 ```sh
 export ANTHROPIC_API_KEY=sk-ant-...
-# or OPENAI_API_KEY, or GEMINI_API_KEY, or PARALLEL_API_KEY, or MISTRAL_API_KEY (for /listen, Telegram audio, and tau tool pdf-unpack)
+# or OPENAI_API_KEY, or GEMINI_API_KEY, or EXA_API_KEY, or MISTRAL_API_KEY (for /listen, Telegram audio, and tau tool pdf-unpack)
 ```
 
 or store keys in `~/.config/tau/config.json`:
@@ -25,15 +25,15 @@ or store keys in `~/.config/tau/config.json`:
     "anthropic": "sk-ant-...",
     "openai": "sk-...",
     "google": "...",
-    "parallel": "...",
+    "exa": "...",
     "mistral": "..."
   }
 }
 ```
 
-for built-in providers and features, use these `apiKeys` entries: `anthropic`, `openai`, `google`, `parallel`, and `mistral`. tau checks the matching `apiKeys.<provider>` entry before environment variables.
+for built-in providers and features, use these `apiKeys` entries: `anthropic`, `openai`, `google`, `exa`, and `mistral`. tau checks the matching `apiKeys.<provider>` entry before environment variables.
 
-`parallel` is only needed for `web_search`/`web_fetch` usage in sub-agents and can be provided through `apiKeys.parallel` or `PARALLEL_API_KEY` (`PARALLEL_API_KEY` takes precedence).
+`exa` is only needed for the `web` code-mode tool in sub-agents and can be provided through `apiKeys.exa` or `EXA_API_KEY` (`EXA_API_KEY` takes precedence).
 
 `/listen` and Telegram audio transcription use Mistral by default (`apiKeys.mistral` or `MISTRAL_API_KEY`, with `MISTRAL_API_KEY` taking precedence). set `speechToText.provider` to `gemini` to use Gemini 3.6 Flash instead (`apiKeys.google` or `GEMINI_API_KEY`). `/listen` also requires `ffmpeg` on your system and is currently supported only on macOS.
 
@@ -382,7 +382,7 @@ the built-in `default` sub-agent is available unless disabled. it inherits the m
 
 sub-agent progress appears in a sticky panel. use `alt+down` to cycle active subagents and `ctrl+g` to terminate the selected one. tau caps active subagents at 8.
 
-to use `web_search`/`web_fetch` in a sub-agent, set `apiKeys.parallel` in `~/.config/tau/config.json` (see above) or export `PARALLEL_API_KEY`. tau will only make web calls when you explicitly ask for web research.
+to use `web` in a sub-agent, set `apiKeys.exa` in `~/.config/tau/config.json` (see above) or export `EXA_API_KEY`. `web` runs one-shot JavaScript with the Exa SDK in the session execution environment; its first use prepares a pinned runtime under `~/.cache/tau/code-mode`, and later calls reuse it. the tool description tells the model how to print the bundled SDK documentation before using the API.
 
 ## trigger sensitivity
 
@@ -516,7 +516,7 @@ model definitions can be extended and overridden through `~/.config/tau/models.j
     "anthropic": "sk-ant-...",
     "openai": "sk-...",
     "google": "...",
-    "parallel": "...",
+    "exa": "...",
     "mistral": "..."
   },
   "defaultPersona": "gpt-5.5-chat",
@@ -569,7 +569,7 @@ model definitions can be extended and overridden through `~/.config/tau/models.j
 }
 ```
 
-for built-in providers and features, the `apiKeys` field uses these keys: `anthropic`, `openai`, `google`, `parallel`, and `mistral`. keys are merged across config levels by key name.
+for built-in providers and features, the `apiKeys` field uses these keys: `anthropic`, `openai`, `google`, `exa`, and `mistral`. keys are merged across config levels by key name.
 
 the `defaultPersona` field specifies which persona to use when starting the app. it accepts `<id>` or `<id>:<reasoning>`, and matching is exact/case-sensitive. the `--persona` flag overrides this setting.
 
@@ -674,16 +674,16 @@ optional frontmatter fields:
     web-research:
       systemPrompt: |
         you are a focused web research sub-agent.
-      description: web research using web_search/web_fetch.
+      description: web research using Exa code mode.
       provider: anthropic
       model: claude-haiku-4-5
       reasoning: medium
-      tools: [web_search, web_fetch, bash]
+      tools: [web, bash]
       launchModels:
         - openai/gpt-5.5:high
         - anthropic/claude-haiku-4-5:medium
   ```
-- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `view_image`, `spawn_agent`, `send_input_to_agent`, `wait_for_agents`, `terminate_agent`. if omitted, defaults to `bash`, `write`, `edit`, `view_image` (and subagent tools when subagents are enabled).
+- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `view_image`, `spawn_agent`, `send_input_to_agent`, `wait_for_agents`, `terminate_agent`; sub-agent tool lists additionally allow `web`. if omitted, defaults to `bash`, `write`, `edit`, `view_image` (and subagent tools when subagents are enabled).
 
 the markdown body becomes the system prompt.
 
@@ -747,7 +747,7 @@ tool output is truncated using a `bytes / 6` token heuristic (shown as `…N tok
 
 - **bash (assistant)**: 8,192 token limit. if output exceeds this and `maxOutputTokens` is unset, output is middle-truncated to a 2,048-token gated preview. re-run with `maxOutputTokens` set to 8,192-16,384; if the user explicitly requests more, it may be set up to 65,536 (user requests are checked). bash captures the last 1MB of output.
 - **bash (user `!`)**: 65,536 token limit.
-- **web_search/web_fetch**: large responses are middle-truncated to their token limits (8,192 / 16,384 tokens).
+- **web**: program stdout/stderr is middle-truncated to 16,384 tokens.
 
 ## creating a release
 

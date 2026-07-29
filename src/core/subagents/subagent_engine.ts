@@ -285,15 +285,6 @@ export async function runSubagent(options: {
     const handleUi = (uiEvent: ToolUiEvent | undefined) => {
       if (!uiEvent) return;
 
-      if (
-        (uiEvent.type === "web_search_finished" || uiEvent.type === "web_fetch_finished") &&
-        typeof uiEvent.costUsd === "number" &&
-        Number.isFinite(uiEvent.costUsd) &&
-        uiEvent.costUsd > 0
-      ) {
-        costTotal += uiEvent.costUsd;
-      }
-
       const text = formatToolUiEventForProgress(uiEvent);
       if (text && /\b(blocked|failed):/.test(text)) {
         recordIssue(text);

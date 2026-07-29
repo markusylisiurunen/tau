@@ -164,7 +164,7 @@ Execution environments and tool backends are intentionally dumb target adapters.
 
 The TUI advertises `diff_review` as a client-provided tool; it is not a host tool registry entry. The `nook` host tool is automatically exposed only when effective Tau config contains `nook`.
 
-Enabled tools execute directly. Persona and subagent tool lists determine tool availability. Immediate tool-call argument schemas remain strict. The `web` tool accepts one `code` string, runs it as one-shot JavaScript in the execution environment, and exposes its bundled Markdown SDK documentation through the `docs` global for progressive discovery; only console stdout/stderr becomes model-visible output. Its description restricts use to requests that ask for or clearly imply web access.
+Enabled tools execute directly. Persona and subagent tool lists determine tool availability. Immediate tool-call argument schemas remain strict. The `web` tool accepts one `code` string, runs it as one-shot JavaScript in the execution environment, and exposes its bundled Markdown SDK documentation through the `docs` global for progressive discovery; only console stdout/stderr becomes model-visible output. Its description restricts use to requests that ask for or clearly imply web access and tells the model to prefer concise plain text over raw JSON dumps, including when all response fields are needed.
 
 Prompt/context tag style: use dash-case for XML-like tag names in prompt text (for example `<available-skills>`, `<tool-call>`, `<tool-result>`, `<last-assistant-message-verbatim>`). Do not introduce new snake_case tag names.
 

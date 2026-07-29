@@ -19,11 +19,12 @@ const WEB_CODE_MODE_PREPARE_TIMEOUT_MS = 5 * 60_000;
 const WEB_CODE_MODE_OUTPUT_TOKENS = 16_384;
 
 const WEB_DESCRIPTION = [
-  "Run a one-shot JavaScript program with the Exa SDK in the execution environment.",
+  "Run a one-shot JavaScript program to search the web and retrieve page content.",
   "Use this tool only when the user asks to browse or search the web, provides a URL, or otherwise clearly implies that web access is needed.",
   "Top-level await is supported. The program receives exa, docs, and console globals.",
-  "Program output is the stdout and stderr written through console.log, console.error, and other console methods; returned values are ignored.",
-  "To discover the complete supported SDK surface, run a program that prints docs with console.log(docs), then use that documentation in the next turn.",
+  "Only text written through console methods is returned; program return values are ignored.",
+  "Format results as concise, readable plain text instead of dumping raw JSON. Select only relevant fields when possible. When all fields are needed, still flatten and label them compactly rather than serializing the response object. Emit JSON only when the user explicitly requests JSON or another machine-readable result.",
+  "To discover the available web APIs, run a program that prints docs with console.log(docs), then use that documentation in the next turn.",
 ].join(" ");
 
 export const WEB_TOOL: Tool = {

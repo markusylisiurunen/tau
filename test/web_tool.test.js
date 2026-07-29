@@ -81,6 +81,12 @@ describe("Exa web code-mode tool", () => {
     expect(tool.schema.description).toContain(
       "only when the user asks to browse or search the web, provides a URL, or otherwise clearly implies that web access is needed",
     );
+    expect(tool.schema.description).toContain(
+      "When all fields are needed, still flatten and label them compactly rather than serializing the response object",
+    );
+    expect(tool.schema.description).toContain(
+      "Emit JSON only when the user explicitly requests JSON or another machine-readable result",
+    );
 
     const first = await runTool(tool, { code: "console.log(docs)" });
     const second = await runTool(tool, { code: "console.log('again')" });

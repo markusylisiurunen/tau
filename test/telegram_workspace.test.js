@@ -91,7 +91,7 @@ describe("telegram workspace", () => {
     const cachePath = join(`${workspaceRoot}-repo-cache`, "tau.git");
     const logs = [];
 
-    spawnWithCaptureMock.mockImplementation(async (command, commandArgs, options) => {
+    spawnWithCaptureMock.mockImplementation(async (command, commandArgs) => {
       if (command === "gh") {
         await mkdir(commandArgs[3], { recursive: true });
         return { exitCode: 0, output: "cached" };
@@ -115,11 +115,6 @@ describe("telegram workspace", () => {
         return { exitCode: 0, output: "" };
       }
 
-      if (command === "npm ci") {
-        expect(options).toEqual(expect.objectContaining({ shell: true }));
-        return { exitCode: 0, output: "installed" };
-      }
-
       throw new Error(`unexpected command: ${command}`);
     });
 
@@ -131,12 +126,18 @@ describe("telegram workspace", () => {
         repo: "owner/repo",
         ref: "main",
         workingDirectory: "packages/core",
-        bootstrapCommands: ["npm ci"],
       },
       onLog: (entry) => logs.push(entry),
     });
 
     expect(result.sessionCwd).toBe(join(result.workspacePath, "packages", "core"));
+    expect(result.provisionTargets).toEqual([
+      {
+        projectId: "tau",
+        repositoryRoot: result.workspacePath,
+        cwd: join(result.workspacePath, "packages", "core"),
+      },
+    ]);
 
     expect(spawnWithCaptureMock).toHaveBeenNthCalledWith(
       1,
@@ -165,21 +166,12 @@ describe("telegram workspace", () => {
         durationMs: expect.any(Number),
       }),
     );
-
-    const bootstrapLog = logs.find((entry) => entry.message === "bootstrap command complete");
-    expect(bootstrapLog?.data).toEqual(
-      expect.objectContaining({
-        command: "npm ci",
-        durationMs: expect.any(Number),
-      }),
-    );
   });
 
   it("prepares composite workspaces with generated root context", async () => {
     const workspaceRoot = await createWorkspaceRoot();
-    const bootstrapCalls = [];
 
-    spawnWithCaptureMock.mockImplementation(async (command, commandArgs, options) => {
+    spawnWithCaptureMock.mockImplementation(async (command, commandArgs) => {
       if (command === "gh") {
         await mkdir(commandArgs[3], { recursive: true });
         return { exitCode: 0, output: "cached" };
@@ -206,32 +198,21 @@ describe("telegram workspace", () => {
 
         return { exitCode: 0, output: "" };
       }
-
-      if (options.shell) {
-        bootstrapCalls.push({ command, cwd: options.cwd });
-        return { exitCode: 0, output: "bootstrapped" };
-      }
-
       throw new Error(`unexpected command: ${command}`);
     });
 
     const projects = {
       tau: {
         repo: "owner/tau",
-        bootstrapCommands: ["bootstrap tau"],
-        backgroundBootstrapCommands: ["watch tau"],
       },
       cowork: {
         repo: "owner/cowork",
         ref: "main",
         workingDirectory: "packages/core",
-        bootstrapCommands: ["bootstrap cowork"],
-        backgroundBootstrapCommands: ["watch cowork"],
       },
       platform: {
         projectIds: ["tau", "cowork"],
         persona: "gpt-5.6-sol-coder:high",
-        bootstrapCommands: ["bootstrap platform"],
         instructions: "Coordinate changes across both repositories.",
       },
     };
@@ -245,18 +226,15 @@ describe("telegram workspace", () => {
     });
 
     expect(result.sessionCwd).toBe(result.workspacePath);
-    expect(bootstrapCalls).toEqual([
-      { command: "bootstrap tau", cwd: join(result.workspacePath, "tau") },
+    expect(result.provisionTargets).toEqual([
       {
-        command: "bootstrap cowork",
-        cwd: join(result.workspacePath, "cowork", "packages", "core"),
+        projectId: "tau",
+        repositoryRoot: join(result.workspacePath, "tau"),
+        cwd: join(result.workspacePath, "tau"),
       },
-      { command: "bootstrap platform", cwd: result.workspacePath },
-    ]);
-    expect(result.memberBackgroundBootstrapCommands).toEqual([
-      { commands: ["watch tau"], cwd: join(result.workspacePath, "tau") },
       {
-        commands: ["watch cowork"],
+        projectId: "cowork",
+        repositoryRoot: join(result.workspacePath, "cowork"),
         cwd: join(result.workspacePath, "cowork", "packages", "core"),
       },
     ]);

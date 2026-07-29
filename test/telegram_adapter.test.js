@@ -216,6 +216,11 @@ function createSessionManagerHarness(initialSessions = [], options = {}) {
       return session ? { ...session } : undefined;
     }),
     getLogs: vi.fn(() => []),
+    getProvisionFailures: vi.fn((sessionId) =>
+      (options.provisionFailures ?? [])
+        .filter((failure) => failure.sessionId === sessionId)
+        .map((failure) => ({ ...failure })),
+    ),
     getSessionSnapshot: vi.fn(async (sessionId) => {
       const session = sessions.get(sessionId);
       return session?.snapshot;
@@ -506,17 +511,30 @@ describe("telegram adapter", () => {
         },
       ],
     ]);
-    const managerHarness = createSessionManagerHarness([
+    const managerHarness = createSessionManagerHarness(
+      [
+        {
+          id: "restored-session",
+          projectId: "demo",
+          ownerId: ownerIdForChat(chatId),
+          state: "waiting-input",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+          snapshot: createStatusSnapshot(),
+        },
+      ],
       {
-        id: "restored-session",
-        projectId: "demo",
-        ownerId: ownerIdForChat(chatId),
-        state: "waiting-input",
-        createdAt: "2024-01-01T00:00:00.000Z",
-        updatedAt: "2024-01-01T00:00:00.000Z",
-        snapshot: createStatusSnapshot(),
+        provisionFailures: [
+          {
+            type: "session-provision-failed",
+            sessionId: "restored-session",
+            projectId: "demo",
+            targetProjectId: "demo",
+            diagnostic: "provision exited with code 17\ndependencies failed",
+          },
+        ],
       },
-    ]);
+    );
 
     const adapter = await startAdapter({
       botToken: "token",
@@ -541,6 +559,14 @@ describe("telegram adapter", () => {
       );
       expect(apiHarness.sendMessages.map((entry) => entry.text)).toContain(
         "project: demo. your session restored-session is waiting-input. it is using Claude Opus 4.6 with medium reasoning. context usage is 6.0% of 200k tokens. cumulative cost is $0.12.",
+      );
+      expect(apiHarness.sendMessages).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            chatId,
+            text: expect.stringContaining("dependencies failed"),
+          }),
+        ]),
       );
     } finally {
       await adapter.close();
@@ -1022,6 +1048,21 @@ describe("telegram adapter", () => {
       await waitFor(() =>
         apiHarness.sendMessages.some(
           (entry) => String(entry.text) === "all set, your demo session s1 is ready.",
+        ),
+      );
+
+      managerHarness.manager.emit({
+        type: "session-provision-failed",
+        sessionId: "s1",
+        projectId: "demo",
+        targetProjectId: "demo",
+        diagnostic: "provision exited with code 17\ndependencies failed",
+      });
+      await waitFor(() =>
+        apiHarness.sendMessages.some(
+          (entry) =>
+            String(entry.text).includes("dependencies failed") &&
+            String(entry.text).includes("the session remains available"),
         ),
       );
 

@@ -22,13 +22,16 @@ export type PrepareWorkspaceOptions = {
   onLog?: (entry: WorkspaceLogEntry) => void;
 };
 
+export type WorkspaceProvisionTarget = {
+  projectId: string;
+  repositoryRoot: string;
+  cwd: string;
+};
+
 export type PreparedWorkspace = {
   workspacePath: string;
   sessionCwd: string;
-  memberBackgroundBootstrapCommands?: Array<{
-    commands: string[];
-    cwd: string;
-  }>;
+  provisionTargets: WorkspaceProvisionTarget[];
 };
 
 export type WorkspaceRootCleanupResult = {
@@ -82,82 +85,6 @@ async function runCommand(args: {
     output: result.output ?? "",
     exitCode: result.exitCode,
   };
-}
-
-async function runShellCommand(args: {
-  command: string;
-  cwd: string;
-  signal?: AbortSignal;
-}): Promise<{ output: string; exitCode: number | null }> {
-  const result = await spawnWithCapture(args.command, [], {
-    cwd: args.cwd,
-    signal: args.signal,
-    shell: true,
-    captureOutput: "combined",
-    maxCaptureBytes: 1024 * 1024,
-  });
-
-  return {
-    output: result.output ?? "",
-    exitCode: result.exitCode,
-  };
-}
-
-export type BootstrapCommandMode = "sync" | "background";
-
-export type RunBootstrapCommandsOptions = {
-  commands: string[];
-  cwd: string;
-  signal?: AbortSignal;
-  onLog?: (entry: WorkspaceLogEntry) => void;
-  mode?: BootstrapCommandMode;
-};
-
-function getBootstrapModeLabel(mode: BootstrapCommandMode): string {
-  return mode === "background" ? "background bootstrap command" : "bootstrap command";
-}
-
-function getBootstrapOutputLabel(mode: BootstrapCommandMode): string {
-  return mode === "background" ? "background bootstrap output" : "bootstrap output";
-}
-
-export async function runBootstrapCommands(options: RunBootstrapCommandsOptions): Promise<void> {
-  const mode = options.mode ?? "sync";
-  const commandLabel = getBootstrapModeLabel(mode);
-  const outputLabel = getBootstrapOutputLabel(mode);
-
-  for (const command of options.commands) {
-    const bootstrapStart = process.hrtime.bigint();
-    log(options.onLog, "info", `running ${commandLabel}`, { command, cwd: options.cwd });
-    const bootstrapResult = await runShellCommand({
-      command,
-      cwd: options.cwd,
-      signal: options.signal,
-    });
-
-    if (bootstrapResult.output.trim()) {
-      log(options.onLog, "info", outputLabel, {
-        command,
-        output: bootstrapResult.output,
-      });
-    }
-
-    if (bootstrapResult.exitCode !== 0) {
-      log(options.onLog, "error", `${commandLabel} failed`, {
-        command,
-        output: bootstrapResult.output,
-        durationMs: elapsedMs(bootstrapStart),
-      });
-      throw new Error(
-        `${commandLabel} failed with exit code ${bootstrapResult.exitCode ?? "unknown"}`,
-      );
-    }
-
-    log(options.onLog, "info", `${commandLabel} complete`, {
-      command,
-      durationMs: elapsedMs(bootstrapStart),
-    });
-  }
 }
 
 function isInsideWorkspace(workspacePath: string, sessionCwd: string): boolean {
@@ -670,14 +597,6 @@ async function prepareRepositoryWorkspace(options: {
     });
   }
 
-  await runBootstrapCommands({
-    commands: options.project.bootstrapCommands ?? [],
-    cwd: projectCwd,
-    signal: options.signal,
-    onLog: options.onLog,
-    mode: "sync",
-  });
-
   return projectCwd;
 }
 
@@ -814,13 +733,21 @@ export async function prepareWorkspace(
         sessionCwd,
         durationMs: elapsedMs(workspaceStart),
       });
-      return { workspacePath, sessionCwd };
+      return {
+        workspacePath,
+        sessionCwd,
+        provisionTargets: [
+          {
+            projectId: options.projectId,
+            repositoryRoot: workspacePath,
+            cwd: sessionCwd,
+          },
+        ],
+      };
     }
 
     await mkdir(workspacePath, { recursive: true });
-    const memberBackgroundBootstrapCommands: NonNullable<
-      PreparedWorkspace["memberBackgroundBootstrapCommands"]
-    > = [];
+    const provisionTargets: PreparedWorkspace["provisionTargets"] = [];
 
     for (const memberProjectId of options.project.projectIds) {
       const memberProject = options.projects[memberProjectId];
@@ -836,25 +763,17 @@ export async function prepareWorkspace(
         signal: options.signal,
         onLog: options.onLog,
       });
-      if (memberProject.backgroundBootstrapCommands) {
-        memberBackgroundBootstrapCommands.push({
-          commands: memberProject.backgroundBootstrapCommands,
-          cwd: memberCwd,
-        });
-      }
+      provisionTargets.push({
+        projectId: memberProjectId,
+        repositoryRoot: join(workspacePath, memberProjectId),
+        cwd: memberCwd,
+      });
     }
 
     await writeCompositeWorkspaceFiles({
       workspacePath,
       project: options.project,
       projects: options.projects,
-    });
-    await runBootstrapCommands({
-      commands: options.project.bootstrapCommands ?? [],
-      cwd: workspacePath,
-      signal: options.signal,
-      onLog: options.onLog,
-      mode: "sync",
     });
 
     log(options.onLog, "info", "workspace prepared", {
@@ -865,9 +784,7 @@ export async function prepareWorkspace(
     return {
       workspacePath,
       sessionCwd: workspacePath,
-      ...(memberBackgroundBootstrapCommands.length > 0
-        ? { memberBackgroundBootstrapCommands }
-        : {}),
+      provisionTargets,
     };
   } catch (error) {
     await rm(workspacePath, { recursive: true, force: true });

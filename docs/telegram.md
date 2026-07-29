@@ -38,16 +38,13 @@ Telegram runner settings are loaded from the JSON file passed to `--config-file`
       "ref": "main",
       "workspaceRoot": "projects/tau",
       "description": "Tau terminal client",
-      "bootstrapCommands": ["npm ci"],
-      "backgroundBootstrapCommands": ["npm run build"],
       "persona": "gpt-5.5-coder",
       "noAgentContextFiles": false
     },
     "cowork": {
       "repo": "markusylisiurunen/cowork",
       "ref": "main",
-      "description": "Cowork application",
-      "bootstrapCommands": ["npm ci"]
+      "description": "Cowork application"
     },
     "tau_cowork": {
       "projectIds": ["tau", "cowork"],
@@ -63,22 +60,23 @@ Project ids must contain only lowercase letters, digits, and underscores and may
 
 Each project is exactly one of:
 
-- A repository project with a GitHub `owner/repo` value and optional `ref`, `workspaceRoot`, `workingDirectory`, `description`, `bootstrapCommands`, `backgroundBootstrapCommands`, `persona`, and `noAgentContextFiles`.
-- A composite project with at least two unique repository `projectIds`, required `persona`, and optional `workspaceRoot`, `description`, `instructions`, `bootstrapCommands`, and `backgroundBootstrapCommands`. Composite projects cannot reference other composites.
+- A repository project with a GitHub `owner/repo` value and optional `ref`, `workspaceRoot`, `workingDirectory`, `description`, `persona`, and `noAgentContextFiles`.
+- A composite project with at least two unique repository `projectIds`, required `persona`, and optional `workspaceRoot`, `description`, and `instructions`. Composite projects cannot reference other composites.
 
 Repository project behavior:
 
 - Relative `workspaceRoot` values resolve from the Telegram config file directory.
 - `workingDirectory` must be a relative path inside the cloned repository. Tau starts the session there when configured, otherwise at the repository root.
-- `bootstrapCommands` run from the session working directory and block readiness. `backgroundBootstrapCommands` start after readiness and do not block it.
+- An optional `.tau/scripts/provision` file must be a regular executable with a shebang. Telegram starts it through `session.exec` from the configured working directory after the session becomes ready. Provisioning is a finite setup task, but it does not block chat access; failures are reported to every linked chat while the session remains usable.
+- New workspaces run provisioning once. Reconstructed missing workspaces run it again, while preserved workspaces skip it on runner restart.
 - `ref` is optional, but recommended when every session should start from the same branch.
 - Repositories use an automatic persistent bare cache at `<workspaceRoot>-repo-cache/<projectId>.git`: the first session initializes it with `gh repo clone <owner/repo> <cache> -- --bare`, later sessions run `git fetch --prune origin`, then each session workspace is cloned from the local cache with `git clone --shared`.
 
-A composite session starts from a generated root containing each member in a directory named after its project id. Tau prepares members using their existing repository caches, runs member bootstrap commands in each member's configured working directory, writes a root `AGENTS.md` describing the workspace, and writes `.tau/config.json` with `agentContextFiles` for member AGENTS files from each repository root through its configured working directory. Composite bootstrap commands then run from the generated root. Member background commands run before composite background commands without blocking readiness.
+A composite session starts from a generated root containing each member in a directory named after its project id. Tau prepares members using their existing repository caches, writes a root `AGENTS.md` describing the workspace, and writes `.tau/config.json` with `agentContextFiles` for member AGENTS files from each repository root through its configured working directory. After the composite session becomes ready, each member repository's provision hook runs from that member's configured working directory. The generated root has no provision hook because it is not a repository.
 
 Child `.tau` configuration is not merged into the main composite session. The composite's required persona is authoritative and must be available from the generated root. Subagents launched with a child repository as their working directory resolve that repository's own Tau configuration normally.
 
-Preserved workspaces skip all bootstrap command lists during runner restart recovery. Failing background commands are logged as warnings, but the session remains available. Synchronous composite preparation is all-or-nothing and removes the generated workspace if any member or composite bootstrap step fails.
+Preserved workspaces skip provision hooks during runner restart recovery. A failed member hook is reported without stopping the remaining member hooks or making the session unavailable. Synchronous composite workspace preparation remains all-or-nothing and removes the generated workspace if repository preparation fails.
 
 Tau persists Telegram session records at `<workspaceRoot>-sessions.json` and project preferences at `<workspaceRoot>-project-preferences.json`. Runner startup removes workspace-root entries that are not referenced by persisted sessions, reconnects recoverable records to their Tau snapshots, reuses preserved session workspaces, and reconstructs a missing workspace from repository caches before reconnecting. On Telegram adapter startup, Tau also prunes stale `tau-telegram-attachments-*` directories under the system temp directory.
 

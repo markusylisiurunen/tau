@@ -7,6 +7,7 @@ import type {
   SessionProtocolCompactResult,
   SessionProtocolCreateParams,
   SessionProtocolDeltaMessage,
+  SessionProtocolExecResult,
   SessionProtocolFacet,
   SessionProtocolInterruptResult,
   SessionProtocolMessage,
@@ -15,6 +16,7 @@ import type {
   SessionProtocolSubmitResult,
   SessionProtocolUnobserveResult,
 } from "../../protocol/session_protocol.js";
+import { TauSessionProtocolResponseError } from "../../transport/errors.js";
 import type { TelegramProjectConfig } from "../config/schema.js";
 import { extractAssistantText } from "../utils/messages.js";
 import { formatTauUserText } from "../utils/user_metadata.js";
@@ -24,10 +26,9 @@ import {
   type PreparedWorkspace,
   type PrepareWorkspaceOptions,
   prepareWorkspace,
-  type RunBootstrapCommandsOptions,
   resolveWorkspacePath,
-  runBootstrapCommands,
   type WorkspaceLogEntry,
+  type WorkspaceProvisionTarget,
 } from "./workspace.js";
 
 export type TelegramSessionState =
@@ -103,6 +104,8 @@ export function resolveTelegramSessionStatePath(workspaceRoot: string): string {
 const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 const PUBLIC_SESSION_ID_LENGTH = 8;
 const NANOSECONDS_PER_MILLISECOND = 1_000_000n;
+const PROVISION_SCRIPT_PATH = ".tau/scripts/provision";
+const MAX_PROVISION_DIAGNOSTIC_CHARS = 2_000;
 
 const ACTIVE_STATES: Set<TelegramSessionState> = new Set([
   "queued",
@@ -113,6 +116,40 @@ const ACTIVE_STATES: Set<TelegramSessionState> = new Set([
 
 function elapsedMs(startTime: bigint): number {
   return Number((process.hrtime.bigint() - startTime) / NANOSECONDS_PER_MILLISECOND);
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function buildProvisionCommand(repositoryRoot: string): string {
+  return [
+    `provision_path=${shellQuote(resolve(repositoryRoot, PROVISION_SCRIPT_PATH))}`,
+    'if [ ! -e "$provision_path" ] && [ ! -L "$provision_path" ]; then exit 0; fi',
+    'if [ -L "$provision_path" ] || [ ! -f "$provision_path" ]; then echo ".tau/scripts/provision must be a regular file" >&2; exit 1; fi',
+    'if [ ! -x "$provision_path" ]; then echo ".tau/scripts/provision must be executable" >&2; exit 1; fi',
+    'provision_prefix=$(LC_ALL=C dd if="$provision_path" bs=2 count=1 2>/dev/null)',
+    'if [ "$provision_prefix" != "#!" ]; then echo ".tau/scripts/provision must start with a shebang" >&2; exit 1; fi',
+    'exec "$provision_path"',
+  ].join("\n");
+}
+
+function isCancelledProtocolResponse(error: unknown): boolean {
+  return error instanceof TauSessionProtocolResponseError && error.code === "cancelled";
+}
+
+function truncateProvisionDiagnostic(diagnostic: string): string {
+  const trimmed = diagnostic.trim();
+  if (trimmed.length <= MAX_PROVISION_DIAGNOSTIC_CHARS) {
+    return trimmed;
+  }
+  return `...${trimmed.slice(-(MAX_PROVISION_DIAGNOSTIC_CHARS - 3))}`;
+}
+
+function formatProvisionFailure(result: SessionProtocolExecResult): string {
+  const status = `provision exited with code ${result.exitCode ?? "unknown"}`;
+  const output = result.output.trim();
+  return truncateProvisionDiagnostic(output ? `${status}\n${output}` : status);
 }
 
 function getErrorCode(error: unknown): string | undefined {
@@ -157,11 +194,19 @@ type SessionEntry = {
   clientClosePromise?: Promise<void>;
   activeSubmit?: Promise<void>;
   initializePromise?: Promise<void>;
-  backgroundBootstrapPromise?: Promise<void>;
+  provisionPromise?: Promise<void>;
   workspaceCleanupPromise?: Promise<void>;
   consumedFacetEventCounts: Map<string, number>;
   emittedAssistantMessageIds: Set<string>;
   emittedTurnFailureIds: Set<string>;
+};
+
+export type TelegramSessionProvisionFailure = {
+  type: "session-provision-failed";
+  sessionId: string;
+  projectId: string;
+  targetProjectId: string;
+  diagnostic: string;
 };
 
 export type TelegramSessionManagerEvent =
@@ -198,7 +243,8 @@ export type TelegramSessionManagerEvent =
       state: TelegramSessionState;
       timestamp: string;
       progress: TelegramSessionProgress;
-    };
+    }
+  | TelegramSessionProvisionFailure;
 
 export type TelegramSessionSubmitOptions = {
   additionalSystemMessage?: string;
@@ -220,6 +266,10 @@ export type TelegramTauSession = {
   steer(text: string): Promise<SessionProtocolSteerResult>;
   interrupt(): Promise<SessionProtocolInterruptResult>;
   compact(mode: "summary-only" | "summary-and-last"): Promise<SessionProtocolCompactResult>;
+  exec(
+    command: string,
+    options?: { cwd?: string; timeoutMs?: number },
+  ): Promise<SessionProtocolExecResult>;
   snapshot(): Promise<SessionProtocolSnapshot>;
   unobserve(): Promise<SessionProtocolUnobserveResult>;
 };
@@ -244,6 +294,7 @@ export type TelegramSessionManager = {
   listSessions(): TelegramSessionRecord[];
   getSession(sessionId: string): TelegramSessionRecord | undefined;
   getLogs(sessionId: string): TelegramSessionLogEntry[] | undefined;
+  getProvisionFailures(sessionId: string): TelegramSessionProvisionFailure[];
   getSessionSnapshot(sessionId: string): Promise<SessionProtocolSnapshot | undefined>;
   sendMessage(
     sessionId: string,
@@ -268,12 +319,12 @@ export type TelegramSessionManagerOptions = {
   onLog?: (entry: WorkspaceLogEntry) => void;
   createClient: (options: TelegramSessionClientOptions) => Promise<TelegramSessionClient>;
   prepareWorkspace?: (options: PrepareWorkspaceOptions) => Promise<PreparedWorkspace>;
-  runBootstrapCommands?: (options: RunBootstrapCommandsOptions) => Promise<void>;
   cleanupWorkspacePath?: (workspacePath: string) => Promise<void>;
 };
 
 class TelegramSessionManagerImpl implements TelegramSessionManager {
   private readonly sessions = new Map<string, SessionEntry>();
+  private readonly provisionFailures = new Map<string, TelegramSessionProvisionFailure[]>();
   private readonly listeners = new Set<(event: TelegramSessionManagerEvent) => void>();
   private readonly projects: Record<string, TelegramProjectConfig>;
   private readonly workspaceRoot: string;
@@ -288,7 +339,6 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
   private readonly prepareWorkspace: (
     options: PrepareWorkspaceOptions,
   ) => Promise<PreparedWorkspace>;
-  private readonly runBootstrapCommands: (options: RunBootstrapCommandsOptions) => Promise<void>;
   private readonly cleanupWorkspacePath: (workspacePath: string) => Promise<void>;
   private persistenceQueue: Promise<void> = Promise.resolve();
   private initializePromise?: Promise<void>;
@@ -309,7 +359,6 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     }
     this.createClient = options.createClient;
     this.prepareWorkspace = options.prepareWorkspace ?? prepareWorkspace;
-    this.runBootstrapCommands = options.runBootstrapCommands ?? runBootstrapCommands;
     this.cleanupWorkspacePath = options.cleanupWorkspacePath ?? cleanupWorkspacePathOnDisk;
   }
 
@@ -398,6 +447,13 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     }
 
     return entry.logs.map((logEntry) => ({ ...logEntry }));
+  }
+
+  getProvisionFailures(sessionId: string): TelegramSessionProvisionFailure[] {
+    if (!this.getEntryBySessionId(sessionId)) {
+      return [];
+    }
+    return (this.provisionFailures.get(sessionId) ?? []).map((failure) => ({ ...failure }));
   }
 
   async getSessionSnapshot(sessionId: string): Promise<SessionProtocolSnapshot | undefined> {
@@ -654,7 +710,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       workspacePath,
       "repo" in entry.project ? (entry.project.workingDirectory ?? ".") : ".",
     );
-    let memberBackgroundBootstrapCommands: PreparedWorkspace["memberBackgroundBootstrapCommands"];
+    let provisionTargets: PreparedWorkspace["provisionTargets"] = [];
     const shouldPrepareWorkspace = !(await pathIsDirectory(sessionCwd));
     if (shouldPrepareWorkspace) {
       const workspace = await this.prepareWorkspace({
@@ -676,7 +732,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       });
       workspacePath = workspace.workspacePath;
       sessionCwd = workspace.sessionCwd;
-      memberBackgroundBootstrapCommands = workspace.memberBackgroundBootstrapCommands;
+      provisionTargets = workspace.provisionTargets;
     }
     entry.record.workspacePath = workspacePath;
 
@@ -691,7 +747,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     this.setState(entry, "waiting-input");
     this.log(entry, "info", "session recovered", { tauSessionId, workspacePath });
     if (shouldPrepareWorkspace) {
-      this.startBackgroundBootstrap(entry, sessionCwd, memberBackgroundBootstrapCommands);
+      this.startProvision(entry, tauSession, provisionTargets);
     }
   }
 
@@ -799,14 +855,9 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
         durationMs: elapsedMs(sessionPreparationStart),
       });
 
-      this.startBackgroundBootstrap(
-        entry,
-        workspace.sessionCwd,
-        workspace.memberBackgroundBootstrapCommands,
-      );
-
       if (!entry.cancelRequested && entry.record.state !== "failed") {
         this.setState(entry, "waiting-input");
+        this.startProvision(entry, tauSession, workspace.provisionTargets);
       }
     } catch (error) {
       if (entry.cancelRequested) {
@@ -824,57 +875,91 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     }
   }
 
-  private startBackgroundBootstrap(
+  private startProvision(
     entry: SessionEntry,
-    sessionCwd: string,
-    memberCommandGroups: PreparedWorkspace["memberBackgroundBootstrapCommands"],
+    tauSession: TelegramTauSession,
+    targets: WorkspaceProvisionTarget[],
   ): void {
-    const commandGroups = [...(memberCommandGroups ?? [])];
-    if (entry.project.backgroundBootstrapCommands) {
-      commandGroups.push({
-        commands: entry.project.backgroundBootstrapCommands,
-        cwd: sessionCwd,
-      });
-    }
-    if (commandGroups.length === 0 || entry.backgroundBootstrapPromise) {
+    if (targets.length === 0 || entry.provisionPromise) {
       return;
     }
 
-    let backgroundBootstrapPromise: Promise<void>;
-    backgroundBootstrapPromise = (async () => {
-      for (const commandGroup of commandGroups) {
-        await this.runBootstrapCommands({
-          ...commandGroup,
-          signal: entry.abortController.signal,
-          mode: "background",
-          onLog: (workspaceLog) => {
-            this.log(
+    let provisionPromise: Promise<void>;
+    provisionPromise = (async () => {
+      for (const target of targets) {
+        const startedAt = process.hrtime.bigint();
+        this.log(entry, "info", "workspace provision started", {
+          targetProjectId: target.projectId,
+          cwd: target.cwd,
+        });
+
+        while (!entry.cancelRequested) {
+          try {
+            const result = await tauSession.exec(buildProvisionCommand(target.repositoryRoot), {
+              cwd: target.cwd,
+            });
+            if (result.exitCode !== 0) {
+              this.reportProvisionFailure(entry, target, formatProvisionFailure(result));
+              break;
+            }
+            this.log(entry, "info", "workspace provision complete", {
+              targetProjectId: target.projectId,
+              durationMs: elapsedMs(startedAt),
+            });
+            break;
+          } catch (error) {
+            if (entry.cancelRequested) {
+              this.log(entry, "info", "workspace provision cancelled", {
+                targetProjectId: target.projectId,
+              });
+              return;
+            }
+            if (isCancelledProtocolResponse(error)) {
+              this.log(entry, "info", "workspace provision restarting after session interrupt", {
+                targetProjectId: target.projectId,
+              });
+              continue;
+            }
+            this.reportProvisionFailure(
               entry,
-              workspaceLog.level === "error" ? "error" : "info",
-              workspaceLog.message,
-              workspaceLog.data,
+              target,
+              truncateProvisionDiagnostic(
+                `provision execution failed\n${error instanceof Error ? error.message : String(error)}`,
+              ),
             );
-          },
-        });
+            break;
+          }
+        }
       }
-    })()
-      .catch((error) => {
-        if (entry.cancelRequested) {
-          this.log(entry, "info", "background bootstrap cancelled");
-          return;
-        }
+    })().finally(() => {
+      if (entry.provisionPromise === provisionPromise) {
+        entry.provisionPromise = undefined;
+      }
+    });
 
-        this.log(entry, "warn", "background bootstrap failed", {
-          cause: error instanceof Error ? error.message : String(error),
-        });
-      })
-      .finally(() => {
-        if (entry.backgroundBootstrapPromise === backgroundBootstrapPromise) {
-          entry.backgroundBootstrapPromise = undefined;
-        }
-      });
+    entry.provisionPromise = provisionPromise;
+  }
 
-    entry.backgroundBootstrapPromise = backgroundBootstrapPromise;
+  private reportProvisionFailure(
+    entry: SessionEntry,
+    target: WorkspaceProvisionTarget,
+    diagnostic: string,
+  ): void {
+    this.log(entry, "warn", "workspace provision failed", {
+      targetProjectId: target.projectId,
+      diagnostic,
+    });
+    const failure: TelegramSessionProvisionFailure = {
+      type: "session-provision-failed",
+      sessionId: entry.record.id,
+      projectId: entry.record.projectId,
+      targetProjectId: target.projectId,
+      diagnostic,
+    };
+    const failures = this.provisionFailures.get(entry.record.id) ?? [];
+    failures.push(failure);
+    this.provisionFailures.set(entry.record.id, failures);
+    this.emit(failure);
   }
 
   private submitText(
@@ -987,7 +1072,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     await Promise.allSettled(entries.map(async (entry) => await this.stopClient(entry)));
     await Promise.allSettled(
       entries.flatMap((entry) =>
-        [entry.initializePromise, entry.activeSubmit, entry.backgroundBootstrapPromise].filter(
+        [entry.initializePromise, entry.activeSubmit, entry.provisionPromise].filter(
           (promise): promise is Promise<void> => promise !== undefined,
         ),
       ),
@@ -1007,6 +1092,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
 
     const record = this.toRecord(entry);
     this.sessions.delete(entry.record.id);
+    this.provisionFailures.delete(entry.record.id);
     await this.persistSessions();
     return record;
   }
@@ -1022,7 +1108,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       const pendingWork = [
         entry.activeSubmit,
         entry.initializePromise,
-        entry.backgroundBootstrapPromise,
+        entry.provisionPromise,
       ].filter((promise): promise is Promise<void> => promise !== undefined);
 
       if (pendingWork.length > 0) {
@@ -1454,6 +1540,15 @@ class ScopedTelegramSessionManager implements TelegramSessionManager {
     }
 
     return this.sessionManager.getLogs(sessionId);
+  }
+
+  getProvisionFailures(sessionId: string): TelegramSessionProvisionFailure[] {
+    const session = this.sessionManager.getSession(sessionId);
+    if (!session || !this.isVisibleSession(session)) {
+      return [];
+    }
+
+    return this.sessionManager.getProvisionFailures(sessionId);
   }
 
   async getSessionSnapshot(sessionId: string): Promise<SessionProtocolSnapshot | undefined> {

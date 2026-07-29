@@ -985,6 +985,71 @@ describe("telegram adapter", () => {
     }
   });
 
+  it("starts the delayed /new acknowledgment before closing the previous session", async () => {
+    const chatId = 199;
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: {
+            message_id: 500,
+            chat: { id: chatId, type: "private" },
+            from: { id: 7 },
+            text: "/new",
+          },
+        },
+      ],
+    ]);
+    const managerHarness = createSessionManagerHarness(
+      [
+        {
+          id: "old-session",
+          projectId: "demo",
+          state: "waiting-input",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+      ],
+      { defaultOwnerId: ownerIdForChat(chatId) },
+    );
+    const closeSession = deferred();
+    managerHarness.manager.closeSession.mockImplementation(async (sessionId) => {
+      const session = managerHarness.sessions.get(sessionId);
+      if (!session) {
+        throw new Error("missing session");
+      }
+      await closeSession.promise;
+      managerHarness.sessions.delete(sessionId);
+      return { ...session };
+    });
+
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      defaultProjectId: "demo",
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() => managerHarness.manager.closeSession.mock.calls.length === 1);
+      await waitFor(() =>
+        apiHarness.setMessageReactions.some(
+          (entry) => entry.chatId === chatId && entry.messageId === 500,
+        ),
+      );
+      expect(managerHarness.manager.createSession).not.toHaveBeenCalled();
+
+      closeSession.resolve();
+      await waitFor(() => managerHarness.manager.createSession.mock.calls.length === 1);
+    } finally {
+      closeSession.resolve();
+      await adapter.close();
+    }
+  });
+
   it("supports /new and routes plain text to the active session", async () => {
     const apiHarness = createApiHarness([
       [
@@ -1104,6 +1169,7 @@ describe("telegram adapter", () => {
         {
           update_id: 2,
           message: {
+            message_id: 504,
             chat: { id: 205, type: "private" },
             from: { id: 7 },
             caption: "release notes",
@@ -1167,6 +1233,7 @@ describe("telegram adapter", () => {
           (entry) => entry.chatId === 205 && entry.messageId === 503,
         ),
       );
+      expect(apiHarness.setMessageReactions).not.toContainEqual({ chatId: 205, messageId: 504 });
     } finally {
       await adapter.close();
     }

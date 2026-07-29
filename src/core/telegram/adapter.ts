@@ -231,8 +231,8 @@ const DEFAULT_TELEGRAM_AUDIO_MIME_TYPE = "audio/mpeg";
 const DEFAULT_TELEGRAM_AUDIO_FILE_NAME = "audio.mp3";
 const DEFAULT_TELEGRAM_PHOTO_MIME_TYPE = "image/jpeg";
 const DEFAULT_TELEGRAM_DOCUMENT_MIME_TYPE = "application/octet-stream";
-const MESSAGE_QUEUED_REACTION_EMOJI = "👀";
-const MESSAGE_QUEUED_REACTION_DELAY_MS = 1000;
+const MESSAGE_ACKNOWLEDGMENT_REACTION_EMOJI = "👀";
+const MESSAGE_ACKNOWLEDGMENT_DELAY_MS = 1000;
 const TELEGRAM_MAX_MESSAGE_BYTES = 4096;
 const TELEGRAM_MAX_RICH_MESSAGE_BYTES = 32 * 1024;
 
@@ -1008,7 +1008,7 @@ function createTelegramApi(botToken: string): TelegramApi {
         {
           chat_id: chatId,
           message_id: messageId,
-          reaction: [{ type: "emoji", emoji: MESSAGE_QUEUED_REACTION_EMOJI }],
+          reaction: [{ type: "emoji", emoji: MESSAGE_ACKNOWLEDGMENT_REACTION_EMOJI }],
         },
         TelegramAckResultSchema,
       );
@@ -2049,6 +2049,8 @@ class TelegramAdapterImpl {
       return;
     }
 
+    void this.acknowledgeMessageAfterDelay(chatId, sourceMessageId);
+
     try {
       const sessionManager = this.getSessionManagerForChat(chatId);
       const previousSession = this.getActiveSession(chatId);
@@ -2062,7 +2064,6 @@ class TelegramAdapterImpl {
       });
 
       this.setActiveSession(chatId, session.id);
-      void this.reactToQueuedMessage(chatId, sourceMessageId);
     } catch (error) {
       await this.reply(chatId, this.formatManagerError(error));
     }
@@ -2468,7 +2469,7 @@ class TelegramAdapterImpl {
       ...(this.systemMessage ? { additionalSystemMessage: this.systemMessage } : {}),
     });
     this.resetPendingAttachmentQueue(sessionId);
-    await this.reactToQueuedMessage(chatId, sourceMessageId);
+    await this.acknowledgeMessageAfterDelay(chatId, sourceMessageId);
     if (this.isVerboseSession(sessionId)) {
       await this.reply(chatId, this.formatMessageQueued(sessionId));
     }
@@ -2826,12 +2827,12 @@ class TelegramAdapterImpl {
     return `${sessionId}:${chatId}`;
   }
 
-  private async reactToQueuedMessage(chatId: number, messageId?: number): Promise<void> {
+  private async acknowledgeMessageAfterDelay(chatId: number, messageId?: number): Promise<void> {
     if (typeof messageId !== "number" || !Number.isInteger(messageId) || messageId <= 0) {
       return;
     }
 
-    await this.wait(MESSAGE_QUEUED_REACTION_DELAY_MS);
+    await this.wait(MESSAGE_ACKNOWLEDGMENT_DELAY_MS);
     if (this.abortController.signal.aborted) {
       return;
     }

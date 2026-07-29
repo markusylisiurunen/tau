@@ -4,7 +4,12 @@ import { getAuthPath } from "../auth/auth_paths.js";
 import { AuthStorage } from "../auth/auth_storage.js";
 import type { Config } from "../config/index.js";
 import type { ModelResolver } from "../models/catalog.js";
-import { type RunnerEvent, runModelSubturn, runToolCalls } from "../session/runner.js";
+import {
+  MAX_MODEL_SUBTURNS,
+  type RunnerEvent,
+  runModelSubturn,
+  runToolCalls,
+} from "../session/runner.js";
 import { ToolCatalog } from "../tools/catalog.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
 import {
@@ -55,8 +60,6 @@ export type SubagentRunResult = {
   turns: number;
   toolCalls: number;
 };
-
-const MAX_SUBAGENT_SUBTURNS = 256;
 
 function getStreamingSettings(settings: SubagentRuntimeConfig["settings"]): TauStreamOptions {
   const merged = { ...(settings ?? {}) } as Record<string, unknown>;
@@ -137,7 +140,6 @@ export async function runSubagent(options: {
   let cacheRead = 0;
   let cacheWrite = 0;
   let contextWindowUsageTokens = 0;
-  const maxSubturns = MAX_SUBAGENT_SUBTURNS;
 
   const getUsageSnapshot = (): SubagentUsageSnapshot => ({
     input,
@@ -177,7 +179,7 @@ export async function runSubagent(options: {
     } catch {}
   };
 
-  for (let subturn = 1; subturn <= maxSubturns && !signal.aborted; subturn++) {
+  for (let subturn = 1; subturn <= MAX_MODEL_SUBTURNS && !signal.aborted; subturn++) {
     emitProgress("assistant: thinking");
 
     const context: Context = {
@@ -365,7 +367,7 @@ export async function runSubagent(options: {
     throw new Error("sub-agent aborted");
   }
 
-  emitProgress(`done (stopped after ${maxSubturns} subturns)`);
+  emitProgress(`done (stopped after ${MAX_MODEL_SUBTURNS} model subturns)`);
   const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant") as
     | AssistantMessage
     | undefined;
@@ -377,7 +379,7 @@ export async function runSubagent(options: {
   const lastNote = lastAssistantLine ? ` Last output: "${lastAssistantLine}".` : "";
 
   throw new Error(
-    `Sub-agent stopped after ${maxSubturns} subturns without producing a final response.${lastNote}${formatIssueSummary()}`,
+    `Sub-agent stopped after ${MAX_MODEL_SUBTURNS} model subturns without producing a final response.${lastNote}${formatIssueSummary()}`,
   );
 }
 

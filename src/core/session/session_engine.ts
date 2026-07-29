@@ -77,12 +77,12 @@ import {
   type SessionPruneResult,
 } from "./pruning.js";
 import {
+  MAX_MODEL_SUBTURNS,
   runModelSubturn,
   SequentialToolCallRunner,
   type SequentialToolCallRunnerOptions,
 } from "./runner.js";
 
-const MAX_ASSISTANT_SUBTURNS = 256;
 const MAX_SUBTURN_RETRIES = 1;
 
 export type SessionEngineOptions = {
@@ -783,12 +783,14 @@ export class SessionEngine {
     options?: { shouldStopAtBoundary?: () => boolean },
   ): AsyncGenerator<CoreEvent, ProcessTurnResult, void> {
     let subturns = 0;
+    let needsAnotherSubturn = false;
     let autoCompactionAttempted = false;
     let retryBudget: SubturnRetryBudget = { remaining: MAX_SUBTURN_RETRIES };
     const originHistoryEntryId = this.getCurrentTurnUserHistoryEntryId();
     const turnSettings = this.captureTurnSettings();
 
-    while (subturns < MAX_ASSISTANT_SUBTURNS && !signal.aborted) {
+    while (subturns < MAX_MODEL_SUBTURNS && !signal.aborted) {
+      needsAnotherSubturn = false;
       if (!autoCompactionAttempted && this.shouldRunAutoCompaction()) {
         autoCompactionAttempted = true;
         const compactionResult = yield* this.runAutoCompactionIfNeeded(signal);
@@ -842,6 +844,7 @@ export class SessionEngine {
         if (options?.shouldStopAtBoundary?.()) {
           break;
         }
+        needsAnotherSubturn = true;
         continue;
       }
 
@@ -858,14 +861,15 @@ export class SessionEngine {
         break;
       }
 
+      needsAnotherSubturn = true;
       retryBudget = { remaining: MAX_SUBTURN_RETRIES };
     }
 
-    if (subturns >= MAX_ASSISTANT_SUBTURNS) {
+    if (needsAnotherSubturn && subturns >= MAX_MODEL_SUBTURNS && !signal.aborted) {
       const event: CoreEvent = {
         type: "notice",
         severity: "warn",
-        text: `stopped after ${MAX_ASSISTANT_SUBTURNS} tool subturns to avoid an infinite loop.`,
+        text: `stopped after ${MAX_MODEL_SUBTURNS} model subturns to avoid an infinite loop.`,
       };
       this.emitEvent(event);
       yield event;

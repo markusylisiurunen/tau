@@ -106,13 +106,6 @@ describe("subagent engine model notices", () => {
       modelResolver: createModelResolver(),
       signal: new AbortController().signal,
       originHistoryEntryId: "history-1",
-      subagentContext: {
-        id: "subagent-1",
-        name: "default",
-        title: "default",
-        originHistoryEntryId: "history-1",
-        controlPlane: { recordEmitOutput: () => {} },
-      },
     });
 
     expect(result.finalText).toBe("done");
@@ -169,13 +162,6 @@ describe("subagent engine model notices", () => {
       modelResolver: createModelResolver(),
       signal: new AbortController().signal,
       originHistoryEntryId: "history-1",
-      subagentContext: {
-        id: "subagent-1",
-        name: "default",
-        title: "default",
-        originHistoryEntryId: "history-1",
-        controlPlane: { recordEmitOutput: () => {} },
-      },
     });
 
     expect(result.finalText).toBe("done");

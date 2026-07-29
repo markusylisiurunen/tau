@@ -8,9 +8,6 @@ import { formatBytes } from "../utils/truncate.js";
 const BASH_MAX_CAPTURE_BYTES = 1024 * 1024; // 1MB
 const BASH_KILL_GRACE_MS = 2_000;
 
-const GREP_MAX_CAPTURE_BYTES = 1024 * 1024;
-const GREP_KILL_GRACE_MS = 2_000;
-
 export type BashExecutionResult = {
   output: string;
   stdout: string;
@@ -52,13 +49,6 @@ export type ListDirResult = {
   entries: ListDirEntry[];
 };
 
-export type GrepExecutionResult = {
-  output: string;
-  exitCode: number | null;
-  captureTruncated: boolean;
-  resolvedPaths: string[];
-};
-
 export interface ToolExecutionBackend {
   dispose(): Promise<void>;
   runBash(
@@ -86,14 +76,6 @@ export interface ToolExecutionBackend {
   writeFile(path: string, content: string): Promise<WriteFileResult>;
   writeFileBinary(path: string, content: Buffer): Promise<WriteFileBinaryResult>;
   listDir(path: string): Promise<ListDirResult>;
-  grep(options: {
-    baseArgs: string[];
-    pattern: string;
-    paths: string[];
-    signal?: AbortSignal;
-    timeoutMs: number;
-    dryRun?: boolean;
-  }): Promise<GrepExecutionResult>;
 }
 
 type LocalBackendDeps = Pick<CoreDeps, "spawn" | "env">;
@@ -281,55 +263,6 @@ export function createLocalToolExecutionBackend(
       }));
       return { path: resolvedPath, entries };
     },
-
-    async grep(options) {
-      const { baseArgs, pattern, paths, signal, timeoutMs, dryRun } = options;
-
-      const resolvedPaths = paths.map((path) => {
-        const cleaned = path.trim();
-        if (!cleaned) {
-          throw new Error("invalid grep path: empty path.");
-        }
-        return cleaned;
-      });
-      const fullArgs = [...baseArgs, "--", pattern, ...resolvedPaths];
-
-      if (dryRun) {
-        return {
-          output: "",
-          exitCode: 0,
-          captureTruncated: false,
-          resolvedPaths,
-        };
-      }
-
-      try {
-        const result = await spawnCapture("rg", fullArgs, {
-          cwd: cwdProvider(),
-          windowsHide: true,
-          signal,
-          timeoutMs,
-          maxCaptureBytes: GREP_MAX_CAPTURE_BYTES,
-          maxCaptureMode: "ignore",
-          captureOutput: "combined",
-          killGraceMs: GREP_KILL_GRACE_MS,
-        });
-
-        return {
-          output: result.output ?? "",
-          exitCode: result.exitCode,
-          captureTruncated: result.captureLimitExceeded || result.timedOut,
-          resolvedPaths,
-        };
-      } catch (err) {
-        return {
-          output: err instanceof Error ? err.message : String(err),
-          exitCode: 2,
-          captureTruncated: false,
-          resolvedPaths,
-        };
-      }
-    },
   };
 }
 
@@ -380,12 +313,6 @@ export function scopeToolExecutionBackend(
     },
     listDir(path) {
       return backend.listDir(resolvePath(path));
-    },
-    grep(options) {
-      return backend.grep({
-        ...options,
-        paths: options.paths.map((path) => resolvePath(path)),
-      });
     },
   };
 }

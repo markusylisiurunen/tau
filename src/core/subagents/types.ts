@@ -80,7 +80,6 @@ export type SubagentUiEvent =
       toolCalls: number;
       usage: SubagentUsageSnapshot;
     }
-  | { type: "subagent_emit_output"; id: string; text: string }
   | { type: "subagent_abort_requested"; id: string }
   | { type: "subagent_finished"; state: SubagentStateSnapshot };
 

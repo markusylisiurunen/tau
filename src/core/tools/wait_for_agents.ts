@@ -18,7 +18,7 @@ import { buildSubagentUiText, formatSubagentStatusLine } from "./subagent_ui.js"
 import { TOOL_NAME_WAIT_FOR_AGENTS } from "./tool_names.js";
 
 const WAIT_FOR_AGENTS_DESCRIPTION = [
-  "Wait for one or more subagents and return as soon as at least one requested subagent finishes.",
+  "Wait for one or more subagents and return final responses as soon as at least one requested subagent finishes.",
   "Provide the list of subagent ids returned by spawn_agent.",
 ].join(" ");
 
@@ -43,22 +43,13 @@ const waitArgsSchema = z.object({
 });
 
 function buildSubagentBody(result: SubagentResult): string {
-  const outputs = result.outputs
-    .map((text) => text.trimEnd())
-    .filter((text) => text.trim().length > 0);
-  const finalText = result.finalText?.trimEnd() ?? "";
-  const trimmedFinal = finalText.trim();
-  if (trimmedFinal && !outputs.some((text) => text.trim() === trimmedFinal)) {
-    outputs.push(finalText);
-  }
-
   const errorLine =
     result.status !== "success"
       ? result.error
         ? `Error: ${result.error}`
         : `Status: ${result.status}`
       : undefined;
-  const bodyParts = [errorLine, outputs.join("\n\n")].filter((text) => text?.trim().length);
+  const bodyParts = [errorLine, result.finalText?.trimEnd()].filter((text) => text?.trim().length);
   return bodyParts.join("\n");
 }
 
@@ -95,7 +86,7 @@ function formatWaitOutput(
   if (runningIds.length > 0) {
     output.push(
       `Finished: ${finishedIds.join(", ")}. Still running: ${runningIds.join(", ")}. ` +
-        "Call wait_for_agents again with the still-running ids to collect their outputs.",
+        "Call wait_for_agents again with the still-running ids to collect their final responses.",
     );
     output.push("");
   }

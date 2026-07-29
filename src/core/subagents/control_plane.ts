@@ -3,7 +3,6 @@ import { cleanupSessionResources, type Message } from "@earendil-works/pi-ai";
 import type { Config } from "../config/index.js";
 import type { ModelResolver } from "../models/catalog.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
-import type { SubagentDispatchContext } from "../tools/registry.js";
 import { formatToolUiEventForProgress } from "../utils/subagent_utils.js";
 import type { SubagentProgressEvent, SubagentToolUiEvent } from "./subagent_engine.js";
 import { runSubagent } from "./subagent_engine.js";
@@ -17,7 +16,6 @@ import type {
 } from "./types.js";
 
 const MAX_ACTIVE_SUBAGENTS = 8;
-const MAX_PROGRESS_EVENTS = 200;
 
 export type SubagentResult = {
   id: string;
@@ -27,7 +25,6 @@ export type SubagentResult = {
   costTotal: number;
   turns: number;
   toolCalls: number;
-  outputs: string[];
   finalText?: string;
   error?: string;
   startedAt: number;
@@ -39,11 +36,6 @@ export type SubagentSpawnResult = { ok: true; id: string } | { ok: false; reason
 export type SubagentSendInputResult =
   | { ok: true; id: string; name: SubagentName; title: string }
   | { ok: false; reason: string };
-
-type SubagentLogEntry = {
-  kind: "progress" | "output";
-  text: string;
-};
 
 type SubagentRecord = {
   id: string;
@@ -69,8 +61,6 @@ type SubagentRecord = {
   startedAt: number;
   finishedAt?: number;
   abortRequested: boolean;
-  progress: SubagentLogEntry[];
-  outputs: string[];
   finalText?: string;
   error?: string;
   controller: AbortController;
@@ -222,8 +212,6 @@ export class SubagentControlPlane {
       cacheWriteOffset: 0,
       startedAt: Date.now(),
       abortRequested: false,
-      progress: [],
-      outputs: [],
       controller: new AbortController(),
       completion: Promise.resolve(undefined as never),
     };
@@ -269,16 +257,6 @@ export class SubagentControlPlane {
     this.startRun({ record, prompt, config, authPath, backend, personaId });
 
     return { ok: true, id: record.id, name: record.name, title: record.title };
-  }
-
-  recordEmitOutput(id: string, text: string): void {
-    const record = this.records.get(id);
-    if (!record) return;
-    const trimmed = text.trim();
-    if (!trimmed) return;
-    const payload = text.trimEnd();
-    record.outputs.push(payload);
-    this.emit({ type: "subagent_emit_output", id, text: payload });
   }
 
   async waitForAgents(ids: string[], signal?: AbortSignal): Promise<SubagentResult[]> {
@@ -341,8 +319,6 @@ export class SubagentControlPlane {
     record.startedAt = Date.now();
     record.finishedAt = undefined;
     record.abortRequested = false;
-    record.progress = [];
-    record.outputs = [];
     record.error = undefined;
     record.finalText = undefined;
     record.controller = new AbortController();
@@ -353,14 +329,6 @@ export class SubagentControlPlane {
     record.outputOffset = record.usage.output;
     record.cacheReadOffset = record.usage.cacheRead;
     record.cacheWriteOffset = record.usage.cacheWrite;
-
-    const subagentContext: SubagentDispatchContext = {
-      id: record.id,
-      name: record.name,
-      title: record.title,
-      originHistoryEntryId: record.originHistoryEntryId,
-      controlPlane: this,
-    };
 
     this.emit({ type: "subagent_spawned", state: this.toSnapshot(record) });
 
@@ -374,7 +342,6 @@ export class SubagentControlPlane {
       sessionId: record.id,
       personaId,
       originHistoryEntryId: record.originHistoryEntryId,
-      subagentContext,
       modelResolver: record.modelResolver,
       messages: record.messages,
       onProgress: (event) => this.recordProgress(record.id, event),
@@ -441,12 +408,6 @@ export class SubagentControlPlane {
     };
 
     const text = event.text.trim();
-    if (text) {
-      record.progress.push({ kind: "progress", text });
-      if (record.progress.length > MAX_PROGRESS_EVENTS) {
-        record.progress.shift();
-      }
-    }
 
     this.emit({
       type: "subagent_progress",
@@ -476,12 +437,6 @@ export class SubagentControlPlane {
     };
 
     const text = formatToolUiEventForProgress(event.uiEvent) ?? "";
-    if (text) {
-      record.progress.push({ kind: "progress", text });
-      if (record.progress.length > MAX_PROGRESS_EVENTS) {
-        record.progress.shift();
-      }
-    }
 
     this.emit({
       type: "subagent_progress",
@@ -522,7 +477,6 @@ export class SubagentControlPlane {
       costTotal: record.costTotal,
       turns: record.turns,
       toolCalls: record.toolCalls,
-      outputs: [...record.outputs],
       finalText: record.finalText,
       error: record.error,
       startedAt: record.startedAt,

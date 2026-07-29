@@ -70,7 +70,7 @@ test("renderEditSuccess (expanded) highlights diffs", () => {
   expect(text).toContain("+ new");
 });
 
-test("subagent panel renders progress and emit_output", () => {
+test("subagent panel renders progress", () => {
   const theme = createTagTheme();
   const panel = new SubagentPanelComponent(theme);
   panel.handleEvent({
@@ -110,18 +110,11 @@ test("subagent panel renders progress and emit_output", () => {
       contextWindow: 200000,
     },
   });
-  panel.handleEvent({
-    type: "subagent_emit_output",
-    id: "agent-1",
-    text: "done",
-  });
-
   const rendered = renderText(panel, 120);
   expect(rendered).toContain("<textDim>⏵</textDim>");
   expect(rendered).toContain("<textDim>explore</textDim>");
   expect(rendered).toContain("<brandAccent>analysis</brandAccent>");
   expect(rendered).toContain("<actionOutput>  · $ echo ok</actionOutput>");
-  expect(rendered).toContain("<actionOutput>  · > done</actionOutput>");
   expect(rendered).toContain("<textMuted>↑1.2k ↓56 (r789 w0) · 1.0%/200k · $0.12</textMuted>");
   expect(rendered).toContain("<textMuted>(1/1) · ctrl+g to terminate</textMuted>");
 });

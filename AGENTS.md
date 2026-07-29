@@ -46,7 +46,7 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
 - **Telegram session runtime helpers** (`src/core/telegram/`, `src/core/telegram/session_manager.ts`, `src/core/telegram/adapter.ts`, `src/core/telegram/workspace.ts`): Telegram runner command/config/runtime plus SDK-backed session management, Telegram polling/media handling, and project workspace preparation
 - **Nook** (`src/core/nook/`, `src/core/tools/nook.ts`, `src/nook/worker/`): Tau-integrated Cloudflare static mini-app platform with `tau nook` CLI, one configured `nook` model tool, bundled Worker/R2/Durable Object implementation, Nook-hosted templates, and injected browser JSON KV SDK. Follow `src/nook/AGENTS.md` for Nook-specific V0 constraints.
 - **ToolCatalog** (`src/core/tools/catalog.ts`): Builds the internal host tool registry; client-provided tools are advertised by attached clients and frozen per assistant turn by the session engine
-- **ToolExecutionBackend** (`src/core/tools/execution_backend.ts`): Generic filesystem/process backend used for local and hosted execution targets, including bash execution, Node script execution, file IO, directory listing, and grep
+- **ToolExecutionBackend** (`src/core/tools/execution_backend.ts`): Generic filesystem/process backend used for local and hosted execution targets, including bash execution, Node script execution, file IO, and directory listing
 - **ToolRegistry** (`src/core/tools/registry.ts`): Tool registry type used by ToolCatalog for main-session host tools (bash, write, edit, view_image, spawn_agent, send_input_to_agent, wait_for_agents, terminate_agent) and sub-agent (configured allowed tools) registries; `diff_review` is advertised as a TUI client-provided tool
 - **TUI**: Terminal rendering via `@earendil-works/pi-tui` with components in `src/tui/ui/`
 - **Chat UI models** (`src/tui/ui/chat_message_model.ts`): Typed message models and rendering glue for UI components
@@ -105,7 +105,7 @@ Execution environments and tool backends are intentionally dumb target adapters.
   - `events/` - Core event protocol types and serialization
   - `session/` - Turn processing, streaming, tool dispatch, and manual/automatic compaction
   - `session/compaction.ts` - Core compaction preparation/prompt building, automatic cut-point selection, retained-tail handling, and synthetic summary message construction
-  - `tools/` - Tool definitions (bash, write, edit, spawn_agent, send_input_to_agent, wait_for_agents, terminate_agent, emit_output, web_search, web_fetch) plus read/list/grep helpers not wired into the default registry
+  - `tools/` - Tool definitions (bash, write, edit, view_image, spawn_agent, send_input_to_agent, wait_for_agents, terminate_agent, web_search, web_fetch, nook)
   - `tools/execution_backend.ts` - Generic local/hosted tool execution backend contract, local implementation, Node script execution, and cwd scoping helper
   - `subagents/` - Default subagent prompt and runner
   - `modes/` - Local app mode interface plus stdio session-protocol line server (`rpc_server.ts`) and WebSocket session server (`websocket_server.ts`)
@@ -156,12 +156,13 @@ Execution environments and tool backends are intentionally dumb target adapters.
 | `view_image` | View an image file |
 | `spawn_agent` | Start a background subagent |
 | `send_input_to_agent` | Send input to an idle subagent |
-| `wait_for_agents` | Await completed subagent outputs, returning when at least one requested agent finishes |
-| `terminate_agent` | Stop a running subagent |
-| `emit_output` | Subagent-only output to main (currently disabled in subagent registries) |
+| `wait_for_agents` | Await completed subagent final responses, returning when at least one requested agent finishes |
+| `terminate_agent` | Stop a running subagent and return its final result |
+| `web_search` | Search the web from a subagent |
+| `web_fetch` | Fetch web content from a subagent |
 | `nook` | Operate the configured Nook static mini-app platform |
 
-Note: read/list/grep tool definitions exist in `src/core/tools`, but ToolCatalog does not register them in the default tool set. The TUI advertises `diff_review` as a client-provided tool; it is not a host tool registry entry. The `nook` host tool is automatically exposed only when effective Tau config contains `nook`.
+The TUI advertises `diff_review` as a client-provided tool; it is not a host tool registry entry. The `nook` host tool is automatically exposed only when effective Tau config contains `nook`.
 
 Enabled tools execute directly. Persona and subagent tool lists determine tool availability. Immediate tool-call argument schemas remain strict.
 
@@ -173,7 +174,6 @@ Prompt/context tag style: use dash-case for XML-like tag names in prompt text (f
 
 - **Bash (assistant)**: 8,192 token limit. Leave `maxOutputTokens` unset in most cases and prefer more scoped commands over larger output. If unset and output exceeds the limit, Tau returns a 2,048-token gated preview. Re-run with `maxOutputTokens` set to 8,192-16,384; up to 65,536 only when the user explicitly requests it.
 - **Bash (user/!/@/$)**: 65,536 token limit, middle-truncated when exceeded.
-- **read/grep**: 8,192 token limit (keeps the head, truncates the tail), after 1MB capture.
 - **web_fetch**: 16,384 token limit (middle-truncated).
 - **web_search**: 8,192 token limit (middle-truncated).
 
@@ -185,7 +185,7 @@ Prompt/context tag style: use dash-case for XML-like tag names in prompt text (f
 - Current preview shapes: bash uses head/tail output plus a status line; write shows up to 16 preview lines with a status line; edit uses a truncated diff preview with counts.
 - Pruned tool results patch existing tool cards by `toolCallId`, preserve headers, replace the body with model-visible pruned content, and prefix status as `✂ pruned · <existing status>` (or `✂ pruned` when no status exists).
 
-**Subagent-only tools**: subagents run with a dedicated tool registry that includes the tools enabled for that subagent (inherited from the main persona or explicitly overridden). The `emit_output` tool definition remains in the codebase but is currently disabled for subagent registries. The built-in `default` subagent prompt wraps and inherits the main persona system prompt, while enforcing default-subagent rules that take precedence on conflicts. `spawn_agent` can optionally set launch model/reasoning via `<provider>/<model>:<effort>` (allowlisted by `launchModels`) and can optionally set `workingDirectory`. When `workingDirectory` is set, the subagent runs from that directory and its config, model catalog, repository metadata, AGENTS.md context, and skills are resolved through the session execution environment as if tau was started there. See `src/core/subagents/subagent_engine.ts` and `src/core/tools/spawn_agent.ts`.
+**Subagent-only tools**: subagents run with a dedicated tool registry that includes the tools enabled for that subagent (inherited from the main persona or explicitly overridden). The built-in `default` subagent prompt wraps and inherits the main persona system prompt, while enforcing default-subagent rules that take precedence on conflicts. `spawn_agent` can optionally set launch model/reasoning via `<provider>/<model>:<effort>` (allowlisted by `launchModels`) and can optionally set `workingDirectory`. When `workingDirectory` is set, the subagent runs from that directory and its config, model catalog, repository metadata, AGENTS.md context, and skills are resolved through the session execution environment as if tau was started there. See `src/core/subagents/subagent_engine.ts` and `src/core/tools/spawn_agent.ts`.
 
 When the user asks to use GPT-5.6 Sol, Terra, or Luna for a subagent without specifying a reasoning effort, use `openai-codex/gpt-5.6-sol:high`, `openai-codex/gpt-5.6-terra:high`, or `openai-codex/gpt-5.6-luna:xhigh`, respectively.
 

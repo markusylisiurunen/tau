@@ -2,7 +2,7 @@ import type { Tool, ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
 import type { Config } from "../config/index.js";
 import type { ModelResolver } from "../models/catalog.js";
 import type { SubagentControlPlane } from "../subagents/control_plane.js";
-import type { SubagentName, SubagentStatus } from "../subagents/types.js";
+import type { SubagentStatus } from "../subagents/types.js";
 import type { Persona } from "../types.js";
 import type { BashTruncationInfo } from "./bash.js";
 import type { ToolName } from "./tool_names.js";
@@ -172,21 +172,6 @@ type ToolUiEventWithHeaderTarget = {
       message?: string;
     }
   | {
-      type: "read_success";
-      toolCallId: string;
-      path: string;
-      startLine: number;
-      endLine?: number;
-      content: string;
-      modelTruncation: {
-        truncated: boolean;
-        totalLines: number;
-        outputLines: number;
-      };
-      uiText: ToolUiText;
-    }
-  | { type: "read_blocked"; toolCallId: string; path: string; reason: string }
-  | {
       type: "view_image_success";
       toolCallId: string;
       path: string;
@@ -195,39 +180,6 @@ type ToolUiEventWithHeaderTarget = {
       uiText: ToolUiText;
     }
   | { type: "view_image_blocked"; toolCallId: string; path: string; reason: string }
-  | {
-      type: "list_success";
-      toolCallId: string;
-      path: string;
-      offset: number;
-      limit: number;
-      total: number;
-      returned: number;
-      entries: string[];
-      uiText: ToolUiText;
-    }
-  | { type: "list_blocked"; toolCallId: string; path: string; reason: string }
-  | {
-      type: "grep_started";
-      toolCallId: string;
-      pattern: string;
-    }
-  | {
-      type: "grep_finished";
-      toolCallId: string;
-      pattern: string;
-      status: "success" | "error";
-      exitCode: number | null;
-      output: string;
-      captureTruncated: boolean;
-      uiText: ToolUiText;
-    }
-  | {
-      type: "grep_blocked";
-      toolCallId: string;
-      pattern: string;
-      reason: string;
-    }
   | {
       type: "write_success";
       toolCallId: string;
@@ -292,14 +244,6 @@ export function createToolDispatch(
   };
 }
 
-export type SubagentDispatchContext = {
-  id: string;
-  name: SubagentName;
-  title: string;
-  originHistoryEntryId: string;
-  controlPlane: SubagentControlPlane;
-};
-
 type ToolDispatchBaseContext = {
   config: Config;
   originHistoryEntryId: string;
@@ -333,7 +277,6 @@ export type MainToolDispatchContext = ToolDispatchBaseContext & {
 
 export type SubagentToolDispatchContext = ToolDispatchBaseContext & {
   scope: "subagent";
-  subagentContext: SubagentDispatchContext;
 };
 
 export type ToolDispatchContext = MainToolDispatchContext | SubagentToolDispatchContext;
@@ -342,12 +285,6 @@ export function isMainToolDispatchContext(
   context: ToolDispatchContext,
 ): context is MainToolDispatchContext {
   return context.scope === "main";
-}
-
-export function isSubagentToolDispatchContext(
-  context: ToolDispatchContext,
-): context is SubagentToolDispatchContext {
-  return context.scope === "subagent";
 }
 
 export interface ToolDefinition {

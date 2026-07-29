@@ -240,37 +240,6 @@ test("ChatContainerComponent hides empty assistant messages even when thoughts a
   expect(emptyLines.length).toBe(1);
 });
 
-test("renderChatMessage fails fast when a tool renderer is missing", () => {
-  const theme = createTagTheme();
-  const toolUiRegistry = createToolUiRegistry();
-
-  expect(() =>
-    renderChatMessage(
-      {
-        type: "tool",
-        event: {
-          type: "list_success",
-          toolCallId: "list-1",
-          path: ".",
-          offset: 0,
-          limit: 10,
-          total: 1,
-          returned: 1,
-          entries: ["a.txt"],
-          uiText: { previewLines: [], fullLines: [] },
-          headerTarget: ".",
-        },
-      },
-      {
-        theme,
-        thoughtsVisible: false,
-        compactToolUi: true,
-        toolUiRegistry,
-      },
-    ),
-  ).toThrow("missing tool ui renderer for event type 'list_success'.");
-});
-
 test("PendingMessagesComponent distinguishes steering and queued previews", () => {
   const theme = createTagTheme();
   const component = new PendingMessagesComponent(theme);

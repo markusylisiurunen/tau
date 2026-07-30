@@ -2081,6 +2081,9 @@ function turnOutcomeFromResult(
         : {}),
     };
   }
+  if (assistantMessage.stopReason === "pending") {
+    throw new Error("session turn completed with a pending assistant message");
+  }
   return { status: "completed", stopReason: assistantMessage.stopReason };
 }
 

@@ -114,7 +114,7 @@ describe("model catalog", () => {
         },
       ],
     });
-    expect(terra.contextWindow).toBe(372000);
+    expect(terra.contextWindow).toBe(272000);
   });
 
   it("returns no models for unknown providers", () => {

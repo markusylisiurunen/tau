@@ -141,7 +141,7 @@ describe("model stream option resolution", () => {
     const codexModel = runtime.resolveModel("openai-codex", "gpt-5.6-sol");
     expect(codexModel).toBeDefined();
     expect(codexModel.api).toBe("openai-codex-responses");
-    expect(codexModel.contextWindow).toBe(372000);
+    expect(codexModel.contextWindow).toBe(272000);
   });
 
   test("calculates request cost with the highest matching input tier", () => {

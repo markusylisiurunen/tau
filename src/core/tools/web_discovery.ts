@@ -248,10 +248,13 @@ function buildMarkdownCandidates(requestedUrl: URL): URL[] {
 }
 
 function buildLlmsTxtCandidates(requestedUrl: URL): URL[] {
-  const root = new URL("/llms.txt", requestedUrl);
-  const firstSegment = requestedUrl.pathname.split("/").filter(Boolean)[0];
-  if (!firstSegment) return [root];
-  return [root, new URL(`/${firstSegment}/llms.txt`, requestedUrl)];
+  const candidates = [new URL("/llms.txt", requestedUrl)];
+  let pathPrefix = "";
+  for (const segment of requestedUrl.pathname.split("/").filter(Boolean)) {
+    pathPrefix += `/${segment}`;
+    candidates.push(new URL(`${pathPrefix}/llms.txt`, requestedUrl));
+  }
+  return candidates;
 }
 
 async function optionalRequest(

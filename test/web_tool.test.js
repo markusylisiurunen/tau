@@ -61,7 +61,7 @@ describe("Exa web code-mode tool", () => {
     expect(getExaApiKey({ apiKeys: { exa: " config-key " } }, {})).toBe("config-key");
   });
 
-  it("discovers only metadata for deterministic Markdown and llms.txt responses", async () => {
+  it("discovers only metadata for deterministic Markdown and llms.txt path prefixes", async () => {
     const requestedUrl = "https://example.com/docs/getting-started";
     const responses = new Map([
       [
@@ -109,6 +109,15 @@ describe("Exa web code-mode tool", () => {
           body: "not found",
         },
       ],
+      [
+        "https://example.com/docs/getting-started/llms.txt",
+        {
+          status: 200,
+          contentType: "text/markdown",
+          vary: "",
+          body: "# Page-specific docs that must not be returned",
+        },
+      ],
     ]);
     const calls = [];
     const request = vi.fn(async (url, options) => {
@@ -143,16 +152,22 @@ describe("Exa web code-mode tool", () => {
           url: "https://example.com/llms.txt",
           contentType: "text/plain",
         },
+        {
+          url: "https://example.com/docs/getting-started/llms.txt",
+          contentType: "text/markdown",
+        },
       ],
     });
     expect(JSON.stringify(discovered)).not.toContain("must not be returned");
     expect(JSON.stringify(discovered)).not.toContain("Getting started");
+    expect(JSON.stringify(discovered)).not.toContain("Page-specific docs");
     expect(calls.map((call) => call.url)).toEqual([
       requestedUrl,
       `${requestedUrl}.md`,
       `${requestedUrl}/index.md`,
       "https://example.com/llms.txt",
       "https://example.com/docs/llms.txt",
+      "https://example.com/docs/getting-started/llms.txt",
     ]);
   });
 

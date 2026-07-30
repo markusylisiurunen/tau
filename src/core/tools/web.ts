@@ -1,23 +1,16 @@
 import { readFileSync } from "node:fs";
-import { finished } from "node:stream/promises";
-import { StringDecoder } from "node:string_decoder";
-import { Worker } from "node:worker_threads";
 import type { Tool } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { z } from "zod";
 import { getExaApiKey } from "../config/index.js";
-import { truncateToBytesFromEnd } from "../utils/truncate.js";
 import { formatZodError } from "../utils/zod.js";
 import {
   type CodeModeToolImplementation,
   createCodeModeToolDefinition,
   type ParsedCodeModeArguments,
 } from "./code_mode.js";
-import {
-  type BashExecutionResult,
-  DEFAULT_COMMAND_CAPTURE_BYTES,
-  type ToolExecutionBackend,
-} from "./execution_backend.js";
+import { type CodeModeBridgeRequest, executeCodeModeWorker } from "./code_mode_worker.js";
+import type { ToolExecutionBackend } from "./execution_backend.js";
 import type { ToolDefinition } from "./registry.js";
 import { TOOL_NAME_WEB } from "./tool_names.js";
 import { discoverAgentContent } from "./web_discovery.js";
@@ -72,14 +65,6 @@ type WebToolDeps = {
   discover(backend: ToolExecutionBackend, value: string, signal: AbortSignal): Promise<unknown>;
   timeoutMs?: number;
 };
-
-type WebBridgeRequest = {
-  id: number;
-  method: string;
-  argsJson: string;
-};
-
-type WebWorkerRequest = { type: "request" } & WebBridgeRequest;
 
 const nonEmptyStringSchema = z.string().trim().min(1);
 const nonEmptyStringArraySchema = z.array(nonEmptyStringSchema).min(1);
@@ -439,15 +424,8 @@ function normalizeResponse(value: unknown): {
   };
 }
 
-function serializeError(error: unknown): { name?: string; message: string } {
-  if (error instanceof Error) {
-    return { name: error.name, message: error.message };
-  }
-  return { message: String(error) };
-}
-
 async function handleWebRequest(
-  request: WebBridgeRequest,
+  request: CodeModeBridgeRequest,
   exa: ExaClient | undefined,
   deps: WebToolDeps,
   backend: ToolExecutionBackend,
@@ -482,10 +460,6 @@ async function handleWebRequest(
   }
 }
 
-function appendCapture(current: string, chunk: string): string {
-  return truncateToBytesFromEnd(current + chunk, DEFAULT_COMMAND_CAPTURE_BYTES);
-}
-
 function executeWebProgram(
   code: string,
   exa: ExaClient | undefined,
@@ -493,135 +467,14 @@ function executeWebProgram(
   backend: ToolExecutionBackend,
   signal: AbortSignal,
   timeoutMs: number,
-): Promise<BashExecutionResult> {
-  return new Promise((resolve, reject) => {
-    const worker = new Worker(sandboxRunnerUrl, {
-      workerData: { code, docs: documentation },
-      env: {
-        ...(process.env.LANG ? { LANG: process.env.LANG } : {}),
-        ...(process.env.LC_ALL ? { LC_ALL: process.env.LC_ALL } : {}),
-        ...(process.env.TZ ? { TZ: process.env.TZ } : {}),
-      },
-      resourceLimits: {
-        maxOldGenerationSizeMb: 128,
-        maxYoungGenerationSizeMb: 32,
-        stackSizeMb: 4,
-      },
-      stdout: true,
-      stderr: true,
-    });
-
-    let stdout = "";
-    let stderr = "";
-    let output = "";
-    let capturedBytes = 0;
-    let truncated = false;
-    let timedOut = false;
-    let aborted = false;
-    let settled = false;
-    let terminating = false;
-    let workerError: Error | undefined;
-    const stdoutDecoder = new StringDecoder("utf8");
-    const stderrDecoder = new StringDecoder("utf8");
-    const requestController = new AbortController();
-    const requestSignal = AbortSignal.any([signal, requestController.signal]);
-    const inFlightRequests = new Set<Promise<void>>();
-
-    const appendOutput = (target: "stdout" | "stderr", text: string): void => {
-      if (!text) return;
-      output = appendCapture(output, text);
-      if (target === "stdout") {
-        stdout = appendCapture(stdout, text);
-      } else {
-        stderr = appendCapture(stderr, text);
-      }
-    };
-    const capture = (target: "stdout" | "stderr", decoder: StringDecoder, chunk: Buffer): void => {
-      capturedBytes += chunk.length;
-      if (capturedBytes > DEFAULT_COMMAND_CAPTURE_BYTES) truncated = true;
-      appendOutput(target, decoder.write(chunk));
-    };
-    const settleRequests = async (): Promise<void> => {
-      requestController.abort();
-      while (inFlightRequests.size > 0) {
-        await Promise.allSettled([...inFlightRequests]);
-      }
-    };
-    const terminate = (reason: "abort" | "timeout"): void => {
-      if (terminating) return;
-      terminating = true;
-      if (reason === "abort") aborted = true;
-      if (reason === "timeout") timedOut = true;
-      requestController.abort();
-      void worker.terminate().catch(() => {});
-    };
-    const abortHandler = (): void => terminate("abort");
-    const timeout = setTimeout(() => terminate("timeout"), timeoutMs);
-    timeout.unref?.();
-
-    const cleanup = (): void => {
-      clearTimeout(timeout);
-      signal.removeEventListener("abort", abortHandler);
-    };
-    const postResponse = (message: Record<string, unknown>): void => {
-      if (settled || terminating) return;
-      try {
-        worker.postMessage(message);
-      } catch {}
-    };
-
-    worker.stdout.on("data", (chunk: Buffer) => capture("stdout", stdoutDecoder, chunk));
-    worker.stderr.on("data", (chunk: Buffer) => capture("stderr", stderrDecoder, chunk));
-    worker.on("message", (message: WebWorkerRequest) => {
-      if (settled || terminating) return;
-      const request = handleWebRequest(message, exa, deps, backend, requestSignal).then(
-        (value) => postResponse({ type: "response", id: message.id, ok: true, value }),
-        (error) =>
-          postResponse({
-            type: "response",
-            id: message.id,
-            ok: false,
-            error: serializeError(error),
-          }),
-      );
-      inFlightRequests.add(request);
-      void request.then(() => inFlightRequests.delete(request));
-    });
-    worker.once("error", (error) => {
-      workerError = error instanceof Error ? error : new Error(String(error));
-      requestController.abort();
-    });
-    worker.once("exit", (workerExitCode) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      void (async () => {
-        await Promise.allSettled([finished(worker.stdout), finished(worker.stderr)]);
-        appendOutput("stdout", stdoutDecoder.end());
-        appendOutput("stderr", stderrDecoder.end());
-        await settleRequests();
-        if (workerError && !terminating) {
-          reject(workerError);
-          return;
-        }
-        resolve({
-          output,
-          stdout,
-          stderr,
-          exitCode: aborted || timedOut ? null : workerExitCode,
-          truncated,
-          timedOut,
-          aborted,
-          closeSignal: null,
-        });
-      })();
-    });
-
-    if (signal.aborted) {
-      abortHandler();
-    } else {
-      signal.addEventListener("abort", abortHandler, { once: true });
-    }
+) {
+  return executeCodeModeWorker({
+    sandboxRunnerUrl,
+    workerData: { code, docs: documentation },
+    signal,
+    timeoutMs,
+    handleRequest: (request, requestSignal) =>
+      handleWebRequest(request, exa, deps, backend, requestSignal),
   });
 }
 

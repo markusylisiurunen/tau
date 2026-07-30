@@ -202,7 +202,7 @@ Add a single configured target to Tau config after deploying the Worker and crea
 }
 ```
 
-Template copies require a destination directory that already exists and is empty. The Worker validates Cloudflare Access JWTs against the Access JWKS with the configured issuer and audience. Tau sends service-token headers to Cloudflare Access for CLI/API calls, but the Worker does not treat those raw headers as authentication. When `nook` is configured, Tau automatically exposes a model tool named `nook`. Detailed setup, deploy, template, Worker, browser SDK, and V0 scope notes live in [src/nook/README.md](src/nook/README.md).
+Template copies require a destination directory that already exists and is empty. The Worker validates Cloudflare Access JWTs against the Access JWKS with the configured issuer and audience. Tau sends service-token headers to Cloudflare Access for CLI/API calls, but the Worker does not treat those raw headers as authentication. When `nook` is configured, Tau automatically exposes a code-mode model tool named `nook`. Generated JavaScript receives a bounded Nook management SDK, static SDK documentation through `docs`, and the deployment-served app-authoring guide through `nook.skill()`; authenticated HTTP and execution-environment file access remain host-owned. Detailed setup, deploy, template, Worker, browser SDK, and V0 scope notes live in [src/nook/README.md](src/nook/README.md).
 
 ## SDK usage (Node)
 

@@ -84,6 +84,7 @@ type NookClientOptions = {
   config: NookConfig;
   env?: NodeJS.ProcessEnv;
   fetchImpl?: typeof fetch;
+  signal?: AbortSignal;
 };
 
 type NookClientDeployFile = NookDeployFile | NookBackendDeployFile;
@@ -117,9 +118,15 @@ function writeDownloadedFiles(directory: string, files: NookDownloadedFile[]): v
   }
 }
 
-async function readDeployFileContent(file: NookClientDeployFile): Promise<Blob> {
+async function readDeployFileContent(
+  file: NookClientDeployFile,
+  signal: AbortSignal | undefined,
+): Promise<Blob> {
+  signal?.throwIfAborted();
   if ("readContent" in file) {
-    return new Blob([bufferToArrayBuffer(await file.readContent())]);
+    const content = await file.readContent();
+    signal?.throwIfAborted();
+    return new Blob([bufferToArrayBuffer(content)]);
   }
   return new Blob([bufferToArrayBuffer(readFileSync(file.absolutePath))]);
 }
@@ -128,11 +135,17 @@ export class NookClient {
   private readonly config: NookConfig;
   private readonly env: NodeJS.ProcessEnv;
   private readonly fetchImpl: typeof fetch;
+  private readonly signal: AbortSignal | undefined;
 
   constructor(options: NookClientOptions) {
     this.config = options.config;
     this.env = options.env ?? process.env;
     this.fetchImpl = options.fetchImpl ?? fetch;
+    this.signal = options.signal;
+  }
+
+  private throwIfAborted(): void {
+    this.signal?.throwIfAborted();
   }
 
   baseUrl(): string {
@@ -167,6 +180,7 @@ export class NookClient {
   }
 
   private async requestJson<T>(url: string, init: RequestInit = {}): Promise<T> {
+    this.throwIfAborted();
     const response = await this.fetchImpl(url, {
       ...init,
       headers: {
@@ -174,7 +188,9 @@ export class NookClient {
         ...(init.body !== undefined ? { "content-type": "application/json" } : {}),
         ...init.headers,
       },
+      signal: this.signal,
     });
+    this.throwIfAborted();
 
     if (!response.ok) {
       throw new Error(await formatNookHttpError(response));
@@ -184,17 +200,24 @@ export class NookClient {
       return undefined as T;
     }
 
-    return (await response.json()) as T;
+    const result = (await response.json()) as T;
+    this.throwIfAborted();
+    return result;
   }
 
   async readSkill(): Promise<string> {
+    this.throwIfAborted();
     const response = await this.fetchImpl(`${this.baseUrl()}/__nook/skill`, {
       headers: this.authHeaders(),
+      signal: this.signal,
     });
+    this.throwIfAborted();
     if (!response.ok) {
       throw new Error(await formatNookHttpError(response));
     }
-    return await response.text();
+    const skill = await response.text();
+    this.throwIfAborted();
+    return skill;
   }
 
   async listSites(): Promise<NookSiteSummary[]> {
@@ -222,9 +245,16 @@ export class NookClient {
     const url = new URL(`${this.baseUrl()}/__nook/api/sites/${encodeURIComponent(site)}/file`);
     url.searchParams.set("deployment", deploymentId);
     url.searchParams.set("path", path);
-    const response = await this.fetchImpl(url, { headers: this.authHeaders() });
+    this.throwIfAborted();
+    const response = await this.fetchImpl(url, {
+      headers: this.authHeaders(),
+      signal: this.signal,
+    });
+    this.throwIfAborted();
     if (!response.ok) throw new Error(await formatNookHttpError(response));
-    return Buffer.from(await response.arrayBuffer());
+    const content = Buffer.from(await response.arrayBuffer());
+    this.throwIfAborted();
+    return content;
   }
 
   async downloadSiteFiles(
@@ -238,7 +268,9 @@ export class NookClient {
     }
     const downloaded: NookDownloadedFile[] = [];
     for (const file of manifest.files) {
+      this.throwIfAborted();
       const content = await this.downloadSiteFile(site, manifest.deploymentId, file.path);
+      this.throwIfAborted();
       if (content.byteLength !== file.sizeBytes) {
         throw new Error(`site file '${file.path}' size does not match manifest`);
       }
@@ -284,11 +316,14 @@ export class NookClient {
 
     const filesByPath = new Map(args.files.map((file) => [file.path, file]));
     for (const path of start.upload) {
+      this.throwIfAborted();
       const file = filesByPath.get(path);
       if (!file) {
         throw new Error(`worker requested unknown upload path '${path}'`);
       }
       const uploadUrl = `${this.baseUrl()}/__nook/api/sites/${encodeURIComponent(args.site)}/deploy/${encodeURIComponent(start.deploymentId)}/file?path=${encodeURIComponent(path)}`;
+      const body = await readDeployFileContent(file, this.signal);
+      this.throwIfAborted();
       const response = await this.fetchImpl(uploadUrl, {
         method: "PUT",
         headers: {
@@ -296,8 +331,10 @@ export class NookClient {
           "content-type": file.contentType,
           "x-nook-deploy-token": start.token,
         },
-        body: await readDeployFileContent(file),
+        body,
+        signal: this.signal,
       });
+      this.throwIfAborted();
       if (!response.ok) {
         throw new Error(await formatNookHttpError(response));
       }
@@ -346,11 +383,14 @@ export class NookClient {
 
     const filesByPath = new Map(args.files.map((file) => [file.path, file]));
     for (const path of start.upload) {
+      this.throwIfAborted();
       const file = filesByPath.get(path);
       if (!file) {
         throw new Error(`worker requested unknown upload path '${path}'`);
       }
       const uploadUrl = `${this.templateApiUrl(args.name)}/save/${encodeURIComponent(start.saveId)}/file?path=${encodeURIComponent(path)}`;
+      const body = await readDeployFileContent(file, this.signal);
+      this.throwIfAborted();
       const response = await this.fetchImpl(uploadUrl, {
         method: "PUT",
         headers: {
@@ -358,8 +398,10 @@ export class NookClient {
           "content-type": file.contentType,
           "x-nook-template-token": start.token,
         },
-        body: await readDeployFileContent(file),
+        body,
+        signal: this.signal,
       });
+      this.throwIfAborted();
       if (!response.ok) {
         throw new Error(await formatNookHttpError(response));
       }
@@ -382,11 +424,18 @@ export class NookClient {
     const url = new URL(`${this.templateApiUrl(name)}/file`);
     url.searchParams.set("revision", revisionId);
     url.searchParams.set("path", path);
-    const response = await this.fetchImpl(url, { headers: this.authHeaders() });
+    this.throwIfAborted();
+    const response = await this.fetchImpl(url, {
+      headers: this.authHeaders(),
+      signal: this.signal,
+    });
+    this.throwIfAborted();
     if (!response.ok) {
       throw new Error(await formatNookHttpError(response));
     }
-    return Buffer.from(await response.arrayBuffer());
+    const content = Buffer.from(await response.arrayBuffer());
+    this.throwIfAborted();
+    return content;
   }
 
   async downloadTemplateFiles(
@@ -403,11 +452,13 @@ export class NookClient {
     }
     const downloaded: NookDownloadedFile[] = [];
     for (const file of manifest.files) {
+      this.throwIfAborted();
       const content = await this.downloadTemplateFile(
         name,
         manifest.template.revisionId,
         file.path,
       );
+      this.throwIfAborted();
       if (content.byteLength !== file.sizeBytes) {
         throw new Error(`template file '${file.path}' size does not match manifest`);
       }
@@ -467,6 +518,7 @@ export function createNookClientFromConfig(args: {
   config: Config;
   env?: NodeJS.ProcessEnv;
   fetchImpl?: typeof fetch;
+  signal?: AbortSignal;
 }): NookClient {
   if (!args.config.nook) {
     throw new Error("nook is not configured. add a nook block to Tau config.");
@@ -475,6 +527,7 @@ export function createNookClientFromConfig(args: {
     config: args.config.nook,
     env: args.env,
     fetchImpl: args.fetchImpl,
+    signal: args.signal,
   });
 }
 

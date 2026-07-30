@@ -32,7 +32,7 @@ const NOOK_DESCRIPTION = [
   "Top-level await is supported. The program receives nook, docs, and console globals.",
   "Only text written through console methods is returned; program return values are ignored.",
   "To discover the available Nook APIs, run a program that prints docs with console.log(docs), then use that documentation in the next turn.",
-  "The static docs describe the agent-facing SDK. When app-authoring guidance or the browser/KV contract is needed, print await nook.skill() in a separate reconnaissance call before authoring the app.",
+  "The static docs describe the agent-facing SDK. When app-authoring guidance or the browser/KV contract is needed, print await nook.skill() before authoring the app.",
   "When preparing site files for deployment, write the complete site directory under a fresh mktemp directory and deploy that directory; do not scatter generated site files into the project tree.",
   "Sites and templates can be copied to an existing empty destination directory. Edit/build copied files normally, then deploy a built static directory separately.",
 ].join(" ");

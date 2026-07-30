@@ -9,13 +9,13 @@ The one-shot JavaScript runtime provides these globals:
 
 Top-level `await` is supported. Calls may run concurrently with `Promise.all`.
 
-Paths are resolved in the session execution environment. Generated code has no direct filesystem, process, environment, network, credential, import, timer, or `fetch` access. Nook methods are the only platform capability.
+Use absolute file system paths. Generated code has no direct filesystem, process, environment, network, credential, import, timer, or `fetch` access. Nook methods are the only platform capability.
 
 ## App-authoring guidance
 
 `docs` describes this agent-facing management SDK. `nook.skill()` is separate and returns the configured Nook deployment's app-authoring guide, including its browser SDK and KV contract.
 
-When authoring or modifying a Nook app, print the skill in a separate reconnaissance call before writing the app:
+When authoring or modifying a Nook app, print the skill before writing the app:
 
 ```js
 console.log(await nook.skill());

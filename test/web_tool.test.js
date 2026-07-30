@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { getExaApiKey } from "../dist/core/config/index.js";
 import { createWebToolDefinition } from "../dist/core/tools/web.js";
-import { assertPublicWebUrl, discoverAgentContent } from "../dist/core/tools/web_discovery.js";
+import { discoverAgentContent } from "../dist/core/tools/web_discovery.js";
 
 function createExecutionResult(output, exitCode = 0) {
   return {
@@ -27,7 +27,7 @@ function createBackend() {
 function createDeps(client) {
   return {
     createExaClient: vi.fn(() => client),
-    discover: vi.fn(async (url) => ({
+    discover: vi.fn(async (_backend, url) => ({
       requestedUrl: url,
       markdown: [{ url: `${url}.md`, via: "markdown-path", contentType: "text/plain" }],
       llmsTxt: [],
@@ -61,76 +61,78 @@ describe("Exa web code-mode tool", () => {
     expect(getExaApiKey({ apiKeys: { exa: " config-key " } }, {})).toBe("config-key");
   });
 
-  it("discovers only metadata for deterministic Markdown and llms.txt path prefixes", async () => {
+  it("runs metadata discovery through the execution environment", async () => {
     const requestedUrl = "https://example.com/docs/getting-started";
     const responses = new Map([
       [
         requestedUrl,
         {
+          url: requestedUrl,
           status: 200,
           contentType: "text/markdown",
           vary: "Accept",
-          body: "# Negotiated content that must not be returned",
         },
       ],
       [
         `${requestedUrl}.md`,
         {
+          url: `${requestedUrl}.md`,
           status: 200,
           contentType: "text/html",
           vary: "",
-          body: "<html>fallback</html>",
         },
       ],
       [
         `${requestedUrl}/index.md`,
         {
+          url: `${requestedUrl}/index.md`,
           status: 200,
           contentType: "text/plain",
           vary: "",
-          body: "# Explicit Markdown content that must not be returned",
         },
       ],
       [
         "https://example.com/llms.txt",
         {
+          url: "https://example.com/llms.txt",
           status: 200,
           contentType: "text/plain",
           vary: "",
-          body: "# Example docs\n- [Getting started](/docs/getting-started/index.md)",
         },
       ],
       [
         "https://example.com/docs/llms.txt",
         {
+          url: "https://example.com/docs/llms.txt",
           status: 404,
           contentType: "text/plain",
           vary: "",
-          body: "not found",
         },
       ],
       [
         "https://example.com/docs/getting-started/llms.txt",
         {
+          url: "https://example.com/docs/getting-started/llms.txt",
           status: 200,
           contentType: "text/markdown",
           vary: "",
-          body: "# Page-specific docs that must not be returned",
         },
       ],
     ]);
-    const calls = [];
-    const request = vi.fn(async (url, options) => {
-      calls.push({ url: url.toString(), accept: options.accept });
-      const response = responses.get(url.toString());
-      if (!response) throw new Error("unexpected URL");
-      return { url: url.toString(), ...response };
+    const backend = createBackend();
+    backend.runNodeScript.mockImplementation(async (script, args, options) => {
+      const requests = JSON.parse(args[0]);
+      expect(script).toContain("fetch(request.url");
+      expect(script).toContain("response.body?.cancel()");
+      expect(args[1]).toBe("8000");
+      expect(options).toMatchObject({ timeoutMs: 10000, maxCaptureBytes: 256 * 1024 });
+      return createExecutionResult(
+        JSON.stringify(requests.map((request) => responses.get(request.url) ?? null)),
+      );
     });
 
-    const discovered = await discoverAgentContent(requestedUrl, {
-      request,
-      validate: async (value) => new URL(value),
-    });
+    const signal = new AbortController().signal;
+    const discovered = await discoverAgentContent(backend, requestedUrl, signal);
 
     expect(discovered).toEqual({
       requestedUrl,
@@ -158,32 +160,60 @@ describe("Exa web code-mode tool", () => {
         },
       ],
     });
-    expect(JSON.stringify(discovered)).not.toContain("must not be returned");
-    expect(JSON.stringify(discovered)).not.toContain("Getting started");
-    expect(JSON.stringify(discovered)).not.toContain("Page-specific docs");
-    expect(calls.map((call) => call.url)).toEqual([
-      requestedUrl,
-      `${requestedUrl}.md`,
-      `${requestedUrl}/index.md`,
-      "https://example.com/llms.txt",
-      "https://example.com/docs/llms.txt",
-      "https://example.com/docs/getting-started/llms.txt",
-    ]);
+    expect(backend.runNodeScript).toHaveBeenCalledWith(
+      expect.any(String),
+      [
+        JSON.stringify([
+          {
+            url: requestedUrl,
+            accept: "text/markdown, text/plain;q=0.9, text/html;q=0.1",
+          },
+          {
+            url: `${requestedUrl}.md`,
+            accept: "text/markdown, text/plain;q=0.9",
+            sameOrigin: "https://example.com",
+          },
+          {
+            url: `${requestedUrl}/index.md`,
+            accept: "text/markdown, text/plain;q=0.9",
+            sameOrigin: "https://example.com",
+          },
+          {
+            url: "https://example.com/llms.txt",
+            accept: "text/plain, text/markdown;q=0.9",
+            sameOrigin: "https://example.com",
+          },
+          {
+            url: "https://example.com/docs/llms.txt",
+            accept: "text/plain, text/markdown;q=0.9",
+            sameOrigin: "https://example.com",
+          },
+          {
+            url: "https://example.com/docs/getting-started/llms.txt",
+            accept: "text/plain, text/markdown;q=0.9",
+            sameOrigin: "https://example.com",
+          },
+        ]),
+        "8000",
+      ],
+      expect.objectContaining({ signal }),
+    );
   });
 
-  it("allows public discovery targets and rejects private targets", async () => {
-    await expect(assertPublicWebUrl("https://8.8.8.8/docs")).resolves.toMatchObject({
-      hostname: "8.8.8.8",
+  it("allows discovery targets available to the execution environment", async () => {
+    const backend = createBackend();
+    backend.runNodeScript.mockResolvedValue(createExecutionResult("[null,null,null,null,null]"));
+
+    await expect(
+      discoverAgentContent(backend, "http://127.0.0.1:8787/docs", new AbortController().signal),
+    ).resolves.toEqual({
+      requestedUrl: "http://127.0.0.1:8787/docs",
+      markdown: [],
+      llmsTxt: [],
     });
-    await expect(assertPublicWebUrl("http://127.0.0.1/docs")).rejects.toThrow(
-      "only supports public web addresses",
-    );
-    await expect(assertPublicWebUrl("http://[::ffff:127.0.0.1]/docs")).rejects.toThrow(
-      "only supports public web addresses",
-    );
-    await expect(assertPublicWebUrl("http://[2002:7f00:1::]/docs")).rejects.toThrow(
-      "only supports public web addresses",
-    );
+    await expect(
+      discoverAgentContent(backend, "file:///tmp/docs", new AbortController().signal),
+    ).rejects.toThrow("must use http or https");
   });
 
   it("runs generated code in a capability-limited sandbox", async () => {
@@ -295,7 +325,11 @@ describe("Exa web code-mode tool", () => {
     expect(result.toolResult.isError).toBe(false);
     expect(getToolText(result)).toContain("true");
     expect(getToolText(result)).toContain("https://example.com/docs.md");
-    expect(deps.discover).toHaveBeenCalledWith("https://example.com/docs");
+    expect(deps.discover).toHaveBeenCalledWith(
+      backend,
+      "https://example.com/docs",
+      expect.any(AbortSignal),
+    );
     expect(deps.createExaClient).not.toHaveBeenCalled();
   });
 

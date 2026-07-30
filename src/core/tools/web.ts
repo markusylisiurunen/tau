@@ -65,7 +65,7 @@ type ExaClient = {
 
 type WebToolDeps = {
   createExaClient(apiKey: string): ExaClient;
-  discover(value: string): Promise<unknown>;
+  discover(backend: ToolExecutionBackend, value: string, signal: AbortSignal): Promise<unknown>;
 };
 
 type WebBridgeRequest = {
@@ -363,6 +363,8 @@ async function handleWebRequest(
   request: WebBridgeRequest,
   exa: ExaClient | undefined,
   deps: WebToolDeps,
+  backend: ToolExecutionBackend,
+  signal: AbortSignal,
 ): Promise<unknown> {
   let args: unknown;
   try {
@@ -376,7 +378,7 @@ async function handleWebRequest(
       if (!Array.isArray(args) || args.length !== 1) {
         throw new Error("web.discover expects one URL");
       }
-      return deps.discover(requireString(args[0], "web.discover url"));
+      return deps.discover(backend, requireString(args[0], "web.discover url"), signal);
     }
     case "search": {
       if (!exa) throw new Error("Missing Exa API key.");
@@ -401,6 +403,7 @@ function executeWebProgram(
   code: string,
   exa: ExaClient | undefined,
   deps: WebToolDeps,
+  backend: ToolExecutionBackend,
   signal: AbortSignal,
 ): Promise<BashExecutionResult> {
   return new Promise((resolve, reject) => {
@@ -477,7 +480,7 @@ function executeWebProgram(
             throw new Error("invalid web sandbox request");
           }
           request = parsed as WebBridgeRequest;
-          const value = await handleWebRequest(request, exa, deps);
+          const value = await handleWebRequest(request, exa, deps, backend, signal);
           child.stdin.write(`${JSON.stringify({ id: request.id, ok: true, value })}\n`);
         } catch (error) {
           if (!child.stdin.writable) return;
@@ -540,10 +543,10 @@ export function createWebToolDefinition(
     schema: WEB_TOOL,
     outputPolicy: { maxTokens: WEB_CODE_MODE_OUTPUT_TOKENS },
     parseArguments: parseWebArguments,
-    execute: async ({ code, context, signal }) => {
+    execute: async ({ code, context, signal, backend: executionBackend }) => {
       const apiKey = getExaApiKey(context.config);
       const exa = apiKey ? deps.createExaClient(apiKey) : undefined;
-      return executeWebProgram(code, exa, deps, signal);
+      return executeWebProgram(code, exa, deps, executionBackend, signal);
     },
   };
 

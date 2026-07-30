@@ -19,7 +19,7 @@ The API is designed for agent workflows and defaults to token-efficient retrieva
 
 ## `web.discover(url)`
 
-Use discovery as a separate first step when the user provides a specific URL and a direct agent-friendly representation may exist. Print a concise discovery report, then decide in the next turn whether to use `curl`, `web.fetch`, or another approach.
+Use discovery as a separate first step when the user provides a specific URL and a direct agent-friendly representation may exist. Also use it when search results identify an official documentation site: discover the relevant result or documentation root before retrieving individual pages. Print a concise discovery report, then decide in the next turn whether to use `curl`, `web.fetch`, or another approach.
 
 ```js
 const discovery = await web.discover("https://example.com/docs/getting-started");
@@ -75,6 +75,17 @@ curl -fsSL -H 'Accept: text/markdown' \
 ```
 
 For content negotiation, request the original URL with the same header. Use `web.fetch` instead when extraction through the web search infrastructure is preferable.
+
+### Documentation research
+
+When researching product or library documentation:
+
+1. If you do not know the official documentation URL, find it with `web.search`.
+2. Run `web.discover` on the relevant official result or documentation root and print the discovery report.
+3. In the next turn, prefer an advertised Markdown representation or retrieve `llms.txt` as an index, then retrieve only the relevant Markdown pages.
+4. Fall back to `web.fetch` when no suitable agent-friendly resource exists or extraction is preferable.
+
+Do not treat search-result highlights as the primary documentation source when the site advertises agent-friendly resources.
 
 ## `web.search(query, options?)`
 
@@ -213,23 +224,24 @@ for (const result of unique.values()) {
 }
 ```
 
-### Search first, then fetch selected pages
+### Search for official docs, then discover agent-friendly resources
 
 ```js
 const { results } = await web.search("official Tau documentation", {
-  numResults: 8,
-  includeDomains: ["github.com"],
+  numResults: 5,
 });
-const urls = results.slice(0, 3).map((result) => result.url);
-const pages = await web.fetch(urls, {
-  query: "installation and configuration instructions",
-});
+const official = results[0];
+if (!official) throw new Error("Official documentation not found");
 
-for (const page of pages.results) {
-  console.log(`${page.title}\n${page.url}`);
-  for (const highlight of page.highlights ?? []) console.log(`- ${highlight}`);
+console.log(`Official docs: ${official.title}\n${official.url}`);
+const discovery = await web.discover(official.url);
+for (const representation of discovery.markdown) {
+  console.log(`Markdown: ${representation.url} (${representation.via})`);
 }
+for (const file of discovery.llmsTxt) console.log(`llms.txt: ${file.url}`);
 ```
+
+Retrieve the selected Markdown representation or `llms.txt` in the next turn. For ordinary pages without agent-friendly resources, use `web.fetch` on the relevant search results instead.
 
 ## Output guidance
 

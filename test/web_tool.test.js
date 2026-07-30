@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { getExaApiKey } from "../dist/core/config/index.js";
-import { createWebToolDefinition } from "../dist/core/tools/web.js";
+import { createWebToolDefinition, WEB_TOOL } from "../dist/core/tools/web.js";
 import { discoverAgentContent } from "../dist/core/tools/web_discovery.js";
 
 function createExecutionResult(output, exitCode = 0) {
@@ -54,6 +54,12 @@ function getToolText(result) {
 }
 
 describe("Exa web code-mode tool", () => {
+  it("directs documentation research toward agent-friendly resources", () => {
+    expect(WEB_TOOL.description).toContain(
+      "When search identifies an official documentation site, run web.discover",
+    );
+  });
+
   it("resolves the Exa API key from the environment before config", () => {
     expect(getExaApiKey({ apiKeys: { exa: "config-key" } }, { EXA_API_KEY: " env-key " })).toBe(
       "env-key",
@@ -395,6 +401,7 @@ describe("Exa web code-mode tool", () => {
       {
         code: [
           "console.log(docs.includes('web.discover(url)'));",
+          "console.log('guidance=' + docs.includes('Do not treat search-result highlights as the primary documentation source'));",
           "const discovery = await web.discover('https://example.com/docs');",
           "console.log(discovery.markdown[0].url);",
         ].join("\n"),
@@ -404,6 +411,7 @@ describe("Exa web code-mode tool", () => {
 
     expect(result.toolResult.isError).toBe(false);
     expect(getToolText(result)).toContain("true");
+    expect(getToolText(result)).toContain("guidance=true");
     expect(getToolText(result)).toContain("https://example.com/docs.md");
     expect(deps.discover).toHaveBeenCalledWith(
       backend,

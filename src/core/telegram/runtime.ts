@@ -49,18 +49,32 @@ type RuntimeLogEntry = {
   data?: unknown;
 };
 
+const MAX_RUNTIME_LOG_CAUSE_LENGTH = 500;
+
 const defaultDeps: TelegramRuntimeDependencies = {
   startTelegramAdapter: startTelegramAdapter,
 };
 
+function formatRuntimeLogCause(data: unknown): string {
+  if (
+    typeof data !== "object" ||
+    data === null ||
+    !("cause" in data) ||
+    typeof data.cause !== "string"
+  ) {
+    return "";
+  }
+
+  const cause = data.cause.trim().replace(/\s+/g, " ");
+  if (cause.length <= MAX_RUNTIME_LOG_CAUSE_LENGTH) {
+    return cause;
+  }
+
+  return `${cause.slice(0, MAX_RUNTIME_LOG_CAUSE_LENGTH - 1)}…`;
+}
+
 function formatRuntimeLog(scope: string, entry: RuntimeLogEntry): string {
-  const cause =
-    typeof entry.data === "object" &&
-    entry.data !== null &&
-    "cause" in entry.data &&
-    typeof entry.data.cause === "string"
-      ? entry.data.cause.trim()
-      : "";
+  const cause = formatRuntimeLogCause(entry.data);
   return `[${scope}:${entry.level}] ${entry.message}${cause ? `: ${cause}` : ""}`;
 }
 

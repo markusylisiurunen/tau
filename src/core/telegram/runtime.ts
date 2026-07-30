@@ -43,9 +43,40 @@ type RuntimeResources = {
   sessionManager: TelegramSessionManager;
 };
 
+type RuntimeLogEntry = {
+  level: string;
+  message: string;
+  data?: unknown;
+};
+
+const MAX_RUNTIME_LOG_CAUSE_LENGTH = 500;
+
 const defaultDeps: TelegramRuntimeDependencies = {
   startTelegramAdapter: startTelegramAdapter,
 };
+
+function formatRuntimeLogCause(data: unknown): string {
+  if (
+    typeof data !== "object" ||
+    data === null ||
+    !("cause" in data) ||
+    typeof data.cause !== "string"
+  ) {
+    return "";
+  }
+
+  const cause = data.cause.trim().replace(/\s+/g, " ");
+  if (cause.length <= MAX_RUNTIME_LOG_CAUSE_LENGTH) {
+    return cause;
+  }
+
+  return `${cause.slice(0, MAX_RUNTIME_LOG_CAUSE_LENGTH - 1)}…`;
+}
+
+function formatRuntimeLog(scope: string, entry: RuntimeLogEntry): string {
+  const cause = formatRuntimeLogCause(entry.data);
+  return `[${scope}:${entry.level}] ${entry.message}${cause ? `: ${cause}` : ""}`;
+}
 
 async function closeRuntimeResources(resources: Partial<RuntimeResources>): Promise<void> {
   await Promise.allSettled([
@@ -88,7 +119,7 @@ export async function startTelegramRuntime(
     systemMessage: options.config.systemMessage,
     persistencePath: resolveTelegramSessionStatePath(options.config.workspaceRoot),
     onLog: (entry) => {
-      options.onLog?.(`[telegram:${entry.level}] ${entry.message}`);
+      options.onLog?.(formatRuntimeLog("telegram", entry));
     },
     createClient: options.createSessionClient,
   });
@@ -132,7 +163,7 @@ export async function startTelegramRuntime(
         sessionManager,
         projectPreferences,
         onLog: (entry) => {
-          options.onLog?.(`[telegram:${botId}:${entry.level}] ${entry.message}`);
+          options.onLog?.(formatRuntimeLog(`telegram:${botId}`, entry));
         },
       });
 

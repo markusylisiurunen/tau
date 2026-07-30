@@ -874,6 +874,50 @@ const TelegramGetUpdatesResultSchema = z.array(TelegramUpdateSchema);
 const TelegramGetFileResultSchema = z.object({ file_path: z.string() });
 const TelegramGetMeResultSchema = telegramObject({ username: z.string() });
 const TelegramAckResultSchema = z.literal(true);
+const MAX_TELEGRAM_ERROR_DETAIL_LENGTH = 500;
+
+function getErrorCode(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null || !("code" in error)) {
+    return undefined;
+  }
+
+  return typeof error.code === "string" ? error.code : undefined;
+}
+
+function formatTelegramNetworkError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const cause = error instanceof Error ? error.cause : undefined;
+  const causeMessage = cause instanceof Error ? cause.message : undefined;
+  const codes = Array.from(
+    new Set([getErrorCode(error), getErrorCode(cause)].filter((code) => code !== undefined)),
+  );
+  const detail = causeMessage && causeMessage !== message ? `${message}: ${causeMessage}` : message;
+  return `${detail}${codes.length > 0 ? ` (${codes.join(", ")})` : ""}`;
+}
+
+function truncateTelegramErrorDetail(detail: string): string {
+  if (detail.length <= MAX_TELEGRAM_ERROR_DETAIL_LENGTH) {
+    return detail;
+  }
+
+  return `${detail.slice(0, MAX_TELEGRAM_ERROR_DETAIL_LENGTH)}…`;
+}
+
+async function readTelegramHttpErrorDetail(response: Response): Promise<string> {
+  const responseText = (await response.text()).trim();
+  if (!responseText) {
+    return "";
+  }
+
+  try {
+    const parsed = TelegramEnvelopeSchema.safeParse(JSON.parse(responseText));
+    if (parsed.success && parsed.data.description?.trim()) {
+      return truncateTelegramErrorDetail(parsed.data.description.trim());
+    }
+  } catch {}
+
+  return truncateTelegramErrorDetail(responseText);
+}
 
 function createTelegramApi(botToken: string): TelegramApi {
   const apiUrl = `https://api.telegram.org/bot${botToken}`;
@@ -883,17 +927,26 @@ function createTelegramApi(botToken: string): TelegramApi {
     payload: Record<string, unknown>,
     resultSchema: z.ZodType<Result>,
   ): Promise<Result> {
-    const response = await fetch(`${apiUrl}/${method}`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-      },
-      body: JSON.stringify(payload),
-    });
+    let response: Response;
+    try {
+      response = await fetch(`${apiUrl}/${method}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+    } catch (error) {
+      throw new Error(
+        `telegram ${method} network request failed: ${formatTelegramNetworkError(error)}`,
+      );
+    }
 
     if (!response.ok) {
-      const detail = (await response.text()).trim();
-      throw new Error(detail || `telegram ${method} failed: HTTP ${response.status}`);
+      const detail = await readTelegramHttpErrorDetail(response);
+      throw new Error(
+        `telegram ${method} failed: HTTP ${response.status}${detail ? `: ${detail}` : ""}`,
+      );
     }
 
     let raw: unknown;
@@ -911,7 +964,7 @@ function createTelegramApi(botToken: string): TelegramApi {
 
     if (!envelope.ok) {
       const detail = envelope.description?.trim() ?? "";
-      throw new Error(detail || `telegram ${method} request failed`);
+      throw new Error(`telegram ${method} request failed${detail ? `: ${detail}` : ""}`);
     }
 
     return parseOrThrow(

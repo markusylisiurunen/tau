@@ -60,7 +60,8 @@ describe("telegram runtime", () => {
           expect(Object.keys(options.projects)).toEqual(["alpha"]);
           options.onLog?.({
             level: "warn",
-            message: "adapter ready",
+            message: "telegram poll failed",
+            data: { cause: "telegram getUpdates failed: HTTP 409: Conflict" },
           });
           return telegramHandle;
         }),
@@ -69,7 +70,7 @@ describe("telegram runtime", () => {
 
     expect(events).toEqual(["start-telegram:token-1:bot-one"]);
     expect(logs).toEqual([
-      "[telegram:bot-one:warn] adapter ready",
+      "[telegram:bot-one:warn] telegram poll failed: telegram getUpdates failed: HTTP 409: Conflict",
       "tau telegram adapter enabled (bot-one)",
     ]);
 
@@ -77,6 +78,38 @@ describe("telegram runtime", () => {
 
     expect(telegramHandle.close).toHaveBeenCalledTimes(1);
     expect(events.slice(-1)).toEqual(["close-telegram:bot-one"]);
+  });
+
+  it("keeps runtime log causes single-line and bounded", async () => {
+    const logs = [];
+    const runtime = await startTelegramRuntime({
+      config: createTelegramConfig({
+        bots: { "bot-one": { botToken: "token-1" } },
+      }),
+      createSessionClient: vi.fn(),
+      onLog: (line) => {
+        logs.push(line);
+      },
+      deps: {
+        startTelegramAdapter: vi.fn(async (options) => {
+          options.onLog?.({
+            level: "warn",
+            message: "telegram poll failed",
+            data: { cause: `gateway failure\r\n${"x".repeat(600)}` },
+          });
+          return { close: vi.fn(async () => {}) };
+        }),
+      },
+    });
+
+    const warning = logs[0];
+    expect(warning).not.toMatch(/[\r\n]/);
+    expect(warning).toMatch(
+      /^\[telegram:bot-one:warn\] telegram poll failed: gateway failure x+…$/,
+    );
+    expect(warning.length).toBe("[telegram:bot-one:warn] telegram poll failed: ".length + 500);
+
+    await runtime.close();
   });
 
   it("persists project preferences across runtime restarts", async () => {

@@ -708,7 +708,11 @@ function createNookToolBackend(entries = []) {
       const content = Buffer.from("<html></html>");
       return { path, content, bytes: content.byteLength };
     }),
-    writeFile: vi.fn(),
+    writeFile: vi.fn(async (path, content) => ({
+      path,
+      bytes: Buffer.byteLength(content),
+      lines: content.split("\n").length,
+    })),
     writeFileBinary: vi.fn(async (path, content) => ({ path, bytes: content.byteLength })),
     listDir: vi.fn(async (path) => ({ path, entries })),
   };
@@ -807,6 +811,47 @@ describe("nook code-mode tool", () => {
     expect(client.getKv).toHaveBeenCalledWith("demo", "settings");
     expect(client.putKv).toHaveBeenCalledWith("demo", "next", { enabled: true });
     expect(client.listKv).toHaveBeenCalledWith("demo", "set");
+  });
+
+  it("moves KV values between Nook and execution-environment files", async () => {
+    const backend = createNookToolBackend();
+    let fileContent = "";
+    backend.writeFile.mockImplementation(async (path, content) => {
+      fileContent = content;
+      return { path, bytes: Buffer.byteLength(content), lines: 1 };
+    });
+    backend.readFileBinary.mockImplementation(async (path) => {
+      const content = Buffer.from(fileContent);
+      return { path, content, bytes: content.byteLength };
+    });
+    const client = {
+      getKv: vi.fn(async () => ({ theme: "dark", density: 2 })),
+      putKv: vi.fn(async (site, key) => ({ site, key })),
+    };
+    const tool = createNookToolDefinition(backend, { createClient: () => client });
+    const result = await runNookCode(
+      tool,
+      [
+        "const saved = await nook.kv.getToFile('demo', 'settings', '/tmp/settings.json');",
+        "const stored = await nook.kv.putFromFile('demo', 'settings-copy', saved.file);",
+        "console.log(saved.file, saved.bytes, stored.key);",
+      ].join("\n"),
+    );
+
+    expect(result.toolResult.isError).toBe(false);
+    expect(getToolText(result)).toContain("/tmp/settings.json 28 settings-copy");
+    expect(fileContent).toBe('{"theme":"dark","density":2}');
+    expect(backend.writeFile).toHaveBeenCalledWith(
+      "/tmp/settings.json",
+      '{"theme":"dark","density":2}',
+    );
+    expect(backend.readFileBinary).toHaveBeenCalledWith("/tmp/settings.json", {
+      maxBytes: 64 * 1024,
+    });
+    expect(client.putKv).toHaveBeenCalledWith("demo", "settings-copy", {
+      theme: "dark",
+      density: 2,
+    });
   });
 
   it("requires explicit visibility and validates deploy inputs before filesystem access", async () => {
@@ -924,6 +969,42 @@ describe("nook code-mode tool", () => {
     expect(result.toolResult.isError).toBe(true);
     expect(getToolText(result)).toContain("Invalid arguments");
     expect(createClient).not.toHaveBeenCalled();
+  });
+
+  it("rejects bridge fan-out beyond the concurrent request budget", async () => {
+    const backend = createNookToolBackend();
+    const createClient = vi.fn(() => ({
+      listSites: vi.fn(
+        async () =>
+          await new Promise((_resolve, reject) => {
+            const signal = createClient.mock.calls[0][0].signal;
+            signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+          }),
+      ),
+    }));
+    const tool = createNookToolDefinition(backend, { createClient });
+    const result = await runNookCode(
+      tool,
+      "await Promise.all(Array.from({ length: 5 }, () => nook.sites.list()))",
+    );
+
+    expect(result.toolResult.isError).toBe(true);
+    expect(getToolText(result)).toContain("exceeded 4 concurrent bridge requests");
+    expect(createClient).toHaveBeenCalledTimes(4);
+  });
+
+  it("rejects programs beyond the total bridge request budget", async () => {
+    const backend = createNookToolBackend();
+    const createClient = vi.fn(() => ({ listSites: vi.fn(async () => []) }));
+    const tool = createNookToolDefinition(backend, { createClient });
+    const result = await runNookCode(
+      tool,
+      "for (let index = 0; index < 65; index += 1) await nook.sites.list()",
+    );
+
+    expect(result.toolResult.isError).toBe(true);
+    expect(getToolText(result)).toContain("exceeded 64 bridge requests");
+    expect(createClient).toHaveBeenCalledTimes(64);
   });
 
   it("cancels and settles Nook requests before returning", async () => {

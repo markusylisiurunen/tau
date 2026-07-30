@@ -4,6 +4,9 @@ import { Worker } from "node:worker_threads";
 import { truncateToBytesFromEnd } from "../utils/truncate.js";
 import { type BashExecutionResult, DEFAULT_COMMAND_CAPTURE_BYTES } from "./execution_backend.js";
 
+const MAX_BRIDGE_REQUESTS = 64;
+const MAX_CONCURRENT_BRIDGE_REQUESTS = 4;
+
 export type CodeModeBridgeRequest = {
   id: number;
   method: string;
@@ -73,6 +76,7 @@ export function executeCodeModeWorker(
     let aborted = false;
     let settled = false;
     let terminating = false;
+    let bridgeRequestCount = 0;
     let workerError: Error | undefined;
     const stdoutDecoder = new StringDecoder("utf8");
     const stderrDecoder = new StringDecoder("utf8");
@@ -116,8 +120,14 @@ export function executeCodeModeWorker(
       clearTimeout(timeout);
       options.signal.removeEventListener("abort", abortHandler);
     };
+    const failWorker = (error: Error): void => {
+      if (workerError) return;
+      workerError = error;
+      requestController.abort();
+      void worker.terminate().catch(() => {});
+    };
     const postResponse = (message: Record<string, unknown>): void => {
-      if (settled || terminating) return;
+      if (settled || terminating || workerError) return;
       try {
         worker.postMessage(message);
       } catch {}
@@ -126,11 +136,22 @@ export function executeCodeModeWorker(
     worker.stdout.on("data", (chunk: Buffer) => capture("stdout", stdoutDecoder, chunk));
     worker.stderr.on("data", (chunk: Buffer) => capture("stderr", stderrDecoder, chunk));
     worker.on("message", (message: unknown) => {
-      if (settled || terminating) return;
+      if (settled || terminating || workerError) return;
       if (!isWorkerRequest(message)) {
-        workerError = new Error("code-mode sandbox sent an invalid bridge request");
-        requestController.abort();
-        void worker.terminate().catch(() => {});
+        failWorker(new Error("code-mode sandbox sent an invalid bridge request"));
+        return;
+      }
+      bridgeRequestCount += 1;
+      if (bridgeRequestCount > MAX_BRIDGE_REQUESTS) {
+        failWorker(new Error(`code-mode sandbox exceeded ${MAX_BRIDGE_REQUESTS} bridge requests`));
+        return;
+      }
+      if (inFlightRequests.size >= MAX_CONCURRENT_BRIDGE_REQUESTS) {
+        failWorker(
+          new Error(
+            `code-mode sandbox exceeded ${MAX_CONCURRENT_BRIDGE_REQUESTS} concurrent bridge requests`,
+          ),
+        );
         return;
       }
       const request = options.handleRequest(message, requestSignal).then(

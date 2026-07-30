@@ -23,6 +23,7 @@ import { TOOL_NAME_NOOK } from "./tool_names.js";
 const NOOK_CODE_MODE_TIMEOUT_MS = 60_000;
 const NOOK_CODE_MODE_OUTPUT_TOKENS = 8_192;
 const MAX_KV_KEY_LENGTH = 256;
+const MAX_KV_VALUE_BYTES = 64 * 1024;
 
 const NOOK_DESCRIPTION = [
   "Run a one-shot JavaScript program to operate the configured Nook platform: Tau's Cloudflare-backed static mini-app host for publishing built front-end artifacts with optional per-site same-origin JSON KV.",
@@ -66,6 +67,7 @@ type NookToolDeps = {
 
 const nonEmptyStringSchema = z.string().trim().min(1);
 const directorySchema = nonEmptyStringSchema;
+const fileSchema = nonEmptyStringSchema;
 const keySchema = z.string().min(1).max(MAX_KV_KEY_LENGTH);
 const visibilityOptionsSchema = z
   .object({
@@ -208,6 +210,47 @@ async function copyTemplate(
   return { ...manifest.template, directory };
 }
 
+async function writeKvToFile(
+  client: NookClient,
+  backend: ToolExecutionBackend,
+  site: string,
+  key: string,
+  file: string,
+  signal: AbortSignal,
+): Promise<unknown> {
+  const value = await client.getKv(site, key);
+  signal.throwIfAborted();
+  const content = JSON.stringify(value);
+  if (content === undefined) {
+    throw new Error(`nook.kv.getToFile received a non-JSON value for ${site}/${key}`);
+  }
+  const result = await backend.writeFile(file, content);
+  signal.throwIfAborted();
+  return { site, key, file: result.path, bytes: result.bytes };
+}
+
+async function readKvFromFile(
+  client: NookClient,
+  backend: ToolExecutionBackend,
+  site: string,
+  key: string,
+  file: string,
+  signal: AbortSignal,
+): Promise<unknown> {
+  signal.throwIfAborted();
+  const result = await backend.readFileBinary(file, { maxBytes: MAX_KV_VALUE_BYTES });
+  signal.throwIfAborted();
+  let value: unknown;
+  try {
+    value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(result.content));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`invalid JSON in KV file '${file}': ${message}`);
+  }
+  const stored = await client.putKv(site, key, value);
+  return { ...stored, file: result.path };
+}
+
 async function handleNookRequest(
   request: CodeModeBridgeRequest,
   deps: NookToolDeps,
@@ -279,6 +322,14 @@ async function handleNookRequest(
       const [site, key] = parseMethodArguments("kv.get", args, z.tuple([siteSchema, keySchema]));
       return createClient().getKv(site, key);
     }
+    case "kv.getToFile": {
+      const [site, key, file] = parseMethodArguments(
+        "kv.getToFile",
+        args,
+        z.tuple([siteSchema, keySchema, fileSchema]),
+      );
+      return writeKvToFile(createClient(), backend, site, key, file, signal);
+    }
     case "kv.put": {
       const [site, key, value] = parseMethodArguments(
         "kv.put",
@@ -286,6 +337,14 @@ async function handleNookRequest(
         z.tuple([siteSchema, keySchema, z.json()]),
       );
       return createClient().putKv(site, key, value);
+    }
+    case "kv.putFromFile": {
+      const [site, key, file] = parseMethodArguments(
+        "kv.putFromFile",
+        args,
+        z.tuple([siteSchema, keySchema, fileSchema]),
+      );
+      return readKvFromFile(createClient(), backend, site, key, file, signal);
     }
     case "kv.delete": {
       const [site, key] = parseMethodArguments("kv.delete", args, z.tuple([siteSchema, keySchema]));

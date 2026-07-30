@@ -3,7 +3,7 @@ The one-shot JavaScript runtime provides these globals:
 - `nook.skill()`: load the configured Nook deployment's version-matched app-authoring skill.
 - `nook.sites`: list, copy, deploy, and delete sites.
 - `nook.templates`: list, copy, save, and delete editable templates.
-- `nook.kv`: get, put, delete, and list per-site JSON KV entries.
+- `nook.kv`: get, put, import, export, delete, and list per-site JSON KV entries.
 - `docs`: this agent-facing SDK document.
 - `console`: program output. Only text written through console methods is returned; return values are ignored.
 
@@ -145,6 +145,15 @@ const settings = await nook.kv.get("demo", "settings");
 console.log(`theme: ${settings.theme}`);
 ```
 
+### `nook.kv.getToFile(site, key, file)`
+
+Write the stored JSON value to a file in the session execution environment. Parent directories are created as needed. Return `{ site, key, file, bytes }`.
+
+```js
+const saved = await nook.kv.getToFile("demo", "settings", "/tmp/settings.json");
+console.log(`wrote ${saved.bytes} bytes to ${saved.file}`);
+```
+
 ### `nook.kv.put(site, key, value)`
 
 Store a JSON value and return `{ site, key }`.
@@ -152,6 +161,15 @@ Store a JSON value and return `{ site, key }`.
 ```js
 const stored = await nook.kv.put("demo", "settings", { theme: "dark" });
 console.log(`stored ${stored.site}/${stored.key}`);
+```
+
+### `nook.kv.putFromFile(site, key, file)`
+
+Parse a JSON file from the session execution environment, store its value, and return `{ site, key, file }`. Files are limited to the 64 KiB maximum size of a KV value.
+
+```js
+const stored = await nook.kv.putFromFile("demo", "settings", "/tmp/settings.json");
+console.log(`stored ${stored.site}/${stored.key} from ${stored.file}`);
 ```
 
 ### `nook.kv.delete(site, key)`

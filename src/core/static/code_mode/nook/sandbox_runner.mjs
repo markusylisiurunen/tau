@@ -123,7 +123,9 @@ compartment.evaluate(String.raw`
       }),
       kv: Object.freeze({
         get: (...args) => callNook("kv.get", args),
+        getToFile: (...args) => callNook("kv.getToFile", args),
         put: (...args) => callNook("kv.put", args),
+        putFromFile: (...args) => callNook("kv.putFromFile", args),
         delete: (...args) => callNook("kv.delete", args),
         list: (...args) => callNook("kv.list", args),
       }),

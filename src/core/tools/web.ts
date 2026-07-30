@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
+import { finished } from "node:stream/promises";
+import { StringDecoder } from "node:string_decoder";
 import { Worker } from "node:worker_threads";
 import type { Tool } from "@earendil-works/pi-ai";
-import Exa from "exa-js";
 import { Type } from "typebox";
 import { z } from "zod";
 import { getExaApiKey } from "../config/index.js";
@@ -23,6 +24,7 @@ import { discoverAgentContent } from "./web_discovery.js";
 
 const WEB_CODE_MODE_TIMEOUT_MS = 60_000;
 const WEB_CODE_MODE_OUTPUT_TOKENS = 8_192;
+const EXA_API_BASE_URL = "https://api.exa.ai";
 
 const WEB_DESCRIPTION = [
   "Run a one-shot JavaScript program to search the web and retrieve page content.",
@@ -56,13 +58,18 @@ const webArgsSchema = z
 type WebArgs = z.infer<typeof webArgsSchema>;
 
 type ExaClient = {
-  search(query: string, options: Record<string, unknown>): Promise<unknown>;
-  getContents(urls: string[], options: Record<string, unknown>): Promise<unknown>;
+  search(query: string, options: Record<string, unknown>, signal: AbortSignal): Promise<unknown>;
+  getContents(
+    urls: string[],
+    options: Record<string, unknown>,
+    signal: AbortSignal,
+  ): Promise<unknown>;
 };
 
 type WebToolDeps = {
   createExaClient(apiKey: string): ExaClient;
   discover(backend: ToolExecutionBackend, value: string, signal: AbortSignal): Promise<unknown>;
+  timeoutMs?: number;
 };
 
 type WebBridgeRequest = {
@@ -141,6 +148,58 @@ const documentation = readFileSync(
   "utf8",
 );
 const sandboxRunnerUrl = new URL("../static/code_mode/web/sandbox_runner.mjs", import.meta.url);
+
+async function requestExa(
+  apiKey: string,
+  endpoint: "/search" | "/contents",
+  body: Record<string, unknown>,
+  signal: AbortSignal,
+): Promise<unknown> {
+  const response = await fetch(`${EXA_API_BASE_URL}${endpoint}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "User-Agent": "tau-web",
+      "x-api-key": apiKey,
+    },
+    body: JSON.stringify(body),
+    signal,
+  });
+  const responseText = await response.text();
+  let payload: unknown;
+  if (responseText) {
+    try {
+      payload = JSON.parse(responseText);
+    } catch {
+      if (response.ok) {
+        throw new Error("Exa returned a non-JSON response");
+      }
+    }
+  }
+  if (!response.ok) {
+    const error =
+      typeof payload === "object" && payload !== null
+        ? (payload as { error?: unknown; message?: unknown })
+        : undefined;
+    const detail = [error?.error, error?.message]
+      .filter((value): value is string => typeof value === "string" && Boolean(value.trim()))
+      .join(". ");
+    throw new Error(detail || `Exa request failed with HTTP ${response.status}`);
+  }
+  if (payload === undefined) {
+    throw new Error("Exa returned an empty response");
+  }
+  return payload;
+}
+
+function createExaClient(apiKey: string): ExaClient {
+  return {
+    search: (query, options, signal) =>
+      requestExa(apiKey, "/search", { query, ...options }, signal),
+    getContents: (urls, options, signal) =>
+      requestExa(apiKey, "/contents", { urls, ...options }, signal),
+  };
+}
 
 function parseWebArguments(raw: unknown): ParsedCodeModeArguments<WebArgs> {
   const rawCode =
@@ -379,12 +438,12 @@ async function handleWebRequest(
     case "search": {
       if (!exa) throw new Error("Missing Exa API key.");
       const [query, options] = normalizeSearchArguments(args);
-      return normalizeResponse(await exa.search(query, options));
+      return normalizeResponse(await exa.search(query, options, signal));
     }
     case "fetch": {
       if (!exa) throw new Error("Missing Exa API key.");
       const [urls, options] = normalizeFetchArguments(args);
-      return normalizeResponse(await exa.getContents(urls, options));
+      return normalizeResponse(await exa.getContents(urls, options, signal));
     }
     default:
       throw new Error(`unsupported web method '${request.method}'`);
@@ -401,6 +460,7 @@ function executeWebProgram(
   deps: WebToolDeps,
   backend: ToolExecutionBackend,
   signal: AbortSignal,
+  timeoutMs: number,
 ): Promise<BashExecutionResult> {
   return new Promise((resolve, reject) => {
     const worker = new Worker(sandboxRunnerUrl, {
@@ -428,11 +488,15 @@ function executeWebProgram(
     let aborted = false;
     let settled = false;
     let terminating = false;
+    let workerError: Error | undefined;
+    const stdoutDecoder = new StringDecoder("utf8");
+    const stderrDecoder = new StringDecoder("utf8");
+    const requestController = new AbortController();
+    const requestSignal = AbortSignal.any([signal, requestController.signal]);
+    const inFlightRequests = new Set<Promise<void>>();
 
-    const capture = (target: "stdout" | "stderr", chunk: Buffer): void => {
-      capturedBytes += chunk.length;
-      if (capturedBytes > DEFAULT_COMMAND_CAPTURE_BYTES) truncated = true;
-      const text = chunk.toString("utf8");
+    const appendOutput = (target: "stdout" | "stderr", text: string): void => {
+      if (!text) return;
       output = appendCapture(output, text);
       if (target === "stdout") {
         stdout = appendCapture(stdout, text);
@@ -440,16 +504,27 @@ function executeWebProgram(
         stderr = appendCapture(stderr, text);
       }
     };
-
+    const capture = (target: "stdout" | "stderr", decoder: StringDecoder, chunk: Buffer): void => {
+      capturedBytes += chunk.length;
+      if (capturedBytes > DEFAULT_COMMAND_CAPTURE_BYTES) truncated = true;
+      appendOutput(target, decoder.write(chunk));
+    };
+    const settleRequests = async (): Promise<void> => {
+      requestController.abort();
+      while (inFlightRequests.size > 0) {
+        await Promise.allSettled([...inFlightRequests]);
+      }
+    };
     const terminate = (reason: "abort" | "timeout"): void => {
       if (terminating) return;
       terminating = true;
       if (reason === "abort") aborted = true;
       if (reason === "timeout") timedOut = true;
+      requestController.abort();
       void worker.terminate().catch(() => {});
     };
     const abortHandler = (): void => terminate("abort");
-    const timeout = setTimeout(() => terminate("timeout"), WEB_CODE_MODE_TIMEOUT_MS);
+    const timeout = setTimeout(() => terminate("timeout"), timeoutMs);
     timeout.unref?.();
 
     const cleanup = (): void => {
@@ -463,10 +538,11 @@ function executeWebProgram(
       } catch {}
     };
 
-    worker.stdout.on("data", (chunk: Buffer) => capture("stdout", chunk));
-    worker.stderr.on("data", (chunk: Buffer) => capture("stderr", chunk));
+    worker.stdout.on("data", (chunk: Buffer) => capture("stdout", stdoutDecoder, chunk));
+    worker.stderr.on("data", (chunk: Buffer) => capture("stderr", stderrDecoder, chunk));
     worker.on("message", (message: WebWorkerRequest) => {
-      void handleWebRequest(message, exa, deps, backend, signal).then(
+      if (settled || terminating) return;
+      const request = handleWebRequest(message, exa, deps, backend, requestSignal).then(
         (value) => postResponse({ type: "response", id: message.id, ok: true, value }),
         (error) =>
           postResponse({
@@ -476,27 +552,37 @@ function executeWebProgram(
             error: serializeError(error),
           }),
       );
+      inFlightRequests.add(request);
+      void request.then(() => inFlightRequests.delete(request));
     });
     worker.once("error", (error) => {
-      if (settled || terminating) return;
-      settled = true;
-      cleanup();
-      reject(error);
+      workerError = error instanceof Error ? error : new Error(String(error));
+      requestController.abort();
     });
     worker.once("exit", (workerExitCode) => {
       if (settled) return;
       settled = true;
       cleanup();
-      resolve({
-        output,
-        stdout,
-        stderr,
-        exitCode: aborted || timedOut ? null : workerExitCode,
-        truncated,
-        timedOut,
-        aborted,
-        closeSignal: null,
-      });
+      void (async () => {
+        await Promise.allSettled([finished(worker.stdout), finished(worker.stderr)]);
+        appendOutput("stdout", stdoutDecoder.end());
+        appendOutput("stderr", stderrDecoder.end());
+        await settleRequests();
+        if (workerError && !terminating) {
+          reject(workerError);
+          return;
+        }
+        resolve({
+          output,
+          stdout,
+          stderr,
+          exitCode: aborted || timedOut ? null : workerExitCode,
+          truncated,
+          timedOut,
+          aborted,
+          closeSignal: null,
+        });
+      })();
     });
 
     if (signal.aborted) {
@@ -507,10 +593,8 @@ function executeWebProgram(
   });
 }
 
-const ExaConstructor = Exa as unknown as new (apiKey: string) => ExaClient;
-
 const defaultDeps: WebToolDeps = {
-  createExaClient: (apiKey) => new ExaConstructor(apiKey),
+  createExaClient,
   discover: discoverAgentContent,
 };
 
@@ -518,14 +602,16 @@ export function createWebToolDefinition(
   backend: ToolExecutionBackend,
   deps: WebToolDeps = defaultDeps,
 ): ToolDefinition {
+  const timeoutMs = deps.timeoutMs ?? WEB_CODE_MODE_TIMEOUT_MS;
   const implementation: CodeModeToolImplementation<WebArgs> = {
     schema: WEB_TOOL,
     outputPolicy: { maxTokens: WEB_CODE_MODE_OUTPUT_TOKENS },
+    timeoutMs,
     parseArguments: parseWebArguments,
     execute: async ({ code, context, signal, backend: executionBackend }) => {
       const apiKey = getExaApiKey(context.config);
       const exa = apiKey ? deps.createExaClient(apiKey) : undefined;
-      return executeWebProgram(code, exa, deps, executionBackend, signal);
+      return executeWebProgram(code, exa, deps, executionBackend, signal, timeoutMs);
     },
   };
 

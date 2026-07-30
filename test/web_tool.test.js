@@ -281,20 +281,61 @@ describe("Exa web code-mode tool", () => {
     });
 
     expect(result.toolResult.isError).toBe(false);
-    expect(client.search).toHaveBeenCalledWith("tau", {
-      type: "auto",
-      numResults: 2,
-      userLocation: "FI",
-      contents: { highlights: true },
-    });
-    expect(client.getContents).toHaveBeenCalledWith(["https://example.com"], {
-      text: { maxCharacters: 123 },
-      extras: { links: 2 },
-    });
+    expect(client.search).toHaveBeenCalledWith(
+      "tau",
+      {
+        type: "auto",
+        numResults: 2,
+        userLocation: "FI",
+        contents: { highlights: true },
+      },
+      expect.any(AbortSignal),
+    );
+    expect(client.getContents).toHaveBeenCalledWith(
+      ["https://example.com"],
+      {
+        text: { maxCharacters: 123 },
+        extras: { links: 2 },
+      },
+      expect.any(AbortSignal),
+    );
     expect(getToolText(result)).toContain("page text");
     expect(getToolText(result)).toContain("https://linked.example");
     expect(getToolText(result)).not.toContain("costDollars");
     expect(getToolText(result)).not.toContain("image.example");
+  });
+
+  it("sends provider requests through abortable host fetch", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          results: [{ title: "Tau", url: "https://example.com/tau", highlights: ["result"] }],
+          statuses: [],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    try {
+      const backend = createBackend();
+      const tool = createWebToolDefinition(backend);
+      const { result } = await runTool(tool, { code: "await web.search('tau')" });
+
+      expect(result.toolResult.isError).toBe(false);
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://api.exa.ai/search",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            query: "tau",
+            type: "auto",
+            contents: { highlights: true },
+          }),
+          signal: expect.any(AbortSignal),
+        }),
+      );
+    } finally {
+      fetchMock.mockRestore();
+    }
   });
 
   it("fails when the provider returns an invalid response", async () => {
@@ -380,6 +421,87 @@ describe("Exa web code-mode tool", () => {
 
     const { result } = await run;
     expect(result.toolResult.isError).toBe(true);
+    expect(getToolText(result)).toContain("(tau) aborted");
+    expect(result.uiEvent.uiText.previewLines).toContainEqual({ text: "(tau) aborted" });
+  });
+
+  it("cancels and settles provider requests before returning", async () => {
+    let markProviderStarted;
+    const providerStarted = new Promise((resolve) => {
+      markProviderStarted = resolve;
+    });
+    let providerSettled = false;
+    const client = {
+      search: vi.fn(
+        async (_query, _options, signal) =>
+          await new Promise((_resolve, reject) => {
+            markProviderStarted();
+            signal.addEventListener(
+              "abort",
+              () => {
+                providerSettled = true;
+                reject(signal.reason);
+              },
+              { once: true },
+            );
+          }),
+      ),
+    };
+    const backend = createBackend();
+    const tool = createWebToolDefinition(backend, createDeps(client));
+    const controller = new AbortController();
+    const run = runTool(
+      tool,
+      { code: "await web.search('tau')" },
+      { scope: "main", cwd: "/project", config: { apiKeys: { exa: "exa-key" } } },
+      controller.signal,
+    );
+
+    await providerStarted;
+    controller.abort();
+    const { result } = await run;
+
+    expect(providerSettled).toBe(true);
+    expect(client.search.mock.calls[0][2].aborted).toBe(true);
+    expect(getToolText(result)).toContain("(tau) aborted");
+  });
+
+  it("cancels provider requests and reports sandbox timeouts explicitly", async () => {
+    let providerSettled = false;
+    const client = {
+      search: vi.fn(
+        async (_query, _options, signal) =>
+          await new Promise((_resolve, reject) => {
+            signal.addEventListener(
+              "abort",
+              () => {
+                providerSettled = true;
+                reject(signal.reason);
+              },
+              { once: true },
+            );
+          }),
+      ),
+    };
+    const backend = createBackend();
+    const deps = { ...createDeps(client), timeoutMs: 1_000 };
+    const tool = createWebToolDefinition(backend, deps);
+    const { result } = await runTool(tool, { code: "await web.search('tau')" });
+
+    expect(providerSettled).toBe(true);
+    expect(result.toolResult.isError).toBe(true);
+    expect(getToolText(result)).toContain("(tau) timed out after 1000ms");
+    expect(result.uiEvent.uiText.previewLines).toContainEqual({
+      text: "(tau) timed out after 1000ms",
+    });
+  });
+
+  it("decodes multibyte output across Worker stream chunks", async () => {
+    const backend = createBackend();
+    const tool = createWebToolDefinition(backend, createDeps({}));
+    const { result } = await runTool(tool, { code: "console.log('€'.repeat(400_000))" });
+
+    expect(getToolText(result)).not.toContain("�");
   });
 
   it("middle-truncates large program output at 8,192 estimated tokens", async () => {

@@ -20,6 +20,7 @@ export type ParsedCodeModeArguments<TArgs> =
 export type CodeModeToolImplementation<TArgs> = {
   schema: Tool;
   outputPolicy: BashOutputPolicy;
+  timeoutMs?: number;
   parseArguments(raw: unknown): ParsedCodeModeArguments<TArgs>;
   execute(input: {
     args: TArgs;
@@ -30,12 +31,25 @@ export type CodeModeToolImplementation<TArgs> = {
   }): Promise<BashExecutionResult>;
 };
 
+function getCodeModeTerminationNote(
+  execution: BashExecutionResult,
+  timeoutMs: number | undefined,
+): string | undefined {
+  if (execution.timedOut) {
+    return `(tau) timed out${timeoutMs === undefined ? "" : ` after ${timeoutMs}ms`}`;
+  }
+  if (execution.aborted) return "(tau) aborted";
+  if (execution.closeSignal) return `(tau) terminated by signal ${execution.closeSignal}`;
+  return undefined;
+}
+
 function formatCodeModeResultText(
   truncationInfo: Awaited<ReturnType<typeof prepareBashOutput>>,
-  exitCode: number | null,
+  execution: BashExecutionResult,
+  terminated: boolean,
 ): string {
   const { model, captureTruncated, fullOutputPath } = truncationInfo;
-  if (model.outputBytes === 0 && exitCode === 0) {
+  if (model.outputBytes === 0 && execution.exitCode === 0) {
     return "Program produced no output (exit 0)";
   }
 
@@ -44,7 +58,10 @@ function formatCodeModeResultText(
     model.truncated || captureTruncated
       ? `\n\n[Output truncated for context: ${model.outputLines} lines / ${formatBytes(model.outputBytes)} shown of ${model.totalLines} lines / ${formatBytes(model.totalBytes)} (full output estimate: ~${bytesToTokens(model.totalBytes)} tokens).${fullOutputPath ? ` Full output saved to ${fullOutputPath}.` : ""}]`
       : "";
-  const exitNote = exitCode !== null && exitCode !== 0 ? `\n(exit ${exitCode})` : "";
+  const exitNote =
+    !terminated && execution.exitCode !== null && execution.exitCode !== 0
+      ? `\n(exit ${execution.exitCode})`
+      : "";
   return `${output || "(no output)"}${truncationNote}${exitNote}`;
 }
 
@@ -100,13 +117,21 @@ export function createCodeModeToolDefinition<TArgs>(
               signal,
             });
             const durationMs = Math.max(0, Date.now() - startedAt);
+            const terminationNote = getCodeModeTerminationNote(execution, implementation.timeoutMs);
+            const output = terminationNote
+              ? `${execution.output}${execution.output && !execution.output.endsWith("\n") ? "\n" : ""}${terminationNote}\n`
+              : execution.output;
             const truncationInfo = await prepareBashOutput(
-              execution.output,
+              output,
               execution.truncated,
               implementation.outputPolicy,
               backend,
             );
-            const toolText = formatCodeModeResultText(truncationInfo, execution.exitCode);
+            const toolText = formatCodeModeResultText(
+              truncationInfo,
+              execution,
+              terminationNote !== undefined,
+            );
             const isError = execution.exitCode === null || execution.exitCode !== 0;
             const uiText = buildBashUiText({
               truncationInfo,

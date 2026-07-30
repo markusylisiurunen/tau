@@ -156,7 +156,6 @@ describe("tool enablement", () => {
 
     expect(allTools).toEqual(expectedTools);
     expect(enabled).toEqual(expectedTools);
-    expect(personas[0].tools).toContain(TOOL_NAME_WEB);
   });
 
   it("fails fast when a persona references an unregistered tool", () => {

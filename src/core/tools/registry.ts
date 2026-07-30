@@ -150,14 +150,12 @@ type ToolUiEventWithHeaderTarget = {
       type: "code_mode_started";
       toolCallId: string;
       toolName: string;
-      label: string;
       code: string;
     }
   | {
       type: "code_mode_finished";
       toolCallId: string;
       toolName: string;
-      label: string;
       code: string;
       status: "success" | "error";
       uiText: ToolUiText;
@@ -166,7 +164,6 @@ type ToolUiEventWithHeaderTarget = {
       type: "code_mode_blocked";
       toolCallId: string;
       toolName: string;
-      label: string;
       code: string;
       reason: string;
     }

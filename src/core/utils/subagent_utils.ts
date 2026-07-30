@@ -30,13 +30,13 @@ export function formatToolUiEventForProgress(uiEvent: ToolUiEvent): string | und
     case "bash_aborted":
       return `bash ${uiEvent.reason}: $ ${uiEvent.command.replace(/\n/g, " ")}`;
     case "code_mode_started":
-      return `${uiEvent.label}: ${uiEvent.headerTarget}`;
+      return `${uiEvent.toolName}: ${uiEvent.headerTarget}`;
     case "code_mode_finished":
       return uiEvent.status === "error"
-        ? `${uiEvent.label} failed: ${uiEvent.headerTarget}`
+        ? `${uiEvent.toolName} failed: ${uiEvent.headerTarget}`
         : undefined;
     case "code_mode_blocked":
-      return `${uiEvent.label} blocked: ${uiEvent.headerTarget} (${normalizeOneLine(uiEvent.reason)})`;
+      return `${uiEvent.toolName} blocked: ${uiEvent.headerTarget} (${normalizeOneLine(uiEvent.reason)})`;
     case "write_success":
       return `write: ${uiEvent.path}`;
     case "write_blocked":

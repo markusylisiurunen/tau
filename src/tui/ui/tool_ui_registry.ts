@@ -585,11 +585,11 @@ export function createToolUiRegistry(): ToolUiRegistry {
 
   registry.register("code_mode_started", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "code_mode_started" }>;
-    const view = buildSimpleToolRunningView(context.theme, uiEvent.label, uiEvent.headerTarget);
+    const view = buildSimpleToolRunningView(context.theme, uiEvent.toolName, uiEvent.headerTarget);
     return {
       ...view,
       compact: {
-        header: buildCodeModeCompactHeader(context.theme, "running", uiEvent.label),
+        header: buildCodeModeCompactHeader(context.theme, "running", uiEvent.toolName),
         extraText: buildCodeModeCompactPreview(context.theme, uiEvent.code),
       },
     };
@@ -599,7 +599,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
     const uiEvent = event as Extract<ToolUiEvent, { type: "code_mode_finished" }>;
     const view = buildClientToolFinishedView({
       theme: context.theme,
-      toolName: uiEvent.label,
+      toolName: uiEvent.toolName,
       status: uiEvent.status,
       uiText: uiEvent.uiText,
     });
@@ -607,7 +607,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
     return {
       ...view,
       compact: {
-        header: buildCodeModeCompactHeader(context.theme, status, uiEvent.label),
+        header: buildCodeModeCompactHeader(context.theme, status, uiEvent.toolName),
         extraText: joinCodeModeCompactSections(
           buildCodeModeCompactPreview(context.theme, uiEvent.code),
           view.compact.extraText,
@@ -620,7 +620,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
     const uiEvent = event as Extract<ToolUiEvent, { type: "code_mode_blocked" }>;
     const view = buildSimpleToolFinishedView({
       theme: context.theme,
-      label: uiEvent.label,
+      label: uiEvent.toolName,
       target: uiEvent.headerTarget,
       status: "error",
       message: uiEvent.reason,
@@ -628,7 +628,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
     return {
       ...view,
       compact: {
-        header: buildCodeModeCompactHeader(context.theme, "blocked", uiEvent.label),
+        header: buildCodeModeCompactHeader(context.theme, "blocked", uiEvent.toolName),
         extraText: joinCodeModeCompactSections(
           buildCodeModeCompactPreview(context.theme, uiEvent.code),
           view.compact.extraText,

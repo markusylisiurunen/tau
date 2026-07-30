@@ -17,20 +17,13 @@ export type ParsedCodeModeArguments<TArgs> =
   | { ok: true; args: TArgs; code: string; displayTarget: string }
   | { ok: false; error: string; code: string; displayTarget: string };
 
-export type CodeModeToolImplementation<TArgs, TRuntime> = {
+export type CodeModeToolImplementation<TArgs> = {
   schema: Tool;
-  label: string;
   outputPolicy: BashOutputPolicy;
   parseArguments(raw: unknown): ParsedCodeModeArguments<TArgs>;
-  prepare(input: {
-    backend: ToolExecutionBackend;
-    context: ToolDispatchContext;
-    signal: AbortSignal;
-  }): Promise<TRuntime>;
   execute(input: {
     args: TArgs;
     code: string;
-    runtime: TRuntime;
     backend: ToolExecutionBackend;
     context: ToolDispatchContext;
     signal: AbortSignal;
@@ -55,9 +48,9 @@ function formatCodeModeResultText(
   return `${output || "(no output)"}${truncationNote}${exitNote}`;
 }
 
-export function createCodeModeToolDefinition<TArgs, TRuntime>(
+export function createCodeModeToolDefinition<TArgs>(
   backend: ToolExecutionBackend,
-  implementation: CodeModeToolImplementation<TArgs, TRuntime>,
+  implementation: CodeModeToolImplementation<TArgs>,
 ): ToolDefinition {
   return {
     schema: implementation.schema,
@@ -77,7 +70,6 @@ export function createCodeModeToolDefinition<TArgs, TRuntime>(
           type: "code_mode_blocked",
           toolCallId: toolCall.id,
           toolName: implementation.schema.name,
-          label: implementation.label,
           code: parsed.code,
           headerTarget,
           reason,
@@ -94,18 +86,15 @@ export function createCodeModeToolDefinition<TArgs, TRuntime>(
           type: "code_mode_started",
           toolCallId: toolCall.id,
           toolName: implementation.schema.name,
-          label: implementation.label,
           code: parsed.code,
           headerTarget,
         },
         run: (async () => {
           try {
             const startedAt = Date.now();
-            const runtime = await implementation.prepare({ backend, context, signal });
             const execution = await implementation.execute({
               args: parsed.args,
               code: parsed.code,
-              runtime,
               backend,
               context,
               signal,
@@ -130,7 +119,6 @@ export function createCodeModeToolDefinition<TArgs, TRuntime>(
               type: "code_mode_finished",
               toolCallId: toolCall.id,
               toolName: implementation.schema.name,
-              label: implementation.label,
               code: parsed.code,
               headerTarget,
               status: isError ? "error" : "success",

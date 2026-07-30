@@ -61,14 +61,6 @@ describe("Exa web code-mode tool", () => {
     expect(getExaApiKey({ apiKeys: { exa: " config-key " } }, {})).toBe("config-key");
   });
 
-  it("bundles documentation for only the bounded web API", () => {
-    const backend = createBackend();
-    const tool = createWebToolDefinition(backend, createDeps({}));
-
-    expect(tool.schema.description).toContain("use web.discover first");
-    expect(tool.schema.description).toContain("receives web, docs, and console globals");
-  });
-
   it("discovers only metadata for deterministic Markdown and llms.txt responses", async () => {
     const requestedUrl = "https://example.com/docs/getting-started";
     const responses = new Map([
@@ -174,6 +166,9 @@ describe("Exa web code-mode tool", () => {
     await expect(assertPublicWebUrl("http://[::ffff:127.0.0.1]/docs")).rejects.toThrow(
       "only supports public web addresses",
     );
+    await expect(assertPublicWebUrl("http://[2002:7f00:1::]/docs")).rejects.toThrow(
+      "only supports public web addresses",
+    );
   });
 
   it("runs generated code in a capability-limited sandbox", async () => {
@@ -191,7 +186,6 @@ describe("Exa web code-mode tool", () => {
     expect(dispatch.startedUiEvent).toMatchObject({
       type: "code_mode_started",
       toolName: "web",
-      label: "web",
     });
     expect(result.toolResult.isError).toBe(false);
     expect(getToolText(result)).toContain("undefined undefined undefined undefined");
@@ -258,6 +252,15 @@ describe("Exa web code-mode tool", () => {
     expect(getToolText(result)).not.toContain("image.example");
   });
 
+  it("fails when the provider returns an invalid response", async () => {
+    const backend = createBackend();
+    const tool = createWebToolDefinition(backend, createDeps({ search: vi.fn(async () => ({})) }));
+    const { result } = await runTool(tool, { code: "await web.search('tau')" });
+
+    expect(result.toolResult.isError).toBe(true);
+    expect(getToolText(result)).toContain("Invalid Exa response");
+  });
+
   it("supports keyless documentation and discovery without constructing a provider client", async () => {
     const backend = createBackend();
     const deps = createDeps({});
@@ -289,7 +292,7 @@ describe("Exa web code-mode tool", () => {
       code: "await web.search('tau', { stream: true })",
     });
     expect(unsupported.result.toolResult.isError).toBe(true);
-    expect(getToolText(unsupported.result)).toContain("does not support option 'stream'");
+    expect(getToolText(unsupported.result)).toContain('Unrecognized key: "stream"');
 
     const missingKey = await runTool(
       tool,

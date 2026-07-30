@@ -74,33 +74,68 @@ type WebBridgeRequest = {
   argsJson: string;
 };
 
-const SEARCH_OPTION_KEYS = new Set([
-  "numResults",
-  "includeDomains",
-  "excludeDomains",
-  "startPublishedDate",
-  "endPublishedDate",
-  "category",
-  "userLocation",
-  "maxAgeHours",
-]);
-const FETCH_OPTION_KEYS = new Set([
-  "mode",
-  "query",
-  "maxCharacters",
-  "maxAgeHours",
-  "subpages",
-  "subpageTarget",
-  "links",
-]);
-const SEARCH_CATEGORIES = new Set([
+const nonEmptyStringSchema = z.string().trim().min(1);
+const nonEmptyStringArraySchema = z.array(nonEmptyStringSchema).min(1);
+const SEARCH_CATEGORIES = [
   "company",
   "people",
   "publication",
   "news",
   "personal site",
   "financial report",
+] as const;
+const searchOptionsSchema = z
+  .object({
+    numResults: z.number().int().min(1).max(100).optional(),
+    includeDomains: nonEmptyStringArraySchema.optional(),
+    excludeDomains: nonEmptyStringArraySchema.optional(),
+    startPublishedDate: nonEmptyStringSchema.optional(),
+    endPublishedDate: nonEmptyStringSchema.optional(),
+    category: z.enum(SEARCH_CATEGORIES).optional(),
+    userLocation: z
+      .string()
+      .trim()
+      .regex(/^[a-z]{2}$/i, "must be a two-letter country code")
+      .transform((value) => value.toUpperCase())
+      .optional(),
+    maxAgeHours: z.number().int().min(-1).optional(),
+  })
+  .strict()
+  .superRefine((options, context) => {
+    if (
+      (options.category === "company" || options.category === "people") &&
+      (options.excludeDomains || options.startPublishedDate || options.endPublishedDate)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `category '${options.category}' does not support excludeDomains or publication-date filters`,
+      });
+    }
+  });
+const fetchUrlsSchema = z.union([
+  nonEmptyStringSchema.transform((url) => [url]),
+  nonEmptyStringArraySchema,
 ]);
+const fetchOptionsSchema = z
+  .object({
+    mode: z.enum(["highlights", "text"]).default("highlights"),
+    query: nonEmptyStringSchema.optional(),
+    maxCharacters: z.number().int().positive().optional(),
+    maxAgeHours: z.number().int().min(-1).optional(),
+    subpages: z.number().int().nonnegative().optional(),
+    subpageTarget: z.union([nonEmptyStringSchema, nonEmptyStringArraySchema]).optional(),
+    links: z.number().int().nonnegative().optional(),
+  })
+  .strict()
+  .superRefine((options, context) => {
+    if (options.mode === "text" && options.query !== undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["query"],
+        message: "is only supported in highlights mode",
+      });
+    }
+  });
 
 const documentation = readFileSync(
   new URL("../static/code_mode/web/documentation.md", import.meta.url),
@@ -138,56 +173,24 @@ function parseWebArguments(raw: unknown): ParsedCodeModeArguments<WebArgs> {
   };
 }
 
-function parseOptions(
-  value: unknown,
-  allowedKeys: Set<string>,
-  method: string,
-): Record<string, unknown> {
-  if (value === undefined) return {};
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error(`web.${method} options must be an object`);
-  }
-  for (const key of Object.keys(value)) {
-    if (!allowedKeys.has(key)) {
-      throw new Error(`web.${method} does not support option '${key}'`);
-    }
-  }
-  return value as Record<string, unknown>;
-}
-
 function requireString(value: unknown, name: string): string {
-  if (typeof value !== "string" || !value.trim()) {
+  const parsed = nonEmptyStringSchema.safeParse(value);
+  if (!parsed.success) {
     throw new Error(`${name} must be a non-empty string`);
   }
-  return value.trim();
+  return parsed.data;
 }
 
-function optionalInteger(
+function parseMethodOptions<T>(
   value: unknown,
-  name: string,
-  minimum: number,
-  maximum?: number,
-): number | undefined {
-  if (value === undefined) return undefined;
-  if (
-    typeof value !== "number" ||
-    !Number.isInteger(value) ||
-    value < minimum ||
-    (maximum !== undefined && value > maximum)
-  ) {
-    const range =
-      maximum === undefined ? `at least ${minimum}` : `between ${minimum} and ${maximum}`;
-    throw new Error(`${name} must be an integer ${range}`);
+  schema: z.ZodType<T>,
+  method: "search" | "fetch",
+): T {
+  const parsed = schema.safeParse(value ?? {});
+  if (!parsed.success) {
+    throw new Error(`Invalid web.${method} options: ${formatZodError(parsed.error)}`);
   }
-  return value;
-}
-
-function optionalStringArray(value: unknown, name: string): string[] | undefined {
-  if (value === undefined) return undefined;
-  if (!Array.isArray(value) || value.length === 0) {
-    throw new Error(`${name} must be a non-empty string array`);
-  }
-  return value.map((entry, index) => requireString(entry, `${name}[${index}]`));
+  return parsed.data;
 }
 
 function normalizeSearchArguments(args: unknown): [string, Record<string, unknown>] {
@@ -195,53 +198,22 @@ function normalizeSearchArguments(args: unknown): [string, Record<string, unknow
     throw new Error("web.search expects query and optional options");
   }
   const query = requireString(args[0], "web.search query");
-  const options = parseOptions(args[1], SEARCH_OPTION_KEYS, "search");
-  const numResults = optionalInteger(options.numResults, "web.search numResults", 1, 100);
-  const includeDomains = optionalStringArray(options.includeDomains, "web.search includeDomains");
-  const excludeDomains = optionalStringArray(options.excludeDomains, "web.search excludeDomains");
-  const startPublishedDate =
-    options.startPublishedDate === undefined
-      ? undefined
-      : requireString(options.startPublishedDate, "web.search startPublishedDate");
-  const endPublishedDate =
-    options.endPublishedDate === undefined
-      ? undefined
-      : requireString(options.endPublishedDate, "web.search endPublishedDate");
-  const category = options.category;
-  if (category !== undefined && !SEARCH_CATEGORIES.has(String(category))) {
-    throw new Error(`web.search category must be one of: ${[...SEARCH_CATEGORIES].join(", ")}`);
-  }
-  if (
-    (category === "company" || category === "people") &&
-    (excludeDomains || startPublishedDate || endPublishedDate)
-  ) {
-    throw new Error(
-      `web.search category '${category}' does not support excludeDomains or publication-date filters`,
-    );
-  }
-  let userLocation: string | undefined;
-  if (options.userLocation !== undefined) {
-    userLocation = requireString(options.userLocation, "web.search userLocation").toUpperCase();
-    if (!/^[A-Z]{2}$/.test(userLocation)) {
-      throw new Error("web.search userLocation must be a two-letter country code");
-    }
-  }
-  const maxAgeHours = optionalInteger(options.maxAgeHours, "web.search maxAgeHours", -1);
+  const options = parseMethodOptions(args[1], searchOptionsSchema, "search");
 
   return [
     query,
     {
       type: "auto",
-      ...(numResults !== undefined ? { numResults } : {}),
-      ...(includeDomains ? { includeDomains } : {}),
-      ...(excludeDomains ? { excludeDomains } : {}),
-      ...(startPublishedDate ? { startPublishedDate } : {}),
-      ...(endPublishedDate ? { endPublishedDate } : {}),
-      ...(category ? { category } : {}),
-      ...(userLocation ? { userLocation } : {}),
+      ...(options.numResults !== undefined ? { numResults: options.numResults } : {}),
+      ...(options.includeDomains ? { includeDomains: options.includeDomains } : {}),
+      ...(options.excludeDomains ? { excludeDomains: options.excludeDomains } : {}),
+      ...(options.startPublishedDate ? { startPublishedDate: options.startPublishedDate } : {}),
+      ...(options.endPublishedDate ? { endPublishedDate: options.endPublishedDate } : {}),
+      ...(options.category ? { category: options.category } : {}),
+      ...(options.userLocation ? { userLocation: options.userLocation } : {}),
       contents: {
         highlights: true,
-        ...(maxAgeHours !== undefined ? { maxAgeHours } : {}),
+        ...(options.maxAgeHours !== undefined ? { maxAgeHours: options.maxAgeHours } : {}),
       },
     },
   ];
@@ -251,102 +223,132 @@ function normalizeFetchArguments(args: unknown): [string[], Record<string, unkno
   if (!Array.isArray(args) || args.length < 1 || args.length > 2) {
     throw new Error("web.fetch expects urls and optional options");
   }
-  const rawUrls = typeof args[0] === "string" ? [args[0]] : args[0];
-  const urls = optionalStringArray(rawUrls, "web.fetch urls");
-  if (!urls) throw new Error("web.fetch urls must be a non-empty string or string array");
-  const options = parseOptions(args[1], FETCH_OPTION_KEYS, "fetch");
-  const mode = options.mode ?? "highlights";
-  if (mode !== "highlights" && mode !== "text") {
-    throw new Error("web.fetch mode must be 'highlights' or 'text'");
+  const parsedUrls = fetchUrlsSchema.safeParse(args[0]);
+  if (!parsedUrls.success) {
+    throw new Error("web.fetch urls must be a non-empty string or string array");
   }
-  const query =
-    options.query === undefined ? undefined : requireString(options.query, "web.fetch query");
-  if (mode === "text" && query !== undefined) {
-    throw new Error("web.fetch query is only supported in highlights mode");
-  }
-  const maxCharacters = optionalInteger(options.maxCharacters, "web.fetch maxCharacters", 1);
-  const maxAgeHours = optionalInteger(options.maxAgeHours, "web.fetch maxAgeHours", -1);
-  const subpages = optionalInteger(options.subpages, "web.fetch subpages", 0);
-  const subpageTarget =
-    typeof options.subpageTarget === "string"
-      ? requireString(options.subpageTarget, "web.fetch subpageTarget")
-      : optionalStringArray(options.subpageTarget, "web.fetch subpageTarget");
-  const links = optionalInteger(options.links, "web.fetch links", 0);
-
+  const options = parseMethodOptions(args[1], fetchOptionsSchema, "fetch");
   const contentOptions =
-    mode === "text"
-      ? { text: maxCharacters === undefined ? true : { maxCharacters } }
+    options.mode === "text"
+      ? {
+          text:
+            options.maxCharacters === undefined ? true : { maxCharacters: options.maxCharacters },
+        }
       : {
           highlights:
-            query === undefined && maxCharacters === undefined
+            options.query === undefined && options.maxCharacters === undefined
               ? true
               : {
-                  ...(query ? { query } : {}),
-                  ...(maxCharacters !== undefined ? { maxCharacters } : {}),
+                  ...(options.query ? { query: options.query } : {}),
+                  ...(options.maxCharacters !== undefined
+                    ? { maxCharacters: options.maxCharacters }
+                    : {}),
                 },
         };
 
   return [
-    urls,
+    parsedUrls.data,
     {
       ...contentOptions,
-      ...(maxAgeHours !== undefined ? { maxAgeHours } : {}),
-      ...(subpages !== undefined ? { subpages } : {}),
-      ...(subpageTarget ? { subpageTarget } : {}),
-      ...(links !== undefined ? { extras: { links } } : {}),
+      ...(options.maxAgeHours !== undefined ? { maxAgeHours: options.maxAgeHours } : {}),
+      ...(options.subpages !== undefined ? { subpages: options.subpages } : {}),
+      ...(options.subpageTarget ? { subpageTarget: options.subpageTarget } : {}),
+      ...(options.links !== undefined ? { extras: { links: options.links } } : {}),
     },
   ];
 }
 
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
+type ExaResult = {
+  title: string;
+  url: string;
+  publishedDate?: string;
+  author?: string | null;
+  text?: string;
+  highlights?: string[];
+  subpages?: ExaResult[];
+  extras?: { links?: string[] };
+};
 
-function normalizeStatus(value: unknown): Record<string, unknown> {
-  const status = asRecord(value);
+const exaResultSchema: z.ZodType<ExaResult> = z.lazy(() =>
+  z
+    .object({
+      title: z.string(),
+      url: z.string(),
+      publishedDate: z.string().optional(),
+      author: z.string().nullable().optional(),
+      text: z.string().optional(),
+      highlights: z.array(z.string()).optional(),
+      subpages: z.array(exaResultSchema).optional(),
+      extras: z
+        .object({ links: z.array(z.string()).optional() })
+        .strip()
+        .optional(),
+    })
+    .strip(),
+);
+const exaStatusSchema = z
+  .object({
+    id: z.string(),
+    status: z.enum(["success", "error"]),
+    error: z
+      .object({
+        tag: z.string().optional(),
+        httpStatusCode: z.number().int().nullable().optional(),
+      })
+      .strip()
+      .nullable()
+      .optional(),
+  })
+  .strip();
+const exaResponseSchema = z
+  .object({
+    results: z.array(exaResultSchema),
+    statuses: z.array(exaStatusSchema).default([]),
+  })
+  .strip();
+
+type ExaStatus = z.infer<typeof exaStatusSchema>;
+
+function normalizeStatus(status: ExaStatus): Record<string, unknown> {
   const normalized: Record<string, unknown> = {
-    id: status?.id,
-    status: status?.status,
+    id: status.id,
+    status: status.status,
   };
-  const error = asRecord(status?.error);
-  if (error) {
+  if (status.error) {
     normalized.error = {
-      tag: error.tag,
-      httpStatusCode: error.httpStatusCode,
+      ...(status.error.tag !== undefined ? { tag: status.error.tag } : {}),
+      ...(status.error.httpStatusCode !== undefined && status.error.httpStatusCode !== null
+        ? { httpStatusCode: status.error.httpStatusCode }
+        : {}),
     };
   }
   return normalized;
 }
 
-function normalizeResult(value: unknown): Record<string, unknown> {
-  const result = asRecord(value);
-  const normalized: Record<string, unknown> = {
-    title: result?.title,
-    url: result?.url,
+function normalizeResult(result: ExaResult): Record<string, unknown> {
+  return {
+    title: result.title,
+    url: result.url,
+    ...(result.publishedDate !== undefined ? { publishedDate: result.publishedDate } : {}),
+    ...(result.author !== undefined && result.author !== null ? { author: result.author } : {}),
+    ...(result.text !== undefined ? { text: result.text } : {}),
+    ...(result.highlights !== undefined ? { highlights: result.highlights } : {}),
+    ...(result.subpages !== undefined ? { subpages: result.subpages.map(normalizeResult) } : {}),
+    ...(result.extras?.links !== undefined ? { links: result.extras.links } : {}),
   };
-  for (const key of ["publishedDate", "author", "text", "highlights"]) {
-    if (result?.[key] !== undefined) normalized[key] = result[key];
-  }
-  if (Array.isArray(result?.subpages)) {
-    normalized.subpages = result.subpages.map(normalizeResult);
-  }
-  const extras = asRecord(result?.extras);
-  if (Array.isArray(extras?.links)) {
-    normalized.links = extras.links;
-  }
-  return normalized;
 }
 
 function normalizeResponse(value: unknown): {
   results: Record<string, unknown>[];
   statuses: Record<string, unknown>[];
 } {
-  const response = asRecord(value);
+  const parsed = exaResponseSchema.safeParse(value);
+  if (!parsed.success) {
+    throw new Error(`Invalid Exa response: ${formatZodError(parsed.error)}`);
+  }
   return {
-    results: Array.isArray(response?.results) ? response.results.map(normalizeResult) : [],
-    statuses: Array.isArray(response?.statuses) ? response.statuses.map(normalizeStatus) : [],
+    results: parsed.data.results.map(normalizeResult),
+    statuses: parsed.data.statuses.map(normalizeStatus),
   };
 }
 
@@ -534,12 +536,10 @@ export function createWebToolDefinition(
   backend: ToolExecutionBackend,
   deps: WebToolDeps = defaultDeps,
 ): ToolDefinition {
-  const implementation: CodeModeToolImplementation<WebArgs, undefined> = {
+  const implementation: CodeModeToolImplementation<WebArgs> = {
     schema: WEB_TOOL,
-    label: "web",
     outputPolicy: { maxTokens: WEB_CODE_MODE_OUTPUT_TOKENS },
     parseArguments: parseWebArguments,
-    prepare: async () => undefined,
     execute: async ({ code, context, signal }) => {
       const apiKey = getExaApiKey(context.config);
       const exa = apiKey ? deps.createExaClient(apiKey) : undefined;

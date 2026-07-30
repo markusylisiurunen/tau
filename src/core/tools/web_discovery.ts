@@ -4,6 +4,8 @@ import type { ToolExecutionBackend } from "./execution_backend.js";
 const DISCOVERY_TIMEOUT_MS = 10_000;
 const DISCOVERY_REQUEST_TIMEOUT_MS = 8_000;
 const DISCOVERY_MAX_CAPTURE_BYTES = 256 * 1024;
+const DISCOVERY_MAX_URL_LENGTH = 2_048;
+const DISCOVERY_MAX_PATH_SEGMENTS = 20;
 
 const discoveryRequestSchema = z.object({
   url: z.string(),
@@ -71,6 +73,14 @@ function parseWebUrl(value: string): URL {
     throw new Error("web.discover url must not contain credentials");
   }
   url.hash = "";
+  if (url.toString().length > DISCOVERY_MAX_URL_LENGTH) {
+    throw new Error(`web.discover url must not exceed ${DISCOVERY_MAX_URL_LENGTH} characters`);
+  }
+  if (url.pathname.split("/").filter(Boolean).length > DISCOVERY_MAX_PATH_SEGMENTS) {
+    throw new Error(
+      `web.discover url must not contain more than ${DISCOVERY_MAX_PATH_SEGMENTS} path segments`,
+    );
+  }
   return url;
 }
 

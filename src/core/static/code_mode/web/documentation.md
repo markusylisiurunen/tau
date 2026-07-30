@@ -35,6 +35,8 @@ for (const file of discovery.llmsTxt) {
 }
 ```
 
+Discovery accepts HTTP(S) URLs up to 2,048 characters and 20 path segments.
+
 Discovery checks:
 
 1. The original URL with Markdown content negotiation.
@@ -90,13 +92,13 @@ const response = await web.search("latest Tau releases", {
 | Option | Type | Behavior |
 | --- | --- | --- |
 | `numResults` | integer, 1-100 | Number of results. Defaults to 10. |
-| `includeDomains` | non-empty string array | Return only matching domains or path prefixes. |
-| `excludeDomains` | non-empty string array | Exclude matching domains or path prefixes. |
+| `includeDomains` | string array, 1-1,200 items | Return only matching domains or path prefixes. |
+| `excludeDomains` | string array, 1-1,200 items | Exclude matching domains or path prefixes. |
 | `startPublishedDate` | string | Return pages published after this ISO 8601 date. |
 | `endPublishedDate` | string | Return pages published before this ISO 8601 date. |
 | `category` | string | One of `company`, `people`, `publication`, `news`, `personal site`, or `financial report`. |
 | `userLocation` | two-letter country code | Bias results toward a country. |
-| `maxAgeHours` | integer >= -1 | Maximum cached-content age. `0` always retrieves live; `-1` uses cache only. Omit for the recommended default. |
+| `maxAgeHours` | integer, -1 to 720 | Maximum cached-content age. `0` always retrieves live; `-1` uses cache only. Omit for the recommended default. |
 
 Do not combine `excludeDomains` or publication-date filters with the `company` or `people` categories; those combinations are unsupported.
 
@@ -127,7 +129,7 @@ Results are relevance ordered. Check `statuses` when inline content is important
 
 ## `web.fetch(urls, options?)`
 
-Retrieve content from one URL or a non-empty URL array.
+Retrieve content from one URL or an array of up to 100 URLs. Each URL may contain up to 2,048 characters.
 
 ```js
 const response = await web.fetch("https://example.com/article", {
@@ -141,11 +143,11 @@ const response = await web.fetch("https://example.com/article", {
 | --- | --- | --- |
 | `mode` | `"highlights"` or `"text"` | Content mode. Defaults to `"highlights"`. |
 | `query` | string | Guides highlight selection. Available only in highlights mode. |
-| `maxCharacters` | positive integer | Caps highlight or text characters per URL. Omit for the service default. |
-| `maxAgeHours` | integer >= -1 | Maximum cached-content age. `0` always retrieves live; `-1` uses cache only. |
-| `subpages` | non-negative integer | Number of linked subpages to retrieve per URL. |
-| `subpageTarget` | string or non-empty string array | Guides linked-subpage selection. |
-| `links` | non-negative integer | Number of links to return from each page. |
+| `maxCharacters` | integer, 1-10,000 | Caps highlight or text characters per URL. Omit for the service default. |
+| `maxAgeHours` | integer, -1 to 720 | Maximum cached-content age. `0` always retrieves live; `-1` uses cache only. |
+| `subpages` | integer, 0-100 | Number of linked subpages to retrieve per URL. |
+| `subpageTarget` | string or string array | Guides linked-subpage selection. Strings may contain up to 100 characters; arrays may contain 1-100 items. |
+| `links` | integer, 0-1,000 | Number of links to return from each page. |
 
 Use highlights for focused questions and multi-step research. Use bounded text when exact context or comprehensive reading is necessary:
 

@@ -214,6 +214,21 @@ describe("Exa web code-mode tool", () => {
     await expect(
       discoverAgentContent(backend, "file:///tmp/docs", new AbortController().signal),
     ).rejects.toThrow("must use http or https");
+    await expect(
+      discoverAgentContent(
+        backend,
+        `https://example.com/${"a".repeat(2_048)}`,
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("must not exceed 2048 characters");
+    await expect(
+      discoverAgentContent(
+        backend,
+        `https://example.com/${Array(21).fill("segment").join("/")}`,
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("must not contain more than 20 path segments");
+    expect(backend.runNodeScript).toHaveBeenCalledTimes(1);
   });
 
   it("runs generated code in a capability-limited sandbox", async () => {
@@ -338,6 +353,30 @@ describe("Exa web code-mode tool", () => {
     }
   });
 
+  it("rejects oversized provider responses", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new Uint8Array(16 * 1024 * 1024 + 1));
+            controller.close();
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+    try {
+      const backend = createBackend();
+      const tool = createWebToolDefinition(backend);
+      const { result } = await runTool(tool, { code: "await web.search('tau')" });
+
+      expect(result.toolResult.isError).toBe(true);
+      expect(getToolText(result)).toContain("Exa response exceeded the 16 MiB limit");
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
   it("fails when the provider returns an invalid response", async () => {
     const backend = createBackend();
     const tool = createWebToolDefinition(backend, createDeps({ search: vi.fn(async () => ({})) }));
@@ -391,6 +430,38 @@ describe("Exa web code-mode tool", () => {
     );
     expect(missingKey.result.toolResult.isError).toBe(true);
     expect(getToolText(missingKey.result)).toContain("Missing Exa API key.");
+  });
+
+  it("enforces provider request bounds", async () => {
+    const client = {
+      search: vi.fn(),
+      getContents: vi.fn(),
+    };
+    const backend = createBackend();
+    const tool = createWebToolDefinition(backend, createDeps(client));
+    const { result } = await runTool(tool, {
+      code: [
+        "const calls = [",
+        "  () => web.search('tau', { maxAgeHours: 721 }),",
+        "  () => web.fetch(Array.from({ length: 101 }, (_, index) => 'https://example.com/' + index)),",
+        "  () => web.fetch('https://example.com', { maxCharacters: 10001, maxAgeHours: 721, subpages: 101, subpageTarget: Array(101).fill('docs'), links: 1001 }),",
+        "];",
+        "for (const call of calls) {",
+        "  try { await call(); } catch (error) { console.log(error.message); }",
+        "}",
+      ].join("\n"),
+    });
+
+    expect(result.toolResult.isError).toBe(false);
+    expect(getToolText(result)).toContain("Invalid web.search options");
+    expect(getToolText(result)).toContain("Invalid web.fetch urls");
+    expect(getToolText(result)).toContain("maxCharacters");
+    expect(getToolText(result)).toContain("maxAgeHours");
+    expect(getToolText(result)).toContain("subpages");
+    expect(getToolText(result)).toContain("subpageTarget");
+    expect(getToolText(result)).toContain("links");
+    expect(client.search).not.toHaveBeenCalled();
+    expect(client.getContents).not.toHaveBeenCalled();
   });
 
   it("rejects unknown tool arguments without starting the sandbox", async () => {

@@ -25,6 +25,7 @@ import { discoverAgentContent } from "./web_discovery.js";
 const WEB_CODE_MODE_TIMEOUT_MS = 60_000;
 const WEB_CODE_MODE_OUTPUT_TOKENS = 8_192;
 const EXA_API_BASE_URL = "https://api.exa.ai";
+const EXA_MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 
 const WEB_DESCRIPTION = [
   "Run a one-shot JavaScript program to search the web and retrieve page content.",
@@ -82,6 +83,13 @@ type WebWorkerRequest = { type: "request" } & WebBridgeRequest;
 
 const nonEmptyStringSchema = z.string().trim().min(1);
 const nonEmptyStringArraySchema = z.array(nonEmptyStringSchema).min(1);
+const domainFilterSchema = nonEmptyStringArraySchema.max(1_200);
+const maxAgeHoursSchema = z.number().int().min(-1).max(720);
+const fetchUrlSchema = nonEmptyStringSchema.max(2_048);
+const subpageTargetSchema = z.union([
+  nonEmptyStringSchema.max(100),
+  z.array(nonEmptyStringSchema.max(100)).min(1).max(100),
+]);
 const SEARCH_CATEGORIES = [
   "company",
   "people",
@@ -93,8 +101,8 @@ const SEARCH_CATEGORIES = [
 const searchOptionsSchema = z
   .object({
     numResults: z.number().int().min(1).max(100).optional(),
-    includeDomains: nonEmptyStringArraySchema.optional(),
-    excludeDomains: nonEmptyStringArraySchema.optional(),
+    includeDomains: domainFilterSchema.optional(),
+    excludeDomains: domainFilterSchema.optional(),
     startPublishedDate: nonEmptyStringSchema.optional(),
     endPublishedDate: nonEmptyStringSchema.optional(),
     category: z.enum(SEARCH_CATEGORIES).optional(),
@@ -104,7 +112,7 @@ const searchOptionsSchema = z
       .regex(/^[a-z]{2}$/i, "must be a two-letter country code")
       .transform((value) => value.toUpperCase())
       .optional(),
-    maxAgeHours: z.number().int().min(-1).optional(),
+    maxAgeHours: maxAgeHoursSchema.optional(),
   })
   .strict()
   .superRefine((options, context) => {
@@ -119,18 +127,18 @@ const searchOptionsSchema = z
     }
   });
 const fetchUrlsSchema = z.union([
-  nonEmptyStringSchema.transform((url) => [url]),
-  nonEmptyStringArraySchema,
+  fetchUrlSchema.transform((url) => [url]),
+  z.array(fetchUrlSchema).min(1).max(100),
 ]);
 const fetchOptionsSchema = z
   .object({
     mode: z.enum(["highlights", "text"]).default("highlights"),
     query: nonEmptyStringSchema.optional(),
-    maxCharacters: z.number().int().positive().optional(),
-    maxAgeHours: z.number().int().min(-1).optional(),
-    subpages: z.number().int().nonnegative().optional(),
-    subpageTarget: z.union([nonEmptyStringSchema, nonEmptyStringArraySchema]).optional(),
-    links: z.number().int().nonnegative().optional(),
+    maxCharacters: z.number().int().min(1).max(10_000).optional(),
+    maxAgeHours: maxAgeHoursSchema.optional(),
+    subpages: z.number().int().min(0).max(100).optional(),
+    subpageTarget: subpageTargetSchema.optional(),
+    links: z.number().int().min(0).max(1_000).optional(),
   })
   .strict()
   .superRefine((options, context) => {
@@ -149,6 +157,30 @@ const documentation = readFileSync(
 );
 const sandboxRunnerUrl = new URL("../static/code_mode/web/sandbox_runner.mjs", import.meta.url);
 
+async function readExaResponse(response: Response): Promise<string> {
+  const contentLength = response.headers.get("content-length");
+  if (contentLength !== null && Number(contentLength) > EXA_MAX_RESPONSE_BYTES) {
+    await response.body?.cancel().catch(() => {});
+    throw new Error("Exa response exceeded the 16 MiB limit");
+  }
+  if (!response.body) return "";
+
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let bytes = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    bytes += value.byteLength;
+    if (bytes > EXA_MAX_RESPONSE_BYTES) {
+      await reader.cancel().catch(() => {});
+      throw new Error("Exa response exceeded the 16 MiB limit");
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return Buffer.concat(chunks, bytes).toString("utf8");
+}
+
 async function requestExa(
   apiKey: string,
   endpoint: "/search" | "/contents",
@@ -165,7 +197,7 @@ async function requestExa(
     body: JSON.stringify(body),
     signal,
   });
-  const responseText = await response.text();
+  const responseText = await readExaResponse(response);
   let payload: unknown;
   if (responseText) {
     try {
@@ -280,7 +312,7 @@ function normalizeFetchArguments(args: unknown): [string[], Record<string, unkno
   }
   const parsedUrls = fetchUrlsSchema.safeParse(args[0]);
   if (!parsedUrls.success) {
-    throw new Error("web.fetch urls must be a non-empty string or string array");
+    throw new Error(`Invalid web.fetch urls: ${formatZodError(parsedUrls.error)}`);
   }
   const options = parseMethodOptions(args[1], fetchOptionsSchema, "fetch");
   const contentOptions =

@@ -19,6 +19,7 @@ type ToolUiEventWithHeaderTarget = {
       type: "tool_call_queued";
       toolCallId: string;
       toolName: string;
+      code?: string;
     }
   | {
       type: "tool_call_blocked";
@@ -146,30 +147,25 @@ type ToolUiEventWithHeaderTarget = {
       reason: string;
     }
   | {
-      type: "web_search_started";
+      type: "code_mode_started";
       toolCallId: string;
-      objective: string;
+      toolName: string;
+      code: string;
     }
   | {
-      type: "web_search_finished";
+      type: "code_mode_finished";
       toolCallId: string;
-      objective: string;
+      toolName: string;
+      code: string;
       status: "success" | "error";
-      costUsd?: number;
-      message?: string;
+      uiText: ToolUiText;
     }
   | {
-      type: "web_fetch_started";
+      type: "code_mode_blocked";
       toolCallId: string;
-      url: string;
-    }
-  | {
-      type: "web_fetch_finished";
-      toolCallId: string;
-      url: string;
-      status: "success" | "error";
-      costUsd?: number;
-      message?: string;
+      toolName: string;
+      code: string;
+      reason: string;
     }
   | {
       type: "view_image_success";
@@ -290,6 +286,7 @@ export function isMainToolDispatchContext(
 export interface ToolDefinition {
   readonly schema: Tool;
   getDisplayTarget(toolCall: ToolCall, context: ToolDispatchContext): string;
+  getCodePreview?(toolCall: ToolCall, context: ToolDispatchContext): string;
   dispatch(
     toolCall: ToolCall,
     signal: AbortSignal,

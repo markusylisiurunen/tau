@@ -227,52 +227,76 @@ describe("ToolUiRegistry", () => {
     expect(terminateFailed).toContain("final status: aborted");
   });
 
-  it("renders web tool events", () => {
-    const searchStarted = renderEvent(registry, theme, {
-      type: "web_search_started",
+  it("renders code-mode tool events", () => {
+    const code = Array.from({ length: 12 }, (_, index) => `code line ${index + 1}`).join("\n");
+    const queued = renderEvent(registry, theme, {
+      type: "tool_call_queued",
       toolCallId: "w1",
-      objective: "latest tau release",
-      headerTarget: "latest tau release",
+      toolName: "web",
+      headerTarget: "code line 1",
+      code,
     });
-    expect(searchStarted).toContain("web search");
+    expect(queued).toContain("<textMuted>queued</textMuted> <brandAccent>web</brandAccent>");
+    expect(queued).toContain("code line 10");
+    expect(queued).not.toContain("code line 11");
+    expect(queued).toContain("2 more lines");
 
-    const searchFinished = renderEvent(registry, theme, {
-      type: "web_search_finished",
+    const started = renderEvent(registry, theme, {
+      type: "code_mode_started",
       toolCallId: "w1",
-      objective: "latest tau release",
-      headerTarget: "latest tau release",
+      toolName: "web",
+      code,
+      headerTarget: "code line 1",
+    });
+    expect(started).toContain("<textMuted>running</textMuted> <brandAccent>web</brandAccent>");
+    expect(started).toContain("code line 10");
+    expect(started).toContain("2 more lines");
+
+    const finished = renderEvent(registry, theme, {
+      type: "code_mode_finished",
+      toolCallId: "w1",
+      toolName: "web",
+      code,
+      headerTarget: "code line 1",
       status: "success",
+      uiText: {
+        previewLines: [{ text: "formatted result" }],
+        statusLine: "exit 0",
+        fullLines: [{ text: "formatted result" }],
+      },
     });
-    expect(searchFinished).toContain("web search");
+    expect(finished).toContain("<textMuted>completed</textMuted> <brandAccent>web</brandAccent>");
+    expect(finished).toContain("code line 10");
+    expect(finished).toContain("2 more lines");
+    expect(finished).toContain("formatted result");
 
-    const searchFailed = renderEvent(registry, theme, {
-      type: "web_search_finished",
-      toolCallId: "w1b",
-      objective: "latest tau release",
-      headerTarget: "latest tau release",
-      status: "error",
-      message: "missing Parallel API key.",
-    });
-    expect(searchFailed).toContain("missing Parallel API key.");
-
-    const fetchStarted = renderEvent(registry, theme, {
-      type: "web_fetch_started",
+    const failed = renderEvent(registry, theme, {
+      type: "code_mode_finished",
       toolCallId: "w2",
-      url: "https://example.com",
-      headerTarget: "https://example.com",
-    });
-    expect(fetchStarted).toContain("web fetch");
-
-    const fetchFinished = renderEvent(registry, theme, {
-      type: "web_fetch_finished",
-      toolCallId: "w2",
-      url: "https://example.com",
-      headerTarget: "https://example.com",
+      toolName: "web",
+      code: "throw new Error('failed')",
+      headerTarget: "throw new Error('failed')",
       status: "error",
-      message: "request failed",
+      uiText: {
+        previewLines: [{ text: "program failed" }],
+        statusLine: "exit 1",
+        fullLines: [{ text: "program failed" }],
+      },
     });
-    expect(fetchFinished).toContain("web fetch");
-    expect(fetchFinished).toContain("request failed");
+    expect(failed).toContain("<textMuted>failed</textMuted> <brandAccent>web</brandAccent>");
+    expect(failed).toContain("throw new Error('failed')");
+
+    const blocked = renderEvent(registry, theme, {
+      type: "code_mode_blocked",
+      toolCallId: "w3",
+      toolName: "web",
+      code: "console.log(docs)",
+      headerTarget: "console.log(docs)",
+      reason: "Missing Exa API key.",
+    });
+    expect(blocked).toContain("<textMuted>blocked</textMuted> <brandAccent>web</brandAccent>");
+    expect(blocked).toContain("console.log(docs)");
+    expect(blocked).toContain("Missing Exa API key.");
   });
 
   it("renders file tool events", () => {

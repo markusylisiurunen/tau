@@ -1088,13 +1088,13 @@ function getTrimmedEnvValue(key: string, env?: NodeJS.ProcessEnv): string | unde
   return trimmed || undefined;
 }
 
-export function getParallelApiKey(config: Config, env?: NodeJS.ProcessEnv): string | undefined {
-  const envKey = getTrimmedEnvValue("PARALLEL_API_KEY", env);
+export function getExaApiKey(config: Config, env?: NodeJS.ProcessEnv): string | undefined {
+  const envKey = getTrimmedEnvValue("EXA_API_KEY", env);
   if (envKey) {
     return envKey;
   }
 
-  const configKey = config.apiKeys?.parallel?.trim();
+  const configKey = config.apiKeys?.exa?.trim();
   return configKey || undefined;
 }
 

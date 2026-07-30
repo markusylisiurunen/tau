@@ -14,7 +14,7 @@ you'll need an API key from at least one provider. set it via environment variab
 
 ```sh
 export ANTHROPIC_API_KEY=sk-ant-...
-# or OPENAI_API_KEY, or GEMINI_API_KEY, or PARALLEL_API_KEY, or MISTRAL_API_KEY (for /listen, Telegram audio, and tau tool pdf-unpack)
+# or OPENAI_API_KEY, or GEMINI_API_KEY, or EXA_API_KEY, or MISTRAL_API_KEY (for /listen, Telegram audio, and tau tool pdf-unpack)
 ```
 
 or store keys in `~/.config/tau/config.json`:
@@ -25,15 +25,15 @@ or store keys in `~/.config/tau/config.json`:
     "anthropic": "sk-ant-...",
     "openai": "sk-...",
     "google": "...",
-    "parallel": "...",
+    "exa": "...",
     "mistral": "..."
   }
 }
 ```
 
-for built-in providers and features, use these `apiKeys` entries: `anthropic`, `openai`, `google`, `parallel`, and `mistral`. tau checks the matching `apiKeys.<provider>` entry before environment variables.
+for built-in providers and features, use these `apiKeys` entries: `anthropic`, `openai`, `google`, `exa`, and `mistral`. environment-variable precedence is described for each feature below.
 
-`parallel` is only needed for `web_search`/`web_fetch` usage in sub-agents and can be provided through `apiKeys.parallel` or `PARALLEL_API_KEY` (`PARALLEL_API_KEY` takes precedence).
+`exa` is only needed for `web.search` and `web.fetch`; `web.discover` works without it. provide the key through `apiKeys.exa` or `EXA_API_KEY` (`EXA_API_KEY` takes precedence).
 
 `/listen` and Telegram audio transcription use Mistral by default (`apiKeys.mistral` or `MISTRAL_API_KEY`, with `MISTRAL_API_KEY` taking precedence). set `speechToText.provider` to `gemini` to use Gemini 3.6 Flash instead (`apiKeys.google` or `GEMINI_API_KEY`). `/listen` also requires `ffmpeg` on your system and is currently supported only on macOS.
 
@@ -382,7 +382,7 @@ the built-in `default` sub-agent is available unless disabled. it inherits the m
 
 sub-agent progress appears in a sticky panel. use `alt+down` to cycle active subagents and `ctrl+g` to terminate the selected one. tau caps active subagents at 8.
 
-to use `web_search`/`web_fetch` in a sub-agent, set `apiKeys.parallel` in `~/.config/tau/config.json` (see above) or export `PARALLEL_API_KEY`. tau will only make web calls when you explicitly ask for web research.
+`web.discover` works without an API key. to use `web.search` and `web.fetch`, set `apiKeys.exa` in `~/.config/tau/config.json` (see above) or export `EXA_API_KEY`. `web` is available to main agents and sub-agents, and runs one-shot JavaScript with bounded `web.discover`, `web.search`, and `web.fetch` APIs; search and fetch are backed by Exa. for direct URLs, the tool description asks the model to run discovery first and decide in the next turn whether to use `curl`, `web.fetch`, or another approach. discovery runs ordinary bounded requests through the session execution environment and reports metadata for direct Markdown representations and `llms.txt` files at every path prefix without returning page content or parsing links, leaving direct retrieval to a later explicit `curl` call. search and fetch remain host-owned so Exa credentials stay outside the sandbox, default to highlights, cap provider responses at 16 MiB before parsing, and omit provider-specific details. generated code runs in a capability-limited SES compartment inside a host Worker. the tool description limits use to requests that ask for or clearly imply web access, asks the model to prefer concise plain text over raw JSON dumps even when all response fields are needed, and tells it how to print the bundled API documentation.
 
 ## trigger sensitivity
 
@@ -516,7 +516,7 @@ model definitions can be extended and overridden through `~/.config/tau/models.j
     "anthropic": "sk-ant-...",
     "openai": "sk-...",
     "google": "...",
-    "parallel": "...",
+    "exa": "...",
     "mistral": "..."
   },
   "defaultPersona": "gpt-5.5-chat",
@@ -569,7 +569,7 @@ model definitions can be extended and overridden through `~/.config/tau/models.j
 }
 ```
 
-for built-in providers and features, the `apiKeys` field uses these keys: `anthropic`, `openai`, `google`, `parallel`, and `mistral`. keys are merged across config levels by key name.
+for built-in providers and features, the `apiKeys` field uses these keys: `anthropic`, `openai`, `google`, `exa`, and `mistral`. keys are merged across config levels by key name.
 
 the `defaultPersona` field specifies which persona to use when starting the app. it accepts `<id>` or `<id>:<reasoning>`, and matching is exact/case-sensitive. the `--persona` flag overrides this setting.
 
@@ -674,16 +674,16 @@ optional frontmatter fields:
     web-research:
       systemPrompt: |
         you are a focused web research sub-agent.
-      description: web research using web_search/web_fetch.
+      description: web research using Exa code mode.
       provider: anthropic
       model: claude-haiku-4-5
       reasoning: medium
-      tools: [web_search, web_fetch, bash]
+      tools: [web, bash]
       launchModels:
         - openai/gpt-5.5:high
         - anthropic/claude-haiku-4-5:medium
   ```
-- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `view_image`, `spawn_agent`, `send_input_to_agent`, `wait_for_agents`, `terminate_agent`. if omitted, defaults to `bash`, `write`, `edit`, `view_image` (and subagent tools when subagents are enabled).
+- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `view_image`, `web`, `spawn_agent`, `send_input_to_agent`, `wait_for_agents`, `terminate_agent`. if omitted, defaults to `bash`, `write`, `edit`, `view_image`, `web` (and subagent tools when subagents are enabled).
 
 the markdown body becomes the system prompt.
 
@@ -747,7 +747,7 @@ tool output is truncated using a `bytes / 6` token heuristic (shown as `…N tok
 
 - **bash (assistant)**: 8,192 token limit. if output exceeds this and `maxOutputTokens` is unset, output is middle-truncated to a 2,048-token gated preview. re-run with `maxOutputTokens` set to 8,192-16,384; if the user explicitly requests more, it may be set up to 65,536 (user requests are checked). bash captures the last 1MB of output.
 - **bash (user `!`)**: 65,536 token limit.
-- **web_search/web_fetch**: large responses are middle-truncated to their token limits (8,192 / 16,384 tokens).
+- **web**: program stdout/stderr is middle-truncated to 8,192 tokens.
 
 ## creating a release
 

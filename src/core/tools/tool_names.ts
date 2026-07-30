@@ -7,8 +7,7 @@ export const TOOL_NAME_SPAWN_AGENT = "spawn_agent";
 export const TOOL_NAME_SEND_INPUT_TO_AGENT = "send_input_to_agent";
 export const TOOL_NAME_WAIT_FOR_AGENTS = "wait_for_agents";
 export const TOOL_NAME_TERMINATE_AGENT = "terminate_agent";
-export const TOOL_NAME_WEB_SEARCH = "web_search";
-export const TOOL_NAME_WEB_FETCH = "web_fetch";
+export const TOOL_NAME_WEB = "web";
 export const TOOL_NAME_NOOK = "nook";
 
 export const TOOL_NAMES = [
@@ -20,8 +19,7 @@ export const TOOL_NAMES = [
   TOOL_NAME_SEND_INPUT_TO_AGENT,
   TOOL_NAME_WAIT_FOR_AGENTS,
   TOOL_NAME_TERMINATE_AGENT,
-  TOOL_NAME_WEB_SEARCH,
-  TOOL_NAME_WEB_FETCH,
+  TOOL_NAME_WEB,
   TOOL_NAME_NOOK,
 ] as const;
 

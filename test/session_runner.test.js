@@ -581,6 +581,7 @@ describe("session runner tool dispatch context", () => {
         },
       },
       getDisplayTarget: () => "sleep 30",
+      getCodePreview: () => "await slowOperation()",
       async dispatch(call) {
         return {
           startedUiEvent: {
@@ -678,6 +679,7 @@ describe("session runner tool dispatch context", () => {
           type: "tool_call_queued",
           toolCallId: "slow-call",
           headerTarget: "sleep 30",
+          code: "await slowOperation()",
         },
       },
     });

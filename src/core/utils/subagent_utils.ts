@@ -29,14 +29,14 @@ export function formatToolUiEventForProgress(uiEvent: ToolUiEvent): string | und
       return `bash blocked: $ ${uiEvent.command.replace(/\n/g, " ")} (${normalizeOneLine(uiEvent.reason)})`;
     case "bash_aborted":
       return `bash ${uiEvent.reason}: $ ${uiEvent.command.replace(/\n/g, " ")}`;
-    case "web_search_started":
-      return `web search: ${uiEvent.objective}`;
-    case "web_search_finished":
-      return uiEvent.status === "error" ? `web search failed: ? ${uiEvent.objective}` : undefined;
-    case "web_fetch_started":
-      return `web fetch: ${uiEvent.url}`;
-    case "web_fetch_finished":
-      return uiEvent.status === "error" ? `web fetch failed: ? ${uiEvent.url}` : undefined;
+    case "code_mode_started":
+      return `${uiEvent.toolName}: ${uiEvent.headerTarget}`;
+    case "code_mode_finished":
+      return uiEvent.status === "error"
+        ? `${uiEvent.toolName} failed: ${uiEvent.headerTarget}`
+        : undefined;
+    case "code_mode_blocked":
+      return `${uiEvent.toolName} blocked: ${uiEvent.headerTarget} (${normalizeOneLine(uiEvent.reason)})`;
     case "write_success":
       return `write: ${uiEvent.path}`;
     case "write_blocked":

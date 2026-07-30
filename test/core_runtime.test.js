@@ -31,6 +31,7 @@ import {
   TOOL_NAME_TERMINATE_AGENT,
   TOOL_NAME_VIEW_IMAGE,
   TOOL_NAME_WAIT_FOR_AGENTS,
+  TOOL_NAME_WEB,
   TOOL_NAME_WRITE,
 } from "../dist/core/tools/tool_names.js";
 import {
@@ -140,6 +141,7 @@ describe("tool enablement", () => {
       TOOL_NAME_WRITE,
       TOOL_NAME_EDIT,
       TOOL_NAME_VIEW_IMAGE,
+      TOOL_NAME_WEB,
       TOOL_NAME_SPAWN_AGENT,
       TOOL_NAME_SEND_INPUT_TO_AGENT,
       TOOL_NAME_WAIT_FOR_AGENTS,

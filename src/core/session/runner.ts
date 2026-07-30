@@ -400,6 +400,7 @@ function createToolQueuedEvent(
       toolCallId: toolCall.id,
       toolName: toolCall.name,
       headerTarget: definition.getDisplayTarget(toolCall, context),
+      ...(definition.getCodePreview ? { code: definition.getCodePreview(toolCall, context) } : {}),
     },
   };
 }

@@ -209,13 +209,7 @@ export type SessionProtocolRewindParams = SessionProtocolSessionIdParams & {
 export type SessionProtocolTerminateSubagentParams = SessionProtocolSessionIdParams & {
   subagentId: string;
 };
-export type SessionProtocolEphemeralAgentTool =
-  | "bash"
-  | "write"
-  | "edit"
-  | "view_image"
-  | "web_search"
-  | "web_fetch";
+export type SessionProtocolEphemeralAgentTool = "bash" | "write" | "edit" | "view_image" | "web";
 export type SessionProtocolEphemeralCreateParams = SessionProtocolSessionIdParams & {
   instructions: string;
   tools: SessionProtocolEphemeralAgentTool[];
@@ -1414,8 +1408,7 @@ const sessionProtocolEphemeralAgentToolSchema = z.enum([
   "write",
   "edit",
   "view_image",
-  "web_search",
-  "web_fetch",
+  "web",
 ]);
 
 const sessionProtocolEphemeralCreateParamsSchema = z

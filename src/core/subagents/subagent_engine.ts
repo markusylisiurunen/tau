@@ -16,7 +16,7 @@ import {
   createLocalToolExecutionBackend,
   scopeToolExecutionBackend,
 } from "../tools/execution_backend.js";
-import type { ToolDispatchContext, ToolRegistry, ToolUiEvent } from "../tools/registry.js";
+import type { ToolDispatchContext, ToolUiEvent } from "../tools/registry.js";
 import { appendUsageLogEntry, getUsageCostTotal, getUsageTotals } from "../usage/logs.js";
 import { shouldAutoRetry } from "../utils/auto_retry.js";
 import { CODEX_ORIGINATOR, CODEX_USER_AGENT } from "../utils/codex.js";
@@ -31,7 +31,7 @@ import {
   getToolResultFirstLine,
   normalizeOneLine,
 } from "../utils/subagent_utils.js";
-import type { SubagentRuntimeConfig, SubagentToolName, SubagentUsageSnapshot } from "./types.js";
+import type { SubagentRuntimeConfig, SubagentUsageSnapshot } from "./types.js";
 
 export type SubagentProgressEvent = {
   text: string;
@@ -59,14 +59,6 @@ export type SubagentRunResult = {
 function getStreamingSettings(settings: SubagentRuntimeConfig["settings"]): TauStreamOptions {
   const merged = { ...(settings ?? {}) } as Record<string, unknown>;
   return parseStreamingSettings(merged);
-}
-
-function buildToolRegistryForAllowedTools(
-  allowedTools: SubagentToolName[],
-  config: Config,
-  backend: ToolExecutionBackend,
-): ToolRegistry {
-  return ToolCatalog.createSubagentRegistry(allowedTools, config, backend);
 }
 
 function isToolCall(block: AssistantMessage["content"][number]): block is ToolCall {
@@ -112,8 +104,7 @@ export async function runSubagent(options: {
 
   const baseBackend = options.backend ?? createLocalToolExecutionBackend();
   const backend = scopeToolExecutionBackend(baseBackend, runtimeConfig.workingDirectory);
-  const allowedTools = runtimeConfig.tools;
-  const toolRegistry = buildToolRegistryForAllowedTools(allowedTools, config, backend);
+  const toolRegistry = ToolCatalog.createSubagentRegistry(runtimeConfig.tools, backend);
   const messages = options.messages ?? [];
   const promptWithModelNotice = prependModelNotice(
     prompt,
@@ -284,15 +275,6 @@ export async function runSubagent(options: {
 
     const handleUi = (uiEvent: ToolUiEvent | undefined) => {
       if (!uiEvent) return;
-
-      if (
-        (uiEvent.type === "web_search_finished" || uiEvent.type === "web_fetch_finished") &&
-        typeof uiEvent.costUsd === "number" &&
-        Number.isFinite(uiEvent.costUsd) &&
-        uiEvent.costUsd > 0
-      ) {
-        costTotal += uiEvent.costUsd;
-      }
 
       const text = formatToolUiEventForProgress(uiEvent);
       if (text && /\b(blocked|failed):/.test(text)) {

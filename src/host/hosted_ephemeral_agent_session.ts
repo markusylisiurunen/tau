@@ -254,11 +254,7 @@ class EphemeralAgentThread {
       persona,
       systemPrompt: options.systemPrompt,
       subagentPrompts: options.subagentPrompts,
-      toolRegistry: ToolCatalog.createSubagentRegistry(
-        options.tools,
-        options.config,
-        options.backend,
-      ),
+      toolRegistry: ToolCatalog.createSubagentRegistry(options.tools, options.backend),
       modelResolver: options.modelResolver,
       resolveSubagentRuntime: options.resolveSubagentRuntime,
       config: options.config,

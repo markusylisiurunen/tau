@@ -79,6 +79,55 @@ function buildToolPendingView(
   };
 }
 
+const CODE_MODE_COMPACT_CODE_LINES = 10;
+
+type CodeModeCompactStatus = "queued" | "running" | "completed" | "failed" | "blocked";
+
+function buildCodeModeCompactHeader(theme: Theme, status: CodeModeCompactStatus, label: string) {
+  const { palette } = theme;
+  const statusStyle =
+    status === "completed"
+      ? palette.actionSuccess
+      : status === "failed" || status === "blocked"
+        ? palette.actionError
+        : status === "running"
+          ? palette.actionRunning
+          : palette.textMuted;
+  const bullet =
+    status === "completed" ? "✓" : status === "failed" || status === "blocked" ? "✗" : "⏵";
+
+  return buildToolHeaderLine({
+    bulletStyle: statusStyle,
+    bullet,
+    label: status,
+    labelStyle: palette.textMuted,
+    accent: label,
+    accentStyle: palette.brandAccent,
+  });
+}
+
+function buildCodeModeCompactPreview(theme: Theme, code: string): string | undefined {
+  const trimmed = code.trim();
+  if (!trimmed) return undefined;
+
+  const lines = trimmed.split(/\r?\n/);
+  const preview = lines
+    .slice(0, CODE_MODE_COMPACT_CODE_LINES)
+    .map((line) => `    ${theme.palette.textMuted("›")} ${theme.palette.textDim(line)}`);
+  const remaining = lines.length - preview.length;
+  if (remaining > 0) {
+    preview.push(
+      `    ${theme.palette.textMuted("›")} ${theme.palette.textDim(`… ${remaining} more line${remaining === 1 ? "" : "s"}`)}`,
+    );
+  }
+  return preview.join("\n");
+}
+
+function joinCodeModeCompactSections(...sections: Array<string | undefined>): string | undefined {
+  const present = sections.filter((section): section is string => Boolean(section?.trim()));
+  return present.length > 0 ? present.join("\n\n") : undefined;
+}
+
 function buildClientToolFinishedView(args: {
   theme: Theme;
   toolName: string;
@@ -306,7 +355,16 @@ export function createToolUiRegistry(): ToolUiRegistry {
 
   registry.register("tool_call_queued", (event, context) => {
     const uiEvent = event as Extract<ToolUiEvent, { type: "tool_call_queued" }>;
-    return buildToolPendingView(context.theme, "queued", uiEvent.headerTarget);
+    const view = buildToolPendingView(context.theme, "queued", uiEvent.headerTarget);
+    if (uiEvent.code === undefined) return view;
+
+    return {
+      ...view,
+      compact: {
+        header: buildCodeModeCompactHeader(context.theme, "queued", uiEvent.toolName),
+        extraText: buildCodeModeCompactPreview(context.theme, uiEvent.code),
+      },
+    };
   });
 
   registry.register("tool_call_blocked", (event, context) => {
@@ -525,36 +583,58 @@ export function createToolUiRegistry(): ToolUiRegistry {
     });
   });
 
-  registry.register("web_search_started", (event, context) => {
-    const uiEvent = event as Extract<ToolUiEvent, { type: "web_search_started" }>;
-    return buildSimpleToolRunningView(context.theme, "web search", uiEvent.headerTarget);
+  registry.register("code_mode_started", (event, context) => {
+    const uiEvent = event as Extract<ToolUiEvent, { type: "code_mode_started" }>;
+    const view = buildSimpleToolRunningView(context.theme, uiEvent.toolName, uiEvent.headerTarget);
+    return {
+      ...view,
+      compact: {
+        header: buildCodeModeCompactHeader(context.theme, "running", uiEvent.toolName),
+        extraText: buildCodeModeCompactPreview(context.theme, uiEvent.code),
+      },
+    };
   });
 
-  registry.register("web_search_finished", (event, context) => {
-    const uiEvent = event as Extract<ToolUiEvent, { type: "web_search_finished" }>;
-    return buildSimpleToolFinishedView({
+  registry.register("code_mode_finished", (event, context) => {
+    const uiEvent = event as Extract<ToolUiEvent, { type: "code_mode_finished" }>;
+    const view = buildClientToolFinishedView({
       theme: context.theme,
-      label: "web search",
-      target: uiEvent.headerTarget,
+      toolName: uiEvent.toolName,
       status: uiEvent.status,
-      message: uiEvent.message,
+      uiText: uiEvent.uiText,
     });
+    const status = uiEvent.status === "success" ? "completed" : "failed";
+    return {
+      ...view,
+      compact: {
+        header: buildCodeModeCompactHeader(context.theme, status, uiEvent.toolName),
+        extraText: joinCodeModeCompactSections(
+          buildCodeModeCompactPreview(context.theme, uiEvent.code),
+          view.compact.extraText,
+        ),
+      },
+    };
   });
 
-  registry.register("web_fetch_started", (event, context) => {
-    const uiEvent = event as Extract<ToolUiEvent, { type: "web_fetch_started" }>;
-    return buildSimpleToolRunningView(context.theme, "web fetch", uiEvent.headerTarget);
-  });
-
-  registry.register("web_fetch_finished", (event, context) => {
-    const uiEvent = event as Extract<ToolUiEvent, { type: "web_fetch_finished" }>;
-    return buildSimpleToolFinishedView({
+  registry.register("code_mode_blocked", (event, context) => {
+    const uiEvent = event as Extract<ToolUiEvent, { type: "code_mode_blocked" }>;
+    const view = buildSimpleToolFinishedView({
       theme: context.theme,
-      label: "web fetch",
+      label: uiEvent.toolName,
       target: uiEvent.headerTarget,
-      status: uiEvent.status,
-      message: uiEvent.message,
+      status: "error",
+      message: uiEvent.reason,
     });
+    return {
+      ...view,
+      compact: {
+        header: buildCodeModeCompactHeader(context.theme, "blocked", uiEvent.toolName),
+        extraText: joinCodeModeCompactSections(
+          buildCodeModeCompactPreview(context.theme, uiEvent.code),
+          view.compact.extraText,
+        ),
+      },
+    };
   });
 
   registry.register("write_success", (event, context) => {

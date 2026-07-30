@@ -2,8 +2,7 @@ import {
   TOOL_NAME_BASH,
   TOOL_NAME_EDIT,
   TOOL_NAME_VIEW_IMAGE,
-  TOOL_NAME_WEB_FETCH,
-  TOOL_NAME_WEB_SEARCH,
+  TOOL_NAME_WEB,
   TOOL_NAME_WRITE,
 } from "../tools/tool_names.js";
 import type { Persona } from "../types.js";
@@ -21,8 +20,7 @@ const INHERITABLE_TOOL_NAMES = new Set<SubagentToolName>([
   TOOL_NAME_WRITE,
   TOOL_NAME_EDIT,
   TOOL_NAME_VIEW_IMAGE,
-  TOOL_NAME_WEB_SEARCH,
-  TOOL_NAME_WEB_FETCH,
+  TOOL_NAME_WEB,
 ]);
 
 function normalizeTools(tools: SubagentToolName[]): SubagentToolName[] {

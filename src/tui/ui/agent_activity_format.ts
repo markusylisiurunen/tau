@@ -45,23 +45,14 @@ export function formatToolActivityText(text: string): string | undefined {
   if (trimmed.startsWith("tool blocked: view image ")) {
     return `view image blocked ${trimmed.slice("tool blocked: view image ".length)}`;
   }
-  if (trimmed.startsWith("web search failed: ")) {
-    return trimmed.replace(/^web search failed:\s*\?\s*/, "web search failed: ");
+  if (trimmed.startsWith("web failed: ")) {
+    return trimmed;
   }
-  if (trimmed.startsWith("web search: ")) {
-    return `web search ${trimmed.slice("web search: ".length)}`;
+  if (trimmed.startsWith("web blocked: ")) {
+    return trimmed;
   }
-  if (trimmed.startsWith("web_search: ")) {
-    return `web search error ${trimmed.slice("web_search: ".length)}`;
-  }
-  if (trimmed.startsWith("web fetch failed: ")) {
-    return trimmed.replace(/^web fetch failed:\s*\?\s*/, "web fetch failed: ");
-  }
-  if (trimmed.startsWith("web fetch: ")) {
-    return `web fetch ${trimmed.slice("web fetch: ".length)}`;
-  }
-  if (trimmed.startsWith("web_fetch: ")) {
-    return `web fetch error ${trimmed.slice("web_fetch: ".length)}`;
+  if (trimmed.startsWith("web: ")) {
+    return `web ${trimmed.slice("web: ".length)}`;
   }
 
   return undefined;

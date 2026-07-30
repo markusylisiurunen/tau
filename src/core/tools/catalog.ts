@@ -1,4 +1,3 @@
-import type { Config } from "../config/index.js";
 import type { SubagentToolName } from "../subagents/types.js";
 import { createBashToolDefinition } from "./bash.js";
 import { createEditToolDefinition } from "./edit.js";
@@ -13,14 +12,12 @@ import {
   TOOL_NAME_BASH,
   TOOL_NAME_EDIT,
   TOOL_NAME_VIEW_IMAGE,
-  TOOL_NAME_WEB_FETCH,
-  TOOL_NAME_WEB_SEARCH,
+  TOOL_NAME_WEB,
   TOOL_NAME_WRITE,
 } from "./tool_names.js";
 import { createViewImageToolDefinition } from "./view_image.js";
 import { createWaitForAgentsToolDefinition } from "./wait_for_agents.js";
-import { createWebFetchToolDefinition } from "./web_fetch.js";
-import { createWebSearchToolDefinition } from "./web_search.js";
+import { createWebToolDefinition } from "./web.js";
 import { createWriteToolDefinition } from "./write.js";
 
 export const ToolCatalog = {
@@ -30,6 +27,7 @@ export const ToolCatalog = {
       createWriteToolDefinition(backend),
       createEditToolDefinition(backend),
       createViewImageToolDefinition(backend),
+      createWebToolDefinition(backend),
       createSpawnAgentToolDefinition(backend),
       createSendInputToAgentToolDefinition(backend),
       createWaitForAgentsToolDefinition(),
@@ -40,7 +38,6 @@ export const ToolCatalog = {
 
   createSubagentRegistry(
     allowedTools: SubagentToolName[],
-    config: Config,
     backend: ToolExecutionBackend,
   ): ToolRegistry {
     const definitions: ToolDefinition[] = [];
@@ -63,11 +60,8 @@ export const ToolCatalog = {
         case TOOL_NAME_VIEW_IMAGE:
           definitions.push(createViewImageToolDefinition(backend));
           break;
-        case TOOL_NAME_WEB_SEARCH:
-          definitions.push(createWebSearchToolDefinition(config));
-          break;
-        case TOOL_NAME_WEB_FETCH:
-          definitions.push(createWebFetchToolDefinition(config));
+        case TOOL_NAME_WEB:
+          definitions.push(createWebToolDefinition(backend));
           break;
       }
     };

@@ -120,4 +120,4 @@ tau nook kv delete demo settings
 tau nook kv list demo --prefix todos/
 ```
 
-The assistant-facing model tool named `nook` appears automatically when Tau config contains `nook`. Enabled operations execute directly.
+The assistant-facing code-mode tool named `nook` appears automatically when Tau config contains `nook`. Its generated JavaScript receives a bounded management SDK as `nook`, static agent-facing SDK documentation as `docs`, and console output. `nook.skill()` separately loads this deployment's version-matched app-authoring guide. The sandbox has no direct filesystem, process, environment, network, credential, import, timer, or `fetch` access; authenticated HTTP stays in the host, and copy/deploy paths are serviced through the session execution environment.

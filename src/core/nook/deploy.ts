@@ -111,9 +111,13 @@ async function walkBackendDirectory(args: {
   dir: string;
   relativeDir: string;
   output: Array<{ backendPath: string; relativePath: string }>;
+  signal: AbortSignal;
 }): Promise<void> {
+  args.signal.throwIfAborted();
   const listed = await args.backend.listDir(args.dir);
+  args.signal.throwIfAborted();
   for (const entry of listed.entries) {
+    args.signal.throwIfAborted();
     if (entry.name.startsWith(".")) {
       throw new Error(`hidden deploy path '${entry.name}' is not allowed`);
     }
@@ -129,6 +133,7 @@ async function walkBackendDirectory(args: {
         dir: backendPath,
         relativeDir: relativePath,
         output: args.output,
+        signal: args.signal,
       });
       continue;
     }
@@ -139,15 +144,24 @@ async function walkBackendDirectory(args: {
 async function buildBackendNookManifest(
   backend: ToolExecutionBackend,
   directory: string,
+  signal: AbortSignal,
 ): Promise<NookBackendDeployFile[]> {
   const files: Array<{ backendPath: string; relativePath: string }> = [];
-  await walkBackendDirectory({ backend, dir: directory, relativeDir: "", output: files });
+  await walkBackendDirectory({
+    backend,
+    dir: directory,
+    relativeDir: "",
+    output: files,
+    signal,
+  });
 
   const manifest: NookBackendDeployFile[] = [];
   for (const file of files) {
+    signal.throwIfAborted();
     assertVisibleNookRelativePath(file.relativePath);
     const assetPath = normalizeNookAssetPath(`/${file.relativePath}`);
     const binary = await backend.readFileBinary(file.backendPath);
+    signal.throwIfAborted();
     const content = Buffer.from(binary.content);
     manifest.push({
       path: assetPath,
@@ -155,7 +169,10 @@ async function buildBackendNookManifest(
       sizeBytes: content.length,
       sha256: createHash("sha256").update(content).digest("hex"),
       contentType: contentTypeForPath(assetPath),
-      readContent: async () => content,
+      readContent: async () => {
+        signal.throwIfAborted();
+        return content;
+      },
     });
   }
 
@@ -165,8 +182,10 @@ async function buildBackendNookManifest(
 export async function buildNookDeployManifestFromBackend(
   backend: ToolExecutionBackend,
   directory: string,
+  signal: AbortSignal,
 ): Promise<NookBackendDeployFile[]> {
-  const files = await buildBackendNookManifest(backend, directory);
+  const files = await buildBackendNookManifest(backend, directory, signal);
+  signal.throwIfAborted();
   validateNookManifest(files);
   return files;
 }
@@ -174,8 +193,10 @@ export async function buildNookDeployManifestFromBackend(
 export async function buildNookTemplateManifestFromBackend(
   backend: ToolExecutionBackend,
   directory: string,
+  signal: AbortSignal,
 ): Promise<NookBackendDeployFile[]> {
-  const files = await buildBackendNookManifest(backend, directory);
+  const files = await buildBackendNookManifest(backend, directory, signal);
+  signal.throwIfAborted();
   validateNookTemplateManifest(files);
   return files;
 }

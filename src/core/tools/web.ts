@@ -1,7 +1,5 @@
-import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { createInterface } from "node:readline";
-import type { Readable } from "node:stream";
+import { Worker } from "node:worker_threads";
 import type { Tool } from "@earendil-works/pi-ai";
 import Exa from "exa-js";
 import { Type } from "typebox";
@@ -25,7 +23,6 @@ import { discoverAgentContent } from "./web_discovery.js";
 
 const WEB_CODE_MODE_TIMEOUT_MS = 60_000;
 const WEB_CODE_MODE_OUTPUT_TOKENS = 8_192;
-const WEB_SANDBOX_KILL_GRACE_MS = 2_000;
 
 const WEB_DESCRIPTION = [
   "Run a one-shot JavaScript program to search the web and retrieve page content.",
@@ -73,6 +70,8 @@ type WebBridgeRequest = {
   method: string;
   argsJson: string;
 };
+
+type WebWorkerRequest = { type: "request" } & WebBridgeRequest;
 
 const nonEmptyStringSchema = z.string().trim().min(1);
 const nonEmptyStringArraySchema = z.array(nonEmptyStringSchema).min(1);
@@ -141,10 +140,7 @@ const documentation = readFileSync(
   new URL("../static/code_mode/web/documentation.md", import.meta.url),
   "utf8",
 );
-const sandboxRunnerSource = readFileSync(
-  new URL("../static/code_mode/web/sandbox_runner.mjs", import.meta.url),
-  "utf8",
-).replace('import "ses";', `import ${JSON.stringify(import.meta.resolve("ses"))};`);
+const sandboxRunnerUrl = new URL("../static/code_mode/web/sandbox_runner.mjs", import.meta.url);
 
 function parseWebArguments(raw: unknown): ParsedCodeModeArguments<WebArgs> {
   const rawCode =
@@ -407,20 +403,21 @@ function executeWebProgram(
   signal: AbortSignal,
 ): Promise<BashExecutionResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ["--input-type=module", "--eval", sandboxRunnerSource], {
+    const worker = new Worker(sandboxRunnerUrl, {
+      workerData: { code, docs: documentation },
       env: {
         ...(process.env.LANG ? { LANG: process.env.LANG } : {}),
         ...(process.env.LC_ALL ? { LC_ALL: process.env.LC_ALL } : {}),
         ...(process.env.TZ ? { TZ: process.env.TZ } : {}),
       },
-      stdio: ["pipe", "pipe", "pipe", "pipe"],
+      resourceLimits: {
+        maxOldGenerationSizeMb: 128,
+        maxYoungGenerationSizeMb: 32,
+        stackSizeMb: 4,
+      },
+      stdout: true,
+      stderr: true,
     });
-    const rpcOutput = child.stdio[3];
-    if (!rpcOutput) {
-      child.kill();
-      reject(new Error("failed to create web sandbox bridge"));
-      return;
-    }
 
     let stdout = "";
     let stderr = "";
@@ -430,7 +427,7 @@ function executeWebProgram(
     let timedOut = false;
     let aborted = false;
     let settled = false;
-    let killTimer: ReturnType<typeof setTimeout> | undefined;
+    let terminating = false;
 
     const capture = (target: "stdout" | "stderr", chunk: Buffer): void => {
       capturedBytes += chunk.length;
@@ -445,86 +442,68 @@ function executeWebProgram(
     };
 
     const terminate = (reason: "abort" | "timeout"): void => {
+      if (terminating) return;
+      terminating = true;
       if (reason === "abort") aborted = true;
       if (reason === "timeout") timedOut = true;
-      child.kill("SIGTERM");
-      if (!killTimer) {
-        killTimer = setTimeout(() => child.kill("SIGKILL"), WEB_SANDBOX_KILL_GRACE_MS);
-        killTimer.unref?.();
-      }
+      void worker.terminate().catch(() => {});
+    };
+    const abortHandler = (): void => terminate("abort");
+    const timeout = setTimeout(() => terminate("timeout"), WEB_CODE_MODE_TIMEOUT_MS);
+    timeout.unref?.();
+
+    const cleanup = (): void => {
+      clearTimeout(timeout);
+      signal.removeEventListener("abort", abortHandler);
+    };
+    const postResponse = (message: Record<string, unknown>): void => {
+      if (settled || terminating) return;
+      try {
+        worker.postMessage(message);
+      } catch {}
     };
 
-    const abortHandler = (): void => terminate("abort");
+    worker.stdout.on("data", (chunk: Buffer) => capture("stdout", chunk));
+    worker.stderr.on("data", (chunk: Buffer) => capture("stderr", chunk));
+    worker.on("message", (message: WebWorkerRequest) => {
+      void handleWebRequest(message, exa, deps, backend, signal).then(
+        (value) => postResponse({ type: "response", id: message.id, ok: true, value }),
+        (error) =>
+          postResponse({
+            type: "response",
+            id: message.id,
+            ok: false,
+            error: serializeError(error),
+          }),
+      );
+    });
+    worker.once("error", (error) => {
+      if (settled || terminating) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    });
+    worker.once("exit", (workerExitCode) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve({
+        output,
+        stdout,
+        stderr,
+        exitCode: aborted || timedOut ? null : workerExitCode,
+        truncated,
+        timedOut,
+        aborted,
+        closeSignal: null,
+      });
+    });
+
     if (signal.aborted) {
       abortHandler();
     } else {
       signal.addEventListener("abort", abortHandler, { once: true });
     }
-    const timeout = setTimeout(() => terminate("timeout"), WEB_CODE_MODE_TIMEOUT_MS);
-    timeout.unref?.();
-
-    child.stdout.on("data", (chunk: Buffer) => capture("stdout", chunk));
-    child.stderr.on("data", (chunk: Buffer) => capture("stderr", chunk));
-
-    const rpcLines = createInterface({ input: rpcOutput as Readable, crlfDelay: Infinity });
-    rpcLines.on("line", (line) => {
-      void (async () => {
-        let request: WebBridgeRequest | undefined;
-        try {
-          const parsed = JSON.parse(line) as Partial<WebBridgeRequest>;
-          if (
-            typeof parsed.id !== "number" ||
-            typeof parsed.method !== "string" ||
-            typeof parsed.argsJson !== "string"
-          ) {
-            throw new Error("invalid web sandbox request");
-          }
-          request = parsed as WebBridgeRequest;
-          const value = await handleWebRequest(request, exa, deps, backend, signal);
-          child.stdin.write(`${JSON.stringify({ id: request.id, ok: true, value })}\n`);
-        } catch (error) {
-          if (!child.stdin.writable) return;
-          child.stdin.write(
-            `${JSON.stringify({
-              id: request?.id,
-              ok: false,
-              error: serializeError(error),
-            })}\n`,
-          );
-        }
-      })();
-    });
-
-    child.once("error", (error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      if (killTimer) clearTimeout(killTimer);
-      signal.removeEventListener("abort", abortHandler);
-      rpcLines.close();
-      reject(error);
-    });
-    child.once("close", (exitCode, closeSignal) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      if (killTimer) clearTimeout(killTimer);
-      signal.removeEventListener("abort", abortHandler);
-      rpcLines.close();
-      resolve({
-        output,
-        stdout,
-        stderr,
-        exitCode,
-        truncated,
-        timedOut,
-        aborted,
-        closeSignal,
-      });
-    });
-
-    child.stdin.on("error", () => {});
-    child.stdin.write(`${JSON.stringify({ code, docs: documentation })}\n`);
   });
 }
 

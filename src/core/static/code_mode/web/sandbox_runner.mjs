@@ -1,38 +1,30 @@
-import { createWriteStream } from "node:fs";
-import { createInterface } from "node:readline";
+import { parentPort, workerData } from "node:worker_threads";
 import "ses";
+
+if (!parentPort) {
+  throw new Error("web sandbox requires a parent port");
+}
+if (
+  typeof workerData !== "object" ||
+  workerData === null ||
+  typeof workerData.code !== "string" ||
+  typeof workerData.docs !== "string"
+) {
+  throw new Error("web sandbox received invalid worker data");
+}
 
 lockdown();
 
-const requests = createWriteStream(null, { fd: 3 });
-const responses = createInterface({ input: process.stdin, crlfDelay: Infinity });
 const pending = new Map();
 let nextRequestId = 1;
-let initialization;
-let resolveInitialization;
-const initialized = new Promise((resolve) => {
-  resolveInitialization = resolve;
-});
 
-responses.on("line", (line) => {
-  let message;
-  try {
-    message = JSON.parse(line);
-  } catch {
-    return;
-  }
-
-  if (!initialization) {
-    initialization = message;
-    resolveInitialization();
-    return;
-  }
-
+parentPort.on("message", (message) => {
+  if (message?.type !== "response" || typeof message.id !== "number") return;
   const request = pending.get(message.id);
   if (!request) return;
   pending.delete(message.id);
   if (message.ok) {
-    request.resolve(JSON.stringify(message.value));
+    request.resolve(message.value);
     return;
   }
 
@@ -48,7 +40,7 @@ function requestWeb(method, argsJson) {
   const id = nextRequestId++;
   return new Promise((resolve, reject) => {
     pending.set(id, { resolve, reject });
-    requests.write(JSON.stringify({ id, method, argsJson }) + "\n");
+    parentPort.postMessage({ type: "request", id, method, argsJson });
   });
 }
 
@@ -60,13 +52,11 @@ function writeOutput(stream, text) {
   output.write(text + "\n");
 }
 
-await initialized;
-
 const compartment = new Compartment({
   globals: {
     _requestWeb: harden(requestWeb),
     _writeOutput: harden(writeOutput),
-    docs: initialization.docs,
+    docs: workerData.docs,
   },
   __options__: true,
 });
@@ -100,7 +90,7 @@ compartment.evaluate(String.raw`
     }),
   });
   function callWeb(method, args) {
-    return requestWebBridge(method, JSON.stringify(args)).then((value) => JSON.parse(value));
+    return requestWebBridge(method, JSON.stringify(args));
   }
   Object.defineProperty(globalThis, "web", {
     value: Object.freeze({
@@ -113,11 +103,10 @@ compartment.evaluate(String.raw`
 `);
 
 try {
-  await compartment.evaluate("(async () => {\n" + initialization.code + "\n})()");
+  await compartment.evaluate("(async () => {\n" + workerData.code + "\n})()");
 } catch (error) {
-  console.error(error instanceof Error ? error.stack || error.message : String(error));
+  writeOutput("stderr", error instanceof Error ? error.stack || error.message : String(error));
   process.exitCode = 1;
 } finally {
-  requests.end();
-  responses.close();
+  parentPort.close();
 }

@@ -97,7 +97,7 @@ export class AuthStorage {
     this.authDirectory = dirname(authPath);
     this.lockPath = `${authPath}.lock`;
     this.tempFilePattern = new RegExp(
-      `^${escapeRegExp(basename(authPath))}\\.${UUID_PATTERN}\\.tmp$`,
+      `^${RegExp.escape(basename(authPath))}\\.${UUID_PATTERN}\\.tmp$`,
     );
     this.reload();
   }
@@ -375,10 +375,6 @@ function isProcessAlive(pid: number): boolean {
 function sleepSync(ms: number): void {
   const signal = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
   Atomics.wait(signal, 0, 0, ms);
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function formatError(error: unknown): string {

@@ -365,10 +365,6 @@ function normalizeTelegramUsername(username: string): string {
   return username.trim().replace(/^@+/, "").toLowerCase();
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 function hasTelegramMention(text: string, username: string): boolean {
   const normalizedUsername = normalizeTelegramUsername(username);
   if (!normalizedUsername) {
@@ -376,7 +372,7 @@ function hasTelegramMention(text: string, username: string): boolean {
   }
 
   const mentionPattern = new RegExp(
-    `(^|[^A-Za-z0-9_])@${escapeRegExp(normalizedUsername)}(?=$|[^A-Za-z0-9_])`,
+    `(^|[^A-Za-z0-9_])@${RegExp.escape(normalizedUsername)}(?=$|[^A-Za-z0-9_])`,
     "i",
   );
   return mentionPattern.test(text);
@@ -389,7 +385,7 @@ function stripTelegramMention(text: string, username: string): string {
   }
 
   const mentionPattern = new RegExp(
-    `(^|[^A-Za-z0-9_])@${escapeRegExp(normalizedUsername)}(?=$|[^A-Za-z0-9_])`,
+    `(^|[^A-Za-z0-9_])@${RegExp.escape(normalizedUsername)}(?=$|[^A-Za-z0-9_])`,
     "gi",
   );
   return text

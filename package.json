@@ -47,7 +47,7 @@
     "@types/ws": "^8.18.1",
     "colorjs.io": "^0.7.1",
     "prettier": "^3.9.6",
-    "typescript": "^5.9.3",
+    "typescript": "^7.0.2",
     "vitest": "^4.1.10"
   },
   "engines": {

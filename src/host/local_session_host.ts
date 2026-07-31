@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import type { Api, AssistantMessage, Message, Model, ToolCall } from "@earendil-works/pi-ai";
-import type { AgentTurnResult } from "../core/agent/agent_runtime.js";
+import type { AgentStateRecovery, AgentTurnResult } from "../core/agent/agent_runtime.js";
 import type { AgentEvent } from "../core/agent/events.js";
 import { type Config, resolvePromptTemplateWithBackend } from "../core/config/index.js";
 import type { ModelResolver } from "../core/models/catalog.js";
@@ -205,7 +205,7 @@ export class LocalSessionHost implements TauSessionHost {
         undefined,
         recovered.changed,
       );
-      hostedSession.runtime.restoreState({
+      const agentRecovery = hostedSession.runtime.restoreState({
         agentId: recovered.snapshot.sessionId,
         revision: recovered.snapshot.agentState.revision,
         contextEpoch: recovered.snapshot.agentState.contextEpoch,
@@ -218,6 +218,9 @@ export class LocalSessionHost implements TauSessionHost {
           ? { usageCheckpoint: { ...recovered.snapshot.agentState.usageCheckpoint } }
           : {}),
       });
+      if (agentRecovery.recoveredToolResults.length > 0) {
+        await hostedSession.persistRecoveredAgentState(agentRecovery);
+      }
       return hostedSession;
     } catch (error) {
       if (hostedSession) {
@@ -797,27 +800,36 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
   async setReasoning(reasoning: ReasoningEffort): Promise<SessionProtocolSettingsUpdateResult> {
     this.assertActive();
-    const fromRevision = this.committedSnapshot?.revision;
-    this.runtime.setReasoning(reasoning);
-    this.bootstrap.persona.settings.reasoning = reasoning;
-    const snapshot = await this.commitSnapshot();
-    if (fromRevision === undefined) {
-      this.emitSnapshotReset("configuration", snapshot);
-    } else if (snapshot.revision !== fromRevision) {
-      this.emitDelta(
-        createSessionProtocolDeltaMessage({
-          sessionId: snapshot.sessionId,
-          fromRevision: snapshot.revision - 1,
-          toRevision: snapshot.revision,
-          reason: "configuration",
-          delta: {
-            type: "snapshot.patch",
-            changes: [{ type: "settings.set", settings: snapshot.settings }],
-          },
-        }),
-      );
-    }
-    return { revision: snapshot.revision, settings: snapshot.settings };
+    const write = this.runtimeEventQueue
+      .catch(() => undefined)
+      .then(async () => {
+        const fromRevision = this.committedSnapshot?.revision;
+        this.runtime.setReasoning(reasoning);
+        this.bootstrap.persona.settings.reasoning = reasoning;
+        const snapshot = await this.commitSnapshot();
+        if (fromRevision === undefined) {
+          this.emitSnapshotReset("configuration", snapshot);
+        } else if (snapshot.revision !== fromRevision) {
+          this.emitDelta(
+            createSessionProtocolDeltaMessage({
+              sessionId: snapshot.sessionId,
+              fromRevision,
+              toRevision: snapshot.revision,
+              reason: "configuration",
+              delta: {
+                type: "snapshot.patch",
+                changes: [{ type: "settings.set", settings: snapshot.settings }],
+              },
+            }),
+          );
+        }
+        return { revision: snapshot.revision, settings: snapshot.settings };
+      });
+    this.runtimeEventQueue = write.then(
+      () => undefined,
+      () => undefined,
+    );
+    return await write;
   }
 
   async setPersona(personaId: string): Promise<SessionProtocolSnapshot> {
@@ -1077,7 +1089,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       contextId,
       persona: this.runtime.persona,
       config: this.bootstrap.config ?? {},
-      modelResolver: this.bootstrap.modelResolver,
       discoveredSkills: this.bootstrap.discoveredSkills,
       includeAgentContext: this.includeAgentContext,
       executionEnvironment: this.executionEnvironment,
@@ -1126,6 +1137,24 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   async snapshot(): Promise<SessionProtocolSnapshot> {
     this.assertActive();
     return await this.commitSnapshot();
+  }
+
+  async persistRecoveredAgentState(recovery: AgentStateRecovery): Promise<void> {
+    this.assertActive();
+    for (const recovered of recovery.recoveredToolResults) {
+      const tool = this.tools.get(recovered.message.toolCallId);
+      if (!tool || tool.status === "streaming") {
+        continue;
+      }
+      this.tools.set(tool.id, {
+        ...tool,
+        status: "cancelled",
+        finishedAt: recovered.message.timestamp,
+        resultMessageId: recovered.historyEntryId,
+        error: "Tool completion status is unknown after session recovery.",
+      });
+    }
+    await this.commitSnapshot();
   }
 
   async dispose(): Promise<void> {

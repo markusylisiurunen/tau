@@ -200,6 +200,34 @@ describe("AgentSupervisor", () => {
     expect(backend.runBash).toHaveBeenCalledTimes(2);
   });
 
+  it("terminates a child before its startup event finishes", async () => {
+    let releaseSpawn;
+    const spawnGate = new Promise((resolve) => {
+      releaseSpawn = resolve;
+    });
+    const supervisor = new AgentSupervisor({
+      onEvent: async (event) => {
+        if (event.type === "subagent_spawned") {
+          await spawnGate;
+        }
+      },
+      recordUsage: () => {},
+    });
+    const spawned = supervisor.spawn(createSpawnOptions());
+    expect(spawned.ok).toBe(true);
+    if (!spawned.ok) throw new Error(spawned.reason);
+    const record = getRecord(supervisor, spawned.id);
+    const stream = vi.fn(() => createStream(createAssistant("too late")));
+    record.runtime.spec.model.stream = stream;
+
+    const termination = supervisor.terminate(spawned.id);
+    await vi.waitFor(() => expect(record.abortRequested).toBe(true));
+    releaseSpawn();
+
+    await expect(termination).resolves.toMatchObject({ id: spawned.id, status: "aborted" });
+    expect(stream).not.toHaveBeenCalled();
+  });
+
   it("terminates a running child and reports an aborted result", async () => {
     const supervisor = new AgentSupervisor({ onEvent: async () => {}, recordUsage: () => {} });
     const spawned = supervisor.spawn(createSpawnOptions());

@@ -8,7 +8,6 @@ import {
 } from "../core/agent/agent_runtime.js";
 import type { AgentEvent } from "../core/agent/events.js";
 import type { Config } from "../core/config/index.js";
-import type { ModelResolver } from "../core/models/catalog.js";
 import { resolveAgentModel } from "../core/runtime/agent_model.js";
 import { createDefaultCoreDeps } from "../core/runtime/deps.js";
 import { composeSessionPrompts } from "../core/runtime/session_prompt_composer.js";
@@ -61,7 +60,6 @@ export type HostedEphemeralAgentSessionOptions = {
   contextId: string;
   persona: Persona;
   config: Config;
-  modelResolver: ModelResolver;
   discoveredSkills: Skill[];
   includeAgentContext: boolean;
   executionEnvironment: ExecutionEnvironment;
@@ -237,6 +235,9 @@ class EphemeralAgentThread {
       ...(state ? { state } : {}),
       deps: options.deps,
     });
+    if (options.forkFrom) {
+      this.onUpdate?.({ costTotal: this.costTotal, usage: { ...this.usage } });
+    }
   }
 
   async submitMessage(message: string): Promise<string> {

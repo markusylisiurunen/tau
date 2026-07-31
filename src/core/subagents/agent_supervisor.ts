@@ -274,7 +274,12 @@ export class AgentSupervisor {
     record.error = undefined;
     record.finalText = undefined;
     record.completion = this.emit({ type: "subagent_spawned", state: this.toSnapshot(record) })
-      .then(async () => await record.runtime.submit(prompt))
+      .then(async () => {
+        if (record.abortRequested) {
+          throw new Error("subagent was interrupted");
+        }
+        return await record.runtime.submit(prompt);
+      })
       .then((result) => {
         if (result.aborted) throw new Error("subagent was interrupted");
         if (result.blocked) throw new Error(result.blocked.message);

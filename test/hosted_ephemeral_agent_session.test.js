@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 import { AgentRuntime } from "../dist/core/index.js";
-import { resolveModel } from "../dist/core/models/catalog.js";
 import { personas } from "../dist/core/personas.js";
 import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
 import { HostedEphemeralAgentSession } from "../dist/host/hosted_ephemeral_agent_session.js";
@@ -56,19 +55,20 @@ function createSession(recordUsage = vi.fn(), config = { autoCompact: { enabled:
       },
     }),
   };
+  const emitUpdate = vi.fn();
   return {
+    emitUpdate,
     recordUsage,
     session: new HostedEphemeralAgentSession({
       contextId: "ephemeral-1",
       persona: personas[0],
       config,
-      modelResolver: resolveModel,
       discoveredSkills: [],
       includeAgentContext: false,
       executionEnvironment,
       instructions: "review the diff",
       tools: [],
-      emitUpdate: vi.fn(),
+      emitUpdate,
       recordUsage,
     }),
   };
@@ -76,7 +76,7 @@ function createSession(recordUsage = vi.fn(), config = { autoCompact: { enabled:
 
 describe("HostedEphemeralAgentSession", () => {
   it("uses AgentRuntime for continuation and cloned fork threads", async () => {
-    const { session, recordUsage } = createSession();
+    const { session, recordUsage, emitUpdate } = createSession();
     const source = await session.getOrCreateThread("source");
     expect(source.runtime).toBeInstanceOf(AgentRuntime);
     const sourceResponses = [createAssistant("first"), createAssistant("continued")];
@@ -98,6 +98,13 @@ describe("HostedEphemeralAgentSession", () => {
     ).resolves.toEqual({ threadId: "source", response: "continued" });
 
     const fork = await session.getOrCreateThread("fork", "source");
+    expect(emitUpdate).toHaveBeenCalledWith(
+      "fork",
+      expect.objectContaining({
+        costTotal: 0,
+        usage: expect.objectContaining({ contextWindowUsageTokens: 3 }),
+      }),
+    );
     expect(fork.runtime).toBeInstanceOf(AgentRuntime);
     expect(fork.runtime.agentIdValue).not.toBe(source.runtime.agentIdValue);
     expect(fork.runtime.rawHistory).toEqual(source.runtime.rawHistory);

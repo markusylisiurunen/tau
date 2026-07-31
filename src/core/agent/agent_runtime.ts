@@ -77,6 +77,14 @@ export type AgentState = {
   usageCheckpoint?: AgentUsageCheckpoint;
 };
 
+export type AgentStateRecovery = {
+  state: AgentState;
+  recoveredToolResults: Array<{
+    historyEntryId: string;
+    message: ToolResultMessage;
+  }>;
+};
+
 export type AgentModelExecutor = {
   model: Model<Api>;
   stream(context: Context, options: TauStreamOptions): AssistantMessageEventStream;
@@ -230,6 +238,103 @@ function getContextEpoch(spec: AgentSpec): string {
     .digest("hex");
 }
 
+export function recoverAgentState(state: AgentState, timestamp: number): AgentStateRecovery {
+  const sourceEntries = structuredClone(state.historyEntries);
+  const historyEntries: HistoryEntry[] = [];
+  const recoveredToolResults: AgentStateRecovery["recoveredToolResults"] = [];
+  const historyEntryIds = new Set(sourceEntries.map((entry) => entry.id));
+  const createRecoveryHistoryEntryId = () => {
+    let id: string;
+    do {
+      id = `history-${randomUUID()}`;
+    } while (historyEntryIds.has(id));
+    historyEntryIds.add(id);
+    return id;
+  };
+
+  for (let index = 0; index < sourceEntries.length; index += 1) {
+    const entry = sourceEntries[index]!;
+    historyEntries.push(entry);
+    if (
+      entry.message.role !== "assistant" ||
+      entry.message.stopReason === "error" ||
+      entry.message.stopReason === "aborted"
+    ) {
+      continue;
+    }
+
+    const toolCalls = entry.message.content.filter(
+      (content): content is ToolCall => content.type === "toolCall",
+    );
+    if (toolCalls.length === 0) {
+      continue;
+    }
+
+    const toolCallIds = new Set(toolCalls.map((toolCall) => toolCall.id));
+    const toolResultsByCallId = new Map<string, ToolResultMessage>();
+    while (sourceEntries[index + 1]?.message.role === "toolResult") {
+      const resultEntry = sourceEntries[index + 1]!;
+      const toolResult = resultEntry.message as ToolResultMessage;
+      if (!toolCallIds.has(toolResult.toolCallId)) {
+        break;
+      }
+      index += 1;
+      historyEntries.push(resultEntry);
+      toolResultsByCallId.set(toolResult.toolCallId, toolResult);
+    }
+
+    const missingToolCalls = toolCalls.filter((toolCall) => !toolResultsByCallId.has(toolCall.id));
+    if (missingToolCalls.length === 0) {
+      continue;
+    }
+
+    for (const toolCall of missingToolCalls) {
+      const message: ToolResultMessage = {
+        role: "toolResult",
+        toolCallId: toolCall.id,
+        toolName: toolCall.name,
+        content: [
+          {
+            type: "text",
+            text: "Tool execution was interrupted before a result was persisted; completion status is unknown.",
+          },
+        ],
+        isError: true,
+        timestamp,
+      };
+      const historyEntryId = createRecoveryHistoryEntryId();
+      historyEntries.push({ id: historyEntryId, message });
+      recoveredToolResults.push({ historyEntryId, message });
+      toolResultsByCallId.set(toolCall.id, message);
+    }
+
+    historyEntries.push({
+      id: createRecoveryHistoryEntryId(),
+      message: buildToolRecoveryUserMessage({
+        errorMessage: "Session recovery found tool calls without persisted results.",
+        toolCalls,
+        toolResults: toolCalls.map((toolCall) => toolResultsByCallId.get(toolCall.id)!),
+        continueOriginalRequest: false,
+        timestamp,
+      }),
+    });
+  }
+
+  if (recoveredToolResults.length === 0) {
+    return { state: { ...state, historyEntries: sourceEntries }, recoveredToolResults };
+  }
+
+  return {
+    state: {
+      agentId: state.agentId,
+      revision: state.revision + historyEntries.length - sourceEntries.length,
+      historyEntries,
+      contextEpoch: state.contextEpoch,
+    },
+    recoveredToolResults,
+  };
+}
+
 export class AgentRuntime {
   private currentSpec: AgentSpec;
   private readonly deps: CoreDeps;
@@ -259,13 +364,14 @@ export class AgentRuntime {
     this.deps = options.deps ?? createDefaultCoreDeps();
     const contextEpoch = getContextEpoch(options.spec);
     if (options.state) {
-      this.agentId = options.state.agentId;
-      this.revision = options.state.revision;
-      this.historyEntries = structuredClone(options.state.historyEntries);
+      const recovered = recoverAgentState(options.state, this.deps.clock.now()).state;
+      this.agentId = recovered.agentId;
+      this.revision = recovered.revision;
+      this.historyEntries = recovered.historyEntries;
       this.contextEpoch = contextEpoch;
       this.usageCheckpoint =
-        options.state.contextEpoch === contextEpoch && options.state.usageCheckpoint
-          ? { ...options.state.usageCheckpoint }
+        recovered.contextEpoch === contextEpoch && recovered.usageCheckpoint
+          ? { ...recovered.usageCheckpoint }
           : undefined;
     } else {
       this.agentId = randomUUID();
@@ -317,18 +423,20 @@ export class AgentRuntime {
     this.agentId = randomUUID();
   }
 
-  restoreState(state: AgentState): void {
+  restoreState(state: AgentState): AgentStateRecovery {
     if (this.status === "running") {
       throw new Error("cannot restore a running agent");
     }
     this.closeProviderSessions();
-    this.agentId = state.agentId;
-    this.revision = state.revision;
-    this.historyEntries = structuredClone(state.historyEntries);
+    const recovery = recoverAgentState(state, this.deps.clock.now());
+    this.agentId = recovery.state.agentId;
+    this.revision = recovery.state.revision;
+    this.historyEntries = recovery.state.historyEntries;
     this.usageCheckpoint =
-      state.contextEpoch === this.contextEpoch && state.usageCheckpoint
-        ? { ...state.usageCheckpoint }
+      recovery.state.contextEpoch === this.contextEpoch && recovery.state.usageCheckpoint
+        ? { ...recovery.state.usageCheckpoint }
         : undefined;
+    return recovery;
   }
 
   private replaceHistoryEntries(entries: readonly HistoryEntry[]): void {

@@ -3,6 +3,7 @@ import {
   AgentRuntime,
   type AgentSampleOptions,
   type AgentState,
+  type AgentStateRecovery,
   type AgentTurnResult,
   type CancelledSteeringSubmission,
   createAgentSpec,
@@ -194,8 +195,8 @@ export class ChatRuntime {
     return this.agent.interrupt();
   }
 
-  restoreState(state: AgentState): void {
-    this.agent.restoreState(state);
+  restoreState(state: AgentState): AgentStateRecovery {
+    return this.agent.restoreState(state);
   }
 
   reset(): void {

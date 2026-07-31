@@ -453,6 +453,64 @@ describe("AgentRuntime", () => {
     expect(runtime.rawHistory.at(-1).content[0].text).toBe("recovered");
   });
 
+  it("repairs dangling committed tool calls when restoring durable state", async () => {
+    const { runtime, persona } = createRuntime();
+    const call = fauxToolCall("side_effect", {}, { id: "dangling-call" });
+    const assistant = createAssistant(persona, [call], { stopReason: "toolUse" });
+    const recovery = runtime.restoreState({
+      agentId: "restored-agent",
+      revision: 2,
+      contextEpoch: runtime.state.contextEpoch,
+      usageCheckpoint: {
+        historyEntryId: "assistant-1",
+        contextEpoch: runtime.state.contextEpoch,
+        tokens: 10,
+      },
+      historyEntries: [
+        {
+          id: "user-1",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "perform once" }],
+            timestamp: 1,
+          },
+        },
+        { id: "assistant-1", message: assistant },
+      ],
+    });
+
+    expect(recovery.recoveredToolResults).toEqual([
+      expect.objectContaining({
+        message: expect.objectContaining({
+          role: "toolResult",
+          toolCallId: call.id,
+          isError: true,
+        }),
+      }),
+    ]);
+    expect(runtime.rawHistory.map((message) => message.role)).toEqual([
+      "user",
+      "assistant",
+      "toolResult",
+      "user",
+    ]);
+    expect(JSON.stringify(runtime.rawHistory.at(-1))).toContain("completion status is unknown");
+    expect(runtime.state.usageCheckpoint).toBeUndefined();
+    expect(runtime.restoreState(runtime.snapshot()).recoveredToolResults).toEqual([]);
+
+    const streamModel = setStreams(runtime, [
+      createStream([], createAssistant(persona, "continued safely")),
+    ]);
+    await runtime.submit("continue");
+    expect(streamModel.mock.calls[0][0].messages.map((message) => message.role)).toEqual([
+      "user",
+      "assistant",
+      "toolResult",
+      "user",
+      "user",
+    ]);
+  });
+
   it("recovers after admitted tool work without executing the tool twice", async () => {
     const call = fauxToolCall("side_effect", {}, { id: "side-effect-1" });
     const execute = vi.fn(async () => ({

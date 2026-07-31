@@ -313,7 +313,6 @@ describe("HostedEphemeralAgentSession", () => {
       contextId: "context-1",
       persona: personas[0],
       config: {},
-      modelResolver: resolveModel,
       discoveredSkills: [],
       includeAgentContext: false,
       executionEnvironment: createTestExecutionEnvironment(),
@@ -1277,6 +1276,8 @@ describe("LocalSessionHost", () => {
     const host = createHost(store);
     const hostedSession = await host.createSession(localCreateInput);
     await hostedSession.snapshot();
+    const revisions = [];
+    hostedSession.onDelta((delta) => revisions.push([delta.fromRevision, delta.toRevision]));
     Object.defineProperty(hostedSession.runtime, "isTurnRunning", {
       configurable: true,
       get: () => true,
@@ -1296,7 +1297,7 @@ describe("LocalSessionHost", () => {
     const reasoningPromise = hostedSession.setReasoning("high");
     await gate.started;
 
-    await hostedSession.enqueueRuntimeEvent({
+    const partialPromise = hostedSession.enqueueRuntimeEvent({
       type: "assistant_partial",
       historyEntryId: "assistant-reasoning-race",
       snapshot: assistantPartial("hello world"),
@@ -1305,10 +1306,11 @@ describe("LocalSessionHost", () => {
 
     await expect(reasoningPromise).resolves.toEqual(
       expect.objectContaining({
-        revision: 5,
+        revision: 4,
         settings: expect.objectContaining({ reasoning: "high" }),
       }),
     );
+    await partialPromise;
     await expect(hostedSession.snapshot()).resolves.toEqual(
       expect.objectContaining({
         revision: 5,
@@ -1337,6 +1339,12 @@ describe("LocalSessionHost", () => {
         ]),
       }),
     );
+    expect(revisions).toEqual([
+      [1, 2],
+      [2, 3],
+      [3, 4],
+      [4, 5],
+    ]);
   });
 
   it("applies session.create persona and reasoning overrides before startup", async () => {
@@ -1774,6 +1782,89 @@ describe("LocalSessionHost", () => {
       environmentTag: storedSnapshot.bootstrap.prompt.environmentTag,
       subagentPrompts: storedSnapshot.bootstrap.prompt.subagentPrompts,
     });
+  });
+
+  it("repairs and persists dangling tool calls when recovering a stored session", async () => {
+    const store = new MemorySessionStore();
+    const toolCall = fauxToolCall("bash", { command: "pwd" }, { id: "dangling-tool" });
+    const storedSnapshot = createStoredSnapshot({
+      sessionId: "dangling-tool-session",
+      historyEntries: [
+        {
+          id: "user-1",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "run pwd" }],
+          },
+        },
+        {
+          id: "assistant-1",
+          message: {
+            ...assistantMessageWithToolCalls([toolCall]),
+            stopReason: "toolUse",
+          },
+        },
+      ],
+      agentState: { revision: 2, contextEpoch: "stored-context" },
+      tools: {
+        [toolCall.id]: {
+          id: toolCall.id,
+          toolCallId: toolCall.id,
+          toolName: toolCall.name,
+          status: "running",
+          call: { messageId: "assistant-1", contentIndex: 0 },
+          startedAt: 1,
+          facetIds: [],
+        },
+      },
+    });
+    await store.commitSessionSnapshot(storedSnapshot);
+
+    const recoveredHost = createHost(store);
+    const recoveredSession = await recoveredHost.observeSession(storedSnapshot.sessionId);
+    if (!recoveredSession) throw new Error("expected stored session to recover");
+    const recoveredSnapshot = await recoveredSession.snapshot();
+
+    expect(recoveredSnapshot.revision).toBe(2);
+    expect(recoveredSnapshot.agentState).toMatchObject({ revision: 4 });
+    expect(recoveredSnapshot.messages.map((entry) => entry.message.role)).toEqual([
+      "system",
+      "user",
+      "assistant",
+      "toolResult",
+      "user",
+    ]);
+    expect(recoveredSnapshot.tools[toolCall.id]).toMatchObject({
+      status: "cancelled",
+      resultMessageId: expect.any(String),
+      error: "Tool completion status is unknown after session recovery.",
+    });
+    await expect(store.loadSession(storedSnapshot.sessionId)).resolves.toEqual(recoveredSnapshot);
+
+    const contexts = [];
+    recoveredSession.runtime.agent.spec.model.stream = (context) => {
+      contexts.push(context);
+      return {
+        async *[Symbol.asyncIterator]() {},
+        async result() {
+          return {
+            ...assistantMessageWithToolCalls([]),
+            stopReason: "stop",
+            content: [{ type: "text", text: "continued safely" }],
+          };
+        },
+      };
+    };
+    await recoveredSession.record({ text: "continue" });
+    await expect(recoveredSession.runTurn()).resolves.toMatchObject({ status: "completed" });
+    expect(contexts[0].messages.map((message) => message.role)).toEqual([
+      "user",
+      "assistant",
+      "toolResult",
+      "user",
+      "user",
+    ]);
+    await recoveredHost.shutdown();
   });
 
   it("persists raw user message metadata and hidden system blocks in snapshots", async () => {

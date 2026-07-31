@@ -52,6 +52,7 @@ type SessionProtocolPendingUserMessageRequest =
 
 type SessionProtocolLiveSessionState = {
   activeSubmit?: SessionProtocolActiveSubmit;
+  interrupting: boolean;
   revision: number;
   pendingSteeringSubmits: SessionProtocolPendingSteeringRequest[];
   pendingQueuedSubmits: SessionProtocolPendingUserMessageRequest[];
@@ -84,6 +85,7 @@ function getSessionLiveState(session: TauHostedSession): SessionProtocolLiveSess
   let state = sessionLiveStates.get(session);
   if (!state) {
     state = {
+      interrupting: false,
       revision: 1,
       pendingSteeringSubmits: [],
       pendingQueuedSubmits: [],
@@ -473,6 +475,9 @@ export class SessionProtocolHandler {
     }
 
     const action = await this.enqueueMutation(state, () => {
+      if (state.live.interrupting) {
+        return { type: "busy" as const };
+      }
       if (state.session.isTurnRunning) {
         const submission = state.session.steer(request.params.text);
         const pending = {
@@ -492,6 +497,11 @@ export class SessionProtocolHandler {
       }
       return { type: "submit" as const, started: this.startUserMessageTurn(state, request) };
     });
+
+    if (action.type === "busy") {
+      this.sendSubmitBusy(state, request.id);
+      return;
+    }
 
     if (action.type === "queued") {
       return;
@@ -1115,14 +1125,29 @@ export class SessionProtocolHandler {
       return;
     }
 
-    const interrupted = state.session.interruptActiveWork();
-    this.rejectPendingSteeringSubmits(state, "session was interrupted");
+    const result = await this.enqueueMutation(state, () => {
+      const interrupted = state.session.interruptActiveWork();
+      if (interrupted) {
+        state.live.interrupting = true;
+      }
+      this.rejectPendingSteeringSubmits(state, "session was interrupted");
+      return {
+        interrupted,
+        isTurnRunning: state.session.isTurnRunning || interrupted,
+      } satisfies SessionProtocolResultByMethod["session.interrupt"];
+    });
 
-    const result: SessionProtocolResultByMethod["session.interrupt"] = {
-      interrupted,
-      isTurnRunning: state.session.isTurnRunning || interrupted,
-    };
-
+    if (result.interrupted) {
+      void state.session
+        .waitForActiveWork()
+        .catch(() => undefined)
+        .then(() =>
+          this.enqueueMutation(state, () => {
+            state.live.interrupting = false;
+          }),
+        )
+        .catch(() => undefined);
+    }
     this.sendMessage(createSessionProtocolSuccessResponse(request.id, "session.interrupt", result));
   }
 

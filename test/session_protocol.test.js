@@ -1110,6 +1110,21 @@ describe("session_protocol", () => {
       value: { sessionId: "session-1", contextId: "ephemeral-1" },
     });
 
+    for (const method of ["session.record", "session.submit", "session.queue", "session.steer"]) {
+      expect(
+        validateSessionProtocolParams(method, {
+          sessionId: "session-1",
+          text: "   ",
+        }),
+      ).toEqual({
+        ok: false,
+        error: expect.objectContaining({
+          code: SESSION_PROTOCOL_ERROR_CODES.invalidParams,
+          message: `${method} params.text must be a non-empty string`,
+        }),
+      });
+    }
+
     const submitWithEmptyHistoryId = validateSessionProtocolParams("session.submit", {
       sessionId: "session-1",
       text: "hello",
@@ -2057,6 +2072,55 @@ describe("session_protocol", () => {
       ),
     ).toThrow("session delta produced an invalid snapshot");
 
+    const checkpointSnapshot = createProtocolSnapshot({
+      sessionId: "session-1",
+      revision: 2,
+      historyEntries: [
+        {
+          id: "checkpoint-assistant",
+          message: {
+            role: "assistant",
+            provider: "openai",
+            model: "gpt-5.5",
+            content: [{ type: "text", text: "done" }],
+            stopReason: "stop",
+          },
+        },
+      ],
+      agentState: {
+        revision: 1,
+        contextEpoch: "epoch-1",
+        usageCheckpoint: {
+          historyEntryId: "checkpoint-assistant",
+          contextEpoch: "epoch-1",
+          tokens: 10,
+        },
+      },
+    });
+    const invalidCheckpointTargetDelta = createSessionProtocolDeltaMessage({
+      sessionId: "session-1",
+      fromRevision: 2,
+      toRevision: 3,
+      reason: "assistant-stream",
+      delta: {
+        type: "snapshot.patch",
+        changes: [
+          {
+            type: "message.replace",
+            message: {
+              id: "checkpoint-assistant",
+              state: "draft",
+              modelVisible: false,
+              message: { role: "assistant", content: [], timestamp: 1 },
+            },
+          },
+        ],
+      },
+    });
+    expect(() =>
+      applySessionProtocolDelta(checkpointSnapshot, invalidCheckpointTargetDelta),
+    ).toThrow("session delta produced an invalid snapshot");
+
     const ephemeral = createSessionProtocolEphemeralMessage({
       sessionId: "session-1",
       event: {
@@ -2210,6 +2274,26 @@ describe("session_protocol", () => {
     const keyedSnapshot = createProtocolSnapshot({
       sessionId: "session-1",
       revision: 3,
+      historyEntries: [
+        {
+          id: "assistant-entry-1",
+          message: {
+            role: "assistant",
+            api: "openai-responses",
+            provider: "openai",
+            model: "gpt-5.5",
+            stopReason: "toolUse",
+            content: [
+              {
+                type: "toolCall",
+                id: "tool-1",
+                name: "bash",
+                arguments: { command: "echo hi" },
+              },
+            ],
+          },
+        },
+      ],
       tools: {
         "tool-1": {
           id: "tool-1",

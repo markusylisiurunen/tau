@@ -122,6 +122,7 @@ function createHarness(options = {}) {
     let releaseTurn;
     let pendingTurnResult = { status: "completed", stopReason: "stop" };
     let pendingTurn = null;
+    let activeTurnSettlement = Promise.resolve();
     const pendingSteering = [];
     let reasoning = bootstrap.persona.settings.reasoning;
     const ephemeralContexts = new Set();
@@ -240,6 +241,10 @@ function createHarness(options = {}) {
       },
       async runTurn() {
         running = true;
+        let settleTurn;
+        activeTurnSettlement = new Promise((resolve) => {
+          settleTurn = resolve;
+        });
         try {
           if (options.runTurn) {
             return await options.runTurn();
@@ -277,6 +282,7 @@ function createHarness(options = {}) {
           running = false;
           pendingTurn = null;
           pendingTurnResult = { status: "completed", stopReason: "stop" };
+          settleTurn();
         }
       },
       requestTurnBoundaryStop: vi.fn(() => running),
@@ -400,7 +406,7 @@ function createHarness(options = {}) {
         return interrupted;
       }),
       waitForActiveWork: vi.fn(async () => {
-        await Promise.allSettled(activeWorkPromises);
+        await Promise.allSettled([activeTurnSettlement, ...activeWorkPromises]);
       }),
       terminateSubagent: vi.fn(async () => ({ found: true })),
       createEphemeralContext: vi.fn(async () => {
@@ -1522,6 +1528,40 @@ describe("rpc_server", () => {
     harness.releaseTurn();
     await firstSubmit;
     await recovered.close();
+  });
+
+  it("rejects steering while an interrupted turn is still unwinding", async () => {
+    let releaseUnwind;
+    const unwindGate = new Promise((resolve) => {
+      releaseUnwind = resolve;
+    });
+    const harness = createHarness({ afterTurnRelease: async () => await unwindGate });
+    const firstSubmit = harness.server.handleLine(
+      request("submit-1", "session.submit", {
+        sessionId: "session-1",
+        text: "first turn",
+      }),
+    );
+    await waitFor(() => harness.lines.some((line) => deltaHasNotice(line, "streaming")));
+
+    await harness.server.handleLine(
+      request("interrupt-1", "session.interrupt", { sessionId: "session-1" }),
+    );
+    await harness.server.handleLine(
+      request("steer-1", "session.steer", {
+        sessionId: "session-1",
+        text: "too late",
+      }),
+    );
+
+    expect(harness.lines.find((line) => line.id === "steer-1")).toEqual(
+      expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({ code: SESSION_PROTOCOL_ERROR_CODES.busy }),
+      }),
+    );
+    releaseUnwind();
+    await firstSubmit;
   });
 
   it("drops pending steering submits when a turn is interrupted", async () => {

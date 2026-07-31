@@ -1261,7 +1261,7 @@ const sessionProtocolInitializeParamsSchema = z
 const sessionProtocolUserMessageParamsSchema = z
   .object({
     sessionId: nonEmptyStringSchema,
-    text: z.string(),
+    text: nonEmptyStringSchema,
     historyEntryId: nonEmptyStringSchema.optional(),
   })
   .strip();
@@ -1269,7 +1269,7 @@ const sessionProtocolUserMessageParamsSchema = z
 const sessionProtocolSteerParamsSchema = z
   .object({
     sessionId: nonEmptyStringSchema,
-    text: z.string(),
+    text: nonEmptyStringSchema,
   })
   .strip();
 
@@ -2652,7 +2652,7 @@ export function applySessionProtocolDelta(
 
   const keyedPatchSnapshot = applyKeyedRecordDelta(snapshot, message);
   if (keyedPatchSnapshot) {
-    return keyedPatchSnapshot;
+    return validateAppliedSnapshot(keyedPatchSnapshot);
   }
 
   const next = structuredClone(snapshot);
@@ -2726,16 +2726,15 @@ export function applySessionProtocolDelta(
     }
   }
 
-  if (message.delta.changes.some((change) => change.type === "agent-state.set")) {
-    const parsed = sessionProtocolSnapshotSchema.safeParse(next);
-    if (!parsed.success) {
-      throw new Error(
-        `session delta produced an invalid snapshot: ${formatZodError(parsed.error)}`,
-      );
-    }
-  }
+  return validateAppliedSnapshot(next);
+}
 
-  return next;
+function validateAppliedSnapshot(snapshot: SessionProtocolSnapshot): SessionProtocolSnapshot {
+  const parsed = sessionProtocolSnapshotSchema.safeParse(snapshot);
+  if (!parsed.success) {
+    throw new Error(`session delta produced an invalid snapshot: ${formatZodError(parsed.error)}`);
+  }
+  return snapshot;
 }
 
 function applyKeyedRecordDelta(
@@ -3515,7 +3514,7 @@ function validateUserMessageParams(
       : hasIssue(parsed.error, ["sessionId"])
         ? `${method} params.sessionId must be a non-empty string`
         : hasIssue(parsed.error, ["text"])
-          ? `${method} params.text must be a string`
+          ? `${method} params.text must be a non-empty string`
           : hasIssue(parsed.error, ["historyEntryId"])
             ? `${method} params.historyEntryId must be a non-empty string when provided`
             : `${method} params are invalid: ${formatZodError(parsed.error)}`;
@@ -3544,7 +3543,7 @@ function validateSteerParams(
       : hasIssue(parsed.error, ["sessionId"])
         ? "session.steer params.sessionId must be a non-empty string"
         : hasIssue(parsed.error, ["text"])
-          ? "session.steer params.text must be a string"
+          ? "session.steer params.text must be a non-empty string"
           : `session.steer params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
@@ -3562,7 +3561,7 @@ function validateRecordParams(
       : hasIssue(parsed.error, ["sessionId"])
         ? "session.record params.sessionId must be a non-empty string"
         : hasIssue(parsed.error, ["text"])
-          ? "session.record params.text must be a string"
+          ? "session.record params.text must be a non-empty string"
           : hasIssue(parsed.error, ["historyEntryId"])
             ? "session.record params.historyEntryId must be a non-empty string when provided"
             : `session.record params are invalid: ${formatZodError(parsed.error)}`;

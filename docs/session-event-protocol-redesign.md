@@ -28,7 +28,7 @@ The protocol should instead make the snapshot the only renderable source of trut
 - Model-facing history remains distinct from client-facing session state.
 - Non-model-facing structured metadata can be attached to model-facing records without encoding it in tool result text.
 - Event and delta names are symmetrical, domain-shaped, and stable.
-- Complex rebases such as reload, rewind, compaction, and pruning are allowed to send a full replacement snapshot instead of large bespoke patch sequences.
+- Complex rebases such as reload, rewind, and compaction are allowed to send a full replacement snapshot instead of large bespoke patch sequences.
 
 ## core invariant
 

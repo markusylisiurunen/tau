@@ -105,7 +105,7 @@ function createAssistantMessage(text) {
 function createAssistantToolCallMessage(toolCalls) {
   return {
     ...createAssistantMessage(""),
-    stopReason: "tool_call",
+    stopReason: "toolUse",
     content: toolCalls,
   };
 }
@@ -1293,6 +1293,7 @@ describe("SessionChatController", () => {
       message: {
         role: "user",
         content: [{ type: "text", text: "started elsewhere" }],
+        timestamp: 1,
       },
     };
     const observedUserDelta = createMessageAppendDelta(
@@ -2404,6 +2405,19 @@ describe("SessionChatController", () => {
     const snapshot = updateSnapshot(createSnapshot(), {
       revision: 3,
       costTotal: 0.42,
+      historyEntries: [
+        {
+          id: "assistant-tools",
+          message: createAssistantToolCallMessage([
+            {
+              type: "toolCall",
+              id: "tool-a",
+              name: "bash",
+              arguments: { command: "echo a" },
+            },
+          ]),
+        },
+      ],
       tools: {
         "tool-a": {
           id: "tool-a",
@@ -3731,7 +3745,11 @@ describe("SessionChatController", () => {
       id: "next-session-message",
       state: "committed",
       modelVisible: true,
-      message: { role: "user", content: [{ type: "text", text: "arrived during handoff" }] },
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "arrived during handoff" }],
+        timestamp: 1,
+      },
     };
     const delta = createMessageAppendDelta(
       nextSession.id,

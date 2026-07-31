@@ -10,7 +10,7 @@ const { capturedUserMessages, runModelSubturnMock, runToolCallsMock } = vi.hoist
 }));
 
 vi.mock("../dist/core/session/runner.js", () => ({
-  MAX_MODEL_SUBTURNS: 512,
+  MAX_MODEL_SUBTURNS: 1024,
   runModelSubturn: runModelSubturnMock,
   runToolCalls: runToolCallsMock,
 }));

@@ -405,7 +405,7 @@ describe("core session rewind APIs", () => {
     }
   });
 
-  it("accepts a final response on model subturn 512", async () => {
+  it("accepts a final response on model subturn 1024", async () => {
     let modelCalls = 0;
     const toolRegistry = new ToolRegistry([
       {
@@ -438,7 +438,7 @@ describe("core session rewind APIs", () => {
     session.engine.modelRuntime.streamModel = () => {
       modelCalls += 1;
       const toolCall =
-        modelCalls === 512
+        modelCalls === 1024
           ? undefined
           : fauxToolCall("fake_tool", {}, { id: `tool-call-${modelCalls}` });
       const response = toolCall
@@ -470,8 +470,8 @@ describe("core session rewind APIs", () => {
       }
     }
 
-    expect(modelCalls).toBe(512);
-    expect(notices).not.toContain("stopped after 512 model subturns to avoid an infinite loop.");
+    expect(modelCalls).toBe(1024);
+    expect(notices).not.toContain("stopped after 1024 model subturns to avoid an infinite loop.");
   });
 
   it("preserves the session id when compacting manually", async () => {

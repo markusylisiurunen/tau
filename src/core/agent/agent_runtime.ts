@@ -56,7 +56,7 @@ import type {
 } from "./events.js";
 
 const DEFAULT_RETRY_POLICY = { maxRetries: 1, delayMs: 3_000 } as const;
-const DEFAULT_MAX_MODEL_SUBTURNS = 512;
+const DEFAULT_MAX_MODEL_SUBTURNS = 1024;
 
 export type HistoryEntry = {
   id: string;

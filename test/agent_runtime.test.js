@@ -113,6 +113,46 @@ function setStreams(runtime, streams) {
 }
 
 describe("AgentRuntime", () => {
+  it("defaults to 1024 model subturns", () => {
+    const { runtime } = createRuntime();
+
+    expect(runtime.spec.maxModelSubturns).toBe(1024);
+  });
+
+  it("accepts a final response on the configured last model subturn", async () => {
+    const toolCall = fauxToolCall("continue", {}, { id: "continue-1" });
+    const { runtime, persona, events } = createRuntime({
+      maxModelSubturns: 2,
+      tools: [
+        createTool("continue", async () => ({
+          content: [{ type: "text", text: "continue" }],
+          outcome: "succeeded",
+        })),
+      ],
+    });
+    const toolMessage = createAssistant(persona, [toolCall], { stopReason: "toolUse" });
+    const streamModel = setStreams(runtime, [
+      createStream(
+        [
+          { type: "toolcall_start", contentIndex: 0, partial: toolMessage },
+          { type: "toolcall_end", contentIndex: 0, toolCall, partial: toolMessage },
+        ],
+        toolMessage,
+      ),
+      createStream([], createAssistant(persona, "done")),
+    ]);
+
+    await runtime.submit("finish at the limit");
+
+    expect(streamModel).toHaveBeenCalledTimes(2);
+    expect(events).not.toContainEqual(
+      expect.objectContaining({
+        type: "notice",
+        text: "stopped after 2 model subturns to avoid an infinite loop.",
+      }),
+    );
+  });
+
   it("commits user input durably and awaits its sink before model work", async () => {
     let releaseUserEvent;
     const userEventGate = new Promise((resolve) => {

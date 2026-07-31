@@ -26,7 +26,6 @@ import type { TauStreamOptions } from "../utils/streaming_settings.js";
 import { MessageAccumulator } from "./message_accumulator.js";
 
 const ASSISTANT_PARTIAL_MIN_INTERVAL_MS = 33;
-export const MAX_MODEL_SUBTURNS = 512;
 
 type NoticeEvent = Extract<AgentEvent, { type: "notice" }>;
 type ModelRetryEvent = Extract<

@@ -116,7 +116,12 @@ function createRuntime(options = {}) {
   const runtime = new AgentRuntime({
     spec,
     eventSink,
-    ...(options.getCompactionContext ? { getCompactionContext: options.getCompactionContext } : {}),
+    clock: options.clock ?? { now: () => Date.now() },
+    ...(options.getCompactionContinuationSystemMessages
+      ? {
+          getCompactionContinuationSystemMessages: options.getCompactionContinuationSystemMessages,
+        }
+      : {}),
   });
   return { runtime, events, persona, spec };
 }
@@ -558,8 +563,9 @@ describe("AgentRuntime", () => {
       config: {
         autoCompact: { enabled: true, reserveTokens: 10, keepRecentTokens: 20 },
       },
-      getCompactionContext: () =>
+      getCompactionContinuationSystemMessages: () => [
         "<active-subagents>\n- child-1: running repository scan\n</active-subagents>",
+      ],
     });
     const first = createAssistant(persona, "first response", {
       usage: {

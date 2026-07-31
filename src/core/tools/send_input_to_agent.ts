@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { AgentSupervisor } from "../subagents/agent_supervisor.js";
 import type { SubagentStateSnapshot } from "../subagents/types.js";
 import { parseToolArgs } from "../utils/zod.js";
+import type { ToolActivity } from "./activity.js";
 import {
   type AgentTool,
   createTextToolOutcome,
@@ -11,7 +12,6 @@ import {
   type ToolExecutionContext,
   type ToolExecutionOutcome,
   type ToolImplementationOutcome,
-  type ToolUiEvent,
 } from "./registry.js";
 import { buildSubagentUiText } from "./subagent_ui.js";
 import { TOOL_NAME_SEND_INPUT_TO_AGENT } from "./tool_names.js";
@@ -84,7 +84,7 @@ export function createSendInputToAgentToolDefinition(supervisor: AgentSupervisor
         details?: { id?: string; name?: string; title?: string },
       ) => {
         const outcome = createTextToolOutcome(reason, "blocked");
-        const uiEvent: ToolUiEvent = {
+        const uiEvent: ToolActivity = {
           type: "send_input_to_agent_blocked",
           toolCallId: toolCall.id,
           agentId: details?.id ?? (id || undefined),
@@ -126,7 +126,7 @@ export function createSendInputToAgentToolDefinition(supervisor: AgentSupervisor
               maxOutputLines: 16,
               fullText: reason,
             });
-            const uiEvent: ToolUiEvent = {
+            const uiEvent: ToolActivity = {
               type: "send_input_to_agent_finished",
               toolCallId: toolCall.id,
               agentId: id,
@@ -144,7 +144,7 @@ export function createSendInputToAgentToolDefinition(supervisor: AgentSupervisor
 
           if (!sendResult.ok) {
             const outcome = createTextToolOutcome(sendResult.reason, "blocked");
-            const uiEvent: ToolUiEvent = {
+            const uiEvent: ToolActivity = {
               type: "send_input_to_agent_blocked",
               toolCallId: toolCall.id,
               agentId: id,
@@ -164,7 +164,7 @@ export function createSendInputToAgentToolDefinition(supervisor: AgentSupervisor
             maxOutputLines: 16,
             fullText: resultText,
           });
-          const uiEvent: ToolUiEvent = {
+          const uiEvent: ToolActivity = {
             type: "send_input_to_agent_finished",
             toolCallId: toolCall.id,
             agentId: sendResult.id,

@@ -1,13 +1,12 @@
 import { randomUUID } from "node:crypto";
 import type { Tool, ToolCall } from "@earendil-works/pi-ai";
+import type { ToolActivity, ToolUiText } from "../core/tools/activity.js";
 import {
   type AgentTool,
   createTextToolOutcome,
   executeTool,
   type ToolExecutionContext,
   type ToolExecutionOutcome,
-  type ToolUiEvent,
-  type ToolUiText,
 } from "../core/tools/registry.js";
 import { formatTokenEstimate } from "../core/utils/token.js";
 import { buildHeadTailPreviewLines } from "../core/utils/tool_preview.js";
@@ -300,7 +299,7 @@ export class ClientToolBroker {
 function createClientToolFinishedUiEvent(
   toolCall: ToolCall,
   outcome: ToolExecutionOutcome,
-): ToolUiEvent {
+): ToolActivity {
   return {
     type: "client_tool_finished",
     toolCallId: toolCall.id,

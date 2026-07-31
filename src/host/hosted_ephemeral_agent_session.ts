@@ -231,8 +231,8 @@ class EphemeralAgentThread {
     this.runtime = new AgentRuntime({
       spec,
       eventSink: async (event) => this.handleEvent(event),
+      clock: options.deps.clock,
       ...(state ? { state } : {}),
-      deps: options.deps,
     });
     if (options.forkFrom) {
       this.onUpdate?.({ costTotal: this.costTotal, usage: { ...this.usage } });

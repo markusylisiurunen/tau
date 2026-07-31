@@ -6,8 +6,8 @@ import {
   type ThemeDefinition,
 } from "../core/config/index.js";
 import type { SubagentUiEvent } from "../core/subagents/types.js";
+import type { ToolActivity, ToolUiText } from "../core/tools/activity.js";
 import type { BashTruncationInfo } from "../core/tools/bash.js";
-import type { ToolUiEvent, ToolUiText } from "../core/tools/registry.js";
 import type { ReasoningEffort } from "../core/types.js";
 import type { SessionProtocolPendingUserMessage } from "../protocol/session_protocol.js";
 import { createAppTerminal } from "./terminal.js";
@@ -86,7 +86,7 @@ export interface ChatView {
   updateStatus(status: ChatViewStatus): void;
   startWorkingIcon(): void;
   stopWorkingIcon(): void;
-  handleToolUiEvent(event: ToolUiEvent, origin: ToolUiEventOrigin): void;
+  handleToolUiEvent(event: ToolActivity, origin: ToolUiEventOrigin): void;
   handleSubagentEvent(event: SubagentUiEvent): void;
   resetToolUiSession(): void;
   reconcileToolUiSession(toolCallIds: readonly string[]): void;
@@ -275,7 +275,7 @@ export class TuiChatView implements ChatView {
     this.footer.stop();
   }
 
-  handleToolUiEvent(event: ToolUiEvent, origin: ToolUiEventOrigin): void {
+  handleToolUiEvent(event: ToolActivity, origin: ToolUiEventOrigin): void {
     this.toolUiRouter.handle(event, origin);
   }
 
@@ -421,7 +421,7 @@ export class TuiChatView implements ChatView {
   }): void {
     const toolCallId = `bash-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const headerTarget = args.command.split(/\r?\n/)[0] ?? args.command;
-    const event: ToolUiEvent = {
+    const event: ToolActivity = {
       type: "bash_execution",
       toolCallId,
       command: args.command,

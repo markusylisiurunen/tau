@@ -11,6 +11,7 @@ import type { SubagentLaunchModel, SubagentRuntimeConfig } from "../subagents/ty
 import type { Persona } from "../types.js";
 import { formatCwd } from "../utils/format.js";
 import { parseToolArgs } from "../utils/zod.js";
+import type { ToolActivity } from "./activity.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import {
   type AgentTool,
@@ -19,7 +20,6 @@ import {
   type ToolExecutionContext,
   type ToolExecutionOutcome,
   type ToolImplementationOutcome,
-  type ToolUiEvent,
 } from "./registry.js";
 import { buildSubagentUiText } from "./subagent_ui.js";
 import { TOOL_NAME_SPAWN_AGENT } from "./tool_names.js";
@@ -149,7 +149,7 @@ export function createSpawnAgentToolDefinition(options: {
 
       const blocked = (reason: string, details?: { name?: string; title?: string }) => {
         const outcome = createTextToolOutcome(reason, "blocked");
-        const uiEvent: ToolUiEvent = {
+        const uiEvent: ToolActivity = {
           type: "spawn_agent_blocked",
           toolCallId: toolCall.id,
           name: details?.name ?? (name || undefined),
@@ -303,7 +303,7 @@ export function createSpawnAgentToolDefinition(options: {
               maxOutputLines: 16,
               fullText: reason,
             });
-            const uiEvent: ToolUiEvent = {
+            const uiEvent: ToolActivity = {
               type: "spawn_agent_finished",
               toolCallId: toolCall.id,
               name,
@@ -329,7 +329,7 @@ export function createSpawnAgentToolDefinition(options: {
 
           if (!spawnResult.ok) {
             const outcome = createTextToolOutcome(spawnResult.reason, "blocked");
-            const uiEvent: ToolUiEvent = {
+            const uiEvent: ToolActivity = {
               type: "spawn_agent_blocked",
               toolCallId: toolCall.id,
               name,
@@ -355,7 +355,7 @@ export function createSpawnAgentToolDefinition(options: {
             maxOutputLines: 16,
             fullText: resultText,
           });
-          const uiEvent: ToolUiEvent = {
+          const uiEvent: ToolActivity = {
             type: "spawn_agent_finished",
             toolCallId: toolCall.id,
             name,

@@ -122,8 +122,11 @@ export class ChatRuntime {
         }
         await options.eventSink(event);
       },
-      getCompactionContext: () => this.supervisor.getActiveCompactionContext(),
-      deps: this.deps,
+      clock: this.deps.clock,
+      getCompactionContinuationSystemMessages: () => {
+        const context = this.supervisor.getActiveCompactionContext();
+        return context ? [context] : [];
+      },
     });
   }
 

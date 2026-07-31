@@ -20,7 +20,7 @@ import { buildDiffReviewInstructions } from "../core/diff_review/review_instruct
 import { type CoreDeps, createDefaultCoreDeps } from "../core/runtime/deps.js";
 import { runDirectBashCommand } from "../core/session/direct_bash.js";
 import type { SubagentStatus, SubagentUiEvent } from "../core/subagents/types.js";
-import type { ToolUiEvent } from "../core/tools/registry.js";
+import type { ToolActivity } from "../core/tools/activity.js";
 import { REASONING_LEVELS, type ReasoningEffort } from "../core/types.js";
 import { formatAdaptiveNumber, formatTokenWindow } from "../core/utils/format.js";
 import { extractAssistantText } from "../core/utils/messages.js";
@@ -2447,7 +2447,7 @@ function isCoreMessage(message: SessionProtocolMessage["message"]): message is M
   }
 }
 
-function isToolUiEvent(value: unknown): value is ToolUiEvent {
+function isToolUiEvent(value: unknown): value is ToolActivity {
   return (
     typeof value === "object" &&
     value !== null &&
@@ -2458,7 +2458,7 @@ function isToolUiEvent(value: unknown): value is ToolUiEvent {
   );
 }
 
-function getToolUiEventsInModelOrder(snapshot: SessionProtocolSnapshot): ToolUiEvent[] {
+function getToolUiEventsInModelOrder(snapshot: SessionProtocolSnapshot): ToolActivity[] {
   const facetsByToolId = new Map<string, SessionProtocolSnapshot["facets"][string]>();
   for (const facet of Object.values(snapshot.facets)) {
     if (facet.kind === "tau.tool-ui-events" && facet.subject.type === "tool") {
@@ -2466,7 +2466,7 @@ function getToolUiEventsInModelOrder(snapshot: SessionProtocolSnapshot): ToolUiE
     }
   }
 
-  const events: ToolUiEvent[] = [];
+  const events: ToolActivity[] = [];
   const emittedFacetIds = new Set<string>();
   for (const toolId of getToolIdsInModelOrder(snapshot)) {
     const facet = facetsByToolId.get(toolId);
@@ -2505,7 +2505,7 @@ function getToolIdsInModelOrder(snapshot: SessionProtocolSnapshot): string[] {
 
 function toolUiEventsFromFacet(
   facet: SessionProtocolSnapshot["facets"][string] | undefined,
-): ToolUiEvent[] {
+): ToolActivity[] {
   if (facet?.kind !== "tau.tool-ui-events" || !Array.isArray(facet.data.events)) {
     return [];
   }
@@ -2513,8 +2513,8 @@ function toolUiEventsFromFacet(
 }
 
 function canAppendToolUiEvents(
-  events: readonly ToolUiEvent[],
-  previousEvents: readonly ToolUiEvent[],
+  events: readonly ToolActivity[],
+  previousEvents: readonly ToolActivity[],
 ): boolean {
   if (previousEvents.length > events.length) {
     return false;

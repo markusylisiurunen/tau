@@ -3,6 +3,7 @@ import { Type } from "typebox";
 import { z } from "zod";
 import type { AgentSupervisor, SubagentResult } from "../subagents/agent_supervisor.js";
 import { parseToolArgs } from "../utils/zod.js";
+import type { ToolActivity } from "./activity.js";
 import {
   type AgentTool,
   createTextToolOutcome,
@@ -10,7 +11,6 @@ import {
   type ToolExecutionContext,
   type ToolExecutionOutcome,
   type ToolImplementationOutcome,
-  type ToolUiEvent,
 } from "./registry.js";
 import { buildSubagentUiText, formatSubagentStatusLine } from "./subagent_ui.js";
 import { TOOL_NAME_TERMINATE_AGENT } from "./tool_names.js";
@@ -86,7 +86,7 @@ export function createTerminateAgentToolDefinition(supervisor: AgentSupervisor):
 
       const blocked = (reason: string): ToolImplementationOutcome => {
         const outcome = createTextToolOutcome(reason, "blocked");
-        const uiEvent: ToolUiEvent = {
+        const uiEvent: ToolActivity = {
           type: "terminate_agent_blocked",
           toolCallId: toolCall.id,
           agentId: id || undefined,
@@ -116,7 +116,7 @@ export function createTerminateAgentToolDefinition(supervisor: AgentSupervisor):
                 maxOutputLines: 16,
                 fullText: message,
               });
-              const uiEvent: ToolUiEvent = {
+              const uiEvent: ToolActivity = {
                 type: "terminate_agent_finished",
                 toolCallId: toolCall.id,
                 agentId: id,
@@ -144,7 +144,7 @@ export function createTerminateAgentToolDefinition(supervisor: AgentSupervisor):
               maxOutputLines: 16,
               fullText: resultText,
             });
-            const uiEvent: ToolUiEvent = {
+            const uiEvent: ToolActivity = {
               type: "terminate_agent_finished",
               toolCallId: toolCall.id,
               agentId: id,
@@ -165,7 +165,7 @@ export function createTerminateAgentToolDefinition(supervisor: AgentSupervisor):
               maxOutputLines: 16,
               fullText: reason,
             });
-            const uiEvent: ToolUiEvent = {
+            const uiEvent: ToolActivity = {
               type: "terminate_agent_finished",
               toolCallId: toolCall.id,
               agentId: id,

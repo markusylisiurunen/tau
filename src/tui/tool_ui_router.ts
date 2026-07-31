@@ -1,4 +1,4 @@
-import type { ToolUiEvent } from "../core/tools/registry.js";
+import type { ToolActivity } from "../core/tools/activity.js";
 import {
   TOOL_NAME_SEND_INPUT_TO_AGENT,
   TOOL_NAME_SPAWN_AGENT,
@@ -32,11 +32,11 @@ type RunningSubagentTool =
       agentId: string;
     };
 
-type ToolUiEventWithToolCallId = Extract<ToolUiEvent, { toolCallId: string }>;
+type ToolUiEventWithToolCallId = Extract<ToolActivity, { toolCallId: string }>;
 
 export type ToolUiEventOrigin = "session" | "local";
 
-type ToolUiEventType = ToolUiEvent["type"];
+type ToolUiEventType = ToolActivity["type"];
 type BashTerminalEventType = "bash_execution" | "bash_aborted" | "bash_blocked";
 type SubagentTerminalEventType =
   | "spawn_agent_finished"
@@ -128,7 +128,7 @@ export class ToolUiRouter {
     this.requestRender();
   }
 
-  handle(uiEvent: ToolUiEvent, origin: ToolUiEventOrigin): void {
+  handle(uiEvent: ToolActivity, origin: ToolUiEventOrigin): void {
     if (origin === "session") {
       this.sessionToolCallIds.add(uiEvent.toolCallId);
     }

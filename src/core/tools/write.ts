@@ -9,6 +9,7 @@ import {
 } from "../utils/tool_preview.js";
 import { formatBytes } from "../utils/truncate.js";
 import { formatZodError } from "../utils/zod.js";
+import type { ToolActivity, ToolUiLine, ToolUiText } from "./activity.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import {
   type AgentTool,
@@ -17,9 +18,6 @@ import {
   type ToolExecutionContext,
   type ToolExecutionOutcome,
   type ToolImplementationOutcome,
-  type ToolUiEvent,
-  type ToolUiLine,
-  type ToolUiText,
 } from "./registry.js";
 import { TOOL_NAME_WRITE } from "./tool_names.js";
 
@@ -117,7 +115,7 @@ export function createWriteToolDefinition(backend: ToolExecutionBackend): AgentT
           semanticOutcome: ToolExecutionOutcome["outcome"] = "blocked",
         ): ToolImplementationOutcome => {
           const outcome = createTextToolOutcome(reason, semanticOutcome);
-          const uiEvent: ToolUiEvent = {
+          const uiEvent: ToolActivity = {
             type: "write_blocked",
             toolCallId: toolCall.id,
             path: path || "(invalid path)",
@@ -139,7 +137,7 @@ export function createWriteToolDefinition(backend: ToolExecutionBackend): AgentT
 
           const outcome = createTextToolOutcome(resultText, "succeeded");
           const uiText = buildWriteUiText({ bytes, lines, content, fullText: resultText });
-          const uiEvent: ToolUiEvent = {
+          const uiEvent: ToolActivity = {
             type: "write_success",
             toolCallId: toolCall.id,
             path,

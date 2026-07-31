@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { AgentSupervisor, SubagentResult } from "../subagents/agent_supervisor.js";
 import { truncateForTokens } from "../utils/truncate.js";
 import { parseToolArgs } from "../utils/zod.js";
+import type { ToolActivity } from "./activity.js";
 import {
   type AgentTool,
   createTextToolOutcome,
@@ -11,7 +12,6 @@ import {
   type ToolExecutionContext,
   type ToolExecutionOutcome,
   type ToolImplementationOutcome,
-  type ToolUiEvent,
 } from "./registry.js";
 import { buildSubagentUiText, formatSubagentStatusLine } from "./subagent_ui.js";
 import { TOOL_NAME_WAIT_FOR_AGENTS } from "./tool_names.js";
@@ -140,7 +140,7 @@ export function createWaitForAgentsToolDefinition(supervisor: AgentSupervisor): 
 
       const blocked = (reason: string): ToolImplementationOutcome => {
         const outcome = createTextToolOutcome(reason, "blocked");
-        const uiEvent: ToolUiEvent = {
+        const uiEvent: ToolActivity = {
           type: "wait_for_agents_blocked",
           toolCallId: toolCall.id,
           agentIds: ids,
@@ -188,7 +188,7 @@ export function createWaitForAgentsToolDefinition(supervisor: AgentSupervisor): 
               statusText,
               fullText: resultText,
             });
-            const uiEvent: ToolUiEvent = {
+            const uiEvent: ToolActivity = {
               type: "wait_for_agents_finished",
               toolCallId: toolCall.id,
               agentIds: deduped,
@@ -207,7 +207,7 @@ export function createWaitForAgentsToolDefinition(supervisor: AgentSupervisor): 
               statusText: "error",
               fullText: reason,
             });
-            const uiEvent: ToolUiEvent = {
+            const uiEvent: ToolActivity = {
               type: "wait_for_agents_finished",
               toolCallId: toolCall.id,
               agentIds: deduped,

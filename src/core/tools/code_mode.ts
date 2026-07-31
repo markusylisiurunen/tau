@@ -1,6 +1,7 @@
 import type { Tool, ToolCall } from "@earendil-works/pi-ai";
 import { bytesToTokens } from "../utils/token.js";
 import { formatBytes } from "../utils/truncate.js";
+import type { ToolActivity } from "./activity.js";
 import { type BashOutputPolicy, buildBashUiText, prepareBashOutput } from "./bash.js";
 import type { BashExecutionResult, ToolExecutionBackend } from "./execution_backend.js";
 import {
@@ -10,7 +11,6 @@ import {
   type ToolExecutionContext,
   type ToolExecutionOutcome,
   type ToolImplementationOutcome,
-  type ToolUiEvent,
 } from "./registry.js";
 
 export type ParsedCodeModeArguments<TArgs> =
@@ -88,7 +88,7 @@ export function createCodeModeToolDefinition<TArgs>(
         semanticOutcome: ToolExecutionOutcome["outcome"] = "blocked",
       ): ToolImplementationOutcome => {
         const outcome = createTextToolOutcome(reason, semanticOutcome);
-        const uiEvent: ToolUiEvent = {
+        const uiEvent: ToolActivity = {
           type: "code_mode_blocked",
           toolCallId: toolCall.id,
           toolName: implementation.schema.name,
@@ -148,7 +148,7 @@ export function createCodeModeToolDefinition<TArgs>(
               fullText: toolText,
             });
             const outcome = createTextToolOutcome(toolText, semanticOutcome);
-            const uiEvent: ToolUiEvent = {
+            const uiEvent: ToolActivity = {
               type: "code_mode_finished",
               toolCallId: toolCall.id,
               toolName: implementation.schema.name,

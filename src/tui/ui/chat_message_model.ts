@@ -1,5 +1,5 @@
 import type { Component } from "@earendil-works/pi-tui";
-import type { ToolUiEvent } from "../../core/tools/registry.js";
+import type { ToolActivity } from "../../core/tools/activity.js";
 import { AppIntroComponent, type AppIntroModel } from "./app_intro.js";
 import { AssistantMessageComponent, type AssistantMessageModel } from "./assistant_message.js";
 import { DiffReviewMessageComponent, type DiffReviewMessageModel } from "./diff_review_message.js";
@@ -19,7 +19,7 @@ export type ChatMessageModel =
   | (UserMessageModel & { type: "user" })
   | {
       type: "tool";
-      event: ToolUiEvent;
+      event: ToolActivity;
     }
   | (SessionDividerModel & { type: "session_divider" });
 

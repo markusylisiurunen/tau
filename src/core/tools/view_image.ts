@@ -5,6 +5,7 @@ import { Type } from "typebox";
 import { z } from "zod";
 import { formatBytes } from "../utils/truncate.js";
 import { formatZodError } from "../utils/zod.js";
+import type { ToolActivity, ToolUiText } from "./activity.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import {
   type AgentTool,
@@ -13,8 +14,6 @@ import {
   type ToolExecutionContext,
   type ToolExecutionOutcome,
   type ToolImplementationOutcome,
-  type ToolUiEvent,
-  type ToolUiText,
 } from "./registry.js";
 import { TOOL_NAME_VIEW_IMAGE } from "./tool_names.js";
 
@@ -255,7 +254,7 @@ export function createViewImageToolDefinition(backend: ToolExecutionBackend): Ag
           semanticOutcome: ToolExecutionOutcome["outcome"] = "blocked",
         ): ToolImplementationOutcome => {
           const outcome = createTextToolOutcome(reason, semanticOutcome);
-          const uiEvent: ToolUiEvent = {
+          const uiEvent: ToolActivity = {
             type: "view_image_blocked",
             toolCallId: toolCall.id,
             path: path || "(invalid path)",
@@ -297,7 +296,7 @@ export function createViewImageToolDefinition(backend: ToolExecutionBackend): Ag
             mimeType: encodedImage.mimeType,
             fullText: resultText,
           });
-          const uiEvent: ToolUiEvent = {
+          const uiEvent: ToolActivity = {
             type: "view_image_success",
             toolCallId: toolCall.id,
             path: resolvedPath,

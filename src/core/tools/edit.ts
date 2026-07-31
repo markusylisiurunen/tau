@@ -3,6 +3,7 @@ import { Type } from "typebox";
 import { z } from "zod";
 import { buildLineDiff } from "../utils/line_diff.js";
 import { formatZodError } from "../utils/zod.js";
+import type { ToolActivity, ToolUiLine, ToolUiText } from "./activity.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import {
   type AgentTool,
@@ -11,9 +12,6 @@ import {
   type ToolExecutionContext,
   type ToolExecutionOutcome,
   type ToolImplementationOutcome,
-  type ToolUiEvent,
-  type ToolUiLine,
-  type ToolUiText,
 } from "./registry.js";
 import { TOOL_NAME_EDIT } from "./tool_names.js";
 
@@ -144,7 +142,7 @@ export function createEditToolDefinition(backend: ToolExecutionBackend): AgentTo
           semanticOutcome: ToolExecutionOutcome["outcome"] = "blocked",
         ): ToolImplementationOutcome => {
           const outcome = createTextToolOutcome(reason, semanticOutcome);
-          const uiEvent: ToolUiEvent = {
+          const uiEvent: ToolActivity = {
             type: "edit_blocked",
             toolCallId: toolCall.id,
             path: path || "(invalid path)",
@@ -228,7 +226,7 @@ export function createEditToolDefinition(backend: ToolExecutionBackend): AgentTo
 
           const outcome = createTextToolOutcome(resultText, "succeeded");
           const uiText = buildEditUiText({ summaryLine, statusLine, diffLines });
-          const uiEvent: ToolUiEvent = {
+          const uiEvent: ToolActivity = {
             type: "edit_success",
             toolCallId: toolCall.id,
             path,

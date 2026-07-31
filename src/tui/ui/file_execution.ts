@@ -1,4 +1,4 @@
-import type { ToolUiText } from "../../core/tools/registry.js";
+import type { ToolUiText } from "../../core/tools/activity.js";
 import type { Theme } from "./theme/index.js";
 import {
   buildBlockedToolView,

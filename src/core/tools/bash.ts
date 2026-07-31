@@ -12,6 +12,7 @@ import {
   type TruncationResult,
   truncateForTokens,
 } from "../utils/truncate.js";
+import type { ToolActivity, ToolUiLine, ToolUiText } from "./activity.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import {
   type AgentTool,
@@ -20,9 +21,6 @@ import {
   type ToolExecutionContext,
   type ToolExecutionOutcome,
   type ToolImplementationOutcome,
-  type ToolUiEvent,
-  type ToolUiLine,
-  type ToolUiText,
 } from "./registry.js";
 import { TOOL_NAME_BASH } from "./tool_names.js";
 
@@ -414,7 +412,7 @@ export function createBashToolDefinition(backend: ToolExecutionBackend, cwd: str
 
       const blocked = (reason: string): ToolImplementationOutcome => {
         const outcome = createTextToolOutcome(reason, "blocked");
-        const uiEvent: ToolUiEvent = {
+        const uiEvent: ToolActivity = {
           type: "bash_blocked",
           toolCallId: toolCall.id,
           command: commandForDisplay,
@@ -479,7 +477,7 @@ export function createBashToolDefinition(backend: ToolExecutionBackend, cwd: str
               toolText,
               aborted || timedOut ? "cancelled" : isError ? "failed" : "succeeded",
             );
-            const uiEvent: ToolUiEvent = {
+            const uiEvent: ToolActivity = {
               type: "bash_execution",
               toolCallId: toolCall.id,
               command,
@@ -493,7 +491,7 @@ export function createBashToolDefinition(backend: ToolExecutionBackend, cwd: str
           } catch (e) {
             const msg = `Bash tool execution failed: ${e instanceof Error ? e.message : String(e)}`;
             const outcome = createTextToolOutcome(msg, "failed");
-            const uiEvent: ToolUiEvent = {
+            const uiEvent: ToolActivity = {
               type: "bash_blocked",
               command: commandForDisplay,
               headerTarget,

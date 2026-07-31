@@ -13,8 +13,7 @@ import type {
   UserMessage,
 } from "@earendil-works/pi-ai";
 import type { NormalizedAutoCompactConfig } from "../config/index.js";
-import type { CoreDeps } from "../runtime/deps.js";
-import { createDefaultCoreDeps } from "../runtime/deps.js";
+import type { CoreClock } from "../runtime/deps.js";
 import { formatSteeringUserMessage } from "../runtime/steering.js";
 import {
   buildAutoCompactionContinuationMessage,
@@ -113,9 +112,9 @@ export type AgentSpec = {
 type AgentRuntimeOptions = {
   spec: AgentSpec;
   eventSink: AgentEventSink;
-  getCompactionContext?: () => string | undefined;
+  clock: CoreClock;
+  getCompactionContinuationSystemMessages?: () => readonly string[];
   state?: AgentState;
-  deps?: CoreDeps;
 };
 
 type AgentCompactionOptions = {
@@ -337,9 +336,9 @@ export function recoverAgentState(state: AgentState, timestamp: number): AgentSt
 
 export class AgentRuntime {
   private currentSpec: AgentSpec;
-  private readonly deps: CoreDeps;
+  private readonly clock: CoreClock;
   private readonly eventSink: AgentEventSink;
-  private readonly getCompactionContext?: () => string | undefined;
+  private readonly getCompactionContinuationSystemMessages?: () => readonly string[];
   private historyEntries: HistoryEntry[];
   private revision: number;
   private contextEpoch: string;
@@ -360,11 +359,11 @@ export class AgentRuntime {
   constructor(options: AgentRuntimeOptions) {
     this.currentSpec = options.spec;
     this.eventSink = options.eventSink;
-    this.getCompactionContext = options.getCompactionContext;
-    this.deps = options.deps ?? createDefaultCoreDeps();
+    this.clock = options.clock;
+    this.getCompactionContinuationSystemMessages = options.getCompactionContinuationSystemMessages;
     const contextEpoch = getContextEpoch(options.spec);
     if (options.state) {
-      const recovered = recoverAgentState(options.state, this.deps.clock.now()).state;
+      const recovered = recoverAgentState(options.state, this.clock.now()).state;
       this.agentId = recovered.agentId;
       this.revision = recovered.revision;
       this.historyEntries = recovered.historyEntries;
@@ -428,7 +427,7 @@ export class AgentRuntime {
       throw new Error("cannot restore a running agent");
     }
     this.closeProviderSessions();
-    const recovery = recoverAgentState(state, this.deps.clock.now());
+    const recovery = recoverAgentState(state, this.clock.now());
     this.agentId = recovery.state.agentId;
     this.revision = recovery.state.revision;
     this.historyEntries = recovery.state.historyEntries;
@@ -476,7 +475,7 @@ export class AgentRuntime {
           text: prependModelNotice(textForModel, this.currentSpec.modelNotice),
         },
       ],
-      timestamp: this.deps.clock.now(),
+      timestamp: this.clock.now(),
     };
     const entry = this.appendHistoryEntry(message, options?.historyEntryId);
     await this.deliver({
@@ -911,7 +910,7 @@ export class AgentRuntime {
       message: {
         role: "user",
         content: [{ type: "text", text: textWithMetadata }],
-        timestamp: this.deps.clock.now(),
+        timestamp: this.clock.now(),
       },
     };
     options.signal?.throwIfAborted();
@@ -940,7 +939,7 @@ export class AgentRuntime {
             {
               role: "user",
               content: [{ type: "text", text: summaryPrompt }],
-              timestamp: this.deps.clock.now(),
+              timestamp: this.clock.now(),
             },
           ],
         },
@@ -1209,14 +1208,14 @@ export class AgentRuntime {
       message: {
         role: "user",
         content: [{ type: "text", text: textWithMetadata }],
-        timestamp: this.deps.clock.now(),
+        timestamp: this.clock.now(),
       },
     };
     const continuationEntry: HistoryEntry = {
       id: this.createHistoryEntryId(),
       message: buildAutoCompactionContinuationMessage({
         cutType: preparation.cutType,
-        now: this.deps.clock.now(),
+        now: this.clock.now(),
       }),
     };
 
@@ -1232,10 +1231,10 @@ export class AgentRuntime {
   }
 
   private prependCompactionContext(text: string): string {
-    const hiddenSystemMessages = [this.getCompactionContext?.()].filter(
-      (message): message is string => message !== undefined,
+    return prependTauHiddenSystemMessages(
+      text,
+      this.getCompactionContinuationSystemMessages?.() ?? [],
     );
-    return prependTauHiddenSystemMessages(text, hiddenSystemMessages);
   }
 
   private shouldRunAutoCompaction(turnSettings: AgentTurnSpec): boolean {
@@ -1355,7 +1354,7 @@ export class AgentRuntime {
           turnId: turnSettings.turnId,
           assistantMessageId: historyEntryId,
         },
-        now: this.deps.clock.now,
+        now: this.clock.now,
       },
       subturnAbortController.signal,
     );
@@ -1405,7 +1404,7 @@ export class AgentRuntime {
             toolCalls: admittedToolCalls,
             errorMessage,
             aborted: signal.aborted,
-            timestamp: this.deps.clock.now(),
+            timestamp: this.clock.now(),
           });
           modelDone = true;
           void toolRunner.finish().catch(() => undefined);
@@ -1690,7 +1689,7 @@ export class AgentRuntime {
       }
 
       if (toolRecoveryMode && finalMessage) {
-        const timestamp = this.deps.clock.now();
+        const timestamp = this.clock.now();
         const recoveryResultsByToolCallId = new Map(
           recoveryToolResults.map((toolResult) => [toolResult.toolCallId, toolResult]),
         );

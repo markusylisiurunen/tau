@@ -11,7 +11,7 @@ import type { CoreDeps } from "../core/runtime/deps.js";
 import type { RuntimePromptBootstrap } from "../core/runtime/runtime_bootstrap.js";
 import type { SessionPromptComposition } from "../core/runtime/session_prompt_composer.js";
 import type { SubagentUiEvent } from "../core/subagents/types.js";
-import type { ToolUiEvent } from "../core/tools/registry.js";
+import type { ToolActivity } from "../core/tools/activity.js";
 import type { Persona, ReasoningEffort, Skill } from "../core/types.js";
 import {
   appendUsageLogEntry,
@@ -1599,7 +1599,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
           throw new Error(`duplicate protocol tool run '${event.toolCallId}'`);
         }
         const facetId = `tool-ui-${event.toolCallId}`;
-        const uiEvent: ToolUiEvent = {
+        const uiEvent: ToolActivity = {
           type: "tool_call_streaming",
           toolCallId: event.toolCallId,
           toolName: event.toolName,
@@ -1896,7 +1896,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     }
   }
 
-  private async recordToolUiEvent(event: ToolUiEvent): Promise<void> {
+  private async recordToolUiEvent(event: ToolActivity): Promise<void> {
     const toolCallId = event.toolCallId;
     const existingTool = this.tools.get(toolCallId);
     if (!existingTool) {

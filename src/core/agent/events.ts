@@ -5,7 +5,7 @@ import type {
   UserMessage,
 } from "@earendil-works/pi-ai";
 import type { AssistantPartialSnapshot } from "../session/message_accumulator.js";
-import type { ToolUiEvent } from "../tools/registry.js";
+import type { ToolActivity } from "../tools/activity.js";
 import type { ReasoningEffort } from "../types.js";
 
 export type AgentTurnOutcome = "completed" | "stopped" | "interrupted" | "blocked";
@@ -59,7 +59,7 @@ export type AgentEvent =
       historyEntryId: string;
       toolCall: ToolCall;
     }
-  | { type: "tool_activity"; activity: ToolUiEvent }
+  | { type: "tool_activity"; activity: ToolActivity }
   | {
       type: "tool_run_queued";
       toolCallId: string;

@@ -9,12 +9,12 @@ import type {
   ToolResultMessage,
 } from "@earendil-works/pi-ai";
 import type { AgentEvent } from "../agent/events.js";
+import type { ToolActivity } from "../tools/activity.js";
 import type {
   AgentTool,
   ToolExecutionContext,
   ToolExecutionOutcome,
   ToolRegistry,
-  ToolUiEvent,
 } from "../tools/registry.js";
 import type { TauStreamOptions } from "../utils/streaming_settings.js";
 import { type AssistantPartialSnapshot, MessageAccumulator } from "./message_accumulator.js";
@@ -28,7 +28,7 @@ type ModelRetryEvent = Extract<
 >;
 type ToolActivityAgentEvent = {
   type: "tool_activity";
-  activity: ToolUiEvent;
+  activity: ToolActivity;
 };
 type ToolRunAgentEvent = Extract<
   AgentEvent,
@@ -677,7 +677,7 @@ async function* runPreparedToolCall(
   const { toolCall, definition } = prepared;
   try {
     const activities: Array<{
-      activity: ToolUiEvent;
+      activity: ToolActivity;
       resolve: () => void;
       reject: (error: Error) => void;
     }> = [];

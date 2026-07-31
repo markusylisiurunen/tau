@@ -1,6 +1,6 @@
 import { formatAdaptiveNumber, formatDurationMs } from "../utils/format.js";
 import { buildCompactPreviewLines } from "../utils/tool_preview.js";
-import type { ToolUiLine, ToolUiText } from "./registry.js";
+import type { ToolUiLine, ToolUiText } from "./activity.js";
 
 type SubagentUiTextOptions = {
   output: string;

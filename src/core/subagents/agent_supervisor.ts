@@ -4,7 +4,7 @@ import { AgentRuntime, createAgentSpec } from "../agent/agent_runtime.js";
 import type { AgentEvent } from "../agent/events.js";
 import type { Config } from "../config/index.js";
 import { resolveAgentModel } from "../runtime/agent_model.js";
-import type { CoreDeps } from "../runtime/deps.js";
+import { type CoreDeps, createDefaultCoreDeps } from "../runtime/deps.js";
 import { ToolCatalog } from "../tools/catalog.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
 import type { Persona } from "../types.js";
@@ -96,6 +96,7 @@ async function raceWithAbort<T>(promise: Promise<T>, signal?: AbortSignal): Prom
 
 export class AgentSupervisor {
   private readonly records = new Map<string, SubagentRecord>();
+  private readonly deps: CoreDeps;
 
   constructor(
     private readonly options: {
@@ -103,7 +104,9 @@ export class AgentSupervisor {
       recordUsage?: UsageRecorder;
       deps?: CoreDeps;
     },
-  ) {}
+  ) {
+    this.deps = options.deps ?? createDefaultCoreDeps();
+  }
 
   reset(): void {
     this.retainOrigins(new Set());
@@ -172,7 +175,7 @@ export class AgentSupervisor {
       spec: createAgentSpec({
         ...resolveAgentModel(persona, options.config, {
           includeModelNotice: true,
-          deps: this.options.deps,
+          deps: this.deps,
         }),
         systemPrompt: runtimeConfig.systemPrompt,
         tools: ToolCatalog.createSubagentRegistry(
@@ -183,7 +186,7 @@ export class AgentSupervisor {
         ),
       }),
       eventSink: async (event) => await this.recordAgentEvent(id, event),
-      ...(this.options.deps ? { deps: this.options.deps } : {}),
+      clock: this.deps.clock,
     });
     const record: SubagentRecord = {
       id,

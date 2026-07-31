@@ -134,5 +134,6 @@ describe("HostedEphemeralAgentSession", () => {
     });
 
     expect(JSON.stringify(stream.mock.calls[0][0])).not.toContain(notice);
+    expect(JSON.stringify(thread.runtime.rawHistory)).not.toContain(notice);
   });
 });

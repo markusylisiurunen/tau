@@ -628,11 +628,11 @@ describe("AgentRuntime", () => {
     spec.model.cleanupSession = cleanupSession;
 
     await runtime.submit("first request");
+    expect(JSON.stringify(runtime.rawHistory)).toContain(modelNotice);
     await runtime.compact({ mode: "summary-only" });
 
     expect(JSON.stringify(streamModel.mock.calls[0][0])).toContain(modelNotice);
-    expect(JSON.stringify(streamModel.mock.calls[1][0])).not.toContain(modelNotice);
-    expect(JSON.stringify(runtime.rawHistory)).not.toContain(modelNotice);
+    expect(JSON.stringify(streamModel.mock.calls[1][0])).toContain(modelNotice);
     expect(streamModel.mock.calls[1][1]).toEqual(
       expect.objectContaining({
         temperature: 0.25,

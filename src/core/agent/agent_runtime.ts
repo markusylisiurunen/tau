@@ -177,7 +177,6 @@ type AgentTurnSpec = {
   historyEntryId: string;
   contextEpoch: string;
   model: AgentModelExecutor;
-  modelNotice?: string;
   attribution: AgentSpec["attribution"];
   systemPrompt: string;
   tools: ToolRegistry;
@@ -223,7 +222,6 @@ function getContextEpoch(spec: AgentSpec): string {
     .update(
       JSON.stringify({
         systemPrompt: spec.systemPrompt,
-        modelNotice: spec.modelNotice,
         provider: spec.model.model.provider,
         model: spec.model.model.id,
         tools: spec.tools.schemas,
@@ -364,7 +362,12 @@ export class AgentRuntime {
     this.assertActive();
     const message: UserMessage = {
       role: "user",
-      content: [{ type: "text", text: textForModel }],
+      content: [
+        {
+          type: "text",
+          text: prependModelNotice(textForModel, this.currentSpec.modelNotice),
+        },
+      ],
       timestamp: this.deps.clock.now(),
     };
     const entry = this.appendHistoryEntry(message, options?.historyEntryId);
@@ -917,7 +920,6 @@ export class AgentRuntime {
       historyEntryId: this.getCurrentTurnUserHistoryEntryId(),
       contextEpoch: getContextEpoch(this.currentSpec),
       model: this.currentSpec.model,
-      ...(this.currentSpec.modelNotice ? { modelNotice: this.currentSpec.modelNotice } : {}),
       attribution: { ...this.currentSpec.attribution },
       systemPrompt: this.currentSpec.systemPrompt,
       tools: this.currentSpec.tools,
@@ -1204,7 +1206,7 @@ export class AgentRuntime {
     yield startEvent;
     const context: Context = {
       systemPrompt: turnSettings.systemPrompt,
-      messages: applyModelNotice(this.modelHistory, turnSettings.modelNotice),
+      messages: [...this.modelHistory],
       tools: turnSettings.tools.schemas,
     };
 
@@ -1651,26 +1653,6 @@ export class AgentRuntime {
       }
     }
   }
-}
-
-function applyModelNotice(history: readonly Message[], modelNotice?: string): Message[] {
-  return history.map((message) => {
-    if (message.role !== "user" || !modelNotice) {
-      return message;
-    }
-    if (typeof message.content === "string") {
-      return { ...message, content: prependModelNotice(message.content, modelNotice) };
-    }
-
-    const content = structuredClone(message.content);
-    const text = content.find((item) => item.type === "text");
-    if (text) {
-      text.text = prependModelNotice(text.text, modelNotice);
-    } else {
-      content.unshift({ type: "text", text: prependModelNotice("", modelNotice) });
-    }
-    return { ...message, content };
-  });
 }
 
 function createToolRecoveryAssistantMessage(options: {

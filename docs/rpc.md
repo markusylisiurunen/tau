@@ -110,7 +110,6 @@ when the rpc server starts, it immediately emits a `ready` line:
     "session.autocompletePaths",
     "session.reload",
     "session.compact",
-    "session.prune",
     "session.rewind",
     "session.terminateSubagent",
     "session.ephemeral.create",
@@ -140,6 +139,8 @@ state transitions:
 `initialize` is a handshake signal, not a gate for other methods. clients may call other rpc methods before `initialize`, though most clients should still initialize immediately after `ready`.
 
 `tau rpc` and `tau serve` store session snapshots under `~/.config/tau/sessions` for the current host user. Starting a server does not create a session. `session.create` creates one in an explicitly selected, already-provisioned execution environment, and closing the transport or server persists hosted sessions. Stored sessions recover from persisted snapshot state, including current settings, cumulative cost, bootstrap metadata, catalog metadata, execution environment identity, messages, timeline items, tools, agents, and facets; host-only config is resolved by the host and is not serialized into the snapshot. Pending queued and steering messages are transient host state rather than snapshot state: they survive client detach while the hosted session remains in memory, but they are discarded on host restart or session recovery so recovered sessions never resume work without new user input.
+
+Main sessions, supervised background agents, and ephemeral threads use the same stateful agent runtime for model streaming, tool admission and execution, retries, recovery, context accounting, steering boundaries, and compaction. The runtime emits ordered semantic transitions through one awaited sink. The hosted-session adapter applies those transitions to protocol snapshots and persists durable state before acknowledging them; child supervision, ephemeral thread maps and forks, pending normal submissions, and usage attribution are separate host concerns.
 
 ## requests
 
@@ -209,7 +210,6 @@ params (required):
       "session.autocompletePaths",
       "session.reload",
       "session.compact",
-      "session.prune",
       "session.rewind",
       "session.terminateSubagent",
       "session.ephemeral.create",
@@ -761,37 +761,6 @@ manually compacts the session into one synthetic user summary message and return
 
 the host applies compaction through the session mutation queue, interrupts any running turn, waits for in-flight submit handling to settle, and rejects pending steering submits. Clients should render the returned `snapshot` as authoritative session state; `compactionMessage` and `includedLastAssistant` describe the operation result and are not stored UI state.
 
-#### session.prune
-
-params (required):
-
-```json
-{
-  "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
-  "strategy": "smart",
-  "fraction": 0.25,
-  "guidance": "keep errors"
-}
-```
-
-`strategy` is `"earliest"`, `"largest"`, or `"smart"`. `fraction` is a required number from `0` to `1`. `guidance` is optional and only used by `"smart"`.
-
-prunes bash tool results and compacts edit tool payloads/results in the session history. returns:
-
-```json
-{
-  "snapshot": { "...": "authoritative updated session snapshot" },
-  "message": "pruned 1 bash tool result (512 tokens).",
-  "noop": false,
-  "bashResultsPruned": 1,
-  "editCallsPruned": 0,
-  "editResultsPruned": 0,
-  "bytesPruned": 3072
-}
-```
-
-the host applies pruning through the session mutation queue, interrupts any running turn, waits for in-flight submit handling to settle, and rejects pending steering submits. clients should render the returned `snapshot` as authoritative session state; prune counts and `message` describe the operation result and are not stored UI state.
-
 #### session.terminateSubagent
 
 params (required):
@@ -890,7 +859,7 @@ observed-session changes are broadcast as `session.delta` messages:
 }
 ```
 
-`snapshot.patch` changes include lifecycle, message, timeline, tool, agent, and facet updates. High-rate assistant streaming uses `message.content.append` after the draft assistant message exists so clients do not receive the full accumulated assistant text on every frame. A content append targets only draft assistant messages and must include non-empty `text` and/or `thinking`; when a thinking block is created, clients insert it before the text block so applying patches reconstructs the canonical assistant content order. Maintenance operations such as reload, rewind, compaction, and pruning may use `snapshot.reset` when replacing the complete state is clearer than sending a long patch sequence.
+`snapshot.patch` changes include lifecycle, message, timeline, tool, agent, and facet updates. High-rate assistant streaming uses `message.content.append` after the draft assistant message exists so clients do not receive the full accumulated assistant text on every frame. A content append targets only draft assistant messages and must include non-empty `text` and/or `thinking`; when a thinking block is created, clients insert it before the text block so applying patches reconstructs the canonical assistant content order. Maintenance operations such as reload, rewind, and compaction may use `snapshot.reset` when replacing the complete state is clearer than sending a long patch sequence.
 
 `reason` describes why the transition happened and is for logging, animation, and client policy. Correctness comes from applying the delta. Current reasons are `user-message`, `assistant-stream`, `assistant-message`, `tool-run`, `tool-result`, `notice`, `agent-run`, `maintenance`, `configuration`, and `recovery`.
 
@@ -992,7 +961,7 @@ for lines that cannot produce a valid request id (for example malformed json), `
 `runRpcServer` handles incoming lines concurrently with explicit serialization for mutating transitions. this means:
 
 - multiple requests can be accepted before earlier ones complete
-- `session.record`, `session.setReasoning`, `session.setPersona`, `session.reload`, `session.compact`, `session.prune`, `session.rewind`, and `session.terminateSubagent` run through a session-owned mutation queue (arrival order across clients observed to the same live session)
+- `session.record`, `session.setReasoning`, `session.setPersona`, `session.reload`, `session.compact`, `session.rewind`, and `session.terminateSubagent` run through a session-owned mutation queue (arrival order across clients observed to the same live session)
 - `session.setReasoning` updates settings immediately without interrupting an active turn; active turns keep their captured reasoning and the new setting applies to the next user-message turn
 - only one `session.submit` or `session.retry` turn can run at once (`busy` otherwise)
 - `session.exec` and `session.sample` calls can run concurrently with each other and with normal session work; they never enter the mutation queue, and `session.cancelExec` targets one exec without interrupting the others

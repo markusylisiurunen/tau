@@ -8,19 +8,10 @@ import { createSpawnAgentToolDefinition } from "../dist/core/tools/spawn_agent.j
 import { TOOL_NAME_SPAWN_AGENT } from "../dist/core/tools/tool_names.js";
 
 function getText(toolResult) {
-  const textBlock = toolResult.content.find((block) => block.type === "text");
-  return textBlock?.text ?? "";
+  return toolResult.content.find((block) => block.type === "text")?.text ?? "";
 }
 
-function createModels() {
-  const anthropic = personas.find((persona) => persona.id === "opus-4.8-chat")?.model;
-  const openai = personas.find((persona) => persona.id === "gpt-5.5-chat")?.model;
-  expect(anthropic).toBeTruthy();
-  expect(openai).toBeTruthy();
-  return { anthropic, openai };
-}
-
-function createModelResolver(cwd, home) {
+function createModelResolver(cwd = "/repo/current", home = "/repo") {
   const deps = {
     fs: {
       readFile: (path) => readFileSync(path, "utf-8"),
@@ -34,471 +25,194 @@ function createModelResolver(cwd, home) {
       home: () => home,
     },
   };
-  const levels = resolveConfigLevels(deps, { cwd });
-
-  return loadModelResolver({ deps, levels }).resolveModel;
+  return loadModelResolver({ deps, levels: resolveConfigLevels(deps, { cwd }) }).resolveModel;
 }
 
-function createContext(overrides = {}) {
-  const { anthropic, openai } = createModels();
-  const spawned = [];
-  const baseCwd = overrides.cwd ?? "/repo/current";
-  const baseHome = overrides.home ?? "/repo";
-  const modelResolver = createModelResolver(baseCwd, baseHome);
-
-  const context = {
-    scope: "main",
-    modelResolver,
-    resolveSubagentRuntime: async ({ cwd, persona }) => ({
-      persona,
-      config: {},
-      modelResolver,
-      subagentPrompts: {
-        default: `default prompt\n<cwd>${cwd}</cwd>`,
-        researcher: `researcher prompt\n<cwd>${cwd}</cwd>`,
+function createFixture(overrides = {}) {
+  const anthropic = personas.find((persona) => persona.id === "opus-4.8-chat")?.model;
+  expect(anthropic).toBeTruthy();
+  const supervisor = {
+    spawn: vi.fn(() => ({ ok: true, id: "agent-1" })),
+  };
+  const persona = {
+    id: "test-persona",
+    label: "test persona",
+    model: anthropic,
+    systemPrompt: "main",
+    settings: { reasoning: "low", serviceTier: "priority" },
+    skills: "*",
+    source: "project",
+    subagents: {
+      default: { launchModels: ["openai/gpt-5.5:high"] },
+      researcher: {
+        systemPrompt: "research",
+        model: anthropic,
+        settings: { reasoning: "medium" },
+        launchModels: ["openai/gpt-5.5:high"],
       },
-    }),
-    persona: {
-      id: "test-persona",
-      label: "test persona",
-      model: anthropic,
-      systemPrompt: "main",
-      settings: { reasoning: "low", serviceTier: "priority" },
-      skills: "*",
-      source: "project",
-      subagents: {
-        default: {
-          launchModels: ["openai/gpt-5.5:high"],
-        },
-        researcher: {
-          systemPrompt: "research",
-          model: anthropic,
-          settings: { reasoning: "medium" },
-          launchModels: ["openai/gpt-5.5:high"],
-        },
-      },
+      fixed: { systemPrompt: "fixed", model: anthropic },
     },
+  };
+  const modelResolver = createModelResolver();
+  const options = {
+    backend: createLocalToolExecutionBackend(),
+    supervisor,
+    persona,
+    config: {},
+    modelResolver,
     subagentPrompts: {
       default: "default prompt",
       researcher: "research prompt",
+      fixed: "fixed prompt",
     },
-    cwd: baseCwd,
-    home: baseHome,
-    config: {},
-    toolRegistry: { schemas: [] },
-    authPath: "/tmp/auth.json",
-    includeAgentContext: false,
-    originHistoryEntryId: "history-1",
-    subagentControlPlane: {
-      spawn: ({ runtimeConfig }) => {
-        spawned.push(runtimeConfig);
-        return { ok: true, id: "agent-1" };
-      },
-    },
+    cwd: "/repo/current",
     ...overrides,
   };
-
-  return { context, anthropic, openai, spawned };
+  return { tool: createSpawnAgentToolDefinition(options), supervisor, persona, modelResolver };
 }
 
-async function runTool(tool, ...args) {
-  const dispatch = await tool.dispatch(...args);
-  return dispatch.run;
+async function execute(tool, arguments_) {
+  const call = { id: "call-1", name: TOOL_NAME_SPAWN_AGENT, arguments: arguments_ };
+  const activities = [];
+  const outcome = await tool.execute(call, {
+    agentId: "parent-agent",
+    turnId: "turn-1",
+    assistantMessageId: "history-1",
+    signal: new AbortController().signal,
+    emitActivity: async (activity) => activities.push(activity),
+  });
+  return {
+    dispatch: { startedUiEvent: activities[0] },
+    result: {
+      toolResult: { ...outcome, toolCallId: call.id, toolName: call.name },
+      uiEvent: activities.at(-1),
+    },
+  };
 }
+
+const baseArguments = {
+  name: "researcher",
+  title: "research task",
+  prompt: "investigate this",
+};
 
 describe("spawn_agent tool", () => {
-  it("accepts an allowed launch model override", async () => {
-    const backend = createLocalToolExecutionBackend();
-    const tool = createSpawnAgentToolDefinition(backend);
-    const { context, openai, spawned } = createContext();
+  it("binds dependencies before execution and admits an allowed launch model", async () => {
+    const { tool, supervisor } = createFixture();
+    const { dispatch, result } = await execute(tool, {
+      ...baseArguments,
+      model: "openai/gpt-5.5:high",
+    });
 
-    const dispatched = await tool.dispatch(
-      {
-        id: "call-1",
-        name: TOOL_NAME_SPAWN_AGENT,
-        arguments: {
-          name: "researcher",
-          title: "research task",
-          prompt: "collect findings",
-          model: "openai/gpt-5.5:high",
-        },
-      },
-      undefined,
-      context,
-    );
-
-    const result = await dispatched.run;
+    expect(dispatch.startedUiEvent).toMatchObject({
+      type: "spawn_agent_started",
+      name: "researcher",
+      title: "research task",
+    });
     expect(result.toolResult.isError).toBe(false);
-    expect(result.uiEvent.type).toBe("spawn_agent_finished");
-    expect(result.uiEvent.uiText.statusLine).toContain("openai/gpt-5.5:high");
-    expect(spawned).toHaveLength(1);
-    expect(spawned[0].model.provider).toBe(openai.provider);
-    expect(spawned[0].model.id).toBe(openai.id);
-    expect(spawned[0].settings.reasoning).toBe("high");
-    expect(spawned[0].settings.serviceTier).toBe("priority");
+    expect(supervisor.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: "investigate this",
+        originHistoryEntryId: "history-1",
+        runtimeConfig: expect.objectContaining({
+          name: "researcher",
+          workingDirectory: "/repo/current",
+          settings: expect.objectContaining({ reasoning: "high" }),
+        }),
+      }),
+    );
   });
 
-  it("shows the launch model override in status when it matches the persona model", async () => {
-    const backend = createLocalToolExecutionBackend();
-    const tool = createSpawnAgentToolDefinition(backend);
-    const { openai } = createModels();
-    const { context } = createContext({
-      persona: {
-        id: "test-persona",
-        label: "test persona",
-        model: openai,
-        systemPrompt: "main",
-        settings: { reasoning: "low" },
-        source: "project",
-        subagents: {
-          researcher: {
-            systemPrompt: "research",
-            model: openai,
-            settings: { reasoning: "medium" },
-            launchModels: ["openai/gpt-5.5:high"],
-          },
-        },
-      },
-      subagentPrompts: {
-        researcher: "research prompt",
-      },
+  it("rejects launch model overrides that are absent or outside the allowlist", async () => {
+    const { tool, supervisor } = createFixture();
+    const missing = await execute(tool, {
+      ...baseArguments,
+      name: "fixed",
+      model: "openai/gpt-5.5:high",
+    });
+    const disallowed = await execute(tool, {
+      ...baseArguments,
+      model: "openai/gpt-5.5:medium",
     });
 
-    const dispatched = await tool.dispatch(
-      {
-        id: "call-1b",
-        name: TOOL_NAME_SPAWN_AGENT,
-        arguments: {
-          name: "researcher",
-          title: "research task",
-          prompt: "collect findings",
-          model: "openai/gpt-5.5:high",
-        },
-      },
-      undefined,
-      context,
-    );
+    expect(missing.result.toolResult.isError).toBe(true);
+    expect(getText(missing.result.toolResult)).toContain("does not allow launch model overrides");
+    expect(disallowed.result.toolResult.isError).toBe(true);
+    expect(getText(disallowed.result.toolResult)).toContain("is not allowed");
+    expect(supervisor.spawn).not.toHaveBeenCalled();
+  });
 
-    const result = await dispatched.run;
+  it("uses the bound default settings without a launch model override", async () => {
+    const { tool, supervisor } = createFixture();
+    const { result } = await execute(tool, baseArguments);
+
     expect(result.toolResult.isError).toBe(false);
-    expect(result.uiEvent.type).toBe("spawn_agent_finished");
-    expect(result.uiEvent.uiText.statusLine).toContain("openai/gpt-5.5:high");
-  });
-
-  it("blocks launch model overrides when no allowlist exists", async () => {
-    const backend = createLocalToolExecutionBackend();
-    const tool = createSpawnAgentToolDefinition(backend);
-    const { context } = createContext({
-      persona: {
-        id: "test-persona",
-        label: "test persona",
-        model: createModels().anthropic,
-        systemPrompt: "main",
-        settings: { reasoning: "low" },
-        source: "project",
-        subagents: {
-          researcher: {
-            systemPrompt: "research",
-          },
-        },
-      },
-      subagentPrompts: {
-        researcher: "research prompt",
-      },
-    });
-
-    const result = await runTool(
-      tool,
-      {
-        id: "call-2",
-        name: TOOL_NAME_SPAWN_AGENT,
-        arguments: {
-          name: "researcher",
-          title: "research task",
-          prompt: "collect findings",
-          model: "openai/gpt-5.5:high",
-        },
-      },
-      undefined,
-      context,
+    expect(supervisor.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelLabel: undefined,
+        runtimeConfig: expect.objectContaining({
+          settings: expect.objectContaining({ reasoning: "medium" }),
+        }),
+      }),
     );
-
-    expect(result.toolResult.isError).toBe(true);
-    expect(getText(result.toolResult)).toContain("does not allow launch model overrides");
   });
 
-  it("blocks launch model overrides outside the allowlist", async () => {
-    const backend = createLocalToolExecutionBackend();
-    const tool = createSpawnAgentToolDefinition(backend);
-    const { context, spawned } = createContext();
-
-    const result = await runTool(
-      tool,
-      {
-        id: "call-3",
-        name: TOOL_NAME_SPAWN_AGENT,
-        arguments: {
-          name: "researcher",
-          title: "research task",
-          prompt: "collect findings",
-          model: "openai/gpt-5.5:low",
-        },
-      },
-      undefined,
-      context,
-    );
-
-    expect(result.toolResult.isError).toBe(true);
-    expect(getText(result.toolResult)).toContain("is not allowed for subagent");
-    expect(getText(result.toolResult)).toContain("openai/gpt-5.5:high");
-    expect(spawned).toHaveLength(0);
-  });
-
-  it("keeps default behavior when no launch model override is provided", async () => {
-    const backend = createLocalToolExecutionBackend();
-    const tool = createSpawnAgentToolDefinition(backend);
-    const { context, anthropic, spawned } = createContext();
-
-    const dispatched = await tool.dispatch(
-      {
-        id: "call-4",
-        name: TOOL_NAME_SPAWN_AGENT,
-        arguments: {
-          name: "researcher",
-          title: "research task",
-          prompt: "collect findings",
-        },
-      },
-      undefined,
-      context,
-    );
-
-    const result = await dispatched.run;
-    expect(result.toolResult.isError).toBe(false);
-    expect(spawned).toHaveLength(1);
-    expect(spawned[0].model.provider).toBe(anthropic.provider);
-    expect(spawned[0].model.id).toBe(anthropic.id);
-    expect(spawned[0].settings.reasoning).toBe("medium");
-    expect(spawned[0].settings.serviceTier).toBe("priority");
-  });
-
-  it("supports launch model overrides on the default subagent", async () => {
-    const backend = createLocalToolExecutionBackend();
-    const tool = createSpawnAgentToolDefinition(backend);
-    const { context, openai, spawned } = createContext();
-
-    const dispatched = await tool.dispatch(
-      {
-        id: "call-5",
-        name: TOOL_NAME_SPAWN_AGENT,
-        arguments: {
-          name: "default",
-          title: "default task",
-          prompt: "collect findings",
-          model: "openai/gpt-5.5:high",
-        },
-      },
-      undefined,
-      context,
-    );
-
-    await dispatched.run;
-    expect(spawned).toHaveLength(1);
-    expect(spawned[0].model.provider).toBe(openai.provider);
-    expect(spawned[0].model.id).toBe(openai.id);
-    expect(spawned[0].settings.reasoning).toBe("high");
-    expect(spawned[0].settings.serviceTier).toBe("priority");
-  });
-
-  it("rejects an explicitly provided but empty model parameter", async () => {
-    const backend = createLocalToolExecutionBackend();
-    const tool = createSpawnAgentToolDefinition(backend);
-    const { context, spawned } = createContext();
-
-    const result = await runTool(
-      tool,
-      {
-        id: "call-6",
-        name: TOOL_NAME_SPAWN_AGENT,
-        arguments: {
-          name: "researcher",
-          title: "research task",
-          prompt: "collect findings",
-          model: "",
-        },
-      },
-      undefined,
-      context,
-    );
-
-    expect(result.toolResult.isError).toBe(true);
-    expect(getText(result.toolResult)).toContain("Invalid arguments: model:");
-    expect(spawned).toHaveLength(0);
-  });
-
-  it("rejects an explicitly provided but empty workingDirectory parameter", async () => {
-    const backend = createLocalToolExecutionBackend();
-    const tool = createSpawnAgentToolDefinition(backend);
-    const { context, spawned } = createContext();
-
-    const result = await runTool(
-      tool,
-      {
-        id: "call-7",
-        name: TOOL_NAME_SPAWN_AGENT,
-        arguments: {
-          name: "researcher",
-          title: "research task",
-          prompt: "collect findings",
-          workingDirectory: "",
-        },
-      },
-      undefined,
-      context,
-    );
-
-    expect(result.toolResult.isError).toBe(true);
-    expect(getText(result.toolResult)).toContain("Invalid arguments: workingDirectory:");
-    expect(spawned).toHaveLength(0);
-  });
-
-  it("accepts absolute workingDirectory values", async () => {
-    const backend = createLocalToolExecutionBackend();
-    const tool = createSpawnAgentToolDefinition(backend);
-    const { context, spawned } = createContext({
-      cwd: "/repo/src",
-    });
-
-    const dispatched = await tool.dispatch(
-      {
-        id: "call-8",
-        name: TOOL_NAME_SPAWN_AGENT,
-        arguments: {
-          name: "researcher",
-          title: "research task",
-          prompt: "collect findings",
-          workingDirectory: "/tmp",
-        },
-      },
-      undefined,
-      context,
-    );
-
-    await dispatched.run;
-    expect(spawned).toHaveLength(1);
-    expect(spawned[0].workingDirectory).toBe("/tmp");
-  });
-
-  it("resolves relative workingDirectory values against the current cwd", async () => {
-    const backend = createLocalToolExecutionBackend();
-    const tool = createSpawnAgentToolDefinition(backend);
-    const { context, spawned } = createContext({
-      cwd: "/repo/src",
-    });
-
-    const dispatched = await tool.dispatch(
-      {
-        id: "call-8b",
-        name: TOOL_NAME_SPAWN_AGENT,
-        arguments: {
-          name: "researcher",
-          title: "research task",
-          prompt: "collect findings",
-          workingDirectory: "..",
-        },
-      },
-      undefined,
-      context,
-    );
-
-    await dispatched.run;
-    expect(spawned).toHaveLength(1);
-    expect(spawned[0].workingDirectory).toBe("/repo");
-  });
-
-  it("uses target persona policy and context for a working-directory subagent", async () => {
+  it("resolves relative working directories through the supplied runtime resolver", async () => {
     const resolveSubagentRuntime = vi.fn(async ({ cwd, persona }) => ({
-      persona: {
-        ...persona,
-        settings: { reasoning: "xhigh", serviceTier: "flex" },
-        subagents: {
-          ...persona.subagents,
-          researcher: {
-            ...persona.subagents.researcher,
-            launchModels: ["openai/gpt-5.5:low"],
-            tools: ["view_image"],
-          },
-        },
-      },
-      config: { modelSystemNotices: {} },
-      modelResolver: createModelResolver(cwd, "/repo"),
-      subagentPrompts: {
-        researcher: `researcher target prompt\n<cwd>${cwd}</cwd>\ntarget AGENTS context`,
-      },
-    }));
-    const { context, spawned } = createContext({
-      cwd: "/repo/src",
-      resolveSubagentRuntime,
-    });
-    const persona = context.persona;
-
-    const dispatched = await createSpawnAgentToolDefinition(
-      createLocalToolExecutionBackend(),
-    ).dispatch(
-      {
-        id: "call-9",
-        name: TOOL_NAME_SPAWN_AGENT,
-        arguments: {
-          name: "researcher",
-          title: "research task",
-          prompt: "collect findings",
-          model: "openai/gpt-5.5:low",
-          workingDirectory: "..",
-        },
-      },
-      undefined,
-      context,
-    );
-
-    await dispatched.run;
-    expect(resolveSubagentRuntime).toHaveBeenCalledWith({
-      cwd: "/repo",
       persona,
+      config: { apiKeys: {} },
+      modelResolver: createModelResolver(cwd),
+      subagentPrompts: { researcher: `target prompt: ${cwd}` },
+    }));
+    const { tool, supervisor } = createFixture({ resolveSubagentRuntime });
+    const { result } = await execute(tool, {
+      ...baseArguments,
+      workingDirectory: "packages/api",
     });
-    expect(spawned).toHaveLength(1);
-    expect(spawned[0].workingDirectory).toBe("/repo");
-    expect(spawned[0].model).toMatchObject({ provider: "openai", id: "gpt-5.5" });
-    expect(spawned[0].settings).toMatchObject({ reasoning: "low", serviceTier: "flex" });
-    expect(spawned[0].tools).toEqual(["view_image"]);
-    expect(spawned[0].systemPrompt).toContain("target AGENTS context");
+
+    expect(result.toolResult.isError).toBe(false);
+    expect(resolveSubagentRuntime).toHaveBeenCalledWith(
+      expect.objectContaining({ cwd: "/repo/current/packages/api" }),
+    );
+    expect(supervisor.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runtimeConfig: expect.objectContaining({
+          systemPrompt: "target prompt: /repo/current/packages/api",
+          workingDirectory: "/repo/current/packages/api",
+        }),
+      }),
+    );
   });
 
-  it("reports execution-environment context resolution failures", async () => {
-    const { context, spawned } = createContext({
-      resolveSubagentRuntime: async () => {
-        throw new Error("target skill configuration is invalid");
-      },
+  it("blocks working-directory launches when runtime resolution is unavailable", async () => {
+    const { tool, supervisor } = createFixture();
+    const { result } = await execute(tool, {
+      ...baseArguments,
+      workingDirectory: "/tmp/project",
     });
 
-    const result = await runTool(
-      createSpawnAgentToolDefinition(createLocalToolExecutionBackend()),
-      {
-        id: "call-10",
-        name: TOOL_NAME_SPAWN_AGENT,
-        arguments: {
-          name: "researcher",
-          title: "research task",
-          prompt: "collect findings",
-          workingDirectory: ".",
-        },
-      },
-      undefined,
-      context,
-    );
+    expect(result.toolResult.isError).toBe(true);
+    expect(getText(result.toolResult)).toContain("context resolution is unavailable");
+    expect(supervisor.spawn).not.toHaveBeenCalled();
+  });
+
+  it("reports supervisor admission failures", async () => {
+    const supervisor = { spawn: vi.fn(() => ({ ok: false, reason: "active limit reached" })) };
+    const { tool } = createFixture({ supervisor });
+    const { result } = await execute(tool, baseArguments);
 
     expect(result.toolResult.isError).toBe(true);
-    expect(getText(result.toolResult)).toContain("Failed to build the subagent prompt");
-    expect(getText(result.toolResult)).toContain("target skill configuration is invalid");
-    expect(spawned).toHaveLength(0);
+    expect(getText(result.toolResult)).toBe("active limit reached");
+    expect(result.uiEvent).toMatchObject({ type: "spawn_agent_blocked" });
+  });
+
+  it("rejects unknown and malformed arguments before contacting the supervisor", async () => {
+    const { tool, supervisor } = createFixture();
+    const unknown = await execute(tool, { ...baseArguments, extra: true });
+    const empty = await execute(tool, { ...baseArguments, workingDirectory: "" });
+
+    expect(unknown.result.toolResult.isError).toBe(true);
+    expect(empty.result.toolResult.isError).toBe(true);
+    expect(supervisor.spawn).not.toHaveBeenCalled();
   });
 });

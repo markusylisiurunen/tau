@@ -1,7 +1,7 @@
-import type { CoreEvent } from "../events/types.js";
+import type { AgentEvent } from "../agent/events.js";
 
 export interface ModeAdapter {
-  onEvent(event: CoreEvent): void | Promise<void>;
+  onEvent(event: AgentEvent): void | Promise<void>;
   onUserInput(text: string): void | Promise<void>;
   onInterrupt(): void;
 }

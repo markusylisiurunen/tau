@@ -1,20 +1,21 @@
-import type { Tool, ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
+import type { Tool, ToolCall } from "@earendil-works/pi-ai";
 import { fileTypeFromBuffer } from "file-type";
 import sharp from "sharp";
 import { Type } from "typebox";
 import { z } from "zod";
-import { createToolError } from "../utils/messages.js";
 import { formatBytes } from "../utils/truncate.js";
 import { formatZodError } from "../utils/zod.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
-import type {
-  ToolDefinition,
-  ToolDispatch,
-  ToolDispatchResult,
-  ToolUiEvent,
-  ToolUiText,
+import {
+  type AgentTool,
+  createTextToolOutcome,
+  executeTool,
+  type ToolExecutionContext,
+  type ToolExecutionOutcome,
+  type ToolImplementationOutcome,
+  type ToolUiEvent,
+  type ToolUiText,
 } from "./registry.js";
-import { createToolDispatch } from "./registry.js";
 import { TOOL_NAME_VIEW_IMAGE } from "./tool_names.js";
 
 const VIEW_IMAGE_DESCRIPTION = [
@@ -236,18 +237,21 @@ function buildViewImageUiText(args: { mimeType: string; fullText: string }): Too
   };
 }
 
-export function createViewImageToolDefinition(backend: ToolExecutionBackend): ToolDefinition {
+export function createViewImageToolDefinition(backend: ToolExecutionBackend): AgentTool {
   return {
     schema: VIEW_IMAGE_TOOL,
-    getDisplayTarget: (toolCall) => getViewImageDisplayTarget(toolCall.arguments),
-    async dispatch(toolCall: ToolCall): Promise<ToolDispatch> {
-      return createToolDispatch(async () => {
+    describe: (toolCall) => ({ headerTarget: getViewImageDisplayTarget(toolCall.arguments) }),
+    async execute(
+      toolCall: ToolCall,
+      context: ToolExecutionContext,
+    ): Promise<ToolExecutionOutcome> {
+      return executeTool(context, async () => {
         const parsedArgs = parseViewImageArgs(toolCall.arguments);
         const path = parsedArgs.ok ? parsedArgs.data.path : "";
         const headerTarget = getViewImageDisplayTarget(toolCall.arguments);
 
-        const blocked = (reason: string): ToolDispatchResult => {
-          const toolResult = createToolError(toolCall, reason);
+        const blocked = (reason: string): ToolImplementationOutcome => {
+          const outcome = createTextToolOutcome(reason, true);
           const uiEvent: ToolUiEvent = {
             type: "view_image_blocked",
             toolCallId: toolCall.id,
@@ -255,7 +259,7 @@ export function createViewImageToolDefinition(backend: ToolExecutionBackend): To
             headerTarget,
             reason,
           };
-          return { toolResult, uiEvent };
+          return { content: outcome.content, isError: outcome.isError, uiEvent };
         };
 
         if (!parsedArgs.ok) {
@@ -278,16 +282,12 @@ export function createViewImageToolDefinition(backend: ToolExecutionBackend): To
           const encodedImage = await prepareImageForModel(content, mimeType);
           const data = encodedImage.content.toString("base64");
           const resultText = `Viewed ${resolvedPath} (${encodedImage.mimeType})`;
-          const toolResult: ToolResultMessage = {
-            role: "toolResult",
-            toolCallId: toolCall.id,
-            toolName: toolCall.name,
+          const outcome: ToolExecutionOutcome = {
             content: [
               { type: "text", text: resultText },
               { type: "image", data, mimeType: encodedImage.mimeType },
             ],
             isError: false,
-            timestamp: Date.now(),
           };
 
           const uiText = buildViewImageUiText({
@@ -304,7 +304,7 @@ export function createViewImageToolDefinition(backend: ToolExecutionBackend): To
             uiText,
           };
 
-          return { toolResult, uiEvent };
+          return { content: outcome.content, isError: outcome.isError, uiEvent };
         } catch (e) {
           const errorMessage = e instanceof Error ? e.message : String(e);
           return blocked(`Tool view_image failed: ${errorMessage}`);

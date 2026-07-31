@@ -1,4 +1,15 @@
 export type {
+  AgentSpec,
+  AgentState,
+  AgentTurnResult,
+  HistoryEntry,
+} from "./agent/agent_runtime.js";
+export {
+  AgentRuntime,
+  createAgentSpec,
+} from "./agent/agent_runtime.js";
+export type { AgentEvent, AgentEventSink } from "./agent/events.js";
+export type {
   AuthCliCommand,
   AuthLog,
   AuthLoginHandler,
@@ -59,13 +70,10 @@ export { personas } from "./personas.js";
 export type { PromptTemplate } from "./prompts.js";
 export type {
   ChatRuntimeEnvironment,
-  ChatRuntimeOptions,
   ChatRuntimePromptContext,
   CreateChatRuntimeOptions,
 } from "./runtime/chat_runtime.js";
 export { ChatRuntime } from "./runtime/chat_runtime.js";
-export type { ConversationTurnResult } from "./runtime/conversation_turn_runtime.js";
-export { ConversationTurnRuntime } from "./runtime/conversation_turn_runtime.js";
 export type { CoreDeps } from "./runtime/deps.js";
 export { createDefaultCoreDeps } from "./runtime/deps.js";
 export type {

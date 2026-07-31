@@ -4,12 +4,10 @@ import {
   type RuntimePromptBootstrap,
   resolveRuntimePromptBootstrap,
 } from "../core/runtime/runtime_bootstrap.js";
-import { ToolCatalog } from "../core/tools/catalog.js";
 import {
   scopeToolExecutionBackend,
   type ToolExecutionBackend,
 } from "../core/tools/execution_backend.js";
-import type { ToolRegistry } from "../core/tools/registry.js";
 import type { SessionProtocolExecutionEnvironmentSnapshot } from "../protocol/session_protocol.js";
 import type {
   ExecutionEnvironment,
@@ -30,7 +28,6 @@ export class ToolBackendExecutionEnvironment<TSnapshot extends BackendExecutionS
   private readonly environmentSnapshot: TSnapshot;
   private readonly backend: ToolExecutionBackend;
   private readonly scopedBackend: ToolExecutionBackend;
-  private readonly toolRegistry: ToolRegistry;
 
   constructor(options: {
     snapshot: TSnapshot;
@@ -45,7 +42,6 @@ export class ToolBackendExecutionEnvironment<TSnapshot extends BackendExecutionS
       ...options.env,
       HOME: this.home,
     });
-    this.toolRegistry = ToolCatalog.createRegistry(this.scopedBackend);
   }
 
   async resolveRuntimeConfig(cwd: string): Promise<RuntimeConfigResult> {
@@ -69,10 +65,7 @@ export class ToolBackendExecutionEnvironment<TSnapshot extends BackendExecutionS
       backend: this.backend,
     });
 
-    return {
-      promptBootstrap,
-      toolRegistry: this.toolRegistry,
-    };
+    return { promptBootstrap };
   }
 
   snapshot(): TSnapshot {

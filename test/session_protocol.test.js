@@ -391,35 +391,17 @@ describe("session_protocol", () => {
       },
     });
 
-    const prune = parseSessionProtocolRequestLine(
-      JSON.stringify({
-        version: SESSION_PROTOCOL_VERSION,
-        type: "request",
-        id: "req-prune",
-        method: "session.prune",
-        params: {
-          sessionId: "session-1",
-          strategy: "smart",
-          fraction: 0.4,
-          guidance: "keep errors",
-        },
-      }),
-    );
-    expect(prune).toEqual({
-      ok: true,
-      request: {
-        version: SESSION_PROTOCOL_VERSION,
-        type: "request",
-        id: "req-prune",
-        method: "session.prune",
-        params: {
-          sessionId: "session-1",
-          strategy: "smart",
-          fraction: 0.4,
-          guidance: "keep errors",
-        },
-      },
-    });
+    expect(
+      parseSessionProtocolRequestLine(
+        JSON.stringify({
+          version: SESSION_PROTOCOL_VERSION,
+          type: "request",
+          id: "req-prune",
+          method: "session.prune",
+          params: { sessionId: "session-1", strategy: "smart" },
+        }),
+      ).ok,
+    ).toBe(false);
   });
 
   it("round-trips sampled assistant messages into later sampling contexts", () => {

@@ -364,20 +364,7 @@ class FakeSession {
       includedLastAssistant: mode === "summary-and-last",
     };
   });
-  pruneToolResults = vi.fn(async (strategy, options) => {
-    this.snapshotValue = updateSnapshot(this.snapshotValue, {
-      revision: this.snapshotValue.revision + 1,
-    });
-    return {
-      snapshot: this.snapshotValue,
-      message: `pruned ${strategy} at ${options.fraction}`,
-      noop: false,
-      bashResultsPruned: 1,
-      editCallsPruned: 0,
-      editResultsPruned: 0,
-      bytesPruned: 512,
-    };
-  });
+
   rewindToHistoryEntryId = vi.fn(async (historyEntryId) => {
     const historyEntries = historyEntriesFromSnapshot(this.snapshotValue);
     const historyIndex = historyEntries.findIndex((entry) => entry.id === historyEntryId);
@@ -2812,15 +2799,8 @@ describe("SessionChatController", () => {
     controller.getInputHandlers().onSubmit("/compact:summary-and-last preserve decisions");
     await flush();
 
-    controller.getInputHandlers().onSubmit("/prune:smart 0.5 keep errors");
-    await flush();
-
     expect(session.compact).toHaveBeenCalledWith("summary-and-last", {
       guidance: "preserve decisions",
-    });
-    expect(session.pruneToolResults).toHaveBeenCalledWith("smart", {
-      fraction: 0.5,
-      guidance: "keep errors",
     });
     expect(session.submit).not.toHaveBeenCalled();
     expect(view.messages).toContainEqual({
@@ -2832,9 +2812,6 @@ describe("SessionChatController", () => {
         kind: "success",
         text: "session compacted. previous context and last assistant message have been included.",
       }),
-    );
-    expect(view.systems).toContainEqual(
-      expect.objectContaining({ kind: "success", text: "pruned smart at 0.5" }),
     );
   });
 

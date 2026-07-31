@@ -19,10 +19,6 @@ import {
 import { buildDiffReviewInstructions } from "../core/diff_review/review_instructions.js";
 import { type CoreDeps, createDefaultCoreDeps } from "../core/runtime/deps.js";
 import { runDirectBashCommand } from "../core/session/direct_bash.js";
-import {
-  parseSessionPruneFraction,
-  parseSessionPruneFractionAndGuidance,
-} from "../core/session/pruning.js";
 import type { SubagentStatus, SubagentUiEvent } from "../core/subagents/types.js";
 import type { ToolUiEvent } from "../core/tools/registry.js";
 import { REASONING_LEVELS, type ReasoningEffort } from "../core/types.js";
@@ -187,9 +183,6 @@ export class SessionChatController {
       diff: (argsText) => this.startDiffReview(argsText),
       compactSummaryOnly: (extra) => this.compactSession("summary-only", extra),
       compactSummaryAndLast: (extra) => this.compactSession("summary-and-last", extra),
-      pruneEarliest: (extra) => this.pruneSession("earliest", extra),
-      pruneLargest: (extra) => this.pruneSession("largest", extra),
-      pruneSmart: (extra) => this.pruneSession("smart", extra),
       reload: () => this.reloadContent(),
       listen: () => this.startListenCaptureFromCommand(),
       speak: () => this.speakLastAssistantMessage(),
@@ -1770,44 +1763,6 @@ export class SessionChatController {
     } finally {
       this.manualCompactionInProgress = false;
       this.refreshStatus();
-    }
-  }
-
-  private async pruneSession(
-    strategy: "earliest" | "largest" | "smart",
-    extraText?: string,
-  ): Promise<void> {
-    if (this.isSessionOperationActive()) {
-      this.view.addSystemMessage("cannot prune while a session turn is running", "warn");
-      return;
-    }
-
-    const extra = extraText?.trim() ?? "";
-    const parsed =
-      strategy === "smart"
-        ? parseSessionPruneFractionAndGuidance(extra)
-        : { fraction: parseSessionPruneFraction(extra) };
-    if (parsed.fraction === null) {
-      this.view.addSystemMessage("invalid prune fraction. use a number between 0 and 1.", "error");
-      return;
-    }
-
-    if (strategy === "smart" && parsed.fraction !== 0) {
-      this.view.addSystemMessage("sampling prune candidates...", "success");
-    }
-
-    try {
-      const result = await this.session.pruneToolResults(strategy, {
-        fraction: parsed.fraction,
-        ...("guidance" in parsed && parsed.guidance !== undefined
-          ? { guidance: parsed.guidance }
-          : {}),
-      });
-      this.syncRenderedHistory(result.snapshot);
-      this.refreshStatus();
-      this.view.addSystemMessage(result.message, result.noop ? "warn" : "success");
-    } catch (error) {
-      this.view.addSystemMessage(`prune failed: ${(error as Error).message}`, "error");
     }
   }
 

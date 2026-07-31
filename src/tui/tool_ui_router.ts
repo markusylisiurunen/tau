@@ -1,4 +1,4 @@
-import type { ToolUiEvent, ToolUiLine, ToolUiText } from "../core/tools/registry.js";
+import type { ToolUiEvent } from "../core/tools/registry.js";
 import {
   TOOL_NAME_SEND_INPUT_TO_AGENT,
   TOOL_NAME_SPAWN_AGENT,
@@ -33,8 +33,6 @@ type RunningSubagentTool =
     };
 
 type ToolUiEventWithToolCallId = Extract<ToolUiEvent, { toolCallId: string }>;
-type ToolPrunedEvent = Extract<ToolUiEvent, { type: "tool_pruned" }>;
-type NonPrunedToolUiEvent = Exclude<ToolUiEventWithToolCallId, ToolPrunedEvent>;
 
 export type ToolUiEventOrigin = "session" | "local";
 
@@ -66,8 +64,6 @@ const SUBAGENT_TERMINAL_EVENT_TYPES = new Set<SubagentTerminalEventType>([
   "terminate_agent_finished",
   "terminate_agent_blocked",
 ]);
-
-const PRUNED_STATUS_PREFIX = "✂ pruned";
 
 export class ToolUiRouter {
   private readonly chatContainer: ChatContainerComponent;
@@ -133,14 +129,6 @@ export class ToolUiRouter {
   }
 
   handle(uiEvent: ToolUiEvent, origin: ToolUiEventOrigin): void {
-    if (uiEvent.type === "tool_pruned") {
-      const updated = this.applyPrunedMutation(uiEvent);
-      if (updated) {
-        this.requestRender();
-      }
-      return;
-    }
-
     if (origin === "session") {
       this.sessionToolCallIds.add(uiEvent.toolCallId);
     }
@@ -149,7 +137,7 @@ export class ToolUiRouter {
     this.requestRender();
   }
 
-  private updateRunningToolState(uiEvent: NonPrunedToolUiEvent): void {
+  private updateRunningToolState(uiEvent: ToolUiEventWithToolCallId): void {
     const bashComponent = this.toRunningBashComponent(uiEvent);
     if (bashComponent) {
       this.runningBashComponents.set(uiEvent.toolCallId, bashComponent);
@@ -172,7 +160,7 @@ export class ToolUiRouter {
     }
   }
 
-  private toRunningBashComponent(uiEvent: NonPrunedToolUiEvent): RunningBashComponent | null {
+  private toRunningBashComponent(uiEvent: ToolUiEventWithToolCallId): RunningBashComponent | null {
     if (uiEvent.type !== "bash_started") {
       return null;
     }
@@ -180,7 +168,7 @@ export class ToolUiRouter {
     return { command: uiEvent.command };
   }
 
-  private toRunningSubagentTool(uiEvent: NonPrunedToolUiEvent): RunningSubagentTool | null {
+  private toRunningSubagentTool(uiEvent: ToolUiEventWithToolCallId): RunningSubagentTool | null {
     if (uiEvent.type === "spawn_agent_started") {
       return {
         kind: TOOL_NAME_SPAWN_AGENT,
@@ -244,53 +232,6 @@ export class ToolUiRouter {
 
     this.latestToolEventsById.set(uiEvent.toolCallId, uiEvent);
     return true;
-  }
-
-  private applyPrunedMutation(uiEvent: ToolPrunedEvent): boolean {
-    const existing = this.latestToolEventsById.get(uiEvent.toolCallId);
-    if (!existing) {
-      return false;
-    }
-
-    if ("uiText" in existing && existing.uiText) {
-      const statusLine = existing.uiText.statusLine?.trim();
-      const nextStatusLine = statusLine
-        ? `${PRUNED_STATUS_PREFIX} · ${statusLine}`
-        : PRUNED_STATUS_PREFIX;
-      const nextLines = this.toToolUiLines(uiEvent.content);
-      const nextUiText: ToolUiText = {
-        previewLines: nextLines,
-        statusLine: nextStatusLine,
-        fullLines: nextLines,
-      };
-
-      const nextEvent = { ...existing, uiText: nextUiText } as ToolUiEventWithToolCallId;
-      return this.replaceToolMessage(nextEvent);
-    }
-
-    if ("reason" in existing && typeof existing.reason === "string") {
-      return this.replaceToolMessage({
-        ...existing,
-        reason: uiEvent.content,
-      } as ToolUiEventWithToolCallId);
-    }
-
-    if ("message" in existing) {
-      return this.replaceToolMessage({
-        ...existing,
-        message: uiEvent.content,
-      } as ToolUiEventWithToolCallId);
-    }
-
-    return false;
-  }
-
-  private toToolUiLines(content: string): ToolUiLine[] {
-    if (!content) {
-      return [];
-    }
-
-    return content.split("\n").map((text) => ({ text }));
   }
 
   private toSubagentAbortEvent(

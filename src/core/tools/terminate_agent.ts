@@ -1,16 +1,15 @@
 import type { Tool, ToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { z } from "zod";
-import type { SubagentResult } from "../subagents/control_plane.js";
-import { createToolError, createToolResult } from "../utils/messages.js";
+import type { AgentSupervisor, SubagentResult } from "../subagents/agent_supervisor.js";
 import { parseToolArgs } from "../utils/zod.js";
 import {
-  createToolDispatch,
-  isMainToolDispatchContext,
-  type ToolDefinition,
-  type ToolDispatch,
-  type ToolDispatchContext,
-  type ToolDispatchResult,
+  type AgentTool,
+  createTextToolOutcome,
+  executeTool,
+  type ToolExecutionContext,
+  type ToolExecutionOutcome,
+  type ToolImplementationOutcome,
   type ToolUiEvent,
 } from "./registry.js";
 import { buildSubagentUiText, formatSubagentStatusLine } from "./subagent_ui.js";
@@ -73,20 +72,20 @@ function getTerminateAgentDisplayTarget(raw: unknown): string {
   return parsedArgs.ok ? parsedArgs.data.id : "(invalid arguments)";
 }
 
-export function createTerminateAgentToolDefinition(): ToolDefinition {
+export function createTerminateAgentToolDefinition(supervisor: AgentSupervisor): AgentTool {
   return {
     schema: TERMINATE_AGENT_TOOL,
-    getDisplayTarget: (toolCall) => getTerminateAgentDisplayTarget(toolCall.arguments),
-    async dispatch(
+    describe: (toolCall) => ({ headerTarget: getTerminateAgentDisplayTarget(toolCall.arguments) }),
+    async execute(
       toolCall: ToolCall,
-      signal: AbortSignal,
-      context: ToolDispatchContext,
-    ): Promise<ToolDispatch> {
+      context: ToolExecutionContext,
+    ): Promise<ToolExecutionOutcome> {
+      const { signal } = context;
       let id = "";
       const headerTarget = getTerminateAgentDisplayTarget(toolCall.arguments);
 
-      const blocked = (reason: string): ToolDispatchResult => {
-        const toolResult = createToolError(toolCall, reason);
+      const blocked = (reason: string): ToolImplementationOutcome => {
+        const outcome = createTextToolOutcome(reason, true);
         const uiEvent: ToolUiEvent = {
           type: "terminate_agent_blocked",
           toolCallId: toolCall.id,
@@ -94,34 +93,21 @@ export function createTerminateAgentToolDefinition(): ToolDefinition {
           headerTarget,
           reason,
         };
-        return { toolResult, uiEvent };
+        return { content: outcome.content, isError: outcome.isError, uiEvent };
       };
 
       const parsedArgs = parseToolArgs(terminateArgsSchema, toolCall.arguments);
       if (!parsedArgs.ok) {
-        return createToolDispatch(() => blocked(`Invalid arguments: ${parsedArgs.error}`));
+        return executeTool(context, () => blocked(`Invalid arguments: ${parsedArgs.error}`));
       }
 
       ({ id } = parsedArgs.data);
 
-      if (!isMainToolDispatchContext(context)) {
-        return createToolDispatch(() =>
-          blocked("The terminate_agent tool is only available in the main session."),
-        );
-      }
-
-      const controlPlane = context.subagentControlPlane;
-
-      return {
-        startedUiEvent: {
-          type: "terminate_agent_started",
-          toolCallId: toolCall.id,
-          agentId: id,
-          headerTarget,
-        },
-        run: (async (): Promise<ToolDispatchResult> => {
+      return executeTool(
+        context,
+        async (): Promise<ToolImplementationOutcome> => {
           try {
-            const result = await controlPlane.terminate(id, signal);
+            const result = await supervisor.terminate(id, signal);
             if (!result) {
               const message = `Unknown subagent ID '${id}'.`;
               const uiText = buildSubagentUiText({
@@ -139,8 +125,8 @@ export function createTerminateAgentToolDefinition(): ToolDefinition {
                 message,
                 uiText,
               };
-              const toolResult = createToolError(toolCall, message);
-              return { toolResult, uiEvent };
+              const outcome = createTextToolOutcome(message, true);
+              return { content: outcome.content, isError: outcome.isError, uiEvent };
             }
 
             const resultText = formatTerminateResult(result);
@@ -168,8 +154,8 @@ export function createTerminateAgentToolDefinition(): ToolDefinition {
               message: succeeded ? undefined : `Subagent finished with status ${result.status}.`,
               uiText,
             };
-            const toolResult = createToolResult(toolCall, resultText, !succeeded);
-            return { toolResult, uiEvent };
+            const outcome = createTextToolOutcome(resultText, !succeeded);
+            return { content: outcome.content, isError: outcome.isError, uiEvent };
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             const reason = message.trim() || "The terminate_agent request failed.";
@@ -188,11 +174,17 @@ export function createTerminateAgentToolDefinition(): ToolDefinition {
               message: reason,
               uiText,
             };
-            const toolResult = createToolError(toolCall, reason);
-            return { toolResult, uiEvent };
+            const outcome = createTextToolOutcome(reason, true);
+            return { content: outcome.content, isError: outcome.isError, uiEvent };
           }
-        })(),
-      };
+        },
+        {
+          type: "terminate_agent_started",
+          toolCallId: toolCall.id,
+          agentId: id,
+          headerTarget,
+        },
+      );
     },
   };
 }

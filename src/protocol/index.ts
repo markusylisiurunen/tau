@@ -74,8 +74,6 @@ export type {
   SessionProtocolPersonaSnapshot,
   SessionProtocolPromptCompositionSnapshot,
   SessionProtocolPromptTemplateSnapshot,
-  SessionProtocolPruneParams,
-  SessionProtocolPruneResult,
   SessionProtocolQueueParams,
   SessionProtocolQueueResult,
   SessionProtocolReadyMessage,

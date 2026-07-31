@@ -1,14 +1,14 @@
 import { randomUUID } from "node:crypto";
-import type { Tool, ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
-import type {
-  ToolDefinition,
-  ToolDispatch,
-  ToolDispatchContext,
-  ToolUiEvent,
-  ToolUiText,
+import type { Tool, ToolCall } from "@earendil-works/pi-ai";
+import {
+  type AgentTool,
+  createTextToolOutcome,
+  executeTool,
+  type ToolExecutionContext,
+  type ToolExecutionOutcome,
+  type ToolUiEvent,
+  type ToolUiText,
 } from "../core/tools/registry.js";
-import { createToolDispatch } from "../core/tools/registry.js";
-import { createToolError, createToolResult } from "../core/utils/messages.js";
 import { formatTokenEstimate } from "../core/utils/token.js";
 import { buildHeadTailPreviewLines } from "../core/utils/tool_preview.js";
 import { formatBytes } from "../core/utils/truncate.js";
@@ -35,14 +35,14 @@ const HOST_TOOL_NAMES = new Set([
   "terminate_agent",
 ]);
 
-export type ClientToolDispatch = (message: SessionProtocolClientToolCallMessage) => void;
+export type ClientToolExecutionOutcome = (message: SessionProtocolClientToolCallMessage) => void;
 export type ClientToolCancelDispatch = (message: SessionProtocolClientToolCancelMessage) => void;
 
 type ClientToolClient = {
   id: string;
   tools: Map<string, SessionProtocolClientToolDefinition>;
   sessionIds: Set<string>;
-  sendCall: ClientToolDispatch;
+  sendCall: ClientToolExecutionOutcome;
   sendCancel: ClientToolCancelDispatch;
 };
 
@@ -55,7 +55,7 @@ type PendingClientToolCall = {
   signal: AbortSignal;
   abortListener: () => void;
   settled: boolean;
-  resolve: (message: ToolResultMessage) => void;
+  resolve: (outcome: ToolExecutionOutcome) => void;
 };
 
 export class ClientToolBroker {
@@ -64,7 +64,7 @@ export class ClientToolBroker {
 
   registerClient(options: {
     tools: SessionProtocolClientToolDefinition[];
-    sendCall: ClientToolDispatch;
+    sendCall: ClientToolExecutionOutcome;
     sendCancel: ClientToolCancelDispatch;
   }): {
     clientId: string;
@@ -100,7 +100,7 @@ export class ClientToolBroker {
     };
   }
 
-  getToolDefinitions(sessionId: string): ToolDefinition[] {
+  getToolDefinitions(sessionId: string): AgentTool[] {
     return [...this.clients.values()].flatMap((client) =>
       client.sessionIds.has(sessionId)
         ? [...client.tools.values()].map((tool) =>
@@ -131,9 +131,9 @@ export class ClientToolBroker {
     }
 
     if (result.ok) {
-      this.complete(callId, createToolResult(pending.toolCall, result.content, false));
+      this.complete(callId, createTextToolOutcome(result.content, false));
     } else {
-      this.complete(callId, createToolError(pending.toolCall, result.error));
+      this.complete(callId, createTextToolOutcome(result.error, true));
     }
     return true;
   }
@@ -144,13 +144,13 @@ export class ClientToolBroker {
     tool: SessionProtocolClientToolDefinition;
     toolCall: ToolCall;
     signal: AbortSignal;
-  }): Promise<ToolResultMessage> {
+  }): Promise<ToolExecutionOutcome> {
     const client = this.clients.get(options.clientId);
     if (!client?.tools.has(options.tool.name) || !client.sessionIds.has(options.sessionId)) {
       return Promise.resolve(
-        createToolError(
-          options.toolCall,
+        createTextToolOutcome(
           `Client tool '${options.tool.name}' is unavailable because its owning client detached.`,
+          true,
         ),
       );
     }
@@ -276,10 +276,10 @@ export class ClientToolBroker {
       callId,
       reason,
     });
-    this.complete(callId, createToolError(pending.toolCall, message));
+    this.complete(callId, createTextToolOutcome(message, true));
   }
 
-  private complete(callId: string, result: ToolResultMessage): void {
+  private complete(callId: string, result: ToolExecutionOutcome): void {
     const pending = this.pendingCalls.get(callId);
     if (!pending || pending.settled) {
       return;
@@ -294,14 +294,17 @@ export class ClientToolBroker {
   }
 }
 
-function createClientToolFinishedUiEvent(toolResult: ToolResultMessage): ToolUiEvent {
+function createClientToolFinishedUiEvent(
+  toolCall: ToolCall,
+  outcome: ToolExecutionOutcome,
+): ToolUiEvent {
   return {
     type: "client_tool_finished",
-    toolCallId: toolResult.toolCallId,
-    toolName: toolResult.toolName,
-    headerTarget: toolResult.toolName,
-    status: toolResult.isError ? "error" : "success",
-    uiText: createClientToolUiText(extractToolResultText(toolResult), toolResult.isError),
+    toolCallId: toolCall.id,
+    toolName: toolCall.name,
+    headerTarget: toolCall.name,
+    status: outcome.isError ? "error" : "success",
+    uiText: createClientToolUiText(extractToolOutcomeText(outcome), outcome.isError),
   };
 }
 
@@ -330,10 +333,10 @@ function createClientToolUiText(content: string, isError: boolean): ToolUiText {
   };
 }
 
-function extractToolResultText(toolResult: ToolResultMessage): string {
-  return toolResult.content
+function extractToolOutcomeText(outcome: ToolExecutionOutcome): string {
+  return outcome.content
     .filter(
-      (part): part is Extract<(typeof toolResult.content)[number], { type: "text" }> =>
+      (part): part is Extract<(typeof outcome.content)[number], { type: "text" }> =>
         part.type === "text",
     )
     .map((part) => part.text)
@@ -352,7 +355,7 @@ function createClientToolDefinition(
   clientId: string,
   tool: SessionProtocolClientToolDefinition,
   broker: ClientToolBroker,
-): ToolDefinition {
+): AgentTool {
   const schema: Tool = {
     name: tool.name,
     description: tool.description,
@@ -361,15 +364,19 @@ function createClientToolDefinition(
 
   return {
     schema,
-    getDisplayTarget: () => tool.name,
-    async dispatch(
+    describe: () => ({ headerTarget: tool.name }),
+    async execute(
       toolCall: ToolCall,
-      signal: AbortSignal,
-      _context: ToolDispatchContext,
-    ): Promise<ToolDispatch> {
-      return createToolDispatch(async () => {
+      context: ToolExecutionContext,
+    ): Promise<ToolExecutionOutcome> {
+      const { signal } = context;
+      return executeTool(context, async () => {
         const toolResult = await broker.dispatch({ sessionId, clientId, tool, toolCall, signal });
-        return { toolResult, uiEvent: createClientToolFinishedUiEvent(toolResult) };
+        return {
+          content: toolResult.content,
+          isError: toolResult.isError ?? false,
+          uiEvent: createClientToolFinishedUiEvent(toolCall, toolResult),
+        };
       });
     },
   };

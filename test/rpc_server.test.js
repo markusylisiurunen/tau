@@ -2,6 +2,7 @@ import { PassThrough } from "node:stream";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import { RpcServer, runRpcServer } from "../dist/core/modes/rpc_server.js";
+import { formatSteeringUserMessage } from "../dist/core/runtime/steering.js";
 import { EphemeralThreadBusyError, SessionExecBusyError } from "../dist/host/session_host.js";
 import {
   SESSION_PROTOCOL_ERROR_CODES,
@@ -120,6 +121,7 @@ function createHarness(options = {}) {
     let releaseTurn;
     let pendingTurnResult = { status: "completed", stopReason: "stop" };
     let pendingTurn = null;
+    const pendingSteering = [];
     let reasoning = bootstrap.persona.settings.reasoning;
     const ephemeralContexts = new Set();
     const activeWorkAbortControllers = new Set();
@@ -250,6 +252,17 @@ function createHarness(options = {}) {
           if (options.afterTurnRelease) {
             await options.afterTurnRelease();
           }
+          if (pendingTurnResult.status !== "aborted" && pendingSteering.length > 0) {
+            const steering = pendingSteering.splice(0);
+            const historyEntryId = hostedSession.session.addUserText(
+              formatSteeringUserMessage(steering.map((item) => item.text)),
+            );
+            const result = {
+              userHistoryEntryId: historyEntryId,
+              turn: { status: "completed", stopReason: "stop" },
+            };
+            for (const item of steering) item.resolve(result);
+          }
           emitDelta(createNoticeDelta(sessionId, historyEntries.length + 2, "finished"));
           return pendingTurnResult;
         } finally {
@@ -260,6 +273,18 @@ function createHarness(options = {}) {
       },
       requestTurnBoundaryStop: vi.fn(() => running),
       cancelTurnBoundaryStop: vi.fn(() => running),
+      steer(text) {
+        return new Promise((resolve, reject) => {
+          pendingSteering.push({ text, resolve, reject });
+        });
+      },
+      cancelSteering: vi.fn(() => {
+        const cancelled = pendingSteering.splice(0);
+        for (const item of cancelled) {
+          item.reject(new Error("steering submission was cancelled"));
+        }
+        return cancelled.map((item) => item.text);
+      }),
       async exec(runOptions) {
         const abortController = new AbortController();
         activeExecAbortControllers.set(runOptions.execId, abortController);
@@ -325,17 +350,6 @@ function createHarness(options = {}) {
           snapshot: await hostedSession.snapshot(),
           compactionMessage,
           includedLastAssistant: compactOptions.mode === "summary-and-last",
-        };
-      },
-      async pruneToolResults(pruneOptions) {
-        return {
-          snapshot: await hostedSession.snapshot(),
-          message: `pruned with ${pruneOptions.strategy}`,
-          noop: false,
-          bashResultsPruned: 1,
-          editCallsPruned: 2,
-          editResultsPruned: 1,
-          bytesPruned: 1024,
         };
       },
       interruptTurn() {
@@ -718,32 +732,6 @@ describe("rpc_server", () => {
               }),
             ]),
           }),
-        }),
-      }),
-    );
-
-    await harness.server.handleLine(
-      request("prune-created", "session.prune", {
-        sessionId: "session-2",
-        strategy: "smart",
-        fraction: 0.5,
-        guidance: "keep errors",
-      }),
-    );
-    const pruned = harness.lines.find(
-      (line) => line.type === "response" && line.id === "prune-created",
-    );
-    expect(pruned).toEqual(
-      expect.objectContaining({
-        ok: true,
-        result: expect.objectContaining({
-          message: "pruned with smart",
-          noop: false,
-          bashResultsPruned: 1,
-          editCallsPruned: 2,
-          editResultsPruned: 1,
-          bytesPruned: 1024,
-          snapshot: expect.objectContaining({ sessionId: "session-2" }),
         }),
       }),
     );
@@ -1282,8 +1270,11 @@ describe("rpc_server", () => {
       }),
     );
 
-    await waitFor(() => harness.seededSession.requestTurnBoundaryStop.mock.calls.length > 0);
-    expect(harness.seededSession.requestTurnBoundaryStop).toHaveBeenCalled();
+    await waitFor(() =>
+      harness.lines.some(
+        (line) => line.type === "session.pendingUserMessages" && line.state.messages.length === 2,
+      ),
+    );
     expect(harness.lines.some((line) => line.id === "steer-1" && line.type === "response")).toBe(
       false,
     );
@@ -1410,7 +1401,7 @@ describe("rpc_server", () => {
     expect(
       harness.lines.findLast((line) => line.type === "session.pendingUserMessages").state.messages,
     ).toEqual([]);
-    expect(harness.seededSession.cancelTurnBoundaryStop).toHaveBeenCalled();
+    expect(harness.seededSession.cancelSteering).toHaveBeenCalled();
 
     harness.releaseTurn();
     await firstSubmit;
@@ -1471,16 +1462,21 @@ describe("rpc_server", () => {
     );
 
     await waitFor(() => harness.lines.some((line) => deltaHasNotice(line, "streaming")));
-    await harness.server.handleLine(
+    const steer = harness.server.handleLine(
       request("steer-1", "session.steer", {
         sessionId: "session-1",
         text: "change direction",
       }),
     );
+    await waitFor(() =>
+      harness.lines.some(
+        (line) => line.type === "session.pendingUserMessages" && line.state.messages.length === 1,
+      ),
+    );
     await harness.server.handleLine(
       request("interrupt", "session.interrupt", { sessionId: "session-1" }),
     );
-    await firstSubmit;
+    await Promise.all([firstSubmit, steer]);
 
     expect(
       harness.seededSession.session.historyEntries.some((entry) =>

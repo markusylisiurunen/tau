@@ -350,19 +350,6 @@ class TauSdkClientImpl implements TauSdkClient {
     });
   }
 
-  sendPrune(
-    sessionId: string,
-    strategy: "earliest" | "largest" | "smart",
-    options: { fraction: number; guidance?: string },
-  ): Promise<SessionProtocolResultByMethod["session.prune"]> {
-    return this.transport.request("session.prune", {
-      sessionId,
-      strategy,
-      fraction: options.fraction,
-      ...(options.guidance !== undefined ? { guidance: options.guidance } : {}),
-    });
-  }
-
   sendRewind(
     sessionId: string,
     historyEntryId: string,
@@ -681,15 +668,6 @@ class TauSdkSessionImpl implements TauSdkSession {
     options: { guidance?: string } = {},
   ): Promise<SessionProtocolResultByMethod["session.compact"]> {
     const result = await this.client.sendCompact(this.activeSessionId(), mode, options);
-    this.discardBufferedDeltasThrough(result.snapshot.revision);
-    return result;
-  }
-
-  async pruneToolResults(
-    strategy: "earliest" | "largest" | "smart",
-    options: { fraction: number; guidance?: string },
-  ): Promise<SessionProtocolResultByMethod["session.prune"]> {
-    const result = await this.client.sendPrune(this.activeSessionId(), strategy, options);
     this.discardBufferedDeltasThrough(result.snapshot.revision);
     return result;
   }

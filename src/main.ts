@@ -1067,7 +1067,16 @@ if (cli.debug) {
   }
 
   const virtualBundle = runtimeBootstrap?.virtualBundle;
-  const debugToolRegistry = ToolCatalog.createRegistry(createLocalToolExecutionBackend());
+  if (!debugPersona || !runtimeBootstrap) {
+    throw new Error("debug runtime bootstrap is unavailable");
+  }
+  const debugToolRegistry = ToolCatalog.createDebugRegistry({
+    backend: createLocalToolExecutionBackend(),
+    cwd,
+    config,
+    persona: debugPersona,
+    modelResolver: runtimeBootstrap.modelResolver.resolveModel,
+  });
   printDebugInfo({
     personas,
     prompts,

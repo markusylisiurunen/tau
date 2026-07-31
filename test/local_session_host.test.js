@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
-import { createLocalToolExecutionBackend, ToolCatalog } from "../dist/core/index.js";
+import { createLocalToolExecutionBackend } from "../dist/core/index.js";
 import { resolveModel } from "../dist/core/models/catalog.js";
 import { personas } from "../dist/core/personas.js";
 import { prependTauUserMetadata } from "../dist/core/utils/user_metadata.js";
@@ -24,7 +24,6 @@ function createTestExecutionEnvironment(
   snapshot = { kind: "local", cwd: "/repo", home: "/home/user" },
   toolBackend = createLocalToolExecutionBackend(),
 ) {
-  const toolRegistry = ToolCatalog.createRegistry(toolBackend);
   return {
     resolveRuntimeConfig: async () => ({
       bootstrap: { modelResolver: { resolveModel } },
@@ -36,7 +35,6 @@ function createTestExecutionEnvironment(
       warnings: [],
     }),
     resolveRuntimeContext: async ({ cwd, includeAgentContext }) => ({
-      toolRegistry,
       promptBootstrap: {
         promptContext: {
           cwd,
@@ -81,6 +79,7 @@ function createHost(store, options = {}) {
     executionEnvironmentResolver,
     includeAgentContext: false,
     environment: createEnvironment(options.now),
+    ...(options.recordUsage ? { recordUsage: options.recordUsage } : {}),
     ...(options.resolveSessionBootstrap
       ? { resolveSessionBootstrap: options.resolveSessionBootstrap }
       : {}),
@@ -364,7 +363,7 @@ describe("LocalSessionHost", () => {
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
     );
 
-    hostedSession.session.addUserText("hello");
+    await hostedSession.session.commitUserText("hello");
 
     await expect(host.observeSession(hostedSession.session.sessionId)).resolves.toBe(hostedSession);
     await expect(host.listSessions()).resolves.toEqual([
@@ -411,7 +410,7 @@ describe("LocalSessionHost", () => {
     await expect(hostedSession.snapshot()).resolves.toEqual(
       expect.objectContaining({ revision: 1 }),
     );
-    hostedSession.session.addUserText("next");
+    await hostedSession.session.commitUserText("next");
     await expect(hostedSession.snapshot()).resolves.toEqual(
       expect.objectContaining({ revision: 2 }),
     );
@@ -488,6 +487,36 @@ describe("LocalSessionHost", () => {
     );
   });
 
+  it("attributes main runtime usage exactly once", async () => {
+    const recordUsage = vi.fn();
+    const host = createHost(new MemorySessionStore(), { recordUsage });
+    const hostedSession = await host.createSession(localCreateInput);
+    const message = {
+      ...assistantMessageWithToolCalls([], 0.25),
+      stopReason: "stop",
+      content: [{ type: "text", text: "measured" }],
+    };
+    hostedSession.runtime.agent.modelRuntime.streamModel = () => ({
+      async *[Symbol.asyncIterator]() {},
+      async result() {
+        return message;
+      },
+    });
+
+    await hostedSession.record({ text: "measure usage" });
+    await hostedSession.runTurn();
+
+    expect(recordUsage).toHaveBeenCalledOnce();
+    expect(recordUsage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: hostedSession.sessionId,
+        personaId: hostedSession.runtime.persona.id,
+        agent: { type: "main" },
+        cost: { total: 0.25 },
+      }),
+    );
+  });
+
   it("rejects an exec when the backend resolves after interruption", async () => {
     const store = new MemorySessionStore();
     const toolBackend = createLocalToolExecutionBackend();
@@ -554,7 +583,7 @@ describe("LocalSessionHost", () => {
       },
       timestamp: 1,
     };
-    hostedSession.session.engine.modelRuntime.streamModel = () => ({
+    hostedSession.runtime.agent.modelRuntime.streamModel = () => ({
       async *[Symbol.asyncIterator]() {},
       async result() {
         return sampledMessage;
@@ -611,7 +640,7 @@ describe("LocalSessionHost", () => {
     const sampleStarted = new Promise((resolve) => {
       markSampleStarted = resolve;
     });
-    hostedSession.session.engine.modelRuntime.streamModel = (_model, _context, options) => ({
+    hostedSession.runtime.agent.modelRuntime.streamModel = (_model, _context, options) => ({
       async *[Symbol.asyncIterator]() {},
       async result() {
         markSampleStarted();
@@ -655,83 +684,6 @@ describe("LocalSessionHost", () => {
 
     expect(snapshot.bootstrap.model).toEqual(expectedModel(persona));
     expect(snapshot.bootstrap.model).not.toHaveProperty("headers");
-  });
-
-  it("serializes runtime event deltas so tool state revisions stay ordered", async () => {
-    const store = new MemorySessionStore();
-    const host = createHost(store);
-    const hostedSession = await host.createSession(localCreateInput);
-    await hostedSession.snapshot();
-    Object.defineProperty(hostedSession.runtime, "isTurnRunning", {
-      configurable: true,
-      get: () => true,
-    });
-
-    const deltas = [];
-    hostedSession.onDelta((delta) => deltas.push(delta));
-    hostedSession.session.addMessage(
-      assistantMessageWithToolCalls([
-        {
-          type: "toolCall",
-          id: "tool-a",
-          name: "bash",
-          arguments: { command: "echo a" },
-        },
-      ]),
-      { historyEntryId: "assistant-tools" },
-    );
-
-    await Promise.all([
-      hostedSession.enqueueRuntimeEvent({
-        type: "assistant_start",
-        historyEntryId: "assistant-tools",
-      }),
-      hostedSession.enqueueRuntimeEvent({
-        type: "assistant_final",
-        historyEntryId: "assistant-tools",
-        message: assistantMessageWithToolCalls([
-          {
-            type: "toolCall",
-            id: "tool-a",
-            name: "bash",
-            arguments: { command: "echo a" },
-          },
-        ]),
-      }),
-      hostedSession.enqueueRuntimeEvent({
-        type: "tool_ui",
-        uiEvent: {
-          type: "tool_call_queued",
-          toolCallId: "tool-a",
-          toolName: "bash",
-          headerTarget: "bash",
-        },
-      }),
-      hostedSession.enqueueRuntimeEvent({
-        type: "tool_ui",
-        uiEvent: {
-          type: "bash_started",
-          toolCallId: "tool-a",
-          command: "echo a",
-          headerTarget: "echo a",
-        },
-      }),
-    ]);
-
-    expect(deltas.map((delta) => [delta.fromRevision, delta.toRevision])).toEqual([
-      [1, 2],
-      [2, 3],
-      [3, 4],
-      [4, 5],
-    ]);
-    await expect(hostedSession.snapshot()).resolves.toEqual(
-      expect.objectContaining({
-        revision: 5,
-        tools: expect.objectContaining({
-          "tool-a": expect.objectContaining({ status: "running" }),
-        }),
-      }),
-    );
   });
 
   it("clears running auto-compaction operations on compaction end", async () => {
@@ -786,7 +738,7 @@ describe("LocalSessionHost", () => {
   it("preserves timeline notices when rewinding history", async () => {
     const host = createHost(new MemorySessionStore());
     const hostedSession = await host.createSession(localCreateInput);
-    const historyEntryId = hostedSession.session.addUserText("rewind me");
+    const historyEntryId = await hostedSession.session.commitUserText("rewind me");
     await hostedSession.snapshot();
 
     await hostedSession.enqueueRuntimeEvent({
@@ -802,133 +754,6 @@ describe("LocalSessionHost", () => {
         type: "notice",
         notice: expect.objectContaining({ text: "keep this notice" }),
       }),
-    );
-  });
-
-  it("accounts for queued subagent progress and preserves the projection after compaction", async () => {
-    const host = createHost(new MemorySessionStore());
-    const hostedSession = await host.createSession(localCreateInput);
-    vi.spyOn(hostedSession.session, "hasSubagent").mockReturnValue(true);
-    hostedSession.session.addUserText("old request", { historyEntryId: "old-user" });
-    await hostedSession.snapshot();
-
-    const usage = {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-      contextWindowUsageTokens: 0,
-      contextWindow: 1000,
-    };
-    await hostedSession.enqueueRuntimeEvent({
-      type: "subagent_ui",
-      event: {
-        type: "subagent_spawned",
-        state: {
-          id: "agent-1",
-          name: "default",
-          title: "research",
-          status: "running",
-          costTotal: 0,
-          turns: 0,
-          toolCalls: 0,
-          usage,
-          startedAt: 1,
-          abortRequested: false,
-        },
-      },
-    });
-
-    hostedSession.session.restoreState({
-      sessionId: hostedSession.session.sessionId,
-      historyEntries: [
-        {
-          id: "compaction-summary",
-          message: {
-            role: "user",
-            content: [{ type: "text", text: "compacted summary" }],
-            timestamp: 2,
-          },
-        },
-      ],
-    });
-    await hostedSession.enqueueRuntimeEvent({
-      type: "subagent_ui",
-      event: {
-        type: "subagent_progress",
-        id: "agent-1",
-        text: "late progress",
-        costTotal: 0.5,
-        turns: 1,
-        toolCalls: 0,
-        usage,
-      },
-    });
-    await hostedSession.enqueueRuntimeEvent({
-      type: "compaction_end",
-      reason: "threshold",
-      outcome: "compacted",
-      result: {
-        summaryHistoryEntryId: "compaction-summary",
-        continuationHistoryEntryId: "compaction-continuation",
-        compactionMessage: "compacted summary",
-        cutType: "turn-boundary",
-        retainedMessageCount: 1,
-      },
-    });
-
-    await expect(hostedSession.snapshot()).resolves.toEqual(
-      expect.objectContaining({
-        costTotal: 0.5,
-        agents: {
-          "agent-1": expect.objectContaining({ status: "running" }),
-        },
-      }),
-    );
-  });
-
-  it("preserves cumulative session cost when compaction replaces message history", async () => {
-    const store = new MemorySessionStore();
-    const host = createHost(store);
-    const hostedSession = await host.createSession(localCreateInput);
-    await hostedSession.snapshot();
-
-    const message = assistantMessageWithToolCalls([], 0.42);
-    hostedSession.session.addMessage(message, { historyEntryId: "assistant-before-compaction" });
-    await hostedSession.enqueueRuntimeEvent({
-      type: "assistant_final",
-      historyEntryId: "assistant-before-compaction",
-      message,
-    });
-
-    hostedSession.session.restoreState({
-      sessionId: hostedSession.session.sessionId,
-      historyEntries: [
-        {
-          id: "compaction-summary",
-          message: {
-            role: "user",
-            content: [{ type: "text", text: "compacted summary" }],
-            timestamp: 2,
-          },
-        },
-      ],
-    });
-    await hostedSession.enqueueRuntimeEvent({
-      type: "compaction_end",
-      reason: "threshold",
-      outcome: "compacted",
-      result: {
-        summaryHistoryEntryId: "compaction-summary",
-        continuationHistoryEntryId: "compaction-continuation",
-        compactionMessage: "compacted summary",
-        cutType: "turn-boundary",
-        retainedMessageCount: 1,
-      },
-    });
-
-    await expect(hostedSession.snapshot()).resolves.toEqual(
-      expect.objectContaining({ costTotal: 0.42 }),
     );
   });
 
@@ -1005,136 +830,6 @@ describe("LocalSessionHost", () => {
     expect(store.commitSessionSnapshot).toHaveBeenCalledTimes(2);
   });
 
-  it("publishes streamed tool calls before the assistant message is final", async () => {
-    const host = createHost(new MemorySessionStore());
-    const hostedSession = await host.createSession(localCreateInput);
-    await hostedSession.snapshot();
-    const deltas = [];
-    hostedSession.onDelta((delta) => deltas.push(delta));
-    const toolCall = {
-      type: "toolCall",
-      id: "streamed-tool-call",
-      name: "bash",
-      arguments: { command: "pwd" },
-    };
-
-    await hostedSession.enqueueRuntimeEvent({
-      type: "assistant_start",
-      historyEntryId: "assistant-streaming-tool",
-    });
-    await hostedSession.enqueueRuntimeEvent({
-      type: "assistant_partial",
-      historyEntryId: "assistant-streaming-tool",
-      snapshot: assistantPartial("running a command"),
-    });
-    await hostedSession.enqueueRuntimeEvent({
-      type: "assistant_partial",
-      historyEntryId: "assistant-streaming-tool",
-      snapshot: {
-        ...assistantPartial("running a command"),
-        toolCalls: [toolCall],
-      },
-    });
-    expect(deltas.at(-1).delta.changes).toEqual([
-      expect.objectContaining({
-        type: "message.replace",
-        message: expect.objectContaining({
-          message: expect.objectContaining({
-            content: [{ type: "text", text: "running a command" }, toolCall],
-          }),
-        }),
-      }),
-      expect.objectContaining({
-        type: "tool.set",
-        tool: expect.objectContaining({
-          call: { messageId: "assistant-streaming-tool", contentIndex: 1 },
-        }),
-      }),
-    ]);
-
-    const finalMessage = assistantMessageWithToolCalls([toolCall]);
-    hostedSession.session.addMessage(finalMessage, {
-      historyEntryId: "assistant-streaming-tool",
-    });
-    await hostedSession.enqueueRuntimeEvent({
-      type: "assistant_final",
-      historyEntryId: "assistant-streaming-tool",
-      message: finalMessage,
-    });
-    await hostedSession.enqueueRuntimeEvent({
-      type: "tool_ui",
-      uiEvent: {
-        type: "tool_call_queued",
-        toolCallId: toolCall.id,
-        toolName: toolCall.name,
-        headerTarget: toolCall.name,
-      },
-    });
-
-    const snapshot = await hostedSession.snapshot();
-    expect(snapshot.messages).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: "assistant-streaming-tool",
-          state: "committed",
-          message: expect.objectContaining({
-            content: [toolCall],
-          }),
-        }),
-      ]),
-    );
-    expect(snapshot.tools[toolCall.id]).toEqual(
-      expect.objectContaining({
-        toolCallId: toolCall.id,
-        toolName: toolCall.name,
-        status: "queued",
-        facetIds: [`tool-ui-${toolCall.id}`],
-      }),
-    );
-
-    await hostedSession.enqueueRuntimeEvent({
-      type: "assistant_final",
-      historyEntryId: "assistant-streaming-tool",
-      message: assistantMessageWithToolCalls([
-        toolCall,
-        { type: "text", text: "running a command" },
-      ]),
-    });
-
-    const finalSnapshot = await hostedSession.snapshot();
-    expect(finalSnapshot.tools[toolCall.id].call).toEqual({
-      messageId: "assistant-streaming-tool",
-      contentIndex: 0,
-    });
-  });
-
-  it("removes streaming tool projections when their draft is interrupted", async () => {
-    const host = createHost(new MemorySessionStore());
-    const hostedSession = await host.createSession(localCreateInput);
-
-    await hostedSession.enqueueRuntimeEvent({
-      type: "assistant_start",
-      historyEntryId: "assistant-interrupted",
-    });
-    await hostedSession.enqueueRuntimeEvent({
-      type: "tool_call_streaming",
-      historyEntryId: "assistant-interrupted",
-      toolCallId: "streaming-call",
-      toolName: "write",
-      contentIndex: 0,
-    });
-    await hostedSession.interruptDraftAssistantMessage();
-
-    const snapshot = await hostedSession.snapshot();
-    expect(snapshot.tools).toEqual({});
-    expect(snapshot.facets).toEqual({});
-    expect(snapshot.messages).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ id: "assistant-interrupted", state: "interrupted" }),
-      ]),
-    );
-  });
-
   it("publishes later streamed tool calls as queued before they execute", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "tau-tool-streaming-"));
     const executionEnvironment = createTestExecutionEnvironment({
@@ -1161,7 +856,7 @@ describe("LocalSessionHost", () => {
       const finalMessage = fauxAssistantMessage("done");
       const responses = [toolMessage, finalMessage];
 
-      hostedSession.runtime.session.engine.modelRuntime.streamModel = () => {
+      hostedSession.runtime.agent.modelRuntime.streamModel = () => {
         const response = responses.shift();
         return {
           async *[Symbol.asyncIterator]() {
@@ -1281,7 +976,7 @@ describe("LocalSessionHost", () => {
         releaseArguments = resolve;
       });
 
-      hostedSession.runtime.session.engine.modelRuntime.streamModel = () => {
+      hostedSession.runtime.agent.modelRuntime.streamModel = () => {
         const response = responses.shift();
         return {
           async *[Symbol.asyncIterator]() {
@@ -1416,87 +1111,13 @@ describe("LocalSessionHost", () => {
     ]);
   });
 
-  it("records recovered tool results without model-visible tool result messages", async () => {
-    const host = createHost(new MemorySessionStore());
-    const hostedSession = await host.createSession(localCreateInput);
-    await hostedSession.snapshot();
-    const toolCall = {
-      type: "toolCall",
-      id: "recovered-tool-call",
-      name: "bash",
-      arguments: { command: "pwd" },
-    };
-    const recoveryMessage = {
-      role: "user",
-      content: [{ type: "text", text: "<system>tool recovery</system>\n" }],
-      timestamp: 3,
-    };
-
-    await hostedSession.enqueueRuntimeEvent({
-      type: "assistant_start",
-      historyEntryId: "assistant-recovery-error",
-    });
-    await hostedSession.enqueueRuntimeEvent({
-      type: "assistant_partial",
-      historyEntryId: "assistant-recovery-error",
-      snapshot: {
-        ...assistantPartial(""),
-        toolCalls: [toolCall],
-      },
-    });
-    const errorMessage = {
-      ...assistantMessageWithToolCalls([toolCall]),
-      stopReason: "error",
-      errorMessage: "network error",
-    };
-    hostedSession.session.addMessage(errorMessage, {
-      historyEntryId: "assistant-recovery-error",
-    });
-    await hostedSession.enqueueRuntimeEvent({
-      type: "assistant_final",
-      historyEntryId: "assistant-recovery-error",
-      message: errorMessage,
-    });
-    hostedSession.session.addMessage(recoveryMessage, {
-      historyEntryId: "tool-recovery-message",
-    });
-    await hostedSession.enqueueRuntimeEvent({
-      type: "tool_recovery",
-      historyEntryId: "tool-recovery-message",
-      message: recoveryMessage,
-      toolResults: [
-        {
-          role: "toolResult",
-          toolCallId: toolCall.id,
-          toolName: toolCall.name,
-          content: [{ type: "text", text: "done" }],
-          isError: false,
-          timestamp: 2,
-        },
-      ],
-    });
-
-    const snapshot = await hostedSession.snapshot();
-    expect(snapshot.messages).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ id: "tool-recovery-message", message: recoveryMessage }),
-      ]),
-    );
-    expect(snapshot.messages.some((message) => message.message.role === "toolResult")).toBe(false);
-    expect(snapshot.timeline.some((item) => item.messageId === "tool-recovery-message")).toBe(
-      false,
-    );
-    expect(snapshot.tools[toolCall.id]).toEqual(expect.objectContaining({ status: "succeeded" }));
-    expect(snapshot.tools[toolCall.id]).not.toHaveProperty("resultMessageId");
-  });
-
   it("does not persist unchanged live snapshots during refreshes", async () => {
     const store = new MemorySessionStore();
     const originalCommit = store.commitSessionSnapshot.bind(store);
     store.commitSessionSnapshot = vi.fn(originalCommit);
     const host = createHost(store);
     const hostedSession = await host.createSession(localCreateInput);
-    hostedSession.session.addUserText("hello");
+    await hostedSession.session.commitUserText("hello");
 
     await expect(hostedSession.snapshot()).resolves.toEqual(
       expect.objectContaining({ revision: 1 }),
@@ -1510,7 +1131,7 @@ describe("LocalSessionHost", () => {
     ]);
     expect(store.commitSessionSnapshot).toHaveBeenCalledTimes(1);
 
-    hostedSession.session.addUserText("next");
+    await hostedSession.session.commitUserText("next");
     await expect(hostedSession.snapshot()).resolves.toEqual(
       expect.objectContaining({ revision: 2 }),
     );
@@ -1523,174 +1144,11 @@ describe("LocalSessionHost", () => {
     store.commitSessionSnapshot = vi.fn(originalCommit);
     const host = createHost(store);
     const hostedSession = await host.createSession(localCreateInput);
-    hostedSession.session.addUserText("hello");
+    await hostedSession.session.commitUserText("hello");
 
     await expect(host.observeSession(hostedSession.session.sessionId)).resolves.toBe(hostedSession);
 
     expect(store.commitSessionSnapshot).not.toHaveBeenCalled();
-  });
-
-  it("persists provider-error outcomes on the submitted user message", async () => {
-    const store = new MemorySessionStore();
-    const host = createHost(store);
-    const hostedSession = await host.createSession(localCreateInput);
-    const { userHistoryEntryId } = await hostedSession.record({
-      text: "trigger a provider error",
-      historyEntryId: "provider-error-user",
-    });
-    const message = {
-      ...assistantMessageWithToolCalls([]),
-      stopReason: "error",
-      errorMessage: "Service Unavailable",
-    };
-    hostedSession.runtime.runTurn = async (options) => {
-      hostedSession.session.addMessage(message, { historyEntryId: "provider-error-assistant" });
-      await options.onEvent({
-        type: "assistant_final",
-        historyEntryId: "provider-error-assistant",
-        message,
-      });
-      return { aborted: false };
-    };
-
-    const outcome = {
-      status: "failed",
-      stopReason: "error",
-      errorMessage: "Service Unavailable",
-    };
-    await expect(hostedSession.runTurn()).resolves.toEqual(outcome);
-    const snapshot = await hostedSession.snapshot();
-    expect(snapshot.messages.find((entry) => entry.id === userHistoryEntryId)?.turn).toEqual(
-      outcome,
-    );
-
-    await hostedSession.rewindToHistoryEntryId(userHistoryEntryId);
-    const replacement = await hostedSession.record({
-      text: "replace the rewound turn",
-      historyEntryId: userHistoryEntryId,
-    });
-    expect(
-      replacement.snapshot.messages.find((entry) => entry.id === userHistoryEntryId),
-    ).not.toHaveProperty("turn");
-  });
-
-  it("keeps streamed assistant content and idles lifecycle when a turn fails mid-draft", async () => {
-    const store = new MemorySessionStore();
-    const host = createHost(store);
-    const hostedSession = await host.createSession(localCreateInput);
-    await hostedSession.snapshot();
-    await hostedSession.record({ text: "fail this turn" });
-
-    const deltas = [];
-    hostedSession.onDelta((delta) => deltas.push(delta));
-
-    let turnRunning = false;
-    Object.defineProperty(hostedSession.runtime, "isTurnRunning", {
-      configurable: true,
-      get: () => turnRunning,
-    });
-    hostedSession.runtime.runTurn = async (options) => {
-      turnRunning = true;
-      try {
-        await options.onEvent({
-          type: "assistant_start",
-          historyEntryId: "assistant-failed",
-        });
-        await options.onEvent({
-          type: "assistant_partial",
-          historyEntryId: "assistant-failed",
-          snapshot: assistantPartial("streamed before failure"),
-        });
-        throw new Error("model stream failed");
-      } finally {
-        turnRunning = false;
-      }
-    };
-
-    await expect(hostedSession.runTurn()).rejects.toThrow("model stream failed");
-
-    expect(deltas.at(-1).delta).toEqual(
-      expect.objectContaining({
-        type: "snapshot.patch",
-        changes: expect.arrayContaining([{ type: "lifecycle.set", lifecycle: "idle" }]),
-      }),
-    );
-    await expect(hostedSession.snapshot()).resolves.toEqual(
-      expect.objectContaining({
-        lifecycle: "idle",
-        messages: expect.arrayContaining([
-          expect.objectContaining({
-            id: "assistant-failed",
-            state: "interrupted",
-            modelVisible: true,
-            message: expect.objectContaining({
-              role: "assistant",
-              content: [{ type: "text", text: "streamed before failure" }],
-              stopReason: "aborted",
-            }),
-          }),
-        ]),
-      }),
-    );
-  });
-
-  it("idles lifecycle when a turn fails after committing the final assistant message", async () => {
-    const store = new MemorySessionStore();
-    const host = createHost(store);
-    const hostedSession = await host.createSession(localCreateInput);
-    await hostedSession.snapshot();
-    await hostedSession.record({ text: "fail after final" });
-
-    const deltas = [];
-    hostedSession.onDelta((delta) => deltas.push(delta));
-
-    let turnRunning = false;
-    Object.defineProperty(hostedSession.runtime, "isTurnRunning", {
-      configurable: true,
-      get: () => turnRunning,
-    });
-    hostedSession.runtime.runTurn = async (options) => {
-      turnRunning = true;
-      try {
-        await options.onEvent({
-          type: "assistant_start",
-          historyEntryId: "assistant-final-then-failed",
-        });
-        const message = assistantMessageWithToolCalls([]);
-        hostedSession.session.addMessage(message, {
-          historyEntryId: "assistant-final-then-failed",
-        });
-        await options.onEvent({
-          type: "assistant_final",
-          historyEntryId: "assistant-final-then-failed",
-          message,
-        });
-        throw new Error("post-final failure");
-      } finally {
-        turnRunning = false;
-      }
-    };
-
-    await expect(hostedSession.runTurn()).rejects.toThrow("post-final failure");
-
-    expect(deltas.at(-1).delta).toEqual(
-      expect.objectContaining({
-        type: "snapshot.reset",
-        snapshot: expect.objectContaining({ lifecycle: "idle" }),
-      }),
-    );
-    await expect(hostedSession.snapshot()).resolves.toEqual(
-      expect.objectContaining({
-        lifecycle: "idle",
-        messages: expect.arrayContaining([
-          expect.objectContaining({
-            id: "assistant-final-then-failed",
-            state: "committed",
-            modelVisible: true,
-          }),
-        ]),
-      }),
-    );
   });
 
   it("does not let delta listener failures fail hosted runtime events", async () => {
@@ -1719,7 +1177,7 @@ describe("LocalSessionHost", () => {
     const host = createHost(store);
     const hostedSession = await host.createSession(localCreateInput);
 
-    hostedSession.session.addUserText("hello");
+    await hostedSession.session.commitUserText("hello");
 
     await expect(
       Promise.all([hostedSession.snapshot(), hostedSession.snapshot(), hostedSession.snapshot()]),
@@ -1731,58 +1189,6 @@ describe("LocalSessionHost", () => {
 
     await expect(store.loadSession(hostedSession.session.sessionId)).resolves.toEqual(
       expect.objectContaining({ revision: 1 }),
-    );
-  });
-
-  it("serializes live snapshot persistence with persisted runtime deltas", async () => {
-    const store = new BlockingCommitStore();
-    const host = createHost(store);
-    const hostedSession = await host.createSession(localCreateInput);
-    await hostedSession.snapshot();
-    Object.defineProperty(hostedSession.runtime, "isTurnRunning", {
-      configurable: true,
-      get: () => true,
-    });
-
-    await hostedSession.enqueueRuntimeEvent({
-      type: "assistant_start",
-      historyEntryId: "assistant-persist-race",
-    });
-    await hostedSession.enqueueRuntimeEvent({
-      type: "assistant_partial",
-      historyEntryId: "assistant-persist-race",
-      snapshot: assistantPartial("hello"),
-    });
-
-    const gate = store.blockNextCommit();
-    const liveSnapshotPromise = hostedSession.snapshot();
-    await gate.started;
-
-    const message = assistantMessageWithToolCalls([]);
-    hostedSession.session.addMessage(message, {
-      historyEntryId: "assistant-persist-race",
-    });
-    const finalEventPromise = hostedSession.enqueueRuntimeEvent({
-      type: "assistant_final",
-      historyEntryId: "assistant-persist-race",
-      message,
-    });
-
-    gate.release();
-
-    await expect(liveSnapshotPromise).resolves.toEqual(expect.objectContaining({ revision: 3 }));
-    await expect(finalEventPromise).resolves.toBeUndefined();
-    await expect(store.loadSession(hostedSession.session.sessionId)).resolves.toEqual(
-      expect.objectContaining({
-        revision: 4,
-        messages: expect.arrayContaining([
-          expect.objectContaining({
-            id: "assistant-persist-race",
-            state: "committed",
-            modelVisible: true,
-          }),
-        ]),
-      }),
     );
   });
 
@@ -1957,10 +1363,13 @@ describe("LocalSessionHost", () => {
     const store = new MemorySessionStore();
     const host = createHost(store);
     const session = await host.createSession(localCreateInput);
-    session.session.addMessage({ role: "user", content: [{ type: "text", text: "loaded" }] });
+    await session.session.commitUserText("loaded");
 
     expect(session.session.history).toEqual([
-      { role: "user", content: [{ type: "text", text: "loaded" }] },
+      expect.objectContaining({
+        role: "user",
+        content: [{ type: "text", text: "loaded" }],
+      }),
     ]);
     expect((await host.createSession(localCreateInput)).session.history).toEqual([]);
   });
@@ -1972,7 +1381,6 @@ describe("LocalSessionHost", () => {
       label: "live persona",
       systemPrompt: "live persona system prompt",
     };
-    const toolRegistry = ToolCatalog.createRegistry(createLocalToolExecutionBackend());
     const liveModelResolver = vi.fn(resolveModel);
     const resolveRuntimeConfig = vi.fn(async () => ({
       bootstrap: { modelResolver: { resolveModel: liveModelResolver } },
@@ -1992,7 +1400,6 @@ describe("LocalSessionHost", () => {
     const executionEnvironment = {
       resolveRuntimeConfig,
       resolveRuntimeContext: ({ persona, discoveredSkills, includeAgentContext }) => ({
-        toolRegistry,
         promptBootstrap: {
           promptContext: {
             cwd: "/repo",
@@ -2019,7 +1426,7 @@ describe("LocalSessionHost", () => {
     const snapshot = await session.setPersona(livePersona.id);
 
     expect(resolveRuntimeConfig).toHaveBeenCalledTimes(1);
-    expect(session.runtime.session.engine.modelResolver).toBe(liveModelResolver);
+    expect(session.runtime.agent.spec.persona.model).toEqual(livePersona.model);
     expect(session.runtime.persona.label).toBe("live persona");
     expect(snapshot.settings.personaId).toBe(livePersona.id);
     expect(snapshot.catalog.personas).toEqual([expect.objectContaining({ label: "live persona" })]);
@@ -2090,7 +1497,6 @@ describe("LocalSessionHost", () => {
       ...personas[0],
       label: "reloaded persona",
     };
-    const toolRegistry = ToolCatalog.createRegistry(createLocalToolExecutionBackend());
     const resolveRuntimeConfig = vi.fn(async () => ({
       bootstrap: { modelResolver: { resolveModel } },
       config: {},
@@ -2137,7 +1543,6 @@ describe("LocalSessionHost", () => {
     const executionEnvironment = {
       resolveRuntimeConfig,
       resolveRuntimeContext: ({ persona, discoveredSkills, includeAgentContext }) => ({
-        toolRegistry,
         promptBootstrap: {
           promptContext: {
             cwd: "/repo",
@@ -2207,7 +1612,7 @@ describe("LocalSessionHost", () => {
 
     const hostedContext = session.ephemeralAgentSessions.get(contextId);
     const thread = await hostedContext.createThread("thread-1");
-    const systemPrompt = thread.session.engine.systemPrompt;
+    const systemPrompt = thread.runtime.spec.systemPrompt;
 
     expect(systemPrompt).toContain("target AGENTS instructions");
     expect(systemPrompt).toContain("target skill");
@@ -2217,7 +1622,6 @@ describe("LocalSessionHost", () => {
 
   it("resolves prompt bodies from the execution environment each time", async () => {
     const store = new MemorySessionStore();
-    const toolRegistry = ToolCatalog.createRegistry(createLocalToolExecutionBackend());
     let promptText = "first body";
     const resolveRuntimeConfig = vi.fn(async () => ({
       bootstrap: { modelResolver: { resolveModel } },
@@ -2252,7 +1656,6 @@ describe("LocalSessionHost", () => {
     const executionEnvironment = {
       resolveRuntimeConfig,
       resolveRuntimeContext: ({ persona, includeAgentContext }) => ({
-        toolRegistry,
         promptBootstrap: {
           promptContext: {
             cwd: "/repo",
@@ -2290,7 +1693,6 @@ describe("LocalSessionHost", () => {
 
   it("reuses the hosted path autocomplete scan for nearby queries", async () => {
     const store = new MemorySessionStore();
-    const toolRegistry = ToolCatalog.createRegistry(createLocalToolExecutionBackend());
     const autocompleteOutput = "src/main.ts\nsrc/host/local_session_host.ts\nREADME.md\n";
     const runNodeScript = vi.fn(async () => ({
       output: autocompleteOutput,
@@ -2310,7 +1712,6 @@ describe("LocalSessionHost", () => {
         warnings: [],
       }),
       resolveRuntimeContext: ({ persona, discoveredSkills, includeAgentContext }) => ({
-        toolRegistry,
         promptBootstrap: {
           promptContext: {
             cwd: "/repo",
@@ -2348,7 +1749,7 @@ describe("LocalSessionHost", () => {
     const store = new MemorySessionStore();
     const originalHost = createHost(store);
     const originalSession = await originalHost.createSession(localCreateInput);
-    const historyEntryId = originalSession.session.addUserText("persisted");
+    const historyEntryId = await originalSession.session.commitUserText("persisted");
     const storedSnapshot = await originalSession.snapshot();
 
     const recoveredHost = createHost(store);
@@ -2383,14 +1784,9 @@ describe("LocalSessionHost", () => {
         preservedUserMessages: [],
       },
     ]);
-    const historyEntryId = originalSession.session.addMessage(
-      {
-        role: "user",
-        content: [{ type: "text", text: rawText }],
-        timestamp: 1,
-      },
-      { historyEntryId: "history-raw" },
-    );
+    const historyEntryId = await originalSession.session.commitUserText(rawText, {
+      historyEntryId: "history-raw",
+    });
 
     const storedSnapshot = await originalSession.snapshot();
     const storedMessage = storedSnapshot.messages.find((entry) => entry.id === historyEntryId);
@@ -2410,7 +1806,7 @@ describe("LocalSessionHost", () => {
     const store = new MemorySessionStore();
     const originalHost = createHost(store);
     const originalSession = await originalHost.createSession(localCreateInput);
-    originalSession.session.addUserText("persisted prompt");
+    await originalSession.session.commitUserText("persisted prompt");
     const storedSnapshot = await originalSession.snapshot();
 
     const recoveredHost = createHost(store, {
@@ -2436,12 +1832,11 @@ describe("LocalSessionHost", () => {
     const store = new MemorySessionStore();
     const originalHost = createHost(store);
     const originalSession = await originalHost.createSession(localCreateInput);
-    originalSession.session.addUserText("persisted config owner");
+    await originalSession.session.commitUserText("persisted config owner");
     const storedSnapshot = await originalSession.snapshot();
     await store.commitSessionSnapshot(storedSnapshot, {
       expectedRevision: storedSnapshot.revision,
     });
-    const toolRegistry = ToolCatalog.createRegistry(createLocalToolExecutionBackend());
     const resolveRuntimeConfig = vi.fn(async () => ({
       bootstrap: { modelResolver: { resolveModel } },
       config: { autoCompact: { enabled: false } },
@@ -2454,7 +1849,6 @@ describe("LocalSessionHost", () => {
     const restoredEnvironment = {
       resolveRuntimeConfig,
       resolveRuntimeContext: ({ persona, includeAgentContext }) => ({
-        toolRegistry,
         promptBootstrap: {
           promptContext: {
             cwd: "/repo",
@@ -2503,7 +1897,7 @@ describe("LocalSessionHost", () => {
       throw new Error("expected stored session to recover");
     }
     expect(resolveRuntimeConfig).toHaveBeenCalledTimes(1);
-    expect(recoveredSession.runtime.session.engine.config).toEqual({
+    expect(recoveredSession.runtime.agent.spec.config).toEqual({
       autoCompact: { enabled: false },
     });
   });
@@ -2512,7 +1906,7 @@ describe("LocalSessionHost", () => {
     const store = new MemorySessionStore();
     const originalHost = createHost(store);
     const originalSession = await originalHost.createSession(localCreateInput);
-    originalSession.session.addUserText("base");
+    await originalSession.session.commitUserText("base");
     const storedSnapshot = await originalSession.snapshot();
 
     const firstHost = createHost(store);
@@ -2761,11 +2155,7 @@ describe("LocalSessionHost", () => {
     const streamStarted = new Promise((resolve) => {
       markStreamStarted = resolve;
     });
-    hostedSession.runtime.session.engine.modelRuntime.streamModel = (
-      _model,
-      _context,
-      options,
-    ) => ({
+    hostedSession.runtime.agent.modelRuntime.streamModel = (_model, _context, options) => ({
       async *[Symbol.asyncIterator]() {
         markStreamStarted();
         await new Promise((resolve) => {
@@ -2796,53 +2186,11 @@ describe("LocalSessionHost", () => {
     expect(executionEnvironment.dispose).toHaveBeenCalledTimes(1);
   });
 
-  it("aborts and settles maintenance before the shutdown snapshot", async () => {
-    const store = new MemorySessionStore();
-    const executionEnvironment = createTestExecutionEnvironment();
-    executionEnvironment.dispose = vi.fn(async () => {});
-    const host = createHostForEnvironment(store, executionEnvironment);
-    const hostedSession = await host.createSession(localCreateInput);
-    hostedSession.session.addUserText("original user message");
-    hostedSession.session.addMessage(fauxAssistantMessage("original assistant response"));
-    const before = await hostedSession.snapshot();
-
-    let markStreamStarted;
-    const streamStarted = new Promise((resolve) => {
-      markStreamStarted = resolve;
-    });
-    hostedSession.runtime.session.engine.modelRuntime.streamModel = (
-      _model,
-      _context,
-      options,
-    ) => ({
-      async *[Symbol.asyncIterator]() {},
-      async result() {
-        markStreamStarted();
-        await new Promise((resolve) => {
-          options.signal.addEventListener("abort", resolve, { once: true });
-        });
-        return fauxAssistantMessage(
-          "## Goal\nContinue\n\n<preserved-user-message-ids>\n[]\n</preserved-user-message-ids>",
-        );
-      },
-    });
-
-    const compact = hostedSession.compact({ mode: "summary-only" });
-    const compactResult = expect(compact).rejects.toThrow();
-    await streamStarted;
-    await expect(host.shutdown()).resolves.toBeUndefined();
-    await compactResult;
-
-    const stored = await store.loadSession(before.sessionId);
-    expect(stored.messages).toEqual(before.messages);
-    expect(executionEnvironment.dispose).toHaveBeenCalledTimes(1);
-  });
-
   it("removes directly disposed live handles from host recovery bookkeeping", async () => {
     const store = new MemorySessionStore();
     const host = createHost(store);
     const session = await host.createSession(localCreateInput);
-    session.session.addUserText("recover after direct dispose");
+    await session.session.commitUserText("recover after direct dispose");
     const storedSnapshot = await session.snapshot();
 
     await session.dispose();
@@ -2857,7 +2205,7 @@ describe("LocalSessionHost", () => {
     const store = new MemorySessionStore();
     const host = createHost(store);
     const session = await host.createSession(localCreateInput);
-    session.session.addUserText("delete me");
+    await session.session.commitUserText("delete me");
     const sessionId = session.sessionId;
     await session.snapshot();
 

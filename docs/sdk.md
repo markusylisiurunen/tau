@@ -331,9 +331,6 @@ options:
 - `compact("summary-only" | "summary-and-last", options?)`
   - sends `session.compact` with this session id and optional `guidance`
   - resolves with the updated snapshot plus `compactionMessage` and `includedLastAssistant`
-- `pruneToolResults("earliest" | "largest" | "smart", { fraction, guidance? })`
-  - sends `session.prune` with this session id
-  - resolves with the updated snapshot plus prune counts and operation message
 - `rewindToHistoryEntryId(historyEntryId)`
   - sends `session.rewind` with this session id
   - resolves with the updated snapshot, removed history ids, and rewound user text
@@ -349,6 +346,8 @@ options:
 - `closeEphemeralContext(contextId)`
   - sends `session.ephemeral.close` with this session id
   - closes non-persisted host-owned ephemeral agent state
+
+Main-session turns, supervised background agents, and ephemeral threads share one canonical stateful runtime. Ephemeral thread continuation and forks therefore use the same model/tool loop, retry and recovery behavior, automatic compaction, and event ordering as ordinary session work; the SDK only controls their host-owned lifecycle and request mapping.
 
 A one-off sampling call uses the same provider-neutral message shape for input and output:
 

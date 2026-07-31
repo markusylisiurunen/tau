@@ -10,9 +10,20 @@ function createToolCall(args = {}) {
   };
 }
 
-async function runTool(tool, ...args) {
-  const dispatch = await tool.dispatch(...args);
-  return dispatch.run;
+async function runTool(tool, toolCall, signal = new AbortController().signal) {
+  const activities = [];
+  const outcome = await tool.execute(toolCall, {
+    agentId: "test-agent",
+    turnId: "test-turn",
+    assistantMessageId: "test-assistant",
+    signal,
+    emitActivity: async (activity) => activities.push(activity),
+  });
+  return {
+    toolResult: { ...outcome, toolCallId: toolCall.id, toolName: toolCall.name },
+    uiEvent: activities.at(-1),
+    activities,
+  };
 }
 
 describe("ClientToolBroker", () => {
@@ -38,7 +49,9 @@ describe("ClientToolBroker", () => {
     registration.attachSession("session-1");
 
     const definition = broker.getToolDefinitions("session-1")[0];
-    expect(definition.getDisplayTarget(createToolCall({ choice: "a" }), {})).toBe("local_picker");
+    expect(definition.describe(createToolCall({ choice: "a" }))).toEqual({
+      headerTarget: "local_picker",
+    });
     const result = await runTool(
       definition,
       createToolCall({ choice: "a" }),
@@ -119,16 +132,18 @@ describe("ClientToolBroker", () => {
       registration.attachSession("session-1");
       const definition = broker.getToolDefinitions("session-1")[0];
 
-      const dispatch = await definition.dispatch(
-        createToolCall({ choice: "a" }),
-        new AbortController().signal,
-        {},
-      );
+      const execution = definition.execute(createToolCall({ choice: "a" }), {
+        agentId: "test-agent",
+        turnId: "test-turn",
+        assistantMessageId: "test-assistant",
+        signal: new AbortController().signal,
+        emitActivity: async () => {},
+      });
       await vi.advanceTimersByTimeAsync(5000);
-      const result = await dispatch.run;
+      const result = await execution;
 
-      expect(result.toolResult.isError).toBe(true);
-      expect(result.toolResult.content[0].text).toBe(
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toBe(
         "Client tool 'local_picker' is unavailable because its owning client did not acknowledge the tool call within 5000ms.",
       );
       expect(sendCancel).toHaveBeenCalledWith(expect.objectContaining({ reason: "timeout" }));

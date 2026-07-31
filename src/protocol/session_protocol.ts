@@ -35,7 +35,6 @@ export const SESSION_PROTOCOL_METHODS = [
   "session.autocompletePaths",
   "session.reload",
   "session.compact",
-  "session.prune",
   "session.rewind",
   "session.terminateSubagent",
   "session.ephemeral.create",
@@ -198,11 +197,6 @@ export type SessionProtocolCompactParams = SessionProtocolSessionIdParams & {
   mode: "summary-only" | "summary-and-last";
   guidance?: string;
 };
-export type SessionProtocolPruneParams = SessionProtocolSessionIdParams & {
-  strategy: "earliest" | "largest" | "smart";
-  fraction: number;
-  guidance?: string;
-};
 export type SessionProtocolRewindParams = SessionProtocolSessionIdParams & {
   historyEntryId: string;
 };
@@ -262,7 +256,6 @@ export type SessionProtocolParamsByMethod = {
   "session.autocompletePaths": SessionProtocolAutocompletePathsParams;
   "session.reload": SessionProtocolReloadParams;
   "session.compact": SessionProtocolCompactParams;
-  "session.prune": SessionProtocolPruneParams;
   "session.rewind": SessionProtocolRewindParams;
   "session.terminateSubagent": SessionProtocolTerminateSubagentParams;
   "session.ephemeral.create": SessionProtocolEphemeralCreateParams;
@@ -409,7 +402,7 @@ export type SessionProtocolNotice = {
 };
 
 export type SessionProtocolOperation = {
-  kind: "auto-compaction" | "manual-compaction" | "prune" | "reload" | "rewind";
+  kind: "auto-compaction" | "manual-compaction" | "reload" | "rewind";
   status: "running" | "succeeded" | "failed" | "cancelled" | "skipped";
   startedAt: number;
   finishedAt?: number;
@@ -643,16 +636,6 @@ export type SessionProtocolCompactResult = {
   compactionMessage: string;
   includedLastAssistant: boolean;
 };
-export type SessionProtocolPruneResult = {
-  snapshot: SessionProtocolSnapshot;
-  message: string;
-  noop: boolean;
-  bashResultsPruned: number;
-  editCallsPruned: number;
-  editResultsPruned: number;
-  bytesPruned: number;
-};
-
 export type SessionProtocolRewindResult = {
   snapshot: SessionProtocolSnapshot;
   historyEntryId: string;
@@ -730,7 +713,6 @@ export type SessionProtocolResultByMethod = {
   "session.autocompletePaths": SessionProtocolAutocompletePathsResult;
   "session.reload": SessionProtocolReloadResult;
   "session.compact": SessionProtocolCompactResult;
-  "session.prune": SessionProtocolPruneResult;
   "session.rewind": SessionProtocolRewindResult;
   "session.terminateSubagent": SessionProtocolTerminateSubagentResult;
   "session.ephemeral.create": SessionProtocolEphemeralCreateResult;
@@ -1380,15 +1362,6 @@ const sessionProtocolCompactParamsSchema = z
   })
   .strip();
 
-const sessionProtocolPruneParamsSchema = z
-  .object({
-    sessionId: nonEmptyStringSchema,
-    strategy: z.enum(["earliest", "largest", "smart"]),
-    fraction: z.number().min(0).max(1),
-    guidance: z.string().optional(),
-  })
-  .strip();
-
 const sessionProtocolRewindParamsSchema = z
   .object({
     sessionId: nonEmptyStringSchema,
@@ -1734,7 +1707,7 @@ const sessionProtocolNoticeSchema = z
 
 const sessionProtocolOperationSchema = z
   .object({
-    kind: z.enum(["auto-compaction", "manual-compaction", "prune", "reload", "rewind"]),
+    kind: z.enum(["auto-compaction", "manual-compaction", "reload", "rewind"]),
     status: z.enum(["running", "succeeded", "failed", "cancelled", "skipped"]),
     startedAt: z.number().finite(),
     finishedAt: z.number().finite().optional(),
@@ -2375,18 +2348,6 @@ const sessionProtocolCompactResultSchema = z
     snapshot: sessionProtocolSnapshotSchema,
     compactionMessage: nonEmptyStringSchema,
     includedLastAssistant: z.boolean(),
-  })
-  .strip();
-
-const sessionProtocolPruneResultSchema = z
-  .object({
-    snapshot: sessionProtocolSnapshotSchema,
-    message: nonEmptyStringSchema,
-    noop: z.boolean(),
-    bashResultsPruned: z.number().int().nonnegative(),
-    editCallsPruned: z.number().int().nonnegative(),
-    editResultsPruned: z.number().int().nonnegative(),
-    bytesPruned: z.number().int().nonnegative(),
   })
   .strip();
 
@@ -3243,10 +3204,6 @@ export function validateSessionProtocolParams(
   params: unknown,
 ): SessionProtocolParamsValidationResult<SessionProtocolCompactParams>;
 export function validateSessionProtocolParams(
-  method: "session.prune",
-  params: unknown,
-): SessionProtocolParamsValidationResult<SessionProtocolPruneParams>;
-export function validateSessionProtocolParams(
   method: "session.rewind",
   params: unknown,
 ): SessionProtocolParamsValidationResult<SessionProtocolRewindParams>;
@@ -3321,8 +3278,6 @@ export function validateSessionProtocolParams(
       return validateAutocompletePathsParams(params);
     case "session.compact":
       return validateCompactParams(params);
-    case "session.prune":
-      return validatePruneParams(params);
     case "session.rewind":
       return validateRewindParams(params);
     case "session.terminateSubagent":
@@ -3370,8 +3325,6 @@ export function validateSessionProtocolResult(
       return validateResult(method, result, sessionProtocolReloadResultSchema);
     case "session.compact":
       return validateResult(method, result, sessionProtocolCompactResultSchema);
-    case "session.prune":
-      return validateResult(method, result, sessionProtocolPruneResultSchema);
     case "session.rewind":
       return validateResult(method, result, sessionProtocolRewindResultSchema);
     case "session.terminateSubagent":
@@ -3718,36 +3671,6 @@ function validateCompactParams(
     value: {
       sessionId: parsed.data.sessionId,
       mode: parsed.data.mode,
-      ...(parsed.data.guidance !== undefined ? { guidance: parsed.data.guidance } : {}),
-    },
-  };
-}
-
-function validatePruneParams(
-  params: unknown,
-): SessionProtocolParamsValidationResult<SessionProtocolPruneParams> {
-  const parsed = sessionProtocolPruneParamsSchema.safeParse(params);
-  if (!parsed.success) {
-    const message = hasIssue(parsed.error, [], "invalid_type")
-      ? "session.prune params must be an object"
-      : hasIssue(parsed.error, ["sessionId"])
-        ? "session.prune params.sessionId must be a non-empty string"
-        : hasIssue(parsed.error, ["strategy"])
-          ? "session.prune params.strategy must be 'earliest', 'largest', or 'smart'"
-          : hasIssue(parsed.error, ["fraction"])
-            ? "session.prune params.fraction must be a number between 0 and 1"
-            : hasIssue(parsed.error, ["guidance"])
-              ? "session.prune params.guidance must be a string when provided"
-              : `session.prune params are invalid: ${formatZodError(parsed.error)}`;
-    return invalidParams(message);
-  }
-
-  return {
-    ok: true,
-    value: {
-      sessionId: parsed.data.sessionId,
-      strategy: parsed.data.strategy,
-      fraction: parsed.data.fraction,
       ...(parsed.data.guidance !== undefined ? { guidance: parsed.data.guidance } : {}),
     },
   };

@@ -17,8 +17,6 @@ import type {
   SessionProtocolEphemeralSubmitResult,
   SessionProtocolExecParams,
   SessionProtocolExecResult,
-  SessionProtocolPruneParams,
-  SessionProtocolPruneResult,
   SessionProtocolRecordParams,
   SessionProtocolRecordResult,
   SessionProtocolReloadResult,
@@ -60,6 +58,11 @@ export type TauHostedSession = {
   waitForActiveWork(): Promise<void>;
   requestTurnBoundaryStop(): boolean;
   cancelTurnBoundaryStop(): boolean;
+  steer(text: string): Promise<{
+    userHistoryEntryId: string;
+    turn: SessionProtocolTurnOutcome;
+  }>;
+  cancelSteering(): string[];
   exec(
     options: Omit<SessionProtocolExecParams, "sessionId"> & {
       signal?: AbortSignal;
@@ -87,9 +90,6 @@ export type TauHostedSession = {
   compact(
     options: Omit<SessionProtocolCompactParams, "sessionId">,
   ): Promise<SessionProtocolCompactResult>;
-  pruneToolResults(
-    options: Omit<SessionProtocolPruneParams, "sessionId">,
-  ): Promise<SessionProtocolPruneResult>;
   rewindToHistoryEntryId(
     historyEntryId: SessionProtocolRewindParams["historyEntryId"],
   ): Promise<SessionProtocolRewindResult>;

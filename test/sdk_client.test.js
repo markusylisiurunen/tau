@@ -204,19 +204,6 @@ class FakeSessionProtocolTransport {
             compactionMessage: "compacted summary",
             includedLastAssistant: params.mode === "summary-and-last",
           };
-        case "session.prune":
-          return {
-            snapshot: {
-              ...createSnapshot(params.sessionId),
-              revision: 3,
-            },
-            message: `pruned with ${params.strategy}`,
-            noop: false,
-            bashResultsPruned: 1,
-            editCallsPruned: 2,
-            editResultsPruned: 1,
-            bytesPruned: 1024,
-          };
         case "session.rewind":
           return {
             snapshot: createProtocolSnapshot({
@@ -679,30 +666,6 @@ describe("sdk_client", () => {
         sessionId: "session-1",
         mode: "summary-and-last",
         guidance: "preserve decisions",
-      },
-    });
-
-    await expect(
-      readySession.pruneToolResults("smart", { fraction: 0.5, guidance: "keep errors" }),
-    ).resolves.toEqual({
-      snapshot: expect.objectContaining({
-        sessionId: "session-1",
-        revision: 3,
-      }),
-      message: "pruned with smart",
-      noop: false,
-      bashResultsPruned: 1,
-      editCallsPruned: 2,
-      editResultsPruned: 1,
-      bytesPruned: 1024,
-    });
-    expect(transport.requests.at(-1)).toEqual({
-      method: "session.prune",
-      params: {
-        sessionId: "session-1",
-        strategy: "smart",
-        fraction: 0.5,
-        guidance: "keep errors",
       },
     });
 

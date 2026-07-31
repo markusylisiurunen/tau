@@ -35,18 +35,27 @@ function createDeps(client) {
   };
 }
 
-async function runTool(
-  tool,
-  arguments_,
-  context = { scope: "subagent", cwd: "/project", config: { apiKeys: { exa: "exa-key" } } },
-  signal = new AbortController().signal,
-) {
-  const dispatch = await tool.dispatch(
-    { id: "web-1", name: "web", arguments: arguments_ },
+function createWebTool(backend, deps, config = { apiKeys: { exa: "exa-key" } }) {
+  return createWebToolDefinition(backend, config, deps);
+}
+
+async function runTool(tool, arguments_, signal = new AbortController().signal) {
+  const call = { id: "web-1", name: "web", arguments: arguments_ };
+  const activities = [];
+  const outcome = await tool.execute(call, {
+    agentId: "test-agent",
+    turnId: "test-turn",
+    assistantMessageId: "test-assistant",
     signal,
-    context,
-  );
-  return { dispatch, result: await dispatch.run };
+    emitActivity: async (activity) => activities.push(activity),
+  });
+  return {
+    dispatch: { startedUiEvent: activities[0] },
+    result: {
+      toolResult: { ...outcome, toolCallId: call.id, toolName: call.name },
+      uiEvent: activities.at(-1),
+    },
+  };
 }
 
 function getToolText(result) {
@@ -240,7 +249,7 @@ describe("Exa web code-mode tool", () => {
   it("runs generated code in a capability-limited sandbox", async () => {
     const backend = createBackend();
     const deps = createDeps({});
-    const tool = createWebToolDefinition(backend, deps);
+    const tool = createWebTool(backend, deps);
     const { dispatch, result } = await runTool(tool, {
       code: [
         "console.log(typeof process, typeof fetch, typeof require, typeof _requestWeb);",
@@ -290,7 +299,7 @@ describe("Exa web code-mode tool", () => {
       })),
     };
     const backend = createBackend();
-    const tool = createWebToolDefinition(backend, createDeps(client));
+    const tool = createWebTool(backend, createDeps(client));
     const { result } = await runTool(tool, {
       code: [
         "const search = await web.search('tau', { numResults: 2, userLocation: 'fi' });",
@@ -338,7 +347,7 @@ describe("Exa web code-mode tool", () => {
     );
     try {
       const backend = createBackend();
-      const tool = createWebToolDefinition(backend);
+      const tool = createWebTool(backend);
       const { result } = await runTool(tool, { code: "await web.search('tau')" });
 
       expect(result.toolResult.isError).toBe(false);
@@ -373,7 +382,7 @@ describe("Exa web code-mode tool", () => {
     );
     try {
       const backend = createBackend();
-      const tool = createWebToolDefinition(backend);
+      const tool = createWebTool(backend);
       const { result } = await runTool(tool, { code: "await web.search('tau')" });
 
       expect(result.toolResult.isError).toBe(true);
@@ -385,7 +394,7 @@ describe("Exa web code-mode tool", () => {
 
   it("fails when the provider returns an invalid response", async () => {
     const backend = createBackend();
-    const tool = createWebToolDefinition(backend, createDeps({ search: vi.fn(async () => ({})) }));
+    const tool = createWebTool(backend, createDeps({ search: vi.fn(async () => ({})) }));
     const { result } = await runTool(tool, { code: "await web.search('tau')" });
 
     expect(result.toolResult.isError).toBe(true);
@@ -395,19 +404,15 @@ describe("Exa web code-mode tool", () => {
   it("supports keyless documentation and discovery without constructing a provider client", async () => {
     const backend = createBackend();
     const deps = createDeps({});
-    const tool = createWebToolDefinition(backend, deps);
-    const { result } = await runTool(
-      tool,
-      {
-        code: [
-          "console.log(docs.includes('web.discover(url)'));",
-          "console.log('guidance=' + docs.includes('Do not treat search-result highlights as the primary documentation source'));",
-          "const discovery = await web.discover('https://example.com/docs');",
-          "console.log(discovery.markdown[0].url);",
-        ].join("\n"),
-      },
-      { scope: "main", cwd: "/project", config: {} },
-    );
+    const tool = createWebTool(backend, deps, {});
+    const { result } = await runTool(tool, {
+      code: [
+        "console.log(docs.includes('web.discover(url)'));",
+        "console.log('guidance=' + docs.includes('Do not treat search-result highlights as the primary documentation source'));",
+        "const discovery = await web.discover('https://example.com/docs');",
+        "console.log(discovery.markdown[0].url);",
+      ].join("\n"),
+    });
 
     expect(result.toolResult.isError).toBe(false);
     expect(getToolText(result)).toContain("true");
@@ -424,18 +429,15 @@ describe("Exa web code-mode tool", () => {
   it("rejects unsupported options and missing credentials", async () => {
     const backend = createBackend();
     const deps = createDeps({});
-    const tool = createWebToolDefinition(backend, deps);
-    const unsupported = await runTool(tool, {
+    const unsupportedTool = createWebTool(backend, deps);
+    const unsupported = await runTool(unsupportedTool, {
       code: "await web.search('tau', { stream: true })",
     });
     expect(unsupported.result.toolResult.isError).toBe(true);
     expect(getToolText(unsupported.result)).toContain('Unrecognized key: "stream"');
 
-    const missingKey = await runTool(
-      tool,
-      { code: "await web.search('tau')" },
-      { scope: "main", cwd: "/project", config: {} },
-    );
+    const missingKeyTool = createWebTool(backend, deps, {});
+    const missingKey = await runTool(missingKeyTool, { code: "await web.search('tau')" });
     expect(missingKey.result.toolResult.isError).toBe(true);
     expect(getToolText(missingKey.result)).toContain("Missing Exa API key.");
   });
@@ -446,7 +448,7 @@ describe("Exa web code-mode tool", () => {
       getContents: vi.fn(),
     };
     const backend = createBackend();
-    const tool = createWebToolDefinition(backend, createDeps(client));
+    const tool = createWebTool(backend, createDeps(client));
     const { result } = await runTool(tool, {
       code: [
         "const calls = [",
@@ -475,7 +477,7 @@ describe("Exa web code-mode tool", () => {
   it("rejects unknown tool arguments without starting the sandbox", async () => {
     const backend = createBackend();
     const deps = createDeps({});
-    const tool = createWebToolDefinition(backend, deps);
+    const tool = createWebTool(backend, deps);
     const { result } = await runTool(tool, {
       code: "console.log(docs)",
       objective: "legacy shape",
@@ -488,14 +490,9 @@ describe("Exa web code-mode tool", () => {
 
   it("forwards cancellation to a running sandbox", async () => {
     const backend = createBackend();
-    const tool = createWebToolDefinition(backend, createDeps({}));
+    const tool = createWebTool(backend, createDeps({}));
     const controller = new AbortController();
-    const run = runTool(
-      tool,
-      { code: "for (;;) {}" },
-      { scope: "main", cwd: "/project", config: {} },
-      controller.signal,
-    );
+    const run = runTool(tool, { code: "for (;;) {}" }, controller.signal);
     setTimeout(() => controller.abort(), 20);
 
     const { result } = await run;
@@ -527,14 +524,9 @@ describe("Exa web code-mode tool", () => {
       ),
     };
     const backend = createBackend();
-    const tool = createWebToolDefinition(backend, createDeps(client));
+    const tool = createWebTool(backend, createDeps(client));
     const controller = new AbortController();
-    const run = runTool(
-      tool,
-      { code: "await web.search('tau')" },
-      { scope: "main", cwd: "/project", config: { apiKeys: { exa: "exa-key" } } },
-      controller.signal,
-    );
+    const run = runTool(tool, { code: "await web.search('tau')" }, controller.signal);
 
     await providerStarted;
     controller.abort();
@@ -564,7 +556,7 @@ describe("Exa web code-mode tool", () => {
     };
     const backend = createBackend();
     const deps = { ...createDeps(client), timeoutMs: 1_000 };
-    const tool = createWebToolDefinition(backend, deps);
+    const tool = createWebTool(backend, deps);
     const { result } = await runTool(tool, { code: "await web.search('tau')" });
 
     expect(providerSettled).toBe(true);
@@ -577,7 +569,7 @@ describe("Exa web code-mode tool", () => {
 
   it("decodes multibyte output across Worker stream chunks", async () => {
     const backend = createBackend();
-    const tool = createWebToolDefinition(backend, createDeps({}));
+    const tool = createWebTool(backend, createDeps({}));
     const { result } = await runTool(tool, { code: "console.log('€'.repeat(400_000))" });
 
     expect(getToolText(result)).not.toContain("�");
@@ -585,7 +577,7 @@ describe("Exa web code-mode tool", () => {
 
   it("middle-truncates large program output at 8,192 estimated tokens", async () => {
     const backend = createBackend();
-    const tool = createWebToolDefinition(backend, createDeps({}));
+    const tool = createWebTool(backend, createDeps({}));
     const { result } = await runTool(tool, { code: "console.log('x'.repeat(60_000))" });
 
     expect(getToolText(result)).toContain("Output truncated for context");

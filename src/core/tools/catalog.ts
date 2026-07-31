@@ -1,12 +1,15 @@
+import type { Config } from "../config/index.js";
+import type { ModelResolver } from "../models/catalog.js";
+import { AgentSupervisor } from "../subagents/agent_supervisor.js";
 import type { SubagentToolName } from "../subagents/types.js";
+import type { Persona } from "../types.js";
 import { createBashToolDefinition } from "./bash.js";
 import { createEditToolDefinition } from "./edit.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import { createNookToolDefinition } from "./nook.js";
-import type { ToolDefinition } from "./registry.js";
 import { ToolRegistry } from "./registry.js";
 import { createSendInputToAgentToolDefinition } from "./send_input_to_agent.js";
-import { createSpawnAgentToolDefinition } from "./spawn_agent.js";
+import { createSpawnAgentToolDefinition, type ResolveSubagentRuntime } from "./spawn_agent.js";
 import { createTerminateAgentToolDefinition } from "./terminate_agent.js";
 import {
   TOOL_NAME_BASH,
@@ -21,35 +24,72 @@ import { createWebToolDefinition } from "./web.js";
 import { createWriteToolDefinition } from "./write.js";
 
 export const ToolCatalog = {
-  createRegistry(backend: ToolExecutionBackend): ToolRegistry {
-    return new ToolRegistry([
-      createBashToolDefinition(backend),
-      createWriteToolDefinition(backend),
-      createEditToolDefinition(backend),
-      createViewImageToolDefinition(backend),
-      createWebToolDefinition(backend),
-      createSpawnAgentToolDefinition(backend),
-      createSendInputToAgentToolDefinition(backend),
-      createWaitForAgentsToolDefinition(),
-      createTerminateAgentToolDefinition(),
-      createNookToolDefinition(backend),
-    ]);
+  createDebugRegistry(options: {
+    backend: ToolExecutionBackend;
+    cwd: string;
+    config: Config;
+    persona: Persona;
+    modelResolver: ModelResolver;
+  }): ToolRegistry {
+    return this.createSessionRegistry({
+      ...options,
+      subagentPrompts: {},
+      supervisor: new AgentSupervisor({ onEvent: () => {} }),
+    });
+  },
+
+  createSessionRegistry(options: {
+    backend: ToolExecutionBackend;
+    cwd: string;
+    config: Config;
+    persona: Persona;
+    subagentPrompts: Record<string, string>;
+    modelResolver: ModelResolver;
+    supervisor: AgentSupervisor;
+    resolveSubagentRuntime?: ResolveSubagentRuntime;
+  }): ToolRegistry {
+    const tools = [
+      createBashToolDefinition(options.backend, options.cwd),
+      createWriteToolDefinition(options.backend),
+      createEditToolDefinition(options.backend),
+      createViewImageToolDefinition(options.backend),
+      createWebToolDefinition(options.backend, options.config),
+      createSpawnAgentToolDefinition({
+        backend: options.backend,
+        supervisor: options.supervisor,
+        persona: options.persona,
+        config: options.config,
+        modelResolver: options.modelResolver,
+        subagentPrompts: options.subagentPrompts,
+        cwd: options.cwd,
+        ...(options.resolveSubagentRuntime
+          ? { resolveSubagentRuntime: options.resolveSubagentRuntime }
+          : {}),
+      }),
+      createSendInputToAgentToolDefinition(options.supervisor),
+      createWaitForAgentsToolDefinition(options.supervisor),
+      createTerminateAgentToolDefinition(options.supervisor),
+    ];
+    if (options.config.nook) {
+      tools.push(createNookToolDefinition(options.backend, options.config));
+    }
+    return new ToolRegistry(tools);
   },
 
   createSubagentRegistry(
     allowedTools: SubagentToolName[],
     backend: ToolExecutionBackend,
+    cwd: string,
+    config: Config,
   ): ToolRegistry {
-    const definitions: ToolDefinition[] = [];
+    const definitions = [];
     const seen = new Set<string>();
-
-    const addTool = (tool: SubagentToolName): void => {
-      if (seen.has(tool)) return;
+    for (const tool of allowedTools) {
+      if (seen.has(tool)) continue;
       seen.add(tool);
-
       switch (tool) {
         case TOOL_NAME_BASH:
-          definitions.push(createBashToolDefinition(backend));
+          definitions.push(createBashToolDefinition(backend, cwd));
           break;
         case TOOL_NAME_WRITE:
           definitions.push(createWriteToolDefinition(backend));
@@ -61,15 +101,10 @@ export const ToolCatalog = {
           definitions.push(createViewImageToolDefinition(backend));
           break;
         case TOOL_NAME_WEB:
-          definitions.push(createWebToolDefinition(backend));
+          definitions.push(createWebToolDefinition(backend, config));
           break;
       }
-    };
-
-    for (const tool of allowedTools) {
-      addTool(tool);
     }
-
     return new ToolRegistry(definitions);
   },
 };

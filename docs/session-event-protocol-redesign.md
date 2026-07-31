@@ -217,7 +217,7 @@ type SessionNotice = {
 };
 
 type SessionOperation = {
-  kind: "auto-compaction" | "manual-compaction" | "prune" | "reload" | "rewind";
+  kind: "auto-compaction" | "manual-compaction" | "reload" | "rewind";
   status: "running" | "succeeded" | "failed" | "cancelled" | "skipped";
   startedAt: number;
   finishedAt?: number;
@@ -382,7 +382,6 @@ For broad rewrites, do not overfit patch changes:
 - `session.setReasoning`: `settings.set`
 - `session.setPersona`: `snapshot.reset`
 - `session.compact`: `snapshot.reset`
-- `session.prune`: `snapshot.reset`
 - `session.rewind`: `snapshot.reset`
 
 Those operations already return authoritative snapshots and can change multiple independent areas at once. Reset is simpler and less error-prone than a long patch.
@@ -692,7 +691,7 @@ Known tool renderers can use typed facets. Unknown tools can still render name, 
 4. Tool UI payloads are stored as `SessionToolRun` updates and typed facets before they cross the protocol boundary.
 5. Notices are timeline notice records.
 6. Subagent UI events are stored as `agents` updates.
-7. `snapshot.reset` is used for reload, persona changes, rewind, compact, and prune; reasoning changes use `settings.set`.
+7. `snapshot.reset` is used for reload, persona changes, rewind, and compact; reasoning changes use `settings.set`.
 8. Transports and SDK listeners expose `session.delta`; ephemeral agent progress uses `session.ephemeral`.
 9. TUI rendering is driven from snapshots and local delta application.
 10. Themes stay in TUI-local config/content loading rather than the session protocol.

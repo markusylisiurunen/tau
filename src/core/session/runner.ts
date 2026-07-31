@@ -4,20 +4,23 @@ import type {
   AssistantMessageEvent,
   Context,
   Model,
-  Tool,
   ToolCall,
   ToolResultMessage,
 } from "@earendil-works/pi-ai";
 import type {
-  CoreNoticeEvent,
-  CoreToolUiEvent,
+  AgentEvent,
   RunnerAssistantPartialEvent,
   RunnerToolCallDiscardedEvent,
   RunnerToolCallStreamingEvent,
   RunnerToolResultEvent,
-} from "../events/types.js";
-import type { ToolDefinition, ToolDispatchContext, ToolRegistry } from "../tools/registry.js";
-import { createToolError } from "../utils/messages.js";
+} from "../agent/events.js";
+import type {
+  AgentTool,
+  ToolExecutionContext,
+  ToolExecutionOutcome,
+  ToolRegistry,
+  ToolUiEvent,
+} from "../tools/registry.js";
 import type { ModelRuntime } from "../utils/model_stream.js";
 import type { TauStreamOptions } from "../utils/streaming_settings.js";
 import { MessageAccumulator } from "./message_accumulator.js";
@@ -25,16 +28,33 @@ import { MessageAccumulator } from "./message_accumulator.js";
 const ASSISTANT_PARTIAL_MIN_INTERVAL_MS = 33;
 export const MAX_MODEL_SUBTURNS = 512;
 
+type NoticeEvent = Extract<AgentEvent, { type: "notice" }>;
+type ModelRetryEvent = Extract<
+  AgentEvent,
+  { type: "model_retry_scheduled" | "model_retry_started" }
+>;
+type ToolUiAgentEvent = Extract<AgentEvent, { type: "tool_ui" }>;
+type ToolRunAgentEvent = Extract<AgentEvent, { type: "tool_run_started" | "tool_run_finished" }>;
+type AcknowledgedToolRunnerEvent = (ToolUiAgentEvent | ToolRunAgentEvent) & {
+  acknowledge: (error?: Error) => void;
+};
+
 export type ModelRunnerEvent =
-  | CoreNoticeEvent
+  | NoticeEvent
+  | ModelRetryEvent
   | RunnerAssistantPartialEvent
   | RunnerToolCallStreamingEvent
   | RunnerToolCallDiscardedEvent;
-export type ToolRunnerEvent = CoreNoticeEvent | CoreToolUiEvent | RunnerToolResultEvent;
+export type ToolRunnerEvent =
+  | NoticeEvent
+  | ToolUiAgentEvent
+  | ToolRunAgentEvent
+  | AcknowledgedToolRunnerEvent
+  | RunnerToolResultEvent;
 export type RunnerEvent = ModelRunnerEvent | ToolRunnerEvent;
 
 export type RetryOptions = {
-  notice?: { text: string; severity?: CoreNoticeEvent["severity"] };
+  notice?: { text: string; severity?: NoticeEvent["severity"] };
   shouldRetryAfterError?: (args: { error: unknown; model: Model<Api> }) => boolean;
   onRetry?: () => void;
   maxRetries?: number;
@@ -292,6 +312,7 @@ export async function* runModelSubturn(
       ) {
         attempt += 1;
         retry?.onRetry?.();
+        yield { type: "model_retry_scheduled", attempt, delayMs };
         if (retryNotice) {
           yield retryNotice;
         }
@@ -299,6 +320,7 @@ export async function* runModelSubturn(
         if (signal.aborted) {
           throw new Error("Request was aborted");
         }
+        yield { type: "model_retry_started", attempt };
         continue;
       }
       return result;
@@ -310,6 +332,7 @@ export async function* runModelSubturn(
       ) {
         attempt += 1;
         retry?.onRetry?.();
+        yield { type: "model_retry_scheduled", attempt, delayMs };
         if (retryNotice) {
           yield retryNotice;
         }
@@ -317,6 +340,7 @@ export async function* runModelSubturn(
         if (signal.aborted) {
           throw new Error("Request was aborted");
         }
+        yield { type: "model_retry_started", attempt };
         continue;
       }
       throw error;
@@ -324,64 +348,34 @@ export async function* runModelSubturn(
   }
 }
 
-export type RunToolCallsOptions = {
-  toolCalls: ToolCall[];
+export type SequentialToolCallRunnerOptions = {
   toolRegistry: ToolRegistry;
-  extraToolDefinitions?: ToolDefinition[];
-  enabledTools: Tool[];
-  signal: AbortSignal;
-  dispatchContext: ToolDispatchContext;
-  toolErrorMessages?: {
-    notEnabled?: (toolCall: ToolCall) => string;
-    unsupported?: (toolCall: ToolCall) => string;
-  };
+  executionContext: Omit<ToolExecutionContext, "signal" | "emitActivity">;
+  now?: () => number;
 };
-
-export type SequentialToolCallRunnerOptions = Omit<RunToolCallsOptions, "toolCalls" | "signal">;
-
-type ToolCallPreparationOptions = Pick<
-  RunToolCallsOptions,
-  "toolRegistry" | "extraToolDefinitions" | "enabledTools" | "toolErrorMessages"
->;
 
 type PreparedToolCall =
   | {
       type: "ready";
       toolCall: ToolCall;
-      definition: ToolDefinition;
+      definition: AgentTool;
     }
   | {
       type: "rejected";
+      toolCall: ToolCall;
       message: string;
-      result: ToolResultMessage;
     };
 
 function prepareToolCall(
   toolCall: ToolCall,
-  options: ToolCallPreparationOptions,
+  options: SequentialToolCallRunnerOptions,
 ): PreparedToolCall {
-  if (!options.enabledTools.some((tool) => tool.name === toolCall.name)) {
-    const message =
-      options.toolErrorMessages?.notEnabled?.(toolCall) ??
-      `Tool '${toolCall.name}' is not enabled for this session.`;
-    return {
-      type: "rejected",
-      message,
-      result: createToolError(toolCall, message),
-    };
-  }
-
-  const definition =
-    options.toolRegistry.get(toolCall.name) ??
-    options.extraToolDefinitions?.find((candidate) => candidate.schema.name === toolCall.name);
+  const definition = options.toolRegistry.get(toolCall.name);
   if (!definition) {
-    const message =
-      options.toolErrorMessages?.unsupported?.(toolCall) ??
-      `Tool '${toolCall.name}' is not supported by tau.`;
     return {
       type: "rejected",
-      message,
-      result: createToolError(toolCall, message),
+      toolCall,
+      message: `Tool '${toolCall.name}' is not available for this turn.`,
     };
   }
 
@@ -390,8 +384,7 @@ function prepareToolCall(
 
 function createToolQueuedEvent(
   prepared: Extract<PreparedToolCall, { type: "ready" }>,
-  context: ToolDispatchContext,
-): CoreToolUiEvent {
+): ToolUiAgentEvent {
   const { toolCall, definition } = prepared;
   return {
     type: "tool_ui",
@@ -399,23 +392,19 @@ function createToolQueuedEvent(
       type: "tool_call_queued",
       toolCallId: toolCall.id,
       toolName: toolCall.name,
-      headerTarget: definition.getDisplayTarget(toolCall, context),
-      ...(definition.getCodePreview ? { code: definition.getCodePreview(toolCall, context) } : {}),
+      ...definition.describe(toolCall),
     },
   };
 }
 
-function createToolBlockedEvent(
-  result: Pick<ToolResultMessage, "toolCallId" | "toolName">,
-  reason: string,
-): CoreToolUiEvent {
+function createToolBlockedEvent(toolCall: ToolCall, reason: string): ToolUiAgentEvent {
   return {
     type: "tool_ui",
     uiEvent: {
       type: "tool_call_blocked",
-      toolCallId: result.toolCallId,
-      toolName: result.toolName,
-      headerTarget: result.toolName,
+      toolCallId: toolCall.id,
+      toolName: toolCall.name,
+      headerTarget: toolCall.name,
       reason,
     },
   };
@@ -438,18 +427,28 @@ export class SequentialToolCallRunner implements AsyncIterable<ToolRunnerEvent> 
     private readonly signal: AbortSignal,
   ) {}
 
-  enqueue(toolCall: ToolCall): CoreToolUiEvent {
-    const prepared = prepareToolCall(toolCall, this.options);
-    this.enqueuePrepared(prepared);
-    return prepared.type === "ready"
-      ? createToolQueuedEvent(prepared, this.options.dispatchContext)
-      : createToolBlockedEvent(prepared.result, prepared.message);
+  prepare(toolCall: ToolCall): { event: ToolUiAgentEvent; start: () => void } {
+    return this.prepareAdmission(prepareToolCall(toolCall, this.options));
   }
 
-  enqueueRejected(toolCall: ToolCall, message: string): CoreToolUiEvent {
-    const result = createToolError(toolCall, message);
-    this.enqueuePrepared({ type: "rejected", message, result });
-    return createToolBlockedEvent(result, message);
+  prepareRejected(
+    toolCall: ToolCall,
+    message: string,
+  ): { event: ToolUiAgentEvent; start: () => void } {
+    return this.prepareAdmission({ type: "rejected", toolCall, message });
+  }
+
+  private prepareAdmission(prepared: PreparedToolCall): {
+    event: ToolUiAgentEvent;
+    start: () => void;
+  } {
+    return {
+      event:
+        prepared.type === "ready"
+          ? createToolQueuedEvent(prepared)
+          : createToolBlockedEvent(prepared.toolCall, prepared.message),
+      start: () => this.enqueuePrepared(prepared),
+    };
   }
 
   private enqueuePrepared(prepared: PreparedToolCall): void {
@@ -461,10 +460,36 @@ export class SequentialToolCallRunner implements AsyncIterable<ToolRunnerEvent> 
       if (this.signal.aborted) {
         return;
       }
-      const execution = runPreparedToolCall(prepared, this.signal, this.options.dispatchContext);
+      if (prepared.type === "ready") {
+        await this.publishAwaited({
+          type: "tool_run_started",
+          toolCallId: prepared.toolCall.id,
+          toolName: prepared.toolCall.name,
+          timestamp: this.options.now?.() ?? Date.now(),
+        });
+      }
+      const execution = runPreparedToolCall(
+        prepared,
+        this.signal,
+        this.options.executionContext,
+        this.options.now,
+      );
       while (true) {
         const next = await execution.next();
         if (next.done) {
+          if (prepared.type === "ready") {
+            await this.publishAwaited({
+              type: "tool_run_finished",
+              toolCallId: prepared.toolCall.id,
+              toolName: prepared.toolCall.name,
+              outcome: this.signal.aborted
+                ? "cancelled"
+                : next.value.isError
+                  ? "failed"
+                  : "succeeded",
+              timestamp: next.value.timestamp,
+            });
+          }
           this.publish({ type: "tool_result", message: next.value });
           return;
         }
@@ -477,6 +502,15 @@ export class SequentialToolCallRunner implements AsyncIterable<ToolRunnerEvent> 
         waiter.reject(error);
       }
     });
+  }
+
+  private async publishAwaited(event: ToolRunAgentEvent): Promise<void> {
+    let acknowledge: (error?: Error) => void = () => {};
+    const acknowledged = new Promise<void>((resolve, reject) => {
+      acknowledge = (error) => (error ? reject(error) : resolve());
+    });
+    this.publish({ ...event, acknowledge });
+    await acknowledged;
   }
 
   private publish(event: ToolRunnerEvent): void {
@@ -522,27 +556,103 @@ export class SequentialToolCallRunner implements AsyncIterable<ToolRunnerEvent> 
   }
 }
 
+function createCanonicalToolResult(
+  toolCall: ToolCall,
+  outcome: ToolExecutionOutcome,
+  timestamp: number,
+): ToolResultMessage {
+  return {
+    role: "toolResult",
+    toolCallId: toolCall.id,
+    toolName: toolCall.name,
+    content: structuredClone(outcome.content),
+    isError: outcome.isError,
+    timestamp,
+  };
+}
+
 async function* runPreparedToolCall(
   prepared: PreparedToolCall,
   signal: AbortSignal,
-  dispatchContext: ToolDispatchContext,
+  executionContext: Omit<ToolExecutionContext, "signal" | "emitActivity">,
+  now: () => number = Date.now,
 ): AsyncGenerator<ToolRunnerEvent, ToolResultMessage, void> {
   if (prepared.type === "rejected") {
     yield { type: "notice", severity: "error", text: prepared.message };
-    return prepared.result;
+    return createCanonicalToolResult(
+      prepared.toolCall,
+      { content: [{ type: "text", text: prepared.message }], isError: true },
+      now(),
+    );
   }
 
   const { toolCall, definition } = prepared;
   try {
-    const dispatch = await definition.dispatch(toolCall, signal, dispatchContext);
-    if (dispatch.startedUiEvent) {
-      yield { type: "tool_ui", uiEvent: dispatch.startedUiEvent };
+    const activities: Array<{
+      activity: ToolUiEvent;
+      resolve: () => void;
+      reject: (error: Error) => void;
+    }> = [];
+    let wake: (() => void) | undefined;
+    let outcome: Awaited<ReturnType<AgentTool["execute"]>> | undefined;
+    let executionError: unknown;
+    let settled = false;
+    const execution = definition
+      .execute(toolCall, {
+        ...executionContext,
+        signal,
+        emitActivity: (activity) =>
+          new Promise<void>((resolve, reject) => {
+            activities.push({ activity, resolve, reject });
+            wake?.();
+          }),
+      })
+      .then(
+        (result) => {
+          outcome = result;
+        },
+        (error: unknown) => {
+          executionError = error;
+        },
+      )
+      .finally(() => {
+        settled = true;
+        wake?.();
+      });
+
+    try {
+      while (!settled || activities.length > 0) {
+        const next = activities.shift();
+        if (next) {
+          let acknowledge: (error?: Error) => void = () => {};
+          const acknowledged = new Promise<void>((resolve, reject) => {
+            acknowledge = (error) => (error ? reject(error) : resolve());
+          });
+          yield { type: "tool_ui", uiEvent: next.activity, acknowledge };
+          try {
+            await acknowledged;
+            next.resolve();
+          } catch (error) {
+            next.reject(error instanceof Error ? error : new Error(String(error)));
+            throw error;
+          }
+          continue;
+        }
+        await new Promise<void>((resolve) => {
+          wake = resolve;
+          if (settled || activities.length > 0) resolve();
+        });
+        wake = undefined;
+      }
+      await execution;
+    } finally {
+      const error = new Error(`tool activity for '${toolCall.name}' was cancelled`);
+      for (const pending of activities.splice(0)) pending.reject(error);
     }
-    const result = await dispatch.run;
-    if (result.uiEvent) {
-      yield { type: "tool_ui", uiEvent: result.uiEvent };
-    }
-    return result.toolResult;
+
+    if (executionError) throw executionError;
+    if (!outcome) throw new Error(`tool '${toolCall.name}' returned no outcome`);
+    return createCanonicalToolResult(toolCall, outcome, now());
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     yield {
@@ -550,58 +660,15 @@ async function* runPreparedToolCall(
       severity: "error",
       text: `Tool '${toolCall.name}' (${toolCall.id}) execution failed: ${errorMessage}`,
     };
-    return createToolError(toolCall, `Tool '${toolCall.name}' execution failed: ${errorMessage}`);
-  }
-}
-
-export async function* runToolCalls(
-  options: RunToolCallsOptions,
-): AsyncGenerator<ToolRunnerEvent, void, void> {
-  const { toolCalls, signal, dispatchContext, ...preparationOptions } = options;
-  const preparedCalls: PreparedToolCall[] = [];
-  for (const toolCall of toolCalls) {
-    if (signal.aborted) {
-      break;
-    }
-    preparedCalls.push(prepareToolCall(toolCall, preparationOptions));
-  }
-  const resultsByIndex = new Map<number, ToolResultMessage>();
-
-  for (const [index, prepared] of preparedCalls.entries()) {
-    if (signal.aborted) {
-      break;
-    }
-    if (prepared.type !== "rejected") {
-      continue;
-    }
-    resultsByIndex.set(index, prepared.result);
-    yield createToolBlockedEvent(prepared.result, prepared.message);
-    yield { type: "notice", severity: "error", text: prepared.message };
-  }
-
-  for (const prepared of preparedCalls) {
-    if (signal.aborted) {
-      break;
-    }
-    if (prepared.type === "ready") {
-      yield createToolQueuedEvent(prepared, dispatchContext);
-    }
-  }
-
-  for (const [index, prepared] of preparedCalls.entries()) {
-    if (signal.aborted) {
-      break;
-    }
-    if (prepared.type === "rejected") {
-      continue;
-    }
-    resultsByIndex.set(index, yield* runPreparedToolCall(prepared, signal, dispatchContext));
-  }
-
-  for (const [index] of toolCalls.entries()) {
-    const result = resultsByIndex.get(index);
-    if (result) {
-      yield { type: "tool_result", message: result };
-    }
+    return createCanonicalToolResult(
+      toolCall,
+      {
+        content: [
+          { type: "text", text: `Tool '${toolCall.name}' execution failed: ${errorMessage}` },
+        ],
+        isError: true,
+      },
+      now(),
+    );
   }
 }

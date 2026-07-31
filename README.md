@@ -136,7 +136,7 @@ For stdio attach, use `--session <id>` before `--`:
 tau attach --session 0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3 -- ssh vps 'cd /path/to/repo && tau rpc'
 ```
 
-Session attach renders the authoritative session snapshot, streams recoverable `session.delta` updates and independently revisioned, non-persisted `session.pendingUserMessages` replacements, submits normal user input through `session.submit`, `session.queue`, and `session.steer`, supports steering/interruption, runs `!`/`!!` Bash commands in the session execution environment, records `/listen` from the local microphone, speaks `/speak` locally, reloads session content with `/reload`, switches session personas with `/persona:<id>` or `Ctrl+P`, inserts session prompt templates with `/prompt:<id>`, compacts or prunes the session with `/compact:*` and `/prune:*`, creates a new session with `/new`, and exits with `/exit` or `Ctrl+C` twice.
+Session attach renders the authoritative session snapshot, streams recoverable `session.delta` updates and independently revisioned, non-persisted `session.pendingUserMessages` replacements, submits normal user input through `session.submit`, `session.queue`, and `session.steer`, supports steering/interruption, runs `!`/`!!` Bash commands in the session execution environment, records `/listen` from the local microphone, speaks `/speak` locally, reloads session content with `/reload`, switches session personas with `/persona:<id>` or `Ctrl+P`, inserts session prompt templates with `/prompt:<id>`, compacts the session with `/compact:*`, creates a new session with `/new`, and exits with `/exit` or `Ctrl+C` twice.
 
 Model `bash` tool calls, `!`/`!!`, `session.exec`, and Tau-controlled command helpers each run in a fresh, non-interactive login Bash belonging to the session execution environment. Tau sets `HOME` to the execution environment home, so Bash reads `/etc/profile` and then the first available user login file (`~/.bash_profile`, `~/.bash_login`, or `~/.profile`). Bash also reads inherited `BASH_ENV` when set; otherwise `.bashrc` is loaded only when the login configuration sources it. Login startup files must be automation-safe: they must not write to stdout or stderr, read stdin, require a TTY, or terminate the shell unexpectedly. Tau does not filter or frame startup output. Commands start from the backend's target-side environment and apply explicit execution-environment overrides; the local backend filters sensitive variables inherited from the Tau host. Node, Git, and other helper executables resolve from the same login-configured `PATH` as model commands. Shell state such as `cd`, exports, aliases, functions, and `nvm use` does not persist between calls.
 
@@ -337,7 +337,7 @@ and in config (`.tau/config.json` or `~/.config/tau/config.json`):
 
 ## tool access
 
-enabled tools execute directly. persona and sub-agent tool lists determine which tools are available.
+enabled tools execute directly. persona and sub-agent tool lists determine which tools are available. main sessions, background sub-agents, and ephemeral review threads all execute through the same stateful agent runtime, with identical streaming, retries, tool recovery, context accounting, steering boundaries, and automatic compaction. each context binds its tool dependencies before a turn starts; session persistence, child supervision, ephemeral thread forks, progress presentation, and usage attribution remain outside the runtime.
 
 ## power management (macOS)
 
@@ -460,9 +460,6 @@ tau supports slash commands for common actions:
 | `/diff [git diff args...]` | open the local diff review tool for the current session; git snapshot and review-agent work run on the session host |
 | `/compact:summary-only` | compress history into one synthetic user summary message |
 | `/compact:summary-and-last` | compress history and include the last assistant message verbatim when present |
-| `/prune:earliest` | prune bash tool results from oldest to newest and compact edit payloads/results |
-| `/prune:largest` | prune largest bash tool results first and compact edit payloads/results |
-| `/prune:smart` | prune bash tool results via model selection and compact edit payloads/results |
 | `/persona:<id>` | switch to a different persona |
 | `/prompt:<id>` | insert a saved prompt template |
 | `/theme:<id>` | switch to a loaded theme |
@@ -472,8 +469,6 @@ tau supports slash commands for common actions:
 tau automatically compacts long sessions when the latest successful provider-reported usage from the active model plus Tau's estimate of model-visible content added since that response approaches the model context limit. Tau checks before every model subturn, so one user turn can compact more than once. automatic compaction summarizes older context, asks the compaction model to select original user messages to append verbatim inside the summary by history id, retains a recent tail verbatim, and inserts a hidden continuation note so the assistant continues without asking you to repeat context.
 
 the compact commands are manual and useful when you want to force context replacement. they replace prior context with a single synthetic user summary message, including compaction-model-selected original user messages verbatim inside that summary, and do not retain a recent tail. compaction prompts middle-truncate each textual tool result to roughly 2,048 estimated tokens without changing live history. `/compact:summary-and-last` also includes the last assistant message verbatim when present.
-
-the prune commands drop bash tool results from the active context without summarizing and compact edit call payloads/results. all three accept an optional fraction between `0` and `1` (for example, `/prune:largest 0.4`) and default to `0.25` when omitted. `/prune:smart` also accepts optional guidance text, either after a fraction (for example, `/prune:smart 0.3 keep only repetitive output`) or by itself (for example, `/prune:smart keep build logs`).
 
 `/listen` (or `ctrl+y`) starts microphone recording on macOS, including while the assistant is working. while recording, editor typing is disabled, and `ctrl+y` stops recording and starts transcription at the cursor using the configured speech-to-text provider. `esc` stops recording first without interrupting the assistant; press it again to interrupt active work. recording also auto-stops after 5 minutes. on Linux, `/listen` is currently unavailable and tau shows a warning.
 

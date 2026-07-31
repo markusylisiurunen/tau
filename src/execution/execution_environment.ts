@@ -1,7 +1,6 @@
 import type { RuntimeConfigResult } from "../core/config/index.js";
 import type { RuntimePromptBootstrap } from "../core/runtime/runtime_bootstrap.js";
 import type { ToolExecutionBackend } from "../core/tools/execution_backend.js";
-import type { ToolRegistry } from "../core/tools/registry.js";
 import type { Persona, Skill } from "../core/types.js";
 import type {
   SessionProtocolExecutionEnvironmentInput,
@@ -18,7 +17,6 @@ export type ResolveExecutionRuntimeContextOptions = {
 
 export type ExecutionRuntimeContext = {
   promptBootstrap: RuntimePromptBootstrap;
-  toolRegistry: ToolRegistry;
 };
 
 export interface ExecutionEnvironment {

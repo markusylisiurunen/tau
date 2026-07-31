@@ -1,11 +1,6 @@
 import type { Tool, ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
-import type { Config } from "../config/index.js";
-import type { ModelResolver } from "../models/catalog.js";
-import type { SubagentControlPlane } from "../subagents/control_plane.js";
 import type { SubagentStatus } from "../subagents/types.js";
-import type { Persona } from "../types.js";
 import type { BashTruncationInfo } from "./bash.js";
-import type { ToolName } from "./tool_names.js";
 
 type ToolUiEventWithHeaderTarget = {
   headerTarget: string;
@@ -199,13 +194,7 @@ type ToolUiEventWithHeaderTarget = {
   | { type: "edit_blocked"; toolCallId: string; path: string; reason: string }
 );
 
-export type ToolUiEvent =
-  | ToolUiEventWithHeaderTarget
-  | {
-      type: "tool_pruned";
-      toolCallId: string;
-      content: string;
-    };
+export type ToolUiEvent = ToolUiEventWithHeaderTarget;
 
 export type ToolUiLineTone = "diffAdd" | "diffRemove";
 
@@ -220,108 +209,96 @@ export type ToolUiText = {
   fullLines: ToolUiLine[];
 };
 
-export type ToolDispatchResult = {
-  toolResult: ToolResultMessage;
+export type ToolExecutionOutcome = {
+  content: ToolResultMessage["content"];
+  isError: boolean;
+};
+
+export type ToolImplementationOutcome = ToolExecutionOutcome & {
   uiEvent?: ToolUiEvent;
 };
 
-export type ToolDispatch = {
-  startedUiEvent?: ToolUiEvent;
-  run: Promise<ToolDispatchResult>;
-};
-
-export function createToolDispatch(
-  run: ToolDispatchResult | (() => ToolDispatchResult | Promise<ToolDispatchResult>),
-  startedUiEvent?: ToolUiEvent,
-): ToolDispatch {
+export function createTextToolOutcome(text: string, isError: boolean): ToolExecutionOutcome {
   return {
-    startedUiEvent,
-    run: typeof run === "function" ? Promise.resolve().then(run) : Promise.resolve(run),
+    content: [{ type: "text", text }],
+    isError,
   };
 }
 
-type ToolDispatchBaseContext = {
-  config: Config;
-  originHistoryEntryId: string;
-  cwd: string;
-  toolRegistry: ToolRegistry;
-  modelResolver: ModelResolver;
-  authPath: string;
-};
-
-export type ResolvedSubagentRuntime = {
-  persona: Persona;
-  config: Config;
-  modelResolver: ModelResolver;
-  subagentPrompts: Record<string, string>;
-};
-
-export type ResolveSubagentRuntime = (options: {
-  cwd: string;
-  persona: Persona;
-}) => Promise<ResolvedSubagentRuntime>;
-
-export type MainToolDispatchContext = ToolDispatchBaseContext & {
-  scope: "main";
-  persona: Persona;
-  home: string;
-  includeAgentContext: boolean;
-  subagentPrompts: Record<string, string>;
-  resolveSubagentRuntime?: ResolveSubagentRuntime;
-  subagentControlPlane: SubagentControlPlane;
-};
-
-export type SubagentToolDispatchContext = ToolDispatchBaseContext & {
-  scope: "subagent";
-};
-
-export type ToolDispatchContext = MainToolDispatchContext | SubagentToolDispatchContext;
-
-export function isMainToolDispatchContext(
-  context: ToolDispatchContext,
-): context is MainToolDispatchContext {
-  return context.scope === "main";
+export async function executeTool(
+  context: ToolExecutionContext,
+  run:
+    | ToolImplementationOutcome
+    | (() => ToolImplementationOutcome | Promise<ToolImplementationOutcome>),
+  startedUiEvent?: ToolUiEvent,
+): Promise<ToolExecutionOutcome> {
+  if (startedUiEvent) {
+    await context.emitActivity(startedUiEvent);
+  }
+  const result = typeof run === "function" ? await run() : run;
+  if (result.uiEvent) {
+    await context.emitActivity(result.uiEvent);
+  }
+  return { content: result.content, isError: result.isError };
 }
 
-export interface ToolDefinition {
+export type ToolCallDescription = {
+  headerTarget: string;
+  code?: string;
+};
+
+export type ToolActivity = ToolUiEvent;
+
+export type ToolExecutionContext = {
+  agentId: string;
+  turnId: string;
+  assistantMessageId: string;
+  signal: AbortSignal;
+  emitActivity: (activity: ToolActivity) => Promise<void>;
+};
+
+export interface AgentTool {
   readonly schema: Tool;
-  getDisplayTarget(toolCall: ToolCall, context: ToolDispatchContext): string;
-  getCodePreview?(toolCall: ToolCall, context: ToolDispatchContext): string;
-  dispatch(
-    toolCall: ToolCall,
-    signal: AbortSignal,
-    context: ToolDispatchContext,
-  ): Promise<ToolDispatch>;
+  describe(toolCall: ToolCall): ToolCallDescription;
+  execute(toolCall: ToolCall, context: ToolExecutionContext): Promise<ToolExecutionOutcome>;
 }
 
 export class ToolRegistry {
-  private readonly byName = new Map<string, ToolDefinition>();
+  private readonly byName = new Map<string, AgentTool>();
 
-  constructor(definitions: ToolDefinition[]) {
-    for (const def of definitions) {
-      this.byName.set(def.schema.name, def);
+  constructor(definitions: AgentTool[]) {
+    for (const definition of definitions) {
+      const name = definition.schema.name;
+      if (this.byName.has(name)) {
+        throw new Error(`duplicate tool '${name}'`);
+      }
+      this.byName.set(name, definition);
     }
   }
 
   get schemas(): Tool[] {
-    return [...this.byName.values()].map((d) => d.schema);
+    return [...this.byName.values()].map((definition) => definition.schema);
   }
 
-  get(toolName: string): ToolDefinition | undefined {
+  get(toolName: string): AgentTool | undefined {
     return this.byName.get(toolName);
   }
 
-  getEnabledToolSchemas(personaTools?: ToolName[]): Tool[] {
-    if (!personaTools) {
-      return this.schemas;
+  getEnabledTools(toolNames?: string[]): AgentTool[] {
+    if (!toolNames) {
+      return [...this.byName.values()];
     }
 
-    return personaTools.map((toolName) => {
+    return toolNames.map((toolName) => {
       const definition = this.byName.get(toolName);
       if (!definition) {
         throw new Error(`tool '${toolName}' is not registered`);
       }
-      return definition.schema;
+      return definition;
     });
+  }
+
+  getEnabledToolSchemas(toolNames?: string[]): Tool[] {
+    return this.getEnabledTools(toolNames).map((definition) => definition.schema);
   }
 }

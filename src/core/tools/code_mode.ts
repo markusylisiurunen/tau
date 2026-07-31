@@ -1,17 +1,17 @@
-import type { Tool, ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
-import { createToolError, createToolResult } from "../utils/messages.js";
+import type { Tool, ToolCall } from "@earendil-works/pi-ai";
 import { bytesToTokens } from "../utils/token.js";
 import { formatBytes } from "../utils/truncate.js";
 import { type BashOutputPolicy, buildBashUiText, prepareBashOutput } from "./bash.js";
 import type { BashExecutionResult, ToolExecutionBackend } from "./execution_backend.js";
-import type {
-  ToolDefinition,
-  ToolDispatch,
-  ToolDispatchContext,
-  ToolDispatchResult,
-  ToolUiEvent,
+import {
+  type AgentTool,
+  createTextToolOutcome,
+  executeTool,
+  type ToolExecutionContext,
+  type ToolExecutionOutcome,
+  type ToolImplementationOutcome,
+  type ToolUiEvent,
 } from "./registry.js";
-import { createToolDispatch } from "./registry.js";
 
 export type ParsedCodeModeArguments<TArgs> =
   | { ok: true; args: TArgs; code: string; displayTarget: string }
@@ -26,7 +26,6 @@ export type CodeModeToolImplementation<TArgs> = {
     args: TArgs;
     code: string;
     backend: ToolExecutionBackend;
-    context: ToolDispatchContext;
     signal: AbortSignal;
   }): Promise<BashExecutionResult>;
 };
@@ -68,21 +67,23 @@ function formatCodeModeResultText(
 export function createCodeModeToolDefinition<TArgs>(
   backend: ToolExecutionBackend,
   implementation: CodeModeToolImplementation<TArgs>,
-): ToolDefinition {
+): AgentTool {
   return {
     schema: implementation.schema,
-    getDisplayTarget: (toolCall) => implementation.parseArguments(toolCall.arguments).displayTarget,
-    getCodePreview: (toolCall) => implementation.parseArguments(toolCall.arguments).code,
-    async dispatch(
+    describe: (toolCall) => {
+      const parsed = implementation.parseArguments(toolCall.arguments);
+      return { headerTarget: parsed.displayTarget, code: parsed.code };
+    },
+    async execute(
       toolCall: ToolCall,
-      signal: AbortSignal,
-      context: ToolDispatchContext,
-    ): Promise<ToolDispatch> {
+      context: ToolExecutionContext,
+    ): Promise<ToolExecutionOutcome> {
+      const { signal } = context;
       const parsed = implementation.parseArguments(toolCall.arguments);
       const headerTarget = parsed.displayTarget;
 
-      const blocked = (reason: string): ToolDispatchResult => {
-        const toolResult = createToolError(toolCall, reason);
+      const blocked = (reason: string): ToolImplementationOutcome => {
+        const outcome = createTextToolOutcome(reason, true);
         const uiEvent: ToolUiEvent = {
           type: "code_mode_blocked",
           toolCallId: toolCall.id,
@@ -91,29 +92,22 @@ export function createCodeModeToolDefinition<TArgs>(
           headerTarget,
           reason,
         };
-        return { toolResult, uiEvent };
+        return { content: outcome.content, isError: outcome.isError, uiEvent };
       };
 
       if (!parsed.ok) {
-        return createToolDispatch(() => blocked(`Invalid arguments: ${parsed.error}`));
+        return executeTool(context, () => blocked(`Invalid arguments: ${parsed.error}`));
       }
 
-      return {
-        startedUiEvent: {
-          type: "code_mode_started",
-          toolCallId: toolCall.id,
-          toolName: implementation.schema.name,
-          code: parsed.code,
-          headerTarget,
-        },
-        run: (async () => {
+      return executeTool(
+        context,
+        async () => {
           try {
             const startedAt = Date.now();
             const execution = await implementation.execute({
               args: parsed.args,
               code: parsed.code,
               backend,
-              context,
               signal,
             });
             const durationMs = Math.max(0, Date.now() - startedAt);
@@ -139,7 +133,7 @@ export function createCodeModeToolDefinition<TArgs>(
               durationMs,
               fullText: toolText,
             });
-            const toolResult: ToolResultMessage = createToolResult(toolCall, toolText, isError);
+            const outcome = createTextToolOutcome(toolText, isError);
             const uiEvent: ToolUiEvent = {
               type: "code_mode_finished",
               toolCallId: toolCall.id,
@@ -149,12 +143,19 @@ export function createCodeModeToolDefinition<TArgs>(
               status: isError ? "error" : "success",
               uiText,
             };
-            return { toolResult, uiEvent };
+            return { content: outcome.content, isError: outcome.isError, uiEvent };
           } catch (error) {
             return blocked(error instanceof Error ? error.message : String(error));
           }
-        })(),
-      };
+        },
+        {
+          type: "code_mode_started",
+          toolCallId: toolCall.id,
+          toolName: implementation.schema.name,
+          code: parsed.code,
+          headerTarget,
+        },
+      );
     },
   };
 }

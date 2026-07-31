@@ -12,9 +12,6 @@ export type Command = (
   | { type: "diff"; argsText: string }
   | { type: "compactSummaryOnly" }
   | { type: "compactSummaryAndLast" }
-  | { type: "pruneEarliest" }
-  | { type: "pruneLargest" }
-  | { type: "pruneSmart" }
   | { type: "reload" }
   | { type: "listen" }
   | { type: "speak" }
@@ -52,9 +49,6 @@ export interface CommandDispatchContext {
   diff: (argsText: string) => Promise<void> | void;
   compactSummaryOnly: (extra?: string) => Promise<void>;
   compactSummaryAndLast: (extra?: string) => Promise<void>;
-  pruneEarliest: (extra?: string) => void;
-  pruneLargest: (extra?: string) => void;
-  pruneSmart: (extra?: string) => Promise<void> | void;
   reload: () => Promise<void>;
   listen: () => Promise<void> | void;
   speak: () => Promise<void> | void;
@@ -281,48 +275,6 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
       return { type: "compactSummaryAndLast", extra };
     },
     run: (ctx, command) => ctx.compactSummaryAndLast(command.extra),
-  });
-
-  registry.register({
-    id: "pruneEarliest",
-    usage: "/prune:earliest",
-    description: "prune earliest tool results from context",
-    autocompleteDescription: "prune earliest tool results",
-    argument: "none",
-    parse: (raw) => {
-      const { command, extra } = splitCommandInput(raw);
-      if (command !== "/prune:earliest") return null;
-      return { type: "pruneEarliest", extra };
-    },
-    run: (ctx, command) => ctx.pruneEarliest(command.extra),
-  });
-
-  registry.register({
-    id: "pruneLargest",
-    usage: "/prune:largest",
-    description: "prune largest tool results from context",
-    autocompleteDescription: "prune largest tool results",
-    argument: "none",
-    parse: (raw) => {
-      const { command, extra } = splitCommandInput(raw);
-      if (command !== "/prune:largest") return null;
-      return { type: "pruneLargest", extra };
-    },
-    run: (ctx, command) => ctx.pruneLargest(command.extra),
-  });
-
-  registry.register({
-    id: "pruneSmart",
-    usage: "/prune:smart",
-    description: "prune tool results using model selection",
-    autocompleteDescription: "prune tool results with model selection",
-    argument: "none",
-    parse: (raw) => {
-      const { command, extra } = splitCommandInput(raw);
-      if (command !== "/prune:smart") return null;
-      return { type: "pruneSmart", extra };
-    },
-    run: (ctx, command) => ctx.pruneSmart(command.extra),
   });
 
   registry.register({

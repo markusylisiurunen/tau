@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import {
   type AssistantMessage,
@@ -17,26 +17,24 @@ import {
   type NormalizedAutoCompactConfig,
   normalizeAutoCompactConfig,
 } from "../config/index.js";
-import type {
-  CoreCompactionResult,
-  CoreEvent,
-  CoreSubagentUiEvent,
-  CoreToolUiEvent,
-} from "../events/types.js";
-import type { ModelResolver } from "../models/catalog.js";
 import type { CoreDeps } from "../runtime/deps.js";
 import { createDefaultCoreDeps } from "../runtime/deps.js";
-import { SubagentControlPlane } from "../subagents/control_plane.js";
-import type { SubagentUiEvent } from "../subagents/types.js";
-import type {
-  ResolveSubagentRuntime,
-  ToolDefinition,
-  ToolDispatchContext,
-  ToolRegistry,
-} from "../tools/registry.js";
-import { TOOL_NAME_NOOK } from "../tools/tool_names.js";
+import { formatSteeringUserMessage } from "../runtime/steering.js";
+import {
+  buildAutoCompactionContinuationMessage,
+  buildAutoCompactionPrompt,
+  buildCompactionSummary,
+  buildSessionCompactionMessage,
+  buildSessionCompactionPrompt,
+  COMPACTION_SUMMARIZATION_SYSTEM_PROMPT,
+  parseCompactionSummaryResponse,
+  prepareAutoCompaction,
+  prepareSessionCompaction,
+  type SessionCompactionMode,
+} from "../session/compaction.js";
+import { runModelSubturn, SequentialToolCallRunner } from "../session/runner.js";
+import { ToolRegistry } from "../tools/registry.js";
 import type { Persona, ReasoningEffort } from "../types.js";
-import { appendUsageLogEntry, getUsageCostTotal, getUsageTotals } from "../usage/logs.js";
 import { shouldAutoRetry } from "../utils/auto_retry.js";
 import { CODEX_ORIGINATOR, CODEX_USER_AGENT } from "../utils/codex.js";
 import { buildCompactionUserMessage } from "../utils/compact.js";
@@ -57,58 +55,61 @@ import {
   stripTauUserMetadata,
   stripTauUserMetadataFromMessage,
 } from "../utils/user_metadata.js";
-import {
-  buildAutoCompactionContinuationMessage,
-  buildAutoCompactionPrompt,
-  buildCompactionSummary,
-  buildSessionCompactionMessage,
-  buildSessionCompactionPrompt,
-  COMPACTION_SUMMARIZATION_SYSTEM_PROMPT,
-  parseCompactionSummaryResponse,
-  prepareAutoCompaction,
-  prepareSessionCompaction,
-  type SessionCompactionMode,
-} from "./compaction.js";
-import {
-  buildSmartPruneSystemPrompt,
-  clampPruneReasoning,
-  parseSmartPruneResponse,
-  prepareSessionSmartPrunePrompt,
-  pruneSessionHistory,
-  type SessionPruneOptions,
-  type SessionPruneResult,
-} from "./pruning.js";
-import {
-  MAX_MODEL_SUBTURNS,
-  runModelSubturn,
-  SequentialToolCallRunner,
-  type SequentialToolCallRunnerOptions,
-} from "./runner.js";
+import type {
+  AgentCompactionResult as AgentAutoCompactionResult,
+  AgentEvent,
+  AgentEventSink,
+} from "./events.js";
 
-const MAX_SUBTURN_RETRIES = 1;
+const DEFAULT_RETRY_POLICY = { maxRetries: 1, delayMs: 3_000 } as const;
+const DEFAULT_MAX_MODEL_SUBTURNS = 512;
 
-export type SessionEngineOptions = {
-  persona: Persona;
-  systemPrompt: string;
-  subagentPrompts: Record<string, string>;
-  toolRegistry: ToolRegistry;
-  clientToolDefinitions?: (sessionId: string) => ToolDefinition[];
-  modelResolver: ModelResolver;
-  resolveSubagentRuntime?: ResolveSubagentRuntime;
-  config?: Config;
-  deps?: CoreDeps;
-  cwd?: string;
-  home?: string;
-  includeAgentContext?: boolean;
+export type HistoryEntry = {
+  id: string;
+  message: Message;
 };
 
-export type SessionCompactionOptions = {
+export type AgentUsageCheckpoint = {
+  historyEntryId: string;
+  contextEpoch: string;
+  tokens: number;
+};
+
+export type AgentState = {
+  agentId: string;
+  revision: number;
+  historyEntries: HistoryEntry[];
+  contextEpoch: string;
+  usageCheckpoint?: AgentUsageCheckpoint;
+};
+
+export type AgentSpec = {
+  persona: Persona;
+  systemPrompt: string;
+  tools: ToolRegistry;
+  config: Config;
+  retryPolicy: {
+    maxRetries: number;
+    delayMs: number;
+  };
+  compactionPolicy: NormalizedAutoCompactConfig;
+  maxModelSubturns: number;
+};
+
+export type AgentRuntimeOptions = {
+  spec: AgentSpec;
+  eventSink: AgentEventSink;
+  state?: AgentState;
+  deps?: CoreDeps;
+};
+
+export type AgentCompactionOptions = {
   mode: SessionCompactionMode;
   guidance?: string;
   signal?: AbortSignal;
 };
 
-export type SessionSampleOptions = {
+export type AgentSampleOptions = {
   context: Context & { systemPrompt: string };
   options: {
     reasoning?: ReasoningEffort;
@@ -117,26 +118,19 @@ export type SessionSampleOptions = {
   signal?: AbortSignal;
 };
 
-export type SessionCompactionResult = {
+export type AgentCompactionResult = {
   compactionMessage: string;
   includedLastAssistant: boolean;
 };
-
-export type { SessionPruneOptions, SessionPruneResult };
 
 export type AutoCompactionBlockedTurn = {
   reason: "auto-compaction-failed";
   message: string;
 };
 
-export type ProcessTurnResult = {
+export type AgentTurnResult = {
   aborted: boolean;
   blocked?: AutoCompactionBlockedTurn;
-};
-
-export type HistoryEntry = {
-  id: string;
-  message: Message;
 };
 
 export type RewindCandidate = {
@@ -150,11 +144,18 @@ export type RewindResult = {
   removedEntryIds: string[];
 };
 
-type SessionTurnSettings = {
+type AgentTurnSpec = {
+  turnId: string;
+  contextEpoch: string;
   persona: Persona;
+  systemPrompt: string;
+  config: Config;
+  tools: ToolRegistry;
   streamOptions: TauStreamOptions;
   reasoningEffort: ReasoningEffort | "none";
-  clientToolDefinitions: ToolDefinition[];
+  retryPolicy: AgentSpec["retryPolicy"];
+  compactionPolicy: AgentSpec["compactionPolicy"];
+  maxModelSubturns: number;
 };
 
 type SingleSubturnResult = {
@@ -166,188 +167,212 @@ type SubturnRetryBudget = {
   remaining: number;
 };
 
-export class SessionEngine {
-  private persona: Persona;
-  private systemPrompt: string;
-  private subagentPrompts: Record<string, string>;
-  private readonly toolRegistry: ToolRegistry;
-  private readonly clientToolDefinitions?: (sessionId: string) => ToolDefinition[];
-  private config: Config;
+export function createAgentSpec(options: {
+  persona: Persona;
+  systemPrompt: string;
+  tools: ToolRegistry;
+  config: Config;
+}): AgentSpec {
+  return {
+    persona: structuredClone(options.persona),
+    systemPrompt: options.systemPrompt,
+    tools: options.tools,
+    config: structuredClone(options.config),
+    retryPolicy: { ...DEFAULT_RETRY_POLICY },
+    compactionPolicy: normalizeAutoCompactConfig(options.config.autoCompact),
+    maxModelSubturns: DEFAULT_MAX_MODEL_SUBTURNS,
+  };
+}
+
+function getContextEpoch(spec: AgentSpec): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        systemPrompt: spec.systemPrompt,
+        provider: spec.persona.model.provider,
+        model: spec.persona.model.id,
+        tools: spec.tools.schemas,
+      }),
+    )
+    .digest("hex");
+}
+
+export class AgentRuntime {
+  private currentSpec: AgentSpec;
   private readonly deps: CoreDeps;
   private readonly authPath: string;
   private readonly modelRuntime: ModelRuntime;
-  private cwd: string;
-  private home: string;
-  private includeAgentContext: boolean;
-  private modelResolver: ModelResolver;
-  private readonly resolveSubagentRuntime?: ResolveSubagentRuntime;
-  private readonly subagentControlPlane: SubagentControlPlane;
-  private readonly eventListeners = new Set<(event: CoreEvent) => void>();
-  private readonly subagentEventListeners = new Set<(event: CoreSubagentUiEvent) => void>();
-  private historyEntries: HistoryEntry[] = [];
-  private autoCompactionUsageInvalidated = false;
-  private sessionId: string = randomUUID();
+  private readonly eventSink: AgentEventSink;
+  private historyEntries: HistoryEntry[];
+  private revision: number;
+  private contextEpoch: string;
+  private usageCheckpoint?: AgentUsageCheckpoint;
+  private activeAbortController?: AbortController;
+  private activeTurnConfig?: Config;
+  private stopAtBoundaryRequested = false;
+  private pendingSteering: Array<{
+    text: string;
+    resolve: (association: { turnId: string; historyEntryId: string }) => void;
+    reject: (error: Error) => void;
+  }> = [];
+  private disposed = false;
+  private agentId: string;
 
-  constructor(options: SessionEngineOptions) {
-    this.persona = options.persona;
-    this.systemPrompt = options.systemPrompt;
-    this.subagentPrompts = options.subagentPrompts;
-    this.toolRegistry = options.toolRegistry;
-    this.clientToolDefinitions = options.clientToolDefinitions;
-    this.config = options.config ?? {};
+  constructor(options: AgentRuntimeOptions) {
+    this.currentSpec = options.spec;
+    this.eventSink = options.eventSink;
     this.deps = options.deps ?? createDefaultCoreDeps();
-    this.cwd = options.cwd ?? this.deps.env.cwd();
-    this.home = options.home ?? this.deps.env.home();
-    this.includeAgentContext = options.includeAgentContext ?? true;
-    this.modelResolver = options.modelResolver;
-    this.resolveSubagentRuntime = options.resolveSubagentRuntime;
     this.authPath = getAuthPath(this.deps.env.home());
     this.modelRuntime = new ModelRuntime({
       authStorage: new AuthStorage(this.authPath),
-      getConfig: () => this.config,
+      getConfig: () => this.activeTurnConfig ?? this.currentSpec.config,
       authPath: this.authPath,
       env: this.deps.env.env(),
     });
-    this.subagentControlPlane = new SubagentControlPlane({
-      onEvent: (event) => this.emitSubagentEvent(event),
-    });
+    const contextEpoch = getContextEpoch(options.spec);
+    if (options.state) {
+      if (options.state.contextEpoch !== contextEpoch) {
+        throw new Error("agent state context epoch does not match its spec");
+      }
+      this.agentId = options.state.agentId;
+      this.revision = options.state.revision;
+      this.historyEntries = structuredClone(options.state.historyEntries);
+      this.contextEpoch = options.state.contextEpoch;
+      this.usageCheckpoint = options.state.usageCheckpoint
+        ? { ...options.state.usageCheckpoint }
+        : undefined;
+    } else {
+      this.agentId = randomUUID();
+      this.revision = 0;
+      this.historyEntries = [];
+      this.contextEpoch = contextEpoch;
+    }
+  }
+
+  get status(): "idle" | "running" {
+    return this.activeAbortController ? "running" : "idle";
+  }
+
+  get state(): Readonly<AgentState> {
+    return this.snapshot();
+  }
+
+  get spec(): Readonly<AgentSpec> {
+    return this.currentSpec;
+  }
+
+  snapshot(): AgentState {
+    return {
+      agentId: this.agentId,
+      revision: this.revision,
+      historyEntries: structuredClone(this.historyEntries),
+      contextEpoch: this.contextEpoch,
+      ...(this.usageCheckpoint ? { usageCheckpoint: { ...this.usageCheckpoint } } : {}),
+    };
+  }
+
+  updateSpec(spec: AgentSpec): void {
+    this.assertActive();
+    this.currentSpec = spec;
+    this.contextEpoch = getContextEpoch(spec);
+    if (this.usageCheckpoint?.contextEpoch !== this.contextEpoch) {
+      this.usageCheckpoint = undefined;
+    }
   }
 
   reset(): void {
+    if (this.status === "running") {
+      throw new Error("cannot reset a running agent");
+    }
     this.closeProviderSessions();
     this.historyEntries = [];
-    this.autoCompactionUsageInvalidated = false;
-    this.sessionId = randomUUID();
-    this.subagentControlPlane.reset();
+    this.revision = 0;
+    this.usageCheckpoint = undefined;
+    this.agentId = randomUUID();
   }
 
-  restoreState(input: { sessionId: string; historyEntries: readonly HistoryEntry[] }): void {
+  restoreState(state: AgentState): void {
+    if (this.status === "running") {
+      throw new Error("cannot restore a running agent");
+    }
+    if (state.contextEpoch !== this.contextEpoch) {
+      throw new Error("agent state context epoch does not match its spec");
+    }
     this.closeProviderSessions();
-    this.historyEntries = input.historyEntries.map((entry) => ({
-      id: entry.id,
-      message: structuredClone(entry.message),
-    }));
-    this.autoCompactionUsageInvalidated = false;
-    this.sessionId = input.sessionId;
-    this.subagentControlPlane.reset();
+    this.agentId = state.agentId;
+    this.revision = state.revision;
+    this.historyEntries = structuredClone(state.historyEntries);
+    this.usageCheckpoint = state.usageCheckpoint ? { ...state.usageCheckpoint } : undefined;
   }
 
   private replaceHistoryEntries(entries: readonly HistoryEntry[]): void {
     this.closeProviderSessions();
-    this.historyEntries = entries.map((entry) => ({
-      id: entry.id,
-      message: structuredClone(entry.message),
-    }));
+    this.historyEntries = entries.map((entry) => structuredClone(entry));
+    this.revision += 1;
+    this.usageCheckpoint = undefined;
   }
 
   dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.interrupt();
     this.closeProviderSessions();
-    this.subagentControlPlane.reset();
   }
 
   private closeProviderSessions(): void {
-    cleanupSessionResources(this.sessionId);
+    cleanupSessionResources(this.agentId);
   }
 
-  setPersona(
-    persona: Persona,
-    systemPrompt: string,
-    subagentPrompts: Record<string, string>,
-  ): void {
-    if (!isDeepStrictEqual(this.persona, persona) || this.systemPrompt !== systemPrompt) {
-      this.autoCompactionUsageInvalidated = true;
-    }
-    this.persona = persona;
-    this.systemPrompt = systemPrompt;
-    this.subagentPrompts = subagentPrompts;
-  }
-
-  setReasoning(reasoning: ReasoningEffort): void {
-    this.persona = {
-      ...this.persona,
-      settings: {
-        ...this.persona.settings,
-        reasoning,
-      },
-    };
-  }
-
-  setRuntimeConfig(config: Config, modelResolver: ModelResolver): void {
-    this.config = config;
-    this.modelResolver = modelResolver;
-  }
-
-  setPromptContext(context: { cwd?: string; home?: string; includeAgentContext?: boolean }): void {
-    if (context.cwd !== undefined) {
-      this.cwd = context.cwd;
-    }
-    if (context.home !== undefined) {
-      this.home = context.home;
-    }
-    if (context.includeAgentContext !== undefined) {
-      this.includeAgentContext = context.includeAgentContext;
+  private assertActive(): void {
+    if (this.disposed) {
+      throw new Error(`agent '${this.agentId}' is disposed`);
     }
   }
 
-  onEvent(handler: (event: CoreEvent) => void): () => void {
-    this.eventListeners.add(handler);
-    return () => this.eventListeners.delete(handler);
-  }
-
-  onSubagentEvent(handler: (event: CoreSubagentUiEvent) => void): () => void {
-    this.subagentEventListeners.add(handler);
-    return () => this.subagentEventListeners.delete(handler);
-  }
-
-  hasSubagent(id: string): boolean {
-    return this.subagentControlPlane.getSnapshot(id) !== undefined;
-  }
-
-  async terminateSubagent(id: string): Promise<boolean> {
-    const result = await this.subagentControlPlane.terminate(id);
-    return Boolean(result);
-  }
-
-  addUserText(textForModel: string, options?: { historyEntryId?: string }): string {
+  async commitUserText(
+    textForModel: string,
+    options?: { historyEntryId?: string },
+  ): Promise<string> {
+    this.assertActive();
     const textWithModelNotice = prependModelNotice(
       textForModel,
-      resolveModelNotice(this.config, this.persona.model),
+      resolveModelNotice(this.currentSpec.config, this.currentSpec.persona.model),
     );
-
-    return this.addMessage(
-      {
-        role: "user",
-        content: [{ type: "text", text: textWithModelNotice }],
-        timestamp: this.deps.clock.now(),
-      },
-      options,
-    );
-  }
-
-  addMessage(message: Message, options?: { historyEntryId?: string }): string {
+    const message: UserMessage = {
+      role: "user",
+      content: [{ type: "text", text: textWithModelNotice }],
+      timestamp: this.deps.clock.now(),
+    };
     const entry = this.appendHistoryEntry(message, options?.historyEntryId);
+    await this.deliver({
+      type: "user_message",
+      historyEntryId: entry.id,
+      message,
+      revision: this.revision,
+    });
     return entry.id;
   }
 
-  replaceMessage(index: number, message: Message): boolean {
-    if (index < 0 || index >= this.historyEntries.length) {
-      return false;
-    }
-    const current = this.historyEntries[index];
-    if (!current) {
-      throw new Error(`history entry missing at index ${index}`);
-    }
-    this.historyEntries[index] = { ...current, message };
-    return true;
+  private addMessage(message: Message, options?: { historyEntryId?: string }): string {
+    return this.appendHistoryEntry(message, options?.historyEntryId).id;
   }
 
-  replaceMessageById(historyEntryId: string, message: Message): boolean {
-    const index = this.historyEntries.findIndex((entry) => entry.id === historyEntryId);
-    if (index < 0) {
-      return false;
+  async commitInterruptedAssistant(
+    message: AssistantMessage,
+    historyEntryId: string,
+  ): Promise<void> {
+    if (this.status !== "idle" || message.stopReason !== "aborted") {
+      throw new Error("only an idle agent can commit an interrupted assistant message");
     }
-    this.historyEntries[index] = { ...this.historyEntries[index]!, message };
-    return true;
+    this.addMessage(message, { historyEntryId });
+    await this.deliver({
+      type: "assistant_final",
+      historyEntryId,
+      message,
+      personaId: this.currentSpec.persona.id,
+      reasoningEffort: this.currentSpec.persona.settings.reasoning ?? "none",
+      revision: this.revision,
+    });
   }
 
   listRewindCandidates(): RewindCandidate[] {
@@ -400,16 +425,8 @@ export class SessionEngine {
     ) {
       return undefined;
     }
-    if (this.subagentControlPlane.getActiveCount() > 0) {
-      throw new Error("cannot rewind while subagents are running");
-    }
-
     const removedEntryIds = this.historyEntries.slice(historyIndex).map((item) => item.id);
     this.replaceHistoryEntries(this.historyEntries.slice(0, historyIndex));
-    this.subagentControlPlane.retainOrigins(
-      new Set(this.historyEntries.map((historyEntry) => historyEntry.id)),
-    );
-
     return {
       historyEntryId: entry.id,
       text: this.extractRewindUserText(entry.message),
@@ -462,15 +479,137 @@ export class SessionEngine {
     }));
   }
 
-  get sessionIdValue(): string {
-    return this.sessionId;
+  get agentIdValue(): string {
+    return this.agentId;
   }
 
-  async sample(input: SessionSampleOptions): Promise<AssistantMessage> {
+  async submit(text: string, options?: { historyEntryId?: string }): Promise<AgentTurnResult> {
+    if (this.status === "running") {
+      throw new Error("agent is already running");
+    }
+    await this.commitUserText(text, options);
+    return await this.runTurn();
+  }
+
+  steer(text: string): Promise<{ turnId: string; historyEntryId: string }> {
+    if (this.status !== "running") {
+      throw new Error("cannot steer an idle agent");
+    }
+    const normalized = text.trim();
+    if (!normalized) {
+      throw new Error("steering input must not be empty");
+    }
+    this.stopAtBoundaryRequested = true;
+    return new Promise((resolve, reject) => {
+      this.pendingSteering.push({ text: normalized, resolve, reject });
+    });
+  }
+
+  cancelSteering(): string[] {
+    const cancelled = this.pendingSteering.splice(0);
+    if (cancelled.length > 0) {
+      this.stopAtBoundaryRequested = false;
+      const error = new Error("steering submission was cancelled");
+      for (const submission of cancelled) {
+        submission.reject(error);
+      }
+    }
+    return cancelled.map((submission) => submission.text);
+  }
+
+  requestStopAtBoundary(): boolean {
+    if (this.status !== "running") return false;
+    this.stopAtBoundaryRequested = true;
+    return true;
+  }
+
+  cancelStopAtBoundary(): boolean {
+    if (this.status !== "running" || !this.stopAtBoundaryRequested) return false;
+    if (this.pendingSteering.length > 0) return false;
+    this.stopAtBoundaryRequested = false;
+    return true;
+  }
+
+  interrupt(): boolean {
+    const controller = this.activeAbortController;
+    if (!controller || controller.signal.aborted) return false;
+    controller.abort();
+    return true;
+  }
+
+  async runTurn(): Promise<AgentTurnResult> {
+    this.assertActive();
+    if (this.activeAbortController) {
+      throw new Error("agent is already running");
+    }
+    this.getCurrentTurnUserHistoryEntryId();
+
+    const controller = new AbortController();
+    this.activeAbortController = controller;
+    let result: AgentTurnResult = { aborted: false };
+
+    try {
+      let turnSpec = this.captureTurnSettings();
+      while (true) {
+        this.activeTurnConfig = turnSpec.config;
+        await this.deliver({ type: "turn_started", turnId: turnSpec.turnId });
+        const stream = this.processTurn(controller.signal, turnSpec);
+        try {
+          while (true) {
+            const next = await stream.next();
+            if (next.done) {
+              result = next.value;
+              break;
+            }
+            await this.deliver(next.value);
+          }
+        } catch (error) {
+          controller.abort();
+          await stream.return?.({ aborted: true });
+          throw error;
+        }
+
+        const outcome = result.blocked
+          ? "blocked"
+          : result.aborted
+            ? "interrupted"
+            : this.stopAtBoundaryRequested
+              ? "stopped"
+              : "completed";
+        await this.deliver({ type: "turn_finished", turnId: turnSpec.turnId, outcome });
+
+        if (controller.signal.aborted || result.blocked || this.pendingSteering.length === 0) {
+          return result;
+        }
+
+        const steering = this.pendingSteering.splice(0);
+        this.stopAtBoundaryRequested = false;
+        turnSpec = this.captureTurnSettings();
+        const historyEntryId = await this.commitUserText(
+          formatSteeringUserMessage(steering.map((item) => item.text)),
+        );
+        for (const submission of steering) {
+          submission.resolve({ turnId: turnSpec.turnId, historyEntryId });
+        }
+      }
+    } finally {
+      if (this.activeAbortController === controller) {
+        this.activeAbortController = undefined;
+        this.activeTurnConfig = undefined;
+        this.stopAtBoundaryRequested = false;
+      }
+    }
+  }
+
+  private async deliver(event: AgentEvent): Promise<void> {
+    await this.eventSink(event);
+  }
+
+  async sample(input: AgentSampleOptions): Promise<AssistantMessage> {
     input.signal?.throwIfAborted();
     const persona = {
-      ...this.persona,
-      settings: { ...this.persona.settings },
+      ...this.currentSpec.persona,
+      settings: { ...this.currentSpec.persona.settings },
     };
     const sampleSessionId = `sample-${randomUUID()}`;
     const stream = this.modelRuntime.streamModel(persona.model, structuredClone(input.context), {
@@ -490,9 +629,48 @@ export class SessionEngine {
     }
   }
 
-  async compact(options: SessionCompactionOptions): Promise<SessionCompactionResult> {
+  async compact(options: AgentCompactionOptions): Promise<AgentCompactionResult> {
+    this.assertActive();
+    if (this.status !== "idle") {
+      throw new Error("cannot compact a running agent");
+    }
+    await this.deliver({ type: "compaction_start", reason: "manual" });
+    try {
+      const result = await this.compactNow(options);
+      const summaryHistoryEntryId = this.historyEntries[0]!.id;
+      await this.deliver({
+        type: "compaction_end",
+        reason: "manual",
+        outcome: "compacted",
+        result: {
+          summaryHistoryEntryId,
+          continuationHistoryEntryId: summaryHistoryEntryId,
+          compactionMessage: result.compactionMessage,
+          cutType: "turn-boundary",
+          retainedMessageCount: 0,
+        },
+        revision: this.revision,
+      });
+      return result;
+    } catch (error) {
+      const aborted = options.signal?.aborted === true;
+      await this.deliver(
+        aborted
+          ? { type: "compaction_end", reason: "manual", outcome: "aborted" }
+          : {
+              type: "compaction_end",
+              reason: "manual",
+              outcome: "failed",
+              errorMessage: error instanceof Error ? error.message : String(error),
+            },
+      );
+      throw error;
+    }
+  }
+
+  private async compactNow(options: AgentCompactionOptions): Promise<AgentCompactionResult> {
     const preparation = prepareSessionCompaction(this.historyEntries, {
-      systemPrompt: this.systemPrompt,
+      systemPrompt: this.currentSpec.systemPrompt,
     });
     if (!preparation) {
       throw new Error("no conversation to compact.");
@@ -521,7 +699,7 @@ export class SessionEngine {
 
     const textWithContext = this.prependCompactionContext(
       compactionMessage,
-      resolveModelNotice(this.config, this.persona.model),
+      resolveModelNotice(this.currentSpec.config, this.currentSpec.persona.model),
     );
     const textWithMetadata = prependTauUserMetadata(textWithContext, [
       {
@@ -549,90 +727,13 @@ export class SessionEngine {
     };
   }
 
-  async pruneToolResults(
-    options: Omit<SessionPruneOptions, "smartSelection"> & { signal?: AbortSignal },
-  ): Promise<SessionPruneResult> {
-    let smartSelection: string[] | undefined;
-    if (options.strategy === "smart") {
-      const request = prepareSessionSmartPrunePrompt({
-        historyEntries: this.historyEntries,
-        fraction: options.fraction,
-        ...(options.guidance !== undefined ? { guidance: options.guidance } : {}),
-      });
-      smartSelection = request
-        ? await this.runSmartPruneSelection(request.prompt, { signal: options.signal })
-        : [];
-    }
-
-    const nextHistoryEntries = [...this.rawHistoryEntriesSnapshot];
-    const result = pruneSessionHistory({
-      historyEntries: nextHistoryEntries,
-      replaceMessageById: (historyEntryId, message) => {
-        const index = nextHistoryEntries.findIndex((entry) => entry.id === historyEntryId);
-        if (index < 0) {
-          return false;
-        }
-        nextHistoryEntries[index] = { ...nextHistoryEntries[index]!, message };
-        return true;
-      },
-      options: {
-        strategy: options.strategy,
-        fraction: options.fraction,
-        ...(options.guidance !== undefined ? { guidance: options.guidance } : {}),
-        ...(smartSelection !== undefined ? { smartSelection } : {}),
-      },
-    });
-    options.signal?.throwIfAborted();
-    this.replaceHistoryEntries(nextHistoryEntries);
-    return result;
-  }
-
-  private async runSmartPruneSelection(
-    prompt: string,
-    options: { signal?: AbortSignal },
-  ): Promise<string[]> {
-    const reasoning = this.clampSmartPruneReasoning(this.persona.settings.reasoning);
-    const stream = this.modelRuntime.streamModel(
-      this.persona.model,
-      {
-        systemPrompt: buildSmartPruneSystemPrompt(),
-        messages: [
-          {
-            role: "user",
-            content: [{ type: "text", text: prompt }],
-            timestamp: this.deps.clock.now(),
-          },
-        ],
-      },
-      {
-        ...(reasoning ? { reasoning } : {}),
-        sessionId: `prune-${randomUUID()}`,
-        ...(options.signal ? { signal: options.signal } : {}),
-      },
-    );
-
-    const final = await stream.result();
-    const raw = extractAssistantText(final).trim();
-    const parsed = parseSmartPruneResponse(raw);
-    if (!parsed) {
-      throw new Error("model returned an invalid prune selection.");
-    }
-
-    return parsed;
-  }
-
-  private clampSmartPruneReasoning(
-    reasoning?: ReasoningEffort,
-  ): Exclude<ReasoningEffort, "none"> | undefined {
-    return clampPruneReasoning(reasoning);
-  }
-
   private async runCompactionSummary(
     summaryPrompt: string,
     options: { sessionId: string; signal?: AbortSignal },
+    persona: Persona = this.currentSpec.persona,
   ): Promise<string> {
     const stream = this.modelRuntime.streamModel(
-      this.persona.model,
+      persona.model,
       {
         systemPrompt: COMPACTION_SUMMARIZATION_SYSTEM_PROMPT,
         messages: [
@@ -661,18 +762,9 @@ export class SessionEngine {
 
   private appendHistoryEntry(message: Message, preferredId?: string): HistoryEntry {
     const id = this.createHistoryEntryId(preferredId);
-    const entry: HistoryEntry = { id, message };
+    const entry: HistoryEntry = { id, message: structuredClone(message) };
     this.historyEntries.push(entry);
-    if (
-      message.role === "assistant" &&
-      message.stopReason !== "error" &&
-      message.stopReason !== "aborted" &&
-      message.usage &&
-      message.provider === this.persona.model.provider &&
-      message.model === this.persona.model.id
-    ) {
-      this.autoCompactionUsageInvalidated = false;
-    }
+    this.revision += 1;
     return entry;
   }
 
@@ -716,23 +808,6 @@ export class SessionEngine {
     return stripTauUserDisplayText(this.extractUserText(message));
   }
 
-  private emitSubagentEvent(event: SubagentUiEvent): void {
-    const coreEvent: CoreSubagentUiEvent = {
-      type: "subagent_ui",
-      event,
-    };
-    for (const listener of this.subagentEventListeners) {
-      listener(coreEvent);
-    }
-    this.emitEvent(coreEvent);
-  }
-
-  private emitEvent(event: CoreEvent): void {
-    for (const listener of this.eventListeners) {
-      listener(event);
-    }
-  }
-
   private getCurrentTurnUserHistoryEntryId(): string {
     for (let i = this.historyEntries.length - 1; i >= 0; i -= 1) {
       const entry = this.historyEntries[i]!;
@@ -749,146 +824,71 @@ export class SessionEngine {
     return parseStreamingSettings(merged);
   }
 
-  private captureTurnSettings(): SessionTurnSettings {
-    const persona = {
-      ...this.persona,
-      settings: { ...this.persona.settings },
-    };
+  private captureTurnSettings(): AgentTurnSpec {
+    const persona = structuredClone(this.currentSpec.persona);
+    const tools = new ToolRegistry(this.currentSpec.tools.getEnabledTools(persona.tools));
     return {
+      turnId: `turn-${randomUUID()}`,
+      contextEpoch: getContextEpoch(this.currentSpec),
       persona,
+      systemPrompt: this.currentSpec.systemPrompt,
+      config: structuredClone(this.currentSpec.config),
+      tools,
       streamOptions: this.getStreamingSettings(persona),
       reasoningEffort: persona.settings.reasoning ?? "none",
-      clientToolDefinitions: this.clientToolDefinitions?.(this.sessionId) ?? [],
+      retryPolicy: { ...this.currentSpec.retryPolicy },
+      compactionPolicy: { ...this.currentSpec.compactionPolicy },
+      maxModelSubturns: this.currentSpec.maxModelSubturns,
     };
   }
 
-  private getEnabledToolSchemas(
-    persona: Persona = this.persona,
-    clientToolDefinitions: ToolDefinition[] = [],
-  ) {
-    const schemas = this.toolRegistry.getEnabledToolSchemas(persona.tools);
-    const existingNames = new Set(schemas.map((tool) => tool.name));
-    const configuredToolDefinitions = this.getConfiguredToolDefinitions().filter(
-      (definition) => !existingNames.has(definition.schema.name),
-    );
-    const extraDefinitions = [...configuredToolDefinitions, ...clientToolDefinitions];
-    if (extraDefinitions.length === 0) {
-      return schemas;
-    }
-
-    const clientSchemas = extraDefinitions.map((definition) => definition.schema);
-    for (const schema of clientSchemas) {
-      if (existingNames.has(schema.name)) {
-        throw new Error(`duplicate tool '${schema.name}'`);
-      }
-      existingNames.add(schema.name);
-    }
-
-    return [...schemas, ...clientSchemas];
-  }
-
-  private getConfiguredToolDefinitions(): ToolDefinition[] {
-    if (!this.config.nook) {
-      return [];
-    }
-
-    const nook = this.toolRegistry.get(TOOL_NAME_NOOK);
-    return nook ? [nook] : [];
-  }
-
-  async *processTurn(
+  private async *processTurn(
     signal: AbortSignal,
-    options?: { shouldStopAtBoundary?: () => boolean },
-  ): AsyncGenerator<CoreEvent, ProcessTurnResult, void> {
+    turnSettings: AgentTurnSpec,
+  ): AsyncGenerator<AgentEvent, AgentTurnResult, void> {
     let subturns = 0;
     let needsAnotherSubturn = false;
-    let retryBudget: SubturnRetryBudget = { remaining: MAX_SUBTURN_RETRIES };
-    const originHistoryEntryId = this.getCurrentTurnUserHistoryEntryId();
-    const turnSettings = this.captureTurnSettings();
+    let retryBudget: SubturnRetryBudget = { remaining: turnSettings.retryPolicy.maxRetries };
 
-    while (subturns < MAX_MODEL_SUBTURNS && !signal.aborted) {
+    while (subturns < turnSettings.maxModelSubturns && !signal.aborted) {
       needsAnotherSubturn = false;
-      if (this.shouldRunAutoCompaction()) {
-        const compactionResult = yield* this.runAutoCompactionIfNeeded(signal);
+      if (this.shouldRunAutoCompaction(turnSettings)) {
+        const compactionResult = yield* this.runAutoCompactionIfNeeded(signal, turnSettings);
         if (compactionResult.blocked || compactionResult.aborted) {
           return compactionResult;
         }
       }
 
       subturns += 1;
-      const enabledTools = this.getEnabledToolSchemas(
-        turnSettings.persona,
-        turnSettings.clientToolDefinitions,
-      );
-      const dispatchContext: ToolDispatchContext = {
-        scope: "main",
-        persona: turnSettings.persona,
-        config: this.config,
-        originHistoryEntryId,
-        cwd: this.cwd,
-        home: this.home,
-        includeAgentContext: this.includeAgentContext,
-        subagentPrompts: this.subagentPrompts,
-        ...(this.resolveSubagentRuntime
-          ? { resolveSubagentRuntime: this.resolveSubagentRuntime }
-          : {}),
-        toolRegistry: this.toolRegistry,
-        modelResolver: this.modelResolver,
-        authPath: this.authPath,
-        subagentControlPlane: this.subagentControlPlane,
-      };
       const { finalMessage, continueAfterToolRecovery } = yield* this.runSingleSubturn(
         signal,
         turnSettings,
         retryBudget,
-        {
-          toolRegistry: this.toolRegistry,
-          extraToolDefinitions: [
-            ...this.getConfiguredToolDefinitions(),
-            ...turnSettings.clientToolDefinitions,
-          ],
-          enabledTools,
-          dispatchContext,
-        },
       );
 
-      if (signal.aborted) {
-        break;
-      }
-
+      if (signal.aborted) break;
       if (continueAfterToolRecovery) {
-        if (options?.shouldStopAtBoundary?.()) {
-          break;
-        }
+        if (this.stopAtBoundaryRequested) break;
         needsAnotherSubturn = true;
         continue;
       }
-
-      if (finalMessage?.stopReason !== "toolUse") {
-        break;
-      }
-
-      const toolCalls = finalMessage.content.filter((c): c is ToolCall => c.type === "toolCall");
-      if (!toolCalls.length) {
-        break;
-      }
-
-      if (options?.shouldStopAtBoundary?.()) {
-        break;
-      }
+      if (finalMessage?.stopReason !== "toolUse") break;
+      const toolCalls = finalMessage.content.filter(
+        (content): content is ToolCall => content.type === "toolCall",
+      );
+      if (toolCalls.length === 0) break;
+      if (this.stopAtBoundaryRequested) break;
 
       needsAnotherSubturn = true;
-      retryBudget = { remaining: MAX_SUBTURN_RETRIES };
+      retryBudget = { remaining: turnSettings.retryPolicy.maxRetries };
     }
 
-    if (needsAnotherSubturn && subturns >= MAX_MODEL_SUBTURNS && !signal.aborted) {
-      const event: CoreEvent = {
+    if (needsAnotherSubturn && subturns >= turnSettings.maxModelSubturns && !signal.aborted) {
+      yield {
         type: "notice",
         severity: "warn",
-        text: `stopped after ${MAX_MODEL_SUBTURNS} model subturns to avoid an infinite loop.`,
+        text: `stopped after ${turnSettings.maxModelSubturns} model subturns to avoid an infinite loop.`,
       };
-      this.emitEvent(event);
-      yield event;
     }
 
     return { aborted: signal.aborted };
@@ -896,57 +896,54 @@ export class SessionEngine {
 
   private async *runAutoCompactionIfNeeded(
     signal: AbortSignal,
-  ): AsyncGenerator<CoreEvent, ProcessTurnResult, void> {
-    if (!this.shouldRunAutoCompaction()) {
+    turnSettings: AgentTurnSpec,
+  ): AsyncGenerator<AgentEvent, AgentTurnResult, void> {
+    if (!this.shouldRunAutoCompaction(turnSettings)) {
       return { aborted: signal.aborted };
     }
 
-    const startEvent: CoreEvent = { type: "compaction_start", reason: "threshold" };
-    this.emitEvent(startEvent);
+    const startEvent: AgentEvent = { type: "compaction_start", reason: "threshold" };
     yield startEvent;
 
     try {
-      const result = await this.runAutoCompaction(signal);
+      const result = await this.runAutoCompaction(signal, turnSettings);
       if (!result) {
-        const endEvent: CoreEvent = {
+        const endEvent: AgentEvent = {
           type: "compaction_end",
           reason: "threshold",
           outcome: "skipped",
         };
-        this.emitEvent(endEvent);
         yield endEvent;
         return { aborted: false };
       }
 
-      const endEvent: CoreEvent = {
+      const endEvent: AgentEvent = {
         type: "compaction_end",
         reason: "threshold",
         outcome: "compacted",
         result,
+        revision: this.revision,
       };
-      this.emitEvent(endEvent);
       yield endEvent;
       return { aborted: false };
     } catch (error) {
       if (signal.aborted) {
-        const endEvent: CoreEvent = {
+        const endEvent: AgentEvent = {
           type: "compaction_end",
           reason: "threshold",
           outcome: "aborted",
         };
-        this.emitEvent(endEvent);
         yield endEvent;
         return { aborted: true };
       }
 
       const message = error instanceof Error ? error.message : String(error);
-      const endEvent: CoreEvent = {
+      const endEvent: AgentEvent = {
         type: "compaction_end",
         reason: "threshold",
         outcome: "failed",
         errorMessage: message,
       };
-      this.emitEvent(endEvent);
       yield endEvent;
       return {
         aborted: false,
@@ -958,14 +955,17 @@ export class SessionEngine {
     }
   }
 
-  private async runAutoCompaction(signal: AbortSignal): Promise<CoreCompactionResult | undefined> {
-    const settings = this.getAutoCompactConfig();
+  private async runAutoCompaction(
+    signal: AbortSignal,
+    turnSettings: AgentTurnSpec,
+  ): Promise<AgentAutoCompactionResult | undefined> {
+    const settings = turnSettings.compactionPolicy;
     const preparation = prepareAutoCompaction(this.historyEntries, {
       keepRecentTokens: Math.min(
         settings.keepRecentTokens,
-        this.getAutoCompactionThresholdTokens(settings),
+        this.getAutoCompactionThresholdTokens(settings, turnSettings),
       ),
-      systemPrompt: this.systemPrompt,
+      systemPrompt: turnSettings.systemPrompt,
     });
     if (!preparation) {
       return undefined;
@@ -977,6 +977,7 @@ export class SessionEngine {
         sessionId: `auto-summary-${randomUUID()}`,
         signal,
       },
+      turnSettings.persona,
     );
     const summaryResult = parseCompactionSummaryResponse({
       response: summaryResponse,
@@ -989,7 +990,7 @@ export class SessionEngine {
     });
     const compactionMessage = buildCompactionUserMessage({ summary: compactionSummary });
     const retainedMessageCount = preparation.retainedEntries.length;
-    const modelNotice = resolveModelNotice(this.config, this.persona.model);
+    const modelNotice = resolveModelNotice(turnSettings.config, turnSettings.persona.model);
     const textWithContext = this.prependCompactionContext(compactionMessage, modelNotice);
     const textWithMetadata = prependTauUserMetadata(textWithContext, [
       {
@@ -1031,96 +1032,57 @@ export class SessionEngine {
   }
 
   private prependCompactionContext(text: string, modelNotice?: string): string {
-    const hiddenSystemMessages = [modelNotice, this.formatCompactionSubagentStatus()].filter(
+    const hiddenSystemMessages = [modelNotice].filter(
       (message): message is string => message !== undefined,
     );
     return prependTauHiddenSystemMessages(text, hiddenSystemMessages);
   }
 
-  private formatCompactionSubagentStatus(): string | undefined {
-    const running = this.subagentControlPlane
-      .listSnapshots()
-      .filter((snapshot) => snapshot.status === "running");
-    if (running.length === 0) {
-      return undefined;
-    }
-
-    const entries = running
-      .map((snapshot) => {
-        const abort = snapshot.abortRequested ? ", abort requested" : "";
-        return `- ${snapshot.id}: ${snapshot.title} (name: ${snapshot.name}, status: ${snapshot.status}${abort})`;
-      })
-      .join("\n");
-    return `<active-subagents>\n${entries}\n</active-subagents>`;
-  }
-
-  private shouldRunAutoCompaction(): boolean {
-    const settings = this.getAutoCompactConfig();
+  private shouldRunAutoCompaction(turnSettings: AgentTurnSpec): boolean {
+    const settings = turnSettings.compactionPolicy;
     if (!settings.enabled) {
       return false;
     }
 
-    const thresholdTokens = this.getAutoCompactionThresholdTokens(settings);
+    const thresholdTokens = this.getAutoCompactionThresholdTokens(settings, turnSettings);
     if (thresholdTokens <= 0) {
       return false;
     }
 
-    const usageTokens = this.getFreshContextUsageEstimateTokens();
+    const usageTokens = this.getFreshContextUsageEstimateTokens(turnSettings.contextEpoch);
     return usageTokens !== undefined && usageTokens > thresholdTokens;
   }
 
-  private getAutoCompactionThresholdTokens(settings: NormalizedAutoCompactConfig): number {
-    return (this.persona.model.contextWindow ?? 0) - settings.reserveTokens;
+  private getAutoCompactionThresholdTokens(
+    settings: NormalizedAutoCompactConfig,
+    turnSettings: AgentTurnSpec,
+  ): number {
+    return (turnSettings.persona.model.contextWindow ?? 0) - settings.reserveTokens;
   }
 
-  private getAutoCompactConfig(): NormalizedAutoCompactConfig {
-    return normalizeAutoCompactConfig(this.config.autoCompact);
-  }
-
-  private getFreshContextUsageEstimateTokens(): number | undefined {
-    if (this.autoCompactionUsageInvalidated) {
+  private getFreshContextUsageEstimateTokens(contextEpoch: string): number | undefined {
+    const checkpoint = this.usageCheckpoint;
+    if (!checkpoint || checkpoint.contextEpoch !== contextEpoch) {
+      return undefined;
+    }
+    const checkpointIndex = this.historyEntries.findIndex(
+      (entry) => entry.id === checkpoint.historyEntryId,
+    );
+    if (checkpointIndex <= this.findLatestAutoCompactionContinuationIndex()) {
       return undefined;
     }
 
-    const boundaryIndex = this.findLatestAutoCompactionContinuationIndex();
-    for (let index = this.historyEntries.length - 1; index > boundaryIndex; index -= 1) {
-      const message = this.historyEntries[index]!.message;
+    return this.historyEntries.slice(checkpointIndex + 1).reduce((total, entry) => {
+      const message = stripTauUserMetadataFromMessage(entry.message);
       if (
-        message.role !== "assistant" ||
-        message.stopReason === "error" ||
-        message.stopReason === "aborted"
+        message.role === "assistant" &&
+        (message.stopReason === "error" || message.stopReason === "aborted")
       ) {
-        continue;
+        return total;
       }
-
-      const usage = message.usage;
-      if (!usage) {
-        continue;
-      }
-      if (
-        message.provider !== this.persona.model.provider ||
-        message.model !== this.persona.model.id
-      ) {
-        return undefined;
-      }
-
-      const reportedUsage =
-        (usage.input ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0) + (usage.output ?? 0);
-      return this.historyEntries.slice(index + 1).reduce((total, entry) => {
-        const appendedMessage = stripTauUserMetadataFromMessage(entry.message);
-        if (
-          appendedMessage.role === "assistant" &&
-          (appendedMessage.stopReason === "error" || appendedMessage.stopReason === "aborted")
-        ) {
-          return total;
-        }
-
-        const contentBytes = Buffer.byteLength(JSON.stringify(appendedMessage.content), "utf8");
-        return total + Math.max(1, bytesToTokens(contentBytes));
-      }, reportedUsage);
-    }
-
-    return undefined;
+      const contentBytes = Buffer.byteLength(JSON.stringify(message.content), "utf8");
+      return total + Math.max(1, bytesToTokens(contentBytes));
+    }, checkpoint.tokens);
   }
 
   private findLatestAutoCompactionContinuationIndex(): number {
@@ -1133,10 +1095,10 @@ export class SessionEngine {
     return -1;
   }
 
-  private async noteCurrentProviderError(message?: string): Promise<void> {
+  private async noteProviderError(provider: string, message?: string): Promise<void> {
     try {
-      await this.modelRuntime.noteProviderError(this.persona.model.provider, {
-        sessionId: this.sessionId,
+      await this.modelRuntime.noteProviderError(provider, {
+        sessionId: this.agentId,
         error: message ? new Error(message) : undefined,
       });
     } catch {}
@@ -1144,29 +1106,22 @@ export class SessionEngine {
 
   private async *runSingleSubturn(
     signal: AbortSignal,
-    turnSettings: SessionTurnSettings,
+    turnSettings: AgentTurnSpec,
     retryBudget: SubturnRetryBudget,
-    toolOptions: SequentialToolCallRunnerOptions,
-  ): AsyncGenerator<CoreEvent, SingleSubturnResult, void> {
+  ): AsyncGenerator<AgentEvent, SingleSubturnResult, void> {
     const historyEntryId = this.createHistoryEntryId();
-    const startEvent: CoreEvent = { type: "assistant_start", historyEntryId };
-    this.emitEvent(startEvent);
+    const startEvent: AgentEvent = { type: "assistant_start", historyEntryId };
     yield startEvent;
-    const tools = this.getEnabledToolSchemas(
-      turnSettings.persona,
-      turnSettings.clientToolDefinitions,
-    );
-
     const context: Context = {
-      systemPrompt: this.systemPrompt,
+      systemPrompt: turnSettings.systemPrompt,
       messages: [...this.modelHistory],
-      tools,
+      tools: turnSettings.tools.schemas,
     };
 
     const baseOptions: TauStreamOptions = {
       ...turnSettings.streamOptions,
       signal,
-      sessionId: this.sessionId,
+      sessionId: this.agentId,
     };
 
     if (turnSettings.persona.model.provider === "openai-codex") {
@@ -1196,11 +1151,22 @@ export class SessionEngine {
         shouldRetryAfterError: ({ error, model }) => shouldAutoRetry({ model, error }),
         onRetry: () => consumeSubturnRetry(retryBudget),
         maxRetries: retryBudget.remaining,
-        delayMs: 3000,
+        delayMs: turnSettings.retryPolicy.delayMs,
         notice: { text: "auto-retrying after transient error", severity: "warn" },
       },
     });
-    const toolRunner = new SequentialToolCallRunner(toolOptions, subturnAbortController.signal);
+    const toolRunner = new SequentialToolCallRunner(
+      {
+        toolRegistry: turnSettings.tools,
+        executionContext: {
+          agentId: this.agentId,
+          turnId: turnSettings.turnId,
+          assistantMessageId: historyEntryId,
+        },
+        now: this.deps.clock.now,
+      },
+      subturnAbortController.signal,
+    );
     const toolStream = toolRunner[Symbol.asyncIterator]();
     const pendingToolResults: ToolResultMessage[] = [];
     const recoveryToolResults: ToolResultMessage[] = [];
@@ -1212,14 +1178,18 @@ export class SessionEngine {
     let shouldNoteProviderError = false;
     let toolRecoveryMode: "continue" | "stop" | undefined;
     let finalMessage: AssistantMessage | undefined;
-    let modelNext = modelStream.next().then(
-      (result) => ({ source: "model" as const, result }),
-      (error: unknown) => ({ source: "model_error" as const, error }),
-    );
-    let toolNext = toolStream.next().then(
-      (result) => ({ source: "tool" as const, result }),
-      (error: unknown) => ({ source: "tool_error" as const, error }),
-    );
+    const readModelEvent = () =>
+      modelStream.next().then(
+        (result) => ({ source: "model" as const, result }),
+        (error: unknown) => ({ source: "model_error" as const, error }),
+      );
+    const readToolEvent = () =>
+      toolStream.next().then(
+        (result) => ({ source: "tool" as const, result }),
+        (error: unknown) => ({ source: "tool_error" as const, error }),
+      );
+    let modelNext = readModelEvent();
+    let toolNext = readToolEvent();
 
     try {
       while (!modelDone || !toolDone) {
@@ -1257,51 +1227,69 @@ export class SessionEngine {
               throw error;
             }
             if (finalMessage.stopReason === "error") {
-              await this.noteCurrentProviderError(finalMessage.errorMessage);
+              await this.noteProviderError(
+                turnSettings.persona.model.provider,
+                finalMessage.errorMessage,
+              );
             }
             if (toolRecoveryMode) {
               recoveryToolResults.push(...pendingToolResults.splice(0));
             }
 
             this.addMessage(finalMessage, { historyEntryId });
-            appendUsageLogEntry({
-              timestamp: finalMessage.timestamp,
-              sessionId: this.sessionId,
-              personaId: turnSettings.persona.id,
-              provider: finalMessage.provider,
-              model: finalMessage.model,
-              api: finalMessage.api,
-              reasoningEffort: turnSettings.reasoningEffort,
-              usage: getUsageTotals(finalMessage.usage),
-              cost: { total: getUsageCostTotal(finalMessage.usage) },
-              agent: { type: "main" },
-            });
-            const event: CoreEvent = {
+            const usage = finalMessage.usage;
+            if (
+              finalMessage.stopReason !== "error" &&
+              finalMessage.stopReason !== "aborted" &&
+              usage &&
+              finalMessage.provider === turnSettings.persona.model.provider &&
+              finalMessage.model === turnSettings.persona.model.id
+            ) {
+              this.usageCheckpoint = {
+                historyEntryId,
+                contextEpoch: turnSettings.contextEpoch,
+                tokens:
+                  (usage.input ?? 0) +
+                  (usage.cacheRead ?? 0) +
+                  (usage.cacheWrite ?? 0) +
+                  (usage.output ?? 0),
+              };
+            }
+            yield {
               type: "assistant_final",
               historyEntryId,
               message: finalMessage,
+              personaId: turnSettings.persona.id,
+              reasoningEffort: turnSettings.reasoningEffort,
+              revision: this.revision,
             };
-            this.emitEvent(event);
-            yield event;
+            if (this.usageCheckpoint?.historyEntryId === historyEntryId) {
+              yield {
+                type: "usage_checkpoint",
+                historyEntryId,
+                contextEpoch: this.usageCheckpoint.contextEpoch,
+                tokens: this.usageCheckpoint.tokens,
+                revision: this.revision,
+              };
+            }
 
             if (toolRecoveryMode === "continue") {
-              const notice: CoreEvent = {
+              const notice: AgentEvent = {
                 type: "notice",
                 severity: "error",
                 text: `model stream failed after tool execution: ${finalMessage.errorMessage ?? "unknown provider error"}`,
               };
-              this.emitEvent(notice);
               yield notice;
             }
             if (!toolRecoveryMode) {
               for (const toolResult of pendingToolResults.splice(0)) {
                 const toolHistoryEntryId = this.addMessage(toolResult);
-                const toolEvent: CoreEvent = {
+                const toolEvent: AgentEvent = {
                   type: "tool_result",
                   historyEntryId: toolHistoryEntryId,
                   message: toolResult,
+                  revision: this.revision,
                 };
-                this.emitEvent(toolEvent);
                 yield toolEvent;
               }
             }
@@ -1309,106 +1297,114 @@ export class SessionEngine {
           }
 
           const event = next.result.value;
-          modelNext = modelStream.next().then(
-            (result) => ({ source: "model" as const, result }),
-            (error: unknown) => ({ source: "model_error" as const, error }),
-          );
-          if (event.type === "tool_call_streaming") {
-            const replacesToolCallId = streamingToolCallIdsByContentIndex.get(event.contentIndex);
-            if (signal.aborted || admittedToolCallIds.has(event.toolCallId)) {
-              if (replacesToolCallId) {
-                streamingToolCallIdsByContentIndex.delete(event.contentIndex);
-                const discardedEvent: CoreEvent = {
-                  type: "tool_call_discarded",
-                  historyEntryId,
-                  toolCallId: replacesToolCallId,
-                  contentIndex: event.contentIndex,
-                };
-                this.emitEvent(discardedEvent);
-                yield discardedEvent;
-              }
-              continue;
-            }
-            streamingToolCallIdsByContentIndex.set(event.contentIndex, event.toolCallId);
-            const streamingEvent: CoreEvent = {
-              type: "tool_call_streaming",
-              historyEntryId,
-              toolCallId: event.toolCallId,
-              toolName: event.toolName,
-              contentIndex: event.contentIndex,
-              ...(replacesToolCallId ? { replacesToolCallId } : {}),
-            };
-            this.emitEvent(streamingEvent);
-            yield streamingEvent;
-            continue;
-          }
-          if (event.type === "tool_call_discarded") {
-            if (streamingToolCallIdsByContentIndex.get(event.contentIndex) !== event.toolCallId) {
-              continue;
-            }
-            streamingToolCallIdsByContentIndex.delete(event.contentIndex);
-            const discardedEvent: CoreEvent = {
-              type: "tool_call_discarded",
-              historyEntryId,
-              toolCallId: event.toolCallId,
-              contentIndex: event.contentIndex,
-            };
-            this.emitEvent(discardedEvent);
-            yield discardedEvent;
-            continue;
-          }
-          if (event.type === "assistant_partial") {
-            if (signal.aborted) {
-              continue;
-            }
-            const admissionEvents: CoreToolUiEvent[] = [];
-            for (const admittedToolCall of event.snapshot.toolCalls.slice(
-              admittedToolCalls.length,
-            )) {
-              const invalidId = !admittedToolCall.id.trim();
-              const duplicateId = admittedToolCallIds.has(admittedToolCall.id);
-              if (!invalidId && !duplicateId) {
-                admittedToolCallIds.add(admittedToolCall.id);
-                admittedToolCalls.push(admittedToolCall);
-                for (const [contentIndex, toolCallId] of streamingToolCallIdsByContentIndex) {
-                  if (toolCallId === admittedToolCall.id) {
-                    streamingToolCallIdsByContentIndex.delete(contentIndex);
-                    break;
-                  }
+          try {
+            if (event.type === "tool_call_streaming") {
+              const replacesToolCallId = streamingToolCallIdsByContentIndex.get(event.contentIndex);
+              if (signal.aborted || admittedToolCallIds.has(event.toolCallId)) {
+                if (replacesToolCallId) {
+                  streamingToolCallIdsByContentIndex.delete(event.contentIndex);
+                  const discardedEvent: AgentEvent = {
+                    type: "tool_call_discarded",
+                    historyEntryId,
+                    toolCallId: replacesToolCallId,
+                    contentIndex: event.contentIndex,
+                  };
+                  yield discardedEvent;
                 }
-                admissionEvents.push(toolRunner.enqueue(admittedToolCall));
                 continue;
               }
-
-              const toolCall = {
-                ...admittedToolCall,
-                id: `invalid-tool-call-${randomUUID()}`,
+              streamingToolCallIdsByContentIndex.set(event.contentIndex, event.toolCallId);
+              const streamingEvent: AgentEvent = {
+                type: "tool_call_streaming",
+                historyEntryId,
+                toolCallId: event.toolCallId,
+                toolName: event.toolName,
+                contentIndex: event.contentIndex,
+                ...(replacesToolCallId ? { replacesToolCallId } : {}),
               };
-              const message = invalidId
-                ? "Model returned a tool call with an empty ID."
-                : `Model returned duplicate tool call ID '${admittedToolCall.id}'.`;
-              admittedToolCalls.push(toolCall);
-              admissionEvents.push(toolRunner.enqueueRejected(toolCall, message));
+              yield streamingEvent;
+              continue;
             }
-            const partialEvent: CoreEvent = {
-              type: "assistant_partial",
-              historyEntryId,
-              snapshot: {
-                ...event.snapshot,
-                toolCalls: [...admittedToolCalls],
-              },
-            };
-            this.emitEvent(partialEvent);
-            yield partialEvent;
-            for (const admissionEvent of admissionEvents) {
-              this.emitEvent(admissionEvent);
-              yield admissionEvent;
+            if (event.type === "tool_call_discarded") {
+              if (streamingToolCallIdsByContentIndex.get(event.contentIndex) !== event.toolCallId) {
+                continue;
+              }
+              streamingToolCallIdsByContentIndex.delete(event.contentIndex);
+              const discardedEvent: AgentEvent = {
+                type: "tool_call_discarded",
+                historyEntryId,
+                toolCallId: event.toolCallId,
+                contentIndex: event.contentIndex,
+              };
+              yield discardedEvent;
+              continue;
             }
-            continue;
-          }
+            if (event.type === "assistant_partial") {
+              if (signal.aborted) {
+                continue;
+              }
+              const admissions: Array<{ events: AgentEvent[]; start: () => void }> = [];
+              for (const admittedToolCall of event.snapshot.toolCalls.slice(
+                admittedToolCalls.length,
+              )) {
+                const invalidId = !admittedToolCall.id.trim();
+                const duplicateId = admittedToolCallIds.has(admittedToolCall.id);
+                if (!invalidId && !duplicateId) {
+                  admittedToolCallIds.add(admittedToolCall.id);
+                  admittedToolCalls.push(admittedToolCall);
+                  for (const [contentIndex, toolCallId] of streamingToolCallIdsByContentIndex) {
+                    if (toolCallId === admittedToolCall.id) {
+                      streamingToolCallIdsByContentIndex.delete(contentIndex);
+                      break;
+                    }
+                  }
+                  const admission = toolRunner.prepare(admittedToolCall);
+                  admissions.push({
+                    events: [
+                      {
+                        type: "tool_call_admitted",
+                        historyEntryId,
+                        toolCall: admittedToolCall,
+                      },
+                      admission.event,
+                    ],
+                    start: admission.start,
+                  });
+                  continue;
+                }
 
-          this.emitEvent(event);
-          yield event;
+                const toolCall = {
+                  ...admittedToolCall,
+                  id: `invalid-tool-call-${randomUUID()}`,
+                };
+                const message = invalidId
+                  ? "Model returned a tool call with an empty ID."
+                  : `Model returned duplicate tool call ID '${admittedToolCall.id}'.`;
+                admittedToolCalls.push(toolCall);
+                const admission = toolRunner.prepareRejected(toolCall, message);
+                admissions.push({ events: [admission.event], start: admission.start });
+              }
+              const partialEvent: AgentEvent = {
+                type: "assistant_partial",
+                historyEntryId,
+                snapshot: {
+                  ...event.snapshot,
+                  toolCalls: [...admittedToolCalls],
+                },
+              };
+              yield partialEvent;
+              for (const admission of admissions) {
+                for (const admissionEvent of admission.events) {
+                  yield admissionEvent;
+                }
+                admission.start();
+              }
+              continue;
+            }
+            yield event;
+          } finally {
+            modelNext = readModelEvent();
+          }
           continue;
         }
 
@@ -1418,32 +1414,43 @@ export class SessionEngine {
         }
 
         const event = next.result.value;
-        toolNext = toolStream.next().then(
-          (result) => ({ source: "tool" as const, result }),
-          (error: unknown) => ({ source: "tool_error" as const, error }),
-        );
-        if (event.type === "tool_result") {
-          if (!modelDone) {
-            pendingToolResults.push(event.message);
+        try {
+          if ("acknowledge" in event) {
+            const { acknowledge, ...semanticEvent } = event;
+            let delivered = false;
+            try {
+              yield semanticEvent;
+              delivered = true;
+            } finally {
+              acknowledge(
+                delivered ? undefined : new Error("tool activity event delivery was interrupted"),
+              );
+            }
             continue;
           }
-          if (toolRecoveryMode) {
-            recoveryToolResults.push(event.message);
-            continue;
-          }
+          if (event.type === "tool_result") {
+            if (!modelDone) {
+              pendingToolResults.push(event.message);
+              continue;
+            }
+            if (toolRecoveryMode) {
+              recoveryToolResults.push(event.message);
+              continue;
+            }
 
-          const toolHistoryEntryId = this.addMessage(event.message);
-          const toolEvent: CoreEvent = {
-            ...event,
-            historyEntryId: toolHistoryEntryId,
-          };
-          this.emitEvent(toolEvent);
-          yield toolEvent;
-          continue;
+            const toolHistoryEntryId = this.addMessage(event.message);
+            const toolEvent: AgentEvent = {
+              ...event,
+              historyEntryId: toolHistoryEntryId,
+              revision: this.revision,
+            };
+            yield toolEvent;
+            continue;
+          }
+          yield event;
+        } finally {
+          toolNext = readToolEvent();
         }
-
-        this.emitEvent(event);
-        yield event;
       }
 
       if (toolRecoveryMode && finalMessage) {
@@ -1475,13 +1482,13 @@ export class SessionEngine {
           timestamp,
         });
         const recoveryHistoryEntryId = this.addMessage(recoveryMessage);
-        const recoveryEvent: CoreEvent = {
+        const recoveryEvent: AgentEvent = {
           type: "tool_recovery",
           historyEntryId: recoveryHistoryEntryId,
           message: recoveryMessage,
           toolResults: completeRecoveryToolResults,
+          revision: this.revision,
         };
-        this.emitEvent(recoveryEvent);
         yield recoveryEvent;
       }
 
@@ -1495,7 +1502,10 @@ export class SessionEngine {
         await toolRunner.finish();
       } catch {}
       if (!signal.aborted && shouldNoteProviderError) {
-        await this.noteCurrentProviderError(err instanceof Error ? err.message : String(err));
+        await this.noteProviderError(
+          turnSettings.persona.model.provider,
+          err instanceof Error ? err.message : String(err),
+        );
       }
       if (signal.aborted) {
         return { finalMessage: undefined, continueAfterToolRecovery: false };

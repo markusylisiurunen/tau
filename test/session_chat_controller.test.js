@@ -1568,12 +1568,7 @@ describe("SessionChatController", () => {
     controller.getInputHandlers().onSteerSubmit?.("change direction");
     await flush();
 
-    expect(session.steer).toHaveBeenCalledWith(
-      "change direction",
-      expect.objectContaining({
-        historyEntryId: expect.stringMatching(/^session-steer-/),
-      }),
-    );
+    expect(session.steer).toHaveBeenCalledWith("change direction");
     expect(view.systems).toEqual([]);
   });
 
@@ -3349,10 +3344,7 @@ describe("SessionChatController", () => {
       "queue after review",
       expect.objectContaining({ historyEntryId: expect.stringMatching(/^session-queue-/) }),
     );
-    expect(session.steer).toHaveBeenCalledWith(
-      "adjust the review",
-      expect.objectContaining({ historyEntryId: expect.stringMatching(/^session-steer-/) }),
-    );
+    expect(session.steer).toHaveBeenCalledWith("adjust the review");
 
     await expect(result).resolves.toContain("Diff review completed.");
     await expect(result).resolves.toContain("Reviewed scope: git diff -- src/main.ts");

@@ -491,6 +491,41 @@ describe("AgentRuntime", () => {
     expect(JSON.stringify(runtime.rawHistory[2])).toContain("completed");
   });
 
+  it("reconciles iterator failures after tool admission without duplicating execution", async () => {
+    const call = fauxToolCall("side_effect", {}, { id: "iterator-failure-call" });
+    const execute = vi.fn(async () => ({
+      content: [{ type: "text", text: "completed" }],
+      outcome: "succeeded",
+    }));
+    const { runtime, persona, events } = createRuntime({
+      tools: [createTool("side_effect", execute)],
+    });
+    const partial = createAssistant(persona, [call], { stopReason: "toolUse" });
+    setStreams(runtime, [
+      createStream(
+        [
+          { type: "toolcall_start", contentIndex: 0, partial },
+          { type: "toolcall_end", contentIndex: 0, toolCall: call, partial },
+        ],
+        undefined,
+        new Error("transport disconnected"),
+      ),
+      createStream([], createAssistant(persona, "recovered response")),
+    ]);
+
+    await runtime.submit("perform once");
+
+    expect(execute).toHaveBeenCalledOnce();
+    expect(events.filter((event) => event.type === "tool_recovery")).toHaveLength(1);
+    expect(runtime.rawHistory.map((message) => message.role)).toEqual([
+      "user",
+      "assistant",
+      "user",
+      "assistant",
+    ]);
+    expect(JSON.stringify(runtime.rawHistory[2])).toContain("completed");
+  });
+
   it("blocks a turn when required automatic compaction fails after input commit", async () => {
     const model = { ...personas[0].model, contextWindow: 100 };
     const persona = createPersona({ model });
@@ -572,6 +607,70 @@ describe("AgentRuntime", () => {
     expect(JSON.stringify(streamModel.mock.calls[2][0])).toContain(
       "<active-subagents>\\n- child-1: running repository scan\\n</active-subagents>",
     );
+  });
+
+  it("inherits stream options and cleans up manual compaction sessions", async () => {
+    const { runtime, persona, spec } = createRuntime();
+    const modelNotice = "agent-only notice";
+    spec.modelNotice = modelNotice;
+    spec.streamOptions.temperature = 0.25;
+    const streamModel = setStreams(runtime, [
+      createStream([], createAssistant(persona, "first response")),
+      createStream(
+        [],
+        createAssistant(
+          persona,
+          "summary\n\n<preserved-user-message-ids>\n[]\n</preserved-user-message-ids>",
+        ),
+      ),
+    ]);
+    const cleanupSession = vi.fn();
+    spec.model.cleanupSession = cleanupSession;
+
+    await runtime.submit("first request");
+    await runtime.compact({ mode: "summary-only" });
+
+    expect(JSON.stringify(streamModel.mock.calls[0][0])).toContain(modelNotice);
+    expect(JSON.stringify(streamModel.mock.calls[1][0])).not.toContain(modelNotice);
+    expect(JSON.stringify(runtime.rawHistory)).not.toContain(modelNotice);
+    expect(streamModel.mock.calls[1][1]).toEqual(
+      expect.objectContaining({
+        temperature: 0.25,
+        reasoning: "high",
+        sessionId: expect.stringMatching(/^summary-/),
+      }),
+    );
+    expect(cleanupSession).toHaveBeenCalledWith(streamModel.mock.calls[1][1].sessionId);
+  });
+
+  it("does not report compaction failure after a committed success event cannot be delivered", async () => {
+    const events = [];
+    const { runtime, persona } = createRuntime({
+      eventSink: async (event) => {
+        events.push(event);
+        if (event.type === "compaction_end" && event.outcome === "compacted") {
+          throw new Error("sink unavailable");
+        }
+      },
+    });
+    setStreams(runtime, [
+      createStream([], createAssistant(persona, "first response")),
+      createStream(
+        [],
+        createAssistant(
+          persona,
+          "summary\n\n<preserved-user-message-ids>\n[]\n</preserved-user-message-ids>",
+        ),
+      ),
+    ]);
+
+    await runtime.submit("first request");
+    await expect(runtime.compact({ mode: "summary-only" })).rejects.toThrow("sink unavailable");
+
+    expect(events.filter((event) => event.type === "compaction_end")).toEqual([
+      expect.objectContaining({ type: "compaction_end", outcome: "compacted" }),
+    ]);
+    expect(runtime.rawHistory).toHaveLength(1);
   });
 
   it("rejects both steering promises when the active event sink fails", async () => {
@@ -707,7 +806,7 @@ describe("AgentRuntime", () => {
     const turn = runtime.submit("original");
     await vi.waitFor(() => expect(runtime.status).toBe("running"));
     const steering = runtime.steer("cancel me");
-    expect(runtime.cancelSteering()).toEqual(["cancel me"]);
+    expect(runtime.cancelSteering()).toEqual([{ id: steering.id, text: "cancel me" }]);
     await expect(steering.applied).rejects.toThrow("steering submission was cancelled");
     await expect(steering.result).rejects.toThrow("steering submission was cancelled");
     releaseModel();
@@ -717,6 +816,46 @@ describe("AgentRuntime", () => {
     expect(events.findLast((event) => event.type === "turn_finished")).toMatchObject({
       outcome: "completed",
     });
+  });
+
+  it("rewinds through an awaited durable event and rejects active turns", async () => {
+    let releaseModel;
+    const modelGate = new Promise((resolve) => {
+      releaseModel = resolve;
+    });
+    const { runtime, persona, events } = createRuntime();
+    const rewindId = await runtime.commitUserText("rewind me");
+    const result = await runtime.rewindToHistoryEntryId(rewindId);
+
+    expect(result).toEqual({
+      historyEntryId: rewindId,
+      text: "rewind me",
+      removedEntryIds: [rewindId],
+    });
+    expect(events.at(-1)).toEqual({
+      type: "history_rewound",
+      ...result,
+      revision: runtime.state.revision,
+    });
+
+    setStreams(runtime, [
+      {
+        async *[Symbol.asyncIterator]() {
+          await modelGate;
+          yield* [];
+        },
+        async result() {
+          return createAssistant(persona, "done");
+        },
+      },
+    ]);
+    const turn = runtime.submit("active");
+    await vi.waitFor(() => expect(runtime.status).toBe("running"));
+    await expect(
+      runtime.rewindToHistoryEntryId(runtime.state.historyEntries[0].id),
+    ).rejects.toThrow("cannot rewind a running agent");
+    releaseModel();
+    await turn;
   });
 
   it("interrupts active model streaming", async () => {
@@ -736,6 +875,58 @@ describe("AgentRuntime", () => {
     await vi.waitFor(() => expect(runtime.status).toBe("running"));
     expect(runtime.interrupt()).toBe(true);
     await expect(turn).resolves.toMatchObject({ aborted: true });
+  });
+
+  it("settles queued tools as cancelled when a turn is interrupted", async () => {
+    const firstCall = fauxToolCall("queued_tool", {}, { id: "queued-first" });
+    const secondCall = fauxToolCall("queued_tool", {}, { id: "queued-second" });
+    const execute = vi.fn(async (call, context) => {
+      if (call.id === firstCall.id) {
+        await new Promise((resolve) =>
+          context.signal.addEventListener("abort", resolve, { once: true }),
+        );
+      }
+      return {
+        content: [{ type: "text", text: "cancelled" }],
+        outcome: context.signal.aborted ? "cancelled" : "succeeded",
+      };
+    });
+    const { runtime, persona, events } = createRuntime({
+      tools: [createTool("queued_tool", execute)],
+    });
+    const partial = createAssistant(persona, [firstCall, secondCall], {
+      stopReason: "toolUse",
+    });
+    runtime.spec.model.stream = vi.fn((_context, options) => ({
+      async *[Symbol.asyncIterator]() {
+        yield { type: "toolcall_start", contentIndex: 0, partial };
+        yield { type: "toolcall_end", contentIndex: 0, toolCall: firstCall, partial };
+        yield { type: "toolcall_start", contentIndex: 1, partial };
+        yield { type: "toolcall_end", contentIndex: 1, toolCall: secondCall, partial };
+        await new Promise((resolve) =>
+          options.signal.addEventListener("abort", resolve, { once: true }),
+        );
+      },
+      async result() {
+        return createAssistant(persona, [firstCall, secondCall], { stopReason: "aborted" });
+      },
+    }));
+
+    const turn = runtime.submit("run tools");
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(1));
+    runtime.interrupt();
+    await turn;
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(
+      events
+        .filter((event) => event.type === "tool_run_finished")
+        .map((event) => [event.toolCallId, event.outcome]),
+    ).toEqual([
+      [firstCall.id, "cancelled"],
+      [secondCall.id, "cancelled"],
+    ]);
+    expect(events.find((event) => event.type === "tool_recovery").toolResults).toHaveLength(2);
   });
 
   it("interrupts active tool execution through the narrow execution-local context", async () => {

@@ -205,7 +205,7 @@ class EphemeralAgentThread {
         ...resolveAgentModel(
           createEphemeralPersona(options.persona, options.systemPrompt, options.tools),
           options.config,
-          options.deps,
+          { includeModelNotice: false, deps: options.deps },
         ),
         systemPrompt: options.systemPrompt,
         tools: ToolCatalog.createSubagentRegistry(

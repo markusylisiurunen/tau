@@ -171,7 +171,10 @@ export class AgentSupervisor {
     };
     const runtime = new AgentRuntime({
       spec: createAgentSpec({
-        ...resolveAgentModel(persona, options.config, this.options.deps),
+        ...resolveAgentModel(persona, options.config, {
+          includeModelNotice: true,
+          deps: this.options.deps,
+        }),
         systemPrompt: runtimeConfig.systemPrompt,
         tools: ToolCatalog.createSubagentRegistry(
           runtimeConfig.tools,

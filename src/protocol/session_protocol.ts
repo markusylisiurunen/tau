@@ -141,7 +141,7 @@ export type SessionProtocolUserMessageParams = {
 };
 export type SessionProtocolSubmitParams = SessionProtocolUserMessageParams;
 export type SessionProtocolQueueParams = SessionProtocolUserMessageParams;
-export type SessionProtocolSteerParams = SessionProtocolUserMessageParams;
+export type SessionProtocolSteerParams = SessionProtocolSessionIdParams & { text: string };
 export type SessionProtocolCancelPendingMessagesParams = SessionProtocolSessionIdParams;
 export type SessionProtocolRecordParams = SessionProtocolSessionIdParams & {
   text: string;
@@ -1266,6 +1266,13 @@ const sessionProtocolUserMessageParamsSchema = z
   })
   .strip();
 
+const sessionProtocolSteerParamsSchema = z
+  .object({
+    sessionId: nonEmptyStringSchema,
+    text: z.string(),
+  })
+  .strip();
+
 const sessionProtocolRecordParamsSchema = sessionProtocolUserMessageParamsSchema;
 
 const sessionProtocolExecParamsSchema = z
@@ -1890,12 +1897,29 @@ const sessionProtocolSnapshotSchema = z
     }
     const checkpoint = snapshot.agentState.usageCheckpoint;
     if (checkpoint) {
+      if (checkpoint.contextEpoch !== snapshot.agentState.contextEpoch) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["agentState", "usageCheckpoint", "contextEpoch"],
+          message: "usage checkpoint context epoch must match agent state",
+        });
+      }
       const checkpointMessage = messagesById.get(checkpoint.historyEntryId);
-      if (!checkpointMessage?.modelVisible || checkpointMessage.message.role !== "assistant") {
+      const checkpointAssistant =
+        checkpointMessage?.message.role === "assistant" && "stopReason" in checkpointMessage.message
+          ? checkpointMessage.message
+          : undefined;
+      if (
+        !checkpointMessage?.modelVisible ||
+        checkpointMessage.state !== "committed" ||
+        !checkpointAssistant ||
+        checkpointAssistant.stopReason === "aborted" ||
+        checkpointAssistant.stopReason === "error"
+      ) {
         ctx.addIssue({
           code: "custom",
           path: ["agentState", "usageCheckpoint", "historyEntryId"],
-          message: "usage checkpoint must reference a model-visible assistant message",
+          message: "usage checkpoint must reference a completed model-visible assistant response",
         });
       }
     }
@@ -2702,6 +2726,15 @@ export function applySessionProtocolDelta(
     }
   }
 
+  if (message.delta.changes.some((change) => change.type === "agent-state.set")) {
+    const parsed = sessionProtocolSnapshotSchema.safeParse(next);
+    if (!parsed.success) {
+      throw new Error(
+        `session delta produced an invalid snapshot: ${formatZodError(parsed.error)}`,
+      );
+    }
+  }
+
   return next;
 }
 
@@ -3300,8 +3333,9 @@ export function validateSessionProtocolParams(
       return validateRecordParams(params);
     case "session.submit":
     case "session.queue":
-    case "session.steer":
       return validateUserMessageParams(method, params);
+    case "session.steer":
+      return validateSteerParams(params);
     case "session.exec":
       return validateExecParams(params);
     case "session.cancelExec":
@@ -3471,7 +3505,7 @@ function validateInitializeParams(
 }
 
 function validateUserMessageParams(
-  method: "session.submit" | "session.queue" | "session.steer",
+  method: "session.submit" | "session.queue",
   params: unknown,
 ): SessionProtocolParamsValidationResult<SessionProtocolUserMessageParams> {
   const parsed = sessionProtocolUserMessageParamsSchema.safeParse(params);
@@ -3498,6 +3532,24 @@ function validateUserMessageParams(
         : {}),
     },
   };
+}
+
+function validateSteerParams(
+  params: unknown,
+): SessionProtocolParamsValidationResult<SessionProtocolSteerParams> {
+  const parsed = sessionProtocolSteerParamsSchema.safeParse(params);
+  if (!parsed.success) {
+    const message = hasIssue(parsed.error, [], "invalid_type")
+      ? "session.steer params must be an object"
+      : hasIssue(parsed.error, ["sessionId"])
+        ? "session.steer params.sessionId must be a non-empty string"
+        : hasIssue(parsed.error, ["text"])
+          ? "session.steer params.text must be a string"
+          : `session.steer params are invalid: ${formatZodError(parsed.error)}`;
+    return invalidParams(message);
+  }
+
+  return { ok: true, value: parsed.data };
 }
 
 function validateRecordParams(

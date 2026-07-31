@@ -26,6 +26,13 @@ export type AgentEvent =
       outcome: AgentTurnOutcome;
     }
   | { type: "user_message"; historyEntryId: string; message: UserMessage; revision: number }
+  | {
+      type: "history_rewound";
+      historyEntryId: string;
+      text: string;
+      removedEntryIds: string[];
+      revision: number;
+    }
   | { type: "assistant_start"; historyEntryId: string }
   | {
       type: "assistant_partial";

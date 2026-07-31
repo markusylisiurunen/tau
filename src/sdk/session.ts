@@ -212,13 +212,8 @@ class TauSdkClientImpl implements TauSdkClient {
   sendSteer(
     sessionId: string,
     text: string,
-    options: TauSdkSessionUserMessageOptions,
   ): Promise<SessionProtocolResultByMethod["session.steer"]> {
-    return this.transport.request("session.steer", {
-      sessionId,
-      text,
-      ...(options.historyEntryId === undefined ? {} : { historyEntryId: options.historyEntryId }),
-    });
+    return this.transport.request("session.steer", { sessionId, text });
   }
 
   sendCancelPendingMessages(
@@ -565,11 +560,8 @@ class TauSdkSessionImpl implements TauSdkSession {
     return this.client.sendQueue(this.activeSessionId(), text, options);
   }
 
-  steer(
-    text: string,
-    options: TauSdkSessionUserMessageOptions = {},
-  ): Promise<SessionProtocolResultByMethod["session.steer"]> {
-    return this.client.sendSteer(this.activeSessionId(), text, options);
+  steer(text: string): Promise<SessionProtocolResultByMethod["session.steer"]> {
+    return this.client.sendSteer(this.activeSessionId(), text);
   }
 
   cancelPendingMessages(): Promise<SessionProtocolResultByMethod["session.cancelPendingMessages"]> {

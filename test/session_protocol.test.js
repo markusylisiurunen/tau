@@ -1034,6 +1034,16 @@ describe("session_protocol", () => {
       },
     });
     expect(
+      validateSessionProtocolParams("session.steer", {
+        sessionId: "session-1",
+        text: "change direction",
+        historyEntryId: "ignored-history-id",
+      }),
+    ).toEqual({
+      ok: true,
+      value: { sessionId: "session-1", text: "change direction" },
+    });
+    expect(
       validateSessionProtocolParams("session.setReasoning", {
         sessionId: "session-1",
         reasoning: "max",
@@ -1812,6 +1822,46 @@ describe("session_protocol", () => {
     expect(
       validateSessionProtocolResult("session.snapshot", {
         ...snapshot,
+        agentState: {
+          revision: 1,
+          contextEpoch: "current-epoch",
+          usageCheckpoint: {
+            historyEntryId: "assistant-1",
+            contextEpoch: "stale-epoch",
+            tokens: 10,
+          },
+        },
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        message: expect.stringContaining("usage checkpoint context epoch must match agent state"),
+      }),
+    });
+    expect(
+      validateSessionProtocolResult("session.snapshot", {
+        ...snapshot,
+        agentState: {
+          revision: 1,
+          contextEpoch: "current-epoch",
+          usageCheckpoint: {
+            historyEntryId: "assistant-1",
+            contextEpoch: "current-epoch",
+            tokens: 10,
+          },
+        },
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        message: expect.stringContaining(
+          "usage checkpoint must reference a completed model-visible assistant response",
+        ),
+      }),
+    });
+    expect(
+      validateSessionProtocolResult("session.snapshot", {
+        ...snapshot,
         tools: {
           "streaming-tool": {
             ...streamingTool,
@@ -1976,6 +2026,36 @@ describe("session_protocol", () => {
       personaId: "default",
       reasoning: "high",
     });
+
+    const invalidAgentStateDelta = createSessionProtocolDeltaMessage({
+      sessionId: "session-1",
+      fromRevision: 2,
+      toRevision: 3,
+      reason: "maintenance",
+      delta: {
+        type: "snapshot.patch",
+        changes: [
+          {
+            type: "agent-state.set",
+            agentState: {
+              revision: 1,
+              contextEpoch: "epoch-1",
+              usageCheckpoint: {
+                historyEntryId: "missing-assistant",
+                contextEpoch: "epoch-1",
+                tokens: 10,
+              },
+            },
+          },
+        ],
+      },
+    });
+    expect(() =>
+      applySessionProtocolDelta(
+        createProtocolSnapshot({ sessionId: "session-1", revision: 2 }),
+        invalidAgentStateDelta,
+      ),
+    ).toThrow("session delta produced an invalid snapshot");
 
     const ephemeral = createSessionProtocolEphemeralMessage({
       sessionId: "session-1",

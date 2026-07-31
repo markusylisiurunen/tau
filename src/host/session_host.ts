@@ -1,3 +1,4 @@
+import type { CancelledSteeringSubmission } from "../core/agent/agent_runtime.js";
 import type {
   SessionProtocolAutocompletePathsParams,
   SessionProtocolAutocompletePathsResult,
@@ -59,13 +60,14 @@ export type TauHostedSession = {
   requestTurnBoundaryStop(): boolean;
   cancelTurnBoundaryStop(): boolean;
   steer(text: string): {
+    id: string;
     applied: Promise<{ userHistoryEntryId: string }>;
     result: Promise<{
       userHistoryEntryId: string;
       turn: SessionProtocolTurnOutcome;
     }>;
   };
-  cancelSteering(): string[];
+  cancelSteering(): CancelledSteeringSubmission[];
   exec(
     options: Omit<SessionProtocolExecParams, "sessionId"> & {
       signal?: AbortSignal;

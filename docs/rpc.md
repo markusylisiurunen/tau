@@ -455,13 +455,12 @@ behavior:
 
 #### session.steer
 
-params are the same as `session.submit`.
+params (required):
 
 ```json
 {
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
-  "text": "change direction",
-  "historyEntryId": "optional-non-empty-user-entry-id"
+  "text": "change direction"
 }
 ```
 
@@ -469,6 +468,7 @@ behavior:
 
 - if the session is idle, behaves like `session.submit`
 - if an assistant turn is active, accepts the request, asks the active turn to stop at the next safe boundary, batches any additional steering messages in arrival order, and then starts one new turn with a short `<system>` steering instruction plus the batched user messages
+- the batched steering turn receives one generated user history entry id shared by every associated response; `session.steer` does not accept a caller-provided history entry id
 - publishes pending steering messages through `session.pendingUserMessages` until the steering turn begins
 - returns the same success shape as `session.submit`
 
@@ -970,6 +970,7 @@ for lines that cannot produce a valid request id (for example malformed json), `
 - multiple requests can be accepted before earlier ones complete
 - `session.record`, `session.setReasoning`, `session.setPersona`, `session.reload`, `session.compact`, `session.rewind`, and `session.terminateSubagent` run through a session-owned mutation queue (arrival order across clients observed to the same live session)
 - `session.setReasoning` updates settings immediately without interrupting an active turn; active turns keep their captured reasoning and the new setting applies to the next user-message turn
+- `session.rewind` is idle-only and fails without interrupting an active turn
 - only one `session.submit` or `session.retry` turn can run at once (`busy` otherwise)
 - `session.exec` and `session.sample` calls can run concurrently with each other and with normal session work; they never enter the mutation queue, and `session.cancelExec` targets one exec without interrupting the others
 - `session.ephemeral.create`, `session.ephemeral.submit`, and `session.ephemeral.close` manage independent, non-persisted contexts outside the main-session mutation queue; only overlapping submissions to the same ephemeral thread return `busy`

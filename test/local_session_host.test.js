@@ -1152,7 +1152,7 @@ describe("LocalSessionHost", () => {
 
     await expect(host.observeSession(hostedSession.session.sessionId)).resolves.toBe(hostedSession);
 
-    expect(store.commitSessionSnapshot).not.toHaveBeenCalled();
+    expect(store.commitSessionSnapshot).toHaveBeenCalledTimes(1);
   });
 
   it("does not let delta listener failures fail hosted runtime events", async () => {

@@ -287,7 +287,7 @@ options:
 - `queue(text, options?)`
   - sends `session.queue` with this session id
   - accepts active-work queueing semantics from the session protocol
-- `steer(text, options?)`
+- `steer(text)`
   - sends `session.steer` with this session id
   - accepts active-turn steering semantics from the session protocol
 - `cancelPendingMessages()`
@@ -332,7 +332,7 @@ options:
   - sends `session.compact` with this session id and optional `guidance`
   - resolves with the updated snapshot plus `compactionMessage` and `includedLastAssistant`
 - `rewindToHistoryEntryId(historyEntryId)`
-  - sends `session.rewind` with this session id
+  - sends the idle-only `session.rewind` with this session id without interrupting active work
   - resolves with the updated snapshot, removed history ids, and rewound user text
 - `terminateSubagent(subagentId)`
   - sends `session.terminateSubagent` with this session id

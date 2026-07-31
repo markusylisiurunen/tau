@@ -425,10 +425,12 @@ export class SequentialToolCallRunner implements AsyncIterable<ToolRunnerEvent> 
     reject: (error: unknown) => void;
   }> = [];
   private execution: Promise<void> = Promise.resolve();
+  private readonly pendingAcknowledgements = new Set<(error?: Error) => void>();
   private completion?: Promise<void>;
   private finished = false;
   private closed = false;
   private failure?: { error: unknown };
+  private acknowledgementFailure?: Error;
 
   constructor(
     private readonly options: SequentialToolCallRunnerOptions,
@@ -490,7 +492,23 @@ export class SequentialToolCallRunner implements AsyncIterable<ToolRunnerEvent> 
     }
 
     this.execution = this.execution.then(async () => {
-      if (this.signal.aborted) {
+      if (prepared.type === "ready" && this.signal.aborted) {
+        const completed = completeToolRun(
+          prepared.toolCall,
+          {
+            content: [{ type: "text", text: "Tool execution was cancelled before it started." }],
+            outcome: "cancelled",
+          },
+          this.options.now?.() ?? Date.now(),
+        );
+        await this.publishAwaited({
+          type: "tool_run_finished",
+          toolCallId: prepared.toolCall.id,
+          toolName: prepared.toolCall.name,
+          outcome: completed.outcome,
+          timestamp: completed.message.timestamp,
+        });
+        this.publish({ type: "tool_result", message: completed.message });
         return;
       }
       if (prepared.type === "ready") {
@@ -542,7 +560,30 @@ export class SequentialToolCallRunner implements AsyncIterable<ToolRunnerEvent> 
     await acknowledged;
   }
 
+  cancelPendingAcknowledgements(error: Error): void {
+    this.acknowledgementFailure = error;
+    for (const acknowledge of [...this.pendingAcknowledgements]) {
+      acknowledge(error);
+    }
+  }
+
   private publish(event: ToolRunnerEvent): void {
+    if ("acknowledge" in event) {
+      const originalAcknowledge = event.acknowledge;
+      let acknowledged = false;
+      const acknowledge = (error?: Error) => {
+        if (acknowledged) return;
+        acknowledged = true;
+        this.pendingAcknowledgements.delete(acknowledge);
+        originalAcknowledge(error);
+      };
+      this.pendingAcknowledgements.add(acknowledge);
+      event = { ...event, acknowledge };
+      if (this.acknowledgementFailure) {
+        acknowledge(this.acknowledgementFailure);
+      }
+    }
+
     const waiter = this.waiters.shift();
     if (waiter) {
       waiter.resolve({ done: false, value: event });

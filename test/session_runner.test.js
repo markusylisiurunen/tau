@@ -6,9 +6,10 @@ import { describe, expect, it, vi } from "vitest";
 import { captureDiffReviewSnapshot } from "../dist/core/diff_review/snapshot.js";
 import { prepareSessionCompaction } from "../dist/core/session/compaction.js";
 import { runDirectBashCommand } from "../dist/core/session/direct_bash.js";
-import { runModelSubturn } from "../dist/core/session/runner.js";
+import { runModelSubturn, SequentialToolCallRunner } from "../dist/core/session/runner.js";
 import { BASH_DEFAULT_TIMEOUT_MS } from "../dist/core/tools/bash.js";
 import { scopeToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
+import { ToolRegistry } from "../dist/core/tools/registry.js";
 import { buildCompactionUserMessage } from "../dist/core/utils/compact.js";
 import { autocompleteProjectPathsWithBackend } from "../dist/core/utils/project_files.js";
 import { prependTauUserMetadata } from "../dist/core/utils/user_metadata.js";
@@ -532,6 +533,57 @@ describe("session runner", () => {
     } finally {
       now.mockRestore();
     }
+  });
+
+  it("releases pending tool acknowledgements when event consumption stops", async () => {
+    const call = {
+      id: "activity-call",
+      type: "toolCall",
+      name: "activity-tool",
+      arguments: {},
+    };
+    const registry = new ToolRegistry([
+      {
+        schema: {
+          name: call.name,
+          description: "activity tool",
+          parameters: { type: "object", properties: {}, additionalProperties: false },
+        },
+        describe: () => ({ headerTarget: call.name }),
+        execute: async (_call, context) => {
+          await context.emitActivity({
+            type: "tool_call_blocked",
+            toolCallId: call.id,
+            toolName: call.name,
+            headerTarget: call.name,
+            reason: "activity",
+          });
+          return { content: [{ type: "text", text: "done" }], outcome: "succeeded" };
+        },
+      },
+    ]);
+    const runner = new SequentialToolCallRunner(
+      {
+        toolRegistry: registry,
+        executionContext: {
+          agentId: "agent-1",
+          turnId: "turn-1",
+          assistantMessageId: "assistant-1",
+        },
+      },
+      new AbortController().signal,
+    );
+    const admission = runner.prepare(call);
+    admission.start();
+    const iterator = runner[Symbol.asyncIterator]();
+    const started = await iterator.next();
+    started.value.acknowledge();
+    const activity = await iterator.next();
+    expect(activity.value.type).toBe("tool_activity");
+
+    runner.cancelPendingAcknowledgements(new Error("event sink failed"));
+
+    await expect(runner.finish()).rejects.toThrow("event sink failed");
   });
 
   it("de-duplicates preserved user message candidates across repeated compactions", () => {

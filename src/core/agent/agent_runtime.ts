@@ -28,6 +28,7 @@ import {
   prepareSessionCompaction,
   type SessionCompactionMode,
 } from "../session/compaction.js";
+import type { AssistantPartialSnapshot } from "../session/message_accumulator.js";
 import { runModelSubturn, SequentialToolCallRunner } from "../session/runner.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { ReasoningEffort } from "../types.js";
@@ -150,8 +151,14 @@ export type SteeringResult = SteeringAssociation & {
 };
 
 export type SteeringSubmission = {
+  id: string;
   applied: Promise<SteeringAssociation>;
   result: Promise<SteeringResult>;
+};
+
+export type CancelledSteeringSubmission = {
+  id: string;
+  text: string;
 };
 
 export type RewindCandidate = {
@@ -216,6 +223,7 @@ function getContextEpoch(spec: AgentSpec): string {
     .update(
       JSON.stringify({
         systemPrompt: spec.systemPrompt,
+        modelNotice: spec.modelNotice,
         provider: spec.model.model.provider,
         model: spec.model.model.id,
         tools: spec.tools.schemas,
@@ -236,6 +244,7 @@ export class AgentRuntime {
   private activeAbortController?: AbortController;
   private stopAtBoundaryRequested = false;
   private pendingSteering: Array<{
+    id: string;
     text: string;
     resolveApplied: (association: SteeringAssociation) => void;
     resolveResult: (result: SteeringResult) => void;
@@ -353,10 +362,9 @@ export class AgentRuntime {
     options?: { historyEntryId?: string },
   ): Promise<string> {
     this.assertActive();
-    const textWithModelNotice = prependModelNotice(textForModel, this.currentSpec.modelNotice);
     const message: UserMessage = {
       role: "user",
-      content: [{ type: "text", text: textWithModelNotice }],
+      content: [{ type: "text", text: textForModel }],
       timestamp: this.deps.clock.now(),
     };
     const entry = this.appendHistoryEntry(message, options?.historyEntryId);
@@ -424,7 +432,12 @@ export class AgentRuntime {
     return true;
   }
 
-  rewindToHistoryEntryId(historyEntryId: string): RewindResult | undefined {
+  async rewindToHistoryEntryId(historyEntryId: string): Promise<RewindResult | undefined> {
+    this.assertActive();
+    if (this.status !== "idle") {
+      throw new Error("cannot rewind a running agent");
+    }
+
     const historyIndex = this.historyEntries.findIndex((entry) => entry.id === historyEntryId);
     if (historyIndex < 0) {
       return undefined;
@@ -441,13 +454,14 @@ export class AgentRuntime {
     ) {
       return undefined;
     }
-    const removedEntryIds = this.historyEntries.slice(historyIndex).map((item) => item.id);
-    this.replaceHistoryEntries(this.historyEntries.slice(0, historyIndex));
-    return {
+    const result = {
       historyEntryId: entry.id,
       text: this.extractRewindUserText(entry.message),
-      removedEntryIds,
+      removedEntryIds: this.historyEntries.slice(historyIndex).map((item) => item.id),
     };
+    this.replaceHistoryEntries(this.historyEntries.slice(0, historyIndex));
+    await this.deliver({ type: "history_rewound", ...result, revision: this.revision });
+    return result;
   }
 
   get history(): readonly Message[] {
@@ -528,17 +542,19 @@ export class AgentRuntime {
       resolveResult = resolve;
       rejectResult = reject;
     });
+    const id = `steering-${randomUUID()}`;
     this.pendingSteering.push({
+      id,
       text: normalized,
       resolveApplied,
       resolveResult,
       rejectApplied,
       rejectResult,
     });
-    return { applied, result };
+    return { id, applied, result };
   }
 
-  cancelSteering(): string[] {
+  cancelSteering(): CancelledSteeringSubmission[] {
     const cancelled = this.pendingSteering.splice(0);
     if (cancelled.length > 0) {
       this.stopAtBoundaryRequested = false;
@@ -548,7 +564,7 @@ export class AgentRuntime {
         submission.rejectResult(error);
       }
     }
-    return cancelled.map((submission) => submission.text);
+    return cancelled.map(({ id, text }) => ({ id, text }));
   }
 
   requestStopAtBoundary(): boolean {
@@ -704,23 +720,9 @@ export class AgentRuntime {
       throw new Error("cannot compact a running agent");
     }
     await this.deliver({ type: "compaction_start", reason: "manual" });
+    let result: AgentCompactionResult;
     try {
-      const result = await this.compactNow(options);
-      const summaryHistoryEntryId = this.historyEntries[0]!.id;
-      await this.deliver({
-        type: "compaction_end",
-        reason: "manual",
-        outcome: "compacted",
-        result: {
-          summaryHistoryEntryId,
-          continuationHistoryEntryId: summaryHistoryEntryId,
-          compactionMessage: result.compactionMessage,
-          cutType: "turn-boundary",
-          retainedMessageCount: 0,
-        },
-        revision: this.revision,
-      });
-      return result;
+      result = await this.compactNow(options);
     } catch (error) {
       const aborted = options.signal?.aborted === true;
       await this.deliver(
@@ -735,6 +737,22 @@ export class AgentRuntime {
       );
       throw error;
     }
+
+    const summaryHistoryEntryId = this.historyEntries[0]!.id;
+    await this.deliver({
+      type: "compaction_end",
+      reason: "manual",
+      outcome: "compacted",
+      result: {
+        summaryHistoryEntryId,
+        continuationHistoryEntryId: summaryHistoryEntryId,
+        compactionMessage: result.compactionMessage,
+        cutType: "turn-boundary",
+        retainedMessageCount: 0,
+      },
+      revision: this.revision,
+    });
+    return result;
   }
 
   private async compactNow(options: AgentCompactionOptions): Promise<AgentCompactionResult> {
@@ -753,6 +771,7 @@ export class AgentRuntime {
     const summaryResponse = await this.runCompactionSummary(summaryPrompt, {
       sessionId: `summary-${randomUUID()}`,
       signal: options.signal,
+      streamOptions: this.currentSpec.streamOptions,
     });
     const summaryResult = parseCompactionSummaryResponse({
       response: summaryResponse,
@@ -766,10 +785,7 @@ export class AgentRuntime {
       preservedUserMessages: summaryResult.preservedUserMessages,
     });
 
-    const textWithContext = this.prependCompactionContext(
-      compactionMessage,
-      this.currentSpec.modelNotice,
-    );
+    const textWithContext = this.prependCompactionContext(compactionMessage);
     const textWithMetadata = prependTauUserMetadata(textWithContext, [
       {
         type: "compaction",
@@ -798,34 +814,42 @@ export class AgentRuntime {
 
   private async runCompactionSummary(
     summaryPrompt: string,
-    options: { sessionId: string; signal?: AbortSignal },
+    options: {
+      sessionId: string;
+      signal?: AbortSignal;
+      streamOptions: Readonly<TauStreamOptions>;
+    },
     model: AgentModelExecutor = this.currentSpec.model,
   ): Promise<string> {
-    const stream = model.stream(
-      {
-        systemPrompt: COMPACTION_SUMMARIZATION_SYSTEM_PROMPT,
-        messages: [
-          {
-            role: "user",
-            content: [{ type: "text", text: summaryPrompt }],
-            timestamp: this.deps.clock.now(),
-          },
-        ],
-      },
-      {
-        reasoning: "high",
-        sessionId: options.sessionId,
-        ...(options.signal ? { signal: options.signal } : {}),
-      },
-    );
+    try {
+      const stream = model.stream(
+        {
+          systemPrompt: COMPACTION_SUMMARIZATION_SYSTEM_PROMPT,
+          messages: [
+            {
+              role: "user",
+              content: [{ type: "text", text: summaryPrompt }],
+              timestamp: this.deps.clock.now(),
+            },
+          ],
+        },
+        {
+          ...options.streamOptions,
+          reasoning: "high",
+          sessionId: options.sessionId,
+          ...(options.signal ? { signal: options.signal } : {}),
+        },
+      );
+      const final = await stream.result();
+      const summary = extractAssistantText(final).trim();
+      if (!summary) {
+        throw new Error("summarization returned an empty response.");
+      }
 
-    const final = await stream.result();
-    const summary = extractAssistantText(final).trim();
-    if (!summary) {
-      throw new Error("summarization returned an empty response.");
+      return summary;
+    } finally {
+      model.cleanupSession(options.sessionId);
     }
-
-    return summary;
   }
 
   private appendHistoryEntry(message: Message, preferredId?: string): HistoryEntry {
@@ -1043,6 +1067,7 @@ export class AgentRuntime {
       {
         sessionId: `auto-summary-${randomUUID()}`,
         signal,
+        streamOptions: turnSettings.streamOptions,
       },
       turnSettings.model,
     );
@@ -1057,8 +1082,7 @@ export class AgentRuntime {
     });
     const compactionMessage = buildCompactionUserMessage({ summary: compactionSummary });
     const retainedMessageCount = preparation.retainedEntries.length;
-    const modelNotice = turnSettings.modelNotice;
-    const textWithContext = this.prependCompactionContext(compactionMessage, modelNotice);
+    const textWithContext = this.prependCompactionContext(compactionMessage);
     const textWithMetadata = prependTauUserMetadata(textWithContext, [
       {
         type: "auto-compaction",
@@ -1083,7 +1107,6 @@ export class AgentRuntime {
       message: buildAutoCompactionContinuationMessage({
         cutType: preparation.cutType,
         now: this.deps.clock.now(),
-        modelNotice,
       }),
     };
 
@@ -1098,8 +1121,8 @@ export class AgentRuntime {
     };
   }
 
-  private prependCompactionContext(text: string, modelNotice?: string): string {
-    const hiddenSystemMessages = [modelNotice, this.getCompactionContext?.()].filter(
+  private prependCompactionContext(text: string): string {
+    const hiddenSystemMessages = [this.getCompactionContext?.()].filter(
       (message): message is string => message !== undefined,
     );
     return prependTauHiddenSystemMessages(text, hiddenSystemMessages);
@@ -1181,7 +1204,7 @@ export class AgentRuntime {
     yield startEvent;
     const context: Context = {
       systemPrompt: turnSettings.systemPrompt,
-      messages: [...this.modelHistory],
+      messages: applyModelNotice(this.modelHistory, turnSettings.modelNotice),
       tools: turnSettings.tools.schemas,
     };
 
@@ -1237,6 +1260,7 @@ export class AgentRuntime {
     let shouldNoteProviderError = false;
     let toolRecoveryMode: "continue" | "stop" | undefined;
     let finalMessage: AssistantMessage | undefined;
+    let latestAssistantSnapshot: AssistantPartialSnapshot | undefined;
     const readModelEvent = () =>
       modelStream.next().then(
         (result) => ({ source: "model" as const, result }),
@@ -1258,8 +1282,49 @@ export class AgentRuntime {
         ]);
 
         if (next.source === "model_error") {
-          shouldNoteProviderError = true;
-          throw next.error;
+          if (admittedToolCalls.length === 0) {
+            shouldNoteProviderError = true;
+            throw next.error;
+          }
+
+          const errorMessage =
+            next.error instanceof Error ? next.error.message : String(next.error);
+          finalMessage = createToolRecoveryAssistantMessage({
+            model: turnSettings.model.model,
+            snapshot: latestAssistantSnapshot,
+            toolCalls: admittedToolCalls,
+            errorMessage,
+            aborted: signal.aborted,
+            timestamp: this.deps.clock.now(),
+          });
+          modelDone = true;
+          void toolRunner.finish().catch(() => undefined);
+          toolRecoveryMode = signal.aborted
+            ? "stop"
+            : consumeSubturnRetry(retryBudget)
+              ? "continue"
+              : "stop";
+          recoveryToolResults.push(...pendingToolResults.splice(0));
+          this.addMessage(finalMessage, { historyEntryId });
+          yield {
+            type: "assistant_final",
+            historyEntryId,
+            message: finalMessage,
+            personaId: turnSettings.attribution.personaId,
+            reasoningEffort: turnSettings.attribution.reasoningEffort,
+            revision: this.revision,
+          };
+          if (!signal.aborted) {
+            await this.noteProviderError(turnSettings.model, errorMessage);
+          }
+          if (toolRecoveryMode === "continue") {
+            yield {
+              type: "notice",
+              severity: "error",
+              text: `model stream failed after tool execution: ${errorMessage}`,
+            };
+          }
+          continue;
         }
         if (next.source === "tool_error") {
           throw next.error;
@@ -1444,13 +1509,14 @@ export class AgentRuntime {
                   start: admission.start,
                 });
               }
+              latestAssistantSnapshot = {
+                ...event.snapshot,
+                toolCalls: [...admittedToolCalls],
+              };
               const partialEvent: AgentEvent = {
                 type: "assistant_partial",
                 historyEntryId,
-                snapshot: {
-                  ...event.snapshot,
-                  toolCalls: [...admittedToolCalls],
-                },
+                snapshot: latestAssistantSnapshot,
               };
               yield partialEvent;
               for (const admission of admissions) {
@@ -1558,6 +1624,7 @@ export class AgentRuntime {
       };
     } catch (err) {
       abortSubturn();
+      toolRunner.cancelPendingAcknowledgements(err instanceof Error ? err : new Error(String(err)));
       try {
         await toolRunner.finish();
       } catch {}
@@ -1575,12 +1642,72 @@ export class AgentRuntime {
       signal.removeEventListener("abort", abortSubturn);
       if (!modelDone || !toolDone) {
         abortSubturn();
+        toolRunner.cancelPendingAcknowledgements(
+          new Error("tool event consumption stopped before acknowledgement"),
+        );
         try {
           await toolRunner.finish();
         } catch {}
       }
     }
   }
+}
+
+function applyModelNotice(history: readonly Message[], modelNotice?: string): Message[] {
+  return history.map((message) => {
+    if (message.role !== "user" || !modelNotice) {
+      return message;
+    }
+    if (typeof message.content === "string") {
+      return { ...message, content: prependModelNotice(message.content, modelNotice) };
+    }
+
+    const content = structuredClone(message.content);
+    const text = content.find((item) => item.type === "text");
+    if (text) {
+      text.text = prependModelNotice(text.text, modelNotice);
+    } else {
+      content.unshift({ type: "text", text: prependModelNotice("", modelNotice) });
+    }
+    return { ...message, content };
+  });
+}
+
+function createToolRecoveryAssistantMessage(options: {
+  model: Model<Api>;
+  snapshot: AssistantPartialSnapshot | undefined;
+  toolCalls: readonly ToolCall[];
+  errorMessage: string;
+  aborted: boolean;
+  timestamp: number;
+}): AssistantMessage {
+  const content: AssistantMessage["content"] = [];
+  if (options.snapshot?.thinking.trim()) {
+    content.push({ type: "thinking", thinking: options.snapshot.thinking });
+  }
+  if (options.snapshot?.text.trim()) {
+    content.push({ type: "text", text: options.snapshot.text });
+  }
+  content.push(...structuredClone(options.toolCalls));
+
+  return {
+    role: "assistant",
+    content,
+    api: options.model.api,
+    provider: options.model.provider,
+    model: options.model.id,
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+    stopReason: options.aborted ? "aborted" : "error",
+    errorMessage: options.errorMessage,
+    timestamp: options.timestamp,
+  };
 }
 
 function consumeSubturnRetry(budget: SubturnRetryBudget): boolean {

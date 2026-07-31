@@ -4,6 +4,7 @@ import {
   type AgentSampleOptions,
   type AgentState,
   type AgentTurnResult,
+  type CancelledSteeringSubmission,
   createAgentSpec,
   type HistoryEntry,
   type RewindCandidate,
@@ -93,7 +94,10 @@ export class ChatRuntime {
     this.environment = options.environment;
     this.backend = options.backend;
     this.deps = options.deps ?? createDefaultCoreDeps();
-    this.resolvedModel = resolveAgentModel(this.currentPersona, this.currentConfig, this.deps);
+    this.resolvedModel = resolveAgentModel(this.currentPersona, this.currentConfig, {
+      includeModelNotice: true,
+      deps: this.deps,
+    });
     this.clientTools = options.clientTools;
     this.resolveSubagentRuntime = options.resolveSubagentRuntime;
     this.latestPromptComposition = composition;
@@ -109,7 +113,14 @@ export class ChatRuntime {
         systemPrompt: composition.baseSystemPrompt,
         tools,
       }),
-      eventSink: options.eventSink,
+      eventSink: async (event) => {
+        if (event.type === "history_rewound") {
+          this.supervisor.retainOrigins(
+            new Set(this.agent.rawHistoryEntriesSnapshot.map((entry) => entry.id)),
+          );
+        }
+        await options.eventSink(event);
+      },
       getCompactionContext: () => this.supervisor.getActiveCompactionContext(),
       deps: this.deps,
     });
@@ -167,7 +178,7 @@ export class ChatRuntime {
     return this.agent.steer(text);
   }
 
-  cancelSteering(): string[] {
+  cancelSteering(): CancelledSteeringSubmission[] {
     return this.agent.cancelSteering();
   }
 
@@ -209,17 +220,11 @@ export class ChatRuntime {
     return this.agent.listRewindCandidates();
   }
 
-  rewindToHistoryEntryId(historyEntryId: string): RewindResult | undefined {
+  async rewindToHistoryEntryId(historyEntryId: string): Promise<RewindResult | undefined> {
     if (this.supervisor.getActiveCount() > 0) {
       throw new Error("cannot rewind while subagents are running");
     }
-    const result = this.agent.rewindToHistoryEntryId(historyEntryId);
-    if (result) {
-      this.supervisor.retainOrigins(
-        new Set(this.agent.rawHistoryEntriesSnapshot.map((entry) => entry.id)),
-      );
-    }
-    return result;
+    return await this.agent.rewindToHistoryEntryId(historyEntryId);
   }
 
   async sample(options: AgentSampleOptions): Promise<AssistantMessage> {
@@ -237,7 +242,10 @@ export class ChatRuntime {
   setRuntimeConfig(config: Config, modelResolver: ModelResolver): void {
     this.currentConfig = config;
     this.currentModelResolver = modelResolver;
-    this.resolvedModel = resolveAgentModel(this.currentPersona, this.currentConfig, this.deps);
+    this.resolvedModel = resolveAgentModel(this.currentPersona, this.currentConfig, {
+      includeModelNotice: true,
+      deps: this.deps,
+    });
     this.refreshSpec();
   }
 
@@ -246,13 +254,19 @@ export class ChatRuntime {
       ...this.currentPersona,
       settings: { ...this.currentPersona.settings, reasoning },
     };
-    this.resolvedModel = resolveAgentModel(this.currentPersona, this.currentConfig, this.deps);
+    this.resolvedModel = resolveAgentModel(this.currentPersona, this.currentConfig, {
+      includeModelNotice: true,
+      deps: this.deps,
+    });
     this.refreshSpec();
   }
 
   setPersona(persona: Persona, options?: { skillsBlock?: string }): void {
     this.currentPersona = structuredClone(persona);
-    this.resolvedModel = resolveAgentModel(this.currentPersona, this.currentConfig, this.deps);
+    this.resolvedModel = resolveAgentModel(this.currentPersona, this.currentConfig, {
+      includeModelNotice: true,
+      deps: this.deps,
+    });
     this.rebuildSystemPrompts(options);
   }
 

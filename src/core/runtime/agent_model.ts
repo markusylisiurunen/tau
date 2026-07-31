@@ -18,9 +18,9 @@ export type ResolvedAgentModel = Pick<
 export function resolveAgentModel(
   persona: Persona,
   config: Config,
-  deps?: CoreDeps,
+  options: { includeModelNotice: boolean; deps?: CoreDeps },
 ): ResolvedAgentModel {
-  const resolvedDeps = deps ?? createDefaultCoreDeps();
+  const resolvedDeps = options.deps ?? createDefaultCoreDeps();
   const resolvedConfig = structuredClone(config);
   const authPath = getAuthPath(resolvedDeps.env.home());
   const runtime = new ModelRuntime({
@@ -45,7 +45,9 @@ export function resolveAgentModel(
     },
     cleanupSession: cleanupSessionResources,
   };
-  const modelNotice = resolveModelNotice(resolvedConfig, persona.model);
+  const modelNotice = options.includeModelNotice
+    ? resolveModelNotice(resolvedConfig, persona.model)
+    : undefined;
   return {
     model,
     ...(modelNotice ? { modelNotice } : {}),

@@ -118,6 +118,7 @@ function createHarness(options = {}) {
     let sessionId = recoveredSessionId ?? `session-${nextSessionId++}`;
     let running = false;
     let nextHistoryId = 1;
+    let nextSteeringId = 1;
     let releaseTurn;
     let pendingTurnResult = { status: "completed", stopReason: "stop" };
     let pendingTurn = null;
@@ -281,6 +282,7 @@ function createHarness(options = {}) {
       requestTurnBoundaryStop: vi.fn(() => running),
       cancelTurnBoundaryStop: vi.fn(() => running),
       steer(text) {
+        const id = `steering-${nextSteeringId++}`;
         let resolveApplied;
         let rejectApplied;
         const applied = new Promise((resolve, reject) => {
@@ -294,13 +296,14 @@ function createHarness(options = {}) {
           rejectResult = reject;
         });
         pendingSteering.push({
+          id,
           text,
           resolveApplied,
           rejectApplied,
           resolveResult,
           rejectResult,
         });
-        return { applied, result };
+        return { id, applied, result };
       },
       cancelSteering: vi.fn(() => {
         const cancelled = pendingSteering.splice(0);
@@ -309,7 +312,7 @@ function createHarness(options = {}) {
           item.rejectApplied(error);
           item.rejectResult(error);
         }
-        return cancelled.map((item) => item.text);
+        return cancelled.map(({ id, text }) => ({ id, text }));
       }),
       async exec(runOptions) {
         const abortController = new AbortController();
@@ -1345,6 +1348,43 @@ describe("rpc_server", () => {
         }),
       );
     }
+  });
+
+  it("does not cancel steering after the runtime has applied it", async () => {
+    const harness = createHarness();
+    const firstSubmit = harness.server.handleLine(
+      request("submit-1", "session.submit", {
+        sessionId: "session-1",
+        text: "first turn",
+      }),
+    );
+    await waitFor(() => harness.lines.some((line) => deltaHasNotice(line, "streaming")));
+    const steer = harness.server.handleLine(
+      request("steer-1", "session.steer", {
+        sessionId: "session-1",
+        text: "change direction",
+      }),
+    );
+
+    harness.releaseTurn();
+    await waitFor(() =>
+      harness.seededSession.session.historyEntries.some((entry) =>
+        entry.message.content[0].text.includes("change direction"),
+      ),
+    );
+    await harness.server.handleLine(
+      request("cancel-1", "session.cancelPendingMessages", { sessionId: "session-1" }),
+    );
+
+    expect(harness.lines.find((line) => line.id === "cancel-1")).toEqual(
+      expect.objectContaining({ ok: true, result: { cancelled: [] } }),
+    );
+    harness.releaseTurn();
+    await Promise.all([firstSubmit, steer]);
+    await waitFor(() => harness.lines.some((line) => line.id === "steer-1"));
+    expect(harness.lines.filter((line) => line.id === "steer-1")).toEqual([
+      expect.objectContaining({ ok: true }),
+    ]);
   });
 
   it("publishes and cancels pending queue and steering state", async () => {

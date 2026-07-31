@@ -629,10 +629,8 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       options.text,
       options.historyEntryId ? { historyEntryId: options.historyEntryId } : undefined,
     );
-    const snapshot = await this.commitSnapshot();
-    this.emitSnapshotReset("user-message", snapshot);
     return {
-      snapshot,
+      snapshot: await this.snapshot(),
       userHistoryEntryId,
     };
   }
@@ -714,6 +712,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   }
 
   steer(text: string): {
+    id: string;
     applied: Promise<{ userHistoryEntryId: string }>;
     result: Promise<{
       userHistoryEntryId: string;
@@ -726,6 +725,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     }
     const submission = this.runtime.steer(text);
     return {
+      id: submission.id,
       applied: submission.applied.then(async (association) => {
         await this.commitSnapshot();
         return { userHistoryEntryId: association.historyEntryId };
@@ -742,7 +742,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     };
   }
 
-  cancelSteering(): string[] {
+  cancelSteering(): ReturnType<ChatRuntime["cancelSteering"]> {
     this.assertActive();
     return this.runtime.cancelSteering();
   }
@@ -1052,17 +1052,13 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
   async rewindToHistoryEntryId(historyEntryId: string): Promise<SessionProtocolRewindResult> {
     this.assertActive();
-    const result = this.session.rewindToHistoryEntryId(historyEntryId);
+    const result = await this.session.rewindToHistoryEntryId(historyEntryId);
     if (!result) {
       throw new Error("rewind failed");
     }
 
-    await this.runtimeEventQueue;
-    this.reconcileProjections({ removeMissingAgents: true });
-    const snapshot = await this.commitSnapshot();
-    this.emitSnapshotReset("maintenance", snapshot);
     return {
-      snapshot,
+      snapshot: await this.snapshot(),
       ...result,
     };
   }
@@ -1674,8 +1670,12 @@ class LocalHostedSessionHandle implements LocalHostedSession {
               timelineItem: timelineItemForMessage(event.historyEntryId),
             },
           ],
-          { persist: false },
+          { persist: true },
         );
+        return;
+      case "history_rewound":
+        this.reconcileProjections({ removeMissingAgents: true });
+        await this.emitSnapshotResetIfChanged("maintenance");
         return;
       case "assistant_final": {
         this.draftAssistantMessage = undefined;

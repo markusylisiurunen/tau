@@ -35,7 +35,7 @@ function createStream(message) {
   };
 }
 
-function createSession(recordUsage = vi.fn()) {
+function createSession(recordUsage = vi.fn(), config = { autoCompact: { enabled: false } }) {
   const backend = createLocalToolExecutionBackend();
   const executionEnvironment = {
     snapshot: () => ({ kind: "local", cwd: "/repo", home: "/home/user" }),
@@ -61,7 +61,7 @@ function createSession(recordUsage = vi.fn()) {
     session: new HostedEphemeralAgentSession({
       contextId: "ephemeral-1",
       persona: personas[0],
-      config: { autoCompact: { enabled: false } },
+      config,
       modelResolver: resolveModel,
       discoveredSkills: [],
       includeAgentContext: false,
@@ -114,5 +114,25 @@ describe("HostedEphemeralAgentSession", () => {
     for (const [entry] of recordUsage.mock.calls) {
       expect(entry.agent).toEqual({ type: "ephemeral" });
     }
+  });
+
+  it("does not apply model system notices to ephemeral agents", async () => {
+    const model = personas[0].model;
+    const notice = "main and subagent notice";
+    const { session } = createSession(vi.fn(), {
+      autoCompact: { enabled: false },
+      modelSystemNotices: { [`${model.provider}/${model.id}`]: notice },
+    });
+    const thread = await session.getOrCreateThread("source");
+    const stream = vi.fn(() => createStream(createAssistant("reviewed")));
+    thread.runtime.spec.model.stream = stream;
+
+    await session.submitThreadMessage({
+      contextId: "ephemeral-1",
+      threadId: "source",
+      message: "review this",
+    });
+
+    expect(JSON.stringify(stream.mock.calls[0][0])).not.toContain(notice);
   });
 });

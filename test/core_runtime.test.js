@@ -699,16 +699,14 @@ describe("compaction context message", () => {
     );
   });
 
-  it("applies model notices to hidden auto-continuation messages", () => {
+  it("keeps auto-compaction continuation guidance hidden", () => {
     const continuation = buildAutoCompactionContinuationMessage({
       cutType: "turn-boundary",
       now: 1,
-      modelNotice: "stay concise",
     });
 
     const text = stripTauUserMetadata(continuation.content[0].text);
 
-    expect(text).toContain("<system>stay concise</system>");
     expect(text).toContain("The conversation context before this point has been compacted");
     expect(hasAutoCompactionContinuationMetadata(continuation)).toBe(true);
   });

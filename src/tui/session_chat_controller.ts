@@ -654,13 +654,11 @@ export class SessionChatController {
   }
 
   private submitSteeringText(text: string): void {
-    void this.session
-      .steer(text, { historyEntryId: `session-steer-${randomUUID()}` })
-      .catch((error) => {
-        if (!this.isPendingMessageCancellation(error)) {
-          this.view.addSystemMessage(`steering failed: ${(error as Error).message}`, "error");
-        }
-      });
+    void this.session.steer(text).catch((error) => {
+      if (!this.isPendingMessageCancellation(error)) {
+        this.view.addSystemMessage(`steering failed: ${(error as Error).message}`, "error");
+      }
+    });
   }
 
   private async cancelPendingMessagesIntoEditor(): Promise<void> {

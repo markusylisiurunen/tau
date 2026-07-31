@@ -128,7 +128,7 @@ export type TauSdkSession = {
     options?: TauSdkSessionUserMessageOptions,
   ): Promise<TauSdkSessionSubmitResult>;
   queue(text: string, options?: TauSdkSessionUserMessageOptions): Promise<TauSdkSessionQueueResult>;
-  steer(text: string, options?: TauSdkSessionUserMessageOptions): Promise<TauSdkSessionSteerResult>;
+  steer(text: string): Promise<TauSdkSessionSteerResult>;
   cancelPendingMessages(): Promise<TauSdkSessionCancelPendingMessagesResult>;
   retry(): Promise<TauSdkSessionRetryResult>;
   exec(

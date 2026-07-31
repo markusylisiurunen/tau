@@ -41,7 +41,7 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
 - **Session compaction** (`src/core/session/compaction.ts`): Prompt assembly, manual compaction preparation, and automatic compaction cut-point/retained-tail preparation
 - **Diff review** (`src/core/diff_review/`): Diff snapshot DTOs/capture and the TUI-local diff-tool protocol bridge with explicit protocol shutdown handshake (`session.close`). The session TUI captures snapshots through generic session execution primitives and drives generic ephemeral agents for review-thread work.
 - **Built-in diff tool** (`src/diff_tool/`): Browser demo/reference implementation for the diff-review tool protocol. Treat this subtree as an isolated island: keep diff-tool-specific prompts, HTTP handlers, state, and UI code inside `src/diff_tool/`; only share narrow protocol/types with `src/core/diff_review/`. The built-in tool is the reference implementation for custom diff tools, including the server-initiated `session.close` shutdown flow.
-- **Mode/session-server wiring** (`src/core/modes/`): Local app mode interface plus stdio and WebSocket session-protocol server wiring
+- **Session-server wiring** (`src/core/modes/`): Stdio and WebSocket session-protocol server wiring
 - **SDK client** (`src/sdk/client.ts`, `src/sdk/session.ts`): Node SDK in-process/WebSocket/bootstrap helpers plus session facade for driving Tau through session protocol transports; the default SDK client owns an in-process local host and shuts it down on close after persisting live snapshots
 - **Telegram session runtime helpers** (`src/core/telegram/`, `src/core/telegram/session_manager.ts`, `src/core/telegram/adapter.ts`, `src/core/telegram/workspace.ts`): Telegram runner command/config/runtime plus SDK-backed session management, Telegram polling/media handling, and project workspace preparation
 - **Nook** (`src/core/nook/`, `src/core/tools/nook.ts`, `src/core/static/code_mode/nook/`, `src/nook/worker/`): Tau-integrated Cloudflare static mini-app platform with `tau nook` CLI, one configured host-sandboxed code-mode `nook` tool, bundled Worker/R2/Durable Object implementation, Nook-hosted templates, and injected browser JSON KV SDK. Follow `src/nook/AGENTS.md` for Nook-specific V0 constraints.
@@ -109,7 +109,7 @@ Execution environments and tool backends are intentionally dumb target adapters.
   - `tools/` - Tool definitions (bash, write, edit, view_image, spawn_agent, send_input_to_agent, wait_for_agents, terminate_agent, Exa-backed JavaScript code-mode web, nook)
   - `tools/execution_backend.ts` - Generic local/hosted tool execution backend contract, local implementation, Node script execution, and cwd scoping helper
   - `subagents/` - Default subagent prompt, runtime types, and external `AgentSupervisor`
-  - `modes/` - Local app mode interface plus stdio session-protocol line server (`rpc_server.ts`) and WebSocket session server (`websocket_server.ts`)
+  - `modes/` - Stdio session-protocol line server (`rpc_server.ts`) and WebSocket session server (`websocket_server.ts`)
   - `runtime/chat_runtime.ts` - Main-session adapter for prompt composition, bound-tool specs, and the shared agent runtime
   - `runtime/session_prompt_composer.ts` - Session prompt composition for main-session and subagent prompts
   - `runtime/runtime_bootstrap.ts` - Shared prompt-context bootstrap resolution for TUI, RPC, and subagent working-directory prompt rebuilds

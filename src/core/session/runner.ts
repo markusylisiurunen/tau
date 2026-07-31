@@ -8,13 +8,7 @@ import type {
   ToolCall,
   ToolResultMessage,
 } from "@earendil-works/pi-ai";
-import type {
-  AgentEvent,
-  RunnerAssistantPartialEvent,
-  RunnerToolCallDiscardedEvent,
-  RunnerToolCallStreamingEvent,
-  RunnerToolResultEvent,
-} from "../agent/events.js";
+import type { AgentEvent } from "../agent/events.js";
 import type {
   AgentTool,
   ToolExecutionContext,
@@ -23,7 +17,7 @@ import type {
   ToolUiEvent,
 } from "../tools/registry.js";
 import type { TauStreamOptions } from "../utils/streaming_settings.js";
-import { MessageAccumulator } from "./message_accumulator.js";
+import { type AssistantPartialSnapshot, MessageAccumulator } from "./message_accumulator.js";
 
 const ASSISTANT_PARTIAL_MIN_INTERVAL_MS = 33;
 
@@ -45,22 +39,39 @@ type ToolRunAgentEvent = Extract<
 type AcknowledgedToolRunnerEvent = (ToolActivityAgentEvent | ToolRunAgentEvent) & {
   acknowledge: (error?: Error) => void;
 };
+type RunnerAssistantPartialEvent = {
+  type: "assistant_partial";
+  snapshot: AssistantPartialSnapshot;
+};
+type RunnerToolCallStreamingEvent = {
+  type: "tool_call_streaming";
+  toolCallId: string;
+  toolName: string;
+  contentIndex: number;
+};
+type RunnerToolCallDiscardedEvent = {
+  type: "tool_call_discarded";
+  toolCallId: string;
+  contentIndex: number;
+};
+type RunnerToolResultEvent = {
+  type: "tool_result";
+  message: ToolResultMessage;
+};
 
-export type ModelRunnerEvent =
+type ModelRunnerEvent =
   | NoticeEvent
   | ModelRetryEvent
   | RunnerAssistantPartialEvent
   | RunnerToolCallStreamingEvent
   | RunnerToolCallDiscardedEvent;
-export type ToolRunnerEvent =
+type ToolRunnerEvent =
   | NoticeEvent
   | ToolActivityAgentEvent
   | ToolRunAgentEvent
   | AcknowledgedToolRunnerEvent
   | RunnerToolResultEvent;
-export type RunnerEvent = ModelRunnerEvent | ToolRunnerEvent;
-
-export type RetryOptions = {
+type RetryOptions = {
   notice?: { text: string; severity?: NoticeEvent["severity"] };
   shouldRetryAfterError?: (args: { error: unknown; model: Model<Api> }) => boolean;
   onRetry?: () => void;
@@ -68,7 +79,7 @@ export type RetryOptions = {
   delayMs?: number;
 };
 
-export type RunModelSubturnOptions = {
+type RunModelSubturnOptions = {
   model: Model<Api>;
   context: Context;
   streamModel: (context: Context, options: TauStreamOptions) => AssistantMessageEventStream;
@@ -355,7 +366,7 @@ export async function* runModelSubturn(
   }
 }
 
-export type SequentialToolCallRunnerOptions = {
+type SequentialToolCallRunnerOptions = {
   toolRegistry: ToolRegistry;
   executionContext: Omit<ToolExecutionContext, "signal" | "emitActivity">;
   now?: () => number;

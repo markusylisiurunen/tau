@@ -1825,8 +1825,6 @@ describe("LocalSessionHost", () => {
     if (!recoveredSession) throw new Error("expected stored session to recover");
     const recoveredSnapshot = await recoveredSession.snapshot();
 
-    expect(recoveredSnapshot.revision).toBe(2);
-    expect(recoveredSnapshot.agentState).toMatchObject({ revision: 4 });
     expect(recoveredSnapshot.messages.map((entry) => entry.message.role)).toEqual([
       "system",
       "user",

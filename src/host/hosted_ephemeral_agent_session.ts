@@ -13,7 +13,6 @@ import { createDefaultCoreDeps } from "../core/runtime/deps.js";
 import { composeSessionPrompts } from "../core/runtime/session_prompt_composer.js";
 import type { SubagentToolName } from "../core/subagents/types.js";
 import { ToolCatalog } from "../core/tools/catalog.js";
-import type { ToolUiEvent } from "../core/tools/registry.js";
 import type { Persona, Skill } from "../core/types.js";
 import {
   appendUsageLogEntry,
@@ -276,7 +275,7 @@ class EphemeralAgentThread {
     switch (event.type) {
       case "tool_activity":
         this.lastActivityText =
-          formatToolUiEventForProgress(event.activity as ToolUiEvent) ?? this.lastActivityText;
+          formatToolUiEventForProgress(event.activity) ?? this.lastActivityText;
         break;
       case "tool_result":
         if (event.message.isError) {

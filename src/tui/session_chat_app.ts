@@ -8,7 +8,6 @@ import type {
   ThemeDefinition,
 } from "../core/config/index.js";
 import { DIFF_REVIEW_TOOL } from "../core/diff_review/index.js";
-import type { ModeAdapter } from "../core/modes/mode_adapter.js";
 import type { CoreDeps } from "../core/runtime/deps.js";
 import type { SessionProtocolCreateParams } from "../protocol/session_protocol.js";
 import { createTauSdkClientFromTransport } from "../sdk/session.js";
@@ -81,7 +80,7 @@ export type SessionChatSelection =
       mode: "select";
     };
 
-export class SessionChatApp implements ModeAdapter {
+export class SessionChatApp {
   private readonly view: TuiChatView;
   private readonly controller: SessionChatController;
   private readonly client: TauSdkClient;
@@ -203,17 +202,6 @@ export class SessionChatApp implements ModeAdapter {
       await this.client.close();
     }
   }
-
-  async onUserInput(text: string): Promise<void> {
-    await this.controller.onUserInput(text);
-  }
-
-  onInterrupt(): void {
-    const handlers = this.controller.getInputHandlers();
-    handlers.onEscape?.();
-  }
-
-  onEvent(): void {}
 
   private handleCtrlC(): void {
     const now = Date.now();

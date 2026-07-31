@@ -1332,6 +1332,12 @@ describe("rpc_server", () => {
     expect(harness.lines.some((line) => line.id === "steer-1" && line.type === "response")).toBe(
       false,
     );
+    await harness.server.handleLine(
+      request("cancel-applied", "session.cancelPendingMessages", { sessionId: "session-1" }),
+    );
+    expect(harness.lines.find((line) => line.id === "cancel-applied")).toEqual(
+      expect.objectContaining({ ok: true, result: { cancelled: [] } }),
+    );
     harness.emitSubagent({ type: "spawned", id: "agent-2", title: "research" });
     harness.releaseTurn();
     await Promise.all([firstSubmit, steerOne, steerTwo]);
@@ -1354,43 +1360,6 @@ describe("rpc_server", () => {
         }),
       );
     }
-  });
-
-  it("does not cancel steering after the runtime has applied it", async () => {
-    const harness = createHarness();
-    const firstSubmit = harness.server.handleLine(
-      request("submit-1", "session.submit", {
-        sessionId: "session-1",
-        text: "first turn",
-      }),
-    );
-    await waitFor(() => harness.lines.some((line) => deltaHasNotice(line, "streaming")));
-    const steer = harness.server.handleLine(
-      request("steer-1", "session.steer", {
-        sessionId: "session-1",
-        text: "change direction",
-      }),
-    );
-
-    harness.releaseTurn();
-    await waitFor(() =>
-      harness.seededSession.session.historyEntries.some((entry) =>
-        entry.message.content[0].text.includes("change direction"),
-      ),
-    );
-    await harness.server.handleLine(
-      request("cancel-1", "session.cancelPendingMessages", { sessionId: "session-1" }),
-    );
-
-    expect(harness.lines.find((line) => line.id === "cancel-1")).toEqual(
-      expect.objectContaining({ ok: true, result: { cancelled: [] } }),
-    );
-    harness.releaseTurn();
-    await Promise.all([firstSubmit, steer]);
-    await waitFor(() => harness.lines.some((line) => line.id === "steer-1"));
-    expect(harness.lines.filter((line) => line.id === "steer-1")).toEqual([
-      expect.objectContaining({ ok: true }),
-    ]);
   });
 
   it("publishes and cancels pending queue and steering state", async () => {

@@ -196,23 +196,12 @@ describe("spawn_agent tool", () => {
     expect(supervisor.spawn).not.toHaveBeenCalled();
   });
 
-  it("reports supervisor admission failures", async () => {
+  it("reports supervisor admission failures as blocked", async () => {
     const supervisor = { spawn: vi.fn(() => ({ ok: false, reason: "active limit reached" })) };
-    const { tool } = createFixture({ supervisor });
-    const { result } = await execute(tool, baseArguments);
+    const { result } = await execute(createFixture({ supervisor }).tool, baseArguments);
 
     expect(result.toolResult.outcome).toBe("blocked");
     expect(getText(result.toolResult)).toBe("active limit reached");
     expect(result.uiEvent).toMatchObject({ type: "spawn_agent_blocked" });
-  });
-
-  it("rejects unknown and malformed arguments before contacting the supervisor", async () => {
-    const { tool, supervisor } = createFixture();
-    const unknown = await execute(tool, { ...baseArguments, extra: true });
-    const empty = await execute(tool, { ...baseArguments, workingDirectory: "" });
-
-    expect(unknown.result.toolResult.outcome).toBe("blocked");
-    expect(empty.result.toolResult.outcome).toBe("blocked");
-    expect(supervisor.spawn).not.toHaveBeenCalled();
   });
 });

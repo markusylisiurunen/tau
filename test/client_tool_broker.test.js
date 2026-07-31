@@ -22,7 +22,6 @@ async function runTool(tool, toolCall, signal = new AbortController().signal) {
   return {
     toolResult: { ...outcome, toolCallId: toolCall.id, toolName: toolCall.name },
     uiEvent: activities.at(-1),
-    activities,
   };
 }
 
@@ -49,15 +48,7 @@ describe("ClientToolBroker", () => {
     registration.attachSession("session-1");
 
     const definition = broker.getToolDefinitions("session-1")[0];
-    expect(definition.describe(createToolCall({ choice: "a" }))).toEqual({
-      headerTarget: "local_picker",
-    });
-    const result = await runTool(
-      definition,
-      createToolCall({ choice: "a" }),
-      new AbortController().signal,
-      {},
-    );
+    const result = await runTool(definition, createToolCall({ choice: "a" }));
 
     expect(result.toolResult.content[0].text).toBe(content);
     expect(result.uiEvent).toMatchObject({
@@ -100,12 +91,7 @@ describe("ClientToolBroker", () => {
     const definition = broker.getToolDefinitions("session-1")[0];
     registration.detachSession("session-1");
 
-    const result = await runTool(
-      definition,
-      createToolCall({ choice: "a" }),
-      new AbortController().signal,
-      {},
-    );
+    const result = await runTool(definition, createToolCall({ choice: "a" }));
 
     expect(result.toolResult.outcome).toBe("blocked");
     expect(result.toolResult.content[0].text).toBe(

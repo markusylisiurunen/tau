@@ -1,4 +1,3 @@
-export type { ModeAdapter } from "./mode_adapter.js";
 export type { RpcServerOptions, RunRpcServerOptions } from "./rpc_server.js";
 export { RpcServer, runRpcServer } from "./rpc_server.js";
 export type {

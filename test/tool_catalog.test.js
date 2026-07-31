@@ -3,9 +3,7 @@ import { ToolCatalog } from "../dist/core/tools/catalog.js";
 
 function createBackend() {
   return {
-    dispose: vi.fn(async () => {}),
-    runBash: vi.fn(),
-    runNodeScript: vi.fn(async (_script, args, options) => {
+    runNodeScript: vi.fn(async (_script, args) => {
       const requests = JSON.parse(args[0]);
       const stdout = JSON.stringify(requests.map(() => null));
       return {
@@ -14,17 +12,11 @@ function createBackend() {
         stderr: "",
         exitCode: 0,
         truncated: false,
-        timedOut: false,
-        aborted: false,
-        closeSignal: null,
-        options,
       };
     }),
     readFile: vi.fn(async (path) => ({ path, content: "old text" })),
     readFileBinary: vi.fn(async (path) => ({ path, content: Buffer.from("not an image") })),
     writeFile: vi.fn(async (path, content) => ({ path, bytes: Buffer.byteLength(content) })),
-    writeFileBinary: vi.fn(async (path, content) => ({ path, bytes: content.byteLength })),
-    listDir: vi.fn(async (path) => ({ path, entries: [] })),
   };
 }
 
@@ -65,7 +57,7 @@ describe("ToolCatalog", () => {
     });
     await execute(registry, "view_image", { path: "image.png" });
     await execute(registry, "web", {
-      code: "console.log(JSON.stringify(await web.discover('https://example.com/docs'))) ",
+      code: "console.log(JSON.stringify(await web.discover('https://example.com/docs')))",
     });
 
     expect(backend.writeFile).toHaveBeenCalledWith("/workspace/child/created.txt", "created");

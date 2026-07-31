@@ -46,7 +46,6 @@ function createHostedSession(sessionId, sessions, options = {}) {
   let running = false;
   let releaseTurn;
   let pendingTurnResult = { status: "completed", stopReason: "stop" };
-  const pendingSteering = [];
 
   const hostedSession = {
     get isTurnRunning() {
@@ -104,20 +103,6 @@ function createHostedSession(sessionId, sessions, options = {}) {
             releaseTurn = resolve;
           });
         }
-        if (pendingTurnResult.status !== "aborted" && pendingSteering.length > 0) {
-          const steering = pendingSteering.splice(0);
-          const historyEntryId = hostedSession.session.addUserText(
-            steering.map((item) => item.text).join("\n"),
-          );
-          const result = {
-            userHistoryEntryId: historyEntryId,
-            turn: { status: "completed", stopReason: "stop" },
-          };
-          for (const item of steering) {
-            item.resolveApplied({ userHistoryEntryId: historyEntryId });
-            item.resolveResult(result);
-          }
-        }
         result = pendingTurnResult;
         return result;
       } finally {
@@ -128,37 +113,7 @@ function createHostedSession(sessionId, sessions, options = {}) {
     },
     requestTurnBoundaryStop: vi.fn(() => running),
     cancelTurnBoundaryStop: vi.fn(() => running),
-    steer(text) {
-      let resolveApplied;
-      let rejectApplied;
-      const applied = new Promise((resolve, reject) => {
-        resolveApplied = resolve;
-        rejectApplied = reject;
-      });
-      let resolveResult;
-      let rejectResult;
-      const result = new Promise((resolve, reject) => {
-        resolveResult = resolve;
-        rejectResult = reject;
-      });
-      pendingSteering.push({
-        text,
-        resolveApplied,
-        rejectApplied,
-        resolveResult,
-        rejectResult,
-      });
-      return { applied, result };
-    },
-    cancelSteering() {
-      const cancelled = pendingSteering.splice(0);
-      for (const item of cancelled) {
-        const error = new Error("steering submission was cancelled");
-        item.rejectApplied(error);
-        item.rejectResult(error);
-      }
-      return cancelled.map((item) => item.text);
-    },
+    cancelSteering: () => [],
     interruptTurn: vi.fn(() => {
       if (!running || !releaseTurn) {
         return false;
@@ -331,21 +286,15 @@ describe("InProcessSessionProtocolTransport", () => {
     await waitFor(() => hostedSession.isTurnRunning);
 
     const queued = session.queue("run tests");
-    const steered = session.steer("change direction");
-    await waitFor(() => session.pendingUserMessages().messages.length === 2);
+    await waitFor(() => session.pendingUserMessages().messages.length === 1);
     expect(session.pendingUserMessages().messages).toEqual([
-      expect.objectContaining({ mode: "steer", text: "change direction" }),
       expect.objectContaining({ mode: "queue", text: "run tests" }),
     ]);
 
     await expect(session.cancelPendingMessages()).resolves.toEqual({
-      cancelled: [
-        expect.objectContaining({ mode: "steer", text: "change direction" }),
-        expect.objectContaining({ mode: "queue", text: "run tests" }),
-      ],
+      cancelled: [expect.objectContaining({ mode: "queue", text: "run tests" })],
     });
     await expect(queued).rejects.toMatchObject({ code: "cancelled" });
-    await expect(steered).rejects.toMatchObject({ code: "cancelled" });
     expect(session.pendingUserMessages().messages).toEqual([]);
 
     hostedSession.interruptTurn();

@@ -75,7 +75,7 @@ function createSession(recordUsage = vi.fn(), config = { autoCompact: { enabled:
 }
 
 describe("HostedEphemeralAgentSession", () => {
-  it("uses AgentRuntime for continuation and cloned fork threads", async () => {
+  it("continues and forks thread state", async () => {
     const { session, recordUsage, emitUpdate } = createSession();
     const source = await session.getOrCreateThread("source");
     expect(source.runtime).toBeInstanceOf(AgentRuntime);

@@ -5,6 +5,7 @@ import type {
   UserMessage,
 } from "@earendil-works/pi-ai";
 import type { AssistantPartialSnapshot } from "../session/message_accumulator.js";
+import type { ToolUiEvent } from "../tools/registry.js";
 import type { ReasoningEffort } from "../types.js";
 
 export type AgentTurnOutcome = "completed" | "stopped" | "interrupted" | "blocked";
@@ -58,7 +59,7 @@ export type AgentEvent =
       historyEntryId: string;
       toolCall: ToolCall;
     }
-  | { type: "tool_activity"; activity: unknown }
+  | { type: "tool_activity"; activity: ToolUiEvent }
   | {
       type: "tool_run_queued";
       toolCallId: string;
@@ -137,26 +138,3 @@ export type AgentEvent =
   | { type: "notice"; severity: "info" | "warn" | "error"; text: string };
 
 export type AgentEventSink = (event: AgentEvent) => Promise<void>;
-
-export type RunnerAssistantPartialEvent = {
-  type: "assistant_partial";
-  snapshot: AssistantPartialSnapshot;
-};
-
-export type RunnerToolCallStreamingEvent = {
-  type: "tool_call_streaming";
-  toolCallId: string;
-  toolName: string;
-  contentIndex: number;
-};
-
-export type RunnerToolCallDiscardedEvent = {
-  type: "tool_call_discarded";
-  toolCallId: string;
-  contentIndex: number;
-};
-
-export type RunnerToolResultEvent = {
-  type: "tool_result";
-  message: ToolResultMessage;
-};

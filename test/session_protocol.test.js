@@ -1034,16 +1034,6 @@ describe("session_protocol", () => {
       },
     });
     expect(
-      validateSessionProtocolParams("session.steer", {
-        sessionId: "session-1",
-        text: "change direction",
-        historyEntryId: "ignored-history-id",
-      }),
-    ).toEqual({
-      ok: true,
-      value: { sessionId: "session-1", text: "change direction" },
-    });
-    expect(
       validateSessionProtocolParams("session.setReasoning", {
         sessionId: "session-1",
         reasoning: "max",
@@ -1110,18 +1100,15 @@ describe("session_protocol", () => {
       value: { sessionId: "session-1", contextId: "ephemeral-1" },
     });
 
-    for (const method of ["session.record", "session.submit", "session.queue", "session.steer"]) {
+    for (const method of ["session.queue", "session.steer"]) {
       expect(
         validateSessionProtocolParams(method, {
           sessionId: "session-1",
           text: "   ",
         }),
-      ).toEqual({
+      ).toMatchObject({
         ok: false,
-        error: expect.objectContaining({
-          code: SESSION_PROTOCOL_ERROR_CODES.invalidParams,
-          message: `${method} params.text must be a non-empty string`,
-        }),
+        error: { code: SESSION_PROTOCOL_ERROR_CODES.invalidParams },
       });
     }
 

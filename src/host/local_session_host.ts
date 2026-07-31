@@ -1884,7 +1884,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         await this.emitSnapshotReset("maintenance", await this.commitSnapshot());
         return;
       case "tool_activity":
-        await this.recordToolUiEvent(event.activity as ToolUiEvent);
+        await this.recordToolUiEvent(event.activity);
         return;
       case "turn_started":
       case "turn_finished":

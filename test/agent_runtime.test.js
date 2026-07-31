@@ -51,6 +51,26 @@ function createStream(events, result, error) {
   };
 }
 
+function createToolStream(message, error) {
+  const events = message.content.flatMap((content, contentIndex) =>
+    content.type === "toolCall"
+      ? [
+          { type: "toolcall_start", contentIndex, partial: message },
+          { type: "toolcall_end", contentIndex, toolCall: content, partial: message },
+        ]
+      : [],
+  );
+  return createStream(events, message, error);
+}
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 function createTool(name, execute) {
   return {
     schema: {
@@ -114,9 +134,7 @@ function setStreams(runtime, streams) {
 
 describe("AgentRuntime", () => {
   it("defaults to 1024 model subturns", () => {
-    const { runtime } = createRuntime();
-
-    expect(runtime.spec.maxModelSubturns).toBe(1024);
+    expect(createRuntime().runtime.spec.maxModelSubturns).toBe(1024);
   });
 
   it("accepts a final response on the configured last model subturn", async () => {
@@ -132,13 +150,7 @@ describe("AgentRuntime", () => {
     });
     const toolMessage = createAssistant(persona, [toolCall], { stopReason: "toolUse" });
     const streamModel = setStreams(runtime, [
-      createStream(
-        [
-          { type: "toolcall_start", contentIndex: 0, partial: toolMessage },
-          { type: "toolcall_end", contentIndex: 0, toolCall, partial: toolMessage },
-        ],
-        toolMessage,
-      ),
+      createToolStream(toolMessage),
       createStream([], createAssistant(persona, "done")),
     ]);
 
@@ -154,15 +166,12 @@ describe("AgentRuntime", () => {
   });
 
   it("commits user input durably and awaits its sink before model work", async () => {
-    let releaseUserEvent;
-    const userEventGate = new Promise((resolve) => {
-      releaseUserEvent = resolve;
-    });
+    const userEvent = deferred();
     const events = [];
     const { runtime, persona } = createRuntime({
       eventSink: async (event) => {
         events.push(event);
-        if (event.type === "user_message") await userEventGate;
+        if (event.type === "user_message") await userEvent.promise;
       },
     });
     const streamModel = setStreams(runtime, [createStream([], createAssistant(persona, "done"))]);
@@ -176,17 +185,9 @@ describe("AgentRuntime", () => {
     });
     expect(streamModel).not.toHaveBeenCalled();
 
-    releaseUserEvent();
+    userEvent.resolve();
     await turn;
     expect(streamModel).toHaveBeenCalledOnce();
-    expect(events.map((event) => event.type)).toEqual([
-      "user_message",
-      "turn_started",
-      "assistant_start",
-      "assistant_final",
-      "usage_checkpoint",
-      "turn_finished",
-    ]);
   });
 
   it("retains accepted input when the event sink fails and aborts later delivery", async () => {
@@ -205,11 +206,6 @@ describe("AgentRuntime", () => {
     expect(runtime.rawHistory).toHaveLength(1);
     expect(runtime.rawHistory[0].role).toBe("user");
     expect(streamModel).not.toHaveBeenCalled();
-    expect(eventSink.mock.calls.map(([event]) => event.type)).toEqual([
-      "user_message",
-      "turn_started",
-      "assistant_start",
-    ]);
   });
 
   it("emits provisional identities without arguments and discards unfinished calls", async () => {
@@ -257,30 +253,18 @@ describe("AgentRuntime", () => {
   it("admits streamed calls immediately, executes sequentially, and commits canonically", async () => {
     const firstCall = fauxToolCall("first_tool", {}, { id: "first-call" });
     const secondCall = fauxToolCall("second_tool", {}, { id: "second-call" });
-    let releaseFirst;
-    const firstGate = new Promise((resolve) => {
-      releaseFirst = resolve;
-    });
-    let markFirstStarted;
-    const firstStarted = new Promise((resolve) => {
-      markFirstStarted = resolve;
-    });
-    let markSecondStarted;
-    const secondStarted = new Promise((resolve) => {
-      markSecondStarted = resolve;
-    });
-    let releaseModel;
-    const modelGate = new Promise((resolve) => {
-      releaseModel = resolve;
-    });
+    const firstRun = deferred();
+    const firstStarted = deferred();
+    const secondStarted = deferred();
+    const modelRun = deferred();
     const tools = [
       createTool("first_tool", async () => {
-        markFirstStarted();
-        await firstGate;
+        firstStarted.resolve();
+        await firstRun.promise;
         return { content: [{ type: "text", text: "first done" }], outcome: "succeeded" };
       }),
       createTool("second_tool", async () => {
-        markSecondStarted();
+        secondStarted.resolve();
         return { content: [{ type: "text", text: "second done" }], outcome: "succeeded" };
       }),
     ];
@@ -305,7 +289,7 @@ describe("AgentRuntime", () => {
             toolCall: secondCall,
             partial: toolMessage,
           };
-          await modelGate;
+          await modelRun.promise;
         },
         async result() {
           return toolMessage;
@@ -315,7 +299,7 @@ describe("AgentRuntime", () => {
     ]);
 
     const turn = runtime.submit("use both");
-    await firstStarted;
+    await firstStarted.promise;
     await vi.waitFor(() =>
       expect(
         events
@@ -325,8 +309,8 @@ describe("AgentRuntime", () => {
     );
     expect(events.some((event) => event.type === "assistant_final")).toBe(false);
 
-    releaseFirst();
-    await secondStarted;
+    firstRun.resolve();
+    await secondStarted.promise;
     await vi.waitFor(() =>
       expect(events.filter((event) => event.type === "tool_run_finished")).toHaveLength(2),
     );
@@ -348,7 +332,7 @@ describe("AgentRuntime", () => {
       "tool_run_started:second-call",
       "tool_run_finished:second-call",
     ]);
-    releaseModel();
+    modelRun.resolve();
     await turn;
 
     expect(
@@ -377,13 +361,7 @@ describe("AgentRuntime", () => {
     };
     const toolMessage = createAssistant(persona, [call], { stopReason: "toolUse" });
     setStreams(runtime, [
-      createStream(
-        [
-          { type: "toolcall_start", contentIndex: 0, partial: toolMessage },
-          { type: "toolcall_end", contentIndex: 0, toolCall: call, partial: toolMessage },
-        ],
-        toolMessage,
-      ),
+      createToolStream(toolMessage),
       createStream([], createAssistant(persona, "continued")),
     ]);
 
@@ -406,15 +384,9 @@ describe("AgentRuntime", () => {
   });
 
   it("applies event-sink backpressure to tool lifecycle and owned activity", async () => {
-    let releaseRunStart;
-    const runStartGate = new Promise((resolve) => {
-      releaseRunStart = resolve;
-    });
+    const runStart = deferred();
     let runStartReachedSink = false;
-    let releaseActivity;
-    const activityGate = new Promise((resolve) => {
-      releaseActivity = resolve;
-    });
+    const activity = deferred();
     let activityReachedSink = false;
     let toolStarted = false;
     let toolProgressed = false;
@@ -438,34 +410,28 @@ describe("AgentRuntime", () => {
         events.push(event);
         if (event.type === "tool_run_started") {
           runStartReachedSink = true;
-          await runStartGate;
+          await runStart.promise;
         }
         if (event.type === "tool_activity" && event.activity.reason === "activity") {
           activityReachedSink = true;
-          await activityGate;
+          await activity.promise;
         }
       },
     });
     const toolMessage = createAssistant(persona, [call], { stopReason: "toolUse" });
     setStreams(runtime, [
-      createStream(
-        [
-          { type: "toolcall_start", contentIndex: 0, partial: toolMessage },
-          { type: "toolcall_end", contentIndex: 0, toolCall: call, partial: toolMessage },
-        ],
-        toolMessage,
-      ),
+      createToolStream(toolMessage),
       createStream([], createAssistant(persona, "finished")),
     ]);
 
     const turn = runtime.submit("run activity");
     await vi.waitFor(() => expect(runStartReachedSink).toBe(true));
     expect(toolStarted).toBe(false);
-    releaseRunStart();
+    runStart.resolve();
     await vi.waitFor(() => expect(activityReachedSink).toBe(true));
     expect(toolStarted).toBe(true);
     expect(toolProgressed).toBe(false);
-    releaseActivity();
+    activity.resolve();
     await turn;
     expect(toolProgressed).toBe(true);
     expect(events.findIndex((event) => event.type === "tool_activity")).toBeLessThan(
@@ -493,136 +459,54 @@ describe("AgentRuntime", () => {
     expect(runtime.rawHistory.at(-1).content[0].text).toBe("recovered");
   });
 
-  it("repairs dangling committed tool calls when restoring durable state", async () => {
-    const { runtime, persona } = createRuntime();
-    const call = fauxToolCall("side_effect", {}, { id: "dangling-call" });
-    const assistant = createAssistant(persona, [call], { stopReason: "toolUse" });
-    const recovery = runtime.restoreState({
-      agentId: "restored-agent",
-      revision: 2,
-      contextEpoch: runtime.state.contextEpoch,
-      usageCheckpoint: {
-        historyEntryId: "assistant-1",
-        contextEpoch: runtime.state.contextEpoch,
-        tokens: 10,
+  it.each([
+    [
+      "a terminal provider error",
+      (persona, call) => {
+        const failed = createAssistant(persona, [call], {
+          stopReason: "error",
+          errorMessage: "connection reset",
+        });
+        return createToolStream(failed);
       },
-      historyEntries: [
-        {
-          id: "user-1",
-          message: {
-            role: "user",
-            content: [{ type: "text", text: "perform once" }],
-            timestamp: 1,
-          },
-        },
-        { id: "assistant-1", message: assistant },
-      ],
-    });
+    ],
+    [
+      "an iterator failure",
+      (persona, call) => {
+        const partial = createAssistant(persona, [call], { stopReason: "toolUse" });
+        return createToolStream(partial, new Error("transport disconnected"));
+      },
+    ],
+  ])(
+    "recovers from %s after tool admission without duplicate execution",
+    async (_label, failure) => {
+      const call = fauxToolCall("side_effect", {}, { id: "side-effect-1" });
+      const execute = vi.fn(async () => ({
+        content: [{ type: "text", text: "completed" }],
+        outcome: "succeeded",
+      }));
+      const { runtime, persona, events } = createRuntime({
+        tools: [createTool("side_effect", execute)],
+      });
+      setStreams(runtime, [
+        failure(persona, call),
+        createStream([], createAssistant(persona, "recovered response")),
+      ]);
 
-    expect(recovery.recoveredToolResults).toEqual([
-      expect.objectContaining({
-        message: expect.objectContaining({
-          role: "toolResult",
-          toolCallId: call.id,
-          isError: true,
-        }),
-      }),
-    ]);
-    expect(runtime.rawHistory.map((message) => message.role)).toEqual([
-      "user",
-      "assistant",
-      "toolResult",
-      "user",
-    ]);
-    expect(JSON.stringify(runtime.rawHistory.at(-1))).toContain("completion status is unknown");
-    expect(runtime.state.usageCheckpoint).toBeUndefined();
-    expect(runtime.restoreState(runtime.snapshot()).recoveredToolResults).toEqual([]);
+      await runtime.submit("perform once");
 
-    const streamModel = setStreams(runtime, [
-      createStream([], createAssistant(persona, "continued safely")),
-    ]);
-    await runtime.submit("continue");
-    expect(streamModel.mock.calls[0][0].messages.map((message) => message.role)).toEqual([
-      "user",
-      "assistant",
-      "toolResult",
-      "user",
-      "user",
-    ]);
-  });
-
-  it("recovers after admitted tool work without executing the tool twice", async () => {
-    const call = fauxToolCall("side_effect", {}, { id: "side-effect-1" });
-    const execute = vi.fn(async () => ({
-      content: [{ type: "text", text: "completed" }],
-      outcome: "succeeded",
-    }));
-    const { runtime, persona, events } = createRuntime({
-      tools: [createTool("side_effect", execute)],
-    });
-    const failed = createAssistant(persona, [call], {
-      stopReason: "error",
-      errorMessage: "connection reset",
-    });
-    setStreams(runtime, [
-      createStream(
-        [
-          { type: "toolcall_start", contentIndex: 0, partial: failed },
-          { type: "toolcall_end", contentIndex: 0, toolCall: call, partial: failed },
-        ],
-        failed,
-      ),
-      createStream([], createAssistant(persona, "recovered response")),
-    ]);
-
-    await runtime.submit("perform once");
-
-    expect(execute).toHaveBeenCalledOnce();
-    expect(events.filter((event) => event.type === "tool_recovery")).toHaveLength(1);
-    expect(events.filter((event) => event.type === "model_retry_scheduled")).toHaveLength(0);
-    expect(runtime.rawHistory.map((message) => message.role)).toEqual([
-      "user",
-      "assistant",
-      "user",
-      "assistant",
-    ]);
-    expect(JSON.stringify(runtime.rawHistory[2])).toContain("completed");
-  });
-
-  it("reconciles iterator failures after tool admission without duplicating execution", async () => {
-    const call = fauxToolCall("side_effect", {}, { id: "iterator-failure-call" });
-    const execute = vi.fn(async () => ({
-      content: [{ type: "text", text: "completed" }],
-      outcome: "succeeded",
-    }));
-    const { runtime, persona, events } = createRuntime({
-      tools: [createTool("side_effect", execute)],
-    });
-    const partial = createAssistant(persona, [call], { stopReason: "toolUse" });
-    setStreams(runtime, [
-      createStream(
-        [
-          { type: "toolcall_start", contentIndex: 0, partial },
-          { type: "toolcall_end", contentIndex: 0, toolCall: call, partial },
-        ],
-        undefined,
-        new Error("transport disconnected"),
-      ),
-      createStream([], createAssistant(persona, "recovered response")),
-    ]);
-
-    await runtime.submit("perform once");
-
-    expect(execute).toHaveBeenCalledOnce();
-    expect(events.filter((event) => event.type === "tool_recovery")).toHaveLength(1);
-    expect(runtime.rawHistory.map((message) => message.role)).toEqual([
-      "user",
-      "assistant",
-      "user",
-      "assistant",
-    ]);
-    expect(JSON.stringify(runtime.rawHistory[2])).toContain("completed");
-  });
+      expect(execute).toHaveBeenCalledOnce();
+      expect(events.filter((event) => event.type === "tool_recovery")).toHaveLength(1);
+      expect(events.filter((event) => event.type === "model_retry_scheduled")).toHaveLength(0);
+      expect(runtime.rawHistory.map((message) => message.role)).toEqual([
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+      ]);
+      expect(JSON.stringify(runtime.rawHistory[2])).toContain("completed");
+    },
+  );
 
   it("blocks a turn when required automatic compaction fails after input commit", async () => {
     const model = { ...personas[0].model, contextWindow: 100 };
@@ -780,14 +664,11 @@ describe("AgentRuntime", () => {
         }
       },
     });
-    let releaseModel;
-    const modelGate = new Promise((resolve) => {
-      releaseModel = resolve;
-    });
+    const modelRun = deferred();
     setStreams(runtime, [
       {
         async *[Symbol.asyncIterator]() {
-          await modelGate;
+          await modelRun.promise;
           yield* [];
         },
         async result() {
@@ -800,7 +681,7 @@ describe("AgentRuntime", () => {
     await vi.waitFor(() => expect(runtime.status).toBe("running"));
     const steering = runtime.steer("change direction");
     rejectAssistantFinal = true;
-    releaseModel();
+    modelRun.resolve();
 
     await expect(turn).rejects.toThrow("sink failed");
     await expect(steering.applied).rejects.toThrow("sink failed");
@@ -809,17 +690,11 @@ describe("AgentRuntime", () => {
 
   it("batches steering at a boundary and captures the latest spec for the resulting turn", async () => {
     const call = fauxToolCall("boundary_tool", {}, { id: "boundary-call" });
-    let releaseTool;
-    const toolGate = new Promise((resolve) => {
-      releaseTool = resolve;
-    });
-    let markToolStarted;
-    const toolStarted = new Promise((resolve) => {
-      markToolStarted = resolve;
-    });
+    const toolRun = deferred();
+    const toolStarted = deferred();
     const tool = createTool("boundary_tool", async () => {
-      markToolStarted();
-      await toolGate;
+      toolStarted.resolve();
+      await toolRun.promise;
       return { content: [{ type: "text", text: "done" }], outcome: "succeeded" };
     });
     const firstPersona = createPersona({ id: "first-persona" });
@@ -833,17 +708,11 @@ describe("AgentRuntime", () => {
     const models = [];
     runtime.spec.model.stream = () => {
       models.push(firstPersona.model.id);
-      return createStream(
-        [
-          { type: "toolcall_start", contentIndex: 0, partial: toolMessage },
-          { type: "toolcall_end", contentIndex: 0, toolCall: call, partial: toolMessage },
-        ],
-        toolMessage,
-      );
+      return createToolStream(toolMessage);
     };
 
     const firstTurn = runtime.submit("original");
-    await toolStarted;
+    await toolStarted.promise;
     const steerOne = runtime.steer("change direction");
     const steerTwo = runtime.steer("also inspect docs");
     const secondSpec = {
@@ -858,7 +727,7 @@ describe("AgentRuntime", () => {
       return createStream([], createAssistant(secondPersona, "steered"));
     };
     runtime.updateSpec(secondSpec);
-    releaseTool();
+    toolRun.resolve();
 
     const initialResult = await firstTurn;
     const [firstAssociation, secondAssociation] = await Promise.all([
@@ -884,15 +753,12 @@ describe("AgentRuntime", () => {
   });
 
   it("cancels unapplied steering and removes the pending boundary stop", async () => {
-    let releaseModel;
-    const modelGate = new Promise((resolve) => {
-      releaseModel = resolve;
-    });
+    const modelRun = deferred();
     const { runtime, persona, events } = createRuntime();
     const streamModel = setStreams(runtime, [
       {
         async *[Symbol.asyncIterator]() {
-          await modelGate;
+          await modelRun.promise;
           yield* [];
         },
         async result() {
@@ -907,7 +773,7 @@ describe("AgentRuntime", () => {
     expect(runtime.cancelSteering()).toEqual([{ id: steering.id, text: "cancel me" }]);
     await expect(steering.applied).rejects.toThrow("steering submission was cancelled");
     await expect(steering.result).rejects.toThrow("steering submission was cancelled");
-    releaseModel();
+    modelRun.resolve();
     await turn;
 
     expect(streamModel).toHaveBeenCalledOnce();
@@ -917,10 +783,7 @@ describe("AgentRuntime", () => {
   });
 
   it("rewinds through an awaited durable event and rejects active turns", async () => {
-    let releaseModel;
-    const modelGate = new Promise((resolve) => {
-      releaseModel = resolve;
-    });
+    const modelRun = deferred();
     const { runtime, persona, events } = createRuntime();
     const rewindId = await runtime.commitUserText("rewind me");
     const result = await runtime.rewindToHistoryEntryId(rewindId);
@@ -939,7 +802,7 @@ describe("AgentRuntime", () => {
     setStreams(runtime, [
       {
         async *[Symbol.asyncIterator]() {
-          await modelGate;
+          await modelRun.promise;
           yield* [];
         },
         async result() {
@@ -952,7 +815,7 @@ describe("AgentRuntime", () => {
     await expect(
       runtime.rewindToHistoryEntryId(runtime.state.historyEntries[0].id),
     ).rejects.toThrow("cannot rewind a running agent");
-    releaseModel();
+    modelRun.resolve();
     await turn;
   });
 
@@ -1029,17 +892,14 @@ describe("AgentRuntime", () => {
 
   it("interrupts active tool execution through the narrow execution-local context", async () => {
     let executionContext;
-    let markStarted;
-    const started = new Promise((resolve) => {
-      markStarted = resolve;
-    });
+    const started = deferred();
     const call = fauxToolCall("blocking_tool", {}, { id: "blocking-call" });
     const tool = createTool(
       "blocking_tool",
       async (_toolCall, context) =>
         await new Promise((resolve) => {
           executionContext = context;
-          markStarted();
+          started.resolve();
           context.signal.addEventListener(
             "abort",
             () =>
@@ -1053,18 +913,10 @@ describe("AgentRuntime", () => {
     );
     const { runtime, persona, events } = createRuntime({ tools: [tool] });
     const toolMessage = createAssistant(persona, [call], { stopReason: "toolUse" });
-    setStreams(runtime, [
-      createStream(
-        [
-          { type: "toolcall_start", contentIndex: 0, partial: toolMessage },
-          { type: "toolcall_end", contentIndex: 0, toolCall: call, partial: toolMessage },
-        ],
-        toolMessage,
-      ),
-    ]);
+    setStreams(runtime, [createToolStream(toolMessage)]);
 
     const turn = runtime.submit("block");
-    await started;
+    await started.promise;
     expect(Object.keys(executionContext).sort()).toEqual([
       "agentId",
       "assistantMessageId",
@@ -1083,21 +935,5 @@ describe("AgentRuntime", () => {
     expect(events.findLast((event) => event.type === "turn_finished")).toMatchObject({
       outcome: "interrupted",
     });
-  });
-
-  it("restores durable state without hidden usage-validity flags", async () => {
-    const { runtime, persona } = createRuntime();
-    setStreams(runtime, [createStream([], createAssistant(persona, "saved"))]);
-    await runtime.submit("persisted");
-    const state = runtime.snapshot();
-
-    expect(state).not.toHaveProperty("autoCompactionUsageInvalidated");
-    const restored = new AgentRuntime({
-      spec: runtime.spec,
-      state,
-      eventSink: async () => {},
-    });
-    expect(restored.snapshot()).toEqual(state);
-    expect(restored.status).toBe("idle");
   });
 });

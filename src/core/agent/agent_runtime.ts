@@ -110,7 +110,7 @@ export type AgentSpec = {
   maxModelSubturns: number;
 };
 
-export type AgentRuntimeOptions = {
+type AgentRuntimeOptions = {
   spec: AgentSpec;
   eventSink: AgentEventSink;
   getCompactionContext?: () => string | undefined;
@@ -118,7 +118,7 @@ export type AgentRuntimeOptions = {
   deps?: CoreDeps;
 };
 
-export type AgentCompactionOptions = {
+type AgentCompactionOptions = {
   mode: SessionCompactionMode;
   guidance?: string;
   signal?: AbortSignal;
@@ -133,12 +133,12 @@ export type AgentSampleOptions = {
   signal?: AbortSignal;
 };
 
-export type AgentCompactionResult = {
+type AgentCompactionResult = {
   compactionMessage: string;
   includedLastAssistant: boolean;
 };
 
-export type AutoCompactionBlockedTurn = {
+type AutoCompactionBlockedTurn = {
   reason: "auto-compaction-failed";
   message: string;
 };
@@ -149,12 +149,12 @@ export type AgentTurnResult = {
   finalMessage?: AssistantMessage;
 };
 
-export type SteeringAssociation = {
+type SteeringAssociation = {
   turnId: string;
   historyEntryId: string;
 };
 
-export type SteeringResult = SteeringAssociation & {
+type SteeringResult = SteeringAssociation & {
   result: AgentTurnResult;
 };
 

@@ -7,7 +7,6 @@ import { resolveAgentModel } from "../runtime/agent_model.js";
 import type { CoreDeps } from "../runtime/deps.js";
 import { ToolCatalog } from "../tools/catalog.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
-import type { ToolUiEvent } from "../tools/registry.js";
 import type { Persona } from "../types.js";
 import {
   appendUsageLogEntry,
@@ -344,7 +343,7 @@ export class AgentSupervisor {
         record.toolCalls += 1;
         return;
       case "tool_activity":
-        text = formatToolUiEventForProgress(event.activity as ToolUiEvent) ?? "";
+        text = formatToolUiEventForProgress(event.activity) ?? "";
         break;
       case "tool_result":
         if (event.message.isError) {

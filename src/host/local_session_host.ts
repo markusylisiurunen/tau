@@ -77,6 +77,7 @@ import {
   createSessionProtocolDeltaMessage,
   createSessionProtocolEphemeralMessage,
 } from "../protocol/session_protocol.js";
+import { LEGACY_SESSION_CONTEXT_EPOCH } from "../store/session_snapshot_migrations.js";
 import type { SessionStore } from "../store/session_store.js";
 import { ClientToolBroker } from "./client_tool_broker.js";
 import { createExecutionEnvironmentSubagentRuntimeResolver } from "./execution_runtime.js";
@@ -218,7 +219,7 @@ export class LocalSessionHost implements TauSessionHost {
           ? { usageCheckpoint: { ...recovered.snapshot.agentState.usageCheckpoint } }
           : {}),
       });
-      if (agentRecovery.recoveredToolResults.length > 0) {
+      if (recovered.legacyAgentState || agentRecovery.recoveredToolResults.length > 0) {
         await hostedSession.persistRecoveredAgentState(agentRecovery);
       }
       return hostedSession;
@@ -2240,9 +2241,11 @@ function getAssistantDraftBlockText(
 function normalizeRecoveredSnapshot(snapshot: SessionProtocolSnapshot): {
   snapshot: SessionProtocolSnapshot;
   changed: boolean;
+  legacyAgentState: boolean;
 } {
   const recovered = cloneSessionProtocolSnapshot(snapshot);
-  let changed = recovered.lifecycle !== "idle";
+  const legacyAgentState = recovered.agentState.contextEpoch === LEGACY_SESSION_CONTEXT_EPOCH;
+  let changed = recovered.lifecycle !== "idle" || legacyAgentState;
   recovered.lifecycle = "idle";
   const streamingToolIds = new Set(
     Object.values(recovered.tools)
@@ -2286,7 +2289,7 @@ function normalizeRecoveredSnapshot(snapshot: SessionProtocolSnapshot): {
         : {}),
     };
   }
-  return { snapshot: recovered, changed };
+  return { snapshot: recovered, changed, legacyAgentState };
 }
 
 function promptCompositionFromSnapshot(

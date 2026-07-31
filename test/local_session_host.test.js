@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
@@ -10,7 +10,13 @@ import { prependTauUserMetadata } from "../dist/core/utils/user_metadata.js";
 import { HostedEphemeralAgentSession } from "../dist/host/hosted_ephemeral_agent_session.js";
 import { LocalSessionHost } from "../dist/host/local_session_host.js";
 import { EphemeralThreadBusyError } from "../dist/host/session_host.js";
+import { FileSessionStore } from "../dist/store/file_session_store.js";
 import { MemorySessionStore } from "../dist/store/memory_session_store.js";
+import {
+  LEGACY_SESSION_CONTEXT_EPOCH,
+  STORED_SESSION_DOCUMENT_FORMAT,
+  STORED_SESSION_DOCUMENT_VERSION,
+} from "../dist/store/session_snapshot_migrations.js";
 
 const localCreateInput = {
   executionEnvironment: { kind: "local", cwd: "/repo" },
@@ -1782,6 +1788,59 @@ describe("LocalSessionHost", () => {
       environmentTag: storedSnapshot.bootstrap.prompt.environmentTag,
       subagentPrompts: storedSnapshot.bootstrap.prompt.subagentPrompts,
     });
+  });
+
+  it("lists and canonicalizes unversioned sessions before recovery returns", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "tau-legacy-session-"));
+    const storedSnapshot = createStoredSnapshot({
+      sessionId: "legacy-agent-state",
+      revision: 7,
+      historyEntries: [
+        {
+          id: "legacy-user",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "persisted request" }],
+          },
+        },
+      ],
+    });
+    const { agentState: _agentState, ...legacySnapshot } = storedSnapshot;
+    const path = join(
+      directory,
+      `${Buffer.from(storedSnapshot.sessionId, "utf8").toString("base64url")}.json`,
+    );
+    writeFileSync(path, JSON.stringify(legacySnapshot), "utf8");
+
+    const store = new FileSessionStore({ directory });
+    const host = createHost(store);
+    try {
+      await expect(host.listSessions()).resolves.toEqual([
+        expect.objectContaining({ sessionId: storedSnapshot.sessionId }),
+      ]);
+      const recoveredSession = await host.observeSession(storedSnapshot.sessionId);
+      if (!recoveredSession) throw new Error("expected stored session to recover");
+
+      const persisted = JSON.parse(readFileSync(path, "utf8"));
+      expect(persisted).toMatchObject({
+        format: STORED_SESSION_DOCUMENT_FORMAT,
+        version: STORED_SESSION_DOCUMENT_VERSION,
+        snapshot: {
+          revision: 8,
+          agentState: {
+            revision: storedSnapshot.revision,
+            contextEpoch: recoveredSession.runtime.snapshot().contextEpoch,
+          },
+          messages: expect.arrayContaining([
+            expect.objectContaining({ id: "legacy-user", modelVisible: true }),
+          ]),
+        },
+      });
+      expect(persisted.snapshot.agentState.contextEpoch).not.toBe(LEGACY_SESSION_CONTEXT_EPOCH);
+    } finally {
+      await host.shutdown();
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it("repairs and persists dangling tool calls when recovering a stored session", async () => {

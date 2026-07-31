@@ -105,7 +105,7 @@ then attach the terminal UI from another machine:
 tau attach --auth-token "$TAU_WS_AUTH_TOKEN" ws://vps:8787
 ```
 
-Without `--session` or `--new`, attach lists hosted sessions and prompts for the session to open. Use `--session <id>` to attach to an existing persisted session directly:
+Without `--session` or `--new`, attach lists hosted sessions and prompts for the session to open. Persisted session files use a versioned storage format and older unwrapped snapshots are migrated during recovery. Use `--session <id>` to attach to an existing persisted session directly:
 
 ```sh
 tau attach --session 0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3 --auth-token "$TAU_WS_AUTH_TOKEN" ws://vps:8787

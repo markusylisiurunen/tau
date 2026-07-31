@@ -186,6 +186,10 @@ function createStoredSnapshot(overrides = {}) {
   return {
     sessionId: overrides.sessionId ?? "stored-session",
     revision: overrides.revision ?? 1,
+    agentState: overrides.agentState ?? {
+      revision: historyEntries.length,
+      contextEpoch: "stored-context",
+    },
     lifecycle: overrides.lifecycle ?? "idle",
     costTotal: overrides.costTotal ?? 0,
     bootstrap: overrides.bootstrap ?? {
@@ -496,7 +500,7 @@ describe("LocalSessionHost", () => {
       stopReason: "stop",
       content: [{ type: "text", text: "measured" }],
     };
-    hostedSession.runtime.agent.modelRuntime.streamModel = () => ({
+    hostedSession.runtime.agent.spec.model.stream = () => ({
       async *[Symbol.asyncIterator]() {},
       async result() {
         return message;
@@ -583,7 +587,7 @@ describe("LocalSessionHost", () => {
       },
       timestamp: 1,
     };
-    hostedSession.runtime.agent.modelRuntime.streamModel = () => ({
+    hostedSession.runtime.agent.spec.model.stream = () => ({
       async *[Symbol.asyncIterator]() {},
       async result() {
         return sampledMessage;
@@ -640,7 +644,7 @@ describe("LocalSessionHost", () => {
     const sampleStarted = new Promise((resolve) => {
       markSampleStarted = resolve;
     });
-    hostedSession.runtime.agent.modelRuntime.streamModel = (_model, _context, options) => ({
+    hostedSession.runtime.agent.spec.model.stream = (_context, options) => ({
       async *[Symbol.asyncIterator]() {},
       async result() {
         markSampleStarted();
@@ -856,7 +860,7 @@ describe("LocalSessionHost", () => {
       const finalMessage = fauxAssistantMessage("done");
       const responses = [toolMessage, finalMessage];
 
-      hostedSession.runtime.agent.modelRuntime.streamModel = () => {
+      hostedSession.runtime.agent.spec.model.stream = () => {
         const response = responses.shift();
         return {
           async *[Symbol.asyncIterator]() {
@@ -976,7 +980,7 @@ describe("LocalSessionHost", () => {
         releaseArguments = resolve;
       });
 
-      hostedSession.runtime.agent.modelRuntime.streamModel = () => {
+      hostedSession.runtime.agent.spec.model.stream = () => {
         const response = responses.shift();
         return {
           async *[Symbol.asyncIterator]() {
@@ -1426,7 +1430,7 @@ describe("LocalSessionHost", () => {
     const snapshot = await session.setPersona(livePersona.id);
 
     expect(resolveRuntimeConfig).toHaveBeenCalledTimes(1);
-    expect(session.runtime.agent.spec.persona.model).toEqual(livePersona.model);
+    expect(session.runtime.agent.spec.model.model).toEqual(livePersona.model);
     expect(session.runtime.persona.label).toBe("live persona");
     expect(snapshot.settings.personaId).toBe(livePersona.id);
     expect(snapshot.catalog.personas).toEqual([expect.objectContaining({ label: "live persona" })]);
@@ -1897,9 +1901,95 @@ describe("LocalSessionHost", () => {
       throw new Error("expected stored session to recover");
     }
     expect(resolveRuntimeConfig).toHaveBeenCalledTimes(1);
-    expect(recoveredSession.runtime.agent.spec.config).toEqual({
-      autoCompact: { enabled: false },
+    expect(recoveredSession.runtime.agent.spec.compactionPolicy).toMatchObject({
+      enabled: false,
     });
+  });
+
+  it("restores agent revisions and usage checkpoints for first-turn auto-compaction", async () => {
+    const store = new MemorySessionStore();
+    const persona = {
+      ...personas[0],
+      model: { ...personas[0].model, contextWindow: 100 },
+    };
+    const config = {
+      autoCompact: { enabled: true, reserveTokens: 10, keepRecentTokens: 20 },
+    };
+    const originalHost = createHost(store, { persona, personas: [persona], config });
+    const originalSession = await originalHost.createSession(localCreateInput);
+    const firstMessage = {
+      ...assistantMessageWithToolCalls([]),
+      api: persona.model.api,
+      provider: persona.model.provider,
+      model: persona.model.id,
+      stopReason: "stop",
+      content: [{ type: "text", text: "near the context limit" }],
+      usage: {
+        input: 89,
+        output: 2,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 91,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+    };
+    originalSession.runtime.agent.spec.model.stream = () => ({
+      async *[Symbol.asyncIterator]() {},
+      async result() {
+        return firstMessage;
+      },
+    });
+
+    await originalSession.record({ text: "first request" });
+    await originalSession.runTurn();
+    const storedSnapshot = await originalSession.snapshot();
+    expect(storedSnapshot.agentState.revision).not.toBe(storedSnapshot.revision);
+    expect(storedSnapshot.agentState.usageCheckpoint).toMatchObject({ tokens: 91 });
+    await originalHost.shutdown();
+
+    const recoveredHost = createHost(store, { persona, personas: [persona], config });
+    const recoveredSession = await recoveredHost.observeSession(storedSnapshot.sessionId);
+    if (!recoveredSession) throw new Error("expected stored session to recover");
+    expect(recoveredSession.runtime.snapshot()).toMatchObject({
+      revision: storedSnapshot.agentState.revision,
+      usageCheckpoint: storedSnapshot.agentState.usageCheckpoint,
+    });
+    const summaryMessage = {
+      ...firstMessage,
+      content: [
+        {
+          type: "text",
+          text: "summary\n\n<preserved-user-message-ids>\n[]\n</preserved-user-message-ids>",
+        },
+      ],
+      usage: { ...firstMessage.usage, input: 1, output: 1, totalTokens: 2 },
+    };
+    const finalMessage = {
+      ...firstMessage,
+      content: [{ type: "text", text: "continued after recovery" }],
+      usage: { ...firstMessage.usage, input: 1, output: 1, totalTokens: 2 },
+    };
+    const streams = [summaryMessage, finalMessage];
+    const stream = vi.fn(() => {
+      const message = streams.shift();
+      return {
+        async *[Symbol.asyncIterator]() {},
+        async result() {
+          return message;
+        },
+      };
+    });
+    recoveredSession.runtime.agent.spec.model.stream = stream;
+
+    await recoveredSession.record({ text: "second request" });
+    await expect(recoveredSession.runTurn()).resolves.toMatchObject({ status: "completed" });
+    expect(stream).toHaveBeenCalledTimes(2);
+    expect(
+      recoveredSession.runtime.rawHistory.some((message) =>
+        JSON.stringify(message).includes("summary"),
+      ),
+    ).toBe(true);
+    await recoveredHost.shutdown();
   });
 
   it("rejects commits from a stale recovered session after another host commits a newer revision", async () => {
@@ -2155,7 +2245,7 @@ describe("LocalSessionHost", () => {
     const streamStarted = new Promise((resolve) => {
       markStreamStarted = resolve;
     });
-    hostedSession.runtime.agent.modelRuntime.streamModel = (_model, _context, options) => ({
+    hostedSession.runtime.agent.spec.model.stream = (_context, options) => ({
       async *[Symbol.asyncIterator]() {
         markStreamStarted();
         await new Promise((resolve) => {
@@ -2279,6 +2369,10 @@ describe("LocalSessionHost", () => {
       createStoredSnapshot({
         sessionId: "stored-running",
         revision: 5,
+        agentState: {
+          revision: 1,
+          contextEpoch: recoveredSession.runtime.snapshot().contextEpoch,
+        },
         lifecycle: "idle",
         historyEntries: [
           {

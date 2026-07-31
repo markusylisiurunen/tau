@@ -139,7 +139,7 @@ export function createWaitForAgentsToolDefinition(supervisor: AgentSupervisor): 
       const headerTarget = getWaitForAgentsDisplayTarget(toolCall.arguments);
 
       const blocked = (reason: string): ToolImplementationOutcome => {
-        const outcome = createTextToolOutcome(reason, true);
+        const outcome = createTextToolOutcome(reason, "blocked");
         const uiEvent: ToolUiEvent = {
           type: "wait_for_agents_blocked",
           toolCallId: toolCall.id,
@@ -147,7 +147,7 @@ export function createWaitForAgentsToolDefinition(supervisor: AgentSupervisor): 
           headerTarget,
           reason,
         };
-        return { content: outcome.content, isError: outcome.isError, uiEvent };
+        return { content: outcome.content, outcome: outcome.outcome, uiEvent };
       };
 
       const parsedArgs = parseToolArgs(waitArgsSchema, toolCall.arguments);
@@ -197,8 +197,8 @@ export function createWaitForAgentsToolDefinition(supervisor: AgentSupervisor): 
               message: hasFailures ? "One or more subagents reported errors." : undefined,
               uiText,
             };
-            const outcome = createTextToolOutcome(resultText, hasFailures);
-            return { content: outcome.content, isError: outcome.isError, uiEvent };
+            const outcome = createTextToolOutcome(resultText, hasFailures ? "failed" : "succeeded");
+            return { content: outcome.content, outcome: outcome.outcome, uiEvent };
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             const reason = message.trim() || "The wait_for_agents request failed.";
@@ -216,8 +216,8 @@ export function createWaitForAgentsToolDefinition(supervisor: AgentSupervisor): 
               message: reason,
               uiText,
             };
-            const outcome = createTextToolOutcome(reason, true);
-            return { content: outcome.content, isError: outcome.isError, uiEvent };
+            const outcome = createTextToolOutcome(reason, signal.aborted ? "cancelled" : "failed");
+            return { content: outcome.content, outcome: outcome.outcome, uiEvent };
           }
         },
         {

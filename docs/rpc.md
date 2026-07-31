@@ -64,7 +64,7 @@ WebSocket clients receive the same `ready`, `response`, `session.delta`, and `se
 every protocol message includes `version`.
 
 ```json
-{ "version": 3, "type": "..." }
+{ "version": 4, "type": "..." }
 ```
 
 server-to-client messages are:
@@ -85,7 +85,7 @@ when the rpc server starts, it immediately emits a `ready` line:
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "type": "ready",
   "methods": [
     "initialize",
@@ -138,7 +138,7 @@ state transitions:
 
 `initialize` is a handshake signal, not a gate for other methods. clients may call other rpc methods before `initialize`, though most clients should still initialize immediately after `ready`.
 
-`tau rpc` and `tau serve` store session snapshots under `~/.config/tau/sessions` for the current host user. Starting a server does not create a session. `session.create` creates one in an explicitly selected, already-provisioned execution environment, and closing the transport or server persists hosted sessions. Stored sessions recover from persisted snapshot state, including current settings, cumulative cost, bootstrap metadata, catalog metadata, execution environment identity, messages, timeline items, tools, agents, and facets; host-only config is resolved by the host and is not serialized into the snapshot. Pending queued and steering messages are transient host state rather than snapshot state: they survive client detach while the hosted session remains in memory, but they are discarded on host restart or session recovery so recovered sessions never resume work without new user input.
+`tau rpc` and `tau serve` store session snapshots under `~/.config/tau/sessions` for the current host user. Starting a server does not create a session. `session.create` creates one in an explicitly selected, already-provisioned execution environment, and closing the transport or server persists hosted sessions. Stored sessions recover from persisted snapshot state, including independent durable agent revision/context accounting state, current settings, cumulative cost, bootstrap metadata, catalog metadata, execution environment identity, messages, timeline items, tools, agents, and facets; host-only config is resolved by the host and is not serialized into the snapshot. The agent revision is not the protocol snapshot revision. A fresh persisted usage checkpoint lets the first model subturn after recovery make the same automatic-compaction decision as an uninterrupted session. Pending queued and steering messages are transient host state rather than snapshot state: they survive client detach while the hosted session remains in memory, but they are discarded on host restart or session recovery so recovered sessions never resume work without new user input.
 
 Main sessions, supervised background agents, and ephemeral threads use the same stateful agent runtime for model streaming, tool admission and execution, retries, recovery, context accounting, steering boundaries, and compaction. The runtime emits ordered semantic transitions through one awaited sink. The hosted-session adapter applies those transitions to protocol snapshots and persists durable state before acknowledging them; child supervision, ephemeral thread maps and forks, pending normal submissions, and usage attribution are separate host concerns.
 
@@ -148,7 +148,7 @@ all requests use this envelope:
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "type": "request",
   "id": "req-1",
   "method": "session.submit",
@@ -181,7 +181,7 @@ params (required):
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "type": "response",
   "id": "init-1",
   "ok": true,
@@ -310,6 +310,10 @@ Establishes observation for that session on this connection and returns the auth
   "snapshot": {
     "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
     "revision": 1,
+    "agentState": {
+      "revision": 0,
+      "contextEpoch": "8f98c4..."
+    },
     "lifecycle": "idle",
     "costTotal": 0,
     "settings": {
@@ -416,7 +420,7 @@ if another turn is already running, tau returns:
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "type": "response",
   "id": "submit-2",
   "ok": false,
@@ -645,7 +649,8 @@ params (required):
 returns current session state:
 
 - `sessionId`
-- `revision` (monotonic snapshot revision for this session id)
+- `revision` (monotonic protocol snapshot revision for this session id)
+- `agentState` (the independent durable agent revision, context epoch, and optional provider usage checkpoint used to resume context accounting after recovery)
 - `lifecycle` (`"idle"` or `"running"`)
 - `settings` (current persona id, reasoning, and service tier)
 - `bootstrap` (selected model/provider metadata and prompt-composition metadata)
@@ -656,6 +661,8 @@ returns current session state:
 - `tools` (semantic tool execution state keyed by tool call id; `streaming` runs expose only tool identity plus draft-message origin, while executable states reference a complete assistant `toolCall` through `call`)
 - `agents` (semantic subagent execution state)
 - `facets` (client-only structured metadata attached to session/message/tool/agent/operation subjects)
+
+Tool status is projected from semantic runtime outcomes (`succeeded`, `failed`, `blocked`, or `cancelled`). Tool-owned activity only adds presentation facets and never determines or overwrites semantic status.
 
 derive transcript length from `messages.length`; the protocol does not duplicate it. The first committed message is the effective system instruction message. Running state is derived from `lifecycle`, draft/interrupted messages, tools, agents, and operations; there is no `activeTurn` side object. If an assistant turn is interrupted mid-stream, the streamed content is retained as an `interrupted` assistant message and remains model-visible unless the host intentionally marks that record `modelVisible: false`.
 
@@ -822,7 +829,7 @@ observed-session changes are broadcast as `session.delta` messages:
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "type": "session.delta",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "fromRevision": 1,
@@ -846,7 +853,7 @@ observed-session changes are broadcast as `session.delta` messages:
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "type": "session.delta",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "fromRevision": null,
@@ -877,7 +884,7 @@ notes:
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "type": "session.pendingUserMessages",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "state": {
@@ -900,7 +907,7 @@ Pending messages are shared across attached clients and survive client detach wh
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "type": "session.ephemeral",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "event": {
@@ -931,7 +938,7 @@ error responses use:
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "type": "response",
   "id": "req-1",
   "ok": false,

@@ -85,7 +85,7 @@ export function createTerminateAgentToolDefinition(supervisor: AgentSupervisor):
       const headerTarget = getTerminateAgentDisplayTarget(toolCall.arguments);
 
       const blocked = (reason: string): ToolImplementationOutcome => {
-        const outcome = createTextToolOutcome(reason, true);
+        const outcome = createTextToolOutcome(reason, "blocked");
         const uiEvent: ToolUiEvent = {
           type: "terminate_agent_blocked",
           toolCallId: toolCall.id,
@@ -93,7 +93,7 @@ export function createTerminateAgentToolDefinition(supervisor: AgentSupervisor):
           headerTarget,
           reason,
         };
-        return { content: outcome.content, isError: outcome.isError, uiEvent };
+        return { content: outcome.content, outcome: outcome.outcome, uiEvent };
       };
 
       const parsedArgs = parseToolArgs(terminateArgsSchema, toolCall.arguments);
@@ -125,8 +125,8 @@ export function createTerminateAgentToolDefinition(supervisor: AgentSupervisor):
                 message,
                 uiText,
               };
-              const outcome = createTextToolOutcome(message, true);
-              return { content: outcome.content, isError: outcome.isError, uiEvent };
+              const outcome = createTextToolOutcome(message, "blocked");
+              return { content: outcome.content, outcome: outcome.outcome, uiEvent };
             }
 
             const resultText = formatTerminateResult(result);
@@ -154,8 +154,8 @@ export function createTerminateAgentToolDefinition(supervisor: AgentSupervisor):
               message: succeeded ? undefined : `Subagent finished with status ${result.status}.`,
               uiText,
             };
-            const outcome = createTextToolOutcome(resultText, !succeeded);
-            return { content: outcome.content, isError: outcome.isError, uiEvent };
+            const outcome = createTextToolOutcome(resultText, succeeded ? "succeeded" : "failed");
+            return { content: outcome.content, outcome: outcome.outcome, uiEvent };
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             const reason = message.trim() || "The terminate_agent request failed.";
@@ -174,8 +174,8 @@ export function createTerminateAgentToolDefinition(supervisor: AgentSupervisor):
               message: reason,
               uiText,
             };
-            const outcome = createTextToolOutcome(reason, true);
-            return { content: outcome.content, isError: outcome.isError, uiEvent };
+            const outcome = createTextToolOutcome(reason, signal.aborted ? "cancelled" : "failed");
+            return { content: outcome.content, outcome: outcome.outcome, uiEvent };
           }
         },
         {

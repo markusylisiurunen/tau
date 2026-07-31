@@ -1,22 +1,18 @@
 import { Buffer } from "node:buffer";
 import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
-import {
-  type AssistantMessage,
-  type Context,
-  cleanupSessionResources,
-  type Message,
-  type ToolCall,
-  type ToolResultMessage,
-  type UserMessage,
+import type {
+  Api,
+  AssistantMessage,
+  AssistantMessageEventStream,
+  Context,
+  Message,
+  Model,
+  ToolCall,
+  ToolResultMessage,
+  UserMessage,
 } from "@earendil-works/pi-ai";
-import { getAuthPath } from "../auth/auth_paths.js";
-import { AuthStorage } from "../auth/auth_storage.js";
-import {
-  type Config,
-  type NormalizedAutoCompactConfig,
-  normalizeAutoCompactConfig,
-} from "../config/index.js";
+import type { NormalizedAutoCompactConfig } from "../config/index.js";
 import type { CoreDeps } from "../runtime/deps.js";
 import { createDefaultCoreDeps } from "../runtime/deps.js";
 import { formatSteeringUserMessage } from "../runtime/steering.js";
@@ -33,16 +29,13 @@ import {
   type SessionCompactionMode,
 } from "../session/compaction.js";
 import { runModelSubturn, SequentialToolCallRunner } from "../session/runner.js";
-import { ToolRegistry } from "../tools/registry.js";
-import type { Persona, ReasoningEffort } from "../types.js";
+import type { ToolRegistry } from "../tools/registry.js";
+import type { ReasoningEffort } from "../types.js";
 import { shouldAutoRetry } from "../utils/auto_retry.js";
-import { CODEX_ORIGINATOR, CODEX_USER_AGENT } from "../utils/codex.js";
 import { buildCompactionUserMessage } from "../utils/compact.js";
 import { extractAssistantText } from "../utils/messages.js";
-import { prependModelNotice, resolveModelNotice } from "../utils/model_notices.js";
-import { ModelRuntime } from "../utils/model_stream.js";
+import { prependModelNotice } from "../utils/model_notices.js";
 import type { TauStreamOptions } from "../utils/streaming_settings.js";
-import { parseStreamingSettings } from "../utils/streaming_settings.js";
 import { bytesToTokens } from "../utils/token.js";
 import {
   formatTauUserText,
@@ -83,11 +76,23 @@ export type AgentState = {
   usageCheckpoint?: AgentUsageCheckpoint;
 };
 
+export type AgentModelExecutor = {
+  model: Model<Api>;
+  stream(context: Context, options: TauStreamOptions): AssistantMessageEventStream;
+  noteProviderError(options: { sessionId: string; error?: unknown }): Promise<void>;
+  cleanupSession(sessionId: string): void;
+};
+
 export type AgentSpec = {
-  persona: Persona;
+  model: AgentModelExecutor;
+  modelNotice?: string;
+  attribution: {
+    personaId: string;
+    reasoningEffort: ReasoningEffort | "none";
+  };
   systemPrompt: string;
   tools: ToolRegistry;
-  config: Config;
+  streamOptions: TauStreamOptions;
   retryPolicy: {
     maxRetries: number;
     delayMs: number;
@@ -99,6 +104,7 @@ export type AgentSpec = {
 export type AgentRuntimeOptions = {
   spec: AgentSpec;
   eventSink: AgentEventSink;
+  getCompactionContext?: () => string | undefined;
   state?: AgentState;
   deps?: CoreDeps;
 };
@@ -131,6 +137,21 @@ export type AutoCompactionBlockedTurn = {
 export type AgentTurnResult = {
   aborted: boolean;
   blocked?: AutoCompactionBlockedTurn;
+  finalMessage?: AssistantMessage;
+};
+
+export type SteeringAssociation = {
+  turnId: string;
+  historyEntryId: string;
+};
+
+export type SteeringResult = SteeringAssociation & {
+  result: AgentTurnResult;
+};
+
+export type SteeringSubmission = {
+  applied: Promise<SteeringAssociation>;
+  result: Promise<SteeringResult>;
 };
 
 export type RewindCandidate = {
@@ -146,13 +167,14 @@ export type RewindResult = {
 
 type AgentTurnSpec = {
   turnId: string;
+  historyEntryId: string;
   contextEpoch: string;
-  persona: Persona;
+  model: AgentModelExecutor;
+  modelNotice?: string;
+  attribution: AgentSpec["attribution"];
   systemPrompt: string;
-  config: Config;
   tools: ToolRegistry;
   streamOptions: TauStreamOptions;
-  reasoningEffort: ReasoningEffort | "none";
   retryPolicy: AgentSpec["retryPolicy"];
   compactionPolicy: AgentSpec["compactionPolicy"];
   maxModelSubturns: number;
@@ -168,18 +190,23 @@ type SubturnRetryBudget = {
 };
 
 export function createAgentSpec(options: {
-  persona: Persona;
+  model: AgentModelExecutor;
+  modelNotice?: string;
+  attribution: AgentSpec["attribution"];
   systemPrompt: string;
   tools: ToolRegistry;
-  config: Config;
+  streamOptions: TauStreamOptions;
+  compactionPolicy: NormalizedAutoCompactConfig;
 }): AgentSpec {
   return {
-    persona: structuredClone(options.persona),
+    model: options.model,
+    ...(options.modelNotice ? { modelNotice: options.modelNotice } : {}),
+    attribution: { ...options.attribution },
     systemPrompt: options.systemPrompt,
     tools: options.tools,
-    config: structuredClone(options.config),
+    streamOptions: structuredClone(options.streamOptions),
     retryPolicy: { ...DEFAULT_RETRY_POLICY },
-    compactionPolicy: normalizeAutoCompactConfig(options.config.autoCompact),
+    compactionPolicy: { ...options.compactionPolicy },
     maxModelSubturns: DEFAULT_MAX_MODEL_SUBTURNS,
   };
 }
@@ -189,8 +216,8 @@ function getContextEpoch(spec: AgentSpec): string {
     .update(
       JSON.stringify({
         systemPrompt: spec.systemPrompt,
-        provider: spec.persona.model.provider,
-        model: spec.persona.model.id,
+        provider: spec.model.model.provider,
+        model: spec.model.model.id,
         tools: spec.tools.schemas,
       }),
     )
@@ -200,20 +227,20 @@ function getContextEpoch(spec: AgentSpec): string {
 export class AgentRuntime {
   private currentSpec: AgentSpec;
   private readonly deps: CoreDeps;
-  private readonly authPath: string;
-  private readonly modelRuntime: ModelRuntime;
   private readonly eventSink: AgentEventSink;
+  private readonly getCompactionContext?: () => string | undefined;
   private historyEntries: HistoryEntry[];
   private revision: number;
   private contextEpoch: string;
   private usageCheckpoint?: AgentUsageCheckpoint;
   private activeAbortController?: AbortController;
-  private activeTurnConfig?: Config;
   private stopAtBoundaryRequested = false;
   private pendingSteering: Array<{
     text: string;
-    resolve: (association: { turnId: string; historyEntryId: string }) => void;
-    reject: (error: Error) => void;
+    resolveApplied: (association: SteeringAssociation) => void;
+    resolveResult: (result: SteeringResult) => void;
+    rejectApplied: (error: Error) => void;
+    rejectResult: (error: Error) => void;
   }> = [];
   private disposed = false;
   private agentId: string;
@@ -221,26 +248,18 @@ export class AgentRuntime {
   constructor(options: AgentRuntimeOptions) {
     this.currentSpec = options.spec;
     this.eventSink = options.eventSink;
+    this.getCompactionContext = options.getCompactionContext;
     this.deps = options.deps ?? createDefaultCoreDeps();
-    this.authPath = getAuthPath(this.deps.env.home());
-    this.modelRuntime = new ModelRuntime({
-      authStorage: new AuthStorage(this.authPath),
-      getConfig: () => this.activeTurnConfig ?? this.currentSpec.config,
-      authPath: this.authPath,
-      env: this.deps.env.env(),
-    });
     const contextEpoch = getContextEpoch(options.spec);
     if (options.state) {
-      if (options.state.contextEpoch !== contextEpoch) {
-        throw new Error("agent state context epoch does not match its spec");
-      }
       this.agentId = options.state.agentId;
       this.revision = options.state.revision;
       this.historyEntries = structuredClone(options.state.historyEntries);
-      this.contextEpoch = options.state.contextEpoch;
-      this.usageCheckpoint = options.state.usageCheckpoint
-        ? { ...options.state.usageCheckpoint }
-        : undefined;
+      this.contextEpoch = contextEpoch;
+      this.usageCheckpoint =
+        options.state.contextEpoch === contextEpoch && options.state.usageCheckpoint
+          ? { ...options.state.usageCheckpoint }
+          : undefined;
     } else {
       this.agentId = randomUUID();
       this.revision = 0;
@@ -295,14 +314,14 @@ export class AgentRuntime {
     if (this.status === "running") {
       throw new Error("cannot restore a running agent");
     }
-    if (state.contextEpoch !== this.contextEpoch) {
-      throw new Error("agent state context epoch does not match its spec");
-    }
     this.closeProviderSessions();
     this.agentId = state.agentId;
     this.revision = state.revision;
     this.historyEntries = structuredClone(state.historyEntries);
-    this.usageCheckpoint = state.usageCheckpoint ? { ...state.usageCheckpoint } : undefined;
+    this.usageCheckpoint =
+      state.contextEpoch === this.contextEpoch && state.usageCheckpoint
+        ? { ...state.usageCheckpoint }
+        : undefined;
   }
 
   private replaceHistoryEntries(entries: readonly HistoryEntry[]): void {
@@ -320,7 +339,7 @@ export class AgentRuntime {
   }
 
   private closeProviderSessions(): void {
-    cleanupSessionResources(this.agentId);
+    this.currentSpec.model.cleanupSession(this.agentId);
   }
 
   private assertActive(): void {
@@ -334,10 +353,7 @@ export class AgentRuntime {
     options?: { historyEntryId?: string },
   ): Promise<string> {
     this.assertActive();
-    const textWithModelNotice = prependModelNotice(
-      textForModel,
-      resolveModelNotice(this.currentSpec.config, this.currentSpec.persona.model),
-    );
+    const textWithModelNotice = prependModelNotice(textForModel, this.currentSpec.modelNotice);
     const message: UserMessage = {
       role: "user",
       content: [{ type: "text", text: textWithModelNotice }],
@@ -369,8 +385,8 @@ export class AgentRuntime {
       type: "assistant_final",
       historyEntryId,
       message,
-      personaId: this.currentSpec.persona.id,
-      reasoningEffort: this.currentSpec.persona.settings.reasoning ?? "none",
+      personaId: this.currentSpec.attribution.personaId,
+      reasoningEffort: this.currentSpec.attribution.reasoningEffort,
       revision: this.revision,
     });
   }
@@ -491,7 +507,7 @@ export class AgentRuntime {
     return await this.runTurn();
   }
 
-  steer(text: string): Promise<{ turnId: string; historyEntryId: string }> {
+  steer(text: string): SteeringSubmission {
     if (this.status !== "running") {
       throw new Error("cannot steer an idle agent");
     }
@@ -500,9 +516,26 @@ export class AgentRuntime {
       throw new Error("steering input must not be empty");
     }
     this.stopAtBoundaryRequested = true;
-    return new Promise((resolve, reject) => {
-      this.pendingSteering.push({ text: normalized, resolve, reject });
+    let resolveApplied!: (association: SteeringAssociation) => void;
+    let rejectApplied!: (error: Error) => void;
+    const applied = new Promise<SteeringAssociation>((resolve, reject) => {
+      resolveApplied = resolve;
+      rejectApplied = reject;
     });
+    let resolveResult!: (result: SteeringResult) => void;
+    let rejectResult!: (error: Error) => void;
+    const result = new Promise<SteeringResult>((resolve, reject) => {
+      resolveResult = resolve;
+      rejectResult = reject;
+    });
+    this.pendingSteering.push({
+      text: normalized,
+      resolveApplied,
+      resolveResult,
+      rejectApplied,
+      rejectResult,
+    });
+    return { applied, result };
   }
 
   cancelSteering(): string[] {
@@ -511,7 +544,8 @@ export class AgentRuntime {
       this.stopAtBoundaryRequested = false;
       const error = new Error("steering submission was cancelled");
       for (const submission of cancelled) {
-        submission.reject(error);
+        submission.rejectApplied(error);
+        submission.rejectResult(error);
       }
     }
     return cancelled.map((submission) => submission.text);
@@ -546,14 +580,19 @@ export class AgentRuntime {
 
     const controller = new AbortController();
     this.activeAbortController = controller;
-    let result: AgentTurnResult = { aborted: false };
+    let initialResult: AgentTurnResult | undefined;
+    let associatedSteering: typeof this.pendingSteering = [];
+    let turnSpec = this.captureTurnSettings();
 
     try {
-      let turnSpec = this.captureTurnSettings();
       while (true) {
-        this.activeTurnConfig = turnSpec.config;
-        await this.deliver({ type: "turn_started", turnId: turnSpec.turnId });
+        await this.deliver({
+          type: "turn_started",
+          turnId: turnSpec.turnId,
+          historyEntryId: turnSpec.historyEntryId,
+        });
         const stream = this.processTurn(controller.signal, turnSpec);
+        let result: AgentTurnResult;
         try {
           while (true) {
             const next = await stream.next();
@@ -569,6 +608,7 @@ export class AgentRuntime {
           throw error;
         }
 
+        initialResult ??= result;
         const outcome = result.blocked
           ? "blocked"
           : result.aborted
@@ -576,28 +616,60 @@ export class AgentRuntime {
             : this.stopAtBoundaryRequested
               ? "stopped"
               : "completed";
-        await this.deliver({ type: "turn_finished", turnId: turnSpec.turnId, outcome });
+        await this.deliver({
+          type: "turn_finished",
+          turnId: turnSpec.turnId,
+          historyEntryId: turnSpec.historyEntryId,
+          outcome,
+        });
+        for (const submission of associatedSteering.splice(0)) {
+          submission.resolveResult({
+            turnId: turnSpec.turnId,
+            historyEntryId: turnSpec.historyEntryId,
+            result,
+          });
+        }
 
         if (controller.signal.aborted || result.blocked || this.pendingSteering.length === 0) {
-          return result;
+          if (this.pendingSteering.length > 0) {
+            this.rejectPendingSteering(new Error("steering was not applied before the turn ended"));
+          }
+          return initialResult;
         }
 
-        const steering = this.pendingSteering.splice(0);
+        associatedSteering = this.pendingSteering.splice(0);
         this.stopAtBoundaryRequested = false;
-        turnSpec = this.captureTurnSettings();
-        const historyEntryId = await this.commitUserText(
-          formatSteeringUserMessage(steering.map((item) => item.text)),
+        await this.commitUserText(
+          formatSteeringUserMessage(associatedSteering.map((item) => item.text)),
         );
-        for (const submission of steering) {
-          submission.resolve({ turnId: turnSpec.turnId, historyEntryId });
+        turnSpec = this.captureTurnSettings();
+        for (const submission of associatedSteering) {
+          submission.resolveApplied({
+            turnId: turnSpec.turnId,
+            historyEntryId: turnSpec.historyEntryId,
+          });
         }
       }
+    } catch (error) {
+      const steeringError = error instanceof Error ? error : new Error(String(error));
+      for (const submission of associatedSteering.splice(0)) {
+        submission.rejectApplied(steeringError);
+        submission.rejectResult(steeringError);
+      }
+      this.rejectPendingSteering(steeringError);
+      throw error;
     } finally {
       if (this.activeAbortController === controller) {
         this.activeAbortController = undefined;
-        this.activeTurnConfig = undefined;
         this.stopAtBoundaryRequested = false;
       }
+    }
+  }
+
+  private rejectPendingSteering(error: Error): void {
+    for (const submission of this.pendingSteering.splice(0)) {
+      submission.rejectApplied(error);
+      submission.rejectResult(error);
     }
   }
 
@@ -607,13 +679,10 @@ export class AgentRuntime {
 
   async sample(input: AgentSampleOptions): Promise<AssistantMessage> {
     input.signal?.throwIfAborted();
-    const persona = {
-      ...this.currentSpec.persona,
-      settings: { ...this.currentSpec.persona.settings },
-    };
+    const model = this.currentSpec.model;
     const sampleSessionId = `sample-${randomUUID()}`;
-    const stream = this.modelRuntime.streamModel(persona.model, structuredClone(input.context), {
-      ...this.getStreamingSettings(persona),
+    const stream = model.stream(structuredClone(input.context), {
+      ...this.currentSpec.streamOptions,
       ...(input.options.reasoning !== undefined ? { reasoning: input.options.reasoning } : {}),
       ...(input.options.maxTokens !== undefined ? { maxTokens: input.options.maxTokens } : {}),
       sessionId: sampleSessionId,
@@ -625,7 +694,7 @@ export class AgentRuntime {
       input.signal?.throwIfAborted();
       return message;
     } finally {
-      cleanupSessionResources(sampleSessionId);
+      model.cleanupSession(sampleSessionId);
     }
   }
 
@@ -699,7 +768,7 @@ export class AgentRuntime {
 
     const textWithContext = this.prependCompactionContext(
       compactionMessage,
-      resolveModelNotice(this.currentSpec.config, this.currentSpec.persona.model),
+      this.currentSpec.modelNotice,
     );
     const textWithMetadata = prependTauUserMetadata(textWithContext, [
       {
@@ -730,10 +799,9 @@ export class AgentRuntime {
   private async runCompactionSummary(
     summaryPrompt: string,
     options: { sessionId: string; signal?: AbortSignal },
-    persona: Persona = this.currentSpec.persona,
+    model: AgentModelExecutor = this.currentSpec.model,
   ): Promise<string> {
-    const stream = this.modelRuntime.streamModel(
-      persona.model,
+    const stream = model.stream(
       {
         systemPrompt: COMPACTION_SUMMARIZATION_SYSTEM_PROMPT,
         messages: [
@@ -819,23 +887,17 @@ export class AgentRuntime {
     throw new Error("cannot process turn without a user history entry");
   }
 
-  private getStreamingSettings(persona: Persona): TauStreamOptions {
-    const merged = { ...persona.settings } as Record<string, unknown>;
-    return parseStreamingSettings(merged);
-  }
-
   private captureTurnSettings(): AgentTurnSpec {
-    const persona = structuredClone(this.currentSpec.persona);
-    const tools = new ToolRegistry(this.currentSpec.tools.getEnabledTools(persona.tools));
     return {
       turnId: `turn-${randomUUID()}`,
+      historyEntryId: this.getCurrentTurnUserHistoryEntryId(),
       contextEpoch: getContextEpoch(this.currentSpec),
-      persona,
+      model: this.currentSpec.model,
+      ...(this.currentSpec.modelNotice ? { modelNotice: this.currentSpec.modelNotice } : {}),
+      attribution: { ...this.currentSpec.attribution },
       systemPrompt: this.currentSpec.systemPrompt,
-      config: structuredClone(this.currentSpec.config),
-      tools,
-      streamOptions: this.getStreamingSettings(persona),
-      reasoningEffort: persona.settings.reasoning ?? "none",
+      tools: this.currentSpec.tools,
+      streamOptions: structuredClone(this.currentSpec.streamOptions),
       retryPolicy: { ...this.currentSpec.retryPolicy },
       compactionPolicy: { ...this.currentSpec.compactionPolicy },
       maxModelSubturns: this.currentSpec.maxModelSubturns,
@@ -848,6 +910,7 @@ export class AgentRuntime {
   ): AsyncGenerator<AgentEvent, AgentTurnResult, void> {
     let subturns = 0;
     let needsAnotherSubturn = false;
+    let lastFinalMessage: AssistantMessage | undefined;
     let retryBudget: SubturnRetryBudget = { remaining: turnSettings.retryPolicy.maxRetries };
 
     while (subturns < turnSettings.maxModelSubturns && !signal.aborted) {
@@ -865,6 +928,7 @@ export class AgentRuntime {
         turnSettings,
         retryBudget,
       );
+      if (finalMessage) lastFinalMessage = finalMessage;
 
       if (signal.aborted) break;
       if (continueAfterToolRecovery) {
@@ -891,7 +955,10 @@ export class AgentRuntime {
       };
     }
 
-    return { aborted: signal.aborted };
+    return {
+      aborted: signal.aborted,
+      ...(lastFinalMessage ? { finalMessage: lastFinalMessage } : {}),
+    };
   }
 
   private async *runAutoCompactionIfNeeded(
@@ -977,7 +1044,7 @@ export class AgentRuntime {
         sessionId: `auto-summary-${randomUUID()}`,
         signal,
       },
-      turnSettings.persona,
+      turnSettings.model,
     );
     const summaryResult = parseCompactionSummaryResponse({
       response: summaryResponse,
@@ -990,7 +1057,7 @@ export class AgentRuntime {
     });
     const compactionMessage = buildCompactionUserMessage({ summary: compactionSummary });
     const retainedMessageCount = preparation.retainedEntries.length;
-    const modelNotice = resolveModelNotice(turnSettings.config, turnSettings.persona.model);
+    const modelNotice = turnSettings.modelNotice;
     const textWithContext = this.prependCompactionContext(compactionMessage, modelNotice);
     const textWithMetadata = prependTauUserMetadata(textWithContext, [
       {
@@ -1032,7 +1099,7 @@ export class AgentRuntime {
   }
 
   private prependCompactionContext(text: string, modelNotice?: string): string {
-    const hiddenSystemMessages = [modelNotice].filter(
+    const hiddenSystemMessages = [modelNotice, this.getCompactionContext?.()].filter(
       (message): message is string => message !== undefined,
     );
     return prependTauHiddenSystemMessages(text, hiddenSystemMessages);
@@ -1057,7 +1124,7 @@ export class AgentRuntime {
     settings: NormalizedAutoCompactConfig,
     turnSettings: AgentTurnSpec,
   ): number {
-    return (turnSettings.persona.model.contextWindow ?? 0) - settings.reserveTokens;
+    return (turnSettings.model.model.contextWindow ?? 0) - settings.reserveTokens;
   }
 
   private getFreshContextUsageEstimateTokens(contextEpoch: string): number | undefined {
@@ -1095,9 +1162,9 @@ export class AgentRuntime {
     return -1;
   }
 
-  private async noteProviderError(provider: string, message?: string): Promise<void> {
+  private async noteProviderError(model: AgentModelExecutor, message?: string): Promise<void> {
     try {
-      await this.modelRuntime.noteProviderError(provider, {
+      await model.noteProviderError({
         sessionId: this.agentId,
         error: message ? new Error(message) : undefined,
       });
@@ -1124,14 +1191,6 @@ export class AgentRuntime {
       sessionId: this.agentId,
     };
 
-    if (turnSettings.persona.model.provider === "openai-codex") {
-      baseOptions.headers = {
-        ...baseOptions.headers,
-        originator: CODEX_ORIGINATOR,
-        "User-Agent": CODEX_USER_AGENT,
-      };
-    }
-
     const subturnAbortController = new AbortController();
     const abortSubturn = () => subturnAbortController.abort();
     if (signal.aborted) {
@@ -1141,8 +1200,8 @@ export class AgentRuntime {
     }
     baseOptions.signal = subturnAbortController.signal;
     const modelStream = runModelSubturn({
-      model: turnSettings.persona.model,
-      modelRuntime: this.modelRuntime,
+      model: turnSettings.model.model,
+      streamModel: (modelContext, options) => turnSettings.model.stream(modelContext, options),
       context,
       streamOptions: baseOptions,
       signal: subturnAbortController.signal,
@@ -1227,10 +1286,7 @@ export class AgentRuntime {
               throw error;
             }
             if (finalMessage.stopReason === "error") {
-              await this.noteProviderError(
-                turnSettings.persona.model.provider,
-                finalMessage.errorMessage,
-              );
+              await this.noteProviderError(turnSettings.model, finalMessage.errorMessage);
             }
             if (toolRecoveryMode) {
               recoveryToolResults.push(...pendingToolResults.splice(0));
@@ -1242,8 +1298,8 @@ export class AgentRuntime {
               finalMessage.stopReason !== "error" &&
               finalMessage.stopReason !== "aborted" &&
               usage &&
-              finalMessage.provider === turnSettings.persona.model.provider &&
-              finalMessage.model === turnSettings.persona.model.id
+              finalMessage.provider === turnSettings.model.model.provider &&
+              finalMessage.model === turnSettings.model.model.id
             ) {
               this.usageCheckpoint = {
                 historyEntryId,
@@ -1259,8 +1315,8 @@ export class AgentRuntime {
               type: "assistant_final",
               historyEntryId,
               message: finalMessage,
-              personaId: turnSettings.persona.id,
-              reasoningEffort: turnSettings.reasoningEffort,
+              personaId: turnSettings.attribution.personaId,
+              reasoningEffort: turnSettings.attribution.reasoningEffort,
               revision: this.revision,
             };
             if (this.usageCheckpoint?.historyEntryId === historyEntryId) {
@@ -1366,7 +1422,8 @@ export class AgentRuntime {
                         historyEntryId,
                         toolCall: admittedToolCall,
                       },
-                      admission.event,
+                      admission.lifecycleEvent,
+                      admission.activityEvent,
                     ],
                     start: admission.start,
                   });
@@ -1382,7 +1439,10 @@ export class AgentRuntime {
                   : `Model returned duplicate tool call ID '${admittedToolCall.id}'.`;
                 admittedToolCalls.push(toolCall);
                 const admission = toolRunner.prepareRejected(toolCall, message);
-                admissions.push({ events: [admission.event], start: admission.start });
+                admissions.push({
+                  events: [admission.lifecycleEvent, admission.activityEvent],
+                  start: admission.start,
+                });
               }
               const partialEvent: AgentEvent = {
                 type: "assistant_partial",
@@ -1503,7 +1563,7 @@ export class AgentRuntime {
       } catch {}
       if (!signal.aborted && shouldNoteProviderError) {
         await this.noteProviderError(
-          turnSettings.persona.model.provider,
+          turnSettings.model,
           err instanceof Error ? err.message : String(err),
         );
       }

@@ -64,7 +64,7 @@ The protocol replaces `event` and `session_update` with one observed-session mes
 
 ```ts
 type SessionDeltaMessage = {
-  version: 3;
+  version: 4;
   type: "session.delta";
   sessionId: string;
   fromRevision: number | null;
@@ -115,6 +115,15 @@ The snapshot should be renderable without live event history:
 type SessionSnapshot = {
   sessionId: string;
   revision: number;
+  agentState: {
+    revision: number;
+    contextEpoch: string;
+    usageCheckpoint?: {
+      historyEntryId: string;
+      contextEpoch: string;
+      tokens: number;
+    };
+  };
 
   lifecycle: "idle" | "running";
   settings: SessionSettingsSnapshot;
@@ -129,6 +138,8 @@ type SessionSnapshot = {
   facets: Record<string, SessionFacet>;
 };
 ```
+
+`agentState.revision` is the durable conversation revision and is independent of the protocol snapshot revision. The context epoch and optional provider usage checkpoint let recovery preserve automatic-compaction accounting when the execution-ready agent spec is unchanged.
 
 ### settings, bootstrap, and catalog
 

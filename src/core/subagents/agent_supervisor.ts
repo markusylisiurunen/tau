@@ -3,9 +3,11 @@ import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { AgentRuntime, createAgentSpec } from "../agent/agent_runtime.js";
 import type { AgentEvent } from "../agent/events.js";
 import type { Config } from "../config/index.js";
+import { resolveAgentModel } from "../runtime/agent_model.js";
 import type { CoreDeps } from "../runtime/deps.js";
 import { ToolCatalog } from "../tools/catalog.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
+import type { ToolUiEvent } from "../tools/registry.js";
 import type { Persona } from "../types.js";
 import {
   appendUsageLogEntry,
@@ -120,6 +122,18 @@ export class AgentSupervisor {
     return [...this.records.values()].filter((record) => record.status === "running").length;
   }
 
+  getActiveCompactionContext(): string | undefined {
+    const active = [...this.records.values()].filter((record) => record.status === "running");
+    if (active.length === 0) return undefined;
+    const entries = active
+      .map((record) => {
+        const abort = record.abortRequested ? ", abort requested" : "";
+        return `- ${record.id}: ${record.title} (name: ${record.name}, status: ${record.status}${abort})`;
+      })
+      .join("\n");
+    return `<active-subagents>\n${entries}\n</active-subagents>`;
+  }
+
   spawn(options: {
     runtimeConfig: SubagentRuntimeConfig;
     prompt: string;
@@ -157,7 +171,7 @@ export class AgentSupervisor {
     };
     const runtime = new AgentRuntime({
       spec: createAgentSpec({
-        persona,
+        ...resolveAgentModel(persona, options.config, this.options.deps),
         systemPrompt: runtimeConfig.systemPrompt,
         tools: ToolCatalog.createSubagentRegistry(
           runtimeConfig.tools,
@@ -165,7 +179,6 @@ export class AgentSupervisor {
           workingDirectory,
           options.config,
         ),
-        config: options.config,
       }),
       eventSink: async (event) => await this.recordAgentEvent(id, event),
       ...(this.options.deps ? { deps: this.options.deps } : {}),
@@ -322,8 +335,8 @@ export class AgentSupervisor {
       case "tool_call_admitted":
         record.toolCalls += 1;
         return;
-      case "tool_ui":
-        text = formatToolUiEventForProgress(event.uiEvent) ?? "";
+      case "tool_activity":
+        text = formatToolUiEventForProgress(event.activity as ToolUiEvent) ?? "";
         break;
       case "tool_result":
         if (event.message.isError) {

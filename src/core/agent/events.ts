@@ -5,7 +5,6 @@ import type {
   UserMessage,
 } from "@earendil-works/pi-ai";
 import type { AssistantPartialSnapshot } from "../session/message_accumulator.js";
-import type { ToolUiEvent } from "../tools/registry.js";
 import type { ReasoningEffort } from "../types.js";
 
 export type AgentTurnOutcome = "completed" | "stopped" | "interrupted" | "blocked";
@@ -19,8 +18,13 @@ export type AgentCompactionResult = {
 };
 
 export type AgentEvent =
-  | { type: "turn_started"; turnId: string }
-  | { type: "turn_finished"; turnId: string; outcome: AgentTurnOutcome }
+  | { type: "turn_started"; turnId: string; historyEntryId: string }
+  | {
+      type: "turn_finished";
+      turnId: string;
+      historyEntryId: string;
+      outcome: AgentTurnOutcome;
+    }
   | { type: "user_message"; historyEntryId: string; message: UserMessage; revision: number }
   | { type: "assistant_start"; historyEntryId: string }
   | {
@@ -47,7 +51,20 @@ export type AgentEvent =
       historyEntryId: string;
       toolCall: ToolCall;
     }
-  | { type: "tool_ui"; uiEvent: ToolUiEvent }
+  | { type: "tool_activity"; activity: unknown }
+  | {
+      type: "tool_run_queued";
+      toolCallId: string;
+      toolName: string;
+      timestamp: number;
+    }
+  | {
+      type: "tool_run_blocked";
+      toolCallId: string;
+      toolName: string;
+      reason: string;
+      timestamp: number;
+    }
   | {
       type: "tool_run_started";
       toolCallId: string;
@@ -58,7 +75,7 @@ export type AgentEvent =
       type: "tool_run_finished";
       toolCallId: string;
       toolName: string;
-      outcome: "succeeded" | "failed" | "cancelled";
+      outcome: "succeeded" | "failed" | "blocked" | "cancelled";
       timestamp: number;
     }
   | {

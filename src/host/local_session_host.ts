@@ -205,16 +205,18 @@ export class LocalSessionHost implements TauSessionHost {
         undefined,
         recovered.changed,
       );
-      const currentState = hostedSession.runtime.snapshot();
       hostedSession.runtime.restoreState({
         agentId: recovered.snapshot.sessionId,
-        revision: recovered.snapshot.revision,
-        contextEpoch: currentState.contextEpoch,
+        revision: recovered.snapshot.agentState.revision,
+        contextEpoch: recovered.snapshot.agentState.contextEpoch,
         historyEntries: recovered.snapshot.messages.flatMap((entry) =>
           entry.modelVisible && isCoreMessage(entry.message)
             ? [{ id: entry.id, message: entry.message }]
             : [],
         ),
+        ...(recovered.snapshot.agentState.usageCheckpoint
+          ? { usageCheckpoint: { ...recovered.snapshot.agentState.usageCheckpoint } }
+          : {}),
       });
       return hostedSession;
     } catch (error) {
@@ -659,10 +661,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     let lastAssistantMessage: AssistantMessage | undefined;
     try {
       const result = await this.runtime.runTurn();
-      const latestAssistant = this.session.rawHistory.findLast(
-        (message): message is AssistantMessage => message.role === "assistant",
-      );
-      lastAssistantMessage = latestAssistant;
+      lastAssistantMessage = result.finalMessage;
       if (result.aborted && this.draftAssistantMessage) {
         await this.interruptDraftAssistantMessage();
       }
@@ -714,19 +713,32 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     return this.runtime.cancelTurnBoundaryStop();
   }
 
-  async steer(text: string): Promise<{
-    userHistoryEntryId: string;
-    turn: SessionProtocolTurnOutcome;
-  }> {
+  steer(text: string): {
+    applied: Promise<{ userHistoryEntryId: string }>;
+    result: Promise<{
+      userHistoryEntryId: string;
+      turn: SessionProtocolTurnOutcome;
+    }>;
+  } {
     this.assertActive();
-    const activeTurn = this.activeTurnPromise;
-    if (!activeTurn) {
+    if (!this.activeTurnPromise) {
       throw new Error("cannot steer without an active turn");
     }
-    const association = await this.runtime.steer(text);
+    const submission = this.runtime.steer(text);
     return {
-      userHistoryEntryId: association.historyEntryId,
-      turn: await activeTurn,
+      applied: submission.applied.then(async (association) => {
+        await this.commitSnapshot();
+        return { userHistoryEntryId: association.historyEntryId };
+      }),
+      result: submission.result.then(async (association) => {
+        const turn = turnOutcomeFromResult(association.result, association.result.finalMessage);
+        this.turnOutcomes.set(association.historyEntryId, turn);
+        await this.emitSnapshotResetIfChanged("assistant-message");
+        return {
+          userHistoryEntryId: association.historyEntryId,
+          turn,
+        };
+      }),
     };
   }
 
@@ -1300,8 +1312,16 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
   private buildSnapshotDraft(): Omit<SessionProtocolSnapshot, "revision"> {
     const messages = this.buildProtocolMessages();
+    const agentState = this.session.snapshot();
     return {
       sessionId: this.session.sessionId,
+      agentState: {
+        revision: agentState.revision,
+        contextEpoch: agentState.contextEpoch,
+        ...(agentState.usageCheckpoint
+          ? { usageCheckpoint: { ...agentState.usageCheckpoint } }
+          : {}),
+      },
       lifecycle: this.runtime.isTurnRunning ? "running" : "idle",
       costTotal: this.costTotal,
       settings: {
@@ -1501,6 +1521,18 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     changes.push({ type: "tool.remove", id: tool.id });
   }
 
+  private agentStateChange(): SessionProtocolChange {
+    const state = this.session.snapshot();
+    return {
+      type: "agent-state.set",
+      agentState: {
+        revision: state.revision,
+        contextEpoch: state.contextEpoch,
+        ...(state.usageCheckpoint ? { usageCheckpoint: { ...state.usageCheckpoint } } : {}),
+      },
+    };
+  }
+
   private async recordRuntimeEvent(event: AgentEvent): Promise<void> {
     switch (event.type) {
       case "assistant_start": {
@@ -1626,6 +1658,25 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         });
         return;
       }
+      case "user_message":
+        await this.emitPatch(
+          "user-message",
+          [
+            this.agentStateChange(),
+            {
+              type: "message.append",
+              message: {
+                id: event.historyEntryId,
+                state: "committed",
+                modelVisible: true,
+                message: event.message,
+              },
+              timelineItem: timelineItemForMessage(event.historyEntryId),
+            },
+          ],
+          { persist: false },
+        );
+        return;
       case "assistant_final": {
         this.draftAssistantMessage = undefined;
         this.messageStates.delete(event.historyEntryId);
@@ -1649,6 +1700,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
           agent: { type: "main" },
         });
         await this.emitPatch("assistant-message", [
+          this.agentStateChange(),
           { type: "cost.set", costTotal: this.costTotal },
           {
             type: "message.replace",
@@ -1663,6 +1715,8 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         ]);
         return;
       }
+      case "tool_run_queued":
+      case "tool_run_blocked":
       case "tool_run_started":
       case "tool_run_finished": {
         const existing = this.tools.get(event.toolCallId);
@@ -1672,15 +1726,19 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         const nextTool: SessionProtocolToolRun = {
           ...existing,
           status:
-            event.type === "tool_run_started"
-              ? "running"
-              : event.outcome === "succeeded"
-                ? "succeeded"
-                : event.outcome === "failed"
-                  ? "failed"
-                  : "cancelled",
-          startedAt: existing.startedAt ?? event.timestamp,
-          ...(event.type === "tool_run_finished" ? { finishedAt: event.timestamp } : {}),
+            event.type === "tool_run_queued"
+              ? "queued"
+              : event.type === "tool_run_blocked"
+                ? "blocked"
+                : event.type === "tool_run_started"
+                  ? "running"
+                  : event.outcome,
+          ...(event.type === "tool_run_started" || event.type === "tool_run_finished"
+            ? { startedAt: existing.startedAt ?? event.timestamp }
+            : {}),
+          ...(event.type === "tool_run_blocked" || event.type === "tool_run_finished"
+            ? { finishedAt: event.timestamp }
+            : {}),
         };
         this.tools.set(nextTool.id, nextTool);
         await this.emitPatch("tool-run", [{ type: "tool.set", tool: structuredClone(nextTool) }]);
@@ -1692,19 +1750,16 @@ class LocalHostedSessionHandle implements LocalHostedSession {
           throw new Error(`tool result arrived before '${event.message.toolCallId}' completed`);
         }
         if (existing) {
+          if (existing.status === "queued" || existing.status === "running") {
+            throw new Error(`tool result arrived before '${event.message.toolCallId}' finished`);
+          }
           const nextTool: SessionProtocolToolRun = {
             ...existing,
-            status:
-              existing.status === "blocked"
-                ? "blocked"
-                : event.message.isError
-                  ? "failed"
-                  : "succeeded",
-            finishedAt: event.message.timestamp,
             resultMessageId: event.historyEntryId,
           };
           this.tools.set(nextTool.id, nextTool);
           await this.emitPatch("tool-result", [
+            this.agentStateChange(),
             {
               type: "message.append",
               message: {
@@ -1720,6 +1775,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
           return;
         }
         await this.emitPatch("tool-result", [
+          this.agentStateChange(),
           {
             type: "message.append",
             message: {
@@ -1735,6 +1791,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       }
       case "tool_recovery": {
         const changes: SessionProtocolChange[] = [
+          this.agentStateChange(),
           {
             type: "message.append",
             message: {
@@ -1750,15 +1807,11 @@ class LocalHostedSessionHandle implements LocalHostedSession {
           if (!existing || existing.status === "streaming") {
             throw new Error(`missing completed protocol tool run for '${toolResult.toolCallId}'`);
           }
+          if (existing.status === "queued" || existing.status === "running") {
+            throw new Error(`tool recovery arrived before '${toolResult.toolCallId}' finished`);
+          }
           const nextTool: SessionProtocolToolRun = {
             ...existing,
-            status:
-              existing.status === "blocked"
-                ? "blocked"
-                : toolResult.isError
-                  ? "failed"
-                  : "succeeded",
-            finishedAt: toolResult.timestamp,
           };
           this.tools.set(nextTool.id, nextTool);
           changes.push({ type: "tool.set", tool: structuredClone(nextTool) });
@@ -1801,12 +1854,11 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         this.reconcileProjections();
         await this.emitSnapshotReset("maintenance", await this.commitSnapshot());
         return;
-      case "tool_ui":
-        await this.recordToolUiEvent(event.uiEvent);
+      case "tool_activity":
+        await this.recordToolUiEvent(event.activity as ToolUiEvent);
         return;
       case "turn_started":
       case "turn_finished":
-      case "user_message":
       case "tool_call_admitted":
       case "model_retry_scheduled":
       case "model_retry_started":
@@ -1834,43 +1886,18 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     };
     this.facets.set(facet.id, facet);
 
-    const tool = this.updateToolRunFromUiEvent(existingTool, event);
+    const tool: SessionProtocolToolRun = {
+      ...existingTool,
+      facetIds: existingTool.facetIds.includes(facetId)
+        ? existingTool.facetIds
+        : [...existingTool.facetIds, facetId],
+    };
     this.tools.set(tool.id, tool);
 
     await this.emitPatch("tool-run", [
       { type: "tool.set", tool },
       { type: "facet.set", facet: structuredClone(facet) },
     ]);
-  }
-
-  private updateToolRunFromUiEvent(
-    tool: SessionProtocolToolRun,
-    event: ToolUiEvent,
-  ): SessionProtocolToolRun {
-    if (tool.status === "streaming") {
-      throw new Error(`tool UI event '${event.type}' arrived before tool call completion`);
-    }
-
-    const next: SessionProtocolToolRun = {
-      ...tool,
-      facetIds: tool.facetIds.includes(`tool-ui-${tool.toolCallId}`)
-        ? tool.facetIds
-        : [...tool.facetIds, `tool-ui-${tool.toolCallId}`],
-    };
-    if (event.type.endsWith("_started") || event.type === "tool_call_queued") {
-      next.status = event.type === "tool_call_queued" ? "queued" : "running";
-      next.startedAt ??= Date.now();
-    } else if (event.type.endsWith("_blocked")) {
-      next.status = "blocked";
-      next.finishedAt = Date.now();
-    } else if (event.type.endsWith("_finished")) {
-      next.status = "status" in event && event.status === "error" ? "failed" : "succeeded";
-      next.finishedAt = Date.now();
-    } else if (event.type === "bash_aborted") {
-      next.status = "cancelled";
-      next.finishedAt = Date.now();
-    }
-    return next;
   }
 
   private async recordSubagentUiEvent(event: SubagentUiEvent): Promise<void> {
@@ -1927,6 +1954,13 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       return;
     }
     if (!this.committedSnapshot) {
+      if (options.persist === false) {
+        const snapshot = { ...this.buildSnapshotDraft(), revision: 1 };
+        this.committedSnapshot = snapshot;
+        this.snapshotGeneration += 1;
+        this.emitSnapshotReset(reason, snapshot);
+        return;
+      }
       const snapshot = await this.commitSnapshot();
       this.emitSnapshotReset(reason, snapshot);
       return;
@@ -2197,11 +2231,13 @@ function normalizeRecoveredSnapshot(snapshot: SessionProtocolSnapshot): {
       ),
     );
   }
+  let recoveredAgentHistory = false;
   recovered.messages = recovered.messages.map((message) => {
     if (message.state !== "draft" || message.message.role !== "assistant") {
       return message;
     }
     changed = true;
+    recoveredAgentHistory = true;
     return {
       id: message.id,
       state: "interrupted",
@@ -2212,6 +2248,15 @@ function normalizeRecoveredSnapshot(snapshot: SessionProtocolSnapshot): {
       ),
     };
   });
+  if (recoveredAgentHistory) {
+    recovered.agentState = {
+      revision: recovered.agentState.revision + 1,
+      contextEpoch: recovered.agentState.contextEpoch,
+      ...(recovered.agentState.usageCheckpoint
+        ? { usageCheckpoint: { ...recovered.agentState.usageCheckpoint } }
+        : {}),
+    };
+  }
   return { snapshot: recovered, changed };
 }
 

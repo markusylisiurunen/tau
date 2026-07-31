@@ -83,7 +83,7 @@ export function createSendInputToAgentToolDefinition(supervisor: AgentSupervisor
         reason: string,
         details?: { id?: string; name?: string; title?: string },
       ) => {
-        const outcome = createTextToolOutcome(reason, true);
+        const outcome = createTextToolOutcome(reason, "blocked");
         const uiEvent: ToolUiEvent = {
           type: "send_input_to_agent_blocked",
           toolCallId: toolCall.id,
@@ -95,7 +95,7 @@ export function createSendInputToAgentToolDefinition(supervisor: AgentSupervisor
         };
         return {
           content: outcome.content,
-          isError: outcome.isError,
+          outcome: outcome.outcome,
           uiEvent,
         } satisfies ToolImplementationOutcome;
       };
@@ -119,7 +119,7 @@ export function createSendInputToAgentToolDefinition(supervisor: AgentSupervisor
         async (): Promise<ToolImplementationOutcome> => {
           if (signal?.aborted) {
             const reason = "Aborted.";
-            const outcome = createTextToolOutcome(reason, true);
+            const outcome = createTextToolOutcome(reason, "cancelled");
             const uiText = buildSubagentUiText({
               output: reason,
               statusText: `${target.name} · ${id}`,
@@ -137,13 +137,13 @@ export function createSendInputToAgentToolDefinition(supervisor: AgentSupervisor
               message: reason,
               uiText,
             };
-            return { content: outcome.content, isError: outcome.isError, uiEvent };
+            return { content: outcome.content, outcome: outcome.outcome, uiEvent };
           }
 
           const sendResult = supervisor.sendInput({ id, prompt });
 
           if (!sendResult.ok) {
-            const outcome = createTextToolOutcome(sendResult.reason, true);
+            const outcome = createTextToolOutcome(sendResult.reason, "blocked");
             const uiEvent: ToolUiEvent = {
               type: "send_input_to_agent_blocked",
               toolCallId: toolCall.id,
@@ -153,11 +153,11 @@ export function createSendInputToAgentToolDefinition(supervisor: AgentSupervisor
               headerTarget: target.title,
               reason: sendResult.reason,
             };
-            return { content: outcome.content, isError: outcome.isError, uiEvent };
+            return { content: outcome.content, outcome: outcome.outcome, uiEvent };
           }
 
           const resultText = formatSendInputToolResult(sendResult);
-          const outcome = createTextToolOutcome(resultText, false);
+          const outcome = createTextToolOutcome(resultText, "succeeded");
           const uiText = buildSubagentUiText({
             output: prompt,
             statusText: `${sendResult.name} · ${sendResult.id}`,
@@ -174,7 +174,7 @@ export function createSendInputToAgentToolDefinition(supervisor: AgentSupervisor
             status: "success",
             uiText,
           };
-          return { content: outcome.content, isError: outcome.isError, uiEvent };
+          return { content: outcome.content, outcome: outcome.outcome, uiEvent };
         },
         {
           type: "send_input_to_agent_started",

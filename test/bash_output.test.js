@@ -63,7 +63,7 @@ describe("bash output policy", () => {
       new AbortController().signal,
     );
 
-    expect(result.toolResult.isError).toBe(true);
+    expect(result.toolResult.outcome).toBe("blocked");
   });
 
   it("gates default output and includes maxOutputTokens instructions", async () => {

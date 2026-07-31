@@ -400,6 +400,7 @@ export function createNookToolDefinition(
     outputPolicy: { maxTokens: NOOK_CODE_MODE_OUTPUT_TOKENS },
     timeoutMs,
     parseArguments: parseNookArguments,
+    getBlockedReason: () => (config.nook ? undefined : "nook is not configured"),
     execute: async ({ code, signal, backend: executionBackend }) =>
       executeNookProgram(code, deps, config, executionBackend, signal, timeoutMs),
   };

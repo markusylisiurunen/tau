@@ -74,7 +74,7 @@ describe("session runner", () => {
       const runner = runModelSubturn({
         model: {},
         context: {},
-        modelRuntime,
+        streamModel: modelRuntime.streamModel.bind(modelRuntime),
         streamOptions: {},
         signal: new AbortController().signal,
         emitPartials: true,
@@ -160,7 +160,7 @@ describe("session runner", () => {
       const runner = runModelSubturn({
         model: {},
         context: {},
-        modelRuntime,
+        streamModel: modelRuntime.streamModel.bind(modelRuntime),
         streamOptions: {},
         signal: new AbortController().signal,
         emitPartials: true,
@@ -250,7 +250,7 @@ describe("session runner", () => {
     const runner = runModelSubturn({
       model: {},
       context: {},
-      modelRuntime,
+      streamModel: modelRuntime.streamModel.bind(modelRuntime),
       streamOptions: {},
       signal: new AbortController().signal,
       emitPartials: true,
@@ -320,7 +320,7 @@ describe("session runner", () => {
     const runner = runModelSubturn({
       model: {},
       context: {},
-      modelRuntime,
+      streamModel: modelRuntime.streamModel.bind(modelRuntime),
       streamOptions: {},
       signal: new AbortController().signal,
       emitPartials: true,
@@ -411,7 +411,7 @@ describe("session runner", () => {
     const runner = runModelSubturn({
       model: {},
       context: {},
-      modelRuntime,
+      streamModel: modelRuntime.streamModel.bind(modelRuntime),
       streamOptions: {},
       signal: new AbortController().signal,
       emitPartials: false,
@@ -460,7 +460,7 @@ describe("session runner", () => {
       const runner = runModelSubturn({
         model: {},
         context: {},
-        modelRuntime,
+        streamModel: modelRuntime.streamModel.bind(modelRuntime),
         streamOptions: {},
         signal: new AbortController().signal,
         emitPartials: true,
@@ -514,7 +514,7 @@ describe("session runner", () => {
       const runner = runModelSubturn({
         model: {},
         context: {},
-        modelRuntime,
+        streamModel: modelRuntime.streamModel.bind(modelRuntime),
         streamOptions: {},
         signal: new AbortController().signal,
         emitPartials: true,

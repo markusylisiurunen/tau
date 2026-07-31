@@ -78,7 +78,7 @@ describe("AgentSupervisor", () => {
     const record = getRecord(supervisor, spawned.id);
     expect(record.runtime).toBeInstanceOf(AgentRuntime);
     const responses = [createAssistant("first result"), createAssistant("follow-up result")];
-    record.runtime.modelRuntime.streamModel = vi.fn(() => createStream(responses.shift()));
+    record.runtime.spec.model.stream = vi.fn(() => createStream(responses.shift()));
 
     await expect(supervisor.waitForAgents([spawned.id])).resolves.toEqual([
       expect.objectContaining({ id: spawned.id, status: "success", finalText: "first result" }),
@@ -180,7 +180,7 @@ describe("AgentSupervisor", () => {
       createStream(createAssistant("finished after compaction")),
     ];
     const streamModel = vi.fn(() => streams.shift());
-    record.runtime.modelRuntime.streamModel = streamModel;
+    record.runtime.spec.model.stream = streamModel;
 
     await expect(supervisor.waitForAgents([spawned.id])).resolves.toEqual([
       expect.objectContaining({
@@ -206,7 +206,7 @@ describe("AgentSupervisor", () => {
     expect(spawned.ok).toBe(true);
     if (!spawned.ok) throw new Error(spawned.reason);
     const record = getRecord(supervisor, spawned.id);
-    record.runtime.modelRuntime.streamModel = vi.fn((_model, _context, options) => ({
+    record.runtime.spec.model.stream = vi.fn((_context, options) => ({
       async *[Symbol.asyncIterator]() {
         await new Promise((resolve) =>
           options.signal.addEventListener("abort", resolve, { once: true }),

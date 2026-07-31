@@ -211,17 +211,20 @@ export type ToolUiText = {
 
 export type ToolExecutionOutcome = {
   content: ToolResultMessage["content"];
-  isError: boolean;
+  outcome: "succeeded" | "failed" | "blocked" | "cancelled";
 };
 
 export type ToolImplementationOutcome = ToolExecutionOutcome & {
   uiEvent?: ToolUiEvent;
 };
 
-export function createTextToolOutcome(text: string, isError: boolean): ToolExecutionOutcome {
+export function createTextToolOutcome(
+  text: string,
+  outcome: ToolExecutionOutcome["outcome"],
+): ToolExecutionOutcome {
   return {
     content: [{ type: "text", text }],
-    isError,
+    outcome,
   };
 }
 
@@ -239,7 +242,7 @@ export async function executeTool(
   if (result.uiEvent) {
     await context.emitActivity(result.uiEvent);
   }
-  return { content: result.content, isError: result.isError };
+  return { content: result.content, outcome: result.outcome };
 }
 
 export type ToolCallDescription = {

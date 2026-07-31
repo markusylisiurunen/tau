@@ -257,11 +257,18 @@ function createHarness(options = {}) {
             const historyEntryId = hostedSession.session.addUserText(
               formatSteeringUserMessage(steering.map((item) => item.text)),
             );
+            for (const item of steering) {
+              item.resolveApplied({ userHistoryEntryId: historyEntryId });
+            }
+            pendingTurn = new Promise((resolve) => {
+              releaseTurn = resolve;
+            });
+            await pendingTurn;
             const result = {
               userHistoryEntryId: historyEntryId,
               turn: { status: "completed", stopReason: "stop" },
             };
-            for (const item of steering) item.resolve(result);
+            for (const item of steering) item.resolveResult(result);
           }
           emitDelta(createNoticeDelta(sessionId, historyEntries.length + 2, "finished"));
           return pendingTurnResult;
@@ -274,14 +281,33 @@ function createHarness(options = {}) {
       requestTurnBoundaryStop: vi.fn(() => running),
       cancelTurnBoundaryStop: vi.fn(() => running),
       steer(text) {
-        return new Promise((resolve, reject) => {
-          pendingSteering.push({ text, resolve, reject });
+        let resolveApplied;
+        let rejectApplied;
+        const applied = new Promise((resolve, reject) => {
+          resolveApplied = resolve;
+          rejectApplied = reject;
         });
+        let resolveResult;
+        let rejectResult;
+        const result = new Promise((resolve, reject) => {
+          resolveResult = resolve;
+          rejectResult = reject;
+        });
+        pendingSteering.push({
+          text,
+          resolveApplied,
+          rejectApplied,
+          resolveResult,
+          rejectResult,
+        });
+        return { applied, result };
       },
       cancelSteering: vi.fn(() => {
         const cancelled = pendingSteering.splice(0);
         for (const item of cancelled) {
-          item.reject(new Error("steering submission was cancelled"));
+          const error = new Error("steering submission was cancelled");
+          item.rejectApplied(error);
+          item.rejectResult(error);
         }
         return cancelled.map((item) => item.text);
       }),
@@ -1280,7 +1306,6 @@ describe("rpc_server", () => {
     );
 
     harness.releaseTurn();
-    await firstSubmit;
     await waitFor(() =>
       harness.seededSession.session.historyEntries.some((entry) =>
         entry.message.content[0].text.includes("change direction"),
@@ -1290,9 +1315,17 @@ describe("rpc_server", () => {
     const steeringEntry = harness.seededSession.session.historyEntries.find((entry) =>
       entry.message.content[0].text.includes("change direction"),
     );
+    await waitFor(() =>
+      harness.lines.some(
+        (line) => line.type === "session.pendingUserMessages" && line.state.messages.length === 0,
+      ),
+    );
+    expect(harness.lines.some((line) => line.id === "steer-1" && line.type === "response")).toBe(
+      false,
+    );
     harness.emitSubagent({ type: "spawned", id: "agent-2", title: "research" });
     harness.releaseTurn();
-    await Promise.all([steerOne, steerTwo]);
+    await Promise.all([firstSubmit, steerOne, steerTwo]);
 
     expect(steeringEntry.message.content[0].text).toContain("<system>");
     expect(steeringEntry.message.content[0].text).toContain("change direction\n\nalso check docs");

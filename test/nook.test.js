@@ -780,7 +780,7 @@ describe("nook code-mode tool", () => {
     );
 
     expect(result.uiEvent).toMatchObject({ type: "code_mode_finished", toolName: "nook" });
-    expect(result.toolResult.isError).toBe(false);
+    expect(result.toolResult.outcome).toBe("succeeded");
     expect(getToolText(result)).toContain("undefined undefined undefined undefined");
     expect(getToolText(result)).toContain("docs=true");
     expect(getToolText(result)).toContain("secret=false");
@@ -817,7 +817,7 @@ describe("nook code-mode tool", () => {
       ].join("\n"),
     );
 
-    expect(result.toolResult.isError).toBe(false);
+    expect(result.toolResult.outcome).toBe("succeeded");
     expect(getToolText(result)).toContain("demo starter dark next settings");
     expect(client.getKv).toHaveBeenCalledWith("demo", "settings");
     expect(client.putKv).toHaveBeenCalledWith("demo", "next", { enabled: true });
@@ -849,7 +849,7 @@ describe("nook code-mode tool", () => {
       ].join("\n"),
     );
 
-    expect(result.toolResult.isError).toBe(false);
+    expect(result.toolResult.outcome).toBe("succeeded");
     expect(getToolText(result)).toContain("/tmp/settings.json 28 settings-copy");
     expect(fileContent).toBe('{"theme":"dark","density":2}');
     expect(backend.writeFile).toHaveBeenCalledWith(
@@ -895,7 +895,7 @@ describe("nook code-mode tool", () => {
       ].join("\n"),
     );
 
-    expect(result.toolResult.isError).toBe(false);
+    expect(result.toolResult.outcome).toBe("succeeded");
     expect(getToolText(result)).toContain("Invalid nook.sites.deploy arguments");
     expect(getToolText(result)).toContain("Site slug must be");
     expect(getToolText(result)).toContain('Unrecognized key: "public"');
@@ -922,7 +922,7 @@ describe("nook code-mode tool", () => {
       ].join("\n"),
     );
 
-    expect(result.toolResult.isError).toBe(false);
+    expect(result.toolResult.outcome).toBe("succeeded");
     expect(getToolText(result).match(/must be JSON-serializable values/g)).toHaveLength(3);
     expect(client.putKv).not.toHaveBeenCalled();
   });
@@ -941,7 +941,7 @@ describe("nook code-mode tool", () => {
       "await nook.templates.copy('starter', '/workspace/app')",
     );
 
-    expect(result.toolResult.isError).toBe(true);
+    expect(result.toolResult.outcome).toBe("failed");
     expect(getToolText(result)).toContain("template copy destination is not empty");
     expect(client.getTemplateManifest).not.toHaveBeenCalled();
     expect(client.downloadTemplateFiles).not.toHaveBeenCalled();
@@ -957,7 +957,7 @@ describe("nook code-mode tool", () => {
       {},
     );
 
-    expect(result.toolResult.isError).toBe(true);
+    expect(result.toolResult.outcome).toBe("blocked");
     expect(getToolText(result)).toContain("nook is not configured");
   });
 
@@ -976,7 +976,7 @@ describe("nook code-mode tool", () => {
       new AbortController().signal,
     );
 
-    expect(result.toolResult.isError).toBe(true);
+    expect(result.toolResult.outcome).toBe("blocked");
     expect(getToolText(result)).toContain("Invalid arguments");
     expect(createClient).not.toHaveBeenCalled();
   });
@@ -998,7 +998,7 @@ describe("nook code-mode tool", () => {
       "await Promise.all(Array.from({ length: 5 }, () => nook.sites.list()))",
     );
 
-    expect(result.toolResult.isError).toBe(true);
+    expect(result.toolResult.outcome).toBe("failed");
     expect(getToolText(result)).toContain("exceeded 4 concurrent bridge requests");
     expect(createClient).toHaveBeenCalledTimes(4);
   });
@@ -1012,7 +1012,7 @@ describe("nook code-mode tool", () => {
       "for (let index = 0; index < 65; index += 1) await nook.sites.list()",
     );
 
-    expect(result.toolResult.isError).toBe(true);
+    expect(result.toolResult.outcome).toBe("failed");
     expect(getToolText(result)).toContain("exceeded 64 bridge requests");
     expect(createClient).toHaveBeenCalledTimes(64);
   });
@@ -1052,7 +1052,7 @@ describe("nook code-mode tool", () => {
 
     expect(requestSettled).toBe(true);
     expect(createClient.mock.calls[0][0].signal.aborted).toBe(true);
-    expect(result.toolResult.isError).toBe(true);
+    expect(result.toolResult.outcome).toBe("cancelled");
     expect(getToolText(result)).toContain("(tau) aborted");
   });
 });

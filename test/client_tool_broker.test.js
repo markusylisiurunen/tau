@@ -107,7 +107,7 @@ describe("ClientToolBroker", () => {
       {},
     );
 
-    expect(result.toolResult.isError).toBe(true);
+    expect(result.toolResult.outcome).toBe("blocked");
     expect(result.toolResult.content[0].text).toBe(
       "Client tool 'local_picker' is unavailable because its owning client detached.",
     );
@@ -142,7 +142,7 @@ describe("ClientToolBroker", () => {
       await vi.advanceTimersByTimeAsync(5000);
       const result = await execution;
 
-      expect(result.isError).toBe(true);
+      expect(result.outcome).toBe("blocked");
       expect(result.content[0].text).toBe(
         "Client tool 'local_picker' is unavailable because its owning client did not acknowledge the tool call within 5000ms.",
       );

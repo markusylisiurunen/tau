@@ -8,7 +8,7 @@ import type {
 } from "@earendil-works/pi-ai";
 import { type ZodError, z } from "zod";
 
-export const SESSION_PROTOCOL_VERSION = 3 as const;
+export const SESSION_PROTOCOL_VERSION = 4 as const;
 export const SESSION_PROTOCOL_MAX_EXEC_CAPTURE_BYTES = 24 * 1024 * 1024;
 export const SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES = 16 * 1024 * 1024;
 
@@ -543,9 +543,20 @@ export type SessionProtocolExecutionEnvironmentSnapshot =
   | SessionProtocolCloudflareSandboxExecutionEnvironmentSnapshot
   | SessionProtocolFlySpriteExecutionEnvironmentSnapshot;
 
+export type SessionProtocolAgentStateSnapshot = {
+  revision: number;
+  contextEpoch: string;
+  usageCheckpoint?: {
+    historyEntryId: string;
+    contextEpoch: string;
+    tokens: number;
+  };
+};
+
 export type SessionProtocolSnapshot = {
   sessionId: string;
   revision: number;
+  agentState: SessionProtocolAgentStateSnapshot;
   lifecycle: SessionProtocolSessionLifecycle;
   costTotal: number;
   settings: SessionProtocolSettingsSnapshot;
@@ -782,6 +793,7 @@ export type SessionProtocolDeltaReason =
   | "recovery";
 
 export type SessionProtocolChange =
+  | { type: "agent-state.set"; agentState: SessionProtocolAgentStateSnapshot }
   | { type: "lifecycle.set"; lifecycle: SessionProtocolSessionLifecycle }
   | { type: "cost.set"; costTotal: number }
   | { type: "settings.set"; settings: SessionProtocolSettingsSnapshot }
@@ -1824,10 +1836,26 @@ const sessionProtocolFacetSchema = z
   })
   .strip();
 
+const sessionProtocolAgentStateSnapshotSchema = z
+  .object({
+    revision: z.number().int().nonnegative(),
+    contextEpoch: nonEmptyStringSchema,
+    usageCheckpoint: z
+      .object({
+        historyEntryId: nonEmptyStringSchema,
+        contextEpoch: nonEmptyStringSchema,
+        tokens: z.number().int().nonnegative(),
+      })
+      .strip()
+      .optional(),
+  })
+  .strip();
+
 const sessionProtocolSnapshotSchema = z
   .object({
     sessionId: nonEmptyStringSchema,
     revision: z.number().int().positive(),
+    agentState: sessionProtocolAgentStateSnapshotSchema,
     lifecycle: sessionProtocolSessionLifecycleSchema,
     costTotal: z.number().nonnegative(),
     settings: sessionProtocolSettingsSnapshotSchema,
@@ -1859,6 +1887,17 @@ const sessionProtocolSnapshotSchema = z
         });
       }
       messagesById.set(message.id, message);
+    }
+    const checkpoint = snapshot.agentState.usageCheckpoint;
+    if (checkpoint) {
+      const checkpointMessage = messagesById.get(checkpoint.historyEntryId);
+      if (!checkpointMessage?.modelVisible || checkpointMessage.message.role !== "assistant") {
+        ctx.addIssue({
+          code: "custom",
+          path: ["agentState", "usageCheckpoint", "historyEntryId"],
+          message: "usage checkpoint must reference a model-visible assistant message",
+        });
+      }
     }
 
     const timelineIds = new Set<string>();
@@ -2017,6 +2056,12 @@ const sessionProtocolDeltaReasonSchema = z.enum([
 ]);
 
 const sessionProtocolChangeSchema = z.discriminatedUnion("type", [
+  z
+    .object({
+      type: z.literal("agent-state.set"),
+      agentState: sessionProtocolAgentStateSnapshotSchema,
+    })
+    .strip(),
   z
     .object({
       type: z.literal("lifecycle.set"),
@@ -2590,6 +2635,9 @@ export function applySessionProtocolDelta(
   next.revision = message.toRevision;
   for (const change of message.delta.changes) {
     switch (change.type) {
+      case "agent-state.set":
+        next.agentState = structuredClone(change.agentState);
+        break;
       case "lifecycle.set":
         next.lifecycle = change.lifecycle;
         break;

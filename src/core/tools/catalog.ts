@@ -5,7 +5,7 @@ import type { SubagentToolName } from "../subagents/types.js";
 import type { Persona } from "../types.js";
 import { createBashToolDefinition } from "./bash.js";
 import { createEditToolDefinition } from "./edit.js";
-import type { ToolExecutionBackend } from "./execution_backend.js";
+import { scopeToolExecutionBackend, type ToolExecutionBackend } from "./execution_backend.js";
 import { createNookToolDefinition } from "./nook.js";
 import { ToolRegistry } from "./registry.js";
 import { createSendInputToAgentToolDefinition } from "./send_input_to_agent.js";
@@ -70,10 +70,12 @@ export const ToolCatalog = {
       createWaitForAgentsToolDefinition(options.supervisor),
       createTerminateAgentToolDefinition(options.supervisor),
     ];
+    const enabledToolNames = new Set<string>(options.persona.tools);
+    const enabledTools = tools.filter((tool) => enabledToolNames.has(tool.schema.name));
     if (options.config.nook) {
-      tools.push(createNookToolDefinition(options.backend, options.config));
+      enabledTools.push(createNookToolDefinition(options.backend, options.config));
     }
-    return new ToolRegistry(tools);
+    return new ToolRegistry(enabledTools);
   },
 
   createSubagentRegistry(
@@ -82,6 +84,7 @@ export const ToolCatalog = {
     cwd: string,
     config: Config,
   ): ToolRegistry {
+    const scopedBackend = scopeToolExecutionBackend(backend, cwd);
     const definitions = [];
     const seen = new Set<string>();
     for (const tool of allowedTools) {
@@ -89,19 +92,19 @@ export const ToolCatalog = {
       seen.add(tool);
       switch (tool) {
         case TOOL_NAME_BASH:
-          definitions.push(createBashToolDefinition(backend, cwd));
+          definitions.push(createBashToolDefinition(scopedBackend, cwd));
           break;
         case TOOL_NAME_WRITE:
-          definitions.push(createWriteToolDefinition(backend));
+          definitions.push(createWriteToolDefinition(scopedBackend));
           break;
         case TOOL_NAME_EDIT:
-          definitions.push(createEditToolDefinition(backend));
+          definitions.push(createEditToolDefinition(scopedBackend));
           break;
         case TOOL_NAME_VIEW_IMAGE:
-          definitions.push(createViewImageToolDefinition(backend));
+          definitions.push(createViewImageToolDefinition(scopedBackend));
           break;
         case TOOL_NAME_WEB:
-          definitions.push(createWebToolDefinition(backend, config));
+          definitions.push(createWebToolDefinition(scopedBackend, config));
           break;
       }
     }

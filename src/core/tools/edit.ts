@@ -139,8 +139,11 @@ export function createEditToolDefinition(backend: ToolExecutionBackend): AgentTo
         const path = parsedArgs.ok ? parsedArgs.data.path : "";
         const headerTarget = getEditDisplayTarget(toolCall.arguments);
 
-        const blocked = (reason: string): ToolImplementationOutcome => {
-          const outcome = createTextToolOutcome(reason, true);
+        const blocked = (
+          reason: string,
+          semanticOutcome: ToolExecutionOutcome["outcome"] = "blocked",
+        ): ToolImplementationOutcome => {
+          const outcome = createTextToolOutcome(reason, semanticOutcome);
           const uiEvent: ToolUiEvent = {
             type: "edit_blocked",
             toolCallId: toolCall.id,
@@ -148,7 +151,7 @@ export function createEditToolDefinition(backend: ToolExecutionBackend): AgentTo
             headerTarget,
             reason,
           };
-          return { content: outcome.content, isError: outcome.isError, uiEvent };
+          return { content: outcome.content, outcome: outcome.outcome, uiEvent };
         };
 
         if (!parsedArgs.ok) {
@@ -166,7 +169,7 @@ export function createEditToolDefinition(backend: ToolExecutionBackend): AgentTo
           if ((e as NodeJS.ErrnoException).code === "ENOENT") {
             return blocked(`File not found at '${path}'. Verify the path is correct.`);
           }
-          return blocked(`Could not read file: ${errorMessage}`);
+          return blocked(`Could not read file: ${errorMessage}`, "failed");
         }
 
         const matchCount = countOccurrences(content, oldText);
@@ -223,7 +226,7 @@ export function createEditToolDefinition(backend: ToolExecutionBackend): AgentTo
 
           const resultText = formatEditToolResultText({ summaryLine });
 
-          const outcome = createTextToolOutcome(resultText, false);
+          const outcome = createTextToolOutcome(resultText, "succeeded");
           const uiText = buildEditUiText({ summaryLine, statusLine, diffLines });
           const uiEvent: ToolUiEvent = {
             type: "edit_success",
@@ -236,10 +239,10 @@ export function createEditToolDefinition(backend: ToolExecutionBackend): AgentTo
             newText,
             uiText,
           };
-          return { content: outcome.content, isError: outcome.isError, uiEvent };
+          return { content: outcome.content, outcome: outcome.outcome, uiEvent };
         } catch (e) {
           const errorMessage = e instanceof Error ? e.message : String(e);
-          return blocked(`Could not write file: ${errorMessage}`);
+          return blocked(`Could not write file: ${errorMessage}`, "failed");
         }
       });
     },

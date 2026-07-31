@@ -9,10 +9,12 @@ import {
 import type { AgentEvent } from "../core/agent/events.js";
 import type { Config } from "../core/config/index.js";
 import type { ModelResolver } from "../core/models/catalog.js";
+import { resolveAgentModel } from "../core/runtime/agent_model.js";
 import { createDefaultCoreDeps } from "../core/runtime/deps.js";
 import { composeSessionPrompts } from "../core/runtime/session_prompt_composer.js";
 import type { SubagentToolName } from "../core/subagents/types.js";
 import { ToolCatalog } from "../core/tools/catalog.js";
+import type { ToolUiEvent } from "../core/tools/registry.js";
 import type { Persona, Skill } from "../core/types.js";
 import {
   appendUsageLogEntry,
@@ -190,7 +192,6 @@ type EphemeralAgentThreadOptions = {
 
 class EphemeralAgentThread {
   private readonly runtime: AgentRuntime;
-  private readonly persona: Persona;
   private readonly onUpdate?: (update: EphemeralAgentThreadUpdate) => void;
   private readonly recordUsage: UsageRecorder;
   private costTotal = 0;
@@ -201,7 +202,11 @@ class EphemeralAgentThread {
     const spec =
       options.forkFrom?.spec ??
       createAgentSpec({
-        persona: createEphemeralPersona(options.persona, options.systemPrompt, options.tools),
+        ...resolveAgentModel(
+          createEphemeralPersona(options.persona, options.systemPrompt, options.tools),
+          options.config,
+          options.deps,
+        ),
         systemPrompt: options.systemPrompt,
         tools: ToolCatalog.createSubagentRegistry(
           options.tools,
@@ -209,9 +214,7 @@ class EphemeralAgentThread {
           options.cwd,
           options.config,
         ),
-        config: options.config,
       });
-    this.persona = spec.persona;
     this.onUpdate = options.onUpdate;
     this.recordUsage = options.recordUsage ?? appendUsageLogEntry;
     this.usage = options.forkFrom?.usageBaseline ?? {
@@ -220,7 +223,7 @@ class EphemeralAgentThread {
       cacheRead: 0,
       cacheWrite: 0,
       contextWindowUsageTokens: 0,
-      contextWindow: this.persona.model.contextWindow,
+      contextWindow: spec.model.model.contextWindow,
     };
     const state = options.forkFrom
       ? {
@@ -270,9 +273,9 @@ class EphemeralAgentThread {
 
   private async handleEvent(event: AgentEvent): Promise<void> {
     switch (event.type) {
-      case "tool_ui":
+      case "tool_activity":
         this.lastActivityText =
-          formatToolUiEventForProgress(event.uiEvent) ?? this.lastActivityText;
+          formatToolUiEventForProgress(event.activity as ToolUiEvent) ?? this.lastActivityText;
         break;
       case "tool_result":
         if (event.message.isError) {

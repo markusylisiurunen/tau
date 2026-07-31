@@ -71,6 +71,10 @@ export function createProtocolSnapshot(overrides = {}) {
   const snapshot = {
     sessionId: overrides.sessionId ?? "session-1",
     revision: overrides.revision ?? 1,
+    agentState: overrides.agentState ?? {
+      revision: historyEntries.length,
+      contextEpoch: "fixture-context",
+    },
     lifecycle: overrides.lifecycle ?? "idle",
     costTotal: overrides.costTotal ?? 0,
     settings: overrides.settings ?? {

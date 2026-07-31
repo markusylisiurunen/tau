@@ -112,8 +112,11 @@ export function createWriteToolDefinition(backend: ToolExecutionBackend): AgentT
         const path = parsedArgs.ok ? parsedArgs.data.path : "";
         const headerTarget = getWriteDisplayTarget(toolCall.arguments);
 
-        const blocked = (reason: string): ToolImplementationOutcome => {
-          const outcome = createTextToolOutcome(reason, true);
+        const blocked = (
+          reason: string,
+          semanticOutcome: ToolExecutionOutcome["outcome"] = "blocked",
+        ): ToolImplementationOutcome => {
+          const outcome = createTextToolOutcome(reason, semanticOutcome);
           const uiEvent: ToolUiEvent = {
             type: "write_blocked",
             toolCallId: toolCall.id,
@@ -121,7 +124,7 @@ export function createWriteToolDefinition(backend: ToolExecutionBackend): AgentT
             headerTarget,
             reason,
           };
-          return { content: outcome.content, isError: outcome.isError, uiEvent };
+          return { content: outcome.content, outcome: outcome.outcome, uiEvent };
         };
 
         if (!parsedArgs.ok) {
@@ -134,7 +137,7 @@ export function createWriteToolDefinition(backend: ToolExecutionBackend): AgentT
           const { bytes, lines } = await backend.writeFile(path, content);
           const resultText = `Successfully wrote ${formatBytes(bytes)} (${lines} lines) to ${path}`;
 
-          const outcome = createTextToolOutcome(resultText, false);
+          const outcome = createTextToolOutcome(resultText, "succeeded");
           const uiText = buildWriteUiText({ bytes, lines, content, fullText: resultText });
           const uiEvent: ToolUiEvent = {
             type: "write_success",
@@ -146,10 +149,10 @@ export function createWriteToolDefinition(backend: ToolExecutionBackend): AgentT
             content,
             uiText,
           };
-          return { content: outcome.content, isError: outcome.isError, uiEvent };
+          return { content: outcome.content, outcome: outcome.outcome, uiEvent };
         } catch (e) {
           const errorMessage = e instanceof Error ? e.message : String(e);
-          return blocked(`Write failed: ${errorMessage}`);
+          return blocked(`Write failed: ${errorMessage}`, "failed");
         }
       });
     },

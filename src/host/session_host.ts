@@ -58,10 +58,13 @@ export type TauHostedSession = {
   waitForActiveWork(): Promise<void>;
   requestTurnBoundaryStop(): boolean;
   cancelTurnBoundaryStop(): boolean;
-  steer(text: string): Promise<{
-    userHistoryEntryId: string;
-    turn: SessionProtocolTurnOutcome;
-  }>;
+  steer(text: string): {
+    applied: Promise<{ userHistoryEntryId: string }>;
+    result: Promise<{
+      userHistoryEntryId: string;
+      turn: SessionProtocolTurnOutcome;
+    }>;
+  };
   cancelSteering(): string[];
   exec(
     options: Omit<SessionProtocolExecParams, "sessionId"> & {

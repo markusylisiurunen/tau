@@ -109,7 +109,7 @@ describe("spawn_agent tool", () => {
       name: "researcher",
       title: "research task",
     });
-    expect(result.toolResult.isError).toBe(false);
+    expect(result.toolResult.outcome).toBe("succeeded");
     expect(supervisor.spawn).toHaveBeenCalledWith(
       expect.objectContaining({
         prompt: "investigate this",
@@ -135,9 +135,9 @@ describe("spawn_agent tool", () => {
       model: "openai/gpt-5.5:medium",
     });
 
-    expect(missing.result.toolResult.isError).toBe(true);
+    expect(missing.result.toolResult.outcome).toBe("blocked");
     expect(getText(missing.result.toolResult)).toContain("does not allow launch model overrides");
-    expect(disallowed.result.toolResult.isError).toBe(true);
+    expect(disallowed.result.toolResult.outcome).toBe("blocked");
     expect(getText(disallowed.result.toolResult)).toContain("is not allowed");
     expect(supervisor.spawn).not.toHaveBeenCalled();
   });
@@ -146,7 +146,7 @@ describe("spawn_agent tool", () => {
     const { tool, supervisor } = createFixture();
     const { result } = await execute(tool, baseArguments);
 
-    expect(result.toolResult.isError).toBe(false);
+    expect(result.toolResult.outcome).toBe("succeeded");
     expect(supervisor.spawn).toHaveBeenCalledWith(
       expect.objectContaining({
         modelLabel: undefined,
@@ -170,7 +170,7 @@ describe("spawn_agent tool", () => {
       workingDirectory: "packages/api",
     });
 
-    expect(result.toolResult.isError).toBe(false);
+    expect(result.toolResult.outcome).toBe("succeeded");
     expect(resolveSubagentRuntime).toHaveBeenCalledWith(
       expect.objectContaining({ cwd: "/repo/current/packages/api" }),
     );
@@ -191,7 +191,7 @@ describe("spawn_agent tool", () => {
       workingDirectory: "/tmp/project",
     });
 
-    expect(result.toolResult.isError).toBe(true);
+    expect(result.toolResult.outcome).toBe("blocked");
     expect(getText(result.toolResult)).toContain("context resolution is unavailable");
     expect(supervisor.spawn).not.toHaveBeenCalled();
   });
@@ -201,7 +201,7 @@ describe("spawn_agent tool", () => {
     const { tool } = createFixture({ supervisor });
     const { result } = await execute(tool, baseArguments);
 
-    expect(result.toolResult.isError).toBe(true);
+    expect(result.toolResult.outcome).toBe("blocked");
     expect(getText(result.toolResult)).toBe("active limit reached");
     expect(result.uiEvent).toMatchObject({ type: "spawn_agent_blocked" });
   });
@@ -211,8 +211,8 @@ describe("spawn_agent tool", () => {
     const unknown = await execute(tool, { ...baseArguments, extra: true });
     const empty = await execute(tool, { ...baseArguments, workingDirectory: "" });
 
-    expect(unknown.result.toolResult.isError).toBe(true);
-    expect(empty.result.toolResult.isError).toBe(true);
+    expect(unknown.result.toolResult.outcome).toBe("blocked");
+    expect(empty.result.toolResult.outcome).toBe("blocked");
     expect(supervisor.spawn).not.toHaveBeenCalled();
   });
 });

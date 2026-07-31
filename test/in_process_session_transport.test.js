@@ -113,7 +113,10 @@ function createHostedSession(sessionId, sessions, options = {}) {
             userHistoryEntryId: historyEntryId,
             turn: { status: "completed", stopReason: "stop" },
           };
-          for (const item of steering) item.resolve(result);
+          for (const item of steering) {
+            item.resolveApplied({ userHistoryEntryId: historyEntryId });
+            item.resolveResult(result);
+          }
         }
         result = pendingTurnResult;
         return result;
@@ -126,13 +129,34 @@ function createHostedSession(sessionId, sessions, options = {}) {
     requestTurnBoundaryStop: vi.fn(() => running),
     cancelTurnBoundaryStop: vi.fn(() => running),
     steer(text) {
-      return new Promise((resolve, reject) => {
-        pendingSteering.push({ text, resolve, reject });
+      let resolveApplied;
+      let rejectApplied;
+      const applied = new Promise((resolve, reject) => {
+        resolveApplied = resolve;
+        rejectApplied = reject;
       });
+      let resolveResult;
+      let rejectResult;
+      const result = new Promise((resolve, reject) => {
+        resolveResult = resolve;
+        rejectResult = reject;
+      });
+      pendingSteering.push({
+        text,
+        resolveApplied,
+        rejectApplied,
+        resolveResult,
+        rejectResult,
+      });
+      return { applied, result };
     },
     cancelSteering() {
       const cancelled = pendingSteering.splice(0);
-      for (const item of cancelled) item.reject(new Error("steering submission was cancelled"));
+      for (const item of cancelled) {
+        const error = new Error("steering submission was cancelled");
+        item.rejectApplied(error);
+        item.rejectResult(error);
+      }
       return cancelled.map((item) => item.text);
     },
     interruptTurn: vi.fn(() => {

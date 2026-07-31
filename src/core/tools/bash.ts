@@ -413,7 +413,7 @@ export function createBashToolDefinition(backend: ToolExecutionBackend, cwd: str
       const headerTarget = getBashDisplayTarget(toolCall.arguments);
 
       const blocked = (reason: string): ToolImplementationOutcome => {
-        const outcome = createTextToolOutcome(reason, true);
+        const outcome = createTextToolOutcome(reason, "blocked");
         const uiEvent: ToolUiEvent = {
           type: "bash_blocked",
           toolCallId: toolCall.id,
@@ -421,7 +421,7 @@ export function createBashToolDefinition(backend: ToolExecutionBackend, cwd: str
           headerTarget,
           reason,
         };
-        return { content: outcome.content, isError: outcome.isError, uiEvent };
+        return { content: outcome.content, outcome: outcome.outcome, uiEvent };
       };
 
       if (!parsedArgs.ok) {
@@ -445,6 +445,8 @@ export function createBashToolDefinition(backend: ToolExecutionBackend, cwd: str
               output,
               exitCode,
               truncated: captureTruncated,
+              aborted,
+              timedOut,
             } = await backend.runBash(command, {
               signal,
               timeoutMs: timeout ?? BASH_DEFAULT_TIMEOUT_MS,
@@ -473,7 +475,10 @@ export function createBashToolDefinition(backend: ToolExecutionBackend, cwd: str
               fullText: toolText,
             });
 
-            const outcome = createTextToolOutcome(toolText, isError);
+            const outcome = createTextToolOutcome(
+              toolText,
+              aborted || timedOut ? "cancelled" : isError ? "failed" : "succeeded",
+            );
             const uiEvent: ToolUiEvent = {
               type: "bash_execution",
               toolCallId: toolCall.id,
@@ -484,10 +489,10 @@ export function createBashToolDefinition(backend: ToolExecutionBackend, cwd: str
               uiText,
               durationMs,
             };
-            return { content: outcome.content, isError: outcome.isError, uiEvent };
+            return { content: outcome.content, outcome: outcome.outcome, uiEvent };
           } catch (e) {
             const msg = `Bash tool execution failed: ${e instanceof Error ? e.message : String(e)}`;
-            const outcome = createTextToolOutcome(msg, true);
+            const outcome = createTextToolOutcome(msg, "failed");
             const uiEvent: ToolUiEvent = {
               type: "bash_blocked",
               command: commandForDisplay,
@@ -495,7 +500,7 @@ export function createBashToolDefinition(backend: ToolExecutionBackend, cwd: str
               reason: msg,
               toolCallId: toolCall.id,
             };
-            return { content: outcome.content, isError: outcome.isError, uiEvent };
+            return { content: outcome.content, outcome: outcome.outcome, uiEvent };
           }
         },
         {

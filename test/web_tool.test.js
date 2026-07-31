@@ -262,7 +262,7 @@ describe("Exa web code-mode tool", () => {
       type: "code_mode_started",
       toolName: "web",
     });
-    expect(result.toolResult.isError).toBe(false);
+    expect(result.toolResult.outcome).toBe("succeeded");
     expect(getToolText(result)).toContain("undefined undefined undefined undefined");
     expect(getToolText(result)).toContain("escape blocked");
     expect(getToolText(result)).not.toContain("ignored");
@@ -310,7 +310,7 @@ describe("Exa web code-mode tool", () => {
       ].join("\n"),
     });
 
-    expect(result.toolResult.isError).toBe(false);
+    expect(result.toolResult.outcome).toBe("succeeded");
     expect(client.search).toHaveBeenCalledWith(
       "tau",
       {
@@ -350,7 +350,7 @@ describe("Exa web code-mode tool", () => {
       const tool = createWebTool(backend);
       const { result } = await runTool(tool, { code: "await web.search('tau')" });
 
-      expect(result.toolResult.isError).toBe(false);
+      expect(result.toolResult.outcome).toBe("succeeded");
       expect(fetchMock).toHaveBeenCalledWith(
         "https://api.exa.ai/search",
         expect.objectContaining({
@@ -385,7 +385,7 @@ describe("Exa web code-mode tool", () => {
       const tool = createWebTool(backend);
       const { result } = await runTool(tool, { code: "await web.search('tau')" });
 
-      expect(result.toolResult.isError).toBe(true);
+      expect(result.toolResult.outcome).toBe("failed");
       expect(getToolText(result)).toContain("Exa response exceeded the 16 MiB limit");
     } finally {
       fetchMock.mockRestore();
@@ -397,7 +397,7 @@ describe("Exa web code-mode tool", () => {
     const tool = createWebTool(backend, createDeps({ search: vi.fn(async () => ({})) }));
     const { result } = await runTool(tool, { code: "await web.search('tau')" });
 
-    expect(result.toolResult.isError).toBe(true);
+    expect(result.toolResult.outcome).toBe("failed");
     expect(getToolText(result)).toContain("Invalid Exa response");
   });
 
@@ -414,7 +414,7 @@ describe("Exa web code-mode tool", () => {
       ].join("\n"),
     });
 
-    expect(result.toolResult.isError).toBe(false);
+    expect(result.toolResult.outcome).toBe("succeeded");
     expect(getToolText(result)).toContain("true");
     expect(getToolText(result)).toContain("guidance=true");
     expect(getToolText(result)).toContain("https://example.com/docs.md");
@@ -433,12 +433,12 @@ describe("Exa web code-mode tool", () => {
     const unsupported = await runTool(unsupportedTool, {
       code: "await web.search('tau', { stream: true })",
     });
-    expect(unsupported.result.toolResult.isError).toBe(true);
+    expect(unsupported.result.toolResult.outcome).toBe("failed");
     expect(getToolText(unsupported.result)).toContain('Unrecognized key: "stream"');
 
     const missingKeyTool = createWebTool(backend, deps, {});
     const missingKey = await runTool(missingKeyTool, { code: "await web.search('tau')" });
-    expect(missingKey.result.toolResult.isError).toBe(true);
+    expect(missingKey.result.toolResult.outcome).toBe("failed");
     expect(getToolText(missingKey.result)).toContain("Missing Exa API key.");
   });
 
@@ -462,7 +462,7 @@ describe("Exa web code-mode tool", () => {
       ].join("\n"),
     });
 
-    expect(result.toolResult.isError).toBe(false);
+    expect(result.toolResult.outcome).toBe("succeeded");
     expect(getToolText(result)).toContain("Invalid web.search options");
     expect(getToolText(result)).toContain("Invalid web.fetch urls");
     expect(getToolText(result)).toContain("maxCharacters");
@@ -483,7 +483,7 @@ describe("Exa web code-mode tool", () => {
       objective: "legacy shape",
     });
 
-    expect(result.toolResult.isError).toBe(true);
+    expect(result.toolResult.outcome).toBe("blocked");
     expect(getToolText(result)).toContain("Invalid arguments");
     expect(deps.createExaClient).not.toHaveBeenCalled();
   });
@@ -496,7 +496,7 @@ describe("Exa web code-mode tool", () => {
     setTimeout(() => controller.abort(), 20);
 
     const { result } = await run;
-    expect(result.toolResult.isError).toBe(true);
+    expect(result.toolResult.outcome).toBe("cancelled");
     expect(getToolText(result)).toContain("(tau) aborted");
     expect(result.uiEvent.uiText.previewLines).toContainEqual({ text: "(tau) aborted" });
   });
@@ -560,7 +560,7 @@ describe("Exa web code-mode tool", () => {
     const { result } = await runTool(tool, { code: "await web.search('tau')" });
 
     expect(providerSettled).toBe(true);
-    expect(result.toolResult.isError).toBe(true);
+    expect(result.toolResult.outcome).toBe("cancelled");
     expect(getToolText(result)).toContain("(tau) timed out after 1000ms");
     expect(result.uiEvent.uiText.previewLines).toContainEqual({
       text: "(tau) timed out after 1000ms",

@@ -50,7 +50,7 @@ type SessionProtocolLiveSessionState = {
   activeSubmit?: SessionProtocolActiveSubmit;
   revision: number;
   pendingSteeringSubmits: Array<SessionProtocolPendingRequest<"session.steer">>;
-  pendingQueuedSubmits: Array<SessionProtocolPendingRequest<"session.queue">>;
+  pendingQueuedSubmits: SessionProtocolPendingUserMessageRequest[];
   listeners: Set<(message: SessionProtocolPendingUserMessagesMessage) => void>;
 };
 
@@ -469,14 +469,27 @@ export class SessionProtocolHandler {
     }
 
     const action = await this.enqueueMutation(state, () => {
-      if (!state.live.activeSubmit && !state.session.isTurnRunning) {
-        return { type: "submit" as const, started: this.startUserMessageTurn(state, request) };
+      if (state.session.isTurnRunning) {
+        const pending = { id: randomUUID(), handler: this, request };
+        state.live.pendingSteeringSubmits.push(pending);
+        publishPendingUserMessages(state.session, state.live);
+        return {
+          type: "steer" as const,
+          pending,
+          submission: state.session.steer(request.params.text),
+        };
       }
-      const pending = { id: randomUUID(), handler: this, request };
-      state.live.pendingSteeringSubmits.push(pending);
-      publishPendingUserMessages(state.session, state.live);
-      return { type: "steer" as const, pending };
+      if (state.live.activeSubmit) {
+        state.live.pendingQueuedSubmits.push({ id: randomUUID(), handler: this, request });
+        publishPendingUserMessages(state.session, state.live);
+        return { type: "queued" as const };
+      }
+      return { type: "submit" as const, started: this.startUserMessageTurn(state, request) };
     });
+
+    if (action.type === "queued") {
+      return;
+    }
 
     if (action.type === "submit") {
       const started = await action.started;
@@ -494,11 +507,20 @@ export class SessionProtocolHandler {
       return;
     }
 
+    let applied = false;
+    void action.submission.result.catch(() => {});
     try {
-      const result = await state.session.steer(request.params.text);
+      await action.submission.applied;
+      applied = true;
+      await this.enqueueMutation(state, () => {
+        const index = state.live.pendingSteeringSubmits.indexOf(action.pending);
+        if (index >= 0) state.live.pendingSteeringSubmits.splice(index, 1);
+        publishPendingUserMessages(state.session, state.live);
+      });
+      const result = await action.submission.result;
       this.sendMessage(createSessionProtocolSuccessResponse(request.id, "session.steer", result));
     } catch (error) {
-      if (state.live.pendingSteeringSubmits.includes(action.pending)) {
+      if (applied || state.live.pendingSteeringSubmits.includes(action.pending)) {
         this.sendMessage(
           createSessionProtocolErrorResponse(
             request.id,
@@ -511,8 +533,10 @@ export class SessionProtocolHandler {
     } finally {
       await this.enqueueMutation(state, () => {
         const index = state.live.pendingSteeringSubmits.indexOf(action.pending);
-        if (index >= 0) state.live.pendingSteeringSubmits.splice(index, 1);
-        publishPendingUserMessages(state.session, state.live);
+        if (index >= 0) {
+          state.live.pendingSteeringSubmits.splice(index, 1);
+          publishPendingUserMessages(state.session, state.live);
+        }
       });
     }
   }

@@ -22,6 +22,7 @@ export type CodeModeToolImplementation<TArgs> = {
   outputPolicy: BashOutputPolicy;
   timeoutMs?: number;
   parseArguments(raw: unknown): ParsedCodeModeArguments<TArgs>;
+  getBlockedReason?(args: TArgs): string | undefined;
   execute(input: {
     args: TArgs;
     code: string;
@@ -82,8 +83,11 @@ export function createCodeModeToolDefinition<TArgs>(
       const parsed = implementation.parseArguments(toolCall.arguments);
       const headerTarget = parsed.displayTarget;
 
-      const blocked = (reason: string): ToolImplementationOutcome => {
-        const outcome = createTextToolOutcome(reason, true);
+      const blocked = (
+        reason: string,
+        semanticOutcome: ToolExecutionOutcome["outcome"] = "blocked",
+      ): ToolImplementationOutcome => {
+        const outcome = createTextToolOutcome(reason, semanticOutcome);
         const uiEvent: ToolUiEvent = {
           type: "code_mode_blocked",
           toolCallId: toolCall.id,
@@ -92,11 +96,15 @@ export function createCodeModeToolDefinition<TArgs>(
           headerTarget,
           reason,
         };
-        return { content: outcome.content, isError: outcome.isError, uiEvent };
+        return { content: outcome.content, outcome: outcome.outcome, uiEvent };
       };
 
       if (!parsed.ok) {
         return executeTool(context, () => blocked(`Invalid arguments: ${parsed.error}`));
+      }
+      const blockedReason = implementation.getBlockedReason?.(parsed.args);
+      if (blockedReason) {
+        return executeTool(context, () => blocked(blockedReason));
       }
 
       return executeTool(
@@ -127,13 +135,19 @@ export function createCodeModeToolDefinition<TArgs>(
               terminationNote !== undefined,
             );
             const isError = execution.exitCode === null || execution.exitCode !== 0;
+            const semanticOutcome =
+              execution.aborted || execution.timedOut
+                ? "cancelled"
+                : isError
+                  ? "failed"
+                  : "succeeded";
             const uiText = buildBashUiText({
               truncationInfo,
               exitCode: execution.exitCode,
               durationMs,
               fullText: toolText,
             });
-            const outcome = createTextToolOutcome(toolText, isError);
+            const outcome = createTextToolOutcome(toolText, semanticOutcome);
             const uiEvent: ToolUiEvent = {
               type: "code_mode_finished",
               toolCallId: toolCall.id,
@@ -143,9 +157,9 @@ export function createCodeModeToolDefinition<TArgs>(
               status: isError ? "error" : "success",
               uiText,
             };
-            return { content: outcome.content, isError: outcome.isError, uiEvent };
+            return { content: outcome.content, outcome: outcome.outcome, uiEvent };
           } catch (error) {
-            return blocked(error instanceof Error ? error.message : String(error));
+            return blocked(error instanceof Error ? error.message : String(error), "failed");
           }
         },
         {

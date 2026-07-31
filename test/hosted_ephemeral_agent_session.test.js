@@ -80,7 +80,7 @@ describe("HostedEphemeralAgentSession", () => {
     const source = await session.getOrCreateThread("source");
     expect(source.runtime).toBeInstanceOf(AgentRuntime);
     const sourceResponses = [createAssistant("first"), createAssistant("continued")];
-    source.runtime.modelRuntime.streamModel = vi.fn(() => createStream(sourceResponses.shift()));
+    source.runtime.spec.model.stream = vi.fn(() => createStream(sourceResponses.shift()));
 
     await expect(
       session.submitThreadMessage({
@@ -101,7 +101,7 @@ describe("HostedEphemeralAgentSession", () => {
     expect(fork.runtime).toBeInstanceOf(AgentRuntime);
     expect(fork.runtime.agentIdValue).not.toBe(source.runtime.agentIdValue);
     expect(fork.runtime.rawHistory).toEqual(source.runtime.rawHistory);
-    fork.runtime.modelRuntime.streamModel = vi.fn(() => createStream(createAssistant("forked")));
+    fork.runtime.spec.model.stream = vi.fn(() => createStream(createAssistant("forked")));
     await expect(
       session.submitThreadMessage({
         contextId: "ephemeral-1",

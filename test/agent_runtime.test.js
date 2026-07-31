@@ -68,15 +68,36 @@ function createRuntime(options = {}) {
   const tools = new ToolRegistry(options.tools ?? []);
   const events = [];
   const eventSink = options.eventSink ?? (async (event) => events.push(event));
+  const autoCompact = options.config?.autoCompact ?? { enabled: false };
   const spec = createAgentSpec({
-    persona,
+    model: {
+      model: persona.model,
+      stream: () => {
+        throw new Error("model stream was not configured");
+      },
+      noteProviderError: async () => {},
+      cleanupSession: () => {},
+    },
+    attribution: {
+      personaId: persona.id,
+      reasoningEffort: persona.settings.reasoning ?? "none",
+    },
     systemPrompt: options.systemPrompt ?? "system",
     tools,
-    config: options.config ?? { autoCompact: { enabled: false } },
+    streamOptions: { reasoning: persona.settings.reasoning },
+    compactionPolicy: {
+      enabled: autoCompact.enabled ?? true,
+      reserveTokens: autoCompact.reserveTokens ?? 16_384,
+      keepRecentTokens: autoCompact.keepRecentTokens ?? 20_000,
+    },
   });
   if (options.retryPolicy) spec.retryPolicy = options.retryPolicy;
   if (options.maxModelSubturns) spec.maxModelSubturns = options.maxModelSubturns;
-  const runtime = new AgentRuntime({ spec, eventSink });
+  const runtime = new AgentRuntime({
+    spec,
+    eventSink,
+    ...(options.getCompactionContext ? { getCompactionContext: options.getCompactionContext } : {}),
+  });
   return { runtime, events, persona, spec };
 }
 
@@ -86,8 +107,8 @@ function setStreams(runtime, streams) {
     if (!stream) throw new Error("unexpected model call");
     return stream;
   });
-  runtime.modelRuntime.streamModel = streamModel;
-  runtime.modelRuntime.noteProviderError = vi.fn(async () => {});
+  runtime.spec.model.stream = streamModel;
+  runtime.spec.model.noteProviderError = vi.fn(async () => {});
   return streamModel;
 }
 
@@ -216,11 +237,11 @@ describe("AgentRuntime", () => {
       createTool("first_tool", async () => {
         markFirstStarted();
         await firstGate;
-        return { content: [{ type: "text", text: "first done" }], isError: false };
+        return { content: [{ type: "text", text: "first done" }], outcome: "succeeded" };
       }),
       createTool("second_tool", async () => {
         markSecondStarted();
-        return { content: [{ type: "text", text: "second done" }], isError: false };
+        return { content: [{ type: "text", text: "second done" }], outcome: "succeeded" };
       }),
     ];
     const { runtime, persona, events } = createRuntime({ tools });
@@ -306,6 +327,44 @@ describe("AgentRuntime", () => {
     ]);
   });
 
+  it("keeps rejected tool calls semantically blocked through result commit", async () => {
+    const { runtime, persona, events } = createRuntime();
+    const call = {
+      id: "missing-call",
+      type: "toolCall",
+      name: "missing_tool",
+      arguments: {},
+    };
+    const toolMessage = createAssistant(persona, [call], { stopReason: "toolUse" });
+    setStreams(runtime, [
+      createStream(
+        [
+          { type: "toolcall_start", contentIndex: 0, partial: toolMessage },
+          { type: "toolcall_end", contentIndex: 0, toolCall: call, partial: toolMessage },
+        ],
+        toolMessage,
+      ),
+      createStream([], createAssistant(persona, "continued")),
+    ]);
+
+    await runtime.submit("use missing tool");
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "tool_run_blocked",
+        toolCallId: call.id,
+        toolName: call.name,
+      }),
+    );
+    expect(
+      events.some((event) => event.type === "tool_run_finished" && event.toolCallId === call.id),
+    ).toBe(false);
+    expect(runtime.rawHistory.find((message) => message.role === "toolResult")).toMatchObject({
+      toolCallId: call.id,
+      isError: true,
+    });
+  });
+
   it("applies event-sink backpressure to tool lifecycle and owned activity", async () => {
     let releaseRunStart;
     const runStartGate = new Promise((resolve) => {
@@ -331,7 +390,7 @@ describe("AgentRuntime", () => {
         reason: "activity",
       });
       toolProgressed = true;
-      return { content: [{ type: "text", text: "done" }], isError: false };
+      return { content: [{ type: "text", text: "done" }], outcome: "succeeded" };
     });
     const { runtime, persona } = createRuntime({
       tools: [tool],
@@ -341,7 +400,7 @@ describe("AgentRuntime", () => {
           runStartReachedSink = true;
           await runStartGate;
         }
-        if (event.type === "tool_ui" && event.uiEvent.reason === "activity") {
+        if (event.type === "tool_activity" && event.activity.reason === "activity") {
           activityReachedSink = true;
           await activityGate;
         }
@@ -369,7 +428,7 @@ describe("AgentRuntime", () => {
     releaseActivity();
     await turn;
     expect(toolProgressed).toBe(true);
-    expect(events.findIndex((event) => event.type === "tool_ui")).toBeLessThan(
+    expect(events.findIndex((event) => event.type === "tool_activity")).toBeLessThan(
       events.findIndex((event) => event.type === "tool_result"),
     );
   });
@@ -398,7 +457,7 @@ describe("AgentRuntime", () => {
     const call = fauxToolCall("side_effect", {}, { id: "side-effect-1" });
     const execute = vi.fn(async () => ({
       content: [{ type: "text", text: "completed" }],
-      isError: false,
+      outcome: "succeeded",
     }));
     const { runtime, persona, events } = createRuntime({
       tools: [createTool("side_effect", execute)],
@@ -474,6 +533,83 @@ describe("AgentRuntime", () => {
     expect(streamModel).toHaveBeenCalledTimes(2);
   });
 
+  it("injects dynamic supervisor context into automatic compaction", async () => {
+    const model = { ...personas[0].model, contextWindow: 100 };
+    const persona = createPersona({ model });
+    const { runtime } = createRuntime({
+      persona,
+      config: {
+        autoCompact: { enabled: true, reserveTokens: 10, keepRecentTokens: 20 },
+      },
+      getCompactionContext: () =>
+        "<active-subagents>\n- child-1: running repository scan\n</active-subagents>",
+    });
+    const first = createAssistant(persona, "first response", {
+      usage: {
+        input: 89,
+        output: 2,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 91,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+    });
+    const streamModel = setStreams(runtime, [
+      createStream([], first),
+      createStream(
+        [],
+        createAssistant(
+          persona,
+          "summary\n\n<preserved-user-message-ids>\n[]\n</preserved-user-message-ids>",
+        ),
+      ),
+      createStream([], createAssistant(persona, "after compaction")),
+    ]);
+
+    await runtime.submit("first request");
+    await runtime.submit("second request");
+
+    expect(JSON.stringify(streamModel.mock.calls[2][0])).toContain(
+      "<active-subagents>\\n- child-1: running repository scan\\n</active-subagents>",
+    );
+  });
+
+  it("rejects both steering promises when the active event sink fails", async () => {
+    let rejectAssistantFinal = false;
+    const { runtime, persona } = createRuntime({
+      eventSink: async (event) => {
+        if (rejectAssistantFinal && event.type === "assistant_final") {
+          throw new Error("sink failed");
+        }
+      },
+    });
+    let releaseModel;
+    const modelGate = new Promise((resolve) => {
+      releaseModel = resolve;
+    });
+    setStreams(runtime, [
+      {
+        async *[Symbol.asyncIterator]() {
+          await modelGate;
+          yield* [];
+        },
+        async result() {
+          return createAssistant(persona, "first");
+        },
+      },
+    ]);
+
+    const turn = runtime.submit("original");
+    await vi.waitFor(() => expect(runtime.status).toBe("running"));
+    const steering = runtime.steer("change direction");
+    rejectAssistantFinal = true;
+    releaseModel();
+
+    await expect(turn).rejects.toThrow("sink failed");
+    await expect(steering.applied).rejects.toThrow("sink failed");
+    await expect(steering.result).rejects.toThrow("sink failed");
+  });
+
   it("batches steering at a boundary and captures the latest spec for the resulting turn", async () => {
     const call = fauxToolCall("boundary_tool", {}, { id: "boundary-call" });
     let releaseTool;
@@ -487,7 +623,7 @@ describe("AgentRuntime", () => {
     const tool = createTool("boundary_tool", async () => {
       markToolStarted();
       await toolGate;
-      return { content: [{ type: "text", text: "done" }], isError: false };
+      return { content: [{ type: "text", text: "done" }], outcome: "succeeded" };
     });
     const firstPersona = createPersona({ id: "first-persona" });
     const secondPersona = createPersona({
@@ -498,38 +634,44 @@ describe("AgentRuntime", () => {
     const { runtime, events } = createRuntime({ persona: firstPersona, tools: [tool] });
     const toolMessage = createAssistant(firstPersona, [call], { stopReason: "toolUse" });
     const models = [];
-    runtime.modelRuntime.streamModel = (model) => {
-      models.push(model.id);
-      return models.length === 1
-        ? createStream(
-            [
-              { type: "toolcall_start", contentIndex: 0, partial: toolMessage },
-              { type: "toolcall_end", contentIndex: 0, toolCall: call, partial: toolMessage },
-            ],
-            toolMessage,
-          )
-        : createStream([], createAssistant(secondPersona, "steered"));
+    runtime.spec.model.stream = () => {
+      models.push(firstPersona.model.id);
+      return createStream(
+        [
+          { type: "toolcall_start", contentIndex: 0, partial: toolMessage },
+          { type: "toolcall_end", contentIndex: 0, toolCall: call, partial: toolMessage },
+        ],
+        toolMessage,
+      );
     };
-    runtime.modelRuntime.noteProviderError = vi.fn(async () => {});
 
     const firstTurn = runtime.submit("original");
     await toolStarted;
     const steerOne = runtime.steer("change direction");
     const steerTwo = runtime.steer("also inspect docs");
-    runtime.updateSpec(
-      createAgentSpec({
-        persona: secondPersona,
-        systemPrompt: "new system",
-        tools: new ToolRegistry([tool]),
-        config: { autoCompact: { enabled: false } },
-      }),
-    );
+    const secondSpec = {
+      ...runtime.spec,
+      model: { ...runtime.spec.model, model: secondPersona.model },
+      attribution: { personaId: secondPersona.id, reasoningEffort: "high" },
+      systemPrompt: "new system",
+      tools: new ToolRegistry([tool]),
+    };
+    secondSpec.model.stream = () => {
+      models.push(secondPersona.model.id);
+      return createStream([], createAssistant(secondPersona, "steered"));
+    };
+    runtime.updateSpec(secondSpec);
     releaseTool();
 
-    await firstTurn;
-    const [firstAssociation, secondAssociation] = await Promise.all([steerOne, steerTwo]);
+    const initialResult = await firstTurn;
+    const [firstAssociation, secondAssociation] = await Promise.all([
+      steerOne.result,
+      steerTwo.result,
+    ]);
 
     expect(firstAssociation).toEqual(secondAssociation);
+    expect(initialResult.finalMessage).toBe(toolMessage);
+    expect(firstAssociation.result.finalMessage.content[0].text).toBe("steered");
     expect(models).toEqual([firstPersona.model.id, secondPersona.model.id]);
     const steeringMessage = runtime.rawHistoryEntriesSnapshot.find(
       (entry) => entry.id === firstAssociation.historyEntryId,
@@ -566,7 +708,8 @@ describe("AgentRuntime", () => {
     await vi.waitFor(() => expect(runtime.status).toBe("running"));
     const steering = runtime.steer("cancel me");
     expect(runtime.cancelSteering()).toEqual(["cancel me"]);
-    await expect(steering).rejects.toThrow("steering submission was cancelled");
+    await expect(steering.applied).rejects.toThrow("steering submission was cancelled");
+    await expect(steering.result).rejects.toThrow("steering submission was cancelled");
     releaseModel();
     await turn;
 
@@ -578,7 +721,7 @@ describe("AgentRuntime", () => {
 
   it("interrupts active model streaming", async () => {
     const { runtime, persona } = createRuntime();
-    runtime.modelRuntime.streamModel = vi.fn((_model, _context, options) => ({
+    runtime.spec.model.stream = vi.fn((_context, options) => ({
       async *[Symbol.asyncIterator]() {
         await new Promise((resolve) =>
           options.signal.addEventListener("abort", resolve, { once: true }),
@@ -592,7 +735,7 @@ describe("AgentRuntime", () => {
     const turn = runtime.submit("wait");
     await vi.waitFor(() => expect(runtime.status).toBe("running"));
     expect(runtime.interrupt()).toBe(true);
-    await expect(turn).resolves.toEqual({ aborted: true });
+    await expect(turn).resolves.toMatchObject({ aborted: true });
   });
 
   it("interrupts active tool execution through the narrow execution-local context", async () => {
@@ -613,7 +756,7 @@ describe("AgentRuntime", () => {
             () =>
               resolve({
                 content: [{ type: "text", text: "cancelled" }],
-                isError: true,
+                outcome: "failed",
               }),
             { once: true },
           );
@@ -645,7 +788,7 @@ describe("AgentRuntime", () => {
       events.find((event) => event.type === "assistant_start").historyEntryId,
     );
     expect(runtime.interrupt()).toBe(true);
-    await expect(turn).resolves.toEqual({ aborted: true });
+    await expect(turn).resolves.toMatchObject({ aborted: true });
 
     expect(runtime.status).toBe("idle");
     expect(events.findLast((event) => event.type === "turn_finished")).toMatchObject({

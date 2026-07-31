@@ -12,6 +12,7 @@ function createPersona(overrides = {}) {
     systemPrompt: "main system prompt",
     settings: {},
     source: "project",
+    tools: personas[0].tools,
     subagents: {
       default: {},
       researcher: {
@@ -67,6 +68,15 @@ describe("ChatRuntime", () => {
     expect(runtime.promptComposition.subagentPrompts.default).toContain("<inherited-instructions>");
   });
 
+  it("keeps configured Nook alongside the persona's enabled tools", () => {
+    const runtime = createRuntime({
+      persona: createPersona({ tools: ["bash"] }),
+      config: { nook: { domain: "nook.example.com" } },
+    });
+
+    expect(runtime.agent.spec.tools.schemas.map((tool) => tool.name)).toEqual(["bash", "nook"]);
+  });
+
   it("uses an explicit initial prompt composition without recomposing it", () => {
     const initialPromptComposition = {
       environmentTag: "<environment><datetime>persisted</datetime></environment>",
@@ -115,7 +125,7 @@ describe("ChatRuntime", () => {
     });
 
     runtime.setReasoning("high");
-    expect(runtime.agent.spec.persona.settings.reasoning).toBe("high");
+    expect(runtime.agent.spec.attribution.reasoningEffort).toBe("high");
     runtime.setRuntimeConfig({ autoCompact: { enabled: false } }, resolveModel);
     expect(runtime.agent.spec.compactionPolicy.enabled).toBe(false);
     runtime.setPersona(nextPersona);

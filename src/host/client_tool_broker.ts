@@ -131,9 +131,9 @@ export class ClientToolBroker {
     }
 
     if (result.ok) {
-      this.complete(callId, createTextToolOutcome(result.content, false));
+      this.complete(callId, createTextToolOutcome(result.content, "succeeded"));
     } else {
-      this.complete(callId, createTextToolOutcome(result.error, true));
+      this.complete(callId, createTextToolOutcome(result.error, "failed"));
     }
     return true;
   }
@@ -150,7 +150,7 @@ export class ClientToolBroker {
       return Promise.resolve(
         createTextToolOutcome(
           `Client tool '${options.tool.name}' is unavailable because its owning client detached.`,
-          true,
+          "blocked",
         ),
       );
     }
@@ -166,6 +166,8 @@ export class ClientToolBroker {
           this.fail(
             callId,
             `Client tool '${options.tool.name}' is unavailable because its owning client did not acknowledge the tool call within ${DEFAULT_ACK_TIMEOUT_MS}ms.`,
+            "timeout",
+            "blocked",
           );
         }, DEFAULT_ACK_TIMEOUT_MS),
         executionTimer: setTimeout(() => {
@@ -262,6 +264,7 @@ export class ClientToolBroker {
     callId: string,
     message: string,
     reason: SessionProtocolClientToolCancelMessage["reason"] = "timeout",
+    outcome: ToolExecutionOutcome["outcome"] = "cancelled",
   ): void {
     const pending = this.pendingCalls.get(callId);
     if (!pending || pending.settled) {
@@ -276,7 +279,7 @@ export class ClientToolBroker {
       callId,
       reason,
     });
-    this.complete(callId, createTextToolOutcome(message, true));
+    this.complete(callId, createTextToolOutcome(message, outcome));
   }
 
   private complete(callId: string, result: ToolExecutionOutcome): void {
@@ -303,8 +306,11 @@ function createClientToolFinishedUiEvent(
     toolCallId: toolCall.id,
     toolName: toolCall.name,
     headerTarget: toolCall.name,
-    status: outcome.isError ? "error" : "success",
-    uiText: createClientToolUiText(extractToolOutcomeText(outcome), outcome.isError),
+    status: outcome.outcome === "succeeded" ? "success" : "error",
+    uiText: createClientToolUiText(
+      extractToolOutcomeText(outcome),
+      outcome.outcome !== "succeeded",
+    ),
   };
 }
 
@@ -374,7 +380,7 @@ function createClientToolDefinition(
         const toolResult = await broker.dispatch({ sessionId, clientId, tool, toolCall, signal });
         return {
           content: toolResult.content,
-          isError: toolResult.isError ?? false,
+          outcome: toolResult.outcome,
           uiEvent: createClientToolFinishedUiEvent(toolCall, toolResult),
         };
       });

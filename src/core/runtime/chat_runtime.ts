@@ -8,6 +8,7 @@ import {
   type HistoryEntry,
   type RewindCandidate,
   type RewindResult,
+  type SteeringSubmission,
 } from "../agent/agent_runtime.js";
 import type { AgentEventSink } from "../agent/events.js";
 import type { Config } from "../config/index.js";
@@ -20,7 +21,8 @@ import { ToolRegistry } from "../tools/registry.js";
 import type { ResolveSubagentRuntime } from "../tools/spawn_agent.js";
 import type { Persona, ReasoningEffort } from "../types.js";
 import type { UsageRecorder } from "../usage/logs.js";
-import type { CoreDeps } from "./deps.js";
+import { type ResolvedAgentModel, resolveAgentModel } from "./agent_model.js";
+import { type CoreDeps, createDefaultCoreDeps } from "./deps.js";
 import { composeSessionPrompts, type SessionPromptComposition } from "./session_prompt_composer.js";
 
 export type ChatRuntimePromptContext = {
@@ -61,6 +63,8 @@ export class ChatRuntime {
   private promptContext: ChatRuntimePromptContext;
   private readonly environment: ChatRuntimeEnvironment;
   private readonly backend: ToolExecutionBackend;
+  private readonly deps: CoreDeps;
+  private resolvedModel: ResolvedAgentModel;
   private readonly clientTools?: CreateChatRuntimeOptions["clientTools"];
   private readonly resolveSubagentRuntime?: ResolveSubagentRuntime;
   private latestPromptComposition: SessionPromptComposition;
@@ -88,24 +92,26 @@ export class ChatRuntime {
     this.promptContext = { ...options.promptContext };
     this.environment = options.environment;
     this.backend = options.backend;
+    this.deps = options.deps ?? createDefaultCoreDeps();
+    this.resolvedModel = resolveAgentModel(this.currentPersona, this.currentConfig, this.deps);
     this.clientTools = options.clientTools;
     this.resolveSubagentRuntime = options.resolveSubagentRuntime;
     this.latestPromptComposition = composition;
     this.supervisor = new AgentSupervisor({
       onEvent: options.subagentEventSink,
       ...(options.recordUsage ? { recordUsage: options.recordUsage } : {}),
-      ...(options.deps ? { deps: options.deps } : {}),
+      deps: this.deps,
     });
     const tools = this.buildToolRegistry(composition);
     this.agent = new AgentRuntime({
       spec: createAgentSpec({
-        persona: this.currentPersona,
+        ...this.resolvedModel,
         systemPrompt: composition.baseSystemPrompt,
         tools,
-        config: this.currentConfig,
       }),
       eventSink: options.eventSink,
-      ...(options.deps ? { deps: options.deps } : {}),
+      getCompactionContext: () => this.supervisor.getActiveCompactionContext(),
+      deps: this.deps,
     });
   }
 
@@ -157,7 +163,7 @@ export class ChatRuntime {
     return this.agent.runTurn();
   }
 
-  steer(text: string): Promise<{ turnId: string; historyEntryId: string }> {
+  steer(text: string): SteeringSubmission {
     return this.agent.steer(text);
   }
 
@@ -231,6 +237,7 @@ export class ChatRuntime {
   setRuntimeConfig(config: Config, modelResolver: ModelResolver): void {
     this.currentConfig = config;
     this.currentModelResolver = modelResolver;
+    this.resolvedModel = resolveAgentModel(this.currentPersona, this.currentConfig, this.deps);
     this.refreshSpec();
   }
 
@@ -239,11 +246,13 @@ export class ChatRuntime {
       ...this.currentPersona,
       settings: { ...this.currentPersona.settings, reasoning },
     };
+    this.resolvedModel = resolveAgentModel(this.currentPersona, this.currentConfig, this.deps);
     this.refreshSpec();
   }
 
   setPersona(persona: Persona, options?: { skillsBlock?: string }): void {
     this.currentPersona = structuredClone(persona);
+    this.resolvedModel = resolveAgentModel(this.currentPersona, this.currentConfig, this.deps);
     this.rebuildSystemPrompts(options);
   }
 
@@ -261,10 +270,9 @@ export class ChatRuntime {
   private refreshSpec(): void {
     this.agent.updateSpec(
       createAgentSpec({
-        persona: this.currentPersona,
+        ...this.resolvedModel,
         systemPrompt: this.latestPromptComposition.baseSystemPrompt,
         tools: this.buildToolRegistry(this.latestPromptComposition),
-        config: this.currentConfig,
       }),
     );
   }

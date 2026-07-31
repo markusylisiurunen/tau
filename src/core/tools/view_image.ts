@@ -250,8 +250,11 @@ export function createViewImageToolDefinition(backend: ToolExecutionBackend): Ag
         const path = parsedArgs.ok ? parsedArgs.data.path : "";
         const headerTarget = getViewImageDisplayTarget(toolCall.arguments);
 
-        const blocked = (reason: string): ToolImplementationOutcome => {
-          const outcome = createTextToolOutcome(reason, true);
+        const blocked = (
+          reason: string,
+          semanticOutcome: ToolExecutionOutcome["outcome"] = "blocked",
+        ): ToolImplementationOutcome => {
+          const outcome = createTextToolOutcome(reason, semanticOutcome);
           const uiEvent: ToolUiEvent = {
             type: "view_image_blocked",
             toolCallId: toolCall.id,
@@ -259,7 +262,7 @@ export function createViewImageToolDefinition(backend: ToolExecutionBackend): Ag
             headerTarget,
             reason,
           };
-          return { content: outcome.content, isError: outcome.isError, uiEvent };
+          return { content: outcome.content, outcome: outcome.outcome, uiEvent };
         };
 
         if (!parsedArgs.ok) {
@@ -287,7 +290,7 @@ export function createViewImageToolDefinition(backend: ToolExecutionBackend): Ag
               { type: "text", text: resultText },
               { type: "image", data, mimeType: encodedImage.mimeType },
             ],
-            isError: false,
+            outcome: "succeeded",
           };
 
           const uiText = buildViewImageUiText({
@@ -304,10 +307,10 @@ export function createViewImageToolDefinition(backend: ToolExecutionBackend): Ag
             uiText,
           };
 
-          return { content: outcome.content, isError: outcome.isError, uiEvent };
+          return { content: outcome.content, outcome: outcome.outcome, uiEvent };
         } catch (e) {
           const errorMessage = e instanceof Error ? e.message : String(e);
-          return blocked(`Tool view_image failed: ${errorMessage}`);
+          return blocked(`Tool view_image failed: ${errorMessage}`, "failed");
         }
       });
     },

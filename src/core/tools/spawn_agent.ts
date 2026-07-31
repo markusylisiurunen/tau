@@ -148,7 +148,7 @@ export function createSpawnAgentToolDefinition(options: {
       const headerTarget = getSpawnAgentDisplayTarget(toolCall.arguments);
 
       const blocked = (reason: string, details?: { name?: string; title?: string }) => {
-        const outcome = createTextToolOutcome(reason, true);
+        const outcome = createTextToolOutcome(reason, "blocked");
         const uiEvent: ToolUiEvent = {
           type: "spawn_agent_blocked",
           toolCallId: toolCall.id,
@@ -159,7 +159,7 @@ export function createSpawnAgentToolDefinition(options: {
         };
         return {
           content: outcome.content,
-          isError: outcome.isError,
+          outcome: outcome.outcome,
           uiEvent,
         } satisfies ToolImplementationOutcome;
       };
@@ -296,7 +296,7 @@ export function createSpawnAgentToolDefinition(options: {
         async (): Promise<ToolImplementationOutcome> => {
           if (signal?.aborted) {
             const reason = "Aborted.";
-            const outcome = createTextToolOutcome(reason, true);
+            const outcome = createTextToolOutcome(reason, "cancelled");
             const uiText = buildSubagentUiText({
               output: reason,
               statusText: [...statusPrefixParts, reason].join(" · "),
@@ -313,7 +313,7 @@ export function createSpawnAgentToolDefinition(options: {
               message: reason,
               uiText,
             };
-            return { content: outcome.content, isError: outcome.isError, uiEvent };
+            return { content: outcome.content, outcome: outcome.outcome, uiEvent };
           }
 
           const spawnResult = supervisor.spawn({
@@ -328,7 +328,7 @@ export function createSpawnAgentToolDefinition(options: {
           });
 
           if (!spawnResult.ok) {
-            const outcome = createTextToolOutcome(spawnResult.reason, true);
+            const outcome = createTextToolOutcome(spawnResult.reason, "blocked");
             const uiEvent: ToolUiEvent = {
               type: "spawn_agent_blocked",
               toolCallId: toolCall.id,
@@ -337,7 +337,7 @@ export function createSpawnAgentToolDefinition(options: {
               headerTarget,
               reason: spawnResult.reason,
             };
-            return { content: outcome.content, isError: outcome.isError, uiEvent };
+            return { content: outcome.content, outcome: outcome.outcome, uiEvent };
           }
 
           const resultText = formatSpawnToolResult({
@@ -348,7 +348,7 @@ export function createSpawnAgentToolDefinition(options: {
           });
 
           const statusParts = [...statusPrefixParts, spawnResult.id];
-          const outcome = createTextToolOutcome(resultText, false);
+          const outcome = createTextToolOutcome(resultText, "succeeded");
           const uiText = buildSubagentUiText({
             output: prompt,
             statusText: statusParts.join(" · "),
@@ -365,7 +365,7 @@ export function createSpawnAgentToolDefinition(options: {
             agentId: spawnResult.id,
             uiText,
           };
-          return { content: outcome.content, isError: outcome.isError, uiEvent };
+          return { content: outcome.content, outcome: outcome.outcome, uiEvent };
         },
         {
           type: "spawn_agent_started",

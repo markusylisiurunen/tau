@@ -2652,7 +2652,8 @@ export function applySessionProtocolDelta(
 
   const keyedPatchSnapshot = applyKeyedRecordDelta(snapshot, message);
   if (keyedPatchSnapshot) {
-    return validateAppliedSnapshot(keyedPatchSnapshot);
+    validateAppliedSnapshotChanges(snapshot, keyedPatchSnapshot, message.delta.changes);
+    return keyedPatchSnapshot;
   }
 
   const next = structuredClone(snapshot);
@@ -2726,15 +2727,105 @@ export function applySessionProtocolDelta(
     }
   }
 
-  return validateAppliedSnapshot(next);
+  validateAppliedSnapshotChanges(snapshot, next, message.delta.changes);
+  return next;
 }
 
-function validateAppliedSnapshot(snapshot: SessionProtocolSnapshot): SessionProtocolSnapshot {
+function validateAppliedSnapshotChanges(
+  previous: SessionProtocolSnapshot,
+  snapshot: SessionProtocolSnapshot,
+  changes: readonly SessionProtocolChange[],
+): void {
+  if (!changes.some((change) => changeCanInvalidateSnapshot(previous, change))) {
+    return;
+  }
   const parsed = sessionProtocolSnapshotSchema.safeParse(snapshot);
   if (!parsed.success) {
     throw new Error(`session delta produced an invalid snapshot: ${formatZodError(parsed.error)}`);
   }
-  return snapshot;
+}
+
+function changeCanInvalidateSnapshot(
+  snapshot: SessionProtocolSnapshot,
+  change: SessionProtocolChange,
+): boolean {
+  switch (change.type) {
+    case "lifecycle.set":
+    case "cost.set":
+    case "settings.set":
+    case "agent.set":
+      return false;
+    case "tool.set": {
+      const previous = snapshot.tools[change.tool.id];
+      return !previous || !hasSameToolReferences(previous, change.tool);
+    }
+    case "facet.set": {
+      const previous = snapshot.facets[change.facet.id];
+      return !previous || !hasSameFacetSubject(previous, change.facet);
+    }
+    case "timeline.replace": {
+      const previous = snapshot.timeline.find((item) => item.id === change.item.id);
+      return !previous || !hasSameTimelineReferences(previous, change.item);
+    }
+    case "agent-state.set":
+    case "message.append":
+    case "message.replace":
+    case "message.content.append":
+    case "timeline.append":
+    case "timeline.remove":
+    case "tool.remove":
+    case "agent.remove":
+    case "facet.remove":
+      return true;
+  }
+}
+
+function hasSameToolReferences(
+  previous: SessionProtocolToolRun,
+  tool: SessionProtocolToolRun,
+): boolean {
+  if (
+    previous.id !== tool.id ||
+    previous.toolCallId !== tool.toolCallId ||
+    previous.toolName !== tool.toolName ||
+    previous.facetIds.length !== tool.facetIds.length ||
+    previous.facetIds.some((id, index) => id !== tool.facetIds[index])
+  ) {
+    return false;
+  }
+  if (previous.status === "streaming" || tool.status === "streaming") {
+    return (
+      previous.status === "streaming" &&
+      tool.status === "streaming" &&
+      previous.origin.messageId === tool.origin.messageId &&
+      previous.origin.contentIndex === tool.origin.contentIndex
+    );
+  }
+  return (
+    previous.call.messageId === tool.call.messageId &&
+    previous.call.contentIndex === tool.call.contentIndex &&
+    previous.resultMessageId === tool.resultMessageId
+  );
+}
+
+function hasSameFacetSubject(previous: SessionProtocolFacet, facet: SessionProtocolFacet): boolean {
+  return (
+    previous.id === facet.id &&
+    previous.subject.type === facet.subject.type &&
+    (previous.subject.type === "session" ||
+      (facet.subject.type !== "session" && previous.subject.id === facet.subject.id))
+  );
+}
+
+function hasSameTimelineReferences(
+  previous: SessionProtocolTimelineItem,
+  item: SessionProtocolTimelineItem,
+): boolean {
+  if (previous.type !== item.type) return false;
+  if (previous.type === "message" && item.type === "message") {
+    return previous.messageId === item.messageId;
+  }
+  return true;
 }
 
 function applyKeyedRecordDelta(

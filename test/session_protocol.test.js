@@ -2380,6 +2380,28 @@ describe("session_protocol", () => {
     expect(keyedPatchedSnapshot.tools).not.toBe(keyedSnapshot.tools);
     expect(keyedPatchedSnapshot.facets).not.toBe(keyedSnapshot.facets);
 
+    const invalidToolReferenceDelta = createSessionProtocolDeltaMessage({
+      sessionId: "session-1",
+      fromRevision: 3,
+      toRevision: 4,
+      reason: "tool-run",
+      delta: {
+        type: "snapshot.patch",
+        changes: [
+          {
+            type: "tool.set",
+            tool: {
+              ...keyedSnapshot.tools["tool-1"],
+              call: { messageId: "missing-assistant", contentIndex: 0 },
+            },
+          },
+        ],
+      },
+    });
+    expect(() => applySessionProtocolDelta(keyedSnapshot, invalidToolReferenceDelta)).toThrow(
+      "session delta produced an invalid snapshot",
+    );
+
     expect(() =>
       applySessionProtocolDelta(
         createProtocolSnapshot({

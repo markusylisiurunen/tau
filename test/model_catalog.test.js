@@ -73,49 +73,52 @@ describe("model catalog", () => {
     expect(merged.find((model) => model.id === "tau-only-model")).toBe(tauModel);
   });
 
-  it("loads GPT-5.6 models from pi-ai", () => {
-    const sol = resolveModel("openai", "gpt-5.6-sol");
-    expect(sol).toBeTruthy();
-    expect(sol.provider).toBe("openai");
-    expect(sol.api).toBe("openai-responses");
-    expect(sol.cost).toEqual({
-      input: 5,
-      output: 30,
-      cacheRead: 0.5,
-      cacheWrite: 6.25,
-      tiers: [
-        {
-          inputTokensAbove: 272000,
-          input: 10,
-          output: 45,
-          cacheRead: 1,
-          cacheWrite: 12.5,
-        },
-      ],
-    });
-    expect(sol.contextWindow).toBe(272000);
-    expect(sol.maxTokens).toBe(128000);
+  it("loads GPT-5.6 models with current first-party pricing", () => {
+    const expectedCosts = {
+      "gpt-5.6-luna": {
+        input: 0.2,
+        output: 1.2,
+        cacheRead: 0.02,
+        cacheWrite: 0.25,
+        tiers: [
+          {
+            inputTokensAbove: 272000,
+            input: 0.4,
+            output: 1.8,
+            cacheRead: 0.04,
+            cacheWrite: 0.5,
+          },
+        ],
+      },
+      "gpt-5.6-terra": {
+        input: 2,
+        output: 12,
+        cacheRead: 0.2,
+        cacheWrite: 2.5,
+        tiers: [
+          {
+            inputTokensAbove: 272000,
+            input: 4,
+            output: 18,
+            cacheRead: 0.4,
+            cacheWrite: 5,
+          },
+        ],
+      },
+    };
 
-    const terra = resolveModel("openai-codex", "gpt-5.6-terra");
-    expect(terra).toBeTruthy();
-    expect(terra.provider).toBe("openai-codex");
-    expect(terra.api).toBe("openai-codex-responses");
-    expect(terra.cost).toEqual({
-      input: 2.5,
-      output: 15,
-      cacheRead: 0.25,
-      cacheWrite: 3.125,
-      tiers: [
-        {
-          inputTokensAbove: 272000,
-          input: 5,
-          output: 22.5,
-          cacheRead: 0.5,
-          cacheWrite: 6.25,
-        },
-      ],
+    for (const provider of ["openai", "openai-codex"]) {
+      for (const [modelId, cost] of Object.entries(expectedCosts)) {
+        expect(resolveModel(provider, modelId)?.cost).toEqual(cost);
+      }
+    }
+
+    expect(resolveModel("cloudflare-ai-gateway", "gpt-5.6-luna")?.cost).toEqual({
+      input: 1,
+      output: 6,
+      cacheRead: 0.1,
+      cacheWrite: 0,
     });
-    expect(terra.contextWindow).toBe(372000);
   });
 
   it("overrides GPT-5.6 Codex context windows without changing OpenAI models", () => {
@@ -126,19 +129,69 @@ describe("model catalog", () => {
   });
 
   it("only applies model overrides to the expected pi metadata", () => {
-    const model = {
+    const codexModel = {
       provider: "openai-codex",
       id: "gpt-5.6-sol",
       contextWindow: 272000,
     };
 
-    expect(applyTauModelOverrides(model)).toEqual({ ...model, contextWindow: 372000 });
+    expect(applyTauModelOverrides(codexModel)).toEqual({
+      ...codexModel,
+      contextWindow: 372000,
+    });
 
     for (const unchanged of [
-      { ...model, contextWindow: 372000 },
-      { ...model, contextWindow: 400000 },
-      { ...model, provider: "openai" },
-      { ...model, id: "gpt-5.5" },
+      { ...codexModel, contextWindow: 372000 },
+      { ...codexModel, contextWindow: 400000 },
+      { ...codexModel, provider: "openai" },
+      { ...codexModel, id: "gpt-5.5" },
+    ]) {
+      expect(applyTauModelOverrides(unchanged)).toBe(unchanged);
+    }
+
+    const staleLuna = {
+      provider: "openai",
+      id: "gpt-5.6-luna",
+      cost: {
+        input: 1,
+        output: 6,
+        cacheRead: 0.1,
+        cacheWrite: 1.25,
+        tiers: [
+          {
+            inputTokensAbove: 272000,
+            input: 2,
+            output: 9,
+            cacheRead: 0.2,
+            cacheWrite: 2.5,
+          },
+        ],
+      },
+    };
+    const currentLunaCost = {
+      input: 0.2,
+      output: 1.2,
+      cacheRead: 0.02,
+      cacheWrite: 0.25,
+      tiers: [
+        {
+          inputTokensAbove: 272000,
+          input: 0.4,
+          output: 1.8,
+          cacheRead: 0.04,
+          cacheWrite: 0.5,
+        },
+      ],
+    };
+
+    for (const provider of ["openai", "openai-codex"]) {
+      expect(applyTauModelOverrides({ ...staleLuna, provider }).cost).toEqual(currentLunaCost);
+    }
+
+    for (const unchanged of [
+      { ...staleLuna, provider: "cloudflare-ai-gateway" },
+      { ...staleLuna, cost: currentLunaCost },
+      { ...staleLuna, cost: { ...staleLuna.cost, input: 0.9 } },
     ]) {
       expect(applyTauModelOverrides(unchanged)).toBe(unchanged);
     }

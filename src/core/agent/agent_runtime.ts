@@ -4,7 +4,6 @@ import { isDeepStrictEqual } from "node:util";
 import type {
   Api,
   AssistantMessage,
-  AssistantMessageEventStream,
   Context,
   Message,
   Model,
@@ -14,6 +13,7 @@ import type {
 } from "@earendil-works/pi-ai";
 import type { NormalizedAutoCompactConfig } from "../config/index.js";
 import type { CoreClock } from "../runtime/deps.js";
+import type { ModelExecutor } from "../runtime/model_executor.js";
 import { formatSteeringUserMessage } from "../runtime/steering.js";
 import {
   buildAutoCompactionContinuationMessage,
@@ -84,15 +84,8 @@ export type AgentStateRecovery = {
   }>;
 };
 
-export type AgentModelExecutor = {
-  model: Model<Api>;
-  stream(context: Context, options: TauStreamOptions): AssistantMessageEventStream;
-  noteProviderError(options: { sessionId: string; error?: unknown }): Promise<void>;
-  cleanupSession(sessionId: string): void;
-};
-
 export type AgentSpec = {
-  model: AgentModelExecutor;
+  model: ModelExecutor;
   modelNotice?: string;
   attribution: {
     personaId: string;
@@ -120,15 +113,6 @@ type AgentRuntimeOptions = {
 type AgentCompactionOptions = {
   mode: SessionCompactionMode;
   guidance?: string;
-  signal?: AbortSignal;
-};
-
-export type AgentSampleOptions = {
-  context: Context & { systemPrompt: string };
-  options: {
-    reasoning?: ReasoningEffort;
-    maxTokens?: number;
-  };
   signal?: AbortSignal;
 };
 
@@ -183,7 +167,7 @@ type AgentTurnSpec = {
   turnId: string;
   historyEntryId: string;
   contextEpoch: string;
-  model: AgentModelExecutor;
+  model: ModelExecutor;
   attribution: AgentSpec["attribution"];
   systemPrompt: string;
   tools: ToolRegistry;
@@ -203,7 +187,7 @@ type SubturnRetryBudget = {
 };
 
 export function createAgentSpec(options: {
-  model: AgentModelExecutor;
+  model: ModelExecutor;
   modelNotice?: string;
   attribution: AgentSpec["attribution"];
   systemPrompt: string;
@@ -803,27 +787,6 @@ export class AgentRuntime {
     await this.eventSink(event);
   }
 
-  async sample(input: AgentSampleOptions): Promise<AssistantMessage> {
-    input.signal?.throwIfAborted();
-    const model = this.currentSpec.model;
-    const sampleSessionId = `sample-${randomUUID()}`;
-    const stream = model.stream(structuredClone(input.context), {
-      ...this.currentSpec.streamOptions,
-      ...(input.options.reasoning !== undefined ? { reasoning: input.options.reasoning } : {}),
-      ...(input.options.maxTokens !== undefined ? { maxTokens: input.options.maxTokens } : {}),
-      sessionId: sampleSessionId,
-      ...(input.signal ? { signal: input.signal } : {}),
-    });
-
-    try {
-      const message = await stream.result();
-      input.signal?.throwIfAborted();
-      return message;
-    } finally {
-      model.cleanupSession(sampleSessionId);
-    }
-  }
-
   async compact(options: AgentCompactionOptions): Promise<AgentCompactionResult> {
     this.assertActive();
     if (this.status !== "idle") {
@@ -929,7 +892,7 @@ export class AgentRuntime {
       signal?: AbortSignal;
       streamOptions: Readonly<TauStreamOptions>;
     },
-    model: AgentModelExecutor = this.currentSpec.model,
+    model: ModelExecutor = this.currentSpec.model,
   ): Promise<string> {
     try {
       const stream = model.stream(
@@ -1294,7 +1257,7 @@ export class AgentRuntime {
     return -1;
   }
 
-  private async noteProviderError(model: AgentModelExecutor, message?: string): Promise<void> {
+  private async noteProviderError(model: ModelExecutor, message?: string): Promise<void> {
     try {
       await model.noteProviderError({
         sessionId: this.agentId,

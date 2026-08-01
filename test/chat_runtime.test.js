@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { fauxAssistantMessage } from "@earendil-works/pi-ai";
+import { describe, expect, it, vi } from "vitest";
 import { AgentRuntime, ChatRuntime, createLocalToolExecutionBackend } from "../dist/core/index.js";
 import { resolveModel } from "../dist/core/models/catalog.js";
 import { personas } from "../dist/core/personas.js";
@@ -70,6 +71,52 @@ describe("ChatRuntime", () => {
     });
 
     expect(runtime.agent.spec.tools.schemas.map((tool) => tool.name)).toEqual(["bash", "nook"]);
+  });
+
+  it("samples with the current persona model settings without changing agent state", async () => {
+    const runtime = createRuntime({
+      persona: createPersona({ settings: { reasoning: "low" } }),
+    });
+    const sampledMessage = fauxAssistantMessage("sampled");
+    const stream = vi.fn(() => ({
+      async *[Symbol.asyncIterator]() {},
+      async result() {
+        return sampledMessage;
+      },
+    }));
+    runtime.agent.spec.model.stream = stream;
+    const stateBeforeSample = runtime.snapshot();
+
+    await expect(
+      runtime.sample({
+        context: { systemPrompt: "Sample in isolation.", messages: [] },
+        options: {},
+      }),
+    ).resolves.toEqual(sampledMessage);
+
+    expect(stream).toHaveBeenCalledWith(
+      { systemPrompt: "Sample in isolation.", messages: [] },
+      expect.objectContaining({ reasoning: "low" }),
+    );
+
+    runtime.setReasoning("high");
+    const updatedStream = vi.fn(() => ({
+      async *[Symbol.asyncIterator]() {},
+      async result() {
+        return sampledMessage;
+      },
+    }));
+    runtime.agent.spec.model.stream = updatedStream;
+    await runtime.sample({
+      context: { systemPrompt: "Sample again.", messages: [] },
+      options: {},
+    });
+
+    expect(updatedStream).toHaveBeenCalledWith(
+      { systemPrompt: "Sample again.", messages: [] },
+      expect.objectContaining({ reasoning: "high" }),
+    );
+    expect(runtime.snapshot()).toEqual(stateBeforeSample);
   });
 
   it("rebuilds the main and subagent prompts and updates the next runtime spec", () => {

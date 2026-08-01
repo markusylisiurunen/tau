@@ -1,5 +1,5 @@
 import { cleanupSessionResources } from "@earendil-works/pi-ai";
-import type { AgentModelExecutor, AgentSpec } from "../agent/agent_runtime.js";
+import type { AgentSpec } from "../agent/agent_runtime.js";
 import { getAuthPath } from "../auth/auth_paths.js";
 import { AuthStorage } from "../auth/auth_storage.js";
 import { type Config, normalizeAutoCompactConfig } from "../config/index.js";
@@ -9,6 +9,7 @@ import { resolveModelNotice } from "../utils/model_notices.js";
 import { ModelRuntime } from "../utils/model_stream.js";
 import { parseStreamingSettings } from "../utils/streaming_settings.js";
 import { type CoreDeps, createDefaultCoreDeps } from "./deps.js";
+import type { ModelExecutor } from "./model_executor.js";
 
 export type ResolvedAgentModel = Pick<
   AgentSpec,
@@ -37,7 +38,7 @@ export function resolveAgentModel(
       "User-Agent": CODEX_USER_AGENT,
     };
   }
-  const model: AgentModelExecutor = {
+  const model: ModelExecutor = {
     model: persona.model,
     stream: (context, options) => runtime.streamModel(persona.model, context, options),
     noteProviderError: async (options) => {

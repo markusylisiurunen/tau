@@ -1,5 +1,4 @@
 export type {
-  AgentModelExecutor,
   AgentSpec,
   AgentState,
   AgentTurnResult,
@@ -77,6 +76,7 @@ export type {
 export { ChatRuntime } from "./runtime/chat_runtime.js";
 export type { CoreDeps } from "./runtime/deps.js";
 export { createDefaultCoreDeps } from "./runtime/deps.js";
+export type { ModelExecutor } from "./runtime/model_executor.js";
 export type {
   ResolvedPersonaSkills,
   ResolveRuntimePromptBootstrapArgs,

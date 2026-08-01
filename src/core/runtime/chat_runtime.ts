@@ -1,7 +1,6 @@
 import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
 import {
   AgentRuntime,
-  type AgentSampleOptions,
   type AgentState,
   type AgentStateRecovery,
   type AgentTurnResult,
@@ -25,6 +24,7 @@ import type { Persona, ReasoningEffort } from "../types.js";
 import type { UsageRecorder } from "../usage/logs.js";
 import { type ResolvedAgentModel, resolveAgentModel } from "./agent_model.js";
 import { type CoreDeps, createDefaultCoreDeps } from "./deps.js";
+import { type ModelSampleInput, sampleModel } from "./model_sampler.js";
 import { composeSessionPrompts, type SessionPromptComposition } from "./session_prompt_composer.js";
 
 export type ChatRuntimePromptContext = {
@@ -231,8 +231,14 @@ export class ChatRuntime {
     return await this.agent.rewindToHistoryEntryId(historyEntryId);
   }
 
-  async sample(options: AgentSampleOptions): Promise<AssistantMessage> {
-    return await this.agent.sample(options);
+  async sample(input: ModelSampleInput): Promise<AssistantMessage> {
+    return await sampleModel(
+      {
+        model: this.resolvedModel.model,
+        streamOptions: this.resolvedModel.streamOptions,
+      },
+      input,
+    );
   }
 
   compact(options: Parameters<AgentRuntime["compact"]>[0]) {

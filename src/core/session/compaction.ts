@@ -10,6 +10,7 @@ import {
   hasAutoCompactionContinuationMetadata,
   stripTauUserMetadata,
 } from "../utils/user_metadata.js";
+import type { AutoCompactionArchivePaths } from "./auto_compaction_archive.js";
 
 export type CompactionHistoryEntry = {
   id: string;
@@ -526,6 +527,7 @@ export function buildAutoCompactionPrompt(preparation: AutoCompactionPreparation
 export function buildAutoCompactionContinuationMessage(args: {
   cutType: AutoCompactionCutType;
   now: number;
+  archive?: AutoCompactionArchivePaths;
 }): Message {
   const lines = [
     "The conversation context before this point has been compacted.",
@@ -536,6 +538,17 @@ export function buildAutoCompactionContinuationMessage(args: {
   if (args.cutType === "split-turn") {
     lines.push(
       "The retained messages begin in the middle of the latest assistant/tool turn. The summary contains the original request and earlier tool work from that turn.",
+    );
+  }
+
+  if (args.archive) {
+    lines.push(
+      "A temporary snapshot of the complete model-visible context immediately before this automatic compaction, including context retained above, is available in these files:",
+      `- text transcript: ${args.archive.textPath}`,
+      `- full JSON: ${args.archive.jsonPath}`,
+      "Prefer the text transcript for normal lookup; its tool results are middle-truncated.",
+      "The JSON contains full captured content and may be very large. Query it narrowly with jq, Node, rg, or bounded reads instead of dumping the whole file.",
+      "Earlier numbered pairs in the same directory are older pre-compaction snapshots. These files are temporary and may no longer exist.",
     );
   }
 

@@ -15,6 +15,10 @@ import type { NormalizedAutoCompactConfig } from "../config/index.js";
 import type { CoreClock } from "../runtime/deps.js";
 import type { ModelExecutor } from "../runtime/model_executor.js";
 import { formatSteeringUserMessage } from "../runtime/steering.js";
+import type {
+  AutoCompactionArchivePaths,
+  AutoCompactionArchiver,
+} from "../session/auto_compaction_archive.js";
 import {
   buildAutoCompactionContinuationMessage,
   buildAutoCompactionPrompt,
@@ -106,6 +110,7 @@ type AgentRuntimeOptions = {
   spec: AgentSpec;
   eventSink: AgentEventSink;
   clock: CoreClock;
+  archiveAutoCompaction: AutoCompactionArchiver;
   getCompactionContinuationSystemMessages?: () => readonly string[];
   state?: AgentState;
 };
@@ -330,6 +335,7 @@ export class AgentRuntime {
   private currentSpec: AgentSpec;
   private readonly clock: CoreClock;
   private readonly eventSink: AgentEventSink;
+  private readonly archiveAutoCompaction: AutoCompactionArchiver;
   private readonly getCompactionContinuationSystemMessages?: () => readonly string[];
   private historyEntries: HistoryEntry[];
   private revision: number;
@@ -353,6 +359,7 @@ export class AgentRuntime {
     this.currentSpec = options.spec;
     this.eventSink = options.eventSink;
     this.clock = options.clock;
+    this.archiveAutoCompaction = options.archiveAutoCompaction;
     this.getCompactionContinuationSystemMessages = options.getCompactionContinuationSystemMessages;
     const contextEpoch = getContextEpoch(options.spec);
     if (options.state) {
@@ -586,6 +593,10 @@ export class AgentRuntime {
   }
 
   private get modelHistory(): readonly Message[] {
+    return this.modelHistoryEntries.map((entry) => entry.message);
+  }
+
+  private get modelHistoryEntries(): readonly HistoryEntry[] {
     return this.historyEntries.flatMap((entry) => {
       const message = stripTauUserMetadataFromMessage(entry.message);
       if (
@@ -594,7 +605,7 @@ export class AgentRuntime {
       ) {
         return [];
       }
-      return [message];
+      return [{ id: entry.id, message }];
     });
   }
 
@@ -1199,6 +1210,8 @@ export class AgentRuntime {
       response: summaryResponse,
       userMessageCandidates: preparation.userMessageCandidates,
     });
+    const archive = await this.tryArchiveAutoCompaction(signal);
+    signal.throwIfAborted();
 
     const compactionSummary = buildCompactionSummary({
       summary: summaryResult.summary,
@@ -1231,6 +1244,7 @@ export class AgentRuntime {
       message: buildAutoCompactionContinuationMessage({
         cutType: preparation.cutType,
         now: this.clock.now(),
+        ...(archive ? { archive } : {}),
       }),
     };
 
@@ -1243,6 +1257,22 @@ export class AgentRuntime {
       cutType: preparation.cutType,
       retainedMessageCount,
     };
+  }
+
+  private async tryArchiveAutoCompaction(
+    signal: AbortSignal,
+  ): Promise<AutoCompactionArchivePaths | undefined> {
+    try {
+      return await this.archiveAutoCompaction({
+        agentId: this.agentId,
+        createdAt: this.clock.now(),
+        historyEntries: structuredClone(this.modelHistoryEntries),
+        signal,
+      });
+    } catch {
+      signal.throwIfAborted();
+      return undefined;
+    }
   }
 
   private prependCompactionContext(text: string): string {

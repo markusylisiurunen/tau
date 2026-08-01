@@ -1,11 +1,21 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { personas } from "../dist/core/personas.js";
 import { resolveRuntimePromptBootstrap } from "../dist/core/runtime/runtime_bootstrap.js";
 import { composeSessionPrompts } from "../dist/core/runtime/session_prompt_composer.js";
+import { createAutoCompactionArchiver } from "../dist/core/session/auto_compaction_archive.js";
 import {
   buildAutoCompactionContinuationMessage,
   buildSessionCompactionPrompt,
@@ -523,6 +533,114 @@ describe("summary formatting", () => {
     expect(hasToolRecoveryMetadata(message)).toBe(false);
     expect(summary).toContain(longOutput);
     expect(summary).not.toContain("tokens truncated");
+  });
+});
+
+describe("automatic compaction archive", () => {
+  it("writes private ordered snapshots and preserves full JSON tool results", async () => {
+    const backend = createLocalToolExecutionBackend();
+    const archive = createAutoCompactionArchiver(backend);
+    const agentId = `agent-${randomUUID()}`;
+    const forkAgentId = `agent-${randomUUID()}`;
+    const roots = new Set();
+    const longOutput = `start ${"x".repeat(20_000)} end`;
+    const historyEntries = [
+      {
+        id: "user-1",
+        message: userMessage("inspect the repository"),
+      },
+      {
+        id: "assistant-1",
+        message: {
+          ...assistantMessage(""),
+          content: [
+            {
+              type: "toolCall",
+              id: "bash-1",
+              name: TOOL_NAME_BASH,
+              arguments: { command: "rg -n TODO src" },
+            },
+          ],
+        },
+      },
+      {
+        id: "tool-1",
+        message: {
+          role: "toolResult",
+          toolCallId: "bash-1",
+          toolName: TOOL_NAME_BASH,
+          content: [{ type: "text", text: longOutput }],
+          isError: false,
+          timestamp: 2,
+        },
+      },
+      {
+        id: "retained-user",
+        message: userMessage("this retained tail must also be archived"),
+      },
+    ];
+    const request = {
+      agentId,
+      createdAt: 1_750_000_000_000,
+      historyEntries,
+      signal: new AbortController().signal,
+    };
+
+    try {
+      const first = await archive(request);
+      roots.add(dirname(first.textPath));
+      const record = JSON.parse(readFileSync(first.jsonPath, "utf8"));
+      const text = readFileSync(first.textPath, "utf8");
+
+      expect(first.textPath).toMatch(/000001\.txt$/);
+      expect(first.jsonPath).toMatch(/000001\.json$/);
+      expect(record).toMatchObject({
+        version: 1,
+        agentId,
+        sequence: 1,
+        createdAt: request.createdAt,
+      });
+      expect(record.messages.map((message) => message.historyEntryId)).toEqual([
+        "user-1",
+        "assistant-1",
+        "tool-1",
+        "retained-user",
+      ]);
+      expect(record.messages[1].content[0]).toEqual({
+        type: "toolCall",
+        id: "bash-1",
+        name: TOOL_NAME_BASH,
+        arguments: { command: "rg -n TODO src" },
+      });
+      expect(record.messages[2].content[0].text).toBe(longOutput);
+      expect(text).toContain("start ");
+      expect(text).toContain(" end");
+      expect(text).toContain("tokens truncated");
+      expect(text).not.toContain(longOutput);
+      expect(statSync(dirname(first.textPath)).mode & 0o777).toBe(0o700);
+      expect(statSync(first.textPath).mode & 0o777).toBe(0o600);
+      expect(statSync(first.jsonPath).mode & 0o777).toBe(0o600);
+
+      const second = await archive(request);
+      expect(second.textPath).toBe(first.textPath.replace("000001.txt", "000002.txt"));
+
+      const recoveredArchive = createAutoCompactionArchiver(backend);
+      const third = await recoveredArchive(request);
+      expect(third.textPath).toBe(first.textPath.replace("000001.txt", "000003.txt"));
+
+      const fork = await archive({ ...request, agentId: forkAgentId });
+      roots.add(dirname(fork.textPath));
+      expect(dirname(fork.textPath)).not.toBe(dirname(first.textPath));
+      expect(fork.textPath).toMatch(/000001\.txt$/);
+
+      rmSync(dirname(first.textPath), { recursive: true, force: true });
+      const recreated = await recoveredArchive(request);
+      roots.add(dirname(recreated.textPath));
+      expect(recreated.textPath).toBe(first.textPath);
+    } finally {
+      for (const root of roots) rmSync(root, { recursive: true, force: true });
+      await backend.dispose();
+    }
   });
 });
 

@@ -19,6 +19,7 @@ import {
   resolveModel,
 } from "../dist/core/models/catalog.js";
 import { mergeTauProviderExtensionModels } from "../dist/core/models/tau_extensions.js";
+import { applyTauModelOverrides } from "../dist/core/models/tau_model_overrides.js";
 
 describe("model catalog", () => {
   it("loads pi-ai providers and models", () => {
@@ -114,7 +115,33 @@ describe("model catalog", () => {
         },
       ],
     });
-    expect(terra.contextWindow).toBe(272000);
+    expect(terra.contextWindow).toBe(372000);
+  });
+
+  it("overrides GPT-5.6 Codex context windows without changing OpenAI models", () => {
+    for (const modelId of ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]) {
+      expect(resolveModel("openai-codex", modelId)?.contextWindow).toBe(372000);
+      expect(resolveModel("openai", modelId)?.contextWindow).toBe(272000);
+    }
+  });
+
+  it("only applies model overrides to the expected pi metadata", () => {
+    const model = {
+      provider: "openai-codex",
+      id: "gpt-5.6-sol",
+      contextWindow: 272000,
+    };
+
+    expect(applyTauModelOverrides(model)).toEqual({ ...model, contextWindow: 372000 });
+
+    for (const unchanged of [
+      { ...model, contextWindow: 372000 },
+      { ...model, contextWindow: 400000 },
+      { ...model, provider: "openai" },
+      { ...model, id: "gpt-5.5" },
+    ]) {
+      expect(applyTauModelOverrides(unchanged)).toBe(unchanged);
+    }
   });
 
   it("returns no models for unknown providers", () => {

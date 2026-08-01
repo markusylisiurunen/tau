@@ -21,9 +21,58 @@ function renderEvent(registry, theme, event, context = {}) {
   return renderText(renderToolOutput(view, true), 120);
 }
 
+function renderModel(registry, theme, model) {
+  const view = registry.renderModel(model, { theme });
+  expect(view).toBeDefined();
+  return renderText(renderToolOutput(view, true), 120);
+}
+
 describe("ToolUiRegistry", () => {
   const theme = createTagTheme();
   const registry = createToolUiRegistry();
+
+  it("renders the canonical lifecycle for built-in and client tools", () => {
+    const tools = [
+      { toolCallId: "write-1", toolName: "write", headerTarget: "notes.txt" },
+      { toolCallId: "bash-1", toolName: "bash", headerTarget: "printf hello" },
+      { toolCallId: "client-1", toolName: "local_picker", headerTarget: "local_picker" },
+    ];
+    for (const tool of tools) {
+      expect(renderModel(registry, theme, { ...tool, status: "streaming" })).toContain("preparing");
+      expect(renderModel(registry, theme, { ...tool, status: "queued" })).toContain("queued");
+      expect(renderModel(registry, theme, { ...tool, status: "running" })).toContain("running");
+      expect(renderModel(registry, theme, { ...tool, status: "succeeded" })).toContain("completed");
+    }
+    const base = tools[0];
+
+    const client = renderModel(registry, theme, {
+      toolCallId: "client-1",
+      toolName: "local_picker",
+      headerTarget: "local_picker",
+      status: "succeeded",
+      resultText: "picked a",
+    });
+    expect(client).toContain("completed");
+    expect(client).toContain("local_picker");
+    expect(client).toContain("picked a");
+
+    const canonicalFailure = renderModel(registry, theme, {
+      ...base,
+      status: "failed",
+      activity: {
+        type: "write_success",
+        toolCallId: "write-1",
+        path: "notes.txt",
+        headerTarget: "notes.txt",
+        bytes: 1,
+        lines: 1,
+        content: "a",
+        uiText: makeUiText("a", "1 line", "a"),
+      },
+    });
+    expect(canonicalFailure).toContain("failed");
+    expect(canonicalFailure).not.toContain("write completed");
+  });
 
   it("renders generic tool call lifecycle events", () => {
     const streaming = renderEvent(registry, theme, {

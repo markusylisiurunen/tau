@@ -11,7 +11,7 @@ import type { BashTruncationInfo } from "../core/tools/bash.js";
 import type { ReasoningEffort } from "../core/types.js";
 import type { SessionProtocolPendingUserMessage } from "../protocol/session_protocol.js";
 import { createAppTerminal } from "./terminal.js";
-import { type ToolUiEventOrigin, ToolUiRouter } from "./tool_ui_router.js";
+import { ToolUiRouter } from "./tool_ui_router.js";
 import { ChatContainerComponent } from "./ui/chat_container.js";
 import type { AssistantMessageModel, ChatMessageModel } from "./ui/chat_message_model.js";
 import { CustomEditor } from "./ui/custom_editor.js";
@@ -22,6 +22,7 @@ import { SubagentEditorPaneComponent } from "./ui/subagent_editor_pane.js";
 import { SubagentPanelComponent } from "./ui/subagent_panel.js";
 import type { SystemMessageKind } from "./ui/system_message.js";
 import { coercePaletteOverrides, createUiTheme, type Theme } from "./ui/theme/index.js";
+import type { ToolUiModel } from "./ui/tool_ui_model.js";
 import { createToolUiRegistry } from "./ui/tool_ui_registry.js";
 
 export type ChatInputMode = "normal" | "bash" | "bash_incognito" | "memory" | "recording";
@@ -86,13 +87,11 @@ export interface ChatView {
   updateStatus(status: ChatViewStatus): void;
   startWorkingIcon(): void;
   stopWorkingIcon(): void;
-  handleToolUiEvent(event: ToolActivity, origin: ToolUiEventOrigin): void;
+  updateLocalToolUi(model: ToolUiModel): void;
   handleSubagentEvent(event: SubagentUiEvent): void;
   resetToolUiSession(): void;
-  reconcileToolUiSession(toolCallIds: readonly string[]): void;
+  reconcileToolUiSession(models: readonly ToolUiModel[]): void;
   resetToolUiSessionPreservingSubagents(): void;
-  finalizeToolUiPending(reason: "aborted" | "interrupted"): void;
-  clearToolUiTransientState(): void;
   cycleSubagentSelection(direction: 1 | -1): string | undefined;
   getSelectedSubagentId(): string | undefined;
   sendTerminalNotification(title: string): void;
@@ -275,8 +274,8 @@ export class TuiChatView implements ChatView {
     this.footer.stop();
   }
 
-  handleToolUiEvent(event: ToolActivity, origin: ToolUiEventOrigin): void {
-    this.toolUiRouter.handle(event, origin);
+  updateLocalToolUi(model: ToolUiModel): void {
+    this.toolUiRouter.updateLocal(model);
   }
 
   handleSubagentEvent(event: SubagentUiEvent): void {
@@ -289,21 +288,13 @@ export class TuiChatView implements ChatView {
     this.subagentPanel.reset();
   }
 
-  reconcileToolUiSession(toolCallIds: readonly string[]): void {
-    this.toolUiRouter.reconcileSession(toolCallIds);
+  reconcileToolUiSession(models: readonly ToolUiModel[]): void {
+    this.toolUiRouter.reconcileSession(models);
     this.subagentPanel.reset();
   }
 
   resetToolUiSessionPreservingSubagents(): void {
     this.toolUiRouter.resetSession();
-  }
-
-  finalizeToolUiPending(reason: "aborted" | "interrupted"): void {
-    this.toolUiRouter.finalizePending(reason);
-  }
-
-  clearToolUiTransientState(): void {
-    this.toolUiRouter.clearTransientState();
   }
 
   cycleSubagentSelection(direction: 1 | -1): string | undefined {
@@ -432,7 +423,17 @@ export class TuiChatView implements ChatView {
       durationMs: args.durationMs,
       labelOverride: args.labelOverride,
     };
-    this.chatContainer.addMessage({ type: "tool", event });
+    this.chatContainer.addMessage({
+      type: "tool",
+      tool: {
+        toolCallId,
+        toolName: "bash",
+        status: args.exitCode === 0 ? "succeeded" : "failed",
+        headerTarget,
+        activity: event,
+        resultText: args.uiText.fullLines.map((line) => line.text).join("\n"),
+      },
+    });
     this.ui.requestRender();
   }
 

@@ -25,13 +25,20 @@ function stripTags(text) {
   return stripAnsi(text.replace(/<[^>]+>/g, ""));
 }
 
-function createToolEvent(label) {
+function createToolModel(label) {
+  const toolCallId = `tool-${label}`;
   return {
-    type: "bash_blocked",
-    toolCallId: `tool-${label}`,
-    command: label,
+    toolCallId,
+    toolName: "bash",
+    status: "blocked",
     headerTarget: label,
-    reason: "blocked",
+    activity: {
+      type: "bash_blocked",
+      toolCallId,
+      command: label,
+      headerTarget: label,
+      reason: "blocked",
+    },
   };
 }
 
@@ -228,9 +235,9 @@ test("ChatContainerComponent hides empty assistant messages even when thoughts a
   const container = new ChatContainerComponent(theme, toolUiRegistry, true);
   container.setCompactToolUi(true);
 
-  container.addMessage({ type: "tool", event: createToolEvent("tool a") });
+  container.addMessage({ type: "tool", tool: createToolModel("tool a") });
   container.addMessage({ type: "assistant_partial", text: "", thinking: "" });
-  container.addMessage({ type: "tool", event: createToolEvent("tool b") });
+  container.addMessage({ type: "tool", tool: createToolModel("tool b") });
 
   const lines = renderLines(container, 80);
   const firstIndex = lines.indexOf("tool a");

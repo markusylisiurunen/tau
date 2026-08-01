@@ -83,6 +83,7 @@ import {
 } from "./session_tool_execution_backend.js";
 import { runSpeechPlaybackTask } from "./speech_playback.js";
 import type { ChatMessageModel } from "./ui/chat_message_model.js";
+import type { ToolUiModel } from "./ui/tool_ui_model.js";
 
 type TurnCaffeinateSession = {
   abortController: AbortController;
@@ -557,15 +558,18 @@ export class SessionChatController {
     this.isStreaming = true;
     this.startTurnTimer();
     this.view.startWorkingIcon();
-    this.view.handleToolUiEvent(
-      {
+    this.view.updateLocalToolUi({
+      toolCallId,
+      toolName: "bash",
+      status: "running",
+      headerTarget,
+      activity: {
         type: "bash_started",
         toolCallId,
         command,
         headerTarget,
       },
-      "local",
-    );
+    });
     this.refreshStatus();
 
     try {
@@ -588,8 +592,12 @@ export class SessionChatController {
         this.hiddenHistoryEntryIds.add(result.userHistoryEntryId);
         this.renderedMessageIds.push(result.userHistoryEntryId);
       }
-      this.view.handleToolUiEvent(
-        {
+      this.view.updateLocalToolUi({
+        toolCallId,
+        toolName: "bash",
+        status: result.exitCode === 0 ? "succeeded" : "failed",
+        headerTarget,
+        activity: {
           type: "bash_execution",
           toolCallId,
           command: result.command,
@@ -600,20 +608,25 @@ export class SessionChatController {
           durationMs: result.durationMs,
           labelOverride: options.labelOverride,
         },
-        "local",
-      );
+        resultText: result.uiText.fullLines.map((line) => line.text).join("\n"),
+      });
       await this.syncFromSessionSnapshot();
     } catch (error) {
-      this.view.handleToolUiEvent(
-        {
+      const reason = (error as Error).message || "bash failed";
+      this.view.updateLocalToolUi({
+        toolCallId,
+        toolName: "bash",
+        status: "blocked",
+        headerTarget,
+        activity: {
           type: "bash_blocked",
           toolCallId,
           command,
           headerTarget,
-          reason: (error as Error).message || "bash failed",
+          reason,
         },
-        "local",
-      );
+        resultText: reason,
+      });
       await this.syncFromSessionSnapshot();
     } finally {
       this.isStreaming = false;
@@ -1166,7 +1179,7 @@ export class SessionChatController {
       if (this.tryApplyFastContentAppendDelta(delta)) {
         return true;
       }
-      if (this.tryApplyFastToolFacetDelta(delta)) {
+      if (this.tryApplyFastToolUiDelta(delta)) {
         return true;
       }
       if (this.tryApplyFastAgentDelta(delta)) {
@@ -1254,14 +1267,10 @@ export class SessionChatController {
     return true;
   }
 
-  private tryApplyFastToolFacetDelta(delta: SessionProtocolDeltaMessage): boolean {
-    if (delta.delta.type !== "snapshot.patch") {
-      return false;
-    }
-
-    const facetChanges = delta.delta.changes.filter((change) => change.type === "facet.set");
+  private tryApplyFastToolUiDelta(delta: SessionProtocolDeltaMessage): boolean {
     if (
-      facetChanges.length !== 1 ||
+      delta.delta.type !== "snapshot.patch" ||
+      delta.delta.changes.length === 0 ||
       delta.delta.changes.some(
         (change) => change.type !== "tool.set" && change.type !== "facet.set",
       )
@@ -1269,24 +1278,18 @@ export class SessionChatController {
       return false;
     }
 
-    const facetChange = facetChanges[0]!;
-    const nextFacet = facetChange.facet;
-    if (nextFacet.kind !== "tau.tool-ui-events" || nextFacet.subject.type !== "tool") {
-      return false;
-    }
-
-    const previousEvents = toolUiEventsFromFacet(this.snapshot.facets[nextFacet.id]);
-    const nextEvents = toolUiEventsFromFacet(nextFacet);
-    if (!canAppendToolUiEvents(nextEvents, previousEvents)) {
+    const facetChanges = delta.delta.changes.filter((change) => change.type === "facet.set");
+    if (
+      facetChanges.some(
+        ({ facet }) => facet.kind !== "tau.tool-ui-events" || facet.subject.type !== "tool",
+      )
+    ) {
       return false;
     }
 
     this.snapshot = applySessionProtocolDelta(this.snapshot, delta);
     this.observedSessionRevision = Math.max(this.observedSessionRevision, this.snapshot.revision);
-
-    for (const event of nextEvents.slice(previousEvents.length)) {
-      this.view.handleToolUiEvent(event, "session");
-    }
+    this.view.reconcileToolUiSession(getToolUiModelsInModelOrder(this.snapshot));
     this.refreshStatus();
     return true;
   }
@@ -1394,7 +1397,7 @@ export class SessionChatController {
 
     if (
       message.message.role === "toolResult" &&
-      hasToolUiFacetForToolCall(this.snapshot, (message.message as ToolResultMessage).toolCallId)
+      this.snapshot.tools[(message.message as ToolResultMessage).toolCallId]
     ) {
       return undefined;
     }
@@ -1415,10 +1418,7 @@ export class SessionChatController {
   }
 
   private syncSnapshotToolAndAgentUi(snapshot: SessionProtocolSnapshot): void {
-    this.view.reconcileToolUiSession(Object.keys(snapshot.tools));
-    for (const event of getToolUiEventsInModelOrder(snapshot)) {
-      this.view.handleToolUiEvent(event, "session");
-    }
+    this.view.reconcileToolUiSession(getToolUiModelsInModelOrder(snapshot));
 
     for (const agent of Object.values(snapshot.agents)) {
       for (const event of subagentUiEventsFromAgentRun(agent)) {
@@ -2330,15 +2330,6 @@ function isMessageInTimeline(snapshot: SessionProtocolSnapshot, messageId: strin
   return snapshot.timeline.some((item) => item.type === "message" && item.messageId === messageId);
 }
 
-function hasToolUiFacetForToolCall(snapshot: SessionProtocolSnapshot, toolCallId: string): boolean {
-  return Object.values(snapshot.facets).some(
-    (facet) =>
-      facet.kind === "tau.tool-ui-events" &&
-      facet.subject.type === "tool" &&
-      facet.subject.id === toolCallId,
-  );
-}
-
 function assistantPartialFromProtocolMessage(message: SessionProtocolMessage): {
   text: string;
   thinking: string;
@@ -2458,32 +2449,62 @@ function isToolUiEvent(value: unknown): value is ToolActivity {
   );
 }
 
-function getToolUiEventsInModelOrder(snapshot: SessionProtocolSnapshot): ToolActivity[] {
+function getToolUiModelsInModelOrder(snapshot: SessionProtocolSnapshot): ToolUiModel[] {
   const facetsByToolId = new Map<string, SessionProtocolSnapshot["facets"][string]>();
   for (const facet of Object.values(snapshot.facets)) {
     if (facet.kind === "tau.tool-ui-events" && facet.subject.type === "tool") {
       facetsByToolId.set(facet.subject.id, facet);
     }
   }
+  const messagesById = new Map(snapshot.messages.map((message) => [message.id, message]));
 
-  const events: ToolActivity[] = [];
-  const emittedFacetIds = new Set<string>();
-  for (const toolId of getToolIdsInModelOrder(snapshot)) {
-    const facet = facetsByToolId.get(toolId);
-    if (!facet) {
-      continue;
-    }
-    emittedFacetIds.add(facet.id);
-    events.push(...toolUiEventsFromFacet(facet));
-  }
+  return getToolIdsInModelOrder(snapshot).map((toolId) => {
+    const tool = snapshot.tools[toolId]!;
+    const activities = toolUiEventsFromFacet(facetsByToolId.get(toolId));
+    const activity = activities.at(-1);
+    const resultMessage =
+      tool.status === "streaming" ? undefined : messagesById.get(tool.resultMessageId ?? "");
+    const resultMessageText =
+      resultMessage?.message.role === "toolResult"
+        ? resultMessage.message.content
+            .flatMap((content) => (content.type === "text" ? [content.text] : []))
+            .join("\n")
+        : undefined;
+    const resultText =
+      resultMessageText || (tool.status === "streaming" ? undefined : (tool.error ?? tool.summary));
+    const activityCode = activity && "code" in activity ? activity.code : undefined;
+    const code = activityCode ?? getToolCallCode(tool, messagesById);
+    return {
+      toolCallId: tool.toolCallId,
+      toolName: tool.toolName,
+      status: tool.status,
+      headerTarget: activity?.headerTarget ?? tool.toolName,
+      ...(code !== undefined ? { code } : {}),
+      ...(activity ? { activity } : {}),
+      ...(resultText ? { resultText } : {}),
+    };
+  });
+}
 
-  for (const facet of Object.values(snapshot.facets)) {
-    if (emittedFacetIds.has(facet.id)) {
-      continue;
-    }
-    events.push(...toolUiEventsFromFacet(facet));
+function getToolCallCode(
+  tool: SessionProtocolSnapshot["tools"][string],
+  messagesById: ReadonlyMap<string, SessionProtocolMessage>,
+): string | undefined {
+  if (tool.status === "streaming") return undefined;
+  const message = messagesById.get(tool.call.messageId);
+  if (message?.message.role !== "assistant") return undefined;
+  const content = message.message.content[tool.call.contentIndex];
+  if (
+    content?.type !== "toolCall" ||
+    content.id !== tool.toolCallId ||
+    typeof content.arguments !== "object" ||
+    content.arguments === null ||
+    !("code" in content.arguments) ||
+    typeof content.arguments.code !== "string"
+  ) {
+    return undefined;
   }
-  return events;
+  return content.arguments.code;
 }
 
 function getToolIdsInModelOrder(snapshot: SessionProtocolSnapshot): string[] {
@@ -2510,22 +2531,6 @@ function toolUiEventsFromFacet(
     return [];
   }
   return facet.data.events.filter(isToolUiEvent);
-}
-
-function canAppendToolUiEvents(
-  events: readonly ToolActivity[],
-  previousEvents: readonly ToolActivity[],
-): boolean {
-  if (previousEvents.length > events.length) {
-    return false;
-  }
-  if (previousEvents.length === 0) {
-    return true;
-  }
-
-  return previousEvents.every(
-    (event, index) => JSON.stringify(event) === JSON.stringify(events[index]),
-  );
 }
 
 function subagentUiEventsFromAgentRun(

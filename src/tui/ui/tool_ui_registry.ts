@@ -22,6 +22,7 @@ import {
   renderToolUiTextLines,
   type ToolOutputViewModel,
 } from "./tool_output.js";
+import type { ToolUiModel } from "./tool_ui_model.js";
 
 export type ToolUiRenderContext = {
   theme: Theme;
@@ -320,6 +321,120 @@ function buildSubagentFinishedView(args: {
   };
 }
 
+const TOOL_STARTED_ACTIVITY_TYPES = new Set<ToolActivity["type"]>([
+  "bash_started",
+  "spawn_agent_started",
+  "send_input_to_agent_started",
+  "wait_for_agents_started",
+  "terminate_agent_started",
+  "code_mode_started",
+]);
+
+function isStartedActivity(activity: ToolActivity | undefined): activity is ToolActivity {
+  return Boolean(activity && TOOL_STARTED_ACTIVITY_TYPES.has(activity.type));
+}
+
+function terminalStatusFromActivity(
+  activity: ToolActivity,
+): "succeeded" | "failed" | "blocked" | "cancelled" | undefined {
+  switch (activity.type) {
+    case "tool_call_streaming":
+    case "tool_call_queued":
+    case "bash_started":
+    case "spawn_agent_started":
+    case "send_input_to_agent_started":
+    case "wait_for_agents_started":
+    case "terminate_agent_started":
+    case "code_mode_started":
+      return undefined;
+    case "tool_call_blocked":
+    case "bash_blocked":
+    case "spawn_agent_blocked":
+    case "send_input_to_agent_blocked":
+    case "wait_for_agents_blocked":
+    case "terminate_agent_blocked":
+    case "code_mode_blocked":
+    case "view_image_blocked":
+    case "write_blocked":
+    case "edit_blocked":
+      return "blocked";
+    case "bash_aborted":
+      return "cancelled";
+    case "bash_execution":
+      return activity.exitCode === 0 ? "succeeded" : "failed";
+    case "client_tool_finished":
+    case "spawn_agent_finished":
+    case "send_input_to_agent_finished":
+    case "wait_for_agents_finished":
+    case "terminate_agent_finished":
+    case "code_mode_finished":
+      return activity.status === "success" ? "succeeded" : "failed";
+    case "view_image_success":
+    case "write_success":
+    case "edit_success":
+      return "succeeded";
+  }
+}
+
+function addCodePreview(
+  view: ToolOutputViewModel,
+  model: ToolUiModel,
+  theme: Theme,
+  status: "queued" | "running",
+): ToolOutputViewModel {
+  if (model.code === undefined) return view;
+  return {
+    ...view,
+    compact: {
+      header: buildCodeModeCompactHeader(theme, status, model.toolName),
+      extraText: buildCodeModeCompactPreview(theme, model.code),
+    },
+  };
+}
+
+function buildGenericTerminalView(theme: Theme, model: ToolUiModel): ToolOutputViewModel {
+  const { palette, text } = theme;
+  const succeeded = model.status === "succeeded";
+  const borderColor = succeeded
+    ? (value: string) => palette.actionSuccess(value)
+    : (value: string) => palette.actionError(value);
+  const label =
+    model.status === "succeeded"
+      ? "completed"
+      : model.status === "failed"
+        ? "failed"
+        : model.status === "blocked"
+          ? "blocked"
+          : "cancelled";
+  const resultText = model.resultText?.trim();
+  const compactResult = resultText
+    ? resultText
+        .split(/\r?\n/)
+        .slice(0, 8)
+        .map((line) => `    ${palette.textDim(line)}`)
+        .join("\n")
+    : undefined;
+
+  return {
+    borderColor,
+    expanded: {
+      title: borderColor(text.bold(`${label} ${model.headerTarget}`)),
+      sections: resultText ? [palette.actionOutput(resultText)] : [],
+    },
+    compact: {
+      header: buildToolHeaderLine({
+        bulletStyle: borderColor,
+        bullet: succeeded ? "✓" : "✗",
+        label,
+        labelStyle: palette.textMuted,
+        accent: inlineText(model.headerTarget),
+        accentStyle: palette.brandAccent,
+      }),
+      extraText: compactResult,
+    },
+  };
+}
+
 export class ToolUiRegistry {
   private renderers = new Map<ToolActivity["type"], ToolUiRenderer>();
 
@@ -333,6 +448,35 @@ export class ToolUiRegistry {
       throw new Error(`missing tool ui renderer for event type '${event.type}'.`);
     }
     return renderer(event, context);
+  }
+
+  renderModel(model: ToolUiModel, context: ToolUiRenderContext): ToolOutputViewModel {
+    if (model.status === "streaming") {
+      return buildToolPendingView(context.theme, "preparing", model.toolName);
+    }
+    if (model.status === "queued") {
+      return addCodePreview(
+        buildToolPendingView(context.theme, "queued", model.headerTarget),
+        model,
+        context.theme,
+        "queued",
+      );
+    }
+    if (model.status === "running") {
+      if (isStartedActivity(model.activity)) {
+        return this.render(model.activity, context);
+      }
+      return addCodePreview(
+        buildSimpleToolRunningView(context.theme, model.toolName, model.headerTarget),
+        model,
+        context.theme,
+        "running",
+      );
+    }
+    if (model.activity && terminalStatusFromActivity(model.activity) === model.status) {
+      return this.render(model.activity, context);
+    }
+    return buildGenericTerminalView(context.theme, model);
   }
 
   renderBashAborted(

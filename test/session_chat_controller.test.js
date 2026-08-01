@@ -526,8 +526,8 @@ class FakeView {
   messages = [];
   removed = [];
   systems = [];
-  toolEvents = [];
-  toolEventOrigins = [];
+  toolModels = [];
+  localToolModels = [];
   rewindPickerShows = [];
   rewindPickerHideCount = 0;
   removeMessagesFromCalls = [];
@@ -588,19 +588,20 @@ class FakeView {
   stopWorkingIcon() {
     this.workingIconStops += 1;
   }
-  handleToolUiEvent(event, origin) {
-    this.toolEvents.push(event);
-    this.toolEventOrigins.push(origin);
+  updateLocalToolUi(model) {
+    const copy = structuredClone(model);
+    this.localToolModels.push(copy);
+    this.toolModels = [copy];
   }
   subagentEvents = [];
   handleSubagentEvent(event) {
     this.subagentEvents.push(event);
   }
   resetToolUiSession = vi.fn();
-  reconcileToolUiSession = vi.fn();
+  reconcileToolUiSession = vi.fn((models) => {
+    this.toolModels = structuredClone(models);
+  });
   resetToolUiSessionPreservingSubagents() {}
-  finalizeToolUiPending() {}
-  clearToolUiTransientState() {}
   cycleSubagentSelection(direction) {
     this.subagentSelectionCycles.push(direction);
     return undefined;
@@ -2256,18 +2257,16 @@ describe("SessionChatController", () => {
 
     controller.start();
 
-    expect(view.reconcileToolUiSession).toHaveBeenCalledWith(
-      expect.arrayContaining(["tool-a", "tool-b", "write-call"]),
-    );
-    expect(view.toolEvents.map((event) => event.toolCallId)).toEqual([
+    expect(view.toolModels.map((model) => model.toolCallId)).toEqual([
       "tool-a",
       "tool-b",
       "write-call",
     ]);
+    expect(view.toolModels.map((model) => model.status)).toEqual(["queued", "queued", "streaming"]);
     await controller.dispose();
   });
 
-  it("does not render tool-result transcript messages when a matching tool UI facet exists", async () => {
+  it("renders tool results through the matching canonical tool card", async () => {
     const baseSnapshot = createSnapshot();
     const assistantMessage = createAssistantToolCallMessage([
       {
@@ -2381,15 +2380,18 @@ describe("SessionChatController", () => {
     controller.start();
 
     expect(view.messages.some((message) => message.id === "tool-a")).toBe(false);
-    expect(view.toolEvents.map((event) => event.type)).toEqual([
-      "tool_call_queued",
-      "bash_execution",
+    expect(view.toolModels).toEqual([
+      expect.objectContaining({
+        toolCallId: "tool-a",
+        status: "succeeded",
+        activity: expect.objectContaining({ type: "bash_execution" }),
+        resultText: expect.stringContaining("a"),
+      }),
     ]);
-    expect(view.toolEventOrigins).toEqual(["session", "session"]);
     await controller.dispose();
   });
 
-  it("applies appended tool UI facet deltas without replaying all tool facets", async () => {
+  it("applies tool status and presentation facet deltas independently", async () => {
     const queuedEvent = {
       type: "tool_call_queued",
       toolCallId: "tool-a",
@@ -2470,6 +2472,34 @@ describe("SessionChatController", () => {
               facetIds: ["tool-ui-tool-a"],
             },
           },
+        ],
+      },
+    };
+    session.snapshotValue = applySessionProtocolDelta(session.snapshotValue, delta);
+
+    for (const listener of session.listeners) {
+      listener(delta);
+    }
+
+    expect(view.resetToolUiSession).toHaveBeenCalledTimes(resetCount);
+    expect(view.toolModels).toEqual([
+      expect.objectContaining({
+        toolCallId: "tool-a",
+        status: "running",
+        activity: queuedEvent,
+      }),
+    ]);
+
+    const facetDelta = {
+      version: SESSION_PROTOCOL_VERSION,
+      type: "session.delta",
+      sessionId: session.id,
+      fromRevision: 4,
+      toRevision: 5,
+      reason: "tool-activity",
+      delta: {
+        type: "snapshot.patch",
+        changes: [
           {
             type: "facet.set",
             facet: {
@@ -2483,15 +2513,19 @@ describe("SessionChatController", () => {
         ],
       },
     };
-    session.snapshotValue = applySessionProtocolDelta(session.snapshotValue, delta);
-
+    session.snapshotValue = applySessionProtocolDelta(session.snapshotValue, facetDelta);
     for (const listener of session.listeners) {
-      listener(delta);
+      listener(facetDelta);
     }
 
     expect(view.resetToolUiSession).toHaveBeenCalledTimes(resetCount);
-    expect(view.toolEvents).toEqual([queuedEvent, startedEvent]);
-    expect(view.toolEventOrigins).toEqual(["session", "session"]);
+    expect(view.toolModels).toEqual([
+      expect.objectContaining({
+        toolCallId: "tool-a",
+        status: "running",
+        activity: startedEvent,
+      }),
+    ]);
     expect(view.status.footer.sessionCost).toBe("$0.42");
     expect(controller.snapshot.tools["tool-a"].status).toBe("running");
     await controller.dispose();
@@ -2732,17 +2766,22 @@ describe("SessionChatController", () => {
       }),
     );
     expect(session.submit).not.toHaveBeenCalled();
-    expect(view.toolEvents).toEqual(
+    expect(view.localToolModels).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ type: "bash_started", command: "pwd" }),
         expect.objectContaining({
-          type: "bash_execution",
-          command: "pwd",
-          labelOverride: "you ran",
+          status: "running",
+          activity: expect.objectContaining({ type: "bash_started", command: "pwd" }),
+        }),
+        expect.objectContaining({
+          status: "succeeded",
+          activity: expect.objectContaining({
+            type: "bash_execution",
+            command: "pwd",
+            labelOverride: "you ran",
+          }),
         }),
       ]),
     );
-    expect(view.toolEventOrigins).toEqual(["local", "local"]);
     expect(view.messages).not.toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -2772,16 +2811,18 @@ describe("SessionChatController", () => {
       timeoutMs: 60000,
     });
     expect(session.record).not.toHaveBeenCalled();
-    expect(view.toolEvents).toEqual(
+    expect(view.localToolModels).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          type: "bash_execution",
-          command: "pwd",
-          labelOverride: "incognito",
+          status: "succeeded",
+          activity: expect.objectContaining({
+            type: "bash_execution",
+            command: "pwd",
+            labelOverride: "incognito",
+          }),
         }),
       ]),
     );
-    expect(view.toolEventOrigins).toEqual(["local", "local"]);
   });
 
   it("routes session maintenance commands through the session protocol", async () => {

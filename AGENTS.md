@@ -54,7 +54,7 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
 - **TUI**: Terminal rendering via `@earendil-works/pi-tui` with components in `src/tui/ui/`
 - **Chat UI models** (`src/tui/ui/chat_message_model.ts`): Typed message models and rendering glue for UI components
 - **Tool output layout** (`src/tui/ui/tool_output.ts`): Shared compact/expanded tool UI layout and header building
-- **Tool UI registry** (`src/tui/ui/tool_ui_registry.ts`): Maps ToolUiEvent types to tool output view models
+- **Tool UI model and registry** (`src/tui/ui/tool_ui_model.ts`, `src/tui/ui/tool_ui_registry.ts`): Projects canonical session tool status into symmetric lifecycle cards, enriched by optional tool-specific activity
 
 **Execution boundary rule**: The TUI/client, host, and execution environment are separate logical machines even when two or all three happen to share one process or filesystem. The TUI owns client-local UI and processes such as the diff tool. The host owns session orchestration, persistence, credentials, and execution-environment lifecycle. The execution environment is the agent's only machine and owns every agent-visible path, cwd, repository root, project config/content, AGENTS.md file, skill, model overlay, platform value, Node version, and command. Host or TUI filesystem APIs must never inspect an execution-environment path. All agent-visible access must go through the execution environment abstraction, including local sessions, so physical co-location cannot create a second code path.
 
@@ -138,7 +138,7 @@ Execution environments and tool backends are intentionally dumb target adapters.
   - `session_chat_controller.ts` - Session snapshot/delta controller for TUI behavior, commands, and protocol mutations
   - `chat_controller/` - Focused helper modules used by `SessionChatController`
   - `chat_view.ts` - TUI view adapter used by `SessionChatApp`
-  - `tool_ui_router.ts` - Tool UI event sequencing and routing
+  - `tool_ui_router.ts` - Keyed tool-card model reconciliation for session and local tools
   - `terminal.ts` - Terminal adapter
   - `clipboard.ts` - Clipboard helper
   - `ui/` - Terminal UI surface (messages, tool output, editor, autocomplete)
@@ -181,6 +181,7 @@ Prompt/context tag style: use dash-case for XML-like tag names in prompt text (f
 
 **Tool UI preview formatting**:
 
+- Every session tool card follows `preparing` → `queued` → `running` → a terminal state from canonical `SessionProtocolToolRun.status`; tool activities only enrich that lifecycle with domain-specific detail.
 - Output-capable tools emit `ToolUiText` with `previewText`, `statusLine`, and `fullText`.
 - Preview truncation/formatting happens in core tools via `src/core/utils/tool_preview.ts`.
 - The TUI only styles output: compact uses `previewText` + `statusLine`, expanded uses raw `fullText`.

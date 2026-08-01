@@ -1321,6 +1321,70 @@ describe("LocalSessionHost", () => {
     );
   });
 
+  it("persists subagent events without reading an unprojected parent transition", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const hostedSession = await host.createSession(localCreateInput);
+    await hostedSession.snapshot();
+
+    const historyEntryId = "assistant-parent-transition";
+    await hostedSession.enqueueRuntimeEvent({ type: "assistant_start", historyEntryId });
+    await hostedSession.enqueueRuntimeEvent({
+      type: "assistant_partial",
+      historyEntryId,
+      snapshot: assistantPartial("finishing"),
+    });
+
+    const finalMessage = fauxAssistantMessage("finished");
+    hostedSession.runtime.agent.addMessage(finalMessage, { historyEntryId });
+    vi.spyOn(hostedSession.session, "hasSubagent").mockReturnValue(true);
+
+    await expect(
+      hostedSession.recordSubagentEvent({
+        type: "subagent_spawned",
+        state: {
+          id: "child-1",
+          name: "default",
+          title: "long task",
+          status: "running",
+          costTotal: 0,
+          turns: 0,
+          toolCalls: 0,
+          usage: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            contextWindowUsageTokens: 0,
+            contextWindow: 100_000,
+          },
+          startedAt: 1,
+          abortRequested: false,
+        },
+      }),
+    ).resolves.toBeUndefined();
+
+    await hostedSession.enqueueRuntimeEvent({
+      type: "assistant_final",
+      historyEntryId,
+      message: finalMessage,
+      personaId: personas[0].id,
+      reasoningEffort: "medium",
+      revision: hostedSession.runtime.agent.snapshot().revision,
+    });
+
+    await expect(hostedSession.snapshot()).resolves.toEqual(
+      expect.objectContaining({
+        messages: expect.arrayContaining([
+          expect.objectContaining({ id: historyEntryId, state: "committed" }),
+        ]),
+        agents: {
+          "child-1": expect.objectContaining({ id: "child-1", status: "running" }),
+        },
+      }),
+    );
+  });
+
   it("does not let a reasoning write replace streamed state at the same revision", async () => {
     const store = new BlockingCommitStore();
     const host = createHost(store);

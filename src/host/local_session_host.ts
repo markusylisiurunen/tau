@@ -1213,10 +1213,13 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     return await write;
   }
 
-  private async commitSnapshotWithRevision(revision: number): Promise<SessionProtocolSnapshot> {
+  private async commitSnapshotPatch(
+    reason: SessionProtocolDeltaReason,
+    changes: SessionProtocolChange[],
+  ): Promise<SessionProtocolDeltaMessage> {
     const write = this.snapshotQueue
       .catch(() => undefined)
-      .then(() => this.writeSnapshotWithRevision(revision));
+      .then(() => this.writeSnapshotPatch(reason, changes));
     this.snapshotQueue = write.catch(() => undefined);
     return await write;
   }
@@ -1246,25 +1249,31 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     return cloneSessionProtocolSnapshot(this.updateCommittedSnapshotAfterWrite(snapshot));
   }
 
-  private async writeSnapshotWithRevision(revision: number): Promise<SessionProtocolSnapshot> {
+  private async writeSnapshotPatch(
+    reason: SessionProtocolDeltaReason,
+    changes: SessionProtocolChange[],
+  ): Promise<SessionProtocolDeltaMessage> {
     this.assertNotDisposed();
-    const generation = this.snapshotGeneration;
-    const draft = this.buildSnapshotDraft();
+    const current = this.committedSnapshot;
+    if (!current) {
+      throw new Error("cannot persist a session patch without a committed snapshot");
+    }
 
-    await this.switchSnapshotSession(draft.sessionId);
-
-    const snapshot: SessionProtocolSnapshot = {
-      ...draft,
-      revision,
-    };
+    const delta = createSessionProtocolDeltaMessage({
+      sessionId: current.sessionId,
+      fromRevision: current.revision,
+      toRevision: current.revision + 1,
+      reason,
+      delta: { type: "snapshot.patch", changes },
+    });
+    const snapshot = applySessionProtocolDelta(current, delta);
     await this.store.commitSessionSnapshot(snapshot, {
       expectedRevision: this.persistedSnapshot?.revision ?? 0,
     });
     this.persistedSnapshot = cloneSessionProtocolSnapshot(snapshot);
-    if (generation !== this.snapshotGeneration) {
-      return await this.writeSnapshot();
-    }
-    return cloneSessionProtocolSnapshot(this.updateCommittedSnapshotAfterWrite(snapshot));
+    this.committedSnapshot = cloneSessionProtocolSnapshot(snapshot);
+    this.snapshotGeneration += 1;
+    return delta;
   }
 
   private async switchSnapshotSession(sessionId: string): Promise<void> {
@@ -2006,32 +2015,21 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       this.emitSnapshotReset(reason, snapshot);
       return;
     }
-    const fromRevision = this.committedSnapshot.revision;
-    const toRevision = fromRevision + 1;
-    const delta = createSessionProtocolDeltaMessage({
-      sessionId: this.committedSnapshot.sessionId,
-      fromRevision,
-      toRevision,
-      reason,
-      delta: { type: "snapshot.patch", changes },
-    });
-    if (options.persist === false) {
-      this.committedSnapshot = applySessionProtocolDelta(this.committedSnapshot, delta);
-      this.snapshotGeneration += 1;
-      this.emitDelta(delta);
+    if (options.persist !== false) {
+      this.emitDelta(await this.commitSnapshotPatch(reason, changes));
       return;
     }
 
-    const snapshot = await this.commitSnapshotWithRevision(toRevision);
-    this.emitDelta(
-      createSessionProtocolDeltaMessage({
-        sessionId: delta.sessionId,
-        fromRevision,
-        toRevision: snapshot.revision,
-        reason,
-        delta: { type: "snapshot.patch", changes },
-      }),
-    );
+    const delta = createSessionProtocolDeltaMessage({
+      sessionId: this.committedSnapshot.sessionId,
+      fromRevision: this.committedSnapshot.revision,
+      toRevision: this.committedSnapshot.revision + 1,
+      reason,
+      delta: { type: "snapshot.patch", changes },
+    });
+    this.committedSnapshot = applySessionProtocolDelta(this.committedSnapshot, delta);
+    this.snapshotGeneration += 1;
+    this.emitDelta(delta);
   }
 
   private emitSnapshotReset(

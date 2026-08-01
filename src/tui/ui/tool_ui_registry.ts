@@ -1,5 +1,15 @@
 import type { ToolActivity, ToolUiText } from "../../core/tools/activity.js";
 import {
+  TOOL_NAME_BASH,
+  TOOL_NAME_EDIT,
+  TOOL_NAME_SEND_INPUT_TO_AGENT,
+  TOOL_NAME_SPAWN_AGENT,
+  TOOL_NAME_TERMINATE_AGENT,
+  TOOL_NAME_VIEW_IMAGE,
+  TOOL_NAME_WAIT_FOR_AGENTS,
+  TOOL_NAME_WRITE,
+} from "../../core/tools/tool_names.js";
+import {
   buildBashAbortedView,
   buildBashBlockedView,
   buildBashExecutionView,
@@ -32,6 +42,122 @@ export type ToolUiRenderContext = {
 
 type ToolUiRenderer = (event: ToolActivity, context: ToolUiRenderContext) => ToolOutputViewModel;
 
+type ToolUiLifecycleStatus = Exclude<ToolUiModel["status"], "streaming">;
+
+type ToolUiLanguage = {
+  name: string;
+  labels: Record<ToolUiLifecycleStatus, string>;
+};
+
+const TOOL_UI_LANGUAGE: Record<string, ToolUiLanguage> = {
+  [TOOL_NAME_BASH]: {
+    name: "bash",
+    labels: {
+      queued: "queued bash",
+      running: "running",
+      succeeded: "ran",
+      failed: "command failed",
+      blocked: "bash blocked",
+      cancelled: "bash cancelled",
+    },
+  },
+  [TOOL_NAME_WRITE]: {
+    name: "write",
+    labels: {
+      queued: "queued write",
+      running: "writing",
+      succeeded: "wrote",
+      failed: "failed to write",
+      blocked: "write blocked",
+      cancelled: "write cancelled",
+    },
+  },
+  [TOOL_NAME_EDIT]: {
+    name: "edit",
+    labels: {
+      queued: "queued edit",
+      running: "editing",
+      succeeded: "edited",
+      failed: "failed to edit",
+      blocked: "edit blocked",
+      cancelled: "edit cancelled",
+    },
+  },
+  [TOOL_NAME_VIEW_IMAGE]: {
+    name: "view image",
+    labels: {
+      queued: "queued view image",
+      running: "viewing",
+      succeeded: "viewed",
+      failed: "failed to view",
+      blocked: "view image blocked",
+      cancelled: "view image cancelled",
+    },
+  },
+  [TOOL_NAME_SPAWN_AGENT]: {
+    name: "spawn agent",
+    labels: {
+      queued: "queued spawn",
+      running: "spawning",
+      succeeded: "spawned",
+      failed: "spawn failed",
+      blocked: "spawn blocked",
+      cancelled: "spawn cancelled",
+    },
+  },
+  [TOOL_NAME_SEND_INPUT_TO_AGENT]: {
+    name: "send input",
+    labels: {
+      queued: "queued agent input",
+      running: "sending",
+      succeeded: "sent input",
+      failed: "send failed",
+      blocked: "send blocked",
+      cancelled: "send cancelled",
+    },
+  },
+  [TOOL_NAME_WAIT_FOR_AGENTS]: {
+    name: "wait for agents",
+    labels: {
+      queued: "queued wait",
+      running: "waiting",
+      succeeded: "finished waiting",
+      failed: "wait failed",
+      blocked: "wait blocked",
+      cancelled: "wait cancelled",
+    },
+  },
+  [TOOL_NAME_TERMINATE_AGENT]: {
+    name: "terminate agent",
+    labels: {
+      queued: "queued termination",
+      running: "terminating",
+      succeeded: "terminated",
+      failed: "terminate failed",
+      blocked: "terminate blocked",
+      cancelled: "termination cancelled",
+    },
+  },
+};
+
+const GENERIC_TOOL_STATUS_LABELS: Record<ToolUiLifecycleStatus, string> = {
+  queued: "queued",
+  running: "running",
+  succeeded: "completed",
+  failed: "failed",
+  blocked: "blocked",
+  cancelled: "cancelled",
+};
+
+function getToolUiLanguage(toolName: string): ToolUiLanguage | undefined {
+  return TOOL_UI_LANGUAGE[toolName];
+}
+
+function getToolStatusLabel(toolName: string, status: ToolUiModel["status"]): string {
+  if (status === "streaming") return "preparing";
+  return getToolUiLanguage(toolName)?.labels[status] ?? GENERIC_TOOL_STATUS_LABELS[status];
+}
+
 function buildSimpleToolRunningView(
   theme: Theme,
   label: string,
@@ -43,7 +169,7 @@ function buildSimpleToolRunningView(
   const header = buildToolHeaderLine({
     bulletStyle: runningColor,
     bullet: "⏵",
-    label: `${label} (running)`,
+    label,
     labelStyle: palette.textMuted,
     accent: inlineText(target),
     accentStyle: palette.brandAccent,
@@ -56,11 +182,7 @@ function buildSimpleToolRunningView(
   };
 }
 
-function buildToolPendingView(
-  theme: Theme,
-  label: "preparing" | "queued",
-  toolName: string,
-): ToolOutputViewModel {
+function buildToolPendingView(theme: Theme, label: string, target: string): ToolOutputViewModel {
   const { palette, text } = theme;
   const pendingColor = (s: string) => palette.textMuted(s);
 
@@ -69,13 +191,13 @@ function buildToolPendingView(
     bullet: "⏵",
     label,
     labelStyle: palette.textMuted,
-    accent: inlineText(toolName),
+    accent: inlineText(target),
     accentStyle: palette.brandAccent,
   });
 
   return {
     borderColor: pendingColor,
-    expanded: { title: pendingColor(text.bold(`${label} ${toolName}`)) },
+    expanded: { title: pendingColor(text.bold(`${label} ${target}`)) },
     compact: { header },
   };
 }
@@ -398,14 +520,7 @@ function buildGenericTerminalView(theme: Theme, model: ToolUiModel): ToolOutputV
   const borderColor = succeeded
     ? (value: string) => palette.actionSuccess(value)
     : (value: string) => palette.actionError(value);
-  const label =
-    model.status === "succeeded"
-      ? "completed"
-      : model.status === "failed"
-        ? "failed"
-        : model.status === "blocked"
-          ? "blocked"
-          : "cancelled";
+  const label = getToolStatusLabel(model.toolName, model.status);
   const resultText = model.resultText?.trim();
   const compactResult = resultText
     ? resultText
@@ -452,11 +567,16 @@ export class ToolUiRegistry {
 
   renderModel(model: ToolUiModel, context: ToolUiRenderContext): ToolOutputViewModel {
     if (model.status === "streaming") {
-      return buildToolPendingView(context.theme, "preparing", model.toolName);
+      const target = getToolUiLanguage(model.toolName)?.name ?? model.toolName;
+      return buildToolPendingView(context.theme, "preparing", target);
     }
     if (model.status === "queued") {
       return addCodePreview(
-        buildToolPendingView(context.theme, "queued", model.headerTarget),
+        buildToolPendingView(
+          context.theme,
+          getToolStatusLabel(model.toolName, model.status),
+          model.headerTarget,
+        ),
         model,
         context.theme,
         "queued",
@@ -467,7 +587,11 @@ export class ToolUiRegistry {
         return this.render(model.activity, context);
       }
       return addCodePreview(
-        buildSimpleToolRunningView(context.theme, model.toolName, model.headerTarget),
+        buildSimpleToolRunningView(
+          context.theme,
+          getToolStatusLabel(model.toolName, model.status),
+          model.headerTarget,
+        ),
         model,
         context.theme,
         "running",
@@ -602,7 +726,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
       theme: context.theme,
       label: "spawn",
       target: title,
-      status: "error",
+      status: "blocked",
       message: uiEvent.reason,
     });
   });
@@ -641,7 +765,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
       theme: context.theme,
       label: "send input",
       target: title,
-      status: "error",
+      status: "blocked",
       message: uiEvent.reason,
     });
   });
@@ -661,7 +785,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
     const title = uiEvent.headerTarget;
     return buildSubagentFinishedView({
       theme: context.theme,
-      label: "waited",
+      label: "finished waiting",
       failureLabel: "wait failed",
       title,
       status: uiEvent.status,
@@ -680,7 +804,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
       theme: context.theme,
       label: "wait",
       target: title,
-      status: "error",
+      status: "blocked",
       message: uiEvent.reason,
     });
   });
@@ -722,7 +846,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
       theme: context.theme,
       label: "terminate",
       target: title,
-      status: "error",
+      status: "blocked",
       message: uiEvent.reason,
     });
   });
@@ -766,7 +890,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
       theme: context.theme,
       label: uiEvent.toolName,
       target: uiEvent.headerTarget,
-      status: "error",
+      status: "blocked",
       message: uiEvent.reason,
     });
     return {

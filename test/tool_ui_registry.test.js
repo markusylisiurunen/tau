@@ -33,17 +33,64 @@ describe("ToolUiRegistry", () => {
 
   it("renders the canonical lifecycle for built-in and client tools", () => {
     const tools = [
-      { toolCallId: "write-1", toolName: "write", headerTarget: "notes.txt" },
-      { toolCallId: "bash-1", toolName: "bash", headerTarget: "printf hello" },
-      { toolCallId: "client-1", toolName: "local_picker", headerTarget: "local_picker" },
+      {
+        toolCallId: "write-1",
+        toolName: "write",
+        headerTarget: "notes.txt",
+        preparingTarget: "write",
+        labels: ["preparing", "queued write", "writing", "wrote"],
+      },
+      {
+        toolCallId: "edit-1",
+        toolName: "edit",
+        headerTarget: "notes.txt",
+        preparingTarget: "edit",
+        labels: ["preparing", "queued edit", "editing", "edited"],
+      },
+      {
+        toolCallId: "image-1",
+        toolName: "view_image",
+        headerTarget: "chart.png",
+        preparingTarget: "view image",
+        labels: ["preparing", "queued view image", "viewing", "viewed"],
+      },
+      {
+        toolCallId: "bash-1",
+        toolName: "bash",
+        headerTarget: "printf hello",
+        preparingTarget: "bash",
+        labels: ["preparing", "queued bash", "running", "ran"],
+      },
+      {
+        toolCallId: "spawn-1",
+        toolName: "spawn_agent",
+        headerTarget: "scan repo",
+        preparingTarget: "spawn agent",
+        labels: ["preparing", "queued spawn", "spawning", "spawned"],
+      },
+      {
+        toolCallId: "client-1",
+        toolName: "local_picker",
+        headerTarget: "local_picker",
+        preparingTarget: "local_picker",
+        labels: ["preparing", "queued", "running", "completed"],
+      },
     ];
+    const statuses = ["streaming", "queued", "running", "succeeded"];
     for (const tool of tools) {
-      expect(renderModel(registry, theme, { ...tool, status: "streaming" })).toContain("preparing");
-      expect(renderModel(registry, theme, { ...tool, status: "queued" })).toContain("queued");
-      expect(renderModel(registry, theme, { ...tool, status: "running" })).toContain("running");
-      expect(renderModel(registry, theme, { ...tool, status: "succeeded" })).toContain("completed");
+      const { labels, preparingTarget, ...model } = tool;
+      for (const [index, status] of statuses.entries()) {
+        const rendered = renderModel(registry, theme, { ...model, status });
+        expect(rendered).toContain(`<textMuted>${labels[index]}</textMuted>`);
+        const target = status === "streaming" ? preparingTarget : tool.headerTarget;
+        expect(rendered).toContain(`<brandAccent>${target}</brandAccent>`);
+      }
     }
-    const base = tools[0];
+    const base = {
+      toolCallId: tools[0].toolCallId,
+      toolName: tools[0].toolName,
+      headerTarget: tools[0].headerTarget,
+    };
 
     const client = renderModel(registry, theme, {
       toolCallId: "client-1",
@@ -70,8 +117,8 @@ describe("ToolUiRegistry", () => {
         uiText: makeUiText("a", "1 line", "a"),
       },
     });
-    expect(canonicalFailure).toContain("failed");
-    expect(canonicalFailure).not.toContain("write completed");
+    expect(canonicalFailure).toContain("failed to write");
+    expect(canonicalFailure).not.toContain("wrote");
   });
 
   it("renders generic tool call lifecycle events", () => {
@@ -149,6 +196,17 @@ describe("ToolUiRegistry", () => {
     });
     expect(execution).toContain("ls");
 
+    const failed = renderEvent(registry, theme, {
+      type: "bash_execution",
+      toolCallId: "b1-failed",
+      command: "false",
+      headerTarget: "false",
+      exitCode: 1,
+      truncationInfo,
+      uiText: makeUiText("", "    (exit 1)"),
+    });
+    expect(failed).toContain("command failed");
+
     const blocked = renderEvent(registry, theme, {
       type: "bash_blocked",
       toolCallId: "b2",
@@ -190,6 +248,15 @@ describe("ToolUiRegistry", () => {
     });
     expect(spawnFinished).toContain("spawned");
     expect(spawnFinished).toContain("agent-1");
+
+    const spawnBlocked = renderEvent(registry, theme, {
+      type: "spawn_agent_blocked",
+      toolCallId: "s2",
+      title: "scan repo",
+      headerTarget: "scan repo",
+      reason: "disabled",
+    });
+    expect(spawnBlocked).toContain("spawn blocked");
 
     const sendStarted = renderEvent(registry, theme, {
       type: "send_input_to_agent_started",

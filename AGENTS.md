@@ -182,6 +182,7 @@ Prompt/context tag style: use dash-case for XML-like tag names in prompt text (f
 **Tool UI preview formatting**:
 
 - Every session tool card follows `preparing` → `queued` → `running` → a terminal state from canonical `SessionProtocolToolRun.status`; tool activities only enrich that lifecycle with domain-specific detail.
+- Known tools may give those statuses explicit natural-language labels such as `writing` and `wrote`; unknown and client-provided tool names keep generic lifecycle labels and are never transformed heuristically.
 - Output-capable tools emit `ToolUiText` with `previewText`, `statusLine`, and `fullText`.
 - Preview truncation/formatting happens in core tools via `src/core/utils/tool_preview.ts`.
 - The TUI only styles output: compact uses `previewText` + `statusLine`, expanded uses raw `fullText`.

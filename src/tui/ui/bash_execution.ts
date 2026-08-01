@@ -55,7 +55,7 @@ export function buildBashExecutionView(
   const header = buildToolHeaderLine({
     bulletStyle: isSuccess ? successBullet : errorColor,
     bullet: isSuccess ? "✓" : "✗",
-    label: labelOverride ?? "ran",
+    label: labelOverride ?? (isSuccess ? "ran" : "command failed"),
     labelStyle: palette.textMuted,
     accent: commandInline,
     accentStyle: palette.brandAccent,

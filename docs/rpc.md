@@ -678,7 +678,7 @@ params (required):
 { "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3", "reasoning": "high" }
 ```
 
-sets the session reasoning effort to `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, or `"max"` and returns `{ "revision": number, "settings": { ... } }` with the authoritative updated settings. Observed clients receive a `settings.set` snapshot patch for the same revision. The host applies the settings update through the session mutation queue, but it does not interrupt an active turn or reject queued/steering messages. If a turn is already running, the new reasoning applies to the next user-message turn.
+sets the session reasoning effort to `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, or `"max"` and returns `{ "revision": number, "settings": { ... } }` with the authoritative updated settings. Observed clients receive a `settings.set` snapshot patch for the same revision. The host applies the settings update through the session mutation queue, but it does not interrupt an active turn or reject queued/steering messages. If a turn is already running, it and any steering continuations retain the spec captured when it started; the new reasoning applies to the next independently submitted or queued turn.
 
 #### session.setPersona
 
@@ -971,7 +971,7 @@ for lines that cannot produce a valid request id (for example malformed json), `
 
 - multiple requests can be accepted before earlier ones complete
 - `session.record`, `session.setReasoning`, `session.setPersona`, `session.reload`, `session.compact`, `session.rewind`, and `session.terminateSubagent` run through a session-owned mutation queue (arrival order across clients observed to the same live session)
-- `session.setReasoning` updates settings immediately without interrupting an active turn; active turns keep their captured reasoning and the new setting applies to the next user-message turn
+- `session.setReasoning` updates settings immediately without interrupting an active turn; the active turn and its steering continuations keep their captured spec, and the new setting applies to the next independently submitted or queued turn
 - `session.rewind` is idle-only and fails without interrupting an active turn
 - only one `session.submit` or `session.retry` turn can run at once (`busy` otherwise)
 - `session.exec` and `session.sample` calls can run concurrently with each other and with normal session work; they never enter the mutation queue, and `session.cancelExec` targets one exec without interrupting the others

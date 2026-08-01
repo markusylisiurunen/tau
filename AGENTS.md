@@ -322,7 +322,7 @@ RPC mode command surface is protocol-based (`initialize`, `session.create`, `ses
 
 **Keybindings**: `Shift+Tab` (cycle reasoning), `Ctrl+P` (cycle personality), `Ctrl+T` (toggle thinking), `Ctrl+O` (compact UI), `Ctrl+S` (stash input to clipboard), `Ctrl+Y` (toggle voice recording for `/listen`), `Ctrl+G` (terminate selected subagent), `Ctrl+Enter` (steer running assistant with editor input), `Enter x2` (retry last response on empty input), `Escape x2` (clear current prompt), `Alt+Up` (cancel pending queue and steering messages into the editor), `Alt+Down` (cycle active subagents), `Escape` (interrupt active work), `Ctrl+C` (press twice to exit)
 
-Reasoning changes are allowed while a turn is running. The active user-message turn keeps the reasoning captured when that turn started, including all tool-call subturns; the new reasoning applies to the next submitted, queued, or steering user-message turn when it actually starts.
+Reasoning changes are allowed while a turn is running. The active turn keeps the full `AgentSpec` captured when it started, including all tool-call subturns and steering continuations; the new reasoning applies to the next independently submitted or queued turn when it actually starts.
 
 ## Development
 

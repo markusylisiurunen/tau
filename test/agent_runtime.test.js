@@ -694,7 +694,7 @@ describe("AgentRuntime", () => {
     await expect(steering.result).rejects.toThrow("sink failed");
   });
 
-  it("batches steering at a boundary and captures the latest spec for the resulting turn", async () => {
+  it("batches steering at a boundary and retains the active turn spec", async () => {
     const call = fauxToolCall("boundary_tool", {}, { id: "boundary-call" });
     const toolRun = deferred();
     const toolStarted = deferred();
@@ -710,11 +710,16 @@ describe("AgentRuntime", () => {
       settings: { reasoning: "high" },
     });
     const { runtime, events } = createRuntime({ persona: firstPersona, tools: [tool] });
+    runtime.spec.modelNotice = "first model notice";
     const toolMessage = createAssistant(firstPersona, [call], { stopReason: "toolUse" });
     const models = [];
-    runtime.spec.model.stream = () => {
+    const contexts = [];
+    runtime.spec.model.stream = (context) => {
       models.push(firstPersona.model.id);
-      return createToolStream(toolMessage);
+      contexts.push(context);
+      return models.length === 1
+        ? createToolStream(toolMessage)
+        : createStream([], createAssistant(firstPersona, "steered"));
     };
 
     const firstTurn = runtime.submit("original");
@@ -724,13 +729,13 @@ describe("AgentRuntime", () => {
     const secondSpec = {
       ...runtime.spec,
       model: { ...runtime.spec.model, model: secondPersona.model },
+      modelNotice: "second model notice",
       attribution: { personaId: secondPersona.id, reasoningEffort: "high" },
       systemPrompt: "new system",
       tools: new ToolRegistry([tool]),
     };
     secondSpec.model.stream = () => {
-      models.push(secondPersona.model.id);
-      return createStream([], createAssistant(secondPersona, "steered"));
+      throw new Error("steering used the next turn spec");
     };
     runtime.updateSpec(secondSpec);
     toolRun.resolve();
@@ -744,14 +749,26 @@ describe("AgentRuntime", () => {
     expect(firstAssociation).toEqual(secondAssociation);
     expect(initialResult.finalMessage).toBe(toolMessage);
     expect(firstAssociation.result.finalMessage.content[0].text).toBe("steered");
-    expect(models).toEqual([firstPersona.model.id, secondPersona.model.id]);
+    expect(models).toEqual([firstPersona.model.id, firstPersona.model.id]);
+    expect(contexts[1].systemPrompt).toBe("system");
     const steeringMessage = runtime.rawHistoryEntriesSnapshot.find(
       (entry) => entry.id === firstAssociation.historyEntryId,
     ).message.content[0].text;
-    expect(steeringMessage).toContain("<system>");
+    expect(steeringMessage).toContain("first model notice");
+    expect(steeringMessage).not.toContain("second model notice");
     expect(steeringMessage).toContain("change direction");
     expect(steeringMessage).toContain("also inspect docs");
     expect(events.filter((event) => event.type === "turn_started")).toHaveLength(2);
+    expect(events.findLast((event) => event.type === "assistant_final")).toMatchObject({
+      personaId: "first-persona",
+      reasoningEffort: "medium",
+    });
+    expect(runtime.snapshot().usageCheckpoint).toBeUndefined();
+
+    secondSpec.model.stream = () =>
+      createStream([], createAssistant(secondPersona, "next submitted turn"));
+    const nextResult = await runtime.submit("next request");
+    expect(nextResult.finalMessage.content[0].text).toBe("next submitted turn");
     expect(events.findLast((event) => event.type === "assistant_final")).toMatchObject({
       personaId: "second-persona",
       reasoningEffort: "high",

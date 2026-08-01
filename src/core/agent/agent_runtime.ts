@@ -168,6 +168,7 @@ type AgentTurnSpec = {
   historyEntryId: string;
   contextEpoch: string;
   model: ModelExecutor;
+  modelNotice?: string;
   attribution: AgentSpec["attribution"];
   systemPrompt: string;
   tools: ToolRegistry;
@@ -450,13 +451,25 @@ export class AgentRuntime {
     textForModel: string,
     options?: { historyEntryId?: string },
   ): Promise<string> {
+    return await this.commitUserTextWithModelNotice(
+      textForModel,
+      this.currentSpec.modelNotice,
+      options,
+    );
+  }
+
+  private async commitUserTextWithModelNotice(
+    textForModel: string,
+    modelNotice: string | undefined,
+    options?: { historyEntryId?: string },
+  ): Promise<string> {
     this.assertActive();
     const message: UserMessage = {
       role: "user",
       content: [
         {
           type: "text",
-          text: prependModelNotice(textForModel, this.currentSpec.modelNotice),
+          text: prependModelNotice(textForModel, modelNotice),
         },
       ],
       timestamp: this.clock.now(),
@@ -749,10 +762,11 @@ export class AgentRuntime {
 
         associatedSteering = this.pendingSteering.splice(0);
         this.stopAtBoundaryRequested = false;
-        await this.commitUserText(
+        await this.commitUserTextWithModelNotice(
           formatSteeringUserMessage(associatedSteering.map((item) => item.text)),
+          turnSpec.modelNotice,
         );
-        turnSpec = this.captureTurnSettings();
+        turnSpec = this.continueTurnSettings(turnSpec);
         for (const submission of associatedSteering) {
           submission.resolveApplied({
             turnId: turnSpec.turnId,
@@ -990,6 +1004,7 @@ export class AgentRuntime {
       historyEntryId: this.getCurrentTurnUserHistoryEntryId(),
       contextEpoch: getContextEpoch(this.currentSpec),
       model: this.currentSpec.model,
+      ...(this.currentSpec.modelNotice ? { modelNotice: this.currentSpec.modelNotice } : {}),
       attribution: { ...this.currentSpec.attribution },
       systemPrompt: this.currentSpec.systemPrompt,
       tools: this.currentSpec.tools,
@@ -997,6 +1012,14 @@ export class AgentRuntime {
       retryPolicy: { ...this.currentSpec.retryPolicy },
       compactionPolicy: { ...this.currentSpec.compactionPolicy },
       maxModelSubturns: this.currentSpec.maxModelSubturns,
+    };
+  }
+
+  private continueTurnSettings(turnSettings: AgentTurnSpec): AgentTurnSpec {
+    return {
+      ...turnSettings,
+      turnId: `turn-${randomUUID()}`,
+      historyEntryId: this.getCurrentTurnUserHistoryEntryId(),
     };
   }
 
@@ -1435,6 +1458,7 @@ export class AgentRuntime {
               finalMessage.stopReason !== "error" &&
               finalMessage.stopReason !== "aborted" &&
               usage &&
+              turnSettings.contextEpoch === this.contextEpoch &&
               finalMessage.provider === turnSettings.model.model.provider &&
               finalMessage.model === turnSettings.model.model.id
             ) {

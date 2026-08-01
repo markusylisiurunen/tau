@@ -53,12 +53,12 @@ const TOOL_UI_LANGUAGE: Record<string, ToolUiLanguage> = {
   [TOOL_NAME_BASH]: {
     name: "bash",
     labels: {
-      queued: "queued bash",
+      queued: "queued",
       running: "running",
       succeeded: "ran",
-      failed: "command failed",
-      blocked: "bash blocked",
-      cancelled: "bash cancelled",
+      failed: "failed",
+      blocked: "blocked",
+      cancelled: "cancelled",
     },
   },
   [TOOL_NAME_WRITE]: {
@@ -108,12 +108,12 @@ const TOOL_UI_LANGUAGE: Record<string, ToolUiLanguage> = {
   [TOOL_NAME_SEND_INPUT_TO_AGENT]: {
     name: "send input",
     labels: {
-      queued: "queued agent input",
-      running: "sending",
+      queued: "queued input",
+      running: "sending input",
       succeeded: "sent input",
-      failed: "send failed",
-      blocked: "send blocked",
-      cancelled: "send cancelled",
+      failed: "failed to send input",
+      blocked: "send input blocked",
+      cancelled: "send input cancelled",
     },
   },
   [TOOL_NAME_WAIT_FOR_AGENTS]: {
@@ -133,8 +133,8 @@ const TOOL_UI_LANGUAGE: Record<string, ToolUiLanguage> = {
       queued: "queued termination",
       running: "terminating",
       succeeded: "terminated",
-      failed: "terminate failed",
-      blocked: "terminate blocked",
+      failed: "failed to terminate",
+      blocked: "termination blocked",
       cancelled: "termination cancelled",
     },
   },
@@ -299,24 +299,23 @@ function buildSimpleToolFinishedView(args: {
   label: string;
   target: string;
   status: "success" | "error" | "blocked";
+  statusLabel?: string;
   message?: string;
 }): ToolOutputViewModel {
-  const { theme, label, target, status, message } = args;
+  const { theme, label, target, status, statusLabel, message } = args;
   const { palette, text } = theme;
   const successColor = (s: string) => palette.actionSuccess(s);
   const errorColor = (s: string) => palette.actionError(s);
   const isSuccess = status === "success";
   const borderColor = isSuccess ? successColor : errorColor;
-  const statusLabel = isSuccess
-    ? label
-    : status === "blocked"
-      ? `${label} blocked`
-      : `${label} failed`;
+  const headerLabel =
+    statusLabel ??
+    (isSuccess ? label : status === "blocked" ? `${label} blocked` : `${label} failed`);
 
   const header = buildToolHeaderLine({
     bulletStyle: borderColor,
     bullet: isSuccess ? "✓" : "✗",
-    label: statusLabel,
+    label: headerLabel,
     labelStyle: palette.textMuted,
     accent: inlineText(target),
     accentStyle: palette.brandAccent,
@@ -521,6 +520,7 @@ function buildGenericTerminalView(theme: Theme, model: ToolUiModel): ToolOutputV
     ? (value: string) => palette.actionSuccess(value)
     : (value: string) => palette.actionError(value);
   const label = getToolStatusLabel(model.toolName, model.status);
+  const target = model.code === undefined ? model.headerTarget : model.toolName;
   const resultText = model.resultText?.trim();
   const compactResult = resultText
     ? resultText
@@ -533,7 +533,7 @@ function buildGenericTerminalView(theme: Theme, model: ToolUiModel): ToolOutputV
   return {
     borderColor,
     expanded: {
-      title: borderColor(text.bold(`${label} ${model.headerTarget}`)),
+      title: borderColor(text.bold(`${label} ${target}`)),
       sections: resultText ? [palette.actionOutput(resultText)] : [],
     },
     compact: {
@@ -542,7 +542,7 @@ function buildGenericTerminalView(theme: Theme, model: ToolUiModel): ToolOutputV
         bullet: succeeded ? "✓" : "✗",
         label,
         labelStyle: palette.textMuted,
-        accent: inlineText(model.headerTarget),
+        accent: inlineText(target),
         accentStyle: palette.brandAccent,
       }),
       extraText: compactResult,
@@ -618,12 +618,17 @@ export function createToolUiRegistry(): ToolUiRegistry {
 
   registry.register("tool_call_streaming", (event, context) => {
     const uiEvent = event as Extract<ToolActivity, { type: "tool_call_streaming" }>;
-    return buildToolPendingView(context.theme, "preparing", uiEvent.toolName);
+    const target = getToolUiLanguage(uiEvent.toolName)?.name ?? uiEvent.toolName;
+    return buildToolPendingView(context.theme, "preparing", target);
   });
 
   registry.register("tool_call_queued", (event, context) => {
     const uiEvent = event as Extract<ToolActivity, { type: "tool_call_queued" }>;
-    const view = buildToolPendingView(context.theme, "queued", uiEvent.headerTarget);
+    const view = buildToolPendingView(
+      context.theme,
+      getToolStatusLabel(uiEvent.toolName, "queued"),
+      uiEvent.headerTarget,
+    );
     if (uiEvent.code === undefined) return view;
 
     return {
@@ -639,9 +644,10 @@ export function createToolUiRegistry(): ToolUiRegistry {
     const uiEvent = event as Extract<ToolActivity, { type: "tool_call_blocked" }>;
     return buildSimpleToolFinishedView({
       theme: context.theme,
-      label: "tool call",
+      label: uiEvent.toolName,
       target: uiEvent.toolName,
       status: "blocked",
+      statusLabel: getToolStatusLabel(uiEvent.toolName, "blocked"),
       message: uiEvent.reason,
     });
   });
@@ -697,7 +703,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
     const uiEvent = event as Extract<ToolActivity, { type: "spawn_agent_started" }>;
     return buildSubagentRunningView({
       theme: context.theme,
-      label: "spawning",
+      label: getToolStatusLabel(TOOL_NAME_SPAWN_AGENT, "running"),
       title: uiEvent.headerTarget,
     });
   });
@@ -707,8 +713,8 @@ export function createToolUiRegistry(): ToolUiRegistry {
     const title = formatSubagentTitle(uiEvent.headerTarget);
     return buildSubagentFinishedView({
       theme: context.theme,
-      label: "spawned",
-      failureLabel: "spawn failed",
+      label: getToolStatusLabel(TOOL_NAME_SPAWN_AGENT, "succeeded"),
+      failureLabel: getToolStatusLabel(TOOL_NAME_SPAWN_AGENT, "failed"),
       title,
       status: uiEvent.status,
       uiText: ensureSubagentUiText({
@@ -727,6 +733,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
       label: "spawn",
       target: title,
       status: "blocked",
+      statusLabel: getToolStatusLabel(TOOL_NAME_SPAWN_AGENT, "blocked"),
       message: uiEvent.reason,
     });
   });
@@ -736,7 +743,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
     const title = formatSubagentTitle(uiEvent.headerTarget);
     return buildSubagentRunningView({
       theme: context.theme,
-      label: "sending",
+      label: getToolStatusLabel(TOOL_NAME_SEND_INPUT_TO_AGENT, "running"),
       title,
     });
   });
@@ -746,8 +753,8 @@ export function createToolUiRegistry(): ToolUiRegistry {
     const title = formatSubagentTitle(uiEvent.headerTarget);
     return buildSubagentFinishedView({
       theme: context.theme,
-      label: "sent input",
-      failureLabel: "send failed",
+      label: getToolStatusLabel(TOOL_NAME_SEND_INPUT_TO_AGENT, "succeeded"),
+      failureLabel: getToolStatusLabel(TOOL_NAME_SEND_INPUT_TO_AGENT, "failed"),
       title,
       status: uiEvent.status,
       uiText: ensureSubagentUiText({
@@ -766,6 +773,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
       label: "send input",
       target: title,
       status: "blocked",
+      statusLabel: getToolStatusLabel(TOOL_NAME_SEND_INPUT_TO_AGENT, "blocked"),
       message: uiEvent.reason,
     });
   });
@@ -775,7 +783,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
     const title = uiEvent.headerTarget;
     return buildSubagentRunningView({
       theme: context.theme,
-      label: "waiting",
+      label: getToolStatusLabel(TOOL_NAME_WAIT_FOR_AGENTS, "running"),
       title,
     });
   });
@@ -785,8 +793,8 @@ export function createToolUiRegistry(): ToolUiRegistry {
     const title = uiEvent.headerTarget;
     return buildSubagentFinishedView({
       theme: context.theme,
-      label: "finished waiting",
-      failureLabel: "wait failed",
+      label: getToolStatusLabel(TOOL_NAME_WAIT_FOR_AGENTS, "succeeded"),
+      failureLabel: getToolStatusLabel(TOOL_NAME_WAIT_FOR_AGENTS, "failed"),
       title,
       status: uiEvent.status,
       uiText: ensureSubagentUiText({
@@ -805,6 +813,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
       label: "wait",
       target: title,
       status: "blocked",
+      statusLabel: getToolStatusLabel(TOOL_NAME_WAIT_FOR_AGENTS, "blocked"),
       message: uiEvent.reason,
     });
   });
@@ -813,7 +822,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
     const uiEvent = event as Extract<ToolActivity, { type: "terminate_agent_started" }>;
     return buildSubagentRunningView({
       theme: context.theme,
-      label: "terminating",
+      label: getToolStatusLabel(TOOL_NAME_TERMINATE_AGENT, "running"),
       title: uiEvent.headerTarget,
     });
   });
@@ -827,8 +836,8 @@ export function createToolUiRegistry(): ToolUiRegistry {
         : uiEvent.message;
     return buildSubagentFinishedView({
       theme: context.theme,
-      label: "terminated",
-      failureLabel: "terminate failed",
+      label: getToolStatusLabel(TOOL_NAME_TERMINATE_AGENT, "succeeded"),
+      failureLabel: getToolStatusLabel(TOOL_NAME_TERMINATE_AGENT, "failed"),
       title,
       status: uiEvent.status,
       uiText: ensureSubagentUiText({
@@ -847,6 +856,7 @@ export function createToolUiRegistry(): ToolUiRegistry {
       label: "terminate",
       target: title,
       status: "blocked",
+      statusLabel: getToolStatusLabel(TOOL_NAME_TERMINATE_AGENT, "blocked"),
       message: uiEvent.reason,
     });
   });

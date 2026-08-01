@@ -387,6 +387,18 @@ function createHarness(options = {}) {
           includedLastAssistant: compactOptions.mode === "summary-and-last",
         };
       },
+      rewindToHistoryEntryId: vi.fn(async (historyEntryId) => {
+        const index = historyEntries.findIndex((entry) => entry.id === historyEntryId);
+        if (index < 0) throw new Error("rewind failed");
+        const entry = historyEntries[index];
+        const removedEntryIds = historyEntries.splice(index).map((item) => item.id);
+        return {
+          snapshot: await hostedSession.snapshot(),
+          historyEntryId,
+          text: entry.message.content.map((content) => content.text ?? "").join("\n"),
+          removedEntryIds,
+        };
+      }),
       interruptTurn() {
         if (!running || !releaseTurn) {
           return false;
@@ -1296,6 +1308,54 @@ describe("rpc_server", () => {
     );
 
     expect(harness.lines).toHaveLength(lineCount);
+  });
+
+  it("rejects rewind while an active submit is finishing protocol bookkeeping", async () => {
+    let markFinalSnapshotStarted;
+    const finalSnapshotStarted = new Promise((resolve) => {
+      markFinalSnapshotStarted = resolve;
+    });
+    let releaseFinalSnapshot;
+    const finalSnapshotGate = new Promise((resolve) => {
+      releaseFinalSnapshot = resolve;
+    });
+    const harness = createHarness({
+      snapshotDelays: [
+        0,
+        async () => {
+          markFinalSnapshotStarted();
+          await finalSnapshotGate;
+        },
+      ],
+    });
+
+    const submit = harness.server.handleLine(
+      request("submit", "session.submit", {
+        sessionId: "session-1",
+        text: "completed but still owned",
+      }),
+    );
+    await waitFor(() => harness.seededSession.canReleaseTurn());
+    const historyEntryId = harness.seededSession.session.historyEntries[0].id;
+    harness.releaseTurn();
+    await finalSnapshotStarted;
+
+    expect(harness.seededSession.isTurnRunning).toBe(false);
+    await harness.server.handleLine(
+      request("rewind", "session.rewind", { sessionId: "session-1", historyEntryId }),
+    );
+
+    expect(harness.seededSession.rewindToHistoryEntryId).not.toHaveBeenCalled();
+    expect(harness.lines.find((line) => line.id === "rewind")).toMatchObject({
+      ok: false,
+      error: {
+        code: SESSION_PROTOCOL_ERROR_CODES.busy,
+        message: "cannot rewind while session work is active or pending",
+      },
+    });
+
+    releaseFinalSnapshot();
+    await submit;
   });
 
   it("terminates a subagent without interrupting an active foreground turn", async () => {

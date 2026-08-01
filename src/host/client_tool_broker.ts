@@ -32,6 +32,8 @@ const HOST_TOOL_NAMES = new Set([
   "send_input_to_agent",
   "wait_for_agents",
   "terminate_agent",
+  "web",
+  "nook",
 ]);
 
 export type ClientToolExecutionOutcome = (message: SessionProtocolClientToolCallMessage) => void;

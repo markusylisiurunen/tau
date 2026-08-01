@@ -883,6 +883,76 @@ describe("LocalSessionHost", () => {
     expect(store.commitSessionSnapshot).toHaveBeenCalledTimes(2);
   });
 
+  it("projects tool activity without independently persisting it", async () => {
+    const store = new MemorySessionStore();
+    const originalCommit = store.commitSessionSnapshot.bind(store);
+    store.commitSessionSnapshot = vi.fn(originalCommit);
+    const host = createHost(store);
+    const hostedSession = await host.createSession(localCreateInput);
+    await hostedSession.snapshot();
+
+    const toolCall = fauxToolCall("bash", { command: "pwd" }, { id: "bash-activity" });
+    await hostedSession.enqueueRuntimeEvent({
+      type: "assistant_start",
+      historyEntryId: "assistant-activity",
+    });
+    await hostedSession.enqueueRuntimeEvent({
+      type: "assistant_partial",
+      historyEntryId: "assistant-activity",
+      snapshot: {
+        text: "",
+        thinking: "",
+        toolCalls: [toolCall],
+        hasTextStarted: false,
+        hasAnyThinking: false,
+      },
+    });
+
+    const deltas = [];
+    hostedSession.onDelta((delta) => deltas.push(delta));
+    await hostedSession.enqueueRuntimeEvent({
+      type: "tool_activity",
+      activity: {
+        type: "bash_started",
+        toolCallId: toolCall.id,
+        command: "pwd",
+        headerTarget: "pwd",
+      },
+    });
+
+    expect(store.commitSessionSnapshot).toHaveBeenCalledTimes(1);
+    expect(deltas.at(-1).delta.changes).toEqual([
+      expect.objectContaining({
+        type: "tool.set",
+        tool: expect.objectContaining({ id: toolCall.id }),
+      }),
+      expect.objectContaining({
+        type: "facet.set",
+        facet: expect.objectContaining({
+          subject: { type: "tool", id: toolCall.id },
+          data: { events: [expect.objectContaining({ type: "bash_started" })] },
+        }),
+      }),
+    ]);
+
+    await hostedSession.enqueueRuntimeEvent({
+      type: "tool_run_queued",
+      toolCallId: toolCall.id,
+      toolName: toolCall.name,
+      timestamp: 1,
+    });
+
+    expect(store.commitSessionSnapshot).toHaveBeenCalledTimes(2);
+    await expect(store.loadSession(hostedSession.sessionId)).resolves.toMatchObject({
+      facets: {
+        [`tool-ui-${toolCall.id}`]: {
+          data: { events: [expect.objectContaining({ type: "bash_started" })] },
+        },
+      },
+    });
+    await host.shutdown();
+  });
+
   it("publishes later streamed tool calls as queued before they execute", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "tau-tool-streaming-"));
     const executionEnvironment = createTestExecutionEnvironment({

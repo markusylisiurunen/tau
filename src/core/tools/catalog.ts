@@ -70,12 +70,11 @@ export const ToolCatalog = {
       createWaitForAgentsToolDefinition(options.supervisor),
       createTerminateAgentToolDefinition(options.supervisor),
     ];
-    const enabledToolNames = new Set<string>(options.persona.tools);
-    const enabledTools = tools.filter((tool) => enabledToolNames.has(tool.schema.name));
     if (options.config.nook) {
-      enabledTools.push(createNookToolDefinition(options.backend, options.config));
+      tools.push(createNookToolDefinition(options.backend, options.config));
     }
-    return new ToolRegistry(enabledTools);
+    const enabledToolNames = new Set<string>(options.persona.tools);
+    return new ToolRegistry(tools.filter((tool) => enabledToolNames.has(tool.schema.name)));
   },
 
   createSubagentRegistry(

@@ -26,6 +26,24 @@ async function runTool(tool, toolCall, signal = new AbortController().signal) {
 }
 
 describe("ClientToolBroker", () => {
+  it.each(["web", "nook"])("rejects client tools that duplicate the %s host tool", (name) => {
+    const broker = new ClientToolBroker();
+
+    expect(() =>
+      broker.registerClient({
+        tools: [
+          {
+            name,
+            description: `Conflicting ${name} tool.`,
+            parameters: { type: "object", properties: {}, additionalProperties: false },
+          },
+        ],
+        sendCall: vi.fn(),
+        sendCancel: vi.fn(),
+      }),
+    ).toThrow(`client tool '${name}' duplicates a host tool`);
+  });
+
   it("returns full client tool results with a truncated final UI event", async () => {
     const broker = new ClientToolBroker();
     const longLine = "x".repeat(200);

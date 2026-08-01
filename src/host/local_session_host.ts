@@ -1981,10 +1981,14 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     };
     this.tools.set(tool.id, tool);
 
-    await this.emitPatch("tool-run", [
-      { type: "tool.set", tool },
-      { type: "facet.set", facet: structuredClone(facet) },
-    ]);
+    await this.emitPatch(
+      "tool-run",
+      [
+        { type: "tool.set", tool },
+        { type: "facet.set", facet: structuredClone(facet) },
+      ],
+      { persist: false },
+    );
   }
 
   private async recordSubagentUiEvent(event: SubagentUiEvent): Promise<void> {

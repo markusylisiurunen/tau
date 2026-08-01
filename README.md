@@ -202,7 +202,7 @@ Add a single configured target to Tau config after deploying the Worker and crea
 }
 ```
 
-Template copies require a destination directory that already exists and is empty. The Worker validates Cloudflare Access JWTs against the Access JWKS with the configured issuer and audience. Tau sends service-token headers to Cloudflare Access for CLI/API calls, but the Worker does not treat those raw headers as authentication. When `nook` is configured, Tau automatically exposes a code-mode model tool named `nook`. Generated JavaScript receives a bounded Nook management SDK, static SDK documentation through `docs`, and the deployment-served app-authoring guide through `nook.skill()`; authenticated HTTP and execution-environment file access remain host-owned. Detailed setup, deploy, template, Worker, browser SDK, and V0 scope notes live in [src/nook/README.md](src/nook/README.md).
+Template copies require a destination directory that already exists and is empty. The Worker validates Cloudflare Access JWTs against the Access JWKS with the configured issuer and audience. Tau sends service-token headers to Cloudflare Access for CLI/API calls, but the Worker does not treat those raw headers as authentication. When `nook` is configured and selected by the active persona, Tau exposes a code-mode model tool named `nook`. Generated JavaScript receives a bounded Nook management SDK, static SDK documentation through `docs`, and the deployment-served app-authoring guide through `nook.skill()`; authenticated HTTP and execution-environment file access remain host-owned. Detailed setup, deploy, template, Worker, browser SDK, and V0 scope notes live in [src/nook/README.md](src/nook/README.md).
 
 ## SDK usage (Node)
 
@@ -661,7 +661,7 @@ optional frontmatter fields:
 - `serviceTier`: `priority` or `flex` for providers that support service tiers (currently `openai` and `openai-codex`)
 - `allowedReasoningLevels`: list of reasoning levels shown in the ui
 - `skills`: list of enabled skill names (matched by `name` in skill frontmatter), or `"*"` to enable all discovered skills. if omitted, custom personas default to `"*"`. set `skills: []` to disable skills completely.
-- `tools`: optional list of persona-selected host tools. Nook is not selected here; when effective config contains `nook`, Tau exposes the `nook` tool automatically.
+- `tools`: optional list of persona-selected host tools. `nook` additionally requires effective Nook configuration before it becomes available.
 - `subagents`: optional map of subagent definitions. the built-in `default` sub-agent is implicit unless `default: false` is provided. custom subagents must include `systemPrompt` and may include `description`, `provider`+`model`, `reasoning`, `serviceTier`, `tools`, and `launchModels` (when specifying a model, `provider` and `model` must be provided together). names must be lowercase with dashes (max 64 chars). `launchModels` entries must use `<provider>/<model>:<effort>` and are used to allowlist launch-time `spawn_agent` overrides. example:
   ```yaml
   subagents:
@@ -678,7 +678,7 @@ optional frontmatter fields:
         - openai/gpt-5.5:high
         - anthropic/claude-haiku-4-5:medium
   ```
-- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `view_image`, `web`, `spawn_agent`, `send_input_to_agent`, `wait_for_agents`, `terminate_agent`. if omitted, defaults to `bash`, `write`, `edit`, `view_image`, `web` (and subagent tools when subagents are enabled).
+- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `view_image`, `web`, `nook`, `spawn_agent`, `send_input_to_agent`, `wait_for_agents`, `terminate_agent`. if omitted, defaults to `bash`, `write`, `edit`, `view_image`, `web`, `nook` (and subagent tools when subagents are enabled). `nook` is available only when effective Nook configuration is also present.
 
 the markdown body becomes the system prompt.
 

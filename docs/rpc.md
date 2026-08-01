@@ -188,7 +188,7 @@ params (required):
   "id": "init-1",
   "ok": true,
   "result": {
-    "protocolVersion": 2,
+    "protocolVersion": 4,
     "methods": [
       "initialize",
       "session.create",
@@ -972,7 +972,7 @@ for lines that cannot produce a valid request id (for example malformed json), `
 - multiple requests can be accepted before earlier ones complete
 - `session.record`, `session.setReasoning`, `session.setPersona`, `session.reload`, `session.compact`, `session.rewind`, and `session.terminateSubagent` run through a session-owned mutation queue (arrival order across clients observed to the same live session)
 - `session.setReasoning` updates settings immediately without interrupting an active turn; the active turn and its steering continuations keep their captured spec, and the new setting applies to the next independently submitted or queued turn
-- `session.rewind` is idle-only and fails without interrupting an active turn
+- `session.rewind` requires no active submit or pending user work and fails with `busy` without interrupting or cancelling anything
 - only one `session.submit` or `session.retry` turn can run at once (`busy` otherwise)
 - `session.exec` and `session.sample` calls can run concurrently with each other and with normal session work; they never enter the mutation queue, and `session.cancelExec` targets one exec without interrupting the others
 - `session.ephemeral.create`, `session.ephemeral.submit`, and `session.ephemeral.close` manage independent, non-persisted contexts outside the main-session mutation queue; only overlapping submissions to the same ephemeral thread return `busy`

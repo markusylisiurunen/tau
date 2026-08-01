@@ -64,13 +64,26 @@ describe("ChatRuntime", () => {
     expect(runtime.agent.spec.systemPrompt).toBe(runtime.promptComposition.baseSystemPrompt);
   });
 
-  it("keeps configured Nook alongside the persona's enabled tools", () => {
-    const runtime = createRuntime({
+  it("requires both persona selection and config to expose Nook", () => {
+    const configuredWithoutPersona = createRuntime({
       persona: createPersona({ tools: ["bash"] }),
       config: { nook: { domain: "nook.example.com" } },
     });
+    const personaWithoutConfig = createRuntime({
+      persona: createPersona({ tools: ["bash", "nook"] }),
+    });
+    const enabled = createRuntime({
+      persona: createPersona({ tools: ["bash", "nook"] }),
+      config: { nook: { domain: "nook.example.com" } },
+    });
 
-    expect(runtime.agent.spec.tools.schemas.map((tool) => tool.name)).toEqual(["bash", "nook"]);
+    expect(configuredWithoutPersona.agent.spec.tools.schemas.map((tool) => tool.name)).toEqual([
+      "bash",
+    ]);
+    expect(personaWithoutConfig.agent.spec.tools.schemas.map((tool) => tool.name)).toEqual([
+      "bash",
+    ]);
+    expect(enabled.agent.spec.tools.schemas.map((tool) => tool.name)).toEqual(["bash", "nook"]);
   });
 
   it("samples with the current persona model settings without changing agent state", async () => {

@@ -1272,6 +1272,21 @@ export class SessionProtocolHandler {
     request: Extract<SessionProtocolRequestMessage, { method: "session.rewind" }>,
   ): Promise<void> {
     await this.withNonInterruptingSessionMutation(request, async (state) => {
+      if (
+        state.live.activeSubmit ||
+        state.session.isTurnRunning ||
+        state.live.pendingSteeringSubmits.length > 0 ||
+        state.live.pendingQueuedSubmits.length > 0
+      ) {
+        this.sendMessage(
+          createSessionProtocolErrorResponse(
+            request.id,
+            SESSION_PROTOCOL_ERROR_CODES.busy,
+            "cannot rewind while session work is active or pending",
+          ),
+        );
+        return;
+      }
       const result = await state.session.rewindToHistoryEntryId(request.params.historyEntryId);
       this.sendMessage(createSessionProtocolSuccessResponse(request.id, "session.rewind", result));
     });

@@ -194,8 +194,49 @@ export async function* runModelSubturn(
       lastPartialEmittedAt = Date.now();
     };
 
+    const streamIterator = stream[Symbol.asyncIterator]();
+    const readStreamEvent = () =>
+      streamIterator.next().then((result) => ({ type: "stream_event" as const, result }));
+    let pendingStreamEvent: ReturnType<typeof readStreamEvent> | undefined;
+
     try {
-      for await (const event of stream) {
+      while (true) {
+        pendingStreamEvent ??= readStreamEvent();
+        let next: Awaited<ReturnType<typeof readStreamEvent>> | { type: "partial_flush" };
+        if (accumulator && hasPendingPartial && lastPartialEmittedAt !== 0) {
+          const delayMs = Math.max(
+            0,
+            ASSISTANT_PARTIAL_MIN_INTERVAL_MS - (Date.now() - lastPartialEmittedAt),
+          );
+          if (delayMs === 0) {
+            yield* emitPartialIfPending();
+            continue;
+          }
+
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          const partialFlush = new Promise<{ type: "partial_flush" }>((resolve) => {
+            timer = setTimeout(() => resolve({ type: "partial_flush" }), delayMs);
+          });
+          try {
+            next = await Promise.race([pendingStreamEvent, partialFlush]);
+          } finally {
+            if (timer) {
+              clearTimeout(timer);
+            }
+          }
+        } else {
+          next = await pendingStreamEvent;
+        }
+
+        if (next.type === "partial_flush") {
+          yield* emitPartialIfPending();
+          continue;
+        }
+        if (next.result.done) {
+          break;
+        }
+        pendingStreamEvent = undefined;
+        const event = next.result.value;
         if (accumulator && event.type !== "toolcall_end") {
           accumulator.processEvent(event);
         }
@@ -286,6 +327,8 @@ export async function* runModelSubturn(
         yield discarded;
       }
       throw error;
+    } finally {
+      await streamIterator.return?.();
     }
 
     yield* emitPartialIfPending();

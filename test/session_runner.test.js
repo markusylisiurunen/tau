@@ -116,6 +116,59 @@ describe("session runner", () => {
     }
   });
 
+  it("flushes a coalesced assistant partial while the model stream is idle", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const idle = Promise.withResolvers();
+    const finalMessage = {
+      role: "assistant",
+      api: "openai-responses",
+      provider: "openai",
+      model: "gpt-5.6-luna",
+      stopReason: "stop",
+      content: [{ type: "text", text: "ab" }],
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+    };
+    const streamModel = () => ({
+      async *[Symbol.asyncIterator]() {
+        yield { type: "text_delta", delta: "a" };
+        yield { type: "text_delta", delta: "b" };
+        await idle.promise;
+      },
+      async result() {
+        return finalMessage;
+      },
+    });
+    const runner = runModelSubturn({
+      model: {},
+      context: {},
+      streamModel,
+      streamOptions: {},
+      signal: new AbortController().signal,
+      emitPartials: true,
+    });
+
+    try {
+      expect((await runner.next()).value.snapshot.text).toBe("a");
+      const pendingPartial = runner.next();
+      await vi.advanceTimersByTimeAsync(33);
+      expect((await pendingPartial).value.snapshot.text).toBe("ab");
+      idle.resolve();
+      await expect(runner.next()).resolves.toEqual({ done: true, value: finalMessage });
+    } finally {
+      idle.resolve();
+      await runner.return();
+      vi.useRealTimers();
+    }
+  });
+
   it("publishes authoritative text-end content after streamed deltas", async () => {
     const finalMessage = {
       role: "assistant",

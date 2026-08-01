@@ -21,9 +21,218 @@ function renderEvent(registry, theme, event, context = {}) {
   return renderText(renderToolOutput(view, true), 120);
 }
 
+function renderModel(registry, theme, model) {
+  const view = registry.renderModel(model, { theme });
+  expect(view).toBeDefined();
+  return renderText(renderToolOutput(view, true), 120);
+}
+
 describe("ToolUiRegistry", () => {
   const theme = createTagTheme();
   const registry = createToolUiRegistry();
+
+  it("renders the canonical lifecycle for built-in and client tools", () => {
+    const tools = [
+      {
+        toolCallId: "bash-1",
+        toolName: "bash",
+        headerTarget: "npm test",
+        preparingTarget: "bash",
+        labels: ["preparing", "queued", "running", "ran", "failed", "blocked", "cancelled"],
+      },
+      {
+        toolCallId: "write-1",
+        toolName: "write",
+        headerTarget: "src/config.ts",
+        preparingTarget: "write",
+        labels: [
+          "preparing",
+          "queued write",
+          "writing",
+          "wrote",
+          "failed to write",
+          "write blocked",
+          "write cancelled",
+        ],
+      },
+      {
+        toolCallId: "edit-1",
+        toolName: "edit",
+        headerTarget: "src/config.ts",
+        preparingTarget: "edit",
+        labels: [
+          "preparing",
+          "queued edit",
+          "editing",
+          "edited",
+          "failed to edit",
+          "edit blocked",
+          "edit cancelled",
+        ],
+      },
+      {
+        toolCallId: "image-1",
+        toolName: "view_image",
+        headerTarget: "screenshot.png",
+        preparingTarget: "view image",
+        labels: [
+          "preparing",
+          "queued view image",
+          "viewing",
+          "viewed",
+          "failed to view",
+          "view image blocked",
+          "view image cancelled",
+        ],
+      },
+      {
+        toolCallId: "spawn-1",
+        toolName: "spawn_agent",
+        headerTarget: "inspect runtime",
+        preparingTarget: "spawn agent",
+        labels: [
+          "preparing",
+          "queued spawn",
+          "spawning",
+          "spawned",
+          "spawn failed",
+          "spawn blocked",
+          "spawn cancelled",
+        ],
+      },
+      {
+        toolCallId: "send-1",
+        toolName: "send_input_to_agent",
+        headerTarget: "inspect runtime",
+        preparingTarget: "send input",
+        labels: [
+          "preparing",
+          "queued input",
+          "sending input",
+          "sent input",
+          "failed to send input",
+          "send input blocked",
+          "send input cancelled",
+        ],
+      },
+      {
+        toolCallId: "wait-1",
+        toolName: "wait_for_agents",
+        headerTarget: "agent-42",
+        preparingTarget: "wait for agents",
+        labels: [
+          "preparing",
+          "queued wait",
+          "waiting",
+          "finished waiting",
+          "wait failed",
+          "wait blocked",
+          "wait cancelled",
+        ],
+      },
+      {
+        toolCallId: "terminate-1",
+        toolName: "terminate_agent",
+        headerTarget: "agent-42",
+        preparingTarget: "terminate agent",
+        labels: [
+          "preparing",
+          "queued termination",
+          "terminating",
+          "terminated",
+          "failed to terminate",
+          "termination blocked",
+          "termination cancelled",
+        ],
+      },
+      {
+        toolCallId: "web-1",
+        toolName: "web",
+        headerTarget: "console.log(docs)",
+        preparingTarget: "web",
+        code: "console.log(docs)",
+        labels: ["preparing", "queued", "running", "completed", "failed", "blocked", "cancelled"],
+      },
+      {
+        toolCallId: "nook-1",
+        toolName: "nook",
+        headerTarget: "console.log(docs)",
+        preparingTarget: "nook",
+        code: "console.log(docs)",
+        labels: ["preparing", "queued", "running", "completed", "failed", "blocked", "cancelled"],
+      },
+      {
+        toolCallId: "client-1",
+        toolName: "local_picker",
+        headerTarget: "local_picker",
+        preparingTarget: "local_picker",
+        labels: ["preparing", "queued", "running", "completed", "failed", "blocked", "cancelled"],
+      },
+      {
+        toolCallId: "inherited-name-1",
+        toolName: "constructor",
+        headerTarget: "constructor",
+        preparingTarget: "constructor",
+        labels: ["preparing", "queued", "running", "completed", "failed", "blocked", "cancelled"],
+      },
+    ];
+    const statuses = [
+      "streaming",
+      "queued",
+      "running",
+      "succeeded",
+      "failed",
+      "blocked",
+      "cancelled",
+    ];
+    for (const tool of tools) {
+      const { labels, preparingTarget, ...model } = tool;
+      for (const [index, status] of statuses.entries()) {
+        const rendered = renderModel(registry, theme, { ...model, status });
+        expect(rendered).toContain(`<textMuted>${labels[index]}</textMuted>`);
+        const target =
+          status === "streaming"
+            ? preparingTarget
+            : tool.code === undefined
+              ? tool.headerTarget
+              : tool.toolName;
+        expect(rendered).toContain(`<brandAccent>${target}</brandAccent>`);
+      }
+    }
+    const base = {
+      toolCallId: tools[1].toolCallId,
+      toolName: tools[1].toolName,
+      headerTarget: tools[1].headerTarget,
+    };
+
+    const client = renderModel(registry, theme, {
+      toolCallId: "client-1",
+      toolName: "local_picker",
+      headerTarget: "local_picker",
+      status: "succeeded",
+      resultText: "picked a",
+    });
+    expect(client).toContain("completed");
+    expect(client).toContain("local_picker");
+    expect(client).toContain("picked a");
+
+    const canonicalFailure = renderModel(registry, theme, {
+      ...base,
+      status: "failed",
+      activity: {
+        type: "write_success",
+        toolCallId: "write-1",
+        path: "notes.txt",
+        headerTarget: "notes.txt",
+        bytes: 1,
+        lines: 1,
+        content: "a",
+        uiText: makeUiText("a", "1 line", "a"),
+      },
+    });
+    expect(canonicalFailure).toContain("failed to write");
+    expect(canonicalFailure).not.toContain("wrote");
+  });
 
   it("renders generic tool call lifecycle events", () => {
     const streaming = renderEvent(registry, theme, {
@@ -52,7 +261,7 @@ describe("ToolUiRegistry", () => {
       headerTarget: "write",
       reason: "disabled",
     });
-    expect(blocked).toContain("tool call blocked");
+    expect(blocked).toContain("write blocked");
     expect(blocked).toContain("disabled");
   });
 
@@ -100,6 +309,17 @@ describe("ToolUiRegistry", () => {
     });
     expect(execution).toContain("ls");
 
+    const failed = renderEvent(registry, theme, {
+      type: "bash_execution",
+      toolCallId: "b1-failed",
+      command: "false",
+      headerTarget: "false",
+      exitCode: 1,
+      truncationInfo,
+      uiText: makeUiText("", "    (exit 1)"),
+    });
+    expect(failed).toContain("failed");
+
     const blocked = renderEvent(registry, theme, {
       type: "bash_blocked",
       toolCallId: "b2",
@@ -107,7 +327,7 @@ describe("ToolUiRegistry", () => {
       headerTarget: "rm -rf /",
       reason: "blocked",
     });
-    expect(blocked).toContain("bash blocked");
+    expect(blocked).toContain("blocked");
 
     const aborted = renderEvent(registry, theme, {
       type: "bash_aborted",
@@ -116,6 +336,7 @@ describe("ToolUiRegistry", () => {
       headerTarget: "sleep 5",
       reason: "aborted",
     });
+    expect(aborted).toContain("cancelled");
     expect(aborted).toContain("aborted");
   });
 
@@ -142,6 +363,15 @@ describe("ToolUiRegistry", () => {
     expect(spawnFinished).toContain("spawned");
     expect(spawnFinished).toContain("agent-1");
 
+    const spawnBlocked = renderEvent(registry, theme, {
+      type: "spawn_agent_blocked",
+      toolCallId: "s2",
+      title: "scan repo",
+      headerTarget: "scan repo",
+      reason: "disabled",
+    });
+    expect(spawnBlocked).toContain("spawn blocked");
+
     const sendStarted = renderEvent(registry, theme, {
       type: "send_input_to_agent_started",
       toolCallId: "si1",
@@ -150,7 +380,7 @@ describe("ToolUiRegistry", () => {
       title: "scan repo",
       headerTarget: "scan repo",
     });
-    expect(sendStarted).toContain("sending");
+    expect(sendStarted).toContain("sending input");
 
     const sendFinished = renderEvent(registry, theme, {
       type: "send_input_to_agent_finished",
@@ -164,6 +394,29 @@ describe("ToolUiRegistry", () => {
     });
     expect(sendFinished).toContain("sent input");
     expect(sendFinished).toContain("agent-1");
+
+    const sendFailed = renderEvent(registry, theme, {
+      type: "send_input_to_agent_finished",
+      toolCallId: "si2",
+      agentId: "agent-1",
+      name: "explore",
+      title: "scan repo",
+      headerTarget: "scan repo",
+      status: "error",
+      message: "agent is not running",
+    });
+    expect(sendFailed).toContain("failed to send input");
+
+    const sendBlocked = renderEvent(registry, theme, {
+      type: "send_input_to_agent_blocked",
+      toolCallId: "si3",
+      agentId: "agent-1",
+      name: "explore",
+      title: "scan repo",
+      headerTarget: "scan repo",
+      reason: "disabled",
+    });
+    expect(sendBlocked).toContain("send input blocked");
 
     const waitStarted = renderEvent(registry, theme, {
       type: "wait_for_agents_started",
@@ -200,6 +453,16 @@ describe("ToolUiRegistry", () => {
     });
     expect(terminateFinished).toContain("terminated");
     expect(terminateFinished).toContain("cost $0.05");
+
+    const terminateBlocked = renderEvent(registry, theme, {
+      type: "terminate_agent_blocked",
+      toolCallId: "t2",
+      agentId: "agent-2",
+      headerTarget: "agent-2",
+      title: "agent-2",
+      reason: "disabled",
+    });
+    expect(terminateBlocked).toContain("termination blocked");
   });
 
   it("renders fallback subagent error text when uiText is absent", () => {
@@ -223,7 +486,7 @@ describe("ToolUiRegistry", () => {
       status: "error",
       finalStatus: "aborted",
     });
-    expect(terminateFailed).toContain("terminate failed");
+    expect(terminateFailed).toContain("failed to terminate");
     expect(terminateFailed).toContain("final status: aborted");
   });
 

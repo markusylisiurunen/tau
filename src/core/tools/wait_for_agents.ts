@@ -1,18 +1,17 @@
 import type { Tool, ToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { z } from "zod";
-import type { SubagentResult } from "../subagents/control_plane.js";
-import { createToolError, createToolResult } from "../utils/messages.js";
+import type { AgentSupervisor, SubagentResult } from "../subagents/agent_supervisor.js";
 import { truncateForTokens } from "../utils/truncate.js";
 import { parseToolArgs } from "../utils/zod.js";
+import type { ToolActivity } from "./activity.js";
 import {
-  createToolDispatch,
-  isMainToolDispatchContext,
-  type ToolDefinition,
-  type ToolDispatch,
-  type ToolDispatchContext,
-  type ToolDispatchResult,
-  type ToolUiEvent,
+  type AgentTool,
+  createTextToolOutcome,
+  executeTool,
+  type ToolExecutionContext,
+  type ToolExecutionOutcome,
+  type ToolImplementationOutcome,
 } from "./registry.js";
 import { buildSubagentUiText, formatSubagentStatusLine } from "./subagent_ui.js";
 import { TOOL_NAME_WAIT_FOR_AGENTS } from "./tool_names.js";
@@ -127,33 +126,33 @@ function getWaitForAgentsDisplayTarget(raw: unknown): string {
   return parsedArgs.ok ? formatAgentIdsDisplayTarget(parsedArgs.data.ids) : "(invalid arguments)";
 }
 
-export function createWaitForAgentsToolDefinition(): ToolDefinition {
+export function createWaitForAgentsToolDefinition(supervisor: AgentSupervisor): AgentTool {
   return {
     schema: WAIT_FOR_AGENTS_TOOL,
-    getDisplayTarget: (toolCall) => getWaitForAgentsDisplayTarget(toolCall.arguments),
-    async dispatch(
+    describe: (toolCall) => ({ headerTarget: getWaitForAgentsDisplayTarget(toolCall.arguments) }),
+    async execute(
       toolCall: ToolCall,
-      signal: AbortSignal,
-      context: ToolDispatchContext,
-    ): Promise<ToolDispatch> {
+      context: ToolExecutionContext,
+    ): Promise<ToolExecutionOutcome> {
+      const { signal } = context;
       let ids: string[] = [];
       const headerTarget = getWaitForAgentsDisplayTarget(toolCall.arguments);
 
-      const blocked = (reason: string): ToolDispatchResult => {
-        const toolResult = createToolError(toolCall, reason);
-        const uiEvent: ToolUiEvent = {
+      const blocked = (reason: string): ToolImplementationOutcome => {
+        const outcome = createTextToolOutcome(reason, "blocked");
+        const uiEvent: ToolActivity = {
           type: "wait_for_agents_blocked",
           toolCallId: toolCall.id,
           agentIds: ids,
           headerTarget,
           reason,
         };
-        return { toolResult, uiEvent };
+        return { content: outcome.content, outcome: outcome.outcome, uiEvent };
       };
 
       const parsedArgs = parseToolArgs(waitArgsSchema, toolCall.arguments);
       if (!parsedArgs.ok) {
-        return createToolDispatch(() => blocked(`Invalid arguments: ${parsedArgs.error}`));
+        return executeTool(context, () => blocked(`Invalid arguments: ${parsedArgs.error}`));
       }
 
       ({ ids } = parsedArgs.data);
@@ -168,24 +167,11 @@ export function createWaitForAgentsToolDefinition(): ToolDefinition {
       }
       const dedupedTarget = formatAgentIdsDisplayTarget(deduped);
 
-      if (!isMainToolDispatchContext(context)) {
-        return createToolDispatch(() =>
-          blocked("The wait_for_agents tool is only available in the main session."),
-        );
-      }
-
-      const controlPlane = context.subagentControlPlane;
-
-      return {
-        startedUiEvent: {
-          type: "wait_for_agents_started",
-          toolCallId: toolCall.id,
-          agentIds: deduped,
-          headerTarget: dedupedTarget,
-        },
-        run: (async (): Promise<ToolDispatchResult> => {
+      return executeTool(
+        context,
+        async (): Promise<ToolImplementationOutcome> => {
           try {
-            const results = await controlPlane.waitForAgents(deduped, signal);
+            const results = await supervisor.waitForAgents(deduped, signal);
             const resultText = formatWaitOutput(results, deduped);
             const outputText = formatWaitOutput(
               results,
@@ -202,7 +188,7 @@ export function createWaitForAgentsToolDefinition(): ToolDefinition {
               statusText,
               fullText: resultText,
             });
-            const uiEvent: ToolUiEvent = {
+            const uiEvent: ToolActivity = {
               type: "wait_for_agents_finished",
               toolCallId: toolCall.id,
               agentIds: deduped,
@@ -211,8 +197,8 @@ export function createWaitForAgentsToolDefinition(): ToolDefinition {
               message: hasFailures ? "One or more subagents reported errors." : undefined,
               uiText,
             };
-            const toolResult = createToolResult(toolCall, resultText, hasFailures);
-            return { toolResult, uiEvent };
+            const outcome = createTextToolOutcome(resultText, hasFailures ? "failed" : "succeeded");
+            return { content: outcome.content, outcome: outcome.outcome, uiEvent };
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             const reason = message.trim() || "The wait_for_agents request failed.";
@@ -221,7 +207,7 @@ export function createWaitForAgentsToolDefinition(): ToolDefinition {
               statusText: "error",
               fullText: reason,
             });
-            const uiEvent: ToolUiEvent = {
+            const uiEvent: ToolActivity = {
               type: "wait_for_agents_finished",
               toolCallId: toolCall.id,
               agentIds: deduped,
@@ -230,11 +216,17 @@ export function createWaitForAgentsToolDefinition(): ToolDefinition {
               message: reason,
               uiText,
             };
-            const toolResult = createToolError(toolCall, reason);
-            return { toolResult, uiEvent };
+            const outcome = createTextToolOutcome(reason, signal.aborted ? "cancelled" : "failed");
+            return { content: outcome.content, outcome: outcome.outcome, uiEvent };
           }
-        })(),
-      };
+        },
+        {
+          type: "wait_for_agents_started",
+          toolCallId: toolCall.id,
+          agentIds: deduped,
+          headerTarget: dedupedTarget,
+        },
+      );
     },
   };
 }

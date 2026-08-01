@@ -2,6 +2,7 @@ import { PassThrough } from "node:stream";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import { RpcServer, runRpcServer } from "../dist/core/modes/rpc_server.js";
+import { formatSteeringUserMessage } from "../dist/core/runtime/steering.js";
 import { EphemeralThreadBusyError, SessionExecBusyError } from "../dist/host/session_host.js";
 import {
   SESSION_PROTOCOL_ERROR_CODES,
@@ -117,9 +118,12 @@ function createHarness(options = {}) {
     let sessionId = recoveredSessionId ?? `session-${nextSessionId++}`;
     let running = false;
     let nextHistoryId = 1;
+    let nextSteeringId = 1;
     let releaseTurn;
     let pendingTurnResult = { status: "completed", stopReason: "stop" };
     let pendingTurn = null;
+    let activeTurnSettlement = Promise.resolve();
+    const pendingSteering = [];
     let reasoning = bootstrap.persona.settings.reasoning;
     const ephemeralContexts = new Set();
     const activeWorkAbortControllers = new Set();
@@ -237,6 +241,10 @@ function createHarness(options = {}) {
       },
       async runTurn() {
         running = true;
+        let settleTurn;
+        activeTurnSettlement = new Promise((resolve) => {
+          settleTurn = resolve;
+        });
         try {
           if (options.runTurn) {
             return await options.runTurn();
@@ -250,16 +258,68 @@ function createHarness(options = {}) {
           if (options.afterTurnRelease) {
             await options.afterTurnRelease();
           }
+          if (pendingTurnResult.status !== "aborted" && pendingSteering.length > 0) {
+            const steering = pendingSteering.splice(0);
+            const historyEntryId = hostedSession.session.addUserText(
+              formatSteeringUserMessage(steering.map((item) => item.text)),
+            );
+            for (const item of steering) {
+              item.resolveApplied({ userHistoryEntryId: historyEntryId });
+            }
+            pendingTurn = new Promise((resolve) => {
+              releaseTurn = resolve;
+            });
+            await pendingTurn;
+            const result = {
+              userHistoryEntryId: historyEntryId,
+              turn: { status: "completed", stopReason: "stop" },
+            };
+            for (const item of steering) item.resolveResult(result);
+          }
           emitDelta(createNoticeDelta(sessionId, historyEntries.length + 2, "finished"));
           return pendingTurnResult;
         } finally {
           running = false;
           pendingTurn = null;
           pendingTurnResult = { status: "completed", stopReason: "stop" };
+          settleTurn();
         }
       },
       requestTurnBoundaryStop: vi.fn(() => running),
       cancelTurnBoundaryStop: vi.fn(() => running),
+      steer(text) {
+        const id = `steering-${nextSteeringId++}`;
+        let resolveApplied;
+        let rejectApplied;
+        const applied = new Promise((resolve, reject) => {
+          resolveApplied = resolve;
+          rejectApplied = reject;
+        });
+        let resolveResult;
+        let rejectResult;
+        const result = new Promise((resolve, reject) => {
+          resolveResult = resolve;
+          rejectResult = reject;
+        });
+        pendingSteering.push({
+          id,
+          text,
+          resolveApplied,
+          rejectApplied,
+          resolveResult,
+          rejectResult,
+        });
+        return { id, applied, result };
+      },
+      cancelSteering: vi.fn(() => {
+        const cancelled = pendingSteering.splice(0);
+        for (const item of cancelled) {
+          const error = new Error("steering submission was cancelled");
+          item.rejectApplied(error);
+          item.rejectResult(error);
+        }
+        return cancelled.map(({ id, text }) => ({ id, text }));
+      }),
       async exec(runOptions) {
         const abortController = new AbortController();
         activeExecAbortControllers.set(runOptions.execId, abortController);
@@ -327,17 +387,18 @@ function createHarness(options = {}) {
           includedLastAssistant: compactOptions.mode === "summary-and-last",
         };
       },
-      async pruneToolResults(pruneOptions) {
+      rewindToHistoryEntryId: vi.fn(async (historyEntryId) => {
+        const index = historyEntries.findIndex((entry) => entry.id === historyEntryId);
+        if (index < 0) throw new Error("rewind failed");
+        const entry = historyEntries[index];
+        const removedEntryIds = historyEntries.splice(index).map((item) => item.id);
         return {
           snapshot: await hostedSession.snapshot(),
-          message: `pruned with ${pruneOptions.strategy}`,
-          noop: false,
-          bashResultsPruned: 1,
-          editCallsPruned: 2,
-          editResultsPruned: 1,
-          bytesPruned: 1024,
+          historyEntryId,
+          text: entry.message.content.map((content) => content.text ?? "").join("\n"),
+          removedEntryIds,
         };
-      },
+      }),
       interruptTurn() {
         if (!running || !releaseTurn) {
           return false;
@@ -357,7 +418,7 @@ function createHarness(options = {}) {
         return interrupted;
       }),
       waitForActiveWork: vi.fn(async () => {
-        await Promise.allSettled(activeWorkPromises);
+        await Promise.allSettled([activeTurnSettlement, ...activeWorkPromises]);
       }),
       terminateSubagent: vi.fn(async () => ({ found: true })),
       createEphemeralContext: vi.fn(async () => {
@@ -723,32 +784,6 @@ describe("rpc_server", () => {
     );
 
     await harness.server.handleLine(
-      request("prune-created", "session.prune", {
-        sessionId: "session-2",
-        strategy: "smart",
-        fraction: 0.5,
-        guidance: "keep errors",
-      }),
-    );
-    const pruned = harness.lines.find(
-      (line) => line.type === "response" && line.id === "prune-created",
-    );
-    expect(pruned).toEqual(
-      expect.objectContaining({
-        ok: true,
-        result: expect.objectContaining({
-          message: "pruned with smart",
-          noop: false,
-          bashResultsPruned: 1,
-          editCallsPruned: 2,
-          editResultsPruned: 1,
-          bytesPruned: 1024,
-          snapshot: expect.objectContaining({ sessionId: "session-2" }),
-        }),
-      }),
-    );
-
-    await harness.server.handleLine(
       request("detach-created", "session.unobserve", { sessionId: "session-2" }),
     );
     await harness.server.handleLine(
@@ -763,6 +798,116 @@ describe("rpc_server", () => {
         result: expect.objectContaining({ sessionId: "session-2" }),
       }),
     );
+  });
+
+  it("serializes idle steering startup through user-message recording", async () => {
+    let markRecordStarted;
+    const recordStarted = new Promise((resolve) => {
+      markRecordStarted = resolve;
+    });
+    let releaseRecord;
+    const recordGate = new Promise((resolve) => {
+      releaseRecord = resolve;
+    });
+    const harness = createHarness({
+      record: async (options, record) => {
+        markRecordStarted();
+        await recordGate;
+        return await record(options);
+      },
+    });
+
+    const steering = harness.server.handleLine(
+      request("steer-1", "session.steer", {
+        sessionId: "session-1",
+        text: "start from steering",
+      }),
+    );
+    await recordStarted;
+    const overlapping = harness.server.handleLine(
+      request("submit-1", "session.submit", {
+        sessionId: "session-1",
+        text: "must remain uncommitted",
+      }),
+    );
+
+    expect(harness.seededSession.session.historyEntries).toEqual([]);
+    releaseRecord();
+    await overlapping;
+    expect(harness.lines.find((line) => line.id === "submit-1")).toMatchObject({
+      ok: false,
+      error: { code: SESSION_PROTOCOL_ERROR_CODES.busy },
+    });
+    expect(harness.seededSession.session.historyEntries).toEqual([
+      expect.objectContaining({
+        message: expect.objectContaining({
+          content: [{ type: "text", text: "start from steering" }],
+        }),
+      }),
+    ]);
+
+    await waitFor(() => harness.seededSession.canReleaseTurn());
+    harness.releaseTurn();
+    await steering;
+  });
+
+  it("preserves steering mode while handing a request to the post-turn queue", async () => {
+    let markFinalSnapshot;
+    const finalSnapshotStarted = new Promise((resolve) => {
+      markFinalSnapshot = resolve;
+    });
+    let releaseFinalSnapshot;
+    const finalSnapshotGate = new Promise((resolve) => {
+      releaseFinalSnapshot = resolve;
+    });
+    const harness = createHarness({
+      snapshotDelays: [
+        0,
+        async () => {
+          markFinalSnapshot();
+          await finalSnapshotGate;
+        },
+      ],
+    });
+
+    const firstSubmit = harness.server.handleLine(
+      request("submit-1", "session.submit", {
+        sessionId: "session-1",
+        text: "first turn",
+      }),
+    );
+    await waitFor(() => harness.seededSession.canReleaseTurn());
+    harness.releaseTurn();
+    await finalSnapshotStarted;
+
+    const steering = harness.server.handleLine(
+      request("steer-1", "session.steer", {
+        sessionId: "session-1",
+        text: "preserve steer mode",
+      }),
+    );
+    await waitFor(() =>
+      harness.lines.some(
+        (line) => line.type === "session.pendingUserMessages" && line.state.messages.length === 1,
+      ),
+    );
+    expect(
+      harness.lines.findLast((line) => line.type === "session.pendingUserMessages").state.messages,
+    ).toEqual([expect.objectContaining({ mode: "steer", text: "preserve steer mode" })]);
+
+    await harness.server.handleLine(
+      request("cancel-1", "session.cancelPendingMessages", { sessionId: "session-1" }),
+    );
+    await steering;
+    expect(harness.lines.find((line) => line.id === "cancel-1")).toMatchObject({
+      ok: true,
+      result: {
+        cancelled: [expect.objectContaining({ mode: "steer", text: "preserve steer mode" })],
+      },
+    });
+
+    releaseFinalSnapshot();
+    await firstSubmit;
   });
 
   it("streams submit events, forwards subagent events, and rejects overlapping submit with busy", async () => {
@@ -1165,6 +1310,54 @@ describe("rpc_server", () => {
     expect(harness.lines).toHaveLength(lineCount);
   });
 
+  it("rejects rewind while an active submit is finishing protocol bookkeeping", async () => {
+    let markFinalSnapshotStarted;
+    const finalSnapshotStarted = new Promise((resolve) => {
+      markFinalSnapshotStarted = resolve;
+    });
+    let releaseFinalSnapshot;
+    const finalSnapshotGate = new Promise((resolve) => {
+      releaseFinalSnapshot = resolve;
+    });
+    const harness = createHarness({
+      snapshotDelays: [
+        0,
+        async () => {
+          markFinalSnapshotStarted();
+          await finalSnapshotGate;
+        },
+      ],
+    });
+
+    const submit = harness.server.handleLine(
+      request("submit", "session.submit", {
+        sessionId: "session-1",
+        text: "completed but still owned",
+      }),
+    );
+    await waitFor(() => harness.seededSession.canReleaseTurn());
+    const historyEntryId = harness.seededSession.session.historyEntries[0].id;
+    harness.releaseTurn();
+    await finalSnapshotStarted;
+
+    expect(harness.seededSession.isTurnRunning).toBe(false);
+    await harness.server.handleLine(
+      request("rewind", "session.rewind", { sessionId: "session-1", historyEntryId }),
+    );
+
+    expect(harness.seededSession.rewindToHistoryEntryId).not.toHaveBeenCalled();
+    expect(harness.lines.find((line) => line.id === "rewind")).toMatchObject({
+      ok: false,
+      error: {
+        code: SESSION_PROTOCOL_ERROR_CODES.busy,
+        message: "cannot rewind while session work is active or pending",
+      },
+    });
+
+    releaseFinalSnapshot();
+    await submit;
+  });
+
   it("terminates a subagent without interrupting an active foreground turn", async () => {
     const harness = createHarness();
 
@@ -1282,14 +1475,16 @@ describe("rpc_server", () => {
       }),
     );
 
-    await waitFor(() => harness.seededSession.requestTurnBoundaryStop.mock.calls.length > 0);
-    expect(harness.seededSession.requestTurnBoundaryStop).toHaveBeenCalled();
+    await waitFor(() =>
+      harness.lines.some(
+        (line) => line.type === "session.pendingUserMessages" && line.state.messages.length === 2,
+      ),
+    );
     expect(harness.lines.some((line) => line.id === "steer-1" && line.type === "response")).toBe(
       false,
     );
 
     harness.releaseTurn();
-    await firstSubmit;
     await waitFor(() =>
       harness.seededSession.session.historyEntries.some((entry) =>
         entry.message.content[0].text.includes("change direction"),
@@ -1299,9 +1494,23 @@ describe("rpc_server", () => {
     const steeringEntry = harness.seededSession.session.historyEntries.find((entry) =>
       entry.message.content[0].text.includes("change direction"),
     );
+    await waitFor(() =>
+      harness.lines.some(
+        (line) => line.type === "session.pendingUserMessages" && line.state.messages.length === 0,
+      ),
+    );
+    expect(harness.lines.some((line) => line.id === "steer-1" && line.type === "response")).toBe(
+      false,
+    );
+    await harness.server.handleLine(
+      request("cancel-applied", "session.cancelPendingMessages", { sessionId: "session-1" }),
+    );
+    expect(harness.lines.find((line) => line.id === "cancel-applied")).toEqual(
+      expect.objectContaining({ ok: true, result: { cancelled: [] } }),
+    );
     harness.emitSubagent({ type: "spawned", id: "agent-2", title: "research" });
     harness.releaseTurn();
-    await Promise.all([steerOne, steerTwo]);
+    await Promise.all([firstSubmit, steerOne, steerTwo]);
 
     expect(steeringEntry.message.content[0].text).toContain("<system>");
     expect(steeringEntry.message.content[0].text).toContain("change direction\n\nalso check docs");
@@ -1410,7 +1619,7 @@ describe("rpc_server", () => {
     expect(
       harness.lines.findLast((line) => line.type === "session.pendingUserMessages").state.messages,
     ).toEqual([]);
-    expect(harness.seededSession.cancelTurnBoundaryStop).toHaveBeenCalled();
+    expect(harness.seededSession.cancelSteering).toHaveBeenCalled();
 
     harness.releaseTurn();
     await firstSubmit;
@@ -1460,6 +1669,40 @@ describe("rpc_server", () => {
     await recovered.close();
   });
 
+  it("rejects steering while an interrupted turn is still unwinding", async () => {
+    let releaseUnwind;
+    const unwindGate = new Promise((resolve) => {
+      releaseUnwind = resolve;
+    });
+    const harness = createHarness({ afterTurnRelease: async () => await unwindGate });
+    const firstSubmit = harness.server.handleLine(
+      request("submit-1", "session.submit", {
+        sessionId: "session-1",
+        text: "first turn",
+      }),
+    );
+    await waitFor(() => harness.lines.some((line) => deltaHasNotice(line, "streaming")));
+
+    await harness.server.handleLine(
+      request("interrupt-1", "session.interrupt", { sessionId: "session-1" }),
+    );
+    await harness.server.handleLine(
+      request("steer-1", "session.steer", {
+        sessionId: "session-1",
+        text: "too late",
+      }),
+    );
+
+    expect(harness.lines.find((line) => line.id === "steer-1")).toEqual(
+      expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({ code: SESSION_PROTOCOL_ERROR_CODES.busy }),
+      }),
+    );
+    releaseUnwind();
+    await firstSubmit;
+  });
+
   it("drops pending steering submits when a turn is interrupted", async () => {
     const harness = createHarness();
 
@@ -1471,16 +1714,21 @@ describe("rpc_server", () => {
     );
 
     await waitFor(() => harness.lines.some((line) => deltaHasNotice(line, "streaming")));
-    await harness.server.handleLine(
+    const steer = harness.server.handleLine(
       request("steer-1", "session.steer", {
         sessionId: "session-1",
         text: "change direction",
       }),
     );
+    await waitFor(() =>
+      harness.lines.some(
+        (line) => line.type === "session.pendingUserMessages" && line.state.messages.length === 1,
+      ),
+    );
     await harness.server.handleLine(
       request("interrupt", "session.interrupt", { sessionId: "session-1" }),
     );
-    await firstSubmit;
+    await Promise.all([firstSubmit, steer]);
 
     expect(
       harness.seededSession.session.historyEntries.some((entry) =>

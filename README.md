@@ -105,7 +105,7 @@ then attach the terminal UI from another machine:
 tau attach --auth-token "$TAU_WS_AUTH_TOKEN" ws://vps:8787
 ```
 
-Without `--session` or `--new`, attach lists hosted sessions and prompts for the session to open. Use `--session <id>` to attach to an existing persisted session directly:
+Without `--session` or `--new`, attach lists hosted sessions and prompts for the session to open. Persisted session files use a versioned storage format and older unwrapped snapshots are migrated during recovery. Use `--session <id>` to attach to an existing persisted session directly:
 
 ```sh
 tau attach --session 0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3 --auth-token "$TAU_WS_AUTH_TOKEN" ws://vps:8787
@@ -136,7 +136,7 @@ For stdio attach, use `--session <id>` before `--`:
 tau attach --session 0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3 -- ssh vps 'cd /path/to/repo && tau rpc'
 ```
 
-Session attach renders the authoritative session snapshot, streams recoverable `session.delta` updates and independently revisioned, non-persisted `session.pendingUserMessages` replacements, submits normal user input through `session.submit`, `session.queue`, and `session.steer`, supports steering/interruption, runs `!`/`!!` Bash commands in the session execution environment, records `/listen` from the local microphone, speaks `/speak` locally, reloads session content with `/reload`, switches session personas with `/persona:<id>` or `Ctrl+P`, inserts session prompt templates with `/prompt:<id>`, compacts or prunes the session with `/compact:*` and `/prune:*`, creates a new session with `/new`, and exits with `/exit` or `Ctrl+C` twice.
+Session attach renders the authoritative session snapshot, streams recoverable `session.delta` updates and independently revisioned, non-persisted `session.pendingUserMessages` replacements, submits normal user input through `session.submit`, `session.queue`, and `session.steer`, supports steering/interruption, runs `!`/`!!` Bash commands in the session execution environment, records `/listen` from the local microphone, speaks `/speak` locally, reloads session content with `/reload`, switches session personas with `/persona:<id>` or `Ctrl+P`, inserts session prompt templates with `/prompt:<id>`, compacts the session with `/compact:*`, creates a new session with `/new`, and exits with `/exit` or `Ctrl+C` twice.
 
 Model `bash` tool calls, `!`/`!!`, `session.exec`, and Tau-controlled command helpers each run in a fresh, non-interactive login Bash belonging to the session execution environment. Tau sets `HOME` to the execution environment home, so Bash reads `/etc/profile` and then the first available user login file (`~/.bash_profile`, `~/.bash_login`, or `~/.profile`). Bash also reads inherited `BASH_ENV` when set; otherwise `.bashrc` is loaded only when the login configuration sources it. Login startup files must be automation-safe: they must not write to stdout or stderr, read stdin, require a TTY, or terminate the shell unexpectedly. Tau does not filter or frame startup output. Commands start from the backend's target-side environment and apply explicit execution-environment overrides; the local backend filters sensitive variables inherited from the Tau host. Node, Git, and other helper executables resolve from the same login-configured `PATH` as model commands. Shell state such as `cd`, exports, aliases, functions, and `nvm use` does not persist between calls.
 
@@ -202,7 +202,7 @@ Add a single configured target to Tau config after deploying the Worker and crea
 }
 ```
 
-Template copies require a destination directory that already exists and is empty. The Worker validates Cloudflare Access JWTs against the Access JWKS with the configured issuer and audience. Tau sends service-token headers to Cloudflare Access for CLI/API calls, but the Worker does not treat those raw headers as authentication. When `nook` is configured, Tau automatically exposes a code-mode model tool named `nook`. Generated JavaScript receives a bounded Nook management SDK, static SDK documentation through `docs`, and the deployment-served app-authoring guide through `nook.skill()`; authenticated HTTP and execution-environment file access remain host-owned. Detailed setup, deploy, template, Worker, browser SDK, and V0 scope notes live in [src/nook/README.md](src/nook/README.md).
+Template copies require a destination directory that already exists and is empty. The Worker validates Cloudflare Access JWTs against the Access JWKS with the configured issuer and audience. Tau sends service-token headers to Cloudflare Access for CLI/API calls, but the Worker does not treat those raw headers as authentication. When `nook` is configured and selected by the active persona, Tau exposes a code-mode model tool named `nook`. Generated JavaScript receives a bounded Nook management SDK, static SDK documentation through `docs`, and the deployment-served app-authoring guide through `nook.skill()`; authenticated HTTP and execution-environment file access remain host-owned. Detailed setup, deploy, template, Worker, browser SDK, and V0 scope notes live in [src/nook/README.md](src/nook/README.md).
 
 ## SDK usage (Node)
 
@@ -337,7 +337,7 @@ and in config (`.tau/config.json` or `~/.config/tau/config.json`):
 
 ## tool access
 
-enabled tools execute directly. persona and sub-agent tool lists determine which tools are available.
+enabled tools execute directly. persona and sub-agent tool lists determine which tools are available. main sessions, background sub-agents, and ephemeral review threads all execute through the same stateful agent runtime, with identical streaming, retries, tool recovery, context accounting, steering boundaries, and automatic compaction. each context binds its tool dependencies before a turn starts; session persistence, child supervision, ephemeral thread forks, progress presentation, and usage attribution remain outside the runtime.
 
 ## power management (macOS)
 
@@ -402,7 +402,7 @@ some models support extended thinking, where they reason through problems before
 tau --persona opus-4.8-chat:high
 ```
 
-reasoning changes made while the assistant is working apply to the next user-message turn. the active turn keeps the reasoning level it captured when that user message started, including any tool-call subturns.
+reasoning changes made while the assistant is working apply to the next independently submitted or queued turn. the active turn keeps the full execution spec it captured when it started, including tool-call subturns and steering continuations.
 
 toggle visibility of the model's thinking with `ctrl+t`.
 
@@ -460,9 +460,6 @@ tau supports slash commands for common actions:
 | `/diff [git diff args...]` | open the local diff review tool for the current session; git snapshot and review-agent work run on the session host |
 | `/compact:summary-only` | compress history into one synthetic user summary message |
 | `/compact:summary-and-last` | compress history and include the last assistant message verbatim when present |
-| `/prune:earliest` | prune bash tool results from oldest to newest and compact edit payloads/results |
-| `/prune:largest` | prune largest bash tool results first and compact edit payloads/results |
-| `/prune:smart` | prune bash tool results via model selection and compact edit payloads/results |
 | `/persona:<id>` | switch to a different persona |
 | `/prompt:<id>` | insert a saved prompt template |
 | `/theme:<id>` | switch to a loaded theme |
@@ -472,8 +469,6 @@ tau supports slash commands for common actions:
 tau automatically compacts long sessions when the latest successful provider-reported usage from the active model plus Tau's estimate of model-visible content added since that response approaches the model context limit. Tau checks before every model subturn, so one user turn can compact more than once. automatic compaction summarizes older context, asks the compaction model to select original user messages to append verbatim inside the summary by history id, retains a recent tail verbatim, and inserts a hidden continuation note so the assistant continues without asking you to repeat context.
 
 the compact commands are manual and useful when you want to force context replacement. they replace prior context with a single synthetic user summary message, including compaction-model-selected original user messages verbatim inside that summary, and do not retain a recent tail. compaction prompts middle-truncate each textual tool result to roughly 2,048 estimated tokens without changing live history. `/compact:summary-and-last` also includes the last assistant message verbatim when present.
-
-the prune commands drop bash tool results from the active context without summarizing and compact edit call payloads/results. all three accept an optional fraction between `0` and `1` (for example, `/prune:largest 0.4`) and default to `0.25` when omitted. `/prune:smart` also accepts optional guidance text, either after a fraction (for example, `/prune:smart 0.3 keep only repetitive output`) or by itself (for example, `/prune:smart keep build logs`).
 
 `/listen` (or `ctrl+y`) starts microphone recording on macOS, including while the assistant is working. while recording, editor typing is disabled, and `ctrl+y` stops recording and starts transcription at the cursor using the configured speech-to-text provider. `esc` stops recording first without interrupting the assistant; press it again to interrupt active work. recording also auto-stops after 5 minutes. on Linux, `/listen` is currently unavailable and tau shows a warning.
 
@@ -591,7 +586,7 @@ the `subagents.defaultLaunchModels` field configures allowed `spawn_agent` launc
 
 `autoCompact` controls automatic session compaction and merges field-by-field across config levels. it is enabled by default with `reserveTokens: 16384` and `keepRecentTokens: 20000`. before every model subturn, Tau compares the latest successful provider-reported assistant usage from the active model plus an estimated token count for model-visible messages appended since that response against the model context window minus the reserve. when the threshold is crossed, Tau summarizes older context, asks the compaction model to select original user messages to append verbatim inside the summary by history id, and retains recent messages verbatim (capped at that threshold). manual `/compact:*` commands remain summary-replacement commands.
 
-the `modelSystemNotices` field maps `<provider>/<model>` to a notice string. provider ids must be known and model ids are exact/case-sensitive against the merged configured model catalog (built-in + layered `models.json`). when a message is sent to that model, tau prepends the notice as a `<system>...</system>` block before the user content. this applies to main-session user messages and sub-agent prompts, regardless of persona id.
+the `modelSystemNotices` field maps `<provider>/<model>` to a notice string. provider ids must be known and model ids are exact/case-sensitive against the merged configured model catalog (built-in + layered `models.json`). when Tau commits a main-session or sub-agent input, it prepends the notice for the active model as an ordinary `<system>...</system>` block. the persisted block is subsequently treated like any other system prefix, so compaction sees notices already present in the source history. tau does not prepend the current notice to the compaction prompt or to synthetic compaction messages, and the generated summary is not required to reproduce it. ephemeral agents never receive model system notices, and maintenance model calls do not resolve or add fresh notices.
 
 session snapshots store raw recoverable user message text. tau-internal metadata is persisted in that text but stripped before model calls and user display. leading exact `<system>...</system>\n` blocks in user messages are hidden from user-facing renderers but remain model-facing instructions.
 
@@ -666,7 +661,7 @@ optional frontmatter fields:
 - `serviceTier`: `priority` or `flex` for providers that support service tiers (currently `openai` and `openai-codex`)
 - `allowedReasoningLevels`: list of reasoning levels shown in the ui
 - `skills`: list of enabled skill names (matched by `name` in skill frontmatter), or `"*"` to enable all discovered skills. if omitted, custom personas default to `"*"`. set `skills: []` to disable skills completely.
-- `tools`: optional list of persona-selected host tools. Nook is not selected here; when effective config contains `nook`, Tau exposes the `nook` tool automatically.
+- `tools`: optional list of persona-selected host tools. `nook` additionally requires effective Nook configuration before it becomes available.
 - `subagents`: optional map of subagent definitions. the built-in `default` sub-agent is implicit unless `default: false` is provided. custom subagents must include `systemPrompt` and may include `description`, `provider`+`model`, `reasoning`, `serviceTier`, `tools`, and `launchModels` (when specifying a model, `provider` and `model` must be provided together). names must be lowercase with dashes (max 64 chars). `launchModels` entries must use `<provider>/<model>:<effort>` and are used to allowlist launch-time `spawn_agent` overrides. example:
   ```yaml
   subagents:
@@ -683,7 +678,7 @@ optional frontmatter fields:
         - openai/gpt-5.5:high
         - anthropic/claude-haiku-4-5:medium
   ```
-- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `view_image`, `web`, `spawn_agent`, `send_input_to_agent`, `wait_for_agents`, `terminate_agent`. if omitted, defaults to `bash`, `write`, `edit`, `view_image`, `web` (and subagent tools when subagents are enabled).
+- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `view_image`, `web`, `nook`, `spawn_agent`, `send_input_to_agent`, `wait_for_agents`, `terminate_agent`. if omitted, defaults to `bash`, `write`, `edit`, `view_image`, `web`, `nook` (and subagent tools when subagents are enabled). `nook` is available only when effective Nook configuration is also present.
 
 the markdown body becomes the system prompt.
 
@@ -739,7 +734,7 @@ tau connects your terminal to large language models, giving them tools to intera
 
 the model sees your messages, any file contents you've shared, and the results of tool calls. it doesn't have ambient access to your filesystem; it only sees what you show it or what it explicitly requests through tools.
 
-tool calls are displayed as soon as the model identifies the tool, before its arguments finish streaming, so you can see what the model is preparing and executing. use `ctrl+o` to toggle between compact and detailed views.
+tool calls are displayed as soon as the model identifies the tool, before its arguments finish streaming. every built-in and client-provided tool uses the same `preparing` → `queued` → `running` → terminal lifecycle; tools with clear action wording present those states naturally, such as `writing` and `wrote`, while other tools use generic labels. tool-specific output enriches the card without replacing that lifecycle. use `ctrl+o` to toggle between compact and detailed views.
 
 ## tool output truncation
 

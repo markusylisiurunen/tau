@@ -1,17 +1,16 @@
 import type { Tool, ToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { z } from "zod";
-import type { SubagentResult } from "../subagents/control_plane.js";
-import { createToolError, createToolResult } from "../utils/messages.js";
+import type { AgentSupervisor, SubagentResult } from "../subagents/agent_supervisor.js";
 import { parseToolArgs } from "../utils/zod.js";
+import type { ToolActivity } from "./activity.js";
 import {
-  createToolDispatch,
-  isMainToolDispatchContext,
-  type ToolDefinition,
-  type ToolDispatch,
-  type ToolDispatchContext,
-  type ToolDispatchResult,
-  type ToolUiEvent,
+  type AgentTool,
+  createTextToolOutcome,
+  executeTool,
+  type ToolExecutionContext,
+  type ToolExecutionOutcome,
+  type ToolImplementationOutcome,
 } from "./registry.js";
 import { buildSubagentUiText, formatSubagentStatusLine } from "./subagent_ui.js";
 import { TOOL_NAME_TERMINATE_AGENT } from "./tool_names.js";
@@ -51,11 +50,11 @@ function formatTerminateResult(result: SubagentResult): string {
   return JSON.stringify(payload, null, 2);
 }
 
-function formatTerminateOutput(result: SubagentResult): string {
+function formatTerminateOutput(result: SubagentResult, succeeded: boolean): string {
   const finalText = result.finalText?.trimEnd() ?? "";
   const body = finalText.trim().length > 0 ? finalText : "";
 
-  if (result.status !== "success") {
+  if (!succeeded) {
     const errorLine = result.error ? `Error: ${result.error}` : `Status: ${result.status}`;
     return body ? `${errorLine}\n${body}` : errorLine;
   }
@@ -73,55 +72,42 @@ function getTerminateAgentDisplayTarget(raw: unknown): string {
   return parsedArgs.ok ? parsedArgs.data.id : "(invalid arguments)";
 }
 
-export function createTerminateAgentToolDefinition(): ToolDefinition {
+export function createTerminateAgentToolDefinition(supervisor: AgentSupervisor): AgentTool {
   return {
     schema: TERMINATE_AGENT_TOOL,
-    getDisplayTarget: (toolCall) => getTerminateAgentDisplayTarget(toolCall.arguments),
-    async dispatch(
+    describe: (toolCall) => ({ headerTarget: getTerminateAgentDisplayTarget(toolCall.arguments) }),
+    async execute(
       toolCall: ToolCall,
-      signal: AbortSignal,
-      context: ToolDispatchContext,
-    ): Promise<ToolDispatch> {
+      context: ToolExecutionContext,
+    ): Promise<ToolExecutionOutcome> {
+      const { signal } = context;
       let id = "";
       const headerTarget = getTerminateAgentDisplayTarget(toolCall.arguments);
 
-      const blocked = (reason: string): ToolDispatchResult => {
-        const toolResult = createToolError(toolCall, reason);
-        const uiEvent: ToolUiEvent = {
+      const blocked = (reason: string): ToolImplementationOutcome => {
+        const outcome = createTextToolOutcome(reason, "blocked");
+        const uiEvent: ToolActivity = {
           type: "terminate_agent_blocked",
           toolCallId: toolCall.id,
           agentId: id || undefined,
           headerTarget,
           reason,
         };
-        return { toolResult, uiEvent };
+        return { content: outcome.content, outcome: outcome.outcome, uiEvent };
       };
 
       const parsedArgs = parseToolArgs(terminateArgsSchema, toolCall.arguments);
       if (!parsedArgs.ok) {
-        return createToolDispatch(() => blocked(`Invalid arguments: ${parsedArgs.error}`));
+        return executeTool(context, () => blocked(`Invalid arguments: ${parsedArgs.error}`));
       }
 
       ({ id } = parsedArgs.data);
 
-      if (!isMainToolDispatchContext(context)) {
-        return createToolDispatch(() =>
-          blocked("The terminate_agent tool is only available in the main session."),
-        );
-      }
-
-      const controlPlane = context.subagentControlPlane;
-
-      return {
-        startedUiEvent: {
-          type: "terminate_agent_started",
-          toolCallId: toolCall.id,
-          agentId: id,
-          headerTarget,
-        },
-        run: (async (): Promise<ToolDispatchResult> => {
+      return executeTool(
+        context,
+        async (): Promise<ToolImplementationOutcome> => {
           try {
-            const result = await controlPlane.terminate(id, signal);
+            const result = await supervisor.terminate(id, signal);
             if (!result) {
               const message = `Unknown subagent ID '${id}'.`;
               const uiText = buildSubagentUiText({
@@ -130,7 +116,7 @@ export function createTerminateAgentToolDefinition(): ToolDefinition {
                 maxOutputLines: 16,
                 fullText: message,
               });
-              const uiEvent: ToolUiEvent = {
+              const uiEvent: ToolActivity = {
                 type: "terminate_agent_finished",
                 toolCallId: toolCall.id,
                 agentId: id,
@@ -139,12 +125,12 @@ export function createTerminateAgentToolDefinition(): ToolDefinition {
                 message,
                 uiText,
               };
-              const toolResult = createToolError(toolCall, message);
-              return { toolResult, uiEvent };
+              const outcome = createTextToolOutcome(message, "blocked");
+              return { content: outcome.content, outcome: outcome.outcome, uiEvent };
             }
 
             const resultText = formatTerminateResult(result);
-            const succeeded = result.status === "success";
+            const succeeded = result.status === "success" || result.status === "aborted";
             const baseStatusText = formatSubagentStatusLine({
               costTotal: result.costTotal,
               durationMs: getTerminateDurationMs(result),
@@ -153,12 +139,12 @@ export function createTerminateAgentToolDefinition(): ToolDefinition {
               ? baseStatusText
               : `${baseStatusText} · Status ${result.status}`;
             const uiText = buildSubagentUiText({
-              output: formatTerminateOutput(result),
+              output: formatTerminateOutput(result, succeeded),
               statusText,
               maxOutputLines: 16,
               fullText: resultText,
             });
-            const uiEvent: ToolUiEvent = {
+            const uiEvent: ToolActivity = {
               type: "terminate_agent_finished",
               toolCallId: toolCall.id,
               agentId: id,
@@ -168,8 +154,8 @@ export function createTerminateAgentToolDefinition(): ToolDefinition {
               message: succeeded ? undefined : `Subagent finished with status ${result.status}.`,
               uiText,
             };
-            const toolResult = createToolResult(toolCall, resultText, !succeeded);
-            return { toolResult, uiEvent };
+            const outcome = createTextToolOutcome(resultText, succeeded ? "succeeded" : "failed");
+            return { content: outcome.content, outcome: outcome.outcome, uiEvent };
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             const reason = message.trim() || "The terminate_agent request failed.";
@@ -179,7 +165,7 @@ export function createTerminateAgentToolDefinition(): ToolDefinition {
               maxOutputLines: 16,
               fullText: reason,
             });
-            const uiEvent: ToolUiEvent = {
+            const uiEvent: ToolActivity = {
               type: "terminate_agent_finished",
               toolCallId: toolCall.id,
               agentId: id,
@@ -188,11 +174,17 @@ export function createTerminateAgentToolDefinition(): ToolDefinition {
               message: reason,
               uiText,
             };
-            const toolResult = createToolError(toolCall, reason);
-            return { toolResult, uiEvent };
+            const outcome = createTextToolOutcome(reason, signal.aborted ? "cancelled" : "failed");
+            return { content: outcome.content, outcome: outcome.outcome, uiEvent };
           }
-        })(),
-      };
+        },
+        {
+          type: "terminate_agent_started",
+          toolCallId: toolCall.id,
+          agentId: id,
+          headerTarget,
+        },
+      );
     },
   };
 }

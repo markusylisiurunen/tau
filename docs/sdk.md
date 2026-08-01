@@ -287,7 +287,7 @@ options:
 - `queue(text, options?)`
   - sends `session.queue` with this session id
   - accepts active-work queueing semantics from the session protocol
-- `steer(text, options?)`
+- `steer(text)`
   - sends `session.steer` with this session id
   - accepts active-turn steering semantics from the session protocol
 - `cancelPendingMessages()`
@@ -331,11 +331,8 @@ options:
 - `compact("summary-only" | "summary-and-last", options?)`
   - sends `session.compact` with this session id and optional `guidance`
   - resolves with the updated snapshot plus `compactionMessage` and `includedLastAssistant`
-- `pruneToolResults("earliest" | "largest" | "smart", { fraction, guidance? })`
-  - sends `session.prune` with this session id
-  - resolves with the updated snapshot plus prune counts and operation message
 - `rewindToHistoryEntryId(historyEntryId)`
-  - sends `session.rewind` with this session id
+  - sends the idle-only `session.rewind` with this session id without interrupting active work
   - resolves with the updated snapshot, removed history ids, and rewound user text
 - `terminateSubagent(subagentId)`
   - sends `session.terminateSubagent` with this session id
@@ -349,6 +346,8 @@ options:
 - `closeEphemeralContext(contextId)`
   - sends `session.ephemeral.close` with this session id
   - closes non-persisted host-owned ephemeral agent state
+
+Main-session turns, supervised background agents, and ephemeral threads share one canonical stateful runtime. Ephemeral thread continuation and forks therefore use the same model/tool loop, retry and recovery behavior, automatic compaction, and event ordering as ordinary session work; the SDK only controls their host-owned lifecycle and request mapping.
 
 A one-off sampling call uses the same provider-neutral message shape for input and output:
 
@@ -393,7 +392,7 @@ const second = await session.sample({
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "type": "session.delta",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "fromRevision": 1,

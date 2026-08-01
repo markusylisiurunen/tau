@@ -1,22 +1,25 @@
 import { resolve } from "node:path";
-import type { Tool, ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
+import type { Tool, ToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { z } from "zod";
+import type { Config } from "../config/index.js";
+import type { ModelResolver } from "../models/catalog.js";
+import type { AgentSupervisor } from "../subagents/agent_supervisor.js";
 import { parseSubagentLaunchModel } from "../subagents/launch_model.js";
 import { getSubagentDescription, resolveSubagentEffectiveSettings } from "../subagents/registry.js";
 import type { SubagentLaunchModel, SubagentRuntimeConfig } from "../subagents/types.js";
+import type { Persona } from "../types.js";
 import { formatCwd } from "../utils/format.js";
-import { createToolError, createToolResult } from "../utils/messages.js";
 import { parseToolArgs } from "../utils/zod.js";
+import type { ToolActivity } from "./activity.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import {
-  createToolDispatch,
-  isMainToolDispatchContext,
-  type ToolDefinition,
-  type ToolDispatch,
-  type ToolDispatchContext,
-  type ToolDispatchResult,
-  type ToolUiEvent,
+  type AgentTool,
+  createTextToolOutcome,
+  executeTool,
+  type ToolExecutionContext,
+  type ToolExecutionOutcome,
+  type ToolImplementationOutcome,
 } from "./registry.js";
 import { buildSubagentUiText } from "./subagent_ui.js";
 import { TOOL_NAME_SPAWN_AGENT } from "./tool_names.js";
@@ -72,13 +75,15 @@ export const SPAWN_AGENT_TOOL: Tool = {
   ),
 };
 
-const spawnArgsSchema = z.object({
-  name: z.string().trim().min(1),
-  title: z.string().trim().min(1),
-  prompt: z.string().trim().min(1),
-  model: z.string().trim().min(1).optional(),
-  workingDirectory: z.string().trim().min(1).optional(),
-});
+const spawnArgsSchema = z
+  .object({
+    name: z.string().trim().min(1),
+    title: z.string().trim().min(1),
+    prompt: z.string().trim().min(1),
+    model: z.string().trim().min(1).optional(),
+    workingDirectory: z.string().trim().min(1).optional(),
+  })
+  .strict();
 
 function formatSpawnToolResult(args: {
   id: string;
@@ -107,22 +112,44 @@ function getSpawnAgentDisplayTarget(raw: unknown): string {
   return parsedArgs.ok ? parsedArgs.data.title : "(invalid arguments)";
 }
 
-export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): ToolDefinition {
+export type ResolvedSubagentRuntime = {
+  persona: Persona;
+  config: Config;
+  modelResolver: ModelResolver;
+  subagentPrompts: Record<string, string>;
+};
+
+export type ResolveSubagentRuntime = (options: {
+  cwd: string;
+  persona: Persona;
+}) => Promise<ResolvedSubagentRuntime>;
+
+export function createSpawnAgentToolDefinition(options: {
+  backend: ToolExecutionBackend;
+  supervisor: AgentSupervisor;
+  persona: Persona;
+  config: Config;
+  modelResolver: ModelResolver;
+  subagentPrompts: Record<string, string>;
+  cwd: string;
+  resolveSubagentRuntime?: ResolveSubagentRuntime;
+}): AgentTool {
+  const { backend, supervisor } = options;
   return {
     schema: SPAWN_AGENT_TOOL,
-    getDisplayTarget: (toolCall) => getSpawnAgentDisplayTarget(toolCall.arguments),
-    async dispatch(
+    describe: (toolCall) => ({ headerTarget: getSpawnAgentDisplayTarget(toolCall.arguments) }),
+    async execute(
       toolCall: ToolCall,
-      signal: AbortSignal,
-      context: ToolDispatchContext,
-    ): Promise<ToolDispatch> {
+      context: ToolExecutionContext,
+    ): Promise<ToolExecutionOutcome> {
+      const { signal } = context;
       let name = "";
       let title = "";
       const headerTarget = getSpawnAgentDisplayTarget(toolCall.arguments);
 
       const blocked = (reason: string, details?: { name?: string; title?: string }) => {
-        const toolResult = createToolError(toolCall, reason);
-        const uiEvent: ToolUiEvent = {
+        const outcome = createTextToolOutcome(reason, "blocked");
+        const uiEvent: ToolActivity = {
           type: "spawn_agent_blocked",
           toolCallId: toolCall.id,
           name: details?.name ?? (name || undefined),
@@ -130,48 +157,43 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
           headerTarget: details?.title ?? headerTarget,
           reason,
         };
-        return { toolResult, uiEvent } satisfies ToolDispatchResult;
+        return {
+          content: outcome.content,
+          outcome: outcome.outcome,
+          uiEvent,
+        } satisfies ToolImplementationOutcome;
       };
 
       const parsedArgs = parseToolArgs(spawnArgsSchema, toolCall.arguments);
       if (!parsedArgs.ok) {
-        return createToolDispatch(() => blocked(`Invalid arguments: ${parsedArgs.error}`));
+        return executeTool(context, () => blocked(`Invalid arguments: ${parsedArgs.error}`));
       }
 
       const { prompt, model, workingDirectory } = parsedArgs.data;
       name = parsedArgs.data.name;
       title = parsedArgs.data.title;
 
-      if (!isMainToolDispatchContext(context)) {
-        return createToolDispatch(() =>
-          blocked("The spawn_agent tool is only available in the main session.", {
-            name,
-            title,
-          }),
-        );
-      }
-
-      const { persona, cwd: baseCwd, subagentPrompts } = context;
+      const { persona, cwd: baseCwd, subagentPrompts } = options;
 
       const cwd = workingDirectory ? resolve(baseCwd, workingDirectory) : baseCwd;
       let effectivePersona = persona;
-      let config = context.config;
-      let modelResolver = context.modelResolver;
+      let config = options.config;
+      let modelResolver = options.modelResolver;
       let effectiveSubagentPrompts = subagentPrompts;
       if (workingDirectory) {
-        if (!context.resolveSubagentRuntime) {
-          return createToolDispatch(() =>
+        if (!options.resolveSubagentRuntime) {
+          return executeTool(context, () =>
             blocked("Working-directory context resolution is unavailable.", { name, title }),
           );
         }
         try {
-          const runtime = await context.resolveSubagentRuntime({ cwd, persona });
+          const runtime = await options.resolveSubagentRuntime({ cwd, persona });
           effectivePersona = runtime.persona;
           config = runtime.config;
           modelResolver = runtime.modelResolver;
           effectiveSubagentPrompts = runtime.subagentPrompts;
         } catch (error) {
-          return createToolDispatch(() =>
+          return executeTool(context, () =>
             blocked(
               `Failed to build the subagent prompt for workingDirectory '${cwd}': ${(error as Error).message}`,
               {
@@ -183,7 +205,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
         }
       }
       if (!effectivePersona.subagents || Object.keys(effectivePersona.subagents).length === 0) {
-        return createToolDispatch(() =>
+        return executeTool(context, () =>
           blocked("The spawn_agent tool is not enabled for the resolved persona.", {
             name,
             title,
@@ -192,7 +214,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
       }
       const personaConfig = effectivePersona.subagents[name];
       if (!personaConfig) {
-        return createToolDispatch(() =>
+        return executeTool(context, () =>
           blocked(`Subagent '${name}' is not enabled for the resolved persona.`, {
             name,
             title,
@@ -201,7 +223,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
       }
       const systemPrompt = effectiveSubagentPrompts[name];
       if (!systemPrompt) {
-        return createToolDispatch(() =>
+        return executeTool(context, () =>
           blocked(`Subagent '${name}' is missing its system prompt.`, {
             name,
             title,
@@ -213,7 +235,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
       if (model) {
         const parsedLaunchModel = parseSubagentLaunchModel(model, { resolveModel: modelResolver });
         if (parsedLaunchModel.error || !parsedLaunchModel.launchModel) {
-          return createToolDispatch(() =>
+          return executeTool(context, () =>
             blocked(`Invalid model parameter: ${parsedLaunchModel.error}.`, {
               name,
               title,
@@ -223,7 +245,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
 
         const launchModels = personaConfig.launchModels ?? [];
         if (launchModels.length === 0) {
-          return createToolDispatch(() =>
+          return executeTool(context, () =>
             blocked(
               `Subagent '${name}' does not allow launch model overrides. Allowed values: ${formatAllowedLaunchModels(launchModels)}.`,
               {
@@ -235,7 +257,8 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
         }
 
         if (!launchModels.includes(parsedLaunchModel.launchModel.normalized)) {
-          return createToolDispatch(
+          return executeTool(
+            context,
             blocked(
               `Model '${parsedLaunchModel.launchModel.normalized}' is not allowed for subagent '${name}'. Allowed values: ${formatAllowedLaunchModels(launchModels)}.`,
               {
@@ -262,33 +285,25 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
         ...effectiveSettings,
       };
 
-      const controlPlane = context.subagentControlPlane;
-
       const modelLabel = launchModelOverride?.normalized;
       const statusWorkingDirectory = runtimeConfig.workingDirectory
         ? formatCwd(runtimeConfig.workingDirectory)
         : undefined;
       const statusPrefixParts = [name, modelLabel, statusWorkingDirectory].filter(Boolean);
 
-      return {
-        startedUiEvent: {
-          type: "spawn_agent_started",
-          toolCallId: toolCall.id,
-          name,
-          title,
-          headerTarget,
-        },
-        run: (async (): Promise<ToolDispatchResult> => {
+      return executeTool(
+        context,
+        async (): Promise<ToolImplementationOutcome> => {
           if (signal?.aborted) {
             const reason = "Aborted.";
-            const toolResult = createToolError(toolCall, reason);
+            const outcome = createTextToolOutcome(reason, "cancelled");
             const uiText = buildSubagentUiText({
               output: reason,
               statusText: [...statusPrefixParts, reason].join(" · "),
               maxOutputLines: 16,
               fullText: reason,
             });
-            const uiEvent: ToolUiEvent = {
+            const uiEvent: ToolActivity = {
               type: "spawn_agent_finished",
               toolCallId: toolCall.id,
               name,
@@ -298,25 +313,23 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
               message: reason,
               uiText,
             };
-            return { toolResult, uiEvent };
+            return { content: outcome.content, outcome: outcome.outcome, uiEvent };
           }
 
-          const spawnResult = controlPlane.spawn({
+          const spawnResult = supervisor.spawn({
             runtimeConfig,
             prompt,
             title,
             modelLabel,
-            originHistoryEntryId: context.originHistoryEntryId,
+            originHistoryEntryId: context.assistantMessageId,
             config,
-            modelResolver,
-            authPath: context.authPath,
             backend,
             personaId: effectivePersona.id,
           });
 
           if (!spawnResult.ok) {
-            const toolResult = createToolError(toolCall, spawnResult.reason);
-            const uiEvent: ToolUiEvent = {
+            const outcome = createTextToolOutcome(spawnResult.reason, "blocked");
+            const uiEvent: ToolActivity = {
               type: "spawn_agent_blocked",
               toolCallId: toolCall.id,
               name,
@@ -324,7 +337,7 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
               headerTarget,
               reason: spawnResult.reason,
             };
-            return { toolResult, uiEvent };
+            return { content: outcome.content, outcome: outcome.outcome, uiEvent };
           }
 
           const resultText = formatSpawnToolResult({
@@ -335,14 +348,14 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
           });
 
           const statusParts = [...statusPrefixParts, spawnResult.id];
-          const toolResult: ToolResultMessage = createToolResult(toolCall, resultText, false);
+          const outcome = createTextToolOutcome(resultText, "succeeded");
           const uiText = buildSubagentUiText({
             output: prompt,
             statusText: statusParts.join(" · "),
             maxOutputLines: 16,
             fullText: resultText,
           });
-          const uiEvent: ToolUiEvent = {
+          const uiEvent: ToolActivity = {
             type: "spawn_agent_finished",
             toolCallId: toolCall.id,
             name,
@@ -352,9 +365,16 @@ export function createSpawnAgentToolDefinition(backend: ToolExecutionBackend): T
             agentId: spawnResult.id,
             uiText,
           };
-          return { toolResult, uiEvent };
-        })(),
-      };
+          return { content: outcome.content, outcome: outcome.outcome, uiEvent };
+        },
+        {
+          type: "spawn_agent_started",
+          toolCallId: toolCall.id,
+          name,
+          title,
+          headerTarget,
+        },
+      );
     },
   };
 }

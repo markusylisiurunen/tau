@@ -52,6 +52,7 @@ import {
   TelegramCliError,
   ToolCatalog,
   ToolCliError,
+  ToolRegistry,
   UsageCliError,
 } from "./core/index.js";
 import { getStartupPlatformError } from "./core/platform_support.js";
@@ -1067,7 +1068,16 @@ if (cli.debug) {
   }
 
   const virtualBundle = runtimeBootstrap?.virtualBundle;
-  const debugToolRegistry = ToolCatalog.createRegistry(createLocalToolExecutionBackend());
+  const debugToolRegistry =
+    debugPersona && runtimeBootstrap
+      ? ToolCatalog.createDebugRegistry({
+          backend: createLocalToolExecutionBackend(),
+          cwd,
+          config,
+          persona: debugPersona,
+          modelResolver: runtimeBootstrap.modelResolver.resolveModel,
+        })
+      : new ToolRegistry([]);
   printDebugInfo({
     personas,
     prompts,

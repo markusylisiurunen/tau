@@ -1,5 +1,5 @@
 import type { AssistantMessage, ToolResultMessage } from "@earendil-works/pi-ai";
-import type { ToolUiEvent } from "../tools/registry.js";
+import type { ToolActivity } from "../tools/activity.js";
 import { extractAssistantText } from "./messages.js";
 
 export function normalizeOneLine(text: string): string {
@@ -15,7 +15,7 @@ export function getToolResultFirstLine(toolResult: ToolResultMessage): string {
   return normalizeOneLine(text.split("\n")[0] ?? "");
 }
 
-export function formatToolUiEventForProgress(uiEvent: ToolUiEvent): string | undefined {
+export function formatToolUiEventForProgress(uiEvent: ToolActivity): string | undefined {
   switch (uiEvent.type) {
     case "tool_call_blocked":
       return `tool blocked: ${uiEvent.toolName} (${normalizeOneLine(uiEvent.reason)})`;

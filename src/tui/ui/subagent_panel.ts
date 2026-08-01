@@ -30,6 +30,11 @@ type SubagentPanelEntry = {
 const MAX_PANEL_LINES = 6;
 const MAX_PANEL_HISTORY = 200;
 
+export type SubagentPanelSnapshot = {
+  state: SubagentStateSnapshot;
+  progress?: string;
+};
+
 export class SubagentPanelComponent implements Component {
   private theme: Theme;
   private entries = new Map<string, SubagentPanelEntry>();
@@ -46,6 +51,36 @@ export class SubagentPanelComponent implements Component {
   reset(): void {
     this.entries.clear();
     this.selectedId = undefined;
+  }
+
+  reconcile(snapshots: readonly SubagentPanelSnapshot[]): void {
+    const currentIds = new Set(snapshots.map(({ state }) => state.id));
+    for (const id of this.entries.keys()) {
+      if (!currentIds.has(id)) this.entries.delete(id);
+    }
+
+    for (const snapshot of snapshots) {
+      let entry = this.entries.get(snapshot.state.id);
+      if (entry) {
+        this.applySnapshot(entry, snapshot.state);
+      } else {
+        entry = this.buildEntry(snapshot.state);
+        this.entries.set(entry.id, entry);
+      }
+
+      const progress = snapshot.progress?.trim();
+      if (progress && !this.hasLine(entry, "progress", progress)) {
+        this.appendLine(entry, { kind: "progress", text: progress });
+      }
+      const finalText = snapshot.state.finalText?.trim();
+      if (finalText && !this.hasLine(entry, "output", finalText)) {
+        this.appendLine(entry, { kind: "output", text: finalText });
+      }
+    }
+
+    if (!this.selectedId || this.entries.get(this.selectedId)?.status !== "running") {
+      this.selectedId = this.getFirstRunningId();
+    }
   }
 
   hasActiveSubagents(): boolean {
@@ -233,10 +268,25 @@ export class SubagentPanelComponent implements Component {
     return undefined;
   }
 
-  private hasOutputLine(entry: SubagentPanelEntry, text: string): boolean {
+  private appendLine(entry: SubagentPanelEntry, line: SubagentPanelLine): void {
+    entry.lines.push(line);
+    if (entry.lines.length > MAX_PANEL_HISTORY) {
+      entry.lines.shift();
+    }
+  }
+
+  private hasLine(
+    entry: SubagentPanelEntry,
+    kind: SubagentPanelLine["kind"],
+    text: string,
+  ): boolean {
     const trimmed = text.trim();
     if (!trimmed) return true;
-    return entry.lines.some((line) => line.kind === "output" && line.text.trim() === trimmed);
+    return entry.lines.some((line) => line.kind === kind && line.text.trim() === trimmed);
+  }
+
+  private hasOutputLine(entry: SubagentPanelEntry, text: string): boolean {
+    return this.hasLine(entry, "output", text);
   }
 
   private buildEntry(state: SubagentStateSnapshot): SubagentPanelEntry {

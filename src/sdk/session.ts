@@ -212,13 +212,8 @@ class TauSdkClientImpl implements TauSdkClient {
   sendSteer(
     sessionId: string,
     text: string,
-    options: TauSdkSessionUserMessageOptions,
   ): Promise<SessionProtocolResultByMethod["session.steer"]> {
-    return this.transport.request("session.steer", {
-      sessionId,
-      text,
-      ...(options.historyEntryId === undefined ? {} : { historyEntryId: options.historyEntryId }),
-    });
+    return this.transport.request("session.steer", { sessionId, text });
   }
 
   sendCancelPendingMessages(
@@ -346,19 +341,6 @@ class TauSdkClientImpl implements TauSdkClient {
     return this.transport.request("session.compact", {
       sessionId,
       mode,
-      ...(options.guidance !== undefined ? { guidance: options.guidance } : {}),
-    });
-  }
-
-  sendPrune(
-    sessionId: string,
-    strategy: "earliest" | "largest" | "smart",
-    options: { fraction: number; guidance?: string },
-  ): Promise<SessionProtocolResultByMethod["session.prune"]> {
-    return this.transport.request("session.prune", {
-      sessionId,
-      strategy,
-      fraction: options.fraction,
       ...(options.guidance !== undefined ? { guidance: options.guidance } : {}),
     });
   }
@@ -578,11 +560,8 @@ class TauSdkSessionImpl implements TauSdkSession {
     return this.client.sendQueue(this.activeSessionId(), text, options);
   }
 
-  steer(
-    text: string,
-    options: TauSdkSessionUserMessageOptions = {},
-  ): Promise<SessionProtocolResultByMethod["session.steer"]> {
-    return this.client.sendSteer(this.activeSessionId(), text, options);
+  steer(text: string): Promise<SessionProtocolResultByMethod["session.steer"]> {
+    return this.client.sendSteer(this.activeSessionId(), text);
   }
 
   cancelPendingMessages(): Promise<SessionProtocolResultByMethod["session.cancelPendingMessages"]> {
@@ -681,15 +660,6 @@ class TauSdkSessionImpl implements TauSdkSession {
     options: { guidance?: string } = {},
   ): Promise<SessionProtocolResultByMethod["session.compact"]> {
     const result = await this.client.sendCompact(this.activeSessionId(), mode, options);
-    this.discardBufferedDeltasThrough(result.snapshot.revision);
-    return result;
-  }
-
-  async pruneToolResults(
-    strategy: "earliest" | "largest" | "smart",
-    options: { fraction: number; guidance?: string },
-  ): Promise<SessionProtocolResultByMethod["session.prune"]> {
-    const result = await this.client.sendPrune(this.activeSessionId(), strategy, options);
     this.discardBufferedDeltasThrough(result.snapshot.revision);
     return result;
   }

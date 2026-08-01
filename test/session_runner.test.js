@@ -6,16 +6,10 @@ import { describe, expect, it, vi } from "vitest";
 import { captureDiffReviewSnapshot } from "../dist/core/diff_review/snapshot.js";
 import { prepareSessionCompaction } from "../dist/core/session/compaction.js";
 import { runDirectBashCommand } from "../dist/core/session/direct_bash.js";
-import {
-  prepareSessionSmartPrunePrompt,
-  pruneSessionHistory,
-} from "../dist/core/session/pruning.js";
-import { runModelSubturn, runToolCalls } from "../dist/core/session/runner.js";
-import { BASH_DEFAULT_TIMEOUT_MS, createBashToolDefinition } from "../dist/core/tools/bash.js";
+import { runModelSubturn, SequentialToolCallRunner } from "../dist/core/session/runner.js";
+import { BASH_DEFAULT_TIMEOUT_MS } from "../dist/core/tools/bash.js";
 import { scopeToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
 import { ToolRegistry } from "../dist/core/tools/registry.js";
-import { TOOL_NAME_BASH, TOOL_NAME_EDIT } from "../dist/core/tools/tool_names.js";
-import { createWriteToolDefinition } from "../dist/core/tools/write.js";
 import { buildCompactionUserMessage } from "../dist/core/utils/compact.js";
 import { autocompleteProjectPathsWithBackend } from "../dist/core/utils/project_files.js";
 import { prependTauUserMetadata } from "../dist/core/utils/user_metadata.js";
@@ -23,17 +17,6 @@ import {
   createSdkDiffSnapshotDeps,
   createSdkToolExecutionBackend,
 } from "../dist/tui/session_tool_execution_backend.js";
-
-function createToolResult(toolCall, text) {
-  return {
-    role: "toolResult",
-    toolCallId: toolCall.id,
-    toolName: toolCall.name,
-    timestamp: Date.now(),
-    isError: false,
-    content: [{ type: "text", text }],
-  };
-}
 
 function createModelStream(events, result, error) {
   return {
@@ -54,7 +37,7 @@ function createModelStream(events, result, error) {
   };
 }
 
-describe("session runner tool dispatch context", () => {
+describe("session runner", () => {
   it("coalesces rapid assistant partials and flushes the final accumulated partial", async () => {
     const now = vi.spyOn(Date, "now");
     now.mockReturnValue(1_000);
@@ -92,7 +75,7 @@ describe("session runner tool dispatch context", () => {
       const runner = runModelSubturn({
         model: {},
         context: {},
-        modelRuntime,
+        streamModel: modelRuntime.streamModel.bind(modelRuntime),
         streamOptions: {},
         signal: new AbortController().signal,
         emitPartials: true,
@@ -131,6 +114,59 @@ describe("session runner tool dispatch context", () => {
     } finally {
       now.mockRestore();
     }
+  });
+
+  it("publishes authoritative text-end content after streamed deltas", async () => {
+    const finalMessage = {
+      role: "assistant",
+      api: "openai-responses",
+      provider: "openai",
+      model: "gpt-5.6-luna",
+      stopReason: "stop",
+      content: [{ type: "text", text: "I am checking all eight independent locations now." }],
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+    };
+    const streamModel = () =>
+      createModelStream(
+        [
+          { type: "text_delta", delta: "I am checking all eight independent" },
+          {
+            type: "text_end",
+            content: "I am checking all eight independent locations now.",
+          },
+        ],
+        finalMessage,
+      );
+    const events = [];
+    const runner = runModelSubturn({
+      model: {},
+      context: {},
+      streamModel,
+      streamOptions: {},
+      signal: new AbortController().signal,
+      emitPartials: true,
+    });
+
+    while (true) {
+      const next = await runner.next();
+      if (next.done) {
+        expect(next.value).toBe(finalMessage);
+        break;
+      }
+      events.push(next.value);
+    }
+
+    expect(events.map((event) => event.snapshot.text)).toEqual([
+      "I am checking all eight independent",
+      "I am checking all eight independent locations now.",
+    ]);
   });
 
   it("flushes pending assistant text before tool-call streaming", async () => {
@@ -178,7 +214,7 @@ describe("session runner tool dispatch context", () => {
       const runner = runModelSubturn({
         model: {},
         context: {},
-        modelRuntime,
+        streamModel: modelRuntime.streamModel.bind(modelRuntime),
         streamOptions: {},
         signal: new AbortController().signal,
         emitPartials: true,
@@ -235,75 +271,6 @@ describe("session runner tool dispatch context", () => {
     }
   });
 
-  it("replaces changed streamed identities and discards unfinished calls on failure", async () => {
-    const oldCall = {
-      id: "old-call",
-      type: "toolCall",
-      name: "write",
-      arguments: {},
-    };
-    const newCall = { ...oldCall, id: "new-call" };
-    const partial = {
-      role: "assistant",
-      content: [oldCall],
-      timestamp: 1,
-    };
-    const modelRuntime = {
-      streamModel() {
-        return createModelStream(
-          [
-            { type: "toolcall_start", contentIndex: 0, partial },
-            {
-              type: "toolcall_delta",
-              contentIndex: 0,
-              delta: "{}",
-              partial: { ...partial, content: [newCall] },
-            },
-          ],
-          undefined,
-          new Error("stream failed"),
-        );
-      },
-    };
-    const runner = runModelSubturn({
-      model: {},
-      context: {},
-      modelRuntime,
-      streamOptions: {},
-      signal: new AbortController().signal,
-      emitPartials: true,
-    });
-    const events = [];
-
-    await expect(async () => {
-      while (true) {
-        const next = await runner.next();
-        if (next.done) break;
-        events.push(next.value);
-      }
-    }).rejects.toThrow("stream failed");
-
-    expect(events).toEqual([
-      {
-        type: "tool_call_streaming",
-        toolCallId: "old-call",
-        toolName: "write",
-        contentIndex: 0,
-      },
-      {
-        type: "tool_call_streaming",
-        toolCallId: "new-call",
-        toolName: "write",
-        contentIndex: 0,
-      },
-      {
-        type: "tool_call_discarded",
-        toolCallId: "new-call",
-        contentIndex: 0,
-      },
-    ]);
-  });
-
   it("discards completed calls still buffered behind earlier calls", async () => {
     const earlierCall = {
       id: "earlier-call",
@@ -338,7 +305,7 @@ describe("session runner tool dispatch context", () => {
     const runner = runModelSubturn({
       model: {},
       context: {},
-      modelRuntime,
+      streamModel: modelRuntime.streamModel.bind(modelRuntime),
       streamOptions: {},
       signal: new AbortController().signal,
       emitPartials: true,
@@ -379,81 +346,6 @@ describe("session runner tool dispatch context", () => {
     ]);
   });
 
-  it("retries without exposing tool calls when early execution is disabled", async () => {
-    const toolCall = {
-      id: "tool-call-1",
-      type: "toolCall",
-      name: "fake_tool",
-      arguments: {},
-    };
-    const errorMessage = {
-      role: "assistant",
-      api: "anthropic",
-      provider: "anthropic",
-      model: "claude-opus",
-      stopReason: "error",
-      errorMessage: "network error",
-      content: [toolCall],
-      usage: {
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 0,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-      },
-    };
-    const successMessage = {
-      ...errorMessage,
-      stopReason: "stop",
-      errorMessage: undefined,
-      content: [{ type: "text", text: "recovered" }],
-    };
-    let attempts = 0;
-    const modelRuntime = {
-      streamModel() {
-        attempts += 1;
-        if (attempts === 1) {
-          return createModelStream(
-            [
-              { type: "toolcall_start", contentIndex: 0 },
-              { type: "toolcall_end", contentIndex: 0, toolCall },
-              { type: "error", reason: "error", error: errorMessage },
-            ],
-            errorMessage,
-          );
-        }
-        return createModelStream([], successMessage);
-      },
-    };
-    const runner = runModelSubturn({
-      model: {},
-      context: {},
-      modelRuntime,
-      streamOptions: {},
-      signal: new AbortController().signal,
-      emitPartials: false,
-      retry: {
-        shouldRetryAfterError: () => true,
-        maxRetries: 1,
-      },
-    });
-    const events = [];
-    let finalMessage;
-    while (true) {
-      const next = await runner.next();
-      if (next.done) {
-        finalMessage = next.value;
-        break;
-      }
-      events.push(next.value);
-    }
-
-    expect(attempts).toBe(2);
-    expect(events).toEqual([]);
-    expect(finalMessage).toBe(successMessage);
-  });
-
   it("flushes the latest pending assistant partial before a stream error", async () => {
     const now = vi.spyOn(Date, "now");
     now.mockReturnValue(1_000);
@@ -475,7 +367,7 @@ describe("session runner tool dispatch context", () => {
       const runner = runModelSubturn({
         model: {},
         context: {},
-        modelRuntime,
+        streamModel: modelRuntime.streamModel.bind(modelRuntime),
         streamOptions: {},
         signal: new AbortController().signal,
         emitPartials: true,
@@ -496,682 +388,57 @@ describe("session runner tool dispatch context", () => {
     }
   });
 
-  it("does not emit empty assistant partials for thinking start events", async () => {
-    const now = vi.spyOn(Date, "now");
-    now.mockReturnValue(1_000);
-    const finalMessage = {
-      role: "assistant",
-      api: "anthropic",
-      provider: "anthropic",
-      model: "claude-opus",
-      stopReason: "end_turn",
-      content: [{ type: "text", text: "hello" }],
-      usage: {
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 0,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-      },
-    };
-    const modelRuntime = {
-      streamModel() {
-        return createModelStream(
-          [{ type: "thinking_start" }, { type: "text_delta", delta: "hello" }],
-          finalMessage,
-        );
-      },
-    };
-
-    try {
-      const events = [];
-      const runner = runModelSubturn({
-        model: {},
-        context: {},
-        modelRuntime,
-        streamOptions: {},
-        signal: new AbortController().signal,
-        emitPartials: true,
-      });
-      while (true) {
-        const next = await runner.next();
-        if (next.done) {
-          expect(next.value).toBe(finalMessage);
-          break;
-        }
-        events.push(next.value);
-      }
-
-      expect(events.map((event) => event.snapshot.text)).toEqual(["hello"]);
-    } finally {
-      now.mockRestore();
-    }
-  });
-
-  it("emits queued UI events for all valid calls before executing the first tool", async () => {
-    const signal = new AbortController().signal;
-    const slowCall = {
-      id: "slow-call",
+  it("releases pending tool acknowledgements when event consumption stops", async () => {
+    const call = {
+      id: "activity-call",
       type: "toolCall",
-      name: "slow_tool",
+      name: "activity-tool",
       arguments: {},
     };
-    const fastCall = {
-      id: "fast-call",
-      type: "toolCall",
-      name: "fast_tool",
-      arguments: {},
-    };
-
-    let resolveSlow;
-    const slowRun = new Promise((resolve) => {
-      resolveSlow = resolve;
-    });
-    let fastDispatched = false;
-
-    const slowDefinition = {
-      schema: {
-        name: "slow_tool",
-        description: "test",
-        parameters: {
-          type: "object",
-          properties: {},
-          additionalProperties: false,
+    const registry = new ToolRegistry([
+      {
+        schema: {
+          name: call.name,
+          description: "activity tool",
+          parameters: { type: "object", properties: {}, additionalProperties: false },
         },
-      },
-      getDisplayTarget: () => "sleep 30",
-      getCodePreview: () => "await slowOperation()",
-      async dispatch(call) {
-        return {
-          startedUiEvent: {
-            type: "bash_started",
+        describe: () => ({ headerTarget: call.name }),
+        execute: async (_call, context) => {
+          await context.emitActivity({
+            type: "tool_call_blocked",
             toolCallId: call.id,
-            command: "sleep 30",
-            headerTarget: "sleep 30",
-          },
-          run: slowRun.then(() => ({
-            toolResult: createToolResult(call, "slow ok"),
-            uiEvent: {
-              type: "bash_execution",
-              toolCallId: call.id,
-              command: "sleep 30",
-              headerTarget: "sleep 30",
-              exitCode: 0,
-              truncationInfo: {
-                output: "",
-                model: {
-                  content: "",
-                  truncated: false,
-                  totalBytes: 0,
-                  totalLines: 0,
-                  outputBytes: 0,
-                  outputLines: 0,
-                },
-                captureTruncated: false,
-              },
-              uiText: {
-                previewLines: [],
-                fullLines: [],
-              },
-            },
-          })),
-        };
-      },
-    };
-
-    const fastDefinition = {
-      schema: {
-        name: "fast_tool",
-        description: "test",
-        parameters: {
-          type: "object",
-          properties: {},
-          additionalProperties: false,
+            toolName: call.name,
+            headerTarget: call.name,
+            reason: "activity",
+          });
+          return { content: [{ type: "text", text: "done" }], outcome: "succeeded" };
         },
-      },
-      getDisplayTarget: () => "fast.txt",
-      async dispatch(call) {
-        fastDispatched = true;
-        return {
-          run: Promise.resolve({
-            toolResult: createToolResult(call, "fast ok"),
-            uiEvent: {
-              type: "write_success",
-              toolCallId: call.id,
-              path: "fast.txt",
-              headerTarget: "fast.txt",
-              bytes: 2,
-              lines: 1,
-              content: "ok",
-              uiText: {
-                previewLines: [{ text: "ok" }],
-                fullLines: [{ text: "ok" }],
-              },
-            },
-          }),
-        };
-      },
-    };
-
-    const toolRegistry = new ToolRegistry([slowDefinition, fastDefinition]);
-    const dispatchContext = {
-      scope: "subagent",
-      config: {},
-      toolRegistry,
-      authPath: "/tmp/auth.json",
-      originHistoryEntryId: "history-1",
-      cwd: "/repo/subagent",
-    };
-
-    const iterator = runToolCalls({
-      toolCalls: [slowCall, fastCall],
-      toolRegistry,
-      enabledTools: toolRegistry.schemas,
-      signal,
-      dispatchContext,
-    })[Symbol.asyncIterator]();
-
-    await expect(iterator.next()).resolves.toMatchObject({
-      value: {
-        type: "tool_ui",
-        uiEvent: {
-          type: "tool_call_queued",
-          toolCallId: "slow-call",
-          headerTarget: "sleep 30",
-          code: "await slowOperation()",
-        },
-      },
-    });
-    await expect(iterator.next()).resolves.toMatchObject({
-      value: {
-        type: "tool_ui",
-        uiEvent: {
-          type: "tool_call_queued",
-          toolCallId: "fast-call",
-          headerTarget: "fast.txt",
-        },
-      },
-    });
-    await expect(iterator.next()).resolves.toMatchObject({
-      value: {
-        type: "tool_ui",
-        uiEvent: { type: "bash_started", toolCallId: "slow-call" },
-      },
-    });
-    expect(fastDispatched).toBe(false);
-
-    resolveSlow();
-    const rest = [];
-    for (;;) {
-      const next = await iterator.next();
-      if (next.done) break;
-      rest.push(next.value);
-    }
-
-    expect(fastDispatched).toBe(true);
-    expect(
-      rest.map((event) => (event.type === "tool_ui" ? event.uiEvent.type : event.type)),
-    ).toEqual(["bash_execution", "write_success", "tool_result", "tool_result"]);
-  });
-
-  it("derives queued targets from completed built-in tool arguments", async () => {
-    const abortController = new AbortController();
-    const toolRegistry = new ToolRegistry([
-      createBashToolDefinition({}),
-      createWriteToolDefinition({}),
-    ]);
-    const dispatchContext = {
-      scope: "subagent",
-      config: {},
-      toolRegistry,
-      authPath: "/tmp/auth.json",
-      originHistoryEntryId: "history-1",
-      cwd: "/repo/subagent",
-    };
-    const iterator = runToolCalls({
-      toolCalls: [
-        {
-          id: "bash-call",
-          type: "toolCall",
-          name: "bash",
-          arguments: { command: "printf hello\nprintf ignored" },
-        },
-        {
-          id: "second-bash-call",
-          type: "toolCall",
-          name: "bash",
-          arguments: { command: "ssh host 'du -h /'" },
-        },
-        {
-          id: "write-call",
-          type: "toolCall",
-          name: "write",
-          arguments: { path: "src/output.ts", content: "content" },
-        },
-        {
-          id: "invalid-bash-call",
-          type: "toolCall",
-          name: "bash",
-          arguments: { command: 42 },
-        },
-      ],
-      toolRegistry,
-      enabledTools: toolRegistry.schemas,
-      signal: abortController.signal,
-      dispatchContext,
-    })[Symbol.asyncIterator]();
-    const queuedEvents = [];
-
-    for (let index = 0; index < 4; index++) {
-      const next = await iterator.next();
-      queuedEvents.push(next.value);
-    }
-
-    expect(
-      queuedEvents.map((event) => [
-        event.uiEvent.type,
-        event.uiEvent.toolCallId,
-        event.uiEvent.toolName,
-        event.uiEvent.headerTarget,
-      ]),
-    ).toEqual([
-      ["tool_call_queued", "bash-call", "bash", "printf hello"],
-      ["tool_call_queued", "second-bash-call", "bash", "ssh host 'du -h /'"],
-      ["tool_call_queued", "write-call", "write", "src/output.ts"],
-      ["tool_call_queued", "invalid-bash-call", "bash", "(invalid arguments)"],
-    ]);
-
-    abortController.abort();
-    await expect(iterator.next()).resolves.toEqual({ done: true, value: undefined });
-  });
-
-  it("emits a terminal blocked event for calls rejected before dispatch", async () => {
-    const toolCall = {
-      id: "blocked-call",
-      type: "toolCall",
-      name: "disabled_tool",
-      arguments: {},
-    };
-    const events = [];
-    const toolRegistry = new ToolRegistry([]);
-    for await (const event of runToolCalls({
-      toolCalls: [toolCall],
-      toolRegistry,
-      enabledTools: [],
-      signal: new AbortController().signal,
-      dispatchContext: {
-        scope: "main",
-        config: {},
-        toolRegistry,
-        authPath: "/tmp/auth.json",
-        originHistoryEntryId: "history-1",
-        cwd: "/repo",
-      },
-    })) {
-      events.push(event);
-    }
-
-    expect(events).toEqual([
-      {
-        type: "tool_ui",
-        uiEvent: {
-          type: "tool_call_blocked",
-          toolCallId: toolCall.id,
-          toolName: toolCall.name,
-          headerTarget: toolCall.name,
-          reason: "Tool 'disabled_tool' is not enabled for this session.",
-        },
-      },
-      {
-        type: "notice",
-        severity: "error",
-        text: "Tool 'disabled_tool' is not enabled for this session.",
-      },
-      {
-        type: "tool_result",
-        message: expect.objectContaining({ toolCallId: toolCall.id, isError: true }),
       },
     ]);
-  });
-
-  it("converts rejected tool runs into tool error results", async () => {
-    const signal = new AbortController().signal;
-    const toolCall = {
-      id: "tool-call-1",
-      type: "toolCall",
-      name: "fake_tool",
-      arguments: {},
-    };
-    const definition = {
-      schema: {
-        name: "fake_tool",
-        description: "test",
-        parameters: {
-          type: "object",
-          properties: {},
-          additionalProperties: false,
+    const runner = new SequentialToolCallRunner(
+      {
+        toolRegistry: registry,
+        executionContext: {
+          agentId: "agent-1",
+          turnId: "turn-1",
+          assistantMessageId: "assistant-1",
         },
       },
-      getDisplayTarget: () => "fake_tool",
-      async dispatch() {
-        return { run: Promise.reject(new Error("run failed")) };
-      },
-    };
-    const toolRegistry = new ToolRegistry([definition]);
-    const dispatchContext = {
-      scope: "subagent",
-      config: {},
-      toolRegistry,
-      authPath: "/tmp/auth.json",
-      originHistoryEntryId: "history-1",
-      cwd: "/repo/subagent",
-    };
-
-    const events = [];
-    for await (const event of runToolCalls({
-      toolCalls: [toolCall],
-      toolRegistry,
-      enabledTools: toolRegistry.schemas,
-      signal,
-      dispatchContext,
-    })) {
-      events.push(event);
-    }
-
-    expect(events).toEqual([
-      expect.objectContaining({
-        type: "tool_ui",
-        uiEvent: expect.objectContaining({ type: "tool_call_queued" }),
-      }),
-      {
-        type: "notice",
-        severity: "error",
-        text: "Tool 'fake_tool' (tool-call-1) execution failed: run failed",
-      },
-      {
-        type: "tool_result",
-        message: expect.objectContaining({
-          toolCallId: "tool-call-1",
-          toolName: "fake_tool",
-          isError: true,
-        }),
-      },
-    ]);
-  });
-
-  it("passes dispatchContext to tool definitions", async () => {
-    const signal = new AbortController().signal;
-    const toolCall = {
-      id: "tool-call-1",
-      type: "toolCall",
-      name: "fake_tool",
-      arguments: {},
-    };
-
-    let receivedContext;
-    let receivedSignal;
-
-    const definition = {
-      schema: {
-        name: "fake_tool",
-        description: "test",
-        parameters: {
-          type: "object",
-          properties: {},
-          additionalProperties: false,
-        },
-      },
-      getDisplayTarget: () => "fake_tool",
-      async dispatch(call, dispatchSignal, context) {
-        receivedSignal = dispatchSignal;
-        receivedContext = context;
-        return {
-          run: Promise.resolve({ toolResult: createToolResult(call, "ok") }),
-        };
-      },
-    };
-
-    const toolRegistry = new ToolRegistry([definition]);
-    const dispatchContext = {
-      scope: "subagent",
-      config: {},
-      toolRegistry,
-      authPath: "/tmp/auth.json",
-      originHistoryEntryId: "history-1",
-      cwd: "/repo/subagent",
-    };
-
-    const events = [];
-    for await (const event of runToolCalls({
-      toolCalls: [toolCall],
-      toolRegistry,
-      enabledTools: toolRegistry.schemas,
-      signal,
-      dispatchContext,
-    })) {
-      events.push(event);
-    }
-
-    expect(receivedSignal).toBe(signal);
-    expect(receivedContext).toBe(dispatchContext);
-    expect(events).toEqual([
-      {
-        type: "tool_ui",
-        uiEvent: {
-          type: "tool_call_queued",
-          toolCallId: "tool-call-1",
-          toolName: "fake_tool",
-          headerTarget: "fake_tool",
-        },
-      },
-      {
-        type: "tool_result",
-        message: expect.objectContaining({
-          role: "toolResult",
-          toolCallId: "tool-call-1",
-          toolName: "fake_tool",
-          isError: false,
-        }),
-      },
-    ]);
-  });
-});
-
-describe("session pruning", () => {
-  it("prunes bash results plus edit call payloads and success results", () => {
-    const entries = [
-      {
-        id: "assistant-edit",
-        message: {
-          role: "assistant",
-          content: [
-            {
-              type: "toolCall",
-              id: "edit-1",
-              name: TOOL_NAME_EDIT,
-              arguments: {
-                path: "src/example.ts",
-                oldText: "before\nsame",
-                newText: "after\nsame",
-              },
-            },
-          ],
-          timestamp: 1,
-        },
-      },
-      {
-        id: "edit-result",
-        message: {
-          role: "toolResult",
-          toolCallId: "edit-1",
-          toolName: TOOL_NAME_EDIT,
-          content: [{ type: "text", text: "Successfully edited src/example.ts" }],
-          isError: false,
-          timestamp: 2,
-        },
-      },
-      {
-        id: "bash-result",
-        message: {
-          role: "toolResult",
-          toolCallId: "bash-1",
-          toolName: TOOL_NAME_BASH,
-          content: [{ type: "text", text: "x".repeat(12_000) }],
-          isError: false,
-          timestamp: 3,
-        },
-      },
-    ];
-
-    const result = pruneSessionHistory({
-      historyEntries: entries,
-      replaceMessageById(historyEntryId, message) {
-        const index = entries.findIndex((entry) => entry.id === historyEntryId);
-        if (index < 0) {
-          return false;
-        }
-        entries[index] = { ...entries[index], message };
-        return true;
-      },
-      options: { strategy: "earliest", fraction: 1 },
-    });
-
-    expect(result).toEqual(
-      expect.objectContaining({
-        noop: false,
-        bashResultsPruned: 1,
-        editCallsPruned: 1,
-        editResultsPruned: 1,
-      }),
+      new AbortController().signal,
     );
-    expect(entries[0].message.content[0].arguments.oldText).toBe("[Content pruned]");
-    expect(entries[0].message.content[0].arguments.newText).toBe("[Content pruned]");
+    const admission = runner.prepare(call);
+    admission.start();
+    const iterator = runner[Symbol.asyncIterator]();
+    const started = await iterator.next();
+    started.value.acknowledge();
+    const activity = await iterator.next();
+    expect(activity.value.type).toBe("tool_activity");
 
-    const editText = entries[1].message.content[0].text;
-    expect(editText).toContain("[Tool result pruned] Edit diff");
-    expect(editText).toContain("- before");
-    expect(editText).toContain("+ after");
+    runner.cancelPendingAcknowledgements(new Error("event sink failed"));
 
-    const bashText = entries[2].message.content[0].text;
-    expect(bashText).toContain("[Tool result pruned] bash output removed");
-    expect(result.prunedToolResults.map((item) => item.toolCallId)).toEqual(["edit-1", "bash-1"]);
+    await expect(runner.finish()).rejects.toThrow("event sink failed");
   });
 
-  it("strips tau metadata but keeps hidden system blocks in smart prune prompts", () => {
-    const rawUserText = prependTauUserMetadata(
-      "<system>hidden pruning context</system>\nvisible request",
-      [
-        {
-          type: "compaction",
-          version: 1,
-          summary: "old summary",
-          preservedUserMessages: [],
-        },
-      ],
-    );
-    const request = prepareSessionSmartPrunePrompt({
-      historyEntries: [
-        { id: "user", message: userMessage(rawUserText) },
-        {
-          id: "bash-result",
-          message: {
-            role: "toolResult",
-            toolCallId: "bash-1",
-            toolName: TOOL_NAME_BASH,
-            content: [{ type: "text", text: "x".repeat(12_000) }],
-            isError: false,
-            timestamp: 1,
-          },
-        },
-      ],
-      fraction: 1,
-    });
-
-    expect(request?.prompt).toContain("&lt;system&gt;hidden pruning context&lt;/system&gt;");
-    expect(request?.prompt).toContain("visible request");
-    expect(request?.prompt).not.toContain("TAU_METADATA_V1");
-    expect(request?.prompt).not.toContain("old summary");
-  });
-
-  it("skips malformed rejected edit calls while pruning valid calls", () => {
-    const entries = [
-      {
-        id: "valid-edit",
-        message: {
-          role: "assistant",
-          content: [
-            {
-              type: "toolCall",
-              id: "edit-valid",
-              name: TOOL_NAME_EDIT,
-              arguments: { path: "src/a.ts", oldText: "before", newText: "after" },
-            },
-          ],
-          timestamp: 1,
-        },
-      },
-      {
-        id: "malformed-edit",
-        message: {
-          role: "assistant",
-          content: [
-            {
-              type: "toolCall",
-              id: "edit-malformed",
-              name: TOOL_NAME_EDIT,
-              arguments: { path: "src/b.ts", oldText: 42 },
-            },
-          ],
-          timestamp: 2,
-        },
-      },
-    ];
-
-    const result = pruneSessionHistory({
-      historyEntries: entries,
-      replaceMessageById(historyEntryId, message) {
-        const index = entries.findIndex((entry) => entry.id === historyEntryId);
-        entries[index] = { ...entries[index], message };
-        return true;
-      },
-      options: { strategy: "earliest", fraction: 1 },
-    });
-
-    expect(result.editCallsPruned).toBe(1);
-    expect(entries[0].message.content[0].arguments.oldText).toBe("[Content pruned]");
-    expect(entries[1].message.content[0].arguments).toEqual({
-      path: "src/b.ts",
-      oldText: 42,
-    });
-  });
-
-  it("fails fast when a selected prune replacement cannot be applied", () => {
-    const entries = [
-      {
-        id: "bash-result",
-        message: {
-          role: "toolResult",
-          toolCallId: "bash-1",
-          toolName: TOOL_NAME_BASH,
-          content: [{ type: "text", text: "x".repeat(12_000) }],
-          isError: false,
-          timestamp: 1,
-        },
-      },
-    ];
-
-    expect(() =>
-      pruneSessionHistory({
-        historyEntries: entries,
-        replaceMessageById: () => false,
-        options: { strategy: "earliest", fraction: 1 },
-      }),
-    ).toThrow("failed to replace pruned bash tool result 'bash-result'");
-  });
-});
-
-describe("session compaction preparation", () => {
   it("de-duplicates preserved user message candidates across repeated compactions", () => {
     const summaryText = prependTauUserMetadata(buildCompactionUserMessage({ summary: "old" }), [
       {

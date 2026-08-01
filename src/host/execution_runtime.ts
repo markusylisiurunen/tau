@@ -1,5 +1,5 @@
 import { composeSessionPrompts } from "../core/runtime/session_prompt_composer.js";
-import type { ResolveSubagentRuntime } from "../core/tools/registry.js";
+import type { ResolveSubagentRuntime } from "../core/tools/spawn_agent.js";
 import type { ExecutionEnvironment } from "../execution/execution_environment.js";
 
 export function createExecutionEnvironmentSubagentRuntimeResolver(options: {

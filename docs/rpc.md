@@ -64,7 +64,7 @@ WebSocket clients receive the same `ready`, `response`, `session.delta`, and `se
 every protocol message includes `version`.
 
 ```json
-{ "version": 3, "type": "..." }
+{ "version": 4, "type": "..." }
 ```
 
 server-to-client messages are:
@@ -85,7 +85,7 @@ when the rpc server starts, it immediately emits a `ready` line:
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "type": "ready",
   "methods": [
     "initialize",
@@ -110,7 +110,6 @@ when the rpc server starts, it immediately emits a `ready` line:
     "session.autocompletePaths",
     "session.reload",
     "session.compact",
-    "session.prune",
     "session.rewind",
     "session.terminateSubagent",
     "session.ephemeral.create",
@@ -139,7 +138,11 @@ state transitions:
 
 `initialize` is a handshake signal, not a gate for other methods. clients may call other rpc methods before `initialize`, though most clients should still initialize immediately after `ready`.
 
-`tau rpc` and `tau serve` store session snapshots under `~/.config/tau/sessions` for the current host user. Starting a server does not create a session. `session.create` creates one in an explicitly selected, already-provisioned execution environment, and closing the transport or server persists hosted sessions. Stored sessions recover from persisted snapshot state, including current settings, cumulative cost, bootstrap metadata, catalog metadata, execution environment identity, messages, timeline items, tools, agents, and facets; host-only config is resolved by the host and is not serialized into the snapshot. Pending queued and steering messages are transient host state rather than snapshot state: they survive client detach while the hosted session remains in memory, but they are discarded on host restart or session recovery so recovered sessions never resume work without new user input.
+`tau rpc` and `tau serve` store session snapshots under `~/.config/tau/sessions` for the current host user. Starting a server does not create a session. `session.create` creates one in an explicitly selected, already-provisioned execution environment, and closing the transport or server persists hosted sessions. Each file uses a versioned `tau-session` storage document whose version is independent of the session protocol version. Tau loads older unwrapped snapshots through sequential storage migrations and rewrites migrated state in the current format during recovery.
+
+Stored sessions recover from persisted snapshot state, including independent durable agent revision/context accounting state, current settings, cumulative cost, bootstrap metadata, catalog metadata, execution environment identity, messages, timeline items, tools, agents, and facets; host-only config is resolved by the host and is not serialized into the snapshot. The agent revision is not the protocol snapshot revision. A fresh persisted usage checkpoint lets the first model subturn after recovery make the same automatic-compaction decision as an uninterrupted session. Legacy snapshots without a checkpoint wait for fresh provider usage before automatic compaction. Pending queued and steering messages are transient host state rather than snapshot state: they survive client detach while the hosted session remains in memory, but they are discarded on host restart or session recovery so recovered sessions never resume work without new user input.
+
+Main sessions, supervised background agents, and ephemeral threads use the same stateful agent runtime for model streaming, tool admission and execution, retries, recovery, context accounting, steering boundaries, and compaction. The runtime emits ordered semantic transitions through one awaited sink. The hosted-session adapter applies those transitions to protocol snapshots and persists durable state before acknowledging them; child supervision, ephemeral thread maps and forks, pending normal submissions, and usage attribution are separate host concerns.
 
 ## requests
 
@@ -147,7 +150,7 @@ all requests use this envelope:
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "type": "request",
   "id": "req-1",
   "method": "session.submit",
@@ -180,12 +183,12 @@ params (required):
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "type": "response",
   "id": "init-1",
   "ok": true,
   "result": {
-    "protocolVersion": 2,
+    "protocolVersion": 4,
     "methods": [
       "initialize",
       "session.create",
@@ -209,7 +212,6 @@ params (required):
       "session.autocompletePaths",
       "session.reload",
       "session.compact",
-      "session.prune",
       "session.rewind",
       "session.terminateSubagent",
       "session.ephemeral.create",
@@ -310,6 +312,10 @@ Establishes observation for that session on this connection and returns the auth
   "snapshot": {
     "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
     "revision": 1,
+    "agentState": {
+      "revision": 0,
+      "contextEpoch": "8f98c4..."
+    },
     "lifecycle": "idle",
     "costTotal": 0,
     "settings": {
@@ -416,7 +422,7 @@ if another turn is already running, tau returns:
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "type": "response",
   "id": "submit-2",
   "ok": false,
@@ -451,13 +457,12 @@ behavior:
 
 #### session.steer
 
-params are the same as `session.submit`.
+params (required):
 
 ```json
 {
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
-  "text": "change direction",
-  "historyEntryId": "optional-non-empty-user-entry-id"
+  "text": "change direction"
 }
 ```
 
@@ -465,6 +470,7 @@ behavior:
 
 - if the session is idle, behaves like `session.submit`
 - if an assistant turn is active, accepts the request, asks the active turn to stop at the next safe boundary, batches any additional steering messages in arrival order, and then starts one new turn with a short `<system>` steering instruction plus the batched user messages
+- the batched steering turn receives one generated user history entry id shared by every associated response; `session.steer` does not accept a caller-provided history entry id
 - publishes pending steering messages through `session.pendingUserMessages` until the steering turn begins
 - returns the same success shape as `session.submit`
 
@@ -645,7 +651,8 @@ params (required):
 returns current session state:
 
 - `sessionId`
-- `revision` (monotonic snapshot revision for this session id)
+- `revision` (monotonic protocol snapshot revision for this session id)
+- `agentState` (the independent durable agent revision, context epoch, and optional provider usage checkpoint used to resume context accounting after recovery)
 - `lifecycle` (`"idle"` or `"running"`)
 - `settings` (current persona id, reasoning, and service tier)
 - `bootstrap` (selected model/provider metadata and prompt-composition metadata)
@@ -656,6 +663,8 @@ returns current session state:
 - `tools` (semantic tool execution state keyed by tool call id; `streaming` runs expose only tool identity plus draft-message origin, while executable states reference a complete assistant `toolCall` through `call`)
 - `agents` (semantic subagent execution state)
 - `facets` (client-only structured metadata attached to session/message/tool/agent/operation subjects)
+
+Tool status is projected from semantic runtime outcomes (`succeeded`, `failed`, `blocked`, or `cancelled`). Tool-owned activity only adds presentation facets and never determines or overwrites semantic status.
 
 derive transcript length from `messages.length`; the protocol does not duplicate it. The first committed message is the effective system instruction message. Running state is derived from `lifecycle`, draft/interrupted messages, tools, agents, and operations; there is no `activeTurn` side object. If an assistant turn is interrupted mid-stream, the streamed content is retained as an `interrupted` assistant message and remains model-visible unless the host intentionally marks that record `modelVisible: false`.
 
@@ -669,7 +678,7 @@ params (required):
 { "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3", "reasoning": "high" }
 ```
 
-sets the session reasoning effort to `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, or `"max"` and returns `{ "revision": number, "settings": { ... } }` with the authoritative updated settings. Observed clients receive a `settings.set` snapshot patch for the same revision. The host applies the settings update through the session mutation queue, but it does not interrupt an active turn or reject queued/steering messages. If a turn is already running, the new reasoning applies to the next user-message turn.
+sets the session reasoning effort to `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, or `"max"` and returns `{ "revision": number, "settings": { ... } }` with the authoritative updated settings. Observed clients receive a `settings.set` snapshot patch for the same revision. The host applies the settings update through the session mutation queue, but it does not interrupt an active turn or reject queued/steering messages. If a turn is already running, it and any steering continuations retain the spec captured when it started; the new reasoning applies to the next independently submitted or queued turn.
 
 #### session.setPersona
 
@@ -761,37 +770,6 @@ manually compacts the session into one synthetic user summary message and return
 
 the host applies compaction through the session mutation queue, interrupts any running turn, waits for in-flight submit handling to settle, and rejects pending steering submits. Clients should render the returned `snapshot` as authoritative session state; `compactionMessage` and `includedLastAssistant` describe the operation result and are not stored UI state.
 
-#### session.prune
-
-params (required):
-
-```json
-{
-  "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
-  "strategy": "smart",
-  "fraction": 0.25,
-  "guidance": "keep errors"
-}
-```
-
-`strategy` is `"earliest"`, `"largest"`, or `"smart"`. `fraction` is a required number from `0` to `1`. `guidance` is optional and only used by `"smart"`.
-
-prunes bash tool results and compacts edit tool payloads/results in the session history. returns:
-
-```json
-{
-  "snapshot": { "...": "authoritative updated session snapshot" },
-  "message": "pruned 1 bash tool result (512 tokens).",
-  "noop": false,
-  "bashResultsPruned": 1,
-  "editCallsPruned": 0,
-  "editResultsPruned": 0,
-  "bytesPruned": 3072
-}
-```
-
-the host applies pruning through the session mutation queue, interrupts any running turn, waits for in-flight submit handling to settle, and rejects pending steering submits. clients should render the returned `snapshot` as authoritative session state; prune counts and `message` describe the operation result and are not stored UI state.
-
 #### session.terminateSubagent
 
 params (required):
@@ -853,7 +831,7 @@ observed-session changes are broadcast as `session.delta` messages:
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "type": "session.delta",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "fromRevision": 1,
@@ -877,7 +855,7 @@ observed-session changes are broadcast as `session.delta` messages:
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "type": "session.delta",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "fromRevision": null,
@@ -890,7 +868,7 @@ observed-session changes are broadcast as `session.delta` messages:
 }
 ```
 
-`snapshot.patch` changes include lifecycle, message, timeline, tool, agent, and facet updates. High-rate assistant streaming uses `message.content.append` after the draft assistant message exists so clients do not receive the full accumulated assistant text on every frame. A content append targets only draft assistant messages and must include non-empty `text` and/or `thinking`; when a thinking block is created, clients insert it before the text block so applying patches reconstructs the canonical assistant content order. Maintenance operations such as reload, rewind, compaction, and pruning may use `snapshot.reset` when replacing the complete state is clearer than sending a long patch sequence.
+`snapshot.patch` changes include lifecycle, message, timeline, tool, agent, and facet updates. High-rate assistant streaming uses `message.content.append` after the draft assistant message exists so clients do not receive the full accumulated assistant text on every frame. A content append targets only draft assistant messages and must include non-empty `text` and/or `thinking`; when a thinking block is created, clients insert it before the text block so applying patches reconstructs the canonical assistant content order. Maintenance operations such as reload, rewind, and compaction may use `snapshot.reset` when replacing the complete state is clearer than sending a long patch sequence.
 
 `reason` describes why the transition happened and is for logging, animation, and client policy. Correctness comes from applying the delta. Current reasons are `user-message`, `assistant-stream`, `assistant-message`, `tool-run`, `tool-result`, `notice`, `agent-run`, `maintenance`, `configuration`, and `recovery`.
 
@@ -908,7 +886,7 @@ notes:
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "type": "session.pendingUserMessages",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "state": {
@@ -931,7 +909,7 @@ Pending messages are shared across attached clients and survive client detach wh
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "type": "session.ephemeral",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "event": {
@@ -962,7 +940,7 @@ error responses use:
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "type": "response",
   "id": "req-1",
   "ok": false,
@@ -992,8 +970,9 @@ for lines that cannot produce a valid request id (for example malformed json), `
 `runRpcServer` handles incoming lines concurrently with explicit serialization for mutating transitions. this means:
 
 - multiple requests can be accepted before earlier ones complete
-- `session.record`, `session.setReasoning`, `session.setPersona`, `session.reload`, `session.compact`, `session.prune`, `session.rewind`, and `session.terminateSubagent` run through a session-owned mutation queue (arrival order across clients observed to the same live session)
-- `session.setReasoning` updates settings immediately without interrupting an active turn; active turns keep their captured reasoning and the new setting applies to the next user-message turn
+- `session.record`, `session.setReasoning`, `session.setPersona`, `session.reload`, `session.compact`, `session.rewind`, and `session.terminateSubagent` run through a session-owned mutation queue (arrival order across clients observed to the same live session)
+- `session.setReasoning` updates settings immediately without interrupting an active turn; the active turn and its steering continuations keep their captured spec, and the new setting applies to the next independently submitted or queued turn
+- `session.rewind` requires no active submit or pending user work and fails with `busy` without interrupting or cancelling anything
 - only one `session.submit` or `session.retry` turn can run at once (`busy` otherwise)
 - `session.exec` and `session.sample` calls can run concurrently with each other and with normal session work; they never enter the mutation queue, and `session.cancelExec` targets one exec without interrupting the others
 - `session.ephemeral.create`, `session.ephemeral.submit`, and `session.ephemeral.close` manage independent, non-persisted contexts outside the main-session mutation queue; only overlapping submissions to the same ephemeral thread return `busy`

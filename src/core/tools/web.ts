@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import type { Tool } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { z } from "zod";
-import { getExaApiKey } from "../config/index.js";
+import { type Config, getExaApiKey } from "../config/index.js";
 import { formatZodError } from "../utils/zod.js";
 import {
   type CodeModeToolImplementation,
@@ -11,7 +11,7 @@ import {
 } from "./code_mode.js";
 import { type CodeModeBridgeRequest, executeCodeModeWorker } from "./code_mode_worker.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
-import type { ToolDefinition } from "./registry.js";
+import type { AgentTool } from "./registry.js";
 import { TOOL_NAME_WEB } from "./tool_names.js";
 import { discoverAgentContent } from "./web_discovery.js";
 
@@ -485,16 +485,17 @@ const defaultDeps: WebToolDeps = {
 
 export function createWebToolDefinition(
   backend: ToolExecutionBackend,
+  config: Config,
   deps: WebToolDeps = defaultDeps,
-): ToolDefinition {
+): AgentTool {
   const timeoutMs = deps.timeoutMs ?? WEB_CODE_MODE_TIMEOUT_MS;
   const implementation: CodeModeToolImplementation<WebArgs> = {
     schema: WEB_TOOL,
     outputPolicy: { maxTokens: WEB_CODE_MODE_OUTPUT_TOKENS },
     timeoutMs,
     parseArguments: parseWebArguments,
-    execute: async ({ code, context, signal, backend: executionBackend }) => {
-      const apiKey = getExaApiKey(context.config);
+    execute: async ({ code, signal, backend: executionBackend }) => {
+      const apiKey = getExaApiKey(config);
       const exa = apiKey ? deps.createExaClient(apiKey) : undefined;
       return executeWebProgram(code, exa, deps, executionBackend, signal, timeoutMs);
     },

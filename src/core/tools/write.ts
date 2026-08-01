@@ -1,7 +1,6 @@
 import type { Tool, ToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { z } from "zod";
-import { createToolError, createToolSuccess } from "../utils/messages.js";
 import { formatTokenEstimate } from "../utils/token.js";
 import {
   applyPreviewPolicy,
@@ -10,16 +9,16 @@ import {
 } from "../utils/tool_preview.js";
 import { formatBytes } from "../utils/truncate.js";
 import { formatZodError } from "../utils/zod.js";
+import type { ToolActivity, ToolUiLine, ToolUiText } from "./activity.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
-import type {
-  ToolDefinition,
-  ToolDispatch,
-  ToolDispatchResult,
-  ToolUiEvent,
-  ToolUiLine,
-  ToolUiText,
+import {
+  type AgentTool,
+  createTextToolOutcome,
+  executeTool,
+  type ToolExecutionContext,
+  type ToolExecutionOutcome,
+  type ToolImplementationOutcome,
 } from "./registry.js";
-import { createToolDispatch } from "./registry.js";
 import { TOOL_NAME_WRITE } from "./tool_names.js";
 
 const WRITE_DESCRIPTION = [
@@ -98,26 +97,32 @@ function buildWriteUiText(args: {
   };
 }
 
-export function createWriteToolDefinition(backend: ToolExecutionBackend): ToolDefinition {
+export function createWriteToolDefinition(backend: ToolExecutionBackend): AgentTool {
   return {
     schema: WRITE_TOOL,
-    getDisplayTarget: (toolCall) => getWriteDisplayTarget(toolCall.arguments),
-    async dispatch(toolCall: ToolCall): Promise<ToolDispatch> {
-      return createToolDispatch(async () => {
+    describe: (toolCall) => ({ headerTarget: getWriteDisplayTarget(toolCall.arguments) }),
+    async execute(
+      toolCall: ToolCall,
+      context: ToolExecutionContext,
+    ): Promise<ToolExecutionOutcome> {
+      return executeTool(context, async () => {
         const parsedArgs = parseWriteArgs(toolCall.arguments);
         const path = parsedArgs.ok ? parsedArgs.data.path : "";
         const headerTarget = getWriteDisplayTarget(toolCall.arguments);
 
-        const blocked = (reason: string): ToolDispatchResult => {
-          const toolResult = createToolError(toolCall, reason);
-          const uiEvent: ToolUiEvent = {
+        const blocked = (
+          reason: string,
+          semanticOutcome: ToolExecutionOutcome["outcome"] = "blocked",
+        ): ToolImplementationOutcome => {
+          const outcome = createTextToolOutcome(reason, semanticOutcome);
+          const uiEvent: ToolActivity = {
             type: "write_blocked",
             toolCallId: toolCall.id,
             path: path || "(invalid path)",
             headerTarget,
             reason,
           };
-          return { toolResult, uiEvent };
+          return { content: outcome.content, outcome: outcome.outcome, uiEvent };
         };
 
         if (!parsedArgs.ok) {
@@ -130,9 +135,9 @@ export function createWriteToolDefinition(backend: ToolExecutionBackend): ToolDe
           const { bytes, lines } = await backend.writeFile(path, content);
           const resultText = `Successfully wrote ${formatBytes(bytes)} (${lines} lines) to ${path}`;
 
-          const toolResult = createToolSuccess(toolCall, resultText);
+          const outcome = createTextToolOutcome(resultText, "succeeded");
           const uiText = buildWriteUiText({ bytes, lines, content, fullText: resultText });
-          const uiEvent: ToolUiEvent = {
+          const uiEvent: ToolActivity = {
             type: "write_success",
             toolCallId: toolCall.id,
             path,
@@ -142,10 +147,10 @@ export function createWriteToolDefinition(backend: ToolExecutionBackend): ToolDe
             content,
             uiText,
           };
-          return { toolResult, uiEvent };
+          return { content: outcome.content, outcome: outcome.outcome, uiEvent };
         } catch (e) {
           const errorMessage = e instanceof Error ? e.message : String(e);
-          return blocked(`Write failed: ${errorMessage}`);
+          return blocked(`Write failed: ${errorMessage}`, "failed");
         }
       });
     },

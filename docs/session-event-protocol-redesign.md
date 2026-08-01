@@ -28,7 +28,7 @@ The protocol should instead make the snapshot the only renderable source of trut
 - Model-facing history remains distinct from client-facing session state.
 - Non-model-facing structured metadata can be attached to model-facing records without encoding it in tool result text.
 - Event and delta names are symmetrical, domain-shaped, and stable.
-- Complex rebases such as reload, rewind, compaction, and pruning are allowed to send a full replacement snapshot instead of large bespoke patch sequences.
+- Complex rebases such as reload, rewind, and compaction are allowed to send a full replacement snapshot instead of large bespoke patch sequences.
 
 ## core invariant
 
@@ -64,7 +64,7 @@ The protocol replaces `event` and `session_update` with one observed-session mes
 
 ```ts
 type SessionDeltaMessage = {
-  version: 3;
+  version: 4;
   type: "session.delta";
   sessionId: string;
   fromRevision: number | null;
@@ -115,6 +115,15 @@ The snapshot should be renderable without live event history:
 type SessionSnapshot = {
   sessionId: string;
   revision: number;
+  agentState: {
+    revision: number;
+    contextEpoch: string;
+    usageCheckpoint?: {
+      historyEntryId: string;
+      contextEpoch: string;
+      tokens: number;
+    };
+  };
 
   lifecycle: "idle" | "running";
   settings: SessionSettingsSnapshot;
@@ -129,6 +138,8 @@ type SessionSnapshot = {
   facets: Record<string, SessionFacet>;
 };
 ```
+
+`agentState.revision` is the durable conversation revision and is independent of the protocol snapshot revision. The context epoch and optional provider usage checkpoint let recovery preserve automatic-compaction accounting when the execution-ready agent spec is unchanged.
 
 ### settings, bootstrap, and catalog
 
@@ -217,7 +228,7 @@ type SessionNotice = {
 };
 
 type SessionOperation = {
-  kind: "auto-compaction" | "manual-compaction" | "prune" | "reload" | "rewind";
+  kind: "auto-compaction" | "manual-compaction" | "reload" | "rewind";
   status: "running" | "succeeded" | "failed" | "cancelled" | "skipped";
   startedAt: number;
   finishedAt?: number;
@@ -382,7 +393,6 @@ For broad rewrites, do not overfit patch changes:
 - `session.setReasoning`: `settings.set`
 - `session.setPersona`: `snapshot.reset`
 - `session.compact`: `snapshot.reset`
-- `session.prune`: `snapshot.reset`
 - `session.rewind`: `snapshot.reset`
 
 Those operations already return authoritative snapshots and can change multiple independent areas at once. Reset is simpler and less error-prone than a long patch.
@@ -692,7 +702,7 @@ Known tool renderers can use typed facets. Unknown tools can still render name, 
 4. Tool UI payloads are stored as `SessionToolRun` updates and typed facets before they cross the protocol boundary.
 5. Notices are timeline notice records.
 6. Subagent UI events are stored as `agents` updates.
-7. `snapshot.reset` is used for reload, persona changes, rewind, compact, and prune; reasoning changes use `settings.set`.
+7. `snapshot.reset` is used for reload, persona changes, rewind, and compact; reasoning changes use `settings.set`.
 8. Transports and SDK listeners expose `session.delta`; ephemeral agent progress uses `session.ephemeral`.
 9. TUI rendering is driven from snapshots and local delta application.
 10. Themes stay in TUI-local config/content loading rather than the session protocol.

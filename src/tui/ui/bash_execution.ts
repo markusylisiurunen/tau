@@ -1,4 +1,4 @@
-import type { ToolUiText } from "../../core/tools/registry.js";
+import type { ToolUiText } from "../../core/tools/activity.js";
 import type { Theme } from "./theme/index.js";
 import {
   buildSection,
@@ -55,7 +55,7 @@ export function buildBashExecutionView(
   const header = buildToolHeaderLine({
     bulletStyle: isSuccess ? successBullet : errorColor,
     bullet: isSuccess ? "✓" : "✗",
-    label: labelOverride ?? "ran",
+    label: labelOverride ?? (isSuccess ? "ran" : "failed"),
     labelStyle: palette.textMuted,
     accent: commandInline,
     accentStyle: palette.brandAccent,
@@ -106,7 +106,7 @@ export function buildBashBlockedView(
   const header = buildToolHeaderLine({
     bulletStyle: errorColor,
     bullet: "✗",
-    label: "bash blocked",
+    label: "blocked",
     labelStyle: palette.textMuted,
     accent: commandInline,
     accentStyle: palette.brandAccent,
@@ -145,7 +145,7 @@ export function buildBashAbortedView(
   const header = buildToolHeaderLine({
     bulletStyle: warnColor,
     bullet: "✗",
-    label: inlineText(reason) || "aborted",
+    label: "cancelled",
     labelStyle: palette.textMuted,
     accent: commandInline,
     accentStyle: palette.brandAccent,

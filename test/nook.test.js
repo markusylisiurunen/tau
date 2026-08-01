@@ -72,9 +72,20 @@ async function startTemplateSave(registry, name = "starter") {
   return { response, body: await response.json() };
 }
 
-async function runTool(tool, ...args) {
-  const dispatch = await tool.dispatch(...args);
-  return dispatch.run;
+async function runTool(tool, toolCall, signal = new AbortController().signal) {
+  const activities = [];
+  const outcome = await tool.execute(toolCall, {
+    agentId: "test-agent",
+    turnId: "test-turn",
+    assistantMessageId: "test-assistant",
+    signal,
+    emitActivity: async (activity) => activities.push(activity),
+  });
+  return {
+    toolResult: { ...outcome, toolCallId: toolCall.id, toolName: toolCall.name },
+    uiEvent: activities.at(-1),
+    activities,
+  };
 }
 
 describe("nook validation", () => {
@@ -718,17 +729,15 @@ function createNookToolBackend(entries = []) {
   };
 }
 
-async function runNookCode(
-  tool,
-  code,
-  signal = new AbortController().signal,
-  config = { nook: { domain: "nook.example.com" } },
-) {
+function createNookTool(backend, deps, config = { nook: { domain: "nook.example.com" } }) {
+  return createNookToolDefinition(backend, config, deps);
+}
+
+async function runNookCode(tool, code, signal = new AbortController().signal) {
   return await runTool(
     tool,
     { type: "toolCall", id: "call_1", name: "nook", arguments: { code } },
     signal,
-    { scope: "main", cwd: "/workspace", config },
   );
 }
 
@@ -747,7 +756,17 @@ describe("nook code-mode tool", () => {
     const backend = createNookToolBackend();
     const client = { readSkill: vi.fn(async () => "# Nook app skill") };
     const createClient = vi.fn(() => client);
-    const tool = createNookToolDefinition(backend, { createClient });
+    const tool = createNookTool(
+      backend,
+      { createClient },
+      {
+        nook: {
+          domain: "nook.example.com",
+          accessClientId: "client-id",
+          accessClientSecret: "top-secret",
+        },
+      },
+    );
     const result = await runNookCode(
       tool,
       [
@@ -758,18 +777,10 @@ describe("nook code-mode tool", () => {
         "try { console.log.constructor('return process')(); } catch { console.log('escape blocked'); }",
         "return 'ignored';",
       ].join("\n"),
-      new AbortController().signal,
-      {
-        nook: {
-          domain: "nook.example.com",
-          accessClientId: "client-id",
-          accessClientSecret: "top-secret",
-        },
-      },
     );
 
     expect(result.uiEvent).toMatchObject({ type: "code_mode_finished", toolName: "nook" });
-    expect(result.toolResult.isError).toBe(false);
+    expect(result.toolResult.outcome).toBe("succeeded");
     expect(getToolText(result)).toContain("undefined undefined undefined undefined");
     expect(getToolText(result)).toContain("docs=true");
     expect(getToolText(result)).toContain("secret=false");
@@ -794,7 +805,7 @@ describe("nook code-mode tool", () => {
         keys: [{ key: "settings", sizeBytes: 16, updatedAt: "2026-07-30T00:00:00Z" }],
       })),
     };
-    const tool = createNookToolDefinition(backend, { createClient: () => client });
+    const tool = createNookTool(backend, { createClient: () => client });
     const result = await runNookCode(
       tool,
       [
@@ -806,7 +817,7 @@ describe("nook code-mode tool", () => {
       ].join("\n"),
     );
 
-    expect(result.toolResult.isError).toBe(false);
+    expect(result.toolResult.outcome).toBe("succeeded");
     expect(getToolText(result)).toContain("demo starter dark next settings");
     expect(client.getKv).toHaveBeenCalledWith("demo", "settings");
     expect(client.putKv).toHaveBeenCalledWith("demo", "next", { enabled: true });
@@ -828,7 +839,7 @@ describe("nook code-mode tool", () => {
       getKv: vi.fn(async () => ({ theme: "dark", density: 2 })),
       putKv: vi.fn(async (site, key) => ({ site, key })),
     };
-    const tool = createNookToolDefinition(backend, { createClient: () => client });
+    const tool = createNookTool(backend, { createClient: () => client });
     const result = await runNookCode(
       tool,
       [
@@ -838,7 +849,7 @@ describe("nook code-mode tool", () => {
       ].join("\n"),
     );
 
-    expect(result.toolResult.isError).toBe(false);
+    expect(result.toolResult.outcome).toBe("succeeded");
     expect(getToolText(result)).toContain("/tmp/settings.json 28 settings-copy");
     expect(fileContent).toBe('{"theme":"dark","density":2}');
     expect(backend.writeFile).toHaveBeenCalledWith(
@@ -868,7 +879,7 @@ describe("nook code-mode tool", () => {
         byteCount: files[0].sizeBytes,
       })),
     };
-    const tool = createNookToolDefinition(backend, { createClient: () => client });
+    const tool = createNookTool(backend, { createClient: () => client });
     const result = await runNookCode(
       tool,
       [
@@ -884,7 +895,7 @@ describe("nook code-mode tool", () => {
       ].join("\n"),
     );
 
-    expect(result.toolResult.isError).toBe(false);
+    expect(result.toolResult.outcome).toBe("succeeded");
     expect(getToolText(result)).toContain("Invalid nook.sites.deploy arguments");
     expect(getToolText(result)).toContain("Site slug must be");
     expect(getToolText(result)).toContain('Unrecognized key: "public"');
@@ -901,7 +912,7 @@ describe("nook code-mode tool", () => {
   it("rejects non-JSON KV values before crossing the bridge", async () => {
     const backend = createNookToolBackend();
     const client = { putKv: vi.fn() };
-    const tool = createNookToolDefinition(backend, { createClient: () => client });
+    const tool = createNookTool(backend, { createClient: () => client });
     const result = await runNookCode(
       tool,
       [
@@ -911,7 +922,7 @@ describe("nook code-mode tool", () => {
       ].join("\n"),
     );
 
-    expect(result.toolResult.isError).toBe(false);
+    expect(result.toolResult.outcome).toBe("succeeded");
     expect(getToolText(result).match(/must be JSON-serializable values/g)).toHaveLength(3);
     expect(client.putKv).not.toHaveBeenCalled();
   });
@@ -924,13 +935,13 @@ describe("nook code-mode tool", () => {
       getTemplateManifest: vi.fn(),
       downloadTemplateFiles: vi.fn(),
     };
-    const tool = createNookToolDefinition(backend, { createClient: () => client });
+    const tool = createNookTool(backend, { createClient: () => client });
     const result = await runNookCode(
       tool,
       "await nook.templates.copy('starter', '/workspace/app')",
     );
 
-    expect(result.toolResult.isError).toBe(true);
+    expect(result.toolResult.outcome).toBe("failed");
     expect(getToolText(result)).toContain("template copy destination is not empty");
     expect(client.getTemplateManifest).not.toHaveBeenCalled();
     expect(client.downloadTemplateFiles).not.toHaveBeenCalled();
@@ -938,7 +949,7 @@ describe("nook code-mode tool", () => {
 
   it("fails fast when Nook is not configured", async () => {
     const backend = createNookToolBackend();
-    const tool = createNookToolDefinition(backend);
+    const tool = createNookTool(backend, undefined, {});
     const result = await runNookCode(
       tool,
       "await nook.sites.list()",
@@ -946,14 +957,14 @@ describe("nook code-mode tool", () => {
       {},
     );
 
-    expect(result.toolResult.isError).toBe(true);
+    expect(result.toolResult.outcome).toBe("blocked");
     expect(getToolText(result)).toContain("nook is not configured");
   });
 
   it("rejects unknown tool arguments without starting the sandbox", async () => {
     const backend = createNookToolBackend();
     const createClient = vi.fn();
-    const tool = createNookToolDefinition(backend, { createClient });
+    const tool = createNookTool(backend, { createClient });
     const result = await runTool(
       tool,
       {
@@ -963,10 +974,9 @@ describe("nook code-mode tool", () => {
         arguments: { code: "console.log(docs)", operation: "list_sites" },
       },
       new AbortController().signal,
-      { scope: "main", cwd: "/workspace", config: { nook: { domain: "nook.example.com" } } },
     );
 
-    expect(result.toolResult.isError).toBe(true);
+    expect(result.toolResult.outcome).toBe("blocked");
     expect(getToolText(result)).toContain("Invalid arguments");
     expect(createClient).not.toHaveBeenCalled();
   });
@@ -982,13 +992,13 @@ describe("nook code-mode tool", () => {
           }),
       ),
     }));
-    const tool = createNookToolDefinition(backend, { createClient });
+    const tool = createNookTool(backend, { createClient });
     const result = await runNookCode(
       tool,
       "await Promise.all(Array.from({ length: 5 }, () => nook.sites.list()))",
     );
 
-    expect(result.toolResult.isError).toBe(true);
+    expect(result.toolResult.outcome).toBe("failed");
     expect(getToolText(result)).toContain("exceeded 4 concurrent bridge requests");
     expect(createClient).toHaveBeenCalledTimes(4);
   });
@@ -996,13 +1006,13 @@ describe("nook code-mode tool", () => {
   it("rejects programs beyond the total bridge request budget", async () => {
     const backend = createNookToolBackend();
     const createClient = vi.fn(() => ({ listSites: vi.fn(async () => []) }));
-    const tool = createNookToolDefinition(backend, { createClient });
+    const tool = createNookTool(backend, { createClient });
     const result = await runNookCode(
       tool,
       "for (let index = 0; index < 65; index += 1) await nook.sites.list()",
     );
 
-    expect(result.toolResult.isError).toBe(true);
+    expect(result.toolResult.outcome).toBe("failed");
     expect(getToolText(result)).toContain("exceeded 64 bridge requests");
     expect(createClient).toHaveBeenCalledTimes(64);
   });
@@ -1032,7 +1042,7 @@ describe("nook code-mode tool", () => {
       ),
     };
     const createClient = vi.fn(() => client);
-    const tool = createNookToolDefinition(backend, { createClient });
+    const tool = createNookTool(backend, { createClient });
     const controller = new AbortController();
     const run = runNookCode(tool, "await nook.sites.list()", controller.signal);
 
@@ -1042,7 +1052,7 @@ describe("nook code-mode tool", () => {
 
     expect(requestSettled).toBe(true);
     expect(createClient.mock.calls[0][0].signal.aborted).toBe(true);
-    expect(result.toolResult.isError).toBe(true);
+    expect(result.toolResult.outcome).toBe("cancelled");
     expect(getToolText(result)).toContain("(tau) aborted");
   });
 });

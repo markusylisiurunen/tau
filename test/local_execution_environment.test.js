@@ -194,7 +194,6 @@ describe("LocalExecutionEnvironment", () => {
     expect(promptBootstrap.promptContext.includeAgentContext).toBe(false);
     expect(promptBootstrap.promptContext.platform).toBe(process.platform);
     expect(promptBootstrap.promptContext.nodeVersion).toBe(process.version);
-    expect(runtimeContext.toolRegistry.schemas.length).toBeGreaterThan(0);
     expect(environment.snapshot()).toEqual({
       kind: "local",
       cwd,

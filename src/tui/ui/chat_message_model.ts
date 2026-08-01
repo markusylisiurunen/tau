@@ -1,5 +1,4 @@
 import type { Component } from "@earendil-works/pi-tui";
-import type { ToolUiEvent } from "../../core/tools/registry.js";
 import { AppIntroComponent, type AppIntroModel } from "./app_intro.js";
 import { AssistantMessageComponent, type AssistantMessageModel } from "./assistant_message.js";
 import { DiffReviewMessageComponent, type DiffReviewMessageModel } from "./diff_review_message.js";
@@ -8,6 +7,7 @@ import type { SystemMessageModel } from "./system_message.js";
 import { SystemMessageComponent } from "./system_message.js";
 import type { Theme } from "./theme/index.js";
 import { buildToolOutputProps, renderToolOutput } from "./tool_output.js";
+import type { ToolUiModel } from "./tool_ui_model.js";
 import type { ToolUiRegistry } from "./tool_ui_registry.js";
 import { UserMessageComponent, type UserMessageModel } from "./user_message.js";
 
@@ -19,7 +19,7 @@ export type ChatMessageModel =
   | (UserMessageModel & { type: "user" })
   | {
       type: "tool";
-      event: ToolUiEvent;
+      tool: ToolUiModel;
     }
   | (SessionDividerModel & { type: "session_divider" });
 
@@ -140,7 +140,7 @@ export function renderChatMessage(
       };
     }
     case "tool": {
-      const view = toolUiRegistry.render(model.event, {
+      const view = toolUiRegistry.renderModel(model.tool, {
         theme,
         compact: compactToolUi,
       });
@@ -150,7 +150,7 @@ export function renderChatMessage(
         isAssistant: false,
         update: (nextModel, nextOptions) => {
           if (nextModel.type !== "tool") return false;
-          const nextView = nextOptions.toolUiRegistry.render(nextModel.event, {
+          const nextView = nextOptions.toolUiRegistry.renderModel(nextModel.tool, {
             theme: nextOptions.theme,
             compact: nextOptions.compactToolUi,
           });

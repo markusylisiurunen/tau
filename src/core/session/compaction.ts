@@ -526,7 +526,6 @@ export function buildAutoCompactionPrompt(preparation: AutoCompactionPreparation
 export function buildAutoCompactionContinuationMessage(args: {
   cutType: AutoCompactionCutType;
   now: number;
-  modelNotice?: string;
 }): Message {
   const lines = [
     "The conversation context before this point has been compacted.",
@@ -540,9 +539,7 @@ export function buildAutoCompactionContinuationMessage(args: {
     );
   }
 
-  const hiddenSystemMessages = [args.modelNotice?.trim() || undefined, lines.join("\n")].filter(
-    (message): message is string => message !== undefined,
-  );
+  const hiddenSystemMessages = [lines.join("\n")];
 
   return {
     role: "user",

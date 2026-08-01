@@ -1,5 +1,5 @@
 import { type Component, Container, Text } from "@earendil-works/pi-tui";
-import type { ToolUiLine, ToolUiText } from "../../core/tools/registry.js";
+import type { ToolUiLine, ToolUiText } from "../../core/tools/activity.js";
 import { DynamicBorder } from "./components/dynamic_border.js";
 import { HeaderLineComponent, type HeaderLineModel } from "./components/header_line.js";
 import type { OneLineSegment } from "./components/one_line_segments.js";

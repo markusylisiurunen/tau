@@ -8,7 +8,7 @@ import type {
 } from "@earendil-works/pi-ai";
 import { type ZodError, z } from "zod";
 
-export const SESSION_PROTOCOL_VERSION = 3 as const;
+export const SESSION_PROTOCOL_VERSION = 4 as const;
 export const SESSION_PROTOCOL_MAX_EXEC_CAPTURE_BYTES = 24 * 1024 * 1024;
 export const SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES = 16 * 1024 * 1024;
 
@@ -35,7 +35,6 @@ export const SESSION_PROTOCOL_METHODS = [
   "session.autocompletePaths",
   "session.reload",
   "session.compact",
-  "session.prune",
   "session.rewind",
   "session.terminateSubagent",
   "session.ephemeral.create",
@@ -142,7 +141,7 @@ export type SessionProtocolUserMessageParams = {
 };
 export type SessionProtocolSubmitParams = SessionProtocolUserMessageParams;
 export type SessionProtocolQueueParams = SessionProtocolUserMessageParams;
-export type SessionProtocolSteerParams = SessionProtocolUserMessageParams;
+export type SessionProtocolSteerParams = SessionProtocolSessionIdParams & { text: string };
 export type SessionProtocolCancelPendingMessagesParams = SessionProtocolSessionIdParams;
 export type SessionProtocolRecordParams = SessionProtocolSessionIdParams & {
   text: string;
@@ -196,11 +195,6 @@ export type SessionProtocolAutocompletePathsParams = SessionProtocolSessionIdPar
 export type SessionProtocolReloadParams = SessionProtocolSessionIdParams;
 export type SessionProtocolCompactParams = SessionProtocolSessionIdParams & {
   mode: "summary-only" | "summary-and-last";
-  guidance?: string;
-};
-export type SessionProtocolPruneParams = SessionProtocolSessionIdParams & {
-  strategy: "earliest" | "largest" | "smart";
-  fraction: number;
   guidance?: string;
 };
 export type SessionProtocolRewindParams = SessionProtocolSessionIdParams & {
@@ -262,7 +256,6 @@ export type SessionProtocolParamsByMethod = {
   "session.autocompletePaths": SessionProtocolAutocompletePathsParams;
   "session.reload": SessionProtocolReloadParams;
   "session.compact": SessionProtocolCompactParams;
-  "session.prune": SessionProtocolPruneParams;
   "session.rewind": SessionProtocolRewindParams;
   "session.terminateSubagent": SessionProtocolTerminateSubagentParams;
   "session.ephemeral.create": SessionProtocolEphemeralCreateParams;
@@ -409,7 +402,7 @@ export type SessionProtocolNotice = {
 };
 
 export type SessionProtocolOperation = {
-  kind: "auto-compaction" | "manual-compaction" | "prune" | "reload" | "rewind";
+  kind: "auto-compaction" | "manual-compaction" | "reload" | "rewind";
   status: "running" | "succeeded" | "failed" | "cancelled" | "skipped";
   startedAt: number;
   finishedAt?: number;
@@ -550,9 +543,20 @@ export type SessionProtocolExecutionEnvironmentSnapshot =
   | SessionProtocolCloudflareSandboxExecutionEnvironmentSnapshot
   | SessionProtocolFlySpriteExecutionEnvironmentSnapshot;
 
+export type SessionProtocolAgentStateSnapshot = {
+  revision: number;
+  contextEpoch: string;
+  usageCheckpoint?: {
+    historyEntryId: string;
+    contextEpoch: string;
+    tokens: number;
+  };
+};
+
 export type SessionProtocolSnapshot = {
   sessionId: string;
   revision: number;
+  agentState: SessionProtocolAgentStateSnapshot;
   lifecycle: SessionProtocolSessionLifecycle;
   costTotal: number;
   settings: SessionProtocolSettingsSnapshot;
@@ -643,16 +647,6 @@ export type SessionProtocolCompactResult = {
   compactionMessage: string;
   includedLastAssistant: boolean;
 };
-export type SessionProtocolPruneResult = {
-  snapshot: SessionProtocolSnapshot;
-  message: string;
-  noop: boolean;
-  bashResultsPruned: number;
-  editCallsPruned: number;
-  editResultsPruned: number;
-  bytesPruned: number;
-};
-
 export type SessionProtocolRewindResult = {
   snapshot: SessionProtocolSnapshot;
   historyEntryId: string;
@@ -730,7 +724,6 @@ export type SessionProtocolResultByMethod = {
   "session.autocompletePaths": SessionProtocolAutocompletePathsResult;
   "session.reload": SessionProtocolReloadResult;
   "session.compact": SessionProtocolCompactResult;
-  "session.prune": SessionProtocolPruneResult;
   "session.rewind": SessionProtocolRewindResult;
   "session.terminateSubagent": SessionProtocolTerminateSubagentResult;
   "session.ephemeral.create": SessionProtocolEphemeralCreateResult;
@@ -800,6 +793,7 @@ export type SessionProtocolDeltaReason =
   | "recovery";
 
 export type SessionProtocolChange =
+  | { type: "agent-state.set"; agentState: SessionProtocolAgentStateSnapshot }
   | { type: "lifecycle.set"; lifecycle: SessionProtocolSessionLifecycle }
   | { type: "cost.set"; costTotal: number }
   | { type: "settings.set"; settings: SessionProtocolSettingsSnapshot }
@@ -1267,8 +1261,15 @@ const sessionProtocolInitializeParamsSchema = z
 const sessionProtocolUserMessageParamsSchema = z
   .object({
     sessionId: nonEmptyStringSchema,
-    text: z.string(),
+    text: nonEmptyStringSchema,
     historyEntryId: nonEmptyStringSchema.optional(),
+  })
+  .strip();
+
+const sessionProtocolSteerParamsSchema = z
+  .object({
+    sessionId: nonEmptyStringSchema,
+    text: nonEmptyStringSchema,
   })
   .strip();
 
@@ -1376,15 +1377,6 @@ const sessionProtocolCompactParamsSchema = z
   .object({
     sessionId: nonEmptyStringSchema,
     mode: z.enum(["summary-only", "summary-and-last"]),
-    guidance: z.string().optional(),
-  })
-  .strip();
-
-const sessionProtocolPruneParamsSchema = z
-  .object({
-    sessionId: nonEmptyStringSchema,
-    strategy: z.enum(["earliest", "largest", "smart"]),
-    fraction: z.number().min(0).max(1),
     guidance: z.string().optional(),
   })
   .strip();
@@ -1734,7 +1726,7 @@ const sessionProtocolNoticeSchema = z
 
 const sessionProtocolOperationSchema = z
   .object({
-    kind: z.enum(["auto-compaction", "manual-compaction", "prune", "reload", "rewind"]),
+    kind: z.enum(["auto-compaction", "manual-compaction", "reload", "rewind"]),
     status: z.enum(["running", "succeeded", "failed", "cancelled", "skipped"]),
     startedAt: z.number().finite(),
     finishedAt: z.number().finite().optional(),
@@ -1851,10 +1843,26 @@ const sessionProtocolFacetSchema = z
   })
   .strip();
 
+const sessionProtocolAgentStateSnapshotSchema = z
+  .object({
+    revision: z.number().int().nonnegative(),
+    contextEpoch: nonEmptyStringSchema,
+    usageCheckpoint: z
+      .object({
+        historyEntryId: nonEmptyStringSchema,
+        contextEpoch: nonEmptyStringSchema,
+        tokens: z.number().int().nonnegative(),
+      })
+      .strip()
+      .optional(),
+  })
+  .strip();
+
 const sessionProtocolSnapshotSchema = z
   .object({
     sessionId: nonEmptyStringSchema,
     revision: z.number().int().positive(),
+    agentState: sessionProtocolAgentStateSnapshotSchema,
     lifecycle: sessionProtocolSessionLifecycleSchema,
     costTotal: z.number().nonnegative(),
     settings: sessionProtocolSettingsSnapshotSchema,
@@ -1886,6 +1894,34 @@ const sessionProtocolSnapshotSchema = z
         });
       }
       messagesById.set(message.id, message);
+    }
+    const checkpoint = snapshot.agentState.usageCheckpoint;
+    if (checkpoint) {
+      if (checkpoint.contextEpoch !== snapshot.agentState.contextEpoch) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["agentState", "usageCheckpoint", "contextEpoch"],
+          message: "usage checkpoint context epoch must match agent state",
+        });
+      }
+      const checkpointMessage = messagesById.get(checkpoint.historyEntryId);
+      const checkpointAssistant =
+        checkpointMessage?.message.role === "assistant" && "stopReason" in checkpointMessage.message
+          ? checkpointMessage.message
+          : undefined;
+      if (
+        !checkpointMessage?.modelVisible ||
+        checkpointMessage.state !== "committed" ||
+        !checkpointAssistant ||
+        checkpointAssistant.stopReason === "aborted" ||
+        checkpointAssistant.stopReason === "error"
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["agentState", "usageCheckpoint", "historyEntryId"],
+          message: "usage checkpoint must reference a completed model-visible assistant response",
+        });
+      }
     }
 
     const timelineIds = new Set<string>();
@@ -2044,6 +2080,12 @@ const sessionProtocolDeltaReasonSchema = z.enum([
 ]);
 
 const sessionProtocolChangeSchema = z.discriminatedUnion("type", [
+  z
+    .object({
+      type: z.literal("agent-state.set"),
+      agentState: sessionProtocolAgentStateSnapshotSchema,
+    })
+    .strip(),
   z
     .object({
       type: z.literal("lifecycle.set"),
@@ -2378,18 +2420,6 @@ const sessionProtocolCompactResultSchema = z
   })
   .strip();
 
-const sessionProtocolPruneResultSchema = z
-  .object({
-    snapshot: sessionProtocolSnapshotSchema,
-    message: nonEmptyStringSchema,
-    noop: z.boolean(),
-    bashResultsPruned: z.number().int().nonnegative(),
-    editCallsPruned: z.number().int().nonnegative(),
-    editResultsPruned: z.number().int().nonnegative(),
-    bytesPruned: z.number().int().nonnegative(),
-  })
-  .strip();
-
 const sessionProtocolRewindResultSchema = z
   .object({
     snapshot: sessionProtocolSnapshotSchema,
@@ -2622,6 +2652,7 @@ export function applySessionProtocolDelta(
 
   const keyedPatchSnapshot = applyKeyedRecordDelta(snapshot, message);
   if (keyedPatchSnapshot) {
+    validateAppliedSnapshotChanges(snapshot, keyedPatchSnapshot, message.delta.changes);
     return keyedPatchSnapshot;
   }
 
@@ -2629,6 +2660,9 @@ export function applySessionProtocolDelta(
   next.revision = message.toRevision;
   for (const change of message.delta.changes) {
     switch (change.type) {
+      case "agent-state.set":
+        next.agentState = structuredClone(change.agentState);
+        break;
       case "lifecycle.set":
         next.lifecycle = change.lifecycle;
         break;
@@ -2693,7 +2727,105 @@ export function applySessionProtocolDelta(
     }
   }
 
+  validateAppliedSnapshotChanges(snapshot, next, message.delta.changes);
   return next;
+}
+
+function validateAppliedSnapshotChanges(
+  previous: SessionProtocolSnapshot,
+  snapshot: SessionProtocolSnapshot,
+  changes: readonly SessionProtocolChange[],
+): void {
+  if (!changes.some((change) => changeCanInvalidateSnapshot(previous, change))) {
+    return;
+  }
+  const parsed = sessionProtocolSnapshotSchema.safeParse(snapshot);
+  if (!parsed.success) {
+    throw new Error(`session delta produced an invalid snapshot: ${formatZodError(parsed.error)}`);
+  }
+}
+
+function changeCanInvalidateSnapshot(
+  snapshot: SessionProtocolSnapshot,
+  change: SessionProtocolChange,
+): boolean {
+  switch (change.type) {
+    case "lifecycle.set":
+    case "cost.set":
+    case "settings.set":
+    case "agent.set":
+      return false;
+    case "tool.set": {
+      const previous = snapshot.tools[change.tool.id];
+      return !previous || !hasSameToolReferences(previous, change.tool);
+    }
+    case "facet.set": {
+      const previous = snapshot.facets[change.facet.id];
+      return !previous || !hasSameFacetSubject(previous, change.facet);
+    }
+    case "timeline.replace": {
+      const previous = snapshot.timeline.find((item) => item.id === change.item.id);
+      return !previous || !hasSameTimelineReferences(previous, change.item);
+    }
+    case "agent-state.set":
+    case "message.append":
+    case "message.replace":
+    case "message.content.append":
+    case "timeline.append":
+    case "timeline.remove":
+    case "tool.remove":
+    case "agent.remove":
+    case "facet.remove":
+      return true;
+  }
+}
+
+function hasSameToolReferences(
+  previous: SessionProtocolToolRun,
+  tool: SessionProtocolToolRun,
+): boolean {
+  if (
+    previous.id !== tool.id ||
+    previous.toolCallId !== tool.toolCallId ||
+    previous.toolName !== tool.toolName ||
+    previous.facetIds.length !== tool.facetIds.length ||
+    previous.facetIds.some((id, index) => id !== tool.facetIds[index])
+  ) {
+    return false;
+  }
+  if (previous.status === "streaming" || tool.status === "streaming") {
+    return (
+      previous.status === "streaming" &&
+      tool.status === "streaming" &&
+      previous.origin.messageId === tool.origin.messageId &&
+      previous.origin.contentIndex === tool.origin.contentIndex
+    );
+  }
+  return (
+    previous.call.messageId === tool.call.messageId &&
+    previous.call.contentIndex === tool.call.contentIndex &&
+    previous.resultMessageId === tool.resultMessageId
+  );
+}
+
+function hasSameFacetSubject(previous: SessionProtocolFacet, facet: SessionProtocolFacet): boolean {
+  return (
+    previous.id === facet.id &&
+    previous.subject.type === facet.subject.type &&
+    (previous.subject.type === "session" ||
+      (facet.subject.type !== "session" && previous.subject.id === facet.subject.id))
+  );
+}
+
+function hasSameTimelineReferences(
+  previous: SessionProtocolTimelineItem,
+  item: SessionProtocolTimelineItem,
+): boolean {
+  if (previous.type !== item.type) return false;
+  if (previous.type === "message" && item.type === "message") {
+    return previous.messageId === item.messageId;
+  }
+  return true;
 }
 
 function applyKeyedRecordDelta(
@@ -3243,10 +3375,6 @@ export function validateSessionProtocolParams(
   params: unknown,
 ): SessionProtocolParamsValidationResult<SessionProtocolCompactParams>;
 export function validateSessionProtocolParams(
-  method: "session.prune",
-  params: unknown,
-): SessionProtocolParamsValidationResult<SessionProtocolPruneParams>;
-export function validateSessionProtocolParams(
   method: "session.rewind",
   params: unknown,
 ): SessionProtocolParamsValidationResult<SessionProtocolRewindParams>;
@@ -3295,8 +3423,9 @@ export function validateSessionProtocolParams(
       return validateRecordParams(params);
     case "session.submit":
     case "session.queue":
-    case "session.steer":
       return validateUserMessageParams(method, params);
+    case "session.steer":
+      return validateSteerParams(params);
     case "session.exec":
       return validateExecParams(params);
     case "session.cancelExec":
@@ -3321,8 +3450,6 @@ export function validateSessionProtocolParams(
       return validateAutocompletePathsParams(params);
     case "session.compact":
       return validateCompactParams(params);
-    case "session.prune":
-      return validatePruneParams(params);
     case "session.rewind":
       return validateRewindParams(params);
     case "session.terminateSubagent":
@@ -3370,8 +3497,6 @@ export function validateSessionProtocolResult(
       return validateResult(method, result, sessionProtocolReloadResultSchema);
     case "session.compact":
       return validateResult(method, result, sessionProtocolCompactResultSchema);
-    case "session.prune":
-      return validateResult(method, result, sessionProtocolPruneResultSchema);
     case "session.rewind":
       return validateResult(method, result, sessionProtocolRewindResultSchema);
     case "session.terminateSubagent":
@@ -3470,7 +3595,7 @@ function validateInitializeParams(
 }
 
 function validateUserMessageParams(
-  method: "session.submit" | "session.queue" | "session.steer",
+  method: "session.submit" | "session.queue",
   params: unknown,
 ): SessionProtocolParamsValidationResult<SessionProtocolUserMessageParams> {
   const parsed = sessionProtocolUserMessageParamsSchema.safeParse(params);
@@ -3480,7 +3605,7 @@ function validateUserMessageParams(
       : hasIssue(parsed.error, ["sessionId"])
         ? `${method} params.sessionId must be a non-empty string`
         : hasIssue(parsed.error, ["text"])
-          ? `${method} params.text must be a string`
+          ? `${method} params.text must be a non-empty string`
           : hasIssue(parsed.error, ["historyEntryId"])
             ? `${method} params.historyEntryId must be a non-empty string when provided`
             : `${method} params are invalid: ${formatZodError(parsed.error)}`;
@@ -3499,6 +3624,24 @@ function validateUserMessageParams(
   };
 }
 
+function validateSteerParams(
+  params: unknown,
+): SessionProtocolParamsValidationResult<SessionProtocolSteerParams> {
+  const parsed = sessionProtocolSteerParamsSchema.safeParse(params);
+  if (!parsed.success) {
+    const message = hasIssue(parsed.error, [], "invalid_type")
+      ? "session.steer params must be an object"
+      : hasIssue(parsed.error, ["sessionId"])
+        ? "session.steer params.sessionId must be a non-empty string"
+        : hasIssue(parsed.error, ["text"])
+          ? "session.steer params.text must be a non-empty string"
+          : `session.steer params are invalid: ${formatZodError(parsed.error)}`;
+    return invalidParams(message);
+  }
+
+  return { ok: true, value: parsed.data };
+}
+
 function validateRecordParams(
   params: unknown,
 ): SessionProtocolParamsValidationResult<SessionProtocolRecordParams> {
@@ -3509,7 +3652,7 @@ function validateRecordParams(
       : hasIssue(parsed.error, ["sessionId"])
         ? "session.record params.sessionId must be a non-empty string"
         : hasIssue(parsed.error, ["text"])
-          ? "session.record params.text must be a string"
+          ? "session.record params.text must be a non-empty string"
           : hasIssue(parsed.error, ["historyEntryId"])
             ? "session.record params.historyEntryId must be a non-empty string when provided"
             : `session.record params are invalid: ${formatZodError(parsed.error)}`;
@@ -3718,36 +3861,6 @@ function validateCompactParams(
     value: {
       sessionId: parsed.data.sessionId,
       mode: parsed.data.mode,
-      ...(parsed.data.guidance !== undefined ? { guidance: parsed.data.guidance } : {}),
-    },
-  };
-}
-
-function validatePruneParams(
-  params: unknown,
-): SessionProtocolParamsValidationResult<SessionProtocolPruneParams> {
-  const parsed = sessionProtocolPruneParamsSchema.safeParse(params);
-  if (!parsed.success) {
-    const message = hasIssue(parsed.error, [], "invalid_type")
-      ? "session.prune params must be an object"
-      : hasIssue(parsed.error, ["sessionId"])
-        ? "session.prune params.sessionId must be a non-empty string"
-        : hasIssue(parsed.error, ["strategy"])
-          ? "session.prune params.strategy must be 'earliest', 'largest', or 'smart'"
-          : hasIssue(parsed.error, ["fraction"])
-            ? "session.prune params.fraction must be a number between 0 and 1"
-            : hasIssue(parsed.error, ["guidance"])
-              ? "session.prune params.guidance must be a string when provided"
-              : `session.prune params are invalid: ${formatZodError(parsed.error)}`;
-    return invalidParams(message);
-  }
-
-  return {
-    ok: true,
-    value: {
-      sessionId: parsed.data.sessionId,
-      strategy: parsed.data.strategy,
-      fraction: parsed.data.fraction,
       ...(parsed.data.guidance !== undefined ? { guidance: parsed.data.guidance } : {}),
     },
   };

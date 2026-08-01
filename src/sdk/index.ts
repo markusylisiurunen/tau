@@ -54,7 +54,6 @@ export type {
   TauSdkSessionExecResult,
   TauSdkSessionInterruptResult,
   TauSdkSessionProtocolMethod,
-  TauSdkSessionPruneResult,
   TauSdkSessionQueueResult,
   TauSdkSessionRecordResult,
   TauSdkSessionReloadResult,

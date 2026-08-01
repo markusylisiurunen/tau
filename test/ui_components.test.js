@@ -1,7 +1,8 @@
 import { visibleWidth } from "@earendil-works/pi-tui";
 import stripAnsi from "strip-ansi";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { createCommandRegistry } from "../dist/core/commands/index.js";
+import { TuiChatView } from "../dist/tui/chat_view.js";
 import { AssistantMessageComponent } from "../dist/tui/ui/assistant_message.js";
 import { ChatContainerComponent } from "../dist/tui/ui/chat_container.js";
 import { renderChatMessage } from "../dist/tui/ui/chat_message_model.js";
@@ -17,6 +18,7 @@ import { PendingMessagesComponent } from "../dist/tui/ui/pending_messages.js";
 import { RewindPickerComponent } from "../dist/tui/ui/rewind_picker.js";
 import { SessionDividerComponent } from "../dist/tui/ui/session_divider.js";
 import { SlashAutocompleteProvider } from "../dist/tui/ui/slash_autocomplete.js";
+import { SubagentPanelComponent } from "../dist/tui/ui/subagent_panel.js";
 import { createToolUiRegistry } from "../dist/tui/ui/tool_ui_registry.js";
 import { UserMessageComponent } from "../dist/tui/ui/user_message.js";
 import { createTagTheme, renderLines, renderText } from "./ui_helpers.js";
@@ -25,13 +27,42 @@ function stripTags(text) {
   return stripAnsi(text.replace(/<[^>]+>/g, ""));
 }
 
-function createToolEvent(label) {
+function createSubagentState(id, title) {
   return {
-    type: "bash_blocked",
-    toolCallId: `tool-${label}`,
-    command: label,
+    id,
+    name: "default",
+    title,
+    status: "running",
+    costTotal: 0,
+    turns: 0,
+    toolCalls: 0,
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      contextWindowUsageTokens: 0,
+      contextWindow: 100,
+    },
+    startedAt: 1,
+    abortRequested: false,
+  };
+}
+
+function createToolModel(label) {
+  const toolCallId = `tool-${label}`;
+  return {
+    toolCallId,
+    toolName: "bash",
+    status: "blocked",
     headerTarget: label,
-    reason: "blocked",
+    activity: {
+      type: "bash_blocked",
+      toolCallId,
+      command: label,
+      headerTarget: label,
+      reason: "blocked",
+    },
   };
 }
 
@@ -64,6 +95,55 @@ function applyCompletion(lines, cursorLine, cursorCol, item, prefix) {
 async function waitForAutocomplete(ms = 0) {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+test("TuiChatView tool reconciliation does not reset subagent state", () => {
+  const reconcileSession = vi.fn();
+  const resetSubagents = vi.fn();
+  const view = Object.create(TuiChatView.prototype);
+  view.toolUiRouter = { reconcileSession };
+  view.subagentPanel = { reset: resetSubagents };
+
+  view.reconcileToolUiSession([createToolModel("command")]);
+
+  expect(reconcileSession).toHaveBeenCalledOnce();
+  expect(resetSubagents).not.toHaveBeenCalled();
+});
+
+test("SubagentPanelComponent reconciles snapshots without discarding surviving state", () => {
+  const panel = new SubagentPanelComponent(createTagTheme());
+  const first = createSubagentState("agent-1", "first task");
+  const second = createSubagentState("agent-2", "second task");
+  panel.reconcile([
+    { state: first, progress: "agent: first snapshot" },
+    { state: second, progress: "agent: second snapshot" },
+  ]);
+  expect(panel.cycleSelection(1)).toBe("agent-2");
+  panel.handleEvent({
+    type: "subagent_progress",
+    id: "agent-2",
+    text: "agent: live progress",
+    costTotal: 0.01,
+    turns: 1,
+    toolCalls: 0,
+    usage: second.usage,
+  });
+
+  panel.reconcile([
+    { state: first, progress: "agent: first snapshot" },
+    {
+      state: { ...second, turns: 1, costTotal: 0.01 },
+      progress: "agent: canonical progress",
+    },
+  ]);
+
+  expect(panel.getSelectedId()).toBe("agent-2");
+  expect(renderText(panel, 80)).toContain("live progress");
+  expect(renderText(panel, 80)).toContain("canonical progress");
+
+  panel.reconcile([{ state: first, progress: "agent: first snapshot" }]);
+  expect(panel.getSelectedId()).toBe("agent-1");
+  expect(renderText(panel, 80)).not.toContain("second task");
+});
 
 test("SessionDividerComponent renders a muted divider line", () => {
   const theme = createTagTheme();
@@ -228,9 +308,9 @@ test("ChatContainerComponent hides empty assistant messages even when thoughts a
   const container = new ChatContainerComponent(theme, toolUiRegistry, true);
   container.setCompactToolUi(true);
 
-  container.addMessage({ type: "tool", event: createToolEvent("tool a") });
+  container.addMessage({ type: "tool", tool: createToolModel("tool a") });
   container.addMessage({ type: "assistant_partial", text: "", thinking: "" });
-  container.addMessage({ type: "tool", event: createToolEvent("tool b") });
+  container.addMessage({ type: "tool", tool: createToolModel("tool b") });
 
   const lines = renderLines(container, 80);
   const firstIndex = lines.indexOf("tool a");

@@ -16,7 +16,6 @@ import type {
   SessionProtocolMethod,
   SessionProtocolPendingUserMessagesMessage,
   SessionProtocolPendingUserMessagesState,
-  SessionProtocolPruneResult,
   SessionProtocolQueueResult,
   SessionProtocolReadyMessage,
   SessionProtocolRecordResult,
@@ -60,7 +59,6 @@ export type TauSdkSessionSnapshotResult = SessionProtocolSnapshot;
 export type TauSdkSessionSetReasoningResult = SessionProtocolSettingsUpdateResult;
 export type TauSdkSessionSetPersonaResult = SessionProtocolSnapshot;
 export type TauSdkSessionCompactResult = SessionProtocolCompactResult;
-export type TauSdkSessionPruneResult = SessionProtocolPruneResult;
 export type TauSdkSessionRewindResult = SessionProtocolRewindResult;
 export type TauSdkSessionReloadResult = SessionProtocolReloadResult;
 export type TauSdkResolvePromptResult = SessionProtocolResolvePromptResult;
@@ -130,7 +128,7 @@ export type TauSdkSession = {
     options?: TauSdkSessionUserMessageOptions,
   ): Promise<TauSdkSessionSubmitResult>;
   queue(text: string, options?: TauSdkSessionUserMessageOptions): Promise<TauSdkSessionQueueResult>;
-  steer(text: string, options?: TauSdkSessionUserMessageOptions): Promise<TauSdkSessionSteerResult>;
+  steer(text: string): Promise<TauSdkSessionSteerResult>;
   cancelPendingMessages(): Promise<TauSdkSessionCancelPendingMessagesResult>;
   retry(): Promise<TauSdkSessionRetryResult>;
   exec(
@@ -162,10 +160,6 @@ export type TauSdkSession = {
     mode: "summary-only" | "summary-and-last",
     options?: { guidance?: string },
   ): Promise<TauSdkSessionCompactResult>;
-  pruneToolResults(
-    strategy: "earliest" | "largest" | "smart",
-    options: { fraction: number; guidance?: string },
-  ): Promise<TauSdkSessionPruneResult>;
   rewindToHistoryEntryId(historyEntryId: string): Promise<TauSdkSessionRewindResult>;
   terminateSubagent(subagentId: string): Promise<TauSdkSessionTerminateSubagentResult>;
   createEphemeralContext(options: {

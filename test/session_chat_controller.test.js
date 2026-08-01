@@ -105,7 +105,7 @@ function createAssistantMessage(text) {
 function createAssistantToolCallMessage(toolCalls) {
   return {
     ...createAssistantMessage(""),
-    stopReason: "tool_call",
+    stopReason: "toolUse",
     content: toolCalls,
   };
 }
@@ -364,20 +364,7 @@ class FakeSession {
       includedLastAssistant: mode === "summary-and-last",
     };
   });
-  pruneToolResults = vi.fn(async (strategy, options) => {
-    this.snapshotValue = updateSnapshot(this.snapshotValue, {
-      revision: this.snapshotValue.revision + 1,
-    });
-    return {
-      snapshot: this.snapshotValue,
-      message: `pruned ${strategy} at ${options.fraction}`,
-      noop: false,
-      bashResultsPruned: 1,
-      editCallsPruned: 0,
-      editResultsPruned: 0,
-      bytesPruned: 512,
-    };
-  });
+
   rewindToHistoryEntryId = vi.fn(async (historyEntryId) => {
     const historyEntries = historyEntriesFromSnapshot(this.snapshotValue);
     const historyIndex = historyEntries.findIndex((entry) => entry.id === historyEntryId);
@@ -539,8 +526,8 @@ class FakeView {
   messages = [];
   removed = [];
   systems = [];
-  toolEvents = [];
-  toolEventOrigins = [];
+  toolModels = [];
+  localToolModels = [];
   rewindPickerShows = [];
   rewindPickerHideCount = 0;
   removeMessagesFromCalls = [];
@@ -549,6 +536,7 @@ class FakeView {
   editorText = "";
   editorEnabledUpdates = [];
   subagentSelectionCycles = [];
+  subagentSnapshots = [];
   selectedSubagentId;
   pendingUserMessages = [];
   terminalNotifications = [];
@@ -601,19 +589,23 @@ class FakeView {
   stopWorkingIcon() {
     this.workingIconStops += 1;
   }
-  handleToolUiEvent(event, origin) {
-    this.toolEvents.push(event);
-    this.toolEventOrigins.push(origin);
+  updateLocalToolUi(model) {
+    const copy = structuredClone(model);
+    this.localToolModels.push(copy);
+    this.toolModels = [copy];
   }
   subagentEvents = [];
   handleSubagentEvent(event) {
     this.subagentEvents.push(event);
   }
   resetToolUiSession = vi.fn();
-  reconcileToolUiSession = vi.fn();
+  reconcileToolUiSession = vi.fn((models) => {
+    this.toolModels = structuredClone(models);
+  });
+  reconcileSubagentUiSession(snapshots) {
+    this.subagentSnapshots = structuredClone(snapshots);
+  }
   resetToolUiSessionPreservingSubagents() {}
-  finalizeToolUiPending() {}
-  clearToolUiTransientState() {}
   cycleSubagentSelection(direction) {
     this.subagentSelectionCycles.push(direction);
     return undefined;
@@ -1306,6 +1298,7 @@ describe("SessionChatController", () => {
       message: {
         role: "user",
         content: [{ type: "text", text: "started elsewhere" }],
+        timestamp: 1,
       },
     };
     const observedUserDelta = createMessageAppendDelta(
@@ -1581,12 +1574,7 @@ describe("SessionChatController", () => {
     controller.getInputHandlers().onSteerSubmit?.("change direction");
     await flush();
 
-    expect(session.steer).toHaveBeenCalledWith(
-      "change direction",
-      expect.objectContaining({
-        historyEntryId: expect.stringMatching(/^session-steer-/),
-      }),
-    );
+    expect(session.steer).toHaveBeenCalledWith("change direction");
     expect(view.systems).toEqual([]);
   });
 
@@ -2273,18 +2261,16 @@ describe("SessionChatController", () => {
 
     controller.start();
 
-    expect(view.reconcileToolUiSession).toHaveBeenCalledWith(
-      expect.arrayContaining(["tool-a", "tool-b", "write-call"]),
-    );
-    expect(view.toolEvents.map((event) => event.toolCallId)).toEqual([
+    expect(view.toolModels.map((model) => model.toolCallId)).toEqual([
       "tool-a",
       "tool-b",
       "write-call",
     ]);
+    expect(view.toolModels.map((model) => model.status)).toEqual(["queued", "queued", "streaming"]);
     await controller.dispose();
   });
 
-  it("does not render tool-result transcript messages when a matching tool UI facet exists", async () => {
+  it("renders tool results through the matching canonical tool card", async () => {
     const baseSnapshot = createSnapshot();
     const assistantMessage = createAssistantToolCallMessage([
       {
@@ -2398,15 +2384,18 @@ describe("SessionChatController", () => {
     controller.start();
 
     expect(view.messages.some((message) => message.id === "tool-a")).toBe(false);
-    expect(view.toolEvents.map((event) => event.type)).toEqual([
-      "tool_call_queued",
-      "bash_execution",
+    expect(view.toolModels).toEqual([
+      expect.objectContaining({
+        toolCallId: "tool-a",
+        status: "succeeded",
+        activity: expect.objectContaining({ type: "bash_execution" }),
+        resultText: expect.stringContaining("a"),
+      }),
     ]);
-    expect(view.toolEventOrigins).toEqual(["session", "session"]);
     await controller.dispose();
   });
 
-  it("applies appended tool UI facet deltas without replaying all tool facets", async () => {
+  it("applies tool status and presentation facet deltas independently", async () => {
     const queuedEvent = {
       type: "tool_call_queued",
       toolCallId: "tool-a",
@@ -2422,6 +2411,19 @@ describe("SessionChatController", () => {
     const snapshot = updateSnapshot(createSnapshot(), {
       revision: 3,
       costTotal: 0.42,
+      historyEntries: [
+        {
+          id: "assistant-tools",
+          message: createAssistantToolCallMessage([
+            {
+              type: "toolCall",
+              id: "tool-a",
+              name: "bash",
+              arguments: { command: "echo a" },
+            },
+          ]),
+        },
+      ],
       tools: {
         "tool-a": {
           id: "tool-a",
@@ -2474,6 +2476,34 @@ describe("SessionChatController", () => {
               facetIds: ["tool-ui-tool-a"],
             },
           },
+        ],
+      },
+    };
+    session.snapshotValue = applySessionProtocolDelta(session.snapshotValue, delta);
+
+    for (const listener of session.listeners) {
+      listener(delta);
+    }
+
+    expect(view.resetToolUiSession).toHaveBeenCalledTimes(resetCount);
+    expect(view.toolModels).toEqual([
+      expect.objectContaining({
+        toolCallId: "tool-a",
+        status: "running",
+        activity: queuedEvent,
+      }),
+    ]);
+
+    const facetDelta = {
+      version: SESSION_PROTOCOL_VERSION,
+      type: "session.delta",
+      sessionId: session.id,
+      fromRevision: 4,
+      toRevision: 5,
+      reason: "tool-activity",
+      delta: {
+        type: "snapshot.patch",
+        changes: [
           {
             type: "facet.set",
             facet: {
@@ -2487,15 +2517,19 @@ describe("SessionChatController", () => {
         ],
       },
     };
-    session.snapshotValue = applySessionProtocolDelta(session.snapshotValue, delta);
-
+    session.snapshotValue = applySessionProtocolDelta(session.snapshotValue, facetDelta);
     for (const listener of session.listeners) {
-      listener(delta);
+      listener(facetDelta);
     }
 
     expect(view.resetToolUiSession).toHaveBeenCalledTimes(resetCount);
-    expect(view.toolEvents).toEqual([queuedEvent, startedEvent]);
-    expect(view.toolEventOrigins).toEqual(["session", "session"]);
+    expect(view.toolModels).toEqual([
+      expect.objectContaining({
+        toolCallId: "tool-a",
+        status: "running",
+        activity: startedEvent,
+      }),
+    ]);
     expect(view.status.footer.sessionCost).toBe("$0.42");
     expect(controller.snapshot.tools["tool-a"].status).toBe("running");
     await controller.dispose();
@@ -2563,16 +2597,11 @@ describe("SessionChatController", () => {
 
     controller.start();
 
-    expect(view.subagentEvents).toEqual([
-      expect.objectContaining({
-        type: "subagent_spawned",
+    expect(view.subagentSnapshots).toEqual([
+      {
         state: expect.objectContaining({ id: "agent-1", status: "running" }),
-      }),
-      expect.objectContaining({
-        type: "subagent_progress",
-        id: "agent-1",
-        text: "reading files",
-      }),
+        progress: "reading files",
+      },
     ]);
     await controller.dispose();
   });
@@ -2601,24 +2630,15 @@ describe("SessionChatController", () => {
 
     controller.start();
 
-    expect(view.subagentEvents).toEqual([
-      expect.objectContaining({
-        type: "subagent_spawned",
-        state: expect.objectContaining({ id: "agent-1", status: "success" }),
-      }),
-      expect.objectContaining({
-        type: "subagent_progress",
-        id: "agent-1",
-        text: "finished checks",
-      }),
-      expect.objectContaining({
-        type: "subagent_finished",
+    expect(view.subagentSnapshots).toEqual([
+      {
         state: expect.objectContaining({
           id: "agent-1",
           status: "success",
           finalText: "all clear",
         }),
-      }),
+        progress: "finished checks",
+      },
     ]);
     await controller.dispose();
   });
@@ -2736,17 +2756,22 @@ describe("SessionChatController", () => {
       }),
     );
     expect(session.submit).not.toHaveBeenCalled();
-    expect(view.toolEvents).toEqual(
+    expect(view.localToolModels).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ type: "bash_started", command: "pwd" }),
         expect.objectContaining({
-          type: "bash_execution",
-          command: "pwd",
-          labelOverride: "you ran",
+          status: "running",
+          activity: expect.objectContaining({ type: "bash_started", command: "pwd" }),
+        }),
+        expect.objectContaining({
+          status: "succeeded",
+          activity: expect.objectContaining({
+            type: "bash_execution",
+            command: "pwd",
+            labelOverride: "you ran",
+          }),
         }),
       ]),
     );
-    expect(view.toolEventOrigins).toEqual(["local", "local"]);
     expect(view.messages).not.toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -2776,16 +2801,18 @@ describe("SessionChatController", () => {
       timeoutMs: 60000,
     });
     expect(session.record).not.toHaveBeenCalled();
-    expect(view.toolEvents).toEqual(
+    expect(view.localToolModels).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          type: "bash_execution",
-          command: "pwd",
-          labelOverride: "incognito",
+          status: "succeeded",
+          activity: expect.objectContaining({
+            type: "bash_execution",
+            command: "pwd",
+            labelOverride: "incognito",
+          }),
         }),
       ]),
     );
-    expect(view.toolEventOrigins).toEqual(["local", "local"]);
   });
 
   it("routes session maintenance commands through the session protocol", async () => {
@@ -2812,15 +2839,8 @@ describe("SessionChatController", () => {
     controller.getInputHandlers().onSubmit("/compact:summary-and-last preserve decisions");
     await flush();
 
-    controller.getInputHandlers().onSubmit("/prune:smart 0.5 keep errors");
-    await flush();
-
     expect(session.compact).toHaveBeenCalledWith("summary-and-last", {
       guidance: "preserve decisions",
-    });
-    expect(session.pruneToolResults).toHaveBeenCalledWith("smart", {
-      fraction: 0.5,
-      guidance: "keep errors",
     });
     expect(session.submit).not.toHaveBeenCalled();
     expect(view.messages).toContainEqual({
@@ -2832,9 +2852,6 @@ describe("SessionChatController", () => {
         kind: "success",
         text: "session compacted. previous context and last assistant message have been included.",
       }),
-    );
-    expect(view.systems).toContainEqual(
-      expect.objectContaining({ kind: "success", text: "pruned smart at 0.5" }),
     );
   });
 
@@ -3372,10 +3389,7 @@ describe("SessionChatController", () => {
       "queue after review",
       expect.objectContaining({ historyEntryId: expect.stringMatching(/^session-queue-/) }),
     );
-    expect(session.steer).toHaveBeenCalledWith(
-      "adjust the review",
-      expect.objectContaining({ historyEntryId: expect.stringMatching(/^session-steer-/) }),
-    );
+    expect(session.steer).toHaveBeenCalledWith("adjust the review");
 
     await expect(result).resolves.toContain("Diff review completed.");
     await expect(result).resolves.toContain("Reviewed scope: git diff -- src/main.ts");
@@ -3762,7 +3776,11 @@ describe("SessionChatController", () => {
       id: "next-session-message",
       state: "committed",
       modelVisible: true,
-      message: { role: "user", content: [{ type: "text", text: "arrived during handoff" }] },
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "arrived during handoff" }],
+        timestamp: 1,
+      },
     };
     const delta = createMessageAppendDelta(
       nextSession.id,

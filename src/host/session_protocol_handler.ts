@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { formatSteeringUserMessage } from "../core/runtime/steering.js";
 import {
   createSessionProtocolErrorResponse,
   createSessionProtocolPendingUserMessagesMessage,
@@ -39,8 +38,13 @@ type SessionProtocolActiveSubmit = {
 
 type SessionProtocolPendingRequest<Method extends "session.queue" | "session.steer"> = {
   id: string;
+  mode: "queue" | "steer";
   handler: SessionProtocolHandler;
   request: Extract<SessionProtocolRequestMessage, { method: Method }>;
+};
+
+type SessionProtocolPendingSteeringRequest = SessionProtocolPendingRequest<"session.steer"> & {
+  steeringId: string;
 };
 
 type SessionProtocolPendingUserMessageRequest =
@@ -49,9 +53,10 @@ type SessionProtocolPendingUserMessageRequest =
 
 type SessionProtocolLiveSessionState = {
   activeSubmit?: SessionProtocolActiveSubmit;
+  interrupting: boolean;
   revision: number;
-  pendingSteeringSubmits: Array<SessionProtocolPendingRequest<"session.steer">>;
-  pendingQueuedSubmits: Array<SessionProtocolPendingRequest<"session.queue">>;
+  pendingSteeringSubmits: SessionProtocolPendingSteeringRequest[];
+  pendingQueuedSubmits: SessionProtocolPendingUserMessageRequest[];
   listeners: Set<(message: SessionProtocolPendingUserMessagesMessage) => void>;
 };
 
@@ -81,6 +86,7 @@ function getSessionLiveState(session: TauHostedSession): SessionProtocolLiveSess
   let state = sessionLiveStates.get(session);
   if (!state) {
     state = {
+      interrupting: false,
       revision: 1,
       pendingSteeringSubmits: [],
       pendingQueuedSubmits: [],
@@ -100,14 +106,14 @@ function buildPendingUserMessagesState(
       ...state.pendingSteeringSubmits.map(
         (pending): SessionProtocolPendingUserMessage => ({
           id: pending.id,
-          mode: "steer",
+          mode: pending.mode,
           text: pending.request.params.text,
         }),
       ),
       ...state.pendingQueuedSubmits.map(
         (pending): SessionProtocolPendingUserMessage => ({
           id: pending.id,
-          mode: "queue",
+          mode: pending.mode,
           text: pending.request.params.text,
         }),
       ),
@@ -146,7 +152,6 @@ type SessionProtocolMutationRequest = Extract<
       | "session.setPersona"
       | "session.reload"
       | "session.compact"
-      | "session.prune"
       | "session.rewind"
       | "session.terminateSubagent";
   }
@@ -245,9 +250,6 @@ export class SessionProtocolHandler {
           return;
         case "session.compact":
           await this.handleCompact(request);
-          return;
-        case "session.prune":
-          await this.handlePrune(request);
           return;
         case "session.rewind":
           await this.handleRewind(request);
@@ -435,7 +437,12 @@ export class SessionProtocolHandler {
 
     const startedSubmit = await this.enqueueMutation(state, () => {
       if (state.live.activeSubmit || state.session.isTurnRunning) {
-        state.live.pendingQueuedSubmits.push({ id: randomUUID(), handler: this, request });
+        state.live.pendingQueuedSubmits.push({
+          id: randomUUID(),
+          mode: "queue",
+          handler: this,
+          request,
+        });
         publishPendingUserMessages(state.session, state.live);
         return undefined;
       }
@@ -468,40 +475,100 @@ export class SessionProtocolHandler {
       this.sendSessionNotFound(request.id, request.params.sessionId);
       return;
     }
-
     if (this.getPendingMutationCount(state) > 0) {
       this.sendSubmitBusy(state, request.id);
       return;
     }
 
-    const startedSubmit = await this.enqueueMutation(state, () => {
-      const hasActiveSessionWork = state.live.activeSubmit || state.session.isTurnRunning;
-      if (state.live.pendingSteeringSubmits.length > 0 || hasActiveSessionWork) {
-        state.live.pendingSteeringSubmits.push({ id: randomUUID(), handler: this, request });
-        publishPendingUserMessages(state.session, state.live);
-        if (hasActiveSessionWork) {
-          state.session.requestTurnBoundaryStop();
-        }
-        return undefined;
+    const action = await this.enqueueMutation(state, async () => {
+      if (state.live.interrupting) {
+        return { type: "busy" as const };
       }
-      return this.startUserMessageTurn(state, request);
+      if (state.session.isTurnRunning) {
+        const submission = state.session.steer(request.params.text);
+        const pending = {
+          id: randomUUID(),
+          mode: "steer" as const,
+          steeringId: submission.id,
+          handler: this,
+          request,
+        };
+        state.live.pendingSteeringSubmits.push(pending);
+        publishPendingUserMessages(state.session, state.live);
+        return { type: "steer" as const, pending, submission };
+      }
+      if (state.live.activeSubmit) {
+        state.live.pendingQueuedSubmits.push({
+          id: randomUUID(),
+          mode: "steer",
+          handler: this,
+          request,
+        });
+        publishPendingUserMessages(state.session, state.live);
+        return { type: "queued" as const };
+      }
+      return {
+        type: "submit" as const,
+        started: await this.startUserMessageTurn(state, request),
+      };
     });
 
-    if (!startedSubmit) {
+    if (action.type === "busy") {
+      this.sendSubmitBusy(state, request.id);
       return;
     }
 
-    const { activeSubmit } = startedSubmit;
+    if (action.type === "queued") {
+      return;
+    }
 
+    if (action.type === "submit") {
+      const started = await action.started;
+      if (!started) return;
+      try {
+        await started.activeSubmit.promise;
+      } finally {
+        await this.enqueueMutation(state, () => {
+          if (state.live.activeSubmit === started.activeSubmit) {
+            state.live.activeSubmit = undefined;
+          }
+        });
+        this.schedulePendingSubmitDrains(state);
+      }
+      return;
+    }
+
+    let applied = false;
+    void action.submission.result.catch(() => {});
     try {
-      await activeSubmit.promise;
+      await action.submission.applied;
+      applied = true;
+      await this.enqueueMutation(state, () => {
+        const index = state.live.pendingSteeringSubmits.indexOf(action.pending);
+        if (index >= 0) state.live.pendingSteeringSubmits.splice(index, 1);
+        publishPendingUserMessages(state.session, state.live);
+      });
+      const result = await action.submission.result;
+      this.sendMessage(createSessionProtocolSuccessResponse(request.id, "session.steer", result));
+    } catch (error) {
+      if (applied || state.live.pendingSteeringSubmits.includes(action.pending)) {
+        this.sendMessage(
+          createSessionProtocolErrorResponse(
+            request.id,
+            SESSION_PROTOCOL_ERROR_CODES.internalError,
+            "steering turn failed",
+            { cause: error instanceof Error ? error.message : String(error) },
+          ),
+        );
+      }
     } finally {
       await this.enqueueMutation(state, () => {
-        if (state.live.activeSubmit === activeSubmit) {
-          state.live.activeSubmit = undefined;
+        const index = state.live.pendingSteeringSubmits.indexOf(action.pending);
+        if (index >= 0) {
+          state.live.pendingSteeringSubmits.splice(index, 1);
+          publishPendingUserMessages(state.session, state.live);
         }
       });
-      this.schedulePendingSubmitDrains(state);
     }
   }
 
@@ -515,15 +582,20 @@ export class SessionProtocolHandler {
     }
 
     const cancelled = await this.enqueueMutation(state, () => {
-      const pending = [
-        ...state.live.pendingSteeringSubmits.splice(0),
-        ...state.live.pendingQueuedSubmits.splice(0),
-      ];
+      const cancelledSteeringIds = new Set(
+        state.session.cancelSteering().map((submission) => submission.id),
+      );
+      const cancelledSteering = state.live.pendingSteeringSubmits.filter((pending) =>
+        cancelledSteeringIds.has(pending.steeringId),
+      );
+      state.live.pendingSteeringSubmits = state.live.pendingSteeringSubmits.filter(
+        (pending) => !cancelledSteeringIds.has(pending.steeringId),
+      );
+      const pending = [...cancelledSteering, ...state.live.pendingQueuedSubmits.splice(0)];
       if (pending.length === 0) {
         return [];
       }
 
-      state.session.cancelTurnBoundaryStop();
       publishPendingUserMessages(state.session, state.live);
       for (const item of pending) {
         item.handler.sendMessage(
@@ -537,7 +609,7 @@ export class SessionProtocolHandler {
       return pending.map(
         (item): SessionProtocolPendingUserMessage => ({
           id: item.id,
-          mode: item.request.method === "session.steer" ? "steer" : "queue",
+          mode: item.mode,
           text: item.request.params.text,
         }),
       );
@@ -786,9 +858,10 @@ export class SessionProtocolHandler {
       return undefined;
     }
 
-    const addOptions = request.params.historyEntryId
-      ? { historyEntryId: request.params.historyEntryId }
-      : undefined;
+    const addOptions =
+      request.method !== "session.steer" && request.params.historyEntryId
+        ? { historyEntryId: request.params.historyEntryId }
+        : undefined;
     const { userHistoryEntryId } = await state.session.record({
       text: request.params.text,
       ...(addOptions ? { historyEntryId: addOptions.historyEntryId } : {}),
@@ -822,71 +895,9 @@ export class SessionProtocolHandler {
   }
 
   private schedulePendingSubmitDrains(state: SessionProtocolHandlerSessionState): void {
-    void this.drainPendingSteeringSubmits(state).catch((error) => {
-      this.failPendingUserMessageRequests(state, "session.steer", error);
-    });
     void this.drainPendingQueuedSubmits(state).catch((error) => {
-      this.failPendingUserMessageRequests(state, "session.queue", error);
+      this.failPendingUserMessageRequests(state, error);
     });
-  }
-
-  private async drainPendingSteeringSubmits(
-    state: SessionProtocolHandlerSessionState,
-  ): Promise<void> {
-    const batch = await this.enqueueMutation(state, async () => {
-      if (
-        state.live.pendingSteeringSubmits.length === 0 ||
-        state.live.activeSubmit ||
-        state.session.isTurnRunning
-      ) {
-        return undefined;
-      }
-
-      const requests = state.live.pendingSteeringSubmits.splice(0);
-      publishPendingUserMessages(state.session, state.live);
-      const primaryRequest = requests[0]!;
-      const preferredHistoryEntryId =
-        requests.length === 1 ? primaryRequest.request.params.historyEntryId : undefined;
-      let userHistoryEntryId: string;
-      try {
-        ({ userHistoryEntryId } = await state.session.record({
-          text: formatSteeringUserMessage(requests.map((item) => item.request.params.text)),
-          ...(preferredHistoryEntryId ? { historyEntryId: preferredHistoryEntryId } : {}),
-        }));
-      } catch (error) {
-        this.sendUserMessageDrainFailure(requests, error);
-        return undefined;
-      }
-      const submitPromise = primaryRequest.handler.executeSubmit(
-        state,
-        primaryRequest.request.id,
-        "session.steer",
-        userHistoryEntryId,
-        requests,
-      );
-      const activeSubmit = {
-        requestId: primaryRequest.request.id,
-        promise: submitPromise,
-      };
-      state.live.activeSubmit = activeSubmit;
-
-      return { activeSubmit };
-    });
-
-    if (!batch) {
-      return;
-    }
-
-    try {
-      await batch.activeSubmit.promise;
-    } finally {
-      await this.enqueueMutation(state, () => {
-        if (state.live.activeSubmit === batch.activeSubmit) {
-          state.live.activeSubmit = undefined;
-        }
-      });
-      this.schedulePendingSubmitDrains(state);
-    }
   }
 
   private async drainPendingQueuedSubmits(
@@ -929,13 +940,9 @@ export class SessionProtocolHandler {
 
   private failPendingUserMessageRequests(
     state: SessionProtocolHandlerSessionState,
-    method: "session.queue" | "session.steer",
     error: unknown,
   ): void {
-    const pending =
-      method === "session.steer"
-        ? state.live.pendingSteeringSubmits.splice(0)
-        : state.live.pendingQueuedSubmits.splice(0);
+    const pending = state.live.pendingQueuedSubmits.splice(0);
     if (pending.length > 0) {
       publishPendingUserMessages(state.session, state.live);
     }
@@ -1133,14 +1140,29 @@ export class SessionProtocolHandler {
       return;
     }
 
-    const interrupted = state.session.interruptActiveWork();
-    this.rejectPendingSteeringSubmits(state, "session was interrupted");
+    const result = await this.enqueueMutation(state, () => {
+      const interrupted = state.session.interruptActiveWork();
+      if (interrupted) {
+        state.live.interrupting = true;
+      }
+      this.rejectPendingSteeringSubmits(state, "session was interrupted");
+      return {
+        interrupted,
+        isTurnRunning: state.session.isTurnRunning || interrupted,
+      } satisfies SessionProtocolResultByMethod["session.interrupt"];
+    });
 
-    const result: SessionProtocolResultByMethod["session.interrupt"] = {
-      interrupted,
-      isTurnRunning: state.session.isTurnRunning || interrupted,
-    };
-
+    if (result.interrupted) {
+      void state.session
+        .waitForActiveWork()
+        .catch(() => undefined)
+        .then(() =>
+          this.enqueueMutation(state, () => {
+            state.live.interrupting = false;
+          }),
+        )
+        .catch(() => undefined);
+    }
     this.sendMessage(createSessionProtocolSuccessResponse(request.id, "session.interrupt", result));
   }
 
@@ -1246,23 +1268,25 @@ export class SessionProtocolHandler {
     });
   }
 
-  private async handlePrune(
-    request: Extract<SessionProtocolRequestMessage, { method: "session.prune" }>,
-  ): Promise<void> {
-    await this.withSessionMutation(request, "session pruned", async (state) => {
-      const result = await state.session.pruneToolResults({
-        strategy: request.params.strategy,
-        fraction: request.params.fraction,
-        ...(request.params.guidance !== undefined ? { guidance: request.params.guidance } : {}),
-      });
-      this.sendMessage(createSessionProtocolSuccessResponse(request.id, "session.prune", result));
-    });
-  }
-
   private async handleRewind(
     request: Extract<SessionProtocolRequestMessage, { method: "session.rewind" }>,
   ): Promise<void> {
-    await this.withSessionMutation(request, "session rewound", async (state) => {
+    await this.withNonInterruptingSessionMutation(request, async (state) => {
+      if (
+        state.live.activeSubmit ||
+        state.session.isTurnRunning ||
+        state.live.pendingSteeringSubmits.length > 0 ||
+        state.live.pendingQueuedSubmits.length > 0
+      ) {
+        this.sendMessage(
+          createSessionProtocolErrorResponse(
+            request.id,
+            SESSION_PROTOCOL_ERROR_CODES.busy,
+            "cannot rewind while session work is active or pending",
+          ),
+        );
+        return;
+      }
       const result = await state.session.rewindToHistoryEntryId(request.params.historyEntryId);
       this.sendMessage(createSessionProtocolSuccessResponse(request.id, "session.rewind", result));
     });
@@ -1404,9 +1428,14 @@ export class SessionProtocolHandler {
     state: SessionProtocolHandlerSessionState,
     message: string,
   ): void {
-    const requests = state.live.pendingSteeringSubmits.splice(0);
+    const cancelledIds = new Set(state.session.cancelSteering().map((submission) => submission.id));
+    const requests = state.live.pendingSteeringSubmits.filter((pending) =>
+      cancelledIds.has(pending.steeringId),
+    );
+    state.live.pendingSteeringSubmits = state.live.pendingSteeringSubmits.filter(
+      (pending) => !cancelledIds.has(pending.steeringId),
+    );
     if (requests.length > 0) {
-      state.session.cancelTurnBoundaryStop();
       publishPendingUserMessages(state.session, state.live);
     }
     for (const { handler, request } of requests) {

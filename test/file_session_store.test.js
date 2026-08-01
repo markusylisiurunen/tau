@@ -1,8 +1,13 @@
-import { access, chmod, mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { FileSessionStore } from "../dist/store/file_session_store.js";
+import {
+  LEGACY_SESSION_CONTEXT_EPOCH,
+  STORED_SESSION_DOCUMENT_FORMAT,
+  STORED_SESSION_DOCUMENT_VERSION,
+} from "../dist/store/session_snapshot_migrations.js";
 import { SessionStoreConflictError } from "../dist/store/session_store.js";
 import { createProtocolSnapshot } from "./helpers/session_protocol_fixtures.js";
 
@@ -58,6 +63,132 @@ describe("FileSessionStore", () => {
 
       await expect(store.loadSession("session-two")).resolves.toEqual(
         createSnapshot("session-two", "hi", 2),
+      );
+    });
+  });
+
+  it("writes the current versioned storage document", async () => {
+    await withTempStore(async (store, directory) => {
+      const snapshot = createSnapshot("session-1", "hello");
+      await store.commitSessionSnapshot(snapshot);
+
+      const stored = JSON.parse(await readFile(join(directory, "c2Vzc2lvbi0x.json"), "utf8"));
+      expect(stored).toEqual({
+        format: STORED_SESSION_DOCUMENT_FORMAT,
+        version: STORED_SESSION_DOCUMENT_VERSION,
+        snapshot,
+      });
+    });
+  });
+
+  it("loads unversioned snapshots that already have canonical agent state", async () => {
+    await withTempStore(async (store, directory) => {
+      const snapshot = createSnapshot("session-1", "hello");
+      await mkdir(directory, { recursive: true });
+      await writeFile(join(directory, "c2Vzc2lvbi0x.json"), JSON.stringify(snapshot), "utf8");
+
+      await expect(store.loadSession("session-1")).resolves.toEqual(snapshot);
+    });
+  });
+
+  it("migrates unversioned snapshots and removes legacy pruning presentation", async () => {
+    await withTempStore(async (store, directory) => {
+      const toolCall = {
+        type: "toolCall",
+        id: "tool-1",
+        name: "bash",
+        arguments: { command: "pwd" },
+      };
+      const current = createProtocolSnapshot({
+        sessionId: "session-1",
+        revision: 7,
+        historyEntries: [
+          {
+            id: "assistant-1",
+            message: {
+              role: "assistant",
+              api: "openai-responses",
+              provider: "openai",
+              model: "gpt-5.5",
+              stopReason: "toolUse",
+              content: [toolCall],
+            },
+          },
+        ],
+        timeline: [
+          { type: "message", id: "timeline-assistant-1", messageId: "assistant-1" },
+          {
+            type: "operation",
+            id: "operation-prune",
+            operation: { kind: "prune", status: "succeeded", startedAt: 1, finishedAt: 2 },
+          },
+        ],
+        tools: {
+          "tool-1": {
+            id: "tool-1",
+            toolCallId: "tool-1",
+            toolName: "bash",
+            call: { messageId: "assistant-1", contentIndex: 0 },
+            status: "queued",
+            facetIds: ["tool-ui-tool-1"],
+          },
+        },
+        facets: {
+          "tool-ui-tool-1": {
+            id: "tool-ui-tool-1",
+            subject: { type: "tool", id: "tool-1" },
+            kind: "tau.tool-ui-events",
+            version: 1,
+            data: {
+              events: [{ type: "tool_pruned", toolCallId: "tool-1", content: "pruned" }],
+            },
+          },
+          "operation-prune-facet": {
+            id: "operation-prune-facet",
+            subject: { type: "operation", id: "operation-prune" },
+            kind: "tau.operation",
+            version: 1,
+            data: {},
+          },
+        },
+      });
+      const { agentState: _agentState, ...legacy } = current;
+      await mkdir(directory, { recursive: true });
+      await writeFile(join(directory, "c2Vzc2lvbi0x.json"), JSON.stringify(legacy), "utf8");
+
+      await expect(store.loadSession("session-1")).resolves.toEqual({
+        ...current,
+        agentState: {
+          revision: current.revision,
+          contextEpoch: LEGACY_SESSION_CONTEXT_EPOCH,
+        },
+        timeline: [{ type: "message", id: "timeline-assistant-1", messageId: "assistant-1" }],
+        tools: {
+          "tool-1": {
+            ...current.tools["tool-1"],
+            facetIds: [],
+          },
+        },
+        facets: {},
+      });
+    });
+  });
+
+  it("rejects stored sessions written by a newer storage version", async () => {
+    await withTempStore(async (store, directory) => {
+      await mkdir(directory, { recursive: true });
+      await writeFile(
+        join(directory, "c2Vzc2lvbi0x.json"),
+        JSON.stringify({
+          format: STORED_SESSION_DOCUMENT_FORMAT,
+          version: STORED_SESSION_DOCUMENT_VERSION + 1,
+          snapshot: createSnapshot("session-1", "future"),
+        }),
+        "utf8",
+      );
+
+      await expect(store.loadSession("session-1")).rejects.toThrow(
+        "stored session was created by a newer Tau version",
       );
     });
   });

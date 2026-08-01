@@ -68,9 +68,20 @@ function getImageBlock(content) {
   return block;
 }
 
-async function runTool(tool, ...args) {
-  const dispatch = await tool.dispatch(...args);
-  return dispatch.run;
+async function runTool(tool, toolCall, signal = new AbortController().signal) {
+  const activities = [];
+  const outcome = await tool.execute(toolCall, {
+    agentId: "test-agent",
+    turnId: "test-turn",
+    assistantMessageId: "test-assistant",
+    signal,
+    emitActivity: async (activity) => activities.push(activity),
+  });
+  return {
+    toolResult: { ...outcome, toolCallId: toolCall.id, toolName: toolCall.name },
+    uiEvent: activities.at(-1),
+    activities,
+  };
 }
 
 describe("view_image tool", () => {

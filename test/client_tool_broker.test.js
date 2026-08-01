@@ -10,12 +10,40 @@ function createToolCall(args = {}) {
   };
 }
 
-async function runTool(tool, ...args) {
-  const dispatch = await tool.dispatch(...args);
-  return dispatch.run;
+async function runTool(tool, toolCall, signal = new AbortController().signal) {
+  const activities = [];
+  const outcome = await tool.execute(toolCall, {
+    agentId: "test-agent",
+    turnId: "test-turn",
+    assistantMessageId: "test-assistant",
+    signal,
+    emitActivity: async (activity) => activities.push(activity),
+  });
+  return {
+    toolResult: { ...outcome, toolCallId: toolCall.id, toolName: toolCall.name },
+    uiEvent: activities.at(-1),
+  };
 }
 
 describe("ClientToolBroker", () => {
+  it.each(["web", "nook"])("rejects client tools that duplicate the %s host tool", (name) => {
+    const broker = new ClientToolBroker();
+
+    expect(() =>
+      broker.registerClient({
+        tools: [
+          {
+            name,
+            description: `Conflicting ${name} tool.`,
+            parameters: { type: "object", properties: {}, additionalProperties: false },
+          },
+        ],
+        sendCall: vi.fn(),
+        sendCancel: vi.fn(),
+      }),
+    ).toThrow(`client tool '${name}' duplicates a host tool`);
+  });
+
   it("returns full client tool results with a truncated final UI event", async () => {
     const broker = new ClientToolBroker();
     const longLine = "x".repeat(200);
@@ -38,13 +66,7 @@ describe("ClientToolBroker", () => {
     registration.attachSession("session-1");
 
     const definition = broker.getToolDefinitions("session-1")[0];
-    expect(definition.getDisplayTarget(createToolCall({ choice: "a" }), {})).toBe("local_picker");
-    const result = await runTool(
-      definition,
-      createToolCall({ choice: "a" }),
-      new AbortController().signal,
-      {},
-    );
+    const result = await runTool(definition, createToolCall({ choice: "a" }));
 
     expect(result.toolResult.content[0].text).toBe(content);
     expect(result.uiEvent).toMatchObject({
@@ -87,14 +109,9 @@ describe("ClientToolBroker", () => {
     const definition = broker.getToolDefinitions("session-1")[0];
     registration.detachSession("session-1");
 
-    const result = await runTool(
-      definition,
-      createToolCall({ choice: "a" }),
-      new AbortController().signal,
-      {},
-    );
+    const result = await runTool(definition, createToolCall({ choice: "a" }));
 
-    expect(result.toolResult.isError).toBe(true);
+    expect(result.toolResult.outcome).toBe("blocked");
     expect(result.toolResult.content[0].text).toBe(
       "Client tool 'local_picker' is unavailable because its owning client detached.",
     );
@@ -119,16 +136,18 @@ describe("ClientToolBroker", () => {
       registration.attachSession("session-1");
       const definition = broker.getToolDefinitions("session-1")[0];
 
-      const dispatch = await definition.dispatch(
-        createToolCall({ choice: "a" }),
-        new AbortController().signal,
-        {},
-      );
+      const execution = definition.execute(createToolCall({ choice: "a" }), {
+        agentId: "test-agent",
+        turnId: "test-turn",
+        assistantMessageId: "test-assistant",
+        signal: new AbortController().signal,
+        emitActivity: async () => {},
+      });
       await vi.advanceTimersByTimeAsync(5000);
-      const result = await dispatch.run;
+      const result = await execution;
 
-      expect(result.toolResult.isError).toBe(true);
-      expect(result.toolResult.content[0].text).toBe(
+      expect(result.outcome).toBe("blocked");
+      expect(result.content[0].text).toBe(
         "Client tool 'local_picker' is unavailable because its owning client did not acknowledge the tool call within 5000ms.",
       );
       expect(sendCancel).toHaveBeenCalledWith(expect.objectContaining({ reason: "timeout" }));

@@ -1,17 +1,25 @@
+import { randomUUID } from "node:crypto";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
+import {
+  AgentRuntime,
+  type AgentSpec,
+  type AgentState,
+  createAgentSpec,
+} from "../core/agent/agent_runtime.js";
+import type { AgentEvent } from "../core/agent/events.js";
 import type { Config } from "../core/config/index.js";
-import type { CoreEvent } from "../core/events/types.js";
-import type { ModelResolver } from "../core/models/catalog.js";
-import { ConversationTurnRuntime } from "../core/runtime/conversation_turn_runtime.js";
+import { resolveAgentModel } from "../core/runtime/agent_model.js";
 import { createDefaultCoreDeps } from "../core/runtime/deps.js";
 import { composeSessionPrompts } from "../core/runtime/session_prompt_composer.js";
-import { CoreSession, type HistoryEntry } from "../core/session/core_session.js";
 import type { SubagentToolName } from "../core/subagents/types.js";
 import { ToolCatalog } from "../core/tools/catalog.js";
-import type { ToolExecutionBackend } from "../core/tools/execution_backend.js";
-import type { ResolveSubagentRuntime } from "../core/tools/registry.js";
 import type { Persona, Skill } from "../core/types.js";
-import { appendUsageLogEntry, getUsageCostTotal, getUsageTotals } from "../core/usage/logs.js";
+import {
+  appendUsageLogEntry,
+  getUsageCostTotal,
+  getUsageTotals,
+  type UsageRecorder,
+} from "../core/usage/logs.js";
 import { extractAssistantText } from "../core/utils/messages.js";
 import {
   extractAssistantTextForProgress,
@@ -24,7 +32,6 @@ import type {
   SessionProtocolEphemeralSubmitParams,
   SessionProtocolEphemeralSubmitResult,
 } from "../protocol/session_protocol.js";
-import { createExecutionEnvironmentSubagentRuntimeResolver } from "./execution_runtime.js";
 import { EphemeralThreadBusyError } from "./session_host.js";
 
 export type EphemeralAgentUsageSnapshot = {
@@ -43,7 +50,8 @@ type EphemeralAgentThreadUpdate = {
 };
 
 type EphemeralAgentThreadForkSource = {
-  historyEntries: readonly HistoryEntry[];
+  spec: AgentSpec;
+  state: AgentState;
   usageBaseline: EphemeralAgentUsageSnapshot;
 };
 
@@ -51,7 +59,6 @@ export type HostedEphemeralAgentSessionOptions = {
   contextId: string;
   persona: Persona;
   config: Config;
-  modelResolver: ModelResolver;
   discoveredSkills: Skill[];
   includeAgentContext: boolean;
   executionEnvironment: ExecutionEnvironment;
@@ -61,46 +68,25 @@ export type HostedEphemeralAgentSessionOptions = {
     threadId: string,
     update: SessionProtocolEphemeralMessage["event"]["update"],
   ) => void;
+  recordUsage?: UsageRecorder;
 };
 
 export class HostedEphemeralAgentSession {
-  private readonly contextId: string;
-  private readonly persona: Persona;
-  private readonly config: Config;
-  private readonly modelResolver: ModelResolver;
-  private readonly discoveredSkills: Skill[];
-  private readonly includeAgentContext: boolean;
-  private readonly executionEnvironment: ExecutionEnvironment;
-  private readonly instructions: string;
-  private readonly tools: SubagentToolName[];
-  private readonly emitUpdate: HostedEphemeralAgentSessionOptions["emitUpdate"];
   private readonly threads = new Map<string, EphemeralAgentThread>();
   private readonly activeThreadIds = new Set<string>();
   private disposed = false;
 
-  constructor(options: HostedEphemeralAgentSessionOptions) {
-    this.contextId = options.contextId;
-    this.persona = structuredClone(options.persona);
-    this.config = options.config;
-    this.modelResolver = options.modelResolver;
-    this.discoveredSkills = structuredClone(options.discoveredSkills);
-    this.includeAgentContext = options.includeAgentContext;
-    this.executionEnvironment = options.executionEnvironment;
-    this.instructions = options.instructions;
-    this.tools = [...options.tools];
-    this.emitUpdate = options.emitUpdate;
-  }
+  constructor(private readonly options: HostedEphemeralAgentSessionOptions) {}
 
   async submitThreadMessage(
     options: Omit<SessionProtocolEphemeralSubmitParams, "sessionId">,
   ): Promise<SessionProtocolEphemeralSubmitResult> {
     this.assertActive();
-    if (options.contextId !== this.contextId) {
+    if (options.contextId !== this.options.contextId) {
       throw new Error(
-        `ephemeral context '${this.contextId}' cannot submit to '${options.contextId}'`,
+        `ephemeral context '${this.options.contextId}' cannot submit to '${options.contextId}'`,
       );
     }
-
     if (this.activeThreadIds.has(options.threadId)) {
       throw new EphemeralThreadBusyError(
         `thread '${options.threadId}' already has an active request`,
@@ -115,22 +101,16 @@ export class HostedEphemeralAgentSession {
     this.activeThreadIds.add(options.threadId);
     try {
       const thread = await this.getOrCreateThread(options.threadId, options.forkFromThreadId);
-      const response = await thread.submitMessage(options.message);
-      return { threadId: options.threadId, response };
+      return { threadId: options.threadId, response: await thread.submitMessage(options.message) };
     } finally {
       this.activeThreadIds.delete(options.threadId);
     }
   }
 
   dispose(): void {
-    if (this.disposed) {
-      return;
-    }
+    if (this.disposed) return;
     this.disposed = true;
-    for (const thread of this.threads.values()) {
-      thread.interrupt();
-      thread.dispose();
-    }
+    for (const thread of this.threads.values()) thread.dispose();
     this.threads.clear();
     this.activeThreadIds.clear();
   }
@@ -140,15 +120,11 @@ export class HostedEphemeralAgentSession {
     forkFromThreadId?: string,
   ): Promise<EphemeralAgentThread> {
     const existing = this.threads.get(threadId);
-    if (existing) {
-      return existing;
-    }
-
-    const forkFrom = forkFromThreadId ? this.threads.get(forkFromThreadId) : undefined;
-    if (forkFromThreadId && !forkFrom) {
+    if (existing) return existing;
+    const source = forkFromThreadId ? this.threads.get(forkFromThreadId) : undefined;
+    if (forkFromThreadId && !source)
       throw new Error(`unknown fork source thread '${forkFromThreadId}'`);
-    }
-    const thread = await this.createThread(threadId, forkFrom?.createForkSource());
+    const thread = await this.createThread(threadId, source?.createForkSource());
     this.threads.set(threadId, thread);
     return thread;
   }
@@ -157,18 +133,18 @@ export class HostedEphemeralAgentSession {
     threadId: string,
     forkFrom?: EphemeralAgentThreadForkSource,
   ): Promise<EphemeralAgentThread> {
-    const cwd = this.executionEnvironment.snapshot().cwd;
-    const runtimeContext = await this.executionEnvironment.resolveRuntimeContext({
+    const cwd = this.options.executionEnvironment.snapshot().cwd;
+    const runtimeContext = await this.options.executionEnvironment.resolveRuntimeContext({
       cwd,
-      persona: this.persona,
-      discoveredSkills: this.discoveredSkills,
-      includeAgentContext: this.includeAgentContext,
-      agentContextFiles: this.config.agentContextFiles ?? [],
+      persona: this.options.persona,
+      discoveredSkills: this.options.discoveredSkills,
+      includeAgentContext: this.options.includeAgentContext,
+      agentContextFiles: this.options.config.agentContextFiles ?? [],
     });
     const deps = createDefaultCoreDeps();
     const promptContext = runtimeContext.promptBootstrap.promptContext;
-    const promptComposition = composeSessionPrompts({
-      persona: this.persona,
+    const composition = composeSessionPrompts({
+      persona: this.options.persona,
       cwd: promptContext.cwd,
       repoRoot: promptContext.repoRoot,
       datetime: new Date(deps.clock.now()).toISOString(),
@@ -177,34 +153,23 @@ export class HostedEphemeralAgentSession {
       skillsBlock: promptContext.skillsBlock,
       projectContextBlock: promptContext.projectContextBlock,
     });
-
     return new EphemeralAgentThread({
       threadId,
-      persona: this.persona,
-      systemPrompt: [promptComposition.baseSystemPrompt, this.instructions].join("\n\n"),
-      subagentPrompts: promptComposition.subagentPrompts,
-      config: this.config,
-      modelResolver: this.modelResolver,
-      resolveSubagentRuntime: createExecutionEnvironmentSubagentRuntimeResolver({
-        executionEnvironment: this.executionEnvironment,
-        includeAgentContext: this.includeAgentContext,
-        now: deps.clock.now,
-      }),
+      persona: this.options.persona,
+      systemPrompt: [composition.baseSystemPrompt, this.options.instructions].join("\n\n"),
+      config: this.options.config,
       deps,
-      backend: this.executionEnvironment.getToolExecutionBackend(),
-      tools: this.tools,
+      backend: this.options.executionEnvironment.getToolExecutionBackend(),
+      tools: this.options.tools,
       cwd: promptContext.cwd,
-      home: promptContext.home ?? deps.env.home(),
-      includeAgentContext: promptContext.includeAgentContext ?? this.includeAgentContext,
       ...(forkFrom ? { forkFrom } : {}),
-      onUpdate: (update) => this.emitUpdate(threadId, update),
+      onUpdate: (update) => this.options.emitUpdate(threadId, update),
+      ...(this.options.recordUsage ? { recordUsage: this.options.recordUsage } : {}),
     });
   }
 
   private assertActive(): void {
-    if (this.disposed) {
-      throw new Error(`ephemeral context '${this.contextId}' is closed`);
-    }
+    if (this.disposed) throw new Error(`ephemeral context '${this.options.contextId}' is closed`);
   }
 }
 
@@ -212,118 +177,90 @@ type EphemeralAgentThreadOptions = {
   threadId: string;
   persona: Persona;
   systemPrompt: string;
-  subagentPrompts: Record<string, string>;
   config: Config;
-  modelResolver: ModelResolver;
-  resolveSubagentRuntime: ResolveSubagentRuntime;
   deps: ReturnType<typeof createDefaultCoreDeps>;
-  backend: ToolExecutionBackend;
+  backend: ReturnType<ExecutionEnvironment["getToolExecutionBackend"]>;
   tools: SubagentToolName[];
   cwd: string;
-  home: string;
-  includeAgentContext: boolean;
   forkFrom?: EphemeralAgentThreadForkSource;
   onUpdate?: (update: EphemeralAgentThreadUpdate) => void;
+  recordUsage?: UsageRecorder;
 };
 
 class EphemeralAgentThread {
-  private readonly session: CoreSession;
-  private readonly runtime: ConversationTurnRuntime;
-  private readonly personaId: string;
-  private readonly reasoningEffort: string;
+  private readonly runtime: AgentRuntime;
   private readonly onUpdate?: (update: EphemeralAgentThreadUpdate) => void;
+  private readonly recordUsage: UsageRecorder;
   private costTotal = 0;
   private usage: EphemeralAgentUsageSnapshot;
   private lastActivityText?: string;
 
   constructor(options: EphemeralAgentThreadOptions) {
-    const persona = createEphemeralPersona(options.persona, options.systemPrompt, options.tools);
-    this.personaId = persona.id;
-    this.reasoningEffort = persona.settings.reasoning ?? "none";
+    const spec =
+      options.forkFrom?.spec ??
+      createAgentSpec({
+        ...resolveAgentModel(
+          createEphemeralPersona(options.persona, options.systemPrompt, options.tools),
+          options.config,
+          { includeModelNotice: false, deps: options.deps },
+        ),
+        systemPrompt: options.systemPrompt,
+        tools: ToolCatalog.createSubagentRegistry(
+          options.tools,
+          options.backend,
+          options.cwd,
+          options.config,
+        ),
+      });
     this.onUpdate = options.onUpdate;
-    this.usage = {
+    this.recordUsage = options.recordUsage ?? appendUsageLogEntry;
+    this.usage = options.forkFrom?.usageBaseline ?? {
       input: 0,
       output: 0,
       cacheRead: 0,
       cacheWrite: 0,
       contextWindowUsageTokens: 0,
-      contextWindow: persona.model.contextWindow,
+      contextWindow: spec.model.model.contextWindow,
     };
-
-    this.session = new CoreSession({
-      persona,
-      systemPrompt: options.systemPrompt,
-      subagentPrompts: options.subagentPrompts,
-      toolRegistry: ToolCatalog.createSubagentRegistry(options.tools, options.backend),
-      modelResolver: options.modelResolver,
-      resolveSubagentRuntime: options.resolveSubagentRuntime,
-      config: options.config,
-      deps: options.deps,
-      cwd: options.cwd,
-      home: options.home,
-      includeAgentContext: options.includeAgentContext,
+    const state = options.forkFrom
+      ? {
+          ...options.forkFrom.state,
+          agentId: `ephemeral-${options.threadId}-${randomUUID()}`,
+        }
+      : undefined;
+    this.runtime = new AgentRuntime({
+      spec,
+      eventSink: async (event) => this.handleEvent(event),
+      clock: options.deps.clock,
+      ...(state ? { state } : {}),
     });
     if (options.forkFrom) {
-      this.usage = { ...options.forkFrom.usageBaseline };
-      for (const entry of options.forkFrom.historyEntries) {
-        this.session.addMessage(entry.message, { historyEntryId: entry.id });
-      }
-      this.emitUpdate();
+      this.onUpdate?.({ costTotal: this.costTotal, usage: { ...this.usage } });
     }
-
-    this.runtime = new ConversationTurnRuntime(this.session);
   }
 
   async submitMessage(message: string): Promise<string> {
-    this.session.addUserText(message);
-    const result = await this.runtime.run({ onEvent: (event) => this.handleEvent(event) });
-    if (result.aborted) {
-      throw new Error("ephemeral agent thread was interrupted");
-    }
-    if (result.blocked) {
-      throw new Error(result.blocked.message);
-    }
-
-    const assistantMessage = findLastAssistantMessage(this.session);
-    if (!assistantMessage) {
-      throw new Error("ephemeral agent thread produced no assistant response");
-    }
-
-    const response = extractAssistantText(assistantMessage).trim();
-    if (!response) {
-      throw new Error("ephemeral agent thread produced an empty assistant response");
-    }
-
-    appendUsageLogEntry({
-      timestamp: assistantMessage.timestamp,
-      sessionId: this.session.sessionId,
-      personaId: this.personaId,
-      provider: assistantMessage.provider,
-      model: assistantMessage.model,
-      api: assistantMessage.api,
-      reasoningEffort: this.reasoningEffort,
-      usage: getUsageTotals(assistantMessage.usage),
-      cost: { total: getUsageCostTotal(assistantMessage.usage) },
-      agent: { type: "ephemeral" },
-    });
-
+    const result = await this.runtime.submit(message);
+    if (result.aborted) throw new Error("ephemeral agent thread was interrupted");
+    if (result.blocked) throw new Error(result.blocked.message);
+    if (result.limitReached) throw new Error(result.limitReached.message);
+    const assistant = [...this.runtime.rawHistory]
+      .reverse()
+      .find((entry): entry is AssistantMessage => entry.role === "assistant");
+    if (!assistant) throw new Error("ephemeral agent thread produced no assistant response");
+    const response = extractAssistantText(assistant).trim();
+    if (!response) throw new Error("ephemeral agent thread produced an empty assistant response");
     return response;
   }
 
-  interrupt(): boolean {
-    return this.runtime.interrupt();
-  }
-
   dispose(): void {
-    this.session.dispose();
+    this.runtime.dispose();
   }
 
   createForkSource(): EphemeralAgentThreadForkSource {
     return {
-      historyEntries: this.session.rawHistoryEntries.map((entry) => ({
-        id: entry.id,
-        message: structuredClone(entry.message),
-      })),
+      spec: this.runtime.spec as AgentSpec,
+      state: this.runtime.snapshot(),
       usageBaseline: {
         input: 0,
         output: 0,
@@ -335,50 +272,51 @@ class EphemeralAgentThread {
     };
   }
 
-  private handleEvent(event: CoreEvent): void {
+  private async handleEvent(event: AgentEvent): Promise<void> {
     switch (event.type) {
-      case "tool_ui": {
-        const progressText = formatToolUiEventForProgress(event.uiEvent);
-        if (progressText) {
-          this.lastActivityText = progressText;
-          this.emitUpdate();
+      case "tool_activity":
+        this.lastActivityText =
+          formatToolUiEventForProgress(event.activity) ?? this.lastActivityText;
+        break;
+      case "tool_result":
+        if (event.message.isError) {
+          const firstLine = getToolResultFirstLine(event.message);
+          this.lastActivityText = firstLine
+            ? `${event.message.toolName}: ${firstLine}`
+            : `${event.message.toolName}: tool returned an error`;
         }
-        return;
-      }
-      case "tool_result": {
-        if (!event.message.isError) {
-          return;
-        }
-        const firstLine = getToolResultFirstLine(event.message);
-        this.lastActivityText = firstLine
-          ? `${event.message.toolName}: ${firstLine}`
-          : `${event.message.toolName}: tool returned an error`;
-        this.emitUpdate();
-        return;
-      }
+        break;
       case "assistant_final": {
-        const usageTotals = getUsageTotals(event.message.usage);
-        this.costTotal += getUsageCostTotal(event.message.usage);
+        const usage = getUsageTotals(event.message.usage);
+        const cost = getUsageCostTotal(event.message.usage);
+        this.costTotal += cost;
         this.usage = {
           ...this.usage,
-          input: this.usage.input + usageTotals.input,
-          output: this.usage.output + usageTotals.output,
-          cacheRead: this.usage.cacheRead + usageTotals.cacheRead,
-          cacheWrite: this.usage.cacheWrite + usageTotals.cacheWrite,
-          contextWindowUsageTokens:
-            usageTotals.input + usageTotals.output + usageTotals.cacheRead + usageTotals.cacheWrite,
+          input: this.usage.input + usage.input,
+          output: this.usage.output + usage.output,
+          cacheRead: this.usage.cacheRead + usage.cacheRead,
+          cacheWrite: this.usage.cacheWrite + usage.cacheWrite,
+          contextWindowUsageTokens: usage.input + usage.output + usage.cacheRead + usage.cacheWrite,
         };
         this.lastActivityText =
           extractAssistantTextForProgress(event.message) ?? this.lastActivityText;
-        this.emitUpdate();
-        return;
+        this.recordUsage({
+          timestamp: event.message.timestamp,
+          sessionId: this.runtime.agentIdValue,
+          personaId: event.personaId,
+          provider: event.message.provider,
+          model: event.message.model,
+          api: event.message.api,
+          reasoningEffort: event.reasoningEffort,
+          usage,
+          cost: { total: cost },
+          agent: { type: "ephemeral" },
+        });
+        break;
       }
       default:
         return;
     }
-  }
-
-  private emitUpdate(): void {
     this.onUpdate?.({
       costTotal: this.costTotal,
       usage: { ...this.usage },
@@ -392,25 +330,13 @@ function createEphemeralPersona(
   systemPrompt: string,
   tools: SubagentToolName[],
 ): Persona {
-  const clone = structuredClone(persona);
   return {
-    ...clone,
-    id: `${clone.id}-ephemeral`,
-    label: `${clone.label} ephemeral`,
+    ...structuredClone(persona),
+    id: `${persona.id}-ephemeral`,
+    label: `${persona.label} ephemeral`,
     description: "Ephemeral assistant",
     systemPrompt,
     subagents: undefined,
-    skills: clone.skills,
     tools,
   };
-}
-
-function findLastAssistantMessage(session: CoreSession): AssistantMessage | undefined {
-  for (let index = session.historyEntries.length - 1; index >= 0; index -= 1) {
-    const entry = session.historyEntries[index];
-    if (entry?.message.role === "assistant") {
-      return entry.message as AssistantMessage;
-    }
-  }
-  return undefined;
 }

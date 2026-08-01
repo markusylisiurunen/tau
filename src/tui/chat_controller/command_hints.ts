@@ -18,12 +18,6 @@ export function getCommandHint(command: Command): string | undefined {
       return "summarize session and start new, optional prompt";
     case "compactSummaryAndLast":
       return "summarize session and keep last turn, optional prompt";
-    case "pruneEarliest":
-      return "prune earliest tool results and compact edit calls, optional fraction 0-1";
-    case "pruneLargest":
-      return "prune largest tool results and compact edit calls, optional fraction 0-1";
-    case "pruneSmart":
-      return "prune smart-selected tool results and compact edit calls, optional fraction and guidance";
     case "reload":
       return "reload prompts, skills, personas, and AGENTS.md";
     case "listen":

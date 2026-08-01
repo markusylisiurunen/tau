@@ -1,3 +1,4 @@
+import type { ToolUiText } from "../tools/activity.js";
 import {
   BASH_DEFAULT_TIMEOUT_MS,
   type BashTruncationInfo,
@@ -7,7 +8,6 @@ import {
   prepareBashOutput,
 } from "../tools/bash.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
-import type { ToolUiText } from "../tools/registry.js";
 
 export type DirectBashExecutionResult = {
   command: string;

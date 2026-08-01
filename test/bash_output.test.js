@@ -34,14 +34,25 @@ const backend = {
   },
 };
 
-async function runTool(tool, ...args) {
-  const dispatch = await tool.dispatch(...args);
-  return dispatch.run;
+async function runTool(tool, toolCall, signal = new AbortController().signal) {
+  const activities = [];
+  const outcome = await tool.execute(toolCall, {
+    agentId: "test-agent",
+    turnId: "test-turn",
+    assistantMessageId: "test-assistant",
+    signal,
+    emitActivity: async (activity) => activities.push(activity),
+  });
+  return {
+    toolResult: { ...outcome, toolCallId: toolCall.id, toolName: toolCall.name },
+    uiEvent: activities.at(-1),
+    activities,
+  };
 }
 
 describe("bash output policy", () => {
   it("rejects unknown execution arguments", async () => {
-    const tool = createBashToolDefinition(backend);
+    const tool = createBashToolDefinition(backend, "/project");
     const result = await runTool(
       tool,
       {
@@ -50,10 +61,9 @@ describe("bash output policy", () => {
         arguments: { command: "pwd", unexpected: true },
       },
       new AbortController().signal,
-      { scope: "main" },
     );
 
-    expect(result.toolResult.isError).toBe(true);
+    expect(result.toolResult.outcome).toBe("blocked");
   });
 
   it("gates default output and includes maxOutputTokens instructions", async () => {

@@ -104,6 +104,37 @@ describe("custom personas", () => {
     }
   });
 
+  it("allows Nook in explicit and default persona tool lists", async () => {
+    const fx = setupFixture();
+
+    try {
+      mkdirSync(join(fx.home, ".config", "tau", "personas"), { recursive: true });
+      writeFileSync(
+        join(fx.home, ".config", "tau", "personas", "nook-persona.md"),
+        [
+          "---",
+          "id: nook-persona",
+          "provider: anthropic",
+          "model: claude-haiku-4-5",
+          "tools:",
+          "  - nook",
+          "---",
+          "",
+          "use Nook when requested",
+        ].join("\n"),
+      );
+
+      const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
+      const { personas, errors } = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
+
+      expect(errors).toEqual([]);
+      expect(personas.find((persona) => persona.id === "nook-persona")?.tools).toEqual(["nook"]);
+      expect(personas.find((persona) => persona.id === "opus-4.8-chat")?.tools).toContain("nook");
+    } finally {
+      fx.cleanup();
+    }
+  });
+
   it("keeps both built-in opus personas available", async () => {
     const fx = setupFixture();
 

@@ -14,7 +14,11 @@ import {
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import type { SessionProtocolSnapshot } from "../protocol/session_protocol.js";
-import { validateSessionProtocolResult } from "../protocol/session_protocol.js";
+import {
+  createStoredSessionDocument,
+  parseStoredSessionDocument,
+  UnsupportedStoredSessionVersionError,
+} from "./session_snapshot_migrations.js";
 import {
   assertExpectedSessionRevision,
   type SessionStore,
@@ -67,7 +71,7 @@ export class FileSessionStore implements SessionStore {
       const finalPath = this.snapshotPath(validated.sessionId);
       const tempPath = `${finalPath}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`;
       try {
-        await writeFile(tempPath, `${JSON.stringify(validated)}\n`, {
+        await writeFile(tempPath, `${JSON.stringify(createStoredSessionDocument(validated))}\n`, {
           encoding: "utf8",
           flag: "wx",
           mode: PRIVATE_FILE_MODE,
@@ -341,18 +345,21 @@ function parseStoredSnapshot(sessionId: string, raw: string): SessionProtocolSna
     throw new Error(`stored session snapshot is not valid JSON: ${sessionId}`, { cause: error });
   }
 
-  const snapshot = validateSessionProtocolResult("session.snapshot", parsed);
-  if (!snapshot.ok) {
-    throw new Error(`stored session snapshot is invalid: ${sessionId}`, {
-      cause: new Error(snapshot.error.message),
-    });
+  let snapshot: SessionProtocolSnapshot;
+  try {
+    snapshot = parseStoredSessionDocument(parsed).snapshot;
+  } catch (error) {
+    if (error instanceof UnsupportedStoredSessionVersionError) {
+      throw new Error(`${error.message}: ${sessionId}`, { cause: error });
+    }
+    throw new Error(`stored session snapshot is invalid: ${sessionId}`, { cause: error });
   }
 
-  if (snapshot.value.sessionId !== sessionId) {
+  if (snapshot.sessionId !== sessionId) {
     throw new Error(`stored session snapshot id mismatch: ${sessionId}`);
   }
 
-  return snapshot.value;
+  return snapshot;
 }
 
 function isSnapshotFilename(filename: string): boolean {

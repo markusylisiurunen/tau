@@ -1,10 +1,9 @@
 import { resolve } from "node:path";
-import type { Tool, ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
+import type { Tool, ToolCall } from "@earendil-works/pi-ai";
 import stripAnsi from "strip-ansi";
 import { Type } from "typebox";
 import { z } from "zod";
 import { formatCwd } from "../utils/format.js";
-import { createToolError, createToolResult } from "../utils/messages.js";
 import { bytesToTokens, formatTokenEstimate } from "../utils/token.js";
 import { buildHeadTailPreviewLines } from "../utils/tool_preview.js";
 import {
@@ -13,17 +12,16 @@ import {
   type TruncationResult,
   truncateForTokens,
 } from "../utils/truncate.js";
+import type { ToolActivity, ToolUiLine, ToolUiText } from "./activity.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
-import type {
-  ToolDefinition,
-  ToolDispatch,
-  ToolDispatchContext,
-  ToolDispatchResult,
-  ToolUiEvent,
-  ToolUiLine,
-  ToolUiText,
+import {
+  type AgentTool,
+  createTextToolOutcome,
+  executeTool,
+  type ToolExecutionContext,
+  type ToolExecutionOutcome,
+  type ToolImplementationOutcome,
 } from "./registry.js";
-import { createToolDispatch } from "./registry.js";
 import { TOOL_NAME_BASH } from "./tool_names.js";
 
 const BASH_MODEL_DEFAULT_MAX_TOKENS = 8192;
@@ -397,59 +395,56 @@ function getBashDisplayTarget(raw: unknown): string {
   return parsedArgs.data.commandForDisplay.split(/\r?\n/)[0] ?? parsedArgs.data.commandForDisplay;
 }
 
-export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDefinition {
+export function createBashToolDefinition(backend: ToolExecutionBackend, cwd: string): AgentTool {
   return {
     schema: BASH_TOOL,
-    getDisplayTarget: (toolCall) => getBashDisplayTarget(toolCall.arguments),
-    async dispatch(
+    describe: (toolCall) => ({ headerTarget: getBashDisplayTarget(toolCall.arguments) }),
+    async execute(
       toolCall: ToolCall,
-      signal: AbortSignal,
-      context: ToolDispatchContext,
-    ): Promise<ToolDispatch> {
+      context: ToolExecutionContext,
+    ): Promise<ToolExecutionOutcome> {
+      const { signal } = context;
       const parsedArgs = parseBashArgs(toolCall.arguments);
       const commandForDisplay = parsedArgs.ok
         ? parsedArgs.data.commandForDisplay
         : parsedArgs.commandForDisplay;
       const headerTarget = getBashDisplayTarget(toolCall.arguments);
 
-      const blocked = (reason: string): ToolDispatchResult => {
-        const toolResult = createToolError(toolCall, reason);
-        const uiEvent: ToolUiEvent = {
+      const blocked = (reason: string): ToolImplementationOutcome => {
+        const outcome = createTextToolOutcome(reason, "blocked");
+        const uiEvent: ToolActivity = {
           type: "bash_blocked",
           toolCallId: toolCall.id,
           command: commandForDisplay,
           headerTarget,
           reason,
         };
-        return { toolResult, uiEvent };
+        return { content: outcome.content, outcome: outcome.outcome, uiEvent };
       };
 
       if (!parsedArgs.ok) {
-        return createToolDispatch(() => blocked(`Invalid arguments: ${parsedArgs.error}`));
+        return executeTool(context, () => blocked(`Invalid arguments: ${parsedArgs.error}`));
       }
 
       const { command, workingDirectory, timeout, maxOutputTokens, hasMaxOutputTokens } =
         parsedArgs.data;
 
       const effectiveWorkingDirectory = resolveBashWorkingDirectory({
-        contextCwd: context.cwd,
+        contextCwd: cwd,
         workingDirectory,
       });
 
-      return {
-        startedUiEvent: {
-          type: "bash_started",
-          toolCallId: toolCall.id,
-          command,
-          headerTarget,
-        },
-        run: (async () => {
+      return executeTool(
+        context,
+        async () => {
           try {
             const startedAt = Date.now();
             const {
               output,
               exitCode,
               truncated: captureTruncated,
+              aborted,
+              timedOut,
             } = await backend.runBash(command, {
               signal,
               timeoutMs: timeout ?? BASH_DEFAULT_TIMEOUT_MS,
@@ -478,8 +473,11 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
               fullText: toolText,
             });
 
-            const toolResult: ToolResultMessage = createToolResult(toolCall, toolText, isError);
-            const uiEvent: ToolUiEvent = {
+            const outcome = createTextToolOutcome(
+              toolText,
+              aborted || timedOut ? "cancelled" : isError ? "failed" : "succeeded",
+            );
+            const uiEvent: ToolActivity = {
               type: "bash_execution",
               toolCallId: toolCall.id,
               command,
@@ -489,21 +487,27 @@ export function createBashToolDefinition(backend: ToolExecutionBackend): ToolDef
               uiText,
               durationMs,
             };
-            return { toolResult, uiEvent };
+            return { content: outcome.content, outcome: outcome.outcome, uiEvent };
           } catch (e) {
             const msg = `Bash tool execution failed: ${e instanceof Error ? e.message : String(e)}`;
-            const toolResult = createToolError(toolCall, msg);
-            const uiEvent: ToolUiEvent = {
+            const outcome = createTextToolOutcome(msg, "failed");
+            const uiEvent: ToolActivity = {
               type: "bash_blocked",
               command: commandForDisplay,
               headerTarget,
               reason: msg,
               toolCallId: toolCall.id,
             };
-            return { toolResult, uiEvent };
+            return { content: outcome.content, outcome: outcome.outcome, uiEvent };
           }
-        })(),
-      };
+        },
+        {
+          type: "bash_started",
+          toolCallId: toolCall.id,
+          command,
+          headerTarget,
+        },
+      );
     },
   };
 }

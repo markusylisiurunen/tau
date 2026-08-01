@@ -17,7 +17,7 @@ import {
 } from "./code_mode.js";
 import { type CodeModeBridgeRequest, executeCodeModeWorker } from "./code_mode_worker.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
-import type { ToolDefinition } from "./registry.js";
+import type { AgentTool } from "./registry.js";
 import { TOOL_NAME_NOOK } from "./tool_names.js";
 
 const NOOK_CODE_MODE_TIMEOUT_MS = 60_000;
@@ -391,16 +391,18 @@ const defaultDeps: NookToolDeps = {
 
 export function createNookToolDefinition(
   backend: ToolExecutionBackend,
+  config: Config,
   deps: NookToolDeps = defaultDeps,
-): ToolDefinition {
+): AgentTool {
   const timeoutMs = deps.timeoutMs ?? NOOK_CODE_MODE_TIMEOUT_MS;
   const implementation: CodeModeToolImplementation<NookArgs> = {
     schema: NOOK_TOOL,
     outputPolicy: { maxTokens: NOOK_CODE_MODE_OUTPUT_TOKENS },
     timeoutMs,
     parseArguments: parseNookArguments,
-    execute: async ({ code, context, signal, backend: executionBackend }) =>
-      executeNookProgram(code, deps, context.config, executionBackend, signal, timeoutMs),
+    getBlockedReason: () => (config.nook ? undefined : "nook is not configured"),
+    execute: async ({ code, signal, backend: executionBackend }) =>
+      executeNookProgram(code, deps, config, executionBackend, signal, timeoutMs),
   };
 
   return createCodeModeToolDefinition(backend, implementation);

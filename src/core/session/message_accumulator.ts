@@ -26,11 +26,9 @@ export class MessageAccumulator {
       }
 
       case "text_end": {
-        if (!this.text && event.content) {
-          this.text = event.content;
-          if (!this.hasTextStarted && this.text.trim()) {
-            this.hasTextStarted = true;
-          }
+        this.text = event.content;
+        if (!this.hasTextStarted && this.text.trim()) {
+          this.hasTextStarted = true;
         }
         return;
       }

@@ -200,6 +200,14 @@ export async function* runModelSubturn(
           accumulator.processEvent(event);
         }
 
+        if (event.type === "text_end") {
+          if (accumulator) {
+            hasPendingPartial = true;
+            yield* emitPartialIfPending();
+          }
+          continue;
+        }
+
         if (event.type === "text_delta" || event.type.startsWith("thinking_")) {
           if (accumulator) {
             hasPendingPartial = true;

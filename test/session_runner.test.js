@@ -116,6 +116,59 @@ describe("session runner", () => {
     }
   });
 
+  it("publishes authoritative text-end content after streamed deltas", async () => {
+    const finalMessage = {
+      role: "assistant",
+      api: "openai-responses",
+      provider: "openai",
+      model: "gpt-5.6-luna",
+      stopReason: "stop",
+      content: [{ type: "text", text: "I am checking all eight independent locations now." }],
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+    };
+    const streamModel = () =>
+      createModelStream(
+        [
+          { type: "text_delta", delta: "I am checking all eight independent" },
+          {
+            type: "text_end",
+            content: "I am checking all eight independent locations now.",
+          },
+        ],
+        finalMessage,
+      );
+    const events = [];
+    const runner = runModelSubturn({
+      model: {},
+      context: {},
+      streamModel,
+      streamOptions: {},
+      signal: new AbortController().signal,
+      emitPartials: true,
+    });
+
+    while (true) {
+      const next = await runner.next();
+      if (next.done) {
+        expect(next.value).toBe(finalMessage);
+        break;
+      }
+      events.push(next.value);
+    }
+
+    expect(events.map((event) => event.snapshot.text)).toEqual([
+      "I am checking all eight independent",
+      "I am checking all eight independent locations now.",
+    ]);
+  });
+
   it("flushes pending assistant text before tool-call streaming", async () => {
     const now = vi.spyOn(Date, "now");
     now.mockReturnValue(1_000);

@@ -110,12 +110,39 @@ function createAssistantToolCallMessage(toolCalls) {
   };
 }
 
-function createAgentRun(overrides = {}) {
+function createAgentRun({
+  status = "running",
+  progress = "",
+  finalText = "",
+  finishedAt = 2,
+  ...overrides
+} = {}) {
   return {
     id: "agent-1",
     name: "default",
     title: "Inspect state",
-    status: "running",
+    availability: status === "running" ? "running" : "idle",
+    model: { provider: "anthropic", id: "claude-opus-4-8", reasoning: "medium" },
+    workingDirectory: "/repo",
+    createdAt: 1,
+    run:
+      status === "running"
+        ? {
+            revision: 1,
+            status,
+            startedAt: 1,
+            progress,
+            interruptRequested: false,
+          }
+        : {
+            revision: 1,
+            status,
+            startedAt: 1,
+            finishedAt,
+            progress,
+            interruptRequested: false,
+            response: finalText,
+          },
     costTotal: 0.01,
     turns: 1,
     toolCalls: 0,
@@ -127,8 +154,6 @@ function createAgentRun(overrides = {}) {
       contextWindowUsageTokens: 15,
       contextWindow: 200000,
     },
-    startedAt: 1,
-    abortRequested: false,
     ...overrides,
   };
 }
@@ -397,7 +422,7 @@ class FakeSession {
       removedEntryIds,
     };
   });
-  terminateSubagent = vi.fn(async (subagentId) => ({
+  interruptSubagent = vi.fn(async (subagentId) => ({
     found: subagentId === "subagent-1",
   }));
   createEphemeralContext = vi.fn(async () => ({ contextId: "ephemeral-1" }));
@@ -2599,7 +2624,10 @@ describe("SessionChatController", () => {
 
     expect(view.subagentSnapshots).toEqual([
       {
-        state: expect.objectContaining({ id: "agent-1", status: "running" }),
+        state: expect.objectContaining({
+          id: "agent-1",
+          run: expect.objectContaining({ status: "running" }),
+        }),
         progress: "reading files",
       },
     ]);
@@ -2634,8 +2662,7 @@ describe("SessionChatController", () => {
       {
         state: expect.objectContaining({
           id: "agent-1",
-          status: "success",
-          finalText: "all clear",
+          run: expect.objectContaining({ status: "succeeded", response: "all clear" }),
         }),
         progress: "finished checks",
       },
@@ -2699,13 +2726,15 @@ describe("SessionChatController", () => {
     expect(view.subagentEvents).toEqual([
       expect.objectContaining({
         type: "subagent_progress",
-        id: "agent-1",
-        text: "checking protocol",
-        costTotal: 0.02,
-        turns: 2,
+        state: expect.objectContaining({
+          id: "agent-1",
+          costTotal: 0.02,
+          turns: 2,
+          run: expect.objectContaining({ progress: "checking protocol" }),
+        }),
       }),
     ]);
-    expect(controller.snapshot.agents["agent-1"].progress).toBe("checking protocol");
+    expect(controller.snapshot.agents["agent-1"].run.progress).toBe("checking protocol");
     await controller.dispose();
   });
 
@@ -3145,7 +3174,7 @@ describe("SessionChatController", () => {
     expect(view.renderRequests).toBeGreaterThan(0);
   });
 
-  it("terminates the selected session subagent with ctrl+g", async () => {
+  it("interrupts the selected session subagent with ctrl+g", async () => {
     const session = new FakeSession();
     const view = new FakeView();
     view.selectedSubagentId = "subagent-1";
@@ -3160,7 +3189,7 @@ describe("SessionChatController", () => {
     controller.getInputHandlers().onCtrlG();
     await flush();
 
-    expect(session.terminateSubagent).toHaveBeenCalledWith("subagent-1");
+    expect(session.interruptSubagent).toHaveBeenCalledWith("subagent-1");
     expect(view.systems).not.toContainEqual(
       expect.objectContaining({
         text: expect.stringContaining("unknown subagent id"),
@@ -3182,7 +3211,7 @@ describe("SessionChatController", () => {
     controller.getInputHandlers().onCtrlG();
     await flush();
 
-    expect(session.terminateSubagent).not.toHaveBeenCalled();
+    expect(session.interruptSubagent).not.toHaveBeenCalled();
     expect(view.systems).toContainEqual({
       text: "no active subagent selected",
       kind: "warn",
@@ -3205,7 +3234,7 @@ describe("SessionChatController", () => {
     controller.getInputHandlers().onCtrlG();
     await flush();
 
-    expect(session.terminateSubagent).toHaveBeenCalledWith("missing-subagent");
+    expect(session.interruptSubagent).toHaveBeenCalledWith("missing-subagent");
     expect(view.systems).toContainEqual({
       text: "unknown subagent id: missing-subagent",
       kind: "warn",

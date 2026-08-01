@@ -39,8 +39,6 @@ export type SubagentPersonaConfig = {
 
 export type SubagentConfigMap = Record<SubagentName, SubagentPersonaConfig>;
 
-export type SubagentStatus = "running" | "success" | "error" | "aborted";
-
 export type SubagentUsageSnapshot = {
   input: number;
   output: number;
@@ -50,35 +48,75 @@ export type SubagentUsageSnapshot = {
   contextWindow: number;
 };
 
+export type SubagentRunFailure =
+  | { kind: "interrupted"; message: string }
+  | {
+      kind: "auto-compaction-failed" | "model-subturn-limit" | "runtime-error";
+      message: string;
+    }
+  | {
+      kind: "provider-error";
+      message: string;
+      stopReason: string;
+    };
+
+type SubagentFailedRunFailure = Exclude<SubagentRunFailure, { kind: "interrupted" }>;
+type SubagentInterruptedRunFailure = Extract<SubagentRunFailure, { kind: "interrupted" }>;
+
+type SubagentRunSnapshotBase = {
+  revision: number;
+  startedAt: number;
+  progress: string;
+  interruptRequested: boolean;
+};
+
+export type SubagentRunSnapshot =
+  | (SubagentRunSnapshotBase & { status: "running" })
+  | (SubagentRunSnapshotBase & {
+      status: "succeeded";
+      finishedAt: number;
+      response: string;
+    })
+  | (SubagentRunSnapshotBase & {
+      status: "failed";
+      finishedAt: number;
+      failure: SubagentFailedRunFailure;
+    })
+  | (SubagentRunSnapshotBase & {
+      status: "interrupted";
+      finishedAt: number;
+      failure: SubagentInterruptedRunFailure;
+    });
+
 export type SubagentStateSnapshot = {
   id: string;
   name: SubagentName;
   title: string;
-  status: SubagentStatus;
-  modelLabel?: string;
+  availability: "running" | "idle";
+  model: {
+    provider: string;
+    id: string;
+    reasoning: ReasoningEffort;
+  };
+  workingDirectory: string;
+  createdAt: number;
+  run: SubagentRunSnapshot;
   costTotal: number;
   turns: number;
   toolCalls: number;
   usage: SubagentUsageSnapshot;
-  startedAt: number;
-  finishedAt?: number;
-  abortRequested: boolean;
-  error?: string;
-  finalText?: string;
+};
+
+export type SubagentCapacitySnapshot = {
+  running: number;
+  limit: number;
 };
 
 export type SubagentUiEvent =
   | { type: "subagent_spawned"; state: SubagentStateSnapshot }
-  | {
-      type: "subagent_progress";
-      id: string;
-      text: string;
-      costTotal: number;
-      turns: number;
-      toolCalls: number;
-      usage: SubagentUsageSnapshot;
-    }
-  | { type: "subagent_abort_requested"; id: string }
+  | { type: "subagent_run_started"; state: SubagentStateSnapshot }
+  | { type: "subagent_progress"; state: SubagentStateSnapshot }
+  | { type: "subagent_interrupt_requested"; state: SubagentStateSnapshot }
   | { type: "subagent_finished"; state: SubagentStateSnapshot };
 
 export type SubagentRuntimeConfig = {

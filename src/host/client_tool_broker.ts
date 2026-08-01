@@ -31,7 +31,8 @@ const HOST_TOOL_NAMES = new Set([
   "spawn_agent",
   "send_input_to_agent",
   "wait_for_agents",
-  "terminate_agent",
+  "list_agents",
+  "interrupt_agent",
   "web",
   "nook",
 ]);

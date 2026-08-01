@@ -4,12 +4,48 @@ import { resolveConfigLevels } from "../dist/core/config/index.js";
 import { loadModelResolver } from "../dist/core/models/catalog.js";
 import { personas } from "../dist/core/personas.js";
 import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
+import { createInterruptAgentToolDefinition } from "../dist/core/tools/interrupt_agent.js";
+import { createListAgentsToolDefinition } from "../dist/core/tools/list_agents.js";
 import { createSpawnAgentToolDefinition } from "../dist/core/tools/spawn_agent.js";
-import { createTerminateAgentToolDefinition } from "../dist/core/tools/terminate_agent.js";
-import { TOOL_NAME_SPAWN_AGENT, TOOL_NAME_TERMINATE_AGENT } from "../dist/core/tools/tool_names.js";
+import {
+  TOOL_NAME_INTERRUPT_AGENT,
+  TOOL_NAME_LIST_AGENTS,
+  TOOL_NAME_SPAWN_AGENT,
+} from "../dist/core/tools/tool_names.js";
 
 function getText(toolResult) {
   return toolResult.content.find((block) => block.type === "text")?.text ?? "";
+}
+
+function createSubagentState(overrides = {}) {
+  return {
+    id: "agent-1",
+    name: "default",
+    title: "child task",
+    availability: "running",
+    model: { provider: "anthropic", id: "claude-opus-4-8", reasoning: "medium" },
+    workingDirectory: "/repo/current",
+    createdAt: 10,
+    run: {
+      revision: 1,
+      status: "running",
+      startedAt: 10,
+      progress: "",
+      interruptRequested: false,
+    },
+    costTotal: 0.01,
+    turns: 1,
+    toolCalls: 0,
+    usage: {
+      input: 10,
+      output: 5,
+      cacheRead: 0,
+      cacheWrite: 0,
+      contextWindowUsageTokens: 15,
+      contextWindow: 200000,
+    },
+    ...overrides,
+  };
 }
 
 function createModelResolver(cwd = "/repo/current", home = "/repo") {
@@ -33,7 +69,20 @@ function createFixture(overrides = {}) {
   const anthropic = personas.find((persona) => persona.id === "opus-4.8-chat")?.model;
   expect(anthropic).toBeTruthy();
   const supervisor = {
-    spawn: vi.fn(() => ({ ok: true, id: "agent-1" })),
+    spawn: vi.fn(({ runtimeConfig, title }) => ({
+      ok: true,
+      state: createSubagentState({
+        name: runtimeConfig.name,
+        title,
+        model: {
+          provider: runtimeConfig.model.provider,
+          id: runtimeConfig.model.id,
+          reasoning: runtimeConfig.settings?.reasoning ?? "none",
+        },
+        workingDirectory: runtimeConfig.workingDirectory,
+      }),
+      capacity: { running: 1, limit: 8 },
+    })),
   };
   const persona = {
     id: "test-persona",
@@ -97,37 +146,69 @@ const baseArguments = {
   prompt: "investigate this",
 };
 
-describe("terminate_agent tool", () => {
-  it("succeeds when termination produces an aborted final status", async () => {
-    const supervisor = {
-      terminate: vi.fn(async () => ({
-        id: "agent-1",
-        name: "default",
-        title: "child task",
-        status: "aborted",
-        costTotal: 0.01,
-        turns: 1,
-        toolCalls: 0,
+describe("list_agents tool", () => {
+  it("returns dense text without including retained response bodies", async () => {
+    const state = createSubagentState({
+      availability: "idle",
+      run: {
+        revision: 1,
+        status: "succeeded",
         startedAt: 10,
         finishedAt: 20,
-      })),
+        progress: "done",
+        interruptRequested: false,
+        response: "private retained response",
+      },
+    });
+    const supervisor = {
+      listSnapshots: vi.fn(() => [state]),
+      getCapacity: vi.fn(() => ({ running: 0, limit: 8 })),
     };
-    const tool = createTerminateAgentToolDefinition(supervisor);
+    const tool = createListAgentsToolDefinition(supervisor);
 
-    const { result } = await execute(tool, { id: "agent-1" }, TOOL_NAME_TERMINATE_AGENT);
+    const { result } = await execute(tool, {}, TOOL_NAME_LIST_AGENTS);
+    const text = getText(result.toolResult);
+
+    expect(result.toolResult.outcome).toBe("succeeded");
+    expect(text).toContain("Agents: 1 · running 0/8");
+    expect(text).toContain("run 1 succeeded");
+    expect(text).toContain("response: available");
+    expect(text).not.toContain("private retained response");
+    expect(() => JSON.parse(text)).toThrow();
+  });
+});
+
+describe("interrupt_agent tool", () => {
+  it("succeeds when interruption produces an interrupted run", async () => {
+    const supervisor = {
+      getCapacity: vi.fn(() => ({ running: 0, limit: 8 })),
+      interrupt: vi.fn(async () =>
+        createSubagentState({
+          availability: "idle",
+          run: {
+            revision: 1,
+            status: "interrupted",
+            startedAt: 10,
+            finishedAt: 20,
+            progress: "",
+            interruptRequested: true,
+            failure: { kind: "interrupted", message: "Subagent run was interrupted." },
+          },
+        }),
+      ),
+    };
+    const tool = createInterruptAgentToolDefinition(supervisor);
+
+    const { result } = await execute(tool, { id: "agent-1" }, TOOL_NAME_INTERRUPT_AGENT);
 
     expect(result.toolResult.outcome).toBe("succeeded");
     expect(result.uiEvent).toMatchObject({
-      type: "terminate_agent_finished",
+      type: "interrupt_agent_finished",
       status: "success",
-      finalStatus: "aborted",
+      finalStatus: "interrupted",
     });
-    expect(result.uiEvent.uiText.statusLine).not.toContain("Status aborted");
-    expect(result.uiEvent.uiText.previewLines).toEqual([]);
-    expect(JSON.parse(getText(result.toolResult))).toMatchObject({
-      id: "agent-1",
-      status: "aborted",
-    });
+    expect(getText(result.toolResult)).toContain("run 1 interrupted");
+    expect(getText(result.toolResult)).toContain("failure interrupted");
   });
 });
 
@@ -184,7 +265,6 @@ describe("spawn_agent tool", () => {
     expect(result.toolResult.outcome).toBe("succeeded");
     expect(supervisor.spawn).toHaveBeenCalledWith(
       expect.objectContaining({
-        modelLabel: undefined,
         runtimeConfig: expect.objectContaining({
           settings: expect.objectContaining({ reasoning: "medium" }),
         }),

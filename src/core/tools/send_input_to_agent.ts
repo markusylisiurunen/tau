@@ -2,6 +2,7 @@ import type { Tool, ToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { z } from "zod";
 import type { AgentSupervisor } from "../subagents/agent_supervisor.js";
+import { formatSubagentStates } from "../subagents/format.js";
 import type { SubagentStateSnapshot } from "../subagents/types.js";
 import { parseToolArgs } from "../utils/zod.js";
 import type { ToolActivity } from "./activity.js";
@@ -44,12 +45,6 @@ const sendInputArgsSchema = z.object({
   id: z.string().trim().min(1),
   prompt: z.string().trim().min(1),
 });
-
-function formatSendInputToolResult(args: { id: string; name: string; title: string }): string {
-  return [`ID: ${args.id}`, `Name: ${args.name}`, `Title: ${args.title}`, "Status: Running"].join(
-    "\n",
-  );
-}
 
 function resolveSnapshotTarget(snapshot: SubagentStateSnapshot) {
   return { name: snapshot.name, title: snapshot.title };
@@ -156,21 +151,23 @@ export function createSendInputToAgentToolDefinition(supervisor: AgentSupervisor
             return { content: outcome.content, outcome: outcome.outcome, uiEvent };
           }
 
-          const resultText = formatSendInputToolResult(sendResult);
+          const resultText = formatSubagentStates([sendResult.state], sendResult.capacity, {
+            includeResponses: false,
+          });
           const outcome = createTextToolOutcome(resultText, "succeeded");
           const uiText = buildSubagentUiText({
             output: prompt,
-            statusText: `${sendResult.name} · ${sendResult.id}`,
+            statusText: `${sendResult.state.name} · ${sendResult.state.id}`,
             maxOutputLines: 16,
             fullText: resultText,
           });
           const uiEvent: ToolActivity = {
             type: "send_input_to_agent_finished",
             toolCallId: toolCall.id,
-            agentId: sendResult.id,
-            name: sendResult.name,
-            title: sendResult.title,
-            headerTarget: sendResult.title,
+            agentId: sendResult.state.id,
+            name: sendResult.state.name,
+            title: sendResult.state.title,
+            headerTarget: sendResult.state.title,
             status: "success",
             uiText,
           };

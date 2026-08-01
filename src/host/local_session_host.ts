@@ -52,6 +52,7 @@ import type {
   SessionProtocolExecParams,
   SessionProtocolExecResult,
   SessionProtocolFacet,
+  SessionProtocolInterruptSubagentResult,
   SessionProtocolMessage,
   SessionProtocolModelSnapshot,
   SessionProtocolPersonaSnapshot,
@@ -67,7 +68,6 @@ import type {
   SessionProtocolSettingsUpdateResult,
   SessionProtocolSnapshot,
   SessionProtocolSubagentSnapshot,
-  SessionProtocolTerminateSubagentResult,
   SessionProtocolTimelineItem,
   SessionProtocolToolRun,
   SessionProtocolTurnOutcome,
@@ -1076,9 +1076,9 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     };
   }
 
-  async terminateSubagent(subagentId: string): Promise<SessionProtocolTerminateSubagentResult> {
+  async interruptSubagent(subagentId: string): Promise<SessionProtocolInterruptSubagentResult> {
     this.assertActive();
-    return { found: await this.session.terminateSubagent(subagentId) };
+    return { found: await this.session.interruptSubagent(subagentId) };
   }
 
   async createEphemeralContext(
@@ -1992,11 +1992,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   }
 
   private async recordSubagentUiEvent(event: SubagentUiEvent): Promise<void> {
-    const existing = "id" in event ? this.agents.get(event.id) : this.agents.get(event.state.id);
-    const agent = agentRunFromSubagentEvent(event, existing);
-    if (!agent) {
-      return;
-    }
+    const agent = agentRunFromSubagentEvent(event);
     const previousCost = this.agentCostTotals.get(agent.id) ?? 0;
     this.costTotal += Math.max(0, agent.costTotal - previousCost);
     this.agentCostTotals.set(agent.id, agent.costTotal);
@@ -2449,53 +2445,8 @@ function createInterruptedAssistantMessageFromModelSnapshot(
   };
 }
 
-function agentRunFromSubagentEvent(
-  event: SubagentUiEvent,
-  existing?: SessionProtocolAgentRun,
-): SessionProtocolAgentRun | undefined {
-  const state =
-    event.type === "subagent_spawned" || event.type === "subagent_finished"
-      ? event.state
-      : undefined;
-  if (event.type === "subagent_progress" && existing) {
-    return {
-      ...existing,
-      costTotal: event.costTotal,
-      turns: event.turns,
-      toolCalls: event.toolCalls,
-      usage: { ...event.usage },
-      progress: event.text,
-    };
-  }
-  if (event.type === "subagent_abort_requested" && existing) {
-    return { ...existing, abortRequested: true };
-  }
-  if (!state) {
-    return undefined;
-  }
-  return {
-    id: state.id,
-    name: state.name,
-    title: state.title,
-    status:
-      state.status === "success"
-        ? "succeeded"
-        : state.status === "error"
-          ? "failed"
-          : state.status === "aborted"
-            ? "cancelled"
-            : "running",
-    ...(state.modelLabel !== undefined ? { modelLabel: state.modelLabel } : {}),
-    costTotal: state.costTotal,
-    turns: state.turns,
-    toolCalls: state.toolCalls,
-    usage: { ...state.usage },
-    startedAt: state.startedAt,
-    ...(state.finishedAt !== undefined ? { finishedAt: state.finishedAt } : {}),
-    abortRequested: state.abortRequested,
-    ...(state.finalText !== undefined ? { finalText: state.finalText } : {}),
-    ...(state.error !== undefined ? { error: state.error } : {}),
-  };
+function agentRunFromSubagentEvent(event: SubagentUiEvent): SessionProtocolAgentRun {
+  return structuredClone(event.state);
 }
 
 function cloneResolvedBootstrap(

@@ -64,7 +64,7 @@ The protocol replaces `event` and `session_update` with one observed-session mes
 
 ```ts
 type SessionDeltaMessage = {
-  version: 4;
+  version: 5;
   type: "session.delta";
   sessionId: string;
   fromRevision: number | null;
@@ -275,9 +275,44 @@ type SessionAgentRun = {
   id: string;
   name: string;
   title: string;
-  status: "running" | "succeeded" | "failed" | "cancelled";
-  originMessageId: string;
-  modelLabel?: string;
+  availability: "running" | "idle";
+  model: {
+    provider: string;
+    id: string;
+    reasoning: ReasoningEffort;
+  };
+  workingDirectory: string;
+  createdAt: number;
+  run:
+    | {
+        revision: number;
+        status: "running";
+        startedAt: number;
+        progress: string;
+        interruptRequested: boolean;
+      }
+    | {
+        revision: number;
+        status: "succeeded";
+        startedAt: number;
+        finishedAt: number;
+        progress: string;
+        interruptRequested: boolean;
+        response: string;
+      }
+    | {
+        revision: number;
+        status: "failed" | "interrupted";
+        startedAt: number;
+        finishedAt: number;
+        progress: string;
+        interruptRequested: boolean;
+        failure: {
+          kind: string;
+          message: string;
+          stopReason?: string;
+        };
+      };
   costTotal: number;
   turns: number;
   toolCalls: number;
@@ -289,12 +324,6 @@ type SessionAgentRun = {
     contextWindowUsageTokens: number;
     contextWindow: number;
   };
-  startedAt: number;
-  finishedAt?: number;
-  abortRequested: boolean;
-  progress?: string;
-  finalText?: string;
-  error?: string;
 };
 ```
 

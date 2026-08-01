@@ -29,7 +29,7 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
 - **ChatRuntime** (`src/core/runtime/chat_runtime.ts`): Main-session adapter that resolves prompts and fully bound tools into an `AgentSpec`, owns the main `AgentRuntime`, forwards child-agent supervision events, and selects the active resolved model target for isolated sampling
 - **Model execution** (`src/core/runtime/model_executor.ts`, `src/core/runtime/agent_model.ts`): Narrow provider/model execution contract plus persona/config resolution used by stateful agents and isolated inference
 - **Model sampler** (`src/core/runtime/model_sampler.ts`): Stateless isolated inference against an explicit resolved model target; target selection belongs to the caller so future sampling can support models beyond the active persona without coupling selection to `AgentRuntime`
-- **AgentSupervisor** (`src/core/subagents/agent_supervisor.ts`): External owner of background child runtime records, limits, follow-ups, waits, termination, progress, usage attribution, and cleanup
+- **AgentSupervisor** (`src/core/subagents/agent_supervisor.ts`): External owner of background child runtime records, limits, follow-ups, waits, interruption, progress, usage attribution, and cleanup
 - **Ephemeral agent session** (`src/host/hosted_ephemeral_agent_session.ts`): Host-owned thread map and fork lifecycle; each thread is an ordinary `AgentRuntime` with cloned durable state
 - **Session prompt composer** (`src/core/runtime/session_prompt_composer.ts`): Composes main-session and subagent system prompts with environment and context blocks
 - **Runtime bootstrap resolver** (`src/core/runtime/runtime_bootstrap.ts`): Shared startup resolver for prompt context, AGENTS context, and persona skill filtering used by TUI/RPC/subagent working-directory prompt rebuilds
@@ -49,7 +49,7 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
 - **Nook** (`src/core/nook/`, `src/core/tools/nook.ts`, `src/core/static/code_mode/nook/`, `src/nook/worker/`): Tau-integrated Cloudflare static mini-app platform with `tau nook` CLI, one configured host-sandboxed code-mode `nook` tool, bundled Worker/R2/Durable Object implementation, Nook-hosted templates, and injected browser JSON KV SDK. Follow `src/nook/AGENTS.md` for Nook-specific V0 constraints.
 - **ToolCatalog** (`src/core/tools/catalog.ts`): Builds fully dependency-bound host tool registries outside `AgentRuntime`; client-provided tools are advertised by attached clients and frozen in the logical turn's captured `AgentSpec`
 - **ToolExecutionBackend** (`src/core/tools/execution_backend.ts`): Generic filesystem/process backend used for local and hosted execution targets, including bash execution, Node script execution, file IO, and directory listing
-- **ToolRegistry** (`src/core/tools/registry.ts`): Tool registry type used by ToolCatalog for main-session host tools (bash, write, edit, view_image, web, nook, spawn_agent, send_input_to_agent, wait_for_agents, terminate_agent) and sub-agent (configured allowed tools) registries; `diff_review` is advertised as a TUI client-provided tool
+- **ToolRegistry** (`src/core/tools/registry.ts`): Tool registry type used by ToolCatalog for main-session host tools (bash, write, edit, view_image, web, nook, spawn_agent, send_input_to_agent, wait_for_agents, list_agents, interrupt_agent) and sub-agent (configured allowed tools) registries; `diff_review` is advertised as a TUI client-provided tool
 - **Code mode** (`src/core/tools/code_mode.ts`, `src/core/tools/code_mode_worker.ts`, `src/core/tools/web.ts`, `src/core/tools/nook.ts`, `src/core/tools/web_discovery.ts`, `src/core/static/code_mode/`): Generic code-tool UI/result lifecycle plus a shared host-Worker executor and separate Exa-backed `web` and Nook platform implementations. Generated JavaScript runs in a host-owned Worker with a tool-specific SES compartment exposing only its bounded facade, `docs`, and console; the trusted parent retains provider/platform credentials and services bridge calls, while web discovery and Nook file operations use generic execution-environment backends. Tool results contain stdout/stderr rather than JavaScript return values
 - **TUI**: Terminal rendering via `@earendil-works/pi-tui` with components in `src/tui/ui/`
 - **Chat UI models** (`src/tui/ui/chat_message_model.ts`): Typed message models and rendering glue for UI components
@@ -108,7 +108,7 @@ Execution environments and tool backends are intentionally dumb target adapters.
   - `diff_review/` - Blocking diff-review subsystem (snapshot capture helpers and local diff-tool protocol bridge)
   - `session/` - Model streaming, sequential tool execution, and manual/automatic compaction helpers
   - `session/compaction.ts` - Core compaction preparation/prompt building, automatic cut-point selection, retained-tail handling, and synthetic summary message construction
-  - `tools/` - Tool definitions (bash, write, edit, view_image, spawn_agent, send_input_to_agent, wait_for_agents, terminate_agent, Exa-backed JavaScript code-mode web, nook)
+  - `tools/` - Tool definitions (bash, write, edit, view_image, spawn_agent, send_input_to_agent, wait_for_agents, list_agents, interrupt_agent, Exa-backed JavaScript code-mode web, nook)
   - `tools/execution_backend.ts` - Generic local/hosted tool execution backend contract, local implementation, Node script execution, and cwd scoping helper
   - `subagents/` - Default subagent prompt, runtime types, and external `AgentSupervisor`
   - `modes/` - Stdio session-protocol line server (`rpc_server.ts`) and WebSocket session server (`websocket_server.ts`)
@@ -158,8 +158,9 @@ Execution environments and tool backends are intentionally dumb target adapters.
 | `view_image` | View an image file |
 | `spawn_agent` | Start a background subagent |
 | `send_input_to_agent` | Send input to an idle subagent |
-| `wait_for_agents` | Await completed subagent final responses, returning when at least one requested agent finishes |
-| `terminate_agent` | Stop a running subagent and return its final result |
+| `wait_for_agents` | Await subagent completion and non-destructively read latest responses |
+| `list_agents` | List spawned subagents with runtime, run, usage, context, and response state |
+| `interrupt_agent` | Interrupt a subagent run while preserving its reusable thread |
 | `web` | Run one-shot JavaScript with bounded web search and retrieval APIs |
 | `nook` | Run one-shot JavaScript with a bounded Nook platform API |
 
@@ -207,7 +208,7 @@ Personas can be defined at user level (`~/.config/tau/personas/*.md`) and projec
 - `allowedReasoningLevels`: list of reasoning levels (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`) shown in the UI
 - `skills`: list of enabled skill names (matched by `name` in skill frontmatter), or `"*"` to enable all discovered skills. if omitted on custom personas, defaults to `"*"`; set `skills: []` to disable skills completely.
 - `subagents`: optional map of subagent definitions. The built-in `default` subagent is implicitly enabled unless `default: false` is provided. Custom subagents must be defined as `{ systemPrompt, description?, provider+model?, reasoning?, serviceTier?, tools?, launchModels? }` with lowercase-dash names (max 64 chars). `launchModels` values are allowlisted launch overrides in `<provider>/<model>:<effort>` format. Persona/subagent model ids may be unbundled as long as provider is known (Tau derives provider defaults when needed, and `models.json` can override fields). The `default` subagent cannot be overridden.
-- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `view_image`, `web`, `nook`, `spawn_agent`, `send_input_to_agent`, `wait_for_agents`, `terminate_agent`. if omitted, defaults to `bash`, `write`, `edit`, `view_image`, `web`, `nook` (and subagent tools when subagents are enabled). `nook` is available only when effective Nook configuration is also present.
+- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `view_image`, `web`, `nook`, `spawn_agent`, `send_input_to_agent`, `wait_for_agents`, `list_agents`, `interrupt_agent`. if omitted, defaults to `bash`, `write`, `edit`, `view_image`, `web`, `nook` (and subagent tools when subagents are enabled). `nook` is available only when effective Nook configuration is also present.
 
 On conflicts, the most specific level wins (built-ins are the base layer).
 
@@ -320,9 +321,9 @@ In TUI mode, `--debug` respects `--persona` and `--no-agent-context-files`, so y
 
 Slash commands only trigger on single-line inputs. `/diff` launches the local diff tool and records returned review feedback without auto-running the assistant. Unknown slash-prefixed text is sent as a normal prompt.
 
-RPC mode command surface is protocol-based (`initialize`, `session.create`, `session.list`, `session.observe`, `session.unobserve`, `session.record`, `session.submit`, `session.queue`, `session.steer`, `session.cancelPendingMessages`, `session.retry`, `session.exec`, `session.cancelExec`, `session.sample`, `session.interrupt`, `session.snapshot`, `session.setReasoning`, `session.setPersona`, `session.resolvePrompt`, `session.autocompletePaths`, `session.reload`, `session.compact`, `session.rewind`, `session.terminateSubagent`, `session.ephemeral.create`, `session.ephemeral.submit`, `session.ephemeral.close`, `session.clientTool.ack`, `session.clientTool.result`) over NDJSON stdin/stdout.
+RPC mode command surface is protocol-based (`initialize`, `session.create`, `session.list`, `session.observe`, `session.unobserve`, `session.record`, `session.submit`, `session.queue`, `session.steer`, `session.cancelPendingMessages`, `session.retry`, `session.exec`, `session.cancelExec`, `session.sample`, `session.interrupt`, `session.snapshot`, `session.setReasoning`, `session.setPersona`, `session.resolvePrompt`, `session.autocompletePaths`, `session.reload`, `session.compact`, `session.rewind`, `session.interruptSubagent`, `session.ephemeral.create`, `session.ephemeral.submit`, `session.ephemeral.close`, `session.clientTool.ack`, `session.clientTool.result`) over NDJSON stdin/stdout.
 
-**Keybindings**: `Shift+Tab` (cycle reasoning), `Ctrl+P` (cycle personality), `Ctrl+T` (toggle thinking), `Ctrl+O` (compact UI), `Ctrl+S` (stash input to clipboard), `Ctrl+Y` (toggle voice recording for `/listen`), `Ctrl+G` (terminate selected subagent), `Ctrl+Enter` (steer running assistant with editor input), `Enter x2` (retry last response on empty input), `Escape x2` (clear current prompt), `Alt+Up` (cancel pending queue and steering messages into the editor), `Alt+Down` (cycle active subagents), `Escape` (interrupt active work), `Ctrl+C` (press twice to exit)
+**Keybindings**: `Shift+Tab` (cycle reasoning), `Ctrl+P` (cycle personality), `Ctrl+T` (toggle thinking), `Ctrl+O` (compact UI), `Ctrl+S` (stash input to clipboard), `Ctrl+Y` (toggle voice recording for `/listen`), `Ctrl+G` (interrupt selected subagent), `Ctrl+Enter` (steer running assistant with editor input), `Enter x2` (retry last response on empty input), `Escape x2` (clear current prompt), `Alt+Up` (cancel pending queue and steering messages into the editor), `Alt+Down` (cycle active subagents), `Escape` (interrupt active work), `Ctrl+C` (press twice to exit)
 
 Reasoning changes are allowed while a turn is running. The active turn keeps the full `AgentSpec` captured when it started, including all tool-call subturns and steering continuations; the new reasoning applies to the next independently submitted or queued turn when it actually starts.
 

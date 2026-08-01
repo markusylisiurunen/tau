@@ -355,11 +355,11 @@ class TauSdkClientImpl implements TauSdkClient {
     });
   }
 
-  sendTerminateSubagent(
+  sendInterruptSubagent(
     sessionId: string,
     subagentId: string,
-  ): Promise<SessionProtocolResultByMethod["session.terminateSubagent"]> {
-    return this.transport.request("session.terminateSubagent", {
+  ): Promise<SessionProtocolResultByMethod["session.interruptSubagent"]> {
+    return this.transport.request("session.interruptSubagent", {
       sessionId,
       subagentId,
     });
@@ -672,10 +672,10 @@ class TauSdkSessionImpl implements TauSdkSession {
     return result;
   }
 
-  async terminateSubagent(
+  async interruptSubagent(
     subagentId: string,
-  ): Promise<SessionProtocolResultByMethod["session.terminateSubagent"]> {
-    return await this.client.sendTerminateSubagent(this.activeSessionId(), subagentId);
+  ): Promise<SessionProtocolResultByMethod["session.interruptSubagent"]> {
+    return await this.client.sendInterruptSubagent(this.activeSessionId(), subagentId);
   }
 
   async createEphemeralContext(options: {

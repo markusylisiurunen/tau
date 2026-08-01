@@ -6,11 +6,12 @@ import type { Persona } from "../types.js";
 import { createBashToolDefinition } from "./bash.js";
 import { createEditToolDefinition } from "./edit.js";
 import { scopeToolExecutionBackend, type ToolExecutionBackend } from "./execution_backend.js";
+import { createInterruptAgentToolDefinition } from "./interrupt_agent.js";
+import { createListAgentsToolDefinition } from "./list_agents.js";
 import { createNookToolDefinition } from "./nook.js";
 import { ToolRegistry } from "./registry.js";
 import { createSendInputToAgentToolDefinition } from "./send_input_to_agent.js";
 import { createSpawnAgentToolDefinition, type ResolveSubagentRuntime } from "./spawn_agent.js";
-import { createTerminateAgentToolDefinition } from "./terminate_agent.js";
 import {
   TOOL_NAME_BASH,
   TOOL_NAME_EDIT,
@@ -68,7 +69,8 @@ export const ToolCatalog = {
       }),
       createSendInputToAgentToolDefinition(options.supervisor),
       createWaitForAgentsToolDefinition(options.supervisor),
-      createTerminateAgentToolDefinition(options.supervisor),
+      createListAgentsToolDefinition(options.supervisor),
+      createInterruptAgentToolDefinition(options.supervisor),
     ];
     if (options.config.nook) {
       tools.push(createNookToolDefinition(options.backend, options.config));

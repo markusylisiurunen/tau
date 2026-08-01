@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { Config } from "../config/index.js";
 import type { ModelResolver } from "../models/catalog.js";
 import type { AgentSupervisor } from "../subagents/agent_supervisor.js";
+import { formatSubagentStates } from "../subagents/format.js";
 import { parseSubagentLaunchModel } from "../subagents/launch_model.js";
 import { getSubagentDescription, resolveSubagentEffectiveSettings } from "../subagents/registry.js";
 import type { SubagentLaunchModel, SubagentRuntimeConfig } from "../subagents/types.js";
@@ -26,7 +27,7 @@ import { TOOL_NAME_SPAWN_AGENT } from "./tool_names.js";
 
 const SPAWN_AGENT_DESCRIPTION = [
   "Spawn a subagent to run in the background and return its id.",
-  "Use wait_for_agents to collect its final response once it finishes.",
+  "Use wait_for_agents to read its latest response once it finishes.",
   "See your system instructions for available subagents and their capabilities.",
 ].join(" ");
 
@@ -84,20 +85,6 @@ const spawnArgsSchema = z
     workingDirectory: z.string().trim().min(1).optional(),
   })
   .strict();
-
-function formatSpawnToolResult(args: {
-  id: string;
-  name: string;
-  title: string;
-  workingDirectory?: string;
-}): string {
-  const lines = [`ID: ${args.id}`, `Name: ${args.name}`, `Title: ${args.title}`];
-  if (args.workingDirectory) {
-    lines.push(`Working directory: ${args.workingDirectory}`);
-  }
-  lines.push("Status: Running");
-  return lines.join("\n");
-}
 
 function formatAllowedLaunchModels(launchModels: string[]): string {
   if (launchModels.length === 0) {
@@ -285,11 +272,9 @@ export function createSpawnAgentToolDefinition(options: {
         ...effectiveSettings,
       };
 
-      const modelLabel = launchModelOverride?.normalized;
-      const statusWorkingDirectory = runtimeConfig.workingDirectory
-        ? formatCwd(runtimeConfig.workingDirectory)
-        : undefined;
-      const statusPrefixParts = [name, modelLabel, statusWorkingDirectory].filter(Boolean);
+      const modelLabel = `${runtimeConfig.model.provider}/${runtimeConfig.model.id}:${runtimeConfig.settings?.reasoning ?? "none"}`;
+      const statusWorkingDirectory = formatCwd(runtimeConfig.workingDirectory);
+      const statusPrefixParts = [name, modelLabel, statusWorkingDirectory];
 
       return executeTool(
         context,
@@ -320,7 +305,6 @@ export function createSpawnAgentToolDefinition(options: {
             runtimeConfig,
             prompt,
             title,
-            modelLabel,
             originHistoryEntryId: context.assistantMessageId,
             config,
             backend,
@@ -340,14 +324,10 @@ export function createSpawnAgentToolDefinition(options: {
             return { content: outcome.content, outcome: outcome.outcome, uiEvent };
           }
 
-          const resultText = formatSpawnToolResult({
-            id: spawnResult.id,
-            name,
-            title,
-            workingDirectory: runtimeConfig.workingDirectory,
+          const resultText = formatSubagentStates([spawnResult.state], spawnResult.capacity, {
+            includeResponses: false,
           });
-
-          const statusParts = [...statusPrefixParts, spawnResult.id];
+          const statusParts = [...statusPrefixParts, spawnResult.state.id];
           const outcome = createTextToolOutcome(resultText, "succeeded");
           const uiText = buildSubagentUiText({
             output: prompt,
@@ -362,7 +342,7 @@ export function createSpawnAgentToolDefinition(options: {
             title,
             headerTarget,
             status: "success",
-            agentId: spawnResult.id,
+            agentId: spawnResult.state.id,
             uiText,
           };
           return { content: outcome.content, outcome: outcome.outcome, uiEvent };

@@ -8,7 +8,7 @@ import type {
 } from "@earendil-works/pi-ai";
 import { type ZodError, z } from "zod";
 
-export const SESSION_PROTOCOL_VERSION = 4 as const;
+export const SESSION_PROTOCOL_VERSION = 5 as const;
 export const SESSION_PROTOCOL_MAX_EXEC_CAPTURE_BYTES = 24 * 1024 * 1024;
 export const SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES = 16 * 1024 * 1024;
 
@@ -36,7 +36,7 @@ export const SESSION_PROTOCOL_METHODS = [
   "session.reload",
   "session.compact",
   "session.rewind",
-  "session.terminateSubagent",
+  "session.interruptSubagent",
   "session.ephemeral.create",
   "session.ephemeral.submit",
   "session.ephemeral.close",
@@ -200,7 +200,7 @@ export type SessionProtocolCompactParams = SessionProtocolSessionIdParams & {
 export type SessionProtocolRewindParams = SessionProtocolSessionIdParams & {
   historyEntryId: string;
 };
-export type SessionProtocolTerminateSubagentParams = SessionProtocolSessionIdParams & {
+export type SessionProtocolInterruptSubagentParams = SessionProtocolSessionIdParams & {
   subagentId: string;
 };
 export type SessionProtocolEphemeralAgentTool = "bash" | "write" | "edit" | "view_image" | "web";
@@ -257,7 +257,7 @@ export type SessionProtocolParamsByMethod = {
   "session.reload": SessionProtocolReloadParams;
   "session.compact": SessionProtocolCompactParams;
   "session.rewind": SessionProtocolRewindParams;
-  "session.terminateSubagent": SessionProtocolTerminateSubagentParams;
+  "session.interruptSubagent": SessionProtocolInterruptSubagentParams;
   "session.ephemeral.create": SessionProtocolEphemeralCreateParams;
   "session.ephemeral.submit": SessionProtocolEphemeralSubmitParams;
   "session.ephemeral.close": SessionProtocolEphemeralCloseParams;
@@ -597,12 +597,65 @@ export type SessionProtocolToolRun =
       error?: string;
     });
 
+export type SessionProtocolAgentRunFailure =
+  | { kind: "interrupted"; message: string }
+  | {
+      kind: "auto-compaction-failed" | "model-subturn-limit" | "runtime-error";
+      message: string;
+    }
+  | {
+      kind: "provider-error";
+      message: string;
+      stopReason: string;
+    };
+
+type SessionProtocolAgentFailedRunFailure = Exclude<
+  SessionProtocolAgentRunFailure,
+  { kind: "interrupted" }
+>;
+type SessionProtocolAgentInterruptedRunFailure = Extract<
+  SessionProtocolAgentRunFailure,
+  { kind: "interrupted" }
+>;
+
+type SessionProtocolAgentRunStateBase = {
+  revision: number;
+  startedAt: number;
+  progress: string;
+  interruptRequested: boolean;
+};
+
+export type SessionProtocolAgentRunState =
+  | (SessionProtocolAgentRunStateBase & { status: "running" })
+  | (SessionProtocolAgentRunStateBase & {
+      status: "succeeded";
+      finishedAt: number;
+      response: string;
+    })
+  | (SessionProtocolAgentRunStateBase & {
+      status: "failed";
+      finishedAt: number;
+      failure: SessionProtocolAgentFailedRunFailure;
+    })
+  | (SessionProtocolAgentRunStateBase & {
+      status: "interrupted";
+      finishedAt: number;
+      failure: SessionProtocolAgentInterruptedRunFailure;
+    });
+
 export type SessionProtocolAgentRun = {
   id: string;
   name: string;
   title: string;
-  status: "running" | "succeeded" | "failed" | "cancelled";
-  modelLabel?: string;
+  availability: "running" | "idle";
+  model: {
+    provider: string;
+    id: string;
+    reasoning: SessionProtocolReasoningEffort;
+  };
+  workingDirectory: string;
+  createdAt: number;
+  run: SessionProtocolAgentRunState;
   costTotal: number;
   turns: number;
   toolCalls: number;
@@ -614,12 +667,6 @@ export type SessionProtocolAgentRun = {
     contextWindowUsageTokens: number;
     contextWindow: number;
   };
-  startedAt: number;
-  finishedAt?: number;
-  abortRequested: boolean;
-  progress?: string;
-  finalText?: string;
-  error?: string;
 };
 
 export type SessionProtocolFacetSubject =
@@ -676,7 +723,7 @@ export type SessionProtocolUnobserveResult = {
   unobserved: true;
 };
 
-export type SessionProtocolTerminateSubagentResult = {
+export type SessionProtocolInterruptSubagentResult = {
   found: boolean;
 };
 
@@ -725,7 +772,7 @@ export type SessionProtocolResultByMethod = {
   "session.reload": SessionProtocolReloadResult;
   "session.compact": SessionProtocolCompactResult;
   "session.rewind": SessionProtocolRewindResult;
-  "session.terminateSubagent": SessionProtocolTerminateSubagentResult;
+  "session.interruptSubagent": SessionProtocolInterruptSubagentResult;
   "session.ephemeral.create": SessionProtocolEphemeralCreateResult;
   "session.ephemeral.submit": SessionProtocolEphemeralSubmitResult;
   "session.ephemeral.close": SessionProtocolEphemeralCloseResult;
@@ -1388,7 +1435,7 @@ const sessionProtocolRewindParamsSchema = z
   })
   .strip();
 
-const sessionProtocolTerminateSubagentParamsSchema = z
+const sessionProtocolInterruptSubagentParamsSchema = z
   .object({
     sessionId: nonEmptyStringSchema,
     subagentId: nonEmptyStringSchema,
@@ -1805,25 +1852,93 @@ const sessionProtocolAgentUsageSchema = z
   })
   .strip();
 
+const sessionProtocolAgentFailedRunFailureSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.enum(["auto-compaction-failed", "model-subturn-limit", "runtime-error"]),
+      message: z.string(),
+    })
+    .strip(),
+  z
+    .object({
+      kind: z.literal("provider-error"),
+      message: z.string(),
+      stopReason: z.string(),
+    })
+    .strip(),
+]);
+
+const sessionProtocolAgentInterruptedRunFailureSchema = z
+  .object({
+    kind: z.literal("interrupted"),
+    message: z.string(),
+  })
+  .strip();
+
+const sessionProtocolAgentRunStateBaseSchema = z.object({
+  revision: z.number().int().positive(),
+  startedAt: z.number().finite(),
+  progress: z.string(),
+  interruptRequested: z.boolean(),
+});
+
+const sessionProtocolAgentRunStateSchema = z.discriminatedUnion("status", [
+  sessionProtocolAgentRunStateBaseSchema.extend({ status: z.literal("running") }).strip(),
+  sessionProtocolAgentRunStateBaseSchema
+    .extend({
+      status: z.literal("succeeded"),
+      finishedAt: z.number().finite(),
+      response: z.string(),
+    })
+    .strip(),
+  sessionProtocolAgentRunStateBaseSchema
+    .extend({
+      status: z.literal("failed"),
+      finishedAt: z.number().finite(),
+      failure: sessionProtocolAgentFailedRunFailureSchema,
+    })
+    .strip(),
+  sessionProtocolAgentRunStateBaseSchema
+    .extend({
+      status: z.literal("interrupted"),
+      finishedAt: z.number().finite(),
+      failure: sessionProtocolAgentInterruptedRunFailureSchema,
+    })
+    .strip(),
+]);
+
 const sessionProtocolAgentRunSchema = z
   .object({
     id: nonEmptyStringSchema,
     name: nonEmptyStringSchema,
     title: nonEmptyStringSchema,
-    status: z.enum(["running", "succeeded", "failed", "cancelled"]),
-    modelLabel: z.string().optional(),
+    availability: z.enum(["running", "idle"]),
+    model: z
+      .object({
+        provider: nonEmptyStringSchema,
+        id: nonEmptyStringSchema,
+        reasoning: sessionProtocolReasoningEffortSchema,
+      })
+      .strip(),
+    workingDirectory: nonEmptyStringSchema,
+    createdAt: z.number().finite(),
+    run: sessionProtocolAgentRunStateSchema,
     costTotal: z.number().finite(),
     turns: z.number().finite(),
     toolCalls: z.number().finite(),
     usage: sessionProtocolAgentUsageSchema,
-    startedAt: z.number().finite(),
-    finishedAt: z.number().finite().optional(),
-    abortRequested: z.boolean(),
-    progress: z.string().optional(),
-    finalText: z.string().optional(),
-    error: z.string().optional(),
   })
-  .strip();
+  .strip()
+  .superRefine((agent, ctx) => {
+    const running = agent.run.status === "running";
+    if ((agent.availability === "running") !== running) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["availability"],
+        message: "agent availability must match latest run status",
+      });
+    }
+  });
 
 const sessionProtocolFacetSubjectSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("session") }).strip(),
@@ -2462,7 +2577,7 @@ const sessionProtocolUnobserveResultSchema = z
   })
   .strip();
 
-const sessionProtocolTerminateSubagentResultSchema = z
+const sessionProtocolInterruptSubagentResultSchema = z
   .object({
     found: z.boolean(),
   })
@@ -3379,9 +3494,9 @@ export function validateSessionProtocolParams(
   params: unknown,
 ): SessionProtocolParamsValidationResult<SessionProtocolRewindParams>;
 export function validateSessionProtocolParams(
-  method: "session.terminateSubagent",
+  method: "session.interruptSubagent",
   params: unknown,
-): SessionProtocolParamsValidationResult<SessionProtocolTerminateSubagentParams>;
+): SessionProtocolParamsValidationResult<SessionProtocolInterruptSubagentParams>;
 export function validateSessionProtocolParams(
   method: "session.ephemeral.create",
   params: unknown,
@@ -3452,8 +3567,8 @@ export function validateSessionProtocolParams(
       return validateCompactParams(params);
     case "session.rewind":
       return validateRewindParams(params);
-    case "session.terminateSubagent":
-      return validateTerminateSubagentParams(params);
+    case "session.interruptSubagent":
+      return validateInterruptSubagentParams(params);
     case "session.ephemeral.create":
       return validateEphemeralCreateParams(params);
     case "session.ephemeral.submit":
@@ -3499,8 +3614,8 @@ export function validateSessionProtocolResult(
       return validateResult(method, result, sessionProtocolCompactResultSchema);
     case "session.rewind":
       return validateResult(method, result, sessionProtocolRewindResultSchema);
-    case "session.terminateSubagent":
-      return validateResult(method, result, sessionProtocolTerminateSubagentResultSchema);
+    case "session.interruptSubagent":
+      return validateResult(method, result, sessionProtocolInterruptSubagentResultSchema);
     case "session.ephemeral.create":
       return validateResult(method, result, sessionProtocolEphemeralCreateResultSchema);
     case "session.ephemeral.submit":
@@ -3890,18 +4005,18 @@ function validateRewindParams(
   };
 }
 
-function validateTerminateSubagentParams(
+function validateInterruptSubagentParams(
   params: unknown,
-): SessionProtocolParamsValidationResult<SessionProtocolTerminateSubagentParams> {
-  const parsed = sessionProtocolTerminateSubagentParamsSchema.safeParse(params);
+): SessionProtocolParamsValidationResult<SessionProtocolInterruptSubagentParams> {
+  const parsed = sessionProtocolInterruptSubagentParamsSchema.safeParse(params);
   if (!parsed.success) {
     const message = hasIssue(parsed.error, [], "invalid_type")
-      ? "session.terminateSubagent params must be an object"
+      ? "session.interruptSubagent params must be an object"
       : hasIssue(parsed.error, ["sessionId"])
-        ? "session.terminateSubagent params.sessionId must be a non-empty string"
+        ? "session.interruptSubagent params.sessionId must be a non-empty string"
         : hasIssue(parsed.error, ["subagentId"])
-          ? "session.terminateSubagent params.subagentId must be a non-empty string"
-          : `session.terminateSubagent params are invalid: ${formatZodError(parsed.error)}`;
+          ? "session.interruptSubagent params.subagentId must be a non-empty string"
+          : `session.interruptSubagent params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 

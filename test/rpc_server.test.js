@@ -59,7 +59,28 @@ function createAgentDelta(sessionId, revision, event) {
             id: event.id,
             name: "default",
             title: event.title ?? event.id,
-            status: event.type === "finished" ? "succeeded" : "running",
+            availability: event.type === "finished" ? "idle" : "running",
+            model: { provider: "anthropic", id: "claude-opus-4-8", reasoning: "medium" },
+            workingDirectory: "/repo",
+            createdAt: revision,
+            run:
+              event.type === "finished"
+                ? {
+                    revision: 1,
+                    status: "succeeded",
+                    startedAt: revision,
+                    finishedAt: revision + 1,
+                    progress: event.text ?? "",
+                    interruptRequested: false,
+                    response: "done",
+                  }
+                : {
+                    revision: 1,
+                    status: "running",
+                    startedAt: revision,
+                    progress: event.text ?? "",
+                    interruptRequested: false,
+                  },
             costTotal: event.costTotal ?? 0,
             turns: event.turns ?? 0,
             toolCalls: event.toolCalls ?? 0,
@@ -71,9 +92,6 @@ function createAgentDelta(sessionId, revision, event) {
               contextWindowUsageTokens: 0,
               contextWindow: 200000,
             },
-            startedAt: revision,
-            abortRequested: false,
-            ...(event.text !== undefined ? { progress: event.text } : {}),
           },
         },
       ],
@@ -420,7 +438,7 @@ function createHarness(options = {}) {
       waitForActiveWork: vi.fn(async () => {
         await Promise.allSettled([activeTurnSettlement, ...activeWorkPromises]);
       }),
-      terminateSubagent: vi.fn(async () => ({ found: true })),
+      interruptSubagent: vi.fn(async () => ({ found: true })),
       createEphemeralContext: vi.fn(async () => {
         const contextId = `context-${ephemeralContexts.size + 1}`;
         ephemeralContexts.add(contextId);
@@ -531,7 +549,7 @@ function deltaHasAgent(line, id, progress) {
       (change) =>
         change.type === "agent.set" &&
         change.agent.id === id &&
-        (progress === undefined || change.agent.progress === progress),
+        (progress === undefined || change.agent.run.progress === progress),
     )
   );
 }
@@ -1358,7 +1376,7 @@ describe("rpc_server", () => {
     await submit;
   });
 
-  it("terminates a subagent without interrupting an active foreground turn", async () => {
+  it("interrupts a subagent run without interrupting an active foreground turn", async () => {
     const harness = createHarness();
 
     const submit = harness.server.handleLine(
@@ -1370,16 +1388,16 @@ describe("rpc_server", () => {
     await waitFor(() => harness.seededSession.canReleaseTurn());
 
     await harness.server.handleLine(
-      request("terminate-1", "session.terminateSubagent", {
+      request("interrupt-subagent-1", "session.interruptSubagent", {
         sessionId: "session-1",
         subagentId: "agent-1",
       }),
     );
 
     expect(harness.seededSession.isTurnRunning).toBe(true);
-    expect(harness.seededSession.terminateSubagent).toHaveBeenCalledWith("agent-1");
+    expect(harness.seededSession.interruptSubagent).toHaveBeenCalledWith("agent-1");
     expect(
-      harness.lines.find((line) => line.type === "response" && line.id === "terminate-1"),
+      harness.lines.find((line) => line.type === "response" && line.id === "interrupt-subagent-1"),
     ).toMatchObject({ ok: true, result: { found: true } });
 
     harness.releaseTurn();

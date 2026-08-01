@@ -64,7 +64,7 @@ WebSocket clients receive the same `ready`, `response`, `session.delta`, and `se
 every protocol message includes `version`.
 
 ```json
-{ "version": 4, "type": "..." }
+{ "version": 5, "type": "..." }
 ```
 
 server-to-client messages are:
@@ -85,7 +85,7 @@ when the rpc server starts, it immediately emits a `ready` line:
 
 ```json
 {
-  "version": 4,
+  "version": 5,
   "type": "ready",
   "methods": [
     "initialize",
@@ -111,7 +111,7 @@ when the rpc server starts, it immediately emits a `ready` line:
     "session.reload",
     "session.compact",
     "session.rewind",
-    "session.terminateSubagent",
+    "session.interruptSubagent",
     "session.ephemeral.create",
     "session.ephemeral.submit",
     "session.ephemeral.close",
@@ -150,7 +150,7 @@ all requests use this envelope:
 
 ```json
 {
-  "version": 4,
+  "version": 5,
   "type": "request",
   "id": "req-1",
   "method": "session.submit",
@@ -183,7 +183,7 @@ params (required):
 
 ```json
 {
-  "version": 4,
+  "version": 5,
   "type": "response",
   "id": "init-1",
   "ok": true,
@@ -213,7 +213,7 @@ params (required):
       "session.reload",
       "session.compact",
       "session.rewind",
-      "session.terminateSubagent",
+      "session.interruptSubagent",
       "session.ephemeral.create",
       "session.ephemeral.submit",
       "session.ephemeral.close"
@@ -422,7 +422,7 @@ if another turn is already running, tau returns:
 
 ```json
 {
-  "version": 4,
+  "version": 5,
   "type": "response",
   "id": "submit-2",
   "ok": false,
@@ -770,7 +770,7 @@ manually compacts the session into one synthetic user summary message and return
 
 the host applies compaction through the session mutation queue, interrupts any running turn, waits for in-flight submit handling to settle, and rejects pending steering submits. Clients should render the returned `snapshot` as authoritative session state; `compactionMessage` and `includedLastAssistant` describe the operation result and are not stored UI state.
 
-#### session.terminateSubagent
+#### session.interruptSubagent
 
 params (required):
 
@@ -781,7 +781,7 @@ params (required):
 }
 ```
 
-requests termination of a running subagent in the hosted session. returns `{ "found": true }` when the subagent id was known and `{ "found": false }` otherwise.
+interrupts the current run of a subagent in the hosted session without disposing its reusable thread. returns `{ "found": true }` when the subagent id was known and `{ "found": false }` otherwise.
 
 #### session.ephemeral.create
 
@@ -831,7 +831,7 @@ observed-session changes are broadcast as `session.delta` messages:
 
 ```json
 {
-  "version": 4,
+  "version": 5,
   "type": "session.delta",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "fromRevision": 1,
@@ -855,7 +855,7 @@ observed-session changes are broadcast as `session.delta` messages:
 
 ```json
 {
-  "version": 4,
+  "version": 5,
   "type": "session.delta",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "fromRevision": null,
@@ -886,7 +886,7 @@ notes:
 
 ```json
 {
-  "version": 4,
+  "version": 5,
   "type": "session.pendingUserMessages",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "state": {
@@ -909,7 +909,7 @@ Pending messages are shared across attached clients and survive client detach wh
 
 ```json
 {
-  "version": 4,
+  "version": 5,
   "type": "session.ephemeral",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "event": {
@@ -940,7 +940,7 @@ error responses use:
 
 ```json
 {
-  "version": 4,
+  "version": 5,
   "type": "response",
   "id": "req-1",
   "ok": false,
@@ -970,7 +970,7 @@ for lines that cannot produce a valid request id (for example malformed json), `
 `runRpcServer` handles incoming lines concurrently with explicit serialization for mutating transitions. this means:
 
 - multiple requests can be accepted before earlier ones complete
-- `session.record`, `session.setReasoning`, `session.setPersona`, `session.reload`, `session.compact`, `session.rewind`, and `session.terminateSubagent` run through a session-owned mutation queue (arrival order across clients observed to the same live session)
+- `session.record`, `session.setReasoning`, `session.setPersona`, `session.reload`, `session.compact`, `session.rewind`, and `session.interruptSubagent` run through a session-owned mutation queue (arrival order across clients observed to the same live session)
 - `session.setReasoning` updates settings immediately without interrupting an active turn; the active turn and its steering continuations keep their captured spec, and the new setting applies to the next independently submitted or queued turn
 - `session.rewind` requires no active submit or pending user work and fails with `busy` without interrupting or cancelling anything
 - only one `session.submit` or `session.retry` turn can run at once (`busy` otherwise)

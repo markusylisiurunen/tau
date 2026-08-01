@@ -215,7 +215,7 @@ class FakeSessionProtocolTransport {
             text: "rewound text",
             removedEntryIds: [params.historyEntryId, "assistant-1"],
           };
-        case "session.terminateSubagent":
+        case "session.interruptSubagent":
           return { found: params.subagentId === "subagent-1" };
         case "session.list":
           return { sessions: [{ sessionId: "session-1", lifecycle: "idle" }] };
@@ -689,9 +689,9 @@ describe("sdk_client", () => {
       params: { sessionId: "session-1", historyEntryId: "history-1" },
     });
 
-    await expect(readySession.terminateSubagent("subagent-1")).resolves.toEqual({ found: true });
+    await expect(readySession.interruptSubagent("subagent-1")).resolves.toEqual({ found: true });
     expect(transport.requests.at(-1)).toEqual({
-      method: "session.terminateSubagent",
+      method: "session.interruptSubagent",
       params: { sessionId: "session-1", subagentId: "subagent-1" },
     });
 

@@ -1430,7 +1430,21 @@ describe("LocalSessionHost", () => {
           id: "child-1",
           name: "default",
           title: "long task",
-          status: "running",
+          availability: "running",
+          model: {
+            provider: personas[0].model.provider,
+            id: personas[0].model.id,
+            reasoning: "medium",
+          },
+          workingDirectory: "/repo",
+          createdAt: 1,
+          run: {
+            revision: 1,
+            status: "running",
+            startedAt: 1,
+            progress: "",
+            interruptRequested: false,
+          },
           costTotal: 0,
           turns: 0,
           toolCalls: 0,
@@ -1442,8 +1456,6 @@ describe("LocalSessionHost", () => {
             contextWindowUsageTokens: 0,
             contextWindow: 100_000,
           },
-          startedAt: 1,
-          abortRequested: false,
         },
       }),
     ).resolves.toBeUndefined();
@@ -1463,7 +1475,10 @@ describe("LocalSessionHost", () => {
           expect.objectContaining({ id: historyEntryId, state: "committed" }),
         ]),
         agents: {
-          "child-1": expect.objectContaining({ id: "child-1", status: "running" }),
+          "child-1": expect.objectContaining({
+            id: "child-1",
+            run: expect.objectContaining({ status: "running" }),
+          }),
         },
       }),
     );

@@ -32,7 +32,17 @@ function createSubagentState(id, title) {
     id,
     name: "default",
     title,
-    status: "running",
+    availability: "running",
+    model: { provider: "anthropic", id: "claude-opus-4-8", reasoning: "medium" },
+    workingDirectory: "/repo",
+    createdAt: 1,
+    run: {
+      revision: 1,
+      status: "running",
+      startedAt: 1,
+      progress: "",
+      interruptRequested: false,
+    },
     costTotal: 0,
     turns: 0,
     toolCalls: 0,
@@ -44,8 +54,6 @@ function createSubagentState(id, title) {
       contextWindowUsageTokens: 0,
       contextWindow: 100,
     },
-    startedAt: 1,
-    abortRequested: false,
   };
 }
 
@@ -120,12 +128,12 @@ test("SubagentPanelComponent reconciles snapshots without discarding surviving s
   expect(panel.cycleSelection(1)).toBe("agent-2");
   panel.handleEvent({
     type: "subagent_progress",
-    id: "agent-2",
-    text: "agent: live progress",
-    costTotal: 0.01,
-    turns: 1,
-    toolCalls: 0,
-    usage: second.usage,
+    state: {
+      ...second,
+      costTotal: 0.01,
+      turns: 1,
+      run: { ...second.run, progress: "agent: live progress" },
+    },
   });
 
   panel.reconcile([

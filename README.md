@@ -374,13 +374,13 @@ tau --persona opus-4.8-coder
 
 ## sub-agents
 
-some personas can run isolated sub-agents via the `spawn_agent`, `send_input_to_agent`, `wait_for_agents`, and `terminate_agent` tools. sub-agents report progress in the subagent panel, and `wait_for_agents` returns final responses as soon as at least one requested agent finishes.
+some personas can run isolated sub-agents via the `spawn_agent`, `send_input_to_agent`, `wait_for_agents`, `list_agents`, and `interrupt_agent` tools. `list_agents` reports each spawned thread's runtime, latest run, usage, context pressure, and response availability. `wait_for_agents` returns retained latest responses as soon as at least one requested agent finishes, and completed responses can be read repeatedly.
 
 the built-in `default` sub-agent is available unless disabled. it inherits the main persona's model, settings, tool access (minus sub-agent management tools), and system prompt. the inherited main prompt is wrapped with default sub-agent-specific rules, and those wrapper rules take precedence on conflicts. custom sub-agents can override model, reasoning, and tools.
 
 `spawn_agent` supports an optional launch override string (`model: "<provider>/<model>:<effort>"`) and an optional `workingDirectory`. when `workingDirectory` is set, the sub-agent runs from that directory and its config, model catalog, repository metadata, AGENTS.md context, and skills are resolved through the session execution environment as if tau was started there. launch overrides are allowlisted per subagent. custom subagents can define `launchModels` in persona frontmatter, and the built-in `default` sub-agent uses `subagents.defaultLaunchModels` from config.
 
-sub-agent progress appears in a sticky panel. use `alt+down` to cycle active subagents and `ctrl+g` to terminate the selected one. tau caps active subagents at 8.
+sub-agent progress appears in a sticky panel. use `alt+down` to cycle active subagents and `ctrl+g` to interrupt the selected one's current run. tau caps active subagents at 8.
 
 `web.discover` works without an API key. to use `web.search` and `web.fetch`, set `apiKeys.exa` in `~/.config/tau/config.json` (see above) or export `EXA_API_KEY`. `web` is available to main agents and sub-agents, and runs one-shot JavaScript with bounded `web.discover`, `web.search`, and `web.fetch` APIs; search and fetch are backed by Exa. for direct URLs, the tool description asks the model to run discovery first and decide in the next turn whether to use `curl`, `web.fetch`, or another approach. discovery runs ordinary bounded requests through the session execution environment and reports metadata for direct Markdown representations and `llms.txt` files at every path prefix without returning page content or parsing links, leaving direct retrieval to a later explicit `curl` call. search and fetch remain host-owned so Exa credentials stay outside the sandbox, default to highlights, cap provider responses at 16 MiB before parsing, and omit provider-specific details. generated code runs in a capability-limited SES compartment inside a host Worker. the tool description limits use to requests that ask for or clearly imply web access, asks the model to prefer concise plain text over raw JSON dumps even when all response fields are needed, and tells it how to print the bundled API documentation.
 
@@ -488,7 +488,7 @@ the compact commands are manual and useful when you want to force context replac
 | `ctrl+o`     | toggle compact tool display               |
 | `ctrl+s`     | stash input to clipboard                  |
 | `ctrl+y`     | toggle voice recording (`/listen`)        |
-| `ctrl+g`     | terminate selected sub-agent              |
+| `ctrl+g`     | interrupt selected sub-agent              |
 | `ctrl+enter` | steer running assistant with editor input |
 | `enter x2`   | retry last response on empty input        |
 | `esc x2`     | clear current prompt                      |
@@ -678,7 +678,7 @@ optional frontmatter fields:
         - openai/gpt-5.5:high
         - anthropic/claude-haiku-4-5:medium
   ```
-- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `view_image`, `web`, `nook`, `spawn_agent`, `send_input_to_agent`, `wait_for_agents`, `terminate_agent`. if omitted, defaults to `bash`, `write`, `edit`, `view_image`, `web`, `nook` (and subagent tools when subagents are enabled). `nook` is available only when effective Nook configuration is also present.
+- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `view_image`, `web`, `nook`, `spawn_agent`, `send_input_to_agent`, `wait_for_agents`, `list_agents`, `interrupt_agent`. if omitted, defaults to `bash`, `write`, `edit`, `view_image`, `web`, `nook` (and subagent tools when subagents are enabled). `nook` is available only when effective Nook configuration is also present.
 
 the markdown body becomes the system prompt.
 

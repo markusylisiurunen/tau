@@ -263,22 +263,22 @@ describe("session_protocol", () => {
       },
     });
 
-    const terminateSubagent = parseSessionProtocolRequestLine(
+    const interruptSubagent = parseSessionProtocolRequestLine(
       JSON.stringify({
         version: SESSION_PROTOCOL_VERSION,
         type: "request",
-        id: "req-terminate-subagent",
-        method: "session.terminateSubagent",
+        id: "req-interrupt-subagent",
+        method: "session.interruptSubagent",
         params: { sessionId: "session-1", subagentId: "subagent-1" },
       }),
     );
-    expect(terminateSubagent).toEqual({
+    expect(interruptSubagent).toEqual({
       ok: true,
       request: {
         version: SESSION_PROTOCOL_VERSION,
         type: "request",
-        id: "req-terminate-subagent",
-        method: "session.terminateSubagent",
+        id: "req-interrupt-subagent",
+        method: "session.interruptSubagent",
         params: { sessionId: "session-1", subagentId: "subagent-1" },
       },
     });
@@ -1052,7 +1052,7 @@ describe("session_protocol", () => {
       value: { sessionId: "session-1", historyEntryId: "history-1" },
     });
     expect(
-      validateSessionProtocolParams("session.terminateSubagent", {
+      validateSessionProtocolParams("session.interruptSubagent", {
         sessionId: "session-1",
         subagentId: "subagent-1",
       }),
@@ -1334,7 +1334,7 @@ describe("session_protocol", () => {
     });
 
     expect(
-      validateSessionProtocolResult("session.terminateSubagent", {
+      validateSessionProtocolResult("session.interruptSubagent", {
         found: true,
       }),
     ).toEqual({
@@ -1772,7 +1772,19 @@ describe("session_protocol", () => {
       id: "agent-1",
       name: "default",
       title: "research",
-      status: "succeeded",
+      availability: "idle",
+      model: { provider: "anthropic", id: "claude-opus-4-8", reasoning: "medium" },
+      workingDirectory: "/repo",
+      createdAt: 1,
+      run: {
+        revision: 1,
+        status: "succeeded",
+        startedAt: 1,
+        finishedAt: 2,
+        progress: "done",
+        interruptRequested: false,
+        response: "result",
+      },
       costTotal: 0,
       turns: 1,
       toolCalls: 0,
@@ -1784,9 +1796,6 @@ describe("session_protocol", () => {
         contextWindowUsageTokens: 0,
         contextWindow: 1000,
       },
-      startedAt: 1,
-      finishedAt: 2,
-      abortRequested: false,
     };
     const snapshot = createProtocolSnapshot({
       messages,

@@ -1,7 +1,9 @@
 import type { Tool, ToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { z } from "zod";
-import type { AgentSupervisor, SubagentResult } from "../subagents/agent_supervisor.js";
+import type { AgentSupervisor } from "../subagents/agent_supervisor.js";
+import { formatSubagentStates } from "../subagents/format.js";
+import type { SubagentStateSnapshot } from "../subagents/types.js";
 import { truncateForTokens } from "../utils/truncate.js";
 import { parseToolArgs } from "../utils/zod.js";
 import type { ToolActivity } from "./activity.js";
@@ -17,8 +19,9 @@ import { buildSubagentUiText, formatSubagentStatusLine } from "./subagent_ui.js"
 import { TOOL_NAME_WAIT_FOR_AGENTS } from "./tool_names.js";
 
 const WAIT_FOR_AGENTS_DESCRIPTION = [
-  "Wait for one or more subagents and return final responses as soon as at least one requested subagent finishes.",
-  "Provide the list of subagent ids returned by spawn_agent.",
+  "Wait for one or more subagents and return their state as soon as at least one requested subagent finishes.",
+  "Completed agents include their latest response; running agents include their current state.",
+  "Responses are retained and may be read repeatedly by calling this tool again with a completed agent id.",
 ].join(" ");
 
 const WAIT_FOR_AGENTS_IDS_DESCRIPTION = "List of subagent ids to wait for.";
@@ -41,80 +44,19 @@ const waitArgsSchema = z.object({
   ids: z.array(z.string().trim().min(1)).min(1),
 });
 
-function buildSubagentBody(result: SubagentResult): string {
-  const errorLine =
-    result.status !== "success"
-      ? result.error
-        ? `Error: ${result.error}`
-        : `Status: ${result.status}`
-      : undefined;
-  const bodyParts = [errorLine, result.finalText?.trimEnd()].filter((text) => text?.trim().length);
-  return bodyParts.join("\n");
-}
-
-function formatSubagentOutputLines(result: SubagentResult): string[] {
-  const header = `**${result.id}**`;
-  const body = buildSubagentBody(result);
-  if (!body.trim()) {
-    return [header];
-  }
-  return [header, ...body.split("\n")];
-}
-
-function formatSubagentOutputLinesForUi(result: SubagentResult, maxTokens: number): string[] {
-  const header = `**${result.id}**`;
-  const body = buildSubagentBody(result);
-  if (!body.trim()) {
-    return [header];
-  }
-  const truncated = truncateForTokens(body, { maxTokens, strategy: "head" }).content.trimEnd();
-  const bodyLines = truncated ? truncated.split("\n") : [];
-  return [header, ...bodyLines];
-}
-
-function formatWaitOutput(
-  results: SubagentResult[],
-  requestedIds: string[],
-  maxTokensPerSubagent?: number,
-): string {
-  const output: string[] = [];
-  const finishedIds = results.map((result) => result.id);
-  const finishedIdSet = new Set(finishedIds);
-  const runningIds = requestedIds.filter((id) => !finishedIdSet.has(id));
-
-  if (runningIds.length > 0) {
-    output.push(
-      `Finished: ${finishedIds.join(", ")}. Still running: ${runningIds.join(", ")}. ` +
-        "Call wait_for_agents again with the still-running ids to collect their final responses.",
-    );
-    output.push("");
-  }
-
-  results.forEach((result, index) => {
-    if (index > 0) output.push("");
-    const lines = maxTokensPerSubagent
-      ? formatSubagentOutputLinesForUi(result, maxTokensPerSubagent)
-      : formatSubagentOutputLines(result);
-    output.push(...lines);
-  });
-  return output.join("\n");
-}
-
-function getWaitDurationMs(results: SubagentResult[]): number | undefined {
-  if (results.length === 0) return undefined;
+function getWaitDurationMs(states: SubagentStateSnapshot[]): number | undefined {
+  if (states.length === 0) return undefined;
   let earliest = Number.POSITIVE_INFINITY;
   let latest = 0;
-  for (const result of results) {
-    earliest = Math.min(earliest, result.startedAt);
-    const finishedAt = result.finishedAt ?? Date.now();
-    latest = Math.max(latest, finishedAt);
+  for (const state of states) {
+    earliest = Math.min(earliest, state.run.startedAt);
+    latest = Math.max(latest, state.run.status === "running" ? Date.now() : state.run.finishedAt);
   }
-  if (!Number.isFinite(earliest)) return undefined;
-  return Math.max(0, latest - earliest);
+  return Number.isFinite(earliest) ? Math.max(0, latest - earliest) : undefined;
 }
 
-function getWaitCostTotal(results: SubagentResult[]): number {
-  return results.reduce((sum, result) => sum + result.costTotal, 0);
+function getWaitCostTotal(states: SubagentStateSnapshot[]): number {
+  return states.reduce((sum, state) => sum + state.costTotal, 0);
 }
 
 function formatAgentIdsDisplayTarget(ids: string[]): string {
@@ -155,33 +97,26 @@ export function createWaitForAgentsToolDefinition(supervisor: AgentSupervisor): 
         return executeTool(context, () => blocked(`Invalid arguments: ${parsedArgs.error}`));
       }
 
-      ({ ids } = parsedArgs.data);
-
-      const deduped: string[] = [];
-      const seen = new Set<string>();
-      for (const id of ids) {
-        if (!seen.has(id)) {
-          seen.add(id);
-          deduped.push(id);
-        }
-      }
-      const dedupedTarget = formatAgentIdsDisplayTarget(deduped);
+      ids = [...new Set(parsedArgs.data.ids)];
+      const dedupedTarget = formatAgentIdsDisplayTarget(ids);
 
       return executeTool(
         context,
         async (): Promise<ToolImplementationOutcome> => {
           try {
-            const results = await supervisor.waitForAgents(deduped, signal);
-            const resultText = formatWaitOutput(results, deduped);
-            const outputText = formatWaitOutput(
-              results,
-              deduped,
-              WAIT_FOR_AGENTS_OUTPUT_MAX_TOKENS,
+            const states = await supervisor.waitForAgents(ids, signal);
+            const capacity = supervisor.getCapacity();
+            const resultText = formatSubagentStates(states, capacity, { includeResponses: true });
+            const outputText = truncateForTokens(resultText, {
+              maxTokens: WAIT_FOR_AGENTS_OUTPUT_MAX_TOKENS * states.length,
+              strategy: "head",
+            }).content.trimEnd();
+            const hasFailures = states.some(
+              (state) => state.run.status === "failed" || state.run.status === "interrupted",
             );
-            const hasFailures = results.some((result) => result.status !== "success");
             const statusText = formatSubagentStatusLine({
-              costTotal: getWaitCostTotal(results),
-              durationMs: getWaitDurationMs(results),
+              costTotal: getWaitCostTotal(states),
+              durationMs: getWaitDurationMs(states),
             });
             const uiText = buildSubagentUiText({
               output: outputText,
@@ -191,10 +126,10 @@ export function createWaitForAgentsToolDefinition(supervisor: AgentSupervisor): 
             const uiEvent: ToolActivity = {
               type: "wait_for_agents_finished",
               toolCallId: toolCall.id,
-              agentIds: deduped,
+              agentIds: ids,
               headerTarget: dedupedTarget,
               status: hasFailures ? "error" : "success",
-              message: hasFailures ? "One or more subagents reported errors." : undefined,
+              message: hasFailures ? "One or more subagent runs did not succeed." : undefined,
               uiText,
             };
             const outcome = createTextToolOutcome(resultText, hasFailures ? "failed" : "succeeded");
@@ -210,7 +145,7 @@ export function createWaitForAgentsToolDefinition(supervisor: AgentSupervisor): 
             const uiEvent: ToolActivity = {
               type: "wait_for_agents_finished",
               toolCallId: toolCall.id,
-              agentIds: deduped,
+              agentIds: ids,
               headerTarget: dedupedTarget,
               status: "error",
               message: reason,
@@ -223,7 +158,7 @@ export function createWaitForAgentsToolDefinition(supervisor: AgentSupervisor): 
         {
           type: "wait_for_agents_started",
           toolCallId: toolCall.id,
-          agentIds: deduped,
+          agentIds: ids,
           headerTarget: dedupedTarget,
         },
       );

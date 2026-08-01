@@ -13,6 +13,7 @@ import type {
   SessionProtocolExecResult,
   SessionProtocolInitializeParams,
   SessionProtocolInterruptResult,
+  SessionProtocolInterruptSubagentResult,
   SessionProtocolMethod,
   SessionProtocolPendingUserMessagesMessage,
   SessionProtocolPendingUserMessagesState,
@@ -31,7 +32,6 @@ import type {
   SessionProtocolSnapshot,
   SessionProtocolSteerResult,
   SessionProtocolSubmitResult,
-  SessionProtocolTerminateSubagentResult,
   SessionProtocolTurnOutcome,
   SessionProtocolUnobserveResult,
 } from "../protocol/session_protocol.js";
@@ -66,7 +66,7 @@ export type TauSdkAutocompletePathsResult = SessionProtocolAutocompletePathsResu
 export type TauSdkSessionRetryResult = SessionProtocolRetryResult;
 export type TauSdkSessionSampleInput = Omit<SessionProtocolSampleParams, "sessionId">;
 export type TauSdkSessionSampleResult = SessionProtocolSampleResult;
-export type TauSdkSessionTerminateSubagentResult = SessionProtocolTerminateSubagentResult;
+export type TauSdkSessionInterruptSubagentResult = SessionProtocolInterruptSubagentResult;
 export type TauSdkSessionUnobserveResult = SessionProtocolUnobserveResult;
 export type TauSdkEphemeralAgentTool = SessionProtocolEphemeralAgentTool;
 export type TauSdkEphemeralCreateResult = SessionProtocolEphemeralCreateResult;
@@ -161,7 +161,7 @@ export type TauSdkSession = {
     options?: { guidance?: string },
   ): Promise<TauSdkSessionCompactResult>;
   rewindToHistoryEntryId(historyEntryId: string): Promise<TauSdkSessionRewindResult>;
-  terminateSubagent(subagentId: string): Promise<TauSdkSessionTerminateSubagentResult>;
+  interruptSubagent(subagentId: string): Promise<TauSdkSessionInterruptSubagentResult>;
   createEphemeralContext(options: {
     instructions: string;
     tools: TauSdkEphemeralAgentTool[];

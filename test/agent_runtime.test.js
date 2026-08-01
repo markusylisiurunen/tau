@@ -195,6 +195,33 @@ describe("AgentRuntime", () => {
     expect(streamModel).toHaveBeenCalledOnce();
   });
 
+  it("reserves submission before awaiting user input delivery", async () => {
+    const userEvent = deferred();
+    const events = [];
+    const { runtime, persona } = createRuntime({
+      eventSink: async (event) => {
+        events.push(event);
+        if (event.type === "user_message") await userEvent.promise;
+      },
+    });
+    const streamModel = setStreams(runtime, [createStream([], createAssistant(persona, "done"))]);
+
+    const first = runtime.submit("first", { historyEntryId: "user-1" });
+    await vi.waitFor(() => expect(events).toHaveLength(1));
+
+    await expect(runtime.submit("second", { historyEntryId: "user-2" })).rejects.toThrow(
+      "agent is already running",
+    );
+    expect(runtime.rawHistory).toHaveLength(1);
+    expect(runtime.state.historyEntries).toEqual([
+      expect.objectContaining({ id: "user-1", message: expect.objectContaining({ role: "user" }) }),
+    ]);
+
+    userEvent.resolve();
+    await first;
+    expect(streamModel).toHaveBeenCalledOnce();
+  });
+
   it("retains accepted input when the event sink fails and aborts later delivery", async () => {
     const sinkError = new Error("projection failed");
     const eventSink = vi.fn(async (event) => {

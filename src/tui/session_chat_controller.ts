@@ -1419,12 +1419,12 @@ export class SessionChatController {
 
   private syncSnapshotToolAndAgentUi(snapshot: SessionProtocolSnapshot): void {
     this.view.reconcileToolUiSession(getToolUiModelsInModelOrder(snapshot));
-
-    for (const agent of Object.values(snapshot.agents)) {
-      for (const event of subagentUiEventsFromAgentRun(agent)) {
-        this.view.handleSubagentEvent(event);
-      }
-    }
+    this.view.reconcileSubagentUiSession(
+      Object.values(snapshot.agents).map((agent) => ({
+        state: subagentStateFromAgentRun(agent),
+        ...(agent.progress !== undefined ? { progress: agent.progress } : {}),
+      })),
+    );
   }
 
   private collectAssistantMessages(snapshot: SessionProtocolSnapshot): AssistantMessage[] {

@@ -329,6 +329,7 @@ export class AgentRuntime {
   private contextEpoch: string;
   private usageCheckpoint?: AgentUsageCheckpoint;
   private activeAbortController?: AbortController;
+  private submitPending = false;
   private stopAtBoundaryRequested = false;
   private pendingSteering: Array<{
     id: string;
@@ -621,11 +622,17 @@ export class AgentRuntime {
   }
 
   async submit(text: string, options?: { historyEntryId?: string }): Promise<AgentTurnResult> {
-    if (this.status === "running") {
+    this.assertActive();
+    if (this.status === "running" || this.submitPending) {
       throw new Error("agent is already running");
     }
-    await this.commitUserText(text, options);
-    return await this.runTurn();
+    this.submitPending = true;
+    try {
+      await this.commitUserText(text, options);
+      return await this.runTurn();
+    } finally {
+      this.submitPending = false;
+    }
   }
 
   steer(text: string): SteeringSubmission {

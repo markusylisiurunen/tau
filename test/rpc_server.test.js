@@ -788,6 +788,116 @@ describe("rpc_server", () => {
     );
   });
 
+  it("serializes idle steering startup through user-message recording", async () => {
+    let markRecordStarted;
+    const recordStarted = new Promise((resolve) => {
+      markRecordStarted = resolve;
+    });
+    let releaseRecord;
+    const recordGate = new Promise((resolve) => {
+      releaseRecord = resolve;
+    });
+    const harness = createHarness({
+      record: async (options, record) => {
+        markRecordStarted();
+        await recordGate;
+        return await record(options);
+      },
+    });
+
+    const steering = harness.server.handleLine(
+      request("steer-1", "session.steer", {
+        sessionId: "session-1",
+        text: "start from steering",
+      }),
+    );
+    await recordStarted;
+    const overlapping = harness.server.handleLine(
+      request("submit-1", "session.submit", {
+        sessionId: "session-1",
+        text: "must remain uncommitted",
+      }),
+    );
+
+    expect(harness.seededSession.session.historyEntries).toEqual([]);
+    releaseRecord();
+    await overlapping;
+    expect(harness.lines.find((line) => line.id === "submit-1")).toMatchObject({
+      ok: false,
+      error: { code: SESSION_PROTOCOL_ERROR_CODES.busy },
+    });
+    expect(harness.seededSession.session.historyEntries).toEqual([
+      expect.objectContaining({
+        message: expect.objectContaining({
+          content: [{ type: "text", text: "start from steering" }],
+        }),
+      }),
+    ]);
+
+    await waitFor(() => harness.seededSession.canReleaseTurn());
+    harness.releaseTurn();
+    await steering;
+  });
+
+  it("preserves steering mode while handing a request to the post-turn queue", async () => {
+    let markFinalSnapshot;
+    const finalSnapshotStarted = new Promise((resolve) => {
+      markFinalSnapshot = resolve;
+    });
+    let releaseFinalSnapshot;
+    const finalSnapshotGate = new Promise((resolve) => {
+      releaseFinalSnapshot = resolve;
+    });
+    const harness = createHarness({
+      snapshotDelays: [
+        0,
+        async () => {
+          markFinalSnapshot();
+          await finalSnapshotGate;
+        },
+      ],
+    });
+
+    const firstSubmit = harness.server.handleLine(
+      request("submit-1", "session.submit", {
+        sessionId: "session-1",
+        text: "first turn",
+      }),
+    );
+    await waitFor(() => harness.seededSession.canReleaseTurn());
+    harness.releaseTurn();
+    await finalSnapshotStarted;
+
+    const steering = harness.server.handleLine(
+      request("steer-1", "session.steer", {
+        sessionId: "session-1",
+        text: "preserve steer mode",
+      }),
+    );
+    await waitFor(() =>
+      harness.lines.some(
+        (line) => line.type === "session.pendingUserMessages" && line.state.messages.length === 1,
+      ),
+    );
+    expect(
+      harness.lines.findLast((line) => line.type === "session.pendingUserMessages").state.messages,
+    ).toEqual([expect.objectContaining({ mode: "steer", text: "preserve steer mode" })]);
+
+    await harness.server.handleLine(
+      request("cancel-1", "session.cancelPendingMessages", { sessionId: "session-1" }),
+    );
+    await steering;
+    expect(harness.lines.find((line) => line.id === "cancel-1")).toMatchObject({
+      ok: true,
+      result: {
+        cancelled: [expect.objectContaining({ mode: "steer", text: "preserve steer mode" })],
+      },
+    });
+
+    releaseFinalSnapshot();
+    await firstSubmit;
+  });
+
   it("streams submit events, forwards subagent events, and rejects overlapping submit with busy", async () => {
     const harness = createHarness();
 

@@ -1709,7 +1709,15 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         return;
       case "assistant_final": {
         this.draftAssistantMessage = undefined;
-        this.messageStates.delete(event.historyEntryId);
+        const messageState = event.message.stopReason === "aborted" ? "interrupted" : "committed";
+        if (messageState === "committed") {
+          this.messageStates.delete(event.historyEntryId);
+        } else {
+          this.messageStates.set(event.historyEntryId, messageState);
+        }
+        const lifecycle: SessionProtocolSnapshot["lifecycle"] = this.runtime.isTurnRunning
+          ? "running"
+          : "idle";
         const toolChanges = this.syncToolRunsFromAssistantMessage(
           event.historyEntryId,
           event.message,
@@ -1736,11 +1744,14 @@ class LocalHostedSessionHandle implements LocalHostedSession {
             type: "message.replace",
             message: {
               id: event.historyEntryId,
-              state: event.message.stopReason === "aborted" ? "interrupted" : "committed",
+              state: messageState,
               modelVisible: true,
               message: event.message,
             },
           },
+          ...(this.committedSnapshot?.lifecycle !== lifecycle
+            ? [{ type: "lifecycle.set" as const, lifecycle }]
+            : []),
           ...toolChanges,
         ]);
         return;

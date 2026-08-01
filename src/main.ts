@@ -52,6 +52,7 @@ import {
   TelegramCliError,
   ToolCatalog,
   ToolCliError,
+  ToolRegistry,
   UsageCliError,
 } from "./core/index.js";
 import { getStartupPlatformError } from "./core/platform_support.js";
@@ -1067,16 +1068,16 @@ if (cli.debug) {
   }
 
   const virtualBundle = runtimeBootstrap?.virtualBundle;
-  if (!debugPersona || !runtimeBootstrap) {
-    throw new Error("debug runtime bootstrap is unavailable");
-  }
-  const debugToolRegistry = ToolCatalog.createDebugRegistry({
-    backend: createLocalToolExecutionBackend(),
-    cwd,
-    config,
-    persona: debugPersona,
-    modelResolver: runtimeBootstrap.modelResolver.resolveModel,
-  });
+  const debugToolRegistry =
+    debugPersona && runtimeBootstrap
+      ? ToolCatalog.createDebugRegistry({
+          backend: createLocalToolExecutionBackend(),
+          cwd,
+          config,
+          persona: debugPersona,
+          modelResolver: runtimeBootstrap.modelResolver.resolveModel,
+        })
+      : new ToolRegistry([]);
   printDebugInfo({
     personas,
     prompts,

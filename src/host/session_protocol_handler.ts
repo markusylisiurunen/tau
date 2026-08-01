@@ -38,6 +38,7 @@ type SessionProtocolActiveSubmit = {
 
 type SessionProtocolPendingRequest<Method extends "session.queue" | "session.steer"> = {
   id: string;
+  mode: "queue" | "steer";
   handler: SessionProtocolHandler;
   request: Extract<SessionProtocolRequestMessage, { method: Method }>;
 };
@@ -105,14 +106,14 @@ function buildPendingUserMessagesState(
       ...state.pendingSteeringSubmits.map(
         (pending): SessionProtocolPendingUserMessage => ({
           id: pending.id,
-          mode: "steer",
+          mode: pending.mode,
           text: pending.request.params.text,
         }),
       ),
       ...state.pendingQueuedSubmits.map(
         (pending): SessionProtocolPendingUserMessage => ({
           id: pending.id,
-          mode: "queue",
+          mode: pending.mode,
           text: pending.request.params.text,
         }),
       ),
@@ -436,7 +437,12 @@ export class SessionProtocolHandler {
 
     const startedSubmit = await this.enqueueMutation(state, () => {
       if (state.live.activeSubmit || state.session.isTurnRunning) {
-        state.live.pendingQueuedSubmits.push({ id: randomUUID(), handler: this, request });
+        state.live.pendingQueuedSubmits.push({
+          id: randomUUID(),
+          mode: "queue",
+          handler: this,
+          request,
+        });
         publishPendingUserMessages(state.session, state.live);
         return undefined;
       }
@@ -474,7 +480,7 @@ export class SessionProtocolHandler {
       return;
     }
 
-    const action = await this.enqueueMutation(state, () => {
+    const action = await this.enqueueMutation(state, async () => {
       if (state.live.interrupting) {
         return { type: "busy" as const };
       }
@@ -482,6 +488,7 @@ export class SessionProtocolHandler {
         const submission = state.session.steer(request.params.text);
         const pending = {
           id: randomUUID(),
+          mode: "steer" as const,
           steeringId: submission.id,
           handler: this,
           request,
@@ -491,11 +498,19 @@ export class SessionProtocolHandler {
         return { type: "steer" as const, pending, submission };
       }
       if (state.live.activeSubmit) {
-        state.live.pendingQueuedSubmits.push({ id: randomUUID(), handler: this, request });
+        state.live.pendingQueuedSubmits.push({
+          id: randomUUID(),
+          mode: "steer",
+          handler: this,
+          request,
+        });
         publishPendingUserMessages(state.session, state.live);
         return { type: "queued" as const };
       }
-      return { type: "submit" as const, started: this.startUserMessageTurn(state, request) };
+      return {
+        type: "submit" as const,
+        started: await this.startUserMessageTurn(state, request),
+      };
     });
 
     if (action.type === "busy") {
@@ -594,7 +609,7 @@ export class SessionProtocolHandler {
       return pending.map(
         (item): SessionProtocolPendingUserMessage => ({
           id: item.id,
-          mode: item.request.method === "session.steer" ? "steer" : "queue",
+          mode: item.mode,
           text: item.request.params.text,
         }),
       );

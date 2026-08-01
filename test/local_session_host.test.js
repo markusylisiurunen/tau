@@ -10,6 +10,7 @@ import { prependTauUserMetadata } from "../dist/core/utils/user_metadata.js";
 import { HostedEphemeralAgentSession } from "../dist/host/hosted_ephemeral_agent_session.js";
 import { LocalSessionHost } from "../dist/host/local_session_host.js";
 import { EphemeralThreadBusyError } from "../dist/host/session_host.js";
+import { applySessionProtocolDelta } from "../dist/protocol/session_protocol.js";
 import { FileSessionStore } from "../dist/store/file_session_store.js";
 import { MemorySessionStore } from "../dist/store/memory_session_store.js";
 import {
@@ -675,6 +676,49 @@ describe("LocalSessionHost", () => {
     await expect(dispose({ host, hostedSession })).resolves.toBeUndefined();
     await sampleResult;
     expect(executionEnvironment.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("persists the same interrupted terminal state published to observers", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const hostedSession = await host.createSession(localCreateInput);
+    let observedSnapshot = await hostedSession.snapshot();
+    hostedSession.onDelta((delta) => {
+      observedSnapshot = applySessionProtocolDelta(observedSnapshot, delta);
+    });
+    const streamError = new Error("stream failed");
+    const partial = fauxAssistantMessage("partial response");
+    hostedSession.runtime.agent.spec.model.stream = () => ({
+      async *[Symbol.asyncIterator]() {
+        yield {
+          type: "text_delta",
+          contentIndex: 0,
+          delta: "partial response",
+          partial,
+        };
+        throw streamError;
+      },
+      async result() {
+        throw streamError;
+      },
+    });
+
+    await hostedSession.record({ text: "fail after streaming" });
+    await expect(hostedSession.runTurn()).rejects.toBe(streamError);
+
+    const persistedSnapshot = await store.loadSession(hostedSession.sessionId);
+    const observedAssistant = observedSnapshot.messages.find(
+      (message) => message.message.role === "assistant",
+    );
+    const persistedAssistant = persistedSnapshot?.messages.find(
+      (message) => message.message.role === "assistant",
+    );
+    expect(observedSnapshot.lifecycle).toBe("idle");
+    expect(persistedSnapshot?.lifecycle).toBe("idle");
+    expect(observedAssistant).toMatchObject({ state: "interrupted", modelVisible: true });
+    expect(persistedAssistant).toEqual(observedAssistant);
+
+    await host.shutdown();
   });
 
   it("omits custom model headers from protocol snapshots", async () => {

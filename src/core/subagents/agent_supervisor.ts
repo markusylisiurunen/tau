@@ -242,8 +242,6 @@ export class AgentSupervisor {
   async waitForAgents(ids: string[], signal?: AbortSignal): Promise<SubagentResult[]> {
     const missing = ids.filter((id) => !this.records.has(id));
     if (missing.length > 0) throw new Error(`Unknown subagent ID(s): ${missing.join(", ")}`);
-    const completed = this.getCompletedRecords(ids);
-    if (completed.length > 0) return completed.map((record) => this.toResult(record));
     await raceWithAbort(Promise.race(ids.map((id) => this.waitForRecord(id))), signal);
     return this.getCompletedRecords(ids).map((record) => this.toResult(record));
   }
@@ -253,8 +251,8 @@ export class AgentSupervisor {
     if (!record) return undefined;
     if (record.status === "running") {
       record.abortRequested = true;
-      await this.emit({ type: "subagent_abort_requested", id });
       record.runtime.interrupt();
+      await this.emit({ type: "subagent_abort_requested", id });
     }
     return this.toResult(await raceWithAbort(this.waitForRecord(id), signal));
   }
@@ -283,7 +281,9 @@ export class AgentSupervisor {
         return await record.runtime.submit(prompt);
       })
       .then((result) => {
-        if (result.aborted) throw new Error("subagent was interrupted");
+        if (record.abortRequested || result.aborted) {
+          throw new Error("subagent was interrupted");
+        }
         if (result.blocked) throw new Error(result.blocked.message);
         const assistant = [...record.runtime.rawHistory]
           .reverse()
@@ -330,7 +330,7 @@ export class AgentSupervisor {
         (this.options.recordUsage ?? appendUsageLogEntry)({
           timestamp: event.message.timestamp,
           sessionId: record.id,
-          personaId: event.personaId,
+          personaId: record.personaId ?? event.personaId,
           provider: event.message.provider,
           model: event.message.model,
           api: event.message.api,
@@ -390,7 +390,7 @@ export class AgentSupervisor {
   private async waitForRecord(id: string): Promise<SubagentRecord> {
     const record = this.records.get(id);
     if (!record) throw new Error(`Unknown subagent ID: ${id}`);
-    return record.status === "running" ? await record.completion : record;
+    return await record.completion;
   }
 
   private toSnapshot(record: SubagentRecord): SubagentStateSnapshot {

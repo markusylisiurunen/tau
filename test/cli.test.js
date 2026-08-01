@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -49,6 +49,31 @@ describe("cli", () => {
       expect(result.status).toBe(1);
       expect(result.stderr).toContain('unknown auth list option "--bogus"');
       expect(existsSync(join(home, ".config", "tau"))).toBe(false);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("prints debug diagnostics when no personas are loaded", () => {
+    const home = mkdtempSync(join(tmpdir(), "tau-debug-cli-home-"));
+    try {
+      const configDirectory = join(home, ".config", "tau");
+      mkdirSync(configDirectory, { recursive: true });
+      writeFileSync(
+        join(configDirectory, "config.json"),
+        JSON.stringify({ disableBuiltinPersonas: true }),
+      );
+      const mainPath = resolve(process.cwd(), "dist/main.js");
+      const result = spawnSync(process.execPath, [mainPath, "--debug"], {
+        cwd: home,
+        encoding: "utf8",
+        env: { ...process.env, HOME: home },
+      });
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("tau debug info");
+      expect(result.stdout).toContain("personas (0)");
+      expect(result.stderr).toContain("defaultPersona 'opus-4.8-chat' not found");
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

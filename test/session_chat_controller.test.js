@@ -536,6 +536,7 @@ class FakeView {
   editorText = "";
   editorEnabledUpdates = [];
   subagentSelectionCycles = [];
+  subagentSnapshots = [];
   selectedSubagentId;
   pendingUserMessages = [];
   terminalNotifications = [];
@@ -601,6 +602,9 @@ class FakeView {
   reconcileToolUiSession = vi.fn((models) => {
     this.toolModels = structuredClone(models);
   });
+  reconcileSubagentUiSession(snapshots) {
+    this.subagentSnapshots = structuredClone(snapshots);
+  }
   resetToolUiSessionPreservingSubagents() {}
   cycleSubagentSelection(direction) {
     this.subagentSelectionCycles.push(direction);
@@ -2593,16 +2597,11 @@ describe("SessionChatController", () => {
 
     controller.start();
 
-    expect(view.subagentEvents).toEqual([
-      expect.objectContaining({
-        type: "subagent_spawned",
+    expect(view.subagentSnapshots).toEqual([
+      {
         state: expect.objectContaining({ id: "agent-1", status: "running" }),
-      }),
-      expect.objectContaining({
-        type: "subagent_progress",
-        id: "agent-1",
-        text: "reading files",
-      }),
+        progress: "reading files",
+      },
     ]);
     await controller.dispose();
   });
@@ -2631,24 +2630,15 @@ describe("SessionChatController", () => {
 
     controller.start();
 
-    expect(view.subagentEvents).toEqual([
-      expect.objectContaining({
-        type: "subagent_spawned",
-        state: expect.objectContaining({ id: "agent-1", status: "success" }),
-      }),
-      expect.objectContaining({
-        type: "subagent_progress",
-        id: "agent-1",
-        text: "finished checks",
-      }),
-      expect.objectContaining({
-        type: "subagent_finished",
+    expect(view.subagentSnapshots).toEqual([
+      {
         state: expect.objectContaining({
           id: "agent-1",
           status: "success",
           finalText: "all clear",
         }),
-      }),
+        progress: "finished checks",
+      },
     ]);
     await controller.dispose();
   });

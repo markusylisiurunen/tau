@@ -19,7 +19,7 @@ import { FooterComponent } from "./ui/footer.js";
 import { PendingMessagesComponent } from "./ui/pending_messages.js";
 import { RewindPickerComponent, type RewindPickerItem } from "./ui/rewind_picker.js";
 import { SubagentEditorPaneComponent } from "./ui/subagent_editor_pane.js";
-import { SubagentPanelComponent } from "./ui/subagent_panel.js";
+import { SubagentPanelComponent, type SubagentPanelSnapshot } from "./ui/subagent_panel.js";
 import type { SystemMessageKind } from "./ui/system_message.js";
 import { coercePaletteOverrides, createUiTheme, type Theme } from "./ui/theme/index.js";
 import type { ToolUiModel } from "./ui/tool_ui_model.js";
@@ -91,6 +91,7 @@ export interface ChatView {
   handleSubagentEvent(event: SubagentUiEvent): void;
   resetToolUiSession(): void;
   reconcileToolUiSession(models: readonly ToolUiModel[]): void;
+  reconcileSubagentUiSession(snapshots: readonly SubagentPanelSnapshot[]): void;
   resetToolUiSessionPreservingSubagents(): void;
   cycleSubagentSelection(direction: 1 | -1): string | undefined;
   getSelectedSubagentId(): string | undefined;
@@ -290,7 +291,11 @@ export class TuiChatView implements ChatView {
 
   reconcileToolUiSession(models: readonly ToolUiModel[]): void {
     this.toolUiRouter.reconcileSession(models);
-    this.subagentPanel.reset();
+  }
+
+  reconcileSubagentUiSession(snapshots: readonly SubagentPanelSnapshot[]): void {
+    this.subagentPanel.reconcile(snapshots);
+    this.ui.requestRender();
   }
 
   resetToolUiSessionPreservingSubagents(): void {

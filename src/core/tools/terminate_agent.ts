@@ -50,11 +50,11 @@ function formatTerminateResult(result: SubagentResult): string {
   return JSON.stringify(payload, null, 2);
 }
 
-function formatTerminateOutput(result: SubagentResult): string {
+function formatTerminateOutput(result: SubagentResult, succeeded: boolean): string {
   const finalText = result.finalText?.trimEnd() ?? "";
   const body = finalText.trim().length > 0 ? finalText : "";
 
-  if (result.status !== "success") {
+  if (!succeeded) {
     const errorLine = result.error ? `Error: ${result.error}` : `Status: ${result.status}`;
     return body ? `${errorLine}\n${body}` : errorLine;
   }
@@ -130,7 +130,7 @@ export function createTerminateAgentToolDefinition(supervisor: AgentSupervisor):
             }
 
             const resultText = formatTerminateResult(result);
-            const succeeded = result.status === "success";
+            const succeeded = result.status === "success" || result.status === "aborted";
             const baseStatusText = formatSubagentStatusLine({
               costTotal: result.costTotal,
               durationMs: getTerminateDurationMs(result),
@@ -139,7 +139,7 @@ export function createTerminateAgentToolDefinition(supervisor: AgentSupervisor):
               ? baseStatusText
               : `${baseStatusText} · Status ${result.status}`;
             const uiText = buildSubagentUiText({
-              output: formatTerminateOutput(result),
+              output: formatTerminateOutput(result, succeeded),
               statusText,
               maxOutputLines: 16,
               fullText: resultText,

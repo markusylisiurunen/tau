@@ -5,7 +5,8 @@ import { loadModelResolver } from "../dist/core/models/catalog.js";
 import { personas } from "../dist/core/personas.js";
 import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
 import { createSpawnAgentToolDefinition } from "../dist/core/tools/spawn_agent.js";
-import { TOOL_NAME_SPAWN_AGENT } from "../dist/core/tools/tool_names.js";
+import { createTerminateAgentToolDefinition } from "../dist/core/tools/terminate_agent.js";
+import { TOOL_NAME_SPAWN_AGENT, TOOL_NAME_TERMINATE_AGENT } from "../dist/core/tools/tool_names.js";
 
 function getText(toolResult) {
   return toolResult.content.find((block) => block.type === "text")?.text ?? "";
@@ -71,8 +72,8 @@ function createFixture(overrides = {}) {
   return { tool: createSpawnAgentToolDefinition(options), supervisor, persona, modelResolver };
 }
 
-async function execute(tool, arguments_) {
-  const call = { id: "call-1", name: TOOL_NAME_SPAWN_AGENT, arguments: arguments_ };
+async function execute(tool, arguments_, name = TOOL_NAME_SPAWN_AGENT) {
+  const call = { id: "call-1", name, arguments: arguments_ };
   const activities = [];
   const outcome = await tool.execute(call, {
     agentId: "parent-agent",
@@ -95,6 +96,40 @@ const baseArguments = {
   title: "research task",
   prompt: "investigate this",
 };
+
+describe("terminate_agent tool", () => {
+  it("succeeds when termination produces an aborted final status", async () => {
+    const supervisor = {
+      terminate: vi.fn(async () => ({
+        id: "agent-1",
+        name: "default",
+        title: "child task",
+        status: "aborted",
+        costTotal: 0.01,
+        turns: 1,
+        toolCalls: 0,
+        startedAt: 10,
+        finishedAt: 20,
+      })),
+    };
+    const tool = createTerminateAgentToolDefinition(supervisor);
+
+    const { result } = await execute(tool, { id: "agent-1" }, TOOL_NAME_TERMINATE_AGENT);
+
+    expect(result.toolResult.outcome).toBe("succeeded");
+    expect(result.uiEvent).toMatchObject({
+      type: "terminate_agent_finished",
+      status: "success",
+      finalStatus: "aborted",
+    });
+    expect(result.uiEvent.uiText.statusLine).not.toContain("Status aborted");
+    expect(result.uiEvent.uiText.previewLines).toEqual([]);
+    expect(JSON.parse(getText(result.toolResult))).toMatchObject({
+      id: "agent-1",
+      status: "aborted",
+    });
+  });
+});
 
 describe("spawn_agent tool", () => {
   it("binds dependencies before execution and admits an allowed launch model", async () => {

@@ -98,6 +98,7 @@ describe("AgentSupervisor", () => {
     expect(recordUsage).toHaveBeenCalledTimes(2);
     for (const [entry] of recordUsage.mock.calls) {
       expect(entry.agent).toEqual({ type: "subagent", name: "default" });
+      expect(entry.personaId).toBe("parent-persona");
     }
   });
 
@@ -222,6 +223,64 @@ describe("AgentSupervisor", () => {
     expect(stream).not.toHaveBeenCalled();
   });
 
+  it("interrupts a child before publishing its abort request", async () => {
+    const abortProjection = new Error("abort projection failed");
+    const supervisor = new AgentSupervisor({
+      onEvent: async (event) => {
+        if (event.type === "subagent_abort_requested") throw abortProjection;
+      },
+      recordUsage: () => {},
+    });
+    const spawned = supervisor.spawn(createSpawnOptions());
+    expect(spawned.ok).toBe(true);
+    if (!spawned.ok) throw new Error(spawned.reason);
+    const record = getRecord(supervisor, spawned.id);
+    record.runtime.spec.model.stream = vi.fn((_context, options) => ({
+      async *[Symbol.asyncIterator]() {
+        await new Promise((resolve) =>
+          options.signal.addEventListener("abort", resolve, { once: true }),
+        );
+      },
+      async result() {
+        return createAssistant("too late");
+      },
+    }));
+
+    await vi.waitFor(() => expect(record.runtime.status).toBe("running"));
+    await expect(supervisor.terminate(spawned.id)).rejects.toBe(abortProjection);
+    await expect(record.completion).resolves.toMatchObject({ status: "aborted" });
+    expect(record.runtime.status).toBe("idle");
+  });
+
+  it("keeps a requested abort when the child races to natural completion", async () => {
+    let markSubmitStarted;
+    const submitStarted = new Promise((resolve) => {
+      markSubmitStarted = resolve;
+    });
+    let releaseSubmit;
+    const submitGate = new Promise((resolve) => {
+      releaseSubmit = resolve;
+    });
+    const supervisor = new AgentSupervisor({ onEvent: async () => {}, recordUsage: () => {} });
+    const spawned = supervisor.spawn(createSpawnOptions());
+    expect(spawned.ok).toBe(true);
+    if (!spawned.ok) throw new Error(spawned.reason);
+    const record = getRecord(supervisor, spawned.id);
+    record.runtime.submit = vi.fn(async () => {
+      markSubmitStarted();
+      await submitGate;
+      return { aborted: false, stopReason: "stop" };
+    });
+    await submitStarted;
+
+    const termination = supervisor.terminate(spawned.id);
+    await vi.waitFor(() => expect(record.abortRequested).toBe(true));
+    releaseSubmit();
+
+    await expect(termination).resolves.toMatchObject({ id: spawned.id, status: "aborted" });
+    expect(record.error).toBeUndefined();
+  });
+
   it("terminates a running child and reports an aborted result", async () => {
     const supervisor = new AgentSupervisor({ onEvent: async () => {}, recordUsage: () => {} });
     const spawned = supervisor.spawn(createSpawnOptions());
@@ -245,6 +304,41 @@ describe("AgentSupervisor", () => {
       status: "aborted",
     });
     expect(supervisor.getActiveCount()).toBe(0);
+  });
+
+  it("waits for finished-event delivery before resolving waiters", async () => {
+    let releaseFinished;
+    const finishedGate = new Promise((resolve) => {
+      releaseFinished = resolve;
+    });
+    let finishedEventSeen = false;
+    const supervisor = new AgentSupervisor({
+      onEvent: async (event) => {
+        if (event.type === "subagent_finished") {
+          finishedEventSeen = true;
+          await finishedGate;
+        }
+      },
+      recordUsage: () => {},
+    });
+    const spawned = supervisor.spawn(createSpawnOptions());
+    expect(spawned.ok).toBe(true);
+    if (!spawned.ok) throw new Error(spawned.reason);
+    const record = getRecord(supervisor, spawned.id);
+    record.runtime.spec.model.stream = vi.fn(() => createStream(createAssistant("done")));
+
+    let settled = false;
+    const waiting = supervisor.waitForAgents([spawned.id]).finally(() => {
+      settled = true;
+    });
+    await vi.waitFor(() => expect(finishedEventSeen).toBe(true));
+    expect(record.status).toBe("success");
+    expect(settled).toBe(false);
+
+    releaseFinished();
+    await expect(waiting).resolves.toEqual([
+      expect.objectContaining({ id: spawned.id, status: "success", finalText: "done" }),
+    ]);
   });
 
   it("enforces the active limit and cleans records removed by parent rewind", async () => {

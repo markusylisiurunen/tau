@@ -1,5 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { AgentRuntime, type AgentTurnResult, createAgentSpec } from "../agent/agent_runtime.js";
+import {
+  AgentRuntime,
+  type AgentTurnResult,
+  createAgentSpec,
+  isAgentProviderError,
+} from "../agent/agent_runtime.js";
 import type { AgentEvent } from "../agent/events.js";
 import type { Config } from "../config/index.js";
 import { resolveAgentModel } from "../runtime/agent_model.js";
@@ -293,6 +298,12 @@ export class AgentSupervisor {
       .catch((error) => {
         if (record.run.interruptRequested) {
           this.finishInterrupted(record);
+        } else if (isAgentProviderError(error)) {
+          this.finishFailed(record, {
+            kind: "provider-error",
+            message: error.message,
+            stopReason: "error",
+          });
         } else {
           this.finishFailed(record, {
             kind: "runtime-error",
@@ -353,7 +364,7 @@ export class AgentSupervisor {
       status: "succeeded",
       startedAt: record.run.startedAt,
       finishedAt: this.deps.clock.now(),
-      progress: record.run.progress,
+      progress: "",
       interruptRequested: false,
       response: extractAssistantText(result.finalMessage).trim(),
     };
@@ -365,7 +376,7 @@ export class AgentSupervisor {
       status: "interrupted",
       startedAt: record.run.startedAt,
       finishedAt: this.deps.clock.now(),
-      progress: record.run.progress,
+      progress: "",
       interruptRequested: true,
       failure: { kind: "interrupted", message: "Subagent run was interrupted." },
     };
@@ -380,7 +391,7 @@ export class AgentSupervisor {
       status: "failed",
       startedAt: record.run.startedAt,
       finishedAt: this.deps.clock.now(),
-      progress: record.run.progress,
+      progress: "",
       interruptRequested: record.run.interruptRequested,
       failure,
     };

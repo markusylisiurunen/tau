@@ -106,8 +106,18 @@ function migrateStoredSessionV1ToV2(value: unknown): unknown {
   }
 
   const snapshot = structuredClone(value);
-  snapshot.agents = {};
+  removeUnrecoverableAgentPresentation(snapshot);
   return snapshot;
+}
+
+function removeUnrecoverableAgentPresentation(snapshot: Record<string, unknown>): void {
+  snapshot.agents = {};
+  if (!isRecord(snapshot.facets)) return;
+  for (const [facetId, facet] of Object.entries(snapshot.facets)) {
+    if (isRecord(facet) && isRecord(facet.subject) && facet.subject.type === "agent") {
+      delete snapshot.facets[facetId];
+    }
+  }
 }
 
 function removeLegacyPruningPresentation(snapshot: Record<string, unknown>): void {

@@ -219,7 +219,7 @@ export class LocalSessionHost implements TauSessionHost {
           ? { usageCheckpoint: { ...recovered.snapshot.agentState.usageCheckpoint } }
           : {}),
       });
-      if (recovered.legacyAgentState || agentRecovery.recoveredToolResults.length > 0) {
+      if (recovered.changed || agentRecovery.recoveredToolResults.length > 0) {
         await hostedSession.persistRecoveredAgentState(agentRecovery);
       }
       return hostedSession;
@@ -2296,6 +2296,13 @@ function normalizeRecoveredSnapshot(snapshot: SessionProtocolSnapshot): {
   const legacyAgentState = recovered.agentState.contextEpoch === LEGACY_SESSION_CONTEXT_EPOCH;
   let changed = recovered.lifecycle !== "idle" || legacyAgentState;
   recovered.lifecycle = "idle";
+  if (Object.keys(recovered.agents).length > 0) {
+    changed = true;
+    recovered.agents = {};
+    recovered.facets = Object.fromEntries(
+      Object.entries(recovered.facets).filter(([, facet]) => facet.subject.type !== "agent"),
+    );
+  }
   const streamingToolIds = new Set(
     Object.values(recovered.tools)
       .filter((tool) => tool.status === "streaming")

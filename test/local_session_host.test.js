@@ -1997,6 +1997,85 @@ describe("LocalSessionHost", () => {
     });
   });
 
+  it("discards and persists unrecoverable subagent presentation on every recovery", async () => {
+    const store = new MemorySessionStore();
+    const storedSnapshot = createStoredSnapshot({
+      sessionId: "stored-subagent",
+      revision: 4,
+      costTotal: 0.03,
+      agents: {
+        "agent-1": {
+          id: "agent-1",
+          name: "default",
+          title: "stale child",
+          availability: "idle",
+          model: {
+            provider: personas[0].model.provider,
+            id: personas[0].model.id,
+            reasoning: "medium",
+          },
+          workingDirectory: "/repo",
+          createdAt: 1,
+          run: {
+            revision: 1,
+            status: "succeeded",
+            startedAt: 1,
+            finishedAt: 2,
+            progress: "",
+            interruptRequested: false,
+            response: "stale response",
+          },
+          costTotal: 0.03,
+          turns: 1,
+          toolCalls: 0,
+          usage: {
+            input: 1,
+            output: 1,
+            cacheRead: 0,
+            cacheWrite: 0,
+            contextWindowUsageTokens: 2,
+            contextWindow: personas[0].model.contextWindow,
+          },
+        },
+      },
+      facets: {
+        "agent-facet": {
+          id: "agent-facet",
+          subject: { type: "agent", id: "agent-1" },
+          kind: "test.agent",
+          version: 1,
+          data: {},
+        },
+        "session-facet": {
+          id: "session-facet",
+          subject: { type: "session" },
+          kind: "test.session",
+          version: 1,
+          data: {},
+        },
+      },
+    });
+    await store.commitSessionSnapshot(storedSnapshot);
+
+    const host = createHost(store);
+    const recoveredSession = await host.observeSession(storedSnapshot.sessionId);
+    if (!recoveredSession) throw new Error("expected stored session to recover");
+
+    const persisted = await store.loadSession(storedSnapshot.sessionId);
+    expect(persisted).toEqual({
+      ...storedSnapshot,
+      revision: 5,
+      agentState: {
+        ...storedSnapshot.agentState,
+        contextEpoch: recoveredSession.runtime.snapshot().contextEpoch,
+      },
+      agents: {},
+      facets: { "session-facet": storedSnapshot.facets["session-facet"] },
+    });
+    await expect(recoveredSession.snapshot()).resolves.toEqual(persisted);
+    expect(recoveredSession.session.hasSubagent("agent-1")).toBe(false);
+  });
+
   it("lists and canonicalizes unversioned sessions before recovery returns", async () => {
     const directory = mkdtempSync(join(tmpdir(), "tau-legacy-session-"));
     const storedSnapshot = createStoredSnapshot({

@@ -56,6 +56,11 @@ import type {
 
 const DEFAULT_RETRY_POLICY = { maxRetries: 1, delayMs: 3_000 } as const;
 const DEFAULT_MAX_MODEL_SUBTURNS = 1024;
+const providerErrors = new WeakSet<Error>();
+
+export function isAgentProviderError(error: unknown): error is Error {
+  return error instanceof Error && providerErrors.has(error);
+}
 
 export type HistoryEntry = {
   id: string;
@@ -1754,10 +1759,10 @@ export class AgentRuntime {
         await toolRunner.finish();
       } catch {}
       if (!signal.aborted && shouldNoteProviderError) {
-        await this.noteProviderError(
-          turnSettings.model,
-          err instanceof Error ? err.message : String(err),
-        );
+        const error = err instanceof Error ? err : new Error(String(err));
+        await this.noteProviderError(turnSettings.model, error.message);
+        providerErrors.add(error);
+        throw error;
       }
       if (signal.aborted) {
         return { finalMessage: undefined, continueAfterToolRecovery: false };

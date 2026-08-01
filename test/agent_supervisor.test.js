@@ -84,7 +84,11 @@ describe("AgentSupervisor", () => {
     await expect(supervisor.waitForAgents([spawned.state.id])).resolves.toEqual([
       expect.objectContaining({
         id: spawned.state.id,
-        run: expect.objectContaining({ status: "succeeded", response: "first result" }),
+        run: expect.objectContaining({
+          status: "succeeded",
+          progress: "",
+          response: "first result",
+        }),
       }),
     ]);
     expect(supervisor.getSnapshot(spawned.state.id)).toMatchObject({
@@ -131,7 +135,7 @@ describe("AgentSupervisor", () => {
     });
   });
 
-  it("distinguishes provider errors from successful empty responses", async () => {
+  it("distinguishes returned and thrown provider errors from successful empty responses", async () => {
     const supervisor = new AgentSupervisor({ onEvent: async () => {}, recordUsage: () => {} });
     const failed = supervisor.spawn(createSpawnOptions());
     expect(failed.ok).toBe(true);
@@ -150,6 +154,36 @@ describe("AgentSupervisor", () => {
           failure: {
             kind: "provider-error",
             message: "provider overloaded",
+            stopReason: "error",
+          },
+        }),
+      }),
+    ]);
+
+    const rejected = supervisor.spawn(createSpawnOptions());
+    expect(rejected.ok).toBe(true);
+    if (!rejected.ok) throw new Error(rejected.reason);
+    const rejectedRecord = getRecord(supervisor, rejected.state.id);
+    rejectedRecord.runtime.spec.model.stream = vi.fn(() => ({
+      [Symbol.asyncIterator]() {
+        return {
+          async next() {
+            throw new Error("provider connection failed");
+          },
+        };
+      },
+      async result() {
+        throw new Error("provider connection failed");
+      },
+    }));
+
+    await expect(supervisor.waitForAgents([rejected.state.id])).resolves.toEqual([
+      expect.objectContaining({
+        run: expect.objectContaining({
+          status: "failed",
+          failure: {
+            kind: "provider-error",
+            message: "provider connection failed",
             stopReason: "error",
           },
         }),

@@ -140,7 +140,7 @@ state transitions:
 
 `tau rpc` and `tau serve` store session snapshots under `~/.config/tau/sessions` for the current host user. Starting a server does not create a session. `session.create` creates one in an explicitly selected, already-provisioned execution environment, and closing the transport or server persists hosted sessions. Each file uses a versioned `tau-session` storage document whose version is independent of the session protocol version. Tau loads older unwrapped snapshots through sequential storage migrations and rewrites migrated state in the current format during recovery.
 
-Stored sessions recover from persisted snapshot state, including independent durable agent revision/context accounting state, current settings, cumulative cost, bootstrap metadata, catalog metadata, execution environment identity, messages, timeline items, tools, agents, and facets; host-only config is resolved by the host and is not serialized into the snapshot. The agent revision is not the protocol snapshot revision. A fresh persisted usage checkpoint lets the first model subturn after recovery make the same automatic-compaction decision as an uninterrupted session. Legacy snapshots without a checkpoint wait for fresh provider usage before automatic compaction. Pending queued and steering messages are transient host state rather than snapshot state: they survive client detach while the hosted session remains in memory, but they are discarded on host restart or session recovery so recovered sessions never resume work without new user input.
+Stored sessions recover from persisted snapshot state, including independent durable agent revision/context accounting state, current settings, cumulative cost, bootstrap metadata, catalog metadata, execution environment identity, messages, timeline items, tools, and non-agent facets; host-only config is resolved by the host and is not serialized into the snapshot. Supervised subagent runtimes are not recoverable across process restart, so recovery discards persisted agents and agent-owned facets before returning and rewrites the normalized snapshot. The agent revision is not the protocol snapshot revision. A fresh persisted usage checkpoint lets the first model subturn after recovery make the same automatic-compaction decision as an uninterrupted session. Legacy snapshots without a checkpoint wait for fresh provider usage before automatic compaction. Pending queued and steering messages are transient host state rather than snapshot state: they survive client detach while the hosted session remains in memory, but they are discarded on host restart or session recovery so recovered sessions never resume work without new user input.
 
 Main sessions, supervised background agents, and ephemeral threads use the same stateful agent runtime for model streaming, tool admission and execution, retries, recovery, context accounting, steering boundaries, and compaction. The runtime emits ordered semantic transitions through one awaited sink. The hosted-session adapter applies those transitions to protocol snapshots and persists durable state before acknowledging them; child supervision, ephemeral thread maps and forks, pending normal submissions, and usage attribution are separate host concerns.
 
@@ -188,7 +188,7 @@ params (required):
   "id": "init-1",
   "ok": true,
   "result": {
-    "protocolVersion": 4,
+    "protocolVersion": 5,
     "methods": [
       "initialize",
       "session.create",

@@ -202,6 +202,15 @@ describe("FileSessionStore", () => {
             finalText: "stale response",
           },
         },
+        facets: {
+          "agent-facet": {
+            id: "agent-facet",
+            subject: { type: "agent", id: "agent-1" },
+            kind: "test.agent",
+            version: 1,
+            data: {},
+          },
+        },
       };
       await mkdir(directory, { recursive: true });
       await writeFile(

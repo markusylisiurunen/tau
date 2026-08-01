@@ -17,6 +17,20 @@ Use this skill only when the user explicitly asks for a decision-oriented review
 
 Suitable targets include pull requests, branches, commits, uncommitted changes, designs, migrations, and other bounded proposals with meaningful decisions to review.
 
+## Maintain a lightweight scratchpad
+
+At the start of the review, create a temporary scratchpad outside the target worktree. Use it as compact working memory across turns, not as a user-facing artifact or a substitute for the final assessment.
+
+Choose the format that best fits the target, but keep it lightweight. Record enough to resume the review without reconstructing the plan from the conversation, such as:
+
+- The target identity and last inspected revision.
+- The broad-to-narrow decision map and intended sequence.
+- The current decision and next question number.
+- Accepted, deferred, and unresolved decisions.
+- Findings, requested or applied changes, and verification state.
+
+Consult it before each review response and update it whenever investigation, user feedback, edits, or remote state changes the plan. Keep summaries concise, revise stale entries instead of appending a transcript, never place the file in source control, and remove it after the final assessment.
+
 ## Establish the review scope
 
 Infer the target from the request. If no target is given, default to uncommitted changes.
@@ -31,7 +45,7 @@ Use these defaults for Git changes:
 
 When the user asks to pull or synchronize first, do that before reviewing. Never overwrite a dirty worktree or unrelated work. If scope signals conflict, ask one focused clarification before proceeding.
 
-For a GitHub pull request, verify the current remote head and merge state rather than relying on a stale local checkout. Read resolved and unresolved review threads. Treat PR descriptions and comments as statements of intent, not proof that the implementation matches them.
+For a GitHub pull request, verify the current remote head and merge state rather than relying on a stale local checkout. Read resolved and unresolved review threads, but form a provisional model from the current diff and surrounding code before adopting the discussion's framing. Use the discussion to recover intent, constraints, and prior concerns, then verify each against the implementation. Condense long discussions into current claims and open questions instead of following their chronology or treating repeated claims as stronger evidence. Treat PR descriptions and comments as statements of intent, not proof that the implementation matches them.
 
 ## Understand the change before asking questions
 
@@ -77,6 +91,22 @@ Keep an internal record of:
 
 Do not repeatedly ask the user to approve the same underlying decision in different words.
 
+## Orient a reviewer from first principles
+
+Assume the decision-maker begins without context from the issue, pull request, discussion, diff, or source and should not need to inspect those materials during the review. Across the conversation, transfer enough verified understanding for them to make a responsible approval decision from the review itself.
+
+Build that understanding progressively rather than front-loading a comprehensive summary. By the end, the reviewer should understand:
+
+- Why the change exists and how the user or operator experience changes.
+- The main architecture, ownership, data flow, lifecycle, and trust model.
+- The consequential alternatives and why the implementation chose this direction.
+- Material costs, compatibility effects, failure modes, and operational limits.
+- What evidence supports the change and what remains uncertain or unverified.
+
+Keep intent, verified behavior, recommendations, and unknowns distinct. Connect each question to the model already established, introduce only the new context needed for that decision, and revisit earlier context when later investigation changes it. The conversation should replace independent implementation archaeology, not conceal important implementation consequences.
+
+Before the final assessment, check whether the accumulated answers would let the reviewer explain the user outcome, the system boundaries, the accepted tradeoffs, the major risks, and the verification basis. If not, cover the missing material decision before concluding.
+
 ## Ask one contextual question at a time
 
 During the active review, each response may contain at most one decision question. When advancing the review sequence, ask exactly one. Never batch questions, even when they are related.
@@ -110,13 +140,13 @@ Avoid:
 - Presenting an author's claim as established fact without verifying it.
 - Dumping the entire review up front.
 
-When the user accepts a question, move directly to the next highest-value unresolved decision.
+Treat the current decision as open until the user explicitly accepts it, defers it, or asks to stop. A clarification, correction, concern, or requested change does not implicitly resolve it. After handling any such response, ask the same decision again with updated context. Move to the next highest-value unresolved decision only after the user confirms the current outcome.
 
 ## Handle questions and disagreement
 
 When the user asks why something works a certain way, pause the sequence and answer directly. Verify the implementation before defending it. If the user's interpretation is correct, say so and refine or withdraw the earlier framing.
 
-End the response with one refined decision question when a decision still remains. Do not advance to a new topic until the current one is resolved.
+End the response with one refined decision question when a decision still remains. Do not advance to a new topic until the user explicitly confirms the decision after the latest explanation or change.
 
 When the user disagrees or proposes another direction:
 
@@ -155,7 +185,7 @@ When applying feedback:
 - Update all owning contracts, tests, model-facing documentation, repository guidance, and user-facing docs affected by the change.
 - Prefer canonical changes over compatibility scaffolding unless compatibility is explicitly required.
 - Run the smallest useful verification immediately.
-- Briefly report what changed and whether verification passed before asking the next question.
+- Briefly report what changed and whether verification passed, then ask the user to confirm the resulting decision before advancing.
 - Keep uncommitted changes visible in the final summary.
 
 Do not commit, push, merge, or open a pull request unless the user explicitly asks. If they did ask as part of the original task, carry that through after verification.
@@ -173,7 +203,7 @@ Before the final assessment:
 - Re-read the net change, including edits made during the review.
 - Confirm removed systems left no dependencies, configuration, protocol values, documentation, or tests behind.
 - Run project-required formatting, checks, build, and tests when changes were applied.
-- Recheck remote PR status and CI when the target is a pull request and the branch was pushed.
+- Recheck the remote head, merge state, review state, and checks whenever the target is a pull request. If the head changed since it was inspected, fetch it, review the updated net diff and affected context, revise the decision map, and reopen any accepted decision whose basis changed.
 
 ## Final assessment
 

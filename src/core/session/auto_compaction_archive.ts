@@ -4,7 +4,6 @@ import type {
   ImageContent,
   Message,
   TextContent,
-  ThinkingContent,
   ToolCall,
   ToolResultMessage,
   UserMessage,
@@ -87,8 +86,8 @@ const text = [
   "Sequence: " + basename,
   "Created: " + new Date(payload.createdAt).toISOString(),
   "",
-  "This is the complete model-visible context immediately before automatic compaction.",
-  "Tool results in this text projection are middle-truncated; the JSON pair retains full captured content.",
+  "This is the archived conversation context immediately before automatic compaction.",
+  "Assistant thinking is omitted. Tool results in this text projection are middle-truncated; the JSON pair retains full archived content.",
   "",
   payload.textTranscript,
   "",
@@ -122,15 +121,8 @@ process.stdout.write(JSON.stringify({ textPath, jsonPath }));
 
 type ArchiveTextContent = Pick<TextContent, "type" | "text">;
 type ArchiveImageContent = Pick<ImageContent, "type" | "data" | "mimeType">;
-type ArchiveThinkingContent = Pick<ThinkingContent, "type" | "thinking"> & {
-  redacted?: boolean;
-};
 type ArchiveToolCall = Pick<ToolCall, "type" | "id" | "name" | "arguments">;
-type ArchiveContent =
-  | ArchiveTextContent
-  | ArchiveImageContent
-  | ArchiveThinkingContent
-  | ArchiveToolCall;
+type ArchiveContent = ArchiveTextContent | ArchiveImageContent | ArchiveToolCall;
 
 type AutoCompactionArchiveMessage =
   | {
@@ -143,7 +135,7 @@ type AutoCompactionArchiveMessage =
       historyEntryId: string;
       role: "assistant";
       timestamp: number;
-      content: Array<ArchiveTextContent | ArchiveThinkingContent | ArchiveToolCall>;
+      content: Array<ArchiveTextContent | ArchiveToolCall>;
     }
   | {
       historyEntryId: string;
@@ -239,23 +231,19 @@ function normalizeAssistantMessage(
     historyEntryId,
     role: message.role,
     timestamp: message.timestamp,
-    content: message.content.map((content) => {
+    content: message.content.flatMap<ArchiveTextContent | ArchiveToolCall>((content) => {
+      if (content.type === "thinking") return [];
       if (content.type === "text") {
-        return { type: content.type, text: content.text };
+        return [{ type: content.type, text: content.text }];
       }
-      if (content.type === "thinking") {
-        return {
+      return [
+        {
           type: content.type,
-          thinking: content.thinking,
-          ...(content.redacted === undefined ? {} : { redacted: content.redacted }),
-        };
-      }
-      return {
-        type: content.type,
-        id: content.id,
-        name: content.name,
-        arguments: content.arguments,
-      };
+          id: content.id,
+          name: content.name,
+          arguments: content.arguments,
+        },
+      ];
     }),
   };
 }
@@ -308,9 +296,6 @@ function formatArchiveContent(content: readonly ArchiveContent[]): string {
         if (block.type === "text") return block.text;
         if (block.type === "image") {
           return `[Image mimeType=${JSON.stringify(block.mimeType)} data omitted from text transcript]`;
-        }
-        if (block.type === "thinking") {
-          return `[Thinking${block.redacted ? " redacted" : ""}]\n${block.thinking}`;
         }
         return `[Tool call id=${JSON.stringify(block.id)} name=${JSON.stringify(block.name)}]\n${JSON.stringify(block.arguments, null, 2)}`;
       })

@@ -527,7 +527,7 @@ export function buildAutoCompactionPrompt(preparation: AutoCompactionPreparation
 export function buildAutoCompactionContinuationMessage(args: {
   cutType: AutoCompactionCutType;
   now: number;
-  archive?: AutoCompactionArchivePaths;
+  archive: AutoCompactionArchivePaths | undefined;
 }): Message {
   const lines = [
     "The conversation context before this point has been compacted.",
@@ -543,12 +543,13 @@ export function buildAutoCompactionContinuationMessage(args: {
 
   if (args.archive) {
     lines.push(
-      "A temporary snapshot of the complete model-visible context immediately before this automatic compaction, including context retained above, is available in these files:",
-      `- text transcript: ${args.archive.textPath}`,
-      `- full JSON: ${args.archive.jsonPath}`,
-      "Prefer the text transcript for normal lookup; its tool results are middle-truncated.",
-      "The JSON contains full captured content and may be very large. Query it narrowly with jq, Node, rg, or bounded reads instead of dumping the whole file.",
-      "Earlier numbered pairs in the same directory are older pre-compaction snapshots. These files are temporary and may no longer exist.",
+      "The summary and retained context should normally be sufficient. If a specific missing detail is needed, temporary pre-compaction snapshots are available as numbered pairs in one directory:",
+      `- current text transcript: ${args.archive.textPath}`,
+      `- current full JSON: ${args.archive.jsonPath}`,
+      "Earlier numbered pairs in the same directory contain older pre-compaction snapshots, so include them in targeted searches when the detail may predate this compaction.",
+      "Prefer narrow searches and bounded reads of the text transcripts; their tool results are middle-truncated. The JSON files retain untruncated archived content and may be very large.",
+      "When available, delegating a precise archive lookup to a low-effort subagent can preserve this context more efficiently than reading large sections directly.",
+      "These files are temporary and may no longer exist.",
     );
   }
 

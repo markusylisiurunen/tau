@@ -672,7 +672,7 @@ describe("AgentRuntime", () => {
     expect(streamModel).toHaveBeenCalledTimes(2);
   });
 
-  it("archives full context and injects archive guidance after automatic compaction", async () => {
+  it("archives conversation context and injects archive guidance after automatic compaction", async () => {
     const model = { ...personas[0].model, contextWindow: 100 };
     const persona = createPersona({ model });
     const archiveAutoCompaction = vi.fn(async () => ({
@@ -730,8 +730,13 @@ describe("AgentRuntime", () => {
     );
     expect(continuationContext).toContain("/tmp/tau-auto-compaction-agent/000004.txt");
     expect(continuationContext).toContain("/tmp/tau-auto-compaction-agent/000004.json");
-    expect(continuationContext).toContain("Query it narrowly with jq, Node, rg, or bounded reads");
-    expect(continuationContext).toContain("including context retained above");
+    expect(continuationContext).toContain(
+      "summary and retained context should normally be sufficient",
+    );
+    expect(continuationContext).toContain("Earlier numbered pairs in the same directory");
+    expect(continuationContext).toContain(
+      "delegating a precise archive lookup to a low-effort subagent",
+    );
   });
 
   it("continues automatic compaction without archive guidance when archiving fails", async () => {

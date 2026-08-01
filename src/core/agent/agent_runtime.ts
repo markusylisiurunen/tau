@@ -1244,7 +1244,7 @@ export class AgentRuntime {
       message: buildAutoCompactionContinuationMessage({
         cutType: preparation.cutType,
         now: this.clock.now(),
-        ...(archive ? { archive } : {}),
+        archive,
       }),
     };
 

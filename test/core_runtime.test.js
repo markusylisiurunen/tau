@@ -555,6 +555,10 @@ describe("automatic compaction archive", () => {
           ...assistantMessage(""),
           content: [
             {
+              type: "thinking",
+              thinking: "private reasoning must not be archived",
+            },
+            {
               type: "toolCall",
               id: "bash-1",
               name: TOOL_NAME_BASH,
@@ -613,10 +617,12 @@ describe("automatic compaction archive", () => {
         arguments: { command: "rg -n TODO src" },
       });
       expect(record.messages[2].content[0].text).toBe(longOutput);
+      expect(JSON.stringify(record)).not.toContain("private reasoning must not be archived");
       expect(text).toContain("start ");
       expect(text).toContain(" end");
       expect(text).toContain("tokens truncated");
       expect(text).not.toContain(longOutput);
+      expect(text).not.toContain("private reasoning must not be archived");
       expect(statSync(dirname(first.textPath)).mode & 0o777).toBe(0o700);
       expect(statSync(first.textPath).mode & 0o777).toBe(0o600);
       expect(statSync(first.jsonPath).mode & 0o777).toBe(0o600);
@@ -746,6 +752,7 @@ describe("compaction context message", () => {
     const continuation = buildAutoCompactionContinuationMessage({
       cutType: "turn-boundary",
       now: 1,
+      archive: undefined,
     });
     const history = [continuation, userMessage("new request")];
 
@@ -821,6 +828,7 @@ describe("compaction context message", () => {
     const continuation = buildAutoCompactionContinuationMessage({
       cutType: "turn-boundary",
       now: 1,
+      archive: undefined,
     });
 
     const text = stripTauUserMetadata(continuation.content[0].text);
@@ -974,6 +982,7 @@ describe("compaction context message", () => {
     const continuation = buildAutoCompactionContinuationMessage({
       cutType: "turn-boundary",
       now: 2,
+      archive: undefined,
     });
     const entries = historyEntries([
       userMessage(previousSummaryText),
@@ -1017,6 +1026,7 @@ describe("compaction context message", () => {
     const continuation = buildAutoCompactionContinuationMessage({
       cutType: "split-turn",
       now: 2,
+      archive: undefined,
     });
     const entries = historyEntries([
       userMessage(previousSummaryText),
@@ -1059,6 +1069,7 @@ describe("compaction context message", () => {
     const continuation = buildAutoCompactionContinuationMessage({
       cutType: "turn-boundary",
       now: 2,
+      archive: undefined,
     });
     const entries = historyEntries([
       userMessage(previousSummaryText),

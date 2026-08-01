@@ -266,7 +266,7 @@ for full API details (options, methods, events, and errors), see [docs/sdk.md](d
 
 ## install starter prompts and skills
 
-tau ships starter prompt and skill templates as markdown content in this repository, including `guided-review` for focused diff walkthroughs and `decision-review` for decision-oriented approval without reading the implementation. install them with:
+tau ships starter prompt and skill templates as markdown content in this repository, including `guided-review` for focused diff walkthroughs and `approval-review` for decision-oriented approval without reading the implementation. install them with:
 
 ```sh
 tau install

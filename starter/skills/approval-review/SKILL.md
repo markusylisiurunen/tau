@@ -1,5 +1,5 @@
 ---
-name: "decision-review"
+name: "approval-review"
 description: "Review a change for someone who has not read it, then guide them through product, architecture, and implementation decisions one contextual question at a time. Trigger: explicit."
 ---
 

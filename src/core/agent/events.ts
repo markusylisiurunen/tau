@@ -8,7 +8,7 @@ import type { AssistantPartialSnapshot } from "../session/message_accumulator.js
 import type { ToolActivity } from "../tools/activity.js";
 import type { ReasoningEffort } from "../types.js";
 
-export type AgentTurnOutcome = "completed" | "stopped" | "interrupted" | "blocked";
+export type AgentTurnOutcome = "completed" | "stopped" | "interrupted" | "blocked" | "failed";
 
 export type AgentCompactionResult = {
   summaryHistoryEntryId: string;

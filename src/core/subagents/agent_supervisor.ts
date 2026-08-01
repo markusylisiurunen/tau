@@ -285,6 +285,7 @@ export class AgentSupervisor {
           throw new Error("subagent was interrupted");
         }
         if (result.blocked) throw new Error(result.blocked.message);
+        if (result.limitReached) throw new Error(result.limitReached.message);
         const assistant = [...record.runtime.rawHistory]
           .reverse()
           .find((message): message is AssistantMessage => message.role === "assistant");

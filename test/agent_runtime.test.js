@@ -170,6 +170,86 @@ describe("AgentRuntime", () => {
     );
   });
 
+  it("reports an error when the model subturn limit is exhausted", async () => {
+    const toolCall = fauxToolCall("continue", {}, { id: "continue-1" });
+    const { runtime, persona, events } = createRuntime({
+      maxModelSubturns: 1,
+      tools: [
+        createTool("continue", async () => ({
+          content: [{ type: "text", text: "continue" }],
+          outcome: "succeeded",
+        })),
+      ],
+    });
+    setStreams(runtime, [
+      createToolStream(
+        createAssistant(persona, [{ type: "text", text: "still working" }, toolCall], {
+          stopReason: "toolUse",
+        }),
+      ),
+    ]);
+
+    const result = await runtime.submit("run until the limit");
+
+    expect(result).toMatchObject({
+      aborted: false,
+      limitReached: {
+        reason: "model-subturn-limit",
+        message: "stopped after 1 model subturn without producing a final response.",
+      },
+    });
+    expect(events).toContainEqual({
+      type: "notice",
+      severity: "error",
+      text: "stopped after 1 model subturn without producing a final response.",
+    });
+    expect(events.findLast((event) => event.type === "turn_finished")).toMatchObject({
+      outcome: "failed",
+    });
+  });
+
+  it("preserves usage checkpoints when recovering missing tool results", () => {
+    const { runtime, spec, persona } = createRuntime();
+    const contextEpoch = runtime.state.contextEpoch;
+    const toolCall = fauxToolCall("bash", { command: "pwd" }, { id: "dangling-tool" });
+    const assistant = createAssistant(persona, [toolCall], { stopReason: "toolUse" });
+    const checkpoint = {
+      historyEntryId: "assistant-1",
+      contextEpoch,
+      tokens: 42,
+    };
+    const recovered = new AgentRuntime({
+      spec,
+      eventSink: async () => {},
+      clock: { now: () => 1 },
+      state: {
+        agentId: "agent-1",
+        revision: 2,
+        historyEntries: [
+          {
+            id: "user-1",
+            message: {
+              role: "user",
+              content: [{ type: "text", text: "run pwd" }],
+              timestamp: 0,
+            },
+          },
+          { id: "assistant-1", message: assistant },
+        ],
+        contextEpoch,
+        usageCheckpoint: checkpoint,
+      },
+    });
+
+    expect(recovered.state.usageCheckpoint).toEqual(checkpoint);
+    expect(recovered.state.historyEntries.map((entry) => entry.message.role)).toEqual([
+      "user",
+      "assistant",
+      "toolResult",
+      "user",
+    ]);
+  });
+
   it("commits user input durably and awaits its sink before model work", async () => {
     const userEvent = deferred();
     const events = [];

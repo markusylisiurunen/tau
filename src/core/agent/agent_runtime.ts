@@ -126,9 +126,15 @@ type AutoCompactionBlockedTurn = {
   message: string;
 };
 
+type ModelSubturnLimit = {
+  reason: "model-subturn-limit";
+  message: string;
+};
+
 export type AgentTurnResult = {
   aborted: boolean;
   blocked?: AutoCompactionBlockedTurn;
+  limitReached?: ModelSubturnLimit;
   finalMessage?: AssistantMessage;
 };
 
@@ -314,6 +320,7 @@ export function recoverAgentState(state: AgentState, timestamp: number): AgentSt
       revision: state.revision + historyEntries.length - sourceEntries.length,
       historyEntries,
       contextEpoch: state.contextEpoch,
+      ...(state.usageCheckpoint ? { usageCheckpoint: { ...state.usageCheckpoint } } : {}),
     },
     recoveredToolResults,
   };
@@ -739,13 +746,15 @@ export class AgentRuntime {
         }
 
         initialResult ??= result;
-        const outcome = result.blocked
-          ? "blocked"
-          : result.aborted
-            ? "interrupted"
-            : this.stopAtBoundaryRequested
-              ? "stopped"
-              : "completed";
+        const outcome = result.limitReached
+          ? "failed"
+          : result.blocked
+            ? "blocked"
+            : result.aborted
+              ? "interrupted"
+              : this.stopAtBoundaryRequested
+                ? "stopped"
+                : "completed";
         await this.deliver({
           type: "turn_finished",
           turnId: turnSpec.turnId,
@@ -760,7 +769,12 @@ export class AgentRuntime {
           });
         }
 
-        if (controller.signal.aborted || result.blocked || this.pendingSteering.length === 0) {
+        if (
+          controller.signal.aborted ||
+          result.blocked ||
+          result.limitReached ||
+          this.pendingSteering.length === 0
+        ) {
           if (this.pendingSteering.length > 0) {
             this.rejectPendingSteering(new Error("steering was not applied before the turn ended"));
           }
@@ -1073,16 +1087,24 @@ export class AgentRuntime {
       retryBudget = { remaining: turnSettings.retryPolicy.maxRetries };
     }
 
-    if (needsAnotherSubturn && subturns >= turnSettings.maxModelSubturns && !signal.aborted) {
+    const limitReached =
+      needsAnotherSubturn && subturns >= turnSettings.maxModelSubturns && !signal.aborted;
+    const limitMessage = limitReached
+      ? `stopped after ${turnSettings.maxModelSubturns} model subturn${turnSettings.maxModelSubturns === 1 ? "" : "s"} without producing a final response.`
+      : undefined;
+    if (limitMessage) {
       yield {
         type: "notice",
-        severity: "warn",
-        text: `stopped after ${turnSettings.maxModelSubturns} model subturns to avoid an infinite loop.`,
+        severity: "error",
+        text: limitMessage,
       };
     }
 
     return {
       aborted: signal.aborted,
+      ...(limitMessage
+        ? { limitReached: { reason: "model-subturn-limit" as const, message: limitMessage } }
+        : {}),
       ...(lastFinalMessage ? { finalMessage: lastFinalMessage } : {}),
     };
   }

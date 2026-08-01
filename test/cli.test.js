@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -55,7 +55,7 @@ describe("cli", () => {
   });
 
   it("prints debug diagnostics when no personas are loaded", () => {
-    const home = mkdtempSync(join(tmpdir(), "tau-debug-cli-home-"));
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "tau-debug-cli-home-")));
     try {
       const configDirectory = join(home, ".config", "tau");
       mkdirSync(configDirectory, { recursive: true });

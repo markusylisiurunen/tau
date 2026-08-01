@@ -1137,7 +1137,9 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
   async snapshot(): Promise<SessionProtocolSnapshot> {
     this.assertActive();
-    return await this.commitSnapshot();
+    return this.runtime.isTurnRunning && this.committedSnapshot
+      ? await this.commitProjectedSnapshot()
+      : await this.commitSnapshot();
   }
 
   async persistRecoveredAgentState(recovery: AgentStateRecovery): Promise<void> {
@@ -1147,13 +1149,18 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       if (!tool || tool.status === "streaming") {
         continue;
       }
-      this.tools.set(tool.id, {
-        ...tool,
-        status: "cancelled",
-        finishedAt: recovered.message.timestamp,
-        resultMessageId: recovered.historyEntryId,
-        error: "Tool completion status is unknown after session recovery.",
-      });
+      this.tools.set(
+        tool.id,
+        tool.status === "queued" || tool.status === "running"
+          ? {
+              ...tool,
+              status: "cancelled",
+              finishedAt: recovered.message.timestamp,
+              resultMessageId: recovered.historyEntryId,
+              error: "Tool completion status is unknown after session recovery.",
+            }
+          : { ...tool, resultMessageId: recovered.historyEntryId },
+      );
     }
     await this.commitSnapshot();
   }
@@ -1213,6 +1220,14 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     return await write;
   }
 
+  private async commitProjectedSnapshot(): Promise<SessionProtocolSnapshot> {
+    const write = this.snapshotQueue
+      .catch(() => undefined)
+      .then(() => this.writeProjectedSnapshot());
+    this.snapshotQueue = write.catch(() => undefined);
+    return await write;
+  }
+
   private async commitSnapshotPatch(
     reason: SessionProtocolDeltaReason,
     changes: SessionProtocolChange[],
@@ -1247,6 +1262,28 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       return await this.writeSnapshot();
     }
     return cloneSessionProtocolSnapshot(this.updateCommittedSnapshotAfterWrite(snapshot));
+  }
+
+  private async writeProjectedSnapshot(): Promise<SessionProtocolSnapshot> {
+    this.assertNotDisposed();
+    const generation = this.snapshotGeneration;
+    const current = this.committedSnapshot;
+    if (!current) {
+      return await this.writeSnapshot();
+    }
+    const snapshot = cloneSessionProtocolSnapshot(current);
+    if (this.persistedSnapshot && isDeepStrictEqual(this.persistedSnapshot, snapshot)) {
+      return snapshot;
+    }
+
+    await this.store.commitSessionSnapshot(snapshot, {
+      expectedRevision: this.persistedSnapshot?.revision ?? 0,
+    });
+    this.persistedSnapshot = cloneSessionProtocolSnapshot(snapshot);
+    if (generation !== this.snapshotGeneration) {
+      return await this.writeProjectedSnapshot();
+    }
+    return cloneSessionProtocolSnapshot(this.committedSnapshot ?? snapshot);
   }
 
   private async writeSnapshotPatch(
@@ -2142,6 +2179,9 @@ function turnOutcomeFromResult(
 ): SessionProtocolTurnOutcome {
   if (result.blocked) {
     return { status: "blocked", ...result.blocked };
+  }
+  if (result.limitReached) {
+    return { status: "failed", stopReason: "error", errorMessage: result.limitReached.message };
   }
   if (result.aborted || assistantMessage?.stopReason === "aborted") {
     return { status: "aborted", stopReason: "aborted" };

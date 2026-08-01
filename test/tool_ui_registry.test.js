@@ -75,6 +75,13 @@ describe("ToolUiRegistry", () => {
         preparingTarget: "local_picker",
         labels: ["preparing", "queued", "running", "completed"],
       },
+      {
+        toolCallId: "inherited-name-1",
+        toolName: "constructor",
+        headerTarget: "constructor",
+        preparingTarget: "constructor",
+        labels: ["preparing", "queued", "running", "completed"],
+      },
     ];
     const statuses = ["streaming", "queued", "running", "succeeded"];
     for (const tool of tools) {

@@ -1335,8 +1335,22 @@ describe("LocalSessionHost", () => {
       snapshot: assistantPartial("finishing"),
     });
 
+    let running = true;
+    Object.defineProperty(hostedSession.runtime, "isTurnRunning", {
+      configurable: true,
+      get: () => running,
+    });
     const finalMessage = fauxAssistantMessage("finished");
     hostedSession.runtime.agent.addMessage(finalMessage, { historyEntryId });
+
+    await expect(hostedSession.snapshot()).resolves.toMatchObject({
+      messages: [
+        expect.objectContaining({ id: "system" }),
+        expect.objectContaining({ id: historyEntryId, state: "draft" }),
+      ],
+    });
+    running = false;
+
     vi.spyOn(hostedSession.session, "hasSubagent").mockReturnValue(true);
 
     await expect(
@@ -1954,6 +1968,11 @@ describe("LocalSessionHost", () => {
   it("repairs and persists dangling tool calls when recovering a stored session", async () => {
     const store = new MemorySessionStore();
     const toolCall = fauxToolCall("bash", { command: "pwd" }, { id: "dangling-tool" });
+    const finishedToolCall = fauxToolCall(
+      "bash",
+      { command: "printf done" },
+      { id: "finished-tool" },
+    );
     const storedSnapshot = createStoredSnapshot({
       sessionId: "dangling-tool-session",
       historyEntries: [
@@ -1967,7 +1986,7 @@ describe("LocalSessionHost", () => {
         {
           id: "assistant-1",
           message: {
-            ...assistantMessageWithToolCalls([toolCall]),
+            ...assistantMessageWithToolCalls([toolCall, finishedToolCall]),
             stopReason: "toolUse",
           },
         },
@@ -1981,6 +2000,16 @@ describe("LocalSessionHost", () => {
           status: "running",
           call: { messageId: "assistant-1", contentIndex: 0 },
           startedAt: 1,
+          facetIds: [],
+        },
+        [finishedToolCall.id]: {
+          id: finishedToolCall.id,
+          toolCallId: finishedToolCall.id,
+          toolName: finishedToolCall.name,
+          status: "succeeded",
+          call: { messageId: "assistant-1", contentIndex: 1 },
+          startedAt: 1,
+          finishedAt: 2,
           facetIds: [],
         },
       },
@@ -1997,6 +2026,7 @@ describe("LocalSessionHost", () => {
       "user",
       "assistant",
       "toolResult",
+      "toolResult",
       "user",
     ]);
     expect(recoveredSnapshot.tools[toolCall.id]).toMatchObject({
@@ -2004,6 +2034,12 @@ describe("LocalSessionHost", () => {
       resultMessageId: expect.any(String),
       error: "Tool completion status is unknown after session recovery.",
     });
+    expect(recoveredSnapshot.tools[finishedToolCall.id]).toMatchObject({
+      status: "succeeded",
+      resultMessageId: expect.any(String),
+      finishedAt: 2,
+    });
+    expect(recoveredSnapshot.tools[finishedToolCall.id]).not.toHaveProperty("error");
     await expect(store.loadSession(storedSnapshot.sessionId)).resolves.toEqual(recoveredSnapshot);
 
     const contexts = [];
@@ -2025,6 +2061,7 @@ describe("LocalSessionHost", () => {
     expect(contexts[0].messages.map((message) => message.role)).toEqual([
       "user",
       "assistant",
+      "toolResult",
       "toolResult",
       "user",
       "user",

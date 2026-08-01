@@ -150,7 +150,7 @@ const GENERIC_TOOL_STATUS_LABELS: Record<ToolUiLifecycleStatus, string> = {
 };
 
 function getToolUiLanguage(toolName: string): ToolUiLanguage | undefined {
-  return TOOL_UI_LANGUAGE[toolName];
+  return Object.hasOwn(TOOL_UI_LANGUAGE, toolName) ? TOOL_UI_LANGUAGE[toolName] : undefined;
 }
 
 function getToolStatusLabel(toolName: string, status: ToolUiModel["status"]): string {

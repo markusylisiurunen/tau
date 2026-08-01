@@ -243,6 +243,7 @@ class EphemeralAgentThread {
     const result = await this.runtime.submit(message);
     if (result.aborted) throw new Error("ephemeral agent thread was interrupted");
     if (result.blocked) throw new Error(result.blocked.message);
+    if (result.limitReached) throw new Error(result.limitReached.message);
     const assistant = [...this.runtime.rawHistory]
       .reverse()
       .find((entry): entry is AssistantMessage => entry.role === "assistant");

@@ -8,6 +8,7 @@ import {
   type TauProviderApiKeyResolverArgs,
   validateTauProviderExtensionModel,
 } from "./tau_extensions.js";
+import { applyTauModelOverrides } from "./tau_model_overrides.js";
 
 type ApiKeyResolver = (args: TauProviderApiKeyResolverArgs) => string | undefined;
 
@@ -156,7 +157,12 @@ function createCatalogState(): CatalogState {
 
   for (const provider of getBuiltinProviders()) {
     for (const model of getBuiltinModels(provider)) {
-      registerModel({ providers, provider, model, source: "pi-ai" });
+      registerModel({
+        providers,
+        provider,
+        model: applyTauModelOverrides(model),
+        source: "pi-ai",
+      });
     }
   }
 

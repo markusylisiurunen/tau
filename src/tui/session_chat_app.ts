@@ -1,5 +1,7 @@
 import { spawn as spawnProcess } from "node:child_process";
 import { createInterface } from "node:readline/promises";
+import { Type } from "typebox";
+import { z } from "zod";
 import { createCommandRegistry } from "../core/commands/index.js";
 import type {
   Config,
@@ -9,6 +11,8 @@ import type {
 } from "../core/config/index.js";
 import { DIFF_REVIEW_TOOL } from "../core/diff_review/index.js";
 import type { CoreDeps } from "../core/runtime/deps.js";
+import { TOOL_NAME_PREFILL_INPUT } from "../core/tools/tool_names.js";
+import { formatZodError } from "../core/utils/zod.js";
 import type { SessionProtocolCreateParams } from "../protocol/session_protocol.js";
 import { createTauSdkClientFromTransport } from "../sdk/session.js";
 import type { TauSdkClient, TauSdkClientTool, TauSdkSession } from "../sdk/types.js";
@@ -33,8 +37,9 @@ export type SessionChatAppOptions = {
   caffeinated?: boolean;
 };
 
-export type SessionChatTransportOptions = Omit<SessionChatAppOptions, "client" | "targetLabel"> &
-  (
+export type SessionChatTransportOptions = Omit<SessionChatAppOptions, "client" | "targetLabel"> & {
+  clientToolsEnabled: boolean;
+} & (
     | {
         transport: "stdio";
         command: string;
@@ -47,9 +52,20 @@ export type SessionChatTransportOptions = Omit<SessionChatAppOptions, "client" |
       }
   );
 
+const prefillInputArgsSchema = z
+  .object({
+    text: z.string().min(1),
+  })
+  .strict();
+
 export function createTuiClientTools(options: {
+  enabled: boolean;
   getController: () => SessionChatController | undefined;
 }): TauSdkClientTool[] {
+  if (!options.enabled) {
+    return [];
+  }
+
   return [
     {
       schema: {
@@ -62,6 +78,36 @@ export function createTuiClientTools(options: {
           throw new Error("diff_review is unavailable because the TUI is not ready");
         }
         return await controller.runClientDiffReview(args, context.signal);
+      },
+    },
+    {
+      schema: {
+        name: TOOL_NAME_PREFILL_INPUT,
+        description: [
+          "Prefill the user's TUI input editor with a draft for them to review, edit, and submit.",
+          "Use this when a structured draft, such as answers to multiple questions, would save the user effort.",
+          "This tool does not submit the input and fails without changing the editor when it already contains text.",
+        ].join(" "),
+        parameters: Type.Object(
+          {
+            text: Type.String({
+              minLength: 1,
+              description: "Complete draft text to place in the empty input editor.",
+            }),
+          },
+          { additionalProperties: false },
+        ),
+      },
+      execute: (args) => {
+        const parsed = prefillInputArgsSchema.safeParse(args);
+        if (!parsed.success) {
+          throw new Error(`Invalid prefill_input arguments: ${formatZodError(parsed.error)}`);
+        }
+        const controller = options.getController();
+        if (!controller) {
+          throw new Error("prefill_input is unavailable because the TUI is not ready");
+        }
+        return controller.prefillInput(parsed.data.text);
       },
     },
   ];
@@ -114,7 +160,10 @@ export class SessionChatApp {
     let controller: SessionChatController | undefined;
     const client = await createTauSdkClientFromTransport(transport, {
       initialize: { client: { name: "tau-tui", version: "1" } },
-      clientTools: createTuiClientTools({ getController: () => controller }),
+      clientTools: createTuiClientTools({
+        enabled: options.clientToolsEnabled,
+        getController: () => controller,
+      }),
     });
     const app = await SessionChatApp.open({
       ...options,

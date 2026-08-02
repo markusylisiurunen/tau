@@ -2092,6 +2092,15 @@ export class SessionChatController {
     return await this.diffReviewService.runModelTool(rawArgs, signal);
   }
 
+  prefillInput(text: string): string {
+    if (this.view.getEditorText().length > 0) {
+      throw new Error("Cannot prefill input because the editor already contains text.");
+    }
+
+    this.view.setEditorText(text);
+    return "Prefilled the input editor. The user can review, edit, and submit it.";
+  }
+
   private async startDiffReview(argsText: string): Promise<void> {
     if (this.diffReviewService.isActive()) {
       this.view.addSystemMessage("diff review is already active.", "warn");

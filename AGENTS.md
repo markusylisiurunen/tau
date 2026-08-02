@@ -20,7 +20,7 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
 
 ## Architecture
 
-- **SessionChatApp** (`src/tui/session_chat_app.ts`): Canonical TUI wiring for both local `tau` and remote `tau attach`; creates or observes a session through the SDK/session protocol facade and connects it to the TUI view adapter
+- **SessionChatApp** (`src/tui/session_chat_app.ts`): Canonical TUI wiring for both local `tau` and remote `tau attach`; creates or observes a session through the SDK/session protocol facade, advertises TUI-owned diff-review and input-prefill client tools, and connects the session to the TUI view adapter
 - **SessionChatController** (`src/tui/session_chat_controller.ts`): Session-protocol TUI controller for rendering snapshots/deltas, user input, local presentation commands, and session protocol mutations
 - **Session chat controller modules** (`src/tui/chat_controller/`): Focused helpers used by `SessionChatController` for queued messages, history labels, status formatting, and clipboard helpers
 - **TuiChatView** (`src/tui/chat_view.ts`): TUI adapter for rendering, editor, and tool UI
@@ -165,7 +165,7 @@ Execution environments and tool backends are intentionally dumb target adapters.
 | `web` | Run one-shot JavaScript with bounded web search and retrieval APIs |
 | `nook` | Run one-shot JavaScript with a bounded Nook platform API |
 
-The TUI advertises `diff_review` as a client-provided tool; it is not a host tool registry entry. The `nook` host tool requires both persona selection and effective Tau config containing `nook`.
+The TUI advertises `diff_review` and `prefill_input` as client-provided tools unless started with `--no-client-tools`; they are not host tool registry entries. Only one TUI observing a session may advertise a given client tool. `prefill_input` fills only an empty client-local editor and refuses to replace existing draft text. The `nook` host tool requires both persona selection and effective Tau config containing `nook`.
 
 Enabled tools execute directly. Persona and subagent tool lists determine tool availability. Immediate tool-call argument schemas remain strict. The `web` and `nook` tools each accept one `code` string, run it as one-shot JavaScript in a host-owned Worker's tool-specific SES compartment, expose their bounded facade plus `docs` and console, and share the generic Worker resource/capture/cancellation lifecycle; only console stdout/stderr becomes model-visible output. Web exposes `web.discover`, `web.search`, and `web.fetch`. For direct URLs, its description instructs the model to run discovery first and decide in the next turn whether to use `curl`, `web.fetch`, or another approach. Discovery runs ordinary bounded requests through the session execution environment, whose network is already fully available to the model, and reports metadata for negotiated and deterministic Markdown representations plus `llms.txt` files at every path prefix without returning page content or parsing links; direct representation retrieval remains an explicit later `curl` call. Search and fetch remain host-owned so Exa credentials stay behind the bridge, default to highlights, cap provider responses at 16 MiB before parsing, and omit provider-specific options and response fields. Nook exposes bounded site, template, and per-site KV methods; `docs` describes that agent-facing SDK, while `nook.skill()` loads the configured deployment's version-matched app-authoring guide. Nook credentials and HTTP stay in the host parent, and copy/deploy paths are serviced through `ToolExecutionBackend`. Both descriptions restrict use to explicit relevant requests and tell the model to print concise task-relevant output.
 
@@ -285,8 +285,9 @@ Trigger sensitivity is a concept that guides how proactively the model should ac
 - `--persona <id>[:<level>]`, `-p` - Start with a specific persona and optional reasoning level
 - `--caffeinated` - Keep macOS awake during active assistant turns in TUI mode (currently a no-op on Linux)
 - `--no-agent-context-files` - Disable AGENTS.md injection into the system prompt
+- `--no-client-tools` - Disable TUI client tools such as diff review and input prefill
 
-These startup flags apply to interactive TUI mode (`tau`), headless RPC mode (`tau rpc`), and WebSocket server mode (`tau serve`), except `--load` and `--debug` (TUI-only because hosted servers start without a session) and `--caffeinated` (macOS-only TUI flag, rejected outside TUI mode).
+These startup flags apply to interactive TUI mode (`tau`), headless RPC mode (`tau rpc`), and WebSocket server mode (`tau serve`), except `--load`, `--debug`, and `--no-client-tools` (TUI-only because hosted servers do not own client tools) and `--caffeinated` (macOS-only TUI flag, rejected outside TUI mode).
 
 In TUI mode, `--debug` respects `--persona` and `--no-agent-context-files`, so you can inspect exactly what system prompt a given configuration produces.
 
@@ -294,8 +295,8 @@ In TUI mode, `--debug` respects `--persona` and `--no-agent-context-files`, so y
 
 - `tau rpc` - Run headless stdio RPC mode (NDJSON request/response + core event streaming)
 - `tau serve [--host <host>] [--port <port>] [--auth-token <token>]` - Host session protocol over WebSocket (`TAU_WS_AUTH_TOKEN` can provide the token)
-- `tau attach [--session <id> | --new --cwd <path>] [--auth-token <token>] ws://host:port` - Run the terminal UI against a WebSocket session host
-- `tau attach [--session <id> | --new --cwd <path>] -- <command...>` - Run the terminal UI against a session-protocol command, for example `ssh vps 'tau rpc'`; without `--session` or `--new`, attach lists hosted sessions and prompts for a selection, and new sessions require a host-local execution cwd
+- `tau attach [--session <id> | --new --cwd <path>] [--auth-token <token>] [--no-client-tools] ws://host:port` - Run the terminal UI against a WebSocket session host
+- `tau attach [--session <id> | --new --cwd <path>] [--no-client-tools] -- <command...>` - Run the terminal UI against a session-protocol command, for example `ssh vps 'tau rpc'`; without `--session` or `--new`, attach lists hosted sessions and prompts for a selection, and new sessions require a host-local execution cwd
 - `tau auth login codex` - Browser or device-code OAuth login for ChatGPT Plus/Pro; stores `~/.config/tau/auth.json`
 - `tau auth list` - List authenticated accounts and usage windows
 - `tau auth logout codex --account <email>` - Remove stored OAuth credentials

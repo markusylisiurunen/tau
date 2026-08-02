@@ -33,11 +33,11 @@ export type ChatViewStatus = {
     sessionCost: string;
     duration: string;
     commandHint?: string;
+    pursuingGoal: boolean;
   };
   editor: {
     mode: ChatInputMode;
     cwdLabel: string;
-    goalStatus?: "active" | "blocked";
     personaName: string;
     reasoningLabel: string;
     reasoning?: ReasoningEffort;
@@ -262,6 +262,7 @@ export class TuiChatView implements ChatView {
       sessionCost: status.footer.sessionCost,
       duration: status.footer.duration,
       commandHint: status.footer.commandHint,
+      pursuingGoal: status.footer.pursuingGoal,
     });
 
     this.updateEditorVisualState(status.editor);
@@ -516,12 +517,7 @@ export class TuiChatView implements ChatView {
       return;
     }
 
-    const goalIndicator =
-      state.goalStatus === "active" ? "◆ " : state.goalStatus === "blocked" ? "◇ " : "";
-    this.editor.setHeader(
-      `${goalIndicator}${state.cwdLabel}`,
-      `${state.personaName} (${state.reasoningLabel})`,
-    );
+    this.editor.setHeader(state.cwdLabel, `${state.personaName} (${state.reasoningLabel})`);
   }
 
   private setRecordingIndicatorActive(active: boolean): void {

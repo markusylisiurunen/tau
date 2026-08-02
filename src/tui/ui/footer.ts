@@ -8,6 +8,7 @@ export interface FooterStatus {
   sessionCost: string;
   duration?: string;
   commandHint?: string;
+  pursuingGoal: boolean;
 }
 
 export class FooterComponent implements Component {
@@ -77,8 +78,12 @@ export class FooterComponent implements Component {
 
     const { palette } = this.theme;
     const iconChar = this.iconIntervalId ? this.iconFrames[this.currentIconFrame]! : this.idleIcon;
-    const icon = this.iconIntervalId ? palette.brandAccent(iconChar) : palette.textDim(iconChar);
+    const activityStyle = this.iconIntervalId ? palette.brandAccent : palette.textDim;
+    const icon = activityStyle(iconChar);
     const iconWidth = visibleWidth(iconChar);
+    const goalText = this.iconIntervalId && this.status?.pursuingGoal ? "pursuing goal" : "";
+    const goalPrefix = goalText ? `${activityStyle(goalText)} ${palette.textDim("·")} ` : "";
+    const goalPrefixWidth = goalText ? visibleWidth(goalText) + 3 : 0;
 
     const leftFull = this.status
       ? `${this.status.duration ? `${this.status.duration} · ` : ""}${this.status.contextUsage} · ${this.status.sessionCost}`
@@ -87,11 +92,11 @@ export class FooterComponent implements Component {
     const commandHint = this.status?.commandHint?.trim();
     const leftRaw = toast ? toast.text : commandHint || leftFull;
     const leftStyle = toast ? this.getToastStyle(toast.kind) : palette.textDim;
-    const availableWidth = Math.max(0, width - iconWidth - 3);
+    const availableWidth = Math.max(0, width - iconWidth - goalPrefixWidth - 3);
     const left = truncateFromEndByWidth(leftRaw, availableWidth);
     const padding = " ".repeat(Math.max(0, availableWidth - visibleWidth(left)));
 
-    return [` ${icon} ${leftStyle(left)}${padding} `];
+    return [` ${icon} ${goalPrefix}${leftStyle(left)}${padding} `];
   }
 
   private getToastStyle(kind: SystemMessageKind): (text: string) => string {

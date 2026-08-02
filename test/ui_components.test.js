@@ -349,9 +349,36 @@ test("FooterComponent renders session status", () => {
   footer.setStatus({
     contextUsage: "ctx 10/100",
     sessionCost: "$0.01",
+    pursuingGoal: false,
   });
   const line = renderLines(footer, 120)[0];
   expect(line).toContain("<textDim>ctx 10/100 · $0.01</textDim>");
+});
+
+test("FooterComponent labels active autonomous goal work", () => {
+  const theme = createTagTheme();
+  const ui = { requestRender() {} };
+  const footer = new FooterComponent(theme, ui);
+  footer.setStatus({
+    contextUsage: "ctx 10/100",
+    sessionCost: "$0.01",
+    duration: "24s",
+    pursuingGoal: true,
+  });
+
+  const idleLine = renderLines(footer, 120)[0];
+  expect(idleLine).not.toContain("pursuing goal");
+  expect(idleLine).toContain("<textDim>24s · ctx 10/100 · $0.01</textDim>");
+
+  footer.startWorkingIcon();
+  try {
+    const activeLine = renderLines(footer, 120)[0];
+    expect(activeLine).toContain(
+      "<brandAccent>⠋</brandAccent> <brandAccent>pursuing goal</brandAccent> <textDim>·</textDim>",
+    );
+  } finally {
+    footer.stop();
+  }
 });
 
 test("FooterComponent compacts cwd before truncating and keeps ellipsis styled", () => {
@@ -361,6 +388,7 @@ test("FooterComponent compacts cwd before truncating and keeps ellipsis styled",
   footer.setStatus({
     contextUsage: "ctx",
     sessionCost: "$0.01",
+    pursuingGoal: false,
   });
 
   const compactLine = renderLines(footer, 50)[0];
@@ -369,6 +397,7 @@ test("FooterComponent compacts cwd before truncating and keeps ellipsis styled",
   footer.setStatus({
     contextUsage: "this is a very long context usage string",
     sessionCost: "$0.01",
+    pursuingGoal: false,
   });
 
   const truncatedLine = renderLines(footer, 40)[0];

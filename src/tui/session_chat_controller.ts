@@ -1886,11 +1886,11 @@ export class SessionChatController {
         commandHint: this.diffReviewService.getCommandHint(
           this.getSessionOperationStatusHint() ?? this.speechStatusHint ?? this.commandHint,
         ),
+        pursuingGoal: this.snapshot.goal?.status === "active",
       },
       editor: {
         mode: this.getInputMode(),
         cwdLabel: this.getFooterCwdLabel(),
-        goalStatus: this.snapshot.goal?.status,
         personaName: this.getCurrentPersonaSnapshot()?.label ?? this.snapshot.settings.personaId,
         reasoningLabel: this.snapshot.settings.reasoning ?? "none",
         reasoning:

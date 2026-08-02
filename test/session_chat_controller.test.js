@@ -3006,7 +3006,7 @@ describe("SessionChatController", () => {
     await flush();
 
     expect(session.startGoal).toHaveBeenCalledWith("Ship the feature");
-    expect(view.status.editor.goalStatus).toBe("active");
+    expect(view.status.footer.pursuingGoal).toBe(true);
 
     controller.isStreaming = true;
     controller.getInputHandlers().onSubmit("/goal");
@@ -3018,7 +3018,7 @@ describe("SessionChatController", () => {
     controller.getInputHandlers().onSubmit("/goal clear");
     await flush();
     expect(session.clearGoal).toHaveBeenCalledOnce();
-    expect(view.status.editor.goalStatus).toBeUndefined();
+    expect(view.status.footer.pursuingGoal).toBe(false);
 
     controller.getInputHandlers().onSubmit("/goal Start another");
     controller.getInputHandlers().onSubmit("/goal resume");

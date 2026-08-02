@@ -32,7 +32,11 @@ import {
   type SessionCompactionMode,
 } from "../session/compaction.js";
 import type { AssistantPartialSnapshot } from "../session/message_accumulator.js";
-import { runModelSubturn, SequentialToolCallRunner } from "../session/runner.js";
+import {
+  ProviderStreamError,
+  runModelSubturn,
+  SequentialToolCallRunner,
+} from "../session/runner.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { ReasoningEffort } from "../types.js";
 import { shouldAutoRetry } from "../utils/auto_retry.js";
@@ -60,11 +64,6 @@ import type {
 
 const DEFAULT_RETRY_POLICY = { maxRetries: 1, delayMs: 3_000 } as const;
 const DEFAULT_MAX_MODEL_SUBTURNS = 1024;
-const providerErrors = new WeakSet<Error>();
-
-export function isAgentProviderError(error: unknown): error is Error {
-  return error instanceof Error && providerErrors.has(error);
-}
 
 export type HistoryEntry = {
   id: string;
@@ -762,15 +761,16 @@ export class AgentRuntime {
         }
 
         initialResult ??= result;
-        const outcome = result.limitReached
-          ? "failed"
-          : result.blocked
-            ? "blocked"
-            : result.aborted
-              ? "interrupted"
-              : this.stopAtBoundaryRequested
-                ? "stopped"
-                : "completed";
+        const outcome =
+          result.limitReached || result.finalMessage?.stopReason === "error"
+            ? "failed"
+            : result.blocked
+              ? "blocked"
+              : result.aborted
+                ? "interrupted"
+                : this.stopAtBoundaryRequested
+                  ? "stopped"
+                  : "completed";
         await this.deliver({
           type: "turn_finished",
           turnId: turnSpec.turnId,
@@ -1441,14 +1441,15 @@ export class AgentRuntime {
         ]);
 
         if (next.source === "model_error") {
-          if (admittedToolCalls.length === 0) {
-            shouldNoteProviderError = true;
+          if (!(next.error instanceof ProviderStreamError)) {
+            throw next.error;
+          }
+          if (signal.aborted && admittedToolCalls.length === 0) {
             throw next.error;
           }
 
-          const errorMessage =
-            next.error instanceof Error ? next.error.message : String(next.error);
-          finalMessage = createToolRecoveryAssistantMessage({
+          const errorMessage = next.error.message;
+          finalMessage = createFailedAssistantMessage({
             model: turnSettings.model.model,
             snapshot: latestAssistantSnapshot,
             toolCalls: admittedToolCalls,
@@ -1458,12 +1459,14 @@ export class AgentRuntime {
           });
           modelDone = true;
           void toolRunner.finish().catch(() => undefined);
-          toolRecoveryMode = signal.aborted
-            ? "stop"
-            : consumeSubturnRetry(retryBudget)
-              ? "continue"
-              : "stop";
-          recoveryToolResults.push(...pendingToolResults.splice(0));
+          if (admittedToolCalls.length > 0) {
+            toolRecoveryMode = signal.aborted
+              ? "stop"
+              : consumeSubturnRetry(retryBudget)
+                ? "continue"
+                : "stop";
+            recoveryToolResults.push(...pendingToolResults.splice(0));
+          }
           this.addMessage(finalMessage, { historyEntryId });
           yield {
             type: "assistant_final",
@@ -1789,10 +1792,10 @@ export class AgentRuntime {
         await toolRunner.finish();
       } catch {}
       if (!signal.aborted && shouldNoteProviderError) {
-        const error = err instanceof Error ? err : new Error(String(err));
-        await this.noteProviderError(turnSettings.model, error.message);
-        providerErrors.add(error);
-        throw error;
+        await this.noteProviderError(
+          turnSettings.model,
+          err instanceof Error ? err.message : String(err),
+        );
       }
       if (signal.aborted) {
         return { finalMessage: undefined, continueAfterToolRecovery: false };
@@ -1813,7 +1816,7 @@ export class AgentRuntime {
   }
 }
 
-function createToolRecoveryAssistantMessage(options: {
+function createFailedAssistantMessage(options: {
   model: Model<Api>;
   snapshot: AssistantPartialSnapshot | undefined;
   toolCalls: readonly ToolCall[];

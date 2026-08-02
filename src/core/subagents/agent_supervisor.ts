@@ -1,10 +1,5 @@
 import { randomUUID } from "node:crypto";
-import {
-  AgentRuntime,
-  type AgentTurnResult,
-  createAgentSpec,
-  isAgentProviderError,
-} from "../agent/agent_runtime.js";
+import { AgentRuntime, type AgentTurnResult, createAgentSpec } from "../agent/agent_runtime.js";
 import type { AgentEvent } from "../agent/events.js";
 import type { Config } from "../config/index.js";
 import { resolveAgentModel } from "../runtime/agent_model.js";
@@ -302,12 +297,6 @@ export class AgentSupervisor {
       .catch((error) => {
         if (record.run.interruptRequested) {
           this.finishInterrupted(record);
-        } else if (isAgentProviderError(error)) {
-          this.finishFailed(record, {
-            kind: "provider-error",
-            message: error.message,
-            stopReason: "error",
-          });
         } else {
           this.finishFailed(record, {
             kind: "runtime-error",

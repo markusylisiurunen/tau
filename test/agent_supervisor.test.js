@@ -38,6 +38,19 @@ function createStream(message, gate) {
   };
 }
 
+function createFailingStream(partialText, error) {
+  const partial = createAssistant(partialText);
+  return {
+    async *[Symbol.asyncIterator]() {
+      yield { type: "text_delta", contentIndex: 0, delta: partialText, partial };
+      throw error;
+    },
+    async result() {
+      throw error;
+    },
+  };
+}
+
 function createSpawnOptions(overrides = {}) {
   return {
     runtimeConfig: {
@@ -151,7 +164,7 @@ describe("AgentSupervisor", () => {
     });
   });
 
-  it("distinguishes returned and thrown provider errors from successful empty responses", async () => {
+  it("distinguishes returned and streamed provider errors from successful empty responses", async () => {
     const supervisor = new AgentSupervisor({ onEvent: async () => {}, recordUsage: () => {} });
     const failed = supervisor.spawn(createSpawnOptions());
     expect(failed.ok).toBe(true);
@@ -180,18 +193,10 @@ describe("AgentSupervisor", () => {
     expect(rejected.ok).toBe(true);
     if (!rejected.ok) throw new Error(rejected.reason);
     const rejectedRecord = getRecord(supervisor, rejected.state.id);
-    rejectedRecord.runtime.spec.model.stream = vi.fn(() => ({
-      [Symbol.asyncIterator]() {
-        return {
-          async next() {
-            throw new Error("provider connection failed");
-          },
-        };
-      },
-      async result() {
-        throw new Error("provider connection failed");
-      },
-    }));
+    rejectedRecord.runtime.spec.retryPolicy = { maxRetries: 0, delayMs: 0 };
+    rejectedRecord.runtime.spec.model.stream = vi.fn(() =>
+      createFailingStream("incomplete result", new Error("provider connection failed")),
+    );
 
     await expect(supervisor.waitForAgents([rejected.state.id])).resolves.toEqual([
       expect.objectContaining({
@@ -205,6 +210,12 @@ describe("AgentSupervisor", () => {
         }),
       }),
     ]);
+    expect(rejectedRecord.runtime.rawHistory.at(-1)).toMatchObject({
+      role: "assistant",
+      content: [{ type: "text", text: "incomplete result" }],
+      stopReason: "error",
+      errorMessage: "provider connection failed",
+    });
 
     const empty = supervisor.spawn(createSpawnOptions());
     expect(empty.ok).toBe(true);

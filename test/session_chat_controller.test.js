@@ -3545,6 +3545,12 @@ describe("SessionChatController", () => {
     const prefillInput = tools.find((tool) => tool.schema.name === "prefill_input");
 
     expect(tools.map((tool) => tool.schema.name)).toEqual(["diff_review", "prefill_input"]);
+    expect(prefillInput.schema.parameters.properties.text.pattern).toBe("\\S");
+    expect(() => prefillInput.execute({ text: " \n\t" })).toThrow(
+      "Invalid prefill_input arguments: text: must contain non-whitespace text",
+    );
+    expect(view.editorText).toBe("");
+
     expect(prefillInput.execute({ text: "Name: \nDecision: " })).toBe(
       "Prefilled the input editor. The user can review, edit, and submit it.",
     );

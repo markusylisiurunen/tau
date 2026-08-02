@@ -54,7 +54,10 @@ export type SessionChatTransportOptions = Omit<SessionChatAppOptions, "client" |
 
 const prefillInputArgsSchema = z
   .object({
-    text: z.string().min(1),
+    text: z
+      .string()
+      .min(1)
+      .refine((value) => value.trim().length > 0, "must contain non-whitespace text"),
   })
   .strict();
 
@@ -85,14 +88,16 @@ export function createTuiClientTools(options: {
         name: TOOL_NAME_PREFILL_INPUT,
         description: [
           "Prefill the user's TUI input editor with a draft for them to review, edit, and submit.",
-          "Use this when a structured draft, such as answers to multiple questions, would save the user effort.",
+          "Use this sparingly, only when an editable structured draft would save the user meaningful effort; respond normally for routine content.",
+          "Use short, obvious placeholders such as [name] or [details] for information only the user can provide.",
           "This tool does not submit the input and fails without changing the editor when it already contains text.",
         ].join(" "),
         parameters: Type.Object(
           {
             text: Type.String({
               minLength: 1,
-              description: "Complete draft text to place in the empty input editor.",
+              pattern: "\\S",
+              description: "Complete non-blank draft text to place in the empty input editor.",
             }),
           },
           { additionalProperties: false },

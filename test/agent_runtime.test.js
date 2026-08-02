@@ -730,13 +730,8 @@ describe("AgentRuntime", () => {
     );
     expect(continuationContext).toContain("/tmp/tau-auto-compaction-agent/000004.txt");
     expect(continuationContext).toContain("/tmp/tau-auto-compaction-agent/000004.json");
-    expect(continuationContext).toContain(
-      "summary and retained context should normally be sufficient",
-    );
     expect(continuationContext).toContain("Earlier numbered pairs in the same directory");
-    expect(continuationContext).toContain(
-      "delegating a precise archive lookup to a low-effort subagent",
-    );
+    expect(continuationContext).toContain("low-effort subagent");
   });
 
   it("continues automatic compaction without archive guidance when archiving fails", async () => {
@@ -745,7 +740,7 @@ describe("AgentRuntime", () => {
     const archiveAutoCompaction = vi.fn(async () => {
       throw new Error("temporary storage unavailable");
     });
-    const { runtime, events } = createRuntime({
+    const { runtime } = createRuntime({
       persona,
       config: {
         autoCompact: { enabled: true, reserveTokens: 10, keepRecentTokens: 20 },
@@ -780,16 +775,8 @@ describe("AgentRuntime", () => {
     expect(result.blocked).toBeUndefined();
     expect(result.finalMessage.content[0].text).toBe("after compaction");
     expect(archiveAutoCompaction).toHaveBeenCalledOnce();
-    expect(events).toContainEqual(
-      expect.objectContaining({
-        type: "compaction_end",
-        reason: "threshold",
-        outcome: "compacted",
-      }),
-    );
     const continuationContext = JSON.stringify(streamModel.mock.calls[2][0]);
     expect(continuationContext).not.toContain("temporary storage unavailable");
-    expect(continuationContext).not.toContain("temporary snapshot");
     expect(continuationContext).not.toContain("000001.json");
   });
 

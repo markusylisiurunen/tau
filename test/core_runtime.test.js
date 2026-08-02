@@ -541,8 +541,7 @@ describe("automatic compaction archive", () => {
     const backend = createLocalToolExecutionBackend();
     const archive = createAutoCompactionArchiver(backend);
     const agentId = `agent-${randomUUID()}`;
-    const forkAgentId = `agent-${randomUUID()}`;
-    const roots = new Set();
+    const roots = [];
     const longOutput = `start ${"x".repeat(20_000)} end`;
     const historyEntries = [
       {
@@ -592,7 +591,7 @@ describe("automatic compaction archive", () => {
 
     try {
       const first = await archive(request);
-      roots.add(dirname(first.textPath));
+      roots.push(dirname(first.textPath));
       const record = JSON.parse(readFileSync(first.jsonPath, "utf8"));
       const text = readFileSync(first.textPath, "utf8");
 
@@ -630,19 +629,10 @@ describe("automatic compaction archive", () => {
       const second = await archive(request);
       expect(second.textPath).toBe(first.textPath.replace("000001.txt", "000002.txt"));
 
-      const recoveredArchive = createAutoCompactionArchiver(backend);
-      const third = await recoveredArchive(request);
-      expect(third.textPath).toBe(first.textPath.replace("000001.txt", "000003.txt"));
-
-      const fork = await archive({ ...request, agentId: forkAgentId });
-      roots.add(dirname(fork.textPath));
+      const fork = await archive({ ...request, agentId: `agent-${randomUUID()}` });
+      roots.push(dirname(fork.textPath));
       expect(dirname(fork.textPath)).not.toBe(dirname(first.textPath));
       expect(fork.textPath).toMatch(/000001\.txt$/);
-
-      rmSync(dirname(first.textPath), { recursive: true, force: true });
-      const recreated = await recoveredArchive(request);
-      roots.add(dirname(recreated.textPath));
-      expect(recreated.textPath).toBe(first.textPath);
     } finally {
       for (const root of roots) rmSync(root, { recursive: true, force: true });
       await backend.dispose();

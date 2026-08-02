@@ -544,8 +544,8 @@ export function buildAutoCompactionContinuationMessage(args: {
   if (args.archive) {
     lines.push(
       "The summary and retained context should normally be sufficient. If a specific missing detail is needed, temporary pre-compaction snapshots are available as numbered pairs in one directory:",
-      `- current text transcript: ${args.archive.textPath}`,
-      `- current full JSON: ${args.archive.jsonPath}`,
+      `- this compaction's text transcript: ${args.archive.textPath}`,
+      `- this compaction's full JSON: ${args.archive.jsonPath}`,
       "Earlier numbered pairs in the same directory contain older pre-compaction snapshots, so include them in targeted searches when the detail may predate this compaction.",
       "Prefer narrow searches and bounded reads of the text transcripts; their tool results are middle-truncated. The JSON files retain untruncated archived content and may be very large.",
       "When available, delegating a precise archive lookup to a low-effort subagent can preserve this context more efficiently than reading large sections directly.",

@@ -11,7 +11,7 @@ import type {
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
 import { truncateForTokens } from "../utils/truncate.js";
 
-const ARCHIVE_TEXT_TOOL_RESULT_MAX_TOKENS = 512;
+const ARCHIVE_TEXT_TOOL_RESULT_MAX_TOKENS = 256;
 const ARCHIVE_WRITE_TIMEOUT_MS = 30_000;
 
 const WRITE_AUTO_COMPACTION_ARCHIVE_SCRIPT = `
@@ -87,7 +87,7 @@ const text = [
   "Created: " + new Date(payload.createdAt).toISOString(),
   "",
   "This is the archived conversation context immediately before automatic compaction.",
-  "Assistant thinking is omitted. Tool results in this text projection are middle-truncated; the JSON pair retains full archived content.",
+  "Tool results in this text projection are middle-truncated; the JSON pair retains full archived content.",
   "",
   payload.textTranscript,
   "",
@@ -297,7 +297,7 @@ function formatArchiveContent(content: readonly ArchiveContent[]): string {
         if (block.type === "image") {
           return `[Image mimeType=${JSON.stringify(block.mimeType)} data omitted from text transcript]`;
         }
-        return `[Tool call id=${JSON.stringify(block.id)} name=${JSON.stringify(block.name)}]\n${JSON.stringify(block.arguments, null, 2)}`;
+        return `[Tool call id=${JSON.stringify(block.id)} name=${JSON.stringify(block.name)}]\n${JSON.stringify(block.arguments)}`;
       })
       .join("\n\n") || "(no content)"
   );

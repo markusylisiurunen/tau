@@ -156,6 +156,8 @@ The Telegram command surface is intentionally small:
 - `/compact` summarizes older conversation context to reduce context usage.
 - `/interrupt` interrupts the active run.
 
+Programmatic Telegram replies and notifications use natural-language sentences, with project and session identifiers included in the prose rather than shown as metadata-style fields.
+
 The runner keeps tool and lifecycle progress quiet: Telegram receives command acknowledgements/errors and assistant messages, including multiple assistant progress updates from a single active run. While work is active, it shows Telegram's typing indicator in DMs and groups. Assistant messages are sent as Telegram rich markdown.
 
 Telegram DM input supports plain text, voice/audio transcription with the transcript echoed back for verification, and attachment queueing (`image/*`, PDF, `.txt`, `.md`, `.json`, `.csv`, `.yaml`, `.yml`). allowed groups are opt-in via `allowedChatIds`; non-triggering group text/captions, attachments, audio transcripts, and processing errors are buffered as sender-attributed context and the most recent 50 messages since the previous bot-triggering turn are included when a bot mention triggers a turn. group commands accept explicit bot mentions on or around the command, such as `/status@botusername`, `/status @botusername`, or `@botusername /status`.

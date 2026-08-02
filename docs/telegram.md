@@ -92,6 +92,8 @@ Supported slash commands:
 - `/compact` summarizes older conversation context to reduce context usage.
 - `/interrupt` interrupts the active run.
 
+Programmatic replies and notifications use natural-language sentences. Project and session identifiers are included in the prose rather than shown as metadata-style fields such as `project: tau`, and internal state identifiers are translated before display.
+
 The runner uses quiet mode for tool and lifecycle progress: it does not send tool or lifecycle progress messages to Telegram. It does send assistant messages as they are committed, so one active run can send multiple assistant progress updates before it finishes. While a run is active, it refreshes Telegram's typing indicator in DMs and groups. Assistant messages are sent as Telegram rich markdown.
 
 DM and group behavior matches the previous Telegram adapter:

@@ -372,7 +372,7 @@ describe("telegram adapter", () => {
         apiHarness.sendMessages.some((entry) => String(entry.text).includes("context usage")),
       );
       expect(apiHarness.sendMessages.map((entry) => entry.text)).toContain(
-        "project: platform (alpha, beta). your session s1 is waiting-input. it is using Claude Opus 4.6 with medium reasoning. context usage is 6.0% of 200k tokens. cumulative cost is $0.12.",
+        "your platform (alpha, beta) session s1 is waiting for input. it is using Claude Opus 4.6 with medium reasoning. context usage is 6.0% of 200k tokens. cumulative cost is $0.12.",
       );
     } finally {
       await adapter.close();
@@ -450,7 +450,7 @@ describe("telegram adapter", () => {
       expect(managerHarness.manager.closeSession).toHaveBeenCalledTimes(1);
       expect(apiHarness.sendMessages.map((entry) => entry.text)).toEqual([
         "new chats will use beta.",
-        "project: alpha. your session s1 is waiting-input. new chats will use: beta.",
+        "your alpha session s1 is waiting for input. new chats will use beta.",
       ]);
     } finally {
       await adapter.close();
@@ -484,7 +484,7 @@ describe("telegram adapter", () => {
 
     try {
       await waitFor(() => apiHarness.sendMessages.length === 1);
-      expect(apiHarness.sendMessages[0].text).toBe("new chats will use: alpha.");
+      expect(apiHarness.sendMessages[0].text).toBe("new chats will use alpha.");
     } finally {
       await adapter.close();
     }
@@ -559,7 +559,7 @@ describe("telegram adapter", () => {
         { mode: "steer" },
       );
       expect(apiHarness.sendMessages.map((entry) => entry.text)).toContain(
-        "project: demo. your session restored-session is waiting-input. it is using Claude Opus 4.6 with medium reasoning. context usage is 6.0% of 200k tokens. cumulative cost is $0.12.",
+        "your demo session restored-session is waiting for input. it is using Claude Opus 4.6 with medium reasoning. context usage is 6.0% of 200k tokens. cumulative cost is $0.12.",
       );
       expect(apiHarness.sendMessages).toEqual(
         expect.arrayContaining([
@@ -1127,8 +1127,8 @@ describe("telegram adapter", () => {
       await waitFor(() =>
         apiHarness.sendMessages.some(
           (entry) =>
-            String(entry.text).includes("dependencies failed") &&
-            String(entry.text).includes("the session remains available"),
+            entry.text ===
+            "provisioning failed for your demo session s1.\nprovision exited with code 17\ndependencies failed\nthe session remains available.",
         ),
       );
 

@@ -1,6 +1,4 @@
 import type { Tool, ToolCall } from "@earendil-works/pi-ai";
-import { fileTypeFromBuffer } from "file-type";
-import sharp from "sharp";
 import { Type } from "typebox";
 import { z } from "zod";
 import { formatBytes } from "../utils/truncate.js";
@@ -84,6 +82,8 @@ type EncodedImage = {
   mimeType: SupportedImageType;
 };
 
+type Sharp = typeof import("sharp")["default"];
+
 function isSupportedImageType(mimeType: string | undefined): mimeType is SupportedImageType {
   return mimeType ? SUPPORTED_IMAGE_TYPES.includes(mimeType as SupportedImageType) : false;
 }
@@ -131,8 +131,9 @@ async function encodeImageCandidate(args: {
   content: Buffer;
   maxDimension: number;
   plan: ImageEncodePlan;
+  sharp: Sharp;
 }): Promise<EncodedImage> {
-  const { content, maxDimension, plan } = args;
+  const { content, maxDimension, plan, sharp } = args;
   const pipeline = sharp(content).resize({
     width: maxDimension,
     height: maxDimension,
@@ -168,6 +169,7 @@ async function encodeImageCandidate(args: {
 async function prepareImageForModel(
   content: Buffer,
   sourceMimeType: SupportedImageType,
+  sharp: Sharp,
 ): Promise<EncodedImage> {
   const metadata = await sharp(content).metadata();
   const width = metadata.width;
@@ -200,6 +202,7 @@ async function prepareImageForModel(
         content,
         maxDimension: dimensionCap,
         plan,
+        sharp,
       });
 
       if (!smallest || candidate.content.byteLength < smallest.content.byteLength) {
@@ -272,6 +275,10 @@ export function createViewImageToolDefinition(backend: ToolExecutionBackend): Ag
           const { path: resolvedPath, content } = await backend.readFileBinary(path, {
             maxBytes: VIEW_IMAGE_READ_MAX_BYTES,
           });
+          const [{ fileTypeFromBuffer }, { default: sharp }] = await Promise.all([
+            import("file-type"),
+            import("sharp"),
+          ]);
 
           const detected = await fileTypeFromBuffer(content);
           const mimeType = detected?.mime;
@@ -281,7 +288,7 @@ export function createViewImageToolDefinition(backend: ToolExecutionBackend): Ag
             );
           }
 
-          const encodedImage = await prepareImageForModel(content, mimeType);
+          const encodedImage = await prepareImageForModel(content, mimeType, sharp);
           const data = encodedImage.content.toString("base64");
           const resultText = `Viewed ${resolvedPath} (${encodedImage.mimeType})`;
           const outcome: ToolExecutionOutcome = {

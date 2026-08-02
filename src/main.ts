@@ -4,66 +4,28 @@ import { homedir } from "node:os";
 import { isAbsolute } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
-import type { RuntimeConfigResult } from "./core/config/index.js";
-import type {
-  AuthCliCommand,
-  AuthPromptFn,
-  CliOptions,
-  Config,
-  Persona,
-  PromptTemplate,
-  ReasoningEffort,
-  RuntimeBootstrap,
-  Skill,
-  ThemeDefinition,
-} from "./core/index.js";
+import type { AuthCliCommand, AuthPromptFn } from "./core/auth/cli.js";
+import type { CliOptions } from "./core/cli.js";
 import {
-  AuthStorage,
   CliError,
-  createDefaultConfigDeps,
-  createDefaultCoreDeps,
-  createLocalToolExecutionBackend,
-  getAuthPath,
-  InstallCliError,
-  loadConfig,
-  loadRuntimeBootstrap,
-  loadRuntimeConfig,
-  NookCliError,
-  parseAuthCliArgs,
   parseCliArgs,
   parsePersonaString,
-  printDebugInfo,
   printDiffToolHelp,
   printHelp,
-  printInstallHelp,
-  printNookHelp,
-  printTelegramHelp,
-  printUsageHelp,
-  runInstallCommand,
-  runListCommand,
-  runLoginCommand,
-  runLogoutCommand,
-  runNookCommand,
-  runRpcServer,
-  runTelegramCommand,
-  runToolCommand,
-  runUsageCommand,
-  runWebSocketSessionServer,
-  TelegramCliError,
-  ToolCatalog,
-  ToolCliError,
-  ToolRegistry,
-  UsageCliError,
-} from "./core/index.js";
+} from "./core/cli.js";
+import type { ThemeDefinition } from "./core/config/content_loader.js";
+import { createDefaultConfigDeps } from "./core/config/deps.js";
+import type { RuntimeBootstrap, RuntimeConfigResult } from "./core/config/runtime.js";
+import { loadRuntimeBootstrap, loadRuntimeConfig } from "./core/config/runtime.js";
+import type { Config } from "./core/config/schema.js";
+import { loadConfig } from "./core/config/schema.js";
 import { getStartupPlatformError } from "./core/platform_support.js";
-import {
-  createBuiltInDiffToolConfig,
-  DiffToolLaunchEnvironmentError,
-  runBuiltInDiffToolCommand,
-} from "./diff_tool/index.js";
-import { CloudflareSandboxExecutionEnvironmentResolver } from "./execution/cloudflare_sandbox_execution_environment.js";
+import type { PromptTemplate } from "./core/prompts.js";
+import { createDefaultCoreDeps } from "./core/runtime/deps.js";
+import { createLocalToolExecutionBackend } from "./core/tools/execution_backend.js";
+import type { Persona, ReasoningEffort, Skill } from "./core/types.js";
+import { createBuiltInDiffToolConfig } from "./diff_tool/launcher.js";
 import { CompositeExecutionEnvironmentResolver } from "./execution/execution_environment.js";
-import { FlySpriteExecutionEnvironmentResolver } from "./execution/fly_sprite_execution_environment.js";
 import { LocalExecutionEnvironmentResolver } from "./execution/local_execution_environment.js";
 import { LocalSessionHost } from "./host/local_session_host.js";
 import type {
@@ -544,7 +506,10 @@ async function resolveHostedSessionBootstrap(options: {
   };
 }
 
-function createLocalSessionHost(options: { cli: CliOptions; config: Config }): LocalSessionHost {
+async function createLocalSessionHost(options: {
+  cli: CliOptions;
+  config: Config;
+}): Promise<LocalSessionHost> {
   const deps = createDefaultCoreDeps();
   const home = deps.env.home() || process.env.HOME || homedir();
   const toolBackend = createLocalToolExecutionBackend();
@@ -552,27 +517,30 @@ function createLocalSessionHost(options: { cli: CliOptions; config: Config }): L
     home,
     toolBackend,
   });
-  const executionEnvironmentResolver = new CompositeExecutionEnvironmentResolver({
+  const resolvers: ConstructorParameters<typeof CompositeExecutionEnvironmentResolver>[0] = {
     local: localExecutionEnvironmentResolver,
-    ...(options.config.cloudflareSandbox?.bridges
-      ? {
-          "cloudflare-sandbox": new CloudflareSandboxExecutionEnvironmentResolver({
-            bridges: options.config.cloudflareSandbox.bridges,
-          }),
-        }
-      : {}),
-    ...(options.config.flySprites?.apis
-      ? {
-          "fly-sprite": new FlySpriteExecutionEnvironmentResolver({
-            apis: options.config.flySprites.apis,
-          }),
-        }
-      : {}),
-  });
+  };
+
+  if (options.config.cloudflareSandbox?.bridges) {
+    const { CloudflareSandboxExecutionEnvironmentResolver } = await import(
+      "./execution/cloudflare_sandbox_execution_environment.js"
+    );
+    resolvers["cloudflare-sandbox"] = new CloudflareSandboxExecutionEnvironmentResolver({
+      bridges: options.config.cloudflareSandbox.bridges,
+    });
+  }
+  if (options.config.flySprites?.apis) {
+    const { FlySpriteExecutionEnvironmentResolver } = await import(
+      "./execution/fly_sprite_execution_environment.js"
+    );
+    resolvers["fly-sprite"] = new FlySpriteExecutionEnvironmentResolver({
+      apis: options.config.flySprites.apis,
+    });
+  }
 
   return new LocalSessionHost({
     store: new FileSessionStore({ directory: getDefaultSessionStoreDirectory(home) }),
-    executionEnvironmentResolver,
+    executionEnvironmentResolver: new CompositeExecutionEnvironmentResolver(resolvers),
     includeAgentContext: !options.cli.noAgentContextFiles,
     environment: {
       now: () => deps.clock.now(),
@@ -591,7 +559,10 @@ function createLocalSessionHost(options: { cli: CliOptions; config: Config }): L
 }
 
 async function runRpcMode(options: { cli: CliOptions; config: Config }): Promise<void> {
-  const sessionHost = createLocalSessionHost(options);
+  const [sessionHost, { runRpcServer }] = await Promise.all([
+    createLocalSessionHost(options),
+    import("./core/modes/rpc_server.js"),
+  ]);
 
   const abortController = new AbortController();
   const requestShutdown = () => {
@@ -627,6 +598,14 @@ let themes: ThemeDefinition[] = [];
 let runtimeBootstrap: RuntimeBootstrap | undefined;
 
 if (argv[0] === "auth") {
+  const {
+    AuthStorage,
+    getAuthPath,
+    parseAuthCliArgs,
+    runListCommand,
+    runLoginCommand,
+    runLogoutCommand,
+  } = await import("./core/auth/index.js");
   let command: AuthCliCommand;
   try {
     command = parseAuthCliArgs(argv.slice(1));
@@ -694,6 +673,7 @@ if (argv[0] === "auth") {
 }
 
 if (argv[0] === "usage") {
+  const { printUsageHelp, runUsageCommand, UsageCliError } = await import("./core/usage/cli.js");
   try {
     await runUsageCommand(argv.slice(1));
     process.exit(0);
@@ -711,6 +691,9 @@ if (argv[0] === "usage") {
 }
 
 if (argv[0] === "install") {
+  const { InstallCliError, printInstallHelp, runInstallCommand } = await import(
+    "./core/install/cli.js"
+  );
   try {
     await runInstallCommand(argv.slice(1), {
       cwd,
@@ -731,6 +714,7 @@ if (argv[0] === "install") {
 }
 
 if (argv[0] === "nook") {
+  const { NookCliError, printNookHelp, runNookCommand } = await import("./core/nook/index.js");
   try {
     const nookConfig = loadConfig(cwd, configDeps);
     await runNookCommand(argv.slice(1), {
@@ -753,6 +737,9 @@ if (argv[0] === "nook") {
 }
 
 if (argv[0] === "telegram") {
+  const { printTelegramHelp, runTelegramCommand, TelegramCliError } = await import(
+    "./core/telegram/index.js"
+  );
   try {
     const telegramConfig = loadConfig(cwd, configDeps);
     await runTelegramCommand(argv.slice(1), {
@@ -776,6 +763,7 @@ if (argv[0] === "telegram") {
 }
 
 if (argv[0] === "tool") {
+  const { runToolCommand, ToolCliError } = await import("./core/tool/cli.js");
   try {
     const toolConfig = loadConfig(cwd, configDeps);
     await runToolCommand(argv.slice(1), {
@@ -800,6 +788,9 @@ if (argv[0] === "tool") {
 }
 
 if (isDiffToolSubcommand) {
+  const { DiffToolLaunchEnvironmentError, runBuiltInDiffToolCommand } = await import(
+    "./diff_tool/index.js"
+  );
   const diffToolArgs = argv.slice(1);
   if (diffToolArgs.length > 0) {
     const wantsHelp = diffToolArgs.includes("--help") || diffToolArgs.includes("-h");
@@ -1059,6 +1050,17 @@ if (cli.personaId) {
 }
 
 if (cli.debug) {
+  const [
+    { printDebugInfo },
+    { ToolCatalog },
+    { createLocalToolExecutionBackend },
+    { ToolRegistry },
+  ] = await Promise.all([
+    import("./core/debug.js"),
+    import("./core/tools/catalog.js"),
+    import("./core/tools/execution_backend.js"),
+    import("./core/tools/registry.js"),
+  ]);
   const selectedPersona = initialPersonaId
     ? personas.find((persona) => persona.id === initialPersonaId)
     : personas[0];
@@ -1091,7 +1093,10 @@ if (cli.debug) {
 }
 
 if (isServeSubcommand) {
-  const sessionHost = createLocalSessionHost({ cli, config });
+  const [sessionHost, { runWebSocketSessionServer }] = await Promise.all([
+    createLocalSessionHost({ cli, config }),
+    import("./core/modes/websocket_server.js"),
+  ]);
 
   const abortController = new AbortController();
   const requestShutdown = () => {

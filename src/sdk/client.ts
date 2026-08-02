@@ -1,12 +1,11 @@
 import { homedir } from "node:os";
 import { parsePersonaString } from "../core/cli.js";
-import { createDefaultConfigDeps, loadRuntimeConfig } from "../core/config/index.js";
+import { createDefaultConfigDeps } from "../core/config/deps.js";
+import { loadConfig } from "../core/config/schema.js";
 import { createDefaultCoreDeps } from "../core/runtime/deps.js";
 import { createLocalToolExecutionBackend } from "../core/tools/execution_backend.js";
 import type { Persona } from "../core/types.js";
-import { CloudflareSandboxExecutionEnvironmentResolver } from "../execution/cloudflare_sandbox_execution_environment.js";
 import { CompositeExecutionEnvironmentResolver } from "../execution/execution_environment.js";
-import { FlySpriteExecutionEnvironmentResolver } from "../execution/fly_sprite_execution_environment.js";
 import { LocalExecutionEnvironmentResolver } from "../execution/local_execution_environment.js";
 import { LocalSessionHost } from "../host/local_session_host.js";
 import { FileSessionStore, getDefaultSessionStoreDirectory } from "../store/file_session_store.js";
@@ -35,30 +34,33 @@ async function createInProcessSdkHost(options: TauSdkClientOptions): Promise<Loc
   const configDeps = createDefaultConfigDeps();
   const cwd = options.cwd ?? deps.env.cwd();
   const home = deps.env.home() || process.env.HOME || homedir();
-  const runtime = await loadRuntimeConfig(cwd, configDeps);
+  const config = loadConfig(cwd, configDeps);
 
   const toolBackend = createLocalToolExecutionBackend();
   const localResolver = new LocalExecutionEnvironmentResolver({
     home,
     toolBackend,
   });
-  const executionEnvironmentResolver = new CompositeExecutionEnvironmentResolver({
+  const resolvers: ConstructorParameters<typeof CompositeExecutionEnvironmentResolver>[0] = {
     local: localResolver,
-    ...(runtime.config.cloudflareSandbox?.bridges
-      ? {
-          "cloudflare-sandbox": new CloudflareSandboxExecutionEnvironmentResolver({
-            bridges: runtime.config.cloudflareSandbox.bridges,
-          }),
-        }
-      : {}),
-    ...(runtime.config.flySprites?.apis
-      ? {
-          "fly-sprite": new FlySpriteExecutionEnvironmentResolver({
-            apis: runtime.config.flySprites.apis,
-          }),
-        }
-      : {}),
-  });
+  };
+  if (config.cloudflareSandbox?.bridges) {
+    const { CloudflareSandboxExecutionEnvironmentResolver } = await import(
+      "../execution/cloudflare_sandbox_execution_environment.js"
+    );
+    resolvers["cloudflare-sandbox"] = new CloudflareSandboxExecutionEnvironmentResolver({
+      bridges: config.cloudflareSandbox.bridges,
+    });
+  }
+  if (config.flySprites?.apis) {
+    const { FlySpriteExecutionEnvironmentResolver } = await import(
+      "../execution/fly_sprite_execution_environment.js"
+    );
+    resolvers["fly-sprite"] = new FlySpriteExecutionEnvironmentResolver({
+      apis: config.flySprites.apis,
+    });
+  }
+  const executionEnvironmentResolver = new CompositeExecutionEnvironmentResolver(resolvers);
 
   return new LocalSessionHost({
     store: new FileSessionStore({ directory: getDefaultSessionStoreDirectory(home) }),

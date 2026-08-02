@@ -14,7 +14,7 @@ type AgentsFilesInScopeResult = {
 
 const CHILD_AGENTS_RG_TIMEOUT_MS = 2000;
 const CHILD_AGENTS_WALK_TIMEOUT_MS = 1000;
-const CHILD_AGENTS_WALK_MAX_DIRS = 10_000;
+const CHILD_AGENTS_WALK_MAX_DIRS = 8_192;
 
 const DEFAULT_IGNORED_CHILD_DIRS = new Set([
   ".cache",

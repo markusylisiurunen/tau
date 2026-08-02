@@ -275,7 +275,7 @@ const HOME_IGNORED_CHILD_DIRS = [
   ".yarn",
 ];
 
-const CHILD_AGENTS_WALK_MAX_DIRS = 10_000;
+const CHILD_AGENTS_WALK_MAX_DIRS = 8_192;
 const RUNTIME_PROMPT_CONTEXT_TIMEOUT_MS = 15_000;
 
 type RuntimePromptContextInspection = {

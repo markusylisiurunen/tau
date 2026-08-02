@@ -18,11 +18,9 @@ type SubagentPanelEntry = {
   id: string;
   name: string;
   title: string;
-  status: SubagentStateSnapshot["status"];
-  abortRequested: boolean;
+  runRevision: number;
+  status: SubagentStateSnapshot["run"]["status"];
   costTotal: number;
-  turns: number;
-  toolCalls: number;
   usage: SubagentUsageSnapshot;
   lines: SubagentPanelLine[];
 };
@@ -32,7 +30,7 @@ const MAX_PANEL_HISTORY = 200;
 
 export type SubagentPanelSnapshot = {
   state: SubagentStateSnapshot;
-  progress?: string;
+  activity?: string;
 };
 
 export class SubagentPanelComponent implements Component {
@@ -68,11 +66,12 @@ export class SubagentPanelComponent implements Component {
         this.entries.set(entry.id, entry);
       }
 
-      const progress = snapshot.progress?.trim();
-      if (progress && !this.hasLine(entry, "progress", progress)) {
-        this.appendLine(entry, { kind: "progress", text: progress });
+      const activity = snapshot.activity?.trim();
+      if (activity && !this.hasLine(entry, "progress", activity)) {
+        this.appendLine(entry, { kind: "progress", text: activity });
       }
-      const finalText = snapshot.state.finalText?.trim();
+      const finalText =
+        snapshot.state.run.status === "succeeded" ? snapshot.state.run.response.trim() : "";
       if (finalText && !this.hasLine(entry, "output", finalText)) {
         this.appendLine(entry, { kind: "output", text: finalText });
       }
@@ -88,7 +87,7 @@ export class SubagentPanelComponent implements Component {
   }
 
   handleEvent(event: SubagentUiEvent): void {
-    if (event.type === "subagent_spawned") {
+    if (event.type === "subagent_spawned" || event.type === "subagent_run_started") {
       const state = event.state;
       this.entries.set(state.id, this.buildEntry(state));
       if (!this.selectedId || this.entries.get(this.selectedId)?.status !== "running") {
@@ -101,9 +100,11 @@ export class SubagentPanelComponent implements Component {
       const entry = this.entries.get(event.state.id);
       if (!entry) return;
       this.applySnapshot(entry, event.state);
-      const finalText = event.state.finalText?.trim();
+      const response =
+        event.state.run.status === "succeeded" ? event.state.run.response : undefined;
+      const finalText = response?.trim() ?? "";
       if (finalText && !this.hasOutputLine(entry, finalText)) {
-        entry.lines.push({ kind: "output", text: event.state.finalText ?? finalText });
+        entry.lines.push({ kind: "output", text: finalText });
         if (entry.lines.length > MAX_PANEL_HISTORY) {
           entry.lines.shift();
         }
@@ -114,23 +115,19 @@ export class SubagentPanelComponent implements Component {
       return;
     }
 
-    if (event.type === "subagent_abort_requested") {
-      const entry = this.entries.get(event.id);
+    if (event.type === "subagent_interrupt_requested") {
+      const entry = this.entries.get(event.state.id);
       if (!entry) return;
-      entry.abortRequested = true;
+      this.applySnapshot(entry, event.state);
       return;
     }
 
-    if (event.type === "subagent_progress") {
-      const entry = this.entries.get(event.id);
+    if (event.type === "subagent_updated" || event.type === "subagent_activity") {
+      const entry = this.entries.get(event.state.id);
       if (!entry) return;
-      entry.costTotal = event.costTotal;
-      entry.turns = event.turns;
-      entry.toolCalls = event.toolCalls;
-      entry.usage = event.usage;
-      const text = event.text.trim();
-      if (text) {
-        entry.lines.push({ kind: "progress", text });
+      this.applySnapshot(entry, event.state);
+      if (event.type === "subagent_activity" && event.text) {
+        entry.lines.push({ kind: "progress", text: event.text });
         if (entry.lines.length > MAX_PANEL_HISTORY) {
           entry.lines.shift();
         }
@@ -247,7 +244,7 @@ export class SubagentPanelComponent implements Component {
     if (total > 1) {
       parts.push("alt+down to cycle");
     }
-    parts.push("ctrl+g to terminate");
+    parts.push("ctrl+g to interrupt");
     return palette.textMuted(parts.join(" · "));
   }
 
@@ -294,22 +291,21 @@ export class SubagentPanelComponent implements Component {
       id: state.id,
       name: state.name,
       title: state.title,
-      status: state.status,
-      abortRequested: Boolean(state.abortRequested),
+      runRevision: state.run.revision,
+      status: state.run.status,
       costTotal: state.costTotal,
-      turns: state.turns,
-      toolCalls: state.toolCalls,
       usage: state.usage,
       lines: [],
     };
   }
 
   private applySnapshot(entry: SubagentPanelEntry, state: SubagentStateSnapshot): void {
-    entry.status = state.status;
-    entry.abortRequested = Boolean(state.abortRequested);
+    if (entry.runRevision !== state.run.revision) {
+      entry.runRevision = state.run.revision;
+      entry.lines = [];
+    }
+    entry.status = state.run.status;
     entry.costTotal = state.costTotal;
-    entry.turns = state.turns;
-    entry.toolCalls = state.toolCalls;
     entry.usage = state.usage;
     entry.name = state.name;
     entry.title = state.title;

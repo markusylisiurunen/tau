@@ -4,7 +4,7 @@ import { personas } from "../dist/core/personas.js";
 import { AgentSupervisor } from "../dist/core/subagents/agent_supervisor.js";
 import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
 
-function createAssistant(text) {
+function createAssistant(text, options = {}) {
   const model = personas[0].model;
   return {
     role: "assistant",
@@ -12,7 +12,8 @@ function createAssistant(text) {
     provider: model.provider,
     model: model.id,
     content: [{ type: "text", text }],
-    stopReason: "stop",
+    stopReason: options.stopReason ?? "stop",
+    ...(options.errorMessage ? { errorMessage: options.errorMessage } : {}),
     usage: {
       input: 2,
       output: 3,
@@ -88,25 +89,37 @@ describe("AgentSupervisor", () => {
     const spawned = supervisor.spawn(createSpawnOptions());
     expect(spawned.ok).toBe(true);
     if (!spawned.ok) throw new Error(spawned.reason);
-    const record = getRecord(supervisor, spawned.id);
+    const record = getRecord(supervisor, spawned.state.id);
     expect(record.runtime).toBeInstanceOf(AgentRuntime);
     const responses = [createAssistant("first result"), createAssistant("follow-up result")];
     record.runtime.spec.model.stream = vi.fn(() => createStream(responses.shift()));
 
-    await expect(supervisor.waitForAgents([spawned.id])).resolves.toEqual([
-      expect.objectContaining({ id: spawned.id, status: "success", finalText: "first result" }),
+    await expect(supervisor.waitForAgents([spawned.state.id])).resolves.toEqual([
+      expect.objectContaining({
+        id: spawned.state.id,
+        run: expect.objectContaining({
+          status: "succeeded",
+          response: "first result",
+        }),
+      }),
     ]);
-    expect(supervisor.getSnapshot(spawned.id)).toMatchObject({
-      status: "success",
-      turns: 1,
+    expect(supervisor.getSnapshot(spawned.state.id)).toMatchObject({
+      run: { status: "succeeded", response: "first result" },
       costTotal: 0.01,
     });
 
-    expect(supervisor.sendInput({ id: spawned.id, prompt: "continue" }).ok).toBe(true);
-    await expect(supervisor.waitForAgents([spawned.id])).resolves.toEqual([
-      expect.objectContaining({ status: "success", finalText: "follow-up result", turns: 2 }),
+    expect(supervisor.sendInput({ id: spawned.state.id, prompt: "continue" }).ok).toBe(true);
+    await expect(supervisor.waitForAgents([spawned.state.id])).resolves.toEqual([
+      expect.objectContaining({
+        run: expect.objectContaining({
+          revision: 2,
+          status: "succeeded",
+          response: "follow-up result",
+        }),
+      }),
     ]);
-    expect(events.filter((event) => event.type === "subagent_spawned")).toHaveLength(2);
+    expect(events.filter((event) => event.type === "subagent_spawned")).toHaveLength(1);
+    expect(events.filter((event) => event.type === "subagent_run_started")).toHaveLength(1);
     expect(events.filter((event) => event.type === "subagent_finished")).toHaveLength(2);
     expect(recordUsage).toHaveBeenCalledTimes(2);
     for (const [entry] of recordUsage.mock.calls) {
@@ -115,36 +128,106 @@ describe("AgentSupervisor", () => {
     }
   });
 
-  it("reports a partial provider failure as an error", async () => {
+  it("marks compacted subagent state as a potentially stale snapshot", async () => {
     const supervisor = new AgentSupervisor({ onEvent: async () => {}, recordUsage: () => {} });
     const spawned = supervisor.spawn(createSpawnOptions());
     expect(spawned.ok).toBe(true);
     if (!spawned.ok) throw new Error(spawned.reason);
-    const record = getRecord(supervisor, spawned.id);
-    const streamError = new Error("stream failed");
-    record.runtime.spec.retryPolicy = { maxRetries: 0, delayMs: 0 };
-    record.runtime.spec.model.stream = vi.fn(() =>
-      createFailingStream("incomplete result", streamError),
+    const record = getRecord(supervisor, spawned.state.id);
+    record.runtime.spec.model.stream = vi.fn(() => createStream(createAssistant("done")));
+
+    const context = supervisor.getActiveCompactionContext();
+
+    expect(context).toContain(
+      "This subagent state was captured at the time of compaction and may have changed since then.",
+    );
+    expect(context).toContain("Use list_agents to inspect the current state.");
+    expect(context).toContain(`\`${spawned.state.id}\` · child task`);
+    expect(context).not.toContain("Agents ·");
+    await supervisor.waitForAgents([spawned.state.id]);
+  });
+
+  it("retains the latest response for repeated waits", async () => {
+    const supervisor = new AgentSupervisor({ onEvent: async () => {}, recordUsage: () => {} });
+    const spawned = supervisor.spawn(createSpawnOptions());
+    expect(spawned.ok).toBe(true);
+    if (!spawned.ok) throw new Error(spawned.reason);
+    const record = getRecord(supervisor, spawned.state.id);
+    record.runtime.spec.model.stream = vi.fn(() => createStream(createAssistant("retained")));
+
+    const first = await supervisor.waitForAgents([spawned.state.id]);
+    const second = await supervisor.waitForAgents([spawned.state.id]);
+
+    expect(first).toEqual(second);
+    expect(second[0]).toMatchObject({
+      run: { status: "succeeded", response: "retained" },
+    });
+  });
+
+  it("distinguishes returned and streamed provider errors from successful empty responses", async () => {
+    const supervisor = new AgentSupervisor({ onEvent: async () => {}, recordUsage: () => {} });
+    const failed = supervisor.spawn(createSpawnOptions());
+    expect(failed.ok).toBe(true);
+    if (!failed.ok) throw new Error(failed.reason);
+    const failedRecord = getRecord(supervisor, failed.state.id);
+    failedRecord.runtime.spec.model.stream = vi.fn(() =>
+      createStream(
+        createAssistant("", { stopReason: "error", errorMessage: "provider overloaded" }),
+      ),
     );
 
-    await expect(supervisor.waitForAgents([spawned.id])).resolves.toEqual([
+    await expect(supervisor.waitForAgents([failed.state.id])).resolves.toEqual([
       expect.objectContaining({
-        id: spawned.id,
-        status: "error",
-        error: "stream failed",
+        run: expect.objectContaining({
+          status: "failed",
+          failure: {
+            kind: "provider-error",
+            message: "provider overloaded",
+            stopReason: "error",
+          },
+        }),
       }),
     ]);
-    expect(supervisor.getSnapshot(spawned.id)).toMatchObject({
-      status: "error",
-      error: "stream failed",
-    });
-    expect(supervisor.getSnapshot(spawned.id)?.finalText).toBeUndefined();
-    expect(record.runtime.rawHistory.at(-1)).toMatchObject({
+
+    const rejected = supervisor.spawn(createSpawnOptions());
+    expect(rejected.ok).toBe(true);
+    if (!rejected.ok) throw new Error(rejected.reason);
+    const rejectedRecord = getRecord(supervisor, rejected.state.id);
+    rejectedRecord.runtime.spec.retryPolicy = { maxRetries: 0, delayMs: 0 };
+    rejectedRecord.runtime.spec.model.stream = vi.fn(() =>
+      createFailingStream("incomplete result", new Error("provider connection failed")),
+    );
+
+    await expect(supervisor.waitForAgents([rejected.state.id])).resolves.toEqual([
+      expect.objectContaining({
+        run: expect.objectContaining({
+          status: "failed",
+          failure: {
+            kind: "provider-error",
+            message: "provider connection failed",
+            stopReason: "error",
+          },
+        }),
+      }),
+    ]);
+    expect(rejectedRecord.runtime.rawHistory.at(-1)).toMatchObject({
       role: "assistant",
       content: [{ type: "text", text: "incomplete result" }],
       stopReason: "error",
-      errorMessage: "stream failed",
+      errorMessage: "provider connection failed",
     });
+
+    const empty = supervisor.spawn(createSpawnOptions());
+    expect(empty.ok).toBe(true);
+    if (!empty.ok) throw new Error(empty.reason);
+    const emptyRecord = getRecord(supervisor, empty.state.id);
+    emptyRecord.runtime.spec.model.stream = vi.fn(() => createStream(createAssistant("")));
+
+    await expect(supervisor.waitForAgents([empty.state.id])).resolves.toEqual([
+      expect.objectContaining({
+        run: expect.objectContaining({ status: "succeeded", response: "" }),
+      }),
+    ]);
   });
 
   it("auto-compacts a child between tool subturns through the shared runtime", async () => {
@@ -173,7 +256,7 @@ describe("AgentSupervisor", () => {
     );
     expect(spawned.ok).toBe(true);
     if (!spawned.ok) throw new Error(spawned.reason);
-    const record = getRecord(supervisor, spawned.id);
+    const record = getRecord(supervisor, spawned.state.id);
     const calls = [
       {
         id: "bash-1",
@@ -223,12 +306,13 @@ describe("AgentSupervisor", () => {
     const streamModel = vi.fn(() => streams.shift());
     record.runtime.spec.model.stream = streamModel;
 
-    await expect(supervisor.waitForAgents([spawned.id])).resolves.toEqual([
+    await expect(supervisor.waitForAgents([spawned.state.id])).resolves.toEqual([
       expect.objectContaining({
-        id: spawned.id,
-        status: "success",
-        finalText: "finished after compaction",
-        toolCalls: 2,
+        id: spawned.state.id,
+        run: expect.objectContaining({
+          status: "succeeded",
+          response: "finished after compaction",
+        }),
       }),
     ]);
 
@@ -240,7 +324,7 @@ describe("AgentSupervisor", () => {
     expect(backend.runBash).toHaveBeenCalledTimes(2);
   });
 
-  it("terminates a child before its startup event finishes", async () => {
+  it("interrupts a child before its startup event finishes", async () => {
     let releaseSpawn;
     const spawnGate = new Promise((resolve) => {
       releaseSpawn = resolve;
@@ -256,30 +340,33 @@ describe("AgentSupervisor", () => {
     const spawned = supervisor.spawn(createSpawnOptions());
     expect(spawned.ok).toBe(true);
     if (!spawned.ok) throw new Error(spawned.reason);
-    const record = getRecord(supervisor, spawned.id);
+    const record = getRecord(supervisor, spawned.state.id);
     const stream = vi.fn(() => createStream(createAssistant("too late")));
     record.runtime.spec.model.stream = stream;
 
-    const termination = supervisor.terminate(spawned.id);
-    await vi.waitFor(() => expect(record.abortRequested).toBe(true));
+    const interruption = supervisor.interrupt(spawned.state.id);
+    await vi.waitFor(() => expect(record.run.interruptRequested).toBe(true));
     releaseSpawn();
 
-    await expect(termination).resolves.toMatchObject({ id: spawned.id, status: "aborted" });
+    await expect(interruption).resolves.toMatchObject({
+      id: spawned.state.id,
+      run: { status: "interrupted", failure: { kind: "interrupted" } },
+    });
     expect(stream).not.toHaveBeenCalled();
   });
 
-  it("interrupts a child before publishing its abort request", async () => {
-    const abortProjection = new Error("abort projection failed");
+  it("interrupts a child before publishing its interruption request", async () => {
+    const interruptProjection = new Error("interrupt projection failed");
     const supervisor = new AgentSupervisor({
       onEvent: async (event) => {
-        if (event.type === "subagent_abort_requested") throw abortProjection;
+        if (event.type === "subagent_interrupt_requested") throw interruptProjection;
       },
       recordUsage: () => {},
     });
     const spawned = supervisor.spawn(createSpawnOptions());
     expect(spawned.ok).toBe(true);
     if (!spawned.ok) throw new Error(spawned.reason);
-    const record = getRecord(supervisor, spawned.id);
+    const record = getRecord(supervisor, spawned.state.id);
     record.runtime.spec.model.stream = vi.fn((_context, options) => ({
       async *[Symbol.asyncIterator]() {
         await new Promise((resolve) =>
@@ -292,12 +379,14 @@ describe("AgentSupervisor", () => {
     }));
 
     await vi.waitFor(() => expect(record.runtime.status).toBe("running"));
-    await expect(supervisor.terminate(spawned.id)).rejects.toBe(abortProjection);
-    await expect(record.completion).resolves.toMatchObject({ status: "aborted" });
+    await expect(supervisor.interrupt(spawned.state.id)).rejects.toBe(interruptProjection);
+    await expect(record.completion).resolves.toMatchObject({
+      run: { status: "interrupted", failure: { kind: "interrupted" } },
+    });
     expect(record.runtime.status).toBe("idle");
   });
 
-  it("keeps a requested abort when the child races to natural completion", async () => {
+  it("keeps a requested interruption when the child races to natural completion", async () => {
     let markSubmitStarted;
     const submitStarted = new Promise((resolve) => {
       markSubmitStarted = resolve;
@@ -310,7 +399,7 @@ describe("AgentSupervisor", () => {
     const spawned = supervisor.spawn(createSpawnOptions());
     expect(spawned.ok).toBe(true);
     if (!spawned.ok) throw new Error(spawned.reason);
-    const record = getRecord(supervisor, spawned.id);
+    const record = getRecord(supervisor, spawned.state.id);
     record.runtime.submit = vi.fn(async () => {
       markSubmitStarted();
       await submitGate;
@@ -318,20 +407,23 @@ describe("AgentSupervisor", () => {
     });
     await submitStarted;
 
-    const termination = supervisor.terminate(spawned.id);
-    await vi.waitFor(() => expect(record.abortRequested).toBe(true));
+    const interruption = supervisor.interrupt(spawned.state.id);
+    await vi.waitFor(() => expect(record.run.interruptRequested).toBe(true));
     releaseSubmit();
 
-    await expect(termination).resolves.toMatchObject({ id: spawned.id, status: "aborted" });
-    expect(record.error).toBeUndefined();
+    await expect(interruption).resolves.toMatchObject({
+      id: spawned.state.id,
+      run: { status: "interrupted", failure: { kind: "interrupted" } },
+    });
+    expect(record.run.failure).toMatchObject({ kind: "interrupted" });
   });
 
-  it("terminates a running child and reports an aborted result", async () => {
+  it("interrupts a running child and reports an interrupted result", async () => {
     const supervisor = new AgentSupervisor({ onEvent: async () => {}, recordUsage: () => {} });
     const spawned = supervisor.spawn(createSpawnOptions());
     expect(spawned.ok).toBe(true);
     if (!spawned.ok) throw new Error(spawned.reason);
-    const record = getRecord(supervisor, spawned.id);
+    const record = getRecord(supervisor, spawned.state.id);
     record.runtime.spec.model.stream = vi.fn((_context, options) => ({
       async *[Symbol.asyncIterator]() {
         await new Promise((resolve) =>
@@ -344,9 +436,9 @@ describe("AgentSupervisor", () => {
     }));
 
     await vi.waitFor(() => expect(record.runtime.status).toBe("running"));
-    await expect(supervisor.terminate(spawned.id)).resolves.toMatchObject({
-      id: spawned.id,
-      status: "aborted",
+    await expect(supervisor.interrupt(spawned.state.id)).resolves.toMatchObject({
+      id: spawned.state.id,
+      run: { status: "interrupted", failure: { kind: "interrupted" } },
     });
     expect(supervisor.getActiveCount()).toBe(0);
   });
@@ -369,20 +461,23 @@ describe("AgentSupervisor", () => {
     const spawned = supervisor.spawn(createSpawnOptions());
     expect(spawned.ok).toBe(true);
     if (!spawned.ok) throw new Error(spawned.reason);
-    const record = getRecord(supervisor, spawned.id);
+    const record = getRecord(supervisor, spawned.state.id);
     record.runtime.spec.model.stream = vi.fn(() => createStream(createAssistant("done")));
 
     let settled = false;
-    const waiting = supervisor.waitForAgents([spawned.id]).finally(() => {
+    const waiting = supervisor.waitForAgents([spawned.state.id]).finally(() => {
       settled = true;
     });
     await vi.waitFor(() => expect(finishedEventSeen).toBe(true));
-    expect(record.status).toBe("success");
+    expect(record.run.status).toBe("succeeded");
     expect(settled).toBe(false);
 
     releaseFinished();
     await expect(waiting).resolves.toEqual([
-      expect.objectContaining({ id: spawned.id, status: "success", finalText: "done" }),
+      expect.objectContaining({
+        id: spawned.state.id,
+        run: expect.objectContaining({ status: "succeeded", response: "done" }),
+      }),
     ]);
   });
 
@@ -394,7 +489,7 @@ describe("AgentSupervisor", () => {
     const supervisor = new AgentSupervisor({
       recordUsage: () => {},
       onEvent: async (event) => {
-        if (event.type === "subagent_progress" && event.text === "assistant: thinking") {
+        if (event.type === "subagent_activity" && event.text === "assistant: thinking") {
           await progressGate;
         }
       },
@@ -405,7 +500,7 @@ describe("AgentSupervisor", () => {
         createSpawnOptions({ originHistoryEntryId: `origin-${index}` }),
       );
       expect(result.ok).toBe(true);
-      if (result.ok) ids.push(result.id);
+      if (result.ok) ids.push(result.state.id);
     }
 
     expect(supervisor.spawn(createSpawnOptions())).toEqual({
@@ -416,6 +511,6 @@ describe("AgentSupervisor", () => {
     expect(supervisor.listSnapshots().map((snapshot) => snapshot.id)).toEqual([ids[0]]);
     expect(supervisor.records.size).toBe(1);
     releaseProgress();
-    await supervisor.terminate(ids[0]);
+    await supervisor.interrupt(ids[0]);
   });
 });

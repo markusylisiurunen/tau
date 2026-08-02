@@ -43,6 +43,40 @@ function createNoticeDelta(sessionId, revision, text) {
 }
 
 function createAgentDelta(sessionId, revision, event) {
+  const agent = {
+    id: event.id,
+    name: "default",
+    title: event.title ?? event.id,
+    availability: event.type === "finished" ? "idle" : "running",
+    model: { provider: "anthropic", id: "claude-opus-4-8", reasoning: "medium" },
+    workingDirectory: "/repo",
+    createdAt: revision,
+    run:
+      event.type === "finished"
+        ? {
+            revision: 1,
+            status: "succeeded",
+            startedAt: revision,
+            finishedAt: revision + 1,
+            interruptRequested: false,
+            response: "done",
+          }
+        : {
+            revision: 1,
+            status: "running",
+            startedAt: revision,
+            interruptRequested: false,
+          },
+    costTotal: event.costTotal ?? 0,
+    usage: event.usage ?? {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      contextWindowUsageTokens: 0,
+      contextWindow: 200000,
+    },
+  };
   return {
     version: SESSION_PROTOCOL_VERSION,
     type: "session.delta",
@@ -53,29 +87,21 @@ function createAgentDelta(sessionId, revision, event) {
     delta: {
       type: "snapshot.patch",
       changes: [
-        {
-          type: "agent.set",
-          agent: {
-            id: event.id,
-            name: "default",
-            title: event.title ?? event.id,
-            status: event.type === "finished" ? "succeeded" : "running",
-            costTotal: event.costTotal ?? 0,
-            turns: event.turns ?? 0,
-            toolCalls: event.toolCalls ?? 0,
-            usage: event.usage ?? {
-              input: 0,
-              output: 0,
-              cacheRead: 0,
-              cacheWrite: 0,
-              contextWindowUsageTokens: 0,
-              contextWindow: 200000,
-            },
-            startedAt: revision,
-            abortRequested: false,
-            ...(event.text !== undefined ? { progress: event.text } : {}),
-          },
-        },
+        { type: "agent.set", agent },
+        ...(event.text
+          ? [
+              {
+                type: "facet.set",
+                facet: {
+                  id: `subagent-activity-${event.id}`,
+                  subject: { type: "agent", id: event.id },
+                  kind: "tau.subagent-activity",
+                  version: 1,
+                  data: { text: event.text },
+                },
+              },
+            ]
+          : []),
       ],
     },
   };
@@ -420,7 +446,7 @@ function createHarness(options = {}) {
       waitForActiveWork: vi.fn(async () => {
         await Promise.allSettled([activeTurnSettlement, ...activeWorkPromises]);
       }),
-      terminateSubagent: vi.fn(async () => ({ found: true })),
+      interruptSubagent: vi.fn(async () => ({ found: true })),
       createEphemeralContext: vi.fn(async () => {
         const contextId = `context-${ephemeralContexts.size + 1}`;
         ephemeralContexts.add(contextId);
@@ -523,15 +549,24 @@ function deltaHasNotice(line, text) {
   );
 }
 
-function deltaHasAgent(line, id, progress) {
+function deltaHasAgent(line, id) {
   return (
     line.type === "session.delta" &&
     line.delta?.type === "snapshot.patch" &&
+    line.delta.changes.some((change) => change.type === "agent.set" && change.agent.id === id)
+  );
+}
+
+function deltaHasAgentActivity(line, id, text) {
+  return (
+    deltaHasAgent(line, id) &&
     line.delta.changes.some(
       (change) =>
-        change.type === "agent.set" &&
-        change.agent.id === id &&
-        (progress === undefined || change.agent.progress === progress),
+        change.type === "facet.set" &&
+        change.facet.subject.type === "agent" &&
+        change.facet.subject.id === id &&
+        change.facet.kind === "tau.subagent-activity" &&
+        change.facet.data.text === text,
     )
   );
 }
@@ -1358,7 +1393,7 @@ describe("rpc_server", () => {
     await submit;
   });
 
-  it("terminates a subagent without interrupting an active foreground turn", async () => {
+  it("interrupts a subagent run without interrupting an active foreground turn", async () => {
     const harness = createHarness();
 
     const submit = harness.server.handleLine(
@@ -1370,16 +1405,16 @@ describe("rpc_server", () => {
     await waitFor(() => harness.seededSession.canReleaseTurn());
 
     await harness.server.handleLine(
-      request("terminate-1", "session.terminateSubagent", {
+      request("interrupt-subagent-1", "session.interruptSubagent", {
         sessionId: "session-1",
         subagentId: "agent-1",
       }),
     );
 
     expect(harness.seededSession.isTurnRunning).toBe(true);
-    expect(harness.seededSession.terminateSubagent).toHaveBeenCalledWith("agent-1");
+    expect(harness.seededSession.interruptSubagent).toHaveBeenCalledWith("agent-1");
     expect(
-      harness.lines.find((line) => line.type === "response" && line.id === "terminate-1"),
+      harness.lines.find((line) => line.type === "response" && line.id === "interrupt-subagent-1"),
     ).toMatchObject({ ok: true, result: { found: true } });
 
     harness.releaseTurn();
@@ -1775,12 +1810,10 @@ describe("rpc_server", () => {
       () => harness.lines.filter((line) => deltaHasNotice(line, "streaming")).length >= 2,
     );
     harness.emitSubagent({
-      type: "subagent_progress",
+      type: "subagent_activity",
       id: "agent-1",
       text: "still working",
       costTotal: 0,
-      turns: 1,
-      toolCalls: 0,
       usage: {
         input: 0,
         output: 0,
@@ -1795,7 +1828,7 @@ describe("rpc_server", () => {
     await secondSubmit;
 
     const lateSubagentEvent = harness.lines.find((line) =>
-      deltaHasAgent(line, "agent-1", "still working"),
+      deltaHasAgentActivity(line, "agent-1", "still working"),
     );
     expect(lateSubagentEvent).toEqual(
       expect.objectContaining({

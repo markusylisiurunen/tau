@@ -1,4 +1,4 @@
-import type { SubagentStatus } from "../subagents/types.js";
+import type { SubagentRunSnapshot } from "../subagents/types.js";
 import type { BashTruncationInfo } from "./bash.js";
 
 type ToolActivityWithHeaderTarget = {
@@ -121,21 +121,37 @@ type ToolActivityWithHeaderTarget = {
       reason: string;
     }
   | {
-      type: "terminate_agent_started";
+      type: "list_agents_started";
       toolCallId: string;
-      agentId: string;
     }
   | {
-      type: "terminate_agent_finished";
+      type: "list_agents_finished";
       toolCallId: string;
-      agentId: string;
       status: "success" | "error";
-      finalStatus?: SubagentStatus;
       message?: string;
       uiText?: ToolUiText;
     }
   | {
-      type: "terminate_agent_blocked";
+      type: "list_agents_blocked";
+      toolCallId: string;
+      reason: string;
+    }
+  | {
+      type: "interrupt_agent_started";
+      toolCallId: string;
+      agentId: string;
+    }
+  | {
+      type: "interrupt_agent_finished";
+      toolCallId: string;
+      agentId: string;
+      status: "success" | "error";
+      finalStatus?: SubagentRunSnapshot["status"];
+      message?: string;
+      uiText?: ToolUiText;
+    }
+  | {
+      type: "interrupt_agent_blocked";
       toolCallId: string;
       agentId?: string;
       reason: string;

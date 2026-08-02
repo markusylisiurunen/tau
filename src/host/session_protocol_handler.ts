@@ -153,7 +153,7 @@ type SessionProtocolMutationRequest = Extract<
       | "session.reload"
       | "session.compact"
       | "session.rewind"
-      | "session.terminateSubagent";
+      | "session.interruptSubagent";
   }
 >;
 
@@ -254,8 +254,8 @@ export class SessionProtocolHandler {
         case "session.rewind":
           await this.handleRewind(request);
           return;
-        case "session.terminateSubagent":
-          await this.handleTerminateSubagent(request);
+        case "session.interruptSubagent":
+          await this.handleInterruptSubagent(request);
           return;
         case "session.ephemeral.create":
           await this.handleEphemeralCreate(request);
@@ -1292,15 +1292,15 @@ export class SessionProtocolHandler {
     });
   }
 
-  private async handleTerminateSubagent(
-    request: Extract<SessionProtocolRequestMessage, { method: "session.terminateSubagent" }>,
+  private async handleInterruptSubagent(
+    request: Extract<SessionProtocolRequestMessage, { method: "session.interruptSubagent" }>,
   ): Promise<void> {
     await this.withNonInterruptingSessionMutation(request, async (state) => {
       this.sendMessage(
         createSessionProtocolSuccessResponse(
           request.id,
-          "session.terminateSubagent",
-          await state.session.terminateSubagent(request.params.subagentId),
+          "session.interruptSubagent",
+          await state.session.interruptSubagent(request.params.subagentId),
         ),
       );
     });

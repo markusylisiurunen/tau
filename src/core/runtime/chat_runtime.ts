@@ -218,8 +218,8 @@ export class ChatRuntime {
     return this.supervisor.getSnapshot(id) !== undefined;
   }
 
-  async terminateSubagent(id: string): Promise<boolean> {
-    return Boolean(await this.supervisor.terminate(id));
+  async interruptSubagent(id: string): Promise<boolean> {
+    return Boolean(await this.supervisor.interrupt(id));
   }
 
   listRewindCandidates(): RewindCandidate[] {

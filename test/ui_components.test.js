@@ -32,10 +32,17 @@ function createSubagentState(id, title) {
     id,
     name: "default",
     title,
-    status: "running",
+    availability: "running",
+    model: { provider: "anthropic", id: "claude-opus-4-8", reasoning: "medium" },
+    workingDirectory: "/repo",
+    createdAt: 1,
+    run: {
+      revision: 1,
+      status: "running",
+      startedAt: 1,
+      interruptRequested: false,
+    },
     costTotal: 0,
-    turns: 0,
-    toolCalls: 0,
     usage: {
       input: 0,
       output: 0,
@@ -44,8 +51,6 @@ function createSubagentState(id, title) {
       contextWindowUsageTokens: 0,
       contextWindow: 100,
     },
-    startedAt: 1,
-    abortRequested: false,
   };
 }
 
@@ -114,25 +119,21 @@ test("SubagentPanelComponent reconciles snapshots without discarding surviving s
   const first = createSubagentState("agent-1", "first task");
   const second = createSubagentState("agent-2", "second task");
   panel.reconcile([
-    { state: first, progress: "agent: first snapshot" },
-    { state: second, progress: "agent: second snapshot" },
+    { state: first, activity: "agent: first snapshot" },
+    { state: second, activity: "agent: second snapshot" },
   ]);
   expect(panel.cycleSelection(1)).toBe("agent-2");
   panel.handleEvent({
-    type: "subagent_progress",
-    id: "agent-2",
+    type: "subagent_activity",
+    state: { ...second, costTotal: 0.01 },
     text: "agent: live progress",
-    costTotal: 0.01,
-    turns: 1,
-    toolCalls: 0,
-    usage: second.usage,
   });
 
   panel.reconcile([
-    { state: first, progress: "agent: first snapshot" },
+    { state: first, activity: "agent: first snapshot" },
     {
-      state: { ...second, turns: 1, costTotal: 0.01 },
-      progress: "agent: canonical progress",
+      state: { ...second, costTotal: 0.01 },
+      activity: "agent: canonical progress",
     },
   ]);
 
@@ -140,7 +141,7 @@ test("SubagentPanelComponent reconciles snapshots without discarding surviving s
   expect(renderText(panel, 80)).toContain("live progress");
   expect(renderText(panel, 80)).toContain("canonical progress");
 
-  panel.reconcile([{ state: first, progress: "agent: first snapshot" }]);
+  panel.reconcile([{ state: first, activity: "agent: first snapshot" }]);
   expect(panel.getSelectedId()).toBe("agent-1");
   expect(renderText(panel, 80)).not.toContain("second task");
 });

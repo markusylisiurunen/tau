@@ -131,18 +131,33 @@ describe("ToolUiRegistry", () => {
         ],
       },
       {
-        toolCallId: "terminate-1",
-        toolName: "terminate_agent",
-        headerTarget: "agent-42",
-        preparingTarget: "terminate agent",
+        toolCallId: "list-1",
+        toolName: "list_agents",
+        headerTarget: "subagents",
+        preparingTarget: "list agents",
         labels: [
           "preparing",
-          "queued termination",
-          "terminating",
-          "terminated",
-          "failed to terminate",
-          "termination blocked",
-          "termination cancelled",
+          "queued list",
+          "listing",
+          "listed",
+          "failed to list",
+          "list blocked",
+          "list cancelled",
+        ],
+      },
+      {
+        toolCallId: "interrupt-1",
+        toolName: "interrupt_agent",
+        headerTarget: "agent-42",
+        preparingTarget: "interrupt agent",
+        labels: [
+          "preparing",
+          "queued interruption",
+          "interrupting",
+          "interrupted",
+          "failed to interrupt",
+          "interruption blocked",
+          "interruption cancelled",
         ],
       },
       {
@@ -442,27 +457,27 @@ describe("ToolUiRegistry", () => {
     expect(waitFinished).toContain("wait failed");
     expect(waitFinished).toContain("cost $0.17");
 
-    const terminateFinished = renderEvent(registry, theme, {
-      type: "terminate_agent_finished",
+    const interruptFinished = renderEvent(registry, theme, {
+      type: "interrupt_agent_finished",
       toolCallId: "t1",
       agentId: "agent-1",
       headerTarget: "agent-1",
       status: "success",
-      finalStatus: "aborted",
+      finalStatus: "interrupted",
       uiText: makeUiText("    ok", "    (cost $0.05 · duration 1m 2s)", "ok"),
     });
-    expect(terminateFinished).toContain("terminated");
-    expect(terminateFinished).toContain("cost $0.05");
+    expect(interruptFinished).toContain("interrupted");
+    expect(interruptFinished).toContain("cost $0.05");
 
-    const terminateBlocked = renderEvent(registry, theme, {
-      type: "terminate_agent_blocked",
+    const interruptBlocked = renderEvent(registry, theme, {
+      type: "interrupt_agent_blocked",
       toolCallId: "t2",
       agentId: "agent-2",
       headerTarget: "agent-2",
       title: "agent-2",
       reason: "disabled",
     });
-    expect(terminateBlocked).toContain("termination blocked");
+    expect(interruptBlocked).toContain("interruption blocked");
   });
 
   it("renders fallback subagent error text when uiText is absent", () => {
@@ -478,16 +493,16 @@ describe("ToolUiRegistry", () => {
     expect(spawnFailed).toContain("spawn failed");
     expect(spawnFailed).toContain("aborted");
 
-    const terminateFailed = renderEvent(registry, theme, {
-      type: "terminate_agent_finished",
+    const interruptFailed = renderEvent(registry, theme, {
+      type: "interrupt_agent_finished",
       toolCallId: "t2",
       agentId: "agent-2",
       headerTarget: "agent-2",
       status: "error",
-      finalStatus: "aborted",
+      finalStatus: "interrupted",
     });
-    expect(terminateFailed).toContain("failed to terminate");
-    expect(terminateFailed).toContain("final status: aborted");
+    expect(interruptFailed).toContain("failed to interrupt");
+    expect(interruptFailed).toContain("final status: interrupted");
   });
 
   it("renders code-mode tool events", () => {

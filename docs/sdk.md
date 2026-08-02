@@ -334,8 +334,8 @@ options:
 - `rewindToHistoryEntryId(historyEntryId)`
   - sends the idle-only `session.rewind` with this session id without interrupting active work
   - resolves with the updated snapshot, removed history ids, and rewound user text
-- `terminateSubagent(subagentId)`
-  - sends `session.terminateSubagent` with this session id
+- `interruptSubagent(subagentId)`
+  - sends `session.interruptSubagent` with this session id to interrupt the current run without disposing the reusable subagent thread
   - resolves with `{ found: boolean }`
 - `createEphemeralContext({ instructions, tools })`
   - sends `session.ephemeral.create` with this session id
@@ -392,7 +392,7 @@ const second = await session.sample({
 
 ```json
 {
-  "version": 4,
+  "version": 5,
   "type": "session.delta",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "fromRevision": 1,

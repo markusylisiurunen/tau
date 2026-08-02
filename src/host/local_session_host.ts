@@ -10,7 +10,7 @@ import { ChatRuntime, type ChatRuntimeEnvironment } from "../core/runtime/chat_r
 import type { CoreDeps } from "../core/runtime/deps.js";
 import type { RuntimePromptBootstrap } from "../core/runtime/runtime_bootstrap.js";
 import type { SessionPromptComposition } from "../core/runtime/session_prompt_composer.js";
-import type { SubagentUiEvent } from "../core/subagents/types.js";
+import { SUBAGENT_ACTIVITY_FACET_KIND, type SubagentUiEvent } from "../core/subagents/types.js";
 import type { ToolActivity } from "../core/tools/activity.js";
 import type { Persona, ReasoningEffort, Skill } from "../core/types.js";
 import {
@@ -52,6 +52,7 @@ import type {
   SessionProtocolExecParams,
   SessionProtocolExecResult,
   SessionProtocolFacet,
+  SessionProtocolInterruptSubagentResult,
   SessionProtocolMessage,
   SessionProtocolModelSnapshot,
   SessionProtocolPersonaSnapshot,
@@ -67,7 +68,6 @@ import type {
   SessionProtocolSettingsUpdateResult,
   SessionProtocolSnapshot,
   SessionProtocolSubagentSnapshot,
-  SessionProtocolTerminateSubagentResult,
   SessionProtocolTimelineItem,
   SessionProtocolToolRun,
   SessionProtocolTurnOutcome,
@@ -219,7 +219,7 @@ export class LocalSessionHost implements TauSessionHost {
           ? { usageCheckpoint: { ...recovered.snapshot.agentState.usageCheckpoint } }
           : {}),
       });
-      if (recovered.legacyAgentState || agentRecovery.recoveredToolResults.length > 0) {
+      if (recovered.changed || agentRecovery.recoveredToolResults.length > 0) {
         await hostedSession.persistRecoveredAgentState(agentRecovery);
       }
       return hostedSession;
@@ -1076,9 +1076,9 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     };
   }
 
-  async terminateSubagent(subagentId: string): Promise<SessionProtocolTerminateSubagentResult> {
+  async interruptSubagent(subagentId: string): Promise<SessionProtocolInterruptSubagentResult> {
     this.assertActive();
-    return { found: await this.session.terminateSubagent(subagentId) };
+    return { found: await this.session.interruptSubagent(subagentId) };
   }
 
   async createEphemeralContext(
@@ -1992,22 +1992,42 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   }
 
   private async recordSubagentUiEvent(event: SubagentUiEvent): Promise<void> {
-    const existing = "id" in event ? this.agents.get(event.id) : this.agents.get(event.state.id);
-    const agent = agentRunFromSubagentEvent(event, existing);
-    if (!agent) {
-      return;
-    }
+    const agent = agentRunFromSubagentEvent(event);
     const previousCost = this.agentCostTotals.get(agent.id) ?? 0;
     this.costTotal += Math.max(0, agent.costTotal - previousCost);
     this.agentCostTotals.set(agent.id, agent.costTotal);
     if (!this.session.hasSubagent(agent.id)) {
       return;
     }
+
     this.agents.set(agent.id, agent);
-    await this.emitPatch("agent-run", [
+    const changes: SessionProtocolChange[] = [
       { type: "cost.set", costTotal: this.costTotal },
       { type: "agent.set", agent: structuredClone(agent) },
-    ]);
+    ];
+    const facetId = `subagent-activity-${agent.id}`;
+    if (event.type === "subagent_activity") {
+      const facet: SessionProtocolFacet = {
+        id: facetId,
+        subject: { type: "agent", id: agent.id },
+        kind: SUBAGENT_ACTIVITY_FACET_KIND,
+        version: 1,
+        data: { text: event.text },
+      };
+      this.facets.set(facet.id, facet);
+      changes.push({ type: "facet.set", facet: structuredClone(facet) });
+    } else if (
+      (event.type === "subagent_run_started" || event.type === "subagent_finished") &&
+      this.facets.delete(facetId)
+    ) {
+      changes.push({ type: "facet.remove", id: facetId });
+    }
+
+    await this.emitPatch(
+      "agent-run",
+      changes,
+      event.type === "subagent_activity" ? { persist: false } : {},
+    );
   }
 
   private buildAssistantPartialChanges(
@@ -2300,6 +2320,13 @@ function normalizeRecoveredSnapshot(snapshot: SessionProtocolSnapshot): {
   const legacyAgentState = recovered.agentState.contextEpoch === LEGACY_SESSION_CONTEXT_EPOCH;
   let changed = recovered.lifecycle !== "idle" || legacyAgentState;
   recovered.lifecycle = "idle";
+  if (Object.keys(recovered.agents).length > 0) {
+    changed = true;
+    recovered.agents = {};
+    recovered.facets = Object.fromEntries(
+      Object.entries(recovered.facets).filter(([, facet]) => facet.subject.type !== "agent"),
+    );
+  }
   const streamingToolIds = new Set(
     Object.values(recovered.tools)
       .filter((tool) => tool.status === "streaming")
@@ -2449,53 +2476,8 @@ function createInterruptedAssistantMessageFromModelSnapshot(
   };
 }
 
-function agentRunFromSubagentEvent(
-  event: SubagentUiEvent,
-  existing?: SessionProtocolAgentRun,
-): SessionProtocolAgentRun | undefined {
-  const state =
-    event.type === "subagent_spawned" || event.type === "subagent_finished"
-      ? event.state
-      : undefined;
-  if (event.type === "subagent_progress" && existing) {
-    return {
-      ...existing,
-      costTotal: event.costTotal,
-      turns: event.turns,
-      toolCalls: event.toolCalls,
-      usage: { ...event.usage },
-      progress: event.text,
-    };
-  }
-  if (event.type === "subagent_abort_requested" && existing) {
-    return { ...existing, abortRequested: true };
-  }
-  if (!state) {
-    return undefined;
-  }
-  return {
-    id: state.id,
-    name: state.name,
-    title: state.title,
-    status:
-      state.status === "success"
-        ? "succeeded"
-        : state.status === "error"
-          ? "failed"
-          : state.status === "aborted"
-            ? "cancelled"
-            : "running",
-    ...(state.modelLabel !== undefined ? { modelLabel: state.modelLabel } : {}),
-    costTotal: state.costTotal,
-    turns: state.turns,
-    toolCalls: state.toolCalls,
-    usage: { ...state.usage },
-    startedAt: state.startedAt,
-    ...(state.finishedAt !== undefined ? { finishedAt: state.finishedAt } : {}),
-    abortRequested: state.abortRequested,
-    ...(state.finalText !== undefined ? { finalText: state.finalText } : {}),
-    ...(state.error !== undefined ? { error: state.error } : {}),
-  };
+function agentRunFromSubagentEvent(event: SubagentUiEvent): SessionProtocolAgentRun {
+  return structuredClone(event.state);
 }
 
 function cloneResolvedBootstrap(

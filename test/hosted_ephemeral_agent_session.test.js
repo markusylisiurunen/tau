@@ -34,6 +34,19 @@ function createStream(message) {
   };
 }
 
+function createFailingStream(partialText, error) {
+  const partial = createAssistant(partialText);
+  return {
+    async *[Symbol.asyncIterator]() {
+      yield { type: "text_delta", contentIndex: 0, delta: partialText, partial };
+      throw error;
+    },
+    async result() {
+      throw error;
+    },
+  };
+}
+
 function createSession(recordUsage = vi.fn(), config = { autoCompact: { enabled: false } }) {
   const backend = createLocalToolExecutionBackend();
   const executionEnvironment = {
@@ -121,6 +134,30 @@ describe("HostedEphemeralAgentSession", () => {
     for (const [entry] of recordUsage.mock.calls) {
       expect(entry.agent).toEqual({ type: "ephemeral" });
     }
+  });
+
+  it("rejects a partial provider failure", async () => {
+    const { session } = createSession();
+    const thread = await session.getOrCreateThread("source");
+    const streamError = new Error("stream failed");
+    thread.runtime.spec.retryPolicy = { maxRetries: 0, delayMs: 0 };
+    thread.runtime.spec.model.stream = vi.fn(() =>
+      createFailingStream("incomplete review", streamError),
+    );
+
+    await expect(
+      session.submitThreadMessage({
+        contextId: "ephemeral-1",
+        threadId: "source",
+        message: "review this",
+      }),
+    ).rejects.toThrow("stream failed");
+    expect(thread.runtime.rawHistory.at(-1)).toMatchObject({
+      role: "assistant",
+      content: [{ type: "text", text: "incomplete review" }],
+      stopReason: "error",
+      errorMessage: "stream failed",
+    });
   });
 
   it("does not apply model system notices to ephemeral agents", async () => {

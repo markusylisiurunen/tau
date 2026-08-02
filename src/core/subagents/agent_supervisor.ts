@@ -288,6 +288,9 @@ export class AgentSupervisor {
         }
         if (result.blocked) throw new Error(result.blocked.message);
         if (result.limitReached) throw new Error(result.limitReached.message);
+        if (result.finalMessage?.stopReason === "error") {
+          throw new Error(result.finalMessage.errorMessage ?? "model provider returned an error");
+        }
         const assistant = [...record.runtime.rawHistory]
           .reverse()
           .find((message): message is AssistantMessage => message.role === "assistant");

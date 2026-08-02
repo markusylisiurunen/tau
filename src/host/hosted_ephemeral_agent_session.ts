@@ -246,6 +246,9 @@ class EphemeralAgentThread {
     if (result.aborted) throw new Error("ephemeral agent thread was interrupted");
     if (result.blocked) throw new Error(result.blocked.message);
     if (result.limitReached) throw new Error(result.limitReached.message);
+    if (result.finalMessage?.stopReason === "error") {
+      throw new Error(result.finalMessage.errorMessage ?? "model provider returned an error");
+    }
     const assistant = [...this.runtime.rawHistory]
       .reverse()
       .find((entry): entry is AssistantMessage => entry.role === "assistant");

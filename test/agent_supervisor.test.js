@@ -37,6 +37,19 @@ function createStream(message, gate) {
   };
 }
 
+function createFailingStream(partialText, error) {
+  const partial = createAssistant(partialText);
+  return {
+    async *[Symbol.asyncIterator]() {
+      yield { type: "text_delta", contentIndex: 0, delta: partialText, partial };
+      throw error;
+    },
+    async result() {
+      throw error;
+    },
+  };
+}
+
 function createSpawnOptions(overrides = {}) {
   return {
     runtimeConfig: {
@@ -100,6 +113,38 @@ describe("AgentSupervisor", () => {
       expect(entry.agent).toEqual({ type: "subagent", name: "default" });
       expect(entry.personaId).toBe("parent-persona");
     }
+  });
+
+  it("reports a partial provider failure as an error", async () => {
+    const supervisor = new AgentSupervisor({ onEvent: async () => {}, recordUsage: () => {} });
+    const spawned = supervisor.spawn(createSpawnOptions());
+    expect(spawned.ok).toBe(true);
+    if (!spawned.ok) throw new Error(spawned.reason);
+    const record = getRecord(supervisor, spawned.id);
+    const streamError = new Error("stream failed");
+    record.runtime.spec.retryPolicy = { maxRetries: 0, delayMs: 0 };
+    record.runtime.spec.model.stream = vi.fn(() =>
+      createFailingStream("incomplete result", streamError),
+    );
+
+    await expect(supervisor.waitForAgents([spawned.id])).resolves.toEqual([
+      expect.objectContaining({
+        id: spawned.id,
+        status: "error",
+        error: "stream failed",
+      }),
+    ]);
+    expect(supervisor.getSnapshot(spawned.id)).toMatchObject({
+      status: "error",
+      error: "stream failed",
+    });
+    expect(supervisor.getSnapshot(spawned.id)?.finalText).toBeUndefined();
+    expect(record.runtime.rawHistory.at(-1)).toMatchObject({
+      role: "assistant",
+      content: [{ type: "text", text: "incomplete result" }],
+      stopReason: "error",
+      errorMessage: "stream failed",
+    });
   });
 
   it("auto-compacts a child between tool subturns through the shared runtime", async () => {

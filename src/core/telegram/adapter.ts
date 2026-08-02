@@ -664,10 +664,8 @@ function formatTelegramSender(user: TelegramUser | undefined): string {
   return `id ${user.id}`;
 }
 
-function formatTelegramSessionName(
-  session: Pick<TelegramSessionRecord, "id" | "projectId">,
-): string {
-  return `${session.projectId} session ${session.id}`;
+function formatTelegramSessionName(sessionId: string, projectLabel: string): string {
+  return `${projectLabel} session ${sessionId}`;
 }
 
 function formatProjectLabel(projectId: string, project: TelegramProjectConfig): string {
@@ -680,16 +678,26 @@ function formatSessionStatus(
   snapshot: SessionProtocolSnapshot | undefined,
   preferredProjectId: string | undefined,
 ): string {
-  const projectStatus = `project: ${formatProjectLabel(session.projectId, project)}.`;
+  const sessionName = formatTelegramSessionName(
+    session.id,
+    formatProjectLabel(session.projectId, project),
+  );
   const preferenceStatus =
     preferredProjectId && preferredProjectId !== session.projectId
-      ? ` new chats will use: ${preferredProjectId}.`
+      ? ` new chats will use ${preferredProjectId}.`
       : "";
-  if (session.state === "failed" && session.error) {
-    return `${projectStatus} your session ${session.id} failed. ${ensureTerminalPunctuation(session.error)}${preferenceStatus}`;
+  if (session.state === "failed") {
+    const errorStatus = session.error ? ` ${ensureTerminalPunctuation(session.error)}` : "";
+    return `your ${sessionName} failed.${errorStatus}${preferenceStatus}`;
   }
 
-  const status = `${projectStatus} your session ${session.id} is ${session.state}.`;
+  const state = {
+    queued: "queued",
+    "preparing-workspace": "preparing its workspace",
+    running: "running",
+    "waiting-input": "waiting for input",
+  }[session.state];
+  const status = `your ${sessionName} is ${state}.`;
   if (!snapshot) {
     return `${status}${preferenceStatus}`;
   }
@@ -2125,7 +2133,7 @@ class TelegramAdapterImpl {
       await this.reply(
         chatId,
         preferredProjectId
-          ? `new chats will use: ${preferredProjectId}.`
+          ? `new chats will use ${preferredProjectId}.`
           : "no active session. select a project with /use_<project>.",
       );
       return;
@@ -2182,12 +2190,15 @@ class TelegramAdapterImpl {
       if (!result.interrupted) {
         await this.reply(
           chatId,
-          `nothing is running in ${formatTelegramSessionName(result.session)}.`,
+          `nothing is running in ${formatTelegramSessionName(result.session.id, result.session.projectId)}.`,
         );
         return;
       }
 
-      await this.reply(chatId, `stopping ${formatTelegramSessionName(result.session)}.`);
+      await this.reply(
+        chatId,
+        `stopping ${formatTelegramSessionName(result.session.id, result.session.projectId)}.`,
+      );
     } catch (error) {
       await this.reply(chatId, this.formatManagerError(error));
     }
@@ -2664,8 +2675,7 @@ class TelegramAdapterImpl {
       this.notifySession(
         event.sessionId,
         [
-          formatSessionHeadline(event.sessionId, "provision failed"),
-          `project: ${event.targetProjectId}`,
+          `provisioning ${event.targetProjectId} failed in your ${formatTelegramSessionName(event.sessionId, event.projectId)}.`,
           truncateText(event.diagnostic, MAX_PROVISION_DIAGNOSTIC_CHARS),
           "the session remains available.",
         ].join("\n"),
@@ -2795,21 +2805,17 @@ class TelegramAdapterImpl {
     projectId: string,
     state: "started" | "finished" | "failed",
   ): void {
-    const stateLabel = {
-      started: "run started",
-      finished: "run finished",
-      failed: "run failed",
-    }[state];
-
+    const sessionName = formatTelegramSessionName(sessionId, projectId);
     if (state === "failed") {
-      this.notifySession(sessionId, `something went wrong in ${projectId} session ${sessionId}.`);
+      this.notifySession(sessionId, `something went wrong in your ${sessionName}.`);
       return;
     }
 
-    this.notifySession(
-      sessionId,
-      [formatSessionHeadline(sessionId, stateLabel), `project: ${projectId}`].join("\n"),
-    );
+    const stateLabel = {
+      started: "started a run",
+      finished: "finished its run",
+    }[state];
+    this.notifySession(sessionId, `your ${sessionName} ${stateLabel}.`);
   }
 
   private notifySession(sessionId: string, text: string, options: { rich?: boolean } = {}): void {
@@ -2914,7 +2920,7 @@ class TelegramAdapterImpl {
   }
 
   private formatSessionReady(sessionId: string, projectId: string): string {
-    return `all set, your ${projectId} session ${sessionId} is ready.`;
+    return `all set, your ${formatTelegramSessionName(sessionId, projectId)} is ready.`;
   }
 
   private formatMessageQueued(sessionId: string): string {

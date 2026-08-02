@@ -437,7 +437,8 @@ function extractPreservableUserText(message: Message): string | undefined {
   }
   if (
     getSummaryCompactionMetadataFromMessage(message) ||
-    hasAutoCompactionContinuationMetadata(message)
+    hasAutoCompactionContinuationMetadata(message) ||
+    hasToolRecoveryMetadata(message)
   ) {
     return undefined;
   }
@@ -747,7 +748,8 @@ function collectTurnStarts(
     }
     if (
       getSummaryCompactionMetadataFromMessage(message) ||
-      hasAutoCompactionContinuationMetadata(message)
+      hasAutoCompactionContinuationMetadata(message) ||
+      hasToolRecoveryMetadata(message)
     ) {
       continue;
     }

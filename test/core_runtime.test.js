@@ -905,6 +905,26 @@ describe("compaction context message", () => {
     expect(result.formattedHistory).toContain("new request");
   });
 
+  it("does not offer tool recovery as preservable user intent", () => {
+    const recoveryMessage = userMessage(
+      formatTauUserText({
+        text: "",
+        metadata: [{ type: "tool-recovery", version: 1 }],
+        hiddenSystemMessages: ["Continue the original request using the recovered tool result."],
+      }),
+    );
+    const entries = historyEntries([userMessage("original request"), recoveryMessage]);
+
+    const result = prepareSessionCompaction(entries, {
+      systemPrompt: "project instructions",
+    });
+
+    expect(result.userMessageCandidates).toEqual([
+      { id: "entry-0", text: "original request", source: "conversation" },
+    ]);
+    expect(result.formattedHistory).toContain("recovered tool result");
+  });
+
   it("selects auto-compaction user boundaries when the latest turn fits", () => {
     const entries = historyEntries([
       userMessage(`old ${"x".repeat(9000)}`),
@@ -931,6 +951,25 @@ describe("compaction context message", () => {
 
     expect(cut).toEqual({ startIndex: 3, cutType: "split-turn" });
     expect(entries[cut.startIndex].message.role).toBe("assistant");
+  });
+
+  it("keeps tool recovery inside the original user turn", () => {
+    const recoveryMessage = userMessage(
+      formatTauUserText({
+        text: "",
+        metadata: [{ type: "tool-recovery", version: 1 }],
+        hiddenSystemMessages: [`Recovered tool result ${"x".repeat(15_000)}`],
+      }),
+    );
+    const entries = historyEntries([
+      userMessage("latest request"),
+      assistantMessage("failed after tool execution"),
+      recoveryMessage,
+    ]);
+
+    const cut = selectAutoCompactionCut(entries, { startIndex: 0, keepRecentTokens: 1_000 });
+
+    expect(cut).toEqual({ startIndex: 1, cutType: "split-turn" });
   });
 
   it("splits at an assistant boundary before an oversized latest tool result", () => {
@@ -1002,7 +1041,11 @@ describe("compaction context message", () => {
       systemPrompt: "project instructions",
     });
 
-    const retainedRecovery = preparation.retainedEntries[0].message;
+    const retainedRecoveryEntry = preparation.retainedEntries.find((entry) =>
+      hasToolRecoveryMetadata(entry.message),
+    );
+    expect(retainedRecoveryEntry).toBeDefined();
+    const retainedRecovery = retainedRecoveryEntry.message;
     expect(retainedRecovery.role).toBe("user");
     expect(retainedRecovery.content[0].text).toContain("tokens truncated");
     expect(retainedRecovery.content[0].text.length).toBeLessThan(

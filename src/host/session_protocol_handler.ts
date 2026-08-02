@@ -131,7 +131,11 @@ function publishPendingUserMessages(
     state: buildPendingUserMessagesState(state),
   });
   for (const listener of [...state.listeners]) {
-    listener(message);
+    try {
+      listener(message);
+    } catch {
+      // Pending-message observers must not be able to fail shared session work.
+    }
   }
 }
 
@@ -903,34 +907,41 @@ export class SessionProtocolHandler {
   private async drainPendingQueuedSubmits(
     state: SessionProtocolHandlerSessionState,
   ): Promise<void> {
-    const next = await this.enqueueMutation(state, async () => {
+    const action = await this.enqueueMutation(state, async () => {
       if (
         state.live.pendingQueuedSubmits.length === 0 ||
         state.live.activeSubmit ||
         state.session.isTurnRunning
       ) {
-        return undefined;
+        return { type: "idle" as const };
       }
 
       const pending = state.live.pendingQueuedSubmits.shift()!;
       publishPendingUserMessages(state.session, state.live);
       try {
-        return await pending.handler.startUserMessageTurn(state, pending.request);
+        const started = await pending.handler.startUserMessageTurn(state, pending.request);
+        return started
+          ? { type: "started" as const, activeSubmit: started.activeSubmit }
+          : { type: "failed" as const };
       } catch (error) {
         this.sendUserMessageDrainFailure([pending], error);
-        return undefined;
+        return { type: "failed" as const };
       }
     });
 
-    if (!next) {
+    if (action.type === "idle") {
+      return;
+    }
+    if (action.type === "failed") {
+      this.schedulePendingSubmitDrains(state);
       return;
     }
 
     try {
-      await next.activeSubmit.promise;
+      await action.activeSubmit.promise;
     } finally {
       await this.enqueueMutation(state, () => {
-        if (state.live.activeSubmit === next.activeSubmit) {
+        if (state.live.activeSubmit === action.activeSubmit) {
           state.live.activeSubmit = undefined;
         }
       });

@@ -249,14 +249,14 @@ describe("runtime prompt bootstrap", () => {
     let current = home;
     let atLimit;
     let beyondLimit;
-    for (let depth = 1; depth <= 33; depth += 1) {
+    for (let depth = 1; depth <= 17; depth += 1) {
       current = join(current, `level-${depth}`);
       mkdirSync(current, { recursive: true });
-      if (depth === 32) {
+      if (depth === 16) {
         atLimit = join(current, "AGENTS.md");
         writeFileSync(atLimit, "at limit", "utf-8");
       }
-      if (depth === 33) {
+      if (depth === 17) {
         beyondLimit = join(current, "AGENTS.md");
         writeFileSync(beyondLimit, "beyond limit", "utf-8");
       }

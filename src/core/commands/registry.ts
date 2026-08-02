@@ -38,7 +38,7 @@ interface CommandDefinition<Ctx, T extends Command = Command> extends CommandInf
   parse: (raw: string) => T | null;
   run: (ctx: Ctx, command: T) => Promise<void> | void;
   hidden?: boolean;
-  allowDuringStreaming?: boolean;
+  allowDuringStreaming?: boolean | ((command: T) => boolean);
 }
 
 export interface CommandDispatchContext {
@@ -115,8 +115,8 @@ export class CommandRegistry<Ctx = unknown> {
   }
 
   allowsDuringStreaming(command: Command): boolean {
-    const handler = this.byId.get(command.type);
-    return Boolean(handler?.allowDuringStreaming);
+    const permission = this.byId.get(command.type)?.allowDuringStreaming;
+    return typeof permission === "function" ? permission(command) : Boolean(permission);
   }
 
   buildHelpText(options: HelpTextOptions = {}): string {
@@ -260,6 +260,8 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     description: "show, start, resume, or clear a session goal",
     autocompleteDescription: "manage the persistent session goal",
     argument: "none",
+    allowDuringStreaming: (command: Extract<Command, { type: "goal" }>) =>
+      command.action === "show" || command.action === "clear",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
       if (command !== "/goal") return null;

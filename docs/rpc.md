@@ -191,7 +191,7 @@ params (required):
   "id": "init-1",
   "ok": true,
   "result": {
-    "protocolVersion": 5,
+    "protocolVersion": 6,
     "methods": [
       "initialize",
       "session.create",
@@ -323,6 +323,7 @@ Establishes observation for that session on this connection and returns the auth
       "contextEpoch": "8f98c4..."
     },
     "lifecycle": "idle",
+    "goal": null,
     "costTotal": 0,
     "settings": {
       "personaId": "gpt-5.5-coder",
@@ -908,9 +909,9 @@ observed-session changes are broadcast as `session.delta` messages:
 }
 ```
 
-`snapshot.patch` changes include lifecycle, message, timeline, tool, agent, and facet updates. High-rate assistant streaming uses `message.content.append` after the draft assistant message exists so clients do not receive the full accumulated assistant text on every frame. A content append targets only draft assistant messages and must include non-empty `text` and/or `thinking`; when a thinking block is created, clients insert it before the text block so applying patches reconstructs the canonical assistant content order. Maintenance operations such as reload, rewind, and compaction may use `snapshot.reset` when replacing the complete state is clearer than sending a long patch sequence.
+`snapshot.patch` changes include lifecycle, goal, message, timeline, tool, agent, and facet updates. High-rate assistant streaming uses `message.content.append` after the draft assistant message exists so clients do not receive the full accumulated assistant text on every frame. A content append targets only draft assistant messages and must include non-empty `text` and/or `thinking`; when a thinking block is created, clients insert it before the text block so applying patches reconstructs the canonical assistant content order. Maintenance operations such as reload, rewind, and compaction may use `snapshot.reset` when replacing the complete state is clearer than sending a long patch sequence.
 
-`reason` describes why the transition happened and is for logging, animation, and client policy. Correctness comes from applying the delta. Current reasons are `user-message`, `assistant-stream`, `assistant-message`, `tool-run`, `tool-result`, `notice`, `agent-run`, `maintenance`, `configuration`, and `recovery`.
+`reason` describes why the transition happened and is for logging, animation, and client policy. Correctness comes from applying the delta. Current reasons are `user-message`, `assistant-stream`, `assistant-message`, `tool-run`, `tool-result`, `notice`, `agent-run`, `maintenance`, `configuration`, `goal`, and `recovery`.
 
 notes:
 

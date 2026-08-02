@@ -668,6 +668,10 @@ describe("AgentRuntime", () => {
     expect(result).toEqual({
       aborted: false,
       blocked: { reason: "auto-compaction-failed", message: "summary unavailable" },
+      terminalResult: {
+        aborted: false,
+        blocked: { reason: "auto-compaction-failed", message: "summary unavailable" },
+      },
     });
     expect(events).toContainEqual({ type: "compaction_start", reason: "threshold" });
     expect(events).toContainEqual({
@@ -1041,6 +1045,7 @@ describe("AgentRuntime", () => {
 
     expect(firstAssociation).toEqual(secondAssociation);
     expect(initialResult.finalMessage).toBe(toolMessage);
+    expect(initialResult.terminalResult.finalMessage.content[0].text).toBe("steered");
     expect(firstAssociation.result.finalMessage.content[0].text).toBe("steered");
     expect(models).toEqual([firstPersona.model.id, firstPersona.model.id]);
     expect(contexts[1].systemPrompt).toBe("system");

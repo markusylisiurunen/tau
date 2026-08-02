@@ -1,4 +1,4 @@
-import { fauxAssistantMessage } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import { AgentRuntime, ChatRuntime, createLocalToolExecutionBackend } from "../dist/core/index.js";
 import { resolveModel } from "../dist/core/models/catalog.js";
@@ -81,6 +81,30 @@ describe("ChatRuntime", () => {
     expect(runtime.agent.getCompactionContinuationSystemMessages()).toEqual([
       expect.stringContaining("<goal-objective>\nShip &lt;all&gt; requirements\n</goal-objective>"),
     ]);
+  });
+
+  it("returns blocking guidance when the model blocks an active goal", async () => {
+    const runtime = createRuntime({
+      goalManager: {
+        getGoal: () => ({ objective: "Wait for approval", status: "active" }),
+        createGoal: async (objective) => ({ objective, status: "active" }),
+        updateGoal: async () => ({ objective: "Wait for approval", status: "blocked" }),
+      },
+    });
+    const updateGoal = runtime.agent.spec.tools.get("update_goal");
+
+    const outcome = await updateGoal.execute(fauxToolCall("update_goal", { status: "blocked" }), {
+      agentId: "agent-1",
+      turnId: "turn-1",
+      assistantMessageId: "assistant-1",
+      signal: new AbortController().signal,
+      emitActivity: async () => {},
+    });
+    const result = JSON.parse(outcome.content[0].text);
+
+    expect(result.goal.status).toBe("blocked");
+    expect(result.instruction).toContain("autonomous work on it must stop");
+    expect(result.instruction).not.toContain("An active session goal is in effect");
   });
 
   it("requires both persona selection and config to expose Nook", () => {

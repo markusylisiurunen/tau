@@ -2,7 +2,7 @@ import type { Tool, ToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { z } from "zod";
 import type { SessionProtocolGoal } from "../../protocol/session_protocol.js";
-import { buildGoalPolicy } from "../session/goal.js";
+import { buildBlockedGoalInstruction, buildGoalPolicy } from "../session/goal.js";
 import { parseToolArgs } from "../utils/zod.js";
 import {
   type AgentTool,
@@ -10,6 +10,7 @@ import {
   type ToolExecutionContext,
   type ToolExecutionOutcome,
 } from "./registry.js";
+import { TOOL_NAME_CREATE_GOAL, TOOL_NAME_GET_GOAL, TOOL_NAME_UPDATE_GOAL } from "./tool_names.js";
 
 export type GoalManager = {
   getGoal(): SessionProtocolGoal | null;
@@ -21,13 +22,13 @@ export type GoalManager = {
 };
 
 const GET_GOAL_TOOL: Tool = {
-  name: "get_goal",
+  name: TOOL_NAME_GET_GOAL,
   description: "Return the current persisted session goal, or null when no goal exists.",
   parameters: Type.Object({}, { additionalProperties: false }),
 };
 
 const CREATE_GOAL_TOOL: Tool = {
-  name: "create_goal",
+  name: TOOL_NAME_CREATE_GOAL,
   description:
     "Create an active persisted session goal. Use this only when the user explicitly asks to create, start, or set a goal, or when system or developer instructions explicitly require one. Never infer a goal from an ordinary task, even when the task is large or multi-step. Continue working on the new goal in the current turn.",
   parameters: Type.Object(
@@ -39,7 +40,7 @@ const CREATE_GOAL_TOOL: Tool = {
 };
 
 const UPDATE_GOAL_TOOL: Tool = {
-  name: "update_goal",
+  name: TOOL_NAME_UPDATE_GOAL,
   description:
     "Update the current persisted goal. Replace objective only when user steering, discovered requirements, or a clearer formulation materially changes the target, never to make completion easier. Set status to complete only after every requirement is achieved and verified; this clears the goal. Set status to blocked only when meaningful progress requires user input or an external state change. An objective update may be combined with blocked, but not complete.",
   parameters: Type.Object(
@@ -78,9 +79,14 @@ export function createGoalToolDefinitions(manager: GoalManager): AgentTool[] {
     }),
     createGoalTool(UPDATE_GOAL_TOOL, updateArgsSchema, async (update) => {
       const goal = await manager.updateGoal(update);
-      return goal === null
-        ? { goal: null, completed: true }
-        : { goal, instruction: buildGoalPolicy(goal) };
+      if (goal === null) {
+        return { goal: null, completed: true };
+      }
+      return {
+        goal,
+        instruction:
+          goal.status === "active" ? buildGoalPolicy(goal) : buildBlockedGoalInstruction(goal),
+      };
     }),
   ];
 }

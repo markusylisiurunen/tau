@@ -30,6 +30,14 @@ function createEnvironment(now = Date.parse("2026-01-01T00:00:00.000Z")) {
   return { now: () => now };
 }
 
+function deferred() {
+  let resolve;
+  const promise = new Promise((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 function createTestExecutionEnvironment(
   snapshot = { kind: "local", cwd: "/repo", home: "/home/user" },
   toolBackend = createLocalToolExecutionBackend(),
@@ -574,6 +582,126 @@ describe("LocalSessionHost", () => {
     );
     expect(hiddenContinuation?.modelVisible).toBe(true);
     expect(snapshot.tools[completeCall.id]).toMatchObject({ status: "succeeded" });
+    await host.shutdown();
+  });
+
+  it("cancels an active goal while the runtime is idle between continuations", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const hostedSession = await host.createSession(localCreateInput);
+    await hostedSession.snapshot();
+    const persistenceReached = deferred();
+    const releasePersistence = deferred();
+    const commitSessionSnapshot = store.commitSessionSnapshot.bind(store);
+    let paused = false;
+    store.commitSessionSnapshot = vi.fn(async (snapshot, options) => {
+      if (
+        !paused &&
+        snapshot.messages.some(
+          (message) => message.message.role === "user" && message.turn?.status === "completed",
+        )
+      ) {
+        paused = true;
+        persistenceReached.resolve();
+        await releasePersistence.promise;
+      }
+      return await commitSessionSnapshot(snapshot, options);
+    });
+    const streamModel = vi.fn(() => ({
+      async *[Symbol.asyncIterator]() {},
+      async result() {
+        return fauxAssistantMessage("more work remains");
+      },
+    }));
+    hostedSession.runtime.agent.spec.model.stream = streamModel;
+
+    const run = hostedSession.startGoal("Finish across turns");
+    await persistenceReached.promise;
+
+    expect(hostedSession.runtime.isTurnRunning).toBe(false);
+    expect(hostedSession.interruptActiveWork()).toBe(true);
+    releasePersistence.resolve();
+
+    const result = await run;
+    expect(result.turn).toEqual({ status: "aborted", stopReason: "aborted" });
+    expect(streamModel).toHaveBeenCalledOnce();
+    const snapshot = await hostedSession.snapshot();
+    expect(snapshot.goal).toEqual({ objective: "Finish across turns", status: "blocked" });
+    expect(
+      snapshot.messages.find((message) => message.id === result.userHistoryEntryId)?.turn,
+    ).toEqual(result.turn);
+    await host.shutdown();
+  });
+
+  it("uses a steering continuation's terminal outcome for an active goal", async () => {
+    const host = createHost(new MemorySessionStore());
+    const hostedSession = await host.createSession(localCreateInput);
+    const firstRun = deferred();
+    const streamModel = vi
+      .fn()
+      .mockImplementationOnce(() => ({
+        async *[Symbol.asyncIterator]() {
+          await firstRun.promise;
+          yield* [];
+        },
+        async result() {
+          return fauxAssistantMessage("initial response");
+        },
+      }))
+      .mockImplementationOnce(() => ({
+        async *[Symbol.asyncIterator]() {},
+        async result() {
+          return fauxAssistantMessage("", { stopReason: "aborted" });
+        },
+      }))
+      .mockImplementation(() => {
+        throw new Error("goal continued after terminal steering outcome");
+      });
+    hostedSession.runtime.agent.spec.model.stream = streamModel;
+
+    const run = hostedSession.startGoal("Follow steering safely");
+    await vi.waitFor(() => expect(hostedSession.runtime.isTurnRunning).toBe(true));
+    const steering = hostedSession.steer("change direction");
+    firstRun.resolve();
+
+    await expect(steering.result).resolves.toMatchObject({
+      turn: { status: "aborted" },
+    });
+    const result = await run;
+    expect(result.turn).toEqual({ status: "aborted", stopReason: "aborted" });
+    expect(streamModel).toHaveBeenCalledTimes(2);
+    const snapshot = await hostedSession.snapshot();
+    expect(snapshot.goal).toEqual({ objective: "Follow steering safely", status: "blocked" });
+    expect(
+      snapshot.messages.find((message) => message.id === result.userHistoryEntryId)?.turn,
+    ).toEqual(result.turn);
+    await host.shutdown();
+  });
+
+  it("rolls back goal mutations when persistence fails", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const hostedSession = await host.createSession(localCreateInput);
+    await hostedSession.snapshot();
+    const commitSessionSnapshot = vi.spyOn(store, "commitSessionSnapshot");
+
+    commitSessionSnapshot.mockRejectedValueOnce(new Error("create failed"));
+    await expect(hostedSession.createGoal("Persist safely")).rejects.toThrow("create failed");
+    expect(hostedSession.getGoal()).toBeNull();
+
+    await expect(hostedSession.createGoal("Persist safely")).resolves.toEqual({
+      objective: "Persist safely",
+      status: "active",
+    });
+    commitSessionSnapshot.mockRejectedValueOnce(new Error("update failed"));
+    await expect(hostedSession.updateGoal({ objective: "Rejected update" })).rejects.toThrow(
+      "update failed",
+    );
+    expect(hostedSession.getGoal()).toEqual({ objective: "Persist safely", status: "active" });
+
+    commitSessionSnapshot.mockRejectedValueOnce(new Error("clear failed"));
+    await expect(hostedSession.updateGoal({ status: "complete" })).rejects.toThrow("clear failed");
+    expect(hostedSession.getGoal()).toEqual({ objective: "Persist safely", status: "active" });
     await host.shutdown();
   });
 

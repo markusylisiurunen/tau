@@ -141,11 +141,15 @@ type ModelSubturnLimit = {
   message: string;
 };
 
-export type AgentTurnResult = {
+export type AgentSubturnResult = {
   aborted: boolean;
   blocked?: AutoCompactionBlockedTurn;
   limitReached?: ModelSubturnLimit;
   finalMessage?: AssistantMessage;
+};
+
+export type AgentTurnResult = AgentSubturnResult & {
+  terminalResult: AgentSubturnResult;
 };
 
 type SteeringAssociation = {
@@ -154,7 +158,7 @@ type SteeringAssociation = {
 };
 
 type SteeringResult = SteeringAssociation & {
-  result: AgentTurnResult;
+  result: AgentSubturnResult;
 };
 
 export type SteeringSubmission = {
@@ -733,7 +737,7 @@ export class AgentRuntime {
 
     const controller = new AbortController();
     this.activeAbortController = controller;
-    let initialResult: AgentTurnResult | undefined;
+    let initialResult: AgentSubturnResult | undefined;
     let associatedSteering: typeof this.pendingSteering = [];
     let turnSpec = this.captureTurnSettings();
 
@@ -745,7 +749,7 @@ export class AgentRuntime {
           historyEntryId: turnSpec.historyEntryId,
         });
         const stream = this.processTurn(controller.signal, turnSpec);
-        let result: AgentTurnResult;
+        let result: AgentSubturnResult;
         try {
           while (true) {
             const next = await stream.next();
@@ -795,7 +799,7 @@ export class AgentRuntime {
           if (this.pendingSteering.length > 0) {
             this.rejectPendingSteering(new Error("steering was not applied before the turn ended"));
           }
-          return initialResult;
+          return { ...initialResult, terminalResult: result };
         }
 
         associatedSteering = this.pendingSteering.splice(0);
@@ -1088,7 +1092,7 @@ export class AgentRuntime {
   private async *processTurn(
     signal: AbortSignal,
     turnSettings: AgentTurnSpec,
-  ): AsyncGenerator<AgentEvent, AgentTurnResult, void> {
+  ): AsyncGenerator<AgentEvent, AgentSubturnResult, void> {
     let subturns = 0;
     let needsAnotherSubturn = false;
     let lastFinalMessage: AssistantMessage | undefined;
@@ -1153,7 +1157,7 @@ export class AgentRuntime {
   private async *runAutoCompactionIfNeeded(
     signal: AbortSignal,
     turnSettings: AgentTurnSpec,
-  ): AsyncGenerator<AgentEvent, AgentTurnResult, void> {
+  ): AsyncGenerator<AgentEvent, AgentSubturnResult, void> {
     if (!this.shouldRunAutoCompaction(turnSettings)) {
       return { aborted: signal.aborted };
     }

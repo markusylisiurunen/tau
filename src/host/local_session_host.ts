@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import type { Api, AssistantMessage, Message, Model, ToolCall } from "@earendil-works/pi-ai";
-import type { AgentStateRecovery, AgentTurnResult } from "../core/agent/agent_runtime.js";
+import type { AgentStateRecovery, AgentSubturnResult } from "../core/agent/agent_runtime.js";
 import type { AgentEvent } from "../core/agent/events.js";
 import { type Config, resolvePromptTemplateWithBackend } from "../core/config/index.js";
 import type { ModelResolver } from "../core/models/catalog.js";
@@ -573,6 +573,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   private readonly activeWorkPromises = new Set<Promise<unknown>>();
   private readonly activeExecAbortControllers = new Map<string, AbortController>();
   private activeTurnPromise?: Promise<SessionProtocolTurnOutcome>;
+  private activeLogicalTurn?: { cancellationRequested: boolean };
   private disposePromise?: Promise<void>;
   private disposing = false;
   private costTotal = 0;
@@ -736,20 +737,37 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
   async runTurn(): Promise<SessionProtocolTurnOutcome> {
     this.assertActive();
-    const run = this.runTurnNow();
+    const logicalTurn = { cancellationRequested: false };
+    const run = this.runTurnNow(logicalTurn);
     this.activeTurnPromise = run;
+    this.activeLogicalTurn = logicalTurn;
     try {
       return await run;
     } finally {
       if (this.activeTurnPromise === run) {
         this.activeTurnPromise = undefined;
+        this.activeLogicalTurn = undefined;
         await this.emitSnapshotResetIfChanged("assistant-message");
       }
     }
   }
 
-  private async runTurnNow(): Promise<SessionProtocolTurnOutcome> {
+  private async runTurnNow(logicalTurn: {
+    cancellationRequested: boolean;
+  }): Promise<SessionProtocolTurnOutcome> {
+    const rootUserMessage = this.session.rawHistoryEntries.findLast(
+      (entry) => entry.message.role === "user",
+    );
+    if (!rootUserMessage) {
+      throw new Error("cannot run a turn without a user message");
+    }
+    let goalRootHistoryEntryId = this.goal?.status === "active" ? rootUserMessage.id : undefined;
+
     while (true) {
+      if (logicalTurn.cancellationRequested) {
+        return await this.cancelLogicalTurn(rootUserMessage.id);
+      }
+
       const userMessage = this.session.rawHistoryEntries.findLast(
         (entry) => entry.message.role === "user",
       );
@@ -757,21 +775,30 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         throw new Error("cannot run a turn without a user message");
       }
 
-      let lastAssistantMessage: AssistantMessage | undefined;
       try {
         const result = await this.runtime.runTurn();
-        lastAssistantMessage = result.finalMessage;
-        if (result.aborted && this.draftAssistantMessage) {
+        const terminalResult = result.terminalResult;
+        if (terminalResult.aborted && this.draftAssistantMessage) {
           await this.interruptDraftAssistantMessage();
         }
-        const outcome = turnOutcomeFromResult(result, lastAssistantMessage);
-        this.turnOutcomes.set(userMessage.id, outcome);
-        if (outcome.status !== "completed") {
+        const initialOutcome = turnOutcomeFromResult(result, result.finalMessage);
+        const terminalOutcome = turnOutcomeFromResult(terminalResult, terminalResult.finalMessage);
+        this.turnOutcomes.set(userMessage.id, initialOutcome);
+        if (this.goal?.status === "active") {
+          goalRootHistoryEntryId ??= rootUserMessage.id;
+        }
+        if (goalRootHistoryEntryId) {
+          this.turnOutcomes.set(goalRootHistoryEntryId, terminalOutcome);
+        }
+        if (terminalOutcome.status !== "completed") {
           await this.blockActiveGoal();
         }
         await this.emitSnapshotResetIfChanged("assistant-message");
-        if (outcome.status !== "completed" || this.goal?.status !== "active") {
-          return outcome;
+        if (logicalTurn.cancellationRequested) {
+          return await this.cancelLogicalTurn(rootUserMessage.id);
+        }
+        if (terminalOutcome.status !== "completed" || this.goal?.status !== "active") {
+          return goalRootHistoryEntryId ? terminalOutcome : initialOutcome;
         }
         await this.session.commitUserText(buildGoalContinuationText(this.goal));
       } catch (error) {
@@ -784,11 +811,19 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
   interruptTurn(): boolean {
     this.assertActive();
-    return this.runtime.interruptTurn();
+    const logicalTurn = this.activeLogicalTurn;
+    if (logicalTurn) {
+      logicalTurn.cancellationRequested = true;
+    }
+    return this.runtime.interruptTurn() || Boolean(logicalTurn);
   }
 
   interruptActiveWork(): boolean {
-    let interrupted = this.runtime.interruptTurn();
+    const logicalTurn = this.activeLogicalTurn;
+    if (logicalTurn) {
+      logicalTurn.cancellationRequested = true;
+    }
+    let interrupted = this.runtime.interruptTurn() || Boolean(logicalTurn);
     for (const abortController of this.activeWorkAbortControllers) {
       if (!abortController.signal.aborted) {
         abortController.abort();
@@ -1328,14 +1363,27 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   }
 
   private async setGoal(goal: SessionProtocolGoal | null): Promise<void> {
+    const previousGoal = structuredClone(this.goal);
     this.goal = structuredClone(goal);
-    await this.emitPatch("goal", [{ type: "goal.set", goal: structuredClone(goal) }]);
+    try {
+      await this.emitPatch("goal", [{ type: "goal.set", goal: structuredClone(goal) }]);
+    } catch (error) {
+      this.goal = previousGoal;
+      throw error;
+    }
   }
 
   private async blockActiveGoal(): Promise<void> {
     if (this.goal?.status === "active") {
       await this.setGoal({ ...this.goal, status: "blocked" });
     }
+  }
+
+  private async cancelLogicalTurn(rootHistoryEntryId: string): Promise<SessionProtocolTurnOutcome> {
+    const outcome = { status: "aborted", stopReason: "aborted" } as const;
+    this.turnOutcomes.set(rootHistoryEntryId, outcome);
+    await this.blockActiveGoal();
+    return outcome;
   }
 
   private async commitSnapshot(): Promise<SessionProtocolSnapshot> {
@@ -2331,7 +2379,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 }
 
 function turnOutcomeFromResult(
-  result: AgentTurnResult,
+  result: AgentSubturnResult,
   assistantMessage: AssistantMessage | undefined,
 ): SessionProtocolTurnOutcome {
   if (result.blocked) {

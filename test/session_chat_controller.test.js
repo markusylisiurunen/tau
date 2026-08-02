@@ -2924,6 +2924,7 @@ describe("SessionChatController", () => {
     expect(session.startGoal).toHaveBeenCalledWith("Ship the feature");
     expect(view.status.editor.goalStatus).toBe("active");
 
+    controller.isStreaming = true;
     controller.getInputHandlers().onSubmit("/goal");
     await flush();
     expect(view.systems).toContainEqual(
@@ -2934,6 +2935,18 @@ describe("SessionChatController", () => {
     await flush();
     expect(session.clearGoal).toHaveBeenCalledOnce();
     expect(view.status.editor.goalStatus).toBeUndefined();
+
+    controller.getInputHandlers().onSubmit("/goal Start another");
+    controller.getInputHandlers().onSubmit("/goal resume");
+    await flush();
+    expect(session.startGoal).toHaveBeenCalledOnce();
+    expect(session.resumeGoal).not.toHaveBeenCalled();
+    expect(view.systems).toContainEqual(
+      expect.objectContaining({
+        kind: "warn",
+        text: "wait for tau to become idle before running commands",
+      }),
+    );
   });
 
   it("shows manual compaction status until the compact request finishes", async () => {

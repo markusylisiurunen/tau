@@ -86,7 +86,11 @@ const home = path.resolve(process.argv[2]);
 const includeAgentContext = process.argv[3] === "true";
 const additionalFiles = JSON.parse(process.argv[4]);
 const ignoredChildDirs = new Set(JSON.parse(process.argv[5]));
-const maxDirs = Number(process.argv[6]);
+const ignoredHomeChildDirs = new Set(JSON.parse(process.argv[6]));
+const ignoredPlatformHomeChildDirs = new Set(
+  process.platform === "darwin" ? ["Library"] : process.platform === "linux" ? ["snap"] : [],
+);
+const maxDirs = Number(process.argv[7]);
 
 function realpath(pathname) {
   try {
@@ -188,7 +192,13 @@ if (includeAgentContext) {
 
     for (const entry of entries) {
       if (visitedDirs >= maxDirs) return;
-      if ((!entry.isDirectory() && !entry.isSymbolicLink()) || ignoredChildDirs.has(entry.name)) {
+      if (
+        (!entry.isDirectory() && !entry.isSymbolicLink()) ||
+        ignoredChildDirs.has(entry.name) ||
+        (canonicalDir === homeReal &&
+          (ignoredHomeChildDirs.has(entry.name) ||
+            ignoredPlatformHomeChildDirs.has(entry.name)))
+      ) {
         continue;
       }
       const childDir = path.join(dir, entry.name);
@@ -227,19 +237,13 @@ process.stdout.write(JSON.stringify({
 
 const DEFAULT_IGNORED_CHILD_DIRS = [
   ".cache",
-  ".cargo",
-  ".config",
-  ".deno",
   ".git",
   ".hg",
   ".jj",
-  ".local",
   ".next",
-  ".npm",
   ".nuxt",
-  ".nvm",
   ".parcel-cache",
-  ".rustup",
+  ".repository-cache",
   ".svn",
   ".turbo",
   ".venv",
@@ -253,6 +257,22 @@ const DEFAULT_IGNORED_CHILD_DIRS = [
   "target",
   "vendor",
   "venv",
+];
+
+const HOME_IGNORED_CHILD_DIRS = [
+  ".bun",
+  ".cargo",
+  ".config",
+  ".deno",
+  ".gradle",
+  ".local",
+  ".m2",
+  ".npm",
+  ".nvm",
+  ".pnpm-store",
+  ".rustup",
+  ".sdkman",
+  ".yarn",
 ];
 
 const CHILD_AGENTS_WALK_MAX_DIRS = 10_000;
@@ -318,6 +338,7 @@ async function inspectRuntimePromptContext(
       String(args.includeAgentContext),
       JSON.stringify(args.agentContextFiles),
       JSON.stringify(DEFAULT_IGNORED_CHILD_DIRS),
+      JSON.stringify(HOME_IGNORED_CHILD_DIRS),
       String(CHILD_AGENTS_WALK_MAX_DIRS),
     ],
     {

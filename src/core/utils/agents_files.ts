@@ -18,19 +18,13 @@ const CHILD_AGENTS_WALK_MAX_DIRS = 10_000;
 
 const DEFAULT_IGNORED_CHILD_DIRS = new Set([
   ".cache",
-  ".cargo",
-  ".config",
-  ".deno",
   ".git",
   ".hg",
   ".jj",
-  ".local",
   ".next",
-  ".npm",
   ".nuxt",
-  ".nvm",
   ".parcel-cache",
-  ".rustup",
+  ".repository-cache",
   ".svn",
   ".turbo",
   ".venv",
@@ -45,6 +39,29 @@ const DEFAULT_IGNORED_CHILD_DIRS = new Set([
   "vendor",
   "venv",
 ]);
+
+const HOME_IGNORED_CHILD_DIRS = new Set([
+  ".bun",
+  ".cargo",
+  ".config",
+  ".deno",
+  ".gradle",
+  ".local",
+  ".m2",
+  ".npm",
+  ".nvm",
+  ".pnpm-store",
+  ".rustup",
+  ".sdkman",
+  ".yarn",
+]);
+
+function getIgnoredHomeChildDirs(): Set<string> {
+  return new Set([
+    ...HOME_IGNORED_CHILD_DIRS,
+    ...(process.platform === "darwin" ? ["Library"] : process.platform === "linux" ? ["snap"] : []),
+  ]);
+}
 
 function isSameOrParentPath(parent: string, child: string): boolean {
   if (parent === child) return true;
@@ -146,12 +163,18 @@ export function findAgentsFilesFromCwdToHome(cwd: string, home: string): string[
   return found;
 }
 
-function buildIgnoredChildDirGlobs(): string[] {
-  return [...DEFAULT_IGNORED_CHILD_DIRS].flatMap((dir) => ["--glob", `!${dir}/`]);
+function buildIgnoredChildDirGlobs(includeHomeChildren: boolean): string[] {
+  return [
+    ...[...DEFAULT_IGNORED_CHILD_DIRS].flatMap((dir) => ["--glob", `!${dir}/`]),
+    ...(includeHomeChildren
+      ? [...getIgnoredHomeChildDirs()].flatMap((dir) => ["--glob", `!/${dir}/**`])
+      : []),
+  ];
 }
 
 function findChildAgentsFilesWithRipgrep(cwd: string, home: string): string[] | null {
   const cwdAbs = resolve(cwd);
+  const homeAbs = resolve(home);
   const result = spawnSync(
     "rg",
     [
@@ -160,7 +183,7 @@ function findChildAgentsFilesWithRipgrep(cwd: string, home: string): string[] | 
       "--no-ignore",
       "--glob",
       "**/AGENTS.md",
-      ...buildIgnoredChildDirGlobs(),
+      ...buildIgnoredChildDirGlobs(cwdAbs === homeAbs),
     ],
     {
       cwd: cwdAbs,
@@ -193,6 +216,13 @@ function findChildAgentsFilesWithRipgrep(cwd: string, home: string): string[] | 
 
 function findChildAgentsFilesByWalking(cwd: string, home: string): string[] {
   const cwdAbs = resolve(cwd);
+  let homeReal = resolve(home);
+  try {
+    homeReal = realpathSync(homeReal);
+  } catch {
+    // use the resolved home path
+  }
+  const ignoredHomeChildDirs = getIgnoredHomeChildDirs();
   const found: string[] = [];
   const seenDirs = new Set<string>();
   const startedAt = Date.now();
@@ -236,7 +266,12 @@ function findChildAgentsFilesByWalking(cwd: string, home: string): string[] {
     for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
       if (shouldBail()) return;
       if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
-      if (DEFAULT_IGNORED_CHILD_DIRS.has(entry.name)) continue;
+      if (
+        DEFAULT_IGNORED_CHILD_DIRS.has(entry.name) ||
+        (dirReal === homeReal && ignoredHomeChildDirs.has(entry.name))
+      ) {
+        continue;
+      }
 
       const childDir = join(dir, entry.name);
       let isDirectory = entry.isDirectory();

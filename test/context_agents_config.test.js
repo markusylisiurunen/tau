@@ -48,6 +48,23 @@ describe("project context agents from .tau/config.json", () => {
     }
   });
 
+  it("limits tool-managed home exclusions to direct children of home", () => {
+    const fx = setupFixture();
+
+    try {
+      mkdirSync(join(fx.home, ".npm", "package"), { recursive: true });
+      mkdirSync(join(fx.repo, ".npm", "package"), { recursive: true });
+      writeFileSync(join(fx.home, ".npm", "package", "AGENTS.md"), "# home cache\n");
+      writeFileSync(join(fx.repo, ".npm", "package", "AGENTS.md"), "# project config\n");
+
+      expect(findChildAgentsFiles(fx.home, fx.home)).toEqual([
+        join(fx.repo, ".npm", "package", "AGENTS.md"),
+      ]);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
   it("includes additional AGENTS.md files configured in .tau/config.json", () => {
     const fx = setupFixture();
 

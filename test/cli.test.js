@@ -20,6 +20,11 @@ describe("cli", () => {
     expect(options.caffeinated).toBe(false);
   });
 
+  it("parses --no-client-tools", () => {
+    const options = parseCliArgs(["--no-client-tools"]);
+    expect(options.noClientTools).toBe(true);
+  });
+
   it("defers persona resolution until an execution environment exists", () => {
     const options = parseCliArgs(["--persona", "sandbox-persona"]);
     expect(options.personaId).toBe("sandbox-persona");

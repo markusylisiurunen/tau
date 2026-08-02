@@ -8,6 +8,7 @@ export type CliOptions = {
   reasoningOverride?: ReasoningEffort;
   caffeinated: boolean;
   noAgentContextFiles: boolean;
+  noClientTools: boolean;
 };
 
 export class CliError extends Error {
@@ -94,6 +95,7 @@ export function parseCliArgs(argv: string[]): CliOptions {
   let reasoningOverride: ReasoningEffort | undefined;
   let caffeinated = false;
   let noAgentContextFiles = false;
+  let noClientTools = false;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
@@ -110,6 +112,11 @@ export function parseCliArgs(argv: string[]): CliOptions {
 
     if (arg === "--no-agent-context-files") {
       noAgentContextFiles = true;
+      continue;
+    }
+
+    if (arg === "--no-client-tools") {
+      noClientTools = true;
       continue;
     }
 
@@ -146,6 +153,7 @@ export function parseCliArgs(argv: string[]): CliOptions {
     reasoningOverride,
     caffeinated,
     noAgentContextFiles,
+    noClientTools,
   };
 }
 
@@ -179,6 +187,7 @@ export function printHelp(personas: Persona[]): void {
       `                                if not specified, uses resolved config defaultPersona.`,
       "  --caffeinated                 keep macOS awake during active assistant turns in TUI mode (no-op on Linux).",
       "  --no-agent-context-files      disable AGENTS.md injection into the system prompt.",
+      "  --no-client-tools             disable TUI client tools such as diff review and input prefill.",
       "",
       "subcommands:",
       "  rpc                           run headless stdio RPC mode (no TUI).",

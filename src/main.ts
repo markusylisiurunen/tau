@@ -99,6 +99,7 @@ type AttachCliOptions = {
   flySpriteName?: string;
   target?: AttachTarget;
   authToken?: string;
+  noClientTools: boolean;
 };
 
 type AttachTarget =
@@ -131,6 +132,7 @@ function parseAttachArgs(args: string[]): AttachCliOptions {
   let flySpriteName: string | undefined;
   let authToken: string | undefined;
   let target: AttachTarget | undefined;
+  let noClientTools = false;
 
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i]!;
@@ -150,6 +152,10 @@ function parseAttachArgs(args: string[]): AttachCliOptions {
     }
     if (arg === "--new") {
       createNew = true;
+      continue;
+    }
+    if (arg === "--no-client-tools") {
+      noClientTools = true;
       continue;
     }
     if (arg === "--cwd" || arg.startsWith("--cwd=")) {
@@ -259,6 +265,7 @@ function parseAttachArgs(args: string[]): AttachCliOptions {
     flySpriteName,
     target,
     authToken,
+    noClientTools,
   };
 }
 
@@ -379,6 +386,7 @@ function printAttachHelp(): void {
       "  --fly-api <id>                 configured Fly Sprites API id.",
       "  --fly-sprite <name>            already-provisioned Fly Sprite name.",
       "  --auth-token <token>           token for websocket servers started with --auth-token.",
+      "  --no-client-tools              disable TUI client tools such as diff review and input prefill.",
       "  --help, -h                     show this help and exit.",
       "",
       "examples:",
@@ -926,6 +934,7 @@ if (isAttachSubcommand) {
           themes,
           config,
           defaultDiffTool,
+          clientToolsEnabled: !attach.noClientTools,
         })
       : await SessionChatApp.connect({
           transport: "websocket",
@@ -937,6 +946,7 @@ if (isAttachSubcommand) {
           themes,
           config,
           defaultDiffTool,
+          clientToolsEnabled: !attach.noClientTools,
         });
 
   let isShuttingDown = false;
@@ -1030,6 +1040,12 @@ if (isRpcSubcommand && cli.caffeinated) {
 if (isServeSubcommand && cli.caffeinated) {
   // eslint-disable-next-line no-console
   console.error("--caffeinated is only supported in TUI mode.");
+  process.exit(1);
+}
+
+if ((isRpcSubcommand || isServeSubcommand) && cli.noClientTools) {
+  // eslint-disable-next-line no-console
+  console.error("--no-client-tools is only supported in TUI mode.");
   process.exit(1);
 }
 
@@ -1169,7 +1185,10 @@ const sessionClient = await createTauSdkClientWithHostConfig(
     reasoning: reasoningOverride,
     noAgentContextFiles: cli.noAgentContextFiles,
     initialize: { client: { name: "tau-tui", version: "1" } },
-    clientTools: createTuiClientTools({ getController: () => sessionChatApp?.getController() }),
+    clientTools: createTuiClientTools({
+      enabled: !cli.noClientTools,
+      getController: () => sessionChatApp?.getController(),
+    }),
   },
   config,
 );

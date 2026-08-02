@@ -15,6 +15,7 @@ import {
 } from "../dist/protocol/session_protocol.js";
 import { TauSessionProtocolResponseError } from "../dist/transport/errors.js";
 import { copyTextToClipboard } from "../dist/tui/clipboard.js";
+import { createTuiClientTools } from "../dist/tui/session_chat_app.js";
 import { SessionChatController } from "../dist/tui/session_chat_controller.js";
 import {
   createProtocolBootstrap,
@@ -3529,6 +3530,45 @@ describe("SessionChatController", () => {
 
     expect(session.record).toHaveBeenCalledTimes(1);
     expect(session.closeEphemeralContext).toHaveBeenCalledWith("ephemeral-1");
+  });
+
+  it("prefills only an empty TUI editor through the client tool", async () => {
+    const session = new FakeSession();
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "in-process",
+    });
+    const tools = createTuiClientTools({ enabled: true, getController: () => controller });
+    const prefillInput = tools.find((tool) => tool.schema.name === "prefill_input");
+
+    expect(tools.map((tool) => tool.schema.name)).toEqual(["diff_review", "prefill_input"]);
+    expect(prefillInput.schema.parameters.properties.text.pattern).toBe("\\S");
+    expect(() => prefillInput.execute({ text: " \n\t" })).toThrow(
+      "Invalid prefill_input arguments: text: must contain non-whitespace text",
+    );
+    expect(view.editorText).toBe("");
+
+    expect(prefillInput.execute({ text: "Name: \nDecision: " })).toBe(
+      "Prefilled the input editor. The user can review, edit, and submit it.",
+    );
+    expect(view.editorText).toBe("Name: \nDecision: ");
+
+    expect(() => prefillInput.execute({ text: "replacement" })).toThrow(
+      "Cannot prefill input because the editor already contains text.",
+    );
+    expect(view.editorText).toBe("Name: \nDecision: ");
+  });
+
+  it("disables all TUI client tools together", () => {
+    expect(
+      createTuiClientTools({
+        enabled: false,
+        getController: () => undefined,
+      }),
+    ).toEqual([]);
   });
 
   it("keeps an active model-launched diff review visible and steerable", async () => {

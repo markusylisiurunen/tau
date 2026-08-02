@@ -10,6 +10,7 @@ import {
   hasAutoCompactionContinuationMetadata,
   stripTauUserMetadata,
 } from "../utils/user_metadata.js";
+import type { AutoCompactionArchivePaths } from "./auto_compaction_archive.js";
 
 export type CompactionHistoryEntry = {
   id: string;
@@ -526,6 +527,7 @@ export function buildAutoCompactionPrompt(preparation: AutoCompactionPreparation
 export function buildAutoCompactionContinuationMessage(args: {
   cutType: AutoCompactionCutType;
   now: number;
+  archive: AutoCompactionArchivePaths | undefined;
 }): Message {
   const lines = [
     "The conversation context before this point has been compacted.",
@@ -536,6 +538,18 @@ export function buildAutoCompactionContinuationMessage(args: {
   if (args.cutType === "split-turn") {
     lines.push(
       "The retained messages begin in the middle of the latest assistant/tool turn. The summary contains the original request and earlier tool work from that turn.",
+    );
+  }
+
+  if (args.archive) {
+    lines.push(
+      "The summary and retained context should normally be sufficient. If a specific missing detail is needed, temporary pre-compaction snapshots are available as numbered pairs in one directory:",
+      `- this compaction's text transcript: ${args.archive.textPath}`,
+      `- this compaction's full JSON: ${args.archive.jsonPath}`,
+      "Earlier numbered pairs in the same directory contain older pre-compaction snapshots, so include them in targeted searches when the detail may predate this compaction.",
+      "Prefer narrow searches and bounded reads of the text transcripts; their tool results are middle-truncated. The JSON files retain untruncated archived content and may be very large.",
+      "When available, delegating a precise archive lookup to a low-effort subagent can preserve this context more efficiently than reading large sections directly.",
+      "These files are temporary and may no longer exist.",
     );
   }
 

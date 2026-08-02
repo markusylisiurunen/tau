@@ -14,6 +14,7 @@ import {
 import type { AgentEventSink } from "../agent/events.js";
 import type { Config } from "../config/index.js";
 import type { ModelResolver } from "../models/catalog.js";
+import { createAutoCompactionArchiver } from "../session/auto_compaction_archive.js";
 import { AgentSupervisor } from "../subagents/agent_supervisor.js";
 import type { SubagentUiEvent } from "../subagents/types.js";
 import { ToolCatalog } from "../tools/catalog.js";
@@ -123,6 +124,7 @@ export class ChatRuntime {
         await options.eventSink(event);
       },
       clock: this.deps.clock,
+      archiveAutoCompaction: createAutoCompactionArchiver(this.backend),
       getCompactionContinuationSystemMessages: () => {
         const context = this.supervisor.getActiveCompactionContext();
         return context ? [context] : [];

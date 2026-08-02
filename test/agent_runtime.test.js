@@ -117,6 +117,12 @@ function createRuntime(options = {}) {
     spec,
     eventSink,
     clock: options.clock ?? { now: () => Date.now() },
+    archiveAutoCompaction:
+      options.archiveAutoCompaction ??
+      (async () => ({
+        textPath: "/tmp/tau-auto-compaction-test/000001.txt",
+        jsonPath: "/tmp/tau-auto-compaction-test/000001.json",
+      })),
     ...(options.getCompactionContinuationSystemMessages
       ? {
           getCompactionContinuationSystemMessages: options.getCompactionContinuationSystemMessages,
@@ -222,6 +228,10 @@ describe("AgentRuntime", () => {
       spec,
       eventSink: async () => {},
       clock: { now: () => 1 },
+      archiveAutoCompaction: async () => ({
+        textPath: "/tmp/tau-auto-compaction-test/000001.txt",
+        jsonPath: "/tmp/tau-auto-compaction-test/000001.json",
+      }),
       state: {
         agentId: "agent-1",
         revision: 2,
@@ -662,14 +672,19 @@ describe("AgentRuntime", () => {
     expect(streamModel).toHaveBeenCalledTimes(2);
   });
 
-  it("injects dynamic supervisor context into automatic compaction", async () => {
+  it("archives conversation context and injects archive guidance after automatic compaction", async () => {
     const model = { ...personas[0].model, contextWindow: 100 };
     const persona = createPersona({ model });
+    const archiveAutoCompaction = vi.fn(async () => ({
+      textPath: "/tmp/tau-auto-compaction-agent/000004.txt",
+      jsonPath: "/tmp/tau-auto-compaction-agent/000004.json",
+    }));
     const { runtime } = createRuntime({
       persona,
       config: {
         autoCompact: { enabled: true, reserveTokens: 10, keepRecentTokens: 20 },
       },
+      archiveAutoCompaction,
       getCompactionContinuationSystemMessages: () => [
         "<active-subagents>\n- child-1: running repository scan\n</active-subagents>",
       ],
@@ -699,9 +714,70 @@ describe("AgentRuntime", () => {
     await runtime.submit("first request");
     await runtime.submit("second request");
 
-    expect(JSON.stringify(streamModel.mock.calls[2][0])).toContain(
+    expect(archiveAutoCompaction).toHaveBeenCalledOnce();
+    const archiveRequest = archiveAutoCompaction.mock.calls[0][0];
+    expect(archiveRequest.agentId).toBe(runtime.agentIdValue);
+    expect(archiveRequest.historyEntries.map((entry) => entry.message.role)).toEqual([
+      "user",
+      "assistant",
+      "user",
+    ]);
+    expect(archiveRequest.historyEntries.at(-1).message.content[0].text).toBe("second request");
+
+    const continuationContext = JSON.stringify(streamModel.mock.calls[2][0]);
+    expect(continuationContext).toContain(
       "<active-subagents>\\n- child-1: running repository scan\\n</active-subagents>",
     );
+    expect(continuationContext).toContain("/tmp/tau-auto-compaction-agent/000004.txt");
+    expect(continuationContext).toContain("/tmp/tau-auto-compaction-agent/000004.json");
+    expect(continuationContext).toContain("Earlier numbered pairs in the same directory");
+    expect(continuationContext).toContain("low-effort subagent");
+  });
+
+  it("continues automatic compaction without archive guidance when archiving fails", async () => {
+    const model = { ...personas[0].model, contextWindow: 100 };
+    const persona = createPersona({ model });
+    const archiveAutoCompaction = vi.fn(async () => {
+      throw new Error("temporary storage unavailable");
+    });
+    const { runtime } = createRuntime({
+      persona,
+      config: {
+        autoCompact: { enabled: true, reserveTokens: 10, keepRecentTokens: 20 },
+      },
+      archiveAutoCompaction,
+    });
+    const first = createAssistant(persona, "first response", {
+      usage: {
+        input: 89,
+        output: 2,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 91,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+    });
+    const streamModel = setStreams(runtime, [
+      createStream([], first),
+      createStream(
+        [],
+        createAssistant(
+          persona,
+          "summary\n\n<preserved-user-message-ids>\n[]\n</preserved-user-message-ids>",
+        ),
+      ),
+      createStream([], createAssistant(persona, "after compaction")),
+    ]);
+
+    await runtime.submit("first request");
+    const result = await runtime.submit("second request");
+
+    expect(result.blocked).toBeUndefined();
+    expect(result.finalMessage.content[0].text).toBe("after compaction");
+    expect(archiveAutoCompaction).toHaveBeenCalledOnce();
+    const continuationContext = JSON.stringify(streamModel.mock.calls[2][0]);
+    expect(continuationContext).not.toContain("temporary storage unavailable");
+    expect(continuationContext).not.toContain("000001.json");
   });
 
   it("inherits stream options and cleans up manual compaction sessions", async () => {

@@ -11,6 +11,7 @@ import type { Config } from "../core/config/index.js";
 import { resolveAgentModel } from "../core/runtime/agent_model.js";
 import { createDefaultCoreDeps } from "../core/runtime/deps.js";
 import { composeSessionPrompts } from "../core/runtime/session_prompt_composer.js";
+import { createAutoCompactionArchiver } from "../core/session/auto_compaction_archive.js";
 import type { SubagentToolName } from "../core/subagents/types.js";
 import { ToolCatalog } from "../core/tools/catalog.js";
 import type { Persona, Skill } from "../core/types.js";
@@ -232,6 +233,7 @@ class EphemeralAgentThread {
       spec,
       eventSink: async (event) => this.handleEvent(event),
       clock: options.deps.clock,
+      archiveAutoCompaction: createAutoCompactionArchiver(options.backend),
       ...(state ? { state } : {}),
     });
     if (options.forkFrom) {

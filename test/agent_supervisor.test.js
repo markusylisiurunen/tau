@@ -86,14 +86,12 @@ describe("AgentSupervisor", () => {
         id: spawned.state.id,
         run: expect.objectContaining({
           status: "succeeded",
-          progress: "",
           response: "first result",
         }),
       }),
     ]);
     expect(supervisor.getSnapshot(spawned.state.id)).toMatchObject({
       run: { status: "succeeded", response: "first result" },
-      turns: 1,
       costTotal: 0.01,
     });
 
@@ -105,7 +103,6 @@ describe("AgentSupervisor", () => {
           status: "succeeded",
           response: "follow-up result",
         }),
-        turns: 2,
       }),
     ]);
     expect(events.filter((event) => event.type === "subagent_spawned")).toHaveLength(1);
@@ -116,6 +113,25 @@ describe("AgentSupervisor", () => {
       expect(entry.agent).toEqual({ type: "subagent", name: "default" });
       expect(entry.personaId).toBe("parent-persona");
     }
+  });
+
+  it("marks compacted subagent state as a potentially stale snapshot", async () => {
+    const supervisor = new AgentSupervisor({ onEvent: async () => {}, recordUsage: () => {} });
+    const spawned = supervisor.spawn(createSpawnOptions());
+    expect(spawned.ok).toBe(true);
+    if (!spawned.ok) throw new Error(spawned.reason);
+    const record = getRecord(supervisor, spawned.state.id);
+    record.runtime.spec.model.stream = vi.fn(() => createStream(createAssistant("done")));
+
+    const context = supervisor.getActiveCompactionContext();
+
+    expect(context).toContain(
+      "This subagent state was captured at the time of compaction and may have changed since then.",
+    );
+    expect(context).toContain("Use list_agents to inspect the current state.");
+    expect(context).toContain(`\`${spawned.state.id}\` · child task`);
+    expect(context).not.toContain("Agents ·");
+    await supervisor.waitForAgents([spawned.state.id]);
   });
 
   it("retains the latest response for repeated waits", async () => {
@@ -286,7 +302,6 @@ describe("AgentSupervisor", () => {
           status: "succeeded",
           response: "finished after compaction",
         }),
-        toolCalls: 2,
       }),
     ]);
 
@@ -463,10 +478,7 @@ describe("AgentSupervisor", () => {
     const supervisor = new AgentSupervisor({
       recordUsage: () => {},
       onEvent: async (event) => {
-        if (
-          event.type === "subagent_progress" &&
-          event.state.run.progress === "assistant: thinking"
-        ) {
+        if (event.type === "subagent_activity" && event.text === "assistant: thinking") {
           await progressGate;
         }
       },

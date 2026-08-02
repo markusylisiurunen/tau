@@ -2,7 +2,7 @@ import type { Tool, ToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { z } from "zod";
 import type { AgentSupervisor } from "../subagents/agent_supervisor.js";
-import { formatSubagentStates } from "../subagents/format.js";
+import { formatSendInputToAgentResult } from "../subagents/format.js";
 import type { SubagentStateSnapshot } from "../subagents/types.js";
 import { parseToolArgs } from "../utils/zod.js";
 import type { ToolActivity } from "./activity.js";
@@ -20,6 +20,7 @@ import { TOOL_NAME_SEND_INPUT_TO_AGENT } from "./tool_names.js";
 const SEND_INPUT_TO_AGENT_DESCRIPTION = [
   "Send a follow-up prompt to an existing subagent.",
   "The subagent must be idle before you can send another input.",
+  "Starting a new run replaces the previously retained response.",
 ].join(" ");
 
 const SEND_INPUT_TO_AGENT_ID_DESCRIPTION = "Subagent id to send input to.";
@@ -151,9 +152,7 @@ export function createSendInputToAgentToolDefinition(supervisor: AgentSupervisor
             return { content: outcome.content, outcome: outcome.outcome, uiEvent };
           }
 
-          const resultText = formatSubagentStates([sendResult.state], sendResult.capacity, {
-            includeResponses: false,
-          });
+          const resultText = formatSendInputToAgentResult(sendResult.state, sendResult.capacity);
           const outcome = createTextToolOutcome(resultText, "succeeded");
           const uiText = buildSubagentUiText({
             output: prompt,

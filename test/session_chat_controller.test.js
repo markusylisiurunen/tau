@@ -110,13 +110,7 @@ function createAssistantToolCallMessage(toolCalls) {
   };
 }
 
-function createAgentRun({
-  status = "running",
-  progress = "",
-  finalText = "",
-  finishedAt = 2,
-  ...overrides
-} = {}) {
+function createAgentRun({ status = "running", finalText = "", finishedAt = 2, ...overrides } = {}) {
   return {
     id: "agent-1",
     name: "default",
@@ -131,7 +125,6 @@ function createAgentRun({
             revision: 1,
             status,
             startedAt: 1,
-            progress,
             interruptRequested: false,
           }
         : {
@@ -139,13 +132,10 @@ function createAgentRun({
             status,
             startedAt: 1,
             finishedAt,
-            progress,
             interruptRequested: false,
             response: finalText,
           },
     costTotal: 0.01,
-    turns: 1,
-    toolCalls: 0,
     usage: {
       input: 10,
       output: 5,
@@ -2603,12 +2593,21 @@ describe("SessionChatController", () => {
     await controller.dispose();
   });
 
-  it("reconstructs subagent progress from snapshot agent state", async () => {
-    const agent = createAgentRun({ progress: "reading files" });
+  it("reconstructs subagent activity from snapshot presentation state", async () => {
+    const agent = createAgentRun();
     const session = new FakeSession(
       updateSnapshot(createSnapshot(), {
         agents: {
           [agent.id]: agent,
+        },
+        facets: {
+          "subagent-activity-agent-1": {
+            id: "subagent-activity-agent-1",
+            subject: { type: "agent", id: agent.id },
+            kind: "tau.subagent-activity",
+            version: 1,
+            data: { text: "reading files" },
+          },
         },
       }),
     );
@@ -2628,7 +2627,7 @@ describe("SessionChatController", () => {
           id: "agent-1",
           run: expect.objectContaining({ status: "running" }),
         }),
-        progress: "reading files",
+        activity: "reading files",
       },
     ]);
     await controller.dispose();
@@ -2637,7 +2636,6 @@ describe("SessionChatController", () => {
   it("reconstructs finished subagents from snapshot agent state", async () => {
     const agent = createAgentRun({
       status: "succeeded",
-      progress: "finished checks",
       finalText: "all clear",
       finishedAt: 2,
     });
@@ -2664,30 +2662,37 @@ describe("SessionChatController", () => {
           id: "agent-1",
           run: expect.objectContaining({ status: "succeeded", response: "all clear" }),
         }),
-        progress: "finished checks",
+        activity: undefined,
       },
     ]);
     await controller.dispose();
   });
 
-  it("applies agent progress deltas without replaying tool UI state", async () => {
-    const initialAgent = createAgentRun({ progress: "reading files" });
+  it("applies agent activity facets without replaying tool UI state", async () => {
+    const initialAgent = createAgentRun();
     const nextAgent = createAgentRun({
-      progress: "checking protocol",
       costTotal: 0.02,
-      turns: 2,
       usage: {
         ...initialAgent.usage,
         output: 15,
         contextWindowUsageTokens: 25,
       },
     });
+    const initialFacet = {
+      id: "subagent-activity-agent-1",
+      subject: { type: "agent", id: initialAgent.id },
+      kind: "tau.subagent-activity",
+      version: 1,
+      data: { text: "reading files" },
+    };
+    const nextFacet = { ...initialFacet, data: { text: "checking protocol" } };
     const session = new FakeSession(
       updateSnapshot(createSnapshot(), {
         revision: 3,
         agents: {
           [initialAgent.id]: initialAgent,
         },
+        facets: { [initialFacet.id]: initialFacet },
       }),
     );
     const view = new FakeView();
@@ -2713,6 +2718,7 @@ describe("SessionChatController", () => {
         changes: [
           { type: "cost.set", costTotal: 0.02 },
           { type: "agent.set", agent: nextAgent },
+          { type: "facet.set", facet: nextFacet },
         ],
       },
     };
@@ -2723,18 +2729,14 @@ describe("SessionChatController", () => {
     }
 
     expect(view.resetToolUiSession).toHaveBeenCalledTimes(resetCount);
-    expect(view.subagentEvents).toEqual([
+    expect(view.subagentEvents).toEqual([]);
+    expect(view.subagentSnapshots).toEqual([
       expect.objectContaining({
-        type: "subagent_progress",
-        state: expect.objectContaining({
-          id: "agent-1",
-          costTotal: 0.02,
-          turns: 2,
-          run: expect.objectContaining({ progress: "checking protocol" }),
-        }),
+        state: expect.objectContaining({ id: "agent-1", costTotal: 0.02 }),
+        activity: "checking protocol",
       }),
     ]);
-    expect(controller.snapshot.agents["agent-1"].run.progress).toBe("checking protocol");
+    expect(controller.snapshot.agents["agent-1"]).not.toHaveProperty("progress");
     await controller.dispose();
   });
 

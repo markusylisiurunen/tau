@@ -115,7 +115,7 @@ export function formatSubagentsForPrompt(persona: Persona): string | undefined {
       launchModels.length > 0
         ? `\n  - Launch model overrides: ${launchModels.map((entry) => `\`${entry}\``).join(", ")}\n    By default, launch the subagent without a model override unless the user explicitly asks to use a specific model.`
         : "";
-    return `- \`${name}\`: ${description}\n  - Default runtime: \`${effective.model.provider}/${effective.model.id}:${reasoning}\` (${effective.model.contextWindow} context tokens)${launchModelsText}`;
+    return `- \`${name}\`: ${description}\n  - Default runtime: \`${effective.model.provider}/${effective.model.id}:${reasoning}\`${launchModelsText}`;
   });
 
   if (subagentLines.length === 0) {

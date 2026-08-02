@@ -1781,13 +1781,10 @@ describe("session_protocol", () => {
         status: "succeeded",
         startedAt: 1,
         finishedAt: 2,
-        progress: "done",
         interruptRequested: false,
         response: "result",
       },
       costTotal: 0,
-      turns: 1,
-      toolCalls: 0,
       usage: {
         input: 0,
         output: 0,

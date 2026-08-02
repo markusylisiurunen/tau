@@ -227,7 +227,7 @@ describe("session prompt composer", () => {
     expect(result.baseSystemPrompt).toContain("`researcher`");
     expect(result.baseSystemPrompt).toContain("Default runtime:");
     expect(result.baseSystemPrompt).toContain(`${persona.model.provider}/${persona.model.id}:none`);
-    expect(result.baseSystemPrompt).toContain(`${persona.model.contextWindow} context tokens`);
+    expect(result.baseSystemPrompt).not.toContain("context tokens");
     expect(result.baseSystemPrompt).toContain("Launch model overrides");
     expect(result.baseSystemPrompt).toContain("openai/gpt-5.4:high");
     expect(result.baseSystemPrompt).toContain(

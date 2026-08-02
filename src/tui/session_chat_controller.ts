@@ -19,7 +19,7 @@ import {
 import { buildDiffReviewInstructions } from "../core/diff_review/review_instructions.js";
 import { type CoreDeps, createDefaultCoreDeps } from "../core/runtime/deps.js";
 import { runDirectBashCommand } from "../core/session/direct_bash.js";
-import type { SubagentUiEvent } from "../core/subagents/types.js";
+import { SUBAGENT_ACTIVITY_FACET_KIND, type SubagentUiEvent } from "../core/subagents/types.js";
 import type { ToolActivity } from "../core/tools/activity.js";
 import { REASONING_LEVELS, type ReasoningEffort } from "../core/types.js";
 import { formatAdaptiveNumber, formatTokenWindow } from "../core/utils/format.js";
@@ -1422,7 +1422,7 @@ export class SessionChatController {
     this.view.reconcileSubagentUiSession(
       Object.values(snapshot.agents).map((agent) => ({
         state: structuredClone(agent),
-        progress: agent.run.progress,
+        activity: getSubagentActivity(snapshot, agent.id),
       })),
     );
   }
@@ -2533,15 +2533,25 @@ function toolUiEventsFromFacet(
   return facet.data.events.filter(isToolUiEvent);
 }
 
+function getSubagentActivity(
+  snapshot: SessionProtocolSnapshot,
+  agentId: string,
+): string | undefined {
+  const facet = Object.values(snapshot.facets).find(
+    (candidate) =>
+      candidate.kind === SUBAGENT_ACTIVITY_FACET_KIND &&
+      candidate.subject.type === "agent" &&
+      candidate.subject.id === agentId,
+  );
+  return typeof facet?.data.text === "string" ? facet.data.text : undefined;
+}
+
 function subagentUiEventsFromAgentRun(
   agent: SessionProtocolSnapshot["agents"][string],
   startedType: "subagent_spawned" | "subagent_run_started" = "subagent_spawned",
 ): SubagentUiEvent[] {
   const state = structuredClone(agent);
   const events: SubagentUiEvent[] = [{ type: startedType, state }];
-  if (agent.run.progress) {
-    events.push({ type: "subagent_progress", state });
-  }
   if (agent.run.interruptRequested) {
     events.push({ type: "subagent_interrupt_requested", state });
   }
@@ -2571,21 +2581,18 @@ function subagentUiEventsForAgentDelta(
     events.push({ type: "subagent_finished", state });
     return events;
   }
-  if (agentProgressChanged(previous, next)) {
-    events.push({ type: "subagent_progress", state });
+  if (agentStateChanged(previous, next)) {
+    events.push({ type: "subagent_updated", state });
   }
   return events;
 }
 
-function agentProgressChanged(
+function agentStateChanged(
   previous: SessionProtocolSnapshot["agents"][string],
   next: SessionProtocolSnapshot["agents"][string],
 ): boolean {
   return (
-    previous.run.progress !== next.run.progress ||
     previous.costTotal !== next.costTotal ||
-    previous.turns !== next.turns ||
-    previous.toolCalls !== next.toolCalls ||
     previous.usage.input !== next.usage.input ||
     previous.usage.output !== next.usage.output ||
     previous.usage.cacheRead !== next.usage.cacheRead ||

@@ -2,7 +2,7 @@ import type { Tool, ToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { z } from "zod";
 import type { AgentSupervisor } from "../subagents/agent_supervisor.js";
-import { formatSubagentStates } from "../subagents/format.js";
+import { formatListAgentsResult } from "../subagents/format.js";
 import { parseToolArgs } from "../utils/zod.js";
 import type { ToolActivity } from "./activity.js";
 import {
@@ -18,7 +18,7 @@ import { TOOL_NAME_LIST_AGENTS } from "./tool_names.js";
 
 const LIST_AGENTS_DESCRIPTION = [
   "List all spawned subagents and their current state.",
-  "Use this to rediscover agent ids and inspect availability, latest run outcome, progress, runtime, usage, context pressure, and response availability.",
+  "Use this to rediscover agent ids and inspect availability, latest run outcome, runtime, context pressure, cost, and response availability.",
 ].join(" ");
 
 export const LIST_AGENTS_TOOL: Tool = {
@@ -58,7 +58,7 @@ export function createListAgentsToolDefinition(supervisor: AgentSupervisor): Age
         (): ToolImplementationOutcome => {
           const states = supervisor.listSnapshots();
           const capacity = supervisor.getCapacity();
-          const resultText = formatSubagentStates(states, capacity, { includeResponses: false });
+          const resultText = formatListAgentsResult(states, capacity);
           const outcome = createTextToolOutcome(resultText, "succeeded");
           const uiText = buildSubagentUiText({
             output: resultText,

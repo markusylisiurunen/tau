@@ -288,7 +288,6 @@ type SessionAgentRun = {
         revision: number;
         status: "running";
         startedAt: number;
-        progress: string;
         interruptRequested: boolean;
       }
     | {
@@ -296,7 +295,6 @@ type SessionAgentRun = {
         status: "succeeded";
         startedAt: number;
         finishedAt: number;
-        progress: string;
         interruptRequested: boolean;
         response: string;
       }
@@ -305,7 +303,6 @@ type SessionAgentRun = {
         status: "failed" | "interrupted";
         startedAt: number;
         finishedAt: number;
-        progress: string;
         interruptRequested: boolean;
         failure: {
           kind: string;
@@ -314,8 +311,6 @@ type SessionAgentRun = {
         };
       };
   costTotal: number;
-  turns: number;
-  toolCalls: number;
   usage: {
     input: number;
     output: number;

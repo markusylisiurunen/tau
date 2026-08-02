@@ -18,10 +18,9 @@ type SubagentPanelEntry = {
   id: string;
   name: string;
   title: string;
+  runRevision: number;
   status: SubagentStateSnapshot["run"]["status"];
   costTotal: number;
-  turns: number;
-  toolCalls: number;
   usage: SubagentUsageSnapshot;
   lines: SubagentPanelLine[];
 };
@@ -31,7 +30,7 @@ const MAX_PANEL_HISTORY = 200;
 
 export type SubagentPanelSnapshot = {
   state: SubagentStateSnapshot;
-  progress?: string;
+  activity?: string;
 };
 
 export class SubagentPanelComponent implements Component {
@@ -67,9 +66,9 @@ export class SubagentPanelComponent implements Component {
         this.entries.set(entry.id, entry);
       }
 
-      const progress = snapshot.progress?.trim();
-      if (progress && !this.hasLine(entry, "progress", progress)) {
-        this.appendLine(entry, { kind: "progress", text: progress });
+      const activity = snapshot.activity?.trim();
+      if (activity && !this.hasLine(entry, "progress", activity)) {
+        this.appendLine(entry, { kind: "progress", text: activity });
       }
       const finalText =
         snapshot.state.run.status === "succeeded" ? snapshot.state.run.response.trim() : "";
@@ -123,13 +122,12 @@ export class SubagentPanelComponent implements Component {
       return;
     }
 
-    if (event.type === "subagent_progress") {
+    if (event.type === "subagent_updated" || event.type === "subagent_activity") {
       const entry = this.entries.get(event.state.id);
       if (!entry) return;
       this.applySnapshot(entry, event.state);
-      const text = event.state.run.progress.trim();
-      if (text) {
-        entry.lines.push({ kind: "progress", text });
+      if (event.type === "subagent_activity" && event.text) {
+        entry.lines.push({ kind: "progress", text: event.text });
         if (entry.lines.length > MAX_PANEL_HISTORY) {
           entry.lines.shift();
         }
@@ -293,20 +291,21 @@ export class SubagentPanelComponent implements Component {
       id: state.id,
       name: state.name,
       title: state.title,
+      runRevision: state.run.revision,
       status: state.run.status,
       costTotal: state.costTotal,
-      turns: state.turns,
-      toolCalls: state.toolCalls,
       usage: state.usage,
       lines: [],
     };
   }
 
   private applySnapshot(entry: SubagentPanelEntry, state: SubagentStateSnapshot): void {
+    if (entry.runRevision !== state.run.revision) {
+      entry.runRevision = state.run.revision;
+      entry.lines = [];
+    }
     entry.status = state.run.status;
     entry.costTotal = state.costTotal;
-    entry.turns = state.turns;
-    entry.toolCalls = state.toolCalls;
     entry.usage = state.usage;
     entry.name = state.name;
     entry.title = state.title;

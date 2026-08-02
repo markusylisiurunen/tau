@@ -10,7 +10,7 @@ import { ChatRuntime, type ChatRuntimeEnvironment } from "../core/runtime/chat_r
 import type { CoreDeps } from "../core/runtime/deps.js";
 import type { RuntimePromptBootstrap } from "../core/runtime/runtime_bootstrap.js";
 import type { SessionPromptComposition } from "../core/runtime/session_prompt_composer.js";
-import type { SubagentUiEvent } from "../core/subagents/types.js";
+import { SUBAGENT_ACTIVITY_FACET_KIND, type SubagentUiEvent } from "../core/subagents/types.js";
 import type { ToolActivity } from "../core/tools/activity.js";
 import type { Persona, ReasoningEffort, Skill } from "../core/types.js";
 import {
@@ -1999,11 +1999,35 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     if (!this.session.hasSubagent(agent.id)) {
       return;
     }
+
     this.agents.set(agent.id, agent);
-    await this.emitPatch("agent-run", [
+    const changes: SessionProtocolChange[] = [
       { type: "cost.set", costTotal: this.costTotal },
       { type: "agent.set", agent: structuredClone(agent) },
-    ]);
+    ];
+    const facetId = `subagent-activity-${agent.id}`;
+    if (event.type === "subagent_activity") {
+      const facet: SessionProtocolFacet = {
+        id: facetId,
+        subject: { type: "agent", id: agent.id },
+        kind: SUBAGENT_ACTIVITY_FACET_KIND,
+        version: 1,
+        data: { text: event.text },
+      };
+      this.facets.set(facet.id, facet);
+      changes.push({ type: "facet.set", facet: structuredClone(facet) });
+    } else if (
+      (event.type === "subagent_run_started" || event.type === "subagent_finished") &&
+      this.facets.delete(facetId)
+    ) {
+      changes.push({ type: "facet.remove", id: facetId });
+    }
+
+    await this.emitPatch(
+      "agent-run",
+      changes,
+      event.type === "subagent_activity" ? { persist: false } : {},
+    );
   }
 
   private buildAssistantPartialChanges(

@@ -5,7 +5,7 @@ import { z } from "zod";
 import type { Config } from "../config/index.js";
 import type { ModelResolver } from "../models/catalog.js";
 import type { AgentSupervisor } from "../subagents/agent_supervisor.js";
-import { formatSubagentStates } from "../subagents/format.js";
+import { formatSpawnAgentResult } from "../subagents/format.js";
 import { parseSubagentLaunchModel } from "../subagents/launch_model.js";
 import { getSubagentDescription, resolveSubagentEffectiveSettings } from "../subagents/registry.js";
 import type { SubagentLaunchModel, SubagentRuntimeConfig } from "../subagents/types.js";
@@ -324,9 +324,7 @@ export function createSpawnAgentToolDefinition(options: {
             return { content: outcome.content, outcome: outcome.outcome, uiEvent };
           }
 
-          const resultText = formatSubagentStates([spawnResult.state], spawnResult.capacity, {
-            includeResponses: false,
-          });
+          const resultText = formatSpawnAgentResult(spawnResult.state, spawnResult.capacity);
           const statusParts = [...statusPrefixParts, spawnResult.state.id];
           const outcome = createTextToolOutcome(resultText, "succeeded");
           const uiText = buildSubagentUiText({

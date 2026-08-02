@@ -621,7 +621,6 @@ type SessionProtocolAgentInterruptedRunFailure = Extract<
 type SessionProtocolAgentRunStateBase = {
   revision: number;
   startedAt: number;
-  progress: string;
   interruptRequested: boolean;
 };
 
@@ -657,8 +656,6 @@ export type SessionProtocolAgentRun = {
   createdAt: number;
   run: SessionProtocolAgentRunState;
   costTotal: number;
-  turns: number;
-  toolCalls: number;
   usage: {
     input: number;
     output: number;
@@ -1878,7 +1875,6 @@ const sessionProtocolAgentInterruptedRunFailureSchema = z
 const sessionProtocolAgentRunStateBaseSchema = z.object({
   revision: z.number().int().positive(),
   startedAt: z.number().finite(),
-  progress: z.string(),
   interruptRequested: z.boolean(),
 });
 
@@ -1924,8 +1920,6 @@ const sessionProtocolAgentRunSchema = z
     createdAt: z.number().finite(),
     run: sessionProtocolAgentRunStateSchema,
     costTotal: z.number().finite(),
-    turns: z.number().finite(),
-    toolCalls: z.number().finite(),
     usage: sessionProtocolAgentUsageSchema,
   })
   .strip()

@@ -20,11 +20,11 @@ import {
 } from "../usage/logs.js";
 import { extractAssistantText } from "../utils/messages.js";
 import {
-  extractAssistantTextForProgress,
   formatToolUiEventForProgress,
   getToolResultFirstLine,
+  normalizeOneLine,
 } from "../utils/subagent_utils.js";
-import { formatSubagentStates } from "./format.js";
+import { formatActiveSubagentsForCompaction } from "./format.js";
 import type {
   SubagentCapacitySnapshot,
   SubagentName,
@@ -37,6 +37,14 @@ import type {
 } from "./types.js";
 
 const MAX_ACTIVE_SUBAGENTS = 8;
+const MAX_SUBAGENT_ACTIVITY_CHARS = 500;
+
+function normalizeSubagentActivity(text: string): string {
+  const normalized = normalizeOneLine(text);
+  return normalized.length <= MAX_SUBAGENT_ACTIVITY_CHARS
+    ? normalized
+    : `${normalized.slice(0, MAX_SUBAGENT_ACTIVITY_CHARS - 3)}...`;
+}
 
 export type SubagentSpawnResult =
   | { ok: true; state: SubagentStateSnapshot; capacity: SubagentCapacitySnapshot }
@@ -63,8 +71,6 @@ type SubagentRecord = {
   runtime: AgentRuntime;
   run: SubagentRunSnapshot;
   costTotal: number;
-  turns: number;
-  toolCalls: number;
   usage: SubagentUsageSnapshot;
   completion: Promise<SubagentRecord>;
 };
@@ -125,7 +131,7 @@ export class AgentSupervisor {
   getActiveCompactionContext(): string | undefined {
     const active = this.listSnapshots().filter((state) => state.availability === "running");
     if (active.length === 0) return undefined;
-    const state = formatSubagentStates(active, this.getCapacity(), { includeResponses: false });
+    const state = formatActiveSubagentsForCompaction(active);
     return `<active-subagents>\n${state}\n</active-subagents>`;
   }
 
@@ -200,12 +206,9 @@ export class AgentSupervisor {
         revision: 1,
         status: "running",
         startedAt: createdAt,
-        progress: "",
         interruptRequested: false,
       },
       costTotal: 0,
-      turns: 0,
-      toolCalls: 0,
       usage: {
         input: 0,
         output: 0,
@@ -241,7 +244,6 @@ export class AgentSupervisor {
       revision: record.run.revision + 1,
       status: "running",
       startedAt: this.deps.clock.now(),
-      progress: "",
       interruptRequested: false,
     };
     this.startRun(record, options.prompt, "subagent_run_started");
@@ -364,7 +366,6 @@ export class AgentSupervisor {
       status: "succeeded",
       startedAt: record.run.startedAt,
       finishedAt: this.deps.clock.now(),
-      progress: "",
       interruptRequested: false,
       response: extractAssistantText(result.finalMessage).trim(),
     };
@@ -376,7 +377,6 @@ export class AgentSupervisor {
       status: "interrupted",
       startedAt: record.run.startedAt,
       finishedAt: this.deps.clock.now(),
-      progress: "",
       interruptRequested: true,
       failure: { kind: "interrupted", message: "Subagent run was interrupted." },
     };
@@ -391,7 +391,6 @@ export class AgentSupervisor {
       status: "failed",
       startedAt: record.run.startedAt,
       finishedAt: this.deps.clock.now(),
-      progress: "",
       interruptRequested: record.run.interruptRequested,
       failure,
     };
@@ -400,41 +399,39 @@ export class AgentSupervisor {
   private async recordAgentEvent(id: string, event: AgentEvent): Promise<void> {
     const record = this.records.get(id);
     if (!record) return;
-    let text = "";
+
+    if (event.type === "assistant_final") {
+      const usage = getUsageTotals(event.message.usage);
+      const cost = getUsageCostTotal(event.message.usage);
+      record.costTotal += cost;
+      record.usage = {
+        input: record.usage.input + usage.input,
+        output: record.usage.output + usage.output,
+        cacheRead: record.usage.cacheRead + usage.cacheRead,
+        cacheWrite: record.usage.cacheWrite + usage.cacheWrite,
+        contextWindowUsageTokens: usage.input + usage.output + usage.cacheRead + usage.cacheWrite,
+        contextWindow: record.runtimeConfig.model.contextWindow,
+      };
+      (this.options.recordUsage ?? appendUsageLogEntry)({
+        timestamp: event.message.timestamp,
+        sessionId: record.id,
+        personaId: record.personaId ?? event.personaId,
+        provider: event.message.provider,
+        model: event.message.model,
+        api: event.message.api,
+        reasoningEffort: event.reasoningEffort,
+        usage,
+        cost: { total: cost },
+        agent: { type: "subagent", name: record.name },
+      });
+      await this.emit({ type: "subagent_updated", state: this.toSnapshot(record) });
+      return;
+    }
+
+    let text: string | undefined;
     switch (event.type) {
-      case "assistant_final": {
-        const usage = getUsageTotals(event.message.usage);
-        const cost = getUsageCostTotal(event.message.usage);
-        record.turns += 1;
-        record.costTotal += cost;
-        record.usage = {
-          input: record.usage.input + usage.input,
-          output: record.usage.output + usage.output,
-          cacheRead: record.usage.cacheRead + usage.cacheRead,
-          cacheWrite: record.usage.cacheWrite + usage.cacheWrite,
-          contextWindowUsageTokens: usage.input + usage.output + usage.cacheRead + usage.cacheWrite,
-          contextWindow: record.runtimeConfig.model.contextWindow,
-        };
-        (this.options.recordUsage ?? appendUsageLogEntry)({
-          timestamp: event.message.timestamp,
-          sessionId: record.id,
-          personaId: record.personaId ?? event.personaId,
-          provider: event.message.provider,
-          model: event.message.model,
-          api: event.message.api,
-          reasoningEffort: event.reasoningEffort,
-          usage,
-          cost: { total: cost },
-          agent: { type: "subagent", name: record.name },
-        });
-        text = extractAssistantTextForProgress(event.message) ?? "";
-        break;
-      }
-      case "tool_call_admitted":
-        record.toolCalls += 1;
-        return;
       case "tool_activity":
-        text = formatToolUiEventForProgress(event.activity) ?? "";
+        text = formatToolUiEventForProgress(event.activity);
         break;
       case "tool_result":
         if (event.message.isError) {
@@ -447,17 +444,20 @@ export class AgentSupervisor {
       case "turn_started":
         text = "assistant: thinking";
         break;
-      case "turn_finished":
-        if (event.outcome === "completed") text = "done";
-        break;
       case "notice":
         text = event.text;
         break;
       default:
         return;
     }
-    record.run.progress = text;
-    await this.emit({ type: "subagent_progress", state: this.toSnapshot(record) });
+
+    const normalized = normalizeSubagentActivity(text ?? "");
+    if (!normalized) return;
+    await this.emit({
+      type: "subagent_activity",
+      state: this.toSnapshot(record),
+      text: normalized,
+    });
   }
 
   private async waitForRecord(id: string): Promise<SubagentRecord> {
@@ -477,8 +477,6 @@ export class AgentSupervisor {
       createdAt: record.createdAt,
       run: structuredClone(record.run),
       costTotal: record.costTotal,
-      turns: record.turns,
-      toolCalls: record.toolCalls,
       usage: { ...record.usage },
     };
   }

@@ -1,68 +1,136 @@
-import { formatAdaptiveNumber } from "../utils/format.js";
+import { formatAdaptiveNumber, formatTokenWindow, formatUsdCost } from "../utils/format.js";
 import type { SubagentCapacitySnapshot, SubagentStateSnapshot } from "./types.js";
 
-function formatCount(value: number): string {
-  return formatAdaptiveNumber(value, 1, 1);
+function formatCapacity(capacity: SubagentCapacitySnapshot): string {
+  return `${capacity.running}/${capacity.limit}`;
 }
 
-function formatCost(value: number): string {
-  return `$${formatAdaptiveNumber(value, 2, 5)}`;
+function formatRuntime(state: SubagentStateSnapshot): string {
+  return `${state.name} · ${state.model.provider}/${state.model.id}:${state.model.reasoning}`;
 }
 
-function formatUsage(state: SubagentStateSnapshot): string {
-  const { usage } = state;
+function formatContext(state: SubagentStateSnapshot): string {
+  const { contextWindowUsageTokens, contextWindow } = state.usage;
+  const percent = contextWindow > 0 ? (contextWindowUsageTokens / contextWindow) * 100 : 0;
+  return `context ${formatAdaptiveNumber(percent, 1, 3)}% (${formatTokenWindow(contextWindowUsageTokens)}/${formatTokenWindow(contextWindow)})`;
+}
+
+function formatAccounting(state: SubagentStateSnapshot): string {
+  return `${formatContext(state)} · cost ${formatUsdCost(state.costTotal)}`;
+}
+
+function formatFailure(state: SubagentStateSnapshot): string[] {
+  if (state.run.status !== "failed" && state.run.status !== "interrupted") return [];
+  const stopReason =
+    state.run.failure.kind === "provider-error"
+      ? ` (stop reason: ${state.run.failure.stopReason})`
+      : "";
+  return [`failure: ${state.run.failure.message}${stopReason}`];
+}
+
+function formatListState(state: SubagentStateSnapshot): string {
+  const runState =
+    state.run.status === "running"
+      ? `running · run ${state.run.revision}`
+      : `idle · run ${state.run.revision} ${state.run.status}`;
+  const response = state.run.status === "succeeded" ? " · response available" : "";
+  const failureKind =
+    state.run.status === "failed" || state.run.status === "interrupted"
+      ? ` · ${state.run.failure.kind}`
+      : "";
   return [
-    `tokens in ${formatCount(usage.input)}`,
-    `out ${formatCount(usage.output)}`,
-    `cache read ${formatCount(usage.cacheRead)}`,
-    `write ${formatCount(usage.cacheWrite)}`,
-    `context ${formatCount(usage.contextWindowUsageTokens)}/${formatCount(usage.contextWindow)}`,
-  ].join(" · ");
+    `\`${state.id}\` · ${state.title}`,
+    `${runState}${response}${failureKind}`,
+    ...formatFailure(state),
+    formatRuntime(state),
+    `cwd ${state.workingDirectory}`,
+    formatAccounting(state),
+  ].join("\n");
 }
 
-function formatSubagentState(
-  state: SubagentStateSnapshot,
-  options: { includeResponse: boolean },
-): string {
+function formatWaitState(state: SubagentStateSnapshot): string {
+  const status = state.run.status === "running" ? "still running" : state.run.status;
+  const failureKind =
+    state.run.status === "failed" || state.run.status === "interrupted"
+      ? ` · ${state.run.failure.kind}`
+      : "";
   const lines = [
-    `**${state.id}** · ${state.title}`,
-    `${state.name} · ${state.availability} · ${state.model.provider}/${state.model.id} · reasoning ${state.model.reasoning}`,
-    `${state.workingDirectory} · run ${state.run.revision} ${state.run.status}`,
-    `cost ${formatCost(state.costTotal)} · turns ${state.turns} · tools ${state.toolCalls}`,
-    formatUsage(state),
+    `\`${state.id}\` · ${state.title}`,
+    `run ${state.run.revision} ${status}${failureKind} · ${formatAccounting(state)}`,
+    ...formatFailure(state),
   ];
-
-  if (state.run.progress) {
-    lines.push(`progress: ${state.run.progress}`);
-  }
-  if (state.run.status === "failed" || state.run.status === "interrupted") {
-    const stopReason =
-      state.run.failure.kind === "provider-error"
-        ? ` · stop reason ${state.run.failure.stopReason}`
-        : "";
-    lines.push(`failure ${state.run.failure.kind}${stopReason}: ${state.run.failure.message}`);
-  }
-  lines.push(`response: ${state.run.status === "succeeded" ? "available" : "unavailable"}`);
-  if (options.includeResponse && state.run.status === "succeeded") {
+  if (state.run.status === "succeeded") {
     lines.push("", "Response:", state.run.response || "(empty response)");
   }
-
   return lines.join("\n");
 }
 
-export function formatSubagentStates(
+export function formatSpawnAgentResult(
+  state: SubagentStateSnapshot,
+  capacity: SubagentCapacitySnapshot,
+): string {
+  return [
+    `Spawned \`${state.id}\` · ${state.title}`,
+    `${formatRuntime(state)} · ${state.workingDirectory}`,
+    `run ${state.run.revision} ${state.run.status} · capacity ${formatCapacity(capacity)}`,
+  ].join("\n");
+}
+
+export function formatSendInputToAgentResult(
+  state: SubagentStateSnapshot,
+  capacity: SubagentCapacitySnapshot,
+): string {
+  return [
+    `Started run ${state.run.revision} for \`${state.id}\` · ${state.title}`,
+    `capacity ${formatCapacity(capacity)}`,
+  ].join("\n");
+}
+
+export function formatListAgentsResult(
   states: SubagentStateSnapshot[],
   capacity: SubagentCapacitySnapshot,
-  options: { includeResponses: boolean },
 ): string {
-  const heading = `Agents: ${states.length} · running ${capacity.running}/${capacity.limit}`;
+  const heading = `Agents · ${capacity.running} running / ${capacity.limit}`;
   if (states.length === 0) return `${heading}\n\nNo subagents have been spawned.`;
+  return [heading, ...states.map(formatListState)].join("\n\n");
+}
+
+export function formatActiveSubagentsForCompaction(states: SubagentStateSnapshot[]): string {
   return [
-    heading,
-    "",
-    ...states.flatMap((state, index) => [
-      ...(index > 0 ? [""] : []),
-      formatSubagentState(state, { includeResponse: options.includeResponses }),
-    ]),
+    "This subagent state was captured at the time of compaction and may have changed since then. Use list_agents to inspect the current state.",
+    ...states.map(formatListState),
+  ].join("\n\n");
+}
+
+export function formatWaitForAgentsResult(
+  states: SubagentStateSnapshot[],
+  capacity: SubagentCapacitySnapshot,
+): string {
+  return [...states.map(formatWaitState), `Capacity: ${formatCapacity(capacity)} running`].join(
+    "\n\n",
+  );
+}
+
+export function formatInterruptAgentResult(
+  state: SubagentStateSnapshot,
+  capacity: SubagentCapacitySnapshot,
+  wasRunning: boolean,
+): string {
+  if (wasRunning) {
+    return [
+      `Interrupted run ${state.run.revision} for \`${state.id}\` · ${state.title}`,
+      `Thread is idle and available for follow-up · capacity ${formatCapacity(capacity)}`,
+    ].join("\n");
+  }
+
+  const failureKind =
+    state.run.status === "failed" || state.run.status === "interrupted"
+      ? ` · ${state.run.failure.kind}`
+      : "";
+  const response = state.run.status === "succeeded" ? " · response available" : "";
+  return [
+    `\`${state.id}\` is already idle`,
+    `latest run ${state.run.revision} ${state.run.status}${response}${failureKind}`,
+    ...formatFailure(state),
   ].join("\n");
 }

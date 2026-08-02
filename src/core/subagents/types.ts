@@ -66,7 +66,6 @@ type SubagentInterruptedRunFailure = Extract<SubagentRunFailure, { kind: "interr
 type SubagentRunSnapshotBase = {
   revision: number;
   startedAt: number;
-  progress: string;
   interruptRequested: boolean;
 };
 
@@ -102,8 +101,6 @@ export type SubagentStateSnapshot = {
   createdAt: number;
   run: SubagentRunSnapshot;
   costTotal: number;
-  turns: number;
-  toolCalls: number;
   usage: SubagentUsageSnapshot;
 };
 
@@ -112,10 +109,13 @@ export type SubagentCapacitySnapshot = {
   limit: number;
 };
 
+export const SUBAGENT_ACTIVITY_FACET_KIND = "tau.subagent-activity";
+
 export type SubagentUiEvent =
   | { type: "subagent_spawned"; state: SubagentStateSnapshot }
   | { type: "subagent_run_started"; state: SubagentStateSnapshot }
-  | { type: "subagent_progress"; state: SubagentStateSnapshot }
+  | { type: "subagent_updated"; state: SubagentStateSnapshot }
+  | { type: "subagent_activity"; state: SubagentStateSnapshot; text: string }
   | { type: "subagent_interrupt_requested"; state: SubagentStateSnapshot }
   | { type: "subagent_finished"; state: SubagentStateSnapshot };
 

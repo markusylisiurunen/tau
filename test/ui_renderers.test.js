@@ -87,12 +87,9 @@ test("subagent panel renders progress", () => {
         revision: 1,
         status: "running",
         startedAt: Date.now(),
-        progress: "",
         interruptRequested: false,
       },
       costTotal: 0,
-      turns: 0,
-      toolCalls: 0,
       usage: {
         input: 0,
         output: 0,
@@ -104,7 +101,7 @@ test("subagent panel renders progress", () => {
     },
   });
   panel.handleEvent({
-    type: "subagent_progress",
+    type: "subagent_activity",
     state: {
       id: "agent-1",
       name: "explore",
@@ -117,12 +114,9 @@ test("subagent panel renders progress", () => {
         revision: 1,
         status: "running",
         startedAt: Date.now(),
-        progress: "bash running: echo ok",
         interruptRequested: false,
       },
       costTotal: 0.12,
-      turns: 1,
-      toolCalls: 1,
       usage: {
         input: 1234,
         output: 56,
@@ -132,6 +126,7 @@ test("subagent panel renders progress", () => {
         contextWindow: 200000,
       },
     },
+    text: "bash running: echo ok",
   });
   const rendered = renderText(panel, 120);
   expect(rendered).toContain("<textDim>⏵</textDim>");

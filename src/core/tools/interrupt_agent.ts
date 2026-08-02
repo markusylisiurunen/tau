@@ -2,7 +2,7 @@ import type { Tool, ToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { z } from "zod";
 import type { AgentSupervisor } from "../subagents/agent_supervisor.js";
-import { formatSubagentStates } from "../subagents/format.js";
+import { formatInterruptAgentResult } from "../subagents/format.js";
 import { parseToolArgs } from "../utils/zod.js";
 import type { ToolActivity } from "./activity.js";
 import {
@@ -79,15 +79,21 @@ export function createInterruptAgentToolDefinition(supervisor: AgentSupervisor):
         context,
         async (): Promise<ToolImplementationOutcome> => {
           try {
+            const current = supervisor.getSnapshot(id);
+            if (!current) {
+              return blocked(`Unknown subagent ID: ${id}`);
+            }
+            const wasRunning = current.availability === "running";
             const state = await supervisor.interrupt(id, signal);
             if (!state) {
               return blocked(`Unknown subagent ID: ${id}`);
             }
 
-            const resultText = formatSubagentStates([state], supervisor.getCapacity(), {
-              includeResponses: true,
-            });
-            const succeeded = state.run.status !== "failed";
+            const resultText = formatInterruptAgentResult(
+              state,
+              supervisor.getCapacity(),
+              wasRunning,
+            );
             const durationMs =
               state.run.status === "running"
                 ? undefined
@@ -107,12 +113,11 @@ export function createInterruptAgentToolDefinition(supervisor: AgentSupervisor):
               toolCallId: toolCall.id,
               agentId: id,
               headerTarget,
-              status: succeeded ? "success" : "error",
+              status: "success",
               finalStatus: state.run.status,
-              message: state.run.status === "failed" ? state.run.failure.message : undefined,
               uiText,
             };
-            const outcome = createTextToolOutcome(resultText, succeeded ? "succeeded" : "failed");
+            const outcome = createTextToolOutcome(resultText, "succeeded");
             return { content: outcome.content, outcome: outcome.outcome, uiEvent };
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);

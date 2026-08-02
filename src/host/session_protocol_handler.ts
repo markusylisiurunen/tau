@@ -922,18 +922,22 @@ export class SessionProtocolHandler {
         const started = await pending.handler.startUserMessageTurn(state, pending.request);
         return started
           ? { type: "started" as const, activeSubmit: started.activeSubmit }
-          : { type: "failed" as const };
+          : { type: "rejected" as const };
       } catch (error) {
         this.sendUserMessageDrainFailure([pending], error);
-        return { type: "failed" as const };
+        return { type: "failed" as const, error };
       }
     });
 
     if (action.type === "idle") {
       return;
     }
-    if (action.type === "failed") {
+    if (action.type === "rejected") {
       this.schedulePendingSubmitDrains(state);
+      return;
+    }
+    if (action.type === "failed") {
+      this.failPendingUserMessageRequests(state, action.error);
       return;
     }
 

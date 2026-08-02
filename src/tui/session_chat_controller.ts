@@ -662,7 +662,7 @@ export class SessionChatController {
       .queue(text, { historyEntryId: `session-queue-${randomUUID()}` })
       .catch((error) => {
         if (!this.isPendingMessageCancellation(error)) {
-          this.view.addSystemMessage(`queueing failed: ${(error as Error).message}`, "error");
+          this.view.addSystemMessage(`queueing failed: ${formatSessionError(error)}`, "error");
         }
       });
   }
@@ -670,7 +670,7 @@ export class SessionChatController {
   private submitSteeringText(text: string): void {
     void this.session.steer(text).catch((error) => {
       if (!this.isPendingMessageCancellation(error)) {
-        this.view.addSystemMessage(`steering failed: ${(error as Error).message}`, "error");
+        this.view.addSystemMessage(`steering failed: ${formatSessionError(error)}`, "error");
       }
     });
   }
@@ -775,7 +775,7 @@ export class SessionChatController {
       }
       await this.syncFromSessionSnapshot();
     } catch (error) {
-      this.view.addSystemMessage(`session turn failed: ${(error as Error).message}`, "error");
+      this.view.addSystemMessage(`session turn failed: ${formatSessionError(error)}`, "error");
       this.stopVisibleSessionTurn();
       void this.stopTurnCaffeinate();
       await this.syncFromSessionSnapshot();
@@ -2345,6 +2345,21 @@ export class SessionChatController {
       (persona) => persona.id.toLowerCase() === this.snapshot.settings.personaId.toLowerCase(),
     );
   }
+}
+
+function formatSessionError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const data =
+    typeof error === "object" && error !== null ? (error as { data?: unknown }).data : undefined;
+  const cause =
+    typeof data === "object" &&
+    data !== null &&
+    "cause" in data &&
+    typeof data.cause === "string" &&
+    data.cause.trim()
+      ? data.cause.trim()
+      : undefined;
+  return cause && cause !== message ? `${message}: ${cause}` : message;
 }
 
 function getTimelineMessages(snapshot: SessionProtocolSnapshot): SessionProtocolMessage[] {

@@ -966,14 +966,12 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       const submission = this.runtime.steer(text);
       return {
         id: submission.id,
-        applied: submission.applied.then(async (association) => {
-          await this.commitSnapshot();
-          return { userHistoryEntryId: association.historyEntryId };
-        }),
+        applied: submission.applied.then((association) => ({
+          userHistoryEntryId: association.historyEntryId,
+        })),
         result: submission.result.then(async (association) => {
           const turn = turnOutcomeFromResult(association.result, association.result.finalMessage);
-          this.turnOutcomes.set(association.historyEntryId, turn);
-          await this.emitSnapshotResetIfChanged("assistant-message");
+          await this.commitSteeringTurnOutcome(association.historyEntryId, turn);
           return {
             userHistoryEntryId: association.historyEntryId,
             turn,
@@ -1981,6 +1979,34 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       .then(() => this.recordRuntimeEvent(event));
     this.runtimeEventQueue = write.catch(() => undefined);
     return write;
+  }
+
+  private async commitSteeringTurnOutcome(
+    historyEntryId: string,
+    turn: SessionProtocolTurnOutcome,
+  ): Promise<void> {
+    const write = this.runtimeEventQueue
+      .catch(() => undefined)
+      .then(async () => {
+        this.turnOutcomes.set(historyEntryId, turn);
+        const message = this.committedSnapshot?.messages.find(
+          (candidate) => candidate.id === historyEntryId,
+        );
+        if (!message) {
+          throw new Error(`missing steering user message '${historyEntryId}'`);
+        }
+        if (isDeepStrictEqual(message.turn, turn)) {
+          return;
+        }
+        await this.emitPatch("assistant-message", [
+          {
+            type: "message.replace",
+            message: { ...structuredClone(message), turn },
+          },
+        ]);
+      });
+    this.runtimeEventQueue = write.catch(() => undefined);
+    await write;
   }
 
   private removeToolRun(tool: SessionProtocolToolRun, changes: SessionProtocolChange[]): void {

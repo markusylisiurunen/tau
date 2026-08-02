@@ -1746,6 +1746,54 @@ describe("rpc_server", () => {
     await observer.close();
   });
 
+  it("isolates pending-message observer failures from shared session work", async () => {
+    const harness = createHarness();
+    let rejectPendingMessages = false;
+    const observer = new RpcServer({
+      host: harness.host,
+      send: (line) => {
+        const message = JSON.parse(line);
+        if (rejectPendingMessages && message.type === "session.pendingUserMessages") {
+          throw new Error("observer unavailable");
+        }
+      },
+    });
+    await observer.handleLine(request("attach", "session.observe", { sessionId: "session-1" }));
+    rejectPendingMessages = true;
+
+    const firstSubmit = harness.server.handleLine(
+      request("submit-1", "session.submit", {
+        sessionId: "session-1",
+        text: "first turn",
+      }),
+    );
+    await waitFor(() => harness.lines.some((line) => deltaHasNotice(line, "streaming")));
+    const queued = harness.server.handleLine(
+      request("queue-1", "session.queue", {
+        sessionId: "session-1",
+        text: "queued turn",
+      }),
+    );
+    await waitFor(() =>
+      harness.lines.some(
+        (line) => line.type === "session.pendingUserMessages" && line.state.messages.length === 1,
+      ),
+    );
+
+    await harness.server.handleLine(
+      request("cancel", "session.cancelPendingMessages", { sessionId: "session-1" }),
+    );
+    await queued;
+    expect(harness.lines.find((line) => line.id === "queue-1")).toMatchObject({
+      ok: false,
+      error: { code: SESSION_PROTOCOL_ERROR_CODES.cancelled },
+    });
+
+    harness.releaseTurn();
+    await firstSubmit;
+    await observer.close();
+  });
+
   it("starts recovered sessions without pending user messages", async () => {
     const harness = createHarness();
     const firstSubmit = harness.server.handleLine(
@@ -2431,6 +2479,67 @@ describe("rpc_server", () => {
         }),
       }),
     );
+  });
+
+  it("fails remaining queued messages after one cannot be committed", async () => {
+    let recordCount = 0;
+    const harness = createHarness({
+      record: async (recordOptions, defaultRecord) => {
+        recordCount += 1;
+        if (recordCount === 2) {
+          throw new Error("first queued commit failed");
+        }
+        return await defaultRecord(recordOptions);
+      },
+    });
+
+    const firstSubmit = harness.server.handleLine(
+      request("submit-1", "session.submit", {
+        sessionId: "session-1",
+        text: "first turn",
+      }),
+    );
+    await waitFor(() => harness.lines.some((line) => deltaHasNotice(line, "streaming")));
+    await Promise.all([
+      harness.server.handleLine(
+        request("queue-1", "session.queue", {
+          sessionId: "session-1",
+          text: "first queued turn",
+        }),
+      ),
+      harness.server.handleLine(
+        request("queue-2", "session.queue", {
+          sessionId: "session-1",
+          text: "second queued turn",
+        }),
+      ),
+    ]);
+
+    harness.releaseTurn();
+    await firstSubmit;
+    await waitFor(() =>
+      ["queue-1", "queue-2"].every((id) => harness.lines.some((line) => line.id === id)),
+    );
+
+    for (const id of ["queue-1", "queue-2"]) {
+      expect(harness.lines.find((line) => line.id === id)).toMatchObject({
+        ok: false,
+        error: {
+          code: SESSION_PROTOCOL_ERROR_CODES.internalError,
+          message: "failed to drain pending user message",
+          data: { cause: "first queued commit failed" },
+        },
+      });
+    }
+    expect(recordCount).toBe(2);
+    expect(
+      harness.seededSession.session.historyEntries.some(
+        (entry) => entry.message.content[0].text === "second queued turn",
+      ),
+    ).toBe(false);
+    expect(
+      harness.lines.findLast((line) => line.type === "session.pendingUserMessages").state.messages,
+    ).toEqual([]);
   });
 
   it("runRpcServer processes lines concurrently and emits ndjson responses", async () => {

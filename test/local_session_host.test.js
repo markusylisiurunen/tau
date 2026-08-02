@@ -1752,6 +1752,74 @@ describe("LocalSessionHost", () => {
     expect(deltas).toHaveLength(1);
   });
 
+  it("projects each steering outcome before a later steering continuation", async () => {
+    const host = createHost(new MemorySessionStore());
+
+    try {
+      const hostedSession = await host.createSession(localCreateInput);
+      await hostedSession.snapshot();
+
+      const createGate = () => {
+        let resolve;
+        const promise = new Promise((settle) => {
+          resolve = settle;
+        });
+        return { promise, resolve };
+      };
+      const modelGates = [createGate(), createGate(), createGate()];
+      const modelStarts = [createGate(), createGate(), createGate()];
+      let modelCall = 0;
+      hostedSession.runtime.agent.spec.model.stream = () => {
+        const index = modelCall++;
+        const response = fauxAssistantMessage(`response ${index + 1}`);
+        return {
+          async *[Symbol.asyncIterator]() {
+            modelStarts[index].resolve();
+            await modelGates[index].promise;
+            yield* [];
+          },
+          async result() {
+            return response;
+          },
+        };
+      };
+
+      await hostedSession.record({ text: "original" });
+      const turn = hostedSession.runTurn();
+      await modelStarts[0].promise;
+
+      const firstSteering = hostedSession.steer("first steer");
+      modelGates[0].resolve();
+      await firstSteering.applied;
+      await modelStarts[1].promise;
+
+      const secondSteering = hostedSession.steer("second steer");
+      modelGates[1].resolve();
+      const [firstResult, secondApplied] = await Promise.all([
+        firstSteering.result,
+        secondSteering.applied,
+      ]);
+      await modelStarts[2].promise;
+
+      modelGates[2].resolve();
+      const [secondResult] = await Promise.all([secondSteering.result, turn]);
+      const snapshot = await hostedSession.snapshot();
+
+      expect(firstResult.turn).toEqual({ status: "completed", stopReason: "stop" });
+      expect(secondResult.turn).toEqual({ status: "completed", stopReason: "stop" });
+      expect(secondApplied).toEqual({ userHistoryEntryId: secondResult.userHistoryEntryId });
+      expect(
+        snapshot.messages.find((message) => message.id === firstResult.userHistoryEntryId),
+      ).toEqual(expect.objectContaining({ turn: firstResult.turn }));
+      expect(
+        snapshot.messages.find((message) => message.id === secondResult.userHistoryEntryId),
+      ).toEqual(expect.objectContaining({ turn: secondResult.turn }));
+      expect(modelCall).toBe(3);
+    } finally {
+      await host.shutdown();
+    }
+  });
+
   it("serializes overlapping snapshots from the same live local session", async () => {
     const store = new MemorySessionStore();
     const host = createHost(store);

@@ -1,6 +1,10 @@
 import { Buffer } from "node:buffer";
-import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
-import { buildCompactionUserMessage, formatHistoryForCompaction } from "../utils/compact.js";
+import type { AssistantMessage, Message, ToolResultMessage } from "@earendil-works/pi-ai";
+import {
+  buildCompactionUserMessage,
+  formatHistoryForCompaction,
+  truncateToolRecoveryResults,
+} from "../utils/compact.js";
 import { extractAssistantText } from "../utils/messages.js";
 import { bytesToTokens } from "../utils/token.js";
 import { truncateForTokens } from "../utils/truncate.js";
@@ -8,6 +12,7 @@ import {
   formatTauUserText,
   getSummaryCompactionMetadataFromMessage,
   hasAutoCompactionContinuationMetadata,
+  hasToolRecoveryMetadata,
   stripTauUserMetadata,
 } from "../utils/user_metadata.js";
 import type { AutoCompactionArchivePaths } from "./auto_compaction_archive.js";
@@ -49,6 +54,7 @@ export type ParsedCompactionSummary = {
 };
 
 const PRESERVED_USER_MESSAGE_MAX_TOKENS = 20_000;
+const RETAINED_TOOL_RESULT_MAX_TOKENS = 8_192;
 const PRESERVED_USER_MESSAGE_IDS_OPEN_TAG = "<preserved-user-message-ids>";
 const PRESERVED_USER_MESSAGE_IDS_CLOSE_TAG = "</preserved-user-message-ids>";
 
@@ -60,13 +66,13 @@ export type AutoCompactionPreparation = CompactionPromptPreparation & {
 };
 
 export const COMPACTION_SUMMARIZATION_SYSTEM_PROMPT =
-  "You are a context compaction assistant. Your output will replace the conversation history for another assistant. Do not continue the conversation. Do not answer any conversation questions. Only output the structured summary in the exact format requested.";
+  "You are a context compaction assistant. Your output will replace the conversation history for another assistant. Do not continue the conversation. Do not answer any conversation questions. Only output a structured handoff summary followed by the required preserved user message id block.";
 
 const COMPACTION_SUMMARIZATION_PROMPT = `The messages above are a conversation to compact. Create an information-dense context checkpoint summary that will replace the full conversation history. Another assistant should be able to continue the session from this summary as if the original conversation were still available.
 
 If a [System prompt] block is present, use it as context for interpreting the conversation. Do not summarize it as part of the conversation history.
 
-Use this exact format:
+Use this structure as a strong default, not a rigid form. Preserve the same continuity-critical concerns, but reorganize, combine, omit, or add sections when another structure would produce a clearer handoff. Project-specific sections and concise prose are allowed. The <preserved-user-message-ids> block remains required and must appear exactly once at the end.
 
 ## Goal
 [What the user is currently trying to accomplish. If the goal changed, briefly note the shift.]
@@ -109,7 +115,8 @@ Rules:
 - If goals evolved over time, capture the current goal and briefly note the change.
 - Collapse tangents, retries, and pleasantries unless they materially affect decisions, blockers, or next steps.
 - Select preserved user message ids only from <user-message-candidates>. The candidates with source "conversation" are identified inline in <conversation> by matching [User id="..."] markers. Select user messages whose exact wording is likely needed to continue, such as standing goals, constraints, corrections, explicit instructions, and recent actionable requests. Omit resolved, repetitive, superseded, or conversational messages. Keep the selected messages under roughly 20,000 tokens total.
-- Preserve exact file paths, function names, commands, and error messages.`;
+- Preserve exact file paths, function names, commands, and error messages.
+- Treat the suggested headings as a checklist, not a form to fill mechanically. Add project-specific sections, combine or omit empty subsections, and use prose or tables when they communicate the handoff more clearly.`;
 
 const COMPACTION_UPDATE_SUMMARIZATION_PROMPT = `The messages above are new conversation messages to incorporate into the existing summary in <previous-summary> tags. The updated summary will replace the prior summary plus these new messages as the session's continuity context.
 
@@ -122,7 +129,7 @@ Update the existing structured summary with these rules:
 - Update Next Steps based on the current state.
 - Remove only information that is clearly obsolete, superseded, or irrelevant to continuing the session.
 
-Use the exact same format as before:
+Use the previous summary's structure when it remains clear, but reorganize it when the conversation has changed enough that another structure would produce a better handoff. Preserve the same continuity-critical concerns. You may combine, omit, or add sections, use project-specific headings, and mix concise prose with lists. The <preserved-user-message-ids> block remains required and must appear exactly once at the end.
 
 ## Goal
 [Preserve and extend goals as needed. If the goal shifted, reflect the latest goal and note the change briefly.]
@@ -164,7 +171,8 @@ Rules:
 - If goals evolved over time, capture the current goal and briefly note the change.
 - Collapse tangents, retries, and pleasantries unless they materially affect decisions, blockers, or next steps.
 - Select preserved user message ids only from <user-message-candidates>. The candidates with source "conversation" are identified inline in <conversation> by matching [User id="..."] markers. Select user messages whose exact wording is likely needed to continue, such as standing goals, constraints, corrections, explicit instructions, and recent actionable requests. Omit resolved, repetitive, superseded, or conversational messages. Keep the selected messages under roughly 20,000 tokens total.
-- Preserve exact file paths, function names, commands, and error messages.`;
+- Preserve exact file paths, function names, commands, and error messages.
+- Treat the suggested headings as a checklist, not a form to fill mechanically. Add project-specific sections, combine or omit empty subsections, and use prose or tables when they communicate the handoff more clearly.`;
 
 export function prepareSessionCompaction(
   entries: readonly CompactionHistoryEntry[],
@@ -175,16 +183,16 @@ export function prepareSessionCompaction(
     .slice(latestCompaction.index + 1)
     .filter((entry) => !hasAutoCompactionContinuationMetadata(entry.message));
   const messagesToSummarize = entriesToSummarize.map((entry) => entry.message);
-  const userMessageIds = buildUserMessageIdMap(entriesToSummarize);
+  const historyEntryIds = buildHistoryEntryIdMap(entriesToSummarize);
   const formattedConversation = formatHistoryForCompaction(messagesToSummarize, {
-    userMessageIds,
+    historyEntryIds,
   });
   if (!formattedConversation) {
     return undefined;
   }
   const formattedHistory = formatHistoryForCompaction(messagesToSummarize, {
     systemPrompt: options.systemPrompt,
-    userMessageIds,
+    historyEntryIds,
   });
 
   return {
@@ -375,16 +383,18 @@ function fitPreservedUserMessages(
   });
 }
 
-function buildUserMessageIdMap(
+function buildHistoryEntryIdMap(
   entries: readonly CompactionHistoryEntry[],
 ): ReadonlyMap<Message, string> {
-  const ids = new Map<Message, string>();
-  for (const entry of entries) {
-    if (extractPreservableUserText(entry.message)) {
-      ids.set(entry.message, entry.id);
-    }
-  }
-  return ids;
+  return new Map(entries.map((entry) => [entry.message, entry.id] as const));
+}
+
+function isAutoCompactionArchiveEntry(entry: CompactionHistoryEntry): boolean {
+  const message = entry.message;
+  return !(
+    message.role === "assistant" &&
+    (message.stopReason === "error" || message.stopReason === "aborted")
+  );
 }
 
 function collectUserMessageCandidates(
@@ -427,7 +437,8 @@ function extractPreservableUserText(message: Message): string | undefined {
   }
   if (
     getSummaryCompactionMetadataFromMessage(message) ||
-    hasAutoCompactionContinuationMetadata(message)
+    hasAutoCompactionContinuationMetadata(message) ||
+    hasToolRecoveryMetadata(message)
   ) {
     return undefined;
   }
@@ -465,6 +476,59 @@ function estimateTextTokens(text: string): number {
   return Math.max(1, bytesToTokens(Buffer.byteLength(text, "utf8")));
 }
 
+function boundRetainedEntry(entry: CompactionHistoryEntry): CompactionHistoryEntry {
+  const message = structuredClone(entry.message);
+  if (message.role === "user" && hasToolRecoveryMetadata(message)) {
+    if (typeof message.content === "string") {
+      message.content = truncateToolRecoveryResults(
+        message.content,
+        RETAINED_TOOL_RESULT_MAX_TOKENS,
+      );
+    } else {
+      for (const block of message.content) {
+        if (block.type === "text") {
+          block.text = truncateToolRecoveryResults(block.text, RETAINED_TOOL_RESULT_MAX_TOKENS);
+        }
+      }
+    }
+    return { id: entry.id, message };
+  }
+  if (message.role !== "toolResult") {
+    return { id: entry.id, message };
+  }
+
+  const toolResult = message as ToolResultMessage;
+  const text = toolResult.content
+    .filter((content) => content.type === "text")
+    .map((content) => content.text)
+    .join("\n");
+  const truncated = truncateForTokens(text, {
+    maxTokens: RETAINED_TOOL_RESULT_MAX_TOKENS,
+    strategy: "middle",
+  });
+  if (!truncated.truncated) {
+    return { id: entry.id, message };
+  }
+
+  const content: ToolResultMessage["content"] = [];
+  let replacedText = false;
+  for (const block of toolResult.content) {
+    if (block.type !== "text") {
+      content.push(block);
+      continue;
+    }
+    if (!replacedText) {
+      content.push({ ...block, text: truncated.content });
+      replacedText = true;
+    }
+  }
+
+  return {
+    id: entry.id,
+    message: { ...toolResult, content },
+  };
+}
+
 export function prepareAutoCompaction(
   entries: readonly CompactionHistoryEntry[],
   settings: { keepRecentTokens: number; systemPrompt: string },
@@ -482,22 +546,24 @@ export function prepareAutoCompaction(
     .slice(latestCompaction.index + 1, cut.startIndex)
     .filter((entry) => !hasAutoCompactionContinuationMetadata(entry.message));
   const messagesToSummarize = entriesToSummarize.map((entry) => entry.message);
-  const userMessageIds = buildUserMessageIdMap(entriesToSummarize);
+  const historyEntryIds = buildHistoryEntryIdMap(
+    entriesToSummarize.filter(isAutoCompactionArchiveEntry),
+  );
   const formattedConversation = formatHistoryForCompaction(messagesToSummarize, {
-    userMessageIds,
+    historyEntryIds,
   });
   if (!formattedConversation) {
     return undefined;
   }
   const formattedHistory = formatHistoryForCompaction(messagesToSummarize, {
     systemPrompt: settings.systemPrompt,
-    userMessageIds,
+    historyEntryIds,
   });
 
   const retainedEntries = entries
     .slice(cut.startIndex)
     .filter((entry) => !hasAutoCompactionContinuationMetadata(entry.message))
-    .map((entry) => ({ ...entry }));
+    .map(boundRetainedEntry);
   if (retainedEntries.length === 0) {
     return undefined;
   }
@@ -514,13 +580,30 @@ export function prepareAutoCompaction(
   };
 }
 
+const AUTO_COMPACTION_ARCHIVE_REFERENCE_GUIDANCE = `After compaction, the continuing assistant will receive paths to temporary text and JSON transcripts of the pre-compaction context. Conversation records above that show a history entry id can be recovered from those transcripts by id. The continuing assistant can search the numbered text transcripts first, then inspect the corresponding JSON record when it needs the full archived content.
+
+Keep the summary independently useful. State continuity-critical goals, constraints, decisions, current state, blockers, and next steps directly. When exact or bulky details would be wasteful to reproduce, you may mention the relevant history entry id in ordinary prose so the continuing assistant can retrieve it. This is useful for long tool output, diagnostic logs, exact errors, payloads, and large code excerpts. Use such references sparingly and only for ids shown in the conversation.
+
+Good pattern: "The key failure is a missing RuntimeConfig field; the complete compiler output is in history entry 'HISTORY_ENTRY_ID'."
+Bad pattern: "See history entry 'HISTORY_ENTRY_ID' for what happened."`;
+
 export function buildAutoCompactionPrompt(preparation: AutoCompactionPreparation): string {
+  const retainedContextGuidance =
+    preparation.cutType === "split-turn"
+      ? `The retained context will begin in the middle of the latest assistant/tool turn. Add a "## Current Turn Handoff" section that clearly captures:
+- the original user request for this turn
+- work completed before the retained suffix
+- tool state and findings at the cut boundary
+- what the first retained message is continuing and what remains unresolved
+
+Place the section wherever it makes the handoff clearest. Preserve earlier session context elsewhere in the summary without duplicating the retained suffix.`
+      : "The retained context will include recent messages. Ensure the summary complements that retained context without duplicating unnecessary detail.";
+  const boundedRetainedContextGuidance =
+    "Individual textual tool results and tool-recovery payloads in the retained context may be middle-truncated above the retention limit. Do not describe the retained context as exact or verbatim. The continuing assistant can recover omitted output through a targeted search of the pre-compaction archive when needed.";
+
   return buildSessionCompactionPrompt({
     preparation,
-    guidance:
-      preparation.cutType === "split-turn"
-        ? "The retained context will begin in the middle of the latest assistant/tool turn. Ensure the summary preserves the original user request, earlier tool work, and the state immediately before the retained suffix."
-        : "The retained context will include recent messages verbatim. Ensure the summary complements that retained context without duplicating unnecessary detail.",
+    guidance: `${retainedContextGuidance}\n\n${boundedRetainedContextGuidance}\n\n${AUTO_COMPACTION_ARCHIVE_REFERENCE_GUIDANCE}`,
   });
 }
 
@@ -531,7 +614,7 @@ export function buildAutoCompactionContinuationMessage(args: {
 }): Message {
   const lines = [
     "The conversation context before this point has been compacted.",
-    "Earlier context is summarized in the compaction message above. Recent messages are retained verbatim after that summary.",
+    "Earlier context is summarized in the compaction message above. Recent messages are retained after that summary, but large textual tool results and tool-recovery payloads may be middle-truncated.",
     "Continue from the summary and retained context without asking the user to repeat information.",
   ];
 
@@ -547,6 +630,8 @@ export function buildAutoCompactionContinuationMessage(args: {
       `- this compaction's text transcript: ${args.archive.textPath}`,
       `- this compaction's full JSON: ${args.archive.jsonPath}`,
       "Earlier numbered pairs in the same directory contain older pre-compaction snapshots, so include them in targeted searches when the detail may predate this compaction.",
+      "When the compaction summary mentions a history entry id, search the numbered text transcripts for that id first, then inspect the corresponding JSON record if the text transcript is truncated or incomplete.",
+      "When retained output is marked as truncated, search the text transcript by tool name and distinctive surrounding text, then inspect the paired JSON record for the complete output.",
       "Prefer narrow searches and bounded reads of the text transcripts; their tool results are middle-truncated. The JSON files retain untruncated archived content and may be very large.",
       "When available, delegating a precise archive lookup to a low-effort subagent can preserve this context more efficiently than reading large sections directly.",
       "These files are temporary and may no longer exist.",
@@ -663,7 +748,8 @@ function collectTurnStarts(
     }
     if (
       getSummaryCompactionMetadataFromMessage(message) ||
-      hasAutoCompactionContinuationMetadata(message)
+      hasAutoCompactionContinuationMetadata(message) ||
+      hasToolRecoveryMetadata(message)
     ) {
       continue;
     }

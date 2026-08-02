@@ -42,6 +42,7 @@ import {
   getAutoCompactionMetadataFromMessage,
   getCompactionMetadataFromMessage,
   hasAutoCompactionContinuationMetadata,
+  hasGoalTurnMetadata,
   hasToolRecoveryMetadata,
   prependTauUserMetadata,
   splitTauUserMetadata,
@@ -681,6 +682,21 @@ describe("compaction context message", () => {
       summary: "## Goal\nShip feature",
       preservedUserMessages: [{ id: "history-one", text: "ship the feature" }],
     });
+  });
+
+  it("recognizes goal-controlled turn metadata", () => {
+    const message = {
+      role: "user",
+      content: [
+        {
+          type: "text",
+          text: prependTauUserMetadata("goal", [{ type: "goal-turn", version: 1 }]),
+        },
+      ],
+      timestamp: 0,
+    };
+
+    expect(hasGoalTurnMetadata(message)).toBe(true);
   });
 
   it("strips strict leading hidden system blocks only from display text", () => {

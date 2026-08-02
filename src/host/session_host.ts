@@ -19,6 +19,7 @@ import type {
   SessionProtocolEphemeralSubmitResult,
   SessionProtocolExecParams,
   SessionProtocolExecResult,
+  SessionProtocolGoal,
   SessionProtocolInterruptSubagentResult,
   SessionProtocolRecordParams,
   SessionProtocolRecordResult,
@@ -48,16 +49,21 @@ export class SessionExecBusyError extends Error {
   }
 }
 
+export class SessionRetryUnavailableError extends Error {}
+
 export type TauHostedSession = {
   readonly sessionId: string;
   readonly isDisposed?: boolean;
   readonly isTurnRunning: boolean;
+  readonly canAcceptSteering: boolean;
+  getGoal(): SessionProtocolGoal | null;
   onDelta(handler: (delta: SessionProtocolDeltaMessage) => void): () => void;
   onEphemeral(handler: (message: SessionProtocolEphemeralMessage) => void): () => void;
   record(
     options: Omit<SessionProtocolRecordParams, "sessionId">,
   ): Promise<SessionProtocolRecordResult>;
   runTurn(): Promise<SessionProtocolTurnOutcome>;
+  retryTurn(): Promise<SessionProtocolTurnOutcome>;
   interruptTurn(): boolean;
   interruptActiveWork(): boolean;
   waitForActiveWork(): Promise<void>;

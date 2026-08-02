@@ -296,6 +296,7 @@ options:
   - returns the cancelled messages in effective processing order
 - `retry()`
   - sends `session.retry` with this session id to run a turn without appending user text
+  - rejects goal-controlled turns; call `resumeGoal()` when the persisted goal is blocked
 - `exec(command, options?)`
   - sends `session.exec` with a generated exec id and runs the command in fresh non-interactive login Bash
   - returns interleaved `output`, split `stdout` and `stderr`, exit/truncation fields, and explicit timeout/abort/signal termination metadata

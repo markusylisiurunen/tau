@@ -55,6 +55,7 @@ import {
   stripTauUserDisplayText,
   stripTauUserMetadata,
   stripTauUserMetadataFromMessage,
+  type TauUserMetadata,
 } from "../utils/user_metadata.js";
 import type {
   AgentCompactionResult as AgentAutoCompactionResult,
@@ -356,6 +357,7 @@ export class AgentRuntime {
   private pendingSteering: Array<{
     id: string;
     text: string;
+    metadata: TauUserMetadata[];
     resolveApplied: (association: SteeringAssociation) => void;
     resolveResult: (result: SteeringResult) => void;
     rejectApplied: (error: Error) => void;
@@ -662,7 +664,7 @@ export class AgentRuntime {
     }
   }
 
-  steer(text: string): SteeringSubmission {
+  steer(text: string, options: { metadata?: readonly TauUserMetadata[] } = {}): SteeringSubmission {
     if (this.status !== "running") {
       throw new Error("cannot steer an idle agent");
     }
@@ -687,6 +689,7 @@ export class AgentRuntime {
     this.pendingSteering.push({
       id,
       text: normalized,
+      metadata: structuredClone([...(options.metadata ?? [])]),
       resolveApplied,
       resolveResult,
       rejectApplied,
@@ -805,7 +808,10 @@ export class AgentRuntime {
         associatedSteering = this.pendingSteering.splice(0);
         this.stopAtBoundaryRequested = false;
         await this.commitUserTextWithModelNotice(
-          formatSteeringUserMessage(associatedSteering.map((item) => item.text)),
+          formatSteeringUserMessage(
+            associatedSteering.map((item) => item.text),
+            associatedSteering.flatMap((item) => item.metadata),
+          ),
           turnSpec.modelNotice,
         );
         turnSpec = this.continueTurnSettings(turnSpec);

@@ -20,6 +20,7 @@ import {
 import {
   EphemeralThreadBusyError,
   SessionExecBusyError,
+  SessionRetryUnavailableError,
   type TauHostedSession,
   type TauSessionHost,
 } from "./session_host.js";
@@ -149,7 +150,6 @@ type SessionProtocolMutationRequest = Extract<
   {
     method:
       | "session.record"
-      | "session.clearGoal"
       | "session.setPersona"
       | "session.reload"
       | "session.compact"
@@ -494,7 +494,7 @@ export class SessionProtocolHandler {
       if (state.live.interrupting) {
         return { type: "busy" as const };
       }
-      if (state.session.isTurnRunning) {
+      if (state.session.canAcceptSteering) {
         const submission = state.session.steer(request.params.text);
         const pending = {
           id: randomUUID(),
@@ -1040,7 +1040,7 @@ export class SessionProtocolHandler {
     requestId: SessionProtocolRequestId,
   ): Promise<void> {
     try {
-      const turnResult = await state.session.runTurn();
+      const turnResult = await state.session.retryTurn();
       await state.session.snapshot();
 
       const result: SessionProtocolResultByMethod["session.retry"] = {
@@ -1049,12 +1049,17 @@ export class SessionProtocolHandler {
 
       this.sendMessage(createSessionProtocolSuccessResponse(requestId, "session.retry", result));
     } catch (error) {
+      const retryUnavailable = error instanceof SessionRetryUnavailableError;
       this.sendMessage(
         createSessionProtocolErrorResponse(
           requestId,
-          SESSION_PROTOCOL_ERROR_CODES.internalError,
-          "failed to run session turn",
-          { cause: error instanceof Error ? error.message : String(error) },
+          retryUnavailable
+            ? SESSION_PROTOCOL_ERROR_CODES.invalidRequest
+            : SESSION_PROTOCOL_ERROR_CODES.internalError,
+          retryUnavailable ? error.message : "failed to run session turn",
+          retryUnavailable
+            ? undefined
+            : { cause: error instanceof Error ? error.message : String(error) },
         ),
       );
     }
@@ -1283,8 +1288,47 @@ export class SessionProtocolHandler {
   private async handleClearGoal(
     request: Extract<SessionProtocolRequestMessage, { method: "session.clearGoal" }>,
   ): Promise<void> {
-    await this.withSessionMutation(request, "session goal cleared", async (state) => {
-      const snapshot = await state.session.clearGoal();
+    const state = await this.getSessionState(request.params.sessionId);
+    if (!state) {
+      this.sendSessionNotFound(request.id, request.params.sessionId);
+      return;
+    }
+    if (!state.session.getGoal()) {
+      this.sendMessage(
+        createSessionProtocolErrorResponse(
+          request.id,
+          SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+          "no goal exists",
+        ),
+      );
+      return;
+    }
+
+    await this.runSessionMutation(state, async () => {
+      if (this.closed) {
+        return;
+      }
+      if (state.session.sessionId !== request.params.sessionId) {
+        this.sendSessionNotFound(request.id, request.params.sessionId);
+        return;
+      }
+      if (!state.session.getGoal()) {
+        this.sendMessage(
+          createSessionProtocolErrorResponse(
+            request.id,
+            SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+            "no goal exists",
+          ),
+        );
+        return;
+      }
+
+      await this.interruptAndWaitForActiveSubmit(state);
+      this.rejectPendingSteeringSubmits(state, "session goal cleared");
+      this.rejectPendingQueuedSubmits(state, "session goal cleared");
+      const snapshot = state.session.getGoal()
+        ? await state.session.clearGoal()
+        : await state.session.snapshot();
       this.sendMessage(
         createSessionProtocolSuccessResponse(request.id, "session.clearGoal", snapshot),
       );

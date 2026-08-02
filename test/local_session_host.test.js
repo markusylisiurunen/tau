@@ -7,6 +7,7 @@ import { createLocalToolExecutionBackend } from "../dist/core/index.js";
 import { resolveModel } from "../dist/core/models/catalog.js";
 import { personas } from "../dist/core/personas.js";
 import {
+  hasGoalTurnMetadata,
   prependTauUserMetadata,
   stripTauUserDisplayText,
 } from "../dist/core/utils/user_metadata.js";
@@ -633,6 +634,183 @@ describe("LocalSessionHost", () => {
     await host.shutdown();
   });
 
+  it("cancels goal startup while the objective message is still persisting", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const hostedSession = await host.createSession(localCreateInput);
+    await hostedSession.snapshot();
+    const persistenceReached = deferred();
+    const releasePersistence = deferred();
+    const commitSessionSnapshot = store.commitSessionSnapshot.bind(store);
+    let paused = false;
+    store.commitSessionSnapshot = vi.fn(async (snapshot, options) => {
+      if (
+        !paused &&
+        snapshot.goal?.status === "active" &&
+        snapshot.messages.some((message) => message.message.role === "user")
+      ) {
+        paused = true;
+        persistenceReached.resolve();
+        await releasePersistence.promise;
+      }
+      return await commitSessionSnapshot(snapshot, options);
+    });
+    const streamModel = vi.fn();
+    hostedSession.runtime.agent.spec.model.stream = streamModel;
+
+    const run = hostedSession.startGoal("Start safely");
+    await persistenceReached.promise;
+
+    expect(hostedSession.runtime.isTurnRunning).toBe(false);
+    expect(hostedSession.interruptActiveWork()).toBe(true);
+    releasePersistence.resolve();
+
+    await expect(run).resolves.toMatchObject({ turn: { status: "aborted" } });
+    expect(streamModel).not.toHaveBeenCalled();
+    await expect(hostedSession.snapshot()).resolves.toMatchObject({
+      goal: { objective: "Start safely", status: "blocked" },
+    });
+    await host.shutdown();
+  });
+
+  it("cancels goal resume before recording its continuation", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const hostedSession = await host.createSession(localCreateInput);
+    await hostedSession.snapshot();
+    await hostedSession.createGoal("Resume safely");
+    await hostedSession.updateGoal({ status: "blocked" });
+    const userMessageCount = hostedSession.runtime.rawHistory.filter(
+      (message) => message.role === "user",
+    ).length;
+    const persistenceReached = deferred();
+    const releasePersistence = deferred();
+    const commitSessionSnapshot = store.commitSessionSnapshot.bind(store);
+    let paused = false;
+    store.commitSessionSnapshot = vi.fn(async (snapshot, options) => {
+      if (!paused && snapshot.goal?.status === "active") {
+        paused = true;
+        persistenceReached.resolve();
+        await releasePersistence.promise;
+      }
+      return await commitSessionSnapshot(snapshot, options);
+    });
+    const streamModel = vi.fn();
+    hostedSession.runtime.agent.spec.model.stream = streamModel;
+
+    const run = hostedSession.resumeGoal();
+    await persistenceReached.promise;
+
+    expect(hostedSession.interruptActiveWork()).toBe(true);
+    releasePersistence.resolve();
+
+    await expect(run).resolves.toEqual({
+      turn: { status: "aborted", stopReason: "aborted" },
+    });
+    expect(streamModel).not.toHaveBeenCalled();
+    expect(
+      hostedSession.runtime.rawHistory.filter((message) => message.role === "user"),
+    ).toHaveLength(userMessageCount);
+    await expect(hostedSession.snapshot()).resolves.toMatchObject({
+      goal: { objective: "Resume safely", status: "blocked" },
+    });
+    await host.shutdown();
+  });
+
+  it("applies steering received between active goal continuations", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const hostedSession = await host.createSession(localCreateInput);
+    await hostedSession.snapshot();
+    const persistenceReached = deferred();
+    const releasePersistence = deferred();
+    const commitSessionSnapshot = store.commitSessionSnapshot.bind(store);
+    let paused = false;
+    store.commitSessionSnapshot = vi.fn(async (snapshot, options) => {
+      if (
+        !paused &&
+        snapshot.messages.some(
+          (message) => message.message.role === "user" && message.turn?.status === "completed",
+        )
+      ) {
+        paused = true;
+        persistenceReached.resolve();
+        await releasePersistence.promise;
+      }
+      return await commitSessionSnapshot(snapshot, options);
+    });
+    const streamModel = vi
+      .fn()
+      .mockImplementationOnce(() => ({
+        async *[Symbol.asyncIterator]() {},
+        async result() {
+          return fauxAssistantMessage("more work remains");
+        },
+      }))
+      .mockImplementationOnce(() => ({
+        async *[Symbol.asyncIterator]() {},
+        async result() {
+          return fauxAssistantMessage("", { stopReason: "aborted" });
+        },
+      }));
+    hostedSession.runtime.agent.spec.model.stream = streamModel;
+
+    const run = hostedSession.startGoal("Accept steering");
+    await persistenceReached.promise;
+    expect(hostedSession.canAcceptSteering).toBe(true);
+    const steering = hostedSession.steer("change the implementation");
+    releasePersistence.resolve();
+
+    const applied = await steering.applied;
+    await expect(steering.result).resolves.toMatchObject({
+      userHistoryEntryId: applied.userHistoryEntryId,
+      turn: { status: "aborted" },
+    });
+    await expect(run).resolves.toMatchObject({ turn: { status: "aborted" } });
+    expect(streamModel).toHaveBeenCalledTimes(2);
+    const steeringMessage = hostedSession.runtime.rawHistoryEntries.find(
+      (entry) => entry.id === applied.userHistoryEntryId,
+    )?.message;
+    expect(steeringMessage?.role).toBe("user");
+    expect(hasGoalTurnMetadata(steeringMessage)).toBe(true);
+    expect(stripTauUserDisplayText(steeringMessage.content[0].text)).toBe(
+      "change the implementation",
+    );
+    await host.shutdown();
+  });
+
+  it("rejects retry for a goal-controlled continuation", async () => {
+    const host = createHost(new MemorySessionStore());
+    const hostedSession = await host.createSession(localCreateInput);
+    const streamModel = vi
+      .fn()
+      .mockImplementationOnce(() => ({
+        async *[Symbol.asyncIterator]() {},
+        async result() {
+          return fauxAssistantMessage("more work remains");
+        },
+      }))
+      .mockImplementationOnce(() => ({
+        async *[Symbol.asyncIterator]() {},
+        async result() {
+          return fauxAssistantMessage("", { stopReason: "aborted" });
+        },
+      }));
+    hostedSession.runtime.agent.spec.model.stream = streamModel;
+
+    await hostedSession.startGoal("Do not retry stale policy");
+
+    const latestUserMessage = hostedSession.runtime.rawHistory.findLast(
+      (message) => message.role === "user",
+    );
+    expect(hasGoalTurnMetadata(latestUserMessage)).toBe(true);
+    await expect(hostedSession.retryTurn()).rejects.toThrow(
+      "goal-controlled turns cannot be retried",
+    );
+    expect(streamModel).toHaveBeenCalledTimes(2);
+    await host.shutdown();
+  });
+
   it("uses a steering continuation's terminal outcome for an active goal", async () => {
     const host = createHost(new MemorySessionStore());
     const hostedSession = await host.createSession(localCreateInput);
@@ -664,9 +842,14 @@ describe("LocalSessionHost", () => {
     const steering = hostedSession.steer("change direction");
     firstRun.resolve();
 
-    await expect(steering.result).resolves.toMatchObject({
+    const steeringResult = await steering.result;
+    expect(steeringResult).toMatchObject({
       turn: { status: "aborted" },
     });
+    const steeringMessage = hostedSession.runtime.rawHistoryEntries.find(
+      (entry) => entry.id === steeringResult.userHistoryEntryId,
+    )?.message;
+    expect(hasGoalTurnMetadata(steeringMessage)).toBe(true);
     const result = await run;
     expect(result.turn).toEqual({ status: "aborted", stopReason: "aborted" });
     expect(streamModel).toHaveBeenCalledTimes(2);

@@ -10,6 +10,7 @@ import { ChatRuntime, type ChatRuntimeEnvironment } from "../core/runtime/chat_r
 import type { CoreDeps } from "../core/runtime/deps.js";
 import type { RuntimePromptBootstrap } from "../core/runtime/runtime_bootstrap.js";
 import type { SessionPromptComposition } from "../core/runtime/session_prompt_composer.js";
+import { formatSteeringUserMessage } from "../core/runtime/steering.js";
 import { buildGoalContinuationText, prependGoalPolicy } from "../core/session/goal.js";
 import { SUBAGENT_ACTIVITY_FACET_KIND, type SubagentUiEvent } from "../core/subagents/types.js";
 import type { ToolActivity } from "../core/tools/activity.js";
@@ -26,6 +27,7 @@ import {
 } from "../core/utils/project_files.js";
 import {
   hasAutoCompactionContinuationMetadata,
+  hasGoalTurnMetadata,
   isTauUserMessageHidden,
 } from "../core/utils/user_metadata.js";
 import type {
@@ -88,6 +90,7 @@ import { createExecutionEnvironmentSubagentRuntimeResolver } from "./execution_r
 import { HostedEphemeralAgentSession } from "./hosted_ephemeral_agent_session.js";
 import {
   SessionExecBusyError,
+  SessionRetryUnavailableError,
   type TauHostedSession,
   type TauSessionHost,
 } from "./session_host.js";
@@ -541,6 +544,32 @@ export class LocalSessionHost implements TauSessionHost {
   }
 }
 
+type HostedSteeringAssociation = { userHistoryEntryId: string };
+type HostedSteeringResult = HostedSteeringAssociation & {
+  turn: SessionProtocolTurnOutcome;
+};
+
+type BufferedLogicalSteering = {
+  id: string;
+  text: string;
+  applied: Promise<HostedSteeringAssociation>;
+  result: Promise<HostedSteeringResult>;
+  resolveApplied: (association: HostedSteeringAssociation) => void;
+  resolveResult: (result: HostedSteeringResult) => void;
+  rejectApplied: (error: Error) => void;
+  rejectResult: (error: Error) => void;
+};
+
+type CommittedLogicalSteering = {
+  historyEntryId: string;
+  submissions: BufferedLogicalSteering[];
+};
+
+type ActiveLogicalTurn = {
+  cancellationRequested: boolean;
+  pendingSteering: BufferedLogicalSteering[];
+};
+
 class LocalHostedSessionHandle implements LocalHostedSession {
   readonly session: ChatRuntime;
   private committedSessionId: string;
@@ -572,8 +601,8 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   private readonly activeWorkAbortControllers = new Set<AbortController>();
   private readonly activeWorkPromises = new Set<Promise<unknown>>();
   private readonly activeExecAbortControllers = new Map<string, AbortController>();
-  private activeTurnPromise?: Promise<SessionProtocolTurnOutcome>;
-  private activeLogicalTurn?: { cancellationRequested: boolean };
+  private activeTurnPromise?: Promise<unknown>;
+  private activeLogicalTurn?: ActiveLogicalTurn;
   private disposePromise?: Promise<void>;
   private disposing = false;
   private costTotal = 0;
@@ -610,6 +639,13 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
   get isTurnRunning(): boolean {
     return this.runtime.isTurnRunning;
+  }
+
+  get canAcceptSteering(): boolean {
+    return (
+      this.runtime.isTurnRunning ||
+      Boolean(this.activeLogicalTurn && this.goal?.status === "active")
+    );
   }
 
   get sessionId(): string {
@@ -678,22 +714,33 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
   async startGoal(objective: string): Promise<SessionProtocolStartGoalResult> {
     const goal = this.buildNewGoal(objective);
-    this.goal = goal;
-    this.pendingGoalCommit = goal;
-    try {
-      const { userHistoryEntryId } = await this.record({
-        text: prependGoalPolicy(goal.objective, goal),
-      });
-      return { userHistoryEntryId, turn: await this.runTurn() };
-    } catch (error) {
-      if (this.pendingGoalCommit === goal) {
-        this.goal = null;
-        this.pendingGoalCommit = undefined;
-      } else {
-        await this.blockActiveGoal().catch(() => undefined);
+    return await this.runLogicalTurn(async (logicalTurn) => {
+      this.goal = goal;
+      this.pendingGoalCommit = goal;
+      try {
+        const { userHistoryEntryId } = await this.record({
+          text: prependGoalPolicy(goal.objective, goal),
+        });
+        if (logicalTurn.cancellationRequested) {
+          return {
+            userHistoryEntryId,
+            turn: await this.cancelLogicalTurn(userHistoryEntryId),
+          };
+        }
+        return {
+          userHistoryEntryId,
+          turn: await this.runTurnNow(logicalTurn, userHistoryEntryId),
+        };
+      } catch (error) {
+        if (this.pendingGoalCommit === goal) {
+          this.goal = null;
+          this.pendingGoalCommit = undefined;
+        } else {
+          await this.blockActiveGoal().catch(() => undefined);
+        }
+        throw error;
       }
-      throw error;
-    }
+    });
   }
 
   async resumeGoal(): Promise<SessionProtocolResumeGoalResult> {
@@ -702,14 +749,25 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       throw new Error(this.goal ? "goal is already active" : "no goal exists");
     }
     const goal: SessionProtocolGoal = { ...this.goal, status: "active" };
-    await this.setGoal(goal);
-    try {
-      await this.record({ text: buildGoalContinuationText(goal) });
-      return { turn: await this.runTurn() };
-    } catch (error) {
-      await this.blockActiveGoal().catch(() => undefined);
-      throw error;
-    }
+    return await this.runLogicalTurn(async (logicalTurn) => {
+      await this.setGoal(goal);
+      try {
+        if (logicalTurn.cancellationRequested) {
+          await this.blockActiveGoal();
+          return { turn: abortedTurnOutcome() };
+        }
+        const { userHistoryEntryId } = await this.record({
+          text: buildGoalContinuationText(goal),
+        });
+        if (logicalTurn.cancellationRequested) {
+          return { turn: await this.cancelLogicalTurn(userHistoryEntryId) };
+        }
+        return { turn: await this.runTurnNow(logicalTurn, userHistoryEntryId) };
+      } catch (error) {
+        await this.blockActiveGoal().catch(() => undefined);
+        throw error;
+      }
+    });
   }
 
   async clearGoal(): Promise<SessionProtocolSnapshot> {
@@ -736,15 +794,43 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   }
 
   async runTurn(): Promise<SessionProtocolTurnOutcome> {
+    return await this.runLogicalTurn((logicalTurn) => this.runTurnNow(logicalTurn));
+  }
+
+  async retryTurn(): Promise<SessionProtocolTurnOutcome> {
+    const userMessage = this.session.rawHistoryEntries.findLast(
+      (entry) => entry.message.role === "user",
+    );
+    if (userMessage && hasGoalTurnMetadata(userMessage.message)) {
+      throw new SessionRetryUnavailableError(
+        "goal-controlled turns cannot be retried; resume a blocked goal or start a new goal",
+      );
+    }
+    return await this.runTurn();
+  }
+
+  private async runLogicalTurn<T>(
+    execute: (logicalTurn: ActiveLogicalTurn) => Promise<T>,
+  ): Promise<T> {
     this.assertActive();
-    const logicalTurn = { cancellationRequested: false };
-    const run = this.runTurnNow(logicalTurn);
-    this.activeTurnPromise = run;
+    if (this.activeLogicalTurn) {
+      throw new Error("session turn is already active");
+    }
+    const logicalTurn: ActiveLogicalTurn = {
+      cancellationRequested: false,
+      pendingSteering: [],
+    };
     this.activeLogicalTurn = logicalTurn;
+    const run = execute(logicalTurn);
+    this.activeTurnPromise = run;
     try {
       return await run;
     } finally {
       if (this.activeTurnPromise === run) {
+        this.rejectBufferedLogicalSteering(
+          logicalTurn,
+          new Error("steering was not applied before the logical turn ended"),
+        );
         this.activeTurnPromise = undefined;
         this.activeLogicalTurn = undefined;
         await this.emitSnapshotResetIfChanged("assistant-message");
@@ -752,12 +838,15 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     }
   }
 
-  private async runTurnNow(logicalTurn: {
-    cancellationRequested: boolean;
-  }): Promise<SessionProtocolTurnOutcome> {
-    const rootUserMessage = this.session.rawHistoryEntries.findLast(
-      (entry) => entry.message.role === "user",
-    );
+  private async runTurnNow(
+    logicalTurn: ActiveLogicalTurn,
+    rootHistoryEntryId?: string,
+  ): Promise<SessionProtocolTurnOutcome> {
+    const rootUserMessage = rootHistoryEntryId
+      ? this.session.rawHistoryEntries.find(
+          (entry) => entry.id === rootHistoryEntryId && entry.message.role === "user",
+        )
+      : this.session.rawHistoryEntries.findLast((entry) => entry.message.role === "user");
     if (!rootUserMessage) {
       throw new Error("cannot run a turn without a user message");
     }
@@ -768,14 +857,22 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         return await this.cancelLogicalTurn(rootUserMessage.id);
       }
 
-      const userMessage = this.session.rawHistoryEntries.findLast(
-        (entry) => entry.message.role === "user",
-      );
-      if (!userMessage) {
-        throw new Error("cannot run a turn without a user message");
-      }
-
+      const committedSteering: CommittedLogicalSteering[] = [];
       try {
+        while (logicalTurn.pendingSteering.length > 0) {
+          committedSteering.push(await this.commitBufferedLogicalSteering(logicalTurn));
+        }
+        if (logicalTurn.cancellationRequested) {
+          return await this.cancelLogicalTurn(rootUserMessage.id, committedSteering);
+        }
+
+        const userMessage = this.session.rawHistoryEntries.findLast(
+          (entry) => entry.message.role === "user",
+        );
+        if (!userMessage) {
+          throw new Error("cannot run a turn without a user message");
+        }
+
         const result = await this.runtime.runTurn();
         const terminalResult = result.terminalResult;
         if (terminalResult.aborted && this.draftAssistantMessage) {
@@ -784,6 +881,9 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         const initialOutcome = turnOutcomeFromResult(result, result.finalMessage);
         const terminalOutcome = turnOutcomeFromResult(terminalResult, terminalResult.finalMessage);
         this.turnOutcomes.set(userMessage.id, initialOutcome);
+        for (const steering of committedSteering) {
+          this.turnOutcomes.set(steering.historyEntryId, initialOutcome);
+        }
         if (this.goal?.status === "active") {
           goalRootHistoryEntryId ??= rootUserMessage.id;
         }
@@ -794,14 +894,19 @@ class LocalHostedSessionHandle implements LocalHostedSession {
           await this.blockActiveGoal();
         }
         await this.emitSnapshotResetIfChanged("assistant-message");
+        this.resolveCommittedLogicalSteering(committedSteering, initialOutcome);
         if (logicalTurn.cancellationRequested) {
           return await this.cancelLogicalTurn(rootUserMessage.id);
         }
         if (terminalOutcome.status !== "completed" || this.goal?.status !== "active") {
           return goalRootHistoryEntryId ? terminalOutcome : initialOutcome;
         }
+        if (logicalTurn.pendingSteering.length > 0) {
+          continue;
+        }
         await this.session.commitUserText(buildGoalContinuationText(this.goal));
       } catch (error) {
+        this.rejectCommittedLogicalSteering(committedSteering, error);
         await this.cleanupFailedTurn().catch(() => undefined);
         await this.blockActiveGoal().catch(() => undefined);
         throw error;
@@ -853,38 +958,51 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
   steer(text: string): {
     id: string;
-    applied: Promise<{ userHistoryEntryId: string }>;
-    result: Promise<{
-      userHistoryEntryId: string;
-      turn: SessionProtocolTurnOutcome;
-    }>;
+    applied: Promise<HostedSteeringAssociation>;
+    result: Promise<HostedSteeringResult>;
   } {
     this.assertActive();
-    if (!this.activeTurnPromise) {
+    if (this.runtime.isTurnRunning) {
+      const submission = this.runtime.steer(text);
+      return {
+        id: submission.id,
+        applied: submission.applied.then(async (association) => {
+          await this.commitSnapshot();
+          return { userHistoryEntryId: association.historyEntryId };
+        }),
+        result: submission.result.then(async (association) => {
+          const turn = turnOutcomeFromResult(association.result, association.result.finalMessage);
+          this.turnOutcomes.set(association.historyEntryId, turn);
+          await this.emitSnapshotResetIfChanged("assistant-message");
+          return {
+            userHistoryEntryId: association.historyEntryId,
+            turn,
+          };
+        }),
+      };
+    }
+
+    const logicalTurn = this.activeLogicalTurn;
+    if (!logicalTurn || this.goal?.status !== "active") {
       throw new Error("cannot steer without an active turn");
     }
-    const submission = this.runtime.steer(text);
-    return {
-      id: submission.id,
-      applied: submission.applied.then(async (association) => {
-        await this.commitSnapshot();
-        return { userHistoryEntryId: association.historyEntryId };
-      }),
-      result: submission.result.then(async (association) => {
-        const turn = turnOutcomeFromResult(association.result, association.result.finalMessage);
-        this.turnOutcomes.set(association.historyEntryId, turn);
-        await this.emitSnapshotResetIfChanged("assistant-message");
-        return {
-          userHistoryEntryId: association.historyEntryId,
-          turn,
-        };
-      }),
-    };
+    return this.bufferLogicalSteering(logicalTurn, text);
   }
 
   cancelSteering(): ReturnType<ChatRuntime["cancelSteering"]> {
     this.assertActive();
-    return this.runtime.cancelSteering();
+    const cancelled = this.runtime.cancelSteering();
+    const logicalTurn = this.activeLogicalTurn;
+    if (!logicalTurn) {
+      return cancelled;
+    }
+    const buffered = logicalTurn.pendingSteering.splice(0);
+    const error = new Error("steering submission was cancelled");
+    for (const submission of buffered) {
+      submission.rejectApplied(error);
+      submission.rejectResult(error);
+    }
+    return [...cancelled, ...buffered.map(({ id, text }) => ({ id, text }))];
   }
 
   async exec(
@@ -1379,10 +1497,118 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     }
   }
 
-  private async cancelLogicalTurn(rootHistoryEntryId: string): Promise<SessionProtocolTurnOutcome> {
-    const outcome = { status: "aborted", stopReason: "aborted" } as const;
+  private bufferLogicalSteering(
+    logicalTurn: ActiveLogicalTurn,
+    text: string,
+  ): {
+    id: string;
+    applied: Promise<HostedSteeringAssociation>;
+    result: Promise<HostedSteeringResult>;
+  } {
+    const normalized = text.trim();
+    if (!normalized) {
+      throw new Error("steering input must not be empty");
+    }
+    let resolveApplied!: (association: HostedSteeringAssociation) => void;
+    let rejectApplied!: (error: Error) => void;
+    const applied = new Promise<HostedSteeringAssociation>((resolve, reject) => {
+      resolveApplied = resolve;
+      rejectApplied = reject;
+    });
+    let resolveResult!: (result: HostedSteeringResult) => void;
+    let rejectResult!: (error: Error) => void;
+    const result = new Promise<HostedSteeringResult>((resolve, reject) => {
+      resolveResult = resolve;
+      rejectResult = reject;
+    });
+    const submission: BufferedLogicalSteering = {
+      id: `logical-steering-${randomUUID()}`,
+      text: normalized,
+      applied,
+      result,
+      resolveApplied,
+      resolveResult,
+      rejectApplied,
+      rejectResult,
+    };
+    logicalTurn.pendingSteering.push(submission);
+    return { id: submission.id, applied, result };
+  }
+
+  private async commitBufferedLogicalSteering(
+    logicalTurn: ActiveLogicalTurn,
+  ): Promise<CommittedLogicalSteering> {
+    const submissions = logicalTurn.pendingSteering.splice(0);
+    if (submissions.length === 0) {
+      throw new Error("cannot commit empty logical steering");
+    }
+    try {
+      const goal = this.goal;
+      if (goal?.status !== "active") {
+        throw new Error("cannot commit logical steering without an active goal");
+      }
+      const historyEntryId = await this.session.commitUserText(
+        prependGoalPolicy(
+          formatSteeringUserMessage(submissions.map((submission) => submission.text)),
+          goal,
+        ),
+      );
+      for (const submission of submissions) {
+        submission.resolveApplied({ userHistoryEntryId: historyEntryId });
+      }
+      return { historyEntryId, submissions };
+    } catch (error) {
+      const steeringError = error instanceof Error ? error : new Error(String(error));
+      for (const submission of submissions) {
+        submission.rejectApplied(steeringError);
+        submission.rejectResult(steeringError);
+      }
+      throw error;
+    }
+  }
+
+  private resolveCommittedLogicalSteering(
+    committed: CommittedLogicalSteering[],
+    turn: SessionProtocolTurnOutcome,
+  ): void {
+    for (const { historyEntryId, submissions } of committed) {
+      for (const submission of submissions) {
+        submission.resolveResult({ userHistoryEntryId: historyEntryId, turn });
+      }
+    }
+  }
+
+  private rejectCommittedLogicalSteering(
+    committed: CommittedLogicalSteering[],
+    error: unknown,
+  ): void {
+    const steeringError = error instanceof Error ? error : new Error(String(error));
+    for (const { submissions } of committed) {
+      for (const submission of submissions) {
+        submission.rejectResult(steeringError);
+      }
+    }
+  }
+
+  private rejectBufferedLogicalSteering(logicalTurn: ActiveLogicalTurn, error: Error): void {
+    for (const submission of logicalTurn.pendingSteering.splice(0)) {
+      submission.rejectApplied(error);
+      submission.rejectResult(error);
+    }
+  }
+
+  private async cancelLogicalTurn(
+    rootHistoryEntryId: string,
+    committedSteering: CommittedLogicalSteering[] = [],
+  ): Promise<SessionProtocolTurnOutcome> {
+    const outcome = abortedTurnOutcome();
     this.turnOutcomes.set(rootHistoryEntryId, outcome);
+    for (const steering of committedSteering) {
+      this.turnOutcomes.set(steering.historyEntryId, outcome);
+    }
     await this.blockActiveGoal();
+    await this.emitSnapshotResetIfChanged("assistant-message");
+    this.resolveCommittedLogicalSteering(committedSteering, outcome);
     return outcome;
   }
 
@@ -2376,6 +2602,10 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
     await this.emitSnapshotResetIfChanged("assistant-message");
   }
+}
+
+function abortedTurnOutcome(): SessionProtocolTurnOutcome {
+  return { status: "aborted", stopReason: "aborted" };
 }
 
 function turnOutcomeFromResult(

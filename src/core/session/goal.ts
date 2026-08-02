@@ -1,8 +1,17 @@
 import type { SessionProtocolGoal } from "../../protocol/session_protocol.js";
-import { prependTauHiddenSystemMessages } from "../utils/user_metadata.js";
+import {
+  prependTauHiddenSystemMessages,
+  prependTauUserMetadata,
+  type TauGoalTurnUserMetadata,
+} from "../utils/user_metadata.js";
 
 const GOAL_CONTINUATION_MESSAGE =
   "The goal remains active after the previous response. Continue working toward it.";
+
+export const GOAL_TURN_USER_METADATA: TauGoalTurnUserMetadata = {
+  type: "goal-turn",
+  version: 1,
+};
 
 export function buildGoalPolicy(goal: SessionProtocolGoal): string {
   return `An active session goal is in effect.
@@ -33,11 +42,16 @@ Explain the blocker in the current response. Do not continue work on this goal u
 }
 
 export function prependGoalPolicy(text: string, goal: SessionProtocolGoal): string {
-  return prependTauHiddenSystemMessages(text, [buildGoalPolicy(goal)]);
+  return prependTauUserMetadata(prependTauHiddenSystemMessages(text, [buildGoalPolicy(goal)]), [
+    GOAL_TURN_USER_METADATA,
+  ]);
 }
 
 export function buildGoalContinuationText(goal: SessionProtocolGoal): string {
-  return prependTauHiddenSystemMessages("", [buildGoalPolicy(goal), GOAL_CONTINUATION_MESSAGE]);
+  return prependTauUserMetadata(
+    prependTauHiddenSystemMessages("", [buildGoalPolicy(goal), GOAL_CONTINUATION_MESSAGE]),
+    [GOAL_TURN_USER_METADATA],
+  );
 }
 
 function escapeXmlText(text: string): string {

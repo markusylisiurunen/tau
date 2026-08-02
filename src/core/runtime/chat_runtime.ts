@@ -15,7 +15,7 @@ import type { AgentEventSink } from "../agent/events.js";
 import type { Config } from "../config/index.js";
 import type { ModelResolver } from "../models/catalog.js";
 import { createAutoCompactionArchiver } from "../session/auto_compaction_archive.js";
-import { buildGoalPolicy } from "../session/goal.js";
+import { buildGoalPolicy, GOAL_TURN_USER_METADATA } from "../session/goal.js";
 import { AgentSupervisor } from "../subagents/agent_supervisor.js";
 import type { SubagentUiEvent } from "../subagents/types.js";
 import { ToolCatalog } from "../tools/catalog.js";
@@ -190,7 +190,10 @@ export class ChatRuntime {
   }
 
   steer(text: string): SteeringSubmission {
-    return this.agent.steer(text);
+    const goal = this.goalManager.getGoal();
+    return this.agent.steer(text, {
+      metadata: goal?.status === "active" ? [GOAL_TURN_USER_METADATA] : [],
+    });
   }
 
   cancelSteering(): CancelledSteeringSubmission[] {

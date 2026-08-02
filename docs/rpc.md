@@ -513,6 +513,7 @@ params (required):
 behavior:
 
 - runs one assistant turn without appending a user message
+- rejects goal-controlled turns with `invalid_request`; clients must use `session.resumeGoal` for a blocked goal
 - streams snapshot changes as broadcast `session.delta` messages with `sessionId`
 - returns `busy` if another turn is already running or a mutating session request is in progress
 
@@ -709,7 +710,7 @@ params (required):
 { "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3" }
 ```
 
-clears the current goal and returns the updated snapshot. The mutation interrupts active work first, matching other session-resetting mutations.
+clears the current goal and returns the updated snapshot. When a goal exists, the mutation interrupts active work first, matching other session-resetting mutations. Without a goal it returns `invalid_request` without interrupting active work or cancelling pending messages.
 
 #### session.setReasoning
 
@@ -1018,7 +1019,7 @@ for lines that cannot produce a valid request id (for example malformed json), `
 - `session.exec` and `session.sample` calls can run concurrently with each other and with normal session work; they never enter the mutation queue, and `session.cancelExec` targets one exec without interrupting the others
 - `session.ephemeral.create`, `session.ephemeral.submit`, and `session.ephemeral.close` manage independent, non-persisted contexts outside the main-session mutation queue; only overlapping submissions to the same ephemeral thread return `busy`
 - `session.queue` can be accepted during active main-session work and runs after the active turn settles
-- `session.steer` can be accepted during an active turn and runs at the next safe boundary after requesting the active turn to stop
+- `session.steer` can be accepted during active model work or between autonomous goal continuations and runs at the next safe boundary before goal work continues
 - `session.cancelPendingMessages` atomically removes pending queue and steering requests without interrupting active work
 - `session.submit` and `session.retry` are rejected with `busy` while a queued/running main-session mutation exists
 - responses and deltas may still interleave

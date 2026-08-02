@@ -3,7 +3,11 @@ import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import { RpcServer, runRpcServer } from "../dist/core/modes/rpc_server.js";
 import { formatSteeringUserMessage } from "../dist/core/runtime/steering.js";
-import { EphemeralThreadBusyError, SessionExecBusyError } from "../dist/host/session_host.js";
+import {
+  EphemeralThreadBusyError,
+  SessionExecBusyError,
+  SessionRetryUnavailableError,
+} from "../dist/host/session_host.js";
 import {
   SESSION_PROTOCOL_ERROR_CODES,
   SESSION_PROTOCOL_VERSION,
@@ -151,6 +155,7 @@ function createHarness(options = {}) {
     let activeTurnSettlement = Promise.resolve();
     const pendingSteering = [];
     let reasoning = bootstrap.persona.settings.reasoning;
+    let goal = options.goal ?? null;
     const ephemeralContexts = new Set();
     const activeWorkAbortControllers = new Set();
     const activeWorkPromises = new Set();
@@ -193,6 +198,12 @@ function createHarness(options = {}) {
       get isTurnRunning() {
         return running;
       },
+      get canAcceptSteering() {
+        return running;
+      },
+      getGoal() {
+        return structuredClone(goal);
+      },
       get sessionId() {
         return sessionId;
       },
@@ -215,6 +226,7 @@ function createHarness(options = {}) {
           sessionId,
           revision: historyEntries.length + 1,
           lifecycle: running ? "running" : "idle",
+          goal,
           bootstrap: {
             ...bootstrap,
             persona: {
@@ -311,6 +323,12 @@ function createHarness(options = {}) {
           settleTurn();
         }
       },
+      async retryTurn() {
+        if (options.retryTurn) {
+          return await options.retryTurn();
+        }
+        return await hostedSession.runTurn();
+      },
       requestTurnBoundaryStop: vi.fn(() => running),
       cancelTurnBoundaryStop: vi.fn(() => running),
       steer(text) {
@@ -378,6 +396,11 @@ function createHarness(options = {}) {
               : Promise.resolve({ message: fauxAssistantMessage("sampled") }),
           sampleOptions.signal,
         );
+      },
+      async clearGoal() {
+        if (!goal) throw new Error("no goal exists");
+        goal = null;
+        return await hostedSession.snapshot();
       },
       async setReasoning(nextReasoning) {
         reasoning = nextReasoning;
@@ -943,6 +966,68 @@ describe("rpc_server", () => {
 
     releaseFinalSnapshot();
     await firstSubmit;
+  });
+
+  it("reports goal-controlled retry as an invalid request", async () => {
+    const harness = createHarness({
+      retryTurn: async () => {
+        throw new SessionRetryUnavailableError("goal-controlled turns cannot be retried");
+      },
+    });
+
+    await harness.server.handleLine(
+      request("retry-goal", "session.retry", { sessionId: "session-1" }),
+    );
+
+    expect(harness.lines.find((line) => line.id === "retry-goal")).toMatchObject({
+      ok: false,
+      error: {
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+        message: "goal-controlled turns cannot be retried",
+      },
+    });
+  });
+
+  it("rejects goal clear without interrupting unrelated active work", async () => {
+    const harness = createHarness();
+    const submit = harness.server.handleLine(
+      request("submit-1", "session.submit", {
+        sessionId: "session-1",
+        text: "ordinary work",
+      }),
+    );
+    await waitFor(() => harness.seededSession.isTurnRunning);
+    const queued = harness.server.handleLine(
+      request("queue-1", "session.queue", {
+        sessionId: "session-1",
+        text: "keep queued",
+      }),
+    );
+    await waitFor(() =>
+      harness.lines.some(
+        (line) => line.type === "session.pendingUserMessages" && line.state.messages.length === 1,
+      ),
+    );
+
+    await harness.server.handleLine(
+      request("clear-goal", "session.clearGoal", { sessionId: "session-1" }),
+    );
+
+    expect(harness.lines.find((line) => line.id === "clear-goal")).toMatchObject({
+      ok: false,
+      error: { code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest, message: "no goal exists" },
+    });
+    expect(harness.seededSession.isTurnRunning).toBe(true);
+    expect(
+      harness.lines.findLast((line) => line.type === "session.pendingUserMessages").state.messages,
+    ).toEqual([expect.objectContaining({ mode: "queue", text: "keep queued" })]);
+
+    await harness.server.handleLine(
+      request("cancel-queue", "session.cancelPendingMessages", { sessionId: "session-1" }),
+    );
+    await queued;
+    harness.releaseTurn();
+    await submit;
   });
 
   it("streams submit events, forwards subagent events, and rejects overlapping submit with busy", async () => {

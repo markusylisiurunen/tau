@@ -296,6 +296,7 @@ options:
   - returns the cancelled messages in effective processing order
 - `retry()`
   - sends `session.retry` with this session id to run a turn without appending user text
+  - rejects goal-controlled turns; call `resumeGoal()` when the persisted goal is blocked
 - `exec(command, options?)`
   - sends `session.exec` with a generated exec id and runs the command in fresh non-interactive login Bash
   - returns interleaved `output`, split `stdout` and `stderr`, exit/truncation fields, and explicit timeout/abort/signal termination metadata
@@ -315,6 +316,12 @@ options:
 - `snapshot()`
   - sends `session.snapshot` with this session id
   - returns raw recoverable session user text; renderers should use `getTauUserDisplayText()` or `projectTauUserText()` to hide Tau metadata and leading exact `<system>...</system>\n` blocks from user messages before showing them to users
+- `startGoal(objective)`
+  - sends `session.startGoal`, persists an active goal, commits the objective as the visible user turn, and runs until the goal is completed or blocked
+- `resumeGoal()`
+  - sends `session.resumeGoal` and continues a blocked goal without adding a visible user message
+- `clearGoal()`
+  - sends `session.clearGoal` and resolves with the updated snapshot
 - `setReasoning("none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max")`
   - sends `session.setReasoning` with this session id and resolves with `{ revision, settings }`
 - `setPersona(personaId)`
@@ -392,7 +399,7 @@ const second = await session.sample({
 
 ```json
 {
-  "version": 5,
+  "version": 6,
   "type": "session.delta",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "fromRevision": 1,

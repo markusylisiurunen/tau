@@ -64,7 +64,7 @@ WebSocket clients receive the same `ready`, `response`, `session.delta`, and `se
 every protocol message includes `version`.
 
 ```json
-{ "version": 5, "type": "..." }
+{ "version": 6, "type": "..." }
 ```
 
 server-to-client messages are:
@@ -85,7 +85,7 @@ when the rpc server starts, it immediately emits a `ready` line:
 
 ```json
 {
-  "version": 5,
+  "version": 6,
   "type": "ready",
   "methods": [
     "initialize",
@@ -104,6 +104,9 @@ when the rpc server starts, it immediately emits a `ready` line:
     "session.sample",
     "session.interrupt",
     "session.snapshot",
+    "session.startGoal",
+    "session.resumeGoal",
+    "session.clearGoal",
     "session.setReasoning",
     "session.setPersona",
     "session.resolvePrompt",
@@ -150,7 +153,7 @@ all requests use this envelope:
 
 ```json
 {
-  "version": 5,
+  "version": 6,
   "type": "request",
   "id": "req-1",
   "method": "session.submit",
@@ -183,12 +186,12 @@ params (required):
 
 ```json
 {
-  "version": 5,
+  "version": 6,
   "type": "response",
   "id": "init-1",
   "ok": true,
   "result": {
-    "protocolVersion": 5,
+    "protocolVersion": 6,
     "methods": [
       "initialize",
       "session.create",
@@ -206,6 +209,9 @@ params (required):
       "session.sample",
       "session.interrupt",
       "session.snapshot",
+      "session.startGoal",
+      "session.resumeGoal",
+      "session.clearGoal",
       "session.setReasoning",
       "session.setPersona",
       "session.resolvePrompt",
@@ -317,6 +323,7 @@ Establishes observation for that session on this connection and returns the auth
       "contextEpoch": "8f98c4..."
     },
     "lifecycle": "idle",
+    "goal": null,
     "costTotal": 0,
     "settings": {
       "personaId": "gpt-5.5-coder",
@@ -422,7 +429,7 @@ if another turn is already running, tau returns:
 
 ```json
 {
-  "version": 5,
+  "version": 6,
   "type": "response",
   "id": "submit-2",
   "ok": false,
@@ -506,6 +513,7 @@ params (required):
 behavior:
 
 - runs one assistant turn without appending a user message
+- rejects goal-controlled turns with `invalid_request`; clients must use `session.resumeGoal` for a blocked goal
 - streams snapshot changes as broadcast `session.delta` messages with `sessionId`
 - returns `busy` if another turn is already running or a mutating session request is in progress
 
@@ -654,6 +662,7 @@ returns current session state:
 - `revision` (monotonic protocol snapshot revision for this session id)
 - `agentState` (the independent durable agent revision, context epoch, and optional provider usage checkpoint used to resume context accounting after recovery)
 - `lifecycle` (`"idle"` or `"running"`)
+- `goal` (the persisted `{ objective, status }` goal, or `null`; status is `"active"` or `"blocked"`)
 - `settings` (current persona id, reasoning, and service tier)
 - `bootstrap` (selected model/provider metadata and prompt-composition metadata)
 - `catalog` (lightweight personas, prompt metadata, and skills available to observed clients)
@@ -669,6 +678,39 @@ Tool status is projected from semantic runtime outcomes (`succeeded`, `failed`, 
 derive transcript length from `messages.length`; the protocol does not duplicate it. The first committed message is the effective system instruction message. Running state is derived from `lifecycle`, draft/interrupted messages, tools, agents, and operations; there is no `activeTurn` side object. If an assistant turn is interrupted mid-stream, the streamed content is retained as an `interrupted` assistant message and remains model-visible unless the host intentionally marks that record `modelVisible: false`.
 
 User message text in `messages` is the raw recoverable Tau session text. It may start with Tau's internal metadata prefix, which is persisted for recovery but is never sent to the model or shown to users. After that metadata is removed, user text may start with one or more strict hidden model instruction blocks in the form `<system>...</system>\n`; these blocks are sent to the model as part of the user turn but should be hidden from user-facing renderers. Clients that render user messages should derive display text by removing Tau metadata and then removing only leading exact `<system>...</system>\n` blocks from user messages. Do not apply this display projection to assistant, tool, or protocol system messages.
+
+#### session.startGoal
+
+params (required):
+
+```json
+{
+  "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
+  "objective": "Ship the feature"
+}
+```
+
+creates an active persisted goal, commits the objective as the visible user message with hidden goal policy, and starts the logical goal run. The request returns the same `{ userHistoryEntryId, turn }` shape as `session.submit`. If an assistant response leaves the goal active, the host appends a hidden continuation turn and runs again. Queued messages wait until the goal is completed, blocked, interrupted, or failed. Creating a second goal fails until the current goal is cleared.
+
+#### session.resumeGoal
+
+params (required):
+
+```json
+{ "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3" }
+```
+
+changes a blocked goal to active, commits a hidden continuation message, and returns `{ turn }` after the logical goal run settles. Process recovery converts active goals to blocked, so recovery never starts work automatically.
+
+#### session.clearGoal
+
+params (required):
+
+```json
+{ "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3" }
+```
+
+clears the current goal and returns the updated snapshot. When a goal exists, the mutation interrupts active work first, matching other session-resetting mutations. Without a goal it returns `invalid_request` without interrupting active work or cancelling pending messages.
 
 #### session.setReasoning
 
@@ -831,7 +873,7 @@ observed-session changes are broadcast as `session.delta` messages:
 
 ```json
 {
-  "version": 5,
+  "version": 6,
   "type": "session.delta",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "fromRevision": 1,
@@ -855,7 +897,7 @@ observed-session changes are broadcast as `session.delta` messages:
 
 ```json
 {
-  "version": 5,
+  "version": 6,
   "type": "session.delta",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "fromRevision": null,
@@ -868,9 +910,9 @@ observed-session changes are broadcast as `session.delta` messages:
 }
 ```
 
-`snapshot.patch` changes include lifecycle, message, timeline, tool, agent, and facet updates. High-rate assistant streaming uses `message.content.append` after the draft assistant message exists so clients do not receive the full accumulated assistant text on every frame. A content append targets only draft assistant messages and must include non-empty `text` and/or `thinking`; when a thinking block is created, clients insert it before the text block so applying patches reconstructs the canonical assistant content order. Maintenance operations such as reload, rewind, and compaction may use `snapshot.reset` when replacing the complete state is clearer than sending a long patch sequence.
+`snapshot.patch` changes include lifecycle, goal, message, timeline, tool, agent, and facet updates. High-rate assistant streaming uses `message.content.append` after the draft assistant message exists so clients do not receive the full accumulated assistant text on every frame. A content append targets only draft assistant messages and must include non-empty `text` and/or `thinking`; when a thinking block is created, clients insert it before the text block so applying patches reconstructs the canonical assistant content order. Maintenance operations such as reload, rewind, and compaction may use `snapshot.reset` when replacing the complete state is clearer than sending a long patch sequence.
 
-`reason` describes why the transition happened and is for logging, animation, and client policy. Correctness comes from applying the delta. Current reasons are `user-message`, `assistant-stream`, `assistant-message`, `tool-run`, `tool-result`, `notice`, `agent-run`, `maintenance`, `configuration`, and `recovery`.
+`reason` describes why the transition happened and is for logging, animation, and client policy. Correctness comes from applying the delta. Current reasons are `user-message`, `assistant-stream`, `assistant-message`, `tool-run`, `tool-result`, `notice`, `agent-run`, `maintenance`, `configuration`, `goal`, and `recovery`.
 
 notes:
 
@@ -886,7 +928,7 @@ notes:
 
 ```json
 {
-  "version": 5,
+  "version": 6,
   "type": "session.pendingUserMessages",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "state": {
@@ -909,7 +951,7 @@ Pending messages are shared across attached clients and survive client detach wh
 
 ```json
 {
-  "version": 5,
+  "version": 6,
   "type": "session.ephemeral",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "event": {
@@ -940,7 +982,7 @@ error responses use:
 
 ```json
 {
-  "version": 5,
+  "version": 6,
   "type": "response",
   "id": "req-1",
   "ok": false,
@@ -970,14 +1012,14 @@ for lines that cannot produce a valid request id (for example malformed json), `
 `runRpcServer` handles incoming lines concurrently with explicit serialization for mutating transitions. this means:
 
 - multiple requests can be accepted before earlier ones complete
-- `session.record`, `session.setReasoning`, `session.setPersona`, `session.reload`, `session.compact`, `session.rewind`, and `session.interruptSubagent` run through a session-owned mutation queue (arrival order across clients observed to the same live session)
+- `session.record`, `session.clearGoal`, `session.setReasoning`, `session.setPersona`, `session.reload`, `session.compact`, `session.rewind`, and `session.interruptSubagent` run through a session-owned mutation queue (arrival order across clients observed to the same live session)
 - `session.setReasoning` updates settings immediately without interrupting an active turn; the active turn and its steering continuations keep their captured spec, and the new setting applies to the next independently submitted or queued turn
 - `session.rewind` requires no active submit or pending user work and fails with `busy` without interrupting or cancelling anything
-- only one `session.submit` or `session.retry` turn can run at once (`busy` otherwise)
+- only one `session.submit`, `session.retry`, `session.startGoal`, or `session.resumeGoal` turn can run at once (`busy` otherwise)
 - `session.exec` and `session.sample` calls can run concurrently with each other and with normal session work; they never enter the mutation queue, and `session.cancelExec` targets one exec without interrupting the others
 - `session.ephemeral.create`, `session.ephemeral.submit`, and `session.ephemeral.close` manage independent, non-persisted contexts outside the main-session mutation queue; only overlapping submissions to the same ephemeral thread return `busy`
 - `session.queue` can be accepted during active main-session work and runs after the active turn settles
-- `session.steer` can be accepted during an active turn and runs at the next safe boundary after requesting the active turn to stop
+- `session.steer` can be accepted during active model work or between autonomous goal continuations and runs at the next safe boundary before goal work continues
 - `session.cancelPendingMessages` atomically removes pending queue and steering requests without interrupting active work
 - `session.submit` and `session.retry` are rejected with `busy` while a queued/running main-session mutation exists
 - responses and deltas may still interleave

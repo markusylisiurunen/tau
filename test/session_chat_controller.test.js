@@ -70,6 +70,7 @@ function updateSnapshot(snapshot, overrides = {}) {
     sessionId: snapshot.sessionId,
     revision: overrides.revision ?? snapshot.revision,
     lifecycle: overrides.lifecycle ?? snapshot.lifecycle,
+    goal: "goal" in overrides ? overrides.goal : snapshot.goal,
     costTotal: overrides.costTotal ?? snapshot.costTotal,
     catalog: overrides.catalog ?? snapshot.catalog,
     executionEnvironment: snapshot.executionEnvironment,
@@ -312,6 +313,26 @@ class FakeSession {
   }));
   cancelPendingMessages = vi.fn(async () => ({ cancelled: [] }));
   interrupt = vi.fn(async () => ({ interrupted: true, isTurnRunning: false }));
+  startGoal = vi.fn(async (objective) => {
+    this.snapshotValue = updateSnapshot(this.snapshotValue, {
+      revision: this.snapshotValue.revision + 1,
+      goal: { objective, status: "active" },
+    });
+    return {
+      userHistoryEntryId: "goal-user",
+      turn: { status: "completed", stopReason: "stop" },
+    };
+  });
+  resumeGoal = vi.fn(async () => ({
+    turn: { status: "completed", stopReason: "stop" },
+  }));
+  clearGoal = vi.fn(async () => {
+    this.snapshotValue = updateSnapshot(this.snapshotValue, {
+      revision: this.snapshotValue.revision + 1,
+      goal: null,
+    });
+    return this.snapshotValue;
+  });
   setReasoning = vi.fn(async (reasoning) => {
     this.snapshotValue = updateSnapshot(this.snapshotValue, {
       revision: this.snapshotValue.revision + 1,
@@ -2966,6 +2987,48 @@ describe("SessionChatController", () => {
       expect.objectContaining({
         kind: "success",
         text: "session compacted. previous context and last assistant message have been included.",
+      }),
+    );
+  });
+
+  it("routes goal controls through the session protocol and reflects goal status", async () => {
+    const session = new FakeSession();
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "ssh host tau rpc",
+    });
+    controller.start();
+
+    controller.getInputHandlers().onSubmit("/goal Ship the feature");
+    await flush();
+
+    expect(session.startGoal).toHaveBeenCalledWith("Ship the feature");
+    expect(view.status.editor.goalStatus).toBe("active");
+
+    controller.isStreaming = true;
+    controller.getInputHandlers().onSubmit("/goal");
+    await flush();
+    expect(view.systems).toContainEqual(
+      expect.objectContaining({ text: "goal active: Ship the feature" }),
+    );
+
+    controller.getInputHandlers().onSubmit("/goal clear");
+    await flush();
+    expect(session.clearGoal).toHaveBeenCalledOnce();
+    expect(view.status.editor.goalStatus).toBeUndefined();
+
+    controller.getInputHandlers().onSubmit("/goal Start another");
+    controller.getInputHandlers().onSubmit("/goal resume");
+    await flush();
+    expect(session.startGoal).toHaveBeenCalledOnce();
+    expect(session.resumeGoal).not.toHaveBeenCalled();
+    expect(view.systems).toContainEqual(
+      expect.objectContaining({
+        kind: "warn",
+        text: "wait for tau to become idle before running commands",
       }),
     );
   });

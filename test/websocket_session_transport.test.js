@@ -54,6 +54,12 @@ function createHostedSession(sessionId, sessions, options = {}) {
     get isTurnRunning() {
       return running;
     },
+    get canAcceptSteering() {
+      return running;
+    },
+    getGoal() {
+      return null;
+    },
     get sessionId() {
       return sessionId;
     },
@@ -111,6 +117,9 @@ function createHostedSession(sessionId, sessions, options = {}) {
         releaseTurn = undefined;
         pendingTurnResult = { status: "completed", stopReason: "stop" };
       }
+    },
+    async retryTurn() {
+      return await hostedSession.runTurn();
     },
     requestTurnBoundaryStop: vi.fn(() => running),
     cancelTurnBoundaryStop: vi.fn(() => running),

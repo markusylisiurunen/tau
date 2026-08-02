@@ -20,6 +20,7 @@ import {
 import {
   EphemeralThreadBusyError,
   SessionExecBusyError,
+  SessionRetryUnavailableError,
   type TauHostedSession,
   type TauSessionHost,
 } from "./session_host.js";
@@ -257,6 +258,15 @@ export class SessionProtocolHandler {
         case "session.snapshot":
           await this.handleSnapshot(request);
           return;
+        case "session.startGoal":
+          await this.handleStartGoal(request);
+          return;
+        case "session.resumeGoal":
+          await this.handleResumeGoal(request);
+          return;
+        case "session.clearGoal":
+          await this.handleClearGoal(request);
+          return;
         case "session.setReasoning":
           await this.handleSetReasoning(request);
           return;
@@ -464,7 +474,7 @@ export class SessionProtocolHandler {
       if (state.live.interrupting) {
         return { type: "busy" as const };
       }
-      if (state.session.isTurnRunning) {
+      if (state.session.canAcceptSteering) {
         const submission = state.session.steer(request.params.text);
         const pending: SessionProtocolPendingBoundarySubmission = {
           id: randomUUID(),
@@ -968,7 +978,7 @@ export class SessionProtocolHandler {
     requestId: SessionProtocolRequestId,
   ): Promise<void> {
     try {
-      const turnResult = await state.session.runTurn();
+      const turnResult = await state.session.retryTurn();
       await state.session.snapshot();
 
       const result: SessionProtocolResultByMethod["session.retry"] = {
@@ -977,12 +987,17 @@ export class SessionProtocolHandler {
 
       this.sendMessage(createSessionProtocolSuccessResponse(requestId, "session.retry", result));
     } catch (error) {
+      const retryUnavailable = error instanceof SessionRetryUnavailableError;
       this.sendMessage(
         createSessionProtocolErrorResponse(
           requestId,
-          SESSION_PROTOCOL_ERROR_CODES.internalError,
-          "failed to run session turn",
-          { cause: error instanceof Error ? error.message : String(error) },
+          retryUnavailable
+            ? SESSION_PROTOCOL_ERROR_CODES.invalidRequest
+            : SESSION_PROTOCOL_ERROR_CODES.internalError,
+          retryUnavailable ? error.message : "failed to run session turn",
+          retryUnavailable
+            ? undefined
+            : { cause: error instanceof Error ? error.message : String(error) },
         ),
       );
     }
@@ -1120,6 +1135,142 @@ export class SessionProtocolHandler {
         await state.session.snapshot(),
       ),
     );
+  }
+
+  private async handleStartGoal(
+    request: Extract<SessionProtocolRequestMessage, { method: "session.startGoal" }>,
+  ): Promise<void> {
+    await this.handleGoalTurn(request);
+  }
+
+  private async handleResumeGoal(
+    request: Extract<SessionProtocolRequestMessage, { method: "session.resumeGoal" }>,
+  ): Promise<void> {
+    await this.handleGoalTurn(request);
+  }
+
+  private async handleGoalTurn(
+    request: Extract<
+      SessionProtocolRequestMessage,
+      { method: "session.startGoal" | "session.resumeGoal" }
+    >,
+  ): Promise<void> {
+    const state = await this.getSessionState(request.params.sessionId);
+    if (!state) {
+      this.sendSessionNotFound(request.id, request.params.sessionId);
+      return;
+    }
+    if (this.getPendingMutationCount(state) > 0) {
+      this.sendSubmitBusy(state, request.id);
+      return;
+    }
+
+    const started = await this.enqueueMutation(state, () => {
+      if (state.live.activeSubmit || state.session.isTurnRunning) {
+        this.sendSubmitBusy(state, request.id);
+        return undefined;
+      }
+      const promise = this.executeGoalTurn(state, request);
+      const activeSubmit = { requestId: request.id, promise };
+      state.live.activeSubmit = activeSubmit;
+      return { activeSubmit };
+    });
+    if (!started) return;
+
+    try {
+      await started.activeSubmit.promise;
+    } finally {
+      await this.enqueueMutation(state, () => {
+        if (state.live.activeSubmit === started.activeSubmit) {
+          state.live.activeSubmit = undefined;
+        }
+      });
+      this.schedulePendingSubmissionDrain(state);
+    }
+  }
+
+  private async executeGoalTurn(
+    state: SessionProtocolHandlerSessionState,
+    request: Extract<
+      SessionProtocolRequestMessage,
+      { method: "session.startGoal" | "session.resumeGoal" }
+    >,
+  ): Promise<void> {
+    try {
+      if (request.method === "session.startGoal") {
+        const result = await state.session.startGoal(request.params.objective);
+        await state.session.snapshot();
+        this.sendMessage(
+          createSessionProtocolSuccessResponse(request.id, "session.startGoal", result),
+        );
+      } else {
+        const result = await state.session.resumeGoal();
+        await state.session.snapshot();
+        this.sendMessage(
+          createSessionProtocolSuccessResponse(request.id, "session.resumeGoal", result),
+        );
+      }
+    } catch (error) {
+      await this.snapshotAfterFailedSubmit(state);
+      this.sendMessage(
+        createSessionProtocolErrorResponse(
+          request.id,
+          SESSION_PROTOCOL_ERROR_CODES.internalError,
+          "failed to run session goal",
+          { cause: error instanceof Error ? error.message : String(error) },
+        ),
+      );
+    }
+  }
+
+  private async handleClearGoal(
+    request: Extract<SessionProtocolRequestMessage, { method: "session.clearGoal" }>,
+  ): Promise<void> {
+    const state = await this.getSessionState(request.params.sessionId);
+    if (!state) {
+      this.sendSessionNotFound(request.id, request.params.sessionId);
+      return;
+    }
+    if (!state.session.getGoal()) {
+      this.sendMessage(
+        createSessionProtocolErrorResponse(
+          request.id,
+          SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+          "no goal exists",
+        ),
+      );
+      return;
+    }
+
+    await this.runSessionMutation(state, async () => {
+      if (this.closed) {
+        return;
+      }
+      if (state.session.sessionId !== request.params.sessionId) {
+        this.sendSessionNotFound(request.id, request.params.sessionId);
+        return;
+      }
+      if (!state.session.getGoal()) {
+        this.sendMessage(
+          createSessionProtocolErrorResponse(
+            request.id,
+            SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+            "no goal exists",
+          ),
+        );
+        return;
+      }
+
+      await this.interruptAndWaitForActiveSubmit(state);
+      this.rejectPendingBoundarySubmissions(state, "session goal cleared");
+      this.rejectPendingIdleSubmissions(state, "session goal cleared");
+      const snapshot = state.session.getGoal()
+        ? await state.session.clearGoal()
+        : await state.session.snapshot();
+      this.sendMessage(
+        createSessionProtocolSuccessResponse(request.id, "session.clearGoal", snapshot),
+      );
+    });
   }
 
   private async handleSetReasoning(

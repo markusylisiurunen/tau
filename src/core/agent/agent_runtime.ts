@@ -55,6 +55,7 @@ import {
   stripTauUserDisplayText,
   stripTauUserMetadata,
   stripTauUserMetadataFromMessage,
+  type TauUserMetadata,
 } from "../utils/user_metadata.js";
 import type {
   AgentCompactionResult as AgentAutoCompactionResult,
@@ -141,11 +142,15 @@ type ModelSubturnLimit = {
   message: string;
 };
 
-export type AgentTurnResult = {
+export type AgentSubturnResult = {
   aborted: boolean;
   blocked?: AutoCompactionBlockedTurn;
   limitReached?: ModelSubturnLimit;
   finalMessage?: AssistantMessage;
+};
+
+export type AgentTurnResult = AgentSubturnResult & {
+  terminalResult: AgentSubturnResult;
 };
 
 type SteeringAssociation = {
@@ -154,7 +159,7 @@ type SteeringAssociation = {
 };
 
 type SteeringResult = SteeringAssociation & {
-  result: AgentTurnResult;
+  result: AgentSubturnResult;
 };
 
 export type SteeringSubmission = {
@@ -352,6 +357,7 @@ export class AgentRuntime {
   private pendingSteering: Array<{
     id: string;
     text: string;
+    metadata: TauUserMetadata[];
     resolveApplied: (association: SteeringAssociation) => void;
     resolveResult: (result: SteeringResult) => void;
     rejectApplied: (error: Error) => void;
@@ -658,7 +664,7 @@ export class AgentRuntime {
     }
   }
 
-  steer(text: string): SteeringSubmission {
+  steer(text: string, options: { metadata?: readonly TauUserMetadata[] } = {}): SteeringSubmission {
     if (this.status !== "running") {
       throw new Error("cannot steer an idle agent");
     }
@@ -683,6 +689,7 @@ export class AgentRuntime {
     this.pendingSteering.push({
       id,
       text: normalized,
+      metadata: structuredClone([...(options.metadata ?? [])]),
       resolveApplied,
       resolveResult,
       rejectApplied,
@@ -733,7 +740,7 @@ export class AgentRuntime {
 
     const controller = new AbortController();
     this.activeAbortController = controller;
-    let initialResult: AgentTurnResult | undefined;
+    let initialResult: AgentSubturnResult | undefined;
     let associatedSteering: typeof this.pendingSteering = [];
     let turnSpec = this.captureTurnSettings();
 
@@ -745,7 +752,7 @@ export class AgentRuntime {
           historyEntryId: turnSpec.historyEntryId,
         });
         const stream = this.processTurn(controller.signal, turnSpec);
-        let result: AgentTurnResult;
+        let result: AgentSubturnResult;
         try {
           while (true) {
             const next = await stream.next();
@@ -795,13 +802,16 @@ export class AgentRuntime {
           if (this.pendingSteering.length > 0) {
             this.rejectPendingSteering(new Error("steering was not applied before the turn ended"));
           }
-          return initialResult;
+          return { ...initialResult, terminalResult: result };
         }
 
         associatedSteering = this.pendingSteering.splice(0);
         this.stopAtBoundaryRequested = false;
         await this.commitUserTextWithModelNotice(
-          formatSteeringUserMessage(associatedSteering.map((item) => item.text)),
+          formatSteeringUserMessage(
+            associatedSteering.map((item) => item.text),
+            associatedSteering.flatMap((item) => item.metadata),
+          ),
           turnSpec.modelNotice,
         );
         turnSpec = this.continueTurnSettings(turnSpec);
@@ -1088,7 +1098,7 @@ export class AgentRuntime {
   private async *processTurn(
     signal: AbortSignal,
     turnSettings: AgentTurnSpec,
-  ): AsyncGenerator<AgentEvent, AgentTurnResult, void> {
+  ): AsyncGenerator<AgentEvent, AgentSubturnResult, void> {
     let subturns = 0;
     let needsAnotherSubturn = false;
     let lastFinalMessage: AssistantMessage | undefined;
@@ -1153,7 +1163,7 @@ export class AgentRuntime {
   private async *runAutoCompactionIfNeeded(
     signal: AbortSignal,
     turnSettings: AgentTurnSpec,
-  ): AsyncGenerator<AgentEvent, AgentTurnResult, void> {
+  ): AsyncGenerator<AgentEvent, AgentSubturnResult, void> {
     if (!this.shouldRunAutoCompaction(turnSettings)) {
       return { aborted: signal.aborted };
     }
@@ -1249,8 +1259,7 @@ export class AgentRuntime {
     });
     const compactionMessage = buildCompactionUserMessage({ summary: compactionSummary });
     const retainedMessageCount = preparation.retainedEntries.length;
-    const textWithContext = this.prependCompactionContext(compactionMessage);
-    const textWithMetadata = prependTauUserMetadata(textWithContext, [
+    const textWithMetadata = prependTauUserMetadata(compactionMessage, [
       {
         type: "auto-compaction",
         version: 1,
@@ -1275,6 +1284,7 @@ export class AgentRuntime {
         cutType: preparation.cutType,
         now: this.clock.now(),
         archive,
+        systemMessages: this.getCompactionContinuationSystemMessages?.() ?? [],
       }),
     };
 

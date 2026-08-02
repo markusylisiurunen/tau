@@ -64,7 +64,7 @@ The protocol replaces `event` and `session_update` with one observed-session mes
 
 ```ts
 type SessionDeltaMessage = {
-  version: 5;
+  version: 6;
   type: "session.delta";
   sessionId: string;
   fromRevision: number | null;
@@ -87,6 +87,7 @@ type SessionDeltaReason =
   | "agent-run"
   | "maintenance"
   | "configuration"
+  | "goal"
   | "recovery";
 
 type SessionDelta =
@@ -126,6 +127,7 @@ type SessionSnapshot = {
   };
 
   lifecycle: "idle" | "running";
+  goal: SessionGoal | null;
   settings: SessionSettingsSnapshot;
   bootstrap: SessionBootstrapSnapshot;
   catalog: SessionContentCatalogSnapshot;
@@ -140,6 +142,13 @@ type SessionSnapshot = {
 ```
 
 `agentState.revision` is the durable conversation revision and is independent of the protocol snapshot revision. The context epoch and optional provider usage checkpoint let recovery preserve automatic-compaction accounting when the execution-ready agent spec is unchanged.
+
+```ts
+type SessionGoal = {
+  objective: string;
+  status: "active" | "blocked";
+};
+```
 
 ### settings, bootstrap, and catalog
 
@@ -383,6 +392,7 @@ Patch changes are intentionally small and regular:
 ```ts
 type SessionChange =
   | { type: "lifecycle.set"; lifecycle: SessionSnapshot["lifecycle"] }
+  | { type: "goal.set"; goal: SessionGoal | null }
   | {
       type: "message.append";
       message: SessionMessage;

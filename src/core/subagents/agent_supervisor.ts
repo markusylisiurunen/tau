@@ -286,7 +286,10 @@ export class AgentSupervisor {
     record.completion = this.emit({ type: eventType, state: this.toSnapshot(record) })
       .then(async () => {
         if (record.run.interruptRequested) {
-          return { aborted: true } satisfies AgentTurnResult;
+          return {
+            aborted: true,
+            terminalResult: { aborted: true },
+          } satisfies AgentTurnResult;
         }
         return await record.runtime.submit(prompt);
       })

@@ -8,6 +8,11 @@ import {
   type ToolExecutionContext,
   type ToolExecutionOutcome,
 } from "../core/tools/registry.js";
+import {
+  TOOL_NAME_CREATE_GOAL,
+  TOOL_NAME_GET_GOAL,
+  TOOL_NAME_UPDATE_GOAL,
+} from "../core/tools/tool_names.js";
 import { formatTokenEstimate } from "../core/utils/token.js";
 import { buildHeadTailPreviewLines } from "../core/utils/tool_preview.js";
 import { formatBytes } from "../core/utils/truncate.js";
@@ -35,6 +40,9 @@ const HOST_TOOL_NAMES = new Set([
   "interrupt_agent",
   "web",
   "nook",
+  TOOL_NAME_GET_GOAL,
+  TOOL_NAME_CREATE_GOAL,
+  TOOL_NAME_UPDATE_GOAL,
 ]);
 
 export type ClientToolExecutionOutcome = (message: SessionProtocolClientToolCallMessage) => void;

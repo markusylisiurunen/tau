@@ -23,6 +23,7 @@ import type {
   SessionProtocolReloadResult,
   SessionProtocolRequestId,
   SessionProtocolResolvePromptResult,
+  SessionProtocolResumeGoalResult,
   SessionProtocolRetryResult,
   SessionProtocolRewindResult,
   SessionProtocolSampleParams,
@@ -30,6 +31,7 @@ import type {
   SessionProtocolSessionSummary,
   SessionProtocolSettingsUpdateResult,
   SessionProtocolSnapshot,
+  SessionProtocolStartGoalResult,
   SessionProtocolSteerResult,
   SessionProtocolSubmitResult,
   SessionProtocolTurnOutcome,
@@ -56,6 +58,9 @@ export type TauSdkSessionRecordResult = SessionProtocolRecordResult;
 export type TauSdkSessionInterruptResult = SessionProtocolInterruptResult;
 export type TauSdkSessionExecResult = SessionProtocolExecResult;
 export type TauSdkSessionSnapshotResult = SessionProtocolSnapshot;
+export type TauSdkSessionStartGoalResult = SessionProtocolStartGoalResult;
+export type TauSdkSessionResumeGoalResult = SessionProtocolResumeGoalResult;
+export type TauSdkSessionClearGoalResult = SessionProtocolSnapshot;
 export type TauSdkSessionSetReasoningResult = SessionProtocolSettingsUpdateResult;
 export type TauSdkSessionSetPersonaResult = SessionProtocolSnapshot;
 export type TauSdkSessionCompactResult = SessionProtocolCompactResult;
@@ -146,6 +151,9 @@ export type TauSdkSession = {
   sample(input: TauSdkSessionSampleInput): Promise<TauSdkSessionSampleResult>;
   interrupt(): Promise<TauSdkSessionInterruptResult>;
   snapshot(): Promise<TauSdkSessionSnapshotResult>;
+  startGoal(objective: string): Promise<TauSdkSessionStartGoalResult>;
+  resumeGoal(): Promise<TauSdkSessionResumeGoalResult>;
+  clearGoal(): Promise<TauSdkSessionClearGoalResult>;
   setReasoning(
     reasoning: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max",
   ): Promise<TauSdkSessionSetReasoningResult>;

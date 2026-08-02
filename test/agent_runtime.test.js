@@ -668,6 +668,10 @@ describe("AgentRuntime", () => {
     expect(result).toEqual({
       aborted: false,
       blocked: { reason: "auto-compaction-failed", message: "summary unavailable" },
+      terminalResult: {
+        aborted: false,
+        blocked: { reason: "auto-compaction-failed", message: "summary unavailable" },
+      },
     });
     expect(events).toContainEqual({ type: "compaction_start", reason: "threshold" });
     expect(events).toContainEqual({
@@ -772,10 +776,12 @@ describe("AgentRuntime", () => {
     ]);
     expect(archiveRequest.historyEntries.at(-1).message.content[0].text).toBe("second request");
 
-    const continuationContext = JSON.stringify(streamModel.mock.calls[2][0]);
-    expect(continuationContext).toContain(
-      "<active-subagents>\\n- child-1: running repository scan\\n</active-subagents>",
-    );
+    const continuationMessages = streamModel.mock.calls[2][0].messages;
+    const continuationContext = JSON.stringify(continuationMessages);
+    const activeSubagentContext =
+      "<active-subagents>\\n- child-1: running repository scan\\n</active-subagents>";
+    expect(JSON.stringify(continuationMessages.slice(0, -1))).not.toContain(activeSubagentContext);
+    expect(JSON.stringify(continuationMessages.at(-1))).toContain(activeSubagentContext);
     expect(continuationContext).toContain("/tmp/tau-auto-compaction-agent/000004.txt");
     expect(continuationContext).toContain("/tmp/tau-auto-compaction-agent/000004.json");
     expect(continuationContext).toContain("Earlier numbered pairs in the same directory");
@@ -1041,6 +1047,7 @@ describe("AgentRuntime", () => {
 
     expect(firstAssociation).toEqual(secondAssociation);
     expect(initialResult.finalMessage).toBe(toolMessage);
+    expect(initialResult.terminalResult.finalMessage.content[0].text).toBe("steered");
     expect(firstAssociation.result.finalMessage.content[0].text).toBe("steered");
     expect(models).toEqual([firstPersona.model.id, firstPersona.model.id]);
     expect(contexts[1].systemPrompt).toBe("system");

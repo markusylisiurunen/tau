@@ -2,6 +2,7 @@ import type { CancelledSteeringSubmission } from "../core/agent/agent_runtime.js
 import type {
   SessionProtocolAutocompletePathsParams,
   SessionProtocolAutocompletePathsResult,
+  SessionProtocolClearGoalResult,
   SessionProtocolClientToolCallMessage,
   SessionProtocolClientToolCancelMessage,
   SessionProtocolClientToolDefinition,
@@ -18,12 +19,14 @@ import type {
   SessionProtocolEphemeralSubmitResult,
   SessionProtocolExecParams,
   SessionProtocolExecResult,
+  SessionProtocolGoal,
   SessionProtocolInterruptSubagentResult,
   SessionProtocolRecordParams,
   SessionProtocolRecordResult,
   SessionProtocolReloadResult,
   SessionProtocolResolvePromptParams,
   SessionProtocolResolvePromptResult,
+  SessionProtocolResumeGoalResult,
   SessionProtocolRewindParams,
   SessionProtocolRewindResult,
   SessionProtocolSampleParams,
@@ -33,6 +36,8 @@ import type {
   SessionProtocolSetReasoningParams,
   SessionProtocolSettingsUpdateResult,
   SessionProtocolSnapshot,
+  SessionProtocolStartGoalParams,
+  SessionProtocolStartGoalResult,
   SessionProtocolTurnOutcome,
 } from "../protocol/session_protocol.js";
 
@@ -44,16 +49,21 @@ export class SessionExecBusyError extends Error {
   }
 }
 
+export class SessionRetryUnavailableError extends Error {}
+
 export type TauHostedSession = {
   readonly sessionId: string;
   readonly isDisposed?: boolean;
   readonly isTurnRunning: boolean;
+  readonly canAcceptSteering: boolean;
+  getGoal(): SessionProtocolGoal | null;
   onDelta(handler: (delta: SessionProtocolDeltaMessage) => void): () => void;
   onEphemeral(handler: (message: SessionProtocolEphemeralMessage) => void): () => void;
   record(
     options: Omit<SessionProtocolRecordParams, "sessionId">,
   ): Promise<SessionProtocolRecordResult>;
   runTurn(): Promise<SessionProtocolTurnOutcome>;
+  retryTurn(): Promise<SessionProtocolTurnOutcome>;
   interruptTurn(): boolean;
   interruptActiveWork(): boolean;
   waitForActiveWork(): Promise<void>;
@@ -79,6 +89,11 @@ export type TauHostedSession = {
       signal?: AbortSignal;
     },
   ): Promise<SessionProtocolSampleResult>;
+  startGoal(
+    objective: SessionProtocolStartGoalParams["objective"],
+  ): Promise<SessionProtocolStartGoalResult>;
+  resumeGoal(): Promise<SessionProtocolResumeGoalResult>;
+  clearGoal(): Promise<SessionProtocolClearGoalResult>;
   setReasoning(
     reasoning: SessionProtocolSetReasoningParams["reasoning"],
   ): Promise<SessionProtocolSettingsUpdateResult>;

@@ -37,6 +37,11 @@ export type TauToolRecoveryUserMetadata = {
   version: 1;
 };
 
+export type TauGoalTurnUserMetadata = {
+  type: "goal-turn";
+  version: 1;
+};
+
 export type TauSummaryCompactionUserMetadata =
   | TauCompactionUserMetadata
   | TauAutoCompactionUserMetadata;
@@ -45,7 +50,8 @@ export type TauUserMetadata =
   | TauCompactionUserMetadata
   | TauAutoCompactionUserMetadata
   | TauAutoCompactionContinuationUserMetadata
-  | TauToolRecoveryUserMetadata;
+  | TauToolRecoveryUserMetadata
+  | TauGoalTurnUserMetadata;
 
 export type TauUserMetadataSplit = {
   metadata: TauUserMetadata[];
@@ -102,6 +108,8 @@ function parseMetadataRecord(value: unknown): TauUserMetadata {
       return parseAutoCompactionContinuationMetadataRecord(record);
     case "tool-recovery":
       return parseToolRecoveryMetadataRecord(record);
+    case "goal-turn":
+      return parseGoalTurnMetadataRecord(record);
     default:
       throw new Error("invalid tau user metadata: unknown record type");
   }
@@ -212,6 +220,16 @@ function parseToolRecoveryMetadataRecord(
   }
   return {
     type: "tool-recovery",
+    version: 1,
+  };
+}
+
+function parseGoalTurnMetadataRecord(record: Record<string, unknown>): TauGoalTurnUserMetadata {
+  if (record.version !== 1) {
+    throw new Error("invalid tau user metadata: unsupported goal turn metadata version");
+  }
+  return {
+    type: "goal-turn",
     version: 1,
   };
 }
@@ -407,6 +425,10 @@ export function hasToolRecoveryMetadata(message: Message): boolean {
   return getTauUserMetadataFromMessage(message).some(
     (metadata) => metadata.type === "tool-recovery",
   );
+}
+
+export function hasGoalTurnMetadata(message: Message): boolean {
+  return getTauUserMetadataFromMessage(message).some((metadata) => metadata.type === "goal-turn");
 }
 
 export function stripTauUserMetadataFromMessage(message: Message): Message {

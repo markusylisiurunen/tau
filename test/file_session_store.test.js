@@ -91,6 +91,25 @@ describe("FileSessionStore", () => {
     });
   });
 
+  it("adds the required null goal when migrating version 2 sessions", async () => {
+    await withTempStore(async (store, directory) => {
+      const snapshot = createSnapshot("session-1", "hello");
+      const { goal: _goal, ...versionTwoSnapshot } = snapshot;
+      await mkdir(directory, { recursive: true });
+      await writeFile(
+        join(directory, "c2Vzc2lvbi0x.json"),
+        JSON.stringify({
+          format: STORED_SESSION_DOCUMENT_FORMAT,
+          version: 2,
+          snapshot: versionTwoSnapshot,
+        }),
+        "utf8",
+      );
+
+      await expect(store.loadSession("session-1")).resolves.toEqual(snapshot);
+    });
+  });
+
   it("migrates unversioned snapshots and removes legacy pruning presentation", async () => {
     await withTempStore(async (store, directory) => {
       const toolCall = {

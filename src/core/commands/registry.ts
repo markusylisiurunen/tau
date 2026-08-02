@@ -10,6 +10,8 @@ export type Command = (
   | { type: "new" }
   | { type: "rewind" }
   | { type: "diff"; argsText: string }
+  | { type: "goal"; action: "show" | "resume" | "clear" }
+  | { type: "goal"; action: "start"; objective: string }
   | { type: "compactSummaryOnly" }
   | { type: "compactSummaryAndLast" }
   | { type: "reload" }
@@ -36,7 +38,7 @@ interface CommandDefinition<Ctx, T extends Command = Command> extends CommandInf
   parse: (raw: string) => T | null;
   run: (ctx: Ctx, command: T) => Promise<void> | void;
   hidden?: boolean;
-  allowDuringStreaming?: boolean;
+  allowDuringStreaming?: boolean | ((command: T) => boolean);
 }
 
 export interface CommandDispatchContext {
@@ -47,6 +49,9 @@ export interface CommandDispatchContext {
   newSession: () => Promise<void>;
   rewind: () => void;
   diff: (argsText: string) => Promise<void> | void;
+  goal: (
+    action: { type: "show" | "resume" | "clear" } | { type: "start"; objective: string },
+  ) => Promise<void> | void;
   compactSummaryOnly: (extra?: string) => Promise<void>;
   compactSummaryAndLast: (extra?: string) => Promise<void>;
   reload: () => Promise<void>;
@@ -110,8 +115,8 @@ export class CommandRegistry<Ctx = unknown> {
   }
 
   allowsDuringStreaming(command: Command): boolean {
-    const handler = this.byId.get(command.type);
-    return Boolean(handler?.allowDuringStreaming);
+    const permission = this.byId.get(command.type)?.allowDuringStreaming;
+    return typeof permission === "function" ? permission(command) : Boolean(permission);
   }
 
   buildHelpText(options: HelpTextOptions = {}): string {
@@ -247,6 +252,31 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
       return { type: "diff", argsText: extra ?? "", extra };
     },
     run: (ctx, command) => ctx.diff(command.argsText),
+  });
+
+  registry.register({
+    id: "goal",
+    usage: "/goal [objective|resume|clear]",
+    description: "show, start, resume, or clear a session goal",
+    autocompleteDescription: "manage the persistent session goal",
+    argument: "none",
+    allowDuringStreaming: (command: Extract<Command, { type: "goal" }>) =>
+      command.action === "show" || command.action === "clear",
+    parse: (raw) => {
+      const { command, extra } = splitCommandInput(raw);
+      if (command !== "/goal") return null;
+      if (!extra) return { type: "goal", action: "show" };
+      if (extra === "resume" || extra === "clear") {
+        return { type: "goal", action: extra };
+      }
+      return { type: "goal", action: "start", objective: extra };
+    },
+    run: (ctx, command) =>
+      ctx.goal(
+        command.action === "start"
+          ? { type: "start", objective: command.objective }
+          : { type: command.action },
+      ),
   });
 
   registry.register({

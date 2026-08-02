@@ -2675,7 +2675,7 @@ class TelegramAdapterImpl {
       this.notifySession(
         event.sessionId,
         [
-          `provisioning failed for your ${formatTelegramSessionName(event.sessionId, event.targetProjectId)}.`,
+          `provisioning ${event.targetProjectId} failed in your ${formatTelegramSessionName(event.sessionId, event.projectId)}.`,
           truncateText(event.diagnostic, MAX_PROVISION_DIAGNOSTIC_CHARS),
           "the session remains available.",
         ].join("\n"),

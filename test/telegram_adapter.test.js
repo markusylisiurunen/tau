@@ -324,7 +324,7 @@ describe("telegram adapter", () => {
     }
   });
 
-  it("reports composite project status with model, reasoning, context, and cost", async () => {
+  it("reports composite project status and provision failures", async () => {
     const apiHarness = createApiHarness([
       [
         {
@@ -373,6 +373,21 @@ describe("telegram adapter", () => {
       );
       expect(apiHarness.sendMessages.map((entry) => entry.text)).toContain(
         "your platform (alpha, beta) session s1 is waiting for input. it is using Claude Opus 4.6 with medium reasoning. context usage is 6.0% of 200k tokens. cumulative cost is $0.12.",
+      );
+
+      managerHarness.manager.emit({
+        type: "session-provision-failed",
+        sessionId: "s1",
+        projectId: "platform",
+        targetProjectId: "alpha",
+        diagnostic: "provision exited with code 17\ndependencies failed",
+      });
+      await waitFor(() =>
+        apiHarness.sendMessages.some(
+          (entry) =>
+            entry.text ===
+            "provisioning alpha failed in your platform session s1.\nprovision exited with code 17\ndependencies failed\nthe session remains available.",
+        ),
       );
     } finally {
       await adapter.close();
@@ -1128,7 +1143,7 @@ describe("telegram adapter", () => {
         apiHarness.sendMessages.some(
           (entry) =>
             entry.text ===
-            "provisioning failed for your demo session s1.\nprovision exited with code 17\ndependencies failed\nthe session remains available.",
+            "provisioning demo failed in your demo session s1.\nprovision exited with code 17\ndependencies failed\nthe session remains available.",
         ),
       );
 

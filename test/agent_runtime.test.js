@@ -347,8 +347,12 @@ describe("AgentRuntime", () => {
       ),
     ]);
 
-    await expect(runtime.submit("inspect")).rejects.toThrow("stream failed");
+    const result = await runtime.submit("inspect");
 
+    expect(result.finalMessage).toMatchObject({
+      stopReason: "error",
+      errorMessage: "stream failed",
+    });
     const provisional = events.filter((event) => event.type === "tool_call_streaming");
     expect(provisional).toEqual([
       expect.objectContaining({
@@ -369,6 +373,9 @@ describe("AgentRuntime", () => {
     }
     expect(events).toContainEqual(
       expect.objectContaining({ type: "tool_call_discarded", toolCallId: "new-call" }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "turn_finished", outcome: "failed" }),
     );
   });
 
@@ -875,6 +882,66 @@ describe("AgentRuntime", () => {
     await expect(turn).rejects.toThrow("sink failed");
     await expect(steering.applied).rejects.toThrow("sink failed");
     await expect(steering.result).rejects.toThrow("sink failed");
+  });
+
+  it("commits a provider failure after steering is applied and accepts the next turn", async () => {
+    const firstRun = deferred();
+    const { runtime, persona, events } = createRuntime({
+      retryPolicy: { maxRetries: 1, delayMs: 0 },
+    });
+    const providerError = createAssistant(persona, "", {
+      stopReason: "error",
+      errorMessage: "OpenAI rate limit exceeded",
+    });
+    const streamModel = setStreams(runtime, [
+      {
+        async *[Symbol.asyncIterator]() {
+          await firstRun.promise;
+          yield* [];
+        },
+        async result() {
+          return createAssistant(persona, "first response");
+        },
+      },
+      createStream([], undefined, providerError),
+      createStream([], undefined, providerError),
+      createStream([], createAssistant(persona, "recovered response")),
+    ]);
+
+    const turn = runtime.submit("original");
+    await vi.waitFor(() => expect(runtime.status).toBe("running"));
+    const steering = runtime.steer("change direction");
+    firstRun.resolve();
+
+    await expect(steering.applied).resolves.toEqual(
+      expect.objectContaining({ historyEntryId: expect.any(String) }),
+    );
+    const association = await steering.result;
+    await turn;
+
+    expect(association.result.finalMessage).toMatchObject({
+      stopReason: "error",
+      errorMessage: "OpenAI rate limit exceeded",
+    });
+    expect(runtime.rawHistory.at(-1)).toMatchObject({
+      role: "assistant",
+      stopReason: "error",
+      errorMessage: "OpenAI rate limit exceeded",
+    });
+    expect(events.filter((event) => event.type === "turn_finished").at(-1)).toMatchObject({
+      outcome: "failed",
+      historyEntryId: association.historyEntryId,
+    });
+    expect(runtime.spec.model.noteProviderError).toHaveBeenCalledWith({
+      sessionId: runtime.agentIdValue,
+      error: expect.objectContaining({ message: "OpenAI rate limit exceeded" }),
+    });
+    expect(events).toContainEqual({ type: "model_retry_scheduled", attempt: 1, delayMs: 0 });
+
+    await expect(runtime.submit("try again")).resolves.toMatchObject({
+      finalMessage: expect.objectContaining({ stopReason: "stop" }),
+    });
+    expect(streamModel).toHaveBeenCalledTimes(4);
   });
 
   it("batches steering at a boundary and retains the active turn spec", async () => {

@@ -89,6 +89,22 @@ type RunModelSubturnOptions = {
   retry?: RetryOptions;
 };
 
+export class ProviderStreamError extends Error {
+  constructor(readonly providerError: unknown) {
+    super(
+      providerError instanceof Error
+        ? providerError.message
+        : providerError &&
+            typeof providerError === "object" &&
+            "errorMessage" in providerError &&
+            typeof providerError.errorMessage === "string"
+          ? providerError.errorMessage
+          : String(providerError),
+    );
+    this.name = "ProviderStreamError";
+  }
+}
+
 type StreamingToolCallIdentity = {
   toolCallId: string;
   toolName: string;
@@ -117,7 +133,12 @@ export async function* runModelSubturn(
   const runAttempt = async function* (
     attemptOptions: TauStreamOptions,
   ): AsyncGenerator<ModelRunnerEvent, AssistantMessage, void> {
-    const stream = streamModel(context, attemptOptions);
+    let stream: AssistantMessageEventStream;
+    try {
+      stream = streamModel(context, attemptOptions);
+    } catch (error) {
+      throw new ProviderStreamError(error);
+    }
     const accumulator = emitPartials ? new MessageAccumulator() : undefined;
     let lastPartialEmittedAt = 0;
     let hasPendingPartial = false;
@@ -195,8 +216,13 @@ export async function* runModelSubturn(
     };
 
     const streamIterator = stream[Symbol.asyncIterator]();
-    const readStreamEvent = () =>
-      streamIterator.next().then((result) => ({ type: "stream_event" as const, result }));
+    const readStreamEvent = async () => {
+      try {
+        return { type: "stream_event" as const, result: await streamIterator.next() };
+      } catch (error) {
+        throw new ProviderStreamError(error);
+      }
+    };
     let pendingStreamEvent: ReturnType<typeof readStreamEvent> | undefined;
 
     try {
@@ -335,7 +361,11 @@ export async function* runModelSubturn(
     for (const discarded of discardStreamingToolCalls()) {
       yield discarded;
     }
-    return await stream.result();
+    try {
+      return await stream.result();
+    } catch (error) {
+      throw new ProviderStreamError(error);
+    }
   };
 
   const retryNotice = retry?.notice
@@ -395,9 +425,10 @@ export async function* runModelSubturn(
       return result;
     } catch (error) {
       if (
+        error instanceof ProviderStreamError &&
         !hasEmittedCompletedToolCall &&
         attempt < maxRetries &&
-        retry?.shouldRetryAfterError?.({ error, model })
+        retry?.shouldRetryAfterError?.({ error: error.providerError, model })
       ) {
         attempt += 1;
         retry?.onRetry?.();

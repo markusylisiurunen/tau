@@ -613,6 +613,15 @@ describe("telegram session manager", () => {
         }),
       }),
     ]);
+    expect(manager.getSession(created.id)?.error).toBeUndefined();
+    expect(clientHarness.client.close).not.toHaveBeenCalled();
+
+    clientHarness.session.submit.mockResolvedValueOnce({
+      userHistoryEntryId: "history-next",
+      turn: { status: "completed", stopReason: "stop" },
+    });
+    await manager.sendMessage(created.id, "try again");
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
   });
 
   it("returns from sendMessage immediately and rejects concurrent submits", async () => {

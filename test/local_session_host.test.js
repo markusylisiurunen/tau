@@ -678,7 +678,7 @@ describe("LocalSessionHost", () => {
     expect(executionEnvironment.dispose).toHaveBeenCalledTimes(1);
   });
 
-  it("persists the same interrupted terminal state published to observers", async () => {
+  it("persists the same provider-failed terminal state published to observers", async () => {
     const store = new MemorySessionStore();
     const host = createHost(store);
     const hostedSession = await host.createSession(localCreateInput);
@@ -704,7 +704,11 @@ describe("LocalSessionHost", () => {
     });
 
     await hostedSession.record({ text: "fail after streaming" });
-    await expect(hostedSession.runTurn()).rejects.toBe(streamError);
+    await expect(hostedSession.runTurn()).resolves.toEqual({
+      status: "failed",
+      stopReason: "error",
+      errorMessage: "stream failed",
+    });
 
     const persistedSnapshot = await store.loadSession(hostedSession.sessionId);
     const observedAssistant = observedSnapshot.messages.find(
@@ -715,7 +719,15 @@ describe("LocalSessionHost", () => {
     );
     expect(observedSnapshot.lifecycle).toBe("idle");
     expect(persistedSnapshot?.lifecycle).toBe("idle");
-    expect(observedAssistant).toMatchObject({ state: "interrupted", modelVisible: true });
+    expect(observedAssistant).toMatchObject({
+      state: "committed",
+      modelVisible: true,
+      message: {
+        stopReason: "error",
+        errorMessage: "stream failed",
+        content: [{ type: "text", text: "partial response" }],
+      },
+    });
     expect(persistedAssistant).toEqual(observedAssistant);
 
     await host.shutdown();

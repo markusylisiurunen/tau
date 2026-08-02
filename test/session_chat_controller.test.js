@@ -3947,6 +3947,7 @@ describe("SessionChatController", () => {
           message: buildAutoCompactionContinuationMessage({
             cutType: "turn-boundary",
             now: 1,
+            archive: undefined,
           }),
         },
         {

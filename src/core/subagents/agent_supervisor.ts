@@ -9,6 +9,7 @@ import type { AgentEvent } from "../agent/events.js";
 import type { Config } from "../config/index.js";
 import { resolveAgentModel } from "../runtime/agent_model.js";
 import { type CoreDeps, createDefaultCoreDeps } from "../runtime/deps.js";
+import { createAutoCompactionArchiver } from "../session/auto_compaction_archive.js";
 import { ToolCatalog } from "../tools/catalog.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
 import type { Persona, ReasoningEffort } from "../types.js";
@@ -185,6 +186,7 @@ export class AgentSupervisor {
       }),
       eventSink: async (event) => await this.recordAgentEvent(id, event),
       clock: this.deps.clock,
+      archiveAutoCompaction: createAutoCompactionArchiver(options.backend),
     });
     const createdAt = this.deps.clock.now();
     const record: SubagentRecord = {

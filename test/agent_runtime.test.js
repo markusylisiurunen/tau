@@ -652,6 +652,7 @@ describe("AgentRuntime", () => {
     const streamModel = setStreams(runtime, [
       createStream([], first),
       createStream([], undefined, new Error("summary unavailable")),
+      createStream([], undefined, new Error("summary unavailable")),
     ]);
 
     await runtime.submit("first request");
@@ -669,7 +670,47 @@ describe("AgentRuntime", () => {
       errorMessage: "summary unavailable",
     });
     expect(runtime.rawHistory.at(-1).content[0].text).toBe("second request");
-    expect(streamModel).toHaveBeenCalledTimes(2);
+    expect(streamModel).toHaveBeenCalledTimes(3);
+  });
+
+  it("retries an automatic compaction summary once", async () => {
+    const model = { ...personas[0].model, contextWindow: 100 };
+    const persona = createPersona({ model });
+    const { runtime } = createRuntime({
+      persona,
+      config: {
+        autoCompact: { enabled: true, reserveTokens: 10, keepRecentTokens: 20 },
+      },
+    });
+    const first = createAssistant(persona, "first response", {
+      usage: {
+        input: 89,
+        output: 2,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 91,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+    });
+    const streamModel = setStreams(runtime, [
+      createStream([], first),
+      createStream([], undefined, new Error("temporary summary failure")),
+      createStream(
+        [],
+        createAssistant(
+          persona,
+          "summary\n\n<preserved-user-message-ids>\n[]\n</preserved-user-message-ids>",
+        ),
+      ),
+      createStream([], createAssistant(persona, "after compaction")),
+    ]);
+
+    await runtime.submit("first request");
+    const result = await runtime.submit("second request");
+
+    expect(result.blocked).toBeUndefined();
+    expect(result.finalMessage.content[0].text).toBe("after compaction");
+    expect(streamModel).toHaveBeenCalledTimes(4);
   });
 
   it("archives conversation context and injects archive guidance after automatic compaction", async () => {
@@ -731,6 +772,7 @@ describe("AgentRuntime", () => {
     expect(continuationContext).toContain("/tmp/tau-auto-compaction-agent/000004.txt");
     expect(continuationContext).toContain("/tmp/tau-auto-compaction-agent/000004.json");
     expect(continuationContext).toContain("Earlier numbered pairs in the same directory");
+    expect(continuationContext).toContain("summary mentions a history entry id");
     expect(continuationContext).toContain("low-effort subagent");
   });
 
@@ -807,7 +849,7 @@ describe("AgentRuntime", () => {
     expect(streamModel.mock.calls[1][1]).toEqual(
       expect.objectContaining({
         temperature: 0.25,
-        reasoning: "high",
+        reasoning: "medium",
         sessionId: expect.stringMatching(/^summary-/),
       }),
     );

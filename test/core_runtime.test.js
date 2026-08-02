@@ -18,6 +18,7 @@ import { composeSessionPrompts } from "../dist/core/runtime/session_prompt_compo
 import { createAutoCompactionArchiver } from "../dist/core/session/auto_compaction_archive.js";
 import {
   buildAutoCompactionContinuationMessage,
+  buildAutoCompactionPrompt,
   buildSessionCompactionPrompt,
   parseCompactionSummaryResponse,
   prepareAutoCompaction,
@@ -768,6 +769,7 @@ describe("compaction context message", () => {
     const entries = historyEntries([
       userMessage("keep this standing constraint"),
       assistantMessage("done"),
+      toolResultMessage("verification output"),
       userMessage("ignore this resolved aside"),
     ]);
     const preparation = prepareSessionCompaction(entries, {
@@ -775,11 +777,14 @@ describe("compaction context message", () => {
     });
 
     const prompt = buildSessionCompactionPrompt({ preparation });
+    expect(prompt).toContain("Use this structure as a strong default, not a rigid form");
     expect(prompt).toContain("<user-message-candidates>");
     expect(prompt).toContain('"id": "entry-0"');
-    expect(prompt).toContain('"id": "entry-2"');
+    expect(prompt).toContain('"id": "entry-3"');
     expect(prompt).toContain('[User id="entry-0"]:');
-    expect(prompt).toContain('[User id="entry-2"]:');
+    expect(prompt).toContain('[Assistant id="entry-1"]:');
+    expect(prompt).toContain('[Tool result id="entry-2"]:');
+    expect(prompt).toContain('[User id="entry-3"]:');
     expect(prompt).toContain("<preserved-user-message-ids>");
 
     const parsed = parseCompactionSummaryResponse({
@@ -936,6 +941,48 @@ describe("compaction context message", () => {
     const cut = selectAutoCompactionCut(entries, { startIndex: 0, keepRecentTokens: 1000 });
 
     expect(cut).toEqual({ startIndex: 1, cutType: "split-turn" });
+  });
+
+  it("bounds retained tool result text and preserves the original entry", () => {
+    const fullOutput = `large output ${"x".repeat(60_000)}`;
+    const entries = historyEntries([
+      userMessage("latest request"),
+      assistantMessage("tool call"),
+      toolResultMessage(fullOutput),
+    ]);
+
+    const preparation = prepareAutoCompaction(entries, {
+      keepRecentTokens: 1_000,
+      systemPrompt: "project instructions",
+    });
+
+    const retainedToolResult = preparation.retainedEntries[1].message;
+    expect(retainedToolResult.role).toBe("toolResult");
+    expect(retainedToolResult.content[0].text).toContain("tokens truncated");
+    expect(retainedToolResult.content[0].text.length).toBeLessThan(fullOutput.length);
+    expect(entries[2].message.content[0].text).toBe(fullOutput);
+  });
+
+  it("adds a dedicated split-turn handoff to the compaction prompt", () => {
+    const entries = historyEntries([
+      userMessage("latest request"),
+      assistantMessage("tool call"),
+      toolResultMessage(`large output ${"x".repeat(15_000)}`),
+    ]);
+    const preparation = prepareAutoCompaction(entries, {
+      keepRecentTokens: 1_000,
+      systemPrompt: "project instructions",
+    });
+
+    const prompt = buildAutoCompactionPrompt(preparation);
+
+    expect(prompt).toContain('Add a "## Current Turn Handoff" section');
+    expect(prompt).toContain("what the first retained message is continuing");
+    expect(prompt).toContain(
+      "Every conversation record above is labeled with its history entry id",
+    );
+    expect(prompt).toContain("Good pattern:");
+    expect(prompt).toContain("Bad pattern:");
   });
 
   it("keeps an oversized latest user-only turn whole when older history can be compacted", () => {

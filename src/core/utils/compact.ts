@@ -131,7 +131,7 @@ function serializeToolCall(name: string, argumentsValue: unknown): string {
   return `${name}(${args})`;
 }
 
-function serializeAssistantMessage(message: AssistantMessage): string[] {
+function serializeAssistantMessage(message: AssistantMessage, historyEntryId?: string): string[] {
   const textParts: string[] = [];
   const toolCalls: string[] = [];
 
@@ -145,16 +145,22 @@ function serializeAssistantMessage(message: AssistantMessage): string[] {
 
   const lines: string[] = [];
   if (textParts.length > 0) {
-    lines.push(formatCompactionBlock("[Assistant]:", textParts.join("\n")));
+    const marker = historyEntryId
+      ? `[Assistant id=${JSON.stringify(historyEntryId)}]:`
+      : "[Assistant]:";
+    lines.push(formatCompactionBlock(marker, textParts.join("\n")));
   }
   if (toolCalls.length > 0) {
-    lines.push(formatCompactionBlock("[Assistant tool calls]:", toolCalls.join("\n\n")));
+    const marker = historyEntryId
+      ? `[Assistant tool calls id=${JSON.stringify(historyEntryId)}]:`
+      : "[Assistant tool calls]:";
+    lines.push(formatCompactionBlock(marker, toolCalls.join("\n\n")));
   }
 
   return lines;
 }
 
-function serializeToolResultMessage(message: ToolResultMessage): string {
+function serializeToolResultMessage(message: ToolResultMessage, historyEntryId?: string): string {
   const outputText = extractTextFromContent(message.content);
   const status = message.isError ? "error" : "ok";
 
@@ -163,12 +169,15 @@ function serializeToolResultMessage(message: ToolResultMessage): string {
     strategy: "middle",
   }).content;
 
-  return formatCompactionBlock(`[Tool result]: ${message.toolName} (${status})`, content);
+  const marker = historyEntryId
+    ? `[Tool result id=${JSON.stringify(historyEntryId)}]: ${message.toolName} (${status})`
+    : `[Tool result]: ${message.toolName} (${status})`;
+  return formatCompactionBlock(marker, content);
 }
 
 export function formatHistoryForCompaction(
   history: readonly Message[],
-  options?: { systemPrompt?: string; userMessageIds?: ReadonlyMap<Message, string> },
+  options?: { systemPrompt?: string; historyEntryIds?: ReadonlyMap<Message, string> },
 ): string {
   const lines: string[] = [];
   const systemPrompt = options?.systemPrompt?.trim();
@@ -183,7 +192,7 @@ export function formatHistoryForCompaction(
         ? truncateToolRecoveryResults(userText)
         : userText;
       if (text) {
-        const id = options?.userMessageIds?.get(message);
+        const id = options?.historyEntryIds?.get(message);
         const marker = id ? `[User id=${JSON.stringify(id)}]:` : "[User]:";
         lines.push(formatCompactionBlock(marker, text));
       }
@@ -191,12 +200,22 @@ export function formatHistoryForCompaction(
     }
 
     if (message.role === "assistant") {
-      lines.push(...serializeAssistantMessage(message as AssistantMessage));
+      lines.push(
+        ...serializeAssistantMessage(
+          message as AssistantMessage,
+          options?.historyEntryIds?.get(message),
+        ),
+      );
       continue;
     }
 
     if (message.role === "toolResult") {
-      lines.push(serializeToolResultMessage(message as ToolResultMessage));
+      lines.push(
+        serializeToolResultMessage(
+          message as ToolResultMessage,
+          options?.historyEntryIds?.get(message),
+        ),
+      );
     }
   }
 

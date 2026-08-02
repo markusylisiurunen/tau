@@ -59,6 +59,7 @@ import type {
 } from "./events.js";
 
 const DEFAULT_RETRY_POLICY = { maxRetries: 1, delayMs: 3_000 } as const;
+const COMPACTION_MAX_ATTEMPTS = 2;
 const DEFAULT_MAX_MODEL_SUBTURNS = 1024;
 const providerErrors = new WeakSet<Error>();
 
@@ -946,31 +947,55 @@ export class AgentRuntime {
     model: ModelExecutor = this.currentSpec.model,
   ): Promise<string> {
     try {
-      const stream = model.stream(
-        {
-          systemPrompt: COMPACTION_SUMMARIZATION_SYSTEM_PROMPT,
-          messages: [
+      for (let attempt = 1; attempt <= COMPACTION_MAX_ATTEMPTS; attempt += 1) {
+        options.signal?.throwIfAborted();
+
+        let final: AssistantMessage;
+        try {
+          const stream = model.stream(
             {
-              role: "user",
-              content: [{ type: "text", text: summaryPrompt }],
-              timestamp: this.clock.now(),
+              systemPrompt: COMPACTION_SUMMARIZATION_SYSTEM_PROMPT,
+              messages: [
+                {
+                  role: "user",
+                  content: [{ type: "text", text: summaryPrompt }],
+                  timestamp: this.clock.now(),
+                },
+              ],
             },
-          ],
-        },
-        {
-          ...options.streamOptions,
-          reasoning: "high",
-          sessionId: options.sessionId,
-          ...(options.signal ? { signal: options.signal } : {}),
-        },
-      );
-      const final = await stream.result();
-      const summary = extractAssistantText(final).trim();
-      if (!summary) {
-        throw new Error("summarization returned an empty response.");
+            {
+              ...options.streamOptions,
+              sessionId: options.sessionId,
+              ...(options.signal ? { signal: options.signal } : {}),
+            },
+          );
+          final = await stream.result();
+        } catch (error) {
+          if (options.signal?.aborted || attempt === COMPACTION_MAX_ATTEMPTS) {
+            throw error;
+          }
+          continue;
+        }
+
+        if (final.stopReason === "aborted") {
+          options.signal?.throwIfAborted();
+          throw new Error(final.errorMessage || "summarization was aborted.");
+        }
+
+        const summary = extractAssistantText(final).trim();
+        if (final.stopReason !== "error" && summary) {
+          return summary;
+        }
+
+        if (attempt === COMPACTION_MAX_ATTEMPTS) {
+          throw new Error(
+            final.errorMessage ||
+              (summary ? "summarization failed." : "summarization returned an empty response."),
+          );
+        }
       }
 
-      return summary;
+      throw new Error("summarization failed.");
     } finally {
       model.cleanupSession(options.sessionId);
     }

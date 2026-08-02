@@ -173,6 +173,36 @@ describe("runtime prompt bootstrap", () => {
     expect(resolved.promptContext.projectContextBlock).toContain("/workspace/repo/src/AGENTS.md");
   });
 
+  it("discovers nested AGENTS files without scanning ignored tool directories", async () => {
+    const root = mkdtempSync(join(tmpdir(), "tau-runtime-agents-walk-"));
+    const home = join(root, "home");
+    const nested = join(home, "projects", "app");
+    const ignored = join(home, ".npm", "package");
+    mkdirSync(nested, { recursive: true });
+    mkdirSync(ignored, { recursive: true });
+    writeFileSync(join(home, "AGENTS.md"), "home instructions", "utf-8");
+    writeFileSync(join(nested, "AGENTS.md"), "nested instructions", "utf-8");
+    writeFileSync(join(ignored, "AGENTS.md"), "ignored instructions", "utf-8");
+
+    try {
+      const resolved = await resolveRuntimePromptBootstrap({
+        persona: personas[0],
+        discoveredSkills: [],
+        cwd: home,
+        home,
+        includeAgentContext: true,
+        agentContextFiles: [],
+        backend: createLocalToolExecutionBackend(),
+      });
+
+      expect(resolved.agentsFiles).toEqual([join(home, "AGENTS.md")]);
+      expect(resolved.promptContext.projectContextBlock).toContain(join(nested, "AGENTS.md"));
+      expect(resolved.promptContext.projectContextBlock).not.toContain(join(ignored, "AGENTS.md"));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("rejects hosted AGENTS symlinks that escape the execution home", async () => {
     const root = mkdtempSync(join(tmpdir(), "tau-hosted-agents-symlink-"));
     const home = join(root, "home");

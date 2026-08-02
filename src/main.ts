@@ -33,6 +33,7 @@ import type {
   SessionProtocolExecutionEnvironmentInput,
 } from "./protocol/session_protocol.js";
 import { createTauSdkClient } from "./sdk/client.js";
+import { createTauSdkClientWithHostConfig } from "./sdk/local_client.js";
 import { FileSessionStore, getDefaultSessionStoreDirectory } from "./store/file_session_store.js";
 import { createTuiClientTools, SessionChatApp } from "./tui/index.js";
 import { detectTerminalAppearance } from "./tui/terminal_appearance.js";
@@ -1153,7 +1154,7 @@ if (personas.length === 0) {
 
 const initialUserMessage = await readPipedStdin();
 
-const terminalAppearance = await detectTerminalAppearance();
+const terminalAppearance = detectTerminalAppearance();
 const defaultDiffTool = createBuiltInDiffToolConfig({
   nodeExecutablePath: process.execPath,
   cliEntryPath: fileURLToPath(import.meta.url),
@@ -1161,14 +1162,17 @@ const defaultDiffTool = createBuiltInDiffToolConfig({
 });
 
 let sessionChatApp: SessionChatApp | undefined;
-const sessionClient = await createTauSdkClient({
-  cwd,
-  persona: initialPersonaId,
-  reasoning: reasoningOverride,
-  noAgentContextFiles: cli.noAgentContextFiles,
-  initialize: { client: { name: "tau-tui", version: "1" } },
-  clientTools: createTuiClientTools({ getController: () => sessionChatApp?.getController() }),
-});
+const sessionClient = await createTauSdkClientWithHostConfig(
+  {
+    cwd,
+    persona: initialPersonaId,
+    reasoning: reasoningOverride,
+    noAgentContextFiles: cli.noAgentContextFiles,
+    initialize: { client: { name: "tau-tui", version: "1" } },
+    clientTools: createTuiClientTools({ getController: () => sessionChatApp?.getController() }),
+  },
+  config,
+);
 const app = await SessionChatApp.open({
   client: sessionClient,
   targetLabel: "in-process",

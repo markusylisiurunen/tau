@@ -156,10 +156,14 @@ if (includeAgentContext) {
 
   const seenDirs = new Set();
   let visitedDirs = 0;
-  function walk(dir) {
-    if (visitedDirs >= maxDirs) return;
-    const canonicalDir = realpath(dir);
-    if (!canonicalDir || seenDirs.has(canonicalDir) || !isSameOrParent(cwdReal, canonicalDir)) return;
+  function walk(dir, canonicalDir) {
+    if (
+      visitedDirs >= maxDirs ||
+      seenDirs.has(canonicalDir) ||
+      !isSameOrParent(cwdReal, canonicalDir)
+    ) {
+      return;
+    }
     seenDirs.add(canonicalDir);
     visitedDirs += 1;
 
@@ -170,24 +174,35 @@ if (includeAgentContext) {
       return;
     }
     entries.sort((a, b) => a.name.localeCompare(b.name));
+    const agentsEntry = entries.find((entry) => entry.name === "AGENTS.md");
+    if (
+      canonicalDir !== cwdReal &&
+      agentsEntry &&
+      (agentsEntry.isFile() || agentsEntry.isSymbolicLink())
+    ) {
+      const candidate = resolveAgentsFile(path.join(dir, agentsEntry.name));
+      if (candidate && !seenFiles.has(candidate.canonical)) {
+        childAgentsFiles.push(candidate.path);
+      }
+    }
+
     for (const entry of entries) {
       if (visitedDirs >= maxDirs) return;
       if ((!entry.isDirectory() && !entry.isSymbolicLink()) || ignoredChildDirs.has(entry.name)) {
         continue;
       }
-      const childDir = path.join(canonicalDir, entry.name);
-      const candidate = resolveAgentsFile(path.join(childDir, "AGENTS.md"));
-      if (
-        candidate &&
-        !seenFiles.has(candidate.canonical) &&
-        path.dirname(candidate.canonical) !== cwdReal
-      ) {
-        childAgentsFiles.push(candidate.path);
+      const childDir = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(childDir, path.join(canonicalDir, entry.name));
+        continue;
       }
-      walk(childDir);
+      const canonicalChildDir = realpath(childDir);
+      if (canonicalChildDir) {
+        walk(childDir, canonicalChildDir);
+      }
     }
   }
-  walk(cwd);
+  walk(cwd, cwdReal);
 }
 
 let repoRoot;
@@ -212,12 +227,19 @@ process.stdout.write(JSON.stringify({
 
 const DEFAULT_IGNORED_CHILD_DIRS = [
   ".cache",
+  ".cargo",
+  ".config",
+  ".deno",
   ".git",
   ".hg",
   ".jj",
+  ".local",
   ".next",
+  ".npm",
   ".nuxt",
+  ".nvm",
   ".parcel-cache",
+  ".rustup",
   ".svn",
   ".turbo",
   ".venv",

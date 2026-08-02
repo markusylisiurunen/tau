@@ -208,6 +208,78 @@ describe("runtime prompt bootstrap", () => {
     }
   });
 
+  it("uses breadth-first child AGENTS discovery when the directory budget is reached", async () => {
+    const root = mkdtempSync(join(tmpdir(), "tau-runtime-agents-breadth-"));
+    const home = join(root, "home");
+    const first = join(home, "aaa", "one", "two", "three");
+    const later = join(home, "zzz");
+    mkdirSync(first, { recursive: true });
+    mkdirSync(later, { recursive: true });
+    writeFileSync(join(later, "AGENTS.md"), "later instructions", "utf-8");
+    const localBackend = createLocalToolExecutionBackend();
+    const limitedBackend = {
+      ...localBackend,
+      runNodeScript(script, args, options) {
+        const limitedArgs = [...args];
+        limitedArgs[6] = "4";
+        return localBackend.runNodeScript(script, limitedArgs, options);
+      },
+    };
+
+    try {
+      const resolved = await resolveRuntimePromptBootstrap({
+        persona: personas[0],
+        discoveredSkills: [],
+        cwd: home,
+        home,
+        includeAgentContext: true,
+        agentContextFiles: [],
+        backend: limitedBackend,
+      });
+
+      expect(resolved.promptContext.projectContextBlock).toContain(join(later, "AGENTS.md"));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("bounds child AGENTS discovery depth", async () => {
+    const root = mkdtempSync(join(tmpdir(), "tau-runtime-agents-depth-"));
+    const home = join(root, "home");
+    let current = home;
+    let atLimit;
+    let beyondLimit;
+    for (let depth = 1; depth <= 33; depth += 1) {
+      current = join(current, `level-${depth}`);
+      mkdirSync(current, { recursive: true });
+      if (depth === 32) {
+        atLimit = join(current, "AGENTS.md");
+        writeFileSync(atLimit, "at limit", "utf-8");
+      }
+      if (depth === 33) {
+        beyondLimit = join(current, "AGENTS.md");
+        writeFileSync(beyondLimit, "beyond limit", "utf-8");
+      }
+    }
+
+    try {
+      const resolved = await resolveRuntimePromptBootstrap({
+        persona: personas[0],
+        discoveredSkills: [],
+        cwd: home,
+        home,
+        includeAgentContext: true,
+        agentContextFiles: [],
+        backend: createLocalToolExecutionBackend(),
+      });
+
+      expect(resolved.promptContext.projectContextBlock).toContain(atLimit);
+      expect(resolved.promptContext.projectContextBlock).not.toContain(beyondLimit);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("rejects hosted AGENTS symlinks that escape the execution home", async () => {
     const root = mkdtempSync(join(tmpdir(), "tau-hosted-agents-symlink-"));
     const home = join(root, "home");

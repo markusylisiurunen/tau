@@ -15,6 +15,7 @@ type AgentsFilesInScopeResult = {
 const CHILD_AGENTS_RG_TIMEOUT_MS = 2000;
 const CHILD_AGENTS_WALK_TIMEOUT_MS = 1000;
 const CHILD_AGENTS_WALK_MAX_DIRS = 8_192;
+const CHILD_AGENTS_WALK_MAX_DEPTH = 32;
 
 const DEFAULT_IGNORED_CHILD_DIRS = new Set([
   ".cache",
@@ -180,6 +181,8 @@ function findChildAgentsFilesWithRipgrep(cwd: string, home: string): string[] | 
     [
       "--files",
       "--hidden",
+      "--max-depth",
+      String(CHILD_AGENTS_WALK_MAX_DEPTH),
       "--no-ignore",
       "--glob",
       "**/AGENTS.md",
@@ -222,82 +225,84 @@ function findChildAgentsFilesByWalking(cwd: string, home: string): string[] {
   } catch {
     // use the resolved home path
   }
+  let cwdReal = cwdAbs;
+  try {
+    cwdReal = realpathSync(cwdAbs);
+  } catch {
+    return [];
+  }
   const ignoredHomeChildDirs = getIgnoredHomeChildDirs();
   const found: string[] = [];
-  const seenDirs = new Set<string>();
+  const queuedDirs = new Set([cwdReal]);
+  const pendingDirs = [{ dir: cwdAbs, canonicalDir: cwdReal, depth: 0 }];
   const startedAt = Date.now();
-  let visitedDirs = 0;
-  let bailed = false;
 
-  const shouldBail = (): boolean => {
-    if (bailed) return true;
-    if (visitedDirs >= CHILD_AGENTS_WALK_MAX_DIRS) {
-      bailed = true;
-      return true;
-    }
+  for (let index = 0; index < pendingDirs.length; index += 1) {
     if (Date.now() - startedAt >= CHILD_AGENTS_WALK_TIMEOUT_MS) {
-      bailed = true;
-      return true;
+      break;
     }
-    return false;
-  };
-
-  const walk = (dir: string): void => {
-    if (shouldBail()) return;
-
-    let dirReal = dir;
-    try {
-      dirReal = realpathSync(dir);
-    } catch {
-      return;
-    }
-
-    if (seenDirs.has(dirReal)) return;
-    seenDirs.add(dirReal);
-    visitedDirs += 1;
-
+    const current = pendingDirs[index]!;
     let entries: Dirent<string>[];
     try {
-      entries = readdirSync(dir, { withFileTypes: true, encoding: "utf8" });
+      entries = readdirSync(current.dir, { withFileTypes: true, encoding: "utf8" });
     } catch {
-      return;
+      continue;
+    }
+    entries.sort((a, b) => a.name.localeCompare(b.name));
+    const agentsEntry = entries.find((entry) => entry.name === "AGENTS.md");
+    if (
+      current.depth > 0 &&
+      agentsEntry &&
+      (agentsEntry.isFile() || agentsEntry.isSymbolicLink())
+    ) {
+      const resolved = resolveAgentContextPath({
+        path: join(current.dir, agentsEntry.name),
+        cwd: cwdAbs,
+        home,
+      });
+      if (resolved) {
+        found.push(resolved);
+      }
     }
 
-    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-      if (shouldBail()) return;
+    if (current.depth >= CHILD_AGENTS_WALK_MAX_DEPTH) {
+      continue;
+    }
+    for (const entry of entries) {
+      if (pendingDirs.length >= CHILD_AGENTS_WALK_MAX_DIRS) break;
       if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
       if (
         DEFAULT_IGNORED_CHILD_DIRS.has(entry.name) ||
-        (dirReal === homeReal && ignoredHomeChildDirs.has(entry.name))
+        (current.canonicalDir === homeReal && ignoredHomeChildDirs.has(entry.name))
       ) {
         continue;
       }
 
-      const childDir = join(dir, entry.name);
-      let isDirectory = entry.isDirectory();
-      if (entry.isSymbolicLink()) {
+      const childDir = join(current.dir, entry.name);
+      let canonicalChildDir: string;
+      if (entry.isDirectory()) {
+        canonicalChildDir = join(current.canonicalDir, entry.name);
+      } else {
         try {
-          isDirectory = statSync(childDir).isDirectory();
+          if (!statSync(childDir).isDirectory()) continue;
+          canonicalChildDir = realpathSync(childDir);
         } catch {
-          isDirectory = false;
+          continue;
         }
       }
-      if (!isDirectory) continue;
-
-      const candidate = join(childDir, "AGENTS.md");
-      if (existsSync(candidate)) {
-        const resolved = resolveAgentContextPath({ path: candidate, cwd: cwdAbs, home });
-        if (resolved) {
-          found.push(resolved);
-        }
+      if (queuedDirs.has(canonicalChildDir) || !isSameOrParentPath(cwdReal, canonicalChildDir)) {
+        continue;
       }
-
-      walk(childDir);
+      queuedDirs.add(canonicalChildDir);
+      pendingDirs.push({
+        dir: childDir,
+        canonicalDir: canonicalChildDir,
+        depth: current.depth + 1,
+      });
     }
-  };
+  }
 
-  walk(cwdAbs);
-  return found;
+  return found.sort((a, b) => a.localeCompare(b));
 }
 
 export function findChildAgentsFiles(cwd: string, home: string): string[] {

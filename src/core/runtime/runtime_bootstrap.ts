@@ -91,6 +91,7 @@ const ignoredPlatformHomeChildDirs = new Set(
   process.platform === "darwin" ? ["Library"] : process.platform === "linux" ? ["snap"] : [],
 );
 const maxDirs = Number(process.argv[7]);
+const maxDepth = Number(process.argv[8]);
 
 function realpath(pathname) {
   try {
@@ -158,61 +159,62 @@ if (includeAgentContext) {
     addAgentsFile(candidate);
   }
 
-  const seenDirs = new Set();
-  let visitedDirs = 0;
-  function walk(dir, canonicalDir) {
-    if (
-      visitedDirs >= maxDirs ||
-      seenDirs.has(canonicalDir) ||
-      !isSameOrParent(cwdReal, canonicalDir)
-    ) {
-      return;
-    }
-    seenDirs.add(canonicalDir);
-    visitedDirs += 1;
-
+  const queuedDirs = new Set([cwdReal]);
+  const pendingDirs = [{ dir: cwd, canonicalDir: cwdReal, depth: 0 }];
+  for (let index = 0; index < pendingDirs.length; index += 1) {
+    const current = pendingDirs[index];
     let entries;
     try {
-      entries = fs.readdirSync(canonicalDir, { withFileTypes: true });
+      entries = fs.readdirSync(current.canonicalDir, { withFileTypes: true });
     } catch {
-      return;
+      continue;
     }
     entries.sort((a, b) => a.name.localeCompare(b.name));
     const agentsEntry = entries.find((entry) => entry.name === "AGENTS.md");
     if (
-      canonicalDir !== cwdReal &&
+      current.depth > 0 &&
       agentsEntry &&
       (agentsEntry.isFile() || agentsEntry.isSymbolicLink())
     ) {
-      const candidate = resolveAgentsFile(path.join(dir, agentsEntry.name));
+      const candidate = resolveAgentsFile(path.join(current.dir, agentsEntry.name));
       if (candidate && !seenFiles.has(candidate.canonical)) {
         childAgentsFiles.push(candidate.path);
       }
     }
 
+    if (current.depth >= maxDepth) {
+      continue;
+    }
     for (const entry of entries) {
-      if (visitedDirs >= maxDirs) return;
+      if (pendingDirs.length >= maxDirs) break;
       if (
         (!entry.isDirectory() && !entry.isSymbolicLink()) ||
         ignoredChildDirs.has(entry.name) ||
-        (canonicalDir === homeReal &&
+        (current.canonicalDir === homeReal &&
           (ignoredHomeChildDirs.has(entry.name) ||
             ignoredPlatformHomeChildDirs.has(entry.name)))
       ) {
         continue;
       }
-      const childDir = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        walk(childDir, path.join(canonicalDir, entry.name));
+      const childDir = path.join(current.dir, entry.name);
+      const canonicalChildDir = entry.isDirectory()
+        ? path.join(current.canonicalDir, entry.name)
+        : realpath(childDir);
+      if (
+        !canonicalChildDir ||
+        queuedDirs.has(canonicalChildDir) ||
+        !isSameOrParent(cwdReal, canonicalChildDir)
+      ) {
         continue;
       }
-      const canonicalChildDir = realpath(childDir);
-      if (canonicalChildDir) {
-        walk(childDir, canonicalChildDir);
-      }
+      queuedDirs.add(canonicalChildDir);
+      pendingDirs.push({
+        dir: childDir,
+        canonicalDir: canonicalChildDir,
+        depth: current.depth + 1,
+      });
     }
   }
-  walk(cwd, cwdReal);
 }
 
 let repoRoot;
@@ -276,6 +278,7 @@ const HOME_IGNORED_CHILD_DIRS = [
 ];
 
 const CHILD_AGENTS_WALK_MAX_DIRS = 8_192;
+const CHILD_AGENTS_WALK_MAX_DEPTH = 32;
 const RUNTIME_PROMPT_CONTEXT_TIMEOUT_MS = 15_000;
 
 type RuntimePromptContextInspection = {
@@ -340,6 +343,7 @@ async function inspectRuntimePromptContext(
       JSON.stringify(DEFAULT_IGNORED_CHILD_DIRS),
       JSON.stringify(HOME_IGNORED_CHILD_DIRS),
       String(CHILD_AGENTS_WALK_MAX_DIRS),
+      String(CHILD_AGENTS_WALK_MAX_DEPTH),
     ],
     {
       cwd: args.cwd,

@@ -13,6 +13,7 @@ import {
   applySessionProtocolDelta,
   SESSION_PROTOCOL_VERSION,
 } from "../dist/protocol/session_protocol.js";
+import { TauSessionProtocolResponseError } from "../dist/transport/errors.js";
 import { copyTextToClipboard } from "../dist/tui/clipboard.js";
 import { SessionChatController } from "../dist/tui/session_chat_controller.js";
 import {
@@ -1035,6 +1036,38 @@ describe("SessionChatController", () => {
     expect(view.status.footer.commandHint).toBeUndefined();
   });
 
+  it("shows the protocol cause when a submitted turn fails", async () => {
+    const session = new FakeSession();
+    session.submit = vi.fn(async () => {
+      throw new TauSessionProtocolResponseError({
+        requestId: "submit-1",
+        error: {
+          code: "internal_error",
+          message: "failed to run session turn",
+          data: { cause: "session snapshot is invalid" },
+        },
+      });
+    });
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "ssh host tau rpc",
+    });
+
+    controller.start();
+    controller.getInputHandlers().onSubmit("hello session");
+    await flush();
+
+    expect(view.systems).toContainEqual(
+      expect.objectContaining({
+        text: "session turn failed: failed to run session turn: session snapshot is invalid",
+        kind: "error",
+      }),
+    );
+  });
+
   it("stops visible running state when submit fails before snapshot recovery returns", async () => {
     const session = new FakeSession();
     session.rejectSubmit = true;
@@ -1591,6 +1624,57 @@ describe("SessionChatController", () => {
 
     expect(session.steer).toHaveBeenCalledWith("change direction");
     expect(view.systems).toEqual([]);
+  });
+
+  it("shows protocol causes when queueing and steering fail", async () => {
+    const session = new FakeSession();
+    session.queue = vi.fn(async () => {
+      throw new TauSessionProtocolResponseError({
+        requestId: "queue-1",
+        error: {
+          code: "internal_error",
+          message: "failed to drain pending user message",
+          data: { cause: "queued commit failed" },
+        },
+      });
+    });
+    session.steer = vi.fn(async () => {
+      throw new TauSessionProtocolResponseError({
+        requestId: "steer-1",
+        error: {
+          code: "internal_error",
+          message: "steering turn failed",
+          data: { cause: "session snapshot is invalid" },
+        },
+      });
+    });
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "in-process",
+    });
+    controller.start();
+    controller.isStreaming = true;
+    controller.submittedTurnInProgress = true;
+
+    controller.getInputHandlers().onSubmit("queue this");
+    controller.getInputHandlers().onSteerSubmit?.("steer this");
+    await flush();
+
+    expect(view.systems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          text: "queueing failed: failed to drain pending user message: queued commit failed",
+          kind: "error",
+        }),
+        expect.objectContaining({
+          text: "steering failed: steering turn failed: session snapshot is invalid",
+          kind: "error",
+        }),
+      ]),
+    );
   });
 
   it("does not dispatch or queue commands while a submitted turn response is pending", async () => {

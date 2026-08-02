@@ -1,6 +1,10 @@
 import { Buffer } from "node:buffer";
 import type { AssistantMessage, Message, ToolResultMessage } from "@earendil-works/pi-ai";
-import { buildCompactionUserMessage, formatHistoryForCompaction } from "../utils/compact.js";
+import {
+  buildCompactionUserMessage,
+  formatHistoryForCompaction,
+  truncateToolRecoveryResults,
+} from "../utils/compact.js";
 import { extractAssistantText } from "../utils/messages.js";
 import { bytesToTokens } from "../utils/token.js";
 import { truncateForTokens } from "../utils/truncate.js";
@@ -8,6 +12,7 @@ import {
   formatTauUserText,
   getSummaryCompactionMetadataFromMessage,
   hasAutoCompactionContinuationMetadata,
+  hasToolRecoveryMetadata,
   stripTauUserMetadata,
 } from "../utils/user_metadata.js";
 import type { AutoCompactionArchivePaths } from "./auto_compaction_archive.js";
@@ -384,6 +389,14 @@ function buildHistoryEntryIdMap(
   return new Map(entries.map((entry) => [entry.message, entry.id] as const));
 }
 
+function isAutoCompactionArchiveEntry(entry: CompactionHistoryEntry): boolean {
+  const message = entry.message;
+  return !(
+    message.role === "assistant" &&
+    (message.stopReason === "error" || message.stopReason === "aborted")
+  );
+}
+
 function collectUserMessageCandidates(
   entries: readonly CompactionHistoryEntry[],
   previousMessages: readonly PreservedUserMessage[],
@@ -464,6 +477,21 @@ function estimateTextTokens(text: string): number {
 
 function boundRetainedEntry(entry: CompactionHistoryEntry): CompactionHistoryEntry {
   const message = structuredClone(entry.message);
+  if (message.role === "user" && hasToolRecoveryMetadata(message)) {
+    if (typeof message.content === "string") {
+      message.content = truncateToolRecoveryResults(
+        message.content,
+        RETAINED_TOOL_RESULT_MAX_TOKENS,
+      );
+    } else {
+      for (const block of message.content) {
+        if (block.type === "text") {
+          block.text = truncateToolRecoveryResults(block.text, RETAINED_TOOL_RESULT_MAX_TOKENS);
+        }
+      }
+    }
+    return { id: entry.id, message };
+  }
   if (message.role !== "toolResult") {
     return { id: entry.id, message };
   }
@@ -517,7 +545,9 @@ export function prepareAutoCompaction(
     .slice(latestCompaction.index + 1, cut.startIndex)
     .filter((entry) => !hasAutoCompactionContinuationMetadata(entry.message));
   const messagesToSummarize = entriesToSummarize.map((entry) => entry.message);
-  const historyEntryIds = buildHistoryEntryIdMap(entriesToSummarize);
+  const historyEntryIds = buildHistoryEntryIdMap(
+    entriesToSummarize.filter(isAutoCompactionArchiveEntry),
+  );
   const formattedConversation = formatHistoryForCompaction(messagesToSummarize, {
     historyEntryIds,
   });
@@ -549,7 +579,7 @@ export function prepareAutoCompaction(
   };
 }
 
-const AUTO_COMPACTION_ARCHIVE_REFERENCE_GUIDANCE = `After compaction, the continuing assistant will receive paths to temporary text and JSON transcripts of the pre-compaction context. Every conversation record above is labeled with its history entry id. The continuing assistant can search the numbered text transcripts for that id, then inspect the corresponding JSON record when it needs the full archived content.
+const AUTO_COMPACTION_ARCHIVE_REFERENCE_GUIDANCE = `After compaction, the continuing assistant will receive paths to temporary text and JSON transcripts of the pre-compaction context. Conversation records above that show a history entry id can be recovered from those transcripts by id. The continuing assistant can search the numbered text transcripts first, then inspect the corresponding JSON record when it needs the full archived content.
 
 Keep the summary independently useful. State continuity-critical goals, constraints, decisions, current state, blockers, and next steps directly. When exact or bulky details would be wasteful to reproduce, you may mention the relevant history entry id in ordinary prose so the continuing assistant can retrieve it. This is useful for long tool output, diagnostic logs, exact errors, payloads, and large code excerpts. Use such references sparingly and only for ids shown in the conversation.
 
@@ -566,11 +596,13 @@ export function buildAutoCompactionPrompt(preparation: AutoCompactionPreparation
 - what the first retained message is continuing and what remains unresolved
 
 Place the section wherever it makes the handoff clearest. Preserve earlier session context elsewhere in the summary without duplicating the retained suffix.`
-      : "The retained context will include recent messages verbatim. Ensure the summary complements that retained context without duplicating unnecessary detail.";
+      : "The retained context will include recent messages. Ensure the summary complements that retained context without duplicating unnecessary detail.";
+  const boundedRetainedContextGuidance =
+    "Individual textual tool results and tool-recovery payloads in the retained context may be middle-truncated above the retention limit. Do not describe the retained context as exact or verbatim. The continuing assistant can recover omitted output through a targeted search of the pre-compaction archive when needed.";
 
   return buildSessionCompactionPrompt({
     preparation,
-    guidance: `${retainedContextGuidance}\n\n${AUTO_COMPACTION_ARCHIVE_REFERENCE_GUIDANCE}`,
+    guidance: `${retainedContextGuidance}\n\n${boundedRetainedContextGuidance}\n\n${AUTO_COMPACTION_ARCHIVE_REFERENCE_GUIDANCE}`,
   });
 }
 
@@ -581,7 +613,7 @@ export function buildAutoCompactionContinuationMessage(args: {
 }): Message {
   const lines = [
     "The conversation context before this point has been compacted.",
-    "Earlier context is summarized in the compaction message above. Recent messages are retained verbatim after that summary.",
+    "Earlier context is summarized in the compaction message above. Recent messages are retained after that summary, but large textual tool results and tool-recovery payloads may be middle-truncated.",
     "Continue from the summary and retained context without asking the user to repeat information.",
   ];
 
@@ -598,6 +630,7 @@ export function buildAutoCompactionContinuationMessage(args: {
       `- this compaction's full JSON: ${args.archive.jsonPath}`,
       "Earlier numbered pairs in the same directory contain older pre-compaction snapshots, so include them in targeted searches when the detail may predate this compaction.",
       "When the compaction summary mentions a history entry id, search the numbered text transcripts for that id first, then inspect the corresponding JSON record if the text transcript is truncated or incomplete.",
+      "When retained output is marked as truncated, search the text transcript by tool name and distinctive surrounding text, then inspect the paired JSON record for the complete output.",
       "Prefer narrow searches and bounded reads of the text transcripts; their tool results are middle-truncated. The JSON files retain untruncated archived content and may be very large.",
       "When available, delegating a precise archive lookup to a low-effort subagent can preserve this context more efficiently than reading large sections directly.",
       "These files are temporary and may no longer exist.",

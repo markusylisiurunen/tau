@@ -773,6 +773,7 @@ describe("AgentRuntime", () => {
     expect(continuationContext).toContain("/tmp/tau-auto-compaction-agent/000004.json");
     expect(continuationContext).toContain("Earlier numbered pairs in the same directory");
     expect(continuationContext).toContain("summary mentions a history entry id");
+    expect(continuationContext).toContain("retained output is marked as truncated");
     expect(continuationContext).toContain("low-effort subagent");
   });
 

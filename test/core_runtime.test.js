@@ -832,6 +832,8 @@ describe("compaction context message", () => {
     const text = stripTauUserMetadata(continuation.content[0].text);
 
     expect(text).toContain("The conversation context before this point has been compacted");
+    expect(text).toContain("tool-recovery payloads may be middle-truncated");
+    expect(text).not.toContain("retained verbatim");
     expect(hasAutoCompactionContinuationMetadata(continuation)).toBe(true);
   });
 
@@ -963,6 +965,52 @@ describe("compaction context message", () => {
     expect(entries[2].message.content[0].text).toBe(fullOutput);
   });
 
+  it("bounds retained tool-recovery results and preserves the original entry", () => {
+    const recoveryInstructions = [
+      "The previous assistant generation failed after tool execution had begun.",
+      "<tool-execution-records>",
+      '  <tool-execution-record tool-call-id="call-1" tool-name="custom_tool">',
+      "    <arguments-json>{}</arguments-json>",
+      "    <is-error>false</is-error>",
+      `    <result-text>start ${"x".repeat(60_000)} end</result-text>`,
+      "  </tool-execution-record>",
+      "</tool-execution-records>",
+    ].join("\n");
+    const recoveryMessage = {
+      role: "user",
+      content: [
+        {
+          type: "text",
+          text: formatTauUserText({
+            text: "",
+            metadata: [{ type: "tool-recovery", version: 1 }],
+            hiddenSystemMessages: [recoveryInstructions],
+          }),
+        },
+      ],
+      timestamp: 0,
+    };
+    const entries = historyEntries([
+      userMessage("older request"),
+      assistantMessage("older answer"),
+      recoveryMessage,
+    ]);
+    const originalRecoveryMessage = structuredClone(recoveryMessage);
+
+    const preparation = prepareAutoCompaction(entries, {
+      keepRecentTokens: 1_000,
+      systemPrompt: "project instructions",
+    });
+
+    const retainedRecovery = preparation.retainedEntries[0].message;
+    expect(retainedRecovery.role).toBe("user");
+    expect(retainedRecovery.content[0].text).toContain("tokens truncated");
+    expect(retainedRecovery.content[0].text.length).toBeLessThan(
+      recoveryMessage.content[0].text.length,
+    );
+    expect(entries[2].message).toEqual(originalRecoveryMessage);
+  });
+
   it("adds a dedicated split-turn handoff to the compaction prompt", () => {
     const entries = historyEntries([
       userMessage("latest request"),
@@ -978,11 +1026,35 @@ describe("compaction context message", () => {
 
     expect(prompt).toContain('Add a "## Current Turn Handoff" section');
     expect(prompt).toContain("what the first retained message is continuing");
+    expect(prompt).toContain("Conversation records above that show a history entry id");
     expect(prompt).toContain(
-      "Every conversation record above is labeled with its history entry id",
+      "tool-recovery payloads in the retained context may be middle-truncated",
     );
+    expect(prompt).not.toContain("retained context will include recent messages verbatim");
     expect(prompt).toContain("Good pattern:");
     expect(prompt).toContain("Bad pattern:");
+  });
+
+  it.each(["error", "aborted"])("withholds archive ids from %s assistant records", (stopReason) => {
+    const failedAssistant = {
+      ...assistantMessage("provider failed"),
+      stopReason,
+      errorMessage: "connection reset",
+    };
+    const entries = historyEntries([
+      userMessage(`older request ${"x".repeat(9_000)}`),
+      failedAssistant,
+      userMessage("current request"),
+      assistantMessage("current answer"),
+    ]);
+    const preparation = prepareAutoCompaction(entries, {
+      keepRecentTokens: 1_000,
+      systemPrompt: "project instructions",
+    });
+
+    expect(preparation.formattedHistory).toContain('[User id="entry-0"]:');
+    expect(preparation.formattedHistory).toContain("[Assistant]:\nprovider failed");
+    expect(preparation.formattedHistory).not.toContain('[Assistant id="entry-1"]:');
   });
 
   it("keeps an oversized latest user-only turn whole when older history can be compacted", () => {

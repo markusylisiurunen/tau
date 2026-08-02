@@ -49,7 +49,10 @@ function unescapeXmlText(text: string): string {
   });
 }
 
-function truncateToolRecoveryResults(text: string): string {
+export function truncateToolRecoveryResults(
+  text: string,
+  maxTokens = COMPACTION_TOOL_RESULT_MAX_TOKENS,
+): string {
   let output = "";
   let cursor = 0;
 
@@ -71,7 +74,7 @@ function truncateToolRecoveryResults(text: string): string {
         TOOL_RESULT_TEXT_PATTERN,
         (_match, openTag: string, escapedText: string, closeTag: string) => {
           const content = truncateForTokens(unescapeXmlText(escapedText), {
-            maxTokens: COMPACTION_TOOL_RESULT_MAX_TOKENS,
+            maxTokens,
             strategy: "middle",
           }).content;
           return `${openTag}${escapeXmlText(content)}${closeTag}`;

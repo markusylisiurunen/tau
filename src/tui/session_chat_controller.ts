@@ -19,7 +19,7 @@ import {
 import { buildDiffReviewInstructions } from "../core/diff_review/review_instructions.js";
 import { type CoreDeps, createDefaultCoreDeps } from "../core/runtime/deps.js";
 import { runDirectBashCommand } from "../core/session/direct_bash.js";
-import type { SubagentStatus, SubagentUiEvent } from "../core/subagents/types.js";
+import { SUBAGENT_ACTIVITY_FACET_KIND, type SubagentUiEvent } from "../core/subagents/types.js";
 import type { ToolActivity } from "../core/tools/activity.js";
 import { REASONING_LEVELS, type ReasoningEffort } from "../core/types.js";
 import { formatAdaptiveNumber, formatTokenWindow } from "../core/utils/format.js";
@@ -252,7 +252,7 @@ export class SessionChatController {
       onCtrlP: () => void this.cyclePersonality(),
       onCtrlS: () => void this.stashEditorToClipboard(),
       onCtrlY: () => void this.toggleListenCapture(),
-      onCtrlG: () => this.terminateSelectedSubagent(),
+      onCtrlG: () => this.interruptSelectedSubagent(),
       onEscape: () => void this.interrupt(),
       beforeSubmit: (text) => this.beforeSubmit(text),
       onChange: (text) => this.handleEditorChange(text),
@@ -1421,8 +1421,8 @@ export class SessionChatController {
     this.view.reconcileToolUiSession(getToolUiModelsInModelOrder(snapshot));
     this.view.reconcileSubagentUiSession(
       Object.values(snapshot.agents).map((agent) => ({
-        state: subagentStateFromAgentRun(agent),
-        ...(agent.progress !== undefined ? { progress: agent.progress } : {}),
+        state: structuredClone(agent),
+        activity: getSubagentActivity(snapshot, agent.id),
       })),
     );
   }
@@ -2264,7 +2264,7 @@ export class SessionChatController {
     }
   }
 
-  private terminateSelectedSubagent(): void {
+  private interruptSelectedSubagent(): void {
     const selectedId = this.view.getSelectedSubagentId();
     if (!selectedId) {
       this.view.addSystemMessage("no active subagent selected", "warn");
@@ -2272,7 +2272,7 @@ export class SessionChatController {
     }
 
     void this.session
-      .terminateSubagent(selectedId)
+      .interruptSubagent(selectedId)
       .then((result) => {
         if (!result.found) {
           this.view.addSystemMessage(`unknown subagent id: ${selectedId}`, "warn");
@@ -2280,7 +2280,7 @@ export class SessionChatController {
       })
       .catch((err) => {
         this.view.addSystemMessage(
-          `failed to terminate subagent: ${(err as Error).message}`,
+          `failed to interrupt subagent: ${(err as Error).message}`,
           "error",
         );
       });
@@ -2533,18 +2533,29 @@ function toolUiEventsFromFacet(
   return facet.data.events.filter(isToolUiEvent);
 }
 
+function getSubagentActivity(
+  snapshot: SessionProtocolSnapshot,
+  agentId: string,
+): string | undefined {
+  const facet = Object.values(snapshot.facets).find(
+    (candidate) =>
+      candidate.kind === SUBAGENT_ACTIVITY_FACET_KIND &&
+      candidate.subject.type === "agent" &&
+      candidate.subject.id === agentId,
+  );
+  return typeof facet?.data.text === "string" ? facet.data.text : undefined;
+}
+
 function subagentUiEventsFromAgentRun(
   agent: SessionProtocolSnapshot["agents"][string],
+  startedType: "subagent_spawned" | "subagent_run_started" = "subagent_spawned",
 ): SubagentUiEvent[] {
-  const state = subagentStateFromAgentRun(agent);
-  const events: SubagentUiEvent[] = [{ type: "subagent_spawned", state }];
-  if (agent.progress !== undefined) {
-    events.push(subagentProgressEventFromAgentRun(agent));
+  const state = structuredClone(agent);
+  const events: SubagentUiEvent[] = [{ type: startedType, state }];
+  if (agent.run.interruptRequested) {
+    events.push({ type: "subagent_interrupt_requested", state });
   }
-  if (agent.abortRequested) {
-    events.push({ type: "subagent_abort_requested", id: agent.id });
-  }
-  if (agent.status !== "running") {
+  if (agent.run.status !== "running") {
     events.push({ type: "subagent_finished", state });
   }
   return events;
@@ -2557,77 +2568,31 @@ function subagentUiEventsForAgentDelta(
   if (!previous) {
     return subagentUiEventsFromAgentRun(next);
   }
-
-  const events: SubagentUiEvent[] = [];
-  if (!previous.abortRequested && next.abortRequested) {
-    events.push({ type: "subagent_abort_requested", id: next.id });
+  if (previous.run.revision !== next.run.revision) {
+    return subagentUiEventsFromAgentRun(next, "subagent_run_started");
   }
-  if (next.status !== "running") {
-    events.push({
-      type: "subagent_finished",
-      state: subagentStateFromAgentRun(next),
-    });
+
+  const state = structuredClone(next);
+  const events: SubagentUiEvent[] = [];
+  if (!previous.run.interruptRequested && next.run.interruptRequested) {
+    events.push({ type: "subagent_interrupt_requested", state });
+  }
+  if (previous.run.status === "running" && next.run.status !== "running") {
+    events.push({ type: "subagent_finished", state });
     return events;
   }
-  if (agentProgressChanged(previous, next)) {
-    events.push(subagentProgressEventFromAgentRun(next));
+  if (agentStateChanged(previous, next)) {
+    events.push({ type: "subagent_updated", state });
   }
   return events;
 }
 
-function subagentStateFromAgentRun(
-  agent: SessionProtocolSnapshot["agents"][string],
-): Extract<SubagentUiEvent, { type: "subagent_spawned" }>["state"] {
-  const status: SubagentStatus =
-    agent.status === "succeeded"
-      ? "success"
-      : agent.status === "failed"
-        ? "error"
-        : agent.status === "cancelled"
-          ? "aborted"
-          : "running";
-  const state = {
-    id: agent.id,
-    name: agent.name,
-    title: agent.title,
-    status,
-    ...(agent.modelLabel !== undefined ? { modelLabel: agent.modelLabel } : {}),
-    costTotal: agent.costTotal,
-    turns: agent.turns,
-    toolCalls: agent.toolCalls,
-    usage: { ...agent.usage },
-    startedAt: agent.startedAt,
-    ...(agent.finishedAt !== undefined ? { finishedAt: agent.finishedAt } : {}),
-    abortRequested: agent.abortRequested,
-    ...(agent.error !== undefined ? { error: agent.error } : {}),
-    ...(agent.finalText !== undefined ? { finalText: agent.finalText } : {}),
-  };
-  return state;
-}
-
-function subagentProgressEventFromAgentRun(
-  agent: SessionProtocolSnapshot["agents"][string],
-): Extract<SubagentUiEvent, { type: "subagent_progress" }> {
-  return {
-    type: "subagent_progress",
-    id: agent.id,
-    text: agent.progress ?? "",
-    costTotal: agent.costTotal,
-    turns: agent.turns,
-    toolCalls: agent.toolCalls,
-    usage: { ...agent.usage },
-  };
-}
-
-function agentProgressChanged(
+function agentStateChanged(
   previous: SessionProtocolSnapshot["agents"][string],
   next: SessionProtocolSnapshot["agents"][string],
 ): boolean {
   return (
-    previous.progress !== next.progress ||
     previous.costTotal !== next.costTotal ||
-    previous.turns !== next.turns ||
-    previous.toolCalls !== next.toolCalls ||
     previous.usage.input !== next.usage.input ||
     previous.usage.output !== next.usage.output ||
     previous.usage.cacheRead !== next.usage.cacheRead ||

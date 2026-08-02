@@ -174,6 +174,58 @@ describe("FileSessionStore", () => {
     });
   });
 
+  it("drops unrecoverable legacy subagent presentation during migration", async () => {
+    await withTempStore(async (store, directory) => {
+      const snapshot = createSnapshot("session-1", "hello");
+      const legacy = {
+        ...snapshot,
+        agents: {
+          "agent-1": {
+            id: "agent-1",
+            name: "default",
+            title: "old run",
+            status: "succeeded",
+            costTotal: 0.01,
+            turns: 1,
+            toolCalls: 0,
+            usage: {
+              input: 1,
+              output: 1,
+              cacheRead: 0,
+              cacheWrite: 0,
+              contextWindowUsageTokens: 2,
+              contextWindow: 200000,
+            },
+            startedAt: 1,
+            finishedAt: 2,
+            abortRequested: false,
+            finalText: "stale response",
+          },
+        },
+        facets: {
+          "agent-facet": {
+            id: "agent-facet",
+            subject: { type: "agent", id: "agent-1" },
+            kind: "test.agent",
+            version: 1,
+            data: {},
+          },
+        },
+      };
+      await mkdir(directory, { recursive: true });
+      await writeFile(
+        join(directory, "c2Vzc2lvbi0x.json"),
+        JSON.stringify({ format: STORED_SESSION_DOCUMENT_FORMAT, version: 1, snapshot: legacy }),
+        "utf8",
+      );
+
+      await expect(store.loadSession("session-1")).resolves.toEqual({
+        ...snapshot,
+        agents: {},
+      });
+    });
+  });
+
   it("rejects stored sessions written by a newer storage version", async () => {
     await withTempStore(async (store, directory) => {
       await mkdir(directory, { recursive: true });

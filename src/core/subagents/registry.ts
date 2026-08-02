@@ -108,12 +108,14 @@ export function formatSubagentsForPrompt(persona: Persona): string | undefined {
 
   const subagentLines = Object.entries(persona.subagents).map(([name, config]) => {
     const description = getSubagentDescription(name, config) ?? "(No description provided.)";
+    const effective = resolveSubagentEffectiveSettings({ persona, config });
+    const reasoning = effective.settings?.reasoning ?? "none";
     const launchModels = config.launchModels ?? [];
     const launchModelsText =
       launchModels.length > 0
         ? `\n  - Launch model overrides: ${launchModels.map((entry) => `\`${entry}\``).join(", ")}\n    By default, launch the subagent without a model override unless the user explicitly asks to use a specific model.`
         : "";
-    return `- \`${name}\`: ${description}${launchModelsText}`;
+    return `- \`${name}\`: ${description}\n  - Default runtime: \`${effective.model.provider}/${effective.model.id}:${reasoning}\`${launchModelsText}`;
   });
 
   if (subagentLines.length === 0) {

@@ -2,9 +2,10 @@ import type { ToolActivity, ToolUiText } from "../../core/tools/activity.js";
 import {
   TOOL_NAME_BASH,
   TOOL_NAME_EDIT,
+  TOOL_NAME_INTERRUPT_AGENT,
+  TOOL_NAME_LIST_AGENTS,
   TOOL_NAME_SEND_INPUT_TO_AGENT,
   TOOL_NAME_SPAWN_AGENT,
-  TOOL_NAME_TERMINATE_AGENT,
   TOOL_NAME_VIEW_IMAGE,
   TOOL_NAME_WAIT_FOR_AGENTS,
   TOOL_NAME_WRITE,
@@ -127,15 +128,26 @@ const TOOL_UI_LANGUAGE: Record<string, ToolUiLanguage> = {
       cancelled: "wait cancelled",
     },
   },
-  [TOOL_NAME_TERMINATE_AGENT]: {
-    name: "terminate agent",
+  [TOOL_NAME_LIST_AGENTS]: {
+    name: "list agents",
     labels: {
-      queued: "queued termination",
-      running: "terminating",
-      succeeded: "terminated",
-      failed: "failed to terminate",
-      blocked: "termination blocked",
-      cancelled: "termination cancelled",
+      queued: "queued list",
+      running: "listing",
+      succeeded: "listed",
+      failed: "failed to list",
+      blocked: "list blocked",
+      cancelled: "list cancelled",
+    },
+  },
+  [TOOL_NAME_INTERRUPT_AGENT]: {
+    name: "interrupt agent",
+    labels: {
+      queued: "queued interruption",
+      running: "interrupting",
+      succeeded: "interrupted",
+      failed: "failed to interrupt",
+      blocked: "interruption blocked",
+      cancelled: "interruption cancelled",
     },
   },
 };
@@ -447,7 +459,8 @@ const TOOL_STARTED_ACTIVITY_TYPES = new Set<ToolActivity["type"]>([
   "spawn_agent_started",
   "send_input_to_agent_started",
   "wait_for_agents_started",
-  "terminate_agent_started",
+  "list_agents_started",
+  "interrupt_agent_started",
   "code_mode_started",
 ]);
 
@@ -465,7 +478,8 @@ function terminalStatusFromActivity(
     case "spawn_agent_started":
     case "send_input_to_agent_started":
     case "wait_for_agents_started":
-    case "terminate_agent_started":
+    case "list_agents_started":
+    case "interrupt_agent_started":
     case "code_mode_started":
       return undefined;
     case "tool_call_blocked":
@@ -473,7 +487,8 @@ function terminalStatusFromActivity(
     case "spawn_agent_blocked":
     case "send_input_to_agent_blocked":
     case "wait_for_agents_blocked":
-    case "terminate_agent_blocked":
+    case "list_agents_blocked":
+    case "interrupt_agent_blocked":
     case "code_mode_blocked":
     case "view_image_blocked":
     case "write_blocked":
@@ -487,7 +502,8 @@ function terminalStatusFromActivity(
     case "spawn_agent_finished":
     case "send_input_to_agent_finished":
     case "wait_for_agents_finished":
-    case "terminate_agent_finished":
+    case "list_agents_finished":
+    case "interrupt_agent_finished":
     case "code_mode_finished":
       return activity.status === "success" ? "succeeded" : "failed";
     case "view_image_success":
@@ -818,26 +834,63 @@ export function createToolUiRegistry(): ToolUiRegistry {
     });
   });
 
-  registry.register("terminate_agent_started", (event, context) => {
-    const uiEvent = event as Extract<ToolActivity, { type: "terminate_agent_started" }>;
+  registry.register("list_agents_started", (event, context) => {
+    const uiEvent = event as Extract<ToolActivity, { type: "list_agents_started" }>;
     return buildSubagentRunningView({
       theme: context.theme,
-      label: getToolStatusLabel(TOOL_NAME_TERMINATE_AGENT, "running"),
+      label: getToolStatusLabel(TOOL_NAME_LIST_AGENTS, "running"),
       title: uiEvent.headerTarget,
     });
   });
 
-  registry.register("terminate_agent_finished", (event, context) => {
-    const uiEvent = event as Extract<ToolActivity, { type: "terminate_agent_finished" }>;
+  registry.register("list_agents_finished", (event, context) => {
+    const uiEvent = event as Extract<ToolActivity, { type: "list_agents_finished" }>;
+    return buildSubagentFinishedView({
+      theme: context.theme,
+      label: getToolStatusLabel(TOOL_NAME_LIST_AGENTS, "succeeded"),
+      failureLabel: getToolStatusLabel(TOOL_NAME_LIST_AGENTS, "failed"),
+      title: uiEvent.headerTarget,
+      status: uiEvent.status,
+      uiText: ensureSubagentUiText({
+        uiText: uiEvent.uiText,
+        status: uiEvent.status,
+        message: uiEvent.message,
+      }),
+    });
+  });
+
+  registry.register("list_agents_blocked", (event, context) => {
+    const uiEvent = event as Extract<ToolActivity, { type: "list_agents_blocked" }>;
+    return buildSimpleToolFinishedView({
+      theme: context.theme,
+      label: "list",
+      target: uiEvent.headerTarget,
+      status: "blocked",
+      statusLabel: getToolStatusLabel(TOOL_NAME_LIST_AGENTS, "blocked"),
+      message: uiEvent.reason,
+    });
+  });
+
+  registry.register("interrupt_agent_started", (event, context) => {
+    const uiEvent = event as Extract<ToolActivity, { type: "interrupt_agent_started" }>;
+    return buildSubagentRunningView({
+      theme: context.theme,
+      label: getToolStatusLabel(TOOL_NAME_INTERRUPT_AGENT, "running"),
+      title: uiEvent.headerTarget,
+    });
+  });
+
+  registry.register("interrupt_agent_finished", (event, context) => {
+    const uiEvent = event as Extract<ToolActivity, { type: "interrupt_agent_finished" }>;
     const title = formatSubagentTitle(uiEvent.headerTarget);
     const fallbackMessage =
-      uiEvent.finalStatus && uiEvent.finalStatus !== "success"
+      uiEvent.finalStatus && uiEvent.finalStatus !== "succeeded"
         ? `final status: ${uiEvent.finalStatus}`
         : uiEvent.message;
     return buildSubagentFinishedView({
       theme: context.theme,
-      label: getToolStatusLabel(TOOL_NAME_TERMINATE_AGENT, "succeeded"),
-      failureLabel: getToolStatusLabel(TOOL_NAME_TERMINATE_AGENT, "failed"),
+      label: getToolStatusLabel(TOOL_NAME_INTERRUPT_AGENT, "succeeded"),
+      failureLabel: getToolStatusLabel(TOOL_NAME_INTERRUPT_AGENT, "failed"),
       title,
       status: uiEvent.status,
       uiText: ensureSubagentUiText({
@@ -848,15 +901,15 @@ export function createToolUiRegistry(): ToolUiRegistry {
     });
   });
 
-  registry.register("terminate_agent_blocked", (event, context) => {
-    const uiEvent = event as Extract<ToolActivity, { type: "terminate_agent_blocked" }>;
+  registry.register("interrupt_agent_blocked", (event, context) => {
+    const uiEvent = event as Extract<ToolActivity, { type: "interrupt_agent_blocked" }>;
     const title = formatSubagentTitle(uiEvent.headerTarget);
     return buildSimpleToolFinishedView({
       theme: context.theme,
-      label: "terminate",
+      label: "interrupt",
       target: title,
       status: "blocked",
-      statusLabel: getToolStatusLabel(TOOL_NAME_TERMINATE_AGENT, "blocked"),
+      statusLabel: getToolStatusLabel(TOOL_NAME_INTERRUPT_AGENT, "blocked"),
       message: uiEvent.reason,
     });
   });

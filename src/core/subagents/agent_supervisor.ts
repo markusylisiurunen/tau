@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { AgentRuntime, createAgentSpec } from "../agent/agent_runtime.js";
+import {
+  AgentRuntime,
+  type AgentTurnResult,
+  createAgentSpec,
+  isAgentProviderError,
+} from "../agent/agent_runtime.js";
 import type { AgentEvent } from "../agent/events.js";
 import type { Config } from "../config/index.js";
 import { resolveAgentModel } from "../runtime/agent_model.js";
@@ -8,7 +12,7 @@ import { type CoreDeps, createDefaultCoreDeps } from "../runtime/deps.js";
 import { createAutoCompactionArchiver } from "../session/auto_compaction_archive.js";
 import { ToolCatalog } from "../tools/catalog.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
-import type { Persona } from "../types.js";
+import type { Persona, ReasoningEffort } from "../types.js";
 import {
   appendUsageLogEntry,
   getUsageCostTotal,
@@ -17,62 +21,58 @@ import {
 } from "../usage/logs.js";
 import { extractAssistantText } from "../utils/messages.js";
 import {
-  extractAssistantTextForProgress,
   formatToolUiEventForProgress,
   getToolResultFirstLine,
+  normalizeOneLine,
 } from "../utils/subagent_utils.js";
+import { formatActiveSubagentsForCompaction } from "./format.js";
 import type {
+  SubagentCapacitySnapshot,
   SubagentName,
+  SubagentRunFailure,
+  SubagentRunSnapshot,
   SubagentRuntimeConfig,
   SubagentStateSnapshot,
-  SubagentStatus,
   SubagentUiEvent,
   SubagentUsageSnapshot,
 } from "./types.js";
 
 const MAX_ACTIVE_SUBAGENTS = 8;
+const MAX_SUBAGENT_ACTIVITY_CHARS = 500;
 
-export type SubagentResult = {
-  id: string;
-  name: SubagentName;
-  title: string;
-  status: SubagentStatus;
-  costTotal: number;
-  turns: number;
-  toolCalls: number;
-  finalText?: string;
-  error?: string;
-  startedAt: number;
-  finishedAt?: number;
-};
+function normalizeSubagentActivity(text: string): string {
+  const normalized = normalizeOneLine(text);
+  return normalized.length <= MAX_SUBAGENT_ACTIVITY_CHARS
+    ? normalized
+    : `${normalized.slice(0, MAX_SUBAGENT_ACTIVITY_CHARS - 3)}...`;
+}
 
-export type SubagentSpawnResult = { ok: true; id: string } | { ok: false; reason: string };
+export type SubagentSpawnResult =
+  | { ok: true; state: SubagentStateSnapshot; capacity: SubagentCapacitySnapshot }
+  | { ok: false; reason: string };
 
 export type SubagentSendInputResult =
-  | { ok: true; id: string; name: SubagentName; title: string }
+  | { ok: true; state: SubagentStateSnapshot; capacity: SubagentCapacitySnapshot }
   | { ok: false; reason: string };
 
 type SubagentRecord = {
   id: string;
   name: SubagentName;
   title: string;
-  modelLabel?: string;
+  model: {
+    provider: string;
+    id: string;
+    reasoning: ReasoningEffort;
+  };
+  workingDirectory: string;
+  createdAt: number;
   originHistoryEntryId: string;
   runtimeConfig: SubagentRuntimeConfig;
-  config: Config;
-  backend: ToolExecutionBackend;
   personaId?: string;
   runtime: AgentRuntime;
-  status: SubagentStatus;
+  run: SubagentRunSnapshot;
   costTotal: number;
-  turns: number;
-  toolCalls: number;
   usage: SubagentUsageSnapshot;
-  startedAt: number;
-  finishedAt?: number;
-  abortRequested: boolean;
-  finalText?: string;
-  error?: string;
   completion: Promise<SubagentRecord>;
 };
 
@@ -121,27 +121,25 @@ export class AgentSupervisor {
     }
   }
 
+  getCapacity(): SubagentCapacitySnapshot {
+    return { running: this.getActiveCount(), limit: MAX_ACTIVE_SUBAGENTS };
+  }
+
   getActiveCount(): number {
-    return [...this.records.values()].filter((record) => record.status === "running").length;
+    return [...this.records.values()].filter((record) => record.run.status === "running").length;
   }
 
   getActiveCompactionContext(): string | undefined {
-    const active = [...this.records.values()].filter((record) => record.status === "running");
+    const active = this.listSnapshots().filter((state) => state.availability === "running");
     if (active.length === 0) return undefined;
-    const entries = active
-      .map((record) => {
-        const abort = record.abortRequested ? ", abort requested" : "";
-        return `- ${record.id}: ${record.title} (name: ${record.name}, status: ${record.status}${abort})`;
-      })
-      .join("\n");
-    return `<active-subagents>\n${entries}\n</active-subagents>`;
+    const state = formatActiveSubagentsForCompaction(active);
+    return `<active-subagents>\n${state}\n</active-subagents>`;
   }
 
   spawn(options: {
     runtimeConfig: SubagentRuntimeConfig;
     prompt: string;
     title: string;
-    modelLabel?: string;
     originHistoryEntryId: string;
     config: Config;
     backend: ToolExecutionBackend;
@@ -190,21 +188,29 @@ export class AgentSupervisor {
       clock: this.deps.clock,
       archiveAutoCompaction: createAutoCompactionArchiver(options.backend),
     });
+    const createdAt = this.deps.clock.now();
     const record: SubagentRecord = {
       id,
       name: runtimeConfig.name,
       title: options.title,
-      modelLabel: options.modelLabel,
+      model: {
+        provider: runtimeConfig.model.provider,
+        id: runtimeConfig.model.id,
+        reasoning: runtime.spec.attribution.reasoningEffort,
+      },
+      workingDirectory,
+      createdAt,
       originHistoryEntryId: options.originHistoryEntryId,
       runtimeConfig,
-      config: options.config,
-      backend: options.backend,
       personaId: options.personaId,
       runtime,
-      status: "running",
+      run: {
+        revision: 1,
+        status: "running",
+        startedAt: createdAt,
+        interruptRequested: false,
+      },
       costTotal: 0,
-      turns: 0,
-      toolCalls: 0,
       usage: {
         input: 0,
         output: 0,
@@ -213,19 +219,17 @@ export class AgentSupervisor {
         contextWindowUsageTokens: 0,
         contextWindow: runtimeConfig.model.contextWindow,
       },
-      startedAt: Date.now(),
-      abortRequested: false,
       completion: Promise.resolve(undefined as never),
     };
     this.records.set(id, record);
-    this.startRun(record, options.prompt);
-    return { ok: true, id };
+    this.startRun(record, options.prompt, "subagent_spawned");
+    return { ok: true, state: this.toSnapshot(record), capacity: this.getCapacity() };
   }
 
   sendInput(options: { id: string; prompt: string }): SubagentSendInputResult {
     const record = this.records.get(options.id);
     if (!record) return { ok: false, reason: `Unknown subagent ID: ${options.id}` };
-    if (record.status === "running") {
+    if (record.run.status === "running") {
       return {
         ok: false,
         reason: `Subagent ${options.id} is already running. Wait for it to finish before sending input.`,
@@ -237,26 +241,37 @@ export class AgentSupervisor {
         reason: `Subagent limit reached (max ${MAX_ACTIVE_SUBAGENTS} active). Wait for existing agents to finish.`,
       };
     }
-    this.startRun(record, options.prompt);
-    return { ok: true, id: record.id, name: record.name, title: record.title };
+
+    record.run = {
+      revision: record.run.revision + 1,
+      status: "running",
+      startedAt: this.deps.clock.now(),
+      interruptRequested: false,
+    };
+    this.startRun(record, options.prompt, "subagent_run_started");
+    return { ok: true, state: this.toSnapshot(record), capacity: this.getCapacity() };
   }
 
-  async waitForAgents(ids: string[], signal?: AbortSignal): Promise<SubagentResult[]> {
+  async waitForAgents(ids: string[], signal?: AbortSignal): Promise<SubagentStateSnapshot[]> {
     const missing = ids.filter((id) => !this.records.has(id));
     if (missing.length > 0) throw new Error(`Unknown subagent ID(s): ${missing.join(", ")}`);
     await raceWithAbort(Promise.race(ids.map((id) => this.waitForRecord(id))), signal);
-    return this.getCompletedRecords(ids).map((record) => this.toResult(record));
+    return ids.map((id) => {
+      const record = this.records.get(id);
+      if (!record) throw new Error(`Unknown subagent ID: ${id}`);
+      return this.toSnapshot(record);
+    });
   }
 
-  async terminate(id: string, signal?: AbortSignal): Promise<SubagentResult | undefined> {
+  async interrupt(id: string, signal?: AbortSignal): Promise<SubagentStateSnapshot | undefined> {
     const record = this.records.get(id);
     if (!record) return undefined;
-    if (record.status === "running") {
-      record.abortRequested = true;
+    if (record.run.status === "running") {
+      record.run.interruptRequested = true;
       record.runtime.interrupt();
-      await this.emit({ type: "subagent_abort_requested", id });
+      await this.emit({ type: "subagent_interrupt_requested", state: this.toSnapshot(record) });
     }
-    return this.toResult(await raceWithAbort(this.waitForRecord(id), signal));
+    return this.toSnapshot(await raceWithAbort(this.waitForRecord(id), signal));
   }
 
   getSnapshot(id: string): SubagentStateSnapshot | undefined {
@@ -268,43 +283,40 @@ export class AgentSupervisor {
     return [...this.records.values()].map((record) => this.toSnapshot(record));
   }
 
-  private startRun(record: SubagentRecord, prompt: string): void {
-    record.status = "running";
-    record.startedAt = Date.now();
-    record.finishedAt = undefined;
-    record.abortRequested = false;
-    record.error = undefined;
-    record.finalText = undefined;
-    record.completion = this.emit({ type: "subagent_spawned", state: this.toSnapshot(record) })
+  private startRun(
+    record: SubagentRecord,
+    prompt: string,
+    eventType: "subagent_spawned" | "subagent_run_started",
+  ): void {
+    record.completion = this.emit({ type: eventType, state: this.toSnapshot(record) })
       .then(async () => {
-        if (record.abortRequested) {
-          throw new Error("subagent was interrupted");
+        if (record.run.interruptRequested) {
+          return { aborted: true } satisfies AgentTurnResult;
         }
         return await record.runtime.submit(prompt);
       })
       .then((result) => {
-        if (record.abortRequested || result.aborted) {
-          throw new Error("subagent was interrupted");
-        }
-        if (result.blocked) throw new Error(result.blocked.message);
-        if (result.limitReached) throw new Error(result.limitReached.message);
-        const assistant = [...record.runtime.rawHistory]
-          .reverse()
-          .find((message): message is AssistantMessage => message.role === "assistant");
-        const finalText = assistant ? extractAssistantText(assistant).trim() : "";
-        if (!finalText) throw new Error("Sub-agent produced an empty response.");
-        record.status = "success";
-        record.finalText = finalText;
+        this.applyTurnResult(record, result);
         return record;
       })
       .catch((error) => {
-        const aborted = record.abortRequested;
-        record.status = aborted ? "aborted" : "error";
-        record.error = aborted ? undefined : error instanceof Error ? error.message : String(error);
+        if (record.run.interruptRequested) {
+          this.finishInterrupted(record);
+        } else if (isAgentProviderError(error)) {
+          this.finishFailed(record, {
+            kind: "provider-error",
+            message: error.message,
+            stopReason: "error",
+          });
+        } else {
+          this.finishFailed(record, {
+            kind: "runtime-error",
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
         return record;
       })
       .then(async (resolved) => {
-        resolved.finishedAt = Date.now();
         if (this.records.get(resolved.id) === resolved) {
           await this.emit({ type: "subagent_finished", state: this.toSnapshot(resolved) });
         }
@@ -312,44 +324,116 @@ export class AgentSupervisor {
       });
   }
 
+  private applyTurnResult(record: SubagentRecord, result: AgentTurnResult): void {
+    if (
+      record.run.interruptRequested ||
+      result.aborted ||
+      result.finalMessage?.stopReason === "aborted"
+    ) {
+      this.finishInterrupted(record);
+      return;
+    }
+    if (result.blocked) {
+      this.finishFailed(record, {
+        kind: result.blocked.reason,
+        message: result.blocked.message,
+      });
+      return;
+    }
+    if (result.limitReached) {
+      this.finishFailed(record, {
+        kind: result.limitReached.reason,
+        message: result.limitReached.message,
+      });
+      return;
+    }
+    if (!result.finalMessage) {
+      this.finishFailed(record, {
+        kind: "runtime-error",
+        message: "Subagent run completed without a final assistant message.",
+      });
+      return;
+    }
+    if (result.finalMessage.stopReason === "error") {
+      this.finishFailed(record, {
+        kind: "provider-error",
+        message: result.finalMessage.errorMessage ?? "Model returned an unspecified error.",
+        stopReason: result.finalMessage.stopReason,
+      });
+      return;
+    }
+
+    record.run = {
+      revision: record.run.revision,
+      status: "succeeded",
+      startedAt: record.run.startedAt,
+      finishedAt: this.deps.clock.now(),
+      interruptRequested: false,
+      response: extractAssistantText(result.finalMessage).trim(),
+    };
+  }
+
+  private finishInterrupted(record: SubagentRecord): void {
+    record.run = {
+      revision: record.run.revision,
+      status: "interrupted",
+      startedAt: record.run.startedAt,
+      finishedAt: this.deps.clock.now(),
+      interruptRequested: true,
+      failure: { kind: "interrupted", message: "Subagent run was interrupted." },
+    };
+  }
+
+  private finishFailed(
+    record: SubagentRecord,
+    failure: Exclude<SubagentRunFailure, { kind: "interrupted" }>,
+  ): void {
+    record.run = {
+      revision: record.run.revision,
+      status: "failed",
+      startedAt: record.run.startedAt,
+      finishedAt: this.deps.clock.now(),
+      interruptRequested: record.run.interruptRequested,
+      failure,
+    };
+  }
+
   private async recordAgentEvent(id: string, event: AgentEvent): Promise<void> {
     const record = this.records.get(id);
     if (!record) return;
-    let text = "";
+
+    if (event.type === "assistant_final") {
+      const usage = getUsageTotals(event.message.usage);
+      const cost = getUsageCostTotal(event.message.usage);
+      record.costTotal += cost;
+      record.usage = {
+        input: record.usage.input + usage.input,
+        output: record.usage.output + usage.output,
+        cacheRead: record.usage.cacheRead + usage.cacheRead,
+        cacheWrite: record.usage.cacheWrite + usage.cacheWrite,
+        contextWindowUsageTokens: usage.input + usage.output + usage.cacheRead + usage.cacheWrite,
+        contextWindow: record.runtimeConfig.model.contextWindow,
+      };
+      (this.options.recordUsage ?? appendUsageLogEntry)({
+        timestamp: event.message.timestamp,
+        sessionId: record.id,
+        personaId: record.personaId ?? event.personaId,
+        provider: event.message.provider,
+        model: event.message.model,
+        api: event.message.api,
+        reasoningEffort: event.reasoningEffort,
+        usage,
+        cost: { total: cost },
+        agent: { type: "subagent", name: record.name },
+      });
+      await this.emit({ type: "subagent_updated", state: this.toSnapshot(record) });
+      return;
+    }
+
+    let text: string | undefined;
     switch (event.type) {
-      case "assistant_final": {
-        const usage = getUsageTotals(event.message.usage);
-        const cost = getUsageCostTotal(event.message.usage);
-        record.turns += 1;
-        record.costTotal += cost;
-        record.usage = {
-          input: record.usage.input + usage.input,
-          output: record.usage.output + usage.output,
-          cacheRead: record.usage.cacheRead + usage.cacheRead,
-          cacheWrite: record.usage.cacheWrite + usage.cacheWrite,
-          contextWindowUsageTokens: usage.input + usage.output + usage.cacheRead + usage.cacheWrite,
-          contextWindow: record.runtimeConfig.model.contextWindow,
-        };
-        (this.options.recordUsage ?? appendUsageLogEntry)({
-          timestamp: event.message.timestamp,
-          sessionId: record.id,
-          personaId: record.personaId ?? event.personaId,
-          provider: event.message.provider,
-          model: event.message.model,
-          api: event.message.api,
-          reasoningEffort: event.reasoningEffort,
-          usage,
-          cost: { total: cost },
-          agent: { type: "subagent", name: record.name },
-        });
-        text = extractAssistantTextForProgress(event.message) ?? "";
-        break;
-      }
-      case "tool_call_admitted":
-        record.toolCalls += 1;
-        return;
       case "tool_activity":
-        text = formatToolUiEventForProgress(event.activity) ?? "";
+        text = formatToolUiEventForProgress(event.activity);
         break;
       case "tool_result":
         if (event.message.isError) {
@@ -362,32 +446,20 @@ export class AgentSupervisor {
       case "turn_started":
         text = "assistant: thinking";
         break;
-      case "turn_finished":
-        if (event.outcome === "completed") text = "done";
-        break;
       case "notice":
         text = event.text;
         break;
       default:
         return;
     }
-    await this.emit({
-      type: "subagent_progress",
-      id,
-      text,
-      costTotal: record.costTotal,
-      turns: record.turns,
-      toolCalls: record.toolCalls,
-      usage: { ...record.usage },
-    });
-  }
 
-  private getCompletedRecords(ids: string[]): SubagentRecord[] {
-    return ids
-      .map((id) => this.records.get(id))
-      .filter(
-        (record): record is SubagentRecord => record !== undefined && record.status !== "running",
-      );
+    const normalized = normalizeSubagentActivity(text ?? "");
+    if (!normalized) return;
+    await this.emit({
+      type: "subagent_activity",
+      state: this.toSnapshot(record),
+      text: normalized,
+    });
   }
 
   private async waitForRecord(id: string): Promise<SubagentRecord> {
@@ -401,34 +473,13 @@ export class AgentSupervisor {
       id: record.id,
       name: record.name,
       title: record.title,
-      modelLabel: record.modelLabel,
-      status: record.status,
+      availability: record.run.status === "running" ? "running" : "idle",
+      model: { ...record.model },
+      workingDirectory: record.workingDirectory,
+      createdAt: record.createdAt,
+      run: structuredClone(record.run),
       costTotal: record.costTotal,
-      turns: record.turns,
-      toolCalls: record.toolCalls,
       usage: { ...record.usage },
-      startedAt: record.startedAt,
-      finishedAt: record.finishedAt,
-      abortRequested: record.abortRequested,
-      error: record.error,
-      finalText: record.finalText,
-    };
-  }
-
-  private toResult(record: SubagentRecord): SubagentResult {
-    const { usage: _usage, runtime: _runtime, completion: _completion, ...result } = record;
-    return {
-      id: result.id,
-      name: result.name,
-      title: result.title,
-      status: result.status,
-      costTotal: result.costTotal,
-      turns: result.turns,
-      toolCalls: result.toolCalls,
-      finalText: result.finalText,
-      error: result.error,
-      startedAt: result.startedAt,
-      finishedAt: result.finishedAt,
     };
   }
 

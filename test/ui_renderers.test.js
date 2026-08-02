@@ -79,10 +79,17 @@ test("subagent panel renders progress", () => {
       id: "agent-1",
       name: "explore",
       title: "analysis",
-      status: "running",
+      availability: "running",
+      model: { provider: "anthropic", id: "claude-opus-4-8", reasoning: "medium" },
+      workingDirectory: "/repo",
+      createdAt: 1,
+      run: {
+        revision: 1,
+        status: "running",
+        startedAt: Date.now(),
+        interruptRequested: false,
+      },
       costTotal: 0,
-      turns: 0,
-      toolCalls: 0,
       usage: {
         input: 0,
         output: 0,
@@ -91,24 +98,35 @@ test("subagent panel renders progress", () => {
         contextWindowUsageTokens: 0,
         contextWindow: 200000,
       },
-      startedAt: Date.now(),
     },
   });
   panel.handleEvent({
-    type: "subagent_progress",
-    id: "agent-1",
-    text: "bash running: echo ok",
-    costTotal: 0.12,
-    turns: 1,
-    toolCalls: 1,
-    usage: {
-      input: 1234,
-      output: 56,
-      cacheRead: 789,
-      cacheWrite: 0,
-      contextWindowUsageTokens: 2079,
-      contextWindow: 200000,
+    type: "subagent_activity",
+    state: {
+      id: "agent-1",
+      name: "explore",
+      title: "analysis",
+      availability: "running",
+      model: { provider: "anthropic", id: "claude-opus-4-8", reasoning: "medium" },
+      workingDirectory: "/repo",
+      createdAt: 1,
+      run: {
+        revision: 1,
+        status: "running",
+        startedAt: Date.now(),
+        interruptRequested: false,
+      },
+      costTotal: 0.12,
+      usage: {
+        input: 1234,
+        output: 56,
+        cacheRead: 789,
+        cacheWrite: 0,
+        contextWindowUsageTokens: 2079,
+        contextWindow: 200000,
+      },
     },
+    text: "bash running: echo ok",
   });
   const rendered = renderText(panel, 120);
   expect(rendered).toContain("<textDim>⏵</textDim>");
@@ -116,5 +134,5 @@ test("subagent panel renders progress", () => {
   expect(rendered).toContain("<brandAccent>analysis</brandAccent>");
   expect(rendered).toContain("<actionOutput>  · $ echo ok</actionOutput>");
   expect(rendered).toContain("<textMuted>↑1.2k ↓56 (r789 w0) · 1.0%/200k · $0.12</textMuted>");
-  expect(rendered).toContain("<textMuted>(1/1) · ctrl+g to terminate</textMuted>");
+  expect(rendered).toContain("<textMuted>(1/1) · ctrl+g to interrupt</textMuted>");
 });

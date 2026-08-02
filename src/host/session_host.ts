@@ -18,6 +18,7 @@ import type {
   SessionProtocolEphemeralSubmitResult,
   SessionProtocolExecParams,
   SessionProtocolExecResult,
+  SessionProtocolInterruptSubagentResult,
   SessionProtocolRecordParams,
   SessionProtocolRecordResult,
   SessionProtocolReloadResult,
@@ -32,7 +33,6 @@ import type {
   SessionProtocolSetReasoningParams,
   SessionProtocolSettingsUpdateResult,
   SessionProtocolSnapshot,
-  SessionProtocolTerminateSubagentResult,
   SessionProtocolTurnOutcome,
 } from "../protocol/session_protocol.js";
 
@@ -98,7 +98,7 @@ export type TauHostedSession = {
   rewindToHistoryEntryId(
     historyEntryId: SessionProtocolRewindParams["historyEntryId"],
   ): Promise<SessionProtocolRewindResult>;
-  terminateSubagent(subagentId: string): Promise<SessionProtocolTerminateSubagentResult>;
+  interruptSubagent(subagentId: string): Promise<SessionProtocolInterruptSubagentResult>;
   createEphemeralContext(
     options: Omit<SessionProtocolEphemeralCreateParams, "sessionId">,
   ): Promise<SessionProtocolEphemeralCreateResult>;

@@ -10,6 +10,8 @@ export type Command = (
   | { type: "new" }
   | { type: "rewind" }
   | { type: "diff"; argsText: string }
+  | { type: "goal"; action: "show" | "resume" | "clear" }
+  | { type: "goal"; action: "start"; objective: string }
   | { type: "compactSummaryOnly" }
   | { type: "compactSummaryAndLast" }
   | { type: "reload" }
@@ -47,6 +49,9 @@ export interface CommandDispatchContext {
   newSession: () => Promise<void>;
   rewind: () => void;
   diff: (argsText: string) => Promise<void> | void;
+  goal: (
+    action: { type: "show" | "resume" | "clear" } | { type: "start"; objective: string },
+  ) => Promise<void> | void;
   compactSummaryOnly: (extra?: string) => Promise<void>;
   compactSummaryAndLast: (extra?: string) => Promise<void>;
   reload: () => Promise<void>;
@@ -247,6 +252,29 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
       return { type: "diff", argsText: extra ?? "", extra };
     },
     run: (ctx, command) => ctx.diff(command.argsText),
+  });
+
+  registry.register({
+    id: "goal",
+    usage: "/goal [objective|resume|clear]",
+    description: "show, start, resume, or clear a session goal",
+    autocompleteDescription: "manage the persistent session goal",
+    argument: "none",
+    parse: (raw) => {
+      const { command, extra } = splitCommandInput(raw);
+      if (command !== "/goal") return null;
+      if (!extra) return { type: "goal", action: "show" };
+      if (extra === "resume" || extra === "clear") {
+        return { type: "goal", action: extra };
+      }
+      return { type: "goal", action: "start", objective: extra };
+    },
+    run: (ctx, command) =>
+      ctx.goal(
+        command.action === "start"
+          ? { type: "start", objective: command.objective }
+          : { type: command.action },
+      ),
   });
 
   registry.register({

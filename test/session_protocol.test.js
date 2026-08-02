@@ -2035,6 +2035,26 @@ describe("session_protocol", () => {
       reasoning: "high",
     });
 
+    const goalDelta = createSessionProtocolDeltaMessage({
+      sessionId: "session-1",
+      fromRevision: 3,
+      toRevision: 4,
+      reason: "goal",
+      delta: {
+        type: "snapshot.patch",
+        changes: [
+          {
+            type: "goal.set",
+            goal: { objective: "Ship it", status: "active" },
+          },
+        ],
+      },
+    });
+    expect(applySessionProtocolDelta(settingsPatchedSnapshot, goalDelta).goal).toEqual({
+      objective: "Ship it",
+      status: "active",
+    });
+
     const invalidAgentStateDelta = createSessionProtocolDeltaMessage({
       sessionId: "session-1",
       fromRevision: 2,

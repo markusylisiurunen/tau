@@ -6,6 +6,7 @@ import type { Persona } from "../types.js";
 import { createBashToolDefinition } from "./bash.js";
 import { createEditToolDefinition } from "./edit.js";
 import { scopeToolExecutionBackend, type ToolExecutionBackend } from "./execution_backend.js";
+import { createGoalToolDefinitions, type GoalManager } from "./goal.js";
 import { createInterruptAgentToolDefinition } from "./interrupt_agent.js";
 import { createListAgentsToolDefinition } from "./list_agents.js";
 import { createNookToolDefinition } from "./nook.js";
@@ -34,6 +35,15 @@ export const ToolCatalog = {
   }): ToolRegistry {
     return this.createSessionRegistry({
       ...options,
+      goalManager: {
+        getGoal: () => null,
+        createGoal: async () => {
+          throw new Error("goal mutations are unavailable in the debug registry");
+        },
+        updateGoal: async () => {
+          throw new Error("goal mutations are unavailable in the debug registry");
+        },
+      },
       subagentPrompts: {},
       supervisor: new AgentSupervisor({ onEvent: () => {} }),
     });
@@ -47,6 +57,7 @@ export const ToolCatalog = {
     subagentPrompts: Record<string, string>;
     modelResolver: ModelResolver;
     supervisor: AgentSupervisor;
+    goalManager: GoalManager;
     resolveSubagentRuntime?: ResolveSubagentRuntime;
   }): ToolRegistry {
     const tools = [
@@ -76,7 +87,10 @@ export const ToolCatalog = {
       tools.push(createNookToolDefinition(options.backend, options.config));
     }
     const enabledToolNames = new Set<string>(options.persona.tools);
-    return new ToolRegistry(tools.filter((tool) => enabledToolNames.has(tool.schema.name)));
+    return new ToolRegistry([
+      ...tools.filter((tool) => enabledToolNames.has(tool.schema.name)),
+      ...createGoalToolDefinitions(options.goalManager),
+    ]);
   },
 
   createSubagentRegistry(

@@ -37,6 +37,7 @@ export type ChatViewStatus = {
   editor: {
     mode: ChatInputMode;
     cwdLabel: string;
+    goalStatus?: "active" | "blocked";
     personaName: string;
     reasoningLabel: string;
     reasoning?: ReasoningEffort;
@@ -515,7 +516,12 @@ export class TuiChatView implements ChatView {
       return;
     }
 
-    this.editor.setHeader(state.cwdLabel, `${state.personaName} (${state.reasoningLabel})`);
+    const goalIndicator =
+      state.goalStatus === "active" ? "◆ " : state.goalStatus === "blocked" ? "◇ " : "";
+    this.editor.setHeader(
+      `${goalIndicator}${state.cwdLabel}`,
+      `${state.personaName} (${state.reasoningLabel})`,
+    );
   }
 
   private setRecordingIndicatorActive(active: boolean): void {

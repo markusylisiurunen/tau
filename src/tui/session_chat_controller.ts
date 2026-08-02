@@ -182,6 +182,7 @@ export class SessionChatController {
       newSession: () => this.createNewSession(),
       rewind: () => this.startRewindFlow(),
       diff: (argsText) => this.startDiffReview(argsText),
+      goal: (action) => this.handleGoalAction(action),
       compactSummaryOnly: (extra) => this.compactSession("summary-only", extra),
       compactSummaryAndLast: (extra) => this.compactSession("summary-and-last", extra),
       reload: () => this.reloadContent(),
@@ -1764,6 +1765,36 @@ export class SessionChatController {
     }
   }
 
+  private async handleGoalAction(
+    action: { type: "show" | "resume" | "clear" } | { type: "start"; objective: string },
+  ): Promise<void> {
+    if (action.type === "show") {
+      const goal = this.snapshot.goal;
+      this.view.addSystemMessage(
+        goal ? `goal ${goal.status}: ${goal.objective}` : "no session goal",
+        goal ? "success" : "muted",
+      );
+      return;
+    }
+
+    if (action.type === "start") {
+      await this.runSessionTurn(() => this.session.startGoal(action.objective));
+      return;
+    }
+    if (action.type === "resume") {
+      await this.runSessionTurn(() => this.session.resumeGoal());
+      return;
+    }
+
+    try {
+      this.snapshot = await this.session.clearGoal();
+      this.refreshStatus();
+      this.view.addSystemMessage("session goal cleared", "success");
+    } catch (error) {
+      this.view.addSystemMessage(`goal clear failed: ${(error as Error).message}`, "error");
+    }
+  }
+
   private async speakLastAssistantMessage(): Promise<void> {
     if (this.speakTask) {
       this.view.addSystemMessage("speech playback already in progress", "warn");
@@ -1859,6 +1890,7 @@ export class SessionChatController {
       editor: {
         mode: this.getInputMode(),
         cwdLabel: this.getFooterCwdLabel(),
+        goalStatus: this.snapshot.goal?.status,
         personaName: this.getCurrentPersonaSnapshot()?.label ?? this.snapshot.settings.personaId,
         reasoningLabel: this.snapshot.settings.reasoning ?? "none",
         reasoning:

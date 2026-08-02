@@ -6,7 +6,10 @@ import { describe, expect, it, vi } from "vitest";
 import { createLocalToolExecutionBackend } from "../dist/core/index.js";
 import { resolveModel } from "../dist/core/models/catalog.js";
 import { personas } from "../dist/core/personas.js";
-import { prependTauUserMetadata } from "../dist/core/utils/user_metadata.js";
+import {
+  prependTauUserMetadata,
+  stripTauUserDisplayText,
+} from "../dist/core/utils/user_metadata.js";
 import { HostedEphemeralAgentSession } from "../dist/host/hosted_ephemeral_agent_session.js";
 import { LocalSessionHost } from "../dist/host/local_session_host.js";
 import { EphemeralThreadBusyError } from "../dist/host/session_host.js";
@@ -198,6 +201,7 @@ function createStoredSnapshot(overrides = {}) {
       contextEpoch: "stored-context",
     },
     lifecycle: overrides.lifecycle ?? "idle",
+    goal: overrides.goal ?? null,
     costTotal: overrides.costTotal ?? 0,
     bootstrap: overrides.bootstrap ?? {
       model: expectedModel(persona),
@@ -495,6 +499,136 @@ describe("LocalSessionHost", () => {
         }),
       }),
     );
+  });
+
+  it("continues an active goal until the model completes it", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const hostedSession = await host.createSession(localCreateInput);
+    await hostedSession.snapshot();
+    const deltas = [];
+    hostedSession.onDelta((delta) => deltas.push(delta));
+    const completeCall = fauxToolCall(
+      "update_goal",
+      { status: "complete" },
+      { id: "complete-goal" },
+    );
+    const toolMessage = fauxAssistantMessage([completeCall], { stopReason: "toolUse" });
+    const responses = [
+      fauxAssistantMessage("I stopped too soon"),
+      toolMessage,
+      fauxAssistantMessage("Goal complete"),
+    ];
+    const contexts = [];
+    hostedSession.runtime.agent.spec.model.stream = (context) => {
+      contexts.push(context);
+      const response = responses.shift();
+      return {
+        async *[Symbol.asyncIterator]() {
+          if (response === toolMessage) {
+            yield { type: "toolcall_start", contentIndex: 0, partial: toolMessage };
+            yield {
+              type: "toolcall_end",
+              contentIndex: 0,
+              toolCall: completeCall,
+              partial: toolMessage,
+            };
+          }
+        },
+        async result() {
+          return response;
+        },
+      };
+    };
+
+    await expect(hostedSession.startGoal("Ship the feature")).resolves.toMatchObject({
+      turn: { status: "completed" },
+    });
+
+    const snapshot = await hostedSession.snapshot();
+    expect(snapshot.goal).toBeNull();
+    const startDelta = deltas.find(
+      (delta) =>
+        delta.reason === "user-message" &&
+        delta.delta.type === "snapshot.patch" &&
+        delta.delta.changes.some((change) => change.type === "goal.set"),
+    );
+    expect(startDelta?.delta.changes).toEqual(
+      expect.arrayContaining([
+        { type: "goal.set", goal: { objective: "Ship the feature", status: "active" } },
+        expect.objectContaining({ type: "message.append" }),
+      ]),
+    );
+    expect(contexts).toHaveLength(3);
+    expect(
+      contexts[0].messages.some(
+        (message) =>
+          message.role === "user" &&
+          JSON.stringify(message.content).includes("<goal-objective>\\nShip the feature"),
+      ),
+    ).toBe(true);
+    const hiddenContinuation = snapshot.messages.find(
+      (message) =>
+        message.message.role === "user" &&
+        stripTauUserDisplayText(message.message.content[0].text) === "",
+    );
+    expect(hiddenContinuation?.modelVisible).toBe(true);
+    expect(snapshot.tools[completeCall.id]).toMatchObject({ status: "succeeded" });
+    await host.shutdown();
+  });
+
+  it("updates goal objectives without weakening completion semantics", async () => {
+    const host = createHost(new MemorySessionStore());
+    const hostedSession = await host.createSession(localCreateInput);
+
+    await hostedSession.createGoal("Initial objective");
+    await expect(
+      hostedSession.updateGoal({ objective: "Refined objective", status: "blocked" }),
+    ).resolves.toEqual({ objective: "Refined objective", status: "blocked" });
+    await expect(
+      hostedSession.updateGoal({ objective: "Discarded objective", status: "complete" }),
+    ).rejects.toThrow("cannot be updated while completing");
+    await expect(hostedSession.snapshot()).resolves.toMatchObject({
+      goal: { objective: "Refined objective", status: "blocked" },
+    });
+    await expect(hostedSession.updateGoal({ status: "complete" })).resolves.toBeNull();
+    await expect(hostedSession.snapshot()).resolves.toMatchObject({ goal: null });
+    await host.shutdown();
+  });
+
+  it("blocks active goals when a turn is interrupted", async () => {
+    const host = createHost(new MemorySessionStore());
+    const hostedSession = await host.createSession(localCreateInput);
+    hostedSession.runtime.agent.spec.model.stream = () => ({
+      async *[Symbol.asyncIterator]() {},
+      async result() {
+        return fauxAssistantMessage("", { stopReason: "aborted" });
+      },
+    });
+
+    await expect(hostedSession.startGoal("Finish safely")).resolves.toMatchObject({
+      turn: { status: "aborted" },
+    });
+    await expect(hostedSession.snapshot()).resolves.toMatchObject({
+      goal: { objective: "Finish safely", status: "blocked" },
+    });
+    await host.shutdown();
+  });
+
+  it("normalizes recovered active goals to blocked", async () => {
+    const store = new MemorySessionStore();
+    const snapshot = createStoredSnapshot({
+      goal: { objective: "Resume deliberately", status: "active" },
+    });
+    await store.commitSessionSnapshot(snapshot);
+
+    const host = createHost(store);
+    const recovered = await host.observeSession(snapshot.sessionId);
+    await expect(recovered?.snapshot()).resolves.toMatchObject({
+      lifecycle: "idle",
+      goal: { objective: "Resume deliberately", status: "blocked" },
+    });
+    await host.shutdown();
   });
 
   it("attributes main runtime usage exactly once", async () => {

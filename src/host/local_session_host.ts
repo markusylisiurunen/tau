@@ -10,6 +10,7 @@ import { ChatRuntime, type ChatRuntimeEnvironment } from "../core/runtime/chat_r
 import type { CoreDeps } from "../core/runtime/deps.js";
 import type { RuntimePromptBootstrap } from "../core/runtime/runtime_bootstrap.js";
 import type { SessionPromptComposition } from "../core/runtime/session_prompt_composer.js";
+import { buildGoalContinuationText, prependGoalPolicy } from "../core/session/goal.js";
 import { SUBAGENT_ACTIVITY_FACET_KIND, type SubagentUiEvent } from "../core/subagents/types.js";
 import type { ToolActivity } from "../core/tools/activity.js";
 import type { Persona, ReasoningEffort, Skill } from "../core/types.js";
@@ -52,6 +53,7 @@ import type {
   SessionProtocolExecParams,
   SessionProtocolExecResult,
   SessionProtocolFacet,
+  SessionProtocolGoal,
   SessionProtocolInterruptSubagentResult,
   SessionProtocolMessage,
   SessionProtocolModelSnapshot,
@@ -61,12 +63,14 @@ import type {
   SessionProtocolReloadResult,
   SessionProtocolResolvePromptParams,
   SessionProtocolResolvePromptResult,
+  SessionProtocolResumeGoalResult,
   SessionProtocolRewindResult,
   SessionProtocolSampleParams,
   SessionProtocolSampleResult,
   SessionProtocolSessionSummary,
   SessionProtocolSettingsUpdateResult,
   SessionProtocolSnapshot,
+  SessionProtocolStartGoalResult,
   SessionProtocolSubagentSnapshot,
   SessionProtocolTimelineItem,
   SessionProtocolToolRun,
@@ -286,6 +290,11 @@ export class LocalSessionHost implements TauSessionHost {
       environment: this.sessionOptions.environment,
       eventSink: async (event) => await hostedSession.enqueueRuntimeEvent(event),
       subagentEventSink: async (event) => await hostedSession.recordSubagentEvent(event),
+      goalManager: {
+        getGoal: () => hostedSession.getGoal(),
+        createGoal: async (objective) => await hostedSession.createGoal(objective),
+        updateGoal: async (update) => await hostedSession.updateGoal(update),
+      },
       initialPromptComposition: committedSnapshot
         ? promptCompositionFromSnapshot(committedSnapshot)
         : undefined,
@@ -567,6 +576,8 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   private disposePromise?: Promise<void>;
   private disposing = false;
   private costTotal = 0;
+  private goal: SessionProtocolGoal | null;
+  private pendingGoalCommit?: SessionProtocolGoal;
   private forceNextSnapshotRevision: boolean;
   private disposed = false;
 
@@ -591,6 +602,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     this.persistedSnapshot = committedSnapshot
       ? cloneSessionProtocolSnapshot(committedSnapshot)
       : undefined;
+    this.goal = structuredClone(committedSnapshot?.goal ?? null);
     this.forceNextSnapshotRevision = forceNextSnapshotRevision;
     this.restoreProtocolState(committedSnapshot);
   }
@@ -625,6 +637,89 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     };
   }
 
+  getGoal(): SessionProtocolGoal | null {
+    return structuredClone(this.goal);
+  }
+
+  async createGoal(objective: string): Promise<SessionProtocolGoal> {
+    const goal = this.buildNewGoal(objective);
+    await this.setGoal(goal);
+    return structuredClone(goal);
+  }
+
+  async updateGoal(update: {
+    objective?: string;
+    status?: "complete" | "blocked";
+  }): Promise<SessionProtocolGoal | null> {
+    this.assertActive();
+    const current = this.goal;
+    if (!current) {
+      throw new Error("no goal exists");
+    }
+    if (update.objective !== undefined && update.status === "complete") {
+      throw new Error("goal objective cannot be updated while completing the goal");
+    }
+    if (update.status === "complete") {
+      await this.setGoal(null);
+      return null;
+    }
+    const objective = update.objective?.trim() ?? current.objective;
+    if (!objective) {
+      throw new Error("goal objective must not be empty");
+    }
+    const goal: SessionProtocolGoal = {
+      objective,
+      status: update.status ?? current.status,
+    };
+    await this.setGoal(goal);
+    return structuredClone(goal);
+  }
+
+  async startGoal(objective: string): Promise<SessionProtocolStartGoalResult> {
+    const goal = this.buildNewGoal(objective);
+    this.goal = goal;
+    this.pendingGoalCommit = goal;
+    try {
+      const { userHistoryEntryId } = await this.record({
+        text: prependGoalPolicy(goal.objective, goal),
+      });
+      return { userHistoryEntryId, turn: await this.runTurn() };
+    } catch (error) {
+      if (this.pendingGoalCommit === goal) {
+        this.goal = null;
+        this.pendingGoalCommit = undefined;
+      } else {
+        await this.blockActiveGoal().catch(() => undefined);
+      }
+      throw error;
+    }
+  }
+
+  async resumeGoal(): Promise<SessionProtocolResumeGoalResult> {
+    this.assertActive();
+    if (this.goal?.status !== "blocked") {
+      throw new Error(this.goal ? "goal is already active" : "no goal exists");
+    }
+    const goal: SessionProtocolGoal = { ...this.goal, status: "active" };
+    await this.setGoal(goal);
+    try {
+      await this.record({ text: buildGoalContinuationText(goal) });
+      return { turn: await this.runTurn() };
+    } catch (error) {
+      await this.blockActiveGoal().catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async clearGoal(): Promise<SessionProtocolSnapshot> {
+    this.assertActive();
+    if (!this.goal) {
+      throw new Error("no goal exists");
+    }
+    await this.setGoal(null);
+    return await this.snapshot();
+  }
+
   async record(
     options: Omit<SessionProtocolRecordParams, "sessionId">,
   ): Promise<SessionProtocolRecordResult> {
@@ -648,36 +743,42 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     } finally {
       if (this.activeTurnPromise === run) {
         this.activeTurnPromise = undefined;
+        await this.emitSnapshotResetIfChanged("assistant-message");
       }
     }
   }
 
   private async runTurnNow(): Promise<SessionProtocolTurnOutcome> {
-    const userMessage = this.session.rawHistoryEntries.findLast(
-      (entry) => entry.message.role === "user",
-    );
-    if (!userMessage) {
-      throw new Error("cannot run a turn without a user message");
-    }
+    while (true) {
+      const userMessage = this.session.rawHistoryEntries.findLast(
+        (entry) => entry.message.role === "user",
+      );
+      if (!userMessage) {
+        throw new Error("cannot run a turn without a user message");
+      }
 
-    let lastAssistantMessage: AssistantMessage | undefined;
-    try {
-      const result = await this.runtime.runTurn();
-      lastAssistantMessage = result.finalMessage;
-      if (result.aborted && this.draftAssistantMessage) {
-        await this.interruptDraftAssistantMessage();
-      }
-      const outcome = turnOutcomeFromResult(result, lastAssistantMessage);
-      this.turnOutcomes.set(userMessage.id, outcome);
-      await this.emitSnapshotResetIfChanged("assistant-message");
-      return outcome;
-    } catch (error) {
+      let lastAssistantMessage: AssistantMessage | undefined;
       try {
-        await this.cleanupFailedTurn();
-      } catch {
-        // Preserve the original turn failure for the protocol response.
+        const result = await this.runtime.runTurn();
+        lastAssistantMessage = result.finalMessage;
+        if (result.aborted && this.draftAssistantMessage) {
+          await this.interruptDraftAssistantMessage();
+        }
+        const outcome = turnOutcomeFromResult(result, lastAssistantMessage);
+        this.turnOutcomes.set(userMessage.id, outcome);
+        if (outcome.status !== "completed") {
+          await this.blockActiveGoal();
+        }
+        await this.emitSnapshotResetIfChanged("assistant-message");
+        if (outcome.status !== "completed" || this.goal?.status !== "active") {
+          return outcome;
+        }
+        await this.session.commitUserText(buildGoalContinuationText(this.goal));
+      } catch (error) {
+        await this.cleanupFailedTurn().catch(() => undefined);
+        await this.blockActiveGoal().catch(() => undefined);
+        throw error;
       }
-      throw error;
     }
   }
 
@@ -1214,6 +1315,29 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     }
   }
 
+  private buildNewGoal(objective: string): SessionProtocolGoal {
+    this.assertActive();
+    if (this.goal) {
+      throw new Error("a goal already exists; clear it before creating another");
+    }
+    const normalized = objective.trim();
+    if (!normalized) {
+      throw new Error("goal objective must not be empty");
+    }
+    return { objective: normalized, status: "active" };
+  }
+
+  private async setGoal(goal: SessionProtocolGoal | null): Promise<void> {
+    this.goal = structuredClone(goal);
+    await this.emitPatch("goal", [{ type: "goal.set", goal: structuredClone(goal) }]);
+  }
+
+  private async blockActiveGoal(): Promise<void> {
+    if (this.goal?.status === "active") {
+      await this.setGoal({ ...this.goal, status: "blocked" });
+    }
+  }
+
   private async commitSnapshot(): Promise<SessionProtocolSnapshot> {
     const write = this.snapshotQueue.catch(() => undefined).then(() => this.writeSnapshot());
     this.snapshotQueue = write.catch(() => undefined);
@@ -1394,7 +1518,8 @@ class LocalHostedSessionHandle implements LocalHostedSession {
           ? { usageCheckpoint: { ...agentState.usageCheckpoint } }
           : {}),
       },
-      lifecycle: this.runtime.isTurnRunning ? "running" : "idle",
+      lifecycle: this.activeTurnPromise || this.runtime.isTurnRunning ? "running" : "idle",
+      goal: structuredClone(this.goal),
       costTotal: this.costTotal,
       settings: {
         personaId: this.runtime.persona.id,
@@ -1730,11 +1855,15 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         });
         return;
       }
-      case "user_message":
+      case "user_message": {
+        const pendingGoal = this.pendingGoalCommit;
         await this.emitPatch(
           "user-message",
           [
             this.agentStateChange(),
+            ...(pendingGoal
+              ? [{ type: "goal.set" as const, goal: structuredClone(pendingGoal) }]
+              : []),
             {
               type: "message.append",
               message: {
@@ -1748,7 +1877,11 @@ class LocalHostedSessionHandle implements LocalHostedSession {
           ],
           { persist: true },
         );
+        if (pendingGoal && this.pendingGoalCommit === pendingGoal) {
+          this.pendingGoalCommit = undefined;
+        }
         return;
+      }
       case "history_rewound":
         this.reconcileProjections({ removeMissingAgents: true });
         await this.emitSnapshotResetIfChanged("maintenance");
@@ -2320,6 +2453,10 @@ function normalizeRecoveredSnapshot(snapshot: SessionProtocolSnapshot): {
   const legacyAgentState = recovered.agentState.contextEpoch === LEGACY_SESSION_CONTEXT_EPOCH;
   let changed = recovered.lifecycle !== "idle" || legacyAgentState;
   recovered.lifecycle = "idle";
+  if (recovered.goal?.status === "active") {
+    changed = true;
+    recovered.goal.status = "blocked";
+  }
   if (Object.keys(recovered.agents).length > 0) {
     changed = true;
     recovered.agents = {};

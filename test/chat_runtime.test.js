@@ -50,6 +50,11 @@ function createRuntime(overrides = {}) {
     environment: createEnvironment(),
     eventSink: async () => {},
     subagentEventSink: async () => {},
+    goalManager: {
+      getGoal: () => null,
+      createGoal: async (objective) => ({ objective, status: "active" }),
+      updateGoal: async () => null,
+    },
     config: {},
     ...overrides,
   });
@@ -62,6 +67,20 @@ describe("ChatRuntime", () => {
     expect(runtime.agent).toBeInstanceOf(AgentRuntime);
     expect(runtime.agent.spec.tools.schemas.length).toBeGreaterThan(0);
     expect(runtime.agent.spec.systemPrompt).toBe(runtime.promptComposition.baseSystemPrompt);
+  });
+
+  it("supplies the authoritative active goal to compaction continuations", () => {
+    const runtime = createRuntime({
+      goalManager: {
+        getGoal: () => ({ objective: "Ship <all> requirements", status: "active" }),
+        createGoal: async (objective) => ({ objective, status: "active" }),
+        updateGoal: async () => null,
+      },
+    });
+
+    expect(runtime.agent.getCompactionContinuationSystemMessages()).toEqual([
+      expect.stringContaining("<goal-objective>\nShip &lt;all&gt; requirements\n</goal-objective>"),
+    ]);
   });
 
   it("requires both persona selection and config to expose Nook", () => {
@@ -79,11 +98,23 @@ describe("ChatRuntime", () => {
 
     expect(configuredWithoutPersona.agent.spec.tools.schemas.map((tool) => tool.name)).toEqual([
       "bash",
+      "get_goal",
+      "create_goal",
+      "update_goal",
     ]);
     expect(personaWithoutConfig.agent.spec.tools.schemas.map((tool) => tool.name)).toEqual([
       "bash",
+      "get_goal",
+      "create_goal",
+      "update_goal",
     ]);
-    expect(enabled.agent.spec.tools.schemas.map((tool) => tool.name)).toEqual(["bash", "nook"]);
+    expect(enabled.agent.spec.tools.schemas.map((tool) => tool.name)).toEqual([
+      "bash",
+      "nook",
+      "get_goal",
+      "create_goal",
+      "update_goal",
+    ]);
   });
 
   it("samples with the current persona model settings without changing agent state", async () => {

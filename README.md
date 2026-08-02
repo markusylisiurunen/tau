@@ -136,7 +136,7 @@ For stdio attach, use `--session <id>` before `--`:
 tau attach --session 0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3 -- ssh vps 'cd /path/to/repo && tau rpc'
 ```
 
-Session attach renders the authoritative session snapshot, streams recoverable `session.delta` updates and independently revisioned, non-persisted `session.pendingUserMessages` replacements, submits normal user input through `session.submit`, `session.queue`, and `session.steer`, supports steering/interruption, runs `!`/`!!` Bash commands in the session execution environment, records `/listen` from the local microphone, speaks `/speak` locally, reloads session content with `/reload`, switches session personas with `/persona:<id>` or `Ctrl+P`, inserts session prompt templates with `/prompt:<id>`, compacts the session with `/compact:*`, creates a new session with `/new`, and exits with `/exit` or `Ctrl+C` twice.
+Session attach renders the authoritative session snapshot, streams recoverable `session.delta` updates and independently revisioned, non-persisted `session.pendingUserMessages` replacements, submits normal user input through `session.submit`, `session.queue`, and `session.steer`, supports steering/interruption, runs `!`/`!!` Bash commands in the session execution environment, records `/listen` from the local microphone, speaks `/speak` locally, reloads session content with `/reload`, switches session personas with `/persona:<id>` or `Ctrl+P`, inserts session prompt templates with `/prompt:<id>`, manages persistent autonomous goals with `/goal`, compacts the session with `/compact:*`, creates a new session with `/new`, and exits with `/exit` or `Ctrl+C` twice.
 
 Model `bash` tool calls, `!`/`!!`, `session.exec`, and Tau-controlled command helpers each run in a fresh, non-interactive login Bash belonging to the session execution environment. Tau sets `HOME` to the execution environment home, so Bash reads `/etc/profile` and then the first available user login file (`~/.bash_profile`, `~/.bash_login`, or `~/.profile`). Bash also reads inherited `BASH_ENV` when set; otherwise `.bashrc` is loaded only when the login configuration sources it. Login startup files must be automation-safe: they must not write to stdout or stderr, read stdin, require a TTY, or terminate the shell unexpectedly. Tau does not filter or frame startup output. Commands start from the backend's target-side environment and apply explicit execution-environment overrides; the local backend filters sensitive variables inherited from the Tau host. Node, Git, and other helper executables resolve from the same login-configured `PATH` as model commands. Shell state such as `cd`, exports, aliases, functions, and `nvm use` does not persist between calls.
 
@@ -374,6 +374,8 @@ tau --persona opus-4.8-coder
 
 ## sub-agents
 
+main-session models always receive `get_goal`, `create_goal`, and `update_goal` independently of persona tool allowlists. `create_goal` must only be used for explicit user, system, or developer goal requests, never inferred from ordinary work.
+
 some personas can run isolated sub-agents via the `spawn_agent`, `send_input_to_agent`, `wait_for_agents`, `list_agents`, and `interrupt_agent` tools. `list_agents` reports each spawned thread's runtime, latest run, usage, context pressure, and response availability. `wait_for_agents` returns retained latest responses as soon as at least one requested agent finishes, and completed responses can be read repeatedly.
 
 the built-in `default` sub-agent is available unless disabled. it inherits the main persona's model, settings, tool access (minus sub-agent management tools), and system prompt. the inherited main prompt is wrapped with default sub-agent-specific rules, and those wrapper rules take precedence on conflicts. custom sub-agents can override model, reasoning, and tools.
@@ -458,6 +460,7 @@ tau supports slash commands for common actions:
 | `/listen` | start microphone recording and transcribe into the editor (macOS only) |
 | `/speak` | speak the last assistant message aloud (macOS only) |
 | `/diff [git diff args...]` | open the local diff review tool for the current session; git snapshot and review-agent work run on the session host |
+| `/goal [objective\|resume\|clear]` | show, start, resume, or clear a persistent autonomous goal |
 | `/compact:summary-only` | compress history into one synthetic user summary message |
 | `/compact:summary-and-last` | compress history and include the last assistant message verbatim when present |
 | `/persona:<id>` | switch to a different persona |
@@ -465,6 +468,8 @@ tau supports slash commands for common actions:
 | `/theme:<id>` | switch to a loaded theme |
 | `!<cmd>` | run a login Bash command directly |
 | `!!<cmd>` | run a login Bash command without adding output to the model context |
+
+`/goal <objective>` starts a persisted autonomous goal. Tau keeps the full objective in the session snapshot, reinjects it after compaction, and starts another ordinary turn when the assistant returns while the goal remains active. The model can inspect, create, revise, complete, or block goals through `get_goal`, `create_goal`, and `update_goal`; `create_goal` is only for explicit user, system, or developer goal requests and never inferred from ordinary tasks. Completion clears the goal. Interruption, terminal failure, and process recovery leave it blocked until `/goal resume`; `/goal clear` removes it. The editor header shows `◆` for active and `◇` for blocked goals.
 
 tau automatically compacts long sessions when the latest successful provider-reported usage from the active model plus Tau's estimate of model-visible content added since that response approaches the model context limit. Tau checks before every model subturn, so one user turn can compact more than once. automatic compaction summarizes older context, retrying the summary call once on failure, asks the compaction model to select original user messages to append verbatim inside the summary by history id, retains a recent tail while middle-truncating individual textual tool and recovery results above roughly 8,192 estimated tokens, and inserts a hidden continuation note so the assistant continues without asking you to repeat context. before replacing history, Tau best-effort archives the pre-compaction conversation as ordered `.txt` and `.json` pairs in an agent-specific execution-environment temp directory. assistant thinking is omitted. the text file middle-truncates tool results for easier lookup, while JSON retains untruncated archived content. every archivable summarized record is labeled with its history entry id, so the compaction model may cite an id for bulky exact details and the continuing assistant can resolve it from the archive. the continuation note includes the temporary paths when archiving succeeds.
 

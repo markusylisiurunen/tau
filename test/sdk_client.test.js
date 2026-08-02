@@ -167,6 +167,15 @@ class FakeSessionProtocolTransport {
           return createObserveResult(params.sessionId);
         case "session.snapshot":
           return createSnapshot(params.sessionId);
+        case "session.startGoal":
+          return {
+            userHistoryEntryId: "goal-user",
+            turn: { status: "completed", stopReason: "stop" },
+          };
+        case "session.resumeGoal":
+          return { turn: { status: "completed", stopReason: "stop" } };
+        case "session.clearGoal":
+          return createProtocolSnapshot({ sessionId: params.sessionId, revision: 3 });
         case "session.setReasoning":
           return {
             revision: 2,
@@ -631,6 +640,30 @@ describe("sdk_client", () => {
       method: "session.record",
       params: { sessionId: "session-1", text: "review", historyEntryId: "review-1" },
     });
+    await expect(readySession.startGoal("Ship the feature")).resolves.toEqual({
+      userHistoryEntryId: "goal-user",
+      turn: { status: "completed", stopReason: "stop" },
+    });
+    expect(transport.requests.at(-1)).toEqual({
+      method: "session.startGoal",
+      params: { sessionId: "session-1", objective: "Ship the feature" },
+    });
+    await expect(readySession.resumeGoal()).resolves.toEqual({
+      turn: { status: "completed", stopReason: "stop" },
+    });
+    expect(transport.requests.at(-1)).toEqual({
+      method: "session.resumeGoal",
+      params: { sessionId: "session-1" },
+    });
+    await expect(readySession.clearGoal()).resolves.toMatchObject({
+      sessionId: "session-1",
+      goal: null,
+    });
+    expect(transport.requests.at(-1)).toEqual({
+      method: "session.clearGoal",
+      params: { sessionId: "session-1" },
+    });
+
     await expect(readySession.setReasoning("high")).resolves.toEqual(
       expect.objectContaining({
         settings: expect.objectContaining({ reasoning: "high" }),

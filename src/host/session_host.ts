@@ -2,6 +2,7 @@ import type { CancelledSteeringSubmission } from "../core/agent/agent_runtime.js
 import type {
   SessionProtocolAutocompletePathsParams,
   SessionProtocolAutocompletePathsResult,
+  SessionProtocolClearGoalResult,
   SessionProtocolClientToolCallMessage,
   SessionProtocolClientToolCancelMessage,
   SessionProtocolClientToolDefinition,
@@ -24,6 +25,7 @@ import type {
   SessionProtocolReloadResult,
   SessionProtocolResolvePromptParams,
   SessionProtocolResolvePromptResult,
+  SessionProtocolResumeGoalResult,
   SessionProtocolRewindParams,
   SessionProtocolRewindResult,
   SessionProtocolSampleParams,
@@ -33,6 +35,8 @@ import type {
   SessionProtocolSetReasoningParams,
   SessionProtocolSettingsUpdateResult,
   SessionProtocolSnapshot,
+  SessionProtocolStartGoalParams,
+  SessionProtocolStartGoalResult,
   SessionProtocolTurnOutcome,
 } from "../protocol/session_protocol.js";
 
@@ -79,6 +83,11 @@ export type TauHostedSession = {
       signal?: AbortSignal;
     },
   ): Promise<SessionProtocolSampleResult>;
+  startGoal(
+    objective: SessionProtocolStartGoalParams["objective"],
+  ): Promise<SessionProtocolStartGoalResult>;
+  resumeGoal(): Promise<SessionProtocolResumeGoalResult>;
+  clearGoal(): Promise<SessionProtocolClearGoalResult>;
   setReasoning(
     reasoning: SessionProtocolSetReasoningParams["reasoning"],
   ): Promise<SessionProtocolSettingsUpdateResult>;

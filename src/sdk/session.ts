@@ -288,6 +288,21 @@ class TauSdkClientImpl implements TauSdkClient {
     return this.transport.request("session.snapshot", { sessionId });
   }
 
+  sendStartGoal(
+    sessionId: string,
+    objective: string,
+  ): Promise<SessionProtocolResultByMethod["session.startGoal"]> {
+    return this.transport.request("session.startGoal", { sessionId, objective });
+  }
+
+  sendResumeGoal(sessionId: string): Promise<SessionProtocolResultByMethod["session.resumeGoal"]> {
+    return this.transport.request("session.resumeGoal", { sessionId });
+  }
+
+  sendClearGoal(sessionId: string): Promise<SessionProtocolResultByMethod["session.clearGoal"]> {
+    return this.transport.request("session.clearGoal", { sessionId });
+  }
+
   sendSetReasoning(
     sessionId: string,
     reasoning: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max",
@@ -616,6 +631,20 @@ class TauSdkSessionImpl implements TauSdkSession {
     }
 
     const snapshot = await this.client.sendSnapshot(this.sessionId);
+    this.discardBufferedDeltasThrough(snapshot.revision);
+    return snapshot;
+  }
+
+  async startGoal(objective: string): Promise<SessionProtocolResultByMethod["session.startGoal"]> {
+    return await this.client.sendStartGoal(this.activeSessionId(), objective);
+  }
+
+  async resumeGoal(): Promise<SessionProtocolResultByMethod["session.resumeGoal"]> {
+    return await this.client.sendResumeGoal(this.activeSessionId());
+  }
+
+  async clearGoal(): Promise<SessionProtocolResultByMethod["session.clearGoal"]> {
+    const snapshot = await this.client.sendClearGoal(this.activeSessionId());
     this.discardBufferedDeltasThrough(snapshot.revision);
     return snapshot;
   }

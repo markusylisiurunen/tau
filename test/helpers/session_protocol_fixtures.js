@@ -76,6 +76,7 @@ export function createProtocolSnapshot(overrides = {}) {
       contextEpoch: "fixture-context",
     },
     lifecycle: overrides.lifecycle ?? "idle",
+    goal: overrides.goal ?? null,
     costTotal: overrides.costTotal ?? 0,
     settings: overrides.settings ?? {
       personaId: bootstrap.persona?.id ?? "persona-1",

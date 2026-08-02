@@ -149,6 +149,7 @@ type SessionProtocolMutationRequest = Extract<
   {
     method:
       | "session.record"
+      | "session.clearGoal"
       | "session.setPersona"
       | "session.reload"
       | "session.compact"
@@ -232,6 +233,15 @@ export class SessionProtocolHandler {
           return;
         case "session.snapshot":
           await this.handleSnapshot(request);
+          return;
+        case "session.startGoal":
+          await this.handleStartGoal(request);
+          return;
+        case "session.resumeGoal":
+          await this.handleResumeGoal(request);
+          return;
+        case "session.clearGoal":
+          await this.handleClearGoal(request);
           return;
         case "session.setReasoning":
           await this.handleSetReasoning(request);
@@ -1182,6 +1192,103 @@ export class SessionProtocolHandler {
         await state.session.snapshot(),
       ),
     );
+  }
+
+  private async handleStartGoal(
+    request: Extract<SessionProtocolRequestMessage, { method: "session.startGoal" }>,
+  ): Promise<void> {
+    await this.handleGoalTurn(request);
+  }
+
+  private async handleResumeGoal(
+    request: Extract<SessionProtocolRequestMessage, { method: "session.resumeGoal" }>,
+  ): Promise<void> {
+    await this.handleGoalTurn(request);
+  }
+
+  private async handleGoalTurn(
+    request: Extract<
+      SessionProtocolRequestMessage,
+      { method: "session.startGoal" | "session.resumeGoal" }
+    >,
+  ): Promise<void> {
+    const state = await this.getSessionState(request.params.sessionId);
+    if (!state) {
+      this.sendSessionNotFound(request.id, request.params.sessionId);
+      return;
+    }
+    if (this.getPendingMutationCount(state) > 0) {
+      this.sendSubmitBusy(state, request.id);
+      return;
+    }
+
+    const started = await this.enqueueMutation(state, () => {
+      if (state.live.activeSubmit || state.session.isTurnRunning) {
+        this.sendSubmitBusy(state, request.id);
+        return undefined;
+      }
+      const promise = this.executeGoalTurn(state, request);
+      const activeSubmit = { requestId: request.id, promise };
+      state.live.activeSubmit = activeSubmit;
+      return { activeSubmit };
+    });
+    if (!started) return;
+
+    try {
+      await started.activeSubmit.promise;
+    } finally {
+      await this.enqueueMutation(state, () => {
+        if (state.live.activeSubmit === started.activeSubmit) {
+          state.live.activeSubmit = undefined;
+        }
+      });
+      this.schedulePendingSubmitDrains(state);
+    }
+  }
+
+  private async executeGoalTurn(
+    state: SessionProtocolHandlerSessionState,
+    request: Extract<
+      SessionProtocolRequestMessage,
+      { method: "session.startGoal" | "session.resumeGoal" }
+    >,
+  ): Promise<void> {
+    try {
+      if (request.method === "session.startGoal") {
+        const result = await state.session.startGoal(request.params.objective);
+        await state.session.snapshot();
+        this.sendMessage(
+          createSessionProtocolSuccessResponse(request.id, "session.startGoal", result),
+        );
+      } else {
+        const result = await state.session.resumeGoal();
+        await state.session.snapshot();
+        this.sendMessage(
+          createSessionProtocolSuccessResponse(request.id, "session.resumeGoal", result),
+        );
+      }
+    } catch (error) {
+      await this.snapshotAfterFailedSubmit(state);
+      this.sendMessage(
+        createSessionProtocolErrorResponse(
+          request.id,
+          SESSION_PROTOCOL_ERROR_CODES.internalError,
+          "failed to run session goal",
+          { cause: error instanceof Error ? error.message : String(error) },
+        ),
+      );
+    }
+  }
+
+  private async handleClearGoal(
+    request: Extract<SessionProtocolRequestMessage, { method: "session.clearGoal" }>,
+  ): Promise<void> {
+    await this.withSessionMutation(request, "session goal cleared", async (state) => {
+      const snapshot = await state.session.clearGoal();
+      this.sendMessage(
+        createSessionProtocolSuccessResponse(request.id, "session.clearGoal", snapshot),
+      );
+    });
   }
 
   private async handleSetReasoning(

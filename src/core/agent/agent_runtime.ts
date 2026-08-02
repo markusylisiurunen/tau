@@ -1259,8 +1259,7 @@ export class AgentRuntime {
     });
     const compactionMessage = buildCompactionUserMessage({ summary: compactionSummary });
     const retainedMessageCount = preparation.retainedEntries.length;
-    const textWithContext = this.prependCompactionContext(compactionMessage);
-    const textWithMetadata = prependTauUserMetadata(textWithContext, [
+    const textWithMetadata = prependTauUserMetadata(compactionMessage, [
       {
         type: "auto-compaction",
         version: 1,
@@ -1285,6 +1284,7 @@ export class AgentRuntime {
         cutType: preparation.cutType,
         now: this.clock.now(),
         archive,
+        systemMessages: this.getCompactionContinuationSystemMessages?.() ?? [],
       }),
     };
 

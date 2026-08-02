@@ -611,6 +611,7 @@ export function buildAutoCompactionContinuationMessage(args: {
   cutType: AutoCompactionCutType;
   now: number;
   archive: AutoCompactionArchivePaths | undefined;
+  systemMessages?: readonly string[];
 }): Message {
   const lines = [
     "The conversation context before this point has been compacted.",
@@ -638,7 +639,7 @@ export function buildAutoCompactionContinuationMessage(args: {
     );
   }
 
-  const hiddenSystemMessages = [lines.join("\n")];
+  const hiddenSystemMessages = [...(args.systemMessages ?? []), lines.join("\n")];
 
   return {
     role: "user",

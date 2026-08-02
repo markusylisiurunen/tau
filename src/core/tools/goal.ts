@@ -2,7 +2,7 @@ import type { Tool, ToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { z } from "zod";
 import type { SessionProtocolGoal } from "../../protocol/session_protocol.js";
-import { buildBlockedGoalInstruction, buildGoalPolicy } from "../session/goal.js";
+import { buildBlockedGoalInstruction, buildGoalPolicy, formatGoalState } from "../session/goal.js";
 import { parseToolArgs } from "../utils/zod.js";
 import {
   type AgentTool,
@@ -69,24 +69,19 @@ const updateArgsSchema = z
 
 export function createGoalToolDefinitions(manager: GoalManager): AgentTool[] {
   return [
-    createGoalTool(GET_GOAL_TOOL, emptyArgsSchema, () => manager.getGoal()),
+    createGoalTool(GET_GOAL_TOOL, emptyArgsSchema, () => formatGoalState(manager.getGoal())),
     createGoalTool(CREATE_GOAL_TOOL, createArgsSchema, async ({ objective }) => {
       const goal = await manager.createGoal(objective);
-      return {
-        goal,
-        instruction: buildGoalPolicy(goal),
-      };
+      return `Session goal created.\n\n${buildGoalPolicy(goal)}`;
     }),
     createGoalTool(UPDATE_GOAL_TOOL, updateArgsSchema, async (update) => {
       const goal = await manager.updateGoal(update);
       if (goal === null) {
-        return { goal: null, completed: true };
+        return "The session goal is complete and has been cleared.";
       }
-      return {
-        goal,
-        instruction:
-          goal.status === "active" ? buildGoalPolicy(goal) : buildBlockedGoalInstruction(goal),
-      };
+      const instruction =
+        goal.status === "active" ? buildGoalPolicy(goal) : buildBlockedGoalInstruction(goal);
+      return `Session goal updated.\n\n${instruction}`;
     }),
   ];
 }
@@ -94,7 +89,7 @@ export function createGoalToolDefinitions(manager: GoalManager): AgentTool[] {
 function createGoalTool<T>(
   schema: Tool,
   argsSchema: z.ZodType<T>,
-  execute: (args: T) => unknown | Promise<unknown>,
+  execute: (args: T) => string | Promise<string>,
 ): AgentTool {
   return {
     schema,
@@ -109,7 +104,7 @@ function createGoalTool<T>(
       }
       try {
         const result = await execute(parsed.data);
-        return createTextToolOutcome(JSON.stringify(result), "succeeded");
+        return createTextToolOutcome(result, "succeeded");
       } catch (error) {
         return createTextToolOutcome(
           error instanceof Error ? error.message : String(error),

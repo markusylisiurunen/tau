@@ -776,10 +776,12 @@ describe("AgentRuntime", () => {
     ]);
     expect(archiveRequest.historyEntries.at(-1).message.content[0].text).toBe("second request");
 
-    const continuationContext = JSON.stringify(streamModel.mock.calls[2][0]);
-    expect(continuationContext).toContain(
-      "<active-subagents>\\n- child-1: running repository scan\\n</active-subagents>",
-    );
+    const continuationMessages = streamModel.mock.calls[2][0].messages;
+    const continuationContext = JSON.stringify(continuationMessages);
+    const activeSubagentContext =
+      "<active-subagents>\\n- child-1: running repository scan\\n</active-subagents>";
+    expect(JSON.stringify(continuationMessages.slice(0, -1))).not.toContain(activeSubagentContext);
+    expect(JSON.stringify(continuationMessages.at(-1))).toContain(activeSubagentContext);
     expect(continuationContext).toContain("/tmp/tau-auto-compaction-agent/000004.txt");
     expect(continuationContext).toContain("/tmp/tau-auto-compaction-agent/000004.json");
     expect(continuationContext).toContain("Earlier numbered pairs in the same directory");

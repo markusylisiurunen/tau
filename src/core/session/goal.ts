@@ -41,6 +41,17 @@ ${escapeXmlText(goal.objective)}
 Explain the blocker in the current response. Do not continue work on this goal unless the user explicitly resumes it.`;
 }
 
+export function formatGoalState(goal: SessionProtocolGoal | null): string {
+  if (!goal) {
+    return "No session goal exists.";
+  }
+  return `The session goal is ${goal.status}.
+
+<goal-objective>
+${escapeXmlText(goal.objective)}
+</goal-objective>`;
+}
+
 export function prependGoalPolicy(text: string, goal: SessionProtocolGoal): string {
   return prependTauUserMetadata(prependTauHiddenSystemMessages(text, [buildGoalPolicy(goal)]), [
     GOAL_TURN_USER_METADATA,

@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { rm, writeFile } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
@@ -15,7 +16,7 @@ import {
 } from "../dist/protocol/session_protocol.js";
 import { TauSessionProtocolResponseError } from "../dist/transport/errors.js";
 import { copyTextToClipboard } from "../dist/tui/clipboard.js";
-import { createTuiClientTools } from "../dist/tui/session_chat_app.js";
+import { createTuiClientTools, SessionChatApp } from "../dist/tui/session_chat_app.js";
 import { SessionChatController } from "../dist/tui/session_chat_controller.js";
 import {
   createProtocolBootstrap,
@@ -852,6 +853,7 @@ describe("SessionChatController", () => {
       session,
       snapshot: await session.snapshot(),
       targetLabel: "ssh host tau rpc",
+      configuredClientToolNames: ["notify"],
       themeIds: ["gold"],
     });
 
@@ -861,9 +863,12 @@ describe("SessionChatController", () => {
     expect(intro.title).toContain("tau v");
     expect(intro.title).toContain("1 AGENTS.md");
     expect(intro.title).toContain("1 skills");
+    expect(intro.title).toContain("1 client tool");
     expect(intro.title).not.toContain("session");
     expect(intro.body).toContain("skills:\n  alpha (~/.tau/skills)");
-    expect(intro.body).toContain("context:\n  ~/repo/AGENTS.md");
+    expect(intro.body).toContain("context:\n  ~/repo/AGENTS.md\n\nclient tools:\n  notify");
+    expect(intro.body).not.toContain("diff_review");
+    expect(intro.body).not.toContain("prefill_input");
     expect(intro.body).not.toContain("~/repo/src/AGENTS.md");
     expect(intro.body).toContain("session id: session-1");
     expect(intro.body).not.toContain("ssh host tau rpc");
@@ -3562,11 +3567,96 @@ describe("SessionChatController", () => {
     expect(view.editorText).toBe("Name: \nDecision: ");
   });
 
-  it("disables all TUI client tools together", () => {
+  it("adds configured command tools to the built-in TUI tools", () => {
+    const tools = createTuiClientTools({
+      enabled: true,
+      getController: () => undefined,
+      commandTools: [
+        {
+          name: "notify",
+          description: "Show a local notification.",
+          parameters: { type: "object", properties: {}, additionalProperties: false },
+          command: "notify",
+        },
+      ],
+    });
+
+    expect(tools.map((tool) => tool.schema.name)).toEqual([
+      "diff_review",
+      "prefill_input",
+      "notify",
+    ]);
+  });
+
+  it("rejects configured tools that duplicate a built-in TUI tool", () => {
+    expect(() =>
+      createTuiClientTools({
+        enabled: true,
+        getController: () => undefined,
+        commandTools: [
+          {
+            name: "prefill_input",
+            description: "Replace a built-in tool.",
+            parameters: { type: "object", properties: {}, additionalProperties: false },
+            command: "replacement",
+          },
+        ],
+      }),
+    ).toThrow("duplicate TUI client tool 'prefill_input'");
+  });
+
+  it("rejects configured tool collisions before spawning a stdio transport", async () => {
+    const markerPath = join(
+      tmpdir(),
+      `tau-client-tool-transport-marker-${process.pid}-${Date.now()}`,
+    );
+
+    try {
+      await expect(
+        SessionChatApp.connect({
+          transport: "stdio",
+          command: process.execPath,
+          args: [
+            "--input-type=module",
+            "--eval",
+            `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(markerPath)}, "spawned");`,
+          ],
+          sessionSelection: { mode: "select" },
+          clientToolsEnabled: true,
+          config: {
+            clientTools: [
+              {
+                name: "prefill_input",
+                defaultEnabled: true,
+                description: "Replace a built-in tool.",
+                parameters: { type: "object", properties: {}, additionalProperties: false },
+                command: "replacement",
+              },
+            ],
+          },
+        }),
+      ).rejects.toThrow("duplicate TUI client tool 'prefill_input'");
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(existsSync(markerPath)).toBe(false);
+    } finally {
+      await rm(markerPath, { force: true });
+    }
+  });
+
+  it("disables built-in and configured TUI client tools together", () => {
     expect(
       createTuiClientTools({
         enabled: false,
         getController: () => undefined,
+        commandTools: [
+          {
+            name: "notify",
+            description: "Show a local notification.",
+            parameters: { type: "object", properties: {}, additionalProperties: false },
+            command: "notify",
+          },
+        ],
       }),
     ).toEqual([]);
   });

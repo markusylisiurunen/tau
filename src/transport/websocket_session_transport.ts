@@ -18,6 +18,7 @@ import {
   notifySessionProtocolClientToolListeners,
   notifySessionProtocolDeltaListeners,
   notifySessionProtocolEphemeralListeners,
+  notifySessionProtocolFailureListeners,
   notifySessionProtocolPendingUserMessagesListeners,
   waitForPromiseOrTimeout,
   withTimeout,
@@ -26,6 +27,7 @@ import type {
   SessionProtocolClientToolListener,
   SessionProtocolDeltaListener,
   SessionProtocolEphemeralListener,
+  SessionProtocolFailureListener,
   SessionProtocolPendingUserMessagesListener,
   SessionProtocolTransport,
 } from "./session_transport.js";
@@ -60,6 +62,7 @@ export class WebSocketSessionProtocolTransport implements SessionProtocolTranspo
   private readonly pendingUserMessagesListeners =
     new Set<SessionProtocolPendingUserMessagesListener>();
   private readonly clientToolListeners = new Set<SessionProtocolClientToolListener>();
+  private readonly failureListeners = new Set<SessionProtocolFailureListener>();
   private readonly pendingRequests = new PendingSessionProtocolRequests();
   private readonly readyDeferred = createDeferred<SessionProtocolReadyMessage>();
   private readonly openDeferred = createDeferred<void>();
@@ -178,8 +181,7 @@ export class WebSocketSessionProtocolTransport implements SessionProtocolTranspo
     try {
       socket.send(JSON.stringify(pending.request));
     } catch (error) {
-      this.pendingRequests.reject(
-        pending.request.id,
+      this.failTransport(
         new TauTransportError("failed to write request to tau websocket", { cause: error }),
       );
     }
@@ -215,6 +217,13 @@ export class WebSocketSessionProtocolTransport implements SessionProtocolTranspo
     };
   }
 
+  onFailure(listener: SessionProtocolFailureListener): () => void {
+    this.failureListeners.add(listener);
+    return () => {
+      this.failureListeners.delete(listener);
+    };
+  }
+
   async close(): Promise<void> {
     if (this.closePromise) {
       return this.closePromise;
@@ -229,6 +238,7 @@ export class WebSocketSessionProtocolTransport implements SessionProtocolTranspo
     this.ephemeralListeners.clear();
     this.pendingUserMessagesListeners.clear();
     this.clientToolListeners.clear();
+    this.failureListeners.clear();
 
     this.closePromise = (async () => {
       const socket = this.socket;
@@ -343,6 +353,7 @@ export class WebSocketSessionProtocolTransport implements SessionProtocolTranspo
     }
 
     this.fatalError = error;
+    notifySessionProtocolFailureListeners(this.failureListeners, error);
     this.pendingRequests.rejectAll(error);
     this.rejectReadyIfPending(error);
   }

@@ -11,6 +11,13 @@ import { formatPersonaReference, parsePersonaReference } from "../persona_refere
 import { parseSubagentLaunchModelList } from "../subagents/launch_model.js";
 import { REASONING_LEVELS } from "../types.js";
 import { normalizeModelNoticeKey, parseModelNoticeKey } from "../utils/model_notices.js";
+import type { CommandClientToolConfig } from "./client_tools.js";
+import {
+  parseCommandClientToolsConfig,
+  parseEnabledClientToolsConfig,
+  resolveCommandClientToolsConfig,
+  selectCommandClientTools,
+} from "./client_tools.js";
 import type { ConfigDeps } from "./deps.js";
 import type { DiffToolConfig } from "./diff_tool.js";
 import { parseDiffToolConfig, resolveDiffToolConfig } from "./diff_tool.js";
@@ -26,6 +33,8 @@ export interface Config {
   defaultTheme?: string;
   diffTool?: DiffToolConfig;
   builtInDiffTool?: BuiltInDiffToolConfig;
+  clientTools?: CommandClientToolConfig[];
+  enabledClientTools?: string[];
   agentContextFiles?: string[];
   subagents?: {
     defaultLaunchModels?: string[];
@@ -393,6 +402,7 @@ function validateConfigData(
   raw: unknown,
   sourceLabel: string,
   options: {
+    scope: ConfigLevel["scope"];
     resolveModel: ModelResolver;
     resolveConfiguredModel: ModelResolver;
   },
@@ -436,6 +446,35 @@ function validateConfigData(
     builtInDiffToolResult.config,
     builtInDiffToolResult.errors,
   );
+
+  if (data.clientTools !== undefined && options.scope !== "global") {
+    errors.push(`${sourceLabel}: 'clientTools' may only be configured in the global config.`);
+  } else {
+    const clientToolsResult = parseCommandClientToolsConfig(data.clientTools, sourceLabel);
+    assignParsedConfigValue(
+      config,
+      errors,
+      "clientTools",
+      clientToolsResult.config,
+      clientToolsResult.errors,
+    );
+  }
+
+  if (data.enabledClientTools !== undefined && options.scope !== "project") {
+    errors.push(`${sourceLabel}: 'enabledClientTools' may only be configured in project config.`);
+  } else {
+    const enabledClientToolsResult = parseEnabledClientToolsConfig(
+      data.enabledClientTools,
+      sourceLabel,
+    );
+    assignParsedConfigValue(
+      config,
+      errors,
+      "enabledClientTools",
+      enabledClientToolsResult.config,
+      enabledClientToolsResult.errors,
+    );
+  }
 
   const agentResult = parseAgentContextFiles(data.agentContextFiles, sourceLabel);
   assignParsedConfigValue(
@@ -830,7 +869,10 @@ function loadConfigFile(
       return { config: {}, errors: parsed.errors };
     }
 
-    const validated = validateConfigData(parsed.data, sourceLabel, options);
+    const validated = validateConfigData(parsed.data, sourceLabel, {
+      ...options,
+      scope: level.scope,
+    });
     return { config: validated.config, errors: [...parsed.errors, ...validated.errors] };
   } catch (err) {
     return {
@@ -934,6 +976,8 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
   let apiKeys: Config["apiKeys"] | undefined;
   let diffTool: DiffToolConfig | undefined;
   let builtInDiffTool: BuiltInDiffToolConfig | undefined;
+  let clientTools: CommandClientToolConfig[] | undefined;
+  let enabledClientTools: string[] | undefined;
   let subagents: Config["subagents"] | undefined;
   let modelSystemNotices: Config["modelSystemNotices"] | undefined;
   let speechToText: SpeechToTextConfig | undefined;
@@ -952,6 +996,12 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
     }
     if (config.builtInDiffTool !== undefined) {
       builtInDiffTool = { ...config.builtInDiffTool };
+    }
+    if (config.clientTools !== undefined) {
+      clientTools = resolveCommandClientToolsConfig(level, config.clientTools);
+    }
+    if (config.enabledClientTools !== undefined) {
+      enabledClientTools = [...config.enabledClientTools];
     }
     subagents = mergeSubagentsConfig(subagents, config.subagents);
     if (config.autoCompact !== undefined) {
@@ -998,6 +1048,13 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
 
   if (builtInDiffTool) {
     merged.builtInDiffTool = builtInDiffTool;
+  }
+
+  if (clientTools) {
+    const selectedClientTools = selectCommandClientTools(clientTools, enabledClientTools);
+    if (selectedClientTools.length > 0) {
+      merged.clientTools = selectedClientTools;
+    }
   }
 
   if (subagents && Object.keys(subagents).length > 0) {

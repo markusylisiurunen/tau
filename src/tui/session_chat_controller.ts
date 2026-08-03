@@ -98,6 +98,7 @@ export type SessionChatControllerOptions = {
   snapshot: SessionProtocolSnapshot;
   createSession?: (input: SessionProtocolCreateParams) => Promise<TauSdkSession>;
   targetLabel: string;
+  configuredClientToolNames?: string[];
   config?: Config;
   defaultDiffTool?: DiffToolConfig;
   diffToolLauncher?: DiffReviewToolLauncher;
@@ -112,6 +113,7 @@ export class SessionChatController {
   private session: TauSdkSession;
   private readonly createSession?: (input: SessionProtocolCreateParams) => Promise<TauSdkSession>;
   private readonly targetLabel: string;
+  private readonly configuredClientToolNames: string[];
   private readonly config: Config;
   private readonly defaultDiffTool?: DiffToolConfig;
   private readonly diffToolLauncher?: DiffReviewToolLauncher;
@@ -166,6 +168,7 @@ export class SessionChatController {
     this.createSession = options.createSession;
     this.snapshot = options.snapshot;
     this.targetLabel = options.targetLabel;
+    this.configuredClientToolNames = options.configuredClientToolNames ?? [];
     this.config = options.config ?? {};
     this.defaultDiffTool = options.defaultDiffTool;
     this.diffToolLauncher = options.diffToolLauncher;
@@ -486,6 +489,10 @@ export class SessionChatController {
     if (this.snapshot.catalog.skills.length > 0) {
       parts.push(`${this.snapshot.catalog.skills.length} skills`);
     }
+    if (this.configuredClientToolNames.length > 0) {
+      const count = this.configuredClientToolNames.length;
+      parts.push(`${count} client tool${count === 1 ? "" : "s"}`);
+    }
     return parts.join(" · ");
   }
 
@@ -515,6 +522,13 @@ export class SessionChatController {
       lines.push("", "context:");
       for (const agentsFile of agentsFiles) {
         lines.push(`  ${agentsFile}`);
+      }
+    }
+
+    if (this.configuredClientToolNames.length > 0) {
+      lines.push("", "client tools:");
+      for (const clientToolName of this.configuredClientToolNames) {
+        lines.push(`  ${clientToolName}`);
       }
     }
 

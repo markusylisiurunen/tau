@@ -111,6 +111,8 @@ export async function spawnWithCapture(
     let aborted = false;
     let settled = false;
     let terminationRequested = false;
+    let terminationEscalationPending = false;
+    let closeResult: SpawnCaptureResult | undefined;
 
     const appendText = (buffer: CaptureBuffer, text: string): void => {
       if (!text) return;
@@ -123,7 +125,6 @@ export async function spawnWithCapture(
     };
 
     const killProcess = (sig: NodeJS.Signals) => {
-      if (child.killed) return;
       if (killProcessGroup && child.pid) {
         try {
           process.kill(-child.pid, sig);
@@ -133,6 +134,7 @@ export async function spawnWithCapture(
         }
       }
 
+      if (child.killed) return;
       try {
         child.kill(sig);
       } catch {
@@ -140,18 +142,18 @@ export async function spawnWithCapture(
       }
     };
 
-    let killTimer: ReturnType<typeof setTimeout> | undefined;
-    const requestTermination = (reason: "limit" | "timeout" | "abort") => {
-      if (reason === "limit") captureLimitExceeded = true;
-      if (reason === "timeout") timedOut = true;
-      if (reason === "abort") aborted = true;
-      if (terminationRequested) return;
-      terminationRequested = true;
-
-      killProcess("SIGTERM");
-      killTimer = setTimeout(() => killProcess("SIGKILL"), killGraceMs);
-      killTimer.unref?.();
+    const processGroupExists = (): boolean => {
+      if (!killProcessGroup || !child.pid) return false;
+      try {
+        process.kill(-child.pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
     };
+
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
     const cleanup = () => {
       if (timeoutId) {
@@ -165,9 +167,36 @@ export async function spawnWithCapture(
       }
     };
 
+    const settleAfterClose = () => {
+      if (!closeResult || terminationEscalationPending || settled) return;
+      settled = true;
+      cleanup();
+      resolve(closeResult);
+    };
+
+    const requestTermination = (reason: "limit" | "timeout" | "abort") => {
+      if (reason === "limit") captureLimitExceeded = true;
+      if (reason === "timeout") timedOut = true;
+      if (reason === "abort") aborted = true;
+      if (terminationRequested) return;
+      terminationRequested = true;
+      terminationEscalationPending = killProcessGroup;
+
+      killProcess("SIGTERM");
+      killTimer = setTimeout(() => {
+        killTimer = undefined;
+        killProcess("SIGKILL");
+        terminationEscalationPending = false;
+        settleAfterClose();
+      }, killGraceMs);
+      if (!killProcessGroup) {
+        killTimer.unref?.();
+      }
+    };
+
     const abortHandler = () => requestTermination("abort");
 
-    const timeoutId =
+    timeoutId =
       typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0
         ? setTimeout(() => requestTermination("timeout"), timeoutMs)
         : undefined;
@@ -217,7 +246,7 @@ export async function spawnWithCapture(
     }
 
     child.on("error", (err) => {
-      if (settled) return;
+      if (settled || closeResult) return;
       settled = true;
       cleanup();
       reject(err instanceof Error ? err : new Error(String(err)));
@@ -225,8 +254,6 @@ export async function spawnWithCapture(
 
     child.on("close", (code, signalValue) => {
       if (settled) return;
-      settled = true;
-      cleanup();
 
       const stdoutTail = stdoutDecoder.end();
       const stderrTail = stderrDecoder.end();
@@ -240,7 +267,7 @@ export async function spawnWithCapture(
         appendText(stderrBuffer, stderrTail);
       }
 
-      resolve({
+      closeResult = {
         stdout: captureSplit ? stdoutBuffer.text : "",
         stderr: captureSplit ? stderrBuffer.text : "",
         output: captureCombined ? outputBuffer.text : undefined,
@@ -249,7 +276,16 @@ export async function spawnWithCapture(
         timedOut,
         aborted,
         closeSignal: signalValue ?? null,
-      });
+      };
+
+      if (terminationEscalationPending && !processGroupExists()) {
+        terminationEscalationPending = false;
+        if (killTimer) {
+          clearTimeout(killTimer);
+          killTimer = undefined;
+        }
+      }
+      settleAfterClose();
     });
   });
 }

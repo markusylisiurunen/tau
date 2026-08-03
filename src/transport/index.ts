@@ -8,6 +8,7 @@ export {
 export type {
   SessionProtocolDeltaListener,
   SessionProtocolEphemeralListener,
+  SessionProtocolFailureListener,
   SessionProtocolPendingUserMessagesListener,
   SessionProtocolTransport,
 } from "./session_transport.js";

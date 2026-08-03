@@ -127,6 +127,7 @@ describe("sdk npm pack types", () => {
           "const modelText: string = getTauUserModelText('<system>hidden</system>\\nvisible');",
           "client.subscribe((delta) => { void delta.sessionId; });",
           "client.subscribeEphemeral((message) => { void message.sessionId; });",
+          "transport.onFailure((error) => { void error.message; });",
           "void client.sessions.observe('session-1').then((session) => session.sample(sampleInput));",
           "void createTauSdkClient({ cwd: '/repo' });",
           "void createTauSdkClientFromTransport(transport, transportOptions);",

@@ -391,6 +391,67 @@ describe("WebSocketSessionProtocolTransport", () => {
     expect(socket.close).toHaveBeenCalledWith(1000, "client closed");
   });
 
+  it("notifies failure listeners when the websocket closes unexpectedly", async () => {
+    const socket = createControllableSocket();
+    const transport = new WebSocketSessionProtocolTransport({
+      url: "ws://localhost:1",
+      webSocketFactory: () => socket,
+    });
+    const onFailure = vi.fn();
+    transport.onFailure(onFailure);
+
+    const connect = transport.connect({ client: { name: "test", version: "1" } }, 500);
+    socket.emitOpen();
+    socket.emitMessage({
+      version: SESSION_PROTOCOL_VERSION,
+      type: "ready",
+      methods: ["initialize"],
+    });
+    await connect;
+
+    socket.close();
+
+    expect(onFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "TauTransportError",
+        message: "tau websocket closed unexpectedly",
+      }),
+    );
+    await transport.close();
+  });
+
+  it("treats websocket send failures as terminal transport failures", async () => {
+    const socket = createControllableSocket();
+    const transport = new WebSocketSessionProtocolTransport({
+      url: "ws://localhost:1",
+      webSocketFactory: () => socket,
+    });
+    const onFailure = vi.fn();
+    transport.onFailure(onFailure);
+
+    const connect = transport.connect({ client: { name: "test", version: "1" } }, 500);
+    socket.emitOpen();
+    socket.emitMessage({
+      version: SESSION_PROTOCOL_VERSION,
+      type: "ready",
+      methods: ["initialize"],
+    });
+    await connect;
+    socket.send.mockImplementation(() => {
+      throw new Error("socket write failed");
+    });
+
+    await expect(transport.request("session.list", {})).rejects.toMatchObject({
+      name: "TauTransportError",
+      message: "failed to write request to tau websocket",
+    });
+    expect(onFailure).toHaveBeenCalledTimes(1);
+    await expect(transport.request("session.list", {})).rejects.toMatchObject({
+      message: "failed to write request to tau websocket",
+    });
+    await transport.close();
+  });
+
   it("fails websocket transport on responses for unknown request ids", async () => {
     const socket = createControllableSocket();
     const transport = new WebSocketSessionProtocolTransport({

@@ -24,6 +24,7 @@ import type {
   SessionProtocolClientToolListener,
   SessionProtocolDeltaListener,
   SessionProtocolEphemeralListener,
+  SessionProtocolFailureListener,
   SessionProtocolPendingUserMessagesListener,
   SessionProtocolTransport,
 } from "./session_transport.js";
@@ -137,6 +138,10 @@ export class InProcessSessionProtocolTransport implements SessionProtocolTranspo
     return () => {
       this.clientToolListeners.delete(listener);
     };
+  }
+
+  onFailure(_listener: SessionProtocolFailureListener): () => void {
+    return () => undefined;
   }
 
   async close(): Promise<void> {

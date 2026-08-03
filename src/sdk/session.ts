@@ -61,7 +61,10 @@ class TauSdkClientImpl implements TauSdkClient {
   readonly sessions: TauSdkSessionClient;
 
   private readonly clientToolAbortControllers = new Map<string, AbortController>();
+  private readonly clientToolExecutions = new Map<string, Promise<void>>();
   private readonly unsubscribeClientTool: () => void;
+  private readonly unsubscribeTransportFailure: () => void;
+  private closePromise?: Promise<void>;
 
   constructor(
     private readonly transport: SessionProtocolTransport,
@@ -71,6 +74,7 @@ class TauSdkClientImpl implements TauSdkClient {
     this.unsubscribeClientTool = this.transport.onClientTool((message) =>
       this.handleClientTool(message),
     );
+    this.unsubscribeTransportFailure = this.transport.onFailure(() => this.abortClientTools());
   }
 
   get ready() {
@@ -111,13 +115,28 @@ class TauSdkClientImpl implements TauSdkClient {
     return this.transport.request("session.unobserve", { sessionId });
   }
 
-  async close(): Promise<void> {
+  close(): Promise<void> {
+    this.closePromise ??= this.closeClient();
+    return this.closePromise;
+  }
+
+  private async closeClient(): Promise<void> {
     this.unsubscribeClientTool();
+    this.unsubscribeTransportFailure();
+    const executions = [...this.clientToolExecutions.values()];
+    this.abortClientTools();
+    const transportClose = Promise.resolve().then(() => this.transport.close());
+    const [transportResult] = await Promise.allSettled([transportClose, ...executions]);
+    if (transportResult.status === "rejected") {
+      throw transportResult.reason;
+    }
+  }
+
+  private abortClientTools(): void {
     for (const controller of this.clientToolAbortControllers.values()) {
       controller.abort();
     }
     this.clientToolAbortControllers.clear();
-    await this.transport.close();
   }
 
   private handleClientTool(
@@ -136,11 +155,13 @@ class TauSdkClientImpl implements TauSdkClient {
 
     const abortController = new AbortController();
     this.clientToolAbortControllers.set(message.callId, abortController);
-    void this.runClientTool(tool, message, abortController)
+    const execution = this.runClientTool(tool, message, abortController)
       .catch(() => undefined)
       .finally(() => {
         this.clientToolAbortControllers.delete(message.callId);
+        this.clientToolExecutions.delete(message.callId);
       });
+    this.clientToolExecutions.set(message.callId, execution);
   }
 
   private async runClientTool(

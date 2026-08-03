@@ -386,7 +386,7 @@ function printAttachHelp(): void {
       "  --fly-api <id>                 configured Fly Sprites API id.",
       "  --fly-sprite <name>            already-provisioned Fly Sprite name.",
       "  --auth-token <token>           token for websocket servers started with --auth-token.",
-      "  --no-client-tools              disable TUI client tools such as diff review and input prefill.",
+      "  --no-client-tools              disable built-in and configured TUI client tools.",
       "  --help, -h                     show this help and exit.",
       "",
       "examples:",
@@ -1197,6 +1197,11 @@ const defaultDiffTool = createBuiltInDiffToolConfig({
 });
 
 let sessionChatApp: SessionChatApp | undefined;
+const clientTools = createTuiClientTools({
+  enabled: !cli.noClientTools,
+  getController: () => sessionChatApp?.getController(),
+  commandTools: config.clientTools,
+});
 const sessionClient = await createTauSdkClientWithHostConfig(
   {
     cwd,
@@ -1204,15 +1209,15 @@ const sessionClient = await createTauSdkClientWithHostConfig(
     reasoning: reasoningOverride,
     noAgentContextFiles: cli.noAgentContextFiles,
     initialize: { client: { name: "tau-tui", version: "1" } },
-    clientTools: createTuiClientTools({
-      enabled: !cli.noClientTools,
-      getController: () => sessionChatApp?.getController(),
-    }),
+    clientTools,
   },
   config,
 );
 const app = await SessionChatApp.open({
   client: sessionClient,
+  configuredClientToolNames: cli.noClientTools
+    ? []
+    : (config.clientTools ?? []).map((tool) => tool.name),
   targetLabel: "in-process",
   sessionSelection: {
     mode: "create",

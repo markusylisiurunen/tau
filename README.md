@@ -138,7 +138,7 @@ tau attach --session 0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3 -- ssh vps 'cd /path/t
 
 Session attach renders the authoritative session snapshot, streams recoverable `session.delta` updates and independently revisioned, non-persisted `session.pendingUserMessages` replacements, submits normal user input through `session.submit`, `session.queue`, and `session.steer`, supports steering/interruption, runs `!`/`!!` Bash commands in the session execution environment, records `/listen` from the local microphone, speaks `/speak` locally, reloads session content with `/reload`, switches session personas with `/persona:<id>` or `Ctrl+P`, inserts session prompt templates with `/prompt:<id>`, manages persistent autonomous goals with `/goal`, compacts the session with `/compact:*`, creates a new session with `/new`, and exits with `/exit` or `Ctrl+C` twice.
 
-The TUI advertises client tools for diff review and input prefill. `prefill_input` fills only an empty editor and leaves existing draft text unchanged. Pass `--no-client-tools` to `tau` or `tau attach` to advertise neither tool, for example when another TUI attached to the same session already owns the client tools.
+The TUI advertises client tools for diff review, input prefill, and the effective command-backed tools selected from global definitions. `prefill_input` fills only an empty editor and leaves existing draft text unchanged. Pass `--no-client-tools` to `tau` or `tau attach` to advertise no TUI client tools, for example when another TUI attached to the same session already owns them.
 
 Model `bash` tool calls, `!`/`!!`, `session.exec`, and Tau-controlled command helpers each run in a fresh, non-interactive login Bash belonging to the session execution environment. Tau sets `HOME` to the execution environment home, so Bash reads `/etc/profile` and then the first available user login file (`~/.bash_profile`, `~/.bash_login`, or `~/.profile`). Bash also reads inherited `BASH_ENV` when set; otherwise `.bashrc` is loaded only when the login configuration sources it. Login startup files must be automation-safe: they must not write to stdout or stderr, read stdin, require a TTY, or terminate the shell unexpectedly. Tau does not filter or frame startup output. Commands start from the backend's target-side environment and apply explicit execution-environment overrides; the local backend filters sensitive variables inherited from the Tau host. Node, Git, and other helper executables resolve from the same login-configured `PATH` as model commands. Shell state such as `cd`, exports, aliases, functions, and `nvm use` does not persist between calls.
 
@@ -533,6 +533,21 @@ model definitions can be extended and overridden through `~/.config/tau/models.j
     "args": ["--browser"],
     "env": { "TAU_DIFF_UI": "browser" }
   },
+  "clientTools": [
+    {
+      "name": "notify",
+      "defaultEnabled": true,
+      "description": "Show a desktop notification on the TUI machine.",
+      "parameters": {
+        "type": "object",
+        "properties": { "message": { "type": "string" } },
+        "required": ["message"],
+        "additionalProperties": false
+      },
+      "command": "./tools/notify",
+      "executionTimeoutMs": 10000
+    }
+  ],
   "subagents": {
     "defaultLaunchModels": [
       "openai/gpt-5.5:high",
@@ -592,6 +607,8 @@ tau ships a built-in browser diff review tool as `tau diff-tool`. `/diff` launch
 
 supported built-in diff tool code themes are: `andromeeda`, `aurora-x`, `ayu-dark`, `ayu-mirage`, `catppuccin-frappe`, `catppuccin-macchiato`, `catppuccin-mocha`, `dark-plus`, `dracula`, `dracula-soft`, `everforest-dark`, `github-dark`, `github-dark-default`, `github-dark-dimmed`, `github-dark-high-contrast`, `gruvbox-dark-hard`, `gruvbox-dark-medium`, `gruvbox-dark-soft`, `horizon`, `horizon-bright`, `houston`, `kanagawa-dragon`, `kanagawa-wave`, `laserwave`, `material-theme`, `material-theme-darker`, `material-theme-ocean`, `material-theme-palenight`, `min-dark`, `monokai`, `night-owl`, `nord`, `one-dark-pro`, `plastic`, `poimandres`, `red`, `rose-pine`, `rose-pine-moon`, `slack-dark`, `solarized-dark`, `synthwave-84`, `tokyo-night`, `vesper`, `vitesse-black`, `vitesse-dark`.
 
+`clientTools` defines command-backed model tools that execute on the TUI machine. Because these tools execute local commands when selected by the model, they are accepted only in `~/.config/tau/config.json`; project `.tau/config.json` files cannot define them. Each entry requires `name`, `defaultEnabled`, `description`, an object JSON Schema in `parameters`, and `command`, with optional `args` and positive `executionTimeoutMs`. Relative command paths resolve from home. When no project config selects tools, entries with `defaultEnabled: true` are advertised. A project `.tau/config.json` can set `enabledClientTools` to an exact allowlist of globally defined names; unknown names are ignored, an empty list disables all configured tools, and the most specific project value wins. Configured tools are available in both local `tau` and `tau attach`, and `--no-client-tools` disables them together with the built-in TUI client tools.
+
 the `subagents.defaultLaunchModels` field configures allowed `spawn_agent` launch overrides for the built-in `default` sub-agent. values must use `<provider>/<model>:<effort>`.
 
 `autoCompact` controls automatic session compaction and merges field-by-field across config levels. it is enabled by default with `reserveTokens: 16384` and `keepRecentTokens: 20000`. before every model subturn, Tau compares the latest successful provider-reported assistant usage from the active model plus an estimated token count for model-visible messages appended since that response against the model context window minus the reserve. when the threshold is crossed, Tau summarizes older context with at most two summary attempts, asks the compaction model to select original user messages to append verbatim inside the summary by history id, retains recent messages while middle-truncating individual textual tool and recovery results above roughly 8,192 estimated tokens, and best-effort archives the untruncated pre-compaction conversation, excluding assistant thinking, in the execution environment's OS temp directory. archivable summarized records carry history entry ids that the compaction model may cite when bulky exact details are better retrieved from the archive than copied into the summary. manual `/compact:*` commands remain summary-replacement commands and do not create these archives.
@@ -609,6 +626,41 @@ tau telegram --config-file <path>
 ```
 
 see [docs/telegram.md](docs/telegram.md) for the config schema, project selection commands, repository and composite project definitions, and GitHub cache requirements.
+
+### command client tools
+
+Command client tools extend the standard TUI without modifying Tau. Define them only in `~/.config/tau/config.json`; Tau requires each parameter schema to be an object with root `type: "object"`, trusts the remaining schema contents, advertises the effective tools to the session host, and runs their commands on the machine where `tau` or `tau attach` is running. Every definition must set `defaultEnabled`. Without a workspace selection, only default-enabled tools are advertised.
+
+A project or nested directory can select a different exact set without defining executable behavior:
+
+```json
+{
+  "enabledClientTools": ["notify", "deploy"]
+}
+```
+
+The most specific `.tau/config.json` selection wins. Unknown names are skipped, and `enabledClientTools: []` disables every configured command client tool for that workspace.
+
+For every call, Tau validates the arguments against the configured schema, starts the command directly without a shell, and writes one versioned JSON request to stdin:
+
+```json
+{
+  "version": 1,
+  "sessionId": "session-id",
+  "callId": "call-id",
+  "arguments": { "message": "Build finished" }
+}
+```
+
+A successful command must exit with code zero and write exactly one JSON result to stdout:
+
+```json
+{ "content": "Notification shown." }
+```
+
+The `content` string becomes the model-visible tool result. A nonzero exit fails the tool using stderr, falling back to stdout when stderr is empty. Tau runs the command from the TUI's current working directory with the TUI process environment unchanged, limits total output to 1 MiB, and terminates the command's process group on cancellation, terminal transport failure, timeout, or excess output. Process-group termination escalates to `SIGKILL` after two seconds even if the command leader exits first. `executionTimeoutMs` defaults to 60 seconds.
+
+Configured names must be unique and cannot replace built-in TUI or host tools. Only one observing client may advertise a given name for a session. `--no-client-tools` disables command client tools together with `diff_review` and `prefill_input`.
 
 ### diff review tool
 

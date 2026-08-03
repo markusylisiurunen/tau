@@ -4,6 +4,7 @@ import { Type } from "typebox";
 import { z } from "zod";
 import { createCommandRegistry } from "../core/commands/index.js";
 import type {
+  CommandClientToolConfig,
   Config,
   DiffToolConfig,
   ThemeAppearance,
@@ -19,6 +20,7 @@ import type { TauSdkClient, TauSdkClientTool, TauSdkSession } from "../sdk/types
 import { StdioSessionProtocolTransport } from "../transport/stdio_session_transport.js";
 import { WebSocketSessionProtocolTransport } from "../transport/websocket_session_transport.js";
 import { TuiChatView } from "./chat_view.js";
+import { createCommandClientTools } from "./command_client_tools.js";
 import { EXIT_DOUBLE_PRESS_WINDOW_MS, EXIT_TOAST_DURATION_MS } from "./constants.js";
 import { SessionChatController } from "./session_chat_controller.js";
 import { SlashAutocompleteProvider } from "./ui/slash_autocomplete.js";
@@ -26,6 +28,7 @@ import { SlashAutocompleteProvider } from "./ui/slash_autocomplete.js";
 export type SessionChatAppOptions = {
   sessionSelection: SessionChatSelection;
   client: TauSdkClient;
+  configuredClientToolNames: string[];
   targetLabel: string;
   terminalAppearance?: ThemeAppearance | Promise<ThemeAppearance>;
   themeId?: string;
@@ -37,7 +40,10 @@ export type SessionChatAppOptions = {
   caffeinated?: boolean;
 };
 
-export type SessionChatTransportOptions = Omit<SessionChatAppOptions, "client" | "targetLabel"> & {
+export type SessionChatTransportOptions = Omit<
+  SessionChatAppOptions,
+  "client" | "configuredClientToolNames" | "targetLabel"
+> & {
   clientToolsEnabled: boolean;
 } & (
     | {
@@ -64,12 +70,14 @@ const prefillInputArgsSchema = z
 export function createTuiClientTools(options: {
   enabled: boolean;
   getController: () => SessionChatController | undefined;
+  commandTools?: CommandClientToolConfig[];
+  deps?: Pick<CoreDeps, "spawn">;
 }): TauSdkClientTool[] {
   if (!options.enabled) {
     return [];
   }
 
-  return [
+  const tools: TauSdkClientTool[] = [
     {
       schema: {
         ...DIFF_REVIEW_TOOL,
@@ -116,6 +124,18 @@ export function createTuiClientTools(options: {
       },
     },
   ];
+
+  tools.push(...createCommandClientTools(options.commandTools ?? [], options.deps));
+
+  const names = new Set<string>();
+  for (const tool of tools) {
+    if (names.has(tool.schema.name)) {
+      throw new Error(`duplicate TUI client tool '${tool.schema.name}'`);
+    }
+    names.add(tool.schema.name);
+  }
+
+  return tools;
 }
 
 export type SessionChatSelection =
@@ -151,6 +171,13 @@ export class SessionChatApp {
   }
 
   static async connect(options: SessionChatTransportOptions): Promise<SessionChatApp> {
+    let controller: SessionChatController | undefined;
+    const clientTools = createTuiClientTools({
+      enabled: options.clientToolsEnabled,
+      getController: () => controller,
+      commandTools: options.config?.clientTools,
+      deps: options.deps,
+    });
     const transport =
       options.transport === "stdio"
         ? new StdioSessionProtocolTransport(
@@ -162,17 +189,16 @@ export class SessionChatApp {
             url: options.url,
             authToken: options.authToken,
           });
-    let controller: SessionChatController | undefined;
     const client = await createTauSdkClientFromTransport(transport, {
       initialize: { client: { name: "tau-tui", version: "1" } },
-      clientTools: createTuiClientTools({
-        enabled: options.clientToolsEnabled,
-        getController: () => controller,
-      }),
+      clientTools,
     });
     const app = await SessionChatApp.open({
       ...options,
       client,
+      configuredClientToolNames: options.clientToolsEnabled
+        ? (options.config?.clientTools ?? []).map((tool) => tool.name)
+        : [],
       targetLabel:
         options.transport === "stdio" ? [options.command, ...options.args].join(" ") : options.url,
     });
@@ -201,6 +227,7 @@ export class SessionChatApp {
         snapshot,
         createSession: (input) => options.client.sessions.create(input),
         targetLabel: options.targetLabel,
+        configuredClientToolNames: options.configuredClientToolNames,
         config: options.config,
         defaultDiffTool: options.defaultDiffTool,
         deps: options.deps,

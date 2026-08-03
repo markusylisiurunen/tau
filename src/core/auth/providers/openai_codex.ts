@@ -281,7 +281,14 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
       const currentAccount = getAccounts(authStorage).find(
         (entry) => entry.accountId === account.accountId,
       );
-      return currentAccount ? { account: currentAccount, refreshStatus: "failed" } : undefined;
+      return currentAccount
+        ? {
+            account: currentAccount,
+            refreshStatus: hasSameCredentialGeneration(currentAccount, account)
+              ? "failed"
+              : "succeeded",
+          }
+        : undefined;
     }
   }
 
@@ -322,7 +329,7 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
       }
       return {
         usage: updateResult.status === "changed" ? updateResult.account.usage : refreshedUsage,
-        refreshStatus: "succeeded",
+        refreshStatus: updateResult.status === "changed" ? "failed" : "succeeded",
       };
     } catch (error) {
       if (error instanceof UnexpectedUsageWindowError) {

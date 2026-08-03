@@ -501,12 +501,72 @@ describe("AuthManager and TauCredentialStore", () => {
       const authManager = new AuthManager(storage);
 
       const providers = await authManager.listProviderAccounts();
-      expect(providers[0]?.accounts[0]?.plan).toBe("pro");
+      expect(providers[0]?.accounts[0]).toMatchObject({
+        plan: "pro",
+        credentialExpired: false,
+        credentialRefreshStatus: "succeeded",
+        usageRefreshStatus: "succeeded",
+      });
 
       const saved = JSON.parse(readFileSync(fx.authPath, "utf-8"));
       const account = saved.providers["openai-codex"].accounts[0];
       expect(account.access).toBe(refreshedAccess);
       expect(account.refresh).toBe("refresh-plan-next");
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("reports stale codex account data when listing refreshes fail", async () => {
+    const fx = createTempAuthPath();
+    try {
+      const access = createAccessToken({
+        accountId: "acct-stale",
+        email: "stale@example.com",
+        plan: "pro",
+      });
+      const usage = {
+        windows: [
+          {
+            name: "primary",
+            usedPercent: 0,
+            resetAt: 1,
+            windowSeconds: 604800,
+          },
+        ],
+      };
+      writeFileSync(
+        fx.authPath,
+        JSON.stringify({
+          providers: {
+            "openai-codex": {
+              accounts: [
+                {
+                  type: "oauth",
+                  accountId: "acct-stale",
+                  providerAccountId: "acct-stale",
+                  access,
+                  refresh: "refresh-stale",
+                  expires: 0,
+                  usage,
+                },
+              ],
+            },
+          },
+        }),
+        { mode: 0o600 },
+      );
+      codexRefresh.mockRejectedValue(new Error("refresh token rejected"));
+
+      const providers = await new AuthManager(new AuthStorage(fx.authPath)).listProviderAccounts();
+
+      expect(providers[0]?.accounts[0]).toMatchObject({
+        email: "stale@example.com",
+        credentialExpired: true,
+        credentialRefreshStatus: "failed",
+        usage,
+        usageRefreshStatus: "failed",
+      });
     } finally {
       fx.cleanup();
     }

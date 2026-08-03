@@ -1,10 +1,31 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+const { codexRefresh } = vi.hoisted(() => ({
+  codexRefresh: vi.fn(),
+}));
+
+vi.mock("@earendil-works/pi-ai/providers/openai-codex", () => ({
+  openaiCodexProvider: () => ({
+    auth: {
+      oauth: {
+        login: vi.fn(),
+        refresh: codexRefresh,
+        toAuth: vi.fn(),
+      },
+    },
+  }),
+}));
 
 import { AuthStorage } from "../dist/core/auth/auth_storage.js";
-import { parseAuthCliArgs, runLoginCommand, runLogoutCommand } from "../dist/core/auth/cli.js";
+import {
+  parseAuthCliArgs,
+  runListCommand,
+  runLoginCommand,
+  runLogoutCommand,
+} from "../dist/core/auth/cli.js";
 
 function toBase64Url(value) {
   return Buffer.from(value, "utf-8")
@@ -109,6 +130,60 @@ describe("auth cli", () => {
 
       const removed = JSON.parse(readFileSync(fx.authPath, "utf-8"));
       expect(removed.providers["openai-codex"].accounts.length).toBe(0);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("warns when account and usage refreshes fail", async () => {
+    const fx = createTempAuthPath();
+    try {
+      writeFileSync(
+        fx.authPath,
+        JSON.stringify({
+          providers: {
+            "openai-codex": {
+              accounts: [
+                {
+                  type: "oauth",
+                  accountId: "acct-stale",
+                  providerAccountId: "acct-stale",
+                  access: createAccessToken({
+                    accountId: "acct-stale",
+                    email: "stale@example.com",
+                    plan: "pro",
+                  }),
+                  refresh: "refresh-stale",
+                  expires: 0,
+                  usage: {
+                    windows: [
+                      {
+                        name: "primary",
+                        usedPercent: 0,
+                        resetAt: 1,
+                        windowSeconds: 604800,
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          },
+        }),
+        { mode: 0o600 },
+      );
+      codexRefresh.mockRejectedValue(new Error("refresh token rejected"));
+      const output = [];
+
+      await runListCommand({
+        authStorage: new AuthStorage(fx.authPath),
+        log: (message) => output.push(message),
+      });
+
+      expect(output).toContain(
+        '    credentials expired; refresh failed, run "tau auth login codex" to re-authenticate',
+      );
+      expect(output).toContain("    usage refresh failed; showing stale cached usage");
     } finally {
       fx.cleanup();
     }

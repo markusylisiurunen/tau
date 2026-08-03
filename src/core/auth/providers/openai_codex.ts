@@ -38,6 +38,15 @@ class UnexpectedUsageWindowError extends Error {
 type CodexAccount = StoredOAuthAccount;
 type UnknownRecord = Record<string, unknown>;
 type AccountPriorityCandidate = { usage?: AuthAccountUsage; index: number };
+type RefreshStatus = "not-requested" | "succeeded" | "failed";
+type AccountRefreshResult = {
+  account: CodexAccount;
+  refreshStatus: Exclude<RefreshStatus, "not-requested">;
+};
+type UsageSnapshotResult = {
+  usage?: AuthAccountUsage;
+  refreshStatus: RefreshStatus;
+};
 
 export class OpenAICodexAdapter implements AuthProviderAdapter {
   readonly id = PROVIDER_ID;
@@ -96,11 +105,11 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
 
     const accountInfo = await Promise.all(
       accounts.map(async (account): Promise<AuthAccountInfo | undefined> => {
-        const refreshedAccount = await this.refreshAccountIdentity(authStorage, account);
-        if (!refreshedAccount) {
+        const accountRefresh = await this.refreshAccountIdentity(authStorage, account);
+        if (!accountRefresh) {
           return undefined;
         }
-        const usage = await this.getUsageSnapshot(authStorage, refreshedAccount, {
+        const usageSnapshot = await this.getUsageSnapshot(authStorage, accountRefresh.account, {
           forceRefresh: true,
         });
         const currentAccount = getAccounts(authStorage).find(
@@ -110,12 +119,20 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
           return undefined;
         }
         const identity = decodeIdentity(currentAccount.access);
+        const credentialRefreshStatus =
+          accountRefresh.refreshStatus === "succeeded" ||
+          !hasSameCredentialGeneration(currentAccount, accountRefresh.account)
+            ? "succeeded"
+            : "failed";
         return {
           provider: PROVIDER_ID,
           accountId: currentAccount.accountId,
           email: identity.email,
           plan: identity.plan,
-          usage,
+          credentialExpired: Date.now() >= currentAccount.expires,
+          credentialRefreshStatus,
+          usage: usageSnapshot.usage,
+          usageRefreshStatus: usageSnapshot.refreshStatus === "succeeded" ? "succeeded" : "failed",
         } satisfies AuthAccountInfo;
       }),
     );
@@ -146,7 +163,7 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
           apiKey,
           forceRefresh: true,
         });
-        usage = refreshed ?? usage;
+        usage = refreshed.usage ?? usage;
       }
 
       if (isUsageUsable(usage, now)) {
@@ -209,12 +226,12 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
     const account = getAccounts(authStorage).find((entry) => entry.accountId === accountId);
     if (!account) return false;
 
-    const usage = await this.getUsageSnapshot(authStorage, account, {
+    const usageSnapshot = await this.getUsageSnapshot(authStorage, account, {
       apiKey: options?.apiKey,
       refreshIfExpired: true,
       refreshIfMissing: true,
     });
-    return isUsageUsable(usage, nowSeconds());
+    return isUsageUsable(usageSnapshot.usage, nowSeconds());
   }
 
   async handleProviderError(
@@ -232,7 +249,7 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
       forceRefresh: true,
       refreshIfMissing: true,
     });
-    if (!selectedUsage || !isUsageExhausted(selectedUsage)) return false;
+    if (!selectedUsage.usage || !isUsageExhausted(selectedUsage.usage)) return false;
 
     for (const account of accounts) {
       if (account.accountId === accountId) continue;
@@ -248,7 +265,7 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
   private async refreshAccountIdentity(
     authStorage: AuthStorage,
     account: CodexAccount,
-  ): Promise<CodexAccount | undefined> {
+  ): Promise<AccountRefreshResult | undefined> {
     try {
       const refreshedCredentials = await openaiCodexOAuth.refresh(toOAuthCredential(account));
       const updateResult = updateStoredOAuthAccount(authStorage, account, (current) =>
@@ -256,10 +273,15 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
           ? mergeUpdatedCredentials(current, refreshedCredentials)
           : current,
       );
-      return updateResult.status === "missing" ? undefined : updateResult.account;
+      return updateResult.status === "missing"
+        ? undefined
+        : { account: updateResult.account, refreshStatus: "succeeded" };
     } catch {
       authStorage.reload();
-      return getAccounts(authStorage).find((entry) => entry.accountId === account.accountId);
+      const currentAccount = getAccounts(authStorage).find(
+        (entry) => entry.accountId === account.accountId,
+      );
+      return currentAccount ? { account: currentAccount, refreshStatus: "failed" } : undefined;
     }
   }
 
@@ -272,38 +294,41 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
       refreshIfExpired?: boolean;
       refreshIfMissing?: boolean;
     },
-  ): Promise<AuthAccountUsage | undefined> {
+  ): Promise<UsageSnapshotResult> {
     const now = nowSeconds();
     const usage = account.usage;
     const shouldRefresh =
       Boolean(options?.forceRefresh) ||
       (Boolean(options?.refreshIfMissing) && !usage) ||
       (Boolean(options?.refreshIfExpired) && usage !== undefined && isUsageExpired(usage, now));
-    if (!shouldRefresh) return usage;
+    if (!shouldRefresh) return { usage, refreshStatus: "not-requested" };
 
     try {
       const apiKey =
         options?.apiKey ?? (await this.getApiKeyForAccount(authStorage, account.accountId));
-      if (!apiKey) return usage;
+      if (!apiKey) return { usage, refreshStatus: "failed" };
 
       const refreshedAccount =
         getAccounts(authStorage).find((entry) => entry.accountId === account.accountId) ?? account;
       const refreshedUsage = await fetchUsage(apiKey, refreshedAccount.providerAccountId);
-      if (!refreshedUsage) return usage;
+      if (!refreshedUsage) return { usage, refreshStatus: "failed" };
 
       const updateResult = updateStoredOAuthAccount(authStorage, refreshedAccount, (current) => ({
         ...current,
         usage: refreshedUsage,
       }));
       if (updateResult.status === "missing") {
-        return undefined;
+        return { refreshStatus: "failed" };
       }
-      return updateResult.status === "changed" ? updateResult.account.usage : refreshedUsage;
+      return {
+        usage: updateResult.status === "changed" ? updateResult.account.usage : refreshedUsage,
+        refreshStatus: "succeeded",
+      };
     } catch (error) {
       if (error instanceof UnexpectedUsageWindowError) {
         throw error;
       }
-      return usage;
+      return { usage, refreshStatus: "failed" };
     }
   }
 }

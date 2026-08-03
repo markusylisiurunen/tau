@@ -15,6 +15,7 @@ import {
   SESSION_PROTOCOL_VERSION,
 } from "../dist/protocol/session_protocol.js";
 import { TauSessionProtocolResponseError } from "../dist/transport/errors.js";
+import { formatDiffReviewUserMessage } from "../dist/tui/chat_controller/diff_review_user_message.js";
 import { copyTextToClipboard } from "../dist/tui/clipboard.js";
 import { createTuiClientTools, SessionChatApp } from "../dist/tui/session_chat_app.js";
 import { SessionChatController } from "../dist/tui/session_chat_controller.js";
@@ -596,11 +597,13 @@ class FakeView {
     this.removeMessagesFromCalls.push(id);
   }
   addMessage(model, id = `view-${this.messages.length + 1}`) {
-    this.messages.push({ id, model });
+    const existing = this.messages.find((message) => message.id === id);
+    if (existing) {
+      existing.model = model;
+    } else {
+      this.messages.push({ id, model });
+    }
     return id;
-  }
-  replaceMessage(id, model) {
-    this.updateMessage(id, model);
   }
   updateMessage(id, model) {
     const message = this.messages.find((item) => item.id === id);
@@ -1011,17 +1014,11 @@ describe("SessionChatController", () => {
     controller.getInputHandlers().onSubmit("hello session");
     await flush();
 
-    expect(session.submit).toHaveBeenCalledWith(
-      "hello session",
-      expect.objectContaining({
-        historyEntryId: expect.stringMatching(/^session-user-/),
-      }),
-    );
-    const userEntryId = session.submit.mock.calls[0][1].historyEntryId;
+    expect(session.submit).toHaveBeenCalledWith("hello session");
     expect(view.messages).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          id: userEntryId,
+          id: "generated-user",
           model: { type: "user", text: "hello session" },
         }),
         expect.objectContaining({
@@ -1030,6 +1027,57 @@ describe("SessionChatController", () => {
         }),
       ]),
     );
+  });
+
+  it("renders submitted user messages from session deltas", async () => {
+    const session = new FakeSession();
+    const submitted = deferred();
+    session.submit = vi.fn(async () => await submitted.promise);
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "ssh host tau rpc",
+    });
+    controller.start();
+
+    controller.getInputHandlers().onSubmit("hello session");
+    await flush();
+
+    expect(session.submit).toHaveBeenCalledWith("hello session");
+    expect(view.messages.some((message) => message.model.type === "user")).toBe(false);
+
+    const hostUser = {
+      id: "host-user",
+      state: "committed",
+      modelVisible: true,
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "hello session" }],
+        timestamp: 1,
+      },
+    };
+    const delta = createMessageAppendDelta(session.id, session.snapshotValue.revision, hostUser);
+    session.snapshotValue = applySessionProtocolDelta(session.snapshotValue, delta);
+    for (const listener of session.listeners) {
+      listener(delta);
+    }
+
+    expect(view.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "host-user",
+          model: { type: "user", text: "hello session" },
+        }),
+      ]),
+    );
+
+    submitted.resolve({
+      userHistoryEntryId: "host-user",
+      turn: { status: "completed", stopReason: "stop" },
+    });
+    await flush();
   });
 
   it("clears submitted turn state when submit fails", async () => {
@@ -1056,6 +1104,8 @@ describe("SessionChatController", () => {
         }),
       ]),
     );
+    expect(session.submit).toHaveBeenCalledWith("hello session");
+    expect(view.messages.some((message) => message.model.type === "user")).toBe(false);
     expect(view.workingIconStarts).toBe(1);
     expect(view.workingIconStops).toBe(1);
     expect(controller.isStreaming).toBe(false);
@@ -1167,12 +1217,7 @@ describe("SessionChatController", () => {
         stdio: ["ignore", "ignore", "ignore"],
       }),
     );
-    expect(session.submit).toHaveBeenCalledWith(
-      "hello session",
-      expect.objectContaining({
-        historyEntryId: expect.stringMatching(/^session-user-/),
-      }),
-    );
+    expect(session.submit).toHaveBeenCalledWith("hello session");
   });
 
   it("does not start caffeinate on Linux", async () => {
@@ -1256,6 +1301,44 @@ describe("SessionChatController", () => {
         expect.objectContaining({
           id: "history-raw",
           model: { type: "user", text: "\nvisible" },
+        }),
+      ]),
+    );
+  });
+
+  it("restores diff review styling from session history", async () => {
+    const rawText = formatDiffReviewUserMessage({
+      diffCommand: "git diff",
+      reviewedFiles: ["src/main.ts"],
+      review: "review feedback",
+      historyEntryId: "review-user",
+    });
+    const session = new FakeSession(
+      createSnapshot([
+        {
+          id: "review-user",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: rawText }],
+          },
+        },
+      ]),
+    );
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "ssh host tau rpc",
+    });
+
+    controller.start();
+
+    expect(view.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "review-user",
+          model: { type: "user", text: "review feedback", kind: "review" },
         }),
       ]),
     );
@@ -1468,12 +1551,7 @@ describe("SessionChatController", () => {
     await flush();
 
     expect(delayedSubmit).toHaveBeenCalledTimes(1);
-    expect(session.queue).toHaveBeenCalledWith(
-      "queued while response pending",
-      expect.objectContaining({
-        historyEntryId: expect.stringMatching(/^session-queue-/),
-      }),
-    );
+    expect(session.queue).toHaveBeenCalledWith("queued while response pending");
     expect(view.systems).toEqual([]);
 
     session.submit = vi.fn(async (_text, options = {}) => ({
@@ -1527,10 +1605,7 @@ describe("SessionChatController", () => {
     controller.getInputHandlers().onSubmit("continue working");
     await flush();
 
-    expect(session.submit).toHaveBeenCalledWith(
-      "continue working",
-      expect.objectContaining({ historyEntryId: expect.stringMatching(/^session-user-/) }),
-    );
+    expect(session.submit).toHaveBeenCalledWith("continue working");
     expect(session.queue).not.toHaveBeenCalled();
   });
 
@@ -1624,12 +1699,7 @@ describe("SessionChatController", () => {
     controller.getInputHandlers().onSteerSubmit?.("start a turn");
     await flush();
 
-    expect(session.submit).toHaveBeenCalledWith(
-      "start a turn",
-      expect.objectContaining({
-        historyEntryId: expect.stringMatching(/^session-user-/),
-      }),
-    );
+    expect(session.submit).toHaveBeenCalledWith("start a turn");
     expect(session.steer).not.toHaveBeenCalled();
   });
 
@@ -1877,10 +1947,7 @@ describe("SessionChatController", () => {
     await flush();
 
     expect(session.submit).not.toHaveBeenCalled();
-    expect(session.queue).toHaveBeenCalledWith(
-      "queued after attach",
-      expect.objectContaining({ historyEntryId: expect.stringMatching(/^session-queue-/) }),
-    );
+    expect(session.queue).toHaveBeenCalledWith("queued after attach");
     expect(view.systems).toEqual([]);
 
     session.snapshotValue = createSnapshot([
@@ -2851,28 +2918,6 @@ describe("SessionChatController", () => {
     await controller.dispose();
   });
 
-  it("removes an optimistic user message when session submit fails before commit", async () => {
-    const session = new FakeSession();
-    session.rejectSubmit = true;
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      view,
-      session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
-    });
-    controller.start();
-
-    controller.getInputHandlers().onSubmit("hello session");
-    await flush();
-
-    const userEntryId = session.submit.mock.calls[0][1].historyEntryId;
-    expect(view.removed).toContain(userEntryId);
-    expect(view.messages).not.toEqual(
-      expect.arrayContaining([expect.objectContaining({ id: userEntryId })]),
-    );
-  });
-
   it("runs direct shell commands in the session execution environment", async () => {
     const session = new FakeSession();
     const view = new FakeView();
@@ -3411,9 +3456,9 @@ describe("SessionChatController", () => {
     controller.getInputHandlers().onSubmit("# remember to run npm test");
     await flush();
 
-    expect(session.submit.mock.calls[0][0]).toBe("# remember to run npm test");
-    const userEntryId = session.submit.mock.calls[0][1].historyEntryId;
-    expect(view.messages.find((message) => message.id === userEntryId)).toEqual(
+    expect(session.submit).toHaveBeenCalledWith("# remember to run npm test");
+    const renderedUser = view.messages.find((message) => message.id === "generated-user");
+    expect(renderedUser).toEqual(
       expect.objectContaining({
         model: {
           type: "user",
@@ -3462,6 +3507,44 @@ describe("SessionChatController", () => {
         kind: "success",
         text: "diff review added to the conversation. tau did not run yet.",
       }),
+    );
+  });
+
+  it("keeps a returned diff review uncommitted when session recording fails", async () => {
+    const session = new FakeSession();
+    session.record = vi.fn(async () => {
+      throw new Error("record failed");
+    });
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "ssh host tau rpc",
+      defaultDiffTool: { command: "inline-diff-tool" },
+      diffToolLauncher: launchInlineDiffTool,
+    });
+    controller.start();
+
+    await controller.onUserInput("/diff -- src/main.ts");
+
+    expect(view.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          model: expect.objectContaining({
+            type: "diff_review",
+            status: "failed",
+            detail: "record failed",
+          }),
+        }),
+      ]),
+    );
+    expect(view.messages.some((message) => message.model.type === "user")).toBe(false);
+    expect(view.systems).toContainEqual(
+      expect.objectContaining({ kind: "error", text: "diff review failed: record failed" }),
+    );
+    expect(view.systems).not.toContainEqual(
+      expect.objectContaining({ kind: "success", text: expect.stringContaining("added") }),
     );
   });
 
@@ -3667,10 +3750,7 @@ describe("SessionChatController", () => {
     controller.getInputHandlers().onSteerSubmit?.("adjust the review");
     await flush();
 
-    expect(session.queue).toHaveBeenCalledWith(
-      "queue after review",
-      expect.objectContaining({ historyEntryId: expect.stringMatching(/^session-queue-/) }),
-    );
+    expect(session.queue).toHaveBeenCalledWith("queue after review");
     expect(session.steer).toHaveBeenCalledWith("adjust the review");
 
     await expect(result).resolves.toContain("Diff review completed.");

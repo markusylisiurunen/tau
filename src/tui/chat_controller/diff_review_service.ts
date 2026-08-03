@@ -327,17 +327,17 @@ export class DiffReviewService {
   ): Promise<void> {
     if (result.status === "returned") {
       state.messageFinalized = true;
-      this.view.replaceMessage(state.messageId, {
-        type: "user",
-        text: result.review,
-        kind: "review",
-      });
-      await onReviewReturned({
-        diffCommand: state.diffCommand,
-        reviewedFiles: state.reviewedFiles,
-        review: result.review,
-        historyEntryId: state.messageId,
-      });
+      try {
+        await onReviewReturned({
+          diffCommand: state.diffCommand,
+          reviewedFiles: state.reviewedFiles,
+          review: result.review,
+          historyEntryId: state.messageId,
+        });
+      } catch (error) {
+        state.messageFinalized = false;
+        throw error;
+      }
       this.view.addSystemMessage(
         "diff review added to the conversation. tau did not run yet.",
         "success",

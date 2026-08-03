@@ -1,21 +1,12 @@
 import type { Tool } from "@earendil-works/pi-ai";
 import type { VirtualBundle } from "./config/index.js";
 import type { PromptTemplate } from "./prompts.js";
-import { createDefaultCoreDeps } from "./runtime/deps.js";
-import {
-  formatSubagentsForPrompt,
-  resolveSubagentEffectiveSettings,
-} from "./subagents/registry.js";
+import type { ChatRuntimePromptContext } from "./runtime/chat_runtime.js";
+import { composeSessionPrompts } from "./runtime/session_prompt_composer.js";
+import { resolveSubagentEffectiveSettings } from "./subagents/registry.js";
 import type { SubagentPersonaConfig } from "./subagents/types.js";
 import type { ToolRegistry } from "./tools/registry.js";
 import type { Persona, Skill } from "./types.js";
-import {
-  buildBaseSystemPrompt,
-  buildEnvironmentTag,
-  buildProjectContextBlock,
-  buildSkillsIndexBlock,
-} from "./utils/context.js";
-import { resolvePromptGitRoot } from "./utils/git.js";
 
 function section(title: string): void {
   console.log(`\n${"=".repeat(60)}`);
@@ -80,24 +71,19 @@ export function printDebugInfo(args: {
   personas: Persona[];
   prompts: PromptTemplate[];
   skills: Skill[];
-  selectedPersona?: Persona;
-  noAgentContextFiles: boolean;
+  selection?: {
+    persona: Persona;
+    promptContext: ChatRuntimePromptContext;
+  };
+  cwd: string;
+  datetime: string;
   toolRegistry: ToolRegistry;
   virtualBundle?: VirtualBundle;
 }): void {
-  const {
-    personas,
-    prompts,
-    skills,
-    selectedPersona,
-    noAgentContextFiles,
-    toolRegistry,
-    virtualBundle,
-  } = args;
+  const { personas, prompts, skills, selection, cwd, datetime, toolRegistry, virtualBundle } = args;
 
-  const deps = createDefaultCoreDeps();
-  const cwd = deps.env.cwd();
-  const home = deps.env.home();
+  const selectedPersona = selection?.persona;
+  const promptContext = selection?.promptContext;
 
   console.log("tau debug info");
   console.log(`cwd: ${cwd}`);
@@ -162,34 +148,23 @@ export function printDebugInfo(args: {
   // Build and print full system prompt
   section("full system prompt");
 
-  if (!selectedPersona) {
+  if (!selectedPersona || !promptContext) {
     console.log("\n  (skipped: no persona loaded)");
     return;
   }
 
-  const activeSkills = getActiveSkills(selectedPersona, skills);
-  const skillsBlock = buildSkillsIndexBlock(activeSkills);
-  const projectContextBlock = !noAgentContextFiles
-    ? buildProjectContextBlock({ cwd, home, readFile: deps.fs.readFile })
-    : undefined;
-  const repoRoot = resolvePromptGitRoot({ cwd });
-  const environmentTag = buildEnvironmentTag({
-    cwd,
-    repoRoot,
-    datetime: new Date(deps.clock.now()).toISOString(),
-    platform: deps.env.platform(),
-    nodeVersion: deps.env.nodeVersion(),
-  });
-  const subagentsBlock = formatSubagentsForPrompt(selectedPersona);
-  const fullSystemPrompt = buildBaseSystemPrompt({
-    personaSystemPrompt: selectedPersona.systemPrompt,
-    skillsBlock,
-    projectContextBlock,
-    environmentTag,
-    subagentsBlock,
+  const promptComposition = composeSessionPrompts({
+    persona: selectedPersona,
+    cwd: promptContext.cwd,
+    repoRoot: promptContext.repoRoot,
+    datetime,
+    platform: promptContext.platform,
+    nodeVersion: promptContext.nodeVersion,
+    skillsBlock: promptContext.skillsBlock,
+    projectContextBlock: promptContext.projectContextBlock,
   });
 
-  console.log(`\n${fullSystemPrompt}`);
+  console.log(`\n${promptComposition.baseSystemPrompt}`);
 
   // Sub-agents
   const activeSubagents = selectedPersona.subagents

@@ -68,9 +68,8 @@ describe("context builder", () => {
 
     const readFile = (path) => (path === "/repo/AGENTS.md" ? "# Agents\n" : "");
     const block = buildProjectContextBlock({
-      cwd: "/repo",
-      home: "/home",
       agentsFiles: ["/repo/AGENTS.md"],
+      childAgentsFiles: [],
       readFile,
     });
 
@@ -80,8 +79,6 @@ describe("context builder", () => {
 
   it("renders nested AGENTS.md paths without duplicating injected files", () => {
     const block = buildProjectContextBlock({
-      cwd: "/repo",
-      home: "/home",
       agentsFiles: ["/repo/AGENTS.md", "/repo/packages/full/AGENTS.md"],
       childAgentsFiles: ["/repo/packages/full/AGENTS.md", "/repo/packages/path-only/AGENTS.md"],
       readFile: (path) => {
@@ -275,6 +272,48 @@ describe("runtime prompt bootstrap", () => {
 
       expect(resolved.promptContext.projectContextBlock).toContain(atLimit);
       expect(resolved.promptContext.projectContextBlock).not.toContain(beyondLimit);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("filters explicit AGENTS files to the execution cwd scope", async () => {
+    const root = mkdtempSync(join(tmpdir(), "tau-runtime-agents-scope-"));
+    const home = join(root, "home");
+    const backend = join(home, "repo", "backend");
+    const scripts = join(backend, "scripts");
+    const sibling = join(home, "repo", "client");
+    const prefixSibling = join(home, "repo", "backendish");
+    mkdirSync(scripts, { recursive: true });
+    mkdirSync(sibling, { recursive: true });
+    mkdirSync(prefixSibling, { recursive: true });
+    const included = join(scripts, "AGENTS.md");
+    const siblingFile = join(sibling, "AGENTS.md");
+    const prefixSiblingFile = join(prefixSibling, "AGENTS.md");
+    const wrongName = join(scripts, "NOTES.md");
+    writeFileSync(included, "included instructions", "utf-8");
+    writeFileSync(siblingFile, "sibling instructions", "utf-8");
+    writeFileSync(prefixSiblingFile, "prefix sibling instructions", "utf-8");
+    writeFileSync(wrongName, "notes", "utf-8");
+
+    try {
+      const resolved = await resolveRuntimePromptBootstrap({
+        persona: personas[0],
+        discoveredSkills: [],
+        cwd: backend,
+        home,
+        includeAgentContext: true,
+        agentContextFiles: [included, siblingFile, prefixSiblingFile, wrongName],
+        backend: createLocalToolExecutionBackend(),
+      });
+
+      expect(resolved.agentsFiles).toEqual([included]);
+      expect(resolved.promptContext.projectContextBlock).toContain("included instructions");
+      expect(resolved.promptContext.projectContextBlock).not.toContain("sibling instructions");
+      expect(resolved.promptContext.projectContextBlock).not.toContain(
+        "prefix sibling instructions",
+      );
+      expect(resolved.promptContext.projectContextBlock).not.toContain("notes");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

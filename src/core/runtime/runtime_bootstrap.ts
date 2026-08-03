@@ -245,7 +245,6 @@ const DEFAULT_IGNORED_CHILD_DIRS = [
   ".next",
   ".nuxt",
   ".parcel-cache",
-  ".repository-cache",
   ".svn",
   ".turbo",
   ".venv",
@@ -296,8 +295,6 @@ export async function resolveRuntimePromptBootstrap(
   const contentByPath = new Map(inspection.agentsFiles.map((file) => [file.path, file.content]));
   const projectContextBlock = args.includeAgentContext
     ? buildProjectContextBlock({
-        cwd: args.cwd,
-        home: args.home,
         agentsFiles: inspection.agentsFiles.map((file) => file.path),
         childAgentsFiles: inspection.childAgentsFiles,
         readFile: (path) => {

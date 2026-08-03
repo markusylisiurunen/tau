@@ -1069,11 +1069,13 @@ if (cli.personaId) {
 if (cli.debug) {
   const [
     { printDebugInfo },
+    { resolveRuntimePromptBootstrap },
     { ToolCatalog },
     { createLocalToolExecutionBackend },
     { ToolRegistry },
   ] = await Promise.all([
     import("./core/debug.js"),
+    import("./core/runtime/runtime_bootstrap.js"),
     import("./core/tools/catalog.js"),
     import("./core/tools/execution_backend.js"),
     import("./core/tools/registry.js"),
@@ -1087,10 +1089,23 @@ if (cli.debug) {
   }
 
   const virtualBundle = runtimeBootstrap?.virtualBundle;
+  const debugDeps = createDefaultCoreDeps();
+  const debugBackend = createLocalToolExecutionBackend();
+  const debugPromptBootstrap = debugPersona
+    ? await resolveRuntimePromptBootstrap({
+        persona: debugPersona,
+        discoveredSkills: skills,
+        cwd,
+        home: debugDeps.env.home() || process.env.HOME || homedir(),
+        includeAgentContext: !cli.noAgentContextFiles,
+        agentContextFiles: config.agentContextFiles ?? [],
+        backend: debugBackend,
+      })
+    : undefined;
   const debugToolRegistry =
     debugPersona && runtimeBootstrap
       ? ToolCatalog.createDebugRegistry({
-          backend: createLocalToolExecutionBackend(),
+          backend: debugBackend,
           cwd,
           config,
           persona: debugPersona,
@@ -1102,8 +1117,12 @@ if (cli.debug) {
     prompts,
     skills,
     virtualBundle,
-    selectedPersona: debugPersona,
-    noAgentContextFiles: cli.noAgentContextFiles,
+    selection:
+      debugPersona && debugPromptBootstrap
+        ? { persona: debugPersona, promptContext: debugPromptBootstrap.promptContext }
+        : undefined,
+    cwd,
+    datetime: new Date(debugDeps.clock.now()).toISOString(),
     toolRegistry: debugToolRegistry,
   });
   process.exit(0);

@@ -84,6 +84,58 @@ describe("cli", () => {
     }
   });
 
+  it("uses runtime prompt bootstrap for debug project context", () => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "tau-debug-context-home-")));
+    let current = home;
+    let atLimit;
+    let beyondLimit;
+    try {
+      const personaDirectory = join(home, ".tau", "personas");
+      mkdirSync(personaDirectory, { recursive: true });
+      writeFileSync(
+        join(personaDirectory, "debug-context.md"),
+        [
+          "---",
+          "id: debug-context",
+          "provider: openai",
+          "model: gpt-5.5",
+          "tools: []",
+          "---",
+          "debug context prompt",
+        ].join("\n"),
+      );
+      for (let depth = 1; depth <= 17; depth += 1) {
+        current = join(current, `level-${depth}`);
+        mkdirSync(current, { recursive: true });
+        if (depth === 16) {
+          atLimit = join(current, "AGENTS.md");
+          writeFileSync(atLimit, "at limit");
+        }
+        if (depth === 17) {
+          beyondLimit = join(current, "AGENTS.md");
+          writeFileSync(beyondLimit, "beyond limit");
+        }
+      }
+
+      const mainPath = resolve(process.cwd(), "dist/main.js");
+      const result = spawnSync(
+        process.execPath,
+        [mainPath, "--debug", "--persona", "debug-context"],
+        {
+          cwd: home,
+          encoding: "utf8",
+          env: { ...process.env, HOME: home },
+        },
+      );
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain(atLimit);
+      expect(result.stdout).not.toContain(beyondLimit);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it.each(["rpc", "serve"])("rejects --debug in %s mode", (mode) => {
     const mainPath = resolve(process.cwd(), "dist/main.js");
     const result = spawnSync(process.execPath, [mainPath, mode, "--debug"], {

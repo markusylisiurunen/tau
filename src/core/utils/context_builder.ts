@@ -1,5 +1,4 @@
 import type { Skill } from "../types.js";
-import { findAgentsFilesInScope, findChildAgentsFiles } from "./agents_files.js";
 
 function escapeXml(value: string): string {
   return value
@@ -77,17 +76,15 @@ export function buildBaseSystemPrompt(args: {
 }
 
 export function buildProjectContextBlock(args: {
-  cwd: string;
-  home: string;
-  agentsFiles?: string[];
-  childAgentsFiles?: string[];
+  agentsFiles: string[];
+  childAgentsFiles: string[];
   readFile: (path: string) => string;
 }): string | undefined {
-  const agentsFiles = args.agentsFiles ?? findAgentsFilesInScope(args.cwd, args.home);
+  const agentsFiles = args.agentsFiles;
   const injectedAgentsFiles = new Set(agentsFiles);
-  const childAgentsFiles = (
-    args.childAgentsFiles ?? findChildAgentsFiles(args.cwd, args.home)
-  ).filter((filePath) => !injectedAgentsFiles.has(filePath));
+  const childAgentsFiles = args.childAgentsFiles.filter(
+    (filePath) => !injectedAgentsFiles.has(filePath),
+  );
   if (agentsFiles.length === 0 && childAgentsFiles.length === 0) return undefined;
 
   const lines: string[] = ["### Project context", ""];

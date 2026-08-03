@@ -153,17 +153,6 @@ test("SessionDividerComponent renders a muted divider line", () => {
   expect(lines[0]).toBe("<textMuted>── new session ─────</textMuted>");
 });
 
-test("UserMessageComponent applies memory mode styling", () => {
-  const theme = createTagTheme();
-  const component = new UserMessageComponent(theme, {
-    text: "remember this",
-    kind: "memory",
-  });
-  const text = renderText(component, 60);
-  expect(text).toContain("<userMemorySurface>");
-  expect(text).toContain("<userMemoryText>remember this</userMemoryText>");
-});
-
 test("UserMessageComponent applies review styling", () => {
   const theme = createTagTheme();
   const component = new UserMessageComponent(theme, {

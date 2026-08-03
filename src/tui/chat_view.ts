@@ -25,7 +25,7 @@ import { coercePaletteOverrides, createUiTheme, type Theme } from "./ui/theme/in
 import type { ToolUiModel } from "./ui/tool_ui_model.js";
 import { createToolUiRegistry } from "./ui/tool_ui_registry.js";
 
-export type ChatInputMode = "normal" | "bash" | "bash_incognito" | "memory" | "recording";
+export type ChatInputMode = "normal" | "bash" | "bash_incognito" | "recording";
 
 export type ChatViewStatus = {
   footer: {
@@ -487,8 +487,6 @@ export class TuiChatView implements ChatView {
     const { palette } = this.uiTheme;
     if (state.mode === "bash" || state.mode === "bash_incognito") {
       this.editor.borderColor = (s: string) => palette.modeBash(s);
-    } else if (state.mode === "memory") {
-      this.editor.borderColor = (s: string) => palette.modeMemory(s);
     } else if (state.mode === "recording") {
       this.editor.borderColor = (s: string) => palette.editorBorderRecording(s);
     } else {
@@ -498,11 +496,6 @@ export class TuiChatView implements ChatView {
     if (state.mode === "bash" || state.mode === "bash_incognito") {
       const label = state.mode === "bash_incognito" ? "bash incognito" : "bash";
       this.editor.setHeader(label, "", { leftStyle: this.editor.borderColor });
-      return;
-    }
-
-    if (state.mode === "memory") {
-      this.editor.setHeader("memoize", "", { leftStyle: this.editor.borderColor });
       return;
     }
 

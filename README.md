@@ -318,11 +318,11 @@ available palette tokens (theme keys):
 
 - core: `brandAccent`, `textMuted`, `textDim`, `linkText`, `thinkingText`, `codeInlineText`, `codeBlockText`
 - editor: `editorBorderNone`, `editorBorderMinimal`, `editorBorderLow`, `editorBorderMedium`, `editorBorderHigh`, `editorBorderXhigh`, `editorBorderMax`, `editorSubagentBorder`, `editorBorderRecording`
-- status: `statusWarn`, `statusError`, `modeMemory`, `modeBash`
+- status: `statusWarn`, `statusError`, `modeBash`
 - action: `actionRunning`, `actionSuccess`, `actionError`, `actionOutput`
 - diff: `diffAdd`, `diffRemove`
 - toasts: `toastSuccess`, `toastWarn`, `toastError`
-- user: `userSurface`, `userMemorySurface`, `userMemoryText`
+- user: `userSurface`, `userReviewSurface`, `userReviewText`, `userReviewTextMuted`, `userReviewTextDim`
 
 example theme file (`.tau/themes/solarized.json`):
 
@@ -438,16 +438,6 @@ you can also include additional `AGENTS.md` files via config (when that config i
 paths are resolved relative to the directory containing `.tau/` (or relative to home for the global config when it is in scope). entries are only included when their directory is an ancestor or descendant of the current working directory (sibling paths are ignored).
 
 run `tau --help` to see all available options, or `tau --debug` to inspect loaded personas, prompts, skills, and the full system prompt for debugging configuration issues.
-
-## memory mode
-
-prefix a single-line message with `#` to update AGENTS.md. this is useful for capturing decisions, conventions, and context as you work.
-
-```
-# prefer explicit error messages with context about what operation failed
-```
-
-tau updates the nearest `AGENTS.md` in your current directory ancestry (or creates one in the current directory if none exists). it integrates the new information into the existing structure. this file is loaded automatically in future sessions unless you pass `--no-agent-context-files`.
 
 ## commands
 

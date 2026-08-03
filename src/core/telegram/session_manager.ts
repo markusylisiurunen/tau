@@ -64,6 +64,7 @@ export type TelegramSessionProgress =
     }
   | {
       type: "assistant-message";
+      messageId: string;
       text: string;
     };
 
@@ -1407,6 +1408,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     entry.emittedAssistantMessageIds.add(message.id);
     this.emitProgress(entry, {
       type: "assistant-message",
+      messageId: message.id,
       text,
     });
   }

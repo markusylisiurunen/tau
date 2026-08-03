@@ -224,6 +224,8 @@ type ResolvedTelegramAdapterOptions = TelegramAdapterOptions & {
   botUsername: string;
 };
 
+type TelegramNotificationOptions = { rich?: false } | { rich: true; messageId: string };
+
 const DEFAULT_POLL_INTERVAL_MS = 1000;
 const DEFAULT_REQUEST_TIMEOUT_SECONDS = 30;
 const MAX_COMMAND_PREVIEW_CHARS = 128;
@@ -247,6 +249,7 @@ const TELEGRAM_RICH_MESSAGE_SAFE_BYTES = Math.floor(
   TELEGRAM_MAX_RICH_MESSAGE_BYTES * TELEGRAM_MESSAGE_BYTE_BUFFER_RATIO,
 );
 const TELEGRAM_MESSAGE_SPLIT_DELAY_MS = 1000;
+const TELEGRAM_DELIVERY_RETRY_DELAYS_MS = [1000, 5000] as const;
 const TELEGRAM_TYPING_REFRESH_MS = 4000;
 const ABORTED = Symbol("aborted");
 const CALLBACK_ACTION_PREFIX = "tau:action:";
@@ -839,17 +842,24 @@ function parseOrThrow<Result>(schema: z.ZodType<Result>, raw: unknown, message: 
   return parsed.data;
 }
 
+const TelegramFailureEnvelopeSchema = z.object({
+  ok: z.literal(false),
+  error_code: z.number().int(),
+  description: z.string(),
+  parameters: z
+    .object({
+      retry_after: z.number().int().nonnegative().optional(),
+    })
+    .optional(),
+});
+
 const TelegramEnvelopeSchema = z.discriminatedUnion("ok", [
   z.object({
     ok: z.literal(true),
     description: z.string().optional(),
     result: z.unknown(),
   }),
-  z.object({
-    ok: z.literal(false),
-    description: z.string().optional(),
-    result: z.unknown().optional(),
-  }),
+  TelegramFailureEnvelopeSchema,
 ]);
 
 const TelegramChatSchema = telegramObject({ id: z.number(), type: z.string() });
@@ -912,6 +922,36 @@ const TelegramGetMeResultSchema = telegramObject({ username: z.string() });
 const TelegramAckResultSchema = z.literal(true);
 const MAX_TELEGRAM_ERROR_DETAIL_LENGTH = 500;
 
+type TelegramRequestErrorOptions = {
+  retryable: boolean;
+  retryAfterMs?: number;
+  cause?: unknown;
+};
+
+export class TelegramRequestError extends Error {
+  readonly retryable: boolean;
+  readonly retryAfterMs?: number;
+
+  constructor(message: string, options: TelegramRequestErrorOptions) {
+    super(message, { cause: options.cause });
+    this.name = "TelegramRequestError";
+    this.retryable = options.retryable;
+    this.retryAfterMs = options.retryAfterMs;
+  }
+}
+
+class TelegramDeliveryError extends Error {
+  readonly attempts: number;
+  readonly retryable: boolean;
+
+  constructor(cause: unknown, attempts: number, retryable: boolean) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = "TelegramDeliveryError";
+    this.attempts = attempts;
+    this.retryable = retryable;
+  }
+}
+
 function getErrorCode(error: unknown): string | undefined {
   if (typeof error !== "object" || error === null || !("code" in error)) {
     return undefined;
@@ -939,20 +979,44 @@ function truncateTelegramErrorDetail(detail: string): string {
   return `${detail.slice(0, MAX_TELEGRAM_ERROR_DETAIL_LENGTH)}…`;
 }
 
-async function readTelegramHttpErrorDetail(response: Response): Promise<string> {
+function isRetryableTelegramErrorCode(errorCode: number): boolean {
+  return errorCode === 408 || errorCode === 429 || (errorCode >= 500 && errorCode <= 599);
+}
+
+function getTelegramRetryAfterMs(
+  envelope: z.infer<typeof TelegramFailureEnvelopeSchema>,
+): number | undefined {
+  const retryAfterSeconds = envelope.parameters?.retry_after;
+  return retryAfterSeconds === undefined ? undefined : retryAfterSeconds * 1000;
+}
+
+async function readTelegramHttpError(response: Response): Promise<{
+  detail: string;
+  errorCode?: number;
+  retryAfterMs?: number;
+}> {
   const responseText = (await response.text()).trim();
   if (!responseText) {
-    return "";
+    return { detail: "" };
   }
 
   try {
-    const parsed = TelegramEnvelopeSchema.safeParse(JSON.parse(responseText));
-    if (parsed.success && parsed.data.description?.trim()) {
-      return truncateTelegramErrorDetail(parsed.data.description.trim());
+    const parsed = TelegramFailureEnvelopeSchema.safeParse(JSON.parse(responseText));
+    if (parsed.success) {
+      return {
+        detail: truncateTelegramErrorDetail(parsed.data.description.trim()),
+        errorCode: parsed.data.error_code,
+        retryAfterMs: getTelegramRetryAfterMs(parsed.data),
+      };
     }
   } catch {}
 
-  return truncateTelegramErrorDetail(responseText);
+  return { detail: truncateTelegramErrorDetail(responseText) };
+}
+
+function asPermanentTelegramRequestError(error: unknown): TelegramRequestError {
+  const message = error instanceof Error ? error.message : String(error);
+  return new TelegramRequestError(message, { retryable: false, cause: error });
 }
 
 function createTelegramApi(botToken: string): TelegramApi {
@@ -973,41 +1037,67 @@ function createTelegramApi(botToken: string): TelegramApi {
         body: JSON.stringify(payload),
       });
     } catch (error) {
-      throw new Error(
+      throw new TelegramRequestError(
         `telegram ${method} network request failed: ${formatTelegramNetworkError(error)}`,
+        { retryable: true, cause: error },
       );
     }
 
     if (!response.ok) {
-      const detail = await readTelegramHttpErrorDetail(response);
-      throw new Error(
+      const { detail, errorCode, retryAfterMs } = await readTelegramHttpError(response);
+      throw new TelegramRequestError(
         `telegram ${method} failed: HTTP ${response.status}${detail ? `: ${detail}` : ""}`,
+        {
+          retryable:
+            isRetryableTelegramErrorCode(response.status) ||
+            (errorCode !== undefined && isRetryableTelegramErrorCode(errorCode)),
+          ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
+        },
       );
     }
 
     let raw: unknown;
     try {
       raw = await response.json();
-    } catch {
-      throw new Error(`telegram ${method} returned invalid JSON`);
+    } catch (error) {
+      throw new TelegramRequestError(`telegram ${method} returned invalid JSON`, {
+        retryable: false,
+        cause: error,
+      });
     }
 
-    const envelope = parseOrThrow(
-      TelegramEnvelopeSchema,
-      raw,
-      `telegram ${method} returned an invalid response payload`,
-    );
+    let envelope: z.infer<typeof TelegramEnvelopeSchema>;
+    try {
+      envelope = parseOrThrow(
+        TelegramEnvelopeSchema,
+        raw,
+        `telegram ${method} returned an invalid response payload`,
+      );
+    } catch (error) {
+      throw asPermanentTelegramRequestError(error);
+    }
 
     if (!envelope.ok) {
-      const detail = envelope.description?.trim() ?? "";
-      throw new Error(`telegram ${method} request failed${detail ? `: ${detail}` : ""}`);
+      const detail = envelope.description.trim();
+      const retryAfterMs = getTelegramRetryAfterMs(envelope);
+      throw new TelegramRequestError(
+        `telegram ${method} request failed${detail ? `: ${detail}` : ""}`,
+        {
+          retryable: isRetryableTelegramErrorCode(envelope.error_code),
+          ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
+        },
+      );
     }
 
-    return parseOrThrow(
-      resultSchema,
-      envelope.result,
-      `telegram ${method} returned an invalid result`,
-    );
+    try {
+      return parseOrThrow(
+        resultSchema,
+        envelope.result,
+        `telegram ${method} returned an invalid result`,
+      );
+    } catch (error) {
+      throw asPermanentTelegramRequestError(error);
+    }
   }
 
   return {
@@ -1151,6 +1241,8 @@ class TelegramAdapterImpl {
   private readonly attachmentTempDirsBySession = new Map<string, Set<string>>();
   private readonly updateQueueTailByKey = new Map<string, Promise<void>>();
   private readonly inFlightUpdateTasks = new Set<Promise<void>>();
+  private readonly notificationQueueTailByChat = new Map<number, Promise<void>>();
+  private readonly inFlightNotificationTasks = new Set<Promise<void>>();
 
   private readonly unsubscribeSessionEvents: () => void;
   private readonly loopPromise: Promise<void>;
@@ -1230,6 +1322,7 @@ class TelegramAdapterImpl {
     try {
       await this.loopPromise;
       await this.waitForInFlightUpdateTasks();
+      await Promise.allSettled(Array.from(this.inFlightNotificationTasks));
 
       for (const sessionId of Array.from(this.chatsBySession.keys())) {
         this.stopTypingIndicators(sessionId);
@@ -1410,16 +1503,16 @@ class TelegramAdapterImpl {
       }),
     );
 
-    if (updates === undefined) {
+    if (updates === ABORTED) {
       return [];
     }
 
     return updates;
   }
 
-  private async raceWithAbort<T>(promise: Promise<T>): Promise<T | undefined> {
+  private async raceWithAbort<T>(promise: Promise<T>): Promise<T | typeof ABORTED> {
     if (this.abortController.signal.aborted) {
-      return undefined;
+      return ABORTED;
     }
 
     let abortListener: (() => void) | undefined;
@@ -1440,7 +1533,7 @@ class TelegramAdapterImpl {
     }
 
     if (raceResult === ABORTED) {
-      return undefined;
+      return ABORTED;
     }
 
     if (!raceResult.ok) {
@@ -2864,7 +2957,7 @@ class TelegramAdapterImpl {
             "\n",
           )
         : event.progress.text,
-      { rich: true },
+      { rich: true, messageId: event.progress.messageId },
     );
   }
 
@@ -2886,20 +2979,69 @@ class TelegramAdapterImpl {
     this.notifySession(sessionId, `your ${sessionName} ${stateLabel}.`);
   }
 
-  private notifySession(sessionId: string, text: string, options: { rich?: boolean } = {}): void {
+  private notifySession(
+    sessionId: string,
+    text: string,
+    options: TelegramNotificationOptions = {},
+  ): void {
     const chatIds = this.chatsBySession.get(sessionId);
     if (!chatIds || chatIds.size === 0) {
       return;
     }
 
     for (const chatId of chatIds) {
-      void this.reply(chatId, text, { rich: options.rich }).catch((error) => {
-        this.log("warn", "failed to send telegram notification", {
-          chatId,
-          cause: error instanceof Error ? error.message : String(error),
-        });
-      });
+      this.enqueueNotification(sessionId, chatId, text, options);
     }
+  }
+
+  private enqueueNotification(
+    sessionId: string,
+    chatId: number,
+    text: string,
+    options: TelegramNotificationOptions,
+  ): void {
+    const previousTask = this.notificationQueueTailByChat.get(chatId) ?? Promise.resolve();
+    const queuedTask = previousTask
+      .then(async () => {
+        if (this.abortController.signal.aborted) {
+          return;
+        }
+
+        await this.reply(chatId, text, { rich: options.rich });
+      })
+      .catch((error) => {
+        if (this.abortController.signal.aborted) {
+          return;
+        }
+
+        const deliveryError =
+          error instanceof TelegramDeliveryError
+            ? error
+            : new TelegramDeliveryError(error, 1, false);
+        this.log(
+          "error",
+          deliveryError.retryable
+            ? "telegram notification delivery retries exhausted"
+            : "failed to send telegram notification",
+          {
+            sessionId,
+            chatId,
+            ...(options.rich === true ? { messageId: options.messageId } : {}),
+            attempts: deliveryError.attempts,
+            cause: deliveryError.message,
+          },
+        );
+      });
+
+    const trackedTask = queuedTask.finally(() => {
+      this.inFlightNotificationTasks.delete(trackedTask);
+      if (this.notificationQueueTailByChat.get(chatId) === trackedTask) {
+        this.notificationQueueTailByChat.delete(chatId);
+      }
+    });
+
+    this.notificationQueueTailByChat.set(chatId, trackedTask);
+    this.inFlightNotificationTasks.add(trackedTask);
   }
 
   private startTypingIndicators(sessionId: string): void {
@@ -3045,9 +3187,11 @@ class TelegramAdapterImpl {
     const chunks = splitTelegramRichMessage(text);
 
     for (const [index, chunk] of chunks.entries()) {
-      await this.api.sendRichMessage(chatId, chunk, {
-        replyMarkup: index === chunks.length - 1 ? replyMarkup : undefined,
-      });
+      await this.sendWithRetry(() =>
+        this.api.sendRichMessage(chatId, chunk, {
+          replyMarkup: index === chunks.length - 1 ? replyMarkup : undefined,
+        }),
+      );
 
       if (index < chunks.length - 1) {
         await this.wait(TELEGRAM_MESSAGE_SPLIT_DELAY_MS);
@@ -3063,12 +3207,41 @@ class TelegramAdapterImpl {
     const chunks = splitTelegramMessage(text);
 
     for (const [index, chunk] of chunks.entries()) {
-      await this.api.sendMessage(chatId, chunk, {
-        replyMarkup: index === chunks.length - 1 ? replyMarkup : undefined,
-      });
+      await this.sendWithRetry(() =>
+        this.api.sendMessage(chatId, chunk, {
+          replyMarkup: index === chunks.length - 1 ? replyMarkup : undefined,
+        }),
+      );
 
       if (index < chunks.length - 1) {
         await this.wait(TELEGRAM_MESSAGE_SPLIT_DELAY_MS);
+      }
+    }
+  }
+
+  private async sendWithRetry(send: () => Promise<void>): Promise<void> {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        const result = await this.raceWithAbort(send());
+        if (result === ABORTED) {
+          return;
+        }
+        return;
+      } catch (error) {
+        if (this.abortController.signal.aborted) {
+          return;
+        }
+
+        const retryDelayMs = TELEGRAM_DELIVERY_RETRY_DELAYS_MS[attempt - 1];
+        const retryable = error instanceof TelegramRequestError && error.retryable;
+        if (!retryable || retryDelayMs === undefined) {
+          throw new TelegramDeliveryError(error, attempt, retryable);
+        }
+
+        await this.wait(Math.max(retryDelayMs, error.retryAfterMs ?? 0));
+        if (this.abortController.signal.aborted) {
+          return;
+        }
       }
     }
   }

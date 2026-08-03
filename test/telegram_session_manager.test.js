@@ -1635,6 +1635,7 @@ describe("telegram session manager", () => {
           event.type === "session-progress" &&
           event.sessionId === created.id &&
           event.progress.type === "assistant-message" &&
+          event.progress.messageId === "h1" &&
           event.progress.text === "done",
       ),
     ).toBe(true);

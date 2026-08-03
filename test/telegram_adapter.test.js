@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { describe, expect, it, vi } from "vitest";
-import { startTelegramAdapter } from "../dist/core/telegram/adapter.js";
+import { startTelegramAdapter, TelegramRequestError } from "../dist/core/telegram/adapter.js";
 import { TauSessionProtocolResponseError } from "../dist/transport/errors.js";
 
 async function startAdapter(options) {
@@ -315,6 +315,40 @@ function createSessionManagerHarness(initialSessions = [], options = {}) {
     manager,
     sessions,
   };
+}
+
+async function startNotificationTestAdapter({ chatId, apiHarness, onLog }) {
+  const managerHarness = createSessionManagerHarness([
+    {
+      id: "s1",
+      projectId: "demo",
+      ownerId: ownerIdForChat(chatId),
+      state: "running",
+      createdAt: "2024-01-01T00:00:00.000Z",
+      updatedAt: "2024-01-01T00:00:00.000Z",
+    },
+  ]);
+  const adapter = await startAdapter({
+    botToken: "token",
+    projects: { demo: { repo: "git@example.com:demo.git" } },
+    sessionManager: managerHarness.manager,
+    api: apiHarness.api,
+    pollIntervalMs: 1,
+    requestTimeoutSeconds: 1,
+    onLog,
+  });
+  return { adapter, manager: managerHarness.manager };
+}
+
+function emitAssistantProgress(manager, messageId, text) {
+  manager.emit({
+    type: "session-progress",
+    sessionId: "s1",
+    projectId: "demo",
+    state: "running",
+    timestamp: "2024-01-01T00:04:00.000Z",
+    progress: { type: "assistant-message", messageId, text },
+  });
 }
 
 describe("telegram adapter", () => {
@@ -2006,6 +2040,7 @@ describe("telegram adapter", () => {
         timestamp: "2024-01-01T00:03:00.000Z",
         progress: {
           type: "assistant-message",
+          messageId: "assistant-intermediate",
           text: "intermediate",
         },
       });
@@ -2018,6 +2053,7 @@ describe("telegram adapter", () => {
         timestamp: "2024-01-01T00:04:00.000Z",
         progress: {
           type: "assistant-message",
+          messageId: "assistant-final",
           text: "final answer",
         },
       });
@@ -2121,12 +2157,14 @@ describe("telegram adapter", () => {
         timestamp: "2024-01-01T00:01:10.000Z",
         progress: {
           type: "assistant-message",
+          messageId: "assistant-checking",
           text: "checking the logs",
         },
       });
 
-      await waitFor(() =>
-        apiHarness.sendRichMessages.some((entry) => entry.markdown === "checking the logs"),
+      await vi.advanceTimersByTimeAsync(0);
+      expect(apiHarness.sendRichMessages).toContainEqual(
+        expect.objectContaining({ markdown: "checking the logs" }),
       );
       expect(apiHarness.richMessageDrafts).toEqual([]);
 
@@ -2146,53 +2184,170 @@ describe("telegram adapter", () => {
     }
   });
 
-  it("logs notification send failures from session events", async () => {
-    const apiHarness = createApiHarness([
-      [{ update_id: 1, message: { chat: { id: 472, type: "private" }, text: "/new" } }],
+  it("retries a transient notification delivery failure", async () => {
+    const chatId = 472;
+    const managerHarness = createSessionManagerHarness([
+      {
+        id: "s1",
+        projectId: "demo",
+        ownerId: ownerIdForChat(chatId),
+        state: "running",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+      },
     ]);
-    apiHarness.api.sendRichMessage.mockRejectedValueOnce(new Error("telegram unavailable"));
-    const managerHarness = createSessionManagerHarness();
-    const logs = [];
-
+    let sendRichMessageCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      createTelegramFetchStub({
+        setMyCommands: async () => createJsonResponse({ ok: true, result: true }),
+        getUpdates: async () => pendingTelegramCall(),
+        sendRichMessage: async () => {
+          sendRichMessageCalls += 1;
+          return sendRichMessageCalls === 1
+            ? createJsonResponse(
+                {
+                  ok: false,
+                  error_code: 429,
+                  description: "Too Many Requests",
+                  parameters: { retry_after: 2 },
+                },
+                429,
+              )
+            : createJsonResponse({ ok: true, result: true });
+        },
+      }),
+    );
     const adapter = await startAdapter({
       botToken: "token",
       projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
-      api: apiHarness.api,
       pollIntervalMs: 1,
       requestTimeoutSeconds: 1,
+    });
+
+    vi.useFakeTimers();
+    try {
+      emitAssistantProgress(managerHarness.manager, "assistant-final", "final answer");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(sendRichMessageCalls).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(1999);
+      expect(sendRichMessageCalls).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(sendRichMessageCalls).toBe(2);
+    } finally {
+      vi.useRealTimers();
+      await adapter.close();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("does not retry permanent notification delivery failures", async () => {
+    const chatId = 473;
+    const apiHarness = createApiHarness([]);
+    apiHarness.api.sendRichMessage.mockRejectedValue(
+      new TelegramRequestError("telegram rejected rich markdown", { retryable: false }),
+    );
+    const logs = [];
+    const { adapter, manager } = await startNotificationTestAdapter({
+      chatId,
+      apiHarness,
       onLog: (entry) => logs.push(entry),
     });
 
     try {
-      await waitFor(() => managerHarness.manager.createSession.mock.calls.length === 1);
-
-      managerHarness.manager.emit({
-        type: "session-progress",
-        sessionId: "s1",
-        projectId: "demo",
-        state: "running",
-        timestamp: "2024-01-01T00:04:00.000Z",
-        progress: { type: "assistant-message", text: "final answer" },
-      });
-      managerHarness.manager.emit({
-        type: "session-state-changed",
-        sessionId: "s1",
-        projectId: "demo",
-        previousState: "running",
-        state: "waiting-input",
-        updatedAt: "2024-01-01T00:05:00.000Z",
-      });
-
+      emitAssistantProgress(manager, "assistant-final", "final answer");
       await waitFor(() =>
-        logs.some(
-          (entry) =>
-            entry.level === "warn" &&
-            entry.message === "failed to send telegram notification" &&
-            entry.data?.cause === "telegram unavailable",
-        ),
+        logs.some((entry) => entry.message === "failed to send telegram notification"),
       );
+
+      expect(apiHarness.api.sendRichMessage).toHaveBeenCalledTimes(1);
+      expect(logs).toContainEqual({
+        level: "error",
+        message: "failed to send telegram notification",
+        data: {
+          sessionId: "s1",
+          chatId,
+          messageId: "assistant-final",
+          attempts: 1,
+          cause: "telegram rejected rich markdown",
+        },
+      });
     } finally {
+      await adapter.close();
+    }
+  });
+
+  it("logs exhausted notification retries with recoverable message identity", async () => {
+    const chatId = 474;
+    const apiHarness = createApiHarness([]);
+    apiHarness.api.sendRichMessage.mockRejectedValue(
+      new TelegramRequestError("telegram unavailable", { retryable: true }),
+    );
+    const logs = [];
+    const { adapter, manager } = await startNotificationTestAdapter({
+      chatId,
+      apiHarness,
+      onLog: (entry) => logs.push(entry),
+    });
+
+    vi.useFakeTimers();
+    try {
+      emitAssistantProgress(manager, "assistant-final", "final answer");
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(1000);
+      await vi.advanceTimersByTimeAsync(5000);
+
+      expect(apiHarness.api.sendRichMessage).toHaveBeenCalledTimes(3);
+      expect(logs).toContainEqual({
+        level: "error",
+        message: "telegram notification delivery retries exhausted",
+        data: {
+          sessionId: "s1",
+          chatId,
+          messageId: "assistant-final",
+          attempts: 3,
+          cause: "telegram unavailable",
+        },
+      });
+    } finally {
+      vi.useRealTimers();
+      await adapter.close();
+    }
+  });
+
+  it("preserves notification order while an earlier delivery retries", async () => {
+    const chatId = 475;
+    const apiHarness = createApiHarness([]);
+    const attempts = [];
+    let failedIntermediate = false;
+    apiHarness.api.sendRichMessage.mockImplementation(async (sentChatId, markdown, options) => {
+      attempts.push(markdown);
+      if (markdown === "intermediate" && !failedIntermediate) {
+        failedIntermediate = true;
+        throw new TelegramRequestError("telegram unavailable", { retryable: true });
+      }
+      apiHarness.sendRichMessages.push({ chatId: sentChatId, markdown, options });
+    });
+    const { adapter, manager } = await startNotificationTestAdapter({ chatId, apiHarness });
+
+    vi.useFakeTimers();
+    try {
+      emitAssistantProgress(manager, "assistant-intermediate", "intermediate");
+      emitAssistantProgress(manager, "assistant-final", "final answer");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toEqual(["intermediate"]);
+
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(attempts).toEqual(["intermediate", "intermediate", "final answer"]);
+      expect(apiHarness.sendRichMessages.map((entry) => entry.markdown)).toEqual([
+        "intermediate",
+        "final answer",
+      ]);
+    } finally {
+      vi.useRealTimers();
       await adapter.close();
     }
   });
@@ -2255,6 +2410,7 @@ describe("telegram adapter", () => {
         timestamp: "2024-01-01T00:02:00.000Z",
         progress: {
           type: "assistant-message",
+          messageId: "assistant-oversized",
           text: finalAnswer,
         },
       });

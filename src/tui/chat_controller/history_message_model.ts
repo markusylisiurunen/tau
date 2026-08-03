@@ -1,11 +1,14 @@
 import type { AssistantMessage, Message, ToolResultMessage } from "@earendil-works/pi-ai";
 import { extractUserText } from "../../core/utils/messages.js";
+import { hasDiffReviewMetadata } from "../../core/utils/user_metadata.js";
 import type { ChatMessageModel } from "../ui/chat_message_model.js";
 
 export function buildHistoryMessageModel(message: Message): ChatMessageModel | undefined {
   if (message.role === "user") {
     const text = extractHistoryUserText(message);
-    return text.trim() ? { type: "user", text } : undefined;
+    return text.trim()
+      ? { type: "user", text, ...(hasDiffReviewMetadata(message) ? { kind: "review" } : {}) }
+      : undefined;
   }
 
   if (message.role === "assistant") {

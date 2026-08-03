@@ -42,6 +42,11 @@ export type TauGoalTurnUserMetadata = {
   version: 1;
 };
 
+export type TauDiffReviewUserMetadata = {
+  type: "diff-review";
+  version: 1;
+};
+
 export type TauSummaryCompactionUserMetadata =
   | TauCompactionUserMetadata
   | TauAutoCompactionUserMetadata;
@@ -51,7 +56,8 @@ export type TauUserMetadata =
   | TauAutoCompactionUserMetadata
   | TauAutoCompactionContinuationUserMetadata
   | TauToolRecoveryUserMetadata
-  | TauGoalTurnUserMetadata;
+  | TauGoalTurnUserMetadata
+  | TauDiffReviewUserMetadata;
 
 export type TauUserMetadataSplit = {
   metadata: TauUserMetadata[];
@@ -110,6 +116,8 @@ function parseMetadataRecord(value: unknown): TauUserMetadata {
       return parseToolRecoveryMetadataRecord(record);
     case "goal-turn":
       return parseGoalTurnMetadataRecord(record);
+    case "diff-review":
+      return parseDiffReviewMetadataRecord(record);
     default:
       throw new Error("invalid tau user metadata: unknown record type");
   }
@@ -230,6 +238,16 @@ function parseGoalTurnMetadataRecord(record: Record<string, unknown>): TauGoalTu
   }
   return {
     type: "goal-turn",
+    version: 1,
+  };
+}
+
+function parseDiffReviewMetadataRecord(record: Record<string, unknown>): TauDiffReviewUserMetadata {
+  if (record.version !== 1) {
+    throw new Error("invalid tau user metadata: unsupported diff review metadata version");
+  }
+  return {
+    type: "diff-review",
     version: 1,
   };
 }
@@ -429,6 +447,10 @@ export function hasToolRecoveryMetadata(message: Message): boolean {
 
 export function hasGoalTurnMetadata(message: Message): boolean {
   return getTauUserMetadataFromMessage(message).some((metadata) => metadata.type === "goal-turn");
+}
+
+export function hasDiffReviewMetadata(message: Message): boolean {
+  return getTauUserMetadataFromMessage(message).some((metadata) => metadata.type === "diff-review");
 }
 
 export function stripTauUserMetadataFromMessage(message: Message): Message {

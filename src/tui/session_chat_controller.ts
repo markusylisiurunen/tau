@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { dirname } from "node:path/posix";
 import type { AssistantMessage, Message, ToolResultMessage } from "@earendil-works/pi-ai";
 import {
@@ -125,7 +124,6 @@ export class SessionChatController {
   private snapshot: SessionProtocolSnapshot;
   private readonly renderedMessageIds: string[] = [];
   private readonly hiddenHistoryEntryIds = new Set<string>();
-  private readonly clientRenderedUserMessages = new Map<string, ChatMessageModel>();
   private observedSessionRevision: number;
   private eventUnsubscribe?: () => void;
   private pendingUserMessagesUnsubscribe?: () => void;
@@ -369,7 +367,7 @@ export class SessionChatController {
       return;
     }
 
-    await this.submitUserText(trimmed);
+    await this.runSessionTurn(() => this.session.submit(trimmed));
   }
 
   public async onUserInput(text: string): Promise<void> {
@@ -513,15 +511,6 @@ export class SessionChatController {
     return lines;
   }
 
-  private async submitUserText(text: string): Promise<void> {
-    const historyEntryId = `session-user-${randomUUID()}`;
-    const model: ChatMessageModel = { type: "user", text };
-    this.clientRenderedUserMessages.set(historyEntryId, model);
-    this.view.addMessage(model, historyEntryId);
-    this.renderedMessageIds.push(historyEntryId);
-    await this.runSessionTurn(() => this.session.submit(text, { historyEntryId }));
-  }
-
   private async retryTurn(): Promise<void> {
     await this.runSessionTurn(() => this.session.retry());
   }
@@ -626,7 +615,7 @@ export class SessionChatController {
     }
 
     if (!this.isSessionOperationActive()) {
-      await this.submitUserText(trimmed);
+      await this.runSessionTurn(() => this.session.submit(trimmed));
       return;
     }
 
@@ -639,13 +628,11 @@ export class SessionChatController {
   }
 
   private submitQueuedText(text: string): void {
-    void this.session
-      .queue(text, { historyEntryId: `session-queue-${randomUUID()}` })
-      .catch((error) => {
-        if (!this.isPendingMessageCancellation(error)) {
-          this.view.addSystemMessage(`queueing failed: ${formatSessionError(error)}`, "error");
-        }
-      });
+    void this.session.queue(text).catch((error) => {
+      if (!this.isPendingMessageCancellation(error)) {
+        this.view.addSystemMessage(`queueing failed: ${formatSessionError(error)}`, "error");
+      }
+    });
   }
 
   private submitSteeringText(text: string): void {
@@ -1318,9 +1305,6 @@ export class SessionChatController {
     const staleIds = this.renderedMessageIds.filter((id) => !snapshotIds.has(id));
     if (staleIds.length > 0) {
       this.view.removeMessages(staleIds);
-      for (const id of staleIds) {
-        this.clientRenderedUserMessages.delete(id);
-      }
     }
 
     const renderedIds = new Set(this.renderedMessageIds);
@@ -1338,8 +1322,7 @@ export class SessionChatController {
         continue;
       }
 
-      const model =
-        this.clientRenderedUserMessages.get(entry.id) ?? this.buildProtocolMessageModel(entry);
+      const model = this.buildProtocolMessageModel(entry);
       if (!model) {
         continue;
       }
@@ -1521,7 +1504,6 @@ export class SessionChatController {
 
   private startLocalUiSession(): void {
     this.hiddenHistoryEntryIds.clear();
-    this.clientRenderedUserMessages.clear();
     this.renderedMessageIds.splice(0);
     this.view.addMessage({ type: "session_divider", label: "new session" });
   }
@@ -2197,16 +2179,6 @@ export class SessionChatController {
     review: DiffReviewReturnedReview,
     session: TauSdkSession,
   ): Promise<void> {
-    const model: ChatMessageModel = {
-      type: "user",
-      text: review.review,
-      kind: "review",
-    };
-    this.clientRenderedUserMessages.set(review.historyEntryId, model);
-    if (!this.renderedMessageIds.includes(review.historyEntryId)) {
-      this.renderedMessageIds.push(review.historyEntryId);
-    }
-
     try {
       const result = await session.record(formatDiffReviewUserMessage(review), {
         historyEntryId: review.historyEntryId,
@@ -2215,10 +2187,17 @@ export class SessionChatController {
         this.syncRenderedHistory(result.snapshot);
       }
     } catch (error) {
-      this.view.addSystemMessage(
-        `failed to add diff review to session: ${(error as Error).message}`,
-        "error",
-      );
+      const reviewWasCommitted =
+        this.session === session &&
+        this.snapshot.messages.some(
+          (entry) =>
+            entry.id === review.historyEntryId &&
+            entry.state === "committed" &&
+            entry.message.role === "user",
+        );
+      if (!reviewWasCommitted) {
+        throw error;
+      }
     }
   }
 

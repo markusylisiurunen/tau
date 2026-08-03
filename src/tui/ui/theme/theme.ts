@@ -42,7 +42,6 @@ export interface Palette {
   // Status
   statusWarn: (text: string) => string;
   statusError: (text: string) => string;
-  modeMemory: (text: string) => string;
   modeBash: (text: string) => string;
 
   // Action
@@ -62,8 +61,6 @@ export interface Palette {
 
   // User
   userSurface: (text: string) => string;
-  userMemorySurface: (text: string) => string;
-  userMemoryText: (text: string) => string;
   userReviewSurface: (text: string) => string;
   userReviewText: (text: string) => string;
   userReviewTextMuted: (text: string) => string;

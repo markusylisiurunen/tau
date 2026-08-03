@@ -321,7 +321,6 @@ In TUI mode, `--debug` respects `--persona` and `--no-agent-context-files`, so y
 - `/persona:<id>`, `/prompt:<id>`, `/theme:<id>`
 - `!<cmd>` - Direct login Bash execution (bypasses model)
 - `!!<cmd>` - Direct login Bash execution without adding output to the model context
-- `#<request>` - Memory mode for updating AGENTS.md (single-line only)
 
 Slash commands only trigger on single-line inputs. `/diff` launches the local diff tool and records returned review feedback without auto-running the assistant. Unknown slash-prefixed text is sent as a normal prompt.
 

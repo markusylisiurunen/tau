@@ -48,7 +48,6 @@ const generatePalette = (brandHue, appearance) => {
   const HUE_EDITOR_BORDER = HUE_BRAND;
   const HUE_EDITOR_SUBAGENT_BORDER = wrapHue(HUE_BRAND - 32);
   const HUE_EDITOR_RECORDING_BORDER = HUE_ERROR;
-  const HUE_MEMORY = wrapHue(280);
   const HUE_REVIEW = wrapHue(132);
   const HUE_BASH = wrapHue(92);
 
@@ -100,16 +99,6 @@ const generatePalette = (brandHue, appearance) => {
   const toastError = transform(toastSuccess, [setH(HUE_ERROR)]);
 
   const userSurface = transform(brandAccent, [scaleC(isDark ? 0.01 : 0), setL(isDark ? 21 : 97)]);
-  const userMemorySurface = transform(brandAccent, [
-    setH(HUE_MEMORY),
-    scaleC(isDark ? 0.24 : 0.04),
-    setL(isDark ? 24 : 94),
-  ]);
-  const userMemoryText = transform(brandAccent, [
-    setH(HUE_MEMORY),
-    scaleC(0.76),
-    setL(isDark ? 84 : 28),
-  ]);
   const userReviewSurface = transform(brandAccent, [
     setH(HUE_REVIEW),
     scaleC(isDark ? 0.16 : 0.03),
@@ -148,7 +137,6 @@ const generatePalette = (brandHue, appearance) => {
     statusWarn: toHex(statusWarn),
     statusError: toHex(statusError),
 
-    modeMemory: toHex(transform(brandAccent, [setH(HUE_MEMORY), shiftL(isDark ? 12 : -10)])),
     modeBash: toHex(transform(brandAccent, [setH(HUE_BASH), shiftL(isDark ? 12 : -10)])),
 
     actionRunning: toHex(actionRunning),
@@ -164,8 +152,6 @@ const generatePalette = (brandHue, appearance) => {
     toastError: toHex(toastError),
 
     userSurface: toHex(userSurface),
-    userMemorySurface: toHex(userMemorySurface),
-    userMemoryText: toHex(userMemoryText),
     userReviewSurface: toHex(userReviewSurface),
     userReviewText: toHex(userReviewText),
     userReviewTextMuted: toHex(userReviewTextMuted),

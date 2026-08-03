@@ -76,7 +76,6 @@ import {
   startListenAudioCapture,
   transcribeListenAudio,
 } from "./listen_capture.js";
-import { formatDefaultMemoryModeFilePath, formatMemoryModeUserMessage } from "./memory_mode.js";
 import {
   createSdkDiffSnapshotDeps,
   createSdkToolExecutionBackend,
@@ -141,7 +140,6 @@ export class SessionChatController {
   private sessionReplacementInProgress = false;
   private isBashMode = false;
   private isBashIncognito = false;
-  private isMemoryMode = false;
   private showThinking = false;
   private compactToolUi = true;
   private commandHint?: string;
@@ -371,23 +369,6 @@ export class SessionChatController {
       return;
     }
 
-    if (this.isSingleLineInput(text) && trimmed.startsWith("#")) {
-      const request = trimmed.slice(1).trim();
-      if (!request) {
-        this.view.addSystemMessage("memory mode request was empty.", "warn");
-        return;
-      }
-
-      const agentsFilePath = formatDefaultMemoryModeFilePath(
-        this.snapshot.executionEnvironment.cwd,
-      );
-      await this.submitUserText(request, {
-        textForModel: formatMemoryModeUserMessage(agentsFilePath, request),
-        kind: "memory",
-      });
-      return;
-    }
-
     await this.submitUserText(trimmed);
   }
 
@@ -416,7 +397,6 @@ export class SessionChatController {
   private handleEditorChange(text: string): void {
     const wasBash = this.isBashMode;
     const wasBashIncognito = this.isBashIncognito;
-    const wasMemory = this.isMemoryMode;
     const previousCommandHint = this.commandHint;
 
     if (text.trim().length > 0) {
@@ -424,17 +404,14 @@ export class SessionChatController {
     }
 
     const trimmed = text.trimStart();
-    const isSingleLine = this.isSingleLineInput(text);
     const isIncognito = trimmed.startsWith("!!");
     this.isBashIncognito = isIncognito;
     this.isBashMode = trimmed.startsWith("!") && !isIncognito;
-    this.isMemoryMode = isSingleLine && trimmed.startsWith("#");
     this.commandHint = this.getCommandHintForInput(text);
 
     if (
       wasBash !== this.isBashMode ||
       wasBashIncognito !== this.isBashIncognito ||
-      wasMemory !== this.isMemoryMode ||
       previousCommandHint !== this.commandHint
     ) {
       this.refreshStatus();
@@ -501,7 +478,6 @@ export class SessionChatController {
       "type `/help` for commands and keybindings",
       "mention files with `@`, agents and skills with `@@`",
       "run bash commands with `!` or `!!`",
-      "use `#` to update AGENTS.md",
     ];
 
     if (this.snapshot.catalog.skills.length > 0) {
@@ -537,22 +513,13 @@ export class SessionChatController {
     return lines;
   }
 
-  private async submitUserText(
-    text: string,
-    options: { textForModel?: string; kind?: "memory" | "review" } = {},
-  ): Promise<void> {
+  private async submitUserText(text: string): Promise<void> {
     const historyEntryId = `session-user-${randomUUID()}`;
-    const model: ChatMessageModel = {
-      type: "user",
-      text,
-      ...(options.kind ? { kind: options.kind } : {}),
-    };
+    const model: ChatMessageModel = { type: "user", text };
     this.clientRenderedUserMessages.set(historyEntryId, model);
     this.view.addMessage(model, historyEntryId);
     this.renderedMessageIds.push(historyEntryId);
-    await this.runSessionTurn(() =>
-      this.session.submit(options.textForModel ?? text, { historyEntryId }),
-    );
+    await this.runSessionTurn(() => this.session.submit(text, { historyEntryId }));
   }
 
   private async retryTurn(): Promise<void> {
@@ -1920,7 +1887,6 @@ export class SessionChatController {
     if (this.listenRecording) return "recording";
     if (this.isBashIncognito) return "bash_incognito";
     if (this.isBashMode) return "bash";
-    if (this.isMemoryMode) return "memory";
     return "normal";
   }
 

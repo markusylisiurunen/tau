@@ -60,7 +60,6 @@ const PALETTE_TEXT_TOKENS = [
   "editorBorderRecording",
   "statusWarn",
   "statusError",
-  "modeMemory",
   "modeBash",
   "actionRunning",
   "actionSuccess",
@@ -71,7 +70,6 @@ const PALETTE_TEXT_TOKENS = [
   "toastSuccess",
   "toastWarn",
   "toastError",
-  "userMemoryText",
   "userReviewText",
   "userReviewTextMuted",
   "userReviewTextDim",
@@ -79,7 +77,6 @@ const PALETTE_TEXT_TOKENS = [
 
 const PALETTE_BG_TOKENS = [
   "userSurface",
-  "userMemorySurface",
   "userReviewSurface",
 ] as const satisfies readonly PaletteColorToken[];
 

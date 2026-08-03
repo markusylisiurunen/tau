@@ -3122,7 +3122,7 @@ describe("SessionChatController", () => {
     expect(view.status.editor.mode).toBe("bash_incognito");
 
     handlers.onChange("# remember this");
-    expect(view.status.editor.mode).toBe("memory");
+    expect(view.status.editor.mode).toBe("normal");
 
     handlers.onChange("/reload");
     expect(view.status.editor.mode).toBe("normal");
@@ -3397,7 +3397,7 @@ describe("SessionChatController", () => {
     });
   });
 
-  it("submits session memory-mode requests with update instructions", async () => {
+  it("submits hash-prefixed text as an ordinary user message", async () => {
     const session = new FakeSession();
     const view = new FakeView();
     const controller = new SessionChatController({
@@ -3411,42 +3411,16 @@ describe("SessionChatController", () => {
     controller.getInputHandlers().onSubmit("# remember to run npm test");
     await flush();
 
-    const submittedText = session.submit.mock.calls[0][0];
-    expect(submittedText).toContain("Memory mode: update the project guidelines file at:");
-    expect(submittedText).toContain("/session/repo/AGENTS.md");
-    expect(submittedText).toContain("remember to run npm test");
+    expect(session.submit.mock.calls[0][0]).toBe("# remember to run npm test");
     const userEntryId = session.submit.mock.calls[0][1].historyEntryId;
-    const renderedUser = view.messages.find((message) => message.id === userEntryId);
-    expect(renderedUser).toEqual(
+    expect(view.messages.find((message) => message.id === userEntryId)).toEqual(
       expect.objectContaining({
-        model: expect.objectContaining({
+        model: {
           type: "user",
-          text: expect.stringContaining("remember to run npm test"),
-        }),
+          text: "# remember to run npm test",
+        },
       }),
     );
-  });
-
-  it("warns on empty session memory-mode requests", async () => {
-    const session = new FakeSession();
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      view,
-      session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
-    });
-    controller.start();
-
-    controller.getInputHandlers().onSubmit("#   ");
-    await flush();
-
-    expect(view.systems).toContainEqual({
-      text: "memory mode request was empty.",
-      kind: "warn",
-      options: undefined,
-    });
-    expect(session.submit).not.toHaveBeenCalled();
   });
 
   it("runs /diff locally while delegating review work through the session protocol", async () => {

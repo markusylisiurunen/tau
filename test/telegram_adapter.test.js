@@ -146,7 +146,19 @@ function createStatusSnapshot(overrides = {}) {
         maxTokens: 32000,
       },
     },
-    catalog: { personas: {}, prompts: {}, themes: {}, skills: {}, subagents: {} },
+    catalog: {
+      personas: [
+        {
+          id: "default",
+          label: "Default",
+          allowedReasoningLevels: ["low", "medium", "high", "xhigh"],
+          skills: "*",
+          source: "builtin",
+        },
+      ],
+      prompts: [],
+      skills: [],
+    },
     executionEnvironment: { kind: "local", cwd: "/tmp/project", home: "/tmp" },
     messages: [
       {
@@ -259,6 +271,14 @@ function createSessionManagerHarness(initialSessions = [], options = {}) {
         includedLastAssistant: false,
       };
     }),
+    setReasoning: vi.fn(async (sessionId, reasoning) => {
+      const session = sessions.get(sessionId);
+      if (!session) throw new Error("missing session");
+      return {
+        revision: 2,
+        settings: { personaId: "default", reasoning },
+      };
+    }),
     closeSession: vi.fn(async (sessionId) => {
       const session = sessions.get(sessionId);
       if (!session) {
@@ -317,6 +337,10 @@ describe("telegram adapter", () => {
         { command: "status", description: "show active session status" },
         { command: "compact", description: "compact session context" },
         { command: "interrupt", description: "interrupt active run" },
+        { command: "effort_low", description: "set reasoning effort to low" },
+        { command: "effort_medium", description: "set reasoning effort to medium" },
+        { command: "effort_high", description: "set reasoning effort to high" },
+        { command: "effort_xhigh", description: "set reasoning effort to xhigh" },
         { command: "use_demo", description: "use demo for new sessions" },
       ]);
     } finally {
@@ -467,6 +491,203 @@ describe("telegram adapter", () => {
         "new chats will use beta.",
         "your alpha session s1 is waiting for input. new chats will use beta.",
       ]);
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it("sets each supported reasoning effort on the active session", async () => {
+    const chatId = 20;
+    const apiHarness = createApiHarness([
+      [
+        ...["low", "medium", "high", "xhigh"].map((reasoning, index) => ({
+          update_id: index + 1,
+          message: {
+            chat: { id: chatId, type: "private" },
+            from: { id: 7 },
+            text: `/effort_${reasoning}`,
+          },
+        })),
+      ],
+    ]);
+    const managerHarness = createSessionManagerHarness(
+      [
+        {
+          id: "reasoning-session",
+          projectId: "demo",
+          ownerId: ownerIdForChat(chatId),
+          state: "running",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+          snapshot: createStatusSnapshot(),
+        },
+      ],
+      { defaultOwnerId: ownerIdForChat(chatId) },
+    );
+
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "owner/demo" } },
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() => managerHarness.manager.setReasoning.mock.calls.length === 4);
+      expect(managerHarness.manager.setReasoning.mock.calls).toEqual([
+        ["reasoning-session", "low"],
+        ["reasoning-session", "medium"],
+        ["reasoning-session", "high"],
+        ["reasoning-session", "xhigh"],
+      ]);
+      expect(apiHarness.sendMessages.map((entry) => entry.text)).toEqual([
+        "reasoning effort set to low.",
+        "reasoning effort set to medium.",
+        "reasoning effort set to high.",
+        "reasoning effort set to xhigh.",
+      ]);
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it("rejects reasoning efforts unsupported by the active persona or model", async () => {
+    const personaChatId = 21;
+    const modelChatId = 22;
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: {
+            chat: { id: personaChatId, type: "private" },
+            from: { id: 7 },
+            text: "/effort_xhigh",
+          },
+        },
+        {
+          update_id: 2,
+          message: {
+            chat: { id: modelChatId, type: "private" },
+            from: { id: 7 },
+            text: "/effort_low",
+          },
+        },
+      ],
+    ]);
+    const managerHarness = createSessionManagerHarness([
+      {
+        id: "limited-persona-session",
+        projectId: "demo",
+        ownerId: ownerIdForChat(personaChatId),
+        state: "waiting-input",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+        snapshot: createStatusSnapshot({
+          catalog: {
+            personas: [
+              {
+                id: "default",
+                label: "Default",
+                allowedReasoningLevels: ["low", "medium", "high"],
+                skills: "*",
+                source: "builtin",
+              },
+            ],
+            prompts: [],
+            skills: [],
+          },
+        }),
+      },
+      {
+        id: "non-reasoning-session",
+        projectId: "demo",
+        ownerId: ownerIdForChat(modelChatId),
+        state: "waiting-input",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+        snapshot: createStatusSnapshot({
+          bootstrap: {
+            model: {
+              ...createStatusSnapshot().bootstrap.model,
+              reasoning: false,
+            },
+          },
+        }),
+      },
+    ]);
+
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "owner/demo" } },
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() => apiHarness.sendMessages.length === 2);
+      expect(apiHarness.sendMessages.map((entry) => entry.text)).toEqual([
+        "reasoning effort xhigh is not supported by this session.",
+        "reasoning effort low is not supported by this session.",
+      ]);
+      expect(managerHarness.manager.setReasoning).not.toHaveBeenCalled();
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it("requires an active session and rejects arguments for effort selectors", async () => {
+    const activeChatId = 21;
+    const inactiveChatId = 22;
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: {
+            chat: { id: inactiveChatId, type: "private" },
+            from: { id: 7 },
+            text: "/effort_low",
+          },
+        },
+        {
+          update_id: 2,
+          message: {
+            chat: { id: activeChatId, type: "private" },
+            from: { id: 7 },
+            text: "/effort_high now",
+          },
+        },
+      ],
+    ]);
+    const managerHarness = createSessionManagerHarness([
+      {
+        id: "reasoning-session",
+        projectId: "demo",
+        ownerId: ownerIdForChat(activeChatId),
+        state: "waiting-input",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+      },
+    ]);
+
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "owner/demo" } },
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() => apiHarness.sendMessages.length === 2);
+      expect(apiHarness.sendMessages.map((entry) => entry.text)).toEqual(
+        expect.arrayContaining(["no active session. use /new.", "usage: /effort_high"]),
+      );
+      expect(managerHarness.manager.setReasoning).not.toHaveBeenCalled();
     } finally {
       await adapter.close();
     }
@@ -1518,7 +1739,7 @@ describe("telegram adapter", () => {
     try {
       await waitFor(() => apiHarness.sendMessages.length === 1);
       expect(apiHarness.sendMessages[0].text).toBe(
-        "unsupported command. supported commands: /new, /status, /compact, /interrupt, /use_demo",
+        "unsupported command. supported commands: /new, /status, /compact, /interrupt, /effort_low, /effort_medium, /effort_high, /effort_xhigh, /use_demo",
       );
       expect(managerHarness.manager.closeSession).not.toHaveBeenCalled();
     } finally {

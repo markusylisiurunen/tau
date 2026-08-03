@@ -3,7 +3,10 @@ import { tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { z } from "zod";
-import type { SessionProtocolSnapshot } from "../../protocol/session_protocol.js";
+import type {
+  SessionProtocolReasoningEffort,
+  SessionProtocolSnapshot,
+} from "../../protocol/session_protocol.js";
 import { TauSessionProtocolResponseError } from "../../transport/errors.js";
 import type { SpeechToTextProvider, TelegramProjectConfig } from "../config/schema.js";
 import { formatAdaptiveNumber, formatTokenWindow } from "../utils/format.js";
@@ -252,6 +255,12 @@ const MAX_TELEGRAM_ATTACHMENT_FILE_BYTES = 20 * 1024 * 1024;
 const MAX_TELEGRAM_ATTACHMENT_TOTAL_BYTES = 50 * 1024 * 1024;
 const MAX_TELEGRAM_GROUP_PENDING_MESSAGES = 50;
 const TELEGRAM_ATTACHMENT_TEMP_DIR_PREFIX = "tau-telegram-attachments-";
+const TELEGRAM_REASONING_EFFORTS = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+] as const satisfies readonly SessionProtocolReasoningEffort[];
 const NO_ACTIVE_SESSION_MESSAGE = "no active session. use /new.";
 
 const SUPPORTED_TEXT_ATTACHMENT_EXTENSIONS = new Set([
@@ -340,7 +349,6 @@ type TelegramCommandHandler = (
 type TelegramCommandDefinition = {
   command: `/${string}`;
   description: string;
-  usage: string;
   callbackAction?: QuickAction;
   handler: TelegramCommandHandler;
 };
@@ -729,6 +737,25 @@ function formatTelegramContextUsage(snapshot: SessionProtocolSnapshot): string {
 
 function getTelegramSessionCostTotal(snapshot: SessionProtocolSnapshot): number {
   return snapshot.costTotal;
+}
+
+function supportsReasoningEffort(
+  snapshot: SessionProtocolSnapshot,
+  reasoning: SessionProtocolReasoningEffort,
+): boolean {
+  if (!snapshot.bootstrap.model.reasoning) {
+    return false;
+  }
+
+  const persona = snapshot.catalog.personas.find(
+    (candidate) => candidate.id === snapshot.settings.personaId,
+  );
+  if (!persona) {
+    return false;
+  }
+
+  const allowed = persona.allowedReasoningLevels;
+  return !allowed || allowed.length === 0 || allowed.includes(reasoning);
 }
 
 function formatTelegramSessionCost(total: number): string {
@@ -1222,7 +1249,6 @@ class TelegramAdapterImpl {
       {
         command: "/new",
         description: "start a new session",
-        usage: "/new",
         callbackAction: "new",
         handler: async (chatId, args, sourceMessageId) =>
           this.handleNew(chatId, args, sourceMessageId),
@@ -1230,30 +1256,34 @@ class TelegramAdapterImpl {
       {
         command: "/status",
         description: "show active session status",
-        usage: "/status",
         callbackAction: "status",
         handler: async (chatId) => this.handleStatus(chatId),
       },
       {
         command: "/compact",
         description: "compact session context",
-        usage: "/compact",
         handler: async (chatId, args) => this.handleCompact(chatId, args),
       },
       {
         command: "/interrupt",
         description: "interrupt active run",
-        usage: "/interrupt",
         callbackAction: "interrupt",
         handler: async (chatId) => this.handleInterrupt(chatId),
       },
     ];
 
+    for (const reasoning of TELEGRAM_REASONING_EFFORTS) {
+      definitions.push({
+        command: `/effort_${reasoning}`,
+        description: `set reasoning effort to ${reasoning}`,
+        handler: async (chatId, args) => this.handleSetReasoning(chatId, reasoning, args),
+      });
+    }
+
     for (const projectId of this.allowedProjectIds) {
       definitions.push({
         command: `/use_${projectId}`,
         description: `use ${projectId} for new sessions`,
-        usage: `/use_${projectId}`,
         handler: async (chatId, args) => this.handleUseProject(chatId, projectId, args),
       });
     }
@@ -2096,6 +2126,39 @@ class TelegramAdapterImpl {
         chatId,
         `failed to save project preference: ${error instanceof Error ? error.message : String(error)}`,
       );
+    }
+  }
+
+  private async handleSetReasoning(
+    chatId: number,
+    reasoning: (typeof TELEGRAM_REASONING_EFFORTS)[number],
+    args: string[],
+  ): Promise<void> {
+    if (args.length > 0) {
+      await this.reply(chatId, `usage: /effort_${reasoning}`);
+      return;
+    }
+
+    const session = await this.requireActiveSession(chatId);
+    if (!session) {
+      return;
+    }
+
+    try {
+      const sessionManager = this.getSessionManagerForChat(chatId);
+      const snapshot = await sessionManager.getSessionSnapshot(session.id);
+      if (!snapshot) {
+        throw new TelegramSessionManagerError("not_ready", "session is still preparing");
+      }
+      if (!supportsReasoningEffort(snapshot, reasoning)) {
+        await this.reply(chatId, `reasoning effort ${reasoning} is not supported by this session.`);
+        return;
+      }
+
+      await sessionManager.setReasoning(session.id, reasoning);
+      await this.reply(chatId, `reasoning effort set to ${reasoning}.`);
+    } catch (error) {
+      await this.reply(chatId, this.formatManagerError(error));
     }
   }
 

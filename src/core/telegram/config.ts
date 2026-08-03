@@ -26,7 +26,7 @@ export class TelegramConfigError extends Error {
   }
 }
 
-const TELEGRAM_BUILTIN_COMMAND_COUNT = 4;
+const TELEGRAM_BUILTIN_COMMAND_COUNT = 8;
 const TELEGRAM_MAX_COMMAND_COUNT = 100;
 const TELEGRAM_PROJECT_COMMAND_PREFIX = "use_";
 const TELEGRAM_MAX_COMMAND_LENGTH = 32;

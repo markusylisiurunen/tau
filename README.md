@@ -155,6 +155,7 @@ The Telegram command surface is intentionally small:
 - `/use_<projectId>` selects the configured project used by future `/new` sessions without changing the active session.
 - `/new` creates a session from the selected project, replacing the previous active session if one exists.
 - `/status` reports the active project and session details, plus a different next-session project preference when selected.
+- `/effort_low`, `/effort_medium`, `/effort_high`, and `/effort_xhigh` set the active session's reasoning effort.
 - `/compact` summarizes older conversation context to reduce context usage.
 - `/interrupt` interrupts the active run.
 

@@ -46,6 +46,10 @@ function createClientHarness() {
       return await submitDeferred.promise;
     }),
     interrupt: vi.fn(async () => ({ interrupted: true, isTurnRunning: true })),
+    setReasoning: vi.fn(async (reasoning) => ({
+      revision: 2,
+      settings: { personaId: "default", reasoning },
+    })),
     exec: vi.fn(async () => ({
       output: "",
       stdout: "",
@@ -882,6 +886,25 @@ describe("telegram session manager", () => {
 
     const logs = manager.getLogs(created.id) ?? [];
     expect(logs.some((entry) => entry.message === "interrupt requested")).toBe(true);
+  });
+
+  it("changes reasoning effort while a session is running", async () => {
+    const clientHarness = createClientHarness();
+    const manager = createDemoSessionManager(clientHarness);
+    const { created, sendPromise } = await startRunningSession(manager);
+
+    await expect(manager.setReasoning(created.id, "high")).resolves.toEqual({
+      revision: 2,
+      settings: { personaId: "default", reasoning: "high" },
+    });
+    expect(clientHarness.session.setReasoning).toHaveBeenCalledWith("high");
+
+    clientHarness.submitDeferred.resolve({
+      userHistoryEntryId: "history-reasoning",
+      turn: { status: "completed", stopReason: "stop" },
+    });
+    await sendPromise;
+    await manager.close();
   });
 
   it("returns a no-op interrupt result when no run is active", async () => {
@@ -1931,6 +1954,10 @@ describe("telegram session manager", () => {
         interrupted: true,
         isTurnRunning: false,
       })),
+      setReasoning: vi.fn(async (_sessionId, reasoning) => ({
+        revision: 2,
+        settings: { personaId: "default", reasoning },
+      })),
       closeSession: vi.fn(async (sessionId) => ({
         id: sessionId,
         projectId: "demo",
@@ -1962,6 +1989,14 @@ describe("telegram session manager", () => {
 
     await scopedManager.sendMessage("s-demo-owned", "hello");
     expect(manager.sendMessage).toHaveBeenCalledWith("s-demo-owned", "hello", undefined);
+
+    await expect(scopedManager.setReasoning("s-demo-other-owner", "high")).rejects.toEqual(
+      expect.objectContaining({
+        code: "not_found",
+      }),
+    );
+    await scopedManager.setReasoning("s-demo-owned", "high");
+    expect(manager.setReasoning).toHaveBeenCalledWith("s-demo-owned", "high");
 
     await scopedManager.createSession({ projectId: "demo" });
     expect(manager.createSession).toHaveBeenCalledWith({

@@ -11,6 +11,8 @@ import type {
   SessionProtocolFacet,
   SessionProtocolInterruptResult,
   SessionProtocolMessage,
+  SessionProtocolReasoningEffort,
+  SessionProtocolSettingsUpdateResult,
   SessionProtocolSnapshot,
   SessionProtocolSteerResult,
   SessionProtocolSubmitResult,
@@ -266,6 +268,9 @@ export type TelegramTauSession = {
   steer(text: string): Promise<SessionProtocolSteerResult>;
   interrupt(): Promise<SessionProtocolInterruptResult>;
   compact(mode: "summary-only" | "summary-and-last"): Promise<SessionProtocolCompactResult>;
+  setReasoning(
+    reasoning: SessionProtocolReasoningEffort,
+  ): Promise<SessionProtocolSettingsUpdateResult>;
   exec(
     command: string,
     options?: { cwd?: string; timeoutMs?: number },
@@ -303,6 +308,10 @@ export type TelegramSessionManager = {
   ): Promise<TelegramSessionRecord>;
   interruptSession(sessionId: string): Promise<TelegramSessionInterruptResult>;
   compactSession(sessionId: string): Promise<SessionProtocolCompactResult>;
+  setReasoning(
+    sessionId: string,
+    reasoning: SessionProtocolReasoningEffort,
+  ): Promise<SessionProtocolSettingsUpdateResult>;
   closeSession(sessionId: string): Promise<TelegramSessionRecord>;
   closeInactiveSessions(): Promise<TelegramSessionRecord[]>;
   close(): Promise<void>;
@@ -540,6 +549,17 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       throw new TelegramSessionManagerError("not_ready", "session is still preparing");
     }
     return await entry.tauSession.compact("summary-only");
+  }
+
+  async setReasoning(
+    sessionId: string,
+    reasoning: SessionProtocolReasoningEffort,
+  ): Promise<SessionProtocolSettingsUpdateResult> {
+    const entry = this.requireSession(sessionId);
+    if (!entry.tauSession) {
+      throw new TelegramSessionManagerError("not_ready", "session is still preparing");
+    }
+    return await entry.tauSession.setReasoning(reasoning);
   }
 
   async closeSession(sessionId: string): Promise<TelegramSessionRecord> {
@@ -1573,6 +1593,14 @@ class ScopedTelegramSessionManager implements TelegramSessionManager {
   async compactSession(sessionId: string): Promise<SessionProtocolCompactResult> {
     this.requireSession(sessionId);
     return await this.sessionManager.compactSession(sessionId);
+  }
+
+  async setReasoning(
+    sessionId: string,
+    reasoning: SessionProtocolReasoningEffort,
+  ): Promise<SessionProtocolSettingsUpdateResult> {
+    this.requireSession(sessionId);
+    return await this.sessionManager.setReasoning(sessionId, reasoning);
   }
 
   async closeSession(sessionId: string): Promise<TelegramSessionRecord> {

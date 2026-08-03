@@ -89,6 +89,7 @@ Supported slash commands:
 - `/use_<projectId>` stores the project to use for future `/new` sessions in that Telegram DM or group. It does not create, close, or switch the active session. The preference survives runner restarts. `defaultProjectId` provides the initial preference, and a sole allowed project is selected automatically.
 - `/new` closes the active session, if any, cleans its workspace, and creates its replacement using the stored project preference.
 - `/status` reports the active session's project, including composite members, plus model, reasoning effort, context usage, and cumulative cost when available. If the next-session preference differs, it reports both. With no active session, it reports the current preference.
+- `/effort_low`, `/effort_medium`, `/effort_high`, and `/effort_xhigh` set the active session's reasoning effort. Changes made during a run apply to the next independently submitted or queued turn.
 - `/compact` summarizes older conversation context to reduce context usage.
 - `/interrupt` interrupts the active run.
 

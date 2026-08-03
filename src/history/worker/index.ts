@@ -46,15 +46,15 @@ type Operation =
   | { id: string; sessionId: string; type: "append"; entries: HistoryEntry[] }
   | { id: string; sessionId: string; type: "truncate"; afterEntryId: string | null };
 
-const DIGEST_MODEL = "@cf/meta/llama-3.1-8b-instruct";
+const DIGEST_MODEL = "@cf/zai-org/glm-4.7-flash";
 const MAX_BODY_BYTES = 8 * 1024 * 1024;
-const MAX_OPERATIONS = 50;
-const MAX_ENTRIES_PER_OPERATION = 100;
+const MAX_OPERATIONS = 1;
+const MAX_ENTRIES_PER_OPERATION = 10;
 const MAX_SEARCH_LIMIT = 100;
 const MAX_READ_LIMIT = 100;
 const SHORT_SESSION_ENTRIES = 12;
 const ESTABLISHED_REFRESH_CHARS = 4_000;
-const DIGEST_CHUNK_CHARS = 20_000;
+const DIGEST_CHUNK_CHARS = 300_000;
 
 let initialization: Promise<void> | undefined;
 
@@ -114,7 +114,7 @@ export default {
        WHERE (s.digest_through_entry_id IS NULL OR s.digest_through_entry_id != latest.entry_id)
          AND s.updated_at <= ?
        ORDER BY s.updated_at
-       LIMIT 25`,
+       LIMIT 5`,
     )
       .bind(Date.now() - 30 * 60 * 1_000)
       .all<{ session_id: string }>();
@@ -163,6 +163,17 @@ async function initialize(database: D1Database): Promise<void> {
           UNIQUE (session_id, position)
         );
         CREATE INDEX IF NOT EXISTS entries_order ON entries(session_id, position);
+        CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(
+          session_id UNINDEXED,
+          entry_id UNINDEXED,
+          position UNINDEXED,
+          text
+        );
+        CREATE VIRTUAL TABLE IF NOT EXISTS sessions_fts USING fts5(
+          session_id UNINDEXED,
+          title,
+          summary
+        );
         CREATE TABLE IF NOT EXISTS operations (
           operation_id TEXT PRIMARY KEY,
           session_id TEXT NOT NULL,
@@ -233,6 +244,7 @@ async function applyOperation(database: D1Database, operation: Operation): Promi
       if (duplicate) continue;
       position += 1;
       updatedAt = Math.max(updatedAt, entry.timestamp);
+      const searchText = entrySearchText(entry);
       await database
         .prepare(
           "INSERT INTO entries (session_id, position, entry_id, timestamp, payload_json, search_text) VALUES (?, ?, ?, ?, ?, ?)",
@@ -243,8 +255,14 @@ async function applyOperation(database: D1Database, operation: Operation): Promi
           entry.id,
           entry.timestamp,
           JSON.stringify(entry),
-          entrySearchText(entry),
+          searchText,
         )
+        .run();
+      await database
+        .prepare(
+          "INSERT INTO entries_fts (session_id, entry_id, position, text) VALUES (?, ?, ?, ?)",
+        )
+        .bind(operation.sessionId, entry.id, position, searchText)
         .run();
     }
     if (updatedAt > 0) {
@@ -257,6 +275,10 @@ async function applyOperation(database: D1Database, operation: Operation): Promi
     await requireSession(database, operation.sessionId);
     if (operation.afterEntryId === null) {
       await database
+        .prepare("DELETE FROM entries_fts WHERE session_id = ?")
+        .bind(operation.sessionId)
+        .run();
+      await database
         .prepare("DELETE FROM entries WHERE session_id = ?")
         .bind(operation.sessionId)
         .run();
@@ -267,10 +289,18 @@ async function applyOperation(database: D1Database, operation: Operation): Promi
         .first<{ position: number }>();
       if (!retained) throw new Error(`truncate entry '${operation.afterEntryId}' was not found`);
       await database
+        .prepare("DELETE FROM entries_fts WHERE session_id = ? AND CAST(position AS INTEGER) > ?")
+        .bind(operation.sessionId, retained.position)
+        .run();
+      await database
         .prepare("DELETE FROM entries WHERE session_id = ? AND position > ?")
         .bind(operation.sessionId, retained.position)
         .run();
     }
+    await database
+      .prepare("DELETE FROM sessions_fts WHERE session_id = ?")
+      .bind(operation.sessionId)
+      .run();
     await database
       .prepare(
         "UPDATE sessions SET updated_at = ?, digest_title = NULL, digest_summary = NULL, digest_through_entry_id = NULL WHERE session_id = ?",
@@ -292,49 +322,74 @@ async function search(database: D1Database, raw: unknown): Promise<unknown> {
   const attributes = parseAttributes(input.attributes, true);
   const limit = boundedInteger(input.limit ?? 10, "limit", 1, MAX_SEARCH_LIMIT);
   const offset = decodeCursor(optionalString(input.cursor, "cursor", 2_048), "offset");
-  const values: unknown[] = [];
-  const filters: string[] = [];
-  for (const [key, value] of Object.entries(attributes)) {
-    filters.push(
-      "EXISTS (SELECT 1 FROM attributes a WHERE a.session_id = s.session_id AND a.key = ? AND a.value = ?)",
-    );
-    values.push(key, value);
+  const attributeValues: unknown[] = [];
+  const attributeFilters = Object.entries(attributes).map(([key, value]) => {
+    attributeValues.push(key, value);
+    return "EXISTS (SELECT 1 FROM attributes a WHERE a.session_id = s.session_id AND a.key = ? AND a.value = ?)";
+  });
+  const attributeClause =
+    attributeFilters.length > 0 ? `AND ${attributeFilters.join(" AND ")}` : "";
+
+  if (!query) {
+    const rows = await database
+      .prepare(
+        `SELECT s.* FROM sessions s
+         WHERE 1 = 1 ${attributeClause}
+         ORDER BY s.updated_at DESC, s.session_id ASC LIMIT ? OFFSET ?`,
+      )
+      .bind(...attributeValues, limit + 1, offset)
+      .all<Record<string, unknown>>();
+    return {
+      sessions: rows.results.slice(0, limit).map((row) => descriptor(row)),
+      ...(rows.results.length > limit
+        ? { nextCursor: encodeCursor({ offset: offset + limit }) }
+        : {}),
+    };
   }
-  if (query) {
-    filters.push(
-      "(s.digest_title LIKE ? ESCAPE '\\' OR s.digest_summary LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM entries e WHERE e.session_id = s.session_id AND e.search_text LIKE ? ESCAPE '\\'))",
-    );
-    const pattern = `%${escapeLike(query)}%`;
-    values.push(pattern, pattern, pattern);
-  }
-  values.push(limit + 1, offset);
-  const rows = await database
+
+  const ftsQuery = buildFtsQuery(query);
+  const candidateLimit = Math.min(1_000, offset + limit + 200);
+  const digestRows = await database
     .prepare(
-      `SELECT s.* FROM sessions s ${filters.length > 0 ? `WHERE ${filters.join(" AND ")}` : ""}
-       ORDER BY CASE
-         WHEN ? IS NOT NULL AND s.digest_title LIKE ? ESCAPE '\\' THEN 0
-         WHEN ? IS NOT NULL AND s.digest_summary LIKE ? ESCAPE '\\' THEN 1
-         ELSE 2 END,
-       s.updated_at DESC, s.session_id ASC LIMIT ? OFFSET ?`,
+      `SELECT s.*, bm25(sessions_fts, 0, 10, 5) AS score
+       FROM sessions_fts
+       JOIN sessions s ON s.session_id = sessions_fts.session_id
+       WHERE sessions_fts MATCH ? ${attributeClause}
+       ORDER BY score, s.updated_at DESC, s.session_id ASC LIMIT ?`,
     )
-    .bind(
-      ...values.slice(0, -2),
-      query ?? null,
-      query ? `%${escapeLike(query)}%` : null,
-      query ?? null,
-      query ? `%${escapeLike(query)}%` : null,
-      limit + 1,
-      offset,
-    )
+    .bind(ftsQuery, ...attributeValues, candidateLimit)
     .all<Record<string, unknown>>();
-  const selected = rows.results.slice(0, limit);
-  const sessions = [];
-  for (const row of selected) {
-    sessions.push(await descriptor(database, row, query));
+  const transcriptRows = await database
+    .prepare(
+      `SELECT s.*, entries_fts.text AS match_text, bm25(entries_fts) AS score
+       FROM entries_fts
+       JOIN sessions s ON s.session_id = entries_fts.session_id
+       WHERE entries_fts MATCH ? ${attributeClause}
+       ORDER BY score, s.updated_at DESC, s.session_id ASC LIMIT ?`,
+    )
+    .bind(ftsQuery, ...attributeValues, candidateLimit)
+    .all<Record<string, unknown>>();
+
+  const matches = new Map<string, Record<string, unknown>>();
+  for (const row of digestRows.results) {
+    const session = descriptor(row);
+    matches.set(String(session.sessionId), session);
   }
+  for (const row of transcriptRows.results) {
+    const sessionId = String(row.session_id);
+    const session = matches.get(sessionId) ?? descriptor(row);
+    const snippets = session.snippets as string[];
+    if (snippets.length < 3 && typeof row.match_text === "string") {
+      snippets.push(boundedSnippet(row.match_text, query));
+    }
+    matches.set(sessionId, session);
+  }
+
+  const ordered = [...matches.values()];
+  const selected = ordered.slice(offset, offset + limit);
   return {
-    sessions,
-    ...(rows.results.length > limit
+    sessions: selected,
+    ...(ordered.length > offset + limit
       ? { nextCursor: encodeCursor({ offset: offset + limit }) }
       : {}),
   };
@@ -359,7 +414,7 @@ async function read(database: D1Database, raw: unknown): Promise<unknown> {
   const selected = rows.results.slice(0, limit);
   const last = selected.at(-1);
   return {
-    session: await descriptor(database, session),
+    session: descriptor(session),
     entries: selected.map((row) => JSON.parse(row.payload_json)),
     ...(rows.results.length > limit && last
       ? { nextCursor: encodeCursor({ position: last.position }) }
@@ -367,35 +422,20 @@ async function read(database: D1Database, raw: unknown): Promise<unknown> {
   };
 }
 
-async function descriptor(
-  database: D1Database,
-  row: Record<string, unknown>,
-  query?: string,
-): Promise<Record<string, unknown>> {
-  const sessionId = String(row.session_id);
-  let snippets: string[] = [];
-  if (query) {
-    const matches = await database
-      .prepare(
-        "SELECT search_text FROM entries WHERE session_id = ? AND search_text LIKE ? ESCAPE '\\' ORDER BY position LIMIT 3",
-      )
-      .bind(sessionId, `%${escapeLike(query)}%`)
-      .all<{ search_text: string }>();
-    snippets = matches.results.map((match) => boundedSnippet(match.search_text, query));
-  }
+function descriptor(row: Record<string, unknown>): Record<string, unknown> {
   const title = typeof row.digest_title === "string" ? row.digest_title : undefined;
   const summary = typeof row.digest_summary === "string" ? row.digest_summary : undefined;
   const through =
     typeof row.digest_through_entry_id === "string" ? row.digest_through_entry_id : undefined;
   return {
-    sessionId,
+    sessionId: String(row.session_id),
     attributes: JSON.parse(String(row.attributes_json)),
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
     ...(title && summary && through
       ? { digest: { title, summary, updatedThroughEntryId: through } }
       : {}),
-    snippets,
+    snippets: [],
   };
 }
 
@@ -446,6 +486,10 @@ async function refreshDigestIfNeeded(env: Env, sessionId: string, force: boolean
       ? { title: session.digest_title, summary: session.digest_summary }
       : undefined;
   const digest = await generateDigest(env.AI, source, previous);
+  await env.DB.prepare("DELETE FROM sessions_fts WHERE session_id = ?").bind(sessionId).run();
+  await env.DB.prepare("INSERT INTO sessions_fts (session_id, title, summary) VALUES (?, ?, ?)")
+    .bind(sessionId, digest.title, digest.summary)
+    .run();
   await env.DB.prepare(
     "UPDATE sessions SET digest_title = ?, digest_summary = ?, digest_through_entry_id = ? WHERE session_id = ?",
   )
@@ -484,15 +528,28 @@ async function generateDigest(
 async function runAi(ai: Ai, prompt: string): Promise<string> {
   const result = await ai.run(DIGEST_MODEL, {
     messages: [{ role: "user", content: prompt }],
-    max_tokens: 1_024,
+    max_completion_tokens: 1_024,
+    reasoning_effort: "low",
   });
-  if (
-    typeof result === "object" &&
-    result !== null &&
-    "response" in result &&
-    typeof result.response === "string"
-  ) {
+  if (typeof result !== "object" || result === null) {
+    throw new Error("Workers AI returned an invalid digest response");
+  }
+  if ("response" in result && typeof result.response === "string") {
     return result.response;
+  }
+  if ("choices" in result && Array.isArray(result.choices)) {
+    const first = result.choices[0];
+    if (
+      typeof first === "object" &&
+      first !== null &&
+      "message" in first &&
+      typeof first.message === "object" &&
+      first.message !== null &&
+      "content" in first.message &&
+      typeof first.message.content === "string"
+    ) {
+      return first.message.content;
+    }
   }
   throw new Error("Workers AI returned an invalid digest response");
 }
@@ -652,8 +709,10 @@ function boundedSnippet(text: string, query: string): string {
   return `${start > 0 ? "…" : ""}${text.slice(start, end)}${end < text.length ? "…" : ""}`;
 }
 
-function escapeLike(value: string): string {
-  return value.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_");
+function buildFtsQuery(query: string): string {
+  const terms = query.match(/[\p{L}\p{N}_-]+/gu) ?? [];
+  if (terms.length === 0) return `"${query.replaceAll('"', '""')}"`;
+  return terms.map((term) => `"${term.replaceAll('"', '""')}"`).join(" AND ");
 }
 
 function encodeCursor(value: Record<string, number>): string {

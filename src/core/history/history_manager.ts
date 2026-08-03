@@ -7,7 +7,7 @@ import type {
   HistorySessionRecord,
 } from "./types.js";
 
-const REPLICATION_BATCH_SIZE = 50;
+const REPLICATION_BATCH_SIZE = 1;
 const REPLICATION_BATCH_BYTES = 6 * 1024 * 1024;
 const REPLICATION_TIMEOUT_MS = 15_000;
 

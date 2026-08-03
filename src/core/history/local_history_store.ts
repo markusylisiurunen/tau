@@ -18,7 +18,7 @@ import type {
 const PRIVATE_DIRECTORY_MODE = 0o700;
 const PRIVATE_FILE_MODE = 0o600;
 const MAX_SEARCH_SNIPPETS = 3;
-const MAX_REPLICATION_ENTRIES = 100;
+const MAX_REPLICATION_ENTRIES = 10;
 
 type SqlValue = string | number | null;
 type SqlRow = Record<string, SqlValue>;

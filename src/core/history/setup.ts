@@ -79,7 +79,7 @@ export async function destroyHistoryService(options: HistoryDestroyOptions): Pro
   const stdout = options.stdout ?? console.log;
   requireCloudflareAuth(env);
 
-  const worker = await runWrangler(["delete", WORKER_NAME, "--force"], { env, allowFailure: true });
+  const worker = await runWrangler(["delete", "--name", WORKER_NAME], { env, allowFailure: true });
   stdout(worker.ok ? `deleted Worker ${WORKER_NAME}` : `Worker ${WORKER_NAME} was not deleted`);
   const database = await runWrangler(["d1", "delete", DATABASE_NAME, "--skip-confirmation"], {
     env,
@@ -105,9 +105,9 @@ async function ensureDatabase(
     return id;
   }
 
-  const created = await runWrangler(["d1", "create", DATABASE_NAME, "--json"], { env });
-  const parsed = JSON.parse(created.output) as D1DatabaseInfo;
-  const id = databaseId(parsed);
+  await runWrangler(["d1", "create", DATABASE_NAME], { env });
+  const info = await runWrangler(["d1", "info", DATABASE_NAME, "--json"], { env });
+  const id = databaseId(JSON.parse(info.output) as D1DatabaseInfo);
   stdout(`created D1 database ${DATABASE_NAME}`);
   return id;
 }

@@ -73,9 +73,31 @@ function formatRuntimeLogCause(data: unknown): string {
   return `${cause.slice(0, MAX_RUNTIME_LOG_CAUSE_LENGTH - 1)}…`;
 }
 
+function formatRuntimeLogContext(data: unknown): string {
+  if (typeof data !== "object" || data === null) {
+    return "";
+  }
+
+  const fields: string[] = [];
+  const record = data as Record<string, unknown>;
+  for (const key of ["sessionId", "messageId"] as const) {
+    if (typeof record[key] === "string") {
+      fields.push(`${key}=${JSON.stringify(record[key])}`);
+    }
+  }
+  for (const key of ["chatId", "attempts"] as const) {
+    if (typeof record[key] === "number" && Number.isFinite(record[key])) {
+      fields.push(`${key}=${record[key]}`);
+    }
+  }
+
+  return fields.length > 0 ? ` [${fields.join(" ")}]` : "";
+}
+
 function formatRuntimeLog(scope: string, entry: RuntimeLogEntry): string {
+  const context = formatRuntimeLogContext(entry.data);
   const cause = formatRuntimeLogCause(entry.data);
-  return `[${scope}:${entry.level}] ${entry.message}${cause ? `: ${cause}` : ""}`;
+  return `[${scope}:${entry.level}] ${entry.message}${context}${cause ? `: ${cause}` : ""}`;
 }
 
 async function closeRuntimeResources(resources: Partial<RuntimeResources>): Promise<void> {

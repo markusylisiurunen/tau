@@ -710,11 +710,16 @@ function formatSessionStatus(
     return `${status}${preferenceStatus}`;
   }
 
+  const goalStatus = snapshot.goal
+    ? snapshot.goal.status === "active"
+      ? " it is pursuing a goal."
+      : " its goal is blocked."
+    : "";
   const model = snapshot.bootstrap.model.name || snapshot.bootstrap.model.id;
   const reasoning = snapshot.settings.reasoning ?? "none";
   const context = formatTelegramContextUsage(snapshot);
   const cost = formatTelegramSessionCost(getTelegramSessionCostTotal(snapshot));
-  return `${status} it is using ${model} with ${reasoning} reasoning. context usage is ${context}. cumulative cost is ${cost}.${preferenceStatus}`;
+  return `${status}${goalStatus} it is using ${model} with ${reasoning} reasoning. context usage is ${context}. cumulative cost is ${cost}.${preferenceStatus}`;
 }
 
 function ensureTerminalPunctuation(text: string): string {

@@ -9,6 +9,11 @@ import {
 } from "../dist/core/history/transcript.js";
 import { createHistoryToolDefinition, HISTORY_TOOL } from "../dist/core/tools/history.js";
 import { runAi } from "../dist/history/worker/index.js";
+import {
+  batchImportOperations,
+  buildImportOperations,
+  snapshotToHistoryEntries,
+} from "../scripts/import-session-snapshots.js";
 
 function createTextEntry(id, type, content, timestamp) {
   return { id, sourceIds: [id], type, content, timestamp };
@@ -152,6 +157,86 @@ describe("session history", () => {
       result: [{ type: "text", text: "/repo" }],
       outcome: "succeeded",
     });
+  });
+
+  it("best-effort snapshot import preserves identities, attributes, and transcript order", () => {
+    const snapshot = {
+      sessionId: "legacy-session",
+      attributes: {},
+      createdAt: 100,
+      messages: [
+        {
+          id: "system-1",
+          state: "committed",
+          message: { role: "system", content: "prompt", timestamp: 100 },
+        },
+        {
+          id: "user-1",
+          state: "committed",
+          message: { role: "user", content: "request", timestamp: 110 },
+        },
+        {
+          id: "assistant-1",
+          state: "committed",
+          message: {
+            role: "assistant",
+            content: [
+              { type: "text", text: "working" },
+              { type: "toolCall", id: "call-1", name: "bash", arguments: { command: "pwd" } },
+            ],
+            timestamp: 120,
+          },
+        },
+        {
+          id: "result-1",
+          state: "committed",
+          message: {
+            role: "toolResult",
+            toolCallId: "call-1",
+            toolName: "bash",
+            content: [{ type: "text", text: "/repo" }],
+            isError: false,
+            timestamp: 130,
+          },
+        },
+        {
+          id: "discarded-1",
+          state: "discarded",
+          message: { role: "user", content: "discarded", timestamp: 140 },
+        },
+      ],
+      tools: {
+        "call-1": {
+          id: "call-1",
+          toolCallId: "call-1",
+          toolName: "bash",
+          facetIds: [],
+          status: "succeeded",
+          call: { messageId: "assistant-1", contentIndex: 1 },
+          resultMessageId: "result-1",
+        },
+      },
+    };
+
+    const entries = snapshotToHistoryEntries(snapshot);
+    expect(entries.map((entry) => entry.id)).toEqual(["user-1", "assistant-1:text:0", "call-1"]);
+    const extraEntries = Array.from({ length: 24 }, (_, index) => ({
+      id: `extra-${index}`,
+      sourceIds: [`extra-${index}`],
+      type: "user",
+      timestamp: 140 + index,
+      content: `extra ${index}`,
+    }));
+    const operations = buildImportOperations(snapshot, [...entries, ...extraEntries]);
+    expect(operations).toHaveLength(3);
+    expect(operations[0]).toMatchObject({
+      id: expect.stringMatching(/^snapshot-import:[0-9a-f]{64}$/),
+      type: "create",
+      session: { attributes: {} },
+    });
+    expect(operations.slice(1).map((operation) => operation.entries.length)).toEqual([25, 2]);
+    expect(buildImportOperations(snapshot, [...entries, ...extraEntries])).toEqual(operations);
+    expect(batchImportOperations(operations)).toEqual([operations]);
   });
 
   it("keeps immutable attributes and idempotent entry identities", async () => {

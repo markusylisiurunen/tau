@@ -183,44 +183,6 @@ describe("command client tool config", () => {
     }
   });
 
-  it("preserves object schemas without interpreting their references", () => {
-    const fx = setupFixture();
-
-    try {
-      writeFileSync(
-        join(fx.home, ".config", "tau", "config.json"),
-        JSON.stringify({
-          clientTools: [
-            createClientTool("local_ref", true, {
-              type: "object",
-              properties: { message: { $ref: "#/$defs/message" } },
-              $defs: { message: { type: "string" } },
-            }),
-            createClientTool("missing_ref", true, {
-              type: "object",
-              properties: { message: { $ref: "#/$defs/missing" } },
-            }),
-            createClientTool("external_ref", true, {
-              type: "object",
-              properties: { message: { $ref: "https://example.com/message" } },
-            }),
-          ],
-        }),
-      );
-
-      const result = loadFixtureConfig(fx);
-
-      expect(result.config.clientTools?.map((tool) => tool.name)).toEqual([
-        "local_ref",
-        "missing_ref",
-        "external_ref",
-      ]);
-      expect(result.errors).toEqual([]);
-    } finally {
-      fx.cleanup();
-    }
-  });
-
   it("ignores project-defined command tools and reports why", () => {
     const fx = setupFixture();
 

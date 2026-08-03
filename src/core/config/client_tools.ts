@@ -1,4 +1,4 @@
-import { isAbsolute, resolve } from "node:path";
+import { resolve } from "node:path";
 import type { TSchema } from "typebox";
 import { z } from "zod";
 import type { ConfigLevel } from "./paths.js";
@@ -153,13 +153,5 @@ function formatClientToolIssue(
 }
 
 function resolveCommand(levelRoot: string, command: string): string {
-  if (isAbsolute(command)) {
-    return command;
-  }
-
-  if (command.startsWith("./") || command.startsWith("../") || command.includes("/")) {
-    return resolve(levelRoot, command);
-  }
-
-  return command;
+  return command.includes("/") ? resolve(levelRoot, command) : command;
 }

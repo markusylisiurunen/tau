@@ -71,7 +71,7 @@ export function createTuiClientTools(options: {
   enabled: boolean;
   getController: () => SessionChatController | undefined;
   commandTools?: CommandClientToolConfig[];
-  deps?: Pick<CoreDeps, "env" | "spawn">;
+  deps?: Pick<CoreDeps, "spawn">;
 }): TauSdkClientTool[] {
   if (!options.enabled) {
     return [];

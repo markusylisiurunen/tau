@@ -14,9 +14,7 @@ const commandClientToolResultSchema = z
   })
   .strict();
 
-type CommandClientToolDeps = Pick<CoreDeps, "spawn"> & {
-  env: Pick<CoreDeps["env"], "cwd">;
-};
+type CommandClientToolDeps = Pick<CoreDeps, "spawn">;
 
 export function createCommandClientTools(
   configs: CommandClientToolConfig[],
@@ -42,7 +40,6 @@ export function createCommandClientTools(
 
       const timeoutMs = config.executionTimeoutMs ?? DEFAULT_EXECUTION_TIMEOUT_MS;
       const result = await deps.spawn(config.command, config.args ?? [], {
-        cwd: deps.env.cwd(),
         detached: true,
         signal: context.signal,
         timeoutMs,

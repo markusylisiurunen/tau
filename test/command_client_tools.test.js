@@ -15,12 +15,7 @@ function createSpawnResult(overrides = {}) {
 }
 
 function createDeps(spawn) {
-  return {
-    spawn,
-    env: {
-      cwd: () => "/client/project",
-    },
-  };
+  return { spawn };
 }
 
 function createConfig(overrides = {}) {
@@ -67,13 +62,13 @@ describe("command client tools", () => {
     });
   });
 
-  it("inherits the TUI process environment unchanged", async () => {
+  it("inherits the TUI process cwd and environment unchanged", async () => {
     const variableName = `TAU_COMMAND_CLIENT_TOOL_TEST_${process.pid}`;
     const previousValue = process.env[variableName];
     process.env[variableName] = "inherited";
 
     try {
-      const script = `process.stdout.write(JSON.stringify({ content: process.env[${JSON.stringify(variableName)}] }))`;
+      const script = `process.stdout.write(JSON.stringify({ content: process.cwd() + "\\n" + process.env[${JSON.stringify(variableName)}] }))`;
       const [tool] = createCommandClientTools([
         createConfig({
           command: process.execPath,
@@ -82,7 +77,7 @@ describe("command client tools", () => {
       ]);
 
       await expect(tool.execute({ message: "hello" }, context)).resolves.toEqual({
-        content: "inherited",
+        content: `${process.cwd()}\ninherited`,
       });
     } finally {
       if (previousValue === undefined) {
@@ -110,7 +105,6 @@ describe("command client tools", () => {
       "/home/user/tools/notify",
       ["--json"],
       expect.objectContaining({
-        cwd: "/client/project",
         detached: true,
         signal: context.signal,
         timeoutMs: 5000,
@@ -126,6 +120,7 @@ describe("command client tools", () => {
         })}\n`,
       }),
     );
+    expect(spawn.mock.calls[0][2]).not.toHaveProperty("cwd");
     expect(spawn.mock.calls[0][2]).not.toHaveProperty("env");
   });
 

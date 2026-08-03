@@ -61,7 +61,9 @@ class TauSdkClientImpl implements TauSdkClient {
   readonly sessions: TauSdkSessionClient;
 
   private readonly clientToolAbortControllers = new Map<string, AbortController>();
+  private readonly clientToolExecutions = new Map<string, Promise<void>>();
   private readonly unsubscribeClientTool: () => void;
+  private closePromise?: Promise<void>;
 
   constructor(
     private readonly transport: SessionProtocolTransport,
@@ -111,13 +113,19 @@ class TauSdkClientImpl implements TauSdkClient {
     return this.transport.request("session.unobserve", { sessionId });
   }
 
-  async close(): Promise<void> {
+  close(): Promise<void> {
+    this.closePromise ??= this.closeClient();
+    return this.closePromise;
+  }
+
+  private async closeClient(): Promise<void> {
     this.unsubscribeClientTool();
+    const executions = [...this.clientToolExecutions.values()];
     for (const controller of this.clientToolAbortControllers.values()) {
       controller.abort();
     }
     this.clientToolAbortControllers.clear();
-    await this.transport.close();
+    await Promise.all([this.transport.close(), ...executions]);
   }
 
   private handleClientTool(
@@ -136,11 +144,13 @@ class TauSdkClientImpl implements TauSdkClient {
 
     const abortController = new AbortController();
     this.clientToolAbortControllers.set(message.callId, abortController);
-    void this.runClientTool(tool, message, abortController)
+    const execution = this.runClientTool(tool, message, abortController)
       .catch(() => undefined)
       .finally(() => {
         this.clientToolAbortControllers.delete(message.callId);
+        this.clientToolExecutions.delete(message.callId);
       });
+    this.clientToolExecutions.set(message.callId, execution);
   }
 
   private async runClientTool(

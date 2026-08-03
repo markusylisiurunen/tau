@@ -156,6 +156,15 @@ describe("command client tool config", () => {
               parameters: { type: "string" },
               command: "bad",
             },
+            {
+              name: "bad_nested_schema",
+              description: "Invalid nested schema.",
+              parameters: {
+                type: "object",
+                properties: { message: { type: "bogus" } },
+              },
+              command: "bad-nested",
+            },
           ],
         }),
       );
@@ -166,6 +175,7 @@ describe("command client tool config", () => {
       expect(result.errors).toEqual([
         `${join(fx.home, ".config", "tau", "config.json")}: clientTools[1].name duplicates client tool 'notify'.`,
         `${join(fx.home, ".config", "tau", "config.json")}: clientTools[2].parameters must be an object JSON Schema with type 'object'.`,
+        `${join(fx.home, ".config", "tau", "config.json")}: clientTools[3].parameters must be a valid JSON Schema.`,
       ]);
     } finally {
       fx.cleanup();

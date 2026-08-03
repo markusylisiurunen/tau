@@ -167,6 +167,13 @@ export class SessionChatApp {
   }
 
   static async connect(options: SessionChatTransportOptions): Promise<SessionChatApp> {
+    let controller: SessionChatController | undefined;
+    const clientTools = createTuiClientTools({
+      enabled: options.clientToolsEnabled,
+      getController: () => controller,
+      commandTools: options.config?.clientTools,
+      deps: options.deps,
+    });
     const transport =
       options.transport === "stdio"
         ? new StdioSessionProtocolTransport(
@@ -178,15 +185,9 @@ export class SessionChatApp {
             url: options.url,
             authToken: options.authToken,
           });
-    let controller: SessionChatController | undefined;
     const client = await createTauSdkClientFromTransport(transport, {
       initialize: { client: { name: "tau-tui", version: "1" } },
-      clientTools: createTuiClientTools({
-        enabled: options.clientToolsEnabled,
-        getController: () => controller,
-        commandTools: options.config?.clientTools,
-        deps: options.deps,
-      }),
+      clientTools,
     });
     const app = await SessionChatApp.open({
       ...options,

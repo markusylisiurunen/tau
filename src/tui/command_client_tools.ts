@@ -1,4 +1,3 @@
-import type { TSchema } from "typebox";
 import { Check, Errors } from "typebox/value";
 import { z } from "zod";
 import type { CommandClientToolConfig } from "../core/config/client_tools.js";
@@ -32,9 +31,8 @@ export function createCommandClientTools(
         : { executionTimeoutMs: config.executionTimeoutMs }),
     },
     execute: async (args, context) => {
-      const parameters = config.parameters as TSchema;
-      if (!Check(parameters, args)) {
-        const issue = Errors(parameters, args)[0];
+      if (!Check(config.parameters, args)) {
+        const issue = Errors(config.parameters, args)[0];
         const detail = issue
           ? `${issue.instancePath || "arguments"} ${issue.message}`
           : "arguments are invalid";

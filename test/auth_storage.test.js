@@ -501,12 +501,239 @@ describe("AuthManager and TauCredentialStore", () => {
       const authManager = new AuthManager(storage);
 
       const providers = await authManager.listProviderAccounts();
-      expect(providers[0]?.accounts[0]?.plan).toBe("pro");
+      expect(providers[0]?.accounts[0]).toMatchObject({
+        plan: "pro",
+        credentialExpired: false,
+        credentialRefreshStatus: "succeeded",
+        usageRefreshStatus: "succeeded",
+      });
 
       const saved = JSON.parse(readFileSync(fx.authPath, "utf-8"));
       const account = saved.providers["openai-codex"].accounts[0];
       expect(account.access).toBe(refreshedAccess);
       expect(account.refresh).toBe("refresh-plan-next");
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("reports stale codex account data when listing refreshes fail", async () => {
+    const fx = createTempAuthPath();
+    try {
+      const access = createAccessToken({
+        accountId: "acct-stale",
+        email: "stale@example.com",
+        plan: "pro",
+      });
+      const usage = {
+        windows: [
+          {
+            name: "primary",
+            usedPercent: 0,
+            resetAt: 1,
+            windowSeconds: 604800,
+          },
+        ],
+      };
+      writeFileSync(
+        fx.authPath,
+        JSON.stringify({
+          providers: {
+            "openai-codex": {
+              accounts: [
+                {
+                  type: "oauth",
+                  accountId: "acct-stale",
+                  providerAccountId: "acct-stale",
+                  access,
+                  refresh: "refresh-stale",
+                  expires: 0,
+                  usage,
+                },
+              ],
+            },
+          },
+        }),
+        { mode: 0o600 },
+      );
+      codexRefresh.mockRejectedValue(new Error("refresh token rejected"));
+
+      const providers = await new AuthManager(new AuthStorage(fx.authPath)).listProviderAccounts();
+
+      expect(providers[0]?.accounts[0]).toMatchObject({
+        email: "stale@example.com",
+        credentialExpired: true,
+        credentialRefreshStatus: "failed",
+        usage,
+        usageRefreshStatus: "failed",
+      });
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("accepts credentials replaced while a listing refresh fails", async () => {
+    const fx = createTempAuthPath();
+    try {
+      const originalAccess = createAccessToken({
+        accountId: "acct-credential-race",
+        email: "old@example.com",
+        plan: "plus",
+      });
+      const replacementAccess = createAccessToken({
+        accountId: "acct-credential-race",
+        email: "new@example.com",
+        plan: "pro",
+      });
+      writeFileSync(
+        fx.authPath,
+        JSON.stringify({
+          providers: {
+            "openai-codex": {
+              accounts: [
+                {
+                  type: "oauth",
+                  accountId: "acct-credential-race",
+                  providerAccountId: "acct-credential-race",
+                  access: originalAccess,
+                  refresh: "refresh-original",
+                  expires: 0,
+                },
+              ],
+            },
+          },
+        }),
+        { mode: 0o600 },
+      );
+      const refreshStarted = deferred();
+      const releaseRefresh = deferred();
+      codexRefresh.mockImplementation(async () => {
+        refreshStarted.resolve();
+        return await releaseRefresh.promise;
+      });
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => ({
+          ok: true,
+          json: async () => ({
+            rate_limit: {
+              primary_window: {
+                used_percent: 12,
+                reset_at: 4102444800,
+                limit_window_seconds: 18000,
+              },
+            },
+          }),
+        })),
+      );
+
+      const listing = new AuthManager(new AuthStorage(fx.authPath)).listProviderAccounts();
+      await refreshStarted.promise;
+
+      new AuthManager(new AuthStorage(fx.authPath)).addOAuthAccount("openai-codex", {
+        type: "oauth",
+        access: replacementAccess,
+        refresh: "refresh-replacement",
+        expires: Number.MAX_SAFE_INTEGER,
+        accountId: "acct-credential-race",
+      });
+      releaseRefresh.reject(new Error("refresh token rejected"));
+
+      await expect(listing).resolves.toEqual([
+        expect.objectContaining({
+          accounts: [
+            expect.objectContaining({
+              email: "new@example.com",
+              credentialRefreshStatus: "succeeded",
+              usageRefreshStatus: "succeeded",
+            }),
+          ],
+        }),
+      ]);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("reports usage as stale when a credential replacement discards its refresh", async () => {
+    const fx = createTempAuthPath();
+    try {
+      const originalAccess = createAccessToken({
+        accountId: "acct-usage-race",
+        email: "old@example.com",
+        plan: "plus",
+      });
+      const replacementAccess = createAccessToken({
+        accountId: "acct-usage-race",
+        email: "new@example.com",
+        plan: "pro",
+      });
+      writeFileSync(
+        fx.authPath,
+        JSON.stringify({
+          providers: {
+            "openai-codex": {
+              accounts: [
+                {
+                  type: "oauth",
+                  accountId: "acct-usage-race",
+                  providerAccountId: "acct-usage-race",
+                  access: originalAccess,
+                  refresh: "refresh-original",
+                  expires: Number.MAX_SAFE_INTEGER,
+                },
+              ],
+            },
+          },
+        }),
+        { mode: 0o600 },
+      );
+      const fetchStarted = deferred();
+      const releaseFetch = deferred();
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => {
+          fetchStarted.resolve();
+          await releaseFetch.promise;
+          return {
+            ok: true,
+            json: async () => ({
+              rate_limit: {
+                primary_window: {
+                  used_percent: 12,
+                  reset_at: 4102444800,
+                  limit_window_seconds: 18000,
+                },
+              },
+            }),
+          };
+        }),
+      );
+
+      const listing = new AuthManager(new AuthStorage(fx.authPath)).listProviderAccounts();
+      await fetchStarted.promise;
+
+      new AuthManager(new AuthStorage(fx.authPath)).addOAuthAccount("openai-codex", {
+        type: "oauth",
+        access: replacementAccess,
+        refresh: "refresh-replacement",
+        expires: Number.MAX_SAFE_INTEGER,
+        accountId: "acct-usage-race",
+      });
+      releaseFetch.resolve();
+
+      await expect(listing).resolves.toEqual([
+        expect.objectContaining({
+          accounts: [
+            expect.objectContaining({
+              email: "new@example.com",
+              credentialRefreshStatus: "succeeded",
+              usage: undefined,
+              usageRefreshStatus: "failed",
+            }),
+          ],
+        }),
+      ]);
     } finally {
       fx.cleanup();
     }

@@ -42,5 +42,8 @@ export type AuthAccountInfo = {
   accountId: string;
   email?: string;
   plan?: string;
+  credentialExpired: boolean;
+  credentialRefreshStatus: "succeeded" | "failed";
   usage?: AuthAccountUsage;
+  usageRefreshStatus: "succeeded" | "failed";
 };

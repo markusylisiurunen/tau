@@ -273,6 +273,24 @@ export async function runListCommand(options: {
       const plan = account.plan ? `[${account.plan}]` : undefined;
       const headerSegments = [`  ${marker}`, label, plan].filter(Boolean);
       log(headerSegments.join(" "));
+      if (account.credentialRefreshStatus === "failed") {
+        log(
+          chalk.red(
+            account.credentialExpired
+              ? '    credentials expired; refresh failed, run "tau auth login codex" to re-authenticate'
+              : "    credential refresh failed; stored credentials have not expired",
+          ),
+        );
+      }
+      if (account.usageRefreshStatus === "failed") {
+        log(
+          chalk.yellow(
+            account.usage
+              ? "    usage refresh failed; showing stale cached usage"
+              : "    usage refresh failed; usage unavailable",
+          ),
+        );
+      }
       if (account.usage) {
         for (const window of account.usage.windows) {
           const labelText = formatWindowLabel(window.windowSeconds) ?? window.name;

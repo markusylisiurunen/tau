@@ -19,11 +19,6 @@ function createDeps(spawn) {
     spawn,
     env: {
       cwd: () => "/client/project",
-      env: () => ({
-        PATH: "/usr/bin",
-        DISPLAY: ":0",
-        API_TOKEN: "inherited-secret",
-      }),
     },
   };
 }
@@ -41,7 +36,6 @@ function createConfig(overrides = {}) {
     },
     command: "/home/user/tools/notify",
     args: ["--json"],
-    env: { NOTIFY_STYLE: "brief", EXPLICIT_TOKEN: "allowed" },
     executionTimeoutMs: 5000,
     ...overrides,
   };
@@ -65,13 +59,38 @@ describe("command client tools", () => {
       createConfig({
         command: process.execPath,
         args: ["--input-type=module", "--eval", script],
-        env: undefined,
       }),
     ]);
 
     await expect(tool.execute({ message: "hello" }, context)).resolves.toEqual({
       content: "received hello",
     });
+  });
+
+  it("inherits the TUI process environment unchanged", async () => {
+    const variableName = `TAU_COMMAND_CLIENT_TOOL_TEST_${process.pid}`;
+    const previousValue = process.env[variableName];
+    process.env[variableName] = "inherited";
+
+    try {
+      const script = `process.stdout.write(JSON.stringify({ content: process.env[${JSON.stringify(variableName)}] }))`;
+      const [tool] = createCommandClientTools([
+        createConfig({
+          command: process.execPath,
+          args: ["--input-type=module", "--eval", script],
+        }),
+      ]);
+
+      await expect(tool.execute({ message: "hello" }, context)).resolves.toEqual({
+        content: "inherited",
+      });
+    } finally {
+      if (previousValue === undefined) {
+        delete process.env[variableName];
+      } else {
+        process.env[variableName] = previousValue;
+      }
+    }
   });
 
   it("executes a configured command with a bounded JSON request and parses its result", async () => {
@@ -92,12 +111,6 @@ describe("command client tools", () => {
       ["--json"],
       expect.objectContaining({
         cwd: "/client/project",
-        env: {
-          PATH: "/usr/bin",
-          DISPLAY: ":0",
-          NOTIFY_STYLE: "brief",
-          EXPLICIT_TOKEN: "allowed",
-        },
         detached: true,
         signal: context.signal,
         timeoutMs: 5000,
@@ -113,6 +126,7 @@ describe("command client tools", () => {
         })}\n`,
       }),
     );
+    expect(spawn.mock.calls[0][2]).not.toHaveProperty("env");
   });
 
   it("validates arguments before starting the command", async () => {

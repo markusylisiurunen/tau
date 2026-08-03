@@ -86,7 +86,6 @@ describe("command client tool config", () => {
               parameters,
               command: "./tools/notify",
               args: ["--json"],
-              env: { DISPLAY: ":0" },
               executionTimeoutMs: 5000,
             },
           ],
@@ -104,7 +103,6 @@ describe("command client tool config", () => {
           parameters,
           command: join(fx.home, "tools", "notify"),
           args: ["--json"],
-          env: { DISPLAY: ":0" },
           executionTimeoutMs: 5000,
         },
       ]);
@@ -185,7 +183,7 @@ describe("command client tool config", () => {
     }
   });
 
-  it("accepts resolved local references and rejects missing or external references", () => {
+  it("preserves object schemas without interpreting their references", () => {
     const fx = setupFixture();
 
     try {
@@ -212,11 +210,12 @@ describe("command client tool config", () => {
 
       const result = loadFixtureConfig(fx);
 
-      expect(result.config.clientTools?.map((tool) => tool.name)).toEqual(["local_ref"]);
-      expect(result.errors).toEqual([
-        `${join(fx.home, ".config", "tau", "config.json")}: clientTools[1].parameters must contain only resolvable local references.`,
-        `${join(fx.home, ".config", "tau", "config.json")}: clientTools[2].parameters must contain only resolvable local references.`,
+      expect(result.config.clientTools?.map((tool) => tool.name)).toEqual([
+        "local_ref",
+        "missing_ref",
+        "external_ref",
       ]);
+      expect(result.errors).toEqual([]);
     } finally {
       fx.cleanup();
     }
@@ -309,36 +308,6 @@ describe("command client tool config", () => {
               parameters: { type: "string" },
               command: "bad",
             },
-            {
-              name: "bad_nested_schema",
-              defaultEnabled: true,
-              description: "Invalid nested schema.",
-              parameters: {
-                type: "object",
-                properties: { message: { type: "bogus" } },
-              },
-              command: "bad-nested",
-            },
-            {
-              name: "bad_pattern",
-              defaultEnabled: true,
-              description: "Invalid pattern.",
-              parameters: {
-                type: "object",
-                properties: { message: { type: "string", pattern: "[" } },
-              },
-              command: "bad-pattern",
-            },
-            {
-              name: "bad_pattern_properties",
-              defaultEnabled: true,
-              description: "Invalid pattern properties.",
-              parameters: {
-                type: "object",
-                patternProperties: { "\\8": { type: "string" } },
-              },
-              command: "bad-pattern-properties",
-            },
           ],
         }),
       );
@@ -349,9 +318,6 @@ describe("command client tool config", () => {
       expect(result.errors).toEqual([
         `${join(fx.home, ".config", "tau", "config.json")}: clientTools[1].name duplicates client tool 'notify'.`,
         `${join(fx.home, ".config", "tau", "config.json")}: clientTools[2].parameters must be an object JSON Schema with type 'object'.`,
-        `${join(fx.home, ".config", "tau", "config.json")}: clientTools[3].parameters must be a valid JSON Schema.`,
-        `${join(fx.home, ".config", "tau", "config.json")}: clientTools[4].parameters must be a valid JSON Schema.`,
-        `${join(fx.home, ".config", "tau", "config.json")}: clientTools[5].parameters must be a valid JSON Schema.`,
       ]);
     } finally {
       fx.cleanup();

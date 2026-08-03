@@ -3,7 +3,6 @@ import { z } from "zod";
 import type { CommandClientToolConfig } from "../core/config/client_tools.js";
 import { type CoreDeps, createDefaultCoreDeps } from "../core/runtime/deps.js";
 import { DEFAULT_COMMAND_CAPTURE_BYTES } from "../core/tools/execution_backend.js";
-import { sanitizeEnvironment } from "../core/utils/sanitize_env.js";
 import type { TauSdkClientTool } from "../sdk/types.js";
 
 const DEFAULT_EXECUTION_TIMEOUT_MS = 60_000;
@@ -15,7 +14,9 @@ const commandClientToolResultSchema = z
   })
   .strict();
 
-type CommandClientToolDeps = Pick<CoreDeps, "env" | "spawn">;
+type CommandClientToolDeps = Pick<CoreDeps, "spawn"> & {
+  env: Pick<CoreDeps["env"], "cwd">;
+};
 
 export function createCommandClientTools(
   configs: CommandClientToolConfig[],
@@ -42,10 +43,6 @@ export function createCommandClientTools(
       const timeoutMs = config.executionTimeoutMs ?? DEFAULT_EXECUTION_TIMEOUT_MS;
       const result = await deps.spawn(config.command, config.args ?? [], {
         cwd: deps.env.cwd(),
-        env: {
-          ...sanitizeEnvironment(deps.env.env()),
-          ...(config.env ?? {}),
-        },
         detached: true,
         signal: context.signal,
         timeoutMs,

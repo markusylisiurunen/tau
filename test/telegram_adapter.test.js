@@ -425,6 +425,60 @@ describe("telegram adapter", () => {
     }
   });
 
+  it("preserves detailed status when there is no goal", async () => {
+    const chatId = 13;
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: {
+            chat: { id: chatId, type: "private" },
+            from: { id: 7 },
+            text: "/status",
+          },
+        },
+      ],
+    ]);
+    const managerHarness = createSessionManagerHarness([
+      {
+        id: "s1",
+        projectId: "platform",
+        ownerId: ownerIdForChat(chatId),
+        state: "waiting-input",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+        snapshot: createStatusSnapshot(),
+      },
+    ]);
+
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: {
+        alpha: { repo: "owner/alpha" },
+        beta: { repo: "owner/beta" },
+        platform: {
+          projectIds: ["alpha", "beta"],
+          persona: "gpt-5.6-sol-coder:high",
+        },
+      },
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() =>
+        apiHarness.sendMessages.some((entry) => String(entry.text).includes("context usage")),
+      );
+      expect(apiHarness.sendMessages.map((entry) => entry.text)).toContain(
+        "your platform (alpha, beta) session s1 is waiting for input. it is using Claude Opus 4.6 with medium reasoning. context usage is 6.0% of 200k tokens. cumulative cost is $0.12.",
+      );
+    } finally {
+      await adapter.close();
+    }
+  });
+
   it("uses project selectors only for future sessions", async () => {
     const apiHarness = createApiHarness([
       [

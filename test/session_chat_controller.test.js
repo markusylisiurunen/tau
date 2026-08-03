@@ -3562,11 +3562,57 @@ describe("SessionChatController", () => {
     expect(view.editorText).toBe("Name: \nDecision: ");
   });
 
-  it("disables all TUI client tools together", () => {
+  it("adds configured command tools to the built-in TUI tools", () => {
+    const tools = createTuiClientTools({
+      enabled: true,
+      getController: () => undefined,
+      commandTools: [
+        {
+          name: "notify",
+          description: "Show a local notification.",
+          parameters: { type: "object", properties: {}, additionalProperties: false },
+          command: "notify",
+        },
+      ],
+    });
+
+    expect(tools.map((tool) => tool.schema.name)).toEqual([
+      "diff_review",
+      "prefill_input",
+      "notify",
+    ]);
+  });
+
+  it("rejects configured tools that duplicate a built-in TUI tool", () => {
+    expect(() =>
+      createTuiClientTools({
+        enabled: true,
+        getController: () => undefined,
+        commandTools: [
+          {
+            name: "prefill_input",
+            description: "Replace a built-in tool.",
+            parameters: { type: "object", properties: {}, additionalProperties: false },
+            command: "replacement",
+          },
+        ],
+      }),
+    ).toThrow("duplicate TUI client tool 'prefill_input'");
+  });
+
+  it("disables built-in and configured TUI client tools together", () => {
     expect(
       createTuiClientTools({
         enabled: false,
         getController: () => undefined,
+        commandTools: [
+          {
+            name: "notify",
+            description: "Show a local notification.",
+            parameters: { type: "object", properties: {}, additionalProperties: false },
+            command: "notify",
+          },
+        ],
       }),
     ).toEqual([]);
   });

@@ -187,7 +187,7 @@ export function printHelp(personas: Persona[]): void {
       `                                if not specified, uses resolved config defaultPersona.`,
       "  --caffeinated                 keep macOS awake during active assistant turns in TUI mode (no-op on Linux).",
       "  --no-agent-context-files      disable AGENTS.md injection into the system prompt.",
-      "  --no-client-tools             disable TUI client tools such as diff review and input prefill.",
+      "  --no-client-tools             disable built-in and configured TUI client tools.",
       "",
       "subcommands:",
       "  rpc                           run headless stdio RPC mode (no TUI).",

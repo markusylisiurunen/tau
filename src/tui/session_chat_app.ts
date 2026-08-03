@@ -4,6 +4,7 @@ import { Type } from "typebox";
 import { z } from "zod";
 import { createCommandRegistry } from "../core/commands/index.js";
 import type {
+  CommandClientToolConfig,
   Config,
   DiffToolConfig,
   ThemeAppearance,
@@ -19,6 +20,7 @@ import type { TauSdkClient, TauSdkClientTool, TauSdkSession } from "../sdk/types
 import { StdioSessionProtocolTransport } from "../transport/stdio_session_transport.js";
 import { WebSocketSessionProtocolTransport } from "../transport/websocket_session_transport.js";
 import { TuiChatView } from "./chat_view.js";
+import { createCommandClientTools } from "./command_client_tools.js";
 import { EXIT_DOUBLE_PRESS_WINDOW_MS, EXIT_TOAST_DURATION_MS } from "./constants.js";
 import { SessionChatController } from "./session_chat_controller.js";
 import { SlashAutocompleteProvider } from "./ui/slash_autocomplete.js";
@@ -64,12 +66,14 @@ const prefillInputArgsSchema = z
 export function createTuiClientTools(options: {
   enabled: boolean;
   getController: () => SessionChatController | undefined;
+  commandTools?: CommandClientToolConfig[];
+  deps?: Pick<CoreDeps, "env" | "spawn">;
 }): TauSdkClientTool[] {
   if (!options.enabled) {
     return [];
   }
 
-  return [
+  const tools: TauSdkClientTool[] = [
     {
       schema: {
         ...DIFF_REVIEW_TOOL,
@@ -116,6 +120,18 @@ export function createTuiClientTools(options: {
       },
     },
   ];
+
+  tools.push(...createCommandClientTools(options.commandTools ?? [], options.deps));
+
+  const names = new Set<string>();
+  for (const tool of tools) {
+    if (names.has(tool.schema.name)) {
+      throw new Error(`duplicate TUI client tool '${tool.schema.name}'`);
+    }
+    names.add(tool.schema.name);
+  }
+
+  return tools;
 }
 
 export type SessionChatSelection =
@@ -168,6 +184,8 @@ export class SessionChatApp {
       clientTools: createTuiClientTools({
         enabled: options.clientToolsEnabled,
         getController: () => controller,
+        commandTools: options.config?.clientTools,
+        deps: options.deps,
       }),
     });
     const app = await SessionChatApp.open({

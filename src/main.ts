@@ -386,7 +386,7 @@ function printAttachHelp(): void {
       "  --fly-api <id>                 configured Fly Sprites API id.",
       "  --fly-sprite <name>            already-provisioned Fly Sprite name.",
       "  --auth-token <token>           token for websocket servers started with --auth-token.",
-      "  --no-client-tools              disable TUI client tools such as diff review and input prefill.",
+      "  --no-client-tools              disable built-in and configured TUI client tools.",
       "  --help, -h                     show this help and exit.",
       "",
       "examples:",
@@ -1207,6 +1207,7 @@ const sessionClient = await createTauSdkClientWithHostConfig(
     clientTools: createTuiClientTools({
       enabled: !cli.noClientTools,
       getController: () => sessionChatApp?.getController(),
+      commandTools: config.clientTools,
     }),
   },
   config,

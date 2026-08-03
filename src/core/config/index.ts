@@ -1,3 +1,4 @@
+export type { CommandClientToolConfig } from "./client_tools.js";
 export type { ThemeAppearance, ThemeDefinition, ThemeVariantTokens } from "./content_loader.js";
 export { loadAllContent } from "./content_loader.js";
 export type { ConfigDeps } from "./deps.js";

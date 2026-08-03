@@ -4162,6 +4162,7 @@ describe("SessionChatController", () => {
 
     expect(createSession).toHaveBeenCalledWith({
       executionEnvironment: { kind: "local", cwd: "/session/repo" },
+      attributes: { source: "tui" },
       personaId: "persona-1",
       reasoning: "none",
     });

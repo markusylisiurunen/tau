@@ -70,6 +70,8 @@ export function createProtocolSnapshot(overrides = {}) {
 
   const snapshot = {
     sessionId: overrides.sessionId ?? "session-1",
+    attributes: overrides.attributes ?? { source: "test" },
+    createdAt: overrides.createdAt ?? 0,
     revision: overrides.revision ?? 1,
     agentState: overrides.agentState ?? {
       revision: historyEntries.length,

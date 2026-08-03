@@ -19,6 +19,12 @@ import type { RuntimeBootstrap, RuntimeConfigResult } from "./core/config/runtim
 import { loadRuntimeBootstrap, loadRuntimeConfig } from "./core/config/runtime.js";
 import type { Config } from "./core/config/schema.js";
 import { loadConfig } from "./core/config/schema.js";
+import { resolveHistoryRemoteTarget } from "./core/history/config.js";
+import { HistoryManager } from "./core/history/history_manager.js";
+import {
+  getDefaultHistoryDatabasePath,
+  LocalHistoryStore,
+} from "./core/history/local_history_store.js";
 import { getStartupPlatformError } from "./core/platform_support.js";
 import type { PromptTemplate } from "./core/prompts.js";
 import { createDefaultCoreDeps } from "./core/runtime/deps.js";
@@ -337,7 +343,7 @@ function buildAttachCreateInput(attach: AttachCliOptions): SessionProtocolCreate
   const kind = attach.executionKind ?? "local";
   switch (kind) {
     case "local":
-      return { executionEnvironment: { kind: "local", cwd } };
+      return { executionEnvironment: { kind: "local", cwd }, attributes: { source: "tui" } };
     case "cloudflare-sandbox":
       if (!attach.cloudflareBridgeId || !attach.cloudflareSandboxId) {
         throw new CliError(
@@ -351,6 +357,7 @@ function buildAttachCreateInput(attach: AttachCliOptions): SessionProtocolCreate
           sandboxId: attach.cloudflareSandboxId,
           cwd,
         },
+        attributes: { source: "tui" },
       };
     case "fly-sprite":
       if (!attach.flyApiId || !attach.flySpriteName) {
@@ -363,6 +370,7 @@ function buildAttachCreateInput(attach: AttachCliOptions): SessionProtocolCreate
           spriteName: attach.flySpriteName,
           cwd,
         },
+        attributes: { source: "tui" },
       };
   }
 }
@@ -549,6 +557,8 @@ async function createLocalSessionHost(options: {
 
   return new LocalSessionHost({
     store: new FileSessionStore({ directory: getDefaultSessionStoreDirectory(home) }),
+    history: new HistoryManager(new LocalHistoryStore(getDefaultHistoryDatabasePath(home))),
+    historyRemote: resolveHistoryRemoteTarget(options.config),
     executionEnvironmentResolver: new CompositeExecutionEnvironmentResolver(resolvers),
     includeAgentContext: !options.cli.noAgentContextFiles,
     environment: {
@@ -716,6 +726,26 @@ if (argv[0] === "install") {
       // eslint-disable-next-line no-console
       console.error("");
       printInstallHelp();
+      process.exit(1);
+    }
+    throw err;
+  }
+}
+
+if (argv[0] === "history") {
+  const { HistoryCliError, printHistoryHelp, runHistoryCommand } = await import(
+    "./core/history/cli.js"
+  );
+  try {
+    await runHistoryCommand(argv.slice(1), { env: process.env });
+    process.exit(0);
+  } catch (err) {
+    if (err instanceof HistoryCliError) {
+      // eslint-disable-next-line no-console
+      console.error(err.message);
+      // eslint-disable-next-line no-console
+      console.error("");
+      printHistoryHelp();
       process.exit(1);
     }
     throw err;
@@ -1110,6 +1140,7 @@ if (cli.debug) {
           config,
           persona: debugPersona,
           modelResolver: runtimeBootstrap.modelResolver.resolveModel,
+          history: new LocalHistoryStore(getDefaultHistoryDatabasePath()),
         })
       : new ToolRegistry([]);
   printDebugInfo({
@@ -1223,6 +1254,7 @@ const app = await SessionChatApp.open({
     mode: "create",
     input: {
       executionEnvironment: { kind: "local", cwd },
+      attributes: { source: "tui" },
       ...(initialPersonaId !== undefined ? { personaId: initialPersonaId } : {}),
       ...(reasoningOverride !== undefined ? { reasoning: reasoningOverride } : {}),
     },

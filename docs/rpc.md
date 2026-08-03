@@ -145,7 +145,7 @@ state transitions:
 
 `tau rpc` and `tau serve` store session snapshots under `~/.config/tau/sessions` for the current host user. Starting a server does not create a session. `session.create` creates one in an explicitly selected, already-provisioned execution environment, and closing the transport or server persists hosted sessions. Each file uses a versioned `tau-session` storage document whose version is independent of the session protocol version. Tau loads older unwrapped snapshots through sequential storage migrations and rewrites migrated state in the current format during recovery.
 
-Stored sessions recover from persisted snapshot state, including independent durable agent revision/context accounting state, current settings, cumulative cost, bootstrap metadata, catalog metadata, execution environment identity, messages, timeline items, tools, and non-agent facets; host-only config is resolved by the host and is not serialized into the snapshot. Supervised subagent runtimes are not recoverable across process restart, so recovery discards persisted agents and agent-owned facets before returning and rewrites the normalized snapshot. The agent revision is not the protocol snapshot revision. A fresh persisted usage checkpoint lets the first model subturn after recovery make the same automatic-compaction decision as an uninterrupted session. Legacy snapshots without a checkpoint wait for fresh provider usage before automatic compaction. Pending queued and steering messages are transient host state rather than snapshot state: they survive client detach while the hosted session remains in memory, but they are discarded on host restart or session recovery so recovered sessions never resume work without new user input.
+Stored sessions recover from persisted snapshot state, including immutable creation attributes and timestamp, independent durable agent revision/context accounting state, current settings, cumulative cost, bootstrap metadata, catalog metadata, execution environment identity, messages, timeline items, tools, and non-agent facets; host-only config is resolved by the host and is not serialized into the snapshot. The separately stored transcript history is for discovery and reading, not session recovery. Supervised subagent runtimes are not recoverable across process restart, so recovery discards persisted agents and agent-owned facets before returning and rewrites the normalized snapshot. The agent revision is not the protocol snapshot revision. A fresh persisted usage checkpoint lets the first model subturn after recovery make the same automatic-compaction decision as an uninterrupted session. Legacy snapshots without a checkpoint wait for fresh provider usage before automatic compaction. Pending queued and steering messages are transient host state rather than snapshot state: they survive client detach while the hosted session remains in memory, but they are discarded on host restart or session recovery so recovered sessions never resume work without new user input.
 
 Main sessions, supervised background agents, and ephemeral threads use the same stateful agent runtime for model streaming, tool admission and execution, retries, recovery, context accounting, steering boundaries, and compaction. The runtime emits ordered semantic transitions through one awaited sink. The hosted-session adapter applies those transitions to protocol snapshots and persists durable state before acknowledging them; child supervision, ephemeral thread maps and forks, pending normal submissions, and usage attribution are separate host concerns.
 
@@ -245,11 +245,15 @@ params (required):
     "env": {
       "GH_CONFIG_DIR": "/srv/cowork/gh"
     }
+  },
+  "attributes": {
+    "source": "sdk",
+    "repository": "github.com/example/project"
   }
 }
 ```
 
-Creates a new hosted session in the selected execution environment and returns its identity. Clients call `session.observe` to establish observation and receive the authoritative initial state. Tau resolves config/content from the selected execution environment cwd before creating the runtime, then stores current settings, bootstrap metadata, lightweight catalog metadata, and prompt composition metadata in the snapshot. Prompt bodies and other large execution-environment content are loaded lazily when used. `session.reload` resolves config/content again and replaces the authoritative snapshot.
+Creates a new hosted session in the selected execution environment and returns its identity. `attributes` is a required bounded map of immutable string pairs used as opaque history provenance and exact-match search fields. Clients call `session.observe` to establish observation and receive the authoritative initial state. Tau resolves config/content from the selected execution environment cwd before creating the runtime, then stores current settings, bootstrap metadata, lightweight catalog metadata, and prompt composition metadata in the snapshot. Prompt bodies and other large execution-environment content are loaded lazily when used. `session.reload` resolves config/content again and replaces the authoritative snapshot.
 
 For local execution environments, `cwd` is resolved on the host, not on the client. They also accept optional `env` overrides for tool processes except `HOME`, which is owned by the execution environment. Tau sanitizes inherited host variables first, then overlays the accepted explicit values unchanged, including sensitive names such as `GH_TOKEN`. All overrides are persisted in the session snapshot, so clients are responsible for protecting the session store when passing secrets.
 
@@ -262,7 +266,8 @@ Cloudflare Sandbox execution environments use host-configured bridge ids and alr
     "bridgeId": "default",
     "sandboxId": "sandbox_123",
     "cwd": "/workspace/repo"
-  }
+  },
+  "attributes": { "source": "sdk" }
 }
 ```
 
@@ -277,7 +282,8 @@ Fly Sprites execution environments use host-configured API ids and already-provi
     "apiId": "default",
     "spriteName": "sprite-123",
     "cwd": "/home/sprite/repo"
-  }
+  },
+  "attributes": { "source": "sdk" }
 }
 ```
 

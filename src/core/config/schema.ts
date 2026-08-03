@@ -45,6 +45,7 @@ export interface Config {
   cloudflareSandbox?: CloudflareSandboxConfig;
   flySprites?: FlySpritesConfig;
   nook?: NookConfig;
+  history?: HistoryConfig;
 }
 
 export type BuiltInDiffToolConfig = {
@@ -84,6 +85,12 @@ export type NookConfig = {
   accessClientId?: string;
   accessClientSecret?: string;
   accessClientSecretEnv?: string;
+};
+
+export type HistoryConfig = {
+  endpoint: string;
+  apiKey?: string;
+  apiKeyEnv?: string;
 };
 
 export type AutoCompactConfig = {
@@ -243,6 +250,13 @@ const NookConfigSchema = z
     accessClientId: NonEmptyStringSchema.optional(),
     accessClientSecret: NonEmptyStringSchema.optional(),
     accessClientSecretEnv: NonEmptyStringSchema.optional(),
+  })
+  .strip();
+const HistoryConfigSchema = z
+  .object({
+    endpoint: NonEmptyStringSchema,
+    apiKey: NonEmptyStringSchema.optional(),
+    apiKeyEnv: NonEmptyStringSchema.optional(),
   })
   .strip();
 const SubagentsConfigSchema = z
@@ -546,6 +560,13 @@ function validateConfigData(
   const nookResult = parseNookConfig(data.nook, sourceLabel);
   assignParsedConfigValue(config, errors, "nook", nookResult.config, nookResult.errors);
 
+  if (data.history !== undefined && options.scope !== "global") {
+    errors.push(`${sourceLabel}: 'history' may only be configured in the global config.`);
+  } else {
+    const historyResult = parseHistoryConfig(data.history, sourceLabel);
+    assignParsedConfigValue(config, errors, "history", historyResult.config, historyResult.errors);
+  }
+
   return { config, errors };
 }
 
@@ -700,6 +721,46 @@ function parseNookConfig(
       ...(parsed.data.accessClientSecretEnv !== undefined
         ? { accessClientSecretEnv: parsed.data.accessClientSecretEnv }
         : {}),
+    },
+    errors: [],
+  };
+}
+
+function parseHistoryConfig(
+  raw: unknown,
+  sourceLabel: string,
+): { config?: HistoryConfig; errors: string[] } {
+  if (raw === undefined) {
+    return { errors: [] };
+  }
+
+  const parsed = HistoryConfigSchema.safeParse(raw);
+  if (!parsed.success) {
+    return {
+      errors: [
+        `${sourceLabel}: 'history' must be an object with an endpoint and optional API key configuration.`,
+      ],
+    };
+  }
+
+  let endpoint: string;
+  try {
+    const url = new URL(parsed.data.endpoint);
+    if ((url.protocol !== "https:" && url.protocol !== "http:") || url.search || url.hash) {
+      throw new Error();
+    }
+    endpoint = url.toString().replace(/\/+$/, "");
+  } catch {
+    return {
+      errors: [`${sourceLabel}: history.endpoint must be an HTTP(S) URL without a query or hash.`],
+    };
+  }
+
+  return {
+    config: {
+      endpoint,
+      ...(parsed.data.apiKey !== undefined ? { apiKey: parsed.data.apiKey } : {}),
+      ...(parsed.data.apiKeyEnv !== undefined ? { apiKeyEnv: parsed.data.apiKeyEnv } : {}),
     },
     errors: [],
   };
@@ -984,6 +1045,7 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
   let cloudflareSandbox: CloudflareSandboxConfig | undefined;
   let flySprites: FlySpritesConfig | undefined;
   let nook: NookConfig | undefined;
+  let history: HistoryConfig | undefined;
   const agentContextFiles: string[] = [];
 
   for (let i = 0; i < levels.length; i += 1) {
@@ -1015,6 +1077,9 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
     flySprites = mergeFlySpritesConfig(flySprites, config.flySprites);
     if (config.nook !== undefined) {
       nook = { ...config.nook };
+    }
+    if (config.history !== undefined) {
+      history = { ...config.history };
     }
 
     if (config.defaultPersona !== undefined) {
@@ -1079,6 +1144,10 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
 
   if (nook) {
     merged.nook = nook;
+  }
+
+  if (history) {
+    merged.history = history;
   }
 
   if (agentContextFiles.length > 0) {
@@ -1173,6 +1242,19 @@ export function getMistralApiKey(config: Config, env?: NodeJS.ProcessEnv): strin
 
   const configKey = config.apiKeys?.mistral?.trim();
   return configKey || undefined;
+}
+
+export function getHistoryApiKey(
+  config: HistoryConfig,
+  env?: NodeJS.ProcessEnv,
+): string | undefined {
+  const envName = config.apiKeyEnv?.trim();
+  if (envName) {
+    const envSecret = getTrimmedEnvValue(envName, env);
+    if (envSecret) return envSecret;
+  }
+  const standardEnvSecret = getTrimmedEnvValue("TAU_HISTORY_API_KEY", env);
+  return (standardEnvSecret ?? config.apiKey?.trim()) || undefined;
 }
 
 export function getNookAccessClientSecret(

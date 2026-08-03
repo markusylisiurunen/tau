@@ -20,7 +20,10 @@ import {
 
 const bootstrap = createProtocolBootstrap();
 
-const localCreateParams = { executionEnvironment: { kind: "local", cwd: "/repo" } };
+const localCreateParams = {
+  executionEnvironment: { kind: "local", cwd: "/repo" },
+  attributes: { source: "test" },
+};
 
 function createNoticeDelta(sessionId, revision, text) {
   return {

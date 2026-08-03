@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
+import { HistoryManager } from "../dist/core/history/history_manager.js";
+import { LocalHistoryStore } from "../dist/core/history/local_history_store.js";
 import { createLocalToolExecutionBackend } from "../dist/core/index.js";
 import { resolveModel } from "../dist/core/models/catalog.js";
 import { personas } from "../dist/core/personas.js";
@@ -25,6 +27,7 @@ import {
 
 const localCreateInput = {
   executionEnvironment: { kind: "local", cwd: "/repo" },
+  attributes: { source: "test" },
 };
 
 function createEnvironment(now = Date.parse("2026-01-01T00:00:00.000Z")) {
@@ -83,6 +86,7 @@ function createHost(store, options = {}) {
 
   return new LocalSessionHost({
     store,
+    history: options.history ?? new HistoryManager(new LocalHistoryStore(":memory:")),
     ...(options.defaultBootstrap === false
       ? {}
       : {
@@ -204,6 +208,8 @@ function createStoredSnapshot(overrides = {}) {
   ];
   return {
     sessionId: overrides.sessionId ?? "stored-session",
+    attributes: overrides.attributes ?? { source: "test" },
+    createdAt: overrides.createdAt ?? 0,
     revision: overrides.revision ?? 1,
     agentState: overrides.agentState ?? {
       revision: historyEntries.length,
@@ -377,6 +383,33 @@ describe("HostedEphemeralAgentSession", () => {
 });
 
 describe("LocalSessionHost", () => {
+  it("captures committed session content and rewinds the active transcript", async () => {
+    const historyStore = new LocalHistoryStore(":memory:");
+    const history = new HistoryManager(historyStore);
+    const host = createHost(new MemorySessionStore(), { history });
+    const session = await host.createSession(localCreateInput);
+
+    const recorded = await session.record({ text: "<system>keep this</system>\nhello" });
+    await expect(
+      historyStore.read({ sessionId: session.sessionId, limit: 10 }),
+    ).resolves.toMatchObject({
+      session: { attributes: { source: "test" } },
+      entries: [
+        {
+          id: recorded.userHistoryEntryId,
+          type: "user",
+          content: [{ type: "text", text: "<system>keep this</system>\nhello" }],
+        },
+      ],
+    });
+
+    await session.rewindToHistoryEntryId(recorded.userHistoryEntryId);
+    await expect(
+      historyStore.read({ sessionId: session.sessionId, limit: 10 }),
+    ).resolves.toMatchObject({ entries: [] });
+    await host.shutdown();
+  });
+
   it("creates, attaches, lists, snapshots, and shuts down local sessions", async () => {
     const store = new MemorySessionStore();
     const host = createHost(store);
@@ -1725,6 +1758,7 @@ describe("LocalSessionHost", () => {
     try {
       const hostedSession = await host.createSession({
         executionEnvironment: { kind: "local", cwd },
+        attributes: { source: "test" },
       });
       const firstCall = fauxToolCall(
         "bash",
@@ -1843,6 +1877,7 @@ describe("LocalSessionHost", () => {
     try {
       const hostedSession = await host.createSession({
         executionEnvironment: { kind: "local", cwd },
+        attributes: { source: "test" },
       });
       const content = "streamed-content-must-not-leak";
       const path = join(cwd, "notes.txt");
@@ -2393,6 +2428,7 @@ describe("LocalSessionHost", () => {
     const host = createHost(store, { personas: [personas[0], personas[1]] });
     const hostedSession = await host.createSession({
       executionEnvironment: { kind: "local", cwd: "/repo" },
+      attributes: { source: "test" },
       personaId: personas[1].id,
       reasoning: "high",
     });

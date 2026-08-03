@@ -909,6 +909,11 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
           kind: "local",
           cwd: workspace.sessionCwd,
         },
+        attributes: {
+          source: "telegram",
+          project: entry.record.projectId,
+          ...("repo" in entry.project ? { repository: entry.project.repo } : {}),
+        },
       });
       const clientConnectDurationMs = elapsedMs(clientConnectStart);
 

@@ -81,6 +81,7 @@ describe("session_protocol", () => {
             cwd: "/repo",
             env: { GH_CONFIG_DIR: "/srv/cowork/gh" },
           },
+          attributes: { source: "test" },
         },
       }),
     );
@@ -97,6 +98,7 @@ describe("session_protocol", () => {
             cwd: "/repo",
             env: { GH_CONFIG_DIR: "/srv/cowork/gh" },
           },
+          attributes: { source: "test" },
         },
       },
     });
@@ -824,6 +826,7 @@ describe("session_protocol", () => {
           cwd: "/repo",
           env: { GH_CONFIG_DIR: "/srv/cowork/gh" },
         },
+        attributes: { source: "test" },
         personaId: "coder",
         reasoning: "high",
       }),
@@ -835,6 +838,7 @@ describe("session_protocol", () => {
           cwd: "/repo",
           env: { GH_CONFIG_DIR: "/srv/cowork/gh" },
         },
+        attributes: { source: "test" },
         personaId: "coder",
         reasoning: "high",
       },
@@ -847,6 +851,7 @@ describe("session_protocol", () => {
           sandboxId: "sandbox-1",
           cwd: "/workspace/repo",
         },
+        attributes: { source: "test" },
       }),
     ).toEqual({
       ok: true,
@@ -857,6 +862,7 @@ describe("session_protocol", () => {
           sandboxId: "sandbox-1",
           cwd: "/workspace/repo",
         },
+        attributes: { source: "test" },
       },
     });
     expect(
@@ -867,6 +873,7 @@ describe("session_protocol", () => {
           spriteName: "sprite-1",
           cwd: "/home/sprite/repo",
         },
+        attributes: { source: "test" },
       }),
     ).toEqual({
       ok: true,
@@ -877,6 +884,7 @@ describe("session_protocol", () => {
           spriteName: "sprite-1",
           cwd: "/home/sprite/repo",
         },
+        attributes: { source: "test" },
       },
     });
     expect(

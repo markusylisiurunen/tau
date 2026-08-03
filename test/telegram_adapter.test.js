@@ -2244,6 +2244,173 @@ describe("telegram adapter", () => {
     }
   });
 
+  it.each([
+    {
+      name: "HTTP error response body read failure",
+      createResponse: () => ({
+        ok: false,
+        status: 503,
+        text: vi.fn(async () => {
+          throw new TypeError("connection reset while reading response");
+        }),
+      }),
+    },
+    {
+      name: "successful response body read failure",
+      createResponse: () => ({
+        ok: true,
+        status: 200,
+        text: vi.fn(async () => {
+          throw new TypeError("connection reset while reading response");
+        }),
+      }),
+    },
+  ])("retries a $name", async ({ createResponse }) => {
+    const chatId = 473;
+    const managerHarness = createSessionManagerHarness([
+      {
+        id: "s1",
+        projectId: "demo",
+        ownerId: ownerIdForChat(chatId),
+        state: "running",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+      },
+    ]);
+    let sendRichMessageCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      createTelegramFetchStub({
+        setMyCommands: async () => createJsonResponse({ ok: true, result: true }),
+        getUpdates: async () => pendingTelegramCall(),
+        sendRichMessage: async () => {
+          sendRichMessageCalls += 1;
+          return sendRichMessageCalls === 1
+            ? createResponse()
+            : createJsonResponse({ ok: true, result: true });
+        },
+      }),
+    );
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      sessionManager: managerHarness.manager,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    vi.useFakeTimers();
+    try {
+      emitAssistantProgress(managerHarness.manager, "assistant-final", "final answer");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(sendRichMessageCalls).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(sendRichMessageCalls).toBe(2);
+    } finally {
+      vi.useRealTimers();
+      await adapter.close();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("does not retry malformed successful response bodies", async () => {
+    const chatId = 474;
+    const managerHarness = createSessionManagerHarness([
+      {
+        id: "s1",
+        projectId: "demo",
+        ownerId: ownerIdForChat(chatId),
+        state: "running",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+      },
+    ]);
+    let sendRichMessageCalls = 0;
+    const logs = [];
+    vi.stubGlobal(
+      "fetch",
+      createTelegramFetchStub({
+        setMyCommands: async () => createJsonResponse({ ok: true, result: true }),
+        getUpdates: async () => pendingTelegramCall(),
+        sendRichMessage: async () => {
+          sendRichMessageCalls += 1;
+          return new Response("{", { status: 200 });
+        },
+      }),
+    );
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      sessionManager: managerHarness.manager,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+      onLog: (entry) => logs.push(entry),
+    });
+
+    try {
+      emitAssistantProgress(managerHarness.manager, "assistant-final", "final answer");
+      await waitFor(() =>
+        logs.some((entry) => entry.message === "failed to send telegram notification"),
+      );
+      expect(sendRichMessageCalls).toBe(1);
+    } finally {
+      await adapter.close();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("retries a delivery attempt after its deadline", async () => {
+    const chatId = 475;
+    const apiHarness = createApiHarness([]);
+    const attemptSignals = [];
+    apiHarness.api.sendRichMessage.mockImplementation(async (sentChatId, markdown, options) => {
+      attemptSignals.push(options.signal);
+      if (attemptSignals.length === 1) {
+        return await new Promise(() => {});
+      }
+      apiHarness.sendRichMessages.push({ chatId: sentChatId, markdown, options });
+    });
+    const { adapter, manager } = await startNotificationTestAdapter({ chatId, apiHarness });
+
+    vi.useFakeTimers();
+    try {
+      emitAssistantProgress(manager, "assistant-final", "final answer");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attemptSignals).toHaveLength(1);
+
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(attemptSignals[0].aborted).toBe(true);
+      expect(attemptSignals).toHaveLength(1);
+
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(attemptSignals).toHaveLength(2);
+      expect(apiHarness.sendRichMessages).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+      await adapter.close();
+    }
+  });
+
+  it("does not start later chunks after shutdown aborts an in-flight delivery", async () => {
+    const chatId = 476;
+    const apiHarness = createApiHarness([]);
+    const attemptSignals = [];
+    apiHarness.api.sendRichMessage.mockImplementation(async (_chatId, _markdown, options) => {
+      attemptSignals.push(options.signal);
+      return await new Promise(() => {});
+    });
+    const { adapter, manager } = await startNotificationTestAdapter({ chatId, apiHarness });
+
+    emitAssistantProgress(manager, "assistant-final", "x".repeat(40_000));
+    await waitFor(() => attemptSignals.length === 1);
+
+    await adapter.close();
+
+    expect(attemptSignals).toHaveLength(1);
+    expect(attemptSignals[0].aborted).toBe(true);
+  });
+
   it("does not retry permanent notification delivery failures", async () => {
     const chatId = 473;
     const apiHarness = createApiHarness([]);

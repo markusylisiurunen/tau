@@ -100,6 +100,11 @@ type TelegramBotCommand = {
   description: string;
 };
 
+type TelegramSendOptions = {
+  replyMarkup?: TelegramInlineKeyboardMarkup;
+  signal: AbortSignal;
+};
+
 export type TelegramApi = {
   getMe(): Promise<TelegramBotInfo>;
   getUpdates(args: {
@@ -107,20 +112,8 @@ export type TelegramApi = {
     timeoutSeconds: number;
     allowedUpdates: TelegramAllowedUpdates;
   }): Promise<TelegramUpdate[]>;
-  sendMessage(
-    chatId: number,
-    text: string,
-    options?: {
-      replyMarkup?: TelegramInlineKeyboardMarkup;
-    },
-  ): Promise<void>;
-  sendRichMessage(
-    chatId: number,
-    markdown: string,
-    options?: {
-      replyMarkup?: TelegramInlineKeyboardMarkup;
-    },
-  ): Promise<void>;
+  sendMessage(chatId: number, text: string, options: TelegramSendOptions): Promise<void>;
+  sendRichMessage(chatId: number, markdown: string, options: TelegramSendOptions): Promise<void>;
   sendChatAction(chatId: number, action: string): Promise<void>;
   downloadFile(fileId: string): Promise<Buffer>;
   setCommands(commands: TelegramBotCommand[]): Promise<void>;
@@ -249,9 +242,11 @@ const TELEGRAM_RICH_MESSAGE_SAFE_BYTES = Math.floor(
   TELEGRAM_MAX_RICH_MESSAGE_BYTES * TELEGRAM_MESSAGE_BYTE_BUFFER_RATIO,
 );
 const TELEGRAM_MESSAGE_SPLIT_DELAY_MS = 1000;
+const TELEGRAM_DELIVERY_ATTEMPT_TIMEOUT_MS = 30_000;
 const TELEGRAM_DELIVERY_RETRY_DELAYS_MS = [1000, 5000] as const;
 const TELEGRAM_TYPING_REFRESH_MS = 4000;
 const ABORTED = Symbol("aborted");
+const TIMED_OUT = Symbol("timed-out");
 const CALLBACK_ACTION_PREFIX = "tau:action:";
 const MAX_TELEGRAM_ATTACHMENTS_PER_TURN = 10;
 const MAX_TELEGRAM_ATTACHMENT_FILE_BYTES = 20 * 1024 * 1024;
@@ -990,18 +985,18 @@ function getTelegramRetryAfterMs(
   return retryAfterSeconds === undefined ? undefined : retryAfterSeconds * 1000;
 }
 
-async function readTelegramHttpError(response: Response): Promise<{
+function parseTelegramHttpError(responseText: string): {
   detail: string;
   errorCode?: number;
   retryAfterMs?: number;
-}> {
-  const responseText = (await response.text()).trim();
-  if (!responseText) {
+} {
+  const trimmedResponseText = responseText.trim();
+  if (!trimmedResponseText) {
     return { detail: "" };
   }
 
   try {
-    const parsed = TelegramFailureEnvelopeSchema.safeParse(JSON.parse(responseText));
+    const parsed = TelegramFailureEnvelopeSchema.safeParse(JSON.parse(trimmedResponseText));
     if (parsed.success) {
       return {
         detail: truncateTelegramErrorDetail(parsed.data.description.trim()),
@@ -1011,7 +1006,7 @@ async function readTelegramHttpError(response: Response): Promise<{
     }
   } catch {}
 
-  return { detail: truncateTelegramErrorDetail(responseText) };
+  return { detail: truncateTelegramErrorDetail(trimmedResponseText) };
 }
 
 function asPermanentTelegramRequestError(error: unknown): TelegramRequestError {
@@ -1026,6 +1021,7 @@ function createTelegramApi(botToken: string): TelegramApi {
     method: string,
     payload: Record<string, unknown>,
     resultSchema: z.ZodType<Result>,
+    signal?: AbortSignal,
   ): Promise<Result> {
     let response: Response;
     try {
@@ -1035,6 +1031,7 @@ function createTelegramApi(botToken: string): TelegramApi {
           "content-type": "application/json",
         },
         body: JSON.stringify(payload),
+        signal,
       });
     } catch (error) {
       throw new TelegramRequestError(
@@ -1044,7 +1041,20 @@ function createTelegramApi(botToken: string): TelegramApi {
     }
 
     if (!response.ok) {
-      const { detail, errorCode, retryAfterMs } = await readTelegramHttpError(response);
+      let responseText: string;
+      try {
+        responseText = await response.text();
+      } catch (error) {
+        throw new TelegramRequestError(
+          `telegram ${method} failed: HTTP ${response.status}: response body read failed: ${formatTelegramNetworkError(error)}`,
+          {
+            retryable: isRetryableTelegramErrorCode(response.status),
+            cause: error,
+          },
+        );
+      }
+
+      const { detail, errorCode, retryAfterMs } = parseTelegramHttpError(responseText);
       throw new TelegramRequestError(
         `telegram ${method} failed: HTTP ${response.status}${detail ? `: ${detail}` : ""}`,
         {
@@ -1056,9 +1066,19 @@ function createTelegramApi(botToken: string): TelegramApi {
       );
     }
 
+    let responseText: string;
+    try {
+      responseText = await response.text();
+    } catch (error) {
+      throw new TelegramRequestError(
+        `telegram ${method} response body read failed: ${formatTelegramNetworkError(error)}`,
+        { retryable: true, cause: error },
+      );
+    }
+
     let raw: unknown;
     try {
-      raw = await response.json();
+      raw = JSON.parse(responseText);
     } catch (error) {
       throw new TelegramRequestError(`telegram ${method} returned invalid JSON`, {
         retryable: false,
@@ -1124,6 +1144,7 @@ function createTelegramApi(botToken: string): TelegramApi {
           ...(options?.replyMarkup ? { reply_markup: options.replyMarkup } : {}),
         },
         z.unknown(),
+        options.signal,
       );
     },
     async sendRichMessage(chatId, markdown, options) {
@@ -1137,6 +1158,7 @@ function createTelegramApi(botToken: string): TelegramApi {
           ...(options?.replyMarkup ? { reply_markup: options.replyMarkup } : {}),
         },
         z.unknown(),
+        options.signal,
       );
     },
     async sendChatAction(chatId, action) {
@@ -3187,11 +3209,15 @@ class TelegramAdapterImpl {
     const chunks = splitTelegramRichMessage(text);
 
     for (const [index, chunk] of chunks.entries()) {
-      await this.sendWithRetry(() =>
+      const result = await this.sendWithRetry((signal) =>
         this.api.sendRichMessage(chatId, chunk, {
           replyMarkup: index === chunks.length - 1 ? replyMarkup : undefined,
+          signal,
         }),
       );
+      if (result === ABORTED) {
+        return;
+      }
 
       if (index < chunks.length - 1) {
         await this.wait(TELEGRAM_MESSAGE_SPLIT_DELAY_MS);
@@ -3207,11 +3233,15 @@ class TelegramAdapterImpl {
     const chunks = splitTelegramMessage(text);
 
     for (const [index, chunk] of chunks.entries()) {
-      await this.sendWithRetry(() =>
+      const result = await this.sendWithRetry((signal) =>
         this.api.sendMessage(chatId, chunk, {
           replyMarkup: index === chunks.length - 1 ? replyMarkup : undefined,
+          signal,
         }),
       );
+      if (result === ABORTED) {
+        return;
+      }
 
       if (index < chunks.length - 1) {
         await this.wait(TELEGRAM_MESSAGE_SPLIT_DELAY_MS);
@@ -3219,17 +3249,19 @@ class TelegramAdapterImpl {
     }
   }
 
-  private async sendWithRetry(send: () => Promise<void>): Promise<void> {
+  private async sendWithRetry(
+    send: (signal: AbortSignal) => Promise<void>,
+  ): Promise<typeof ABORTED | undefined> {
     for (let attempt = 1; ; attempt += 1) {
       try {
-        const result = await this.raceWithAbort(send());
+        const result = await this.runDeliveryAttempt(send);
         if (result === ABORTED) {
-          return;
+          return ABORTED;
         }
         return;
       } catch (error) {
         if (this.abortController.signal.aborted) {
-          return;
+          return ABORTED;
         }
 
         const retryDelayMs = TELEGRAM_DELIVERY_RETRY_DELAYS_MS[attempt - 1];
@@ -3240,9 +3272,69 @@ class TelegramAdapterImpl {
 
         await this.wait(Math.max(retryDelayMs, error.retryAfterMs ?? 0));
         if (this.abortController.signal.aborted) {
-          return;
+          return ABORTED;
         }
       }
+    }
+  }
+
+  private async runDeliveryAttempt(
+    send: (signal: AbortSignal) => Promise<void>,
+  ): Promise<typeof ABORTED | undefined> {
+    if (this.abortController.signal.aborted) {
+      return ABORTED;
+    }
+
+    const attemptController = new AbortController();
+    let abortListener: (() => void) | undefined;
+    const abortPromise = new Promise<typeof ABORTED>((resolve) => {
+      abortListener = () => {
+        resolve(ABORTED);
+        attemptController.abort();
+      };
+      this.abortController.signal.addEventListener("abort", abortListener, { once: true });
+    });
+
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<typeof TIMED_OUT>((resolve) => {
+      timeout = setTimeout(() => {
+        resolve(TIMED_OUT);
+        attemptController.abort();
+      }, TELEGRAM_DELIVERY_ATTEMPT_TIMEOUT_MS);
+      timeout.unref?.();
+    });
+
+    let sendPromise: Promise<void>;
+    try {
+      sendPromise = send(attemptController.signal);
+    } catch (error) {
+      sendPromise = Promise.reject(error);
+    }
+    const settled = sendPromise.then(
+      () => ({ ok: true as const }),
+      (error) => ({ ok: false as const, error }),
+    );
+
+    const raceResult = await Promise.race([settled, abortPromise, timeoutPromise]);
+
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+    if (abortListener) {
+      this.abortController.signal.removeEventListener("abort", abortListener);
+    }
+
+    if (raceResult === ABORTED) {
+      return ABORTED;
+    }
+    if (raceResult === TIMED_OUT) {
+      throw new TelegramRequestError(
+        `telegram delivery attempt timed out after ${TELEGRAM_DELIVERY_ATTEMPT_TIMEOUT_MS / 1000} seconds`,
+        { retryable: true },
+      );
+    }
+    if (!raceResult.ok) {
+      throw raceResult.error;
     }
   }
 

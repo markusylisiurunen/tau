@@ -112,6 +112,41 @@ describe("telegram runtime", () => {
     await runtime.close();
   });
 
+  it("includes exhausted-delivery recovery identifiers in runtime logs", async () => {
+    const logs = [];
+    const runtime = await startTelegramRuntime({
+      config: createTelegramConfig({
+        bots: { "bot-one": { botToken: "token-1" } },
+      }),
+      createSessionClient: vi.fn(),
+      onLog: (line) => {
+        logs.push(line);
+      },
+      deps: {
+        startTelegramAdapter: vi.fn(async (options) => {
+          options.onLog?.({
+            level: "error",
+            message: "telegram notification delivery retries exhausted",
+            data: {
+              sessionId: "session-one",
+              chatId: 42,
+              messageId: "assistant-final",
+              attempts: 3,
+              cause: "telegram unavailable",
+            },
+          });
+          return { close: vi.fn(async () => {}) };
+        }),
+      },
+    });
+
+    expect(logs[0]).toBe(
+      '[telegram:bot-one:error] telegram notification delivery retries exhausted [sessionId="session-one" messageId="assistant-final" chatId=42 attempts=3]: telegram unavailable',
+    );
+
+    await runtime.close();
+  });
+
   it("persists project preferences across runtime restarts", async () => {
     const ownerId = "telegram:bot-one:chat:42";
     const config = createTelegramConfig({

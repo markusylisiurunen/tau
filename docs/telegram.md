@@ -97,7 +97,7 @@ Programmatic replies and notifications use natural-language sentences. Project a
 
 The runner uses quiet mode for tool and lifecycle progress: it does not send tool or lifecycle progress messages to Telegram. It does send assistant messages as they are committed, so one active run can send multiple assistant progress updates before it finishes. While a run is active, it refreshes Telegram's typing indicator in DMs and groups. Assistant messages are sent as Telegram rich markdown.
 
-Outbound reply chunks retry transient network, HTTP 408/429/5xx, and matching Telegram API failures twice, after 1 second and 5 seconds, while honoring Telegram's longer `retry_after` value. Session notifications remain ordered per chat while retrying. Exhausted deliveries are logged with their session, chat, and assistant snapshot message identifiers; retries are in-process and do not survive a runner restart.
+Outbound reply chunks use a 30-second attempt deadline and retry timeouts, transient network failures, HTTP 408/429/5xx, and matching Telegram API failures twice, after 1 second and 5 seconds, while honoring Telegram's longer `retry_after` value. Session notifications remain ordered per chat while retrying. Exhausted deliveries are logged with their session, chat, and assistant snapshot message identifiers; retries are in-process and do not survive a runner restart.
 
 DM and group behavior matches the previous Telegram adapter:
 

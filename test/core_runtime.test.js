@@ -68,9 +68,8 @@ describe("context builder", () => {
 
     const readFile = (path) => (path === "/repo/AGENTS.md" ? "# Agents\n" : "");
     const block = buildProjectContextBlock({
-      cwd: "/repo",
-      home: "/home",
       agentsFiles: ["/repo/AGENTS.md"],
+      childAgentsFiles: [],
       readFile,
     });
 
@@ -80,8 +79,6 @@ describe("context builder", () => {
 
   it("renders nested AGENTS.md paths without duplicating injected files", () => {
     const block = buildProjectContextBlock({
-      cwd: "/repo",
-      home: "/home",
       agentsFiles: ["/repo/AGENTS.md", "/repo/packages/full/AGENTS.md"],
       childAgentsFiles: ["/repo/packages/full/AGENTS.md", "/repo/packages/path-only/AGENTS.md"],
       readFile: (path) => {
@@ -171,6 +168,155 @@ describe("runtime prompt bootstrap", () => {
     expect(resolved.promptContext.projectContextBlock).toContain("repo instructions");
     expect(resolved.promptContext.projectContextBlock).toContain("workspace instructions");
     expect(resolved.promptContext.projectContextBlock).toContain("/workspace/repo/src/AGENTS.md");
+  });
+
+  it("discovers nested AGENTS files without scanning ignored tool directories", async () => {
+    const root = mkdtempSync(join(tmpdir(), "tau-runtime-agents-walk-"));
+    const home = join(root, "home");
+    const nested = join(home, "projects", "app");
+    const nestedManaged = join(nested, ".npm", "package");
+    const ignored = join(home, ".npm", "package");
+    mkdirSync(nestedManaged, { recursive: true });
+    mkdirSync(ignored, { recursive: true });
+    writeFileSync(join(home, "AGENTS.md"), "home instructions", "utf-8");
+    writeFileSync(join(nested, "AGENTS.md"), "nested instructions", "utf-8");
+    writeFileSync(join(nestedManaged, "AGENTS.md"), "nested managed instructions", "utf-8");
+    writeFileSync(join(ignored, "AGENTS.md"), "ignored instructions", "utf-8");
+
+    try {
+      const resolved = await resolveRuntimePromptBootstrap({
+        persona: personas[0],
+        discoveredSkills: [],
+        cwd: home,
+        home,
+        includeAgentContext: true,
+        agentContextFiles: [],
+        backend: createLocalToolExecutionBackend(),
+      });
+
+      expect(resolved.agentsFiles).toEqual([join(home, "AGENTS.md")]);
+      expect(resolved.promptContext.projectContextBlock).toContain(join(nested, "AGENTS.md"));
+      expect(resolved.promptContext.projectContextBlock).toContain(
+        join(nestedManaged, "AGENTS.md"),
+      );
+      expect(resolved.promptContext.projectContextBlock).not.toContain(join(ignored, "AGENTS.md"));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("uses breadth-first child AGENTS discovery when the directory budget is reached", async () => {
+    const root = mkdtempSync(join(tmpdir(), "tau-runtime-agents-breadth-"));
+    const home = join(root, "home");
+    const first = join(home, "aaa", "one", "two", "three");
+    const later = join(home, "zzz");
+    mkdirSync(first, { recursive: true });
+    mkdirSync(later, { recursive: true });
+    writeFileSync(join(later, "AGENTS.md"), "later instructions", "utf-8");
+    const localBackend = createLocalToolExecutionBackend();
+    const limitedBackend = {
+      ...localBackend,
+      runNodeScript(script, args, options) {
+        const limitedArgs = [...args];
+        limitedArgs[6] = "4";
+        return localBackend.runNodeScript(script, limitedArgs, options);
+      },
+    };
+
+    try {
+      const resolved = await resolveRuntimePromptBootstrap({
+        persona: personas[0],
+        discoveredSkills: [],
+        cwd: home,
+        home,
+        includeAgentContext: true,
+        agentContextFiles: [],
+        backend: limitedBackend,
+      });
+
+      expect(resolved.promptContext.projectContextBlock).toContain(join(later, "AGENTS.md"));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("bounds child AGENTS discovery depth", async () => {
+    const root = mkdtempSync(join(tmpdir(), "tau-runtime-agents-depth-"));
+    const home = join(root, "home");
+    let current = home;
+    let atLimit;
+    let beyondLimit;
+    for (let depth = 1; depth <= 17; depth += 1) {
+      current = join(current, `level-${depth}`);
+      mkdirSync(current, { recursive: true });
+      if (depth === 16) {
+        atLimit = join(current, "AGENTS.md");
+        writeFileSync(atLimit, "at limit", "utf-8");
+      }
+      if (depth === 17) {
+        beyondLimit = join(current, "AGENTS.md");
+        writeFileSync(beyondLimit, "beyond limit", "utf-8");
+      }
+    }
+
+    try {
+      const resolved = await resolveRuntimePromptBootstrap({
+        persona: personas[0],
+        discoveredSkills: [],
+        cwd: home,
+        home,
+        includeAgentContext: true,
+        agentContextFiles: [],
+        backend: createLocalToolExecutionBackend(),
+      });
+
+      expect(resolved.promptContext.projectContextBlock).toContain(atLimit);
+      expect(resolved.promptContext.projectContextBlock).not.toContain(beyondLimit);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("filters explicit AGENTS files to the execution cwd scope", async () => {
+    const root = mkdtempSync(join(tmpdir(), "tau-runtime-agents-scope-"));
+    const home = join(root, "home");
+    const backend = join(home, "repo", "backend");
+    const scripts = join(backend, "scripts");
+    const sibling = join(home, "repo", "client");
+    const prefixSibling = join(home, "repo", "backendish");
+    mkdirSync(scripts, { recursive: true });
+    mkdirSync(sibling, { recursive: true });
+    mkdirSync(prefixSibling, { recursive: true });
+    const included = join(scripts, "AGENTS.md");
+    const siblingFile = join(sibling, "AGENTS.md");
+    const prefixSiblingFile = join(prefixSibling, "AGENTS.md");
+    const wrongName = join(scripts, "NOTES.md");
+    writeFileSync(included, "included instructions", "utf-8");
+    writeFileSync(siblingFile, "sibling instructions", "utf-8");
+    writeFileSync(prefixSiblingFile, "prefix sibling instructions", "utf-8");
+    writeFileSync(wrongName, "notes", "utf-8");
+
+    try {
+      const resolved = await resolveRuntimePromptBootstrap({
+        persona: personas[0],
+        discoveredSkills: [],
+        cwd: backend,
+        home,
+        includeAgentContext: true,
+        agentContextFiles: [included, siblingFile, prefixSiblingFile, wrongName],
+        backend: createLocalToolExecutionBackend(),
+      });
+
+      expect(resolved.agentsFiles).toEqual([included]);
+      expect(resolved.promptContext.projectContextBlock).toContain("included instructions");
+      expect(resolved.promptContext.projectContextBlock).not.toContain("sibling instructions");
+      expect(resolved.promptContext.projectContextBlock).not.toContain(
+        "prefix sibling instructions",
+      );
+      expect(resolved.promptContext.projectContextBlock).not.toContain("notes");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("rejects hosted AGENTS symlinks that escape the execution home", async () => {

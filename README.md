@@ -427,7 +427,7 @@ you can also pipe content directly:
 cat src/tui/session_chat_app.ts | tau --persona opus-4.8-chat
 ```
 
-by default, tau injects your AGENTS.md into the system prompt. use `--no-agent-context-files` to disable this behavior. tau searches for AGENTS.md in the current directory and parent directories up to your home folder (or filesystem root if cwd is outside home). tau also includes a paths-only listing of `AGENTS.md` files in child directories under the current working directory, excluding any file already injected in full.
+by default, tau injects your AGENTS.md into the system prompt. use `--no-agent-context-files` to disable this behavior. tau searches for AGENTS.md in the current directory and parent directories up to your home folder (or filesystem root if cwd is outside home). tau also includes a paths-only listing of `AGENTS.md` files in child directories under the current working directory, excluding any file already injected in full. this nested scan is breadth-first and stops after 8,192 directories or 16 levels. it skips standard VCS, dependency, build, virtual-environment, and cache directories at every level. when scanning directly from the execution home, it also skips direct tool-managed children such as `.cargo`, `.config`, `.local`, `.npm`, and platform data directories (`Library` on macOS and `snap` on Linux). project-local directories with the same tool-managed names remain visible. use `agentContextFiles` for important files that must be included independently of the nested scan.
 
 you can also include additional `AGENTS.md` files via config (when that config is in scope for the current working directory):
 

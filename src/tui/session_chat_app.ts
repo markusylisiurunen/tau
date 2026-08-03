@@ -27,7 +27,7 @@ export type SessionChatAppOptions = {
   sessionSelection: SessionChatSelection;
   client: TauSdkClient;
   targetLabel: string;
-  terminalAppearance?: ThemeAppearance;
+  terminalAppearance?: ThemeAppearance | Promise<ThemeAppearance>;
   themeId?: string;
   themes?: ThemeDefinition[];
   config?: Config;
@@ -182,12 +182,15 @@ export class SessionChatApp {
 
   static async open(options: SessionChatAppOptions): Promise<SessionChatApp> {
     try {
-      const session = await resolveSession(options.client, options.sessionSelection);
+      const [session, terminalAppearance] = await Promise.all([
+        resolveSession(options.client, options.sessionSelection),
+        options.terminalAppearance,
+      ]);
       const snapshot = await session.snapshot();
       const view = new TuiChatView({
         compactToolUi: true,
         showThinking: false,
-        terminalAppearance: options.terminalAppearance,
+        terminalAppearance,
         themeId: options.themeId,
         themes: options.themes ?? [],
       });

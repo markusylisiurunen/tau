@@ -78,7 +78,7 @@ default behavior:
 
 - creates a local in-process session host
 - uses the file session store under the current host user's Tau config directory
-- resolves config/content from `options.cwd ?? process.cwd()` for SDK startup defaults
+- resolves host config from `options.cwd ?? process.cwd()` for the in-process host; each new session resolves runtime config/content from its execution environment cwd
 - waits up to `5000ms` for the session protocol `ready` message
 - sends session protocol `initialize` with default metadata `{ client: { name: "tau-sdk", version: "1" } }`
 
@@ -94,7 +94,8 @@ sdk lifecycle notes:
 #### options
 
 - `cwd?: string`
-  - startup cwd for resolving SDK default config/content before sessions are created
+  - host cwd for resolving the in-process host config, including configured hosted execution-environment resolvers
+  - session runtime config/content is resolved separately from the execution environment and cwd passed to `client.sessions.create()`
 - `persona?: string`
   - default persona id and optional reasoning level for locally created in-process sessions
 - `reasoning?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"`

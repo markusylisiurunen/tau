@@ -88,7 +88,7 @@ sdk lifecycle notes:
 
 - the sdk waits for session protocol `ready`, then immediately sends `initialize`; `initialize` is a transport handshake and does not create or observe a session.
 - connected clients start without an observed session; call `client.sessions.list()`, `client.sessions.observe(sessionId)`, or `client.sessions.create({ executionEnvironment })` before submitting, snapshotting, or interrupting.
-- `client.close()` aborts active client-tool handlers and awaits them while closing the transport. For `createTauSdkClient()`, it also shuts down the owned in-process host after persisting live session snapshots. Persisted sessions can be observed by a later client that knows the session id.
+- `client.close()` aborts active client-tool handlers and awaits them while closing the transport, even when transport shutdown fails; after cleanup it propagates the transport error. For `createTauSdkClient()`, close also shuts down the owned in-process host after persisting live session snapshots. Persisted sessions can be observed by a later client that knows the session id.
 - `session.unobserve()` stops observing from this SDK facade and makes the facade terminal. It does not delete the hosted session.
 
 #### options
@@ -244,7 +244,7 @@ options:
   - subscribes to all `session.pendingUserMessages` state messages on this client connection
   - returns an unsubscribe function
 - `close()`
-  - aborts active client-tool handlers and awaits them while closing the transport
+  - aborts active client-tool handlers and awaits them while closing the transport, then propagates any transport close error
   - for `createTauSdkClient()`, also shuts down the owned in-process host after persisting live session snapshots
   - idempotent
 

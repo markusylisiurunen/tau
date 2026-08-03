@@ -195,21 +195,16 @@ export class StdioSessionProtocolTransport implements SessionProtocolTransport {
     }
 
     const payload = JSON.stringify(pending.request);
-    const requestId = pending.request.id;
     try {
       this.process.stdin.write(`${payload}\n`, "utf8", (error) => {
-        if (!error) {
-          return;
+        if (error) {
+          this.failTransport(
+            new TauTransportError("failed to write request to tau rpc process", { cause: error }),
+          );
         }
-
-        this.pendingRequests.reject(
-          requestId,
-          new TauTransportError("failed to write request to tau rpc process", { cause: error }),
-        );
       });
     } catch (error) {
-      this.pendingRequests.reject(
-        requestId,
+      this.failTransport(
         new TauTransportError("failed to write request to tau rpc process", { cause: error }),
       );
     }

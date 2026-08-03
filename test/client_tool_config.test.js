@@ -60,12 +60,12 @@ const parameters = {
   additionalProperties: false,
 };
 
-function createClientTool(name, defaultEnabled) {
+function createClientTool(name, defaultEnabled, toolParameters = parameters) {
   return {
     name,
     defaultEnabled,
     description: `${name} tool`,
-    parameters,
+    parameters: toolParameters,
     command: name,
   };
 }
@@ -180,6 +180,43 @@ describe("command client tool config", () => {
 
       expect(result.errors).toEqual([]);
       expect(result.config.clientTools).toBeUndefined();
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("accepts resolved local references and rejects missing or external references", () => {
+    const fx = setupFixture();
+
+    try {
+      writeFileSync(
+        join(fx.home, ".config", "tau", "config.json"),
+        JSON.stringify({
+          clientTools: [
+            createClientTool("local_ref", true, {
+              type: "object",
+              properties: { message: { $ref: "#/$defs/message" } },
+              $defs: { message: { type: "string" } },
+            }),
+            createClientTool("missing_ref", true, {
+              type: "object",
+              properties: { message: { $ref: "#/$defs/missing" } },
+            }),
+            createClientTool("external_ref", true, {
+              type: "object",
+              properties: { message: { $ref: "https://example.com/message" } },
+            }),
+          ],
+        }),
+      );
+
+      const result = loadFixtureConfig(fx);
+
+      expect(result.config.clientTools?.map((tool) => tool.name)).toEqual(["local_ref"]);
+      expect(result.errors).toEqual([
+        `${join(fx.home, ".config", "tau", "config.json")}: clientTools[1].parameters must contain only resolvable local references.`,
+        `${join(fx.home, ".config", "tau", "config.json")}: clientTools[2].parameters must contain only resolvable local references.`,
+      ]);
     } finally {
       fx.cleanup();
     }

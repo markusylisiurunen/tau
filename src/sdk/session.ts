@@ -125,7 +125,11 @@ class TauSdkClientImpl implements TauSdkClient {
     this.unsubscribeTransportFailure();
     const executions = [...this.clientToolExecutions.values()];
     this.abortClientTools();
-    await Promise.all([this.transport.close(), ...executions]);
+    const transportClose = Promise.resolve().then(() => this.transport.close());
+    const [transportResult] = await Promise.allSettled([transportClose, ...executions]);
+    if (transportResult.status === "rejected") {
+      throw transportResult.reason;
+    }
   }
 
   private abortClientTools(): void {

@@ -629,7 +629,7 @@ see [docs/telegram.md](docs/telegram.md) for the config schema, project selectio
 
 ### command client tools
 
-Command client tools extend the standard TUI without modifying Tau. Define them only in `~/.config/tau/config.json`; Tau recursively validates their schemas, including regex-bearing keywords, advertises the effective tools to the session host, and runs their commands on the machine where `tau` or `tau attach` is running. Every definition must set `defaultEnabled`. Without a workspace selection, only default-enabled tools are advertised.
+Command client tools extend the standard TUI without modifying Tau. Define them only in `~/.config/tau/config.json`; Tau recursively validates their schemas, including regex-bearing keywords and document-local references, advertises the effective tools to the session host, and runs their commands on the machine where `tau` or `tau attach` is running. References must be resolvable `#` fragments within the same schema; external and missing references produce config diagnostics. Every definition must set `defaultEnabled`. Without a workspace selection, only default-enabled tools are advertised.
 
 A project or nested directory can select a different exact set without defining executable behavior:
 

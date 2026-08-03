@@ -181,8 +181,7 @@ export class WebSocketSessionProtocolTransport implements SessionProtocolTranspo
     try {
       socket.send(JSON.stringify(pending.request));
     } catch (error) {
-      this.pendingRequests.reject(
-        pending.request.id,
+      this.failTransport(
         new TauTransportError("failed to write request to tau websocket", { cause: error }),
       );
     }

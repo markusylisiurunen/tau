@@ -104,7 +104,127 @@ const commandClientToolParametersSchema = z
   .record(z.string(), z.unknown())
   .refine((value) => value.type === "object", "must be an object JSON Schema with type 'object'")
   .refine((value) => jsonSchemaSchema.safeParse(value).success, "must be a valid JSON Schema")
+  .refine(
+    (value) => hasResolvableLocalReferences(value),
+    "must contain only resolvable local references",
+  )
   .transform((value) => value as TSchema);
+
+const schemaMapKeywords = [
+  "$defs",
+  "definitions",
+  "properties",
+  "patternProperties",
+  "dependentSchemas",
+] as const;
+const schemaKeywords = [
+  "additionalItems",
+  "additionalProperties",
+  "contains",
+  "contentSchema",
+  "else",
+  "if",
+  "not",
+  "propertyNames",
+  "then",
+  "unevaluatedProperties",
+] as const;
+const schemaArrayKeywords = ["allOf", "anyOf", "oneOf", "prefixItems"] as const;
+
+function hasResolvableLocalReferences(root: Record<string, unknown>): boolean {
+  const anchors = new Set<string>();
+  visitSchemas(root, (schema) => {
+    for (const keyword of ["$anchor", "$dynamicAnchor"] as const) {
+      const anchor = schema[keyword];
+      if (typeof anchor === "string") {
+        anchors.add(`#${anchor}`);
+      }
+    }
+  });
+
+  let valid = true;
+  visitSchemas(root, (schema) => {
+    for (const keyword of ["$ref", "$dynamicRef"] as const) {
+      const reference = schema[keyword];
+      if (reference === undefined) continue;
+      if (typeof reference !== "string" || !isResolvableLocalReference(root, anchors, reference)) {
+        valid = false;
+      }
+    }
+  });
+  return valid;
+}
+
+function isResolvableLocalReference(
+  root: Record<string, unknown>,
+  anchors: ReadonlySet<string>,
+  reference: string,
+): boolean {
+  if (reference === "#") return true;
+  if (reference.startsWith("#/")) {
+    const target = resolveJsonPointer(root, reference);
+    return target !== undefined && jsonSchemaSchema.safeParse(target).success;
+  }
+  if (!reference.startsWith("#")) return false;
+
+  try {
+    return anchors.has(`#${decodeURIComponent(reference.slice(1))}`);
+  } catch {
+    return false;
+  }
+}
+
+function resolveJsonPointer(root: unknown, reference: string): unknown {
+  let pointer: string;
+  try {
+    pointer = decodeURIComponent(reference.slice(1));
+  } catch {
+    return undefined;
+  }
+
+  let current = root;
+  for (const encodedToken of pointer.slice(1).split("/")) {
+    const token = encodedToken.replaceAll("~1", "/").replaceAll("~0", "~");
+    if (typeof current !== "object" || current === null || !Object.hasOwn(current, token)) {
+      return undefined;
+    }
+    current = (current as Record<string, unknown>)[token];
+  }
+  return current;
+}
+
+function visitSchemas(schema: unknown, visitor: (schema: Record<string, unknown>) => void): void {
+  if (typeof schema !== "object" || schema === null || Array.isArray(schema)) return;
+  const objectSchema = schema as Record<string, unknown>;
+  visitor(objectSchema);
+
+  for (const keyword of schemaMapKeywords) {
+    const schemas = objectSchema[keyword];
+    if (typeof schemas !== "object" || schemas === null || Array.isArray(schemas)) continue;
+    for (const child of Object.values(schemas)) {
+      visitSchemas(child, visitor);
+    }
+  }
+  for (const keyword of schemaKeywords) {
+    visitSchemas(objectSchema[keyword], visitor);
+  }
+  for (const keyword of schemaArrayKeywords) {
+    const schemas = objectSchema[keyword];
+    if (!Array.isArray(schemas)) continue;
+    for (const child of schemas) {
+      visitSchemas(child, visitor);
+    }
+  }
+
+  const items = objectSchema.items;
+  if (Array.isArray(items)) {
+    for (const child of items) {
+      visitSchemas(child, visitor);
+    }
+  } else {
+    visitSchemas(items, visitor);
+  }
+}
 
 const CommandClientToolSchema = z
   .object({

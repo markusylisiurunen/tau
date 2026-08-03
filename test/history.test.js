@@ -8,6 +8,7 @@ import {
   userHistoryEntry,
 } from "../dist/core/history/transcript.js";
 import { createHistoryToolDefinition, HISTORY_TOOL } from "../dist/core/tools/history.js";
+import { runAi } from "../dist/history/worker/index.js";
 
 function createTextEntry(id, type, content, timestamp) {
   return { id, sourceIds: [id], type, content, timestamp };
@@ -175,6 +176,20 @@ describe("session history", () => {
     } finally {
       store.close();
     }
+  });
+
+  it("generates digests with GPT-5.6 Luna at medium reasoning effort", async () => {
+    const ai = {
+      run: vi.fn(async () => '{"title":"History","summary":"Durable transcript work"}'),
+    };
+
+    await expect(runAi(ai, "transcript material")).resolves.toContain("Durable transcript work");
+    expect(ai.run).toHaveBeenCalledWith("openai/gpt-5.6-luna", {
+      input: "transcript material",
+      instructions: "Produce concise, factually grounded Tau session digest material.",
+      max_output_tokens: 1_024,
+      reasoning: { effort: "medium" },
+    });
   });
 
   it("uses explicit remote configuration without exposing its API key to code mode", async () => {

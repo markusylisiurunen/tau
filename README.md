@@ -183,7 +183,7 @@ Tau records every session to a machine-local SQLite history database independent
 
 Built-in personas include the read-only `history` code-mode tool. Its `history.search()` and `history.read()` APIs provide global access to bounded transcript results across repositories and execution environments; ordinary JavaScript can further filter and project them.
 
-A bundled single-owner Cloudflare service can combine histories from several Tau hosts and generate searchable session titles and summaries with Workers AI. It requires the **Workers Paid** plan so indefinite retention, FTS queries, replication batches, and digest processing use the paid D1/Worker limits rather than the free plan's 500 MB per-database, 50-query, and 10 ms CPU ceilings.
+A bundled single-owner Cloudflare service can combine histories from several Tau hosts and generate searchable session titles and summaries with Cloudflare AI using GPT-5.6 Luna at medium reasoning effort. It requires the **Workers Paid** plan so indefinite retention, FTS queries, replication batches, and digest processing use the paid D1/Worker limits rather than the free plan's 500 MB per-database, 50-query, and 10 ms CPU ceilings.
 
 ```sh
 export CLOUDFLARE_API_TOKEN=...

@@ -39,7 +39,7 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
 - **Session protocol** (`src/protocol/session_protocol.ts`): Canonical session request/response/delta protocol DTOs and strict parsers carried by stdio and WebSocket transports and SDK clients
 - **Transport** (`src/transport/session_transport.ts`, `src/transport/in_process_session_transport.ts`, `src/transport/stdio_session_transport.ts`, `src/transport/websocket_session_transport.ts`): Session protocol transport contract, including terminal failure notification, plus in-process, stdio, and WebSocket transport implementations used by SDK clients
 - **Session store** (`src/store/session_store.ts`, `src/store/memory_session_store.ts`, `src/store/file_session_store.ts`, `src/store/session_snapshot_migrations.ts`): Session snapshot persistence boundary, versioned storage document and sequential migrations, plus in-memory and file-backed store implementations; `tau`, `tau rpc`, and `tau serve` use the file store under `~/.config/tau/sessions`
-- **Session history** (`src/core/history/`, `src/history/worker/`, `src/core/tools/history.ts`): Snapshot-independent flat active transcripts, immutable creation attributes, machine-local SQLite search/read and durable remote outbox, optional API-key-protected Cloudflare D1/Workers AI service deployed through `tau history` on Workers Paid, and the global read-only `history` code-mode tool
+- **Session history** (`src/core/history/`, `src/history/worker/`, `src/core/tools/history.ts`): Snapshot-independent flat active transcripts, immutable creation attributes, machine-local SQLite search/read and durable remote outbox, optional API-key-protected Cloudflare D1/AI service using GPT-5.6 Luna at medium reasoning effort deployed through `tau history` on Workers Paid, and the global read-only `history` code-mode tool
 - **Model catalog** (`src/core/models/catalog.ts`): Unified provider/model registry (pi-ai + Tau extensions) with layered `models.json` overlays used for model resolution metadata
 - **Model runtime** (`src/core/utils/model_stream.ts`, `src/core/auth/credential_store.ts`): pi-ai `Models` runtime wrapper used for main-session, subagent, and maintenance model calls, with Tau config/auth storage exposed through pi-ai credential resolution
 - **Session compaction** (`src/core/session/compaction.ts`, `src/core/session/auto_compaction_archive.ts`): Prompt assembly, manual compaction preparation, automatic compaction cut-point/retained-tail preparation, and best-effort execution-environment transcript archives
@@ -135,7 +135,7 @@ Execution environments and tool backends are intentionally dumb target adapters.
   - `utils/messages.ts` - Message helpers
 
 - `src/diff_tool/` - Built-in browser diff review demo tool (`tau diff-tool`) and reference implementation for the diff-review tool protocol
-- `src/history/` - Bundled Cloudflare history Worker with D1 storage and Workers AI digest generation
+- `src/history/` - Bundled Cloudflare history Worker with D1 storage and GPT-5.6 Luna digest generation through Cloudflare AI
 - `src/nook/` - Bundled Nook Cloudflare Worker, Nook docs, and Nook-specific implementation guidance
 - `src/tui/`
   - `session_chat_app.ts` - Canonical TUI wiring for local and remote session-protocol clients

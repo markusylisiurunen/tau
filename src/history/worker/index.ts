@@ -46,7 +46,7 @@ type Operation =
   | { id: string; sessionId: string; type: "append"; entries: HistoryEntry[] }
   | { id: string; sessionId: string; type: "truncate"; afterEntryId: string | null };
 
-const DIGEST_MODEL = "@cf/zai-org/glm-4.7-flash";
+const DIGEST_MODEL = "openai/gpt-5.6-luna";
 const MAX_BODY_BYTES = 8 * 1024 * 1024;
 const MAX_OPERATIONS = 10;
 const MAX_ENTRIES_PER_OPERATION = 25;
@@ -525,14 +525,19 @@ async function generateDigest(
   return parseDigest(response);
 }
 
-async function runAi(ai: Ai, prompt: string): Promise<string> {
+export async function runAi(ai: Ai, prompt: string): Promise<string> {
   const result = await ai.run(DIGEST_MODEL, {
-    messages: [{ role: "user", content: prompt }],
-    max_completion_tokens: 1_024,
-    reasoning_effort: "low",
+    input: prompt,
+    instructions: "Produce concise, factually grounded Tau session digest material.",
+    max_output_tokens: 1_024,
+    reasoning: { effort: "medium" },
   });
+  if (typeof result === "string") return result;
   if (typeof result !== "object" || result === null) {
-    throw new Error("Workers AI returned an invalid digest response");
+    throw new Error("Cloudflare AI returned an invalid digest response");
+  }
+  if ("output_text" in result && typeof result.output_text === "string") {
+    return result.output_text;
   }
   if ("response" in result && typeof result.response === "string") {
     return result.response;
@@ -551,7 +556,7 @@ async function runAi(ai: Ai, prompt: string): Promise<string> {
       return first.message.content;
     }
   }
-  throw new Error("Workers AI returned an invalid digest response");
+  throw new Error("Cloudflare AI returned an invalid digest response");
 }
 
 function parseDigest(value: string): { title: string; summary: string } {

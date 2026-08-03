@@ -28,6 +28,7 @@ import { SlashAutocompleteProvider } from "./ui/slash_autocomplete.js";
 export type SessionChatAppOptions = {
   sessionSelection: SessionChatSelection;
   client: TauSdkClient;
+  configuredClientToolNames: string[];
   targetLabel: string;
   terminalAppearance?: ThemeAppearance | Promise<ThemeAppearance>;
   themeId?: string;
@@ -39,7 +40,10 @@ export type SessionChatAppOptions = {
   caffeinated?: boolean;
 };
 
-export type SessionChatTransportOptions = Omit<SessionChatAppOptions, "client" | "targetLabel"> & {
+export type SessionChatTransportOptions = Omit<
+  SessionChatAppOptions,
+  "client" | "configuredClientToolNames" | "targetLabel"
+> & {
   clientToolsEnabled: boolean;
 } & (
     | {
@@ -192,6 +196,9 @@ export class SessionChatApp {
     const app = await SessionChatApp.open({
       ...options,
       client,
+      configuredClientToolNames: options.clientToolsEnabled
+        ? (options.config?.clientTools ?? []).map((tool) => tool.name)
+        : [],
       targetLabel:
         options.transport === "stdio" ? [options.command, ...options.args].join(" ") : options.url,
     });
@@ -220,6 +227,7 @@ export class SessionChatApp {
         snapshot,
         createSession: (input) => options.client.sessions.create(input),
         targetLabel: options.targetLabel,
+        configuredClientToolNames: options.configuredClientToolNames,
         config: options.config,
         defaultDiffTool: options.defaultDiffTool,
         deps: options.deps,

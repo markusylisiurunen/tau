@@ -853,6 +853,7 @@ describe("SessionChatController", () => {
       session,
       snapshot: await session.snapshot(),
       targetLabel: "ssh host tau rpc",
+      configuredClientToolNames: ["notify"],
       themeIds: ["gold"],
     });
 
@@ -862,9 +863,12 @@ describe("SessionChatController", () => {
     expect(intro.title).toContain("tau v");
     expect(intro.title).toContain("1 AGENTS.md");
     expect(intro.title).toContain("1 skills");
+    expect(intro.title).toContain("1 client tool");
     expect(intro.title).not.toContain("session");
     expect(intro.body).toContain("skills:\n  alpha (~/.tau/skills)");
-    expect(intro.body).toContain("context:\n  ~/repo/AGENTS.md");
+    expect(intro.body).toContain("context:\n  ~/repo/AGENTS.md\n\nclient tools:\n  notify");
+    expect(intro.body).not.toContain("diff_review");
+    expect(intro.body).not.toContain("prefill_input");
     expect(intro.body).not.toContain("~/repo/src/AGENTS.md");
     expect(intro.body).toContain("session id: session-1");
     expect(intro.body).not.toContain("ssh host tau rpc");

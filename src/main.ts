@@ -1197,6 +1197,11 @@ const defaultDiffTool = createBuiltInDiffToolConfig({
 });
 
 let sessionChatApp: SessionChatApp | undefined;
+const clientTools = createTuiClientTools({
+  enabled: !cli.noClientTools,
+  getController: () => sessionChatApp?.getController(),
+  commandTools: config.clientTools,
+});
 const sessionClient = await createTauSdkClientWithHostConfig(
   {
     cwd,
@@ -1204,16 +1209,15 @@ const sessionClient = await createTauSdkClientWithHostConfig(
     reasoning: reasoningOverride,
     noAgentContextFiles: cli.noAgentContextFiles,
     initialize: { client: { name: "tau-tui", version: "1" } },
-    clientTools: createTuiClientTools({
-      enabled: !cli.noClientTools,
-      getController: () => sessionChatApp?.getController(),
-      commandTools: config.clientTools,
-    }),
+    clientTools,
   },
   config,
 );
 const app = await SessionChatApp.open({
   client: sessionClient,
+  configuredClientToolNames: cli.noClientTools
+    ? []
+    : (config.clientTools ?? []).map((tool) => tool.name),
   targetLabel: "in-process",
   sessionSelection: {
     mode: "create",

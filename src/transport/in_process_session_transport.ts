@@ -24,6 +24,7 @@ import type {
   SessionProtocolClientToolListener,
   SessionProtocolDeltaListener,
   SessionProtocolEphemeralListener,
+  SessionProtocolFailureListener,
   SessionProtocolPendingUserMessagesListener,
   SessionProtocolTransport,
 } from "./session_transport.js";
@@ -41,6 +42,7 @@ export class InProcessSessionProtocolTransport implements SessionProtocolTranspo
   private readonly pendingUserMessagesListeners =
     new Set<SessionProtocolPendingUserMessagesListener>();
   private readonly clientToolListeners = new Set<SessionProtocolClientToolListener>();
+  private readonly failureListeners = new Set<SessionProtocolFailureListener>();
   private readonly pendingRequests = new PendingSessionProtocolRequests();
 
   private readyValue?: SessionProtocolReadyMessage;
@@ -139,6 +141,13 @@ export class InProcessSessionProtocolTransport implements SessionProtocolTranspo
     };
   }
 
+  onFailure(listener: SessionProtocolFailureListener): () => void {
+    this.failureListeners.add(listener);
+    return () => {
+      this.failureListeners.delete(listener);
+    };
+  }
+
   async close(): Promise<void> {
     if (this.isClosed) {
       return;
@@ -151,6 +160,7 @@ export class InProcessSessionProtocolTransport implements SessionProtocolTranspo
     this.ephemeralListeners.clear();
     this.pendingUserMessagesListeners.clear();
     this.clientToolListeners.clear();
+    this.failureListeners.clear();
     await this.handler.close(this.closeMode);
   }
 

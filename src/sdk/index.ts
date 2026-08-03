@@ -9,6 +9,7 @@ export { applySessionProtocolDelta } from "../protocol/index.js";
 export type {
   SessionProtocolDeltaListener,
   SessionProtocolEphemeralListener,
+  SessionProtocolFailureListener,
   SessionProtocolPendingUserMessagesListener,
   SessionProtocolSpawnedProcess,
   SessionProtocolTransport,

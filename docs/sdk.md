@@ -88,7 +88,7 @@ sdk lifecycle notes:
 
 - the sdk waits for session protocol `ready`, then immediately sends `initialize`; `initialize` is a transport handshake and does not create or observe a session.
 - connected clients start without an observed session; call `client.sessions.list()`, `client.sessions.observe(sessionId)`, or `client.sessions.create({ executionEnvironment })` before submitting, snapshotting, or interrupting.
-- `client.close()` closes the transport. For `createTauSdkClient()`, it also shuts down the owned in-process host after persisting live session snapshots. Persisted sessions can be observed by a later client that knows the session id.
+- `client.close()` aborts active client-tool handlers and awaits them while closing the transport. For `createTauSdkClient()`, it also shuts down the owned in-process host after persisting live session snapshots. Persisted sessions can be observed by a later client that knows the session id.
 - `session.unobserve()` stops observing from this SDK facade and makes the facade terminal. It does not delete the hosted session.
 
 #### options
@@ -138,7 +138,7 @@ const client = await createTauSdkClient({
 });
 ```
 
-Tool names must not duplicate host tools or another connected client's tools. The Tau TUI uses this mechanism to advertise `diff_review`; generic SDK clients can advertise their own tools, but `diff_review` itself is TUI-owned.
+Tool names must not duplicate host tools or another connected client's tools. Active handlers receive an aborted signal when the host cancels the call, the client closes, or the underlying transport fails; `client.close()` waits for them to settle. The Tau TUI uses this mechanism to advertise `diff_review`; generic SDK clients can advertise their own tools, but `diff_review` itself is TUI-owned.
 
 ### `createTauSdkWebSocketClient(options)`
 
@@ -216,7 +216,7 @@ options:
 
 creates, connects, and initializes the same SDK client facade over a caller-provided `SessionProtocolTransport`.
 
-`createTauSdkClient()` is the in-process convenience wrapper. `createTauSdkWebSocketClient()` is the WebSocket convenience wrapper. `createTauSdkClientFromTransport()` is the transport-agnostic path for stdio subprocesses, daemon, session, or test transports that carry the canonical session protocol.
+`createTauSdkClient()` is the in-process convenience wrapper. `createTauSdkWebSocketClient()` is the WebSocket convenience wrapper. `createTauSdkClientFromTransport()` is the transport-agnostic path for stdio subprocesses, daemon, session, or test transports that carry the canonical session protocol. Custom transports must implement `onFailure(listener)` and invoke the listener when a terminal transport error makes further requests impossible; the SDK uses this signal to cancel active client tools.
 
 The SDK entrypoint also exports `StdioSessionProtocolTransport` for callers that want to spawn or wrap a `tau rpc` process themselves.
 
@@ -244,7 +244,7 @@ options:
   - subscribes to all `session.pendingUserMessages` state messages on this client connection
   - returns an unsubscribe function
 - `close()`
-  - closes the transport
+  - aborts active client-tool handlers and awaits them while closing the transport
   - for `createTauSdkClient()`, also shuts down the owned in-process host after persisting live session snapshots
   - idempotent
 

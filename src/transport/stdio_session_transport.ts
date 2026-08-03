@@ -20,6 +20,7 @@ import {
   notifySessionProtocolClientToolListeners,
   notifySessionProtocolDeltaListeners,
   notifySessionProtocolEphemeralListeners,
+  notifySessionProtocolFailureListeners,
   notifySessionProtocolPendingUserMessagesListeners,
   waitForPromiseOrTimeout,
   withTimeout,
@@ -28,6 +29,7 @@ import type {
   SessionProtocolClientToolListener,
   SessionProtocolDeltaListener,
   SessionProtocolEphemeralListener,
+  SessionProtocolFailureListener,
   SessionProtocolPendingUserMessagesListener,
   SessionProtocolTransport,
 } from "./session_transport.js";
@@ -64,6 +66,7 @@ export class StdioSessionProtocolTransport implements SessionProtocolTransport {
   private readonly pendingUserMessagesListeners =
     new Set<SessionProtocolPendingUserMessagesListener>();
   private readonly clientToolListeners = new Set<SessionProtocolClientToolListener>();
+  private readonly failureListeners = new Set<SessionProtocolFailureListener>();
   private readonly pendingRequests = new PendingSessionProtocolRequests();
   private readonly readyDeferred = createDeferred<SessionProtocolReadyMessage>();
   private readonly exitDeferred = createDeferred<ProcessExitInfo>();
@@ -165,6 +168,13 @@ export class StdioSessionProtocolTransport implements SessionProtocolTransport {
     };
   }
 
+  onFailure(listener: SessionProtocolFailureListener): () => void {
+    this.failureListeners.add(listener);
+    return () => {
+      this.failureListeners.delete(listener);
+    };
+  }
+
   request<M extends SessionProtocolMethod>(
     method: M,
     params: SessionProtocolParamsByMethod[M],
@@ -221,6 +231,7 @@ export class StdioSessionProtocolTransport implements SessionProtocolTransport {
     this.ephemeralListeners.clear();
     this.pendingUserMessagesListeners.clear();
     this.clientToolListeners.clear();
+    this.failureListeners.clear();
 
     this.process.stdout.off("data", this.handleStdoutData);
     this.process.stderr.off("data", this.handleStderrData);
@@ -405,6 +416,7 @@ export class StdioSessionProtocolTransport implements SessionProtocolTransport {
     }
 
     this.fatalError = error;
+    notifySessionProtocolFailureListeners(this.failureListeners, error);
     this.pendingRequests.rejectAll(error);
     this.rejectReadyIfPending(error);
   }

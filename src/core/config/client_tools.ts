@@ -23,6 +23,14 @@ const jsonSchemaTypeSchema = z.enum([
   "string",
 ]);
 const nonNegativeIntegerSchema = z.number().int().nonnegative();
+const jsonSchemaRegexSchema = z.string().refine((value) => {
+  try {
+    new RegExp(value, "u");
+    return true;
+  } catch {
+    return false;
+  }
+}, "must be a valid Unicode regular expression");
 const jsonSchemaThenKeyword = "then";
 const jsonSchemaSchema: z.ZodType<unknown> = z.lazy(() =>
   z.union([
@@ -55,7 +63,7 @@ const jsonSchemaSchema: z.ZodType<unknown> = z.lazy(() =>
         exclusiveMinimum: z.number().optional(),
         maxLength: nonNegativeIntegerSchema.optional(),
         minLength: nonNegativeIntegerSchema.optional(),
-        pattern: z.string().optional(),
+        pattern: jsonSchemaRegexSchema.optional(),
         format: z.string().optional(),
         contentEncoding: z.string().optional(),
         contentMediaType: z.string().optional(),
@@ -73,7 +81,7 @@ const jsonSchemaSchema: z.ZodType<unknown> = z.lazy(() =>
         minProperties: nonNegativeIntegerSchema.optional(),
         required: z.array(z.string()).optional(),
         properties: z.record(z.string(), jsonSchemaSchema).optional(),
-        patternProperties: z.record(z.string(), jsonSchemaSchema).optional(),
+        patternProperties: z.record(jsonSchemaRegexSchema, jsonSchemaSchema).optional(),
         additionalProperties: jsonSchemaSchema.optional(),
         dependentRequired: z.record(z.string(), z.array(z.string())).optional(),
         dependentSchemas: z.record(z.string(), jsonSchemaSchema).optional(),

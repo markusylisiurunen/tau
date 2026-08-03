@@ -297,6 +297,7 @@ class FakeSessionProtocolTransport {
   listeners = new Set();
   pendingUserMessagesListeners = new Set();
   clientToolListeners = new Set();
+  failureListeners = new Set();
   initializeParams;
   connectTimeoutMs;
   closed = false;
@@ -327,6 +328,13 @@ class FakeSessionProtocolTransport {
     };
   }
 
+  onFailure(listener) {
+    this.failureListeners.add(listener);
+    return () => {
+      this.failureListeners.delete(listener);
+    };
+  }
+
   emitDelta(delta) {
     for (const listener of this.listeners) {
       listener(delta);
@@ -342,6 +350,12 @@ class FakeSessionProtocolTransport {
   emitClientTool(message) {
     for (const listener of this.clientToolListeners) {
       listener(message);
+    }
+  }
+
+  emitFailure(error) {
+    for (const listener of this.failureListeners) {
+      listener(error);
     }
   }
 }
@@ -1028,6 +1042,52 @@ describe("sdk_client", () => {
     ).toBe(false);
   });
 
+  it("aborts active client tools when the transport fails", async () => {
+    const transport = new FakeSessionProtocolTransport();
+    let toolSignal;
+    let finishTool;
+    const execute = vi.fn(
+      (_args, context) =>
+        new Promise((resolve) => {
+          toolSignal = context.signal;
+          finishTool = () => resolve({ content: "cancelled" });
+        }),
+    );
+    const client = await createTauSdkClientFromTransport(transport, {
+      clientTools: [
+        {
+          schema: {
+            name: "local_picker",
+            description: "Pick a local item.",
+            parameters: { type: "object", properties: {}, additionalProperties: false },
+          },
+          execute,
+        },
+      ],
+    });
+
+    transport.emitClientTool({
+      version: SESSION_PROTOCOL_VERSION,
+      type: "session.clientTool.call",
+      sessionId: "session-1",
+      callId: "call-1",
+      toolName: "local_picker",
+      arguments: {},
+      ackDeadlineMs: 5000,
+      executionDeadlineMs: 60_000,
+    });
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(1));
+
+    transport.emitFailure(new TauTransportError("transport lost"));
+    await vi.waitFor(() => expect(toolSignal?.aborted).toBe(true));
+
+    finishTool();
+    await client.close();
+    expect(
+      transport.requests.some((request) => request.method === "session.clientTool.result"),
+    ).toBe(false);
+  });
+
   it("reuses create and observe snapshots for the first sdk snapshot call", async () => {
     const transport = new FakeSessionProtocolTransport();
     const client = await createTauSdkClientFromTransport(transport);
@@ -1643,6 +1703,23 @@ describe("sdk_client", () => {
     expect(Buffer.byteLength(error.stderr, "utf8")).toBeLessThanOrEqual(64 * 1024);
 
     await client.close();
+  });
+
+  it("notifies failure listeners when the stdio process exits unexpectedly", async () => {
+    const child = new FakeChildProcess();
+    const transport = new StdioSessionProtocolTransport(child);
+    const onFailure = vi.fn();
+    transport.onFailure(onFailure);
+
+    child.exit(9, null);
+
+    expect(onFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "TauProcessError",
+        message: "tau rpc process exited unexpectedly code=9 signal=null",
+      }),
+    );
+    await transport.close();
   });
 
   it("close is idempotent", async () => {

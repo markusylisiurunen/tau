@@ -12,6 +12,7 @@ import type {
   SessionProtocolClientToolListener,
   SessionProtocolDeltaListener,
   SessionProtocolEphemeralListener,
+  SessionProtocolFailureListener,
   SessionProtocolPendingUserMessagesListener,
 } from "./session_transport.js";
 
@@ -94,6 +95,19 @@ export function notifySessionProtocolClientToolListeners(
       if (!options.ignoreListenerErrors) {
         throw error;
       }
+    }
+  }
+}
+
+export function notifySessionProtocolFailureListeners(
+  listeners: ReadonlySet<SessionProtocolFailureListener>,
+  error: Error,
+): void {
+  for (const listener of [...listeners]) {
+    try {
+      listener(error);
+    } catch {
+      // listener failures must not break transport processing
     }
   }
 }

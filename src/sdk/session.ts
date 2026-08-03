@@ -63,6 +63,7 @@ class TauSdkClientImpl implements TauSdkClient {
   private readonly clientToolAbortControllers = new Map<string, AbortController>();
   private readonly clientToolExecutions = new Map<string, Promise<void>>();
   private readonly unsubscribeClientTool: () => void;
+  private readonly unsubscribeTransportFailure: () => void;
   private closePromise?: Promise<void>;
 
   constructor(
@@ -73,6 +74,7 @@ class TauSdkClientImpl implements TauSdkClient {
     this.unsubscribeClientTool = this.transport.onClientTool((message) =>
       this.handleClientTool(message),
     );
+    this.unsubscribeTransportFailure = this.transport.onFailure(() => this.abortClientTools());
   }
 
   get ready() {
@@ -120,12 +122,17 @@ class TauSdkClientImpl implements TauSdkClient {
 
   private async closeClient(): Promise<void> {
     this.unsubscribeClientTool();
+    this.unsubscribeTransportFailure();
     const executions = [...this.clientToolExecutions.values()];
+    this.abortClientTools();
+    await Promise.all([this.transport.close(), ...executions]);
+  }
+
+  private abortClientTools(): void {
     for (const controller of this.clientToolAbortControllers.values()) {
       controller.abort();
     }
     this.clientToolAbortControllers.clear();
-    await Promise.all([this.transport.close(), ...executions]);
   }
 
   private handleClientTool(

@@ -628,7 +628,7 @@ see [docs/telegram.md](docs/telegram.md) for the config schema, project selectio
 
 ### command client tools
 
-Command client tools extend the standard TUI without modifying Tau. Define them only in `~/.config/tau/config.json`; Tau advertises their schemas to the session host and runs their commands on the machine where `tau` or `tau attach` is running.
+Command client tools extend the standard TUI without modifying Tau. Define them only in `~/.config/tau/config.json`; Tau recursively validates their schemas, including regex-bearing keywords, advertises them to the session host, and runs their commands on the machine where `tau` or `tau attach` is running.
 
 For every call, Tau validates the arguments against the configured schema, starts the command directly without a shell, and writes one versioned JSON request to stdin:
 
@@ -647,7 +647,7 @@ A successful command must exit with code zero and write exactly one JSON result 
 { "content": "Notification shown." }
 ```
 
-The `content` string becomes the model-visible tool result. A nonzero exit fails the tool using stderr, falling back to stdout when stderr is empty. Tau strips sensitive inherited environment variables, applies the entry's explicit `env` afterward, runs the command from the TUI's current working directory, limits total output to 1 MiB, and terminates the command's process group on cancellation, timeout, or excess output. `executionTimeoutMs` defaults to 60 seconds.
+The `content` string becomes the model-visible tool result. A nonzero exit fails the tool using stderr, falling back to stdout when stderr is empty. Tau strips sensitive inherited environment variables, applies the entry's explicit `env` afterward, runs the command from the TUI's current working directory, limits total output to 1 MiB, and terminates the command's process group on cancellation, terminal transport failure, timeout, or excess output. Process-group termination escalates to `SIGKILL` after two seconds even if the command leader exits first. `executionTimeoutMs` defaults to 60 seconds.
 
 Configured names must be unique and cannot replace built-in TUI or host tools. Only one observing client may advertise a given name for a session. `--no-client-tools` disables command client tools together with `diff_review` and `prefill_input`.
 

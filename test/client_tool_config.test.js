@@ -165,6 +165,24 @@ describe("command client tool config", () => {
               },
               command: "bad-nested",
             },
+            {
+              name: "bad_pattern",
+              description: "Invalid pattern.",
+              parameters: {
+                type: "object",
+                properties: { message: { type: "string", pattern: "[" } },
+              },
+              command: "bad-pattern",
+            },
+            {
+              name: "bad_pattern_properties",
+              description: "Invalid pattern properties.",
+              parameters: {
+                type: "object",
+                patternProperties: { "\\8": { type: "string" } },
+              },
+              command: "bad-pattern-properties",
+            },
           ],
         }),
       );
@@ -176,6 +194,8 @@ describe("command client tool config", () => {
         `${join(fx.home, ".config", "tau", "config.json")}: clientTools[1].name duplicates client tool 'notify'.`,
         `${join(fx.home, ".config", "tau", "config.json")}: clientTools[2].parameters must be an object JSON Schema with type 'object'.`,
         `${join(fx.home, ".config", "tau", "config.json")}: clientTools[3].parameters must be a valid JSON Schema.`,
+        `${join(fx.home, ".config", "tau", "config.json")}: clientTools[4].parameters must be a valid JSON Schema.`,
+        `${join(fx.home, ".config", "tau", "config.json")}: clientTools[5].parameters must be a valid JSON Schema.`,
       ]);
     } finally {
       fx.cleanup();

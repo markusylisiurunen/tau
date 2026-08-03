@@ -48,8 +48,8 @@ type Operation =
 
 const DIGEST_MODEL = "@cf/zai-org/glm-4.7-flash";
 const MAX_BODY_BYTES = 8 * 1024 * 1024;
-const MAX_OPERATIONS = 1;
-const MAX_ENTRIES_PER_OPERATION = 10;
+const MAX_OPERATIONS = 10;
+const MAX_ENTRIES_PER_OPERATION = 25;
 const MAX_SEARCH_LIMIT = 100;
 const MAX_READ_LIMIT = 100;
 const SHORT_SESSION_ENTRIES = 12;
@@ -114,7 +114,7 @@ export default {
        WHERE (s.digest_through_entry_id IS NULL OR s.digest_through_entry_id != latest.entry_id)
          AND s.updated_at <= ?
        ORDER BY s.updated_at
-       LIMIT 5`,
+       LIMIT 25`,
     )
       .bind(Date.now() - 30 * 60 * 1_000)
       .all<{ session_id: string }>();

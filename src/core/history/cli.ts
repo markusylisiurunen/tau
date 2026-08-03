@@ -11,7 +11,7 @@ export function printHistoryHelp(log: (line: string) => void = console.log): voi
   log(
     [
       "usage:",
-      "  tau history setup --domain <domain> --zone-name <zone> [--api-key <key>]",
+      "  tau history setup --domain <domain> --zone-name <zone> [--api-key <key>]  # Workers Paid",
       "  tau history destroy --yes",
     ].join("\n"),
   );

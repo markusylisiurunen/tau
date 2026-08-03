@@ -52,6 +52,8 @@ export async function setupHistoryService(options: HistorySetupOptions): Promise
     });
     stdout(`deployed Worker ${WORKER_NAME}`);
     stdout("");
+    stdout("The shared history service requires the Cloudflare Workers Paid plan.");
+    stdout("");
     stdout("Add this to the global Tau config:");
     stdout(
       JSON.stringify(

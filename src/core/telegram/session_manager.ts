@@ -80,7 +80,15 @@ export type TelegramSessionRecord = {
   error?: string;
 };
 
-const persistedTelegramSessionRecordSchema = z
+const telegramSessionStateValueSchema = z.enum([
+  "queued",
+  "preparing-workspace",
+  "running",
+  "waiting-input",
+  "failed",
+]);
+
+const persistedTelegramSessionRecordV1Schema = z
   .object({
     id: z.string().min(1),
     projectId: z.string().min(1),
@@ -91,14 +99,41 @@ const persistedTelegramSessionRecordSchema = z
   })
   .strip();
 
-const telegramSessionStateSchema = z
-  .object({
-    version: z.literal(1),
-    sessions: z.array(persistedTelegramSessionRecordSchema),
-  })
-  .strip();
+const persistedTelegramSessionRecordSchema = persistedTelegramSessionRecordV1Schema.extend({
+  state: telegramSessionStateValueSchema,
+  error: z.string().min(1).optional(),
+});
+
+const telegramSessionStateSchema = z.discriminatedUnion("version", [
+  z
+    .object({
+      version: z.literal(1),
+      sessions: z.array(persistedTelegramSessionRecordV1Schema),
+    })
+    .strip(),
+  z
+    .object({
+      version: z.literal(2),
+      sessions: z.array(persistedTelegramSessionRecordSchema),
+    })
+    .strip(),
+]);
 
 type PersistedTelegramSessionRecord = z.infer<typeof persistedTelegramSessionRecordSchema>;
+
+type PersistedTelegramSessionState = z.infer<typeof telegramSessionStateSchema>;
+
+function normalizePersistedTelegramSessions(
+  state: PersistedTelegramSessionState,
+): PersistedTelegramSessionRecord[] {
+  if (state.version === 2) {
+    return state.sessions;
+  }
+  return state.sessions.map((record) => ({
+    ...record,
+    state: record.tauSessionId ? "waiting-input" : "queued",
+  }));
+}
 
 export function resolveTelegramSessionStatePath(workspaceRoot: string): string {
   return `${resolve(workspaceRoot)}-sessions.json`;
@@ -139,6 +174,29 @@ function buildProvisionCommand(repositoryRoot: string): string {
 
 function isCancelledProtocolResponse(error: unknown): boolean {
   return error instanceof TauSessionProtocolResponseError && error.code === "cancelled";
+}
+
+function formatErrorDiagnostic(error: unknown): string {
+  const messages: string[] = [];
+  const seen = new Set<unknown>();
+  let current = error;
+  while (current !== undefined && !seen.has(current)) {
+    seen.add(current);
+    messages.push(current instanceof Error ? current.message : String(current));
+    if (current instanceof TauSessionProtocolResponseError) {
+      const data = current.data;
+      if (
+        typeof data === "object" &&
+        data !== null &&
+        "cause" in data &&
+        typeof data.cause === "string"
+      ) {
+        messages.push(data.cause);
+      }
+    }
+    current = current instanceof Error ? current.cause : undefined;
+  }
+  return messages.filter((message, index) => message && message !== messages[index - 1]).join(": ");
 }
 
 function truncateProvisionDiagnostic(diagnostic: string): string {
@@ -617,7 +675,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       if (!parsed.success) {
         throw new Error(`invalid telegram session state: ${parsed.error.message}`);
       }
-      persistedSessions = parsed.data.sessions;
+      persistedSessions = normalizePersistedTelegramSessions(parsed.data);
     }
 
     for (const record of persistedSessions) {
@@ -627,10 +685,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       }
 
       const entry: SessionEntry = {
-        record: {
-          ...record,
-          state: record.tauSessionId ? "waiting-input" : "queued",
-        },
+        record: { ...record },
         logs: [],
         project,
         abortController: new AbortController(),
@@ -646,6 +701,9 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
 
     await Promise.all(
       Array.from(this.sessions.values(), async (entry) => {
+        if (entry.record.state === "failed") {
+          return;
+        }
         try {
           if (!entry.record.tauSessionId) {
             await this.initializeSession(entry);
@@ -657,7 +715,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
           entry.record.error = `recovery failed: ${message}`;
           this.setState(entry, "failed");
           this.log(entry, "error", "session recovery failed", { cause: message });
-          await this.stopClient(entry);
+          await this.stopClient(entry, "recovery failure cleanup");
         }
       }),
     );
@@ -781,18 +839,18 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     const write = this.persistenceQueue
       .catch(() => undefined)
       .then(async () => {
-        const state: z.infer<typeof telegramSessionStateSchema> = {
-          version: 1,
-          sessions: Array.from(this.sessions.values())
-            .filter((entry) => this.isActiveState(entry.record.state))
-            .map((entry) => ({
-              id: entry.record.id,
-              projectId: entry.record.projectId,
-              ...(entry.record.ownerId ? { ownerId: entry.record.ownerId } : {}),
-              createdAt: entry.record.createdAt,
-              updatedAt: entry.record.updatedAt,
-              ...(entry.record.tauSessionId ? { tauSessionId: entry.record.tauSessionId } : {}),
-            })),
+        const state: Extract<PersistedTelegramSessionState, { version: 2 }> = {
+          version: 2,
+          sessions: Array.from(this.sessions.values(), (entry) => ({
+            id: entry.record.id,
+            projectId: entry.record.projectId,
+            ...(entry.record.ownerId ? { ownerId: entry.record.ownerId } : {}),
+            state: entry.record.state,
+            createdAt: entry.record.createdAt,
+            updatedAt: entry.record.updatedAt,
+            ...(entry.record.tauSessionId ? { tauSessionId: entry.record.tauSessionId } : {}),
+            ...(entry.record.error ? { error: entry.record.error } : {}),
+          })),
         };
         await mkdir(dirname(persistencePath), { recursive: true });
         const temporaryPath = `${persistencePath}.tmp`;
@@ -856,7 +914,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
 
       if (entry.cancelRequested) {
         entry.tauSession = tauSession;
-        await this.stopClient(entry);
+        await this.stopClient(entry, "cancelled initialization cleanup");
         return;
       }
 
@@ -892,7 +950,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
         this.log(entry, "error", "session failed", { cause: message });
       }
 
-      await this.stopClient(entry);
+      await this.stopClient(entry, "initialization failure cleanup");
     }
   }
 
@@ -1039,11 +1097,30 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
         }
       } catch (error) {
         if (!entry.cancelRequested) {
-          const message = error instanceof Error ? error.message : String(error);
-          entry.record.error = message;
+          const diagnostic = formatErrorDiagnostic(error);
+          entry.record.error = diagnostic;
           this.setState(entry, "failed");
-          this.log(entry, "error", "submit failed", { source, cause: message });
-          await this.stopClient(entry);
+          const data = {
+            sessionId: entry.record.id,
+            tauSessionId: tauSession.id,
+            source,
+            cause: diagnostic,
+          };
+          this.log(entry, "error", "submit failed", data);
+          this.onLog?.({ level: "error", message: "telegram session submit failed", data });
+          try {
+            await this.persistSessions();
+          } catch (persistenceError) {
+            this.onLog?.({
+              level: "error",
+              message: "failed to persist telegram session failure",
+              data: {
+                ...data,
+                persistenceCause: formatErrorDiagnostic(persistenceError),
+              },
+            });
+          }
+          await this.stopClient(entry, "submit failure cleanup");
         }
       }
     })();
@@ -1090,7 +1167,9 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       }
     }
 
-    await Promise.allSettled(entries.map(async (entry) => await this.stopClient(entry)));
+    await Promise.allSettled(
+      entries.map(async (entry) => await this.stopClient(entry, "manager shutdown")),
+    );
     await Promise.allSettled(
       entries.flatMap((entry) =>
         [entry.initializePromise, entry.activeSubmit, entry.provisionPromise].filter(
@@ -1108,7 +1187,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       this.log(entry, "info", message);
     }
 
-    await this.stopClient(entry);
+    await this.stopClient(entry, "session close");
     await this.runWorkspaceCleanup(entry);
 
     const record = this.toRecord(entry);
@@ -1175,7 +1254,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     this.log(entry, "info", message);
   }
 
-  private async stopClient(entry: SessionEntry): Promise<void> {
+  private async stopClient(entry: SessionEntry, reason: string): Promise<void> {
     if (entry.unsubscribeClientEvents) {
       entry.unsubscribeClientEvents();
       entry.unsubscribeClientEvents = undefined;
@@ -1195,6 +1274,9 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
 
     let closePromise: Promise<void>;
     closePromise = (async () => {
+      if (tauSession) {
+        this.log(entry, "info", "internal cleanup interrupt requested", { reason });
+      }
       try {
         await tauSession?.interrupt();
       } catch (error) {

@@ -1340,6 +1340,193 @@ describe("LocalSessionHost", () => {
     expect(store.commitSessionSnapshot).toHaveBeenCalledTimes(2);
   });
 
+  it("serializes durable goal writes with later transient tool projections", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const hostedSession = await host.createSession(localCreateInput);
+    await hostedSession.snapshot();
+
+    const persistenceReached = deferred();
+    const releasePersistence = deferred();
+    const commitSessionSnapshot = store.commitSessionSnapshot.bind(store);
+    store.commitSessionSnapshot = vi.fn(async (snapshot, options) => {
+      if (snapshot.goal?.objective === "Persist in order") {
+        persistenceReached.resolve();
+        await releasePersistence.promise;
+      }
+      await commitSessionSnapshot(snapshot, options);
+    });
+
+    const deltas = [];
+    hostedSession.onDelta((delta) => deltas.push(delta));
+    const goal = hostedSession.createGoal("Persist in order");
+    await persistenceReached.promise;
+
+    const toolCall = fauxToolCall("bash", { command: "pwd" }, { id: "ordered-tool" });
+    const assistantStart = hostedSession.enqueueRuntimeEvent({
+      type: "assistant_start",
+      historyEntryId: "assistant-ordered",
+    });
+    const assistantPartial = hostedSession.enqueueRuntimeEvent({
+      type: "assistant_partial",
+      historyEntryId: "assistant-ordered",
+      snapshot: {
+        text: "",
+        thinking: "",
+        toolCalls: [toolCall],
+        hasTextStarted: false,
+        hasAnyThinking: false,
+      },
+    });
+
+    await Promise.resolve();
+    expect(deltas).toEqual([]);
+    releasePersistence.resolve();
+    await Promise.all([goal, assistantStart, assistantPartial]);
+
+    expect(deltas.map((delta) => [delta.fromRevision, delta.toRevision])).toEqual([
+      [1, 2],
+      [2, 3],
+      [3, 4],
+    ]);
+    await expect(hostedSession.snapshot()).resolves.toMatchObject({
+      goal: { objective: "Persist in order", status: "active" },
+      messages: [
+        expect.anything(),
+        expect.objectContaining({ id: "assistant-ordered", state: "draft" }),
+      ],
+      tools: {
+        [toolCall.id]: expect.objectContaining({
+          status: "queued",
+          call: { messageId: "assistant-ordered", contentIndex: 0 },
+        }),
+      },
+    });
+    await host.shutdown();
+  });
+
+  it("reconciles tools, goals, and failure context after a runtime event sink failure", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const hostedSession = await host.createSession(localCreateInput);
+    await hostedSession.snapshot();
+
+    const goalCall = fauxToolCall(
+      "create_goal",
+      { objective: "Finish safely" },
+      { id: "failure-goal" },
+    );
+    const bashCall = fauxToolCall("bash", { command: "printf never" }, { id: "failure-bash" });
+    const toolMessage = fauxAssistantMessage([goalCall, bashCall], {
+      stopReason: "toolUse",
+    });
+    hostedSession.runtime.agent.spec.model.stream = () => ({
+      async *[Symbol.asyncIterator]() {
+        const goalPartial = { ...toolMessage, content: [goalCall] };
+        yield { type: "toolcall_start", contentIndex: 0, partial: goalPartial };
+        yield {
+          type: "toolcall_end",
+          contentIndex: 0,
+          toolCall: goalCall,
+          partial: goalPartial,
+        };
+        await vi.waitFor(() =>
+          expect(hostedSession.getGoal()).toEqual({
+            objective: "Finish safely",
+            status: "active",
+          }),
+        );
+        yield { type: "toolcall_start", contentIndex: 1, partial: toolMessage };
+        yield {
+          type: "toolcall_end",
+          contentIndex: 1,
+          toolCall: bashCall,
+          partial: toolMessage,
+        };
+      },
+      async result() {
+        return toolMessage;
+      },
+    });
+
+    const commitSessionSnapshot = store.commitSessionSnapshot.bind(store);
+    let injectedFailure = false;
+    store.commitSessionSnapshot = vi.fn(async (snapshot, options) => {
+      if (!injectedFailure && snapshot.tools[bashCall.id]?.status === "queued") {
+        injectedFailure = true;
+        throw new Error("injected lifecycle failure", {
+          cause: new Error("store unavailable"),
+        });
+      }
+      await commitSessionSnapshot(snapshot, options);
+    });
+
+    const { userHistoryEntryId } = await hostedSession.record({
+      text: "run both",
+    });
+    await expect(hostedSession.runTurn()).rejects.toThrow("injected lifecycle failure");
+
+    const snapshot = await hostedSession.snapshot();
+    expect(snapshot.goal).toEqual({
+      objective: "Finish safely",
+      status: "blocked",
+    });
+    expect(snapshot.messages.find((message) => message.id === userHistoryEntryId)?.turn).toEqual({
+      status: "failed",
+      stopReason: "error",
+      errorMessage: "injected lifecycle failure: store unavailable",
+    });
+    expect(
+      [goalCall.id, bashCall.id].every(
+        (id) => snapshot.tools[id].status !== "queued" && snapshot.tools[id].status !== "running",
+      ),
+    ).toBe(true);
+    expect(snapshot.tools[bashCall.id]).toMatchObject({
+      status: "cancelled",
+      error: "Turn failed before tool completion: injected lifecycle failure: store unavailable",
+    });
+    await host.shutdown();
+  });
+
+  it("rolls back protocol projection state when a durable mutation fails", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const hostedSession = await host.createSession(localCreateInput);
+    await hostedSession.snapshot();
+
+    const toolCall = fauxToolCall("bash", { command: "pwd" }, { id: "rollback-tool" });
+    await hostedSession.enqueueRuntimeEvent({
+      type: "assistant_start",
+      historyEntryId: "assistant-rollback",
+    });
+    await hostedSession.enqueueRuntimeEvent({
+      type: "assistant_partial",
+      historyEntryId: "assistant-rollback",
+      snapshot: {
+        text: "",
+        thinking: "",
+        toolCalls: [toolCall],
+        hasTextStarted: false,
+        hasAnyThinking: false,
+      },
+    });
+
+    vi.spyOn(store, "commitSessionSnapshot").mockRejectedValueOnce(new Error("store failed"));
+    await expect(
+      hostedSession.enqueueRuntimeEvent({
+        type: "tool_run_started",
+        toolCallId: toolCall.id,
+        toolName: toolCall.name,
+        timestamp: 1,
+      }),
+    ).rejects.toThrow("store failed");
+
+    await expect(hostedSession.snapshot()).resolves.toMatchObject({
+      tools: { [toolCall.id]: expect.objectContaining({ status: "queued" }) },
+    });
+    await host.shutdown();
+  });
+
   it("projects tool activity without independently persisting it", async () => {
     const store = new MemorySessionStore();
     const originalCommit = store.commitSessionSnapshot.bind(store);
@@ -1840,7 +2027,7 @@ describe("LocalSessionHost", () => {
     );
   });
 
-  it("does not let an older live snapshot write clobber newer streamed state", async () => {
+  it("orders newer streamed state after an in-flight live snapshot write", async () => {
     const store = new BlockingCommitStore();
     const host = createHost(store);
     const hostedSession = await host.createSession(localCreateInput);
@@ -1867,27 +2054,30 @@ describe("LocalSessionHost", () => {
     const liveSnapshotPromise = hostedSession.snapshot();
     await gate.started;
 
-    await hostedSession.enqueueRuntimeEvent({
+    const laterPartial = hostedSession.enqueueRuntimeEvent({
       type: "assistant_partial",
       historyEntryId: "assistant-live-race",
       snapshot: assistantPartial("hello world"),
     });
 
+    await Promise.resolve();
+    expect(deltas).toHaveLength(2);
     gate.release();
 
     await expect(liveSnapshotPromise).resolves.toEqual(
       expect.objectContaining({
-        revision: 4,
+        revision: 3,
         messages: expect.arrayContaining([
           expect.objectContaining({
             id: "assistant-live-race",
             message: expect.objectContaining({
-              content: [{ type: "text", text: "hello world" }],
+              content: [{ type: "text", text: "hello" }],
             }),
           }),
         ]),
       }),
     );
+    await laterPartial;
 
     await hostedSession.enqueueRuntimeEvent({
       type: "assistant_partial",

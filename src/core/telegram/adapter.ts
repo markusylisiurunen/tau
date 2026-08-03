@@ -739,6 +739,25 @@ function getTelegramSessionCostTotal(snapshot: SessionProtocolSnapshot): number 
   return snapshot.costTotal;
 }
 
+function supportsReasoningEffort(
+  snapshot: SessionProtocolSnapshot,
+  reasoning: SessionProtocolReasoningEffort,
+): boolean {
+  if (!snapshot.bootstrap.model.reasoning) {
+    return false;
+  }
+
+  const persona = snapshot.catalog.personas.find(
+    (candidate) => candidate.id === snapshot.settings.personaId,
+  );
+  if (!persona) {
+    return false;
+  }
+
+  const allowed = persona.allowedReasoningLevels;
+  return !allowed || allowed.length === 0 || allowed.includes(reasoning);
+}
+
 function formatTelegramSessionCost(total: number): string {
   return `$${formatAdaptiveNumber(total, 2, 5)}`;
 }
@@ -2127,6 +2146,15 @@ class TelegramAdapterImpl {
 
     try {
       const sessionManager = this.getSessionManagerForChat(chatId);
+      const snapshot = await sessionManager.getSessionSnapshot(session.id);
+      if (!snapshot) {
+        throw new TelegramSessionManagerError("not_ready", "session is still preparing");
+      }
+      if (!supportsReasoningEffort(snapshot, reasoning)) {
+        await this.reply(chatId, `reasoning effort ${reasoning} is not supported by this session.`);
+        return;
+      }
+
       await sessionManager.setReasoning(session.id, reasoning);
       await this.reply(chatId, `reasoning effort set to ${reasoning}.`);
     } catch (error) {

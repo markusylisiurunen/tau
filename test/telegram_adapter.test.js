@@ -146,7 +146,19 @@ function createStatusSnapshot(overrides = {}) {
         maxTokens: 32000,
       },
     },
-    catalog: { personas: {}, prompts: {}, themes: {}, skills: {}, subagents: {} },
+    catalog: {
+      personas: [
+        {
+          id: "default",
+          label: "Default",
+          allowedReasoningLevels: ["low", "medium", "high", "xhigh"],
+          skills: "*",
+          source: "builtin",
+        },
+      ],
+      prompts: [],
+      skills: [],
+    },
     executionEnvironment: { kind: "local", cwd: "/tmp/project", home: "/tmp" },
     messages: [
       {
@@ -507,6 +519,7 @@ describe("telegram adapter", () => {
           state: "running",
           createdAt: "2024-01-01T00:00:00.000Z",
           updatedAt: "2024-01-01T00:00:00.000Z",
+          snapshot: createStatusSnapshot(),
         },
       ],
       { defaultOwnerId: ownerIdForChat(chatId) },
@@ -535,6 +548,92 @@ describe("telegram adapter", () => {
         "reasoning effort set to high.",
         "reasoning effort set to xhigh.",
       ]);
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it("rejects reasoning efforts unsupported by the active persona or model", async () => {
+    const personaChatId = 21;
+    const modelChatId = 22;
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: {
+            chat: { id: personaChatId, type: "private" },
+            from: { id: 7 },
+            text: "/effort_xhigh",
+          },
+        },
+        {
+          update_id: 2,
+          message: {
+            chat: { id: modelChatId, type: "private" },
+            from: { id: 7 },
+            text: "/effort_low",
+          },
+        },
+      ],
+    ]);
+    const managerHarness = createSessionManagerHarness([
+      {
+        id: "limited-persona-session",
+        projectId: "demo",
+        ownerId: ownerIdForChat(personaChatId),
+        state: "waiting-input",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+        snapshot: createStatusSnapshot({
+          catalog: {
+            personas: [
+              {
+                id: "default",
+                label: "Default",
+                allowedReasoningLevels: ["low", "medium", "high"],
+                skills: "*",
+                source: "builtin",
+              },
+            ],
+            prompts: [],
+            skills: [],
+          },
+        }),
+      },
+      {
+        id: "non-reasoning-session",
+        projectId: "demo",
+        ownerId: ownerIdForChat(modelChatId),
+        state: "waiting-input",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+        snapshot: createStatusSnapshot({
+          bootstrap: {
+            model: {
+              ...createStatusSnapshot().bootstrap.model,
+              reasoning: false,
+            },
+          },
+        }),
+      },
+    ]);
+
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "owner/demo" } },
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() => apiHarness.sendMessages.length === 2);
+      expect(apiHarness.sendMessages.map((entry) => entry.text)).toEqual([
+        "reasoning effort xhigh is not supported by this session.",
+        "reasoning effort low is not supported by this session.",
+      ]);
+      expect(managerHarness.manager.setReasoning).not.toHaveBeenCalled();
     } finally {
       await adapter.close();
     }

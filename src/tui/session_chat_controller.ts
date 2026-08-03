@@ -2179,11 +2179,25 @@ export class SessionChatController {
     review: DiffReviewReturnedReview,
     session: TauSdkSession,
   ): Promise<void> {
-    const result = await session.record(formatDiffReviewUserMessage(review), {
-      historyEntryId: review.historyEntryId,
-    });
-    if (this.session === session) {
-      this.syncRenderedHistory(result.snapshot);
+    try {
+      const result = await session.record(formatDiffReviewUserMessage(review), {
+        historyEntryId: review.historyEntryId,
+      });
+      if (this.session === session) {
+        this.syncRenderedHistory(result.snapshot);
+      }
+    } catch (error) {
+      const reviewWasCommitted =
+        this.session === session &&
+        this.snapshot.messages.some(
+          (entry) =>
+            entry.id === review.historyEntryId &&
+            entry.state === "committed" &&
+            entry.message.role === "user",
+        );
+      if (!reviewWasCommitted) {
+        throw error;
+      }
     }
   }
 

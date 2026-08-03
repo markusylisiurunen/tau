@@ -31,7 +31,7 @@ describe("sdk client integration", () => {
       let unsubscribe = () => {};
 
       try {
-        expect(client.ready.version).toBe(6);
+        expect(client.ready.version).toBe(7);
         await expect(client.sessions.list()).resolves.toEqual([]);
 
         const session = await client.sessions.create(localCreateInput);

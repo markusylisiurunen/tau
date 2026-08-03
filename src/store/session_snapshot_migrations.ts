@@ -2,7 +2,7 @@ import type { SessionProtocolSnapshot } from "../protocol/session_protocol.js";
 import { validateSessionProtocolResult } from "../protocol/session_protocol.js";
 
 export const STORED_SESSION_DOCUMENT_FORMAT = "tau-session" as const;
-export const STORED_SESSION_DOCUMENT_VERSION = 3 as const;
+export const STORED_SESSION_DOCUMENT_VERSION = 4 as const;
 export const LEGACY_SESSION_CONTEXT_EPOCH = "legacy-v3";
 
 export type StoredSessionDocument = {
@@ -17,6 +17,7 @@ const storedSessionMigrations = new Map<number, StoredSessionMigration>([
   [0, migrateStoredSessionV0ToV1],
   [1, migrateStoredSessionV1ToV2],
   [2, migrateStoredSessionV2ToV3],
+  [3, migrateStoredSessionV3ToV4],
 ]);
 
 export class UnsupportedStoredSessionVersionError extends Error {
@@ -119,6 +120,10 @@ function migrateStoredSessionV2ToV3(value: unknown): unknown {
   const snapshot = structuredClone(value);
   snapshot.goal = null;
   return snapshot;
+}
+
+function migrateStoredSessionV3ToV4(value: unknown): unknown {
+  return value;
 }
 
 function removeUnrecoverableAgentPresentation(snapshot: Record<string, unknown>): void {

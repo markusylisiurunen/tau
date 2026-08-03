@@ -3548,6 +3548,66 @@ describe("SessionChatController", () => {
     );
   });
 
+  it("keeps a returned diff review committed when its delta arrives before record rejects", async () => {
+    const session = new FakeSession();
+    session.record = vi.fn(async (text, options = {}) => {
+      const historyEntryId = options.historyEntryId;
+      const message = {
+        id: historyEntryId,
+        state: "committed",
+        modelVisible: true,
+        message: {
+          role: "user",
+          content: [{ type: "text", text }],
+          timestamp: 1,
+        },
+      };
+      const delta = createMessageAppendDelta(session.id, session.snapshotValue.revision, message);
+      session.snapshotValue = applySessionProtocolDelta(session.snapshotValue, delta);
+      for (const listener of session.listeners) {
+        listener(delta);
+      }
+      throw new Error("connection closed");
+    });
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "ssh host tau rpc",
+      defaultDiffTool: { command: "inline-diff-tool" },
+      diffToolLauncher: launchInlineDiffTool,
+    });
+    controller.start();
+
+    await controller.onUserInput("/diff -- src/main.ts");
+
+    expect(view.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          model: {
+            type: "user",
+            text: "returned review from local diff tool",
+            kind: "review",
+          },
+        }),
+      ]),
+    );
+    expect(view.messages.some((message) => message.model.status === "failed")).toBe(false);
+    expect(view.systems).toContainEqual(
+      expect.objectContaining({
+        kind: "success",
+        text: "diff review added to the conversation. tau did not run yet.",
+      }),
+    );
+    expect(view.systems).not.toContainEqual(
+      expect.objectContaining({
+        kind: "error",
+        text: expect.stringContaining("connection closed"),
+      }),
+    );
+  });
+
   it("blocks prompts and session replacement until a local diff review is recorded", async () => {
     const session = new FakeSession();
     const nextSession = new FakeSession();

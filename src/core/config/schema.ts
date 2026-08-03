@@ -12,7 +12,12 @@ import { parseSubagentLaunchModelList } from "../subagents/launch_model.js";
 import { REASONING_LEVELS } from "../types.js";
 import { normalizeModelNoticeKey, parseModelNoticeKey } from "../utils/model_notices.js";
 import type { CommandClientToolConfig } from "./client_tools.js";
-import { parseCommandClientToolsConfig, resolveCommandClientToolsConfig } from "./client_tools.js";
+import {
+  parseCommandClientToolsConfig,
+  parseEnabledClientToolsConfig,
+  resolveCommandClientToolsConfig,
+  selectCommandClientTools,
+} from "./client_tools.js";
 import type { ConfigDeps } from "./deps.js";
 import type { DiffToolConfig } from "./diff_tool.js";
 import { parseDiffToolConfig, resolveDiffToolConfig } from "./diff_tool.js";
@@ -29,6 +34,7 @@ export interface Config {
   diffTool?: DiffToolConfig;
   builtInDiffTool?: BuiltInDiffToolConfig;
   clientTools?: CommandClientToolConfig[];
+  enabledClientTools?: string[];
   agentContextFiles?: string[];
   subagents?: {
     defaultLaunchModels?: string[];
@@ -451,6 +457,22 @@ function validateConfigData(
       "clientTools",
       clientToolsResult.config,
       clientToolsResult.errors,
+    );
+  }
+
+  if (data.enabledClientTools !== undefined && options.scope !== "project") {
+    errors.push(`${sourceLabel}: 'enabledClientTools' may only be configured in project config.`);
+  } else {
+    const enabledClientToolsResult = parseEnabledClientToolsConfig(
+      data.enabledClientTools,
+      sourceLabel,
+    );
+    assignParsedConfigValue(
+      config,
+      errors,
+      "enabledClientTools",
+      enabledClientToolsResult.config,
+      enabledClientToolsResult.errors,
     );
   }
 
@@ -955,6 +977,7 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
   let diffTool: DiffToolConfig | undefined;
   let builtInDiffTool: BuiltInDiffToolConfig | undefined;
   let clientTools: CommandClientToolConfig[] | undefined;
+  let enabledClientTools: string[] | undefined;
   let subagents: Config["subagents"] | undefined;
   let modelSystemNotices: Config["modelSystemNotices"] | undefined;
   let speechToText: SpeechToTextConfig | undefined;
@@ -976,6 +999,9 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
     }
     if (config.clientTools !== undefined) {
       clientTools = resolveCommandClientToolsConfig(level, config.clientTools);
+    }
+    if (config.enabledClientTools !== undefined) {
+      enabledClientTools = [...config.enabledClientTools];
     }
     subagents = mergeSubagentsConfig(subagents, config.subagents);
     if (config.autoCompact !== undefined) {
@@ -1025,7 +1051,10 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
   }
 
   if (clientTools) {
-    merged.clientTools = clientTools;
+    const selectedClientTools = selectCommandClientTools(clientTools, enabledClientTools);
+    if (selectedClientTools.length > 0) {
+      merged.clientTools = selectedClientTools;
+    }
   }
 
   if (subagents && Object.keys(subagents).length > 0) {

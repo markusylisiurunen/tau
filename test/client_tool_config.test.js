@@ -44,9 +44,9 @@ function setupFixture() {
   };
 }
 
-function loadFixtureConfig(fixture) {
-  const deps = createConfigDeps({ cwd: fixture.repo, home: fixture.home });
-  const levels = resolveConfigLevels(deps, { cwd: fixture.repo });
+function loadFixtureConfig(fixture, cwd = fixture.repo) {
+  const deps = createConfigDeps({ cwd, home: fixture.home });
+  const levels = resolveConfigLevels(deps, { cwd });
   const modelResolver = loadModelResolver({ deps, levels });
   return loadConfigWithDiagnostics(deps, { levels, modelResolver });
 }
@@ -60,6 +60,16 @@ const parameters = {
   additionalProperties: false,
 };
 
+function createClientTool(name, defaultEnabled) {
+  return {
+    name,
+    defaultEnabled,
+    description: `${name} tool`,
+    parameters,
+    command: name,
+  };
+}
+
 describe("command client tool config", () => {
   it("loads global tools and resolves relative commands from home", () => {
     const fx = setupFixture();
@@ -71,6 +81,7 @@ describe("command client tool config", () => {
           clientTools: [
             {
               name: "notify",
+              defaultEnabled: true,
               description: "Show a local notification.",
               parameters,
               command: "./tools/notify",
@@ -88,6 +99,7 @@ describe("command client tool config", () => {
       expect(result.config.clientTools).toEqual([
         {
           name: "notify",
+          defaultEnabled: true,
           description: "Show a local notification.",
           parameters,
           command: join(fx.home, "tools", "notify"),
@@ -96,6 +108,78 @@ describe("command client tool config", () => {
           executionTimeoutMs: 5000,
         },
       ]);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("uses default-enabled tools when the workspace has no explicit selection", () => {
+    const fx = setupFixture();
+
+    try {
+      writeFileSync(
+        join(fx.home, ".config", "tau", "config.json"),
+        JSON.stringify({
+          clientTools: [createClientTool("notify", true), createClientTool("deploy", false)],
+        }),
+      );
+
+      const result = loadFixtureConfig(fx);
+
+      expect(result.errors).toEqual([]);
+      expect(result.config.clientTools?.map((tool) => tool.name)).toEqual(["notify"]);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("uses the most specific workspace allowlist and skips unknown tool names", () => {
+    const fx = setupFixture();
+    const nested = join(fx.repo, "packages", "app");
+
+    try {
+      mkdirSync(join(nested, ".tau"), { recursive: true });
+      writeFileSync(
+        join(fx.home, ".config", "tau", "config.json"),
+        JSON.stringify({
+          clientTools: [createClientTool("notify", true), createClientTool("deploy", false)],
+        }),
+      );
+      writeFileSync(
+        join(fx.repo, ".tau", "config.json"),
+        JSON.stringify({ enabledClientTools: ["notify"] }),
+      );
+      writeFileSync(
+        join(nested, ".tau", "config.json"),
+        JSON.stringify({ enabledClientTools: ["deploy", "missing"] }),
+      );
+
+      const result = loadFixtureConfig(fx, nested);
+
+      expect(result.errors).toEqual([]);
+      expect(result.config.clientTools?.map((tool) => tool.name)).toEqual(["deploy"]);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("allows a workspace to disable all configured client tools", () => {
+    const fx = setupFixture();
+
+    try {
+      writeFileSync(
+        join(fx.home, ".config", "tau", "config.json"),
+        JSON.stringify({ clientTools: [createClientTool("notify", true)] }),
+      );
+      writeFileSync(
+        join(fx.repo, ".tau", "config.json"),
+        JSON.stringify({ enabledClientTools: [] }),
+      );
+
+      const result = loadFixtureConfig(fx);
+
+      expect(result.errors).toEqual([]);
+      expect(result.config.clientTools).toBeUndefined();
     } finally {
       fx.cleanup();
     }
@@ -130,7 +214,7 @@ describe("command client tool config", () => {
     }
   });
 
-  it("keeps valid tools while reporting invalid and duplicate entries", () => {
+  it("requires each global tool to declare whether it is enabled by default", () => {
     const fx = setupFixture();
 
     try {
@@ -144,20 +228,53 @@ describe("command client tool config", () => {
               parameters,
               command: "notify",
             },
+          ],
+        }),
+      );
+
+      const result = loadFixtureConfig(fx);
+
+      expect(result.config.clientTools).toBeUndefined();
+      expect(result.errors).toEqual([
+        `${join(fx.home, ".config", "tau", "config.json")}: clientTools[0].defaultEnabled must be a boolean.`,
+      ]);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("keeps valid tools while reporting invalid and duplicate entries", () => {
+    const fx = setupFixture();
+
+    try {
+      writeFileSync(
+        join(fx.home, ".config", "tau", "config.json"),
+        JSON.stringify({
+          clientTools: [
             {
               name: "notify",
+              defaultEnabled: true,
+              description: "Show a local notification.",
+              parameters,
+              command: "notify",
+            },
+            {
+              name: "notify",
+              defaultEnabled: true,
               description: "Duplicate.",
               parameters,
               command: "duplicate",
             },
             {
               name: "bad_schema",
+              defaultEnabled: true,
               description: "Invalid schema.",
               parameters: { type: "string" },
               command: "bad",
             },
             {
               name: "bad_nested_schema",
+              defaultEnabled: true,
               description: "Invalid nested schema.",
               parameters: {
                 type: "object",
@@ -167,6 +284,7 @@ describe("command client tool config", () => {
             },
             {
               name: "bad_pattern",
+              defaultEnabled: true,
               description: "Invalid pattern.",
               parameters: {
                 type: "object",
@@ -176,6 +294,7 @@ describe("command client tool config", () => {
             },
             {
               name: "bad_pattern_properties",
+              defaultEnabled: true,
               description: "Invalid pattern properties.",
               parameters: {
                 type: "object",

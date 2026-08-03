@@ -5,6 +5,7 @@ import type { ConfigLevel } from "./paths.js";
 
 export type CommandClientToolConfig = {
   name: string;
+  defaultEnabled: boolean;
   description: string;
   parameters: TSchema;
   command: string;
@@ -108,6 +109,7 @@ const commandClientToolParametersSchema = z
 const CommandClientToolSchema = z
   .object({
     name: z.string().trim().min(1),
+    defaultEnabled: z.boolean(),
     description: z.string().trim().min(1),
     parameters: commandClientToolParametersSchema,
     command: z.string().trim().min(1),
@@ -161,6 +163,49 @@ export function parseCommandClientToolsConfig(
   };
 }
 
+export function parseEnabledClientToolsConfig(
+  raw: unknown,
+  sourceLabel: string,
+): { config?: string[]; errors: string[] } {
+  if (raw === undefined) {
+    return { errors: [] };
+  }
+  if (!Array.isArray(raw)) {
+    return { errors: [`${sourceLabel}: 'enabledClientTools' must be an array.`] };
+  }
+
+  const config: string[] = [];
+  const errors: string[] = [];
+  const names = new Set<string>();
+
+  for (const [index, entry] of raw.entries()) {
+    if (typeof entry !== "string" || entry.trim().length === 0) {
+      errors.push(`${sourceLabel}: enabledClientTools[${index}] must be a non-empty string.`);
+      continue;
+    }
+
+    const name = entry.trim();
+    if (!names.has(name)) {
+      names.add(name);
+      config.push(name);
+    }
+  }
+
+  return { config, errors };
+}
+
+export function selectCommandClientTools(
+  tools: CommandClientToolConfig[],
+  enabledNames?: string[],
+): CommandClientToolConfig[] {
+  if (enabledNames === undefined) {
+    return tools.filter((tool) => tool.defaultEnabled);
+  }
+
+  const enabled = new Set(enabledNames);
+  return tools.filter((tool) => enabled.has(tool.name));
+}
+
 export function resolveCommandClientToolsConfig(
   level: ConfigLevel,
   config: CommandClientToolConfig[],
@@ -180,6 +225,8 @@ function formatClientToolIssue(
   switch (field) {
     case "name":
       return "must be a non-empty string";
+    case "defaultEnabled":
+      return "must be a boolean";
     case "description":
       return "must be a non-empty string";
     case "parameters":

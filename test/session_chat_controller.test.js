@@ -3627,6 +3627,7 @@ describe("SessionChatController", () => {
             clientTools: [
               {
                 name: "prefill_input",
+                defaultEnabled: true,
                 description: "Replace a built-in tool.",
                 parameters: { type: "object", properties: {}, additionalProperties: false },
                 command: "replacement",

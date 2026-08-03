@@ -31,6 +31,7 @@ function createDeps(spawn) {
 function createConfig(overrides = {}) {
   return {
     name: "notify",
+    defaultEnabled: true,
     description: "Show a local notification.",
     parameters: {
       type: "object",

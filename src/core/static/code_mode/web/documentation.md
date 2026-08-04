@@ -19,7 +19,7 @@ The API is designed for agent workflows and defaults to token-efficient retrieva
 
 ## `web.discover(url)`
 
-Use discovery as a separate first step when the user provides a specific URL and a direct agent-friendly representation may exist. Also use it when search results identify an official documentation site: discover the relevant result or documentation root before retrieving individual pages. Print a concise discovery report, then decide in the next turn whether to use `curl`, `web.fetch`, or another approach.
+Use discovery as a separate first step when the user provides a specific URL and a direct agent-friendly representation may exist. Also use it when search results identify an official documentation site: discover the relevant result or documentation root before retrieving individual pages. Print a concise discovery report before retrieving content in the next turn. If discovery advertises a Markdown representation or `llms.txt` file, end the web call and retrieve that URL in a separate Bash call with `curl`. Never pass a discovered Markdown or `llms.txt` URL to `web.fetch`.
 
 ```js
 const discovery = await web.discover("https://example.com/docs/getting-started");
@@ -74,7 +74,7 @@ curl -fsSL -H 'Accept: text/markdown' \
   'https://example.com/docs/getting-started/index.md'
 ```
 
-For content negotiation, request the original URL with the same header. Use `web.fetch` instead when extraction through the web search infrastructure is preferable.
+For content negotiation, request the original URL with the same header. Do not use `web.fetch` for either explicit or content-negotiated Markdown resources. `web.fetch` uses the web extraction service rather than direct HTTP and is the fallback for ordinary pages when no suitable agent-friendly resource exists or extraction is preferable.
 
 ### Documentation research
 
@@ -82,8 +82,8 @@ When researching product or library documentation:
 
 1. If you do not know the official documentation URL, find it with `web.search`.
 2. Run `web.discover` on the relevant official result or documentation root and print the discovery report.
-3. In the next turn, prefer an advertised Markdown representation or retrieve `llms.txt` as an index, then retrieve only the relevant Markdown pages.
-4. Fall back to `web.fetch` when no suitable agent-friendly resource exists or extraction is preferable.
+3. In the next turn, retrieve an advertised Markdown representation or `llms.txt` index with `curl`, then retrieve only the relevant Markdown pages with `curl`.
+4. Fall back to `web.fetch` only for ordinary pages when no suitable agent-friendly resource exists or extraction is preferable.
 
 Do not treat search-result highlights as the primary documentation source when the site advertises agent-friendly resources.
 
@@ -140,7 +140,7 @@ Results are relevance ordered. Check `statuses` when inline content is important
 
 ## `web.fetch(urls, options?)`
 
-Retrieve content from one URL or an array of up to 100 URLs. Each URL may contain up to 2,048 characters.
+Retrieve extracted content from one ordinary web page URL or an array of up to 100 ordinary page URLs. Each URL may contain up to 2,048 characters. This API uses the web extraction service rather than direct HTTP. Never pass a discovered Markdown representation or `llms.txt` URL to `web.fetch`; retrieve it in a separate Bash call with `curl`.
 
 ```js
 const response = await web.fetch("https://example.com/article", {
@@ -165,7 +165,7 @@ Use highlights for focused questions and multi-step research. Use bounded text w
 ```js
 const response = await web.fetch(urls, {
   mode: "text",
-  maxCharacters: 12_000,
+  maxCharacters: 10_000,
 });
 ```
 
@@ -241,7 +241,7 @@ for (const representation of discovery.markdown) {
 for (const file of discovery.llmsTxt) console.log(`llms.txt: ${file.url}`);
 ```
 
-Retrieve the selected Markdown representation or `llms.txt` in the next turn. For ordinary pages without agent-friendly resources, use `web.fetch` on the relevant search results instead.
+In the next turn, retrieve the selected Markdown representation or `llms.txt` with `curl` in a separate Bash call. Never pass those URLs to `web.fetch`. For ordinary pages without agent-friendly resources, use `web.fetch` on the relevant search results instead.
 
 ## Output guidance
 

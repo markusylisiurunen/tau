@@ -66,7 +66,7 @@ WebSocket clients receive the same `ready`, `response`, `session.delta`, and `se
 every protocol message includes `version`.
 
 ```json
-{ "version": 7, "type": "..." }
+{ "version": 8, "type": "..." }
 ```
 
 server-to-client messages are:
@@ -87,7 +87,7 @@ when the rpc server starts, it immediately emits a `ready` line:
 
 ```json
 {
-  "version": 7,
+  "version": 8,
   "type": "ready",
   "methods": [
     "initialize",
@@ -155,7 +155,7 @@ all requests use this envelope:
 
 ```json
 {
-  "version": 7,
+  "version": 8,
   "type": "request",
   "id": "req-1",
   "method": "session.submit",
@@ -188,12 +188,12 @@ params (required):
 
 ```json
 {
-  "version": 7,
+  "version": 8,
   "type": "response",
   "id": "init-1",
   "ok": true,
   "result": {
-    "protocolVersion": 7,
+    "protocolVersion": 8,
     "methods": [
       "initialize",
       "session.create",
@@ -437,7 +437,7 @@ if another turn is already running, tau returns:
 
 ```json
 {
-  "version": 7,
+  "version": 8,
   "type": "response",
   "id": "submit-2",
   "ok": false,
@@ -881,7 +881,7 @@ observed-session changes are broadcast as `session.delta` messages:
 
 ```json
 {
-  "version": 7,
+  "version": 8,
   "type": "session.delta",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "fromRevision": 1,
@@ -905,7 +905,7 @@ observed-session changes are broadcast as `session.delta` messages:
 
 ```json
 {
-  "version": 7,
+  "version": 8,
   "type": "session.delta",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "fromRevision": null,
@@ -936,7 +936,7 @@ notes:
 
 ```json
 {
-  "version": 7,
+  "version": 8,
   "type": "session.pendingUserMessages",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "state": {
@@ -959,7 +959,7 @@ Pending messages are shared across attached clients and survive client detach wh
 
 ```json
 {
-  "version": 7,
+  "version": 8,
   "type": "session.ephemeral",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "event": {
@@ -990,7 +990,7 @@ error responses use:
 
 ```json
 {
-  "version": 7,
+  "version": 8,
   "type": "response",
   "id": "req-1",
   "ok": false,

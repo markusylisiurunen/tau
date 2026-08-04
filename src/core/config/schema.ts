@@ -1248,13 +1248,14 @@ export function getHistoryApiKey(
   config: HistoryConfig,
   env?: NodeJS.ProcessEnv,
 ): string | undefined {
+  const standardEnvSecret = getTrimmedEnvValue("TAU_HISTORY_API_KEY", env);
+  if (standardEnvSecret) return standardEnvSecret;
   const envName = config.apiKeyEnv?.trim();
   if (envName) {
     const envSecret = getTrimmedEnvValue(envName, env);
     if (envSecret) return envSecret;
   }
-  const standardEnvSecret = getTrimmedEnvValue("TAU_HISTORY_API_KEY", env);
-  return (standardEnvSecret ?? config.apiKey?.trim()) || undefined;
+  return config.apiKey?.trim() || undefined;
 }
 
 export function getNookAccessClientSecret(

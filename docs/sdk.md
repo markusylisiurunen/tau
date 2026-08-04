@@ -404,7 +404,7 @@ const second = await session.sample({
 
 ```json
 {
-  "version": 7,
+  "version": 8,
   "type": "session.delta",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "fromRevision": 1,

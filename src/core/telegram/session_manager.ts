@@ -11,6 +11,7 @@ import type {
   SessionProtocolFacet,
   SessionProtocolInterruptResult,
   SessionProtocolMessage,
+  SessionProtocolNotice,
   SessionProtocolReasoningEffort,
   SessionProtocolSettingsUpdateResult,
   SessionProtocolSnapshot,
@@ -259,6 +260,7 @@ type SessionEntry = {
   workspaceCleanupPromise?: Promise<void>;
   consumedFacetEventCounts: Map<string, number>;
   emittedAssistantMessageIds: Set<string>;
+  emittedNoticeIds: Set<string>;
   emittedTurnFailureIds: Set<string>;
 };
 
@@ -296,6 +298,14 @@ export type TelegramSessionManagerEvent =
       projectId: string;
       timestamp: string;
       failure: Extract<SessionProtocolSubmitResult["turn"], { status: "failed" | "blocked" }>;
+    }
+  | {
+      type: "session-notice";
+      sessionId: string;
+      projectId: string;
+      timestamp: string;
+      severity: "warn" | "error";
+      text: string;
     }
   | {
       type: "session-progress";
@@ -471,6 +481,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       cancelRequested: false,
       consumedFacetEventCounts: new Map(),
       emittedAssistantMessageIds: new Set(),
+      emittedNoticeIds: new Set(),
       emittedTurnFailureIds: new Set(),
     };
 
@@ -692,6 +703,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
         cancelRequested: false,
         consumedFacetEventCounts: new Map(),
         emittedAssistantMessageIds: new Set(),
+        emittedNoticeIds: new Set(),
         emittedTurnFailureIds: new Set(),
       };
       this.sessions.set(record.id, entry);
@@ -822,6 +834,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     entry.unsubscribeClientEvents = tauSession.onDelta((event) => {
       this.handleClientEvent(entry, event);
     });
+    this.handleSnapshotNotices(entry, await tauSession.snapshot());
     entry.record.error = undefined;
     this.setState(entry, "waiting-input");
     this.log(entry, "info", "session recovered", { tauSessionId, workspacePath });
@@ -934,6 +947,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       entry.unsubscribeClientEvents = tauSession.onDelta((event) => {
         this.handleClientEvent(entry, event);
       });
+      this.handleSnapshotNotices(entry, await tauSession.snapshot());
 
       this.log(entry, "info", "session preparation complete", {
         durationMs: elapsedMs(sessionPreparationStart),
@@ -1444,6 +1458,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
 
   private handleClientEvent(entry: SessionEntry, clientEvent: TelegramSessionClientEvent): void {
     if (clientEvent.delta.type === "snapshot.reset") {
+      this.handleSnapshotNotices(entry, clientEvent.delta.snapshot);
       if (clientEvent.reason !== "assistant-message") {
         return;
       }
@@ -1464,6 +1479,10 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
         this.handleFacetProgress(entry, change.facet);
         continue;
       }
+      if (change.type === "timeline.append" && change.item.type === "notice") {
+        this.handleNotice(entry, change.item.id, change.item.notice);
+        continue;
+      }
 
       if (clientEvent.reason !== "assistant-message") {
         continue;
@@ -1473,6 +1492,29 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
         this.handleAssistantMessageProgress(entry, change.message);
       }
     }
+  }
+
+  private handleSnapshotNotices(entry: SessionEntry, snapshot: SessionProtocolSnapshot): void {
+    for (const item of snapshot.timeline) {
+      if (item.type === "notice") {
+        this.handleNotice(entry, item.id, item.notice);
+      }
+    }
+  }
+
+  private handleNotice(entry: SessionEntry, id: string, notice: SessionProtocolNotice): void {
+    if (notice.severity === "info" || entry.emittedNoticeIds.has(id)) {
+      return;
+    }
+    entry.emittedNoticeIds.add(id);
+    this.emit({
+      type: "session-notice",
+      sessionId: entry.record.id,
+      projectId: entry.record.projectId,
+      timestamp: this.now().toISOString(),
+      severity: notice.severity,
+      text: notice.text,
+    });
   }
 
   private handleAssistantMessageProgress(

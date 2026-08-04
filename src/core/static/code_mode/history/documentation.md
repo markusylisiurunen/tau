@@ -55,9 +55,9 @@ const conversational = page.entries.filter((entry) => entry.type !== "tool");
 console.log(conversational);
 ```
 
-`sessionId` is required. `limit` defaults to 50 and is bounded to 100. Use the opaque `nextCursor` to continue in transcript order.
+`sessionId` is required. `limit` defaults to 50 and is bounded to 100. It is an upper bound rather than a guaranteed page size: remote pages may contain fewer entries to stay within the response byte budget. Use the opaque `nextCursor` to continue in transcript order. Only the absence of `nextCursor` means the transcript is exhausted.
 
-The transcript is a flat list. Text entries have `type: "user" | "assistant"` and `content`. Tool entries have `type: "tool"`, `name`, `arguments`, `result`, and `outcome`. Every entry also has `id`, `sourceIds`, and `timestamp`. A transcript represents the active conversation, so content removed by rewind is absent. Compaction does not remove original transcript entries.
+The transcript is a flat list. Text entries have `type: "user" | "assistant"` and `content`. Tool entries have `type: "tool"`, `name`, `arguments`, `result`, and `outcome`. Every entry also has `id`, `sourceIds`, and `timestamp`. A transcript represents the active conversation, so content removed by rewind is absent. Compaction does not remove original transcript entries. Machine-local entries retain complete payloads. In a shared remote collection, entries larger than 1 MiB serialize and middle-truncate oversized payload fields with an explicit marker while preserving entry identity and metadata.
 
 ## Filtering and pagination
 

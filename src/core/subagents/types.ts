@@ -2,6 +2,7 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import {
   TOOL_NAME_BASH,
   TOOL_NAME_EDIT,
+  TOOL_NAME_HISTORY,
   TOOL_NAME_VIEW_IMAGE,
   TOOL_NAME_WEB,
   TOOL_NAME_WRITE,
@@ -18,6 +19,7 @@ export const SUBAGENT_TOOL_NAMES = [
   TOOL_NAME_EDIT,
   TOOL_NAME_VIEW_IMAGE,
   TOOL_NAME_WEB,
+  TOOL_NAME_HISTORY,
 ] as const;
 
 export type SubagentToolName = (typeof SUBAGENT_TOOL_NAMES)[number];

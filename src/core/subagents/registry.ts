@@ -1,6 +1,7 @@
 import {
   TOOL_NAME_BASH,
   TOOL_NAME_EDIT,
+  TOOL_NAME_HISTORY,
   TOOL_NAME_VIEW_IMAGE,
   TOOL_NAME_WEB,
   TOOL_NAME_WRITE,
@@ -21,6 +22,7 @@ const INHERITABLE_TOOL_NAMES = new Set<SubagentToolName>([
   TOOL_NAME_EDIT,
   TOOL_NAME_VIEW_IMAGE,
   TOOL_NAME_WEB,
+  TOOL_NAME_HISTORY,
 ]);
 
 function normalizeTools(tools: SubagentToolName[]): SubagentToolName[] {

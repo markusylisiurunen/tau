@@ -21,10 +21,7 @@ import type { Config } from "./core/config/schema.js";
 import { loadConfig } from "./core/config/schema.js";
 import { resolveHistoryRemoteTarget } from "./core/history/config.js";
 import { HistoryManager } from "./core/history/history_manager.js";
-import {
-  getDefaultHistoryDatabasePath,
-  LocalHistoryStore,
-} from "./core/history/local_history_store.js";
+import { getDefaultHistoryDatabasePath } from "./core/history/local_history_store.js";
 import { getStartupPlatformError } from "./core/platform_support.js";
 import type { PromptTemplate } from "./core/prompts.js";
 import { createDefaultCoreDeps } from "./core/runtime/deps.js";
@@ -557,7 +554,7 @@ async function createLocalSessionHost(options: {
 
   return new LocalSessionHost({
     store: new FileSessionStore({ directory: getDefaultSessionStoreDirectory(home) }),
-    history: new HistoryManager(new LocalHistoryStore(getDefaultHistoryDatabasePath(home))),
+    history: HistoryManager.open(getDefaultHistoryDatabasePath(home)),
     historyRemote: resolveHistoryRemoteTarget(options.config),
     executionEnvironmentResolver: new CompositeExecutionEnvironmentResolver(resolvers),
     includeAgentContext: !options.cli.noAgentContextFiles,
@@ -1140,7 +1137,7 @@ if (cli.debug) {
           config,
           persona: debugPersona,
           modelResolver: runtimeBootstrap.modelResolver.resolveModel,
-          history: new LocalHistoryStore(getDefaultHistoryDatabasePath()),
+          history: HistoryManager.open(getDefaultHistoryDatabasePath()).query(),
         })
       : new ToolRegistry([]);
   printDebugInfo({

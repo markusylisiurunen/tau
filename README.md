@@ -181,9 +181,9 @@ tau tool pdf-unpack ./docs/spec.pdf
 
 Tau records every session to a machine-local SQLite history database independently of the resumable session snapshot. History retains committed user text (including leading `<system>` blocks), assistant preambles and responses, and completed tool calls with their full results. Rewind removes the superseded suffix, while compaction does not remove original transcript entries.
 
-Built-in personas include the read-only `history` code-mode tool. Its `history.search()` and `history.read()` APIs provide global access to bounded transcript results across repositories and execution environments; ordinary JavaScript can further filter and project them.
+Built-in personas include the read-only `history` code-mode tool, and their subagents inherit it by default. Custom subagents can include or exclude it in their `tools` list like `bash` or `web`. Its `history.search()` and `history.read()` APIs provide global access to bounded transcript results across repositories and execution environments; ordinary JavaScript can further filter and project them. If local history initialization or projection fails, Tau keeps the session running, persists one warning notice for clients (including Telegram), and makes history unavailable for that process.
 
-A bundled single-owner Cloudflare service can combine histories from several Tau hosts and generate searchable session titles and summaries with Cloudflare AI using GPT-5.6 Luna at medium reasoning effort. It requires the **Workers Paid** plan so indefinite retention, FTS queries, replication batches, and digest processing use the paid D1/Worker limits rather than the free plan's 500 MB per-database, 50-query, and 10 ms CPU ceilings.
+A bundled single-owner Cloudflare service can combine histories from several Tau hosts and generate searchable session titles and summaries with Cloudflare AI using GPT-5.6 Luna at medium reasoning effort. Digest generation normally sends the full transcript after middle-truncating each tool result to roughly 512 estimated tokens; documented context-overflow errors trigger recursive halving through at most three levels before final synthesis. It requires the **Workers Paid** plan so indefinite retention, FTS queries, replication batches, and digest processing use the paid D1/Worker limits rather than the free plan's 500 MB per-database, 50-query, and 10 ms CPU ceilings.
 
 ```sh
 export CLOUDFLARE_API_TOKEN=...
@@ -202,7 +202,7 @@ Configure the endpoint only in global Tau config:
 }
 ```
 
-Without `history` config, capture and queries remain machine-local. With a remote target, Tau writes locally first and forwards ordered, idempotent append/truncate operations asynchronously; remote outages never block session execution. `tau history destroy --yes` removes the bundled Worker and D1 database.
+Without `history` config, capture and queries remain machine-local. With a remote target, Tau writes locally first and forwards ordered, idempotent append/truncate operations asynchronously; remote outages never block session execution. Local entries remain complete, while remote entries larger than 1 MiB middle-truncate oversized payload fields with an explicit marker, and append operations stay below the replication byte budget. `tau history destroy --yes` removes the bundled Worker and D1 database.
 
 ## Nook static mini-apps
 
@@ -748,7 +748,7 @@ optional frontmatter fields:
 - `allowedReasoningLevels`: list of reasoning levels shown in the ui
 - `skills`: list of enabled skill names (matched by `name` in skill frontmatter), or `"*"` to enable all discovered skills. if omitted, custom personas default to `"*"`. set `skills: []` to disable skills completely.
 - `tools`: optional list of persona-selected host tools. `nook` additionally requires effective Nook configuration before it becomes available.
-- `subagents`: optional map of subagent definitions. the built-in `default` sub-agent is implicit unless `default: false` is provided. custom subagents must include `systemPrompt` and may include `description`, `provider`+`model`, `reasoning`, `serviceTier`, `tools`, and `launchModels` (when specifying a model, `provider` and `model` must be provided together). names must be lowercase with dashes (max 64 chars). `launchModels` entries must use `<provider>/<model>:<effort>` and are used to allowlist launch-time `spawn_agent` overrides. example:
+- `subagents`: optional map of subagent definitions. the built-in `default` sub-agent is implicit unless `default: false` is provided. custom subagents must include `systemPrompt` and may include `description`, `provider`+`model`, `reasoning`, `serviceTier`, `tools`, and `launchModels` (when specifying a model, `provider` and `model` must be provided together). subagent `tools` accepts `bash`, `write`, `edit`, `view_image`, `web`, and `history`; when omitted, eligible main-persona tools are inherited. names must be lowercase with dashes (max 64 chars). `launchModels` entries must use `<provider>/<model>:<effort>` and are used to allowlist launch-time `spawn_agent` overrides. example:
   ```yaml
   subagents:
     default: false

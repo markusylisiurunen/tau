@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { AgentRuntime, type AgentTurnResult, createAgentSpec } from "../agent/agent_runtime.js";
 import type { AgentEvent } from "../agent/events.js";
 import type { Config } from "../config/index.js";
+import type { HistoryQuery } from "../history/types.js";
 import { resolveAgentModel } from "../runtime/agent_model.js";
 import { type CoreDeps, createDefaultCoreDeps } from "../runtime/deps.js";
 import { createAutoCompactionArchiver } from "../session/auto_compaction_archive.js";
@@ -138,6 +139,7 @@ export class AgentSupervisor {
     originHistoryEntryId: string;
     config: Config;
     backend: ToolExecutionBackend;
+    history?: HistoryQuery;
     personaId?: string;
   }): SubagentSpawnResult {
     if (this.getActiveCount() >= MAX_ACTIVE_SUBAGENTS) {
@@ -177,6 +179,7 @@ export class AgentSupervisor {
           options.backend,
           workingDirectory,
           options.config,
+          options.history,
         ),
       }),
       eventSink: async (event) => await this.recordAgentEvent(id, event),

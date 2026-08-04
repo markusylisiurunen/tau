@@ -7,6 +7,7 @@ type Env = {
 type D1Database = {
   exec(query: string): Promise<unknown>;
   prepare(query: string): D1PreparedStatement;
+  batch(statements: D1PreparedStatement[]): Promise<unknown[]>;
 };
 
 type D1PreparedStatement = {
@@ -22,6 +23,13 @@ type Ai = {
 
 type ExecutionContext = {
   waitUntil(promise: Promise<unknown>): void;
+};
+
+type Digest = { title: string; summary: string };
+
+type DigestEntryRow = {
+  position: number;
+  payload_json: string;
 };
 
 type HistoryEntry = {
@@ -52,9 +60,14 @@ const MAX_OPERATIONS = 10;
 const MAX_ENTRIES_PER_OPERATION = 25;
 const MAX_SEARCH_LIMIT = 100;
 const MAX_READ_LIMIT = 100;
+const MAX_READ_PAGE_PAYLOAD_BYTES = 12 * 1024 * 1024;
 const SHORT_SESSION_ENTRIES = 12;
 const ESTABLISHED_REFRESH_CHARS = 4_000;
-const DIGEST_CHUNK_CHARS = 300_000;
+const DIGEST_BYTES_PER_TOKEN = 6;
+const DIGEST_TOOL_RESULT_MAX_BYTES = 512 * DIGEST_BYTES_PER_TOKEN;
+const DIGEST_SOURCE_PAGE_SIZE = 8;
+const DIGEST_SOURCE_MAX_BYTES = 12 * 1024 * 1024;
+const DIGEST_MAX_SPLIT_DEPTH = 3;
 
 let initialization: Promise<void> | undefined;
 
@@ -189,13 +202,15 @@ async function initialize(database: D1Database): Promise<void> {
   await initialization;
 }
 
-async function applyOperation(database: D1Database, operation: Operation): Promise<boolean> {
+export async function applyOperation(database: D1Database, operation: Operation): Promise<boolean> {
   const existing = await database
     .prepare("SELECT 1 AS found FROM operations WHERE operation_id = ?")
     .bind(operation.id)
     .first();
   if (existing) return false;
 
+  const statements: D1PreparedStatement[] = [];
+  const appliedAt = Date.now();
   if (operation.type === "create") {
     const attributesJson = stableJson(operation.session.attributes);
     const session = await database
@@ -210,23 +225,25 @@ async function applyOperation(database: D1Database, operation: Operation): Promi
         throw new Error(`session '${operation.sessionId}' has conflicting immutable data`);
       }
     } else {
-      await database
-        .prepare(
-          "INSERT INTO sessions (session_id, attributes_json, created_at, updated_at) VALUES (?, ?, ?, ?)",
-        )
-        .bind(
-          operation.sessionId,
-          attributesJson,
-          operation.session.createdAt,
-          operation.session.createdAt,
-        )
-        .run();
+      statements.push(
+        database
+          .prepare(
+            "INSERT INTO sessions (session_id, attributes_json, created_at, updated_at) VALUES (?, ?, ?, ?)",
+          )
+          .bind(
+            operation.sessionId,
+            attributesJson,
+            operation.session.createdAt,
+            operation.session.createdAt,
+          ),
+      );
     }
     for (const [key, value] of Object.entries(operation.session.attributes)) {
-      await database
-        .prepare("INSERT OR IGNORE INTO attributes (session_id, key, value) VALUES (?, ?, ?)")
-        .bind(operation.sessionId, key, value)
-        .run();
+      statements.push(
+        database
+          .prepare("INSERT OR IGNORE INTO attributes (session_id, key, value) VALUES (?, ?, ?)")
+          .bind(operation.sessionId, key, value),
+      );
     }
   } else if (operation.type === "append") {
     await requireSession(database, operation.sessionId);
@@ -245,74 +262,71 @@ async function applyOperation(database: D1Database, operation: Operation): Promi
       position += 1;
       updatedAt = Math.max(updatedAt, entry.timestamp);
       const searchText = entrySearchText(entry);
-      await database
-        .prepare(
-          "INSERT INTO entries (session_id, position, entry_id, timestamp, payload_json, search_text) VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        .bind(
-          operation.sessionId,
-          position,
-          entry.id,
-          entry.timestamp,
-          JSON.stringify(entry),
-          searchText,
-        )
-        .run();
-      await database
-        .prepare(
-          "INSERT INTO entries_fts (session_id, entry_id, position, text) VALUES (?, ?, ?, ?)",
-        )
-        .bind(operation.sessionId, entry.id, position, searchText)
-        .run();
+      statements.push(
+        database
+          .prepare(
+            "INSERT INTO entries (session_id, position, entry_id, timestamp, payload_json, search_text) VALUES (?, ?, ?, ?, ?, ?)",
+          )
+          .bind(
+            operation.sessionId,
+            position,
+            entry.id,
+            entry.timestamp,
+            JSON.stringify(entry),
+            searchText,
+          ),
+        database
+          .prepare(
+            "INSERT INTO entries_fts (session_id, entry_id, position, text) VALUES (?, ?, ?, ?)",
+          )
+          .bind(operation.sessionId, entry.id, position, searchText),
+      );
     }
     if (updatedAt > 0) {
-      await database
-        .prepare("UPDATE sessions SET updated_at = MAX(updated_at, ?) WHERE session_id = ?")
-        .bind(updatedAt, operation.sessionId)
-        .run();
+      statements.push(
+        database
+          .prepare("UPDATE sessions SET updated_at = MAX(updated_at, ?) WHERE session_id = ?")
+          .bind(updatedAt, operation.sessionId),
+      );
     }
   } else {
     await requireSession(database, operation.sessionId);
     if (operation.afterEntryId === null) {
-      await database
-        .prepare("DELETE FROM entries_fts WHERE session_id = ?")
-        .bind(operation.sessionId)
-        .run();
-      await database
-        .prepare("DELETE FROM entries WHERE session_id = ?")
-        .bind(operation.sessionId)
-        .run();
+      statements.push(
+        database.prepare("DELETE FROM entries_fts WHERE session_id = ?").bind(operation.sessionId),
+        database.prepare("DELETE FROM entries WHERE session_id = ?").bind(operation.sessionId),
+      );
     } else {
       const retained = await database
         .prepare("SELECT position FROM entries WHERE session_id = ? AND entry_id = ?")
         .bind(operation.sessionId, operation.afterEntryId)
         .first<{ position: number }>();
       if (!retained) throw new Error(`truncate entry '${operation.afterEntryId}' was not found`);
-      await database
-        .prepare("DELETE FROM entries_fts WHERE session_id = ? AND CAST(position AS INTEGER) > ?")
-        .bind(operation.sessionId, retained.position)
-        .run();
-      await database
-        .prepare("DELETE FROM entries WHERE session_id = ? AND position > ?")
-        .bind(operation.sessionId, retained.position)
-        .run();
+      statements.push(
+        database
+          .prepare("DELETE FROM entries_fts WHERE session_id = ? AND CAST(position AS INTEGER) > ?")
+          .bind(operation.sessionId, retained.position),
+        database
+          .prepare("DELETE FROM entries WHERE session_id = ? AND position > ?")
+          .bind(operation.sessionId, retained.position),
+      );
     }
-    await database
-      .prepare("DELETE FROM sessions_fts WHERE session_id = ?")
-      .bind(operation.sessionId)
-      .run();
-    await database
-      .prepare(
-        "UPDATE sessions SET updated_at = ?, digest_title = NULL, digest_summary = NULL, digest_through_entry_id = NULL WHERE session_id = ?",
-      )
-      .bind(Date.now(), operation.sessionId)
-      .run();
+    statements.push(
+      database.prepare("DELETE FROM sessions_fts WHERE session_id = ?").bind(operation.sessionId),
+      database
+        .prepare(
+          "UPDATE sessions SET updated_at = ?, digest_title = NULL, digest_summary = NULL, digest_through_entry_id = NULL WHERE session_id = ?",
+        )
+        .bind(appliedAt, operation.sessionId),
+    );
   }
 
-  await database
-    .prepare("INSERT INTO operations (operation_id, session_id, applied_at) VALUES (?, ?, ?)")
-    .bind(operation.id, operation.sessionId, Date.now())
-    .run();
+  statements.push(
+    database
+      .prepare("INSERT INTO operations (operation_id, session_id, applied_at) VALUES (?, ?, ?)")
+      .bind(operation.id, operation.sessionId, appliedAt),
+  );
+  await database.batch(statements);
   return true;
 }
 
@@ -405,21 +419,40 @@ async function read(database: D1Database, raw: unknown): Promise<unknown> {
     .bind(sessionId)
     .first<Record<string, unknown>>();
   if (!session) throw new Error(`history session '${sessionId}' was not found`);
+  const candidates = await database
+    .prepare(
+      "SELECT position, LENGTH(CAST(payload_json AS BLOB)) AS payload_bytes FROM entries WHERE session_id = ? AND position > ? ORDER BY position LIMIT ?",
+    )
+    .bind(sessionId, position, limit + 1)
+    .all<{ position: number; payload_bytes: number }>();
+  const page = selectHistoryReadPage(candidates.results, limit);
   const rows = await database
     .prepare(
       "SELECT position, payload_json FROM entries WHERE session_id = ? AND position > ? ORDER BY position LIMIT ?",
     )
-    .bind(sessionId, position, limit + 1)
+    .bind(sessionId, position, page.count)
     .all<{ position: number; payload_json: string }>();
-  const selected = rows.results.slice(0, limit);
-  const last = selected.at(-1);
+  const last = rows.results.at(-1);
   return {
     session: descriptor(session),
-    entries: selected.map((row) => JSON.parse(row.payload_json)),
-    ...(rows.results.length > limit && last
-      ? { nextCursor: encodeCursor({ position: last.position }) }
-      : {}),
+    entries: rows.results.map((row) => JSON.parse(row.payload_json)),
+    ...(page.hasMore && last ? { nextCursor: encodeCursor({ position: last.position }) } : {}),
   };
+}
+
+export function selectHistoryReadPage(
+  candidates: Array<{ payload_bytes: number }>,
+  limit: number,
+): { count: number; hasMore: boolean } {
+  let count = 0;
+  let bytes = 0;
+  for (const candidate of candidates.slice(0, limit)) {
+    const nextBytes = bytes + Number(candidate.payload_bytes) + 1;
+    if (count > 0 && nextBytes > MAX_READ_PAGE_PAYLOAD_BYTES) break;
+    count += 1;
+    bytes = nextBytes;
+  }
+  return { count, hasMore: candidates.length > count };
 }
 
 function descriptor(row: Record<string, unknown>): Record<string, unknown> {
@@ -475,17 +508,17 @@ async function refreshDigestIfNeeded(env: Env, sessionId: string, force: boolean
     Number(newContent?.chars ?? 0) >= ESTABLISHED_REFRESH_CHARS;
   if (!shouldRefresh) return;
 
-  const rows = await env.DB.prepare(
-    "SELECT payload_json FROM entries WHERE session_id = ? ORDER BY position",
-  )
-    .bind(sessionId)
-    .all<{ payload_json: string }>();
-  const source = rows.results.map((row) => row.payload_json).join("\n");
   const previous =
     typeof session.digest_title === "string" && typeof session.digest_summary === "string"
       ? { title: session.digest_title, summary: session.digest_summary }
       : undefined;
-  const digest = await generateDigest(env.AI, source, previous);
+  const digest = await generateDigestFromDatabase(
+    env.DB,
+    env.AI,
+    sessionId,
+    latest.position,
+    previous,
+  );
   await env.DB.prepare("DELETE FROM sessions_fts WHERE session_id = ?").bind(sessionId).run();
   await env.DB.prepare("INSERT INTO sessions_fts (session_id, title, summary) VALUES (?, ?, ?)")
     .bind(sessionId, digest.title, digest.summary)
@@ -497,24 +530,158 @@ async function refreshDigestIfNeeded(env: Env, sessionId: string, force: boolean
     .run();
 }
 
-async function generateDigest(
+async function generateDigestFromDatabase(
+  database: D1Database,
   ai: Ai,
-  transcript: string,
-  previous?: { title: string; summary: string },
-): Promise<{ title: string; summary: string }> {
-  const chunks = chunkText(transcript, DIGEST_CHUNK_CHARS);
-  const summaries: string[] = [];
-  if (chunks.length > 1) {
-    for (let index = 0; index < chunks.length; index += 1) {
+  sessionId: string,
+  latestPosition: number,
+  previous?: Digest,
+): Promise<Digest> {
+  let transcript: string;
+  try {
+    transcript = await loadDigestSource(database, sessionId, 0, latestPosition);
+  } catch (error) {
+    if (!(error instanceof DigestSourceTooLargeError)) throw error;
+    const ranges = splitPositionRange(0, latestPosition);
+    if (!ranges) throw error;
+    const summaries: string[] = [];
+    for (const range of ranges) {
       summaries.push(
-        await runAi(
-          ai,
-          `Summarize transcript chunk ${index + 1}/${chunks.length} as reusable context. Preserve intent, decisions, constraints, work, findings, outcomes, and unresolved work.\n\n${chunks[index]}`,
-        ),
+        await summarizeDatabaseSegment(database, ai, sessionId, range[0], range[1], 1),
       );
     }
+    return await finalizeDigest(ai, summaries.join("\n\n"), previous);
   }
-  const source = chunks.length <= 1 ? transcript : summaries.join("\n\n");
+  return await generateDigest(ai, transcript, previous);
+}
+
+async function summarizeDatabaseSegment(
+  database: D1Database,
+  ai: Ai,
+  sessionId: string,
+  startPosition: number,
+  endPosition: number,
+  depth: number,
+): Promise<string> {
+  let transcript: string;
+  try {
+    transcript = await loadDigestSource(database, sessionId, startPosition, endPosition);
+  } catch (error) {
+    if (!(error instanceof DigestSourceTooLargeError) || depth >= DIGEST_MAX_SPLIT_DEPTH) {
+      throw error;
+    }
+    return await summarizeDatabaseChildren(
+      database,
+      ai,
+      sessionId,
+      startPosition,
+      endPosition,
+      depth,
+    );
+  }
+
+  try {
+    return await runAi(ai, buildSegmentSummaryPrompt(transcript));
+  } catch (error) {
+    if (!isDigestContextOverflowError(error) || depth >= DIGEST_MAX_SPLIT_DEPTH) {
+      throw error;
+    }
+    transcript = "";
+    return await summarizeDatabaseChildren(
+      database,
+      ai,
+      sessionId,
+      startPosition,
+      endPosition,
+      depth,
+    );
+  }
+}
+
+async function summarizeDatabaseChildren(
+  database: D1Database,
+  ai: Ai,
+  sessionId: string,
+  startPosition: number,
+  endPosition: number,
+  depth: number,
+): Promise<string> {
+  const ranges = splitPositionRange(startPosition, endPosition);
+  if (!ranges) throw new DigestSourceTooLargeError();
+  const summaries: string[] = [];
+  for (const range of ranges) {
+    summaries.push(
+      await summarizeDatabaseSegment(database, ai, sessionId, range[0], range[1], depth + 1),
+    );
+  }
+  return summaries.join("\n\n");
+}
+
+async function loadDigestSource(
+  database: D1Database,
+  sessionId: string,
+  startPosition: number,
+  endPosition: number,
+): Promise<string> {
+  const lines: string[] = [];
+  let bytes = 0;
+  let position = startPosition;
+  while (position < endPosition) {
+    const rows = await database
+      .prepare(
+        "SELECT position, payload_json FROM entries WHERE session_id = ? AND position > ? AND position <= ? ORDER BY position LIMIT ?",
+      )
+      .bind(sessionId, position, endPosition, DIGEST_SOURCE_PAGE_SIZE)
+      .all<DigestEntryRow>();
+    if (rows.results.length === 0) break;
+    for (const row of rows.results) {
+      const line = JSON.stringify(projectDigestEntry(JSON.parse(row.payload_json) as HistoryEntry));
+      bytes += utf8ByteLength(line) + (lines.length > 0 ? 1 : 0);
+      if (bytes > DIGEST_SOURCE_MAX_BYTES) throw new DigestSourceTooLargeError();
+      lines.push(line);
+      position = Number(row.position);
+    }
+  }
+  return lines.join("\n");
+}
+
+export async function generateDigest(
+  ai: Ai,
+  transcript: string,
+  previous?: Digest,
+): Promise<Digest> {
+  try {
+    return await finalizeDigest(ai, transcript, previous);
+  } catch (error) {
+    if (!isDigestContextOverflowError(error)) throw error;
+  }
+
+  const halves = splitText(transcript);
+  if (!halves) throw new DigestSourceTooLargeError();
+  const summaries = await Promise.all(
+    halves.map(async (half) => await summarizeTextSegment(ai, half, 1)),
+  );
+  return await finalizeDigest(ai, summaries.join("\n\n"), previous);
+}
+
+async function summarizeTextSegment(ai: Ai, transcript: string, depth: number): Promise<string> {
+  try {
+    return await runAi(ai, buildSegmentSummaryPrompt(transcript));
+  } catch (error) {
+    if (!isDigestContextOverflowError(error) || depth >= DIGEST_MAX_SPLIT_DEPTH) {
+      throw error;
+    }
+  }
+
+  const halves = splitText(transcript);
+  if (!halves) throw new DigestSourceTooLargeError();
+  const summaries = await Promise.all(
+    halves.map(async (half) => await summarizeTextSegment(ai, half, depth + 1)),
+  );
+  return summaries.join("\n\n");
+}
+
+async function finalizeDigest(ai: Ai, source: string, previous?: Digest): Promise<Digest> {
   const stability = previous
     ? `Previous digest (use only as a phrasing stability hint, not as factual source):\n${JSON.stringify(previous)}\n\n`
     : "";
@@ -523,6 +690,10 @@ async function generateDigest(
     `${stability}Generate a complete replacement digest from the current active Tau transcript below. The title must be specific and concise. The summary must optimize for reusable context: original intent, important decisions and constraints, meaningful work, key findings or outcomes, and unresolved questions or remaining work. Omit tool-by-tool narration and incidental conversation. Return only JSON with string fields "title" and "summary".\n\n${source}`,
   );
   return parseDigest(response);
+}
+
+function buildSegmentSummaryPrompt(transcript: string): string {
+  return `Summarize this complete transcript segment as reusable context. Preserve intent, decisions, constraints, work, findings, outcomes, and unresolved work.\n\n${transcript}`;
 }
 
 export async function runAi(ai: Ai, prompt: string): Promise<string> {
@@ -693,12 +864,118 @@ function recursiveText(value: unknown): string {
   return Object.values(value).map(recursiveText).filter(Boolean).join("\n");
 }
 
-function chunkText(value: string, size: number): string[] {
-  const chunks: string[] = [];
-  for (let offset = 0; offset < value.length; offset += size) {
-    chunks.push(value.slice(offset, offset + size));
+const digestOverflowTextPattern =
+  /request(?: body)? (?:is )?too large|context[ _](?:window|length)|maximum context length|maximum (?:context |input )?tokens|too many (?:input )?tokens|input tokens? exceed|token limit/;
+
+class DigestSourceTooLargeError extends Error {
+  constructor() {
+    super("digest source remains too large after bounded splitting");
+    this.name = "DigestSourceTooLargeError";
   }
-  return chunks;
+}
+
+export function projectDigestEntry(entry: HistoryEntry): HistoryEntry {
+  if (entry.type !== "tool" || !("result" in entry)) return entry;
+  const encoded = JSON.stringify(entry.result);
+  if (encoded === undefined || utf8ByteLength(encoded) <= DIGEST_TOOL_RESULT_MAX_BYTES) {
+    return entry;
+  }
+  let lower = 0;
+  let upper = DIGEST_TOOL_RESULT_MAX_BYTES;
+  let result = "";
+  while (lower <= upper) {
+    const candidateBytes = Math.floor((lower + upper) / 2);
+    const candidate = truncateUtf8Middle(encoded, candidateBytes);
+    if (utf8ByteLength(JSON.stringify(candidate)) <= DIGEST_TOOL_RESULT_MAX_BYTES) {
+      result = candidate;
+      lower = candidateBytes + 1;
+    } else {
+      upper = candidateBytes - 1;
+    }
+  }
+  return { ...entry, result };
+}
+
+export function isDigestContextOverflowError(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < 3 && current !== undefined; depth += 1) {
+    if (typeof current === "string") {
+      return digestOverflowTextPattern.test(current.toLowerCase());
+    }
+    if (typeof current !== "object" || current === null) break;
+    const record = current as Record<string, unknown>;
+    const codes = [
+      record.code,
+      record.internalCode,
+      record.status,
+      record.statusCode,
+      record.httpStatus,
+      record.httpStatusCode,
+    ];
+    if (codes.some((value) => Number(value) === 3006 || Number(value) === 413)) return true;
+    const name = typeof record.name === "string" ? record.name : "";
+    const message = typeof record.message === "string" ? record.message : "";
+    const text = `${name} ${message}`.toLowerCase();
+    if (name.toLowerCase() === "badinput" || digestOverflowTextPattern.test(text)) {
+      return true;
+    }
+    current = record.cause;
+  }
+  return false;
+}
+
+function splitPositionRange(
+  startPosition: number,
+  endPosition: number,
+): [[number, number], [number, number]] | undefined {
+  if (endPosition - startPosition <= 1) return undefined;
+  const midpoint = startPosition + Math.floor((endPosition - startPosition) / 2);
+  return [
+    [startPosition, midpoint],
+    [midpoint, endPosition],
+  ];
+}
+
+function splitText(value: string): [string, string] | undefined {
+  if (value.length <= 1) return undefined;
+  const midpoint = Math.floor(value.length / 2);
+  const before = value.lastIndexOf("\n", midpoint);
+  const after = value.indexOf("\n", midpoint);
+  const candidates = [before, after].filter((index) => index > 0 && index < value.length - 1);
+  const splitAt =
+    candidates.sort((a, b) => Math.abs(a - midpoint) - Math.abs(b - midpoint))[0] ?? midpoint;
+  const rightStart = value[splitAt] === "\n" ? splitAt + 1 : splitAt;
+  const left = value.slice(0, splitAt);
+  const right = value.slice(rightStart);
+  return left && right ? [left, right] : undefined;
+}
+
+function truncateUtf8Middle(value: string, maxBytes: number): string {
+  const bytes = new TextEncoder().encode(value);
+  if (bytes.byteLength <= maxBytes) return value;
+  const omittedTokens = Math.ceil((bytes.byteLength - maxBytes) / DIGEST_BYTES_PER_TOKEN);
+  const marker = `\n... ~${omittedTokens} tokens middle-truncated for digest ...\n`;
+  const markerBytes = utf8ByteLength(marker);
+  const remaining = Math.max(0, maxBytes - markerBytes);
+  const headBytes = Math.floor(remaining / 2);
+  const tailBytes = remaining - headBytes;
+  return `${decodeUtf8Head(bytes, headBytes)}${marker}${decodeUtf8Tail(bytes, tailBytes)}`;
+}
+
+function decodeUtf8Head(bytes: Uint8Array, maxBytes: number): string {
+  let end = Math.min(maxBytes, bytes.byteLength);
+  while (end > 0 && end < bytes.byteLength && (bytes[end]! & 0xc0) === 0x80) end -= 1;
+  return new TextDecoder().decode(bytes.slice(0, end));
+}
+
+function decodeUtf8Tail(bytes: Uint8Array, maxBytes: number): string {
+  let start = Math.max(0, bytes.byteLength - maxBytes);
+  while (start < bytes.byteLength && (bytes[start]! & 0xc0) === 0x80) start += 1;
+  return new TextDecoder().decode(bytes.slice(start));
+}
+
+function utf8ByteLength(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
 }
 
 function stableJson(value: Record<string, string>): string {

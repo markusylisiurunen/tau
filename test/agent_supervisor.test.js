@@ -79,6 +79,30 @@ function getRecord(supervisor, id) {
 }
 
 describe("AgentSupervisor", () => {
+  it("binds configured history access into child runtimes", async () => {
+    const supervisor = new AgentSupervisor({ onEvent: () => {} });
+    const history = {
+      search: vi.fn(),
+      read: vi.fn(),
+    };
+    const spawned = supervisor.spawn(
+      createSpawnOptions({
+        runtimeConfig: {
+          ...createSpawnOptions().runtimeConfig,
+          tools: ["history"],
+        },
+        history,
+      }),
+    );
+
+    expect(spawned.ok).toBe(true);
+    if (!spawned.ok) throw new Error(spawned.reason);
+    expect(getRecord(supervisor, spawned.state.id).runtime.spec.tools.schemas).toEqual([
+      expect.objectContaining({ name: "history" }),
+    ]);
+    supervisor.reset();
+  });
+
   it("supports child wait and follow-up", async () => {
     const events = [];
     const recordUsage = vi.fn();

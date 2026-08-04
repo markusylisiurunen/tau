@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { RemoteHistoryClient } from "../dist/core/history/remote_history_client.js";
+import { batchHistoryEntriesForRemote } from "../dist/core/history/replication.js";
 import {
   assistantHistoryEntries,
   toolHistoryEntry,
@@ -13,9 +14,7 @@ import {
 } from "../dist/core/history/transcript.js";
 import { parseStoredSessionDocument } from "../dist/store/session_snapshot_migrations.js";
 
-const MAX_APPEND_ENTRIES = 25;
 const MAX_OPERATIONS_PER_REQUEST = 10;
-const MAX_OPERATION_BYTES = 7 * 1024 * 1024;
 const MAX_REQUEST_BYTES = 7.5 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 30_000;
 const RETRY_DELAYS_MS = [500, 1_500, 3_000];
@@ -58,43 +57,18 @@ export function snapshotToHistoryEntries(snapshot) {
   return entries;
 }
 
-export function buildImportOperations(snapshot, entries, warn = console.warn) {
+export function buildImportOperations(snapshot, entries) {
   const session = {
     sessionId: snapshot.sessionId,
     attributes: snapshot.attributes,
     createdAt: snapshot.createdAt,
   };
-  const operations = [withOperationId({ sessionId: snapshot.sessionId, type: "create", session })];
-  let batch = [];
-  for (const entry of entries) {
-    const candidate = [...batch, entry];
-    const operation = { sessionId: snapshot.sessionId, type: "append", entries: candidate };
-    if (
-      candidate.length <= MAX_APPEND_ENTRIES &&
-      Buffer.byteLength(JSON.stringify(operation)) <= MAX_OPERATION_BYTES
-    ) {
-      batch = candidate;
-      continue;
-    }
-    if (batch.length > 0) {
-      operations.push(
-        withOperationId({ sessionId: snapshot.sessionId, type: "append", entries: batch }),
-      );
-      batch = [];
-    }
-    const single = { sessionId: snapshot.sessionId, type: "append", entries: [entry] };
-    if (Buffer.byteLength(JSON.stringify(single)) > MAX_OPERATION_BYTES) {
-      warn(`skipping oversized entry '${entry.id}' in session '${snapshot.sessionId}'`);
-    } else {
-      batch = [entry];
-    }
-  }
-  if (batch.length > 0) {
-    operations.push(
+  return [
+    withOperationId({ sessionId: snapshot.sessionId, type: "create", session }),
+    ...batchHistoryEntriesForRemote(snapshot.sessionId, entries).map((batch) =>
       withOperationId({ sessionId: snapshot.sessionId, type: "append", entries: batch }),
-    );
-  }
-  return operations;
+    ),
+  ];
 }
 
 export function batchImportOperations(operations) {

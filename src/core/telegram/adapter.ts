@@ -2866,6 +2866,15 @@ class TelegramAdapterImpl {
       return;
     }
 
+    if (event.type === "session-notice") {
+      if (!this.chatsBySession.has(event.sessionId)) {
+        return;
+      }
+
+      this.notifySession(event.sessionId, event.text);
+      return;
+    }
+
     if (event.type === "session-progress") {
       if (!this.chatsBySession.has(event.sessionId)) {
         return;

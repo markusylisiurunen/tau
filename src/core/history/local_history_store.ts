@@ -3,6 +3,7 @@ import { chmodSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { batchHistoryEntriesForRemote } from "./replication.js";
 import type {
   HistoryEntry,
   HistoryReadInput,
@@ -18,7 +19,6 @@ import type {
 const PRIVATE_DIRECTORY_MODE = 0o700;
 const PRIVATE_FILE_MODE = 0o600;
 const MAX_SEARCH_SNIPPETS = 3;
-const MAX_REPLICATION_ENTRIES = 25;
 
 type SqlValue = string | number | null;
 type SqlRow = Record<string, SqlValue>;
@@ -147,12 +147,12 @@ export class LocalHistoryStore {
         .prepare("UPDATE history_sessions SET updated_at = MAX(updated_at, ?) WHERE session_id = ?")
         .run(updatedAt, sessionId);
       if (remote) {
-        for (let offset = 0; offset < inserted.length; offset += MAX_REPLICATION_ENTRIES) {
+        for (const entries of batchHistoryEntriesForRemote(sessionId, inserted)) {
           this.enqueue(remote.endpoint, {
             id: randomUUID(),
             sessionId,
             type: "append",
-            entries: inserted.slice(offset, offset + MAX_REPLICATION_ENTRIES),
+            entries,
           });
         }
       }

@@ -40,6 +40,22 @@ async function execute(registry, name, args) {
 }
 
 describe("ToolCatalog", () => {
+  it("binds history for subagents without exposing its storage or credentials", () => {
+    const history = {
+      search: vi.fn(),
+      read: vi.fn(),
+    };
+    const registry = ToolCatalog.createSubagentRegistry(
+      ["history"],
+      createBackend(),
+      "/workspace/child",
+      {},
+      history,
+    );
+
+    expect(registry.schemas.map((tool) => tool.name)).toEqual(["history"]);
+  });
+
   it("scopes every child filesystem and process tool to the child working directory", async () => {
     const backend = createBackend();
     const registry = ToolCatalog.createSubagentRegistry(

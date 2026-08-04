@@ -1847,6 +1847,32 @@ describe("telegram adapter", () => {
     }
   });
 
+  it("delivers session warning notices through the ordered notification queue", async () => {
+    const chatId = 470;
+    const apiHarness = createApiHarness([]);
+    const { adapter, manager } = await startNotificationTestAdapter({ chatId, apiHarness });
+
+    try {
+      manager.emit({
+        type: "session-notice",
+        sessionId: "s1",
+        projectId: "demo",
+        timestamp: "2024-01-01T00:01:00.000Z",
+        severity: "warn",
+        text: "Session history is unavailable. This session will continue.",
+      });
+
+      await waitFor(() =>
+        apiHarness.sendMessages.some(
+          (message) =>
+            message.text === "Session history is unavailable. This session will continue.",
+        ),
+      );
+    } finally {
+      await adapter.close();
+    }
+  });
+
   it("reports a failed turn and keeps routing messages to the same session", async () => {
     const logs = [];
     const nextUpdate = deferred();

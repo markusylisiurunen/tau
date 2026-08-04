@@ -8,7 +8,14 @@ import {
   userHistoryEntry,
 } from "../dist/core/history/transcript.js";
 import { createHistoryToolDefinition, HISTORY_TOOL } from "../dist/core/tools/history.js";
-import { runAi } from "../dist/history/worker/index.js";
+import {
+  applyOperation,
+  generateDigest,
+  isDigestContextOverflowError,
+  projectDigestEntry,
+  runAi,
+  selectHistoryReadPage,
+} from "../dist/history/worker/index.js";
 import {
   batchImportOperations,
   buildImportOperations,
@@ -42,6 +49,40 @@ async function runTool(tool, code) {
 
 function toolText(result) {
   return result.content.find((item) => item.type === "text")?.text ?? "";
+}
+
+function createD1Harness() {
+  const prepared = [];
+  const database = {
+    exec: vi.fn(),
+    prepare: vi.fn((query) => {
+      const statement = {
+        query,
+        values: [],
+        bind(...values) {
+          this.values = values;
+          return this;
+        },
+        first: vi.fn(async () => {
+          if (query.includes("FROM operations")) return null;
+          if (query.includes("SELECT attributes_json")) return null;
+          if (query.includes("SELECT 1 AS found FROM sessions")) return { found: 1 };
+          if (query.includes("MAX(position)")) return { position: 0 };
+          if (query.includes("SELECT 1 AS found FROM entries")) return null;
+          if (query.includes("SELECT position FROM entries")) return { position: 1 };
+          return null;
+        }),
+        all: vi.fn(async () => ({ results: [] })),
+        run: vi.fn(async () => {
+          throw new Error("mutations must execute through batch");
+        }),
+      };
+      prepared.push(statement);
+      return statement;
+    }),
+    batch: vi.fn(async (statements) => statements.map(() => ({ success: true }))),
+  };
+  return { database, prepared };
 }
 
 describe("session history", () => {
@@ -263,6 +304,138 @@ describe("session history", () => {
     }
   });
 
+  it("keeps full local entries while bounding remote replication by entry and operation bytes", async () => {
+    const store = new LocalHistoryStore(":memory:");
+    const remote = { endpoint: "https://history.example.com", apiKey: "secret" };
+    try {
+      store.createSession(
+        { sessionId: "session-1", attributes: { source: "test" }, createdAt: 100 },
+        remote,
+      );
+      const fullResult = `start ${"x".repeat(1_500_000)} end`;
+      store.append(
+        "session-1",
+        [
+          {
+            id: "large-tool",
+            sourceIds: ["assistant-1", "result-1"],
+            type: "tool",
+            timestamp: 110,
+            name: "bash",
+            arguments: { command: "diagnose" },
+            result: [{ type: "text", text: fullResult }],
+            outcome: "succeeded",
+          },
+        ],
+        remote,
+      );
+      store.append(
+        "session-1",
+        Array.from({ length: 7 }, (_, index) =>
+          createTextEntry(
+            `large-${index}`,
+            "assistant",
+            `${index}${"y".repeat(900_000)}`,
+            120 + index,
+          ),
+        ),
+        remote,
+      );
+
+      const local = await store.read({ sessionId: "session-1", limit: 20 });
+      expect(local.entries[0]).toMatchObject({
+        id: "large-tool",
+        result: [{ type: "text", text: fullResult }],
+      });
+
+      const operations = store
+        .listPendingOperations(remote.endpoint, 20)
+        .map((pending) => pending.operation)
+        .filter((operation) => operation.type === "append");
+      expect(operations.flatMap((operation) => operation.entries)).toHaveLength(8);
+      for (const operation of operations) {
+        expect(Buffer.byteLength(JSON.stringify(operation), "utf8")).toBeLessThanOrEqual(
+          6 * 1024 * 1024,
+        );
+        for (const entry of operation.entries) {
+          expect(Buffer.byteLength(JSON.stringify(entry), "utf8")).toBeLessThanOrEqual(1024 * 1024);
+        }
+      }
+      const remoteTool = operations
+        .flatMap((operation) => operation.entries)
+        .find((entry) => entry.id === "large-tool");
+      expect(remoteTool).toMatchObject({
+        id: "large-tool",
+        sourceIds: ["assistant-1", "result-1"],
+        type: "tool",
+        outcome: "succeeded",
+      });
+      expect(remoteTool.result).toEqual(expect.stringContaining("start"));
+      expect(remoteTool.result).toEqual(expect.stringContaining("end"));
+      expect(remoteTool.result).toEqual(expect.stringContaining("middle-truncated"));
+    } finally {
+      store.close();
+    }
+  });
+
+  it("paginates remote reads by payload bytes and requested entry count", () => {
+    expect(
+      selectHistoryReadPage(
+        Array.from({ length: 20 }, () => ({ payload_bytes: 1024 * 1024 })),
+        20,
+      ),
+    ).toEqual({ count: 11, hasMore: true });
+    expect(
+      selectHistoryReadPage(
+        Array.from({ length: 101 }, () => ({ payload_bytes: 100 })),
+        100,
+      ),
+    ).toEqual({ count: 100, hasMore: true });
+    expect(selectHistoryReadPage([{ payload_bytes: 20 * 1024 * 1024 }], 1)).toEqual({
+      count: 1,
+      hasMore: false,
+    });
+  });
+
+  it("commits every remote replication operation through one D1 batch", async () => {
+    const operations = [
+      {
+        id: "create-1",
+        sessionId: "session-1",
+        type: "create",
+        session: {
+          sessionId: "session-1",
+          attributes: { source: "test" },
+          createdAt: 100,
+        },
+      },
+      {
+        id: "append-1",
+        sessionId: "session-1",
+        type: "append",
+        entries: [createTextEntry("user-1", "user", "hello", 110)],
+      },
+      {
+        id: "truncate-1",
+        sessionId: "session-1",
+        type: "truncate",
+        afterEntryId: "user-1",
+      },
+    ];
+
+    for (const operation of operations) {
+      const harness = createD1Harness();
+      await expect(applyOperation(harness.database, operation)).resolves.toBe(true);
+      expect(harness.database.batch).toHaveBeenCalledOnce();
+      const batched = harness.database.batch.mock.calls[0][0];
+      expect(batched.length).toBeGreaterThan(1);
+      expect(batched.at(-1).query).toContain("INSERT INTO operations");
+      expect(harness.prepared.every((statement) => statement.run.mock.calls.length === 0)).toBe(
+        true,
+      );
+    }
+  });
+
   it("generates digests with GPT-5.6 Luna at medium reasoning effort", async () => {
     const ai = {
       run: vi.fn(async () => '{"title":"History","summary":"Durable transcript work"}'),
@@ -277,6 +450,86 @@ describe("session history", () => {
     });
   });
 
+  it("projects small tool results intact and middle-truncates large results for digests", () => {
+    const small = {
+      id: "tool-small",
+      sourceIds: ["tool-small"],
+      type: "tool",
+      timestamp: 1,
+      name: "bash",
+      arguments: { command: "pwd" },
+      result: [{ type: "text", text: "short" }],
+      outcome: "succeeded",
+    };
+    expect(projectDigestEntry(small)).toEqual(small);
+
+    const large = {
+      ...small,
+      id: "tool-large",
+      result: `start-${"x".repeat(10_000)}-end`,
+    };
+    const projected = projectDigestEntry(large);
+    expect(projected.result).toContain("start-");
+    expect(projected.result).toContain("-end");
+    expect(projected.result).toContain("tokens middle-truncated for digest");
+    expect(Buffer.byteLength(JSON.stringify(projected.result), "utf8")).toBeLessThanOrEqual(
+      512 * 6,
+    );
+  });
+
+  it("uses one full-transcript digest call when Luna accepts the context", async () => {
+    const ai = {
+      run: vi.fn(async () => '{"title":"Stable","summary":"Complete"}'),
+    };
+
+    await expect(
+      generateDigest(ai, "complete transcript", { title: "Old", summary: "Prior wording" }),
+    ).resolves.toEqual({ title: "Stable", summary: "Complete" });
+    expect(ai.run).toHaveBeenCalledOnce();
+    expect(ai.run.mock.calls[0][1].input).toContain("complete transcript");
+    expect(ai.run.mock.calls[0][1].input).toContain("Prior wording");
+  });
+
+  it("recursively halves context overflow at most three levels before final synthesis", async () => {
+    const ai = {
+      run: vi.fn(async (_model, request) => {
+        const segments = [...new Set(request.input.match(/segment-\d+/g) ?? [])];
+        if (request.input.includes("Generate a complete replacement digest")) {
+          if (!request.input.includes("leaf-summary:")) {
+            throw { code: 3006, status: 413, message: "Request too large" };
+          }
+          return JSON.stringify({ title: "Split", summary: segments.join(",") });
+        }
+        if (segments.length > 1) {
+          const error = new Error("context window exceeded");
+          error.name = "BadInput";
+          throw error;
+        }
+        return `leaf-summary:${segments[0]}`;
+      }),
+    };
+    const transcript = Array.from({ length: 8 }, (_, index) => `segment-${index + 1}`).join("\n");
+
+    await expect(generateDigest(ai, transcript)).resolves.toEqual({
+      title: "Split",
+      summary: "segment-1,segment-2,segment-3,segment-4,segment-5,segment-6,segment-7,segment-8",
+    });
+    expect(ai.run).toHaveBeenCalledTimes(16);
+  });
+
+  it("recognizes only documented or narrowly identified digest context overflow errors", () => {
+    expect(isDigestContextOverflowError({ code: 3006 })).toBe(true);
+    expect(isDigestContextOverflowError({ status: 413 })).toBe(true);
+    expect(
+      isDigestContextOverflowError(Object.assign(new Error("bad input"), { name: "BadInput" })),
+    ).toBe(true);
+    expect(isDigestContextOverflowError(new Error("maximum input tokens exceeded"))).toBe(true);
+    expect(isDigestContextOverflowError("context_length_exceeded")).toBe(true);
+    expect(isDigestContextOverflowError({ code: 3007, status: 408, message: "timeout" })).toBe(
+      false,
+    );
+  });
+
   it("uses explicit remote configuration without exposing its API key to code mode", async () => {
     expect(
       resolveHistoryRemoteTarget(
@@ -284,6 +537,12 @@ describe("session history", () => {
         { HISTORY_SECRET: " remote-key " },
       ),
     ).toEqual({ endpoint: "https://history.example.com", apiKey: "remote-key" });
+    expect(
+      resolveHistoryRemoteTarget(
+        { history: { endpoint: "https://history.example.com", apiKeyEnv: "HISTORY_SECRET" } },
+        { TAU_HISTORY_API_KEY: "standard-key", HISTORY_SECRET: "custom-key" },
+      ),
+    ).toEqual({ endpoint: "https://history.example.com", apiKey: "standard-key" });
 
     const fetchImpl = vi.fn(async (_url, options) => {
       expect(options.headers.authorization).toBe("Bearer remote-key");

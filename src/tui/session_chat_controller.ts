@@ -1268,9 +1268,21 @@ export class SessionChatController {
     this.snapshot = snapshot;
     this.observedSessionRevision = Math.max(this.observedSessionRevision, snapshot.revision);
     this.assistantMessages = [];
-    const messages = getTimelineMessages(snapshot);
-    for (const entry of messages) {
-      this.renderProtocolMessage(entry);
+    for (const item of getRenderableTimelineItems(snapshot)) {
+      if (item.type === "notice") {
+        this.renderedMessageIds.push(
+          this.view.addMessage(
+            {
+              type: "system",
+              text: item.text,
+              kind: item.severity === "info" ? "muted" : item.severity,
+            },
+            item.id,
+          ),
+        );
+      } else {
+        this.renderProtocolMessage(item.message);
+      }
     }
     this.syncSnapshotToolAndAgentUi(snapshot);
   }
@@ -1301,8 +1313,8 @@ export class SessionChatController {
     this.snapshot = snapshot;
     this.observedSessionRevision = Math.max(this.observedSessionRevision, snapshot.revision);
 
-    const messages = getTimelineMessages(snapshot);
-    const snapshotIds = new Set(messages.map((entry) => entry.id));
+    const items = getRenderableTimelineItems(snapshot);
+    const snapshotIds = new Set(items.map((item) => item.id));
     const staleIds = this.renderedMessageIds.filter((id) => !snapshotIds.has(id));
     if (staleIds.length > 0) {
       this.view.removeMessages(staleIds);
@@ -1315,27 +1327,34 @@ export class SessionChatController {
       ...this.renderedMessageIds.filter((id) => snapshotIds.has(id)),
     );
 
-    for (const entry of messages) {
-      if (this.hiddenHistoryEntryIds.has(entry.id)) {
-        if (!renderedIds.has(entry.id)) {
-          this.renderedMessageIds.push(entry.id);
+    for (const item of items) {
+      if (item.type === "message" && this.hiddenHistoryEntryIds.has(item.id)) {
+        if (!renderedIds.has(item.id)) {
+          this.renderedMessageIds.push(item.id);
         }
         continue;
       }
 
-      const model = this.buildProtocolMessageModel(entry);
+      const model =
+        item.type === "notice"
+          ? {
+              type: "system" as const,
+              text: item.text,
+              kind: item.severity === "info" ? ("muted" as const) : item.severity,
+            }
+          : this.buildProtocolMessageModel(item.message);
       if (!model) {
         continue;
       }
 
-      if (renderedIds.has(entry.id)) {
+      if (renderedIds.has(item.id)) {
         if (model.type === "assistant") {
-          this.view.updateAssistantMessage(entry.id, model);
+          this.view.updateAssistantMessage(item.id, model);
         } else {
-          this.view.updateMessage(entry.id, model);
+          this.view.updateMessage(item.id, model);
         }
       } else {
-        this.renderedMessageIds.push(this.view.addMessage(model, entry.id));
+        this.renderedMessageIds.push(this.view.addMessage(model, item.id));
       }
     }
 
@@ -2331,14 +2350,33 @@ function formatSessionError(error: unknown): string {
   return cause && cause !== message ? `${message}: ${cause}` : message;
 }
 
-function getTimelineMessages(snapshot: SessionProtocolSnapshot): SessionProtocolMessage[] {
+type RenderableTimelineItem =
+  | { type: "message"; id: string; message: SessionProtocolMessage }
+  | {
+      type: "notice";
+      id: string;
+      severity: "info" | "warn" | "error";
+      text: string;
+    };
+
+function getRenderableTimelineItems(snapshot: SessionProtocolSnapshot): RenderableTimelineItem[] {
   const messagesById = new Map(snapshot.messages.map((message) => [message.id, message]));
-  return snapshot.timeline.flatMap((item) => {
+  return snapshot.timeline.flatMap((item): RenderableTimelineItem[] => {
+    if (item.type === "notice") {
+      return [
+        {
+          type: "notice",
+          id: item.id,
+          severity: item.notice.severity,
+          text: item.notice.text,
+        },
+      ];
+    }
     if (item.type !== "message") {
       return [];
     }
     const message = messagesById.get(item.messageId);
-    return message ? [message] : [];
+    return message ? [{ type: "message", id: message.id, message }] : [];
   });
 }
 

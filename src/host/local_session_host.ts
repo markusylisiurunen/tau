@@ -103,6 +103,7 @@ import {
 } from "./session_host.js";
 
 const PATH_AUTOCOMPLETE_CACHE_TTL_MS = 5_000;
+const HISTORY_UNAVAILABLE_NOTICE_ID = "notice-history-unavailable";
 
 export type LocalSessionResolvedBootstrap = {
   persona: Persona;
@@ -284,7 +285,7 @@ export class LocalSessionHost implements TauSessionHost {
     );
   }
 
-  private createLocalSessionHandleFromRuntimeContext(
+  private async createLocalSessionHandleFromRuntimeContext(
     executionEnvironment: ExecutionEnvironment,
     runtimeContext: Awaited<ReturnType<ExecutionEnvironment["resolveRuntimeContext"]>>,
     bootstrap: LocalSessionResolvedBootstrap,
@@ -292,7 +293,7 @@ export class LocalSessionHost implements TauSessionHost {
     committedSnapshot?: SessionProtocolSnapshot,
     createParams?: SessionProtocolCreateParams,
     forceNextSnapshotRevision = false,
-  ): LocalHostedSessionHandle {
+  ): Promise<LocalHostedSessionHandle> {
     let hostedSession: LocalHostedSessionHandle;
     const runtime = ChatRuntime.create({
       persona: bootstrap.persona,
@@ -344,7 +345,7 @@ export class LocalSessionHost implements TauSessionHost {
       this.sessionOptions.recordUsage ?? appendUsageLogEntry,
       (session) => this.sessions.delete(session),
     );
-    this.history.registerSession(
+    const historyFailure = this.history.registerSession(
       {
         sessionId: committedSnapshot?.sessionId ?? hostedSession.sessionId,
         attributes,
@@ -352,6 +353,7 @@ export class LocalSessionHost implements TauSessionHost {
       },
       this.historyRemote,
     );
+    await hostedSession.recordHistoryFailure(historyFailure);
     this.sessions.add(hostedSession);
     return hostedSession;
   }
@@ -2043,11 +2045,28 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     changes.push({ type: "tool.remove", id: tool.id });
   }
 
-  private appendToolHistory(
+  async recordHistoryFailure(reason: string | undefined): Promise<void> {
+    if (!reason || this.timelineExtras.some((item) => item.id === HISTORY_UNAVAILABLE_NOTICE_ID)) {
+      return;
+    }
+    const item: SessionProtocolTimelineItem = {
+      type: "notice",
+      id: HISTORY_UNAVAILABLE_NOTICE_ID,
+      notice: {
+        severity: "warn",
+        text: `Session history is unavailable: ${reason}. This session will continue without durable history recording or recall.`,
+        timestamp: Date.now(),
+      },
+    };
+    this.timelineExtras.push(item);
+    await this.emitPatch("notice", [{ type: "timeline.append", item: structuredClone(item) }]);
+  }
+
+  private async appendToolHistory(
     tool: Exclude<SessionProtocolToolRun, { status: "streaming" }>,
     resultHistoryEntryId: string,
     result: Extract<AgentEvent, { type: "tool_result" }>["message"],
-  ): void {
+  ): Promise<void> {
     const callMessage = this.committedSnapshot?.messages.find(
       (message) => message.id === tool.call.messageId,
     );
@@ -2061,18 +2080,20 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     if (tool.status === "queued" || tool.status === "running") {
       throw new Error(`transcript tool call '${tool.toolCallId}' is not terminal`);
     }
-    this.history.append(
-      this.sessionId,
-      [
-        toolHistoryEntry({
-          callHistoryEntryId: tool.call.messageId,
-          resultHistoryEntryId,
-          call,
-          result,
-          outcome: tool.status,
-        }),
-      ],
-      this.historyRemote,
+    await this.recordHistoryFailure(
+      this.history.append(
+        this.sessionId,
+        [
+          toolHistoryEntry({
+            callHistoryEntryId: tool.call.messageId,
+            resultHistoryEntryId,
+            call,
+            result,
+            outcome: tool.status,
+          }),
+        ],
+        this.historyRemote,
+      ),
     );
   }
 
@@ -2235,10 +2256,12 @@ class LocalHostedSessionHandle implements LocalHostedSession {
           ],
           { persist: true },
         );
-        this.history.append(
-          this.sessionId,
-          [userHistoryEntry(event.historyEntryId, event.message)],
-          this.historyRemote,
+        await this.recordHistoryFailure(
+          this.history.append(
+            this.sessionId,
+            [userHistoryEntry(event.historyEntryId, event.message)],
+            this.historyRemote,
+          ),
         );
         if (pendingGoal && this.pendingGoalCommit === pendingGoal) {
           this.pendingGoalCommit = undefined;
@@ -2248,7 +2271,13 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       case "history_rewound":
         this.reconcileProjections({ removeMissingAgents: true });
         await this.emitSnapshotResetIfChanged("maintenance");
-        this.history.truncateFromSources(this.sessionId, event.removedEntryIds, this.historyRemote);
+        await this.recordHistoryFailure(
+          this.history.truncateFromSources(
+            this.sessionId,
+            event.removedEntryIds,
+            this.historyRemote,
+          ),
+        );
         return;
       case "assistant_final": {
         this.draftAssistantMessage = undefined;
@@ -2297,10 +2326,12 @@ class LocalHostedSessionHandle implements LocalHostedSession {
             : []),
           ...toolChanges,
         ]);
-        this.history.append(
-          this.sessionId,
-          assistantHistoryEntries(event.historyEntryId, event.message),
-          this.historyRemote,
+        await this.recordHistoryFailure(
+          this.history.append(
+            this.sessionId,
+            assistantHistoryEntries(event.historyEntryId, event.message),
+            this.historyRemote,
+          ),
         );
         return;
       }
@@ -2361,7 +2392,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
             },
             { type: "tool.set", tool: structuredClone(nextTool) },
           ]);
-          this.appendToolHistory(existing, event.historyEntryId, event.message);
+          await this.appendToolHistory(existing, event.historyEntryId, event.message);
           return;
         }
         await this.emitPatch("tool-result", [
@@ -2392,6 +2423,10 @@ class LocalHostedSessionHandle implements LocalHostedSession {
             },
           },
         ];
+        const historyTools: Array<{
+          tool: Exclude<SessionProtocolToolRun, { status: "streaming" }>;
+          result: (typeof event.toolResults)[number];
+        }> = [];
         for (const toolResult of event.toolResults) {
           const existing = this.tools.get(toolResult.toolCallId);
           if (!existing || existing.status === "streaming") {
@@ -2405,8 +2440,12 @@ class LocalHostedSessionHandle implements LocalHostedSession {
           };
           this.tools.set(nextTool.id, nextTool);
           changes.push({ type: "tool.set", tool: structuredClone(nextTool) });
+          historyTools.push({ tool: existing, result: toolResult });
         }
         await this.emitPatch("recovery", changes);
+        for (const { tool, result } of historyTools) {
+          await this.appendToolHistory(tool, event.historyEntryId, result);
+        }
         return;
       }
       case "notice": {

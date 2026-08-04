@@ -1012,7 +1012,12 @@ export class SessionChatController {
 
     const createInput: SessionProtocolCreateParams = {
       executionEnvironment: this.createExecutionEnvironmentInputFromSnapshot(),
-      attributes: { source: "tui" },
+      attributes: {
+        source: "tui",
+        ...(this.snapshot.attributes.repository
+          ? { repository: this.snapshot.attributes.repository }
+          : {}),
+      },
       personaId: this.snapshot.settings.personaId,
       ...(this.snapshot.settings.reasoning !== undefined
         ? { reasoning: this.snapshot.settings.reasoning }

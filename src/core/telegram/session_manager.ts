@@ -22,6 +22,7 @@ import type {
 import { TauSessionProtocolResponseError } from "../../transport/errors.js";
 import type { TelegramProjectConfig } from "../config/schema.js";
 import { extractAssistantText } from "../utils/messages.js";
+import { normalizeRepositoryReference } from "../utils/repository.js";
 import { formatTauUserText } from "../utils/user_metadata.js";
 import {
   cleanupWorkspacePath as cleanupWorkspacePathOnDisk,
@@ -922,11 +923,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
           kind: "local",
           cwd: workspace.sessionCwd,
         },
-        attributes: {
-          source: "telegram",
-          project: entry.record.projectId,
-          ...("repo" in entry.project ? { repository: entry.project.repo } : {}),
-        },
+        attributes: this.buildSessionAttributes(entry),
       });
       const clientConnectDurationMs = elapsedMs(clientConnectStart);
 
@@ -1160,6 +1157,25 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       });
 
     return submitPromise;
+  }
+
+  private buildSessionAttributes(entry: SessionEntry): Record<string, string> {
+    const configuredRepositories =
+      "repo" in entry.project
+        ? [entry.project.repo]
+        : entry.project.projectIds.flatMap((projectId) => {
+            const project = this.projects[projectId];
+            return project && "repo" in project ? [project.repo] : [];
+          });
+    const repositories = configuredRepositories.map(
+      (repository) =>
+        normalizeRepositoryReference(repository, { defaultHost: "github.com" }) ?? repository,
+    );
+    return {
+      source: "telegram",
+      project: entry.record.projectId,
+      ...(repositories.length > 0 ? { repository: repositories.join(",") } : {}),
+    };
   }
 
   private buildClientOptions(entry: SessionEntry, cwd: string): TelegramSessionClientOptions {

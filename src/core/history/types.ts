@@ -1,4 +1,6 @@
 export type SessionAttributes = Record<string, string>;
+export type HistoryAttributeFilter = string | { contains: string };
+export type HistoryAttributeFilters = Record<string, HistoryAttributeFilter>;
 
 export type HistoryTextEntry = {
   id: string;
@@ -38,7 +40,7 @@ export type HistorySessionDescriptor = {
 
 export type HistorySearchInput = {
   query?: string;
-  attributes?: SessionAttributes;
+  attributes?: HistoryAttributeFilters;
   limit: number;
   cursor?: string;
 };

@@ -3179,7 +3179,10 @@ describe("LocalSessionHost", () => {
     });
     await store.commitSessionSnapshot(storedSnapshot);
 
-    const recoveredHost = createHost(store);
+    const historyStore = new LocalHistoryStore(":memory:");
+    const recoveredHost = createHost(store, {
+      history: new HistoryManager(historyStore),
+    });
     const recoveredSession = await recoveredHost.observeSession(storedSnapshot.sessionId);
     if (!recoveredSession) throw new Error("expected stored session to recover");
     const recoveredSnapshot = await recoveredSession.snapshot();
@@ -3204,6 +3207,26 @@ describe("LocalSessionHost", () => {
     });
     expect(recoveredSnapshot.tools[finishedToolCall.id]).not.toHaveProperty("error");
     await expect(store.loadSession(storedSnapshot.sessionId)).resolves.toEqual(recoveredSnapshot);
+    await expect(
+      historyStore.read({ sessionId: storedSnapshot.sessionId, limit: 10 }),
+    ).resolves.toMatchObject({
+      entries: [
+        {
+          id: toolCall.id,
+          type: "tool",
+          name: "bash",
+          arguments: { command: "pwd" },
+          outcome: "cancelled",
+        },
+        {
+          id: finishedToolCall.id,
+          type: "tool",
+          name: "bash",
+          arguments: { command: "printf done" },
+          outcome: "succeeded",
+        },
+      ],
+    });
 
     const contexts = [];
     recoveredSession.runtime.agent.spec.model.stream = (context) => {

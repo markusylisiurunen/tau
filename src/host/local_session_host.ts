@@ -1451,13 +1451,16 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   async persistRecoveredAgentState(recovery: AgentStateRecovery): Promise<void> {
     this.assertActive();
     await this.enqueueMutation(async () => {
+      const recoveredTools: Array<{
+        tool: Exclude<SessionProtocolToolRun, { status: "streaming" }>;
+        result: AgentStateRecovery["recoveredToolResults"][number];
+      }> = [];
       for (const recovered of recovery.recoveredToolResults) {
         const tool = this.tools.get(recovered.message.toolCallId);
         if (!tool || tool.status === "streaming") {
           continue;
         }
-        this.tools.set(
-          tool.id,
+        const nextTool: Exclude<SessionProtocolToolRun, { status: "streaming" }> =
           tool.status === "queued" || tool.status === "running"
             ? {
                 ...tool,
@@ -1466,10 +1469,14 @@ class LocalHostedSessionHandle implements LocalHostedSession {
                 resultMessageId: recovered.historyEntryId,
                 error: "Tool completion status is unknown after session recovery.",
               }
-            : { ...tool, resultMessageId: recovered.historyEntryId },
-        );
+            : { ...tool, resultMessageId: recovered.historyEntryId };
+        this.tools.set(tool.id, nextTool);
+        recoveredTools.push({ tool: nextTool, result: recovered });
       }
       await this.commitSnapshot();
+      for (const { tool, result } of recoveredTools) {
+        await this.appendToolHistory(tool, result.historyEntryId, result.message);
+      }
     });
   }
 

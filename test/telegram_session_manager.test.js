@@ -221,6 +221,15 @@ describe("telegram session manager", () => {
         tauSessionId: "rpc-1",
       }),
     );
+    expect(clientHarness.client.sessions.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attributes: {
+          source: "telegram",
+          project: "demo",
+          repository: "example.com/demo",
+        },
+      }),
+    );
   });
 
   it("emits persisted warning notices for Telegram delivery", async () => {
@@ -447,6 +456,15 @@ describe("telegram session manager", () => {
     const created = await manager.createSession({ projectId: "platform" });
     await waitFor(() => clientHarness.session.exec.mock.calls.length === 2);
 
+    expect(clientHarness.client.sessions.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attributes: {
+          source: "telegram",
+          project: "platform",
+          repository: "github.com/owner/alpha,github.com/owner/beta",
+        },
+      }),
+    );
     expect(clientHarness.session.exec.mock.calls).toEqual([
       [
         expect.stringContaining("/tmp/ws/platform/alpha/.tau/scripts/provision"),

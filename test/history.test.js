@@ -1,3 +1,4 @@
+import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it, vi } from "vitest";
 import { resolveHistoryRemoteTarget } from "../dist/core/history/config.js";
 import { LocalHistoryStore } from "../dist/core/history/local_history_store.js";
@@ -15,6 +16,7 @@ import historyWorker, {
   generateDigest,
   isDigestContextOverflowError,
   migrateHistoryDatabase,
+  refreshDigestIfNeeded,
   runAi,
   selectHistoryReadPage,
 } from "../dist/history/worker/index.js";
@@ -96,6 +98,48 @@ function createD1Harness(options = {}) {
   return { database, prepared };
 }
 
+function createSqliteD1Harness() {
+  const sqlite = new DatabaseSync(":memory:");
+  const database = {
+    async exec(query) {
+      sqlite.exec(query);
+    },
+    prepare(query) {
+      const statement = {
+        values: [],
+        bind(...values) {
+          this.values = values;
+          return this;
+        },
+        async first() {
+          return sqlite.prepare(query).get(...this.values) ?? null;
+        },
+        async all() {
+          return { results: sqlite.prepare(query).all(...this.values) };
+        },
+        async run() {
+          sqlite.prepare(query).run(...this.values);
+          return { success: true };
+        },
+      };
+      return statement;
+    },
+    async batch(statements) {
+      sqlite.exec("BEGIN IMMEDIATE");
+      try {
+        const results = [];
+        for (const statement of statements) results.push(await statement.run());
+        sqlite.exec("COMMIT");
+        return results;
+      } catch (error) {
+        sqlite.exec("ROLLBACK");
+        throw error;
+      }
+    },
+  };
+  return { database, sqlite };
+}
+
 async function callHistoryWorker(path, body, harness) {
   return await historyWorker.fetch(
     new Request(`https://history.example.com${path}`, {
@@ -159,6 +203,12 @@ describe("session history", () => {
           },
         ],
       });
+      await expect(
+        store.search({
+          attributes: { repository: { contains: "example/repo" } },
+          limit: 10,
+        }),
+      ).resolves.toMatchObject({ sessions: [{ sessionId: "session-1" }] });
       const firstPage = await store.read({ sessionId: "session-1", limit: 2 });
       expect(firstPage.entries.map((entry) => entry.id)).toEqual(["user-1", "assistant-1"]);
       expect(firstPage.nextCursor).toEqual(expect.any(String));
@@ -170,6 +220,36 @@ describe("session history", () => {
       await expect(store.read({ sessionId: "session-1", limit: 10 })).resolves.toMatchObject({
         entries: [{ id: "user-1" }, { id: "assistant-1" }],
       });
+    } finally {
+      store.close();
+    }
+  });
+
+  it("bounds local transcript pages by serialized bytes", async () => {
+    const store = new LocalHistoryStore(":memory:");
+    try {
+      store.createSession({ sessionId: "large-local", attributes: {}, createdAt: 1 });
+      const content = "x".repeat(1024 * 1024);
+      const entries = Array.from({ length: 14 }, (_, index) =>
+        createTextEntry(`large-${index}`, "assistant", content, index + 2),
+      );
+      store.append("large-local", entries);
+
+      const firstPage = await store.read({ sessionId: "large-local", limit: 100 });
+      expect(firstPage.entries.length).toBeGreaterThan(0);
+      expect(firstPage.entries.length).toBeLessThan(entries.length);
+      expect(firstPage.entries[0].content).toHaveLength(content.length);
+      expect(firstPage.nextCursor).toEqual(expect.any(String));
+
+      const secondPage = await store.read({
+        sessionId: "large-local",
+        limit: 100,
+        cursor: firstPage.nextCursor,
+      });
+      expect([...firstPage.entries, ...secondPage.entries].map((entry) => entry.id)).toEqual(
+        entries.map((entry) => entry.id),
+      );
+      expect(secondPage.nextCursor).toBeUndefined();
     } finally {
       store.close();
     }
@@ -592,12 +672,146 @@ describe("session history", () => {
     });
   });
 
+  it("paginates distinct remote search sessions when one session has many matches", async () => {
+    const harness = createSqliteD1Harness();
+    try {
+      await migrateHistoryDatabase(harness.database);
+      const insertSession = harness.sqlite.prepare(
+        "INSERT INTO sessions (session_id, attributes_json, created_at, updated_at) VALUES (?, '{}', ?, ?)",
+      );
+      insertSession.run("session-1", 1, 300);
+      insertSession.run("session-2", 2, 200);
+      insertSession.run("session-3", 3, 100);
+      harness.sqlite
+        .prepare("INSERT INTO attributes (session_id, key, value) VALUES (?, ?, ?)")
+        .run("session-2", "repository", "github.com/example/alpha,github.com/example/beta");
+
+      const insertMatch = harness.sqlite.prepare(
+        "INSERT INTO entries_fts (session_id, entry_id, position, text) VALUES (?, ?, ?, ?)",
+      );
+      for (let position = 1; position <= 250; position += 1) {
+        insertMatch.run("session-1", `session-1-entry-${position}`, position, "history");
+      }
+      insertMatch.run("session-2", "session-2-entry-1", 1, "history");
+      insertMatch.run("session-3", "session-3-entry-1", 1, "history");
+
+      const firstResponse = await callHistoryWorker(
+        "/v1/search",
+        { query: "history", limit: 2 },
+        harness,
+      );
+      expect(firstResponse.status).toBe(200);
+      const firstPage = await firstResponse.json();
+      expect(firstPage.sessions.map((session) => session.sessionId)).toEqual([
+        "session-1",
+        "session-2",
+      ]);
+      expect(firstPage.nextCursor).toEqual(expect.any(String));
+
+      const secondResponse = await callHistoryWorker(
+        "/v1/search",
+        { query: "history", limit: 2, cursor: firstPage.nextCursor },
+        harness,
+      );
+      expect(secondResponse.status).toBe(200);
+      await expect(secondResponse.json()).resolves.toMatchObject({
+        sessions: [{ sessionId: "session-3" }],
+      });
+
+      const attributeResponse = await callHistoryWorker(
+        "/v1/search",
+        { attributes: { repository: { contains: "example/beta" } }, limit: 10 },
+        harness,
+      );
+      expect(attributeResponse.status).toBe(200);
+      await expect(attributeResponse.json()).resolves.toMatchObject({
+        sessions: [{ sessionId: "session-2" }],
+      });
+    } finally {
+      harness.sqlite.close();
+    }
+  });
+
   it("centers remote snippets on a matched term when the full query phrase is absent", () => {
     const text = `START ${"prefix ".repeat(80)}database details ${"middle ".repeat(80)}migration plan`;
     const snippet = boundedSnippet(text, "database migration");
 
     expect(snippet).toContain("database details");
     expect(snippet).not.toContain("START");
+  });
+
+  it("rejects stale digest writes after the transcript changes", async () => {
+    const harness = createSqliteD1Harness();
+    try {
+      await migrateHistoryDatabase(harness.database);
+      await applyOperation(harness.database, {
+        id: "create-digest-race",
+        sessionId: "digest-race",
+        type: "create",
+        session: { sessionId: "digest-race", attributes: {}, createdAt: 1 },
+      });
+      await applyOperation(harness.database, {
+        id: "append-digest-race-1",
+        sessionId: "digest-race",
+        type: "append",
+        entries: [createTextEntry("entry-1", "user", "first", 2)],
+      });
+
+      const oldDigestStarted = Promise.withResolvers();
+      const oldDigestResult = Promise.withResolvers();
+      const oldRefresh = refreshDigestIfNeeded(
+        {
+          DB: harness.database,
+          AI: {
+            run: vi.fn(async () => {
+              oldDigestStarted.resolve();
+              return await oldDigestResult.promise;
+            }),
+          },
+        },
+        "digest-race",
+        true,
+      );
+      await oldDigestStarted.promise;
+
+      await applyOperation(harness.database, {
+        id: "append-digest-race-2",
+        sessionId: "digest-race",
+        type: "append",
+        entries: [createTextEntry("entry-2", "assistant", "second", 3)],
+      });
+      await refreshDigestIfNeeded(
+        {
+          DB: harness.database,
+          AI: { run: vi.fn(async () => '{"title":"Current","summary":"Current digest"}') },
+        },
+        "digest-race",
+        true,
+      );
+
+      oldDigestResult.resolve('{"title":"Stale","summary":"Stale digest"}');
+      await oldRefresh;
+
+      expect(
+        harness.sqlite
+          .prepare(
+            "SELECT transcript_revision, digest_title, digest_summary, digest_through_entry_id FROM sessions WHERE session_id = ?",
+          )
+          .get("digest-race"),
+      ).toEqual({
+        transcript_revision: 2,
+        digest_title: "Current",
+        digest_summary: "Current digest",
+        digest_through_entry_id: "entry-2",
+      });
+      expect(
+        harness.sqlite
+          .prepare("SELECT title, summary FROM sessions_fts WHERE session_id = ?")
+          .get("digest-race"),
+      ).toEqual({ title: "Current", summary: "Current digest" });
+    } finally {
+      harness.sqlite.close();
+    }
   });
 
   it("generates digests with GPT-5.6 Luna at medium reasoning effort", async () => {
@@ -805,12 +1019,16 @@ describe("session history", () => {
     const tool = createHistoryToolDefinition(createBackend(), history);
     const result = await runTool(
       tool,
-      'const page = await history.search({ query: "sqlite" }); console.log(page.sessions[0].sessionId);',
+      'const page = await history.search({ query: "sqlite", attributes: { repository: { contains: "tau" } } }); console.log(page.sessions[0].sessionId);',
     );
 
     expect(toolText(result)).toContain("session-1");
     expect(history.search).toHaveBeenCalledWith(
-      { query: "sqlite", limit: 10 },
+      {
+        query: "sqlite",
+        attributes: { repository: { contains: "tau" } },
+        limit: 10,
+      },
       expect.any(AbortSignal),
     );
 

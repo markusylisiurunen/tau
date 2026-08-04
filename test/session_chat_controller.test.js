@@ -4195,6 +4195,10 @@ describe("SessionChatController", () => {
         },
       ]),
     );
+    session.snapshotValue = {
+      ...session.snapshotValue,
+      attributes: { source: "telegram", repository: "github.com/example/repo" },
+    };
     const nextSession = new FakeSession(createSnapshot([]));
     nextSession.id = "session-2";
     nextSession.snapshotValue = {
@@ -4219,7 +4223,7 @@ describe("SessionChatController", () => {
 
     expect(createSession).toHaveBeenCalledWith({
       executionEnvironment: { kind: "local", cwd: "/session/repo" },
-      attributes: { source: "tui" },
+      attributes: { source: "tui", repository: "github.com/example/repo" },
       personaId: "persona-1",
       reasoning: "none",
     });

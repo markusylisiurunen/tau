@@ -18,6 +18,7 @@ import type {
 
 const PRIVATE_DIRECTORY_MODE = 0o700;
 const PRIVATE_FILE_MODE = 0o600;
+const HISTORY_READ_PAGE_MAX_BYTES = 12 * 1024 * 1024;
 const MAX_SEARCH_SNIPPETS = 3;
 
 type SqlValue = string | number | null;
@@ -214,9 +215,13 @@ export class LocalHistoryStore {
   async search(input: HistorySearchInput): Promise<HistorySearchResult> {
     const offset = decodeOffsetCursor(input.cursor);
     const values: SqlValue[] = [];
-    const attributeClauses = Object.entries(input.attributes ?? {}).map(([key, value]) => {
-      values.push(key, value);
-      return "EXISTS (SELECT 1 FROM history_attributes a WHERE a.session_id = s.session_id AND a.key = ? AND a.value = ?)";
+    const attributeClauses = Object.entries(input.attributes ?? {}).map(([key, filter]) => {
+      if (typeof filter === "string") {
+        values.push(key, filter);
+        return "EXISTS (SELECT 1 FROM history_attributes a WHERE a.session_id = s.session_id AND a.key = ? AND a.value = ?)";
+      }
+      values.push(key, filter.contains);
+      return "EXISTS (SELECT 1 FROM history_attributes a WHERE a.session_id = s.session_id AND a.key = ? AND INSTR(a.value, ?) > 0)";
     });
     const query = input.query?.trim();
     let sql: string;
@@ -264,18 +269,24 @@ export class LocalHistoryStore {
     if (!sessionRow) {
       throw new Error(`history session '${input.sessionId}' was not found`);
     }
+    const candidates = this.database
+      .prepare(
+        "SELECT position, LENGTH(CAST(payload_json AS BLOB)) AS payload_bytes FROM history_entries WHERE session_id = ? AND position > ? ORDER BY position LIMIT ?",
+      )
+      .all(input.sessionId, position, input.limit + 1) as SqlRow[];
+    const selectedCount = selectHistoryReadPage(candidates, input.limit);
     const rows = this.database
       .prepare(
         "SELECT position, payload_json FROM history_entries WHERE session_id = ? AND position > ? ORDER BY position LIMIT ?",
       )
-      .all(input.sessionId, position, input.limit + 1) as SqlRow[];
-    const hasMore = rows.length > input.limit;
-    const selected = rows.slice(0, input.limit);
-    const last = selected.at(-1);
+      .all(input.sessionId, position, selectedCount) as SqlRow[];
+    const last = rows.at(-1);
     return {
       session: descriptorFromRow(sessionRow),
-      entries: selected.map((row) => JSON.parse(String(row.payload_json)) as HistoryEntry),
-      ...(hasMore && last ? { nextCursor: encodePositionCursor(Number(last.position)) } : {}),
+      entries: rows.map((row) => JSON.parse(String(row.payload_json)) as HistoryEntry),
+      ...(candidates.length > selectedCount && last
+        ? { nextCursor: encodePositionCursor(Number(last.position)) }
+        : {}),
     };
   }
 
@@ -429,6 +440,18 @@ function buildFtsQuery(query: string): string {
   const terms = query.match(/[\p{L}\p{N}_-]+/gu) ?? [];
   if (terms.length === 0) return `"${query.replaceAll('"', '""')}"`;
   return terms.map((term) => `"${term.replaceAll('"', '""')}"`).join(" AND ");
+}
+
+function selectHistoryReadPage(candidates: SqlRow[], limit: number): number {
+  let count = 0;
+  let bytes = 0;
+  for (const candidate of candidates.slice(0, limit)) {
+    const nextBytes = bytes + Number(candidate.payload_bytes) + 1;
+    if (count > 0 && nextBytes > HISTORY_READ_PAGE_MAX_BYTES) break;
+    count += 1;
+    bytes = nextBytes;
+  }
+  return count;
 }
 
 function encodeOffsetCursor(offset: number): string {

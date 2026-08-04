@@ -38,7 +38,8 @@ export async function setupHistoryService(options: HistorySetupOptions): Promise
   const domain = normalizeDomain(options.domain);
   const zoneName = options.zoneName.trim();
   if (!zoneName) throw new Error("zone name is required");
-  const apiKey = options.apiKey?.trim() || env.TAU_HISTORY_API_KEY?.trim() || generateApiKey();
+  const suppliedApiKey = options.apiKey?.trim() || env.TAU_HISTORY_API_KEY?.trim();
+  const apiKey = suppliedApiKey || generateApiKey();
   const databaseId = await ensureDatabase(env, stdout);
   const temporaryDirectory = mkdtempSync(join(tmpdir(), "tau-history-"));
   try {
@@ -68,8 +69,12 @@ export async function setupHistoryService(options: HistorySetupOptions): Promise
       ),
     );
     stdout("");
-    stdout("Set TAU_HISTORY_API_KEY to:");
-    stdout(apiKey);
+    if (suppliedApiKey) {
+      stdout("Set TAU_HISTORY_API_KEY to the API key supplied for this deployment.");
+    } else {
+      stdout("Set TAU_HISTORY_API_KEY to:");
+      stdout(apiKey);
+    }
   } finally {
     rmSync(temporaryDirectory, { recursive: true, force: true });
   }
@@ -81,16 +86,47 @@ export async function destroyHistoryService(options: HistoryDestroyOptions): Pro
   const stdout = options.stdout ?? console.log;
   requireCloudflareAuth(env);
 
-  const worker = await runWrangler(["delete", "--name", WORKER_NAME], { env, allowFailure: true });
-  stdout(worker.ok ? `deleted Worker ${WORKER_NAME}` : `Worker ${WORKER_NAME} was not deleted`);
-  const database = await runWrangler(["d1", "delete", DATABASE_NAME, "--skip-confirmation"], {
-    env,
-    allowFailure: true,
-  });
-  stdout(
-    database.ok
-      ? `deleted D1 database ${DATABASE_NAME}`
-      : `D1 database ${DATABASE_NAME} was not deleted`,
+  const failures: Error[] = [];
+  const resources = [
+    { label: `Worker ${WORKER_NAME}`, args: ["delete", "--name", WORKER_NAME] },
+    {
+      label: `D1 database ${DATABASE_NAME}`,
+      args: ["d1", "delete", DATABASE_NAME, "--skip-confirmation"],
+    },
+  ];
+  for (const resource of resources) {
+    try {
+      const result = await runWrangler(resource.args, { env, allowFailure: true });
+      if (result.ok) {
+        stdout(`deleted ${resource.label}`);
+      } else if (isMissingHistoryResource(result.output)) {
+        stdout(`${resource.label} was already absent`);
+      } else {
+        const failure = new Error(
+          `wrangler ${resource.args.join(" ")} failed${result.output ? `:\n${result.output}` : " without diagnostic output"}`,
+        );
+        failures.push(failure);
+        stdout(`${resource.label} was not deleted: ${failure.message}`);
+      }
+    } catch (error) {
+      const failure = error instanceof Error ? error : new Error(String(error));
+      failures.push(failure);
+      stdout(`${resource.label} was not deleted: ${failure.message}`);
+    }
+  }
+  if (failures.length > 0) {
+    throw new AggregateError(
+      failures,
+      `failed to destroy history service:\n${failures.map((failure) => failure.message).join("\n")}`,
+    );
+  }
+}
+
+function isMissingHistoryResource(output: string): boolean {
+  const normalized = output.toLowerCase();
+  if (!normalized.includes("tau-history")) return false;
+  return ["not found", "does not exist", "could not find", "couldn't find"].some((phrase) =>
+    normalized.includes(phrase),
   );
 }
 

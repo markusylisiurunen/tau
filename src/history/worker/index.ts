@@ -78,6 +78,7 @@ const HISTORY_SCHEMA_MIGRATIONS = [
         attributes_json TEXT NOT NULL,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
+        transcript_revision INTEGER NOT NULL DEFAULT 0,
         digest_title TEXT,
         digest_summary TEXT,
         digest_through_entry_id TEXT
@@ -347,7 +348,9 @@ export async function applyOperation(database: D1Database, operation: Operation)
     if (updatedAt > 0) {
       statements.push(
         database
-          .prepare("UPDATE sessions SET updated_at = MAX(updated_at, ?) WHERE session_id = ?")
+          .prepare(
+            "UPDATE sessions SET updated_at = MAX(updated_at, ?), transcript_revision = transcript_revision + 1 WHERE session_id = ?",
+          )
           .bind(updatedAt, operation.sessionId),
       );
     }
@@ -383,7 +386,7 @@ export async function applyOperation(database: D1Database, operation: Operation)
       database.prepare("DELETE FROM sessions_fts WHERE session_id = ?").bind(operation.sessionId),
       database
         .prepare(
-          "UPDATE sessions SET updated_at = ?, digest_title = NULL, digest_summary = NULL, digest_through_entry_id = NULL WHERE session_id = ?",
+          "UPDATE sessions SET updated_at = ?, digest_title = NULL, digest_summary = NULL, digest_through_entry_id = NULL, transcript_revision = transcript_revision + 1 WHERE session_id = ?",
         )
         .bind(appliedAt, operation.sessionId),
     );
@@ -401,13 +404,17 @@ export async function applyOperation(database: D1Database, operation: Operation)
 async function search(database: D1Database, raw: unknown): Promise<unknown> {
   const input = asRecord(raw, "search input");
   const query = optionalString(input.query, "query", 1_000)?.trim();
-  const attributes = parseAttributes(input.attributes, true);
+  const attributes = parseAttributeFilters(input.attributes);
   const limit = boundedInteger(input.limit ?? 10, "limit", 1, MAX_SEARCH_LIMIT);
   const offset = decodeCursor(optionalString(input.cursor, "cursor", 2_048), "offset");
   const attributeValues: unknown[] = [];
-  const attributeFilters = Object.entries(attributes).map(([key, value]) => {
-    attributeValues.push(key, value);
-    return "EXISTS (SELECT 1 FROM attributes a WHERE a.session_id = s.session_id AND a.key = ? AND a.value = ?)";
+  const attributeFilters = Object.entries(attributes).map(([key, filter]) => {
+    if (typeof filter === "string") {
+      attributeValues.push(key, filter);
+      return "EXISTS (SELECT 1 FROM attributes a WHERE a.session_id = s.session_id AND a.key = ? AND a.value = ?)";
+    }
+    attributeValues.push(key, filter.contains);
+    return "EXISTS (SELECT 1 FROM attributes a WHERE a.session_id = s.session_id AND a.key = ? AND INSTR(a.value, ?) > 0)";
   });
   const attributeClause =
     attributeFilters.length > 0 ? `AND ${attributeFilters.join(" AND ")}` : "";
@@ -430,48 +437,68 @@ async function search(database: D1Database, raw: unknown): Promise<unknown> {
   }
 
   const ftsQuery = buildFtsQuery(query);
-  const candidateLimit = Math.min(1_000, offset + limit + 200);
-  const digestRows = await database
+  const candidates = await database
     .prepare(
-      `SELECT s.*, bm25(sessions_fts, 0, 10, 5) AS score
-       FROM sessions_fts
-       JOIN sessions s ON s.session_id = sessions_fts.session_id
-       WHERE sessions_fts MATCH ? ${attributeClause}
-       ORDER BY score, s.updated_at DESC, s.session_id ASC LIMIT ?`,
+      `WITH matching_sessions AS (
+         SELECT session_id, 0 AS source_rank
+         FROM sessions_fts
+         WHERE sessions_fts MATCH ?
+         UNION ALL
+         SELECT session_id, 1 AS source_rank
+         FROM entries_fts
+         WHERE entries_fts MATCH ?
+       ), ranked_sessions AS (
+         SELECT session_id, MIN(source_rank) AS source_rank
+         FROM matching_sessions
+         GROUP BY session_id
+       )
+       SELECT s.*
+       FROM ranked_sessions r
+       JOIN sessions s ON s.session_id = r.session_id
+       WHERE 1 = 1 ${attributeClause}
+       ORDER BY r.source_rank, s.updated_at DESC, s.session_id ASC
+       LIMIT ? OFFSET ?`,
     )
-    .bind(ftsQuery, ...attributeValues, candidateLimit)
+    .bind(ftsQuery, ftsQuery, ...attributeValues, limit + 1, offset)
     .all<Record<string, unknown>>();
-  const transcriptRows = await database
-    .prepare(
-      `SELECT s.*, entries_fts.text AS match_text, bm25(entries_fts) AS score
-       FROM entries_fts
-       JOIN sessions s ON s.session_id = entries_fts.session_id
-       WHERE entries_fts MATCH ? ${attributeClause}
-       ORDER BY score, s.updated_at DESC, s.session_id ASC LIMIT ?`,
-    )
-    .bind(ftsQuery, ...attributeValues, candidateLimit)
-    .all<Record<string, unknown>>();
+  const selectedRows = candidates.results.slice(0, limit);
+  const sessions = selectedRows.map((row) => descriptor(row));
 
-  const matches = new Map<string, Record<string, unknown>>();
-  for (const row of digestRows.results) {
-    const session = descriptor(row);
-    matches.set(String(session.sessionId), session);
-  }
-  for (const row of transcriptRows.results) {
-    const sessionId = String(row.session_id);
-    const session = matches.get(sessionId) ?? descriptor(row);
-    const snippets = session.snippets as string[];
-    if (snippets.length < 3 && typeof row.match_text === "string") {
-      snippets.push(boundedSnippet(row.match_text, query));
+  if (selectedRows.length > 0) {
+    const sessionIds = selectedRows.map((row) => String(row.session_id));
+    const snippets = await database
+      .prepare(
+        `WITH ranked_snippets AS (
+           SELECT session_id,
+                  text AS match_text,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY session_id
+                    ORDER BY CAST(position AS INTEGER), entry_id
+                  ) AS snippet_rank
+           FROM entries_fts
+           WHERE entries_fts MATCH ?
+             AND session_id IN (${sessionIds.map(() => "?").join(", ")})
+         )
+         SELECT session_id, match_text
+         FROM ranked_snippets
+         WHERE snippet_rank <= 3
+         ORDER BY session_id, snippet_rank`,
+      )
+      .bind(ftsQuery, ...sessionIds)
+      .all<{ session_id: string; match_text: string }>();
+    const sessionsById = new Map(
+      sessions.map((session) => [String(session.sessionId), session] as const),
+    );
+    for (const row of snippets.results) {
+      const session = sessionsById.get(String(row.session_id));
+      if (!session || typeof row.match_text !== "string") continue;
+      (session.snippets as string[]).push(boundedSnippet(row.match_text, query));
     }
-    matches.set(sessionId, session);
   }
 
-  const ordered = [...matches.values()];
-  const selected = ordered.slice(offset, offset + limit);
   return {
-    sessions: selected,
-    ...(ordered.length > offset + limit
+    sessions,
+    ...(candidates.results.length > limit
       ? { nextCursor: encodeCursor({ offset: offset + limit }) }
       : {}),
   };
@@ -542,20 +569,32 @@ function descriptor(row: Record<string, unknown>): Record<string, unknown> {
   };
 }
 
-async function refreshDigestIfNeeded(env: Env, sessionId: string, force: boolean): Promise<void> {
+export async function refreshDigestIfNeeded(
+  env: Env,
+  sessionId: string,
+  force: boolean,
+): Promise<void> {
   const session = await env.DB.prepare(
-    "SELECT digest_title, digest_summary, digest_through_entry_id FROM sessions WHERE session_id = ?",
+    `SELECT s.digest_title,
+            s.digest_summary,
+            s.digest_through_entry_id,
+            s.transcript_revision,
+            latest.position AS latest_position,
+            latest.entry_id AS latest_entry_id
+     FROM sessions s
+     LEFT JOIN entries latest ON latest.session_id = s.session_id
+       AND latest.position = (
+         SELECT MAX(position) FROM entries WHERE session_id = s.session_id
+       )
+     WHERE s.session_id = ?`,
   )
     .bind(sessionId)
     .first<Record<string, unknown>>();
-  if (!session) return;
-  const latest = await env.DB.prepare(
-    "SELECT position, entry_id FROM entries WHERE session_id = ? ORDER BY position DESC LIMIT 1",
-  )
-    .bind(sessionId)
-    .first<{ position: number; entry_id: string }>();
-  if (!latest) return;
-  if (session.digest_through_entry_id === latest.entry_id && !force) return;
+  if (!session || typeof session.latest_entry_id !== "string") return;
+  const latestPosition = Number(session.latest_position);
+  const transcriptRevision = Number(session.transcript_revision);
+  if (!Number.isSafeInteger(latestPosition) || !Number.isSafeInteger(transcriptRevision)) return;
+  if (session.digest_through_entry_id === session.latest_entry_id && !force) return;
 
   const count = await env.DB.prepare("SELECT COUNT(*) AS count FROM entries WHERE session_id = ?")
     .bind(sessionId)
@@ -586,18 +625,25 @@ async function refreshDigestIfNeeded(env: Env, sessionId: string, force: boolean
     env.DB,
     env.AI,
     sessionId,
-    latest.position,
+    latestPosition,
     previous,
   );
-  await env.DB.prepare("DELETE FROM sessions_fts WHERE session_id = ?").bind(sessionId).run();
-  await env.DB.prepare("INSERT INTO sessions_fts (session_id, title, summary) VALUES (?, ?, ?)")
-    .bind(sessionId, digest.title, digest.summary)
-    .run();
-  await env.DB.prepare(
-    "UPDATE sessions SET digest_title = ?, digest_summary = ?, digest_through_entry_id = ? WHERE session_id = ?",
-  )
-    .bind(digest.title, digest.summary, latest.entry_id, sessionId)
-    .run();
+  const currentRevision =
+    "EXISTS (SELECT 1 FROM sessions WHERE session_id = ? AND transcript_revision = ?)";
+  await env.DB.batch([
+    env.DB.prepare(`DELETE FROM sessions_fts WHERE session_id = ? AND ${currentRevision}`).bind(
+      sessionId,
+      sessionId,
+      transcriptRevision,
+    ),
+    env.DB.prepare(
+      `INSERT INTO sessions_fts (session_id, title, summary)
+         SELECT ?, ?, ? WHERE ${currentRevision}`,
+    ).bind(sessionId, digest.title, digest.summary, sessionId, transcriptRevision),
+    env.DB.prepare(
+      "UPDATE sessions SET digest_title = ?, digest_summary = ?, digest_through_entry_id = ? WHERE session_id = ? AND transcript_revision = ?",
+    ).bind(digest.title, digest.summary, session.latest_entry_id, sessionId, transcriptRevision),
+  ]);
 }
 
 async function generateDigestFromDatabase(
@@ -916,6 +962,36 @@ function parseEntry(raw: unknown): HistoryEntry {
     result: entry.result,
     outcome,
   };
+}
+
+function parseAttributeFilters(raw: unknown): Record<string, string | { contains: string }> {
+  if (raw === undefined) return {};
+  const attributes = asRecord(raw, "attributes");
+  const entries = Object.entries(attributes);
+  if (entries.length > 32) throw invalidRequest("at most 32 attributes are allowed");
+  return Object.fromEntries(
+    entries.map(([key, value]) => {
+      if (key.length === 0 || key.length > 64) {
+        throw invalidRequest("attribute filter keys must be bounded strings");
+      }
+      if (typeof value === "string" && value.length <= 1_024) return [key, value];
+      if (
+        typeof value === "object" &&
+        value !== null &&
+        !Array.isArray(value) &&
+        Object.keys(value).length === 1 &&
+        "contains" in value &&
+        typeof value.contains === "string" &&
+        value.contains.length > 0 &&
+        value.contains.length <= 1_024
+      ) {
+        return [key, { contains: value.contains }];
+      }
+      throw invalidRequest(
+        "attribute filters must be bounded strings or objects with one non-empty contains string",
+      );
+    }),
+  );
 }
 
 function parseAttributes(raw: unknown, optional: boolean): Record<string, string> {

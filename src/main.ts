@@ -35,10 +35,10 @@ import type {
   SessionProtocolCreateParams,
   SessionProtocolExecutionEnvironmentInput,
 } from "./protocol/session_protocol.js";
-import { createTauSdkClient } from "./sdk/client.js";
 import { createTauSdkClientWithHostConfig } from "./sdk/local_client.js";
 import { FileSessionStore, getDefaultSessionStoreDirectory } from "./store/file_session_store.js";
 import { createTuiClientTools, SessionChatApp } from "./tui/index.js";
+import { createLocalTuiSessionAttributes } from "./tui/session_creation_attributes.js";
 import { detectTerminalAppearance } from "./tui/terminal_appearance.js";
 
 const cwd = process.cwd();
@@ -782,7 +782,8 @@ if (argv[0] === "telegram") {
       cwd,
       env: process.env,
       config: telegramConfig,
-      createSessionClient: createTauSdkClient,
+      createSessionClient: async (options) =>
+        await createTauSdkClientWithHostConfig(options, telegramConfig),
     });
     process.exit(0);
   } catch (err) {
@@ -1251,7 +1252,7 @@ const app = await SessionChatApp.open({
     mode: "create",
     input: {
       executionEnvironment: { kind: "local", cwd },
-      attributes: { source: "tui" },
+      attributes: createLocalTuiSessionAttributes(cwd),
       ...(initialPersonaId !== undefined ? { personaId: initialPersonaId } : {}),
       ...(reasoningOverride !== undefined ? { reasoning: reasoningOverride } : {}),
     },

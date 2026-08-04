@@ -44,13 +44,17 @@ export const HISTORY_TOOL: Tool = {
 const historyArgsSchema = z.object({ code: z.string().trim().min(1) }).strict();
 type HistoryArgs = z.infer<typeof historyArgsSchema>;
 
-const attributesSchema = z
-  .record(z.string().min(1).max(64), z.string().max(1_024))
+const attributeFilterSchema = z.union([
+  z.string().max(1_024),
+  z.object({ contains: z.string().min(1).max(1_024) }).strict(),
+]);
+const attributeFiltersSchema = z
+  .record(z.string().min(1).max(64), attributeFilterSchema)
   .refine((attributes) => Object.keys(attributes).length <= 32);
 const searchInputSchema = z
   .object({
     query: z.string().trim().min(1).max(1_000).optional(),
-    attributes: attributesSchema.optional(),
+    attributes: attributeFiltersSchema.optional(),
     limit: z.number().int().min(1).max(100).default(10),
     cursor: z.string().min(1).max(2_048).optional(),
   })

@@ -1240,16 +1240,25 @@ describe("telegram session manager", () => {
     }
   });
 
-  it("does not persist failed sessions", async () => {
+  it("persists rejected submissions as recoverable failed-session tombstones", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "tau-telegram-session-failure-"));
     const persistencePath = join(tempRoot, "sessions.json");
     const clientHarness = createClientHarness();
     clientHarness.session.submit = vi.fn(async () => {
-      throw new Error("submit boom");
+      throw new TauSessionProtocolResponseError({
+        requestId: "submit-1",
+        error: {
+          code: "internal_error",
+          message: "failed to run session turn",
+          data: { cause: "snapshot projection failed" },
+        },
+      });
     });
+    const logs = [];
     const manager = createTelegramSessionManager({
       projects: { demo: { repo: "git@example.com:demo.git" } },
       persistencePath,
+      onLog: (entry) => logs.push(entry),
       prepareWorkspace: vi.fn(async () => ({
         workspacePath: join(tempRoot, "workspaces", "demo"),
         sessionCwd: join(tempRoot, "workspaces", "demo"),
@@ -1257,17 +1266,68 @@ describe("telegram session manager", () => {
       })),
       createClient: vi.fn(async () => clientHarness.client),
     });
+    let recoveredManager;
 
     try {
       const created = await manager.createSession({ projectId: "demo" });
       await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
       await manager.sendMessage(created.id, "fail");
       await waitFor(() => manager.getSession(created.id)?.state === "failed");
+      await waitFor(() => clientHarness.client.close.mock.calls.length === 1);
       await manager.close();
 
+      const diagnostic = "failed to run session turn: snapshot projection failed";
       const state = JSON.parse(await readFile(persistencePath, "utf8"));
-      expect(state.sessions).toEqual([]);
+      expect(state).toMatchObject({
+        version: 2,
+        sessions: [
+          {
+            id: created.id,
+            projectId: "demo",
+            state: "failed",
+            tauSessionId: "rpc-1",
+            error: diagnostic,
+          },
+        ],
+      });
+      expect(logs).toContainEqual({
+        level: "error",
+        message: "telegram session submit failed",
+        data: {
+          sessionId: created.id,
+          tauSessionId: "rpc-1",
+          source: "user-message",
+          cause: diagnostic,
+        },
+      });
+      expect(manager.getLogs(created.id)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            message: "internal cleanup interrupt requested",
+            data: { reason: "submit failure cleanup" },
+          }),
+        ]),
+      );
+
+      const createClient = vi.fn(async () => createClientHarness().client);
+      recoveredManager = createTelegramSessionManager({
+        projects: { demo: { repo: "git@example.com:demo.git" } },
+        persistencePath,
+        createClient,
+      });
+      await recoveredManager.initialize();
+
+      expect(recoveredManager.getSession(created.id)).toEqual(
+        expect.objectContaining({
+          id: created.id,
+          state: "failed",
+          tauSessionId: "rpc-1",
+          error: diagnostic,
+        }),
+      );
+      expect(createClient).not.toHaveBeenCalled();
     } finally {
+      await recoveredManager?.close();
       await manager.close();
       await rm(tempRoot, { recursive: true, force: true });
     }
@@ -1305,6 +1365,7 @@ describe("telegram session manager", () => {
           id: created.id,
           projectId: "demo",
           ownerId: "telegram:bot:chat:42",
+          state: "waiting-input",
           createdAt: expect.any(String),
           updatedAt: expect.any(String),
           tauSessionId: "rpc-1",

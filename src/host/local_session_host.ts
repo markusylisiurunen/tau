@@ -911,7 +911,9 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         await this.session.commitUserText(buildGoalContinuationText(this.goal));
       } catch (error) {
         this.rejectCommittedLogicalSteering(committedSteering, error);
-        await this.cleanupFailedTurn(rootUserMessage.id, error).catch(() => undefined);
+        await this.cleanupFailedTurn(rootUserMessage.id, committedSteering, error).catch(
+          () => undefined,
+        );
         throw error;
       }
     }
@@ -1886,7 +1888,10 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     for (const [id, facet] of Object.entries(snapshot.facets)) {
       this.facets.set(id, structuredClone(facet));
     }
-    this.draftAssistantMessage = snapshot.messages.find((message) => message.state === "draft");
+    const historyEntryIds = new Set(this.session.rawHistoryEntries.map((entry) => entry.id));
+    this.draftAssistantMessage = snapshot.messages.find(
+      (message) => message.state === "draft" && !historyEntryIds.has(message.id),
+    );
     this.messageStates.clear();
     this.turnOutcomes.clear();
     for (const message of snapshot.messages) {
@@ -2593,18 +2598,26 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     await this.session.commitInterruptedAssistant(interruptedMessage, draft.id);
   }
 
-  private async cleanupFailedTurn(rootHistoryEntryId: string, error: unknown): Promise<void> {
+  private async cleanupFailedTurn(
+    rootHistoryEntryId: string,
+    committedSteering: CommittedLogicalSteering[],
+    error: unknown,
+  ): Promise<void> {
     if (this.draftAssistantMessage) {
       await this.interruptDraftAssistantMessage().catch(() => undefined);
     }
 
     const diagnostic = formatErrorDiagnostic(error);
     await this.enqueueMutation(async () => {
-      this.turnOutcomes.set(rootHistoryEntryId, {
+      const outcome: SessionProtocolTurnOutcome = {
         status: "failed",
         stopReason: "error",
         errorMessage: diagnostic,
-      });
+      };
+      this.turnOutcomes.set(rootHistoryEntryId, outcome);
+      for (const steering of committedSteering) {
+        this.turnOutcomes.set(steering.historyEntryId, outcome);
+      }
       if (this.goal?.status === "active") {
         this.goal = { ...this.goal, status: "blocked" };
       }

@@ -861,6 +861,76 @@ describe("LocalSessionHost", () => {
     await host.shutdown();
   });
 
+  it("persists failed outcomes for committed steering messages", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const hostedSession = await host.createSession(localCreateInput);
+    await hostedSession.snapshot();
+    const persistenceReached = deferred();
+    const releasePersistence = deferred();
+    const finalText = "after steering";
+    const commitSessionSnapshot = store.commitSessionSnapshot.bind(store);
+    let paused = false;
+    let injectedFailure = false;
+    store.commitSessionSnapshot = vi.fn(async (snapshot, options) => {
+      if (
+        !paused &&
+        snapshot.messages.some(
+          (message) => message.message.role === "user" && message.turn?.status === "completed",
+        )
+      ) {
+        paused = true;
+        persistenceReached.resolve();
+        await releasePersistence.promise;
+      }
+      const hasFinalMessage = snapshot.messages.some(
+        (message) =>
+          message.message.role === "assistant" &&
+          message.message.content.some(
+            (content) => content.type === "text" && content.text === finalText,
+          ),
+      );
+      if (!injectedFailure && hasFinalMessage) {
+        injectedFailure = true;
+        throw new Error("steering event sink failed");
+      }
+      await commitSessionSnapshot(snapshot, options);
+    });
+    hostedSession.runtime.agent.spec.model.stream = vi
+      .fn()
+      .mockImplementationOnce(() => ({
+        async *[Symbol.asyncIterator]() {},
+        async result() {
+          return fauxAssistantMessage("before steering");
+        },
+      }))
+      .mockImplementationOnce(() => ({
+        async *[Symbol.asyncIterator]() {},
+        async result() {
+          return fauxAssistantMessage(finalText);
+        },
+      }));
+
+    const run = hostedSession.startGoal("Fail after steering");
+    await persistenceReached.promise;
+    const steering = hostedSession.steer("change direction");
+    const runResult = expect(run).rejects.toThrow("steering event sink failed");
+    const steeringResult = expect(steering.result).rejects.toThrow("steering event sink failed");
+    releasePersistence.resolve();
+
+    const applied = await steering.applied;
+    await Promise.all([runResult, steeringResult]);
+    const snapshot = await hostedSession.snapshot();
+    expect(
+      snapshot.messages.find((message) => message.id === applied.userHistoryEntryId)?.turn,
+    ).toEqual({
+      status: "failed",
+      stopReason: "error",
+      errorMessage: "steering event sink failed",
+    });
+    await host.shutdown();
+  });
+
   it("rolls back goal mutations when persistence fails", async () => {
     const store = new MemorySessionStore();
     const host = createHost(store);
@@ -1484,6 +1554,52 @@ describe("LocalSessionHost", () => {
     expect(snapshot.tools[bashCall.id]).toMatchObject({
       status: "cancelled",
       error: "Turn failed before tool completion: injected lifecycle failure: store unavailable",
+    });
+    await host.shutdown();
+  });
+
+  it("does not restore a finalized assistant draft after persistence fails", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const hostedSession = await host.createSession(localCreateInput);
+    await hostedSession.snapshot();
+
+    const finalText = "finalized before persistence failed";
+    hostedSession.runtime.agent.spec.model.stream = () => ({
+      async *[Symbol.asyncIterator]() {},
+      async result() {
+        return fauxAssistantMessage(finalText);
+      },
+    });
+    const commitSessionSnapshot = store.commitSessionSnapshot.bind(store);
+    let injectedFailure = false;
+    store.commitSessionSnapshot = vi.fn(async (snapshot, options) => {
+      const hasFinalMessage = snapshot.messages.some(
+        (message) =>
+          message.state === "committed" &&
+          message.message.role === "assistant" &&
+          message.message.content.some(
+            (content) => content.type === "text" && content.text === finalText,
+          ),
+      );
+      if (!injectedFailure && hasFinalMessage) {
+        injectedFailure = true;
+        throw new Error("assistant final persistence failed");
+      }
+      await commitSessionSnapshot(snapshot, options);
+    });
+
+    const { userHistoryEntryId } = await hostedSession.record({ text: "finish" });
+    await expect(hostedSession.runTurn()).rejects.toThrow("assistant final persistence failed");
+
+    const snapshot = await hostedSession.snapshot();
+    expect(
+      snapshot.messages.filter((message) => message.message.role === "assistant"),
+    ).toHaveLength(1);
+    expect(snapshot.messages.find((message) => message.id === userHistoryEntryId)?.turn).toEqual({
+      status: "failed",
+      stopReason: "error",
+      errorMessage: "assistant final persistence failed",
     });
     await host.shutdown();
   });

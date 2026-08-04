@@ -101,21 +101,62 @@ describe("model catalog", () => {
     expect(terra.provider).toBe("openai-codex");
     expect(terra.api).toBe("openai-codex-responses");
     expect(terra.cost).toEqual({
-      input: 2.5,
-      output: 15,
-      cacheRead: 0.25,
-      cacheWrite: 3.125,
+      input: 2,
+      output: 12,
+      cacheRead: 0.2,
+      cacheWrite: 2.5,
       tiers: [
         {
           inputTokensAbove: 272000,
-          input: 5,
-          output: 22.5,
-          cacheRead: 0.5,
-          cacheWrite: 6.25,
+          input: 4,
+          output: 18,
+          cacheRead: 0.4,
+          cacheWrite: 5,
         },
       ],
     });
     expect(terra.contextWindow).toBe(372000);
+  });
+
+  it("overrides GPT-5.6 Terra and Luna costs across OpenAI providers", () => {
+    const expectedCosts = {
+      "gpt-5.6-terra": {
+        input: 2,
+        output: 12,
+        cacheRead: 0.2,
+        cacheWrite: 2.5,
+        tiers: [
+          {
+            inputTokensAbove: 272000,
+            input: 4,
+            output: 18,
+            cacheRead: 0.4,
+            cacheWrite: 5,
+          },
+        ],
+      },
+      "gpt-5.6-luna": {
+        input: 0.2,
+        output: 1.2,
+        cacheRead: 0.02,
+        cacheWrite: 0.25,
+        tiers: [
+          {
+            inputTokensAbove: 272000,
+            input: 0.4,
+            output: 1.8,
+            cacheRead: 0.04,
+            cacheWrite: 0.5,
+          },
+        ],
+      },
+    };
+
+    for (const provider of ["openai", "openai-codex"]) {
+      for (const [modelId, expectedCost] of Object.entries(expectedCosts)) {
+        expect(resolveModel(provider, modelId)?.cost).toEqual(expectedCost);
+      }
+    }
   });
 
   it("overrides GPT-5.6 Codex context windows without changing OpenAI models", () => {

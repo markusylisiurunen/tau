@@ -1035,7 +1035,7 @@ describe("session history", () => {
     const harness = createSqliteD1Harness();
     try {
       await migrateHistoryDatabase(harness.database);
-      for (const sessionId of ["scheduled-1", "scheduled-2"]) {
+      for (const sessionId of ["scheduled-1", "scheduled-2", "scheduled-3", "scheduled-4"]) {
         await applyOperation(harness.database, {
           id: `create-${sessionId}`,
           sessionId,
@@ -1082,7 +1082,7 @@ describe("session history", () => {
         harness.sqlite
           .prepare("SELECT COUNT(*) AS count FROM sessions WHERE digest_title IS NOT NULL")
           .get(),
-      ).toEqual({ count: 1 });
+      ).toEqual({ count: 3 });
 
       await historyWorker.scheduled(
         {},
@@ -1099,7 +1099,7 @@ describe("session history", () => {
         harness.sqlite
           .prepare("SELECT COUNT(*) AS count FROM sessions WHERE digest_title IS NOT NULL")
           .get(),
-      ).toEqual({ count: 2 });
+      ).toEqual({ count: 4 });
       expect(
         harness.sqlite
           .prepare("SELECT claimed_at FROM digest_worker_lease WHERE singleton = 1")
@@ -1221,13 +1221,17 @@ describe("session history", () => {
         });
       }
 
+      let callCount = 0;
+      const ai = {
+        run: vi.fn(async () => {
+          callCount += 1;
+          if (callCount === 1) throw new Error("rate limited");
+          return aiResponse('{"title":"Healthy","summary":"Healthy digest"}');
+        }),
+      };
       await historyWorker.scheduled(
         {},
-        {
-          DB: harness.database,
-          AI: { run: vi.fn(async () => await Promise.reject(new Error("rate limited"))) },
-          API_KEY: "secret",
-        },
+        { DB: harness.database, AI: ai, API_KEY: "secret" },
         { waitUntil: vi.fn() },
       );
       expect(
@@ -1242,16 +1246,7 @@ describe("session history", () => {
         digest_last_attempt_at: now,
         digest_last_error: "Error: rate limited",
       });
-
-      const healthyAi = {
-        run: vi.fn(async () => aiResponse('{"title":"Healthy","summary":"Healthy digest"}')),
-      };
-      await historyWorker.scheduled(
-        {},
-        { DB: harness.database, AI: healthyAi, API_KEY: "secret" },
-        { waitUntil: vi.fn() },
-      );
-      expect(healthyAi.run).toHaveBeenCalledOnce();
+      expect(ai.run).toHaveBeenCalledTimes(2);
       expect(
         harness.sqlite
           .prepare(

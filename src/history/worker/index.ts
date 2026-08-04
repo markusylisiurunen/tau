@@ -97,6 +97,7 @@ const DIGEST_SOURCE_MAX_BYTES = 12 * 1024 * 1024;
 const DIGEST_MAX_SPLIT_DEPTH = 3;
 const DIGEST_IDLE_MS = 10 * 60 * 1_000;
 const DIGEST_LEASE_MS = 30 * 60 * 1_000;
+const DIGEST_SESSIONS_PER_CRON = 3;
 
 const HISTORY_SCHEMA_MIGRATIONS = [
   {
@@ -238,68 +239,13 @@ export default {
       .first<{ claimed_at: number }>();
     if (!lease) return;
 
-    let sessionId: string | undefined;
-    let failureCount = 0;
     try {
-      const stale = await env.DB.prepare(
-        `SELECT s.session_id, s.digest_failure_count
-         FROM sessions s
-         JOIN entries latest ON latest.session_id = s.session_id
-           AND latest.position = (SELECT MAX(position) FROM entries WHERE session_id = s.session_id)
-         LEFT JOIN entries digested ON digested.session_id = s.session_id
-           AND digested.entry_id = s.digest_through_entry_id
-         WHERE (s.digest_through_entry_id IS NULL OR s.digest_through_entry_id != latest.entry_id)
-           AND s.updated_at <= ?
-           AND (s.digest_next_attempt_at IS NULL OR s.digest_next_attempt_at <= ?)
-           AND (
-             s.digest_through_entry_id IS NULL
-             OR latest.position - COALESCE(digested.position, 0) >= ?
-             OR s.updated_at <= ?
-           )
-         ORDER BY COALESCE(s.digest_last_attempt_at, 0), s.updated_at, s.session_id
-         LIMIT 1`,
-      )
-        .bind(
-          claimedAt - DIGEST_IDLE_MS,
-          claimedAt,
-          DIGEST_NEW_ENTRY_THRESHOLD,
-          claimedAt - DIGEST_MAX_STALENESS_MS,
-        )
-        .first<{ session_id: string; digest_failure_count: number }>();
-      if (!stale) return;
-      sessionId = stale.session_id;
-      failureCount = Number(stale.digest_failure_count);
-      await env.DB.prepare("UPDATE sessions SET digest_last_attempt_at = ? WHERE session_id = ?")
-        .bind(claimedAt, sessionId)
-        .run();
-      const updated = await refreshDigestIfNeeded(env, sessionId);
-      await env.DB.prepare(
-        `UPDATE sessions
-         SET digest_failure_count = 0,
-             digest_next_attempt_at = NULL,
-             digest_last_error = NULL,
-             digest_last_success_at = CASE WHEN ? THEN ? ELSE digest_last_success_at END
-         WHERE session_id = ?`,
-      )
-        .bind(updated ? 1 : 0, Date.now(), sessionId)
-        .run();
-    } catch (caught) {
-      if (sessionId) {
-        const failedAt = Date.now();
-        const nextAttemptAt = failedAt + digestRetryDelayMs(failureCount + 1);
-        await env.DB.prepare(
-          `UPDATE sessions
-           SET digest_failure_count = ?,
-               digest_next_attempt_at = ?,
-               digest_last_error = ?
-           WHERE session_id = ?`,
-        )
-          .bind(failureCount + 1, nextAttemptAt, digestErrorMessage(caught), sessionId)
-          .run();
+      for (let index = 0; index < DIGEST_SESSIONS_PER_CRON; index += 1) {
+        const attemptedAt = Date.now();
+        const candidate = await selectDigestCandidate(env.DB, attemptedAt);
+        if (!candidate) return;
+        await attemptScheduledDigest(env, candidate, attemptedAt);
       }
-      logWorkerError("history_digest_refresh_failed", caught, {
-        sessionId: sessionId ?? "unknown",
-      });
     } finally {
       await env.DB.prepare(
         "UPDATE digest_worker_lease SET claimed_at = NULL WHERE singleton = 1 AND claimed_at = ?",
@@ -309,6 +255,80 @@ export default {
     }
   },
 };
+
+async function selectDigestCandidate(
+  database: D1Database,
+  now: number,
+): Promise<{ sessionId: string; failureCount: number } | undefined> {
+  const candidate = await database
+    .prepare(
+      `SELECT s.session_id, s.digest_failure_count
+       FROM sessions s
+       JOIN entries latest ON latest.session_id = s.session_id
+         AND latest.position = (SELECT MAX(position) FROM entries WHERE session_id = s.session_id)
+       LEFT JOIN entries digested ON digested.session_id = s.session_id
+         AND digested.entry_id = s.digest_through_entry_id
+       WHERE (s.digest_through_entry_id IS NULL OR s.digest_through_entry_id != latest.entry_id)
+         AND s.updated_at <= ?
+         AND (s.digest_next_attempt_at IS NULL OR s.digest_next_attempt_at <= ?)
+         AND (
+           s.digest_through_entry_id IS NULL
+           OR latest.position - COALESCE(digested.position, 0) >= ?
+           OR s.updated_at <= ?
+         )
+       ORDER BY COALESCE(s.digest_last_attempt_at, 0), s.updated_at, s.session_id
+       LIMIT 1`,
+    )
+    .bind(now - DIGEST_IDLE_MS, now, DIGEST_NEW_ENTRY_THRESHOLD, now - DIGEST_MAX_STALENESS_MS)
+    .first<{ session_id: string; digest_failure_count: number }>();
+  if (!candidate) return undefined;
+  return {
+    sessionId: candidate.session_id,
+    failureCount: Number(candidate.digest_failure_count),
+  };
+}
+
+async function attemptScheduledDigest(
+  env: Env,
+  candidate: { sessionId: string; failureCount: number },
+  attemptedAt: number,
+): Promise<void> {
+  try {
+    await env.DB.prepare("UPDATE sessions SET digest_last_attempt_at = ? WHERE session_id = ?")
+      .bind(attemptedAt, candidate.sessionId)
+      .run();
+    const updated = await refreshDigestIfNeeded(env, candidate.sessionId);
+    await env.DB.prepare(
+      `UPDATE sessions
+       SET digest_failure_count = 0,
+           digest_next_attempt_at = NULL,
+           digest_last_error = NULL,
+           digest_last_success_at = CASE WHEN ? THEN ? ELSE digest_last_success_at END
+       WHERE session_id = ?`,
+    )
+      .bind(updated ? 1 : 0, Date.now(), candidate.sessionId)
+      .run();
+  } catch (caught) {
+    const failedAt = Date.now();
+    await env.DB.prepare(
+      `UPDATE sessions
+       SET digest_failure_count = ?,
+           digest_next_attempt_at = ?,
+           digest_last_error = ?
+       WHERE session_id = ?`,
+    )
+      .bind(
+        candidate.failureCount + 1,
+        failedAt + digestRetryDelayMs(candidate.failureCount + 1),
+        digestErrorMessage(caught),
+        candidate.sessionId,
+      )
+      .run();
+    logWorkerError("history_digest_refresh_failed", caught, {
+      sessionId: candidate.sessionId,
+    });
+  }
+}
 
 export function digestRetryDelayMs(failureCount: number): number {
   return Math.min(DIGEST_RETRY_BASE_MS * 2 ** Math.max(0, failureCount - 1), DIGEST_RETRY_MAX_MS);

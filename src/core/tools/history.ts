@@ -18,8 +18,8 @@ const HISTORY_CODE_MODE_TIMEOUT_MS = 60_000;
 const HISTORY_CODE_MODE_OUTPUT_TOKENS = 8_192;
 
 const HISTORY_DESCRIPTION = [
-  "Run a one-shot JavaScript program to search and read durable transcripts from the configured Tau history collection.",
-  "Use this tool when prior Tau sessions may contain relevant decisions, findings, implementation context, or user preferences.",
+  "Run a one-shot JavaScript program to search and read durable transcripts from the configured history collection.",
+  "Use this tool only when the user or other active instructions directly ask you to reference, search, or read historical transcripts; do not invoke it merely because prior sessions might be relevant.",
   "The tool is read-only and has global visibility across repositories and execution environments.",
   "Top-level await is supported. The program receives history, docs, and console globals.",
   "Only text written through console methods is returned; program return values are ignored.",

@@ -81,6 +81,8 @@ Before asking the first question, organize the material decisions from broadest 
 
 Adapt the order to the target. Do not ask about low-value implementation trivia. Skip decisions already dictated unambiguously by the user's request or repository policy unless an important consequence still needs confirmation.
 
+Treat new or changed abstraction boundaries and cross-component interfaces as first-class, high-level review material whenever their shape embodies a design choice. Explain their purpose, ownership, data contract, guarantees, and tradeoffs without turning the review into an implementation walkthrough. This includes relevant persisted data models and visible documentation. If a change alters anything presented to or interpreted by an AI model, explicitly cover that model-facing contract, including relevant prompts and instructions, tool definitions and schemas, injected context, or other information the model sees.
+
 Keep an internal record of:
 
 - Decisions the user accepted.

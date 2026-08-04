@@ -29,14 +29,32 @@ const descriptorSchema = z
     snippets: z.array(z.string()),
   })
   .strict();
-const entrySchema = z
-  .object({
-    id: z.string(),
-    sourceIds: z.array(z.string()),
-    type: z.enum(["user", "assistant", "tool"]),
-    timestamp: z.number(),
-  })
-  .passthrough();
+const jsonValueSchema = z.union([
+  z.null(),
+  z.boolean(),
+  z.number(),
+  z.string(),
+  z.array(z.unknown()),
+  z.record(z.string(), z.unknown()),
+]);
+const entryBaseSchema = z.object({
+  id: z.string(),
+  sourceIds: z.array(z.string()),
+  timestamp: z.number(),
+});
+const entrySchema = z.discriminatedUnion("type", [
+  entryBaseSchema.extend({ type: z.literal("user"), content: jsonValueSchema }).strict(),
+  entryBaseSchema.extend({ type: z.literal("assistant"), content: jsonValueSchema }).strict(),
+  entryBaseSchema
+    .extend({
+      type: z.literal("tool"),
+      name: z.string(),
+      arguments: jsonValueSchema,
+      result: jsonValueSchema,
+      outcome: z.enum(["succeeded", "failed", "blocked", "cancelled"]),
+    })
+    .strict(),
+]);
 const searchResultSchema = z
   .object({
     sessions: z.array(descriptorSchema),

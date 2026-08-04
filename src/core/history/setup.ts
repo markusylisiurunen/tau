@@ -192,7 +192,7 @@ function writeWorkerProject(
           },
         ],
         ai: { binding: "AI" },
-        triggers: { crons: ["*/30 * * * *"] },
+        triggers: { crons: ["* * * * *"] },
       },
       null,
       2,

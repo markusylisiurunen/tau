@@ -17,6 +17,7 @@ import { discoverLocalWorkspaceRepositories } from "../dist/tui/session_creation
 
 const MAX_OPERATIONS_PER_REQUEST = 10;
 const MAX_REQUEST_BYTES = 7.5 * 1024 * 1024;
+const MAX_ATTRIBUTE_VALUE_LENGTH = 1_024;
 const REQUEST_TIMEOUT_MS = 30_000;
 const RETRY_DELAYS_MS = [500, 1_500, 3_000];
 
@@ -83,10 +84,12 @@ export function inferSnapshotRepositories(
       repositoriesByParent.get(dirname(cwd)) ??
       matchWorkspaceRepositories(cwd, repositoriesByName);
     if (!repositories || repositories.length === 0) return snapshot;
+    const repository = repositories.join(",");
+    if (repository.length > MAX_ATTRIBUTE_VALUE_LENGTH) return snapshot;
     inferredCount += 1;
     return {
       ...snapshot,
-      attributes: { ...snapshot.attributes, repository: repositories.join(",") },
+      attributes: { ...snapshot.attributes, repository },
     };
   });
   return { snapshots: inferred, inferredCount };

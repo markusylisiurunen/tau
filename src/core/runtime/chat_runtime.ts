@@ -242,13 +242,6 @@ export class ChatRuntime {
     return this.agent.listRewindCandidates();
   }
 
-  async prepareRetry(historyEntryId: string): Promise<boolean> {
-    if (this.supervisor.getActiveCount() > 0) {
-      throw new Error("cannot retry while subagents are running");
-    }
-    return await this.agent.retryFromHistoryEntryId(historyEntryId);
-  }
-
   async rewindToHistoryEntryId(historyEntryId: string): Promise<RewindResult | undefined> {
     if (this.supervisor.getActiveCount() > 0) {
       throw new Error("cannot rewind while subagents are running");

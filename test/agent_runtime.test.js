@@ -1142,24 +1142,6 @@ describe("AgentRuntime", () => {
     await turn;
   });
 
-  it("retains the user message while removing the superseded retry suffix", async () => {
-    const { runtime, persona, events } = createRuntime();
-    const userId = await runtime.commitUserText("try this");
-    const assistantId = "assistant-attempt-1";
-    await runtime.commitInterruptedAssistant(
-      createAssistant(persona, "old attempt", { stopReason: "aborted" }),
-      assistantId,
-    );
-
-    await expect(runtime.retryFromHistoryEntryId(userId)).resolves.toBe(true);
-    expect(runtime.state.historyEntries.map((entry) => entry.id)).toEqual([userId]);
-    expect(events.at(-1)).toMatchObject({
-      type: "history_rewound",
-      historyEntryId: userId,
-      removedEntryIds: [assistantId],
-    });
-  });
-
   it("interrupts active model streaming", async () => {
     const { runtime, persona } = createRuntime();
     runtime.spec.model.stream = vi.fn((_context, options) => ({

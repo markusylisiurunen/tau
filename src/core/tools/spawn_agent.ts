@@ -3,6 +3,7 @@ import type { Tool, ToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { z } from "zod";
 import type { Config } from "../config/index.js";
+import type { HistoryQuery } from "../history/types.js";
 import type { ModelResolver } from "../models/catalog.js";
 import type { AgentSupervisor } from "../subagents/agent_supervisor.js";
 import { formatSpawnAgentResult } from "../subagents/format.js";
@@ -118,6 +119,7 @@ export function createSpawnAgentToolDefinition(options: {
   config: Config;
   modelResolver: ModelResolver;
   subagentPrompts: Record<string, string>;
+  history: HistoryQuery;
   cwd: string;
   resolveSubagentRuntime?: ResolveSubagentRuntime;
 }): AgentTool {
@@ -308,6 +310,7 @@ export function createSpawnAgentToolDefinition(options: {
             originHistoryEntryId: context.assistantMessageId,
             config,
             backend,
+            history: options.history,
             personaId: effectivePersona.id,
           });
 

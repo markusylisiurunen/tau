@@ -2,7 +2,7 @@ import type { SessionProtocolSnapshot } from "../protocol/session_protocol.js";
 import { validateSessionProtocolResult } from "../protocol/session_protocol.js";
 
 export const STORED_SESSION_DOCUMENT_FORMAT = "tau-session" as const;
-export const STORED_SESSION_DOCUMENT_VERSION = 4 as const;
+export const STORED_SESSION_DOCUMENT_VERSION = 5 as const;
 export const LEGACY_SESSION_CONTEXT_EPOCH = "legacy-v3";
 
 export type StoredSessionDocument = {
@@ -18,6 +18,7 @@ const storedSessionMigrations = new Map<number, StoredSessionMigration>([
   [1, migrateStoredSessionV1ToV2],
   [2, migrateStoredSessionV2ToV3],
   [3, migrateStoredSessionV3ToV4],
+  [4, migrateStoredSessionV4ToV5],
 ]);
 
 export class UnsupportedStoredSessionVersionError extends Error {
@@ -98,7 +99,9 @@ function migrateStoredSessionV0ToV1(value: unknown): unknown {
       contextEpoch: LEGACY_SESSION_CONTEXT_EPOCH,
     };
   }
+  if (!("costTotal" in snapshot)) snapshot.costTotal = 0;
   removeLegacyPruningPresentation(snapshot);
+  removeLegacyOrphanedToolPresentation(snapshot);
   return snapshot;
 }
 
@@ -124,6 +127,17 @@ function migrateStoredSessionV2ToV3(value: unknown): unknown {
 
 function migrateStoredSessionV3ToV4(value: unknown): unknown {
   return value;
+}
+
+function migrateStoredSessionV4ToV5(value: unknown): unknown {
+  if (!isRecord(value)) {
+    throw new Error("stored session snapshot must be an object");
+  }
+
+  const snapshot = structuredClone(value);
+  if (!("attributes" in snapshot)) snapshot.attributes = {};
+  if (!("createdAt" in snapshot)) snapshot.createdAt = earliestSnapshotTimestamp(snapshot);
+  return snapshot;
 }
 
 function removeUnrecoverableAgentPresentation(snapshot: Record<string, unknown>): void {
@@ -190,6 +204,56 @@ function removeLegacyPruningPresentation(snapshot: Record<string, unknown>): voi
       (facetId) => typeof facetId !== "string" || !removedFacetIds.has(facetId),
     );
   }
+}
+
+function removeLegacyOrphanedToolPresentation(snapshot: Record<string, unknown>): void {
+  if (!Array.isArray(snapshot.messages) || !isRecord(snapshot.tools)) return;
+  const messageIds = new Set(
+    snapshot.messages.flatMap((message) =>
+      isRecord(message) && typeof message.id === "string" ? [message.id] : [],
+    ),
+  );
+  const removedToolIds = new Set<string>();
+  for (const [toolId, tool] of Object.entries(snapshot.tools)) {
+    if (!isRecord(tool)) continue;
+    const reference = isRecord(tool.origin)
+      ? tool.origin
+      : isRecord(tool.call)
+        ? tool.call
+        : undefined;
+    const referencesMissingMessage =
+      !reference || typeof reference.messageId !== "string" || !messageIds.has(reference.messageId);
+    const referencesMissingResult =
+      typeof tool.resultMessageId === "string" && !messageIds.has(tool.resultMessageId);
+    if (!referencesMissingMessage && !referencesMissingResult) continue;
+    delete snapshot.tools[toolId];
+    removedToolIds.add(toolId);
+  }
+
+  if (removedToolIds.size === 0 || !isRecord(snapshot.facets)) return;
+  for (const [facetId, facet] of Object.entries(snapshot.facets)) {
+    if (
+      isRecord(facet) &&
+      isRecord(facet.subject) &&
+      facet.subject.type === "tool" &&
+      typeof facet.subject.id === "string" &&
+      removedToolIds.has(facet.subject.id)
+    ) {
+      delete snapshot.facets[facetId];
+    }
+  }
+}
+
+function earliestSnapshotTimestamp(snapshot: Record<string, unknown>): number {
+  if (!Array.isArray(snapshot.messages)) return 0;
+  const timestamps = snapshot.messages.flatMap((entry) => {
+    if (!isRecord(entry) || !isRecord(entry.message)) return [];
+    const timestamp = entry.message.timestamp;
+    return typeof timestamp === "number" && Number.isFinite(timestamp) && timestamp > 0
+      ? [timestamp]
+      : [];
+  });
+  return timestamps.length > 0 ? Math.min(...timestamps) : 0;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

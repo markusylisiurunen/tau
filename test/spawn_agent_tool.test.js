@@ -91,6 +91,7 @@ function createFixture(overrides = {}) {
     model: anthropic,
     systemPrompt: "main",
     settings: { reasoning: "low", serviceTier: "priority" },
+    tools: ["bash", "write", "edit", "history"],
     skills: "*",
     source: "project",
     subagents: {
@@ -115,6 +116,10 @@ function createFixture(overrides = {}) {
       default: "default prompt",
       researcher: "research prompt",
       fixed: "fixed prompt",
+    },
+    history: {
+      search: vi.fn(),
+      read: vi.fn(),
     },
     cwd: "/repo/current",
     ...overrides,
@@ -406,8 +411,13 @@ describe("spawn_agent tool", () => {
     expect(result.toolResult.outcome).toBe("succeeded");
     expect(supervisor.spawn).toHaveBeenCalledWith(
       expect.objectContaining({
+        history: expect.objectContaining({
+          search: expect.any(Function),
+          read: expect.any(Function),
+        }),
         runtimeConfig: expect.objectContaining({
           settings: expect.objectContaining({ reasoning: "medium" }),
+          tools: ["bash", "write", "edit", "history"],
         }),
       }),
     );

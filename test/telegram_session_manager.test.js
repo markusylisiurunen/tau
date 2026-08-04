@@ -221,6 +221,77 @@ describe("telegram session manager", () => {
         tauSessionId: "rpc-1",
       }),
     );
+    expect(clientHarness.client.sessions.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attributes: {
+          source: "telegram",
+          project: "demo",
+          repository: "example.com/demo",
+        },
+      }),
+    );
+  });
+
+  it("emits persisted warning notices for Telegram delivery", async () => {
+    const clientHarness = createClientHarness();
+    clientHarness.session.snapshot.mockResolvedValue(
+      createProtocolSnapshot({
+        sessionId: "rpc-1",
+        revision: 1,
+        executionEnvironment: { kind: "local", cwd: "/tmp/ws/demo", home: "/home/user" },
+        timeline: [
+          {
+            type: "notice",
+            id: "notice-history-unavailable",
+            notice: {
+              severity: "warn",
+              text: "Session history is unavailable. This session will continue.",
+              timestamp: 1,
+            },
+          },
+        ],
+      }),
+    );
+    const manager = createTelegramSessionManager({
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      prepareWorkspace: vi.fn(async () => ({
+        workspacePath: "/tmp/ws/demo",
+        sessionCwd: "/tmp/ws/demo",
+        provisionTargets: [],
+      })),
+      createClient: vi.fn(async () => clientHarness.client),
+    });
+    const events = [];
+    manager.onEvent((event) => events.push(event));
+
+    const created = await manager.createSession({ projectId: "demo" });
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "session-notice",
+        sessionId: created.id,
+        severity: "warn",
+        text: "Session history is unavailable. This session will continue.",
+      }),
+    );
+
+    const liveNotice = {
+      type: "timeline.append",
+      item: {
+        type: "notice",
+        id: "notice-live-warning",
+        notice: { severity: "warn", text: "A live warning arrived.", timestamp: 2 },
+      },
+    };
+    clientHarness.emitDelta(createPatchDelta([liveNotice], 1, "notice"));
+    clientHarness.emitDelta(createPatchDelta([liveNotice], 2, "notice"));
+
+    expect(
+      events.filter(
+        (event) => event.type === "session-notice" && event.text === "A live warning arrived.",
+      ),
+    ).toHaveLength(1);
   });
 
   it("starts sdk client from the prepared session cwd", async () => {
@@ -385,6 +456,15 @@ describe("telegram session manager", () => {
     const created = await manager.createSession({ projectId: "platform" });
     await waitFor(() => clientHarness.session.exec.mock.calls.length === 2);
 
+    expect(clientHarness.client.sessions.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attributes: {
+          source: "telegram",
+          project: "platform",
+          repository: "github.com/owner/alpha,github.com/owner/beta",
+        },
+      }),
+    );
     expect(clientHarness.session.exec.mock.calls).toEqual([
       [
         expect.stringContaining("/tmp/ws/platform/alpha/.tau/scripts/provision"),

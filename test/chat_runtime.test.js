@@ -55,6 +55,12 @@ function createRuntime(overrides = {}) {
       createGoal: async (objective) => ({ objective, status: "active" }),
       updateGoal: async () => null,
     },
+    history: {
+      search: async () => ({ sessions: [] }),
+      read: async () => {
+        throw new Error("missing history session");
+      },
+    },
     config: {},
     ...overrides,
   });

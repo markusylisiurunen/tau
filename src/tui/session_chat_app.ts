@@ -394,6 +394,7 @@ async function createSessionFromPrompt(
         kind,
         cwd,
       },
+      attributes: { source: "tui" },
     });
   }
 
@@ -410,6 +411,7 @@ async function createSessionFromPrompt(
         sandboxId,
         cwd,
       },
+      attributes: { source: "tui" },
     });
   }
 
@@ -425,5 +427,6 @@ async function createSessionFromPrompt(
       spriteName,
       cwd,
     },
+    attributes: { source: "tui" },
   });
 }

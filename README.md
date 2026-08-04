@@ -177,6 +177,33 @@ tau tool pdf-unpack ./docs/spec.pdf
 
 `tau tool pdf-unpack` sends the original PDF to Mistral for OCR/Markdown, renders page image patches locally with `pdftoppm`, writes a persistent temp directory with `document.md`, `pages/`, and `images/`, and prints the output paths as plain text for follow-up model use.
 
+## session history
+
+Tau records every session to a machine-local SQLite history database independently of the resumable session snapshot. History retains committed user text (including leading `<system>` blocks), assistant preambles and responses, and completed tool calls with their full results. Rewind removes the superseded suffix, while compaction does not remove original transcript entries.
+
+Built-in personas include the read-only `history` code-mode tool, and their subagents inherit it by default. Agents are instructed to invoke it only when the user or other active instructions directly ask them to reference historical transcripts. Custom subagents can include or exclude it in their `tools` list like `bash` or `web`. Its `history.search()` and `history.read()` APIs provide global access to bounded transcript results across repositories and execution environments; ordinary JavaScript can further filter and project them. Attribute search supports exact strings and generic `{ "contains": "text" }` substring filters. Conventional client-supplied attributes include `source` and `repository`; repository values use `host/owner/repository`, with comma-delimited values for composite workspaces. Local TUI startup derives this value from the current Git repository or direct child repositories, `/new` preserves a known value, Telegram derives it from project configuration, attach-created sessions leave it absent, and SDK/raw clients include it only when their caller provides it. If local history initialization or projection fails, Tau keeps the session running, persists one warning notice for clients (including Telegram), and makes history unavailable for that process.
+
+A bundled single-owner Cloudflare service can combine histories from several Tau hosts and generate searchable session titles and summaries with Cloudflare AI using GPT-5.6 Luna at medium reasoning effort. Digest generation normally sends a compact role-delimited projection of the full transcript, omitting entry metadata and middle-truncating each tool result to roughly 512 estimated tokens; documented context-overflow errors trigger recursive halving through at most three levels before final synthesis. The Worker applies sequential D1 schema migrations when it starts against a reused database. It requires the **Workers Paid** plan so indefinite retention, FTS queries, replication batches, and digest processing use the paid D1/Worker limits rather than the free plan's 500 MB per-database, 50-query, and 10 ms CPU ceilings.
+
+```sh
+export CLOUDFLARE_API_TOKEN=...
+tau history setup --domain history.example.com --zone-name example.com
+export TAU_HISTORY_API_KEY=... # use the value printed by setup
+```
+
+Configure the endpoint only in global Tau config:
+
+```json
+{
+  "history": {
+    "endpoint": "https://history.example.com",
+    "apiKeyEnv": "TAU_HISTORY_API_KEY"
+  }
+}
+```
+
+Without `history` config, capture and queries remain machine-local. With a remote target, Tau writes locally first and forwards ordered, idempotent append/truncate operations asynchronously; remote outages never block session execution. Local entries remain complete, while remote entries larger than 1 MiB middle-truncate oversized payload fields with an explicit marker, and append operations stay below the replication byte budget. `tau history destroy --yes` removes the bundled Worker and D1 database.
+
 ## Nook static mini-apps
 
 Nook is Tau's bundled Cloudflare-backed static mini-app platform. It deploys static directories to path-based site URLs and gives each site same-origin JSON KV through an injected `window.nook` browser SDK.
@@ -222,6 +249,7 @@ const session = await client.sessions.create({
     kind: "local",
     cwd: process.cwd(),
   },
+  attributes: { source: "sdk", repository: "github.com/example/project" },
 });
 const unsubscribe = session.onDelta((delta) => {
   // stream reconstructable session deltas
@@ -573,6 +601,10 @@ model definitions can be extended and overridden through `~/.config/tau/models.j
     "accessClientId": "...",
     "accessClientSecretEnv": "NOOK_ACCESS_CLIENT_SECRET"
   },
+  "history": {
+    "endpoint": "https://history.example.com",
+    "apiKeyEnv": "TAU_HISTORY_API_KEY"
+  },
   "modelSystemNotices": {
     "openai-codex/gpt-5.5": "avoid apply_patch heredocs, use tau tools directly"
   }
@@ -592,6 +624,8 @@ the `defaultTheme` field sets the theme id to load at startup. it must be non-em
 `flySprites.apis` configures host-owned Fly Sprites API targets for hosted sessions. session requests refer to an API by id and a pre-existing Sprite name; Tau does not create Sprites, clone repos, install dependencies, inject secrets, or run readiness checks during `session.create`. paths such as `cwd` are real paths inside the Sprite. Tau resolves session config/content from that execution environment cwd when creating the session and on `/reload`; API tokens stay on the host through either `token` or `tokenEnv` and are not stored in session snapshots.
 
 `nook` configures one effective Nook target. `domain` is required. `accessClientId`, `accessClientSecret`, and `accessClientSecretEnv` are optional Cloudflare Access service-token fields; when the env var resolves, it wins over the inline secret. `tau nook setup` takes infrastructure route and Access validation inputs through `--zone-name`, `--access-team-domain`, and `--access-aud` or the `NOOK_ZONE_NAME`, `NOOK_ACCESS_TEAM_DOMAIN`, and `NOOK_ACCESS_AUD` env vars. `tau nook destroy` is an infrastructure flow that takes service-token cleanup credentials through flags or `NOOK_ACCESS_CLIENT_ID` and `NOOK_ACCESS_CLIENT_SECRET`.
+
+`history` is accepted only in global config and selects the shared history service instead of machine-local queries. `endpoint` is required. The API key comes from `TAU_HISTORY_API_KEY`, `apiKeyEnv`, or `apiKey`, in that precedence order. The key stays in the host and is never exposed to generated code.
 
 tau ships a built-in browser diff review tool as `tau diff-tool`. `/diff` launches the configured diff tool locally from the TUI process. `diffTool` overrides the built-in fallback; `command` is required when `diffTool` is present, `args` and `env` are optional, and relative `command` paths resolve from the config level root (directory containing `.tau`, or home for the global config). set `builtInDiffTool.codeTheme` to choose the built-in diff tool's initial code theme, for example `{ "builtInDiffTool": { "codeTheme": "github-dark-dimmed" } }`. the default is `github-dark-dimmed`.
 
@@ -714,7 +748,7 @@ optional frontmatter fields:
 - `allowedReasoningLevels`: list of reasoning levels shown in the ui
 - `skills`: list of enabled skill names (matched by `name` in skill frontmatter), or `"*"` to enable all discovered skills. if omitted, custom personas default to `"*"`. set `skills: []` to disable skills completely.
 - `tools`: optional list of persona-selected host tools. `nook` additionally requires effective Nook configuration before it becomes available.
-- `subagents`: optional map of subagent definitions. the built-in `default` sub-agent is implicit unless `default: false` is provided. custom subagents must include `systemPrompt` and may include `description`, `provider`+`model`, `reasoning`, `serviceTier`, `tools`, and `launchModels` (when specifying a model, `provider` and `model` must be provided together). names must be lowercase with dashes (max 64 chars). `launchModels` entries must use `<provider>/<model>:<effort>` and are used to allowlist launch-time `spawn_agent` overrides. example:
+- `subagents`: optional map of subagent definitions. the built-in `default` sub-agent is implicit unless `default: false` is provided. custom subagents must include `systemPrompt` and may include `description`, `provider`+`model`, `reasoning`, `serviceTier`, `tools`, and `launchModels` (when specifying a model, `provider` and `model` must be provided together). subagent `tools` accepts `bash`, `write`, `edit`, `view_image`, `web`, and `history`; when omitted, eligible main-persona tools are inherited. names must be lowercase with dashes (max 64 chars). `launchModels` entries must use `<provider>/<model>:<effort>` and are used to allowlist launch-time `spawn_agent` overrides. example:
   ```yaml
   subagents:
     default: false
@@ -730,7 +764,7 @@ optional frontmatter fields:
         - openai/gpt-5.5:high
         - anthropic/claude-haiku-4-5:medium
   ```
-- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `view_image`, `web`, `nook`, `spawn_agent`, `send_input_to_agent`, `wait_for_agents`, `list_agents`, `interrupt_agent`. if omitted, defaults to `bash`, `write`, `edit`, `view_image`, `web`, `nook` (and subagent tools when subagents are enabled). `nook` is available only when effective Nook configuration is also present.
+- `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `view_image`, `web`, `nook`, `history`, `spawn_agent`, `send_input_to_agent`, `wait_for_agents`, `list_agents`, `interrupt_agent`. if omitted, defaults to `bash`, `write`, `edit`, `view_image`, `web`, `nook`, `history` (and subagent tools when subagents are enabled). `nook` is available only when effective Nook configuration is also present.
 
 the markdown body becomes the system prompt.
 

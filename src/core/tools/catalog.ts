@@ -1,4 +1,5 @@
 import type { Config } from "../config/index.js";
+import type { HistoryQuery } from "../history/types.js";
 import type { ModelResolver } from "../models/catalog.js";
 import { AgentSupervisor } from "../subagents/agent_supervisor.js";
 import type { SubagentToolName } from "../subagents/types.js";
@@ -7,6 +8,7 @@ import { createBashToolDefinition } from "./bash.js";
 import { createEditToolDefinition } from "./edit.js";
 import { scopeToolExecutionBackend, type ToolExecutionBackend } from "./execution_backend.js";
 import { createGoalToolDefinitions, type GoalManager } from "./goal.js";
+import { createHistoryToolDefinition } from "./history.js";
 import { createInterruptAgentToolDefinition } from "./interrupt_agent.js";
 import { createListAgentsToolDefinition } from "./list_agents.js";
 import { createNookToolDefinition } from "./nook.js";
@@ -16,6 +18,7 @@ import { createSpawnAgentToolDefinition, type ResolveSubagentRuntime } from "./s
 import {
   TOOL_NAME_BASH,
   TOOL_NAME_EDIT,
+  TOOL_NAME_HISTORY,
   TOOL_NAME_VIEW_IMAGE,
   TOOL_NAME_WEB,
   TOOL_NAME_WRITE,
@@ -32,6 +35,7 @@ export const ToolCatalog = {
     config: Config;
     persona: Persona;
     modelResolver: ModelResolver;
+    history: HistoryQuery;
   }): ToolRegistry {
     return this.createSessionRegistry({
       ...options,
@@ -58,6 +62,7 @@ export const ToolCatalog = {
     modelResolver: ModelResolver;
     supervisor: AgentSupervisor;
     goalManager: GoalManager;
+    history: HistoryQuery;
     resolveSubagentRuntime?: ResolveSubagentRuntime;
   }): ToolRegistry {
     const tools = [
@@ -66,6 +71,7 @@ export const ToolCatalog = {
       createEditToolDefinition(options.backend),
       createViewImageToolDefinition(options.backend),
       createWebToolDefinition(options.backend, options.config),
+      createHistoryToolDefinition(options.backend, options.history),
       createSpawnAgentToolDefinition({
         backend: options.backend,
         supervisor: options.supervisor,
@@ -73,6 +79,7 @@ export const ToolCatalog = {
         config: options.config,
         modelResolver: options.modelResolver,
         subagentPrompts: options.subagentPrompts,
+        history: options.history,
         cwd: options.cwd,
         ...(options.resolveSubagentRuntime
           ? { resolveSubagentRuntime: options.resolveSubagentRuntime }
@@ -98,6 +105,7 @@ export const ToolCatalog = {
     backend: ToolExecutionBackend,
     cwd: string,
     config: Config,
+    history?: HistoryQuery,
   ): ToolRegistry {
     const scopedBackend = scopeToolExecutionBackend(backend, cwd);
     const definitions = [];
@@ -120,6 +128,12 @@ export const ToolCatalog = {
           break;
         case TOOL_NAME_WEB:
           definitions.push(createWebToolDefinition(scopedBackend, config));
+          break;
+        case TOOL_NAME_HISTORY:
+          if (!history) {
+            throw new Error("history query is required when history is enabled for a subagent");
+          }
+          definitions.push(createHistoryToolDefinition(scopedBackend, history));
           break;
       }
     }

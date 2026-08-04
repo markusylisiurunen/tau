@@ -36,6 +36,7 @@ const session = await client.sessions.create({
     kind: "local",
     cwd: process.cwd(),
   },
+  attributes: { source: "sdk", repository: "github.com/example/project" },
 });
 
 const unsubscribe = session.onDelta((delta) => {
@@ -87,7 +88,7 @@ returns a connected `TauSdkClient` instance.
 sdk lifecycle notes:
 
 - the sdk waits for session protocol `ready`, then immediately sends `initialize`; `initialize` is a transport handshake and does not create or observe a session.
-- connected clients start without an observed session; call `client.sessions.list()`, `client.sessions.observe(sessionId)`, or `client.sessions.create({ executionEnvironment })` before submitting, snapshotting, or interrupting.
+- connected clients start without an observed session; call `client.sessions.list()`, `client.sessions.observe(sessionId)`, or `client.sessions.create({ executionEnvironment, attributes })` before submitting, snapshotting, or interrupting. Creation attributes are bounded immutable string pairs used for history provenance. Conventional attributes include `source` and `repository`; repository values use `host/owner/repository`, with comma-delimited values for composite workspaces. The SDK passes attributes through unchanged.
 - `client.close()` aborts active client-tool handlers and awaits them while closing the transport, even when transport shutdown fails; after cleanup it propagates the transport error. For `createTauSdkClient()`, close also shuts down the owned in-process host after persisting live session snapshots. Persisted sessions can be observed by a later client that knows the session id.
 - `session.unobserve()` stops observing from this SDK facade and makes the facade terminal. It does not delete the hosted session.
 
@@ -160,6 +161,7 @@ const session = await client.sessions.create({
       GH_CONFIG_DIR: "/srv/cowork/gh",
     },
   },
+  attributes: { source: "sdk", repository: "github.com/example/project" },
 });
 await session.submit("summarize the PR");
 await client.close();
@@ -177,6 +179,7 @@ const session = await client.sessions.create({
     sandboxId: "sandbox_123",
     cwd: "/workspace/repo",
   },
+  attributes: { source: "sdk", repository: "github.com/example/project" },
 });
 ```
 
@@ -192,6 +195,7 @@ const session = await client.sessions.create({
     spriteName: "sprite-123",
     cwd: "/home/sprite/repo",
   },
+  attributes: { source: "sdk", repository: "github.com/example/project" },
 });
 ```
 
@@ -400,7 +404,7 @@ const second = await session.sample({
 
 ```json
 {
-  "version": 7,
+  "version": 8,
   "type": "session.delta",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "fromRevision": 1,

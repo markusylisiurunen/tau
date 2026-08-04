@@ -101,6 +101,10 @@ describe("config paths", () => {
             defaultLaunchModels: ["anthropic/claude-haiku-4-5:low"],
           },
           speechToText: { provider: "mistral" },
+          history: {
+            endpoint: "https://history.example.com/",
+            apiKeyEnv: "HISTORY_KEY",
+          },
           cloudflareSandbox: {
             bridges: {
               default: {
@@ -206,6 +210,10 @@ describe("config paths", () => {
         defaultLaunchModels: ["openai/gpt-5.4:high"],
       });
       expect(config.speechToText).toEqual({ provider: "gemini" });
+      expect(config.history).toEqual({
+        endpoint: "https://history.example.com",
+        apiKeyEnv: "HISTORY_KEY",
+      });
       expect(config.cloudflareSandbox).toEqual({
         bridges: {
           default: {

@@ -13,6 +13,7 @@ import {
 } from "../agent/agent_runtime.js";
 import type { AgentEventSink } from "../agent/events.js";
 import type { Config } from "../config/index.js";
+import type { HistoryQuery } from "../history/types.js";
 import type { ModelResolver } from "../models/catalog.js";
 import { createAutoCompactionArchiver } from "../session/auto_compaction_archive.js";
 import { buildGoalPolicy, GOAL_TURN_USER_METADATA } from "../session/goal.js";
@@ -54,6 +55,7 @@ export type CreateChatRuntimeOptions = {
   eventSink: AgentEventSink;
   subagentEventSink: (event: SubagentUiEvent) => void | Promise<void>;
   goalManager: GoalManager;
+  history: HistoryQuery;
   recordUsage?: UsageRecorder;
   initialPromptComposition?: SessionPromptComposition;
   config: Config;
@@ -74,6 +76,7 @@ export class ChatRuntime {
   private readonly clientTools?: CreateChatRuntimeOptions["clientTools"];
   private readonly resolveSubagentRuntime?: ResolveSubagentRuntime;
   private readonly goalManager: GoalManager;
+  private readonly historyQuery: HistoryQuery;
   private latestPromptComposition: SessionPromptComposition;
 
   static create(options: CreateChatRuntimeOptions): ChatRuntime {
@@ -107,6 +110,7 @@ export class ChatRuntime {
     this.clientTools = options.clientTools;
     this.resolveSubagentRuntime = options.resolveSubagentRuntime;
     this.goalManager = options.goalManager;
+    this.historyQuery = options.history;
     this.latestPromptComposition = composition;
     this.supervisor = new AgentSupervisor({
       onEvent: options.subagentEventSink,
@@ -238,6 +242,13 @@ export class ChatRuntime {
     return this.agent.listRewindCandidates();
   }
 
+  async prepareRetry(historyEntryId: string): Promise<boolean> {
+    if (this.supervisor.getActiveCount() > 0) {
+      throw new Error("cannot retry while subagents are running");
+    }
+    return await this.agent.retryFromHistoryEntryId(historyEntryId);
+  }
+
   async rewindToHistoryEntryId(historyEntryId: string): Promise<RewindResult | undefined> {
     if (this.supervisor.getActiveCount() > 0) {
       throw new Error("cannot rewind while subagents are running");
@@ -325,6 +336,7 @@ export class ChatRuntime {
       modelResolver: this.currentModelResolver,
       supervisor: this.supervisor,
       goalManager: this.goalManager,
+      history: this.historyQuery,
       ...(this.resolveSubagentRuntime
         ? { resolveSubagentRuntime: this.resolveSubagentRuntime }
         : {}),

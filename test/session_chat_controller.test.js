@@ -884,6 +884,63 @@ describe("SessionChatController", () => {
     expect(view.systems.at(-1)?.text).toContain("skills:\n  alpha (~/.tau/skills)");
   });
 
+  it("renders persisted protocol notices in timeline order", async () => {
+    const snapshot = createProtocolSnapshot({
+      timeline: [
+        {
+          type: "notice",
+          id: "notice-history-unavailable",
+          notice: {
+            severity: "warn",
+            text: "Session history is unavailable. This session will continue.",
+            timestamp: 1,
+          },
+        },
+      ],
+    });
+    const session = new FakeSession(snapshot);
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "in-process",
+    });
+
+    controller.start();
+
+    expect(view.messages).toContainEqual({
+      id: "notice-history-unavailable",
+      model: {
+        type: "system",
+        kind: "warn",
+        text: "Session history is unavailable. This session will continue.",
+      },
+    });
+
+    const liveNotice = {
+      type: "notice",
+      id: "notice-live-warning",
+      notice: { severity: "warn", text: "A live warning arrived.", timestamp: 2 },
+    };
+    for (const listener of session.listeners) {
+      listener({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "session.delta",
+        sessionId: session.id,
+        fromRevision: snapshot.revision,
+        toRevision: snapshot.revision + 1,
+        reason: "notice",
+        delta: { type: "snapshot.patch", changes: [{ type: "timeline.append", item: liveNotice }] },
+      });
+    }
+
+    expect(view.messages).toContainEqual({
+      id: "notice-live-warning",
+      model: { type: "system", kind: "warn", text: "A live warning arrived." },
+    });
+  });
+
   it("shows auto-compaction operation status in the footer", async () => {
     const snapshot = createProtocolSnapshot({
       timeline: [
@@ -4138,6 +4195,10 @@ describe("SessionChatController", () => {
         },
       ]),
     );
+    session.snapshotValue = {
+      ...session.snapshotValue,
+      attributes: { source: "telegram", repository: "github.com/example/repo" },
+    };
     const nextSession = new FakeSession(createSnapshot([]));
     nextSession.id = "session-2";
     nextSession.snapshotValue = {
@@ -4162,6 +4223,7 @@ describe("SessionChatController", () => {
 
     expect(createSession).toHaveBeenCalledWith({
       executionEnvironment: { kind: "local", cwd: "/session/repo" },
+      attributes: { source: "tui", repository: "github.com/example/repo" },
       personaId: "persona-1",
       reasoning: "none",
     });

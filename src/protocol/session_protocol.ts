@@ -8,7 +8,7 @@ import type {
 } from "@earendil-works/pi-ai";
 import { type ZodError, z } from "zod";
 
-export const SESSION_PROTOCOL_VERSION = 7 as const;
+export const SESSION_PROTOCOL_VERSION = 8 as const;
 export const SESSION_PROTOCOL_MAX_EXEC_CAPTURE_BYTES = 24 * 1024 * 1024;
 export const SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES = 16 * 1024 * 1024;
 
@@ -129,6 +129,7 @@ export type SessionProtocolExecutionEnvironmentInput =
 
 export type SessionProtocolCreateParams = {
   executionEnvironment: SessionProtocolExecutionEnvironmentInput;
+  attributes: Record<string, string>;
   personaId?: string;
   reasoning?: SessionProtocolReasoningEffort;
 };
@@ -575,6 +576,8 @@ export type SessionProtocolGoal = {
 
 export type SessionProtocolSnapshot = {
   sessionId: string;
+  attributes: Record<string, string>;
+  createdAt: number;
   revision: number;
   agentState: SessionProtocolAgentStateSnapshot;
   lifecycle: SessionProtocolSessionLifecycle;
@@ -1064,6 +1067,12 @@ const environmentVariableValueSchema = z.string().refine((value) => !value.inclu
 const environmentVariablesSchema = z
   .record(environmentVariableNameSchema, environmentVariableValueSchema)
   .refine((value) => !("HOME" in value), "HOME is controlled by the execution environment");
+const sessionAttributesSchema = z
+  .record(z.string().min(1).max(64), z.string().max(1_024))
+  .refine(
+    (attributes) => Object.keys(attributes).length <= 32,
+    "at most 32 attributes are allowed",
+  );
 const processArgumentsSchema = z
   .array(z.string())
   .refine((values) => values.every((value) => !value.includes("\0")));
@@ -1566,6 +1575,7 @@ const sessionProtocolExecutionEnvironmentInputSchema = z.discriminatedUnion("kin
 const sessionProtocolCreateParamsSchema = z
   .object({
     executionEnvironment: sessionProtocolExecutionEnvironmentInputSchema,
+    attributes: sessionAttributesSchema,
     personaId: nonEmptyStringSchema.optional(),
     reasoning: sessionProtocolReasoningEffortSchema.optional(),
   })
@@ -2010,6 +2020,8 @@ const sessionProtocolAgentStateSnapshotSchema = z
 const sessionProtocolSnapshotSchema = z
   .object({
     sessionId: nonEmptyStringSchema,
+    attributes: sessionAttributesSchema,
+    createdAt: z.number().finite().nonnegative(),
     revision: z.number().int().positive(),
     agentState: sessionProtocolAgentStateSnapshotSchema,
     lifecycle: sessionProtocolSessionLifecycleSchema,
@@ -4241,11 +4253,13 @@ function validateCreateParams(
             ? "session.create params.executionEnvironment.cwd must be an absolute path"
             : hasIssue(parsed.error, ["executionEnvironment", "env"])
               ? "session.create params.executionEnvironment.env must use valid environment variable names and string values without null bytes and cannot override HOME"
-              : hasIssue(parsed.error, ["personaId"])
-                ? "session.create params.personaId must be a non-empty string"
-                : hasIssue(parsed.error, ["reasoning"])
-                  ? "session.create params.reasoning must be one of none, minimal, low, medium, high, xhigh, or max"
-                  : `session.create params are invalid: ${formatZodError(parsed.error)}`;
+              : hasIssue(parsed.error, ["attributes"])
+                ? "session.create params.attributes must contain at most 32 bounded string pairs"
+                : hasIssue(parsed.error, ["personaId"])
+                  ? "session.create params.personaId must be a non-empty string"
+                  : hasIssue(parsed.error, ["reasoning"])
+                    ? "session.create params.reasoning must be one of none, minimal, low, medium, high, xhigh, or max"
+                    : `session.create params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 

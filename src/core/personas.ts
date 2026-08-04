@@ -3,6 +3,7 @@ import { DEFAULT_SUBAGENT_NAME, type SubagentConfigMap } from "./subagents/types
 import {
   TOOL_NAME_BASH,
   TOOL_NAME_EDIT,
+  TOOL_NAME_HISTORY,
   TOOL_NAME_INTERRUPT_AGENT,
   TOOL_NAME_LIST_AGENTS,
   TOOL_NAME_NOOK,
@@ -372,6 +373,7 @@ const BASE_TOOLS: NonNullable<Persona["tools"]> = [
   TOOL_NAME_VIEW_IMAGE,
   TOOL_NAME_WEB,
   TOOL_NAME_NOOK,
+  TOOL_NAME_HISTORY,
 ];
 const SUBAGENT_TOOLS: NonNullable<Persona["tools"]> = [
   TOOL_NAME_SPAWN_AGENT,

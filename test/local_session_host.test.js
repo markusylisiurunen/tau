@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
+import { HistoryManager } from "../dist/core/history/history_manager.js";
+import { LocalHistoryStore } from "../dist/core/history/local_history_store.js";
 import { createLocalToolExecutionBackend } from "../dist/core/index.js";
 import { resolveModel } from "../dist/core/models/catalog.js";
 import { personas } from "../dist/core/personas.js";
@@ -25,6 +27,7 @@ import {
 
 const localCreateInput = {
   executionEnvironment: { kind: "local", cwd: "/repo" },
+  attributes: { source: "test" },
 };
 
 function createEnvironment(now = Date.parse("2026-01-01T00:00:00.000Z")) {
@@ -83,6 +86,7 @@ function createHost(store, options = {}) {
 
   return new LocalSessionHost({
     store,
+    history: options.history ?? new HistoryManager(new LocalHistoryStore(":memory:")),
     ...(options.defaultBootstrap === false
       ? {}
       : {
@@ -204,6 +208,8 @@ function createStoredSnapshot(overrides = {}) {
   ];
   return {
     sessionId: overrides.sessionId ?? "stored-session",
+    attributes: overrides.attributes ?? { source: "test" },
+    createdAt: overrides.createdAt ?? 0,
     revision: overrides.revision ?? 1,
     agentState: overrides.agentState ?? {
       revision: historyEntries.length,
@@ -377,6 +383,171 @@ describe("HostedEphemeralAgentSession", () => {
 });
 
 describe("LocalSessionHost", () => {
+  it("starts with a persistent warning when local history initialization fails", async () => {
+    const root = mkdtempSync(join(tmpdir(), "tau-unavailable-history-"));
+    const parentFile = join(root, "not-a-directory");
+    writeFileSync(parentFile, "file");
+    const history = HistoryManager.open(join(parentFile, "history.sqlite"));
+    const host = createHost(new MemorySessionStore(), { history });
+
+    try {
+      const session = await host.createSession(localCreateInput);
+      const snapshot = await session.snapshot();
+
+      expect(snapshot.timeline).toContainEqual(
+        expect.objectContaining({
+          id: "notice-history-unavailable",
+          type: "notice",
+          notice: expect.objectContaining({
+            severity: "warn",
+            text: expect.stringContaining("This session will continue"),
+          }),
+        }),
+      );
+      await expect(history.query().search({ limit: 10 })).rejects.toThrow(
+        "session history is unavailable",
+      );
+    } finally {
+      await host.shutdown();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("continues turns and warns once when local history projection fails", async () => {
+    const historyStore = new LocalHistoryStore(":memory:");
+    vi.spyOn(historyStore, "append").mockImplementation(() => {
+      throw new Error("history disk failed");
+    });
+    const host = createHost(new MemorySessionStore(), {
+      history: new HistoryManager(historyStore),
+    });
+
+    const session = await host.createSession(localCreateInput);
+    await expect(session.record({ text: "first" })).resolves.toBeTruthy();
+    await expect(session.record({ text: "second" })).resolves.toBeTruthy();
+
+    const snapshot = await session.snapshot();
+    expect(
+      snapshot.timeline.filter((item) => item.id === "notice-history-unavailable"),
+    ).toHaveLength(1);
+    expect(snapshot.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          message: expect.objectContaining({
+            content: [expect.objectContaining({ type: "text", text: "first" })],
+          }),
+        }),
+        expect.objectContaining({
+          message: expect.objectContaining({
+            content: [expect.objectContaining({ type: "text", text: "second" })],
+          }),
+        }),
+      ]),
+    );
+
+    await host.shutdown();
+  });
+
+  it("captures committed session content and rewinds the active transcript", async () => {
+    const historyStore = new LocalHistoryStore(":memory:");
+    const history = new HistoryManager(historyStore);
+    const host = createHost(new MemorySessionStore(), { history });
+    const session = await host.createSession(localCreateInput);
+
+    const recorded = await session.record({ text: "<system>keep this</system>\nhello" });
+    await expect(
+      historyStore.read({ sessionId: session.sessionId, limit: 10 }),
+    ).resolves.toMatchObject({
+      session: { attributes: { source: "test" } },
+      entries: [
+        {
+          id: recorded.userHistoryEntryId,
+          type: "user",
+          content: [{ type: "text", text: "<system>keep this</system>\nhello" }],
+        },
+      ],
+    });
+
+    await session.rewindToHistoryEntryId(recorded.userHistoryEntryId);
+    await expect(
+      historyStore.read({ sessionId: session.sessionId, limit: 10 }),
+    ).resolves.toMatchObject({ entries: [] });
+    await host.shutdown();
+  });
+
+  it("captures terminal tool results committed through recovery", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "tau-tool-recovery-history-"));
+    const historyStore = new LocalHistoryStore(":memory:");
+    const history = new HistoryManager(historyStore);
+    const executionEnvironment = createTestExecutionEnvironment({
+      kind: "local",
+      cwd,
+      home: cwd,
+    });
+    const host = createHostForEnvironment(new MemorySessionStore(), executionEnvironment, {
+      history,
+      recordUsage: vi.fn(),
+    });
+
+    try {
+      const session = await host.createSession({
+        executionEnvironment: { kind: "local", cwd },
+        attributes: { source: "test" },
+      });
+      const toolCall = fauxToolCall(
+        "bash",
+        { command: "printf recovered" },
+        { id: "recovered-tool" },
+      );
+      const failedMessage = fauxAssistantMessage([toolCall], {
+        stopReason: "error",
+        errorMessage: "connection reset",
+      });
+      const recoveredMessage = fauxAssistantMessage("continued after recovery");
+      const responses = [failedMessage, recoveredMessage];
+      session.runtime.agent.spec.model.stream = () => {
+        const response = responses.shift();
+        return {
+          async *[Symbol.asyncIterator]() {
+            if (response !== failedMessage) return;
+            yield { type: "toolcall_start", contentIndex: 0, partial: failedMessage };
+            yield {
+              type: "toolcall_end",
+              contentIndex: 0,
+              toolCall,
+              partial: failedMessage,
+            };
+          },
+          async result() {
+            return response;
+          },
+        };
+      };
+
+      await session.record({ text: "run once" });
+      await expect(session.runTurn()).resolves.toMatchObject({ status: "completed" });
+      await expect(
+        historyStore.read({ sessionId: session.sessionId, limit: 10 }),
+      ).resolves.toMatchObject({
+        entries: [
+          { type: "user", content: [{ type: "text", text: "run once" }] },
+          {
+            id: toolCall.id,
+            type: "tool",
+            name: "bash",
+            arguments: { command: "printf recovered" },
+            result: [{ type: "text", text: expect.stringContaining("recovered") }],
+            outcome: "succeeded",
+          },
+          { type: "assistant", content: "continued after recovery" },
+        ],
+      });
+    } finally {
+      await host.shutdown();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("creates, attaches, lists, snapshots, and shuts down local sessions", async () => {
     const store = new MemorySessionStore();
     const host = createHost(store);
@@ -1725,6 +1896,7 @@ describe("LocalSessionHost", () => {
     try {
       const hostedSession = await host.createSession({
         executionEnvironment: { kind: "local", cwd },
+        attributes: { source: "test" },
       });
       const firstCall = fauxToolCall(
         "bash",
@@ -1843,6 +2015,7 @@ describe("LocalSessionHost", () => {
     try {
       const hostedSession = await host.createSession({
         executionEnvironment: { kind: "local", cwd },
+        attributes: { source: "test" },
       });
       const content = "streamed-content-must-not-leak";
       const path = join(cwd, "notes.txt");
@@ -2393,6 +2566,7 @@ describe("LocalSessionHost", () => {
     const host = createHost(store, { personas: [personas[0], personas[1]] });
     const hostedSession = await host.createSession({
       executionEnvironment: { kind: "local", cwd: "/repo" },
+      attributes: { source: "test" },
       personaId: personas[1].id,
       reasoning: "high",
     });
@@ -3005,7 +3179,10 @@ describe("LocalSessionHost", () => {
     });
     await store.commitSessionSnapshot(storedSnapshot);
 
-    const recoveredHost = createHost(store);
+    const historyStore = new LocalHistoryStore(":memory:");
+    const recoveredHost = createHost(store, {
+      history: new HistoryManager(historyStore),
+    });
     const recoveredSession = await recoveredHost.observeSession(storedSnapshot.sessionId);
     if (!recoveredSession) throw new Error("expected stored session to recover");
     const recoveredSnapshot = await recoveredSession.snapshot();
@@ -3030,6 +3207,26 @@ describe("LocalSessionHost", () => {
     });
     expect(recoveredSnapshot.tools[finishedToolCall.id]).not.toHaveProperty("error");
     await expect(store.loadSession(storedSnapshot.sessionId)).resolves.toEqual(recoveredSnapshot);
+    await expect(
+      historyStore.read({ sessionId: storedSnapshot.sessionId, limit: 10 }),
+    ).resolves.toMatchObject({
+      entries: [
+        {
+          id: toolCall.id,
+          type: "tool",
+          name: "bash",
+          arguments: { command: "pwd" },
+          outcome: "cancelled",
+        },
+        {
+          id: finishedToolCall.id,
+          type: "tool",
+          name: "bash",
+          arguments: { command: "printf done" },
+          outcome: "succeeded",
+        },
+      ],
+    });
 
     const contexts = [];
     recoveredSession.runtime.agent.spec.model.stream = (context) => {

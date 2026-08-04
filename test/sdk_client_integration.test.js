@@ -4,7 +4,10 @@ import { join } from "node:path";
 import { createTauSdkClient } from "@markusylisiurunen/tau/sdk";
 import { describe, expect, it } from "vitest";
 
-const localCreateInput = { executionEnvironment: { kind: "local", cwd: process.cwd() } };
+const localCreateInput = {
+  executionEnvironment: { kind: "local", cwd: process.cwd() },
+  attributes: { source: "test" },
+};
 
 async function withTempHome(test) {
   const home = await mkdtemp(join(tmpdir(), "tau-sdk-home-"));
@@ -31,7 +34,7 @@ describe("sdk client integration", () => {
       let unsubscribe = () => {};
 
       try {
-        expect(client.ready.version).toBe(7);
+        expect(client.ready.version).toBe(8);
         await expect(client.sessions.list()).resolves.toEqual([]);
 
         const session = await client.sessions.create(localCreateInput);
@@ -111,6 +114,7 @@ describe("sdk client integration", () => {
       try {
         const session = await client.sessions.create({
           executionEnvironment: { kind: "local", cwd: repo },
+          attributes: { source: "test" },
         });
         const snapshot = await session.snapshot();
 

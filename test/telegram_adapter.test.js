@@ -317,7 +317,7 @@ function createSessionManagerHarness(initialSessions = [], options = {}) {
   };
 }
 
-async function startNotificationTestAdapter({ chatId, apiHarness, onLog }) {
+async function startNotificationTestAdapter({ chatId, apiHarness, onLog, snapshot }) {
   const managerHarness = createSessionManagerHarness([
     {
       id: "s1",
@@ -326,6 +326,7 @@ async function startNotificationTestAdapter({ chatId, apiHarness, onLog }) {
       state: "running",
       createdAt: "2024-01-01T00:00:00.000Z",
       updatedAt: "2024-01-01T00:00:00.000Z",
+      ...(snapshot ? { snapshot } : {}),
     },
   ]);
   const adapter = await startAdapter({
@@ -1842,6 +1843,59 @@ describe("telegram adapter", () => {
         "unsupported command. supported commands: /new, /status, /compact, /interrupt, /effort_low, /effort_medium, /effort_high, /effort_xhigh, /use_demo",
       );
       expect(managerHarness.manager.closeSession).not.toHaveBeenCalled();
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it("replays recovered session warning notices after subscribing", async () => {
+    const chatId = 470;
+    const apiHarness = createApiHarness([]);
+    const snapshot = createStatusSnapshot({
+      timeline: [
+        {
+          type: "notice",
+          id: "notice-history-unavailable",
+          notice: {
+            severity: "warn",
+            text: "Recovered history warning.",
+            timestamp: 1,
+          },
+        },
+      ],
+    });
+    const { adapter } = await startNotificationTestAdapter({ chatId, apiHarness, snapshot });
+
+    try {
+      await waitFor(() =>
+        apiHarness.sendMessages.some((message) => message.text === "Recovered history warning."),
+      );
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it("delivers session warning notices through the ordered notification queue", async () => {
+    const chatId = 470;
+    const apiHarness = createApiHarness([]);
+    const { adapter, manager } = await startNotificationTestAdapter({ chatId, apiHarness });
+
+    try {
+      manager.emit({
+        type: "session-notice",
+        sessionId: "s1",
+        projectId: "demo",
+        timestamp: "2024-01-01T00:01:00.000Z",
+        severity: "warn",
+        text: "Session history is unavailable. This session will continue.",
+      });
+
+      await waitFor(() =>
+        apiHarness.sendMessages.some(
+          (message) =>
+            message.text === "Session history is unavailable. This session will continue.",
+        ),
+      );
     } finally {
       await adapter.close();
     }

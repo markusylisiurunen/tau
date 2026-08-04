@@ -11,6 +11,7 @@ export const TOOL_NAME_LIST_AGENTS = "list_agents";
 export const TOOL_NAME_INTERRUPT_AGENT = "interrupt_agent";
 export const TOOL_NAME_WEB = "web";
 export const TOOL_NAME_NOOK = "nook";
+export const TOOL_NAME_HISTORY = "history";
 export const TOOL_NAME_GET_GOAL = "get_goal";
 export const TOOL_NAME_CREATE_GOAL = "create_goal";
 export const TOOL_NAME_UPDATE_GOAL = "update_goal";
@@ -27,6 +28,7 @@ export const TOOL_NAMES = [
   TOOL_NAME_INTERRUPT_AGENT,
   TOOL_NAME_WEB,
   TOOL_NAME_NOOK,
+  TOOL_NAME_HISTORY,
 ] as const;
 
 export type ToolName = (typeof TOOL_NAMES)[number];

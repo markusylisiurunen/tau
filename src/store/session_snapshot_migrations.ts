@@ -99,7 +99,9 @@ function migrateStoredSessionV0ToV1(value: unknown): unknown {
       contextEpoch: LEGACY_SESSION_CONTEXT_EPOCH,
     };
   }
+  if (!("costTotal" in snapshot)) snapshot.costTotal = 0;
   removeLegacyPruningPresentation(snapshot);
+  removeLegacyOrphanedToolPresentation(snapshot);
   return snapshot;
 }
 
@@ -201,6 +203,44 @@ function removeLegacyPruningPresentation(snapshot: Record<string, unknown>): voi
     value.facetIds = value.facetIds.filter(
       (facetId) => typeof facetId !== "string" || !removedFacetIds.has(facetId),
     );
+  }
+}
+
+function removeLegacyOrphanedToolPresentation(snapshot: Record<string, unknown>): void {
+  if (!Array.isArray(snapshot.messages) || !isRecord(snapshot.tools)) return;
+  const messageIds = new Set(
+    snapshot.messages.flatMap((message) =>
+      isRecord(message) && typeof message.id === "string" ? [message.id] : [],
+    ),
+  );
+  const removedToolIds = new Set<string>();
+  for (const [toolId, tool] of Object.entries(snapshot.tools)) {
+    if (!isRecord(tool)) continue;
+    const reference = isRecord(tool.origin)
+      ? tool.origin
+      : isRecord(tool.call)
+        ? tool.call
+        : undefined;
+    const referencesMissingMessage =
+      !reference || typeof reference.messageId !== "string" || !messageIds.has(reference.messageId);
+    const referencesMissingResult =
+      typeof tool.resultMessageId === "string" && !messageIds.has(tool.resultMessageId);
+    if (!referencesMissingMessage && !referencesMissingResult) continue;
+    delete snapshot.tools[toolId];
+    removedToolIds.add(toolId);
+  }
+
+  if (removedToolIds.size === 0 || !isRecord(snapshot.facets)) return;
+  for (const [facetId, facet] of Object.entries(snapshot.facets)) {
+    if (
+      isRecord(facet) &&
+      isRecord(facet.subject) &&
+      facet.subject.type === "tool" &&
+      typeof facet.subject.id === "string" &&
+      removedToolIds.has(facet.subject.id)
+    ) {
+      delete snapshot.facets[facetId];
+    }
   }
 }
 

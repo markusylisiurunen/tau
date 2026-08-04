@@ -23,6 +23,9 @@ import historyWorker, {
 import {
   batchImportOperations,
   buildImportOperations,
+  inferSnapshotRepositories,
+  inferSnapshotSources,
+  parseSnapshotForImport,
   snapshotToHistoryEntries,
 } from "../scripts/import-session-snapshots.js";
 
@@ -388,6 +391,132 @@ describe("session history", () => {
     expect(operations.slice(1).map((operation) => operation.entries.length)).toEqual([25, 2]);
     expect(buildImportOperations(snapshot, [...entries, ...extraEntries])).toEqual(operations);
     expect(batchImportOperations(operations)).toEqual([operations]);
+  });
+
+  it("infers migration sources from the two machine workspace conventions", () => {
+    const snapshots = [
+      {
+        attributes: {},
+        executionEnvironment: { cwd: "/home/user/cowork/workspaces/tau-pr-1" },
+      },
+      {
+        attributes: {},
+        executionEnvironment: { cwd: "/home/user/repos/tau/AbCd1234" },
+      },
+      {
+        attributes: {},
+        executionEnvironment: { cwd: "/home/user/Code/tau" },
+      },
+      {
+        attributes: { source: "telegram" },
+        executionEnvironment: { cwd: "/home/user/cowork/workspaces/retained" },
+      },
+    ];
+
+    const inferred = inferSnapshotSources(snapshots, { home: "/home/user" });
+
+    expect(inferred.inferredCount).toBe(3);
+    expect(inferred.snapshots.map((snapshot) => snapshot.attributes.source)).toEqual([
+      "cowork",
+      "telegram",
+      "tui",
+      "telegram",
+    ]);
+  });
+
+  it("infers missing repositories without replacing stored attributes", () => {
+    const snapshots = [
+      {
+        sessionId: "existing",
+        attributes: { source: "cowork" },
+        executionEnvironment: { cwd: "/workspaces/tau-existing" },
+      },
+      {
+        sessionId: "sibling",
+        attributes: {},
+        executionEnvironment: { cwd: "/workspaces/tau-removed" },
+      },
+      {
+        sessionId: "named",
+        attributes: {},
+        executionEnvironment: { cwd: "/removed/tau-pr-1" },
+      },
+      {
+        sessionId: "stored",
+        attributes: { repository: "example.com/owner/custom" },
+        executionEnvironment: { cwd: "/other/custom" },
+      },
+      {
+        sessionId: "home",
+        attributes: {},
+        executionEnvironment: { cwd: "/home/user" },
+      },
+    ];
+    const discoverRepositories = vi.fn((cwd) =>
+      cwd === "/workspaces/tau-existing" ? ["github.com/owner/tau"] : [],
+    );
+
+    const inferred = inferSnapshotRepositories(snapshots, {
+      home: "/home/user",
+      discoverRepositories,
+    });
+
+    expect(inferred.inferredCount).toBe(3);
+    expect(inferred.snapshots.map((snapshot) => snapshot.attributes)).toEqual([
+      { source: "cowork", repository: "github.com/owner/tau" },
+      { repository: "github.com/owner/tau" },
+      { repository: "github.com/owner/tau" },
+      { repository: "example.com/owner/custom" },
+      {},
+    ]);
+    expect(discoverRepositories).not.toHaveBeenCalledWith("/home/user");
+  });
+
+  it("imports legacy checkpoint history entries", () => {
+    const snapshot = parseSnapshotForImport({
+      sessionId: "legacy-checkpoint",
+      revision: 3,
+      status: "idle",
+      historyEntries: [
+        {
+          id: "user-1",
+          message: { role: "user", content: "request", timestamp: 100 },
+        },
+        {
+          id: "assistant-1",
+          message: {
+            role: "assistant",
+            content: [
+              { type: "text", text: "working" },
+              { type: "toolCall", id: "call-1", name: "bash", arguments: { command: "pwd" } },
+            ],
+            timestamp: 110,
+          },
+        },
+        {
+          id: "result-1",
+          message: {
+            role: "toolResult",
+            toolCallId: "call-1",
+            toolName: "bash",
+            content: [{ type: "text", text: "/repo" }],
+            isError: false,
+            timestamp: 120,
+          },
+        },
+      ],
+    });
+
+    expect(snapshot).toMatchObject({
+      sessionId: "legacy-checkpoint",
+      attributes: {},
+      createdAt: 100,
+    });
+    expect(snapshotToHistoryEntries(snapshot).map((entry) => entry.id)).toEqual([
+      "user-1",
+      "assistant-1:text:0",
+      "call-1",
+    ]);
   });
 
   it("keeps immutable attributes and idempotent entry identities", async () => {

@@ -3,7 +3,7 @@
 import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { RemoteHistoryClient } from "../dist/core/history/remote_history_client.js";
 import { batchHistoryEntriesForRemote } from "../dist/core/history/replication.js";
@@ -13,11 +13,103 @@ import {
   userHistoryEntry,
 } from "../dist/core/history/transcript.js";
 import { parseStoredSessionDocument } from "../dist/store/session_snapshot_migrations.js";
+import { discoverLocalWorkspaceRepositories } from "../dist/tui/session_creation_attributes.js";
 
 const MAX_OPERATIONS_PER_REQUEST = 10;
 const MAX_REQUEST_BYTES = 7.5 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 30_000;
 const RETRY_DELAYS_MS = [500, 1_500, 3_000];
+
+export function parseSnapshotForImport(value) {
+  if (isLegacyCheckpointSnapshot(value)) {
+    const messages = value.historyEntries.map((entry) => {
+      if (!isRecord(entry) || typeof entry.id !== "string" || !isRecord(entry.message)) {
+        throw new Error("legacy checkpoint history entries must contain an id and message");
+      }
+      return {
+        id: entry.id,
+        state: "committed",
+        modelVisible: true,
+        message: entry.message,
+      };
+    });
+    const timestamps = messages.flatMap(({ message }) =>
+      typeof message.timestamp === "number" && Number.isFinite(message.timestamp)
+        ? [message.timestamp]
+        : [],
+    );
+    return {
+      sessionId: value.sessionId,
+      attributes: {},
+      createdAt: timestamps.length > 0 ? Math.min(...timestamps) : 0,
+      executionEnvironment: value.executionEnvironment,
+      messages,
+      tools: {},
+    };
+  }
+  return parseStoredSessionDocument(value).snapshot;
+}
+
+export function inferSnapshotRepositories(
+  snapshots,
+  { home = homedir(), discoverRepositories = discoverLocalWorkspaceRepositories } = {},
+) {
+  const repositoriesByCwd = new Map();
+  const discoveredByCwd = new Map();
+  for (const snapshot of snapshots) {
+    const cwd = snapshot.executionEnvironment?.cwd;
+    if (typeof cwd !== "string") continue;
+    const storedRepository = snapshot.attributes.repository;
+    if (typeof storedRepository === "string") {
+      repositoriesByCwd.set(cwd, storedRepository.split(","));
+      continue;
+    }
+    if (!discoveredByCwd.has(cwd)) {
+      discoveredByCwd.set(cwd, cwd === home ? [] : discoverRepositories(cwd));
+    }
+    const discovered = discoveredByCwd.get(cwd);
+    if (discovered.length > 0) repositoriesByCwd.set(cwd, discovered);
+  }
+
+  const repositoriesByParent = stableParentRepositoryMappings(repositoriesByCwd);
+  const repositoriesByName = repositoryNameMappings(repositoriesByCwd.values());
+  let inferredCount = 0;
+  const inferred = snapshots.map((snapshot) => {
+    if (typeof snapshot.attributes.repository === "string") return snapshot;
+    const cwd = snapshot.executionEnvironment?.cwd;
+    if (typeof cwd !== "string") return snapshot;
+    const repositories =
+      repositoriesByCwd.get(cwd) ??
+      repositoriesByParent.get(dirname(cwd)) ??
+      matchWorkspaceRepositories(cwd, repositoriesByName);
+    if (!repositories || repositories.length === 0) return snapshot;
+    inferredCount += 1;
+    return {
+      ...snapshot,
+      attributes: { ...snapshot.attributes, repository: repositories.join(",") },
+    };
+  });
+  return { snapshots: inferred, inferredCount };
+}
+
+export function inferSnapshotSources(snapshots, { home = homedir() } = {}) {
+  const coworkRoot = join(home, "cowork", "workspaces");
+  const telegramRoot = join(home, "repos");
+  let inferredCount = 0;
+  const inferred = snapshots.map((snapshot) => {
+    if (typeof snapshot.attributes.source === "string") return snapshot;
+    const cwd = snapshot.executionEnvironment?.cwd;
+    if (typeof cwd !== "string") return snapshot;
+    const source = isWithin(coworkRoot, cwd)
+      ? "cowork"
+      : isTelegramWorkspace(telegramRoot, cwd)
+        ? "telegram"
+        : "tui";
+    inferredCount += 1;
+    return { ...snapshot, attributes: { ...snapshot.attributes, source } };
+  });
+  return { snapshots: inferred, inferredCount };
+}
 
 export function snapshotToHistoryEntries(snapshot) {
   const calls = new Map();
@@ -95,18 +187,35 @@ async function main() {
     return;
   }
   const client = options.dryRun ? undefined : new RemoteHistoryClient(await resolveTarget(options));
-  const filenames = (await readdir(options.sessionsDirectory))
-    .filter((filename) => filename.endsWith(".json"))
+  const filenames = (await readdir(options.sessionsDirectory, { withFileTypes: true }))
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+    .map((entry) => entry.name)
     .sort((a, b) => a.localeCompare(b));
-  let imported = 0;
+  const loaded = [];
   let skipped = 0;
-  let entryCount = 0;
-
   for (const filename of filenames) {
     const path = join(options.sessionsDirectory, filename);
     try {
-      const raw = JSON.parse(await readFile(path, "utf8"));
-      const snapshot = parseStoredSessionDocument(raw).snapshot;
+      loaded.push({
+        filename,
+        snapshot: parseSnapshotForImport(JSON.parse(await readFile(path, "utf8"))),
+      });
+    } catch (error) {
+      skipped += 1;
+      console.warn(
+        `skipping ${filename}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  const repositories = inferSnapshotRepositories(loaded.map(({ snapshot }) => snapshot));
+  const sources = inferSnapshotSources(repositories.snapshots);
+  let imported = 0;
+  let entryCount = 0;
+  for (let index = 0; index < loaded.length; index += 1) {
+    const { filename } = loaded[index];
+    const snapshot = sources.snapshots[index];
+    try {
       const entries = snapshotToHistoryEntries(snapshot);
       const operations = buildImportOperations(snapshot, entries);
       if (!options.dryRun) {
@@ -128,7 +237,7 @@ async function main() {
   }
 
   console.log(
-    `${options.dryRun ? "checked" : "imported"} ${imported} snapshots and ${entryCount} entries; skipped ${skipped}`,
+    `${options.dryRun ? "checked" : "imported"} ${imported} snapshots and ${entryCount} entries; inferred repository for ${repositories.inferredCount} and source for ${sources.inferredCount}; skipped ${skipped}`,
   );
   if (skipped > 0) process.exitCode = 1;
 }
@@ -218,6 +327,95 @@ function withOperationId(operation) {
     id: `snapshot-import:${createHash("sha256").update(JSON.stringify(operation)).digest("hex")}`,
     ...operation,
   };
+}
+
+function isWithin(root, path) {
+  const relPath = relative(root, path);
+  return relPath === "" || (!relPath.startsWith(`..${sep}`) && relPath !== "..");
+}
+
+function isTelegramWorkspace(root, path) {
+  if (!isWithin(root, path)) return false;
+  const segments = relative(root, path).split(sep).filter(Boolean);
+  return segments.length >= 2;
+}
+
+function stableParentRepositoryMappings(repositoriesByCwd) {
+  const candidates = new Map();
+  for (const [cwd, repositories] of repositoriesByCwd) {
+    const parent = dirname(cwd);
+    const serialized = repositories.join(",");
+    const values = candidates.get(parent) ?? new Set();
+    values.add(serialized);
+    candidates.set(parent, values);
+  }
+  return new Map(
+    Array.from(candidates).flatMap(([parent, values]) =>
+      values.size === 1 ? [[parent, [...values][0].split(",")]] : [],
+    ),
+  );
+}
+
+function repositoryNameMappings(repositoryLists) {
+  const candidates = new Map();
+  for (const repositories of repositoryLists) {
+    for (const repository of repositories) {
+      const name = repositoryName(repository);
+      if (!name) continue;
+      const values = candidates.get(name) ?? new Set();
+      values.add(repository);
+      candidates.set(name, values);
+    }
+  }
+  return new Map(
+    Array.from(candidates).flatMap(([name, values]) =>
+      values.size === 1 ? [[name, [...values][0]]] : [],
+    ),
+  );
+}
+
+function matchWorkspaceRepositories(cwd, repositoriesByName) {
+  const workspaceName = basename(cwd);
+  const ownerSeparator = workspaceName.indexOf("--");
+  const candidates = [
+    normalizeWorkspaceName(workspaceName),
+    normalizeWorkspaceName(basename(dirname(cwd))),
+    ...(ownerSeparator >= 0
+      ? [normalizeWorkspaceName(workspaceName.slice(ownerSeparator + 2))]
+      : []),
+  ];
+  const matches = Array.from(repositoriesByName)
+    .filter(([name]) =>
+      candidates.some((candidate) => candidate === name || candidate.startsWith(`${name}-`)),
+    )
+    .sort((left, right) => right[0].length - left[0].length);
+  if (matches.length === 0 || matches[1]?.[0].length === matches[0][0].length) return undefined;
+  return [matches[0][1]];
+}
+
+function repositoryName(repository) {
+  const slash = repository.lastIndexOf("/");
+  return slash >= 0 ? normalizeWorkspaceName(repository.slice(slash + 1)) : undefined;
+}
+
+function normalizeWorkspaceName(value) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function isLegacyCheckpointSnapshot(value) {
+  return (
+    isRecord(value) &&
+    typeof value.sessionId === "string" &&
+    !("messages" in value) &&
+    Array.isArray(value.historyEntries)
+  );
+}
+
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function terminalToolOutcome(status, isError) {

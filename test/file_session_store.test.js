@@ -171,7 +171,7 @@ describe("FileSessionStore", () => {
           },
         },
       });
-      const { agentState: _agentState, ...legacy } = current;
+      const { agentState: _agentState, costTotal: _costTotal, ...legacy } = current;
       await mkdir(directory, { recursive: true });
       await writeFile(join(directory, "c2Vzc2lvbi0x.json"), JSON.stringify(legacy), "utf8");
 
@@ -188,6 +188,43 @@ describe("FileSessionStore", () => {
             facetIds: [],
           },
         },
+        facets: {},
+      });
+    });
+  });
+
+  it("drops legacy tool presentation that references removed messages", async () => {
+    await withTempStore(async (store, directory) => {
+      const snapshot = createSnapshot("session-1", "hello");
+      const legacy = {
+        ...snapshot,
+        tools: {
+          "tool-1": {
+            id: "tool-1",
+            toolCallId: "tool-1",
+            toolName: "bash",
+            call: { messageId: "removed-assistant", contentIndex: 0 },
+            status: "succeeded",
+            facetIds: ["tool-facet"],
+            resultMessageId: "removed-result",
+          },
+        },
+        facets: {
+          "tool-facet": {
+            id: "tool-facet",
+            subject: { type: "tool", id: "tool-1" },
+            kind: "test.tool",
+            version: 1,
+            data: {},
+          },
+        },
+      };
+      await mkdir(directory, { recursive: true });
+      await writeFile(join(directory, "c2Vzc2lvbi0x.json"), JSON.stringify(legacy), "utf8");
+
+      await expect(store.loadSession("session-1")).resolves.toEqual({
+        ...snapshot,
+        tools: {},
         facets: {},
       });
     });

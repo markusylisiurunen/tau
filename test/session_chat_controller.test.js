@@ -15,6 +15,7 @@ import {
   applySessionProtocolDelta,
   SESSION_PROTOCOL_VERSION,
 } from "../dist/protocol/session_protocol.js";
+import { FileSessionStore } from "../dist/store/file_session_store.js";
 import { TauSessionProtocolResponseError } from "../dist/transport/errors.js";
 import { formatDiffReviewUserMessage } from "../dist/tui/chat_controller/diff_review_user_message.js";
 import { formatRewindCandidateAge } from "../dist/tui/chat_controller/history_labels.js";
@@ -2465,7 +2466,7 @@ describe("SessionChatController", () => {
           id: "tool-ui-write-call",
           subject: { type: "tool", id: "write-call" },
           kind: "tau.tool-ui-events",
-          version: 1,
+          version: 2,
           data: {
             events: [
               {
@@ -2484,7 +2485,7 @@ describe("SessionChatController", () => {
           id: "tool-ui-tool-b",
           subject: { type: "tool", id: "tool-b" },
           kind: "tau.tool-ui-events",
-          version: 1,
+          version: 2,
           data: {
             events: [
               {
@@ -2503,7 +2504,7 @@ describe("SessionChatController", () => {
           id: "tool-ui-tool-a",
           subject: { type: "tool", id: "tool-a" },
           kind: "tau.tool-ui-events",
-          version: 1,
+          version: 2,
           data: {
             events: [
               {
@@ -2601,7 +2602,7 @@ describe("SessionChatController", () => {
           id: "tool-ui-tool-a",
           subject: { type: "tool", id: "tool-a" },
           kind: "tau.tool-ui-events",
-          version: 1,
+          version: 2,
           data: {
             events: [
               {
@@ -2655,6 +2656,130 @@ describe("SessionChatController", () => {
     await controller.dispose();
   });
 
+  it("opens a filesystem snapshot with an older tool presentation facet", async () => {
+    const baseSnapshot = createSnapshot();
+    const result = Array.from({ length: 10 }, (_, index) => `result ${index + 1}`).join("\n");
+    const snapshot = updateSnapshot(baseSnapshot, {
+      messages: [
+        ...baseSnapshot.messages,
+        {
+          id: "assistant-tools",
+          state: "committed",
+          modelVisible: true,
+          message: createAssistantToolCallMessage([
+            {
+              type: "toolCall",
+              id: "tool-a",
+              name: "bash",
+              arguments: { command: "do-not-render-this-command" },
+            },
+          ]),
+        },
+        {
+          id: "tool-a-result",
+          state: "committed",
+          modelVisible: true,
+          message: {
+            role: "toolResult",
+            toolCallId: "tool-a",
+            toolName: "bash",
+            content: [{ type: "text", text: result }],
+            isError: false,
+            timestamp: 2,
+          },
+        },
+      ],
+      timeline: [
+        {
+          type: "message",
+          id: "timeline-assistant-tools",
+          messageId: "assistant-tools",
+        },
+        {
+          type: "message",
+          id: "timeline-tool-a-result",
+          messageId: "tool-a-result",
+        },
+      ],
+      tools: {
+        "tool-a": {
+          id: "tool-a",
+          toolCallId: "tool-a",
+          toolName: "bash",
+          call: { messageId: "assistant-tools", contentIndex: 0 },
+          status: "succeeded",
+          resultMessageId: "tool-a-result",
+          facetIds: ["tool-ui-tool-a"],
+        },
+      },
+      facets: {
+        "tool-ui-tool-a": {
+          id: "tool-ui-tool-a",
+          subject: { type: "tool", id: "tool-a" },
+          kind: "tau.tool-ui-events",
+          version: 1,
+          data: {
+            events: [
+              {
+                type: "bash_execution",
+                toolCallId: "tool-a",
+                command: "do-not-render-this-command",
+                headerTarget: "do-not-render-this-command",
+              },
+            ],
+          },
+        },
+      },
+    });
+    const directory = join(
+      tmpdir(),
+      `tau-old-tool-presentation-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    );
+    try {
+      const store = new FileSessionStore({ directory });
+      await store.commitSessionSnapshot(snapshot);
+      const storedSnapshot = await store.loadSession(snapshot.sessionId);
+      expect(storedSnapshot).toBeDefined();
+      if (!storedSnapshot) throw new Error("expected stored session snapshot");
+
+      const session = new FakeSession(storedSnapshot);
+      const view = new FakeView();
+      const controller = new SessionChatController({
+        view,
+        session,
+        snapshot: await session.snapshot(),
+        targetLabel: "ssh host tau rpc",
+      });
+
+      controller.start();
+
+      expect(view.messages.some((message) => message.id === "tool-a-result")).toBe(false);
+      expect(view.toolModels).toEqual([
+        expect.objectContaining({
+          toolCallId: "tool-a",
+          status: "succeeded",
+          presentation: expect.objectContaining({
+            actionByStatus: expect.objectContaining({ succeeded: "completed" }),
+            subject: "bash",
+            details: [
+              { text: "result 1", wrap: "character" },
+              { text: "result 2", wrap: "character" },
+              { text: "result 3", wrap: "character" },
+              { text: "…4 more lines…", wrap: "word" },
+              { text: "result 8", wrap: "character" },
+              { text: "result 9", wrap: "character" },
+              { text: "result 10", wrap: "character" },
+            ],
+          }),
+        }),
+      ]);
+      expect(JSON.stringify(view.toolModels)).not.toContain("do-not-render-this-command");
+      await controller.dispose();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("applies tool status and presentation facet deltas independently", async () => {
     const queuedEvent = {
       type: "tool_call_queued",
@@ -2699,7 +2824,7 @@ describe("SessionChatController", () => {
           id: "tool-ui-tool-a",
           subject: { type: "tool", id: "tool-a" },
           kind: "tau.tool-ui-events",
-          version: 1,
+          version: 2,
           data: { events: [queuedEvent] },
         },
       },
@@ -2770,7 +2895,7 @@ describe("SessionChatController", () => {
               id: "tool-ui-tool-a",
               subject: { type: "tool", id: "tool-a" },
               kind: "tau.tool-ui-events",
-              version: 1,
+              version: 2,
               data: { events: [queuedEvent, startedEvent] },
             },
           },

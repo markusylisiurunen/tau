@@ -114,7 +114,7 @@ If every caller supplies the same value, remove the option. If a default is neve
 
 ### Compatibility scaffolding without compatibility requirements
 
-Remove migrations, dual reads, deployment-skew guards, and legacy aliases when no shipped data, external consumer, or independent deployment requires them. Preserve them when project context establishes a real compatibility contract.
+Remove migrations, dual reads, deployment-skew guards, and legacy aliases when no shipped data, external consumer, or independent deployment requires them. Preserve access when project context establishes a durable-data contract, using the owning boundary's simplest appropriate migration, normalization, regeneration, version handling, or intentional degradation strategy while keeping current runtime shapes canonical.
 
 ### Tests that restate implementation
 

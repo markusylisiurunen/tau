@@ -17,6 +17,13 @@ Tau is pre-v1. Treat compatibility scaffolding for unshipped behavior as slop an
 - Fail fast when a required value cannot be produced instead of silently omitting, defaulting, or coercing it.
 - When release or persisted-state compatibility is genuinely unclear, ask once whether the behavior shipped or data must survive. Without evidence of a compatibility requirement, simplify to the canonical shape.
 
+Filesystem-backed `tau-session` documents are not an ambiguous compatibility case. They are shipped durable user data and must remain openable, but historical derived or presentation state does not need exact reconstruction.
+
+- Preserve semantic session data and choose the least complex owning-boundary strategy that keeps it accessible: migration, independently versioned payload handling, recovery normalization, canonical regeneration, or intentional degradation of nonessential state.
+- Keep current runtime types canonical. Do not preserve old shapes throughout protocol, host, runtime, or TUI layers merely to reproduce historical representation exactly.
+- Never replace openability with snapshot reset, silent loss of semantic data, or rejection of an older supported document.
+- Keep regression coverage that loads a representative older file through normal recovery and reaches the affected current consumer. Assert semantic accessibility and the intended degradation, not byte-for-byte or visual equivalence.
+
 ## Ownership-boundary slop
 
 Flag code that creates a second owner or bypasses an existing boundary:

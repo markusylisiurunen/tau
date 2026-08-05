@@ -21,7 +21,7 @@ import { formatSteeringUserMessage } from "../core/runtime/steering.js";
 import { buildGoalContinuationText, prependGoalPolicy } from "../core/session/goal.js";
 import { SUBAGENT_ACTIVITY_FACET_KIND, type SubagentUiEvent } from "../core/subagents/types.js";
 import type { ToolActivity } from "../core/tools/activity.js";
-import { buildToolRunPresentation } from "../core/tools/presentation.js";
+import { buildToolRunPresentation, TOOL_UI_FACET_VERSION } from "../core/tools/presentation.js";
 import type { Persona, ReasoningEffort, Skill } from "../core/types.js";
 import {
   appendUsageLogEntry,
@@ -2171,7 +2171,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
           id: facetId,
           subject: { type: "tool", id: event.toolCallId },
           kind: "tau.tool-ui-events",
-          version: 1,
+          version: TOOL_UI_FACET_VERSION,
           data: { events: [uiEvent] },
         };
         const tool: SessionProtocolToolRun = {
@@ -2516,12 +2516,15 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
     const facetId = `tool-ui-${toolCallId}`;
     const existing = this.facets.get(facetId);
-    const events = Array.isArray(existing?.data.events) ? existing.data.events : [];
+    const events =
+      existing?.version === TOOL_UI_FACET_VERSION && Array.isArray(existing.data.events)
+        ? existing.data.events
+        : [];
     const facet: SessionProtocolFacet = {
       id: facetId,
       subject: { type: "tool", id: toolCallId },
       kind: "tau.tool-ui-events",
-      version: 1,
+      version: TOOL_UI_FACET_VERSION,
       data: { events: [...events, structuredClone(event)] },
     };
     this.facets.set(facet.id, facet);

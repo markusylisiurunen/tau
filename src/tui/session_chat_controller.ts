@@ -19,7 +19,11 @@ import { buildDiffReviewInstructions } from "../core/diff_review/review_instruct
 import { type CoreDeps, createDefaultCoreDeps } from "../core/runtime/deps.js";
 import { runDirectBashCommand } from "../core/session/direct_bash.js";
 import { SUBAGENT_ACTIVITY_FACET_KIND, type SubagentUiEvent } from "../core/subagents/types.js";
-import { buildToolRunPresentation, parseToolRunPresentation } from "../core/tools/presentation.js";
+import {
+  buildToolRunPresentation,
+  parseToolRunPresentation,
+  TOOL_UI_FACET_VERSION,
+} from "../core/tools/presentation.js";
 import { TOOL_NAME_BASH } from "../core/tools/tool_names.js";
 import { REASONING_LEVELS, type ReasoningEffort } from "../core/types.js";
 import { formatAdaptiveNumber, formatCwd, formatTokenWindow } from "../core/utils/format.js";
@@ -36,6 +40,7 @@ import type {
   SessionProtocolMessage,
   SessionProtocolPendingUserMessagesMessage,
   SessionProtocolSnapshot,
+  SessionProtocolToolRun,
 } from "../protocol/session_protocol.js";
 import { applySessionProtocolDelta } from "../protocol/session_protocol.js";
 import type {
@@ -2452,6 +2457,16 @@ function isCoreMessage(message: SessionProtocolMessage["message"]): message is M
   }
 }
 
+const RECOVERED_TOOL_ACTION_LABELS = {
+  preparing: "preparing",
+  queued: "queued",
+  running: "running",
+  succeeded: "completed",
+  failed: "failed",
+  blocked: "blocked",
+  cancelled: "cancelled",
+};
+
 function getToolUiModelsInModelOrder(snapshot: SessionProtocolSnapshot): ToolUiModel[] {
   const facetsByToolId = new Map<string, SessionProtocolSnapshot["facets"][string]>();
   for (const facet of Object.values(snapshot.facets)) {
@@ -2465,29 +2480,75 @@ function getToolUiModelsInModelOrder(snapshot: SessionProtocolSnapshot): ToolUiM
     return {
       toolCallId: tool.toolCallId,
       status: tool.status,
-      presentation: getToolPresentation(facetsByToolId.get(toolId), tool.toolCallId),
+      presentation: getToolPresentation(snapshot, tool, facetsByToolId.get(toolId)),
     };
   });
 }
 
 function getToolPresentation(
+  snapshot: SessionProtocolSnapshot,
+  tool: SessionProtocolToolRun,
   facet: SessionProtocolSnapshot["facets"][string] | undefined,
-  toolCallId: string,
 ) {
-  if (facet?.kind !== "tau.tool-ui-events" || !Array.isArray(facet.data.events)) {
-    throw new Error(`missing tool presentation for '${toolCallId}'`);
+  if (facet?.kind !== "tau.tool-ui-events" || facet.version !== TOOL_UI_FACET_VERSION) {
+    return buildRecoveredToolPresentation(snapshot, tool);
+  }
+  if (!Array.isArray(facet.data.events)) {
+    throw new Error(`missing tool presentation for '${tool.toolCallId}'`);
   }
   const event = facet.data.events.at(-1);
   if (
     typeof event !== "object" ||
     event === null ||
     !("toolCallId" in event) ||
-    event.toolCallId !== toolCallId ||
+    event.toolCallId !== tool.toolCallId ||
     !("presentation" in event)
   ) {
-    throw new Error(`missing tool presentation for '${toolCallId}'`);
+    throw new Error(`missing tool presentation for '${tool.toolCallId}'`);
   }
   return parseToolRunPresentation(event.presentation);
+}
+
+function buildRecoveredToolPresentation(
+  snapshot: SessionProtocolSnapshot,
+  tool: SessionProtocolToolRun,
+) {
+  const result = getRecoveredToolResult(snapshot, tool);
+  return buildToolRunPresentation({
+    toolName: tool.toolName,
+    subject: tool.toolName,
+    details: result ? [{ text: result, wrap: "character" }] : [],
+    actionOverrides: RECOVERED_TOOL_ACTION_LABELS,
+  });
+}
+
+function getRecoveredToolResult(
+  snapshot: SessionProtocolSnapshot,
+  tool: SessionProtocolToolRun,
+): string | undefined {
+  if (tool.status === "streaming") {
+    return undefined;
+  }
+
+  const resultEntry = tool.resultMessageId
+    ? snapshot.messages.find((entry) => entry.id === tool.resultMessageId)
+    : snapshot.messages.find(
+        (entry) =>
+          entry.message.role === "toolResult" && entry.message.toolCallId === tool.toolCallId,
+      );
+  const resultMessage = resultEntry?.message;
+  if (resultMessage?.role === "toolResult" && resultMessage.toolCallId === tool.toolCallId) {
+    const text = resultMessage.content
+      .filter((block): block is { type: "text"; text: string } => block.type === "text")
+      .map((block) => block.text)
+      .join("\n")
+      .trimEnd();
+    if (text) {
+      return text;
+    }
+  }
+
+  return tool.error?.trim() || tool.summary?.trim() || undefined;
 }
 
 function getToolIdsInModelOrder(snapshot: SessionProtocolSnapshot): string[] {

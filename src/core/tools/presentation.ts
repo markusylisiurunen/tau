@@ -47,6 +47,7 @@ export type ToolRunPresentation = {
   metadata: string[];
 };
 
+export const TOOL_UI_FACET_VERSION = 2;
 export const TOOL_CARD_SUBJECT_MAX_LINES = 8;
 export const TOOL_CARD_DEFAULT_DETAILS_MAX_LINES = 7;
 export const TOOL_CARD_TRUNCATED_DETAILS_MAX_LINES = 17;

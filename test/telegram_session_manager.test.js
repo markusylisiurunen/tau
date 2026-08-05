@@ -121,7 +121,7 @@ function createToolUiFacetChange(toolCallId, eventOrEvents) {
       id: `tool-ui-${toolCallId}`,
       subject: { type: "tool", id: toolCallId },
       kind: "tau.tool-ui-events",
-      version: 1,
+      version: 2,
       data: { events },
     },
   };

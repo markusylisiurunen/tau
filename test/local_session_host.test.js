@@ -8,7 +8,10 @@ import { LocalHistoryStore } from "../dist/core/history/local_history_store.js";
 import { createLocalToolExecutionBackend } from "../dist/core/index.js";
 import { resolveModel } from "../dist/core/models/catalog.js";
 import { personas } from "../dist/core/personas.js";
-import { buildToolRunPresentation } from "../dist/core/tools/presentation.js";
+import {
+  buildToolRunPresentation,
+  TOOL_UI_FACET_VERSION,
+} from "../dist/core/tools/presentation.js";
 import {
   hasGoalTurnMetadata,
   prependTauUserMetadata,
@@ -2073,6 +2076,7 @@ describe("LocalSessionHost", () => {
       };
 
       const events = [];
+      const facetVersions = [];
       let resolveFirstStarted;
       const firstStarted = new Promise((resolve) => {
         resolveFirstStarted = resolve;
@@ -2088,6 +2092,7 @@ describe("LocalSessionHost", () => {
           }
           const event = change.facet.data.events.at(-1);
           events.push(event);
+          facetVersions.push(change.facet.version);
           if (event.type === "bash_started" && event.toolCallId === firstCall.id) {
             resolveFirstStarted();
           } else if (event.type === "tool_call_queued" && event.toolCallId === secondCall.id) {
@@ -2117,6 +2122,7 @@ describe("LocalSessionHost", () => {
           expect.objectContaining({ type: "bash_started", toolCallId: secondCall.id }),
         ]),
       );
+      expect(facetVersions.every((version) => version === TOOL_UI_FACET_VERSION)).toBe(true);
 
       await turn;
     } finally {

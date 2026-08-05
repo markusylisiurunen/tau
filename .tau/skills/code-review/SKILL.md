@@ -46,6 +46,7 @@ Actively hunt for issues across these categories:
 - **Performance**: Unnecessary allocations in hot paths, O(n²) where O(n) is straightforward, missing indexes.
 - **Cleanliness**: Leftover debug code (`console.log`, print statements), commented-out code, dead imports.
 - **Maintainability**: Fragile coupling, misleading names, duplicated logic that will drift.
+- **Persistence compatibility**: For durable versioned filesystem data, verify that older files remain openable through an appropriate owning-boundary strategy, important semantic data remains accessible, and current runtime shapes stay canonical. Exact reconstruction of derived or presentation state is not required, but silent semantic data loss or rejection of an older supported document is a correctness bug.
 
 ## When to flag
 

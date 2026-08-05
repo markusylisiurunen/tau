@@ -742,4 +742,4 @@ Known tool renderers can use typed facets. Unknown tools can still render name, 
 10. Themes stay in TUI-local config/content loading rather than the session protocol.
 11. Wire-level `eventVersion`, `event`, `tool_ui`, and `session_update` semantics are removed from the session protocol.
 
-This is a breaking protocol change, which is appropriate before v1. Avoid aliases or compatibility shims.
+This is a breaking wire-protocol change, which is appropriate before v1. Avoid aliases or compatibility shims in the protocol. Filesystem-backed `tau-session` documents are a separate durable-data contract: newer versions must keep them openable, using the owning boundary's appropriate migration, normalization, regeneration, or intentional degradation strategy while preserving canonical current runtime shapes.

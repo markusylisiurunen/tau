@@ -118,7 +118,7 @@ type User struct {
 
 Watch for parallel structs representing the same concept across domain, storage, transport, and presentation layers. Share one owned type when the contracts are truly identical. When boundaries need different structs, use an explicit conversion function and keep field meaning and optionality aligned.
 
-Do not accept multiple JSON or storage shapes indefinitely without a compatibility requirement. Decode the canonical form, reject unexpected alternatives, and migrate or reset obsolete data when project context permits.
+Do not accept multiple JSON or storage shapes indefinitely without a compatibility requirement. Decode the canonical form and reject unexpected alternatives. When persisted data has an openability contract, handle older representations at the owning version or recovery boundary using the simplest appropriate migration, normalization, regeneration, or intentional degradation strategy; keep the current internal type canonical.
 
 ## Keep interfaces earned
 

@@ -20,6 +20,7 @@ export type DirectBashExecutionOptions = {
   command: string;
   backend: ToolExecutionBackend;
   signal?: AbortSignal;
+  workingDirectory: string;
   actionLabel: string;
   addToContext: boolean;
   addUserText?: (text: string) => string | Promise<string>;
@@ -57,6 +58,7 @@ export async function runDirectBashCommand(
     truncationInfo,
     exitCode,
     durationMs,
+    workingDirectory: options.workingDirectory,
     actionLabel: options.actionLabel,
   });
   const userHistoryEntryId =

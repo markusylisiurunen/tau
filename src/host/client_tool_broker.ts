@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Tool, ToolCall } from "@earendil-works/pi-ai";
 import type { ToolActivity } from "../core/tools/activity.js";
-import { buildToolRunPresentation } from "../core/tools/presentation.js";
+import { buildToolRunPresentation, formatToolDurationMs } from "../core/tools/presentation.js";
 import {
   type AgentTool,
   createTextToolOutcome,
@@ -15,7 +15,6 @@ import {
   TOOL_NAME_UPDATE_GOAL,
 } from "../core/tools/tool_names.js";
 import { formatTokenEstimate } from "../core/utils/token.js";
-import { formatBytes } from "../core/utils/truncate.js";
 import type {
   SessionProtocolClientToolCallMessage,
   SessionProtocolClientToolCancelMessage,
@@ -307,6 +306,7 @@ export class ClientToolBroker {
 function createClientToolFinishedUiEvent(
   toolCall: ToolCall,
   outcome: ToolExecutionOutcome,
+  durationMs: number,
 ): ToolActivity {
   const isError = outcome.outcome !== "succeeded";
   return {
@@ -317,27 +317,35 @@ function createClientToolFinishedUiEvent(
       toolCall.name,
       extractToolOutcomeText(outcome),
       isError,
+      durationMs,
     ),
     status: isError ? "error" : "success",
   };
 }
 
-function createClientToolPresentation(toolName: string, content: string, isError: boolean) {
+function createClientToolPresentation(
+  toolName: string,
+  content: string,
+  isError: boolean,
+  durationMs: number,
+) {
   const trimmed = content.trimEnd();
   const lineCount = trimmed ? trimmed.split("\n").length : 0;
   const contentBytes = Buffer.byteLength(trimmed, "utf8");
-  const details = (trimmed || (isError ? "failed" : "ok"))
-    .replace(/\r\n?/g, "\n")
-    .split("\n")
-    .map((text) => ({ text, ...(isError ? { tone: "error" as const } : {}) }));
+  const details = trimmed
+    ? trimmed
+        .replace(/\r\n?/g, "\n")
+        .split("\n")
+        .map((text) => ({ text, ...(isError ? { tone: "error" as const } : {}) }))
+    : [];
   return buildToolRunPresentation({
     toolName,
     subject: toolName,
     details,
     metadata: [
-      formatLineCount(lineCount),
+      formatToolDurationMs(durationMs),
       contentBytes > 0 ? formatTokenEstimate(contentBytes) : undefined,
-      contentBytes > 0 ? formatBytes(contentBytes) : undefined,
+      formatLineCount(lineCount),
     ].filter((part): part is string => part !== undefined),
   });
 }
@@ -382,11 +390,13 @@ function createClientToolDefinition(
     ): Promise<ToolExecutionOutcome> {
       const { signal } = context;
       return executeTool(context, async () => {
+        const startedAt = Date.now();
         const toolResult = await broker.dispatch({ sessionId, clientId, tool, toolCall, signal });
+        const durationMs = Math.max(0, Date.now() - startedAt);
         return {
           content: toolResult.content,
           outcome: toolResult.outcome,
-          uiEvent: createClientToolFinishedUiEvent(toolCall, toolResult),
+          uiEvent: createClientToolFinishedUiEvent(toolCall, toolResult, durationMs),
         };
       });
     },

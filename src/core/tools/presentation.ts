@@ -31,13 +31,15 @@ export type ToolRunActionLabels = Record<ToolRunPresentationStatus, string>;
 
 export type ToolRunPresentation = {
   actionByStatus: ToolRunActionLabels;
+  operation?: string;
   subject: string;
   details: ToolCardLine[];
   metadata: string[];
 };
 
 export const TOOL_CARD_SUBJECT_MAX_LINES = 8;
-export const TOOL_CARD_DETAILS_MAX_LINES = 8;
+export const TOOL_CARD_DEFAULT_DETAILS_MAX_LINES = 7;
+export const TOOL_CARD_TRUNCATED_DETAILS_MAX_LINES = 17;
 export const TOOL_CARD_MAX_LINE_CHARS = 256;
 
 function isBoundedLine(text: string): boolean {
@@ -48,12 +50,15 @@ function isBoundedLine(text: string): boolean {
   );
 }
 
+const singleLineSchema = z
+  .string()
+  .refine((text) => !text.includes("\n") && !text.includes("\r"), "must be one line");
 const boundedLineSchema = z.string().refine(isBoundedLine, "must be one bounded line");
 const boundedLabelSchema = boundedLineSchema.min(1);
 
 const toolCardLineSchema = z
   .object({
-    text: boundedLineSchema,
+    text: singleLineSchema,
     tone: z.enum(["added", "removed", "error"]).optional(),
   })
   .strict();
@@ -71,6 +76,7 @@ const toolRunPresentationSchema: z.ZodType<ToolRunPresentation> = z
         cancelled: boundedLabelSchema,
       })
       .strict(),
+    operation: boundedLabelSchema.optional(),
     subject: z
       .string()
       .min(1)
@@ -78,7 +84,7 @@ const toolRunPresentationSchema: z.ZodType<ToolRunPresentation> = z
         const lines = subject.split("\n");
         return lines.length <= TOOL_CARD_SUBJECT_MAX_LINES && lines.every(isBoundedLine);
       }, "must contain only bounded lines"),
-    details: z.array(toolCardLineSchema).max(TOOL_CARD_DETAILS_MAX_LINES),
+    details: z.array(toolCardLineSchema),
     metadata: z.array(boundedLineSchema),
   })
   .strict();
@@ -182,9 +188,35 @@ function normalizeLabel(text: string): string {
   return truncateLine(text.replace(/\s+/g, " ").trim());
 }
 
-function truncateLines(lines: ToolCardLine[], maxLines: number): ToolCardLine[] {
-  const bounded = lines.map((line) => ({ ...line, text: truncateLine(line.text) }));
+export function formatToolDurationMs(durationMs: number | null | undefined): string {
+  if (durationMs === null || durationMs === undefined || !Number.isFinite(durationMs)) {
+    return "?ms";
+  }
+  const ms = Math.max(0, Math.round(durationMs));
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 10_000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${Math.round(ms / 1000)}s`;
+}
+
+function truncateLines(
+  lines: ToolCardLine[],
+  maxLines: number,
+  strategy: "head" | "middle" = "middle",
+  truncateLongLines: boolean = true,
+): ToolCardLine[] {
+  const bounded = truncateLongLines
+    ? lines.map((line) => ({ ...line, text: truncateLine(line.text) }))
+    : lines;
   if (bounded.length <= maxLines) return bounded;
+
+  if (strategy === "head") {
+    const headCount = maxLines - 1;
+    const omitted = bounded.length - headCount;
+    return [
+      ...bounded.slice(0, headCount),
+      { text: `…${omitted} more ${omitted === 1 ? "line" : "lines"}…` },
+    ];
+  }
 
   const headCount = Math.ceil((maxLines - 1) / 2);
   const tailCount = maxLines - headCount - 1;
@@ -208,8 +240,11 @@ function getToolRunActionLabels(toolName: string): ToolRunActionLabels {
 
 export function buildToolRunPresentation(args: {
   toolName: string;
+  operation?: string;
   subject: string;
   details?: ToolCardLine[];
+  detailTruncation?: false | { maxLines: number; strategy: "head" | "middle" };
+  truncateDetailLines?: false;
   metadata?: string[];
   actionOverrides?: Partial<ToolRunActionLabels>;
 }): ToolRunPresentation {
@@ -230,11 +265,38 @@ export function buildToolRunPresentation(args: {
       .split("\n")
       .map((text) => ({ ...line, text })),
   );
+  const detailTruncation = args.detailTruncation ?? {
+    maxLines: TOOL_CARD_DEFAULT_DETAILS_MAX_LINES,
+    strategy: "middle",
+  };
+  if (
+    detailTruncation !== false &&
+    (!Number.isInteger(detailTruncation.maxLines) ||
+      detailTruncation.maxLines < 1 ||
+      detailTruncation.maxLines > TOOL_CARD_TRUNCATED_DETAILS_MAX_LINES)
+  ) {
+    throw new Error(
+      `detail maxLines must be between 1 and ${TOOL_CARD_TRUNCATED_DETAILS_MAX_LINES}`,
+    );
+  }
+  const truncateDetailLines = args.truncateDetailLines !== false;
+  const boundedDetails =
+    detailTruncation === false
+      ? truncateDetailLines
+        ? details.map((line) => ({ ...line, text: truncateLine(line.text) }))
+        : details
+      : truncateLines(
+          details,
+          detailTruncation.maxLines,
+          detailTruncation.strategy,
+          truncateDetailLines,
+        );
 
   return parseToolRunPresentation({
     actionByStatus: labels,
+    ...(args.operation ? { operation: normalizeLabel(args.operation) } : {}),
     subject: boundedSubject || args.toolName,
-    details: truncateLines(details, TOOL_CARD_DETAILS_MAX_LINES),
+    details: boundedDetails,
     metadata: (args.metadata ?? []).map(normalizeLabel).filter((part) => part.length > 0),
   });
 }

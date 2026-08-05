@@ -796,6 +796,7 @@ describe("session execution backend plumbing", () => {
     const result = await runDirectBashCommand({
       command: "echo hello",
       backend,
+      workingDirectory: "/repo",
       actionLabel: "ran",
       signal,
       addToContext: true,
@@ -815,6 +816,7 @@ describe("session execution backend plumbing", () => {
     await runDirectBashCommand({
       command: "echo skipped",
       backend,
+      workingDirectory: "/repo",
       actionLabel: "ran",
       addToContext: false,
       addUserText,
@@ -841,6 +843,7 @@ describe("session execution backend plumbing", () => {
     await runDirectBashCommand({
       command: "false",
       backend,
+      workingDirectory: "/repo",
       actionLabel: "ran",
       addToContext: true,
       addUserText,

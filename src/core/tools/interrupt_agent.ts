@@ -23,21 +23,28 @@ const INTERRUPT_AGENT_DESCRIPTION = [
   "If the subagent is already idle, this returns its latest state without changing it.",
 ].join(" ");
 
-const INTERRUPT_AGENT_ID_DESCRIPTION = "Subagent id to interrupt.";
+const INTERRUPT_AGENT_ID_DESCRIPTION = "Single-line subagent id to interrupt.";
 
 export const INTERRUPT_AGENT_TOOL: Tool = {
   name: TOOL_NAME_INTERRUPT_AGENT,
   description: INTERRUPT_AGENT_DESCRIPTION,
   parameters: Type.Object(
     {
-      id: Type.String({ description: INTERRUPT_AGENT_ID_DESCRIPTION }),
+      id: Type.String({
+        description: INTERRUPT_AGENT_ID_DESCRIPTION,
+        pattern: "^[^\\r\\n]+$",
+      }),
     },
     { additionalProperties: false },
   ),
 };
 
 const interruptArgsSchema = z.object({
-  id: z.string().trim().min(1),
+  id: z
+    .string()
+    .trim()
+    .min(1)
+    .refine((id) => !/[\r\n]/.test(id), "Subagent ID must be a single line."),
 });
 
 function getInterruptAgentSubject(raw: unknown): string {
@@ -72,6 +79,8 @@ export function createInterruptAgentToolDefinition(supervisor: AgentSupervisor):
             toolName: TOOL_NAME_INTERRUPT_AGENT,
             subject: subject,
             details: [{ text: reason, tone: "error" }],
+            detailTruncation: false,
+            truncateDetailLines: false,
           }),
           reason,
         };
@@ -112,6 +121,8 @@ export function createInterruptAgentToolDefinition(supervisor: AgentSupervisor):
               toolName: TOOL_NAME_INTERRUPT_AGENT,
               subject: subject,
               output: resultText,
+              detailTruncation: false,
+              truncateDetailLines: false,
               metadata: formatSubagentMetadata({ costTotal: state.costTotal, durationMs }),
             });
             const uiEvent: ToolActivity = {
@@ -126,15 +137,23 @@ export function createInterruptAgentToolDefinition(supervisor: AgentSupervisor):
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             const reason = message.trim() || "The interrupt_agent request failed.";
+            const presentation = signal.aborted
+              ? buildToolRunPresentation({
+                  toolName: TOOL_NAME_INTERRUPT_AGENT,
+                  subject,
+                })
+              : buildSubagentPresentation({
+                  toolName: TOOL_NAME_INTERRUPT_AGENT,
+                  subject,
+                  output: reason,
+                  detailTruncation: false,
+                  truncateDetailLines: false,
+                });
             const uiEvent: ToolActivity = {
               type: "tool_call_finished",
               toolCallId: toolCall.id,
               toolName: TOOL_NAME_INTERRUPT_AGENT,
-              presentation: buildSubagentPresentation({
-                toolName: TOOL_NAME_INTERRUPT_AGENT,
-                subject: subject,
-                output: reason,
-              }),
+              presentation,
               status: "error",
             };
             const outcome = createTextToolOutcome(reason, signal.aborted ? "cancelled" : "failed");

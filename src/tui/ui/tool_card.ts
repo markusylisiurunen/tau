@@ -29,7 +29,6 @@ function getStatusStyle(status: ToolUiModel["status"], theme: Theme): (text: str
   switch (status) {
     case "streaming":
     case "queued":
-      return theme.palette.textMuted;
     case "running":
       return theme.palette.actionRunning;
     case "succeeded":
@@ -49,7 +48,7 @@ function styleDetail(line: ToolCardLine, theme: Theme): string {
     case "removed":
       return theme.palette.diffRemove(line.text);
     case "error":
-      return theme.palette.actionError(line.text);
+      return theme.palette.textDim(line.text);
     case undefined:
       return theme.palette.textDim(line.text);
   }
@@ -59,10 +58,13 @@ function renderToolCard(model: ToolUiModel, theme: Theme): string {
   const status = getPresentationStatus(model.status);
   const statusStyle = getStatusStyle(model.status, theme);
   const action = model.presentation.actionByStatus[status];
+  const actionText = model.presentation.operation
+    ? `${action} ${model.presentation.operation}`
+    : action;
   const subjectLines = model.presentation.subject.split("\n");
   const firstSubjectLine = subjectLines[0] ?? "";
   const lines = [
-    ` ${statusStyle(getMarker(model.status))} ${theme.palette.textMuted(action)} ${theme.palette.brandAccent(firstSubjectLine)}`,
+    ` ${statusStyle(getMarker(model.status))} ${theme.palette.textMuted(actionText)} ${theme.palette.brandAccent(firstSubjectLine)}`,
     ...subjectLines.slice(1).map((line) => ` ${theme.palette.brandAccent(line)}`),
     ...model.presentation.details.map((line) => ` ${styleDetail(line, theme)}`),
   ];

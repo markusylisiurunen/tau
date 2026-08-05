@@ -75,7 +75,7 @@ export function createListAgentsToolDefinition(supervisor: AgentSupervisor): Age
             toolName: TOOL_NAME_LIST_AGENTS,
             subject: "subagents",
             output: resultText,
-            metadata: [`running ${capacity.running}/${capacity.limit}`],
+            detailTruncation: false,
           });
           const uiEvent: ToolActivity = {
             type: "tool_call_finished",

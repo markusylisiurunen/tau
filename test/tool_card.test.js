@@ -4,6 +4,7 @@ import {
   parseToolRunPresentation,
   TOOL_CARD_MAX_LINE_CHARS,
 } from "../dist/core/tools/presentation.js";
+import { createWriteToolDefinition } from "../dist/core/tools/write.js";
 import { ToolCardComponent } from "../dist/tui/ui/tool_card.js";
 import { createTagTheme, renderText } from "./ui_helpers.js";
 
@@ -39,6 +40,78 @@ describe("tool cards", () => {
     ]);
   });
 
+  it("renders an explicit operation between the lifecycle action and subject", () => {
+    const model = {
+      toolCallId: "web",
+      status: "running",
+      presentation: buildToolRunPresentation({
+        toolName: "web",
+        operation: "web",
+        subject: "console.log('ok')",
+      }),
+    };
+
+    expect(renderText(new ToolCardComponent({ model, theme }), 120)).toContain(
+      "<textMuted>running web</textMuted> <brandAccent>console.log('ok')</brandAccent>",
+    );
+  });
+
+  it("uses the running marker color while preparing, queued, and running", () => {
+    const presentation = buildToolRunPresentation({ toolName: "bash", subject: "pwd" });
+    for (const status of ["streaming", "running"]) {
+      const rendered = renderText(
+        new ToolCardComponent({ model: { toolCallId: status, status, presentation }, theme }),
+        120,
+      );
+      expect(rendered).toContain("<actionRunning>⏵</actionRunning>");
+    }
+
+    const queued = renderText(
+      new ToolCardComponent({
+        model: { toolCallId: "queued", status: "queued", presentation },
+        theme,
+      }),
+      120,
+    );
+    expect(queued).toContain("<actionRunning>⏵</actionRunning>");
+  });
+
+  it("renders error details with the same dim style as other details", () => {
+    const model = {
+      toolCallId: "bash-blocked",
+      status: "blocked",
+      presentation: buildToolRunPresentation({
+        toolName: "bash",
+        subject: "false",
+        details: [{ text: "blocked", tone: "error" }],
+      }),
+    };
+
+    expect(renderText(new ToolCardComponent({ model, theme }), 120)).toContain(
+      "<textDim>blocked</textDim>",
+    );
+  });
+
+  it("preserves edit addition and removal colors", () => {
+    const model = {
+      toolCallId: "edit",
+      status: "succeeded",
+      presentation: buildToolRunPresentation({
+        toolName: "edit",
+        subject: "file.txt",
+        details: [
+          { text: "- old", tone: "removed" },
+          { text: "+ new", tone: "added" },
+          { text: "  same" },
+        ],
+      }),
+    };
+    const rendered = renderText(new ToolCardComponent({ model, theme }), 120);
+    expect(rendered).toContain("<diffRemove>- old</diffRemove>");
+    expect(rendered).toContain("<diffAdd>+ new</diffAdd>");
+    expect(rendered).toContain("<textDim>  same</textDim>");
+  });
+
   it("bounds subjects and details at the producer boundary", () => {
     const presentation = buildToolRunPresentation({
       toolName: "bash",
@@ -60,11 +133,25 @@ describe("tool cards", () => {
       "detail 1",
       "detail 2",
       "detail 3",
-      "detail 4",
-      "…5 more lines…",
+      "…6 more lines…",
       "detail 10",
       "detail 11",
       "detail 12",
+    ]);
+
+    const exactDetails = buildToolRunPresentation({
+      toolName: "bash",
+      subject: "echo test",
+      details: Array.from({ length: 7 }, (_, index) => ({ text: `detail ${index + 1}` })),
+    });
+    expect(exactDetails.details.map((line) => line.text)).toEqual([
+      "detail 1",
+      "detail 2",
+      "detail 3",
+      "detail 4",
+      "detail 5",
+      "detail 6",
+      "detail 7",
     ]);
 
     const longLine = "x".repeat(TOOL_CARD_MAX_LINE_CHARS + 10);
@@ -76,6 +163,63 @@ describe("tool cards", () => {
     expect(Array.from(lineBounded.subject)).toHaveLength(TOOL_CARD_MAX_LINE_CHARS);
     expect(lineBounded.details).toHaveLength(2);
     expect(Array.from(lineBounded.details[1].text)).toHaveLength(TOOL_CARD_MAX_LINE_CHARS);
+
+    const completeDetails = buildToolRunPresentation({
+      toolName: "edit",
+      subject: "file.txt",
+      details: Array.from({ length: 20 }, (_, index) => ({
+        text: index === 10 ? longLine : `detail ${index + 1}`,
+      })),
+      detailTruncation: false,
+    });
+    expect(completeDetails.details).toHaveLength(20);
+    expect(Array.from(completeDetails.details[10].text)).toHaveLength(TOOL_CARD_MAX_LINE_CHARS);
+  });
+
+  it("uses a head-only write preview and enforces single-line paths", async () => {
+    const content = Array.from({ length: 17 }, (_, index) => `line ${index + 1}`).join("\n");
+    const bytes = Buffer.byteLength(content, "utf8");
+    const tool = createWriteToolDefinition({
+      async writeFile(path, writtenContent) {
+        return { path, bytes: Buffer.byteLength(writtenContent, "utf8"), lines: 17 };
+      },
+    });
+    const execute = async (toolCall) => {
+      const activities = [];
+      const result = await tool.execute(toolCall, {
+        agentId: "agent",
+        turnId: "turn",
+        assistantMessageId: "message",
+        signal: new AbortController().signal,
+        emitActivity: async (activity) => activities.push(activity),
+      });
+      return { result, uiEvent: activities.at(-1) };
+    };
+
+    expect(tool.schema.parameters.properties.path.pattern).toBe("^[^\\r\\n]+$");
+
+    const invalid = await execute({
+      id: "write-invalid",
+      name: "write",
+      arguments: { path: "one\ntwo", content },
+    });
+    expect(invalid.result.outcome).toBe("blocked");
+    expect(invalid.uiEvent.presentation.details[0].text).toContain("single line");
+
+    const succeeded = await execute({
+      id: "write-valid",
+      name: "write",
+      arguments: { path: "file.txt", content },
+    });
+    expect(succeeded.result.outcome).toBe("succeeded");
+    expect(succeeded.uiEvent.presentation.details.map((line) => line.text)).toEqual([
+      ...Array.from({ length: 15 }, (_, index) => `line ${index + 1}`),
+      "…2 more lines…",
+    ]);
+    expect(succeeded.uiEvent.presentation.metadata).toEqual([
+      `~${Math.floor(bytes / 6)} tokens`,
+      "17 lines",
+    ]);
   });
 
   it("rejects transported presentations outside the canonical bounds", () => {

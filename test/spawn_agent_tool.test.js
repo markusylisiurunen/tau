@@ -127,14 +127,19 @@ function createFixture(overrides = {}) {
   return { tool: createSpawnAgentToolDefinition(options), supervisor, persona, modelResolver };
 }
 
-async function execute(tool, arguments_, name = TOOL_NAME_SPAWN_AGENT) {
+async function execute(
+  tool,
+  arguments_,
+  name = TOOL_NAME_SPAWN_AGENT,
+  signal = new AbortController().signal,
+) {
   const call = { id: "call-1", name, arguments: arguments_ };
   const activities = [];
   const outcome = await tool.execute(call, {
     agentId: "parent-agent",
     turnId: "turn-1",
     assistantMessageId: "history-1",
-    signal: new AbortController().signal,
+    signal,
     emitActivity: async (activity) => activities.push(activity),
   });
   return {
@@ -165,9 +170,10 @@ describe("list_agents tool", () => {
         response: "private retained response",
       },
     });
+    const running = createSubagentState({ id: "agent-2", title: "second task" });
     const supervisor = {
-      listSnapshots: vi.fn(() => [state]),
-      getCapacity: vi.fn(() => ({ running: 0, limit: 8 })),
+      listSnapshots: vi.fn(() => [state, running]),
+      getCapacity: vi.fn(() => ({ running: 1, limit: 8 })),
     };
     const tool = createListAgentsToolDefinition(supervisor);
 
@@ -175,10 +181,12 @@ describe("list_agents tool", () => {
     const text = getText(result.toolResult);
 
     expect(result.toolResult.outcome).toBe("succeeded");
-    expect(text).toContain("Agents · 0 running / 8");
+    expect(text).toContain("Agents · 1 running / 8");
     expect(text).toContain("idle · run 1 succeeded · response available");
     expect(text).toContain("context 0.01% (15/200k) · cost $0.01");
     expect(text).not.toContain("private retained response");
+    expect(result.uiEvent.presentation.details.map((line) => line.text)).toEqual(text.split("\n"));
+    expect(result.uiEvent.presentation.metadata).toEqual([]);
     expect(() => JSON.parse(text)).toThrow();
   });
 });
@@ -213,32 +221,73 @@ describe("send_input_to_agent tool", () => {
       })),
     };
     const tool = createSendInputToAgentToolDefinition(supervisor);
+    const prompt = Array.from({ length: 20 }, (_, index) => `prompt ${index + 1}`).join("\n");
+
+    expect(tool.schema.parameters.properties.id.pattern).toBe("^[^\\r\\n]+$");
+
+    const invalid = await execute(
+      tool,
+      { id: "agent-1\nagent-2", prompt },
+      TOOL_NAME_SEND_INPUT_TO_AGENT,
+    );
+    expect(invalid.result.toolResult.outcome).toBe("blocked");
 
     const { result } = await execute(
       tool,
-      { id: "agent-1", prompt: "continue" },
+      { id: "agent-1", prompt },
       TOOL_NAME_SEND_INPUT_TO_AGENT,
     );
 
     expect(result.toolResult.outcome).toBe("succeeded");
+    expect(result.uiEvent.presentation.metadata).toEqual([]);
+    expect(result.uiEvent.presentation.details.map((line) => line.text)).toEqual([
+      ...Array.from({ length: 8 }, (_, index) => `prompt ${index + 1}`),
+      "…4 more lines…",
+      ...Array.from({ length: 8 }, (_, index) => `prompt ${index + 13}`),
+    ]);
     expect(getText(result.toolResult)).toBe(
       ["Started run 2 for `agent-1` · child task", "capacity 1/8"].join("\n"),
     );
     expect(getText(result.toolResult)).not.toContain("previous response");
   });
+
+  it("does not duplicate cancellation in details or metadata", async () => {
+    const supervisor = {
+      getSnapshot: vi.fn(() => createSubagentState({ availability: "idle" })),
+      sendInput: vi.fn(),
+    };
+    const tool = createSendInputToAgentToolDefinition(supervisor);
+    const controller = new AbortController();
+    controller.abort();
+
+    const { result } = await execute(
+      tool,
+      { id: "agent-1", prompt: "continue" },
+      TOOL_NAME_SEND_INPUT_TO_AGENT,
+      controller.signal,
+    );
+
+    expect(result.toolResult.outcome).toBe("cancelled");
+    expect(result.uiEvent.presentation.details).toEqual([]);
+    expect(result.uiEvent.presentation.metadata).toEqual([]);
+  });
 });
 
 describe("wait_for_agents tool", () => {
-  it("returns retained responses and child failures without failing the wait operation", async () => {
+  it("returns full responses while accounting only for agents that completed the wait", async () => {
+    const responseLines = Array.from({ length: 30 }, (_, index) =>
+      index === 29 ? "END" : `response ${index + 1}`,
+    );
+    const longResponse = responseLines.join("\n");
     const succeeded = createSubagentState({
       availability: "idle",
       run: {
         revision: 2,
         status: "succeeded",
-        startedAt: 10,
-        finishedAt: 20,
+        startedAt: 10_000,
+        finishedAt: 20_000,
         interruptRequested: false,
-        response: "final response",
+        response: longResponse,
       },
     });
     const failed = createSubagentState({
@@ -248,8 +297,8 @@ describe("wait_for_agents tool", () => {
       run: {
         revision: 1,
         status: "failed",
-        startedAt: 10,
-        finishedAt: 20,
+        startedAt: 10_000,
+        finishedAt: 40_000,
         interruptRequested: false,
         failure: {
           kind: "provider-error",
@@ -258,15 +307,29 @@ describe("wait_for_agents tool", () => {
         },
       },
     });
+    const running = createSubagentState({
+      id: "agent-3",
+      costTotal: 99,
+      run: {
+        revision: 1,
+        status: "running",
+        startedAt: 1,
+        interruptRequested: false,
+      },
+    });
     const supervisor = {
-      waitForAgents: vi.fn(async () => [succeeded, failed]),
-      getCapacity: vi.fn(() => ({ running: 0, limit: 8 })),
+      waitForAgents: vi.fn(async () => [succeeded, failed, running]),
+      getCapacity: vi.fn(() => ({ running: 1, limit: 8 })),
     };
     const tool = createWaitForAgentsToolDefinition(supervisor);
+    expect(tool.schema.parameters.properties.ids.items.pattern).toBe("^[^\\r\\n]+$");
+
+    const invalid = await execute(tool, { ids: ["agent-1\nagent-2"] }, TOOL_NAME_WAIT_FOR_AGENTS);
+    expect(invalid.result.toolResult.outcome).toBe("blocked");
 
     const { result } = await execute(
       tool,
-      { ids: ["agent-1", "agent-2"] },
+      { ids: ["agent-1", "agent-2", "agent-3"] },
       TOOL_NAME_WAIT_FOR_AGENTS,
     );
     const text = getText(result.toolResult);
@@ -274,10 +337,45 @@ describe("wait_for_agents tool", () => {
     expect(result.toolResult.outcome).toBe("succeeded");
     expect(result.uiEvent).toMatchObject({ status: "success" });
     expect(text).toContain("run 2 succeeded · context");
-    expect(text).toContain("Response:\nfinal response");
+    expect(text).toContain(`Response:\n${longResponse}`);
     expect(text).toContain("run 1 failed · provider-error · context");
     expect(text).toContain("failure: provider overloaded (stop reason: error)");
-    expect(text).toContain("Capacity: 0/8 running");
+    expect(text).toContain("Capacity: 1/8 running");
+    expect(result.uiEvent.presentation.details.map((line) => line.text)).toEqual([
+      "agent-1 · child task · succeeded",
+      "Response:",
+      ...responseLines.slice(0, 8),
+      "…14 more lines…",
+      ...responseLines.slice(-8),
+      "agent-2 · second task · failed",
+      "provider overloaded (stop reason: error)",
+    ]);
+    expect(result.uiEvent.presentation.details.map((line) => line.text).join("\n")).not.toContain(
+      "agent-3",
+    );
+    expect(result.uiEvent.presentation.metadata).toEqual(["cost $0.02", "duration 30s"]);
+  });
+
+  it("does not duplicate cancellation as a detail", async () => {
+    const supervisor = {
+      waitForAgents: vi.fn(async () => {
+        throw new Error("Aborted.");
+      }),
+      getCapacity: vi.fn(() => ({ running: 1, limit: 8 })),
+    };
+    const tool = createWaitForAgentsToolDefinition(supervisor);
+    const controller = new AbortController();
+    controller.abort();
+
+    const { result } = await execute(
+      tool,
+      { ids: ["agent-1"] },
+      TOOL_NAME_WAIT_FOR_AGENTS,
+      controller.signal,
+    );
+
+    expect(result.toolResult.outcome).toBe("cancelled");
+    expect(result.uiEvent.presentation.details).toEqual([]);
   });
 });
 
@@ -301,6 +399,10 @@ describe("interrupt_agent tool", () => {
       ),
     };
     const tool = createInterruptAgentToolDefinition(supervisor);
+    expect(tool.schema.parameters.properties.id.pattern).toBe("^[^\\r\\n]+$");
+
+    const invalid = await execute(tool, { id: "agent-1\nagent-2" }, TOOL_NAME_INTERRUPT_AGENT);
+    expect(invalid.result.toolResult.outcome).toBe("blocked");
 
     const { result } = await execute(tool, { id: "agent-1" }, TOOL_NAME_INTERRUPT_AGENT);
 
@@ -353,20 +455,95 @@ describe("interrupt_agent tool", () => {
       ].join("\n"),
     );
   });
+
+  it("renders the exact model-facing result without line truncation", async () => {
+    const failureMessage = "x".repeat(400);
+    const state = createSubagentState({
+      availability: "idle",
+      run: {
+        revision: 2,
+        status: "failed",
+        startedAt: 10,
+        finishedAt: 20,
+        interruptRequested: false,
+        failure: { kind: "runtime-error", message: failureMessage },
+      },
+    });
+    const supervisor = {
+      getSnapshot: vi.fn(() => state),
+      getCapacity: vi.fn(() => ({ running: 0, limit: 8 })),
+      interrupt: vi.fn(async () => state),
+    };
+    const tool = createInterruptAgentToolDefinition(supervisor);
+
+    const { result } = await execute(tool, { id: "agent-1" }, TOOL_NAME_INTERRUPT_AGENT);
+    const modelText = getText(result.toolResult);
+
+    expect(result.uiEvent.presentation.details.map((line) => line.text).join("\n")).toBe(modelText);
+    expect(result.uiEvent.presentation.details.at(-1).text).toBe(`failure: ${failureMessage}`);
+  });
+
+  it("does not duplicate cancellation as a detail", async () => {
+    const supervisor = {
+      getSnapshot: vi.fn(() => createSubagentState()),
+      interrupt: vi.fn(async () => {
+        throw new Error("Aborted.");
+      }),
+    };
+    const tool = createInterruptAgentToolDefinition(supervisor);
+    const controller = new AbortController();
+    controller.abort();
+
+    const { result } = await execute(
+      tool,
+      { id: "agent-1" },
+      TOOL_NAME_INTERRUPT_AGENT,
+      controller.signal,
+    );
+
+    expect(result.toolResult.outcome).toBe("cancelled");
+    expect(result.uiEvent.presentation.details).toEqual([]);
+  });
 });
 
 describe("spawn_agent tool", () => {
+  it("enforces single-line title and working-directory contracts", async () => {
+    const { tool } = createFixture();
+
+    expect(tool.schema.parameters.properties.title.pattern).toBe("^[^\\r\\n]+$");
+    expect(tool.schema.parameters.properties.workingDirectory.pattern).toBe("^[^\\r\\n]+$");
+
+    const invalidDirectory = await execute(tool, {
+      ...baseArguments,
+      workingDirectory: "one\ntwo",
+    });
+    expect(invalidDirectory.result.toolResult.outcome).toBe("blocked");
+    expect(invalidDirectory.result.uiEvent.presentation.details[0].text).toContain("single line");
+
+    const invalidTitle = await execute(tool, {
+      ...baseArguments,
+      title: "one\ntwo",
+    });
+    expect(invalidTitle.result.toolResult.outcome).toBe("blocked");
+    expect(invalidTitle.result.uiEvent.presentation.details[0].text).toContain("single line");
+  });
+
   it("binds dependencies before execution and admits an allowed launch model", async () => {
     const { tool, supervisor } = createFixture();
-    const { dispatch, result } = await execute(tool, {
+    const arguments_ = {
       ...baseArguments,
       model: "openai/gpt-5.6-sol:high",
-    });
+    };
+    expect(
+      tool.describe({ id: "describe", name: TOOL_NAME_SPAWN_AGENT, arguments: arguments_ })
+        .presentation.metadata,
+    ).toEqual(["/repo/current"]);
+    const { dispatch, result } = await execute(tool, arguments_);
 
     expect(dispatch.startedUiEvent).toMatchObject({
       type: "tool_call_started",
       toolName: TOOL_NAME_SPAWN_AGENT,
-      presentation: { subject: "research task" },
+      presentation: { subject: "research task", metadata: ["/repo/current"] },
     });
     expect(result.toolResult.outcome).toBe("succeeded");
     expect(getText(result.toolResult)).toBe(
@@ -387,6 +564,31 @@ describe("spawn_agent tool", () => {
         }),
       }),
     );
+  });
+
+  it("shows up to seventeen prompt lines using a balanced preview", async () => {
+    const { tool } = createFixture();
+    const prompt = Array.from({ length: 20 }, (_, index) => `prompt ${index + 1}`).join("\n");
+
+    const { result } = await execute(tool, { ...baseArguments, prompt });
+
+    expect(result.uiEvent.presentation.details.map((line) => line.text)).toEqual([
+      ...Array.from({ length: 8 }, (_, index) => `prompt ${index + 1}`),
+      "…4 more lines…",
+      ...Array.from({ length: 8 }, (_, index) => `prompt ${index + 13}`),
+    ]);
+  });
+
+  it("does not duplicate cancellation as a detail", async () => {
+    const { tool } = createFixture();
+    const controller = new AbortController();
+    controller.abort();
+
+    const { result } = await execute(tool, baseArguments, TOOL_NAME_SPAWN_AGENT, controller.signal);
+
+    expect(result.toolResult.outcome).toBe("cancelled");
+    expect(result.uiEvent.presentation.details).toEqual([]);
+    expect(result.uiEvent.presentation.metadata).not.toContain("Aborted.");
   });
 
   it("rejects launch model overrides that are absent or outside the allowlist", async () => {

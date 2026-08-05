@@ -88,20 +88,46 @@ describe("ClientToolBroker", () => {
       toolName: "local_picker",
       status: "success",
       presentation: {
-        metadata: ["9 lines", "~40 tokens", "241 B"],
+        metadata: [expect.stringMatching(/^(?:\d+ms|\d+(?:\.\d+)?s)$/), "~40 tokens", "9 lines"],
       },
     });
     expect(result.uiEvent.presentation.details.map((line) => line.text)).toEqual([
       "one",
       "x".repeat(200),
       "three",
-      "four",
-      "…2 more lines…",
+      "…3 more lines…",
       "seven",
       "eight",
       "nine",
     ]);
     expect(sendCancel).not.toHaveBeenCalled();
+  });
+
+  it("does not synthesize details for empty client tool results", async () => {
+    const broker = new ClientToolBroker();
+    const registration = broker.registerClient({
+      tools: [
+        {
+          name: "local_picker",
+          description: "Pick a local item.",
+          parameters: { type: "object", properties: {}, additionalProperties: false },
+        },
+      ],
+      sendCall: (message) => {
+        broker.ack(message.sessionId, message.callId);
+        broker.result(message.sessionId, message.callId, { ok: true, content: "" });
+      },
+      sendCancel: vi.fn(),
+    });
+    registration.attachSession("session-1");
+
+    const definition = broker.getToolDefinitions("session-1")[0];
+    const result = await runTool(definition, createToolCall({ choice: "a" }));
+
+    expect(result.uiEvent.presentation.details).toEqual([]);
+    expect(result.uiEvent.presentation.metadata).toEqual([
+      expect.stringMatching(/^(?:\d+ms|\d+(?:\.\d+)?s)$/),
+    ]);
   });
 
   it("returns clear errors when client tools become unavailable", async () => {

@@ -100,6 +100,7 @@ export function createCodeModeToolDefinition<TArgs>(
       return {
         presentation: buildToolRunPresentation({
           toolName: implementation.schema.name,
+          operation: implementation.schema.name,
           subject: parsed.code || parsed.subject,
         }),
       };
@@ -123,6 +124,7 @@ export function createCodeModeToolDefinition<TArgs>(
           toolName: implementation.schema.name,
           presentation: buildToolRunPresentation({
             toolName: implementation.schema.name,
+            operation: implementation.schema.name,
             subject: parsed.code || subject,
             details: [{ text: reason, tone: "error" }],
           }),
@@ -175,10 +177,12 @@ export function createCodeModeToolDefinition<TArgs>(
                   : "succeeded";
             const presentation = buildBashPresentation({
               toolName: implementation.schema.name,
+              operation: implementation.schema.name,
               subject: parsed.code || subject,
               truncationInfo,
               exitCode: execution.exitCode,
               durationMs,
+              includeExitCode: false,
             });
             const outcome = createTextToolOutcome(toolText, semanticOutcome);
             const uiEvent: ToolActivity = {
@@ -199,6 +203,7 @@ export function createCodeModeToolDefinition<TArgs>(
           toolName: implementation.schema.name,
           presentation: buildToolRunPresentation({
             toolName: implementation.schema.name,
+            operation: implementation.schema.name,
             subject: parsed.code || subject,
           }),
         },

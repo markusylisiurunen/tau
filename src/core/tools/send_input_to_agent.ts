@@ -24,7 +24,7 @@ const SEND_INPUT_TO_AGENT_DESCRIPTION = [
   "Starting a new run replaces the previously retained response.",
 ].join(" ");
 
-const SEND_INPUT_TO_AGENT_ID_DESCRIPTION = "Subagent id to send input to.";
+const SEND_INPUT_TO_AGENT_ID_DESCRIPTION = "Single-line subagent id to send input to.";
 
 const SEND_INPUT_TO_AGENT_PROMPT_DESCRIPTION = [
   "The prompt to send to the subagent.",
@@ -36,7 +36,10 @@ export const SEND_INPUT_TO_AGENT_TOOL: Tool = {
   description: SEND_INPUT_TO_AGENT_DESCRIPTION,
   parameters: Type.Object(
     {
-      id: Type.String({ description: SEND_INPUT_TO_AGENT_ID_DESCRIPTION }),
+      id: Type.String({
+        description: SEND_INPUT_TO_AGENT_ID_DESCRIPTION,
+        pattern: "^[^\\r\\n]+$",
+      }),
       prompt: Type.String({ description: SEND_INPUT_TO_AGENT_PROMPT_DESCRIPTION }),
     },
     { additionalProperties: false },
@@ -44,7 +47,11 @@ export const SEND_INPUT_TO_AGENT_TOOL: Tool = {
 };
 
 const sendInputArgsSchema = z.object({
-  id: z.string().trim().min(1),
+  id: z
+    .string()
+    .trim()
+    .min(1)
+    .refine((id) => !/[\r\n]/.test(id), "Subagent ID must be a single line."),
   prompt: z.string().trim().min(1),
 });
 
@@ -122,11 +129,9 @@ export function createSendInputToAgentToolDefinition(supervisor: AgentSupervisor
           if (signal?.aborted) {
             const reason = "Aborted.";
             const outcome = createTextToolOutcome(reason, "cancelled");
-            const presentation = buildSubagentPresentation({
+            const presentation = buildToolRunPresentation({
               toolName: TOOL_NAME_SEND_INPUT_TO_AGENT,
               subject: target.title,
-              output: reason,
-              metadata: [target.name, id],
             });
             const uiEvent: ToolActivity = {
               type: "tool_call_finished",
@@ -162,7 +167,7 @@ export function createSendInputToAgentToolDefinition(supervisor: AgentSupervisor
             toolName: TOOL_NAME_SEND_INPUT_TO_AGENT,
             subject: sendResult.state.title,
             output: prompt,
-            metadata: [sendResult.state.name, sendResult.state.id],
+            detailTruncation: { maxLines: 17, strategy: "middle" },
           });
           const uiEvent: ToolActivity = {
             type: "tool_call_finished",

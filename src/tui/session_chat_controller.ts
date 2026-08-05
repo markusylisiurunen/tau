@@ -22,7 +22,7 @@ import { SUBAGENT_ACTIVITY_FACET_KIND, type SubagentUiEvent } from "../core/suba
 import { buildToolRunPresentation, parseToolRunPresentation } from "../core/tools/presentation.js";
 import { TOOL_NAME_BASH } from "../core/tools/tool_names.js";
 import { REASONING_LEVELS, type ReasoningEffort } from "../core/types.js";
-import { formatAdaptiveNumber, formatTokenWindow } from "../core/utils/format.js";
+import { formatAdaptiveNumber, formatCwd, formatTokenWindow } from "../core/utils/format.js";
 import { extractAssistantText } from "../core/utils/messages.js";
 import { collectSpeechToTextContext } from "../core/utils/speech_to_text_context.js";
 import {
@@ -502,6 +502,7 @@ export class SessionChatController {
     }
 
     const toolCallId = `bash-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const workingDirectory = this.snapshot.executionEnvironment.cwd;
 
     this.isStreaming = true;
     this.startTurnTimer();
@@ -512,6 +513,7 @@ export class SessionChatController {
       presentation: buildToolRunPresentation({
         toolName: TOOL_NAME_BASH,
         subject: command,
+        metadata: [formatCwd(workingDirectory)],
       }),
     });
     this.refreshStatus();
@@ -524,6 +526,7 @@ export class SessionChatController {
       const result = await runDirectBashCommand({
         command,
         backend,
+        workingDirectory,
         actionLabel: options.labelOverride,
         addToContext: options.addToContext,
         addUserText: async (text) => {
@@ -551,7 +554,8 @@ export class SessionChatController {
         presentation: buildToolRunPresentation({
           toolName: TOOL_NAME_BASH,
           subject: command,
-          details: [{ text: reason, tone: "error" }],
+          details: [{ text: reason }],
+          metadata: [formatCwd(workingDirectory)],
         }),
       });
       await this.syncFromSessionSnapshot();

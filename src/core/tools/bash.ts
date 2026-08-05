@@ -15,6 +15,7 @@ import type { ToolActivity } from "./activity.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import {
   buildToolRunPresentation,
+  formatToolDurationMs,
   type ToolCardLine,
   type ToolRunPresentation,
 } from "./presentation.js";
@@ -82,7 +83,7 @@ const BASH_DESCRIPTION = [
 const BASH_COMMAND_DESCRIPTION = "The Bash command to execute.";
 
 const BASH_WORKING_DIRECTORY_DESCRIPTION =
-  "Working directory for the command. If omitted, uses the current working directory. Prefer this over `cd` in the command.";
+  "Single-line working directory for the command. If omitted, uses the current working directory. Prefer this over `cd` in the command.";
 
 const BASH_TIMEOUT_DESCRIPTION =
   "Timeout in milliseconds. If omitted, defaults to 60 seconds. Use a longer timeout for known slow operations like builds or large clones.";
@@ -107,6 +108,7 @@ export const BASH_TOOL: Tool = {
       workingDirectory: Type.Optional(
         Type.String({
           description: BASH_WORKING_DIRECTORY_DESCRIPTION,
+          pattern: "^[^\\r\\n]+$",
         }),
       ),
       timeout: Type.Optional(
@@ -262,23 +264,15 @@ export function formatBashUserMessageText(args: {
   return `Bash command output:\n${bashContextText}`;
 }
 
-function formatDurationMs(durationMs: number | null | undefined): string {
-  if (durationMs === null || durationMs === undefined || !Number.isFinite(durationMs)) {
-    return "?ms";
-  }
-  const ms = Math.max(0, Math.round(durationMs));
-  if (ms < 1000) return `${ms}ms`;
-  if (ms < 10_000) return `${(ms / 1000).toFixed(1)}s`;
-  return `${Math.round(ms / 1000)}s`;
-}
-
 export function buildBashPresentation(args: {
   toolName: string;
+  operation?: string;
   subject: string;
   truncationInfo: BashTruncationInfo;
   exitCode: number | null;
   durationMs?: number;
   workingDirectory?: string;
+  includeExitCode?: boolean;
   actionLabel?: string;
 }): ToolRunPresentation {
   const { truncationInfo, exitCode, durationMs } = args;
@@ -297,14 +291,16 @@ export function buildBashPresentation(args: {
   const workingDirectoryLabel = args.workingDirectory
     ? formatCwd(args.workingDirectory)
     : undefined;
-  const durationLabel = formatDurationMs(durationMs);
-  const lineLabel = hasOutput ? `${outputLines} line${outputLines === 1 ? "" : "s"}` : "no output";
+  const durationLabel = formatToolDurationMs(durationMs);
+  const lineLabel = hasOutput ? `${outputLines} line${outputLines === 1 ? "" : "s"}` : undefined;
   const tokenLabel = hasOutput ? formatTokenEstimate(outputBytes) : undefined;
   const summaryParts: string[] = [];
   if (model.truncated || captureTruncated) {
     summaryParts.push(TRUNCATION_MARKER);
   }
-  summaryParts.push(exitSummary);
+  if (args.includeExitCode !== false) {
+    summaryParts.push(exitSummary);
+  }
   if (workingDirectoryLabel) {
     summaryParts.push(workingDirectoryLabel);
   }
@@ -312,9 +308,12 @@ export function buildBashPresentation(args: {
   if (tokenLabel) {
     summaryParts.push(tokenLabel);
   }
-  summaryParts.push(lineLabel);
+  if (lineLabel) {
+    summaryParts.push(lineLabel);
+  }
   return buildToolRunPresentation({
     toolName: args.toolName,
+    operation: args.operation,
     subject: args.subject,
     details,
     metadata: summaryParts,
@@ -335,7 +334,12 @@ function resolveBashWorkingDirectory(args: {
 const bashArgsSchema = z
   .object({
     command: z.string().trim().min(1),
-    workingDirectory: z.string().trim().min(1).optional(),
+    workingDirectory: z
+      .string()
+      .trim()
+      .min(1)
+      .refine((path) => !/[\r\n]/.test(path), "Working directory must be a single line.")
+      .optional(),
     timeout: z.number().positive().optional(),
     maxOutputTokens: z.number().int().positive().optional(),
   })
@@ -392,12 +396,20 @@ function getBashSubject(raw: unknown): string {
 export function createBashToolDefinition(backend: ToolExecutionBackend, cwd: string): AgentTool {
   return {
     schema: BASH_TOOL,
-    describe: (toolCall) => ({
-      presentation: buildToolRunPresentation({
-        toolName: TOOL_NAME_BASH,
-        subject: getBashSubject(toolCall.arguments),
-      }),
-    }),
+    describe: (toolCall) => {
+      const parsedArgs = parseBashArgs(toolCall.arguments);
+      const workingDirectory = resolveBashWorkingDirectory({
+        contextCwd: cwd,
+        workingDirectory: parsedArgs.ok ? parsedArgs.data.workingDirectory : undefined,
+      });
+      return {
+        presentation: buildToolRunPresentation({
+          toolName: TOOL_NAME_BASH,
+          subject: getBashSubject(toolCall.arguments),
+          metadata: [formatCwd(workingDirectory)],
+        }),
+      };
+    },
     async execute(
       toolCall: ToolCall,
       context: ToolExecutionContext,
@@ -408,6 +420,10 @@ export function createBashToolDefinition(backend: ToolExecutionBackend, cwd: str
         ? parsedArgs.data.commandForDisplay
         : parsedArgs.commandForDisplay;
       const subject = commandForDisplay;
+      const effectiveWorkingDirectory = resolveBashWorkingDirectory({
+        contextCwd: cwd,
+        workingDirectory: parsedArgs.ok ? parsedArgs.data.workingDirectory : undefined,
+      });
 
       const blocked = (reason: string): ToolImplementationOutcome => {
         const outcome = createTextToolOutcome(reason, "blocked");
@@ -418,7 +434,8 @@ export function createBashToolDefinition(backend: ToolExecutionBackend, cwd: str
           presentation: buildToolRunPresentation({
             toolName: TOOL_NAME_BASH,
             subject: commandForDisplay,
-            details: [{ text: reason, tone: "error" }],
+            details: [{ text: reason }],
+            metadata: [formatCwd(effectiveWorkingDirectory)],
           }),
           reason,
         };
@@ -429,13 +446,7 @@ export function createBashToolDefinition(backend: ToolExecutionBackend, cwd: str
         return executeTool(context, () => blocked(`Invalid arguments: ${parsedArgs.error}`));
       }
 
-      const { command, workingDirectory, timeout, maxOutputTokens, hasMaxOutputTokens } =
-        parsedArgs.data;
-
-      const effectiveWorkingDirectory = resolveBashWorkingDirectory({
-        contextCwd: cwd,
-        workingDirectory,
-      });
+      const { command, timeout, maxOutputTokens, hasMaxOutputTokens } = parsedArgs.data;
 
       return executeTool(
         context,
@@ -474,7 +485,7 @@ export function createBashToolDefinition(backend: ToolExecutionBackend, cwd: str
               truncationInfo,
               exitCode,
               durationMs,
-              workingDirectory: workingDirectory ? effectiveWorkingDirectory : undefined,
+              workingDirectory: effectiveWorkingDirectory,
             });
 
             const outcome = createTextToolOutcome(
@@ -498,7 +509,8 @@ export function createBashToolDefinition(backend: ToolExecutionBackend, cwd: str
               presentation: buildToolRunPresentation({
                 toolName: TOOL_NAME_BASH,
                 subject: commandForDisplay,
-                details: [{ text: msg, tone: "error" }],
+                details: [{ text: msg }],
+                metadata: [formatCwd(effectiveWorkingDirectory)],
               }),
               reason: msg,
               toolCallId: toolCall.id,
@@ -513,6 +525,7 @@ export function createBashToolDefinition(backend: ToolExecutionBackend, cwd: str
           presentation: buildToolRunPresentation({
             toolName: TOOL_NAME_BASH,
             subject: command,
+            metadata: [formatCwd(effectiveWorkingDirectory)],
           }),
         },
       );

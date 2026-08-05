@@ -39,7 +39,7 @@ const SPAWN_AGENT_NAME_DESCRIPTION = [
 ].join(" ");
 
 const SPAWN_AGENT_TITLE_DESCRIPTION = [
-  "A short human-friendly UI title shown while the subagent runs.",
+  "A short single-line human-friendly UI title shown while the subagent runs.",
   "Do not use title case; all lower-case is preferred except for proper nouns.",
 ].join(" ");
 
@@ -57,7 +57,7 @@ const SPAWN_AGENT_MODEL_DESCRIPTION = [
 ].join(" ");
 
 const SPAWN_AGENT_WORKING_DIRECTORY_DESCRIPTION = [
-  "Optional working directory for the subagent.",
+  "Optional single-line working directory for the subagent.",
   "When set, subagent runs as if it was started in this directory.",
 ].join(" ");
 
@@ -67,11 +67,17 @@ export const SPAWN_AGENT_TOOL: Tool = {
   parameters: Type.Object(
     {
       name: Type.String({ description: SPAWN_AGENT_NAME_DESCRIPTION }),
-      title: Type.String({ description: SPAWN_AGENT_TITLE_DESCRIPTION }),
+      title: Type.String({
+        description: SPAWN_AGENT_TITLE_DESCRIPTION,
+        pattern: "^[^\\r\\n]+$",
+      }),
       prompt: Type.String({ description: SPAWN_AGENT_PROMPT_DESCRIPTION }),
       model: Type.Optional(Type.String({ description: SPAWN_AGENT_MODEL_DESCRIPTION })),
       workingDirectory: Type.Optional(
-        Type.String({ description: SPAWN_AGENT_WORKING_DIRECTORY_DESCRIPTION }),
+        Type.String({
+          description: SPAWN_AGENT_WORKING_DIRECTORY_DESCRIPTION,
+          pattern: "^[^\\r\\n]+$",
+        }),
       ),
     },
     { additionalProperties: false },
@@ -81,10 +87,19 @@ export const SPAWN_AGENT_TOOL: Tool = {
 const spawnArgsSchema = z
   .object({
     name: z.string().trim().min(1),
-    title: z.string().trim().min(1),
+    title: z
+      .string()
+      .trim()
+      .min(1)
+      .refine((title) => !/[\r\n]/.test(title), "Title must be a single line."),
     prompt: z.string().trim().min(1),
     model: z.string().trim().min(1).optional(),
-    workingDirectory: z.string().trim().min(1).optional(),
+    workingDirectory: z
+      .string()
+      .trim()
+      .min(1)
+      .refine((path) => !/[\r\n]/.test(path), "Working directory must be a single line.")
+      .optional(),
   })
   .strict();
 
@@ -99,6 +114,12 @@ function formatAllowedLaunchModels(launchModels: string[]): string {
 function getSpawnAgentSubject(raw: unknown): string {
   const parsedArgs = parseToolArgs(spawnArgsSchema, raw);
   return parsedArgs.ok ? parsedArgs.data.title : "(invalid arguments)";
+}
+
+function getSpawnAgentWorkingDirectory(raw: unknown, baseCwd: string): string {
+  const parsedArgs = parseToolArgs(spawnArgsSchema, raw);
+  const workingDirectory = parsedArgs.ok ? parsedArgs.data.workingDirectory : undefined;
+  return workingDirectory ? resolve(baseCwd, workingDirectory) : baseCwd;
 }
 
 export type ResolvedSubagentRuntime = {
@@ -129,8 +150,13 @@ export function createSpawnAgentToolDefinition(options: {
     schema: SPAWN_AGENT_TOOL,
     describe: (toolCall) => {
       const subject = getSpawnAgentSubject(toolCall.arguments);
+      const workingDirectory = getSpawnAgentWorkingDirectory(toolCall.arguments, options.cwd);
       return {
-        presentation: buildToolRunPresentation({ toolName: TOOL_NAME_SPAWN_AGENT, subject }),
+        presentation: buildToolRunPresentation({
+          toolName: TOOL_NAME_SPAWN_AGENT,
+          subject,
+          metadata: [formatCwd(workingDirectory)],
+        }),
       };
     },
     async execute(
@@ -141,6 +167,9 @@ export function createSpawnAgentToolDefinition(options: {
       let name = "";
       let title = "";
       const subject = getSpawnAgentSubject(toolCall.arguments);
+      const presentationWorkingDirectory = formatCwd(
+        getSpawnAgentWorkingDirectory(toolCall.arguments, options.cwd),
+      );
 
       const blocked = (reason: string, details?: { title?: string }) => {
         const outcome = createTextToolOutcome(reason, "blocked");
@@ -152,6 +181,7 @@ export function createSpawnAgentToolDefinition(options: {
             toolName: TOOL_NAME_SPAWN_AGENT,
             subject: details?.title ?? subject,
             details: [{ text: reason, tone: "error" }],
+            metadata: [presentationWorkingDirectory],
           }),
           reason,
         };
@@ -286,11 +316,10 @@ export function createSpawnAgentToolDefinition(options: {
           if (signal?.aborted) {
             const reason = "Aborted.";
             const outcome = createTextToolOutcome(reason, "cancelled");
-            const presentation = buildSubagentPresentation({
+            const presentation = buildToolRunPresentation({
               toolName: TOOL_NAME_SPAWN_AGENT,
-              subject: subject,
-              output: reason,
-              metadata: [...statusPrefixParts, reason],
+              subject,
+              metadata: statusPrefixParts,
             });
             const uiEvent: ToolActivity = {
               type: "tool_call_finished",
@@ -323,6 +352,7 @@ export function createSpawnAgentToolDefinition(options: {
                 toolName: TOOL_NAME_SPAWN_AGENT,
                 subject: subject,
                 details: [{ text: spawnResult.reason, tone: "error" }],
+                metadata: [statusWorkingDirectory],
               }),
               reason: spawnResult.reason,
             };
@@ -335,6 +365,7 @@ export function createSpawnAgentToolDefinition(options: {
             toolName: TOOL_NAME_SPAWN_AGENT,
             subject: subject,
             output: prompt,
+            detailTruncation: { maxLines: 17, strategy: "middle" },
             metadata: [...statusPrefixParts, spawnResult.state.id],
           });
           const uiEvent: ToolActivity = {
@@ -353,6 +384,7 @@ export function createSpawnAgentToolDefinition(options: {
           presentation: buildToolRunPresentation({
             toolName: TOOL_NAME_SPAWN_AGENT,
             subject: subject,
+            metadata: [statusWorkingDirectory],
           }),
         },
       );

@@ -4,10 +4,9 @@ import { z } from "zod";
 import type { AgentSupervisor } from "../subagents/agent_supervisor.js";
 import { formatWaitForAgentsResult } from "../subagents/format.js";
 import type { SubagentStateSnapshot } from "../subagents/types.js";
-import { truncateForTokens } from "../utils/truncate.js";
 import { parseToolArgs } from "../utils/zod.js";
 import type { ToolActivity } from "./activity.js";
-import { buildToolRunPresentation } from "./presentation.js";
+import { buildToolRunPresentation, type ToolCardLine } from "./presentation.js";
 import {
   type AgentTool,
   createTextToolOutcome,
@@ -25,39 +24,84 @@ const WAIT_FOR_AGENTS_DESCRIPTION = [
   "Responses are retained and may be read repeatedly by calling this tool again with a completed agent id.",
 ].join(" ");
 
-const WAIT_FOR_AGENTS_IDS_DESCRIPTION = "List of subagent ids to wait for.";
-const WAIT_FOR_AGENTS_OUTPUT_MAX_TOKENS = 256;
+const WAIT_FOR_AGENTS_IDS_DESCRIPTION = "List of single-line subagent ids to wait for.";
+const WAIT_FOR_AGENTS_RESPONSE_MAX_LINES = 17;
 
 export const WAIT_FOR_AGENTS_TOOL: Tool = {
   name: TOOL_NAME_WAIT_FOR_AGENTS,
   description: WAIT_FOR_AGENTS_DESCRIPTION,
   parameters: Type.Object(
     {
-      ids: Type.Array(Type.String({ description: WAIT_FOR_AGENTS_IDS_DESCRIPTION }), {
-        minItems: 1,
-      }),
+      ids: Type.Array(
+        Type.String({
+          description: WAIT_FOR_AGENTS_IDS_DESCRIPTION,
+          pattern: "^[^\\r\\n]+$",
+        }),
+        { minItems: 1 },
+      ),
     },
     { additionalProperties: false },
   ),
 };
 
 const waitArgsSchema = z.object({
-  ids: z.array(z.string().trim().min(1)).min(1),
+  ids: z
+    .array(
+      z
+        .string()
+        .trim()
+        .min(1)
+        .refine((id) => !/[\r\n]/.test(id), "Subagent ID must be a single line."),
+    )
+    .min(1),
 });
 
 function getWaitDurationMs(states: SubagentStateSnapshot[]): number | undefined {
-  if (states.length === 0) return undefined;
-  let earliest = Number.POSITIVE_INFINITY;
-  let latest = 0;
-  for (const state of states) {
-    earliest = Math.min(earliest, state.run.startedAt);
-    latest = Math.max(latest, state.run.status === "running" ? Date.now() : state.run.finishedAt);
-  }
-  return Number.isFinite(earliest) ? Math.max(0, latest - earliest) : undefined;
+  const durations = states.flatMap((state) =>
+    state.run.status === "running" ? [] : [Math.max(0, state.run.finishedAt - state.run.startedAt)],
+  );
+  return durations.length > 0 ? Math.max(...durations) : undefined;
 }
 
 function getWaitCostTotal(states: SubagentStateSnapshot[]): number {
-  return states.reduce((sum, state) => sum + state.costTotal, 0);
+  return states.reduce(
+    (sum, state) => (state.run.status === "running" ? sum : sum + state.costTotal),
+    0,
+  );
+}
+
+function truncateResponseLines(response: string): string[] {
+  const text = response.replace(/\r\n?/g, "\n").trimEnd() || "(empty response)";
+  const lines = text.split("\n");
+  if (lines.length <= WAIT_FOR_AGENTS_RESPONSE_MAX_LINES) return lines;
+
+  const head = lines.slice(0, 8);
+  const tail = lines.slice(-8);
+  return [...head, `…${lines.length - 16} more lines…`, ...tail];
+}
+
+function buildWaitDetails(states: SubagentStateSnapshot[]): ToolCardLine[] {
+  return states.flatMap((state): ToolCardLine[] => {
+    if (state.run.status === "running") return [];
+
+    const details: ToolCardLine[] = [
+      { text: `${state.id} · ${state.title} · ${state.run.status}` },
+    ];
+    if (state.run.status === "succeeded") {
+      details.push(
+        { text: "Response:" },
+        ...truncateResponseLines(state.run.response).map((text) => ({ text })),
+      );
+      return details;
+    }
+
+    const stopReason =
+      state.run.failure.kind === "provider-error"
+        ? ` (stop reason: ${state.run.failure.stopReason})`
+        : "";
+    details.push({ text: `${state.run.failure.message}${stopReason}` });
+    return details;
+  });
 }
 
 function formatAgentIdsSubject(ids: string[]): string {
@@ -117,14 +161,11 @@ export function createWaitForAgentsToolDefinition(supervisor: AgentSupervisor): 
             const states = await supervisor.waitForAgents(ids, signal);
             const capacity = supervisor.getCapacity();
             const resultText = formatWaitForAgentsResult(states, capacity);
-            const outputText = truncateForTokens(resultText, {
-              maxTokens: WAIT_FOR_AGENTS_OUTPUT_MAX_TOKENS * states.length,
-              strategy: "head",
-            }).content.trimEnd();
-            const presentation = buildSubagentPresentation({
+            const presentation = buildToolRunPresentation({
               toolName: TOOL_NAME_WAIT_FOR_AGENTS,
               subject: dedupedTarget,
-              output: outputText,
+              details: buildWaitDetails(states),
+              detailTruncation: false,
               metadata: formatSubagentMetadata({
                 costTotal: getWaitCostTotal(states),
                 durationMs: getWaitDurationMs(states),
@@ -142,15 +183,21 @@ export function createWaitForAgentsToolDefinition(supervisor: AgentSupervisor): 
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             const reason = message.trim() || "The wait_for_agents request failed.";
+            const presentation = signal.aborted
+              ? buildToolRunPresentation({
+                  toolName: TOOL_NAME_WAIT_FOR_AGENTS,
+                  subject: dedupedTarget,
+                })
+              : buildSubagentPresentation({
+                  toolName: TOOL_NAME_WAIT_FOR_AGENTS,
+                  subject: dedupedTarget,
+                  output: reason,
+                });
             const uiEvent: ToolActivity = {
               type: "tool_call_finished",
               toolCallId: toolCall.id,
               toolName: TOOL_NAME_WAIT_FOR_AGENTS,
-              presentation: buildSubagentPresentation({
-                toolName: TOOL_NAME_WAIT_FOR_AGENTS,
-                subject: dedupedTarget,
-                output: reason,
-              }),
+              presentation,
               status: "error",
             };
             const outcome = createTextToolOutcome(reason, signal.aborted ? "cancelled" : "failed");

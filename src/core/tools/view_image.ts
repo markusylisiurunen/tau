@@ -21,7 +21,7 @@ const VIEW_IMAGE_DESCRIPTION = [
   "Only use this tool when the user explicitly requests viewing or analyzing an image.",
 ].join(" ");
 
-const VIEW_IMAGE_PATH_DESCRIPTION = "Path to the image file to view.";
+const VIEW_IMAGE_PATH_DESCRIPTION = "Single-line path to the image file to view.";
 
 const VIEW_IMAGE_READ_MAX_BYTES = 50 * 1024 * 1024;
 const VIEW_IMAGE_MODEL_MAX_BYTES = 2.5 * 1024 * 1024;
@@ -37,14 +37,21 @@ export const VIEW_IMAGE_TOOL: Tool = {
   description: VIEW_IMAGE_DESCRIPTION,
   parameters: Type.Object(
     {
-      path: Type.String({ description: VIEW_IMAGE_PATH_DESCRIPTION }),
+      path: Type.String({
+        description: VIEW_IMAGE_PATH_DESCRIPTION,
+        pattern: "^[^\\r\\n]+$",
+      }),
     },
     { additionalProperties: false },
   ),
 };
 
 const viewImageArgsSchema = z.object({
-  path: z.string().trim().min(1),
+  path: z
+    .string()
+    .trim()
+    .min(1)
+    .refine((path) => !/[\r\n]/.test(path), "Path must be a single line."),
 });
 
 function parseViewImageArgs(
@@ -81,6 +88,8 @@ type ImageEncodePlan =
 type EncodedImage = {
   content: Buffer;
   mimeType: SupportedImageType;
+  width: number;
+  height: number;
 };
 
 type Sharp = typeof import("sharp")["default"];
@@ -143,28 +152,26 @@ async function encodeImageCandidate(args: {
   });
 
   if (plan.mimeType === "image/jpeg") {
-    return {
-      mimeType: "image/jpeg",
-      content: await pipeline.jpeg({ quality: plan.quality }).toBuffer(),
-    };
+    const { data, info } = await pipeline
+      .jpeg({ quality: plan.quality })
+      .toBuffer({ resolveWithObject: true });
+    return { mimeType: "image/jpeg", content: data, width: info.width, height: info.height };
   }
 
   if (plan.mimeType === "image/png") {
-    return {
-      mimeType: "image/png",
-      content: await pipeline.png({ compressionLevel: 9 }).toBuffer(),
-    };
+    const { data, info } = await pipeline
+      .png({ compressionLevel: 9 })
+      .toBuffer({ resolveWithObject: true });
+    return { mimeType: "image/png", content: data, width: info.width, height: info.height };
   }
 
-  return {
-    mimeType: "image/webp",
-    content: await pipeline
-      .webp({
-        quality: plan.quality,
-        lossless: plan.lossless,
-      })
-      .toBuffer(),
-  };
+  const { data, info } = await pipeline
+    .webp({
+      quality: plan.quality,
+      lossless: plan.lossless,
+    })
+    .toBuffer({ resolveWithObject: true });
+  return { mimeType: "image/webp", content: data, width: info.width, height: info.height };
 }
 
 async function prepareImageForModel(
@@ -185,7 +192,7 @@ async function prepareImageForModel(
     height <= VIEW_IMAGE_MAX_DIMENSION_PX &&
     content.byteLength <= VIEW_IMAGE_MODEL_MAX_BYTES
   ) {
-    return { content, mimeType: sourceMimeType };
+    return { content, mimeType: sourceMimeType, width, height };
   }
 
   const maxDimension = Math.min(VIEW_IMAGE_MAX_DIMENSION_PX, Math.max(width, height));
@@ -256,7 +263,7 @@ export function createViewImageToolDefinition(backend: ToolExecutionBackend): Ag
             presentation: buildToolRunPresentation({
               toolName: TOOL_NAME_VIEW_IMAGE,
               subject: subject,
-              details: [{ text: reason, tone: "error" }],
+              details: [{ text: reason }],
             }),
             reason,
           };
@@ -301,8 +308,8 @@ export function createViewImageToolDefinition(backend: ToolExecutionBackend): Ag
             path: resolvedPath,
             presentation: buildToolRunPresentation({
               toolName: TOOL_NAME_VIEW_IMAGE,
-              subject: resolvedPath,
-              metadata: [encodedImage.mimeType],
+              subject,
+              metadata: [encodedImage.mimeType, `${encodedImage.width}×${encodedImage.height}`],
             }),
           };
 

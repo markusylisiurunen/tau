@@ -315,6 +315,13 @@ describe("Exa web code-mode tool", () => {
     });
 
     expect(result.toolResult.outcome).toBe("succeeded");
+    expect(result.uiEvent.presentation.operation).toBe("web");
+    expect(result.uiEvent.presentation.metadata.some((part) => part.startsWith("exit "))).toBe(
+      false,
+    );
+    expect(result.uiEvent.presentation.metadata[0]).toMatch(/^(?:\d+ms|\d+(?:\.\d+)?s)$/);
+    expect(result.uiEvent.presentation.metadata[1]).toMatch(/^~\d+ tokens?$/);
+    expect(result.uiEvent.presentation.metadata[2]).toMatch(/^\d+ lines?$/);
     expect(client.search).toHaveBeenCalledWith(
       "tau",
       {

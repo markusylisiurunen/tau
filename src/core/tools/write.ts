@@ -22,7 +22,7 @@ const WRITE_DESCRIPTION = [
   "Creates parent directories as needed.",
 ].join(" ");
 
-const WRITE_PATH_DESCRIPTION = "Absolute or relative path to the file to write.";
+const WRITE_PATH_DESCRIPTION = "Single-line absolute or relative path to the file to write.";
 const WRITE_CONTENT_DESCRIPTION = "The content to write to the file.";
 
 export const WRITE_TOOL: Tool = {
@@ -30,7 +30,10 @@ export const WRITE_TOOL: Tool = {
   description: WRITE_DESCRIPTION,
   parameters: Type.Object(
     {
-      path: Type.String({ description: WRITE_PATH_DESCRIPTION }),
+      path: Type.String({
+        description: WRITE_PATH_DESCRIPTION,
+        pattern: "^[^\\r\\n]+$",
+      }),
       content: Type.String({ description: WRITE_CONTENT_DESCRIPTION }),
     },
     { additionalProperties: false },
@@ -38,7 +41,11 @@ export const WRITE_TOOL: Tool = {
 };
 
 const writeArgsSchema = z.object({
-  path: z.string().trim().min(1),
+  path: z
+    .string()
+    .trim()
+    .min(1)
+    .refine((path) => !/[\r\n]/.test(path), "Path must be a single line."),
   content: z.string(),
 });
 
@@ -69,7 +76,8 @@ function buildWritePresentation(args: {
     toolName: TOOL_NAME_WRITE,
     subject,
     details: detailText ? detailText.split("\n").map((text) => ({ text })) : [],
-    metadata: [`${lines} lines`, formatTokenEstimate(bytes), formatBytes(bytes)],
+    detailTruncation: { maxLines: 16, strategy: "head" },
+    metadata: [formatTokenEstimate(bytes), `${lines} lines`],
   });
 }
 

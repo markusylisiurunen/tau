@@ -22,7 +22,7 @@ const EDIT_DESCRIPTION = [
   "Fails if the file doesn't exist, if oldText is not found, or if multiple matches exist.",
 ].join(" ");
 
-const EDIT_PATH_DESCRIPTION = "Absolute or relative path to the file to edit.";
+const EDIT_PATH_DESCRIPTION = "Single-line absolute or relative path to the file to edit.";
 const EDIT_OLD_TEXT_DESCRIPTION = [
   "The exact text to find and replace, including whitespace and newlines.",
   "Must match exactly one occurrence.",
@@ -35,7 +35,10 @@ export const EDIT_TOOL: Tool = {
   description: EDIT_DESCRIPTION,
   parameters: Type.Object(
     {
-      path: Type.String({ description: EDIT_PATH_DESCRIPTION }),
+      path: Type.String({
+        description: EDIT_PATH_DESCRIPTION,
+        pattern: "^[^\\r\\n]+$",
+      }),
       oldText: Type.String({ description: EDIT_OLD_TEXT_DESCRIPTION }),
       newText: Type.String({ description: EDIT_NEW_TEXT_DESCRIPTION }),
     },
@@ -44,7 +47,11 @@ export const EDIT_TOOL: Tool = {
 };
 
 const editArgsSchema = z.object({
-  path: z.string().trim().min(1),
+  path: z
+    .string()
+    .trim()
+    .min(1)
+    .refine((path) => !/[\r\n]/.test(path), "Path must be a single line."),
   oldText: z.string().min(1),
   newText: z.string(),
 });
@@ -97,6 +104,11 @@ function formatEditToolResultText(args: { summaryLine: string }): string {
   return args.summaryLine;
 }
 
+function formatSignedDelta(value: number, unit: string): string {
+  const prefix = value > 0 ? "+" : "";
+  return `${prefix}${value} ${unit}${Math.abs(value) === 1 ? "" : "s"}`;
+}
+
 function buildEditPresentation(args: {
   subject: string;
   diffLines: string[];
@@ -104,7 +116,6 @@ function buildEditPresentation(args: {
   removed: number;
   oldLength: number;
   newLength: number;
-  sizeDiff: string;
 }) {
   const details: ToolCardLine[] = args.diffLines.map((text) => {
     if (text.startsWith("+ ")) return { text, tone: "added" };
@@ -115,11 +126,10 @@ function buildEditPresentation(args: {
     toolName: TOOL_NAME_EDIT,
     subject: args.subject,
     details,
+    detailTruncation: false,
     metadata: [
-      `+${args.added}`,
-      `-${args.removed}`,
-      `${args.oldLength} → ${args.newLength} chars`,
-      args.sizeDiff,
+      formatSignedDelta(args.added - args.removed, "line"),
+      formatSignedDelta(args.newLength - args.oldLength, "char"),
     ],
   });
 }
@@ -154,7 +164,7 @@ export function createEditToolDefinition(backend: ToolExecutionBackend): AgentTo
             presentation: buildToolRunPresentation({
               toolName: TOOL_NAME_EDIT,
               subject: subject,
-              details: [{ text: reason, tone: "error" }],
+              details: [{ text: reason }],
             }),
             reason,
           };
@@ -243,7 +253,6 @@ export function createEditToolDefinition(backend: ToolExecutionBackend): AgentTo
               removed,
               oldLength: oldText.length,
               newLength: newText.length,
-              sizeDiff: sizeDiffStr,
             }),
           };
           return { content: outcome.content, outcome: outcome.outcome, uiEvent };

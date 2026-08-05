@@ -5,7 +5,11 @@ import type { SessionProtocolGoal } from "../../protocol/session_protocol.js";
 import { buildBlockedGoalInstruction, buildGoalPolicy, formatGoalState } from "../session/goal.js";
 import { parseToolArgs } from "../utils/zod.js";
 import type { ToolActivity } from "./activity.js";
-import { buildToolRunPresentation } from "./presentation.js";
+import {
+  buildToolRunPresentation,
+  type ToolCardLine,
+  type ToolRunActionLabels,
+} from "./presentation.js";
 import {
   type AgentTool,
   createTextToolOutcome,
@@ -57,6 +61,36 @@ const UPDATE_GOAL_TOOL: Tool = {
 
 const emptyArgsSchema = z.object({}).strict();
 const createArgsSchema = z.object({ objective: z.string().trim().min(1) }).strict();
+const GOAL_ACTION_LABELS: Record<string, ToolRunActionLabels> = {
+  [TOOL_NAME_GET_GOAL]: {
+    preparing: "preparing check",
+    queued: "queued check",
+    running: "checking",
+    succeeded: "checked",
+    failed: "failed to check",
+    blocked: "check blocked",
+    cancelled: "check cancelled",
+  },
+  [TOOL_NAME_CREATE_GOAL]: {
+    preparing: "preparing creation",
+    queued: "queued creation",
+    running: "creating",
+    succeeded: "created",
+    failed: "failed to create",
+    blocked: "creation blocked",
+    cancelled: "creation cancelled",
+  },
+  [TOOL_NAME_UPDATE_GOAL]: {
+    preparing: "preparing update",
+    queued: "queued update",
+    running: "updating",
+    succeeded: "updated",
+    failed: "failed to update",
+    blocked: "update blocked",
+    cancelled: "update cancelled",
+  },
+};
+
 const updateArgsSchema = z
   .object({
     objective: z.string().trim().min(1).optional(),
@@ -75,7 +109,13 @@ export function createGoalToolDefinitions(manager: GoalManager): AgentTool[] {
     createGoalTool(GET_GOAL_TOOL, emptyArgsSchema, () => formatGoalState(manager.getGoal())),
     createGoalTool(CREATE_GOAL_TOOL, createArgsSchema, async ({ objective }) => {
       const goal = await manager.createGoal(objective);
-      return `Session goal created.\n\n${buildGoalPolicy(goal)}`;
+      return {
+        text: `Session goal created.\n\n${buildGoalPolicy(goal)}`,
+        presentation: {
+          details: [{ text: goal.objective }],
+          preserveDetails: true,
+        },
+      };
     }),
     createGoalTool(UPDATE_GOAL_TOOL, updateArgsSchema, async (update) => {
       const goal = await manager.updateGoal(update);
@@ -84,20 +124,46 @@ export function createGoalToolDefinitions(manager: GoalManager): AgentTool[] {
       }
       const instruction =
         goal.status === "active" ? buildGoalPolicy(goal) : buildBlockedGoalInstruction(goal);
-      return `Session goal updated.\n\n${instruction}`;
+      return {
+        text: `Session goal updated.\n\n${instruction}`,
+        presentation: {
+          details: [{ text: goal.objective }],
+          preserveDetails: true,
+        },
+      };
     }),
   ];
 }
 
+type GoalToolSuccessPresentation = {
+  details: ToolCardLine[];
+  preserveDetails?: boolean;
+};
+
+type GoalToolExecutionResult = {
+  text: string;
+  presentation?: GoalToolSuccessPresentation;
+};
+
 function createGoalTool<T>(
   schema: Tool,
   argsSchema: z.ZodType<T>,
-  execute: (args: T) => string | Promise<string>,
+  execute: (
+    args: T,
+  ) => string | GoalToolExecutionResult | Promise<string | GoalToolExecutionResult>,
 ): AgentTool {
+  const actionOverrides = GOAL_ACTION_LABELS[schema.name];
+  if (!actionOverrides) {
+    throw new Error(`missing goal action labels for '${schema.name}'`);
+  }
   return {
     schema,
     describe: () => ({
-      presentation: buildToolRunPresentation({ toolName: schema.name, subject: "goal" }),
+      presentation: buildToolRunPresentation({
+        toolName: schema.name,
+        subject: "goal",
+        actionOverrides,
+      }),
     }),
     async execute(
       toolCall: ToolCall,
@@ -106,20 +172,30 @@ function createGoalTool<T>(
       const finish = (
         text: string,
         outcome: ToolExecutionOutcome["outcome"],
-      ): ReturnType<typeof createTextToolOutcome> & { uiEvent: ToolActivity } => ({
-        ...createTextToolOutcome(text, outcome),
-        uiEvent: {
-          type: "tool_call_finished",
-          toolCallId: toolCall.id,
-          toolName: schema.name,
-          presentation: buildToolRunPresentation({
+        successPresentation?: GoalToolSuccessPresentation,
+      ): ReturnType<typeof createTextToolOutcome> & { uiEvent: ToolActivity } => {
+        const preserveDetails = successPresentation?.preserveDetails === true;
+        return {
+          ...createTextToolOutcome(text, outcome),
+          uiEvent: {
+            type: "tool_call_finished",
+            toolCallId: toolCall.id,
             toolName: schema.name,
-            subject: "goal",
-            details: [{ text, ...(outcome === "succeeded" ? {} : { tone: "error" as const }) }],
-          }),
-          status: outcome === "succeeded" ? "success" : "error",
-        },
-      });
+            presentation: buildToolRunPresentation({
+              toolName: schema.name,
+              subject: "goal",
+              details: successPresentation?.details ?? [
+                { text, ...(outcome === "succeeded" ? {} : { tone: "error" as const }) },
+              ],
+              ...(preserveDetails
+                ? { detailTruncation: false as const, truncateDetailLines: false as const }
+                : {}),
+              actionOverrides,
+            }),
+            status: outcome === "succeeded" ? "success" : "error",
+          },
+        };
+      };
 
       return executeTool(
         context,
@@ -129,7 +205,10 @@ function createGoalTool<T>(
             return finish(`Invalid arguments: ${parsed.error}`, "blocked");
           }
           try {
-            return finish(await execute(parsed.data), "succeeded");
+            const result = await execute(parsed.data);
+            return typeof result === "string"
+              ? finish(result, "succeeded")
+              : finish(result.text, "succeeded", result.presentation);
           } catch (error) {
             return finish(error instanceof Error ? error.message : String(error), "blocked");
           }
@@ -138,7 +217,11 @@ function createGoalTool<T>(
           type: "tool_call_started",
           toolCallId: toolCall.id,
           toolName: schema.name,
-          presentation: buildToolRunPresentation({ toolName: schema.name, subject: "goal" }),
+          presentation: buildToolRunPresentation({
+            toolName: schema.name,
+            subject: "goal",
+            actionOverrides,
+          }),
         },
       );
     },

@@ -68,6 +68,58 @@ describe("edit tool", () => {
     }
   });
 
+  it("enforces single-line paths in the tool contract", async () => {
+    const editTool = createEditToolDefinition(createLocalToolExecutionBackend());
+
+    expect(editTool.schema.parameters.properties.path.pattern).toBe("^[^\\r\\n]+$");
+
+    const result = await runTool(editTool, {
+      id: "tool-invalid-path",
+      name: TOOL_NAME_EDIT,
+      arguments: {
+        path: "one\ntwo",
+        oldText: "one",
+        newText: "two",
+      },
+    });
+
+    expect(result.toolResult.outcome).toBe("blocked");
+    expect(result.uiEvent.presentation.details[0].text).toContain("single line");
+  });
+
+  it("renders the complete dim line diff with net metadata", async () => {
+    const fx = setupFixture();
+
+    try {
+      const filePath = join(fx.dir, "large-edit.txt");
+      const oldText = Array.from({ length: 20 }, (_, index) => `old ${index + 1}`).join("\n");
+      const newText = Array.from({ length: 22 }, (_, index) => `new ${index + 1}`).join("\n");
+      writeFileSync(filePath, oldText);
+
+      const editTool = createEditToolDefinition(createLocalToolExecutionBackend());
+      const result = await runTool(editTool, {
+        id: "tool-full-diff",
+        name: TOOL_NAME_EDIT,
+        arguments: { path: filePath, oldText, newText },
+      });
+
+      expect(result.toolResult.outcome).toBe("succeeded");
+      expect(result.uiEvent.presentation.details).toHaveLength(42);
+      expect(
+        result.uiEvent.presentation.details.slice(0, 20).every((line) => line.tone === "removed"),
+      ).toBe(true);
+      expect(
+        result.uiEvent.presentation.details.slice(20).every((line) => line.tone === "added"),
+      ).toBe(true);
+      expect(result.uiEvent.presentation.metadata).toEqual([
+        "+2 lines",
+        `+${newText.length - oldText.length} chars`,
+      ]);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
   it("treats $ sequences as literal replacements", async () => {
     const fx = setupFixture();
 

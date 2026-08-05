@@ -167,6 +167,27 @@ describe("bash output policy", () => {
     expect(toolText).toBe("Command produced no output (exit 0)");
   });
 
+  it("marks terminal output for character wrapping", () => {
+    const presentation = buildBashPresentation({
+      toolName: "bash",
+      subject: "echo test",
+      truncationInfo: {
+        output: "alpha beta",
+        model: {
+          truncated: false,
+          totalLines: 1,
+          outputLines: 1,
+          totalBytes: 10,
+          outputBytes: 10,
+        },
+        captureTruncated: false,
+      },
+      exitCode: 0,
+    });
+
+    expect(presentation.details).toEqual([{ text: "alpha beta", wrap: "character" }]);
+  });
+
   it("omits empty-output metadata", () => {
     const presentation = buildBashPresentation({
       toolName: "bash",

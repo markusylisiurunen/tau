@@ -2,21 +2,30 @@ import { z } from "zod";
 import {
   TOOL_NAME_BASH,
   TOOL_NAME_EDIT,
+  TOOL_NAME_HISTORY,
   TOOL_NAME_INTERRUPT_AGENT,
   TOOL_NAME_LIST_AGENTS,
+  TOOL_NAME_NOOK,
   TOOL_NAME_SEND_INPUT_TO_AGENT,
   TOOL_NAME_SPAWN_AGENT,
   TOOL_NAME_VIEW_IMAGE,
   TOOL_NAME_WAIT_FOR_AGENTS,
+  TOOL_NAME_WEB,
   TOOL_NAME_WRITE,
 } from "./tool_names.js";
 
 export type ToolCardLineTone = "added" | "removed" | "error";
 
+export type ToolCardWrap = "word" | "character";
+
 export type ToolCardLine = {
   text: string;
   tone?: ToolCardLineTone;
+  wrap: ToolCardWrap;
 };
+
+export type ToolCardLineInput = Omit<ToolCardLine, "wrap"> & { wrap?: ToolCardWrap };
+export type ToolCardSubjectWrap = ToolCardWrap;
 
 export type ToolRunPresentationStatus =
   | "preparing"
@@ -33,6 +42,7 @@ export type ToolRunPresentation = {
   actionByStatus: ToolRunActionLabels;
   operation?: string;
   subject: string;
+  subjectWrap: ToolCardSubjectWrap;
   details: ToolCardLine[];
   metadata: string[];
 };
@@ -60,6 +70,7 @@ const toolCardLineSchema = z
   .object({
     text: singleLineSchema,
     tone: z.enum(["added", "removed", "error"]).optional(),
+    wrap: z.enum(["word", "character"]),
   })
   .strict();
 
@@ -84,6 +95,7 @@ const toolRunPresentationSchema: z.ZodType<ToolRunPresentation> = z
         const lines = subject.split("\n");
         return lines.length <= TOOL_CARD_SUBJECT_MAX_LINES && lines.every(isBoundedLine);
       }, "must contain only bounded lines"),
+    subjectWrap: z.enum(["word", "character"]),
     details: z.array(toolCardLineSchema),
     metadata: z.array(boundedLineSchema),
   })
@@ -214,7 +226,7 @@ function truncateLines(
     const omitted = bounded.length - headCount;
     return [
       ...bounded.slice(0, headCount),
-      { text: `…${omitted} more ${omitted === 1 ? "line" : "lines"}…` },
+      { text: `…${omitted} more ${omitted === 1 ? "line" : "lines"}…`, wrap: "word" },
     ];
   }
 
@@ -223,7 +235,7 @@ function truncateLines(
   const omitted = bounded.length - headCount - tailCount;
   return [
     ...bounded.slice(0, headCount),
-    { text: `…${omitted} more ${omitted === 1 ? "line" : "lines"}…` },
+    { text: `…${omitted} more ${omitted === 1 ? "line" : "lines"}…`, wrap: "word" },
     ...bounded.slice(-tailCount),
   ];
 }
@@ -238,11 +250,22 @@ function getToolRunActionLabels(toolName: string): ToolRunActionLabels {
     : GENERIC_TOOL_RUN_ACTION_LABELS;
 }
 
+const CHARACTER_WRAPPED_SUBJECT_TOOLS = new Set([
+  TOOL_NAME_BASH,
+  TOOL_NAME_WEB,
+  TOOL_NAME_HISTORY,
+  TOOL_NAME_NOOK,
+  TOOL_NAME_WRITE,
+  TOOL_NAME_EDIT,
+  TOOL_NAME_VIEW_IMAGE,
+]);
+
 export function buildToolRunPresentation(args: {
   toolName: string;
   operation?: string;
   subject: string;
-  details?: ToolCardLine[];
+  subjectWrap?: ToolCardSubjectWrap;
+  details?: ToolCardLineInput[];
   detailTruncation?: false | { maxLines: number; strategy: "head" | "middle" };
   truncateDetailLines?: false;
   metadata?: string[];
@@ -250,7 +273,7 @@ export function buildToolRunPresentation(args: {
 }): ToolRunPresentation {
   const subjectLines = args.subject.replace(/\r\n?/g, "\n").replace(/\n+$/, "").split("\n");
   const boundedSubject = truncateLines(
-    subjectLines.map((text) => ({ text })),
+    subjectLines.map((text) => ({ text, wrap: "word" })),
     TOOL_CARD_SUBJECT_MAX_LINES,
   )
     .map((line) => line.text)
@@ -263,7 +286,7 @@ export function buildToolRunPresentation(args: {
     line.text
       .replace(/\r\n?/g, "\n")
       .split("\n")
-      .map((text) => ({ ...line, text })),
+      .map((text) => ({ ...line, text, wrap: line.wrap ?? "word" })),
   );
   const detailTruncation = args.detailTruncation ?? {
     maxLines: TOOL_CARD_DEFAULT_DETAILS_MAX_LINES,
@@ -296,6 +319,9 @@ export function buildToolRunPresentation(args: {
     actionByStatus: labels,
     ...(args.operation ? { operation: normalizeLabel(args.operation) } : {}),
     subject: boundedSubject || args.toolName,
+    subjectWrap:
+      args.subjectWrap ??
+      (CHARACTER_WRAPPED_SUBJECT_TOOLS.has(args.toolName) ? "character" : "word"),
     details: boundedDetails,
     metadata: (args.metadata ?? []).map(normalizeLabel).filter((part) => part.length > 0),
   });

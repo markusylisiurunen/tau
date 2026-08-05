@@ -118,9 +118,9 @@ function buildEditPresentation(args: {
   newLength: number;
 }) {
   const details: ToolCardLine[] = args.diffLines.map((text) => {
-    if (text.startsWith("+ ")) return { text, tone: "added" };
-    if (text.startsWith("- ")) return { text, tone: "removed" };
-    return { text };
+    if (text.startsWith("+ ")) return { text, tone: "added", wrap: "character" };
+    if (text.startsWith("- ")) return { text, tone: "removed", wrap: "character" };
+    return { text, wrap: "character" };
   });
   return buildToolRunPresentation({
     toolName: TOOL_NAME_EDIT,

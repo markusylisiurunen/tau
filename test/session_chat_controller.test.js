@@ -2636,7 +2636,7 @@ describe("SessionChatController", () => {
         status: "succeeded",
         presentation: expect.objectContaining({
           subject: "echo a",
-          details: [{ text: "a" }],
+          details: [{ text: "a", wrap: "word" }],
         }),
       }),
     ]);

@@ -280,7 +280,7 @@ export function buildBashPresentation(args: {
 
   const detailText = truncationInfo.output.replace(/\r\n?/g, "\n").trimEnd();
   const details: ToolCardLine[] = detailText
-    ? detailText.split("\n").map((text) => ({ text }))
+    ? detailText.split("\n").map((text) => ({ text, wrap: "character" }))
     : [];
 
   const outputLines = model.outputLines;

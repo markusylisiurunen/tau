@@ -7,7 +7,7 @@ import { parseToolArgs } from "../utils/zod.js";
 import type { ToolActivity } from "./activity.js";
 import {
   buildToolRunPresentation,
-  type ToolCardLine,
+  type ToolCardLineInput,
   type ToolRunActionLabels,
 } from "./presentation.js";
 import {
@@ -136,7 +136,7 @@ export function createGoalToolDefinitions(manager: GoalManager): AgentTool[] {
 }
 
 type GoalToolSuccessPresentation = {
-  details: ToolCardLine[];
+  details: ToolCardLineInput[];
   preserveDetails?: boolean;
 };
 

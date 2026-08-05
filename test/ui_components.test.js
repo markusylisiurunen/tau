@@ -191,18 +191,18 @@ test("SessionDividerComponent renders a muted divider line", () => {
   expect(lines[0]).toBe("<textMuted>── new session ─────</textMuted>");
 });
 
-test("UserMessageComponent renders prefixed plain text with hanging indentation", () => {
+test("UserMessageComponent renders aligned plain text", () => {
   const component = new UserMessageComponent(createUiTheme("plain"), {
     text: "hey, how\nare you?",
   });
 
-  expect(renderLines(component, 40)).toEqual([" > hey, how", "   are you?"]);
+  expect(renderLines(component, 40)).toEqual([" hey, how", " are you?"]);
 
   component.update({ text: "hey, how are you?" });
-  expect(renderLines(component, 12)).toEqual([" > hey, how", "   are you?"]);
+  expect(renderLines(component, 12)).toEqual([" hey, how", " are you?"]);
 
   component.update({ text: "**still plain**" });
-  expect(renderText(component, 40).trim()).toBe("> **still plain**");
+  expect(renderText(component, 40).trim()).toBe("**still plain**");
 });
 
 test("UserMessageComponent applies review styling", () => {
@@ -217,7 +217,7 @@ test("UserMessageComponent applies review styling", () => {
   expect(text).toContain("<userReviewSurface>");
   expect(text).toContain("<userReviewText>");
   expect(text).toContain("<bold>");
-  expect(stripTags(text).trimStart()).toMatch(/^> reviewed/);
+  expect(stripTags(text).trimStart()).toMatch(/^reviewed/);
 });
 
 test("renderChatMessage renders diff review status with review styling", () => {

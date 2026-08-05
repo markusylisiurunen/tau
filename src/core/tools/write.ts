@@ -75,7 +75,9 @@ function buildWritePresentation(args: {
   return buildToolRunPresentation({
     toolName: TOOL_NAME_WRITE,
     subject,
-    details: detailText ? detailText.split("\n").map((text) => ({ text })) : [],
+    details: detailText
+      ? detailText.split("\n").map((text) => ({ text, wrap: "character" as const }))
+      : [],
     detailTruncation: { maxLines: 16, strategy: "head" },
     metadata: [formatTokenEstimate(bytes), `${lines} lines`],
   });

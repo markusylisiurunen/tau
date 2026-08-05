@@ -5,6 +5,7 @@ import {
   TOOL_CARD_MAX_LINE_CHARS,
 } from "../dist/core/tools/presentation.js";
 import { createWriteToolDefinition } from "../dist/core/tools/write.js";
+import { createUiTheme } from "../dist/tui/ui/theme/index.js";
 import { ToolCardComponent } from "../dist/tui/ui/tool_card.js";
 import { createTagTheme, renderText } from "./ui_helpers.js";
 
@@ -38,6 +39,84 @@ describe("tool cards", () => {
       " <textDim>line two</textDim>",
       " <textMuted>(exit 0 · 184ms · ~1 token · 2 lines)</textMuted>",
     ]);
+  });
+
+  it("wraps bash and code-mode subjects at character boundaries", () => {
+    const bashPresentation = buildToolRunPresentation({
+      toolName: "bash",
+      subject: "echo alpha beta",
+    });
+    const webPresentation = buildToolRunPresentation({
+      toolName: "web",
+      operation: "web",
+      subject: "console.log('alpha beta')",
+    });
+    const writePresentation = buildToolRunPresentation({
+      toolName: "write",
+      subject: "alpha beta gamma",
+    });
+    const spawnPresentation = buildToolRunPresentation({
+      toolName: "spawn_agent",
+      subject: "alpha beta gamma",
+    });
+
+    expect(bashPresentation.subjectWrap).toBe("character");
+    expect(webPresentation.subjectWrap).toBe("character");
+    expect(writePresentation.subjectWrap).toBe("character");
+    expect(spawnPresentation.subjectWrap).toBe("word");
+    expect(
+      renderText(
+        new ToolCardComponent({
+          model: { toolCallId: "bash-wrap", status: "succeeded", presentation: bashPresentation },
+          theme: createUiTheme("plain"),
+        }),
+        16,
+      ).split("\n"),
+    ).toEqual([" ✓ ran echo alph", " a beta"]);
+
+    expect(
+      renderText(
+        new ToolCardComponent({
+          model: { toolCallId: "web-wrap", status: "running", presentation: webPresentation },
+          theme: createUiTheme("plain"),
+        }),
+        22,
+      ).split("\n"),
+    ).toEqual([" ⏵ running web console", " .log('alpha beta')"]);
+  });
+
+  it("uses the prefix width only on the first word-wrapped subject line", () => {
+    const presentation = buildToolRunPresentation({
+      toolName: "spawn_agent",
+      subject: "alpha beta gamma delta",
+    });
+
+    expect(
+      renderText(
+        new ToolCardComponent({
+          model: { toolCallId: "word-wrap", status: "succeeded", presentation },
+          theme: createUiTheme("plain"),
+        }),
+        20,
+      ).split("\n"),
+    ).toEqual([" ✓ spawned alpha", " beta gamma delta"]);
+  });
+
+  it("wraps character-mode details without seeking word boundaries", () => {
+    const presentation = buildToolRunPresentation({
+      toolName: "custom",
+      subject: "x",
+      details: [{ text: "alpha beta gamma", wrap: "character" }],
+    });
+    const rendered = renderText(
+      new ToolCardComponent({
+        model: { toolCallId: "detail-wrap", status: "succeeded", presentation },
+        theme: createUiTheme("plain"),
+      }),
+      8,
+    ).split("\n");
+
+    expect(rendered).toEqual(expect.arrayContaining([" alpha b", " eta gam", " ma"]));
   });
 
   it("renders an explicit operation between the lifecycle action and subject", () => {
@@ -215,6 +294,10 @@ describe("tool cards", () => {
     expect(succeeded.uiEvent.presentation.details.map((line) => line.text)).toEqual([
       ...Array.from({ length: 15 }, (_, index) => `line ${index + 1}`),
       "…2 more lines…",
+    ]);
+    expect(succeeded.uiEvent.presentation.details.map((line) => line.wrap)).toEqual([
+      ...Array.from({ length: 15 }, () => "character"),
+      "word",
     ]);
     expect(succeeded.uiEvent.presentation.metadata).toEqual([
       `~${Math.floor(bytes / 6)} tokens`,

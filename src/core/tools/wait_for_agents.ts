@@ -6,7 +6,7 @@ import { formatWaitForAgentsResult } from "../subagents/format.js";
 import type { SubagentStateSnapshot } from "../subagents/types.js";
 import { parseToolArgs } from "../utils/zod.js";
 import type { ToolActivity } from "./activity.js";
-import { buildToolRunPresentation, type ToolCardLine } from "./presentation.js";
+import { buildToolRunPresentation, type ToolCardLineInput } from "./presentation.js";
 import {
   type AgentTool,
   createTextToolOutcome,
@@ -80,11 +80,11 @@ function truncateResponseLines(response: string): string[] {
   return [...head, `…${lines.length - 16} more lines…`, ...tail];
 }
 
-function buildWaitDetails(states: SubagentStateSnapshot[]): ToolCardLine[] {
-  return states.flatMap((state): ToolCardLine[] => {
+function buildWaitDetails(states: SubagentStateSnapshot[]): ToolCardLineInput[] {
+  return states.flatMap((state): ToolCardLineInput[] => {
     if (state.run.status === "running") return [];
 
-    const details: ToolCardLine[] = [
+    const details: ToolCardLineInput[] = [
       { text: `${state.id} · ${state.title} · ${state.run.status}` },
     ];
     if (state.run.status === "succeeded") {

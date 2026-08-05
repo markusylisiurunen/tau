@@ -175,7 +175,7 @@ export function createCodeModeToolDefinition<TArgs>(
                 : isError
                   ? "failed"
                   : "succeeded";
-            const presentation = buildBashPresentation({
+            const outputPresentation = buildBashPresentation({
               toolName: implementation.schema.name,
               operation: implementation.schema.name,
               subject: parsed.code || subject,
@@ -184,6 +184,14 @@ export function createCodeModeToolDefinition<TArgs>(
               durationMs,
               includeExitCode: false,
             });
+            const presentation = terminationNote
+              ? {
+                  ...outputPresentation,
+                  details: outputPresentation.details.map((line) =>
+                    line.text === terminationNote ? { ...line, wrap: "word" as const } : line,
+                  ),
+                }
+              : outputPresentation;
             const outcome = createTextToolOutcome(toolText, semanticOutcome);
             const uiEvent: ToolActivity = {
               type: "code_mode_finished",

@@ -105,6 +105,9 @@ describe("edit tool", () => {
 
       expect(result.toolResult.outcome).toBe("succeeded");
       expect(result.uiEvent.presentation.details).toHaveLength(42);
+      expect(result.uiEvent.presentation.details.every((line) => line.wrap === "character")).toBe(
+        true,
+      );
       expect(
         result.uiEvent.presentation.details.slice(0, 20).every((line) => line.tone === "removed"),
       ).toBe(true);

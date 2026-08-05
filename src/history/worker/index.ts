@@ -319,7 +319,8 @@ async function attemptScheduledDigest(
     )
       .bind(
         candidate.failureCount + 1,
-        failedAt + digestRetryDelayMs(candidate.failureCount + 1),
+        failedAt +
+          digestRetryDelayMs(candidate.failureCount + 1, retryAfterDelayMs(caught, failedAt)),
         digestErrorMessage(caught),
         candidate.sessionId,
       )
@@ -330,12 +331,42 @@ async function attemptScheduledDigest(
   }
 }
 
-export function digestRetryDelayMs(failureCount: number): number {
-  return Math.min(DIGEST_RETRY_BASE_MS * 2 ** Math.max(0, failureCount - 1), DIGEST_RETRY_MAX_MS);
+export function digestRetryDelayMs(failureCount: number, retryAfterMs = 0): number {
+  const backoff = Math.min(
+    DIGEST_RETRY_BASE_MS * 2 ** Math.max(0, failureCount - 1),
+    DIGEST_RETRY_MAX_MS,
+  );
+  return Math.min(Math.max(backoff, retryAfterMs), DIGEST_RETRY_MAX_MS);
+}
+
+function retryAfterDelayMs(caught: unknown, now: number): number {
+  const value = retryAfterValue(caught, new Set());
+  if (typeof value === "number") return Number.isFinite(value) && value > 0 ? value * 1_000 : 0;
+  if (typeof value !== "string") return 0;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds > 0) return seconds * 1_000;
+  const date = Date.parse(value);
+  return Number.isFinite(date) && date > now ? date - now : 0;
+}
+
+function retryAfterValue(value: unknown, visited: Set<object>): unknown {
+  if (value instanceof Headers) return value.get("retry-after");
+  if (typeof value !== "object" || value === null || visited.has(value)) return undefined;
+  visited.add(value);
+  const record = value as Record<string, unknown>;
+  const direct = record["retry-after"] ?? record["Retry-After"];
+  if (direct !== undefined) return direct;
+  for (const key of ["headers", "response", "cause"]) {
+    const nested = retryAfterValue(record[key], visited);
+    if (nested !== undefined) return nested;
+  }
+  return undefined;
 }
 
 function digestErrorMessage(caught: unknown): string {
-  if (caught instanceof Error) return `${caught.name}: ${caught.message}`.slice(0, 2_000);
+  if (caught instanceof Error && caught.cause === undefined) {
+    return `${caught.name}: ${caught.message}`.slice(0, 2_000);
+  }
   if (typeof caught === "object" && caught !== null) {
     const details = providerErrorDetails(caught as Record<string, unknown>);
     return JSON.stringify(details).slice(0, 2_000);
@@ -349,24 +380,32 @@ function logWorkerError(
   context: Record<string, string>,
 ): void {
   const error =
-    caught instanceof Error
+    typeof caught === "object" && caught !== null
       ? {
-          name: caught.name,
-          message: caught.message.slice(0, 2_000),
-          ...(caught.stack ? { stack: caught.stack.slice(0, 4_000) } : {}),
+          ...providerErrorDetails(caught as Record<string, unknown>),
+          ...(caught instanceof Error && caught.stack
+            ? { stack: caught.stack.slice(0, 4_000) }
+            : {}),
         }
-      : typeof caught === "object" && caught !== null
-        ? providerErrorDetails(caught as Record<string, unknown>)
-        : { message: String(caught).slice(0, 2_000) };
+      : { message: String(caught).slice(0, 2_000) };
   console.error(JSON.stringify({ event, ...context, error }));
 }
 
-function providerErrorDetails(error: Record<string, unknown>): Record<string, unknown> {
+function providerErrorDetails(error: Record<string, unknown>, depth = 0): Record<string, unknown> {
   const details: Record<string, unknown> = {};
-  for (const key of ["name", "message", "code", "status", "statusCode", "internalCode"]) {
+  for (const key of ["name", "message", "state", "code", "status", "statusCode", "internalCode"]) {
     const value = error[key];
     if (typeof value === "string") details[key] = value.slice(0, 2_000);
     if (typeof value === "number" || typeof value === "boolean") details[key] = value;
+  }
+  if (depth < 2) {
+    for (const key of ["error", "cause"]) {
+      const value = error[key];
+      if (typeof value === "string") details[key] = value.slice(0, 2_000);
+      if (typeof value === "object" && value !== null) {
+        details[key] = providerErrorDetails(value as Record<string, unknown>, depth + 1);
+      }
+    }
   }
   return details;
 }
@@ -991,9 +1030,17 @@ export async function runAi(
     reasoning: { effort: "medium" },
     ...(text ? { text } : {}),
   });
-  const outputText = result.output_text || responsesOutputText(result.output ?? []);
-  if (!outputText) throw new Error("Cloudflare AI returned an invalid digest response");
-  return outputText;
+  const response = result as ResponsesOutput & Record<string, unknown>;
+  const outputText = response.output_text || responsesOutputText(response.output ?? []);
+  if (outputText) return outputText;
+  if (response.state === "Failed" || response.error !== undefined) {
+    const message =
+      typeof response.error === "string"
+        ? response.error
+        : JSON.stringify(providerErrorDetails(response));
+    throw new Error(`Cloudflare AI failed: ${message}`, { cause: response });
+  }
+  throw new Error("Cloudflare AI returned an invalid digest response");
 }
 
 function responsesOutputText(output: NonNullable<ResponsesOutput["output"]>): string {

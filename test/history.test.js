@@ -1225,7 +1225,16 @@ describe("session history", () => {
       const ai = {
         run: vi.fn(async () => {
           callCount += 1;
-          if (callCount === 1) throw new Error("rate limited");
+          if (callCount === 1) {
+            throw new Error("AI Gateway request failed", {
+              cause: {
+                state: "Failed",
+                status: 429,
+                error: "Wholesale rate limit exceeded for this gateway",
+                response: { headers: { "Retry-After": "900" } },
+              },
+            });
+          }
           return aiResponse('{"title":"Healthy","summary":"Healthy digest"}');
         }),
       };
@@ -1242,9 +1251,10 @@ describe("session history", () => {
           .get(),
       ).toEqual({
         digest_failure_count: 1,
-        digest_next_attempt_at: now + digestRetryDelayMs(1),
+        digest_next_attempt_at: now + 15 * 60 * 1_000,
         digest_last_attempt_at: now,
-        digest_last_error: "Error: rate limited",
+        digest_last_error:
+          '{"name":"Error","message":"AI Gateway request failed","cause":{"state":"Failed","status":429,"error":"Wholesale rate limit exceeded for this gateway"}}',
       });
       expect(ai.run).toHaveBeenCalledTimes(2);
       expect(
@@ -1255,6 +1265,7 @@ describe("session history", () => {
           .get(),
       ).toEqual({ digest_last_success_at: now, digest_failure_count: 0 });
       expect(digestRetryDelayMs(2)).toBe(10 * 60 * 1_000);
+      expect(digestRetryDelayMs(2, 15 * 60 * 1_000)).toBe(15 * 60 * 1_000);
       expect(digestRetryDelayMs(20)).toBe(12 * 60 * 60 * 1_000);
     } finally {
       errorLog.mockRestore();
@@ -1276,6 +1287,19 @@ describe("session history", () => {
       max_output_tokens: 8_192,
       reasoning: { effort: "medium" },
     });
+  });
+
+  it("surfaces failed AI Gateway responses", async () => {
+    const ai = {
+      run: vi.fn(async () => ({
+        state: "Failed",
+        error: "Wholesale rate limit exceeded for this gateway",
+      })),
+    };
+
+    await expect(runAi(ai, "transcript material")).rejects.toThrow(
+      "Cloudflare AI failed: Wholesale rate limit exceeded for this gateway",
+    );
   });
 
   it("formats compact digest entries and middle-truncates large tool results", () => {

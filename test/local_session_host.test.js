@@ -8,6 +8,7 @@ import { LocalHistoryStore } from "../dist/core/history/local_history_store.js";
 import { createLocalToolExecutionBackend } from "../dist/core/index.js";
 import { resolveModel } from "../dist/core/models/catalog.js";
 import { personas } from "../dist/core/personas.js";
+import { buildToolRunPresentation } from "../dist/core/tools/presentation.js";
 import {
   hasGoalTurnMetadata,
   prependTauUserMetadata,
@@ -1969,7 +1970,7 @@ describe("LocalSessionHost", () => {
         type: "bash_started",
         toolCallId: toolCall.id,
         command: "pwd",
-        headerTarget: "pwd",
+        presentation: buildToolRunPresentation({ toolName: "bash", subject: "pwd" }),
       },
     });
 
@@ -4050,7 +4051,7 @@ describe("LocalSessionHost", () => {
                 type: "tool_call_streaming",
                 toolCallId: "streaming-tool",
                 toolName: "write",
-                headerTarget: "write",
+                presentation: buildToolRunPresentation({ toolName: "write", subject: "write" }),
               },
             ],
           },

@@ -1,20 +1,18 @@
-import type { ToolUiText } from "../tools/activity.js";
 import {
   BASH_DEFAULT_TIMEOUT_MS,
-  type BashTruncationInfo,
-  buildBashUiText,
+  buildBashPresentation,
   formatBashUserMessageText,
   getBashOutputPolicy,
   prepareBashOutput,
 } from "../tools/bash.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
+import type { ToolRunPresentation } from "../tools/presentation.js";
+import { TOOL_NAME_BASH } from "../tools/tool_names.js";
 
 export type DirectBashExecutionResult = {
   command: string;
   exitCode: number | null;
-  truncationInfo: BashTruncationInfo;
-  uiText: ToolUiText;
-  durationMs: number;
+  presentation: ToolRunPresentation;
   userHistoryEntryId?: string;
 };
 
@@ -22,6 +20,7 @@ export type DirectBashExecutionOptions = {
   command: string;
   backend: ToolExecutionBackend;
   signal?: AbortSignal;
+  actionLabel: string;
   addToContext: boolean;
   addUserText?: (text: string) => string | Promise<string>;
   now?: () => number;
@@ -52,12 +51,13 @@ export async function runDirectBashCommand(
     truncationInfo,
     exitCode,
   });
-  const uiText = buildBashUiText({
+  const presentation = buildBashPresentation({
+    toolName: TOOL_NAME_BASH,
+    subject: options.command,
     truncationInfo,
     exitCode,
     durationMs,
-    previewLines: { head: 12, tail: 12 },
-    fullText: userMessageText,
+    actionLabel: options.actionLabel,
   });
   const userHistoryEntryId =
     options.addToContext && options.addUserText
@@ -67,9 +67,7 @@ export async function runDirectBashCommand(
   return {
     command: options.command,
     exitCode,
-    truncationInfo,
-    uiText,
-    durationMs,
+    presentation,
     ...(userHistoryEntryId !== undefined ? { userHistoryEntryId } : {}),
   };
 }

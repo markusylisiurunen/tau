@@ -7,6 +7,7 @@ import type { SubagentStateSnapshot } from "../subagents/types.js";
 import { truncateForTokens } from "../utils/truncate.js";
 import { parseToolArgs } from "../utils/zod.js";
 import type { ToolActivity } from "./activity.js";
+import { buildToolRunPresentation } from "./presentation.js";
 import {
   type AgentTool,
   createTextToolOutcome,
@@ -15,7 +16,7 @@ import {
   type ToolExecutionOutcome,
   type ToolImplementationOutcome,
 } from "./registry.js";
-import { buildSubagentUiText, formatSubagentStatusLine } from "./subagent_ui.js";
+import { buildSubagentPresentation, formatSubagentMetadata } from "./subagent_ui.js";
 import { TOOL_NAME_WAIT_FOR_AGENTS } from "./tool_names.js";
 
 const WAIT_FOR_AGENTS_DESCRIPTION = [
@@ -59,34 +60,43 @@ function getWaitCostTotal(states: SubagentStateSnapshot[]): number {
   return states.reduce((sum, state) => sum + state.costTotal, 0);
 }
 
-function formatAgentIdsDisplayTarget(ids: string[]): string {
+function formatAgentIdsSubject(ids: string[]): string {
   return ids.join(", ");
 }
 
-function getWaitForAgentsDisplayTarget(raw: unknown): string {
+function getWaitForAgentsSubject(raw: unknown): string {
   const parsedArgs = parseToolArgs(waitArgsSchema, raw);
-  return parsedArgs.ok ? formatAgentIdsDisplayTarget(parsedArgs.data.ids) : "(invalid arguments)";
+  return parsedArgs.ok ? formatAgentIdsSubject(parsedArgs.data.ids) : "(invalid arguments)";
 }
 
 export function createWaitForAgentsToolDefinition(supervisor: AgentSupervisor): AgentTool {
   return {
     schema: WAIT_FOR_AGENTS_TOOL,
-    describe: (toolCall) => ({ headerTarget: getWaitForAgentsDisplayTarget(toolCall.arguments) }),
+    describe: (toolCall) => {
+      const subject = getWaitForAgentsSubject(toolCall.arguments);
+      return {
+        presentation: buildToolRunPresentation({ toolName: TOOL_NAME_WAIT_FOR_AGENTS, subject }),
+      };
+    },
     async execute(
       toolCall: ToolCall,
       context: ToolExecutionContext,
     ): Promise<ToolExecutionOutcome> {
       const { signal } = context;
       let ids: string[] = [];
-      const headerTarget = getWaitForAgentsDisplayTarget(toolCall.arguments);
+      const subject = getWaitForAgentsSubject(toolCall.arguments);
 
       const blocked = (reason: string): ToolImplementationOutcome => {
         const outcome = createTextToolOutcome(reason, "blocked");
         const uiEvent: ToolActivity = {
-          type: "wait_for_agents_blocked",
+          type: "tool_call_blocked",
           toolCallId: toolCall.id,
-          agentIds: ids,
-          headerTarget,
+          toolName: TOOL_NAME_WAIT_FOR_AGENTS,
+          presentation: buildToolRunPresentation({
+            toolName: TOOL_NAME_WAIT_FOR_AGENTS,
+            subject: subject,
+            details: [{ text: reason, tone: "error" }],
+          }),
           reason,
         };
         return { content: outcome.content, outcome: outcome.outcome, uiEvent };
@@ -98,7 +108,7 @@ export function createWaitForAgentsToolDefinition(supervisor: AgentSupervisor): 
       }
 
       ids = [...new Set(parsedArgs.data.ids)];
-      const dedupedTarget = formatAgentIdsDisplayTarget(ids);
+      const dedupedTarget = formatAgentIdsSubject(ids);
 
       return executeTool(
         context,
@@ -111,51 +121,50 @@ export function createWaitForAgentsToolDefinition(supervisor: AgentSupervisor): 
               maxTokens: WAIT_FOR_AGENTS_OUTPUT_MAX_TOKENS * states.length,
               strategy: "head",
             }).content.trimEnd();
-            const statusText = formatSubagentStatusLine({
-              costTotal: getWaitCostTotal(states),
-              durationMs: getWaitDurationMs(states),
-            });
-            const uiText = buildSubagentUiText({
+            const presentation = buildSubagentPresentation({
+              toolName: TOOL_NAME_WAIT_FOR_AGENTS,
+              subject: dedupedTarget,
               output: outputText,
-              statusText,
-              fullText: resultText,
+              metadata: formatSubagentMetadata({
+                costTotal: getWaitCostTotal(states),
+                durationMs: getWaitDurationMs(states),
+              }),
             });
             const uiEvent: ToolActivity = {
-              type: "wait_for_agents_finished",
+              type: "tool_call_finished",
               toolCallId: toolCall.id,
-              agentIds: ids,
-              headerTarget: dedupedTarget,
+              toolName: TOOL_NAME_WAIT_FOR_AGENTS,
+              presentation,
               status: "success",
-              uiText,
             };
             const outcome = createTextToolOutcome(resultText, "succeeded");
             return { content: outcome.content, outcome: outcome.outcome, uiEvent };
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             const reason = message.trim() || "The wait_for_agents request failed.";
-            const uiText = buildSubagentUiText({
-              output: reason,
-              statusText: "error",
-              fullText: reason,
-            });
             const uiEvent: ToolActivity = {
-              type: "wait_for_agents_finished",
+              type: "tool_call_finished",
               toolCallId: toolCall.id,
-              agentIds: ids,
-              headerTarget: dedupedTarget,
+              toolName: TOOL_NAME_WAIT_FOR_AGENTS,
+              presentation: buildSubagentPresentation({
+                toolName: TOOL_NAME_WAIT_FOR_AGENTS,
+                subject: dedupedTarget,
+                output: reason,
+              }),
               status: "error",
-              message: reason,
-              uiText,
             };
             const outcome = createTextToolOutcome(reason, signal.aborted ? "cancelled" : "failed");
             return { content: outcome.content, outcome: outcome.outcome, uiEvent };
           }
         },
         {
-          type: "wait_for_agents_started",
+          type: "tool_call_started",
           toolCallId: toolCall.id,
-          agentIds: ids,
-          headerTarget: dedupedTarget,
+          toolName: TOOL_NAME_WAIT_FOR_AGENTS,
+          presentation: buildToolRunPresentation({
+            toolName: TOOL_NAME_WAIT_FOR_AGENTS,
+            subject: dedupedTarget,
+          }),
         },
       );
     },

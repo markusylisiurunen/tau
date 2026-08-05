@@ -510,7 +510,6 @@ the compact commands are manual and useful when you want to force context replac
 | `shift+tab`  | cycle reasoning effort                    |
 | `ctrl+p`     | cycle personality                         |
 | `ctrl+t`     | toggle thinking visibility                |
-| `ctrl+o`     | toggle compact tool display               |
 | `ctrl+s`     | stash input to clipboard                  |
 | `ctrl+y`     | toggle voice recording (`/listen`)        |
 | `ctrl+g`     | interrupt selected sub-agent              |
@@ -817,7 +816,7 @@ tau connects your terminal to large language models, giving them tools to intera
 
 the model sees your messages, any file contents you've shared, and the results of tool calls. it doesn't have ambient access to your filesystem; it only sees what you show it or what it explicitly requests through tools.
 
-tool calls are displayed as soon as the model identifies the tool, before its arguments finish streaming. every built-in and client-provided tool uses the same `preparing` → `queued` → `running` → terminal lifecycle; tools with clear action wording present those states naturally, such as `writing` and `wrote`, while other tools use generic labels. tool-specific output enriches the card without replacing that lifecycle. use `ctrl+o` to toggle between compact and detailed views.
+tool calls are displayed as soon as the model identifies the tool, before its arguments finish streaming. every built-in and client-provided tool uses the same `preparing` → `queued` → `running` → terminal lifecycle and one compact card grammar; tools with clear action wording present those states naturally, such as `writing` and `wrote`, while other tools use generic labels. multiline subjects and details each show at most eight lines (four from the start, an omission marker, and three from the end) and 256 characters per line. metadata enriches the card without replacing that lifecycle.
 
 ## tool output truncation
 

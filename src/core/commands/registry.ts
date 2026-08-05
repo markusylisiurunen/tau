@@ -154,7 +154,6 @@ export class CommandRegistry<Ctx = unknown> {
       ["shift+tab", "cycle reasoning effort"],
       ["ctrl+p", "cycle personality"],
       ["ctrl+t", "toggle thoughts visibility"],
-      ["ctrl+o", "toggle compact tool UI"],
       ["ctrl+s", "stash input to clipboard"],
       ["ctrl+y", "toggle voice recording"],
       ["ctrl+enter", "steer running assistant with editor input"],

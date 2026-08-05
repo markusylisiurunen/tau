@@ -2,6 +2,7 @@ import { fauxToolCall } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import { AgentRuntime, createAgentSpec } from "../dist/core/index.js";
 import { personas } from "../dist/core/personas.js";
+import { buildToolRunPresentation } from "../dist/core/tools/presentation.js";
 import { ToolRegistry } from "../dist/core/tools/registry.js";
 
 function createPersona(overrides = {}) {
@@ -78,7 +79,9 @@ function createTool(name, execute) {
       description: `${name} test tool`,
       parameters: { type: "object", properties: {}, additionalProperties: false },
     },
-    describe: () => ({ headerTarget: name }),
+    describe: () => ({
+      presentation: buildToolRunPresentation({ toolName: name, subject: name }),
+    }),
     execute,
   };
 }
@@ -527,8 +530,8 @@ describe("AgentRuntime", () => {
         type: "tool_call_blocked",
         toolCallId: call.id,
         toolName: call.name,
-        headerTarget: call.name,
         reason: "activity",
+        presentation: buildToolRunPresentation({ toolName: call.name, subject: call.name }),
       });
       toolProgressed = true;
       return { content: [{ type: "text", text: "done" }], outcome: "succeeded" };

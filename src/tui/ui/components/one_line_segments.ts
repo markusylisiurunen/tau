@@ -1,4 +1,3 @@
-import type { Component } from "@earendil-works/pi-tui";
 import { visibleWidth } from "@earendil-works/pi-tui";
 
 export type OneLineSegment = { text: string; style: (s: string) => string };
@@ -142,77 +141,4 @@ function parseAnsiSequence(
   }
 
   return null;
-}
-
-export function normalizeInlineTextPreservePadding(text: string): string {
-  // Keep this strictly single-line but preserve intentional padding segments (e.g. " ").
-  // Callers should trim user-provided segments (e.g. commands) as needed.
-  return text.replace(/[\r\n\t]+/g, " ").replace(/ {2,}/g, " ");
-}
-
-export class OneLineSegmentsComponent implements Component {
-  constructor(
-    private segments: OneLineSegment[],
-    private flexIndices: number[] = [],
-  ) {}
-
-  invalidate() {}
-
-  render(width: number) {
-    const minWidth = Math.max(0, width);
-    const texts = this.segments.map((s) => normalizeInlineTextPreservePadding(s.text));
-    const total = (): number => texts.reduce((acc, t) => acc + visibleWidth(t), 0);
-
-    let excess = total() - minWidth;
-    if (excess > 0) {
-      for (const idx of this.flexIndices) {
-        if (excess <= 0) break;
-        const original = texts[idx] ?? "";
-        const originalCols = visibleWidth(original);
-        if (originalCols <= 1) continue;
-
-        const targetCols = Math.max(1, originalCols - excess);
-        texts[idx] = truncateFromEndByWidth(original, targetCols);
-        excess = total() - minWidth;
-      }
-    }
-
-    // Last resort: width smaller than fixed parts; hard truncate the fully rendered line.
-    if (excess > 0) {
-      let remaining = minWidth;
-      let usedWidth = 0;
-      const styledParts: string[] = [];
-      for (let i = 0; i < texts.length && remaining > 0; i++) {
-        const segmentText = texts[i] ?? "";
-        const segmentWidth = visibleWidth(segmentText);
-        const style = this.segments[i]?.style ?? ((s: string) => s);
-
-        if (segmentWidth <= remaining) {
-          styledParts.push(style(segmentText));
-          remaining -= segmentWidth;
-          usedWidth += segmentWidth;
-        } else {
-          const truncated = truncateFromEndByWidth(segmentText, remaining);
-          const truncatedWidth = visibleWidth(truncated);
-          styledParts.push(style(truncated));
-          usedWidth += truncatedWidth;
-          remaining = Math.max(0, remaining - truncatedWidth);
-        }
-      }
-
-      const pad = Math.max(0, minWidth - usedWidth);
-      return [`${styledParts.join("")}${" ".repeat(pad)}`];
-    }
-
-    const rendered = texts
-      .map((t, i) => {
-        const style = this.segments[i]?.style ?? ((s: string) => s);
-        return style(t);
-      })
-      .join("");
-
-    const visibleLen = total();
-    const pad = Math.max(0, minWidth - visibleLen);
-    return [`${rendered}${" ".repeat(pad)}`];
-  }
 }

@@ -1,0 +1,240 @@
+import { z } from "zod";
+import {
+  TOOL_NAME_BASH,
+  TOOL_NAME_EDIT,
+  TOOL_NAME_INTERRUPT_AGENT,
+  TOOL_NAME_LIST_AGENTS,
+  TOOL_NAME_SEND_INPUT_TO_AGENT,
+  TOOL_NAME_SPAWN_AGENT,
+  TOOL_NAME_VIEW_IMAGE,
+  TOOL_NAME_WAIT_FOR_AGENTS,
+  TOOL_NAME_WRITE,
+} from "./tool_names.js";
+
+export type ToolCardLineTone = "added" | "removed" | "error";
+
+export type ToolCardLine = {
+  text: string;
+  tone?: ToolCardLineTone;
+};
+
+export type ToolRunPresentationStatus =
+  | "preparing"
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "blocked"
+  | "cancelled";
+
+export type ToolRunActionLabels = Record<ToolRunPresentationStatus, string>;
+
+export type ToolRunPresentation = {
+  actionByStatus: ToolRunActionLabels;
+  subject: string;
+  details: ToolCardLine[];
+  metadata: string[];
+};
+
+export const TOOL_CARD_SUBJECT_MAX_LINES = 8;
+export const TOOL_CARD_DETAILS_MAX_LINES = 8;
+export const TOOL_CARD_MAX_LINE_CHARS = 256;
+
+function isBoundedLine(text: string): boolean {
+  return (
+    !text.includes("\n") &&
+    !text.includes("\r") &&
+    Array.from(text).length <= TOOL_CARD_MAX_LINE_CHARS
+  );
+}
+
+const boundedLineSchema = z.string().refine(isBoundedLine, "must be one bounded line");
+const boundedLabelSchema = boundedLineSchema.min(1);
+
+const toolCardLineSchema = z
+  .object({
+    text: boundedLineSchema,
+    tone: z.enum(["added", "removed", "error"]).optional(),
+  })
+  .strict();
+
+const toolRunPresentationSchema: z.ZodType<ToolRunPresentation> = z
+  .object({
+    actionByStatus: z
+      .object({
+        preparing: boundedLabelSchema,
+        queued: boundedLabelSchema,
+        running: boundedLabelSchema,
+        succeeded: boundedLabelSchema,
+        failed: boundedLabelSchema,
+        blocked: boundedLabelSchema,
+        cancelled: boundedLabelSchema,
+      })
+      .strict(),
+    subject: z
+      .string()
+      .min(1)
+      .refine((subject) => {
+        const lines = subject.split("\n");
+        return lines.length <= TOOL_CARD_SUBJECT_MAX_LINES && lines.every(isBoundedLine);
+      }, "must contain only bounded lines"),
+    details: z.array(toolCardLineSchema).max(TOOL_CARD_DETAILS_MAX_LINES),
+    metadata: z.array(boundedLineSchema),
+  })
+  .strict();
+
+const GENERIC_TOOL_RUN_ACTION_LABELS: ToolRunActionLabels = {
+  preparing: "preparing",
+  queued: "queued",
+  running: "running",
+  succeeded: "completed",
+  failed: "failed",
+  blocked: "blocked",
+  cancelled: "cancelled",
+};
+
+const TOOL_RUN_ACTION_LABELS: Record<string, ToolRunActionLabels> = {
+  [TOOL_NAME_BASH]: {
+    ...GENERIC_TOOL_RUN_ACTION_LABELS,
+    succeeded: "ran",
+  },
+  [TOOL_NAME_WRITE]: {
+    ...GENERIC_TOOL_RUN_ACTION_LABELS,
+    queued: "queued write",
+    running: "writing",
+    succeeded: "wrote",
+    failed: "failed to write",
+    blocked: "write blocked",
+    cancelled: "write cancelled",
+  },
+  [TOOL_NAME_EDIT]: {
+    ...GENERIC_TOOL_RUN_ACTION_LABELS,
+    queued: "queued edit",
+    running: "editing",
+    succeeded: "edited",
+    failed: "failed to edit",
+    blocked: "edit blocked",
+    cancelled: "edit cancelled",
+  },
+  [TOOL_NAME_VIEW_IMAGE]: {
+    ...GENERIC_TOOL_RUN_ACTION_LABELS,
+    queued: "queued view image",
+    running: "viewing",
+    succeeded: "viewed",
+    failed: "failed to view",
+    blocked: "view image blocked",
+    cancelled: "view image cancelled",
+  },
+  [TOOL_NAME_SPAWN_AGENT]: {
+    ...GENERIC_TOOL_RUN_ACTION_LABELS,
+    queued: "queued spawn",
+    running: "spawning",
+    succeeded: "spawned",
+    failed: "spawn failed",
+    blocked: "spawn blocked",
+    cancelled: "spawn cancelled",
+  },
+  [TOOL_NAME_SEND_INPUT_TO_AGENT]: {
+    ...GENERIC_TOOL_RUN_ACTION_LABELS,
+    queued: "queued input",
+    running: "sending input",
+    succeeded: "sent input",
+    failed: "failed to send input",
+    blocked: "send input blocked",
+    cancelled: "send input cancelled",
+  },
+  [TOOL_NAME_WAIT_FOR_AGENTS]: {
+    ...GENERIC_TOOL_RUN_ACTION_LABELS,
+    queued: "queued wait",
+    running: "waiting",
+    succeeded: "finished waiting",
+    failed: "wait failed",
+    blocked: "wait blocked",
+    cancelled: "wait cancelled",
+  },
+  [TOOL_NAME_LIST_AGENTS]: {
+    ...GENERIC_TOOL_RUN_ACTION_LABELS,
+    queued: "queued list",
+    running: "listing",
+    succeeded: "listed",
+    failed: "failed to list",
+    blocked: "list blocked",
+    cancelled: "list cancelled",
+  },
+  [TOOL_NAME_INTERRUPT_AGENT]: {
+    ...GENERIC_TOOL_RUN_ACTION_LABELS,
+    queued: "queued interruption",
+    running: "interrupting",
+    succeeded: "interrupted",
+    failed: "failed to interrupt",
+    blocked: "interruption blocked",
+    cancelled: "interruption cancelled",
+  },
+};
+
+function truncateLine(text: string): string {
+  const characters = Array.from(text);
+  if (characters.length <= TOOL_CARD_MAX_LINE_CHARS) return text;
+  return `${characters.slice(0, TOOL_CARD_MAX_LINE_CHARS - 1).join("")}…`;
+}
+
+function normalizeLabel(text: string): string {
+  return truncateLine(text.replace(/\s+/g, " ").trim());
+}
+
+function truncateLines(lines: ToolCardLine[], maxLines: number): ToolCardLine[] {
+  const bounded = lines.map((line) => ({ ...line, text: truncateLine(line.text) }));
+  if (bounded.length <= maxLines) return bounded;
+
+  const headCount = Math.ceil((maxLines - 1) / 2);
+  const tailCount = maxLines - headCount - 1;
+  const omitted = bounded.length - headCount - tailCount;
+  return [
+    ...bounded.slice(0, headCount),
+    { text: `…${omitted} more ${omitted === 1 ? "line" : "lines"}…` },
+    ...bounded.slice(-tailCount),
+  ];
+}
+
+export function parseToolRunPresentation(value: unknown): ToolRunPresentation {
+  return toolRunPresentationSchema.parse(value);
+}
+
+function getToolRunActionLabels(toolName: string): ToolRunActionLabels {
+  return Object.hasOwn(TOOL_RUN_ACTION_LABELS, toolName)
+    ? (TOOL_RUN_ACTION_LABELS[toolName] ?? GENERIC_TOOL_RUN_ACTION_LABELS)
+    : GENERIC_TOOL_RUN_ACTION_LABELS;
+}
+
+export function buildToolRunPresentation(args: {
+  toolName: string;
+  subject: string;
+  details?: ToolCardLine[];
+  metadata?: string[];
+  actionOverrides?: Partial<ToolRunActionLabels>;
+}): ToolRunPresentation {
+  const subjectLines = args.subject.replace(/\r\n?/g, "\n").replace(/\n+$/, "").split("\n");
+  const boundedSubject = truncateLines(
+    subjectLines.map((text) => ({ text })),
+    TOOL_CARD_SUBJECT_MAX_LINES,
+  )
+    .map((line) => line.text)
+    .join("\n");
+  const labels = { ...getToolRunActionLabels(args.toolName), ...args.actionOverrides };
+  for (const status of Object.keys(labels) as ToolRunPresentationStatus[]) {
+    labels[status] = normalizeLabel(labels[status]) || GENERIC_TOOL_RUN_ACTION_LABELS[status];
+  }
+  const details = (args.details ?? []).flatMap((line) =>
+    line.text
+      .replace(/\r\n?/g, "\n")
+      .split("\n")
+      .map((text) => ({ ...line, text })),
+  );
+
+  return parseToolRunPresentation({
+    actionByStatus: labels,
+    subject: boundedSubject || args.toolName,
+    details: truncateLines(details, TOOL_CARD_DETAILS_MAX_LINES),
+    metadata: (args.metadata ?? []).map(normalizeLabel).filter((part) => part.length > 0),
+  });
+}

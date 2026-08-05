@@ -214,7 +214,6 @@ export class SessionChatApp {
       ]);
       const snapshot = await session.snapshot();
       const view = new TuiChatView({
-        compactToolUi: true,
         showThinking: false,
         terminalAppearance,
         themeId: options.themeId,

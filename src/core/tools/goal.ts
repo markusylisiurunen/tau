@@ -4,9 +4,12 @@ import { z } from "zod";
 import type { SessionProtocolGoal } from "../../protocol/session_protocol.js";
 import { buildBlockedGoalInstruction, buildGoalPolicy, formatGoalState } from "../session/goal.js";
 import { parseToolArgs } from "../utils/zod.js";
+import type { ToolActivity } from "./activity.js";
+import { buildToolRunPresentation } from "./presentation.js";
 import {
   type AgentTool,
   createTextToolOutcome,
+  executeTool,
   type ToolExecutionContext,
   type ToolExecutionOutcome,
 } from "./registry.js";
@@ -93,24 +96,51 @@ function createGoalTool<T>(
 ): AgentTool {
   return {
     schema,
-    describe: () => ({ headerTarget: "goal" }),
+    describe: () => ({
+      presentation: buildToolRunPresentation({ toolName: schema.name, subject: "goal" }),
+    }),
     async execute(
       toolCall: ToolCall,
-      _context: ToolExecutionContext,
+      context: ToolExecutionContext,
     ): Promise<ToolExecutionOutcome> {
-      const parsed = parseToolArgs(argsSchema, toolCall.arguments);
-      if (!parsed.ok) {
-        return createTextToolOutcome(`Invalid arguments: ${parsed.error}`, "blocked");
-      }
-      try {
-        const result = await execute(parsed.data);
-        return createTextToolOutcome(result, "succeeded");
-      } catch (error) {
-        return createTextToolOutcome(
-          error instanceof Error ? error.message : String(error),
-          "blocked",
-        );
-      }
+      const finish = (
+        text: string,
+        outcome: ToolExecutionOutcome["outcome"],
+      ): ReturnType<typeof createTextToolOutcome> & { uiEvent: ToolActivity } => ({
+        ...createTextToolOutcome(text, outcome),
+        uiEvent: {
+          type: "tool_call_finished",
+          toolCallId: toolCall.id,
+          toolName: schema.name,
+          presentation: buildToolRunPresentation({
+            toolName: schema.name,
+            subject: "goal",
+            details: [{ text, ...(outcome === "succeeded" ? {} : { tone: "error" as const }) }],
+          }),
+          status: outcome === "succeeded" ? "success" : "error",
+        },
+      });
+
+      return executeTool(
+        context,
+        async () => {
+          const parsed = parseToolArgs(argsSchema, toolCall.arguments);
+          if (!parsed.ok) {
+            return finish(`Invalid arguments: ${parsed.error}`, "blocked");
+          }
+          try {
+            return finish(await execute(parsed.data), "succeeded");
+          } catch (error) {
+            return finish(error instanceof Error ? error.message : String(error), "blocked");
+          }
+        },
+        {
+          type: "tool_call_started",
+          toolCallId: toolCall.id,
+          toolName: schema.name,
+          presentation: buildToolRunPresentation({ toolName: schema.name, subject: "goal" }),
+        },
+      );
     },
   };
 }

@@ -3,8 +3,9 @@ import { Type } from "typebox";
 import { z } from "zod";
 import { buildLineDiff } from "../utils/line_diff.js";
 import { formatZodError } from "../utils/zod.js";
-import type { ToolActivity, ToolUiLine, ToolUiText } from "./activity.js";
+import type { ToolActivity } from "./activity.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
+import { buildToolRunPresentation, type ToolCardLine } from "./presentation.js";
 import {
   type AgentTool,
   createTextToolOutcome,
@@ -60,7 +61,7 @@ function parseEditArgs(
   return { ok: true, data: parsed.data };
 }
 
-function getEditDisplayTarget(raw: unknown): string {
+function getEditSubject(raw: unknown): string {
   const parsedArgs = parseEditArgs(raw);
   return parsedArgs.ok ? parsedArgs.data.path : "(invalid arguments)";
 }
@@ -96,38 +97,42 @@ function formatEditToolResultText(args: { summaryLine: string }): string {
   return args.summaryLine;
 }
 
-function buildEditUiText(args: {
-  summaryLine: string;
-  statusLine: string;
+function buildEditPresentation(args: {
+  subject: string;
   diffLines: string[];
-}): ToolUiText {
-  const { summaryLine, statusLine, diffLines } = args;
-
-  const formatLine = (line: string): ToolUiLine => {
-    const text = line;
-    if (line.startsWith("+ ")) return { text, tone: "diffAdd" };
-    if (line.startsWith("- ")) return { text, tone: "diffRemove" };
+  added: number;
+  removed: number;
+  oldLength: number;
+  newLength: number;
+  sizeDiff: string;
+}) {
+  const details: ToolCardLine[] = args.diffLines.map((text) => {
+    if (text.startsWith("+ ")) return { text, tone: "added" };
+    if (text.startsWith("- ")) return { text, tone: "removed" };
     return { text };
-  };
-
-  const previewLines: ToolUiLine[] = diffLines.map((line) => formatLine(line));
-
-  const fullLines: ToolUiLine[] = [{ text: summaryLine }];
-  if (diffLines.length > 0) {
-    fullLines.push({ text: "" }, ...diffLines.map((line) => formatLine(line)));
-  }
-
-  return {
-    previewLines,
-    statusLine,
-    fullLines,
-  };
+  });
+  return buildToolRunPresentation({
+    toolName: TOOL_NAME_EDIT,
+    subject: args.subject,
+    details,
+    metadata: [
+      `+${args.added}`,
+      `-${args.removed}`,
+      `${args.oldLength} → ${args.newLength} chars`,
+      args.sizeDiff,
+    ],
+  });
 }
 
 export function createEditToolDefinition(backend: ToolExecutionBackend): AgentTool {
   return {
     schema: EDIT_TOOL,
-    describe: (toolCall) => ({ headerTarget: getEditDisplayTarget(toolCall.arguments) }),
+    describe: (toolCall) => {
+      const subject = getEditSubject(toolCall.arguments);
+      return {
+        presentation: buildToolRunPresentation({ toolName: TOOL_NAME_EDIT, subject }),
+      };
+    },
     async execute(
       toolCall: ToolCall,
       context: ToolExecutionContext,
@@ -135,7 +140,7 @@ export function createEditToolDefinition(backend: ToolExecutionBackend): AgentTo
       return executeTool(context, async () => {
         const parsedArgs = parseEditArgs(toolCall.arguments);
         const path = parsedArgs.ok ? parsedArgs.data.path : "";
-        const headerTarget = getEditDisplayTarget(toolCall.arguments);
+        const subject = getEditSubject(toolCall.arguments);
 
         const blocked = (
           reason: string,
@@ -146,7 +151,11 @@ export function createEditToolDefinition(backend: ToolExecutionBackend): AgentTo
             type: "edit_blocked",
             toolCallId: toolCall.id,
             path: path || "(invalid path)",
-            headerTarget,
+            presentation: buildToolRunPresentation({
+              toolName: TOOL_NAME_EDIT,
+              subject: subject,
+              details: [{ text: reason, tone: "error" }],
+            }),
             reason,
           };
           return { content: outcome.content, outcome: outcome.outcome, uiEvent };
@@ -220,22 +229,22 @@ export function createEditToolDefinition(backend: ToolExecutionBackend): AgentTo
                 ? `+${sizeDiff} chars`
                 : `${sizeDiff} chars`;
           const summaryLine = `Successfully edited ${path}: ${oldText.length} → ${newText.length} chars (${sizeDiffStr})`;
-          const statusLine = `+${added}, -${removed} · ${oldText.length} → ${newText.length} chars (${sizeDiffStr})`;
-
           const resultText = formatEditToolResultText({ summaryLine });
 
           const outcome = createTextToolOutcome(resultText, "succeeded");
-          const uiText = buildEditUiText({ summaryLine, statusLine, diffLines });
           const uiEvent: ToolActivity = {
             type: "edit_success",
             toolCallId: toolCall.id,
             path,
-            headerTarget,
-            oldLength: oldText.length,
-            newLength: newText.length,
-            oldText,
-            newText,
-            uiText,
+            presentation: buildEditPresentation({
+              subject: subject,
+              diffLines,
+              added,
+              removed,
+              oldLength: oldText.length,
+              newLength: newText.length,
+              sizeDiff: sizeDiffStr,
+            }),
           };
           return { content: outcome.content, outcome: outcome.outcome, uiEvent };
         } catch (e) {

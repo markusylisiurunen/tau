@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildBashUiText,
+  buildBashPresentation,
   createBashToolDefinition,
   formatBashToolResultText,
   getBashOutputPolicy,
@@ -144,7 +144,9 @@ describe("bash output policy", () => {
   });
 
   it("omits working directory when it is not provided", () => {
-    const uiText = buildBashUiText({
+    const presentation = buildBashPresentation({
+      toolName: "bash",
+      subject: "echo test",
       truncationInfo: {
         output: "",
         model: {
@@ -160,11 +162,13 @@ describe("bash output policy", () => {
       durationMs: 12,
     });
 
-    expect(uiText.statusLine).toBe("exit 0 · 12ms · no output");
+    expect(presentation.metadata).toEqual(["exit 0", "12ms", "no output"]);
   });
 
   it("shows working directory after exit status", () => {
-    const uiText = buildBashUiText({
+    const presentation = buildBashPresentation({
+      toolName: "bash",
+      subject: "echo test",
       truncationInfo: {
         output: "",
         model: {
@@ -181,6 +185,6 @@ describe("bash output policy", () => {
       durationMs: 12,
     });
 
-    expect(uiText.statusLine).toBe("exit 0 · /tmp/tau · 12ms · no output");
+    expect(presentation.metadata).toEqual(["exit 0", "/tmp/tau", "12ms", "no output"]);
   });
 });

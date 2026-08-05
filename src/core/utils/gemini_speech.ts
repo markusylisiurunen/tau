@@ -470,7 +470,7 @@ function buildSpeechRewritePrompt(sourceText: string): string {
     '- `src/tui/session_chat_controller.ts:1819-1855` → "session_chat_controller.ts, lines 1819 to 1855"',
     '- `src/core/session/compaction.ts` → "compaction.ts"',
     '- `/Users/markus/.config/tau/config.json` → "the tau config.json in your home directory"',
-    '- `rg --heading -n -t ts "ToolUiText" src` → "ripgrep for ToolUiText in TypeScript files under src"',
+    '- `rg --heading -n -t ts "ToolRunPresentation" src` → "ripgrep for ToolRunPresentation in TypeScript files under src"',
     '- `<available-skills>` → "the available-skills tag"',
     "- A markdown bullet list of short items → a natural comma-separated list or short sentences",
     "",

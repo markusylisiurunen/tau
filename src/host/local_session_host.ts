@@ -21,6 +21,7 @@ import { formatSteeringUserMessage } from "../core/runtime/steering.js";
 import { buildGoalContinuationText, prependGoalPolicy } from "../core/session/goal.js";
 import { SUBAGENT_ACTIVITY_FACET_KIND, type SubagentUiEvent } from "../core/subagents/types.js";
 import type { ToolActivity } from "../core/tools/activity.js";
+import { buildToolRunPresentation } from "../core/tools/presentation.js";
 import type { Persona, ReasoningEffort, Skill } from "../core/types.js";
 import {
   appendUsageLogEntry,
@@ -2161,7 +2162,10 @@ class LocalHostedSessionHandle implements LocalHostedSession {
           type: "tool_call_streaming",
           toolCallId: event.toolCallId,
           toolName: event.toolName,
-          headerTarget: event.toolName,
+          presentation: buildToolRunPresentation({
+            toolName: event.toolName,
+            subject: event.toolName,
+          }),
         };
         const facet: SessionProtocolFacet = {
           id: facetId,

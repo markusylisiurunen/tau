@@ -306,9 +306,9 @@ describe("interrupt_agent tool", () => {
 
     expect(result.toolResult.outcome).toBe("succeeded");
     expect(result.uiEvent).toMatchObject({
-      type: "interrupt_agent_finished",
+      type: "tool_call_finished",
+      toolName: TOOL_NAME_INTERRUPT_AGENT,
       status: "success",
-      finalStatus: "interrupted",
     });
     expect(getText(result.toolResult)).toBe(
       [
@@ -340,7 +340,11 @@ describe("interrupt_agent tool", () => {
     const { result } = await execute(tool, { id: "agent-1" }, TOOL_NAME_INTERRUPT_AGENT);
 
     expect(result.toolResult.outcome).toBe("succeeded");
-    expect(result.uiEvent).toMatchObject({ status: "success", finalStatus: "failed" });
+    expect(result.uiEvent).toMatchObject({
+      type: "tool_call_finished",
+      toolName: TOOL_NAME_INTERRUPT_AGENT,
+      status: "success",
+    });
     expect(getText(result.toolResult)).toBe(
       [
         "`agent-1` is already idle",
@@ -360,9 +364,9 @@ describe("spawn_agent tool", () => {
     });
 
     expect(dispatch.startedUiEvent).toMatchObject({
-      type: "spawn_agent_started",
-      name: "researcher",
-      title: "research task",
+      type: "tool_call_started",
+      toolName: TOOL_NAME_SPAWN_AGENT,
+      presentation: { subject: "research task" },
     });
     expect(result.toolResult.outcome).toBe("succeeded");
     expect(getText(result.toolResult)).toBe(
@@ -468,6 +472,9 @@ describe("spawn_agent tool", () => {
 
     expect(result.toolResult.outcome).toBe("blocked");
     expect(getText(result.toolResult)).toBe("active limit reached");
-    expect(result.uiEvent).toMatchObject({ type: "spawn_agent_blocked" });
+    expect(result.uiEvent).toMatchObject({
+      type: "tool_call_blocked",
+      toolName: TOOL_NAME_SPAWN_AGENT,
+    });
   });
 });

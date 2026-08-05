@@ -502,7 +502,7 @@ describe("Exa web code-mode tool", () => {
     const { result } = await run;
     expect(result.toolResult.outcome).toBe("cancelled");
     expect(getToolText(result)).toContain("(tau) aborted");
-    expect(result.uiEvent.uiText.previewLines).toContainEqual({ text: "(tau) aborted" });
+    expect(result.uiEvent.presentation.details).toContainEqual({ text: "(tau) aborted" });
   });
 
   it("cancels and settles provider requests before returning", async () => {
@@ -566,7 +566,7 @@ describe("Exa web code-mode tool", () => {
     expect(providerSettled).toBe(true);
     expect(result.toolResult.outcome).toBe("cancelled");
     expect(getToolText(result)).toContain("(tau) timed out after 1000ms");
-    expect(result.uiEvent.uiText.previewLines).toContainEqual({
+    expect(result.uiEvent.presentation.details).toContainEqual({
       text: "(tau) timed out after 1000ms",
     });
   });

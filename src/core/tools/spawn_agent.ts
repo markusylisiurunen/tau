@@ -15,6 +15,7 @@ import { formatCwd } from "../utils/format.js";
 import { parseToolArgs } from "../utils/zod.js";
 import type { ToolActivity } from "./activity.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
+import { buildToolRunPresentation } from "./presentation.js";
 import {
   type AgentTool,
   createTextToolOutcome,
@@ -23,7 +24,7 @@ import {
   type ToolExecutionOutcome,
   type ToolImplementationOutcome,
 } from "./registry.js";
-import { buildSubagentUiText } from "./subagent_ui.js";
+import { buildSubagentPresentation } from "./subagent_ui.js";
 import { TOOL_NAME_SPAWN_AGENT } from "./tool_names.js";
 
 const SPAWN_AGENT_DESCRIPTION = [
@@ -95,7 +96,7 @@ function formatAllowedLaunchModels(launchModels: string[]): string {
   return launchModels.map((entry) => `'${entry}'`).join(", ");
 }
 
-function getSpawnAgentDisplayTarget(raw: unknown): string {
+function getSpawnAgentSubject(raw: unknown): string {
   const parsedArgs = parseToolArgs(spawnArgsSchema, raw);
   return parsedArgs.ok ? parsedArgs.data.title : "(invalid arguments)";
 }
@@ -126,7 +127,12 @@ export function createSpawnAgentToolDefinition(options: {
   const { backend, supervisor } = options;
   return {
     schema: SPAWN_AGENT_TOOL,
-    describe: (toolCall) => ({ headerTarget: getSpawnAgentDisplayTarget(toolCall.arguments) }),
+    describe: (toolCall) => {
+      const subject = getSpawnAgentSubject(toolCall.arguments);
+      return {
+        presentation: buildToolRunPresentation({ toolName: TOOL_NAME_SPAWN_AGENT, subject }),
+      };
+    },
     async execute(
       toolCall: ToolCall,
       context: ToolExecutionContext,
@@ -134,16 +140,19 @@ export function createSpawnAgentToolDefinition(options: {
       const { signal } = context;
       let name = "";
       let title = "";
-      const headerTarget = getSpawnAgentDisplayTarget(toolCall.arguments);
+      const subject = getSpawnAgentSubject(toolCall.arguments);
 
-      const blocked = (reason: string, details?: { name?: string; title?: string }) => {
+      const blocked = (reason: string, details?: { title?: string }) => {
         const outcome = createTextToolOutcome(reason, "blocked");
         const uiEvent: ToolActivity = {
-          type: "spawn_agent_blocked",
+          type: "tool_call_blocked",
           toolCallId: toolCall.id,
-          name: details?.name ?? (name || undefined),
-          title: details?.title ?? headerTarget,
-          headerTarget: details?.title ?? headerTarget,
+          toolName: TOOL_NAME_SPAWN_AGENT,
+          presentation: buildToolRunPresentation({
+            toolName: TOOL_NAME_SPAWN_AGENT,
+            subject: details?.title ?? subject,
+            details: [{ text: reason, tone: "error" }],
+          }),
           reason,
         };
         return {
@@ -172,7 +181,7 @@ export function createSpawnAgentToolDefinition(options: {
       if (workingDirectory) {
         if (!options.resolveSubagentRuntime) {
           return executeTool(context, () =>
-            blocked("Working-directory context resolution is unavailable.", { name, title }),
+            blocked("Working-directory context resolution is unavailable.", { title }),
           );
         }
         try {
@@ -186,7 +195,6 @@ export function createSpawnAgentToolDefinition(options: {
             blocked(
               `Failed to build the subagent prompt for workingDirectory '${cwd}': ${(error as Error).message}`,
               {
-                name,
                 title,
               },
             ),
@@ -196,7 +204,6 @@ export function createSpawnAgentToolDefinition(options: {
       if (!effectivePersona.subagents || Object.keys(effectivePersona.subagents).length === 0) {
         return executeTool(context, () =>
           blocked("The spawn_agent tool is not enabled for the resolved persona.", {
-            name,
             title,
           }),
         );
@@ -205,7 +212,6 @@ export function createSpawnAgentToolDefinition(options: {
       if (!personaConfig) {
         return executeTool(context, () =>
           blocked(`Subagent '${name}' is not enabled for the resolved persona.`, {
-            name,
             title,
           }),
         );
@@ -214,7 +220,6 @@ export function createSpawnAgentToolDefinition(options: {
       if (!systemPrompt) {
         return executeTool(context, () =>
           blocked(`Subagent '${name}' is missing its system prompt.`, {
-            name,
             title,
           }),
         );
@@ -226,7 +231,6 @@ export function createSpawnAgentToolDefinition(options: {
         if (parsedLaunchModel.error || !parsedLaunchModel.launchModel) {
           return executeTool(context, () =>
             blocked(`Invalid model parameter: ${parsedLaunchModel.error}.`, {
-              name,
               title,
             }),
           );
@@ -238,7 +242,6 @@ export function createSpawnAgentToolDefinition(options: {
             blocked(
               `Subagent '${name}' does not allow launch model overrides. Allowed values: ${formatAllowedLaunchModels(launchModels)}.`,
               {
-                name,
                 title,
               },
             ),
@@ -251,7 +254,6 @@ export function createSpawnAgentToolDefinition(options: {
             blocked(
               `Model '${parsedLaunchModel.launchModel.normalized}' is not allowed for subagent '${name}'. Allowed values: ${formatAllowedLaunchModels(launchModels)}.`,
               {
-                name,
                 title,
               },
             ),
@@ -284,21 +286,18 @@ export function createSpawnAgentToolDefinition(options: {
           if (signal?.aborted) {
             const reason = "Aborted.";
             const outcome = createTextToolOutcome(reason, "cancelled");
-            const uiText = buildSubagentUiText({
+            const presentation = buildSubagentPresentation({
+              toolName: TOOL_NAME_SPAWN_AGENT,
+              subject: subject,
               output: reason,
-              statusText: [...statusPrefixParts, reason].join(" · "),
-              maxOutputLines: 16,
-              fullText: reason,
+              metadata: [...statusPrefixParts, reason],
             });
             const uiEvent: ToolActivity = {
-              type: "spawn_agent_finished",
+              type: "tool_call_finished",
               toolCallId: toolCall.id,
-              name,
-              title,
-              headerTarget,
+              toolName: TOOL_NAME_SPAWN_AGENT,
+              presentation,
               status: "error",
-              message: reason,
-              uiText,
             };
             return { content: outcome.content, outcome: outcome.outcome, uiEvent };
           }
@@ -317,43 +316,44 @@ export function createSpawnAgentToolDefinition(options: {
           if (!spawnResult.ok) {
             const outcome = createTextToolOutcome(spawnResult.reason, "blocked");
             const uiEvent: ToolActivity = {
-              type: "spawn_agent_blocked",
+              type: "tool_call_blocked",
               toolCallId: toolCall.id,
-              name,
-              title,
-              headerTarget,
+              toolName: TOOL_NAME_SPAWN_AGENT,
+              presentation: buildToolRunPresentation({
+                toolName: TOOL_NAME_SPAWN_AGENT,
+                subject: subject,
+                details: [{ text: spawnResult.reason, tone: "error" }],
+              }),
               reason: spawnResult.reason,
             };
             return { content: outcome.content, outcome: outcome.outcome, uiEvent };
           }
 
           const resultText = formatSpawnAgentResult(spawnResult.state, spawnResult.capacity);
-          const statusParts = [...statusPrefixParts, spawnResult.state.id];
           const outcome = createTextToolOutcome(resultText, "succeeded");
-          const uiText = buildSubagentUiText({
+          const presentation = buildSubagentPresentation({
+            toolName: TOOL_NAME_SPAWN_AGENT,
+            subject: subject,
             output: prompt,
-            statusText: statusParts.join(" · "),
-            maxOutputLines: 16,
-            fullText: resultText,
+            metadata: [...statusPrefixParts, spawnResult.state.id],
           });
           const uiEvent: ToolActivity = {
-            type: "spawn_agent_finished",
+            type: "tool_call_finished",
             toolCallId: toolCall.id,
-            name,
-            title,
-            headerTarget,
+            toolName: TOOL_NAME_SPAWN_AGENT,
+            presentation,
             status: "success",
-            agentId: spawnResult.state.id,
-            uiText,
           };
           return { content: outcome.content, outcome: outcome.outcome, uiEvent };
         },
         {
-          type: "spawn_agent_started",
+          type: "tool_call_started",
           toolCallId: toolCall.id,
-          name,
-          title,
-          headerTarget,
+          toolName: TOOL_NAME_SPAWN_AGENT,
+          presentation: buildToolRunPresentation({
+            toolName: TOOL_NAME_SPAWN_AGENT,
+            subject: subject,
+          }),
         },
       );
     },

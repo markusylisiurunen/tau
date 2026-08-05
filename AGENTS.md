@@ -55,8 +55,9 @@ Tau is pre-v1 and the priority is to reach a clean, stable v1 design. Prefer exp
 - **Code mode** (`src/core/tools/code_mode.ts`, `src/core/tools/code_mode_worker.ts`, `src/core/tools/web.ts`, `src/core/tools/nook.ts`, `src/core/tools/web_discovery.ts`, `src/core/static/code_mode/`): Generic code-tool UI/result lifecycle plus a shared host-Worker executor and separate Exa-backed `web`, Nook platform, and session-history implementations. Generated JavaScript runs in a host-owned Worker with a tool-specific SES compartment exposing only its bounded facade, `docs`, and console; the trusted parent retains provider/platform credentials and services bridge calls, while web discovery and Nook file operations use generic execution-environment backends. Tool results contain stdout/stderr rather than JavaScript return values
 - **TUI**: Terminal rendering via `@earendil-works/pi-tui` with components in `src/tui/ui/`
 - **Chat UI models** (`src/tui/ui/chat_message_model.ts`): Typed message models and rendering glue for UI components
-- **Tool output layout** (`src/tui/ui/tool_output.ts`): Shared compact/expanded tool UI layout and header building
-- **Tool UI model and registry** (`src/tui/ui/tool_ui_model.ts`, `src/tui/ui/tool_ui_registry.ts`): Projects canonical session tool status into symmetric lifecycle cards, enriched by optional tool-specific activity
+- **Tool presentation** (`src/core/tools/presentation.ts`): Producer-owned bounded tool-card contract with lifecycle actions, multiline subjects, semantic detail lines, and metadata segments
+- **Tool card** (`src/tui/ui/tool_card.ts`): Generic compact tool-card grammar that projects canonical session tool status and producer-supplied presentation into keyed lifecycle cards
+- **Tool UI model** (`src/tui/ui/tool_ui_model.ts`): Typed bridge from snapshot-owned tool state and presentation facets to the compact card
 
 **Execution boundary rule**: The TUI/client, host, and execution environment are separate logical machines even when two or all three happen to share one process or filesystem. The TUI owns client-local UI and processes such as the diff tool. The host owns session orchestration, persistence, credentials, and execution-environment lifecycle. The execution environment is the agent's only machine and owns every agent-visible path, cwd, repository root, project config/content, AGENTS.md file, skill, model overlay, platform value, Node version, and command. Outside pre-creation metadata derived by a client from an execution environment it directly manages, host or TUI filesystem APIs must never inspect an execution-environment path. Session creation attributes are complete authoritative client input; the host and stores never infer or normalize them. All agent-visible access must go through the execution environment abstraction, including local sessions, so physical co-location cannot create a second runtime code path.
 
@@ -122,7 +123,6 @@ Execution environments and tool backends are intentionally dumb target adapters.
   - `runtime/deps.ts` - Core dependency injection
   - `utils/context_builder.ts` - System prompt assembly
   - `utils/project_files.ts` - Bounded project path suggestions for `@<path>` autocomplete
-  - `utils/tool_preview.ts` - Tool UI preview truncation
   - `utils/truncate.ts` - Truncation helpers
   - `utils/model_stream.ts` - Model streaming wrapper
   - `utils/spawn_capture.ts` - Process capture helper
@@ -149,8 +149,7 @@ Execution environments and tool backends are intentionally dumb target adapters.
   - `ui/components/` - Editor and layout primitives
   - `ui/theme/` - Theme tokens, palette, and renderer
   - `ui/chat_message_model.ts` - Message view models and renderer for the chat UI
-  - `ui/tool_output.ts` - Shared tool output layout primitives
-  - `ui/tool_ui_registry.ts` - Tool UI renderer registry
+  - `ui/tool_card.ts` - Generic compact tool-card renderer
 
 ## Tool system
 
@@ -186,14 +185,13 @@ Prompt/context tag style: use dash-case for XML-like tag names in prompt text (f
 - **Bash (user/!/@/$)**: 65,536 token limit, middle-truncated when exceeded.
 - **Code mode (web/history/Nook)**: 8,192 token stdout/stderr limit (middle-truncated).
 
-**Tool UI preview formatting**:
+**Tool card presentation**:
 
-- Every session tool card follows `preparing` → `queued` → `running` → a terminal state from canonical `SessionProtocolToolRun.status`; tool activities only enrich that lifecycle with domain-specific detail.
-- Known tools may give those statuses explicit natural-language labels such as `writing` and `wrote`; unknown and client-provided tool names keep generic lifecycle labels and are never transformed heuristically.
-- Output-capable tools emit `ToolUiText` with `previewText`, `statusLine`, and `fullText`.
-- Preview truncation/formatting happens in core tools via `src/core/utils/tool_preview.ts`.
-- The TUI only styles output: compact uses `previewText` + `statusLine`, expanded uses raw `fullText`.
-- Current preview shapes: bash uses head/tail output plus a status line; write shows up to 16 preview lines with a status line; edit uses a truncated diff preview with counts.
+- Every session tool card follows `preparing` → `queued` → `running` → a terminal state from canonical `SessionProtocolToolRun.status`.
+- Tool and host producers emit `ToolRunPresentation` with required lifecycle actions and a required multiline `subject`, plus bounded semantic `details` and metadata segments. Known tools may provide natural actions such as `writing` and `wrote`; unknown and client-provided tools use generic actions.
+- Producers apply the shared eight-line head/tail limits and 256-character per-line limit to subjects and details through `src/core/tools/presentation.ts`. Truncation markers are part of the presentation payload; the TUI does not apply vertical truncation.
+- Compact cards use one generic grammar: `<marker> <action> <subject>`, followed directly by detail lines and one parenthesized metadata line. The renderer preserves subject newlines and derives markers and colors from canonical status.
+- The TUI has no tool-specific card renderers and does not retain an expanded tool-card mode.
 
 **Subagent-only tools**: subagents run with a dedicated tool registry that includes the tools enabled for that subagent (inherited from the main persona or explicitly overridden). The built-in `default` subagent prompt wraps and inherits the main persona system prompt, while enforcing default-subagent rules that take precedence on conflicts. `spawn_agent` can optionally set launch model/reasoning via `<provider>/<model>:<effort>` (allowlisted by `launchModels`) and can optionally set `workingDirectory`. When `workingDirectory` is set, the subagent runs from that directory and its config, model catalog, repository metadata, AGENTS.md context, and skills are resolved through the session execution environment as if tau was started there. See `src/core/subagents/agent_supervisor.ts` and `src/core/tools/spawn_agent.ts`.
 
@@ -332,7 +330,7 @@ Slash commands only trigger on single-line inputs. `/diff` launches the local di
 
 RPC mode command surface is protocol-based (`initialize`, `session.create`, `session.list`, `session.observe`, `session.unobserve`, `session.record`, `session.submit`, `session.queue`, `session.steer`, `session.cancelPendingMessages`, `session.retry`, `session.exec`, `session.cancelExec`, `session.sample`, `session.interrupt`, `session.snapshot`, `session.startGoal`, `session.resumeGoal`, `session.clearGoal`, `session.setReasoning`, `session.setPersona`, `session.resolvePrompt`, `session.autocompletePaths`, `session.reload`, `session.compact`, `session.rewind`, `session.interruptSubagent`, `session.ephemeral.create`, `session.ephemeral.submit`, `session.ephemeral.close`, `session.clientTool.ack`, `session.clientTool.result`) over NDJSON stdin/stdout.
 
-**Keybindings**: `Shift+Tab` (cycle reasoning), `Ctrl+P` (cycle personality), `Ctrl+T` (toggle thinking), `Ctrl+O` (compact UI), `Ctrl+S` (stash input to clipboard), `Ctrl+Y` (toggle voice recording for `/listen`), `Ctrl+G` (interrupt selected subagent), `Ctrl+Enter` (steer running assistant with editor input), `Enter x2` (retry last response on empty input), `Escape x2` (clear current prompt), `Alt+Up` (cancel pending queue and steering messages into the editor), `Alt+Down` (cycle active subagents), `Escape` (interrupt active work), `Ctrl+C` (press twice to exit)
+**Keybindings**: `Shift+Tab` (cycle reasoning), `Ctrl+P` (cycle personality), `Ctrl+T` (toggle thinking), `Ctrl+S` (stash input to clipboard), `Ctrl+Y` (toggle voice recording for `/listen`), `Ctrl+G` (interrupt selected subagent), `Ctrl+Enter` (steer running assistant with editor input), `Enter x2` (retry last response on empty input), `Escape x2` (clear current prompt), `Alt+Up` (cancel pending queue and steering messages into the editor), `Alt+Down` (cycle active subagents), `Escape` (interrupt active work), `Ctrl+C` (press twice to exit)
 
 Reasoning changes are allowed while a turn is running. The active turn keeps the full `AgentSpec` captured when it started, including all tool-call subturns and steering continuations; the new reasoning applies to the next independently submitted or queued turn when it actually starts.
 
@@ -348,7 +346,7 @@ Reasoning changes are allowed while a turn is running. The active turn keeps the
 **Search examples**
 
 - For likely-broad searches, list matching files first: `rg -l "ChatController" src`
-- Search only TypeScript files with grouped output: `rg --heading -n -t ts "ToolUiText" src`
+- Search only TypeScript files with grouped output: `rg --heading -n -t ts "ToolRunPresentation" src`
 - Show line numbers and context grouped by file: `rg --heading -n -C 2 "spawn_agent" src`
 - List matching files only: `rg -l "export interface" src`
 - List all TypeScript files under src: `fd -e ts --search-path src -t f`

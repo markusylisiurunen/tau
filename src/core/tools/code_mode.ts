@@ -2,8 +2,9 @@ import type { Tool, ToolCall } from "@earendil-works/pi-ai";
 import { bytesToTokens } from "../utils/token.js";
 import { formatBytes } from "../utils/truncate.js";
 import type { ToolActivity } from "./activity.js";
-import { type BashOutputPolicy, buildBashUiText, prepareBashOutput } from "./bash.js";
+import { type BashOutputPolicy, buildBashPresentation, prepareBashOutput } from "./bash.js";
 import type { BashExecutionResult, ToolExecutionBackend } from "./execution_backend.js";
+import { buildToolRunPresentation } from "./presentation.js";
 import {
   type AgentTool,
   createTextToolOutcome,
@@ -14,8 +15,8 @@ import {
 } from "./registry.js";
 
 export type ParsedCodeModeArguments<TArgs> =
-  | { ok: true; args: TArgs; code: string; displayTarget: string }
-  | { ok: false; error: string; code: string; displayTarget: string };
+  | { ok: true; args: TArgs; code: string; subject: string }
+  | { ok: false; error: string; code: string; subject: string };
 
 type CodeModeToolDescriptionOptions = {
   sdkGlobal: string;
@@ -96,7 +97,12 @@ export function createCodeModeToolDefinition<TArgs>(
     schema: implementation.schema,
     describe: (toolCall) => {
       const parsed = implementation.parseArguments(toolCall.arguments);
-      return { headerTarget: parsed.displayTarget, code: parsed.code };
+      return {
+        presentation: buildToolRunPresentation({
+          toolName: implementation.schema.name,
+          subject: parsed.code || parsed.subject,
+        }),
+      };
     },
     async execute(
       toolCall: ToolCall,
@@ -104,7 +110,7 @@ export function createCodeModeToolDefinition<TArgs>(
     ): Promise<ToolExecutionOutcome> {
       const { signal } = context;
       const parsed = implementation.parseArguments(toolCall.arguments);
-      const headerTarget = parsed.displayTarget;
+      const subject = parsed.subject;
 
       const blocked = (
         reason: string,
@@ -115,8 +121,11 @@ export function createCodeModeToolDefinition<TArgs>(
           type: "code_mode_blocked",
           toolCallId: toolCall.id,
           toolName: implementation.schema.name,
-          code: parsed.code,
-          headerTarget,
+          presentation: buildToolRunPresentation({
+            toolName: implementation.schema.name,
+            subject: parsed.code || subject,
+            details: [{ text: reason, tone: "error" }],
+          }),
           reason,
         };
         return { content: outcome.content, outcome: outcome.outcome, uiEvent };
@@ -164,21 +173,20 @@ export function createCodeModeToolDefinition<TArgs>(
                 : isError
                   ? "failed"
                   : "succeeded";
-            const uiText = buildBashUiText({
+            const presentation = buildBashPresentation({
+              toolName: implementation.schema.name,
+              subject: parsed.code || subject,
               truncationInfo,
               exitCode: execution.exitCode,
               durationMs,
-              fullText: toolText,
             });
             const outcome = createTextToolOutcome(toolText, semanticOutcome);
             const uiEvent: ToolActivity = {
               type: "code_mode_finished",
               toolCallId: toolCall.id,
               toolName: implementation.schema.name,
-              code: parsed.code,
-              headerTarget,
+              presentation,
               status: isError ? "error" : "success",
-              uiText,
             };
             return { content: outcome.content, outcome: outcome.outcome, uiEvent };
           } catch (error) {
@@ -189,8 +197,10 @@ export function createCodeModeToolDefinition<TArgs>(
           type: "code_mode_started",
           toolCallId: toolCall.id,
           toolName: implementation.schema.name,
-          code: parsed.code,
-          headerTarget,
+          presentation: buildToolRunPresentation({
+            toolName: implementation.schema.name,
+            subject: parsed.code || subject,
+          }),
         },
       );
     },

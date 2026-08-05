@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { buildAutoCompactionContinuationMessage } from "../dist/core/session/compaction.js";
+import { buildToolRunPresentation } from "../dist/core/tools/presentation.js";
 import {
   hasAutoCompactionContinuationMetadata,
   prependTauUserMetadata,
@@ -620,7 +621,6 @@ class FakeView {
     this.systems.push({ text, kind, options });
   }
   setThinkingVisibility() {}
-  setCompactToolUi() {}
   updateStatus(status) {
     this.status = status;
     this.statusUpdates.push(status);
@@ -690,7 +690,6 @@ class FakeView {
   }
   bindInputHandlers() {}
   setAutocompleteProvider() {}
-  addBashExecutionMessage() {}
   updateTheme = vi.fn();
 }
 
@@ -2461,7 +2460,10 @@ describe("SessionChatController", () => {
                 type: "tool_call_streaming",
                 toolCallId: "write-call",
                 toolName: "write",
-                headerTarget: "write",
+                presentation: buildToolRunPresentation({
+                  toolName: "write",
+                  subject: "write",
+                }),
               },
             ],
           },
@@ -2477,7 +2479,10 @@ describe("SessionChatController", () => {
                 type: "tool_call_queued",
                 toolCallId: "tool-b",
                 toolName: "bash",
-                headerTarget: "bash",
+                presentation: buildToolRunPresentation({
+                  toolName: "bash",
+                  subject: "echo b",
+                }),
               },
             ],
           },
@@ -2493,7 +2498,10 @@ describe("SessionChatController", () => {
                 type: "tool_call_queued",
                 toolCallId: "tool-a",
                 toolName: "bash",
-                headerTarget: "bash",
+                presentation: buildToolRunPresentation({
+                  toolName: "bash",
+                  subject: "echo a",
+                }),
               },
             ],
           },
@@ -2588,34 +2596,22 @@ describe("SessionChatController", () => {
                 type: "tool_call_queued",
                 toolCallId: "tool-a",
                 toolName: "bash",
-                headerTarget: "bash",
+                presentation: buildToolRunPresentation({
+                  toolName: "bash",
+                  subject: "echo a",
+                }),
               },
               {
                 type: "bash_execution",
                 toolCallId: "tool-a",
                 command: "echo a",
-                headerTarget: "echo a",
+                presentation: buildToolRunPresentation({
+                  toolName: "bash",
+                  subject: "echo a",
+                  details: [{ text: "a" }],
+                  metadata: ["exit 0"],
+                }),
                 exitCode: 0,
-                truncationInfo: {
-                  output: "a\n",
-                  model: {
-                    content: "a\n",
-                    truncated: false,
-                    truncatedBy: null,
-                    totalLines: 2,
-                    totalBytes: 2,
-                    outputLines: 2,
-                    outputBytes: 2,
-                    maxLines: 2,
-                    maxTokens: 8192,
-                  },
-                  captureTruncated: false,
-                },
-                uiText: {
-                  previewLines: [{ text: "a" }],
-                  statusLine: "exit 0",
-                  fullLines: [{ text: "a" }],
-                },
               },
             ],
           },
@@ -2638,8 +2634,10 @@ describe("SessionChatController", () => {
       expect.objectContaining({
         toolCallId: "tool-a",
         status: "succeeded",
-        activity: expect.objectContaining({ type: "bash_execution" }),
-        resultText: expect.stringContaining("a"),
+        presentation: expect.objectContaining({
+          subject: "echo a",
+          details: [{ text: "a" }],
+        }),
       }),
     ]);
     await controller.dispose();
@@ -2650,13 +2648,13 @@ describe("SessionChatController", () => {
       type: "tool_call_queued",
       toolCallId: "tool-a",
       toolName: "bash",
-      headerTarget: "bash",
+      presentation: buildToolRunPresentation({ toolName: "bash", subject: "echo a" }),
     };
     const startedEvent = {
       type: "bash_started",
       toolCallId: "tool-a",
-      command: "echo a",
-      headerTarget: "echo a",
+      command: "echo a\necho b",
+      presentation: buildToolRunPresentation({ toolName: "bash", subject: "echo a\necho b" }),
     };
     const snapshot = updateSnapshot(createSnapshot(), {
       revision: 3,
@@ -2740,7 +2738,7 @@ describe("SessionChatController", () => {
       expect.objectContaining({
         toolCallId: "tool-a",
         status: "running",
-        activity: queuedEvent,
+        presentation: expect.objectContaining({ subject: "echo a" }),
       }),
     ]);
 
@@ -2777,7 +2775,7 @@ describe("SessionChatController", () => {
       expect.objectContaining({
         toolCallId: "tool-a",
         status: "running",
-        activity: startedEvent,
+        presentation: expect.objectContaining({ subject: "echo a\necho b" }),
       }),
     ]);
     expect(view.status.footer.sessionCost).toBe("$0.42");
@@ -3004,14 +3002,13 @@ describe("SessionChatController", () => {
       expect.arrayContaining([
         expect.objectContaining({
           status: "running",
-          activity: expect.objectContaining({ type: "bash_started", command: "pwd" }),
+          presentation: expect.objectContaining({ subject: "pwd" }),
         }),
         expect.objectContaining({
           status: "succeeded",
-          activity: expect.objectContaining({
-            type: "bash_execution",
-            command: "pwd",
-            labelOverride: "you ran",
+          presentation: expect.objectContaining({
+            subject: "pwd",
+            actionByStatus: expect.objectContaining({ succeeded: "you ran" }),
           }),
         }),
       ]),
@@ -3049,10 +3046,9 @@ describe("SessionChatController", () => {
       expect.arrayContaining([
         expect.objectContaining({
           status: "succeeded",
-          activity: expect.objectContaining({
-            type: "bash_execution",
-            command: "pwd",
-            labelOverride: "incognito",
+          presentation: expect.objectContaining({
+            subject: "pwd",
+            actionByStatus: expect.objectContaining({ succeeded: "incognito" }),
           }),
         }),
       ]),

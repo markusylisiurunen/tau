@@ -50,7 +50,17 @@ describe("ClientToolBroker", () => {
   it("returns full client tool results with a truncated final UI event", async () => {
     const broker = new ClientToolBroker();
     const longLine = "x".repeat(200);
-    const content = ["one", longLine, "three", "four", "five", "six", "seven", "eight"].join("\n");
+    const content = [
+      "one",
+      longLine,
+      "three",
+      "four",
+      "five",
+      "six",
+      "seven",
+      "eight",
+      "nine",
+    ].join("\n");
     const sendCancel = vi.fn();
     const registration = broker.registerClient({
       tools: [
@@ -73,25 +83,24 @@ describe("ClientToolBroker", () => {
 
     expect(result.toolResult.content[0].text).toBe(content);
     expect(result.uiEvent).toMatchObject({
-      type: "client_tool_finished",
+      type: "tool_call_finished",
       toolCallId: "tool-call-1",
       toolName: "local_picker",
-      headerTarget: "local_picker",
       status: "success",
-      uiText: {
-        statusLine: "success · 8 lines · ~39 tokens · 236 B",
+      presentation: {
+        metadata: ["9 lines", "~40 tokens", "241 B"],
       },
     });
-    expect(result.uiEvent.uiText.previewLines.map((line) => line.text)).toEqual([
+    expect(result.uiEvent.presentation.details.map((line) => line.text)).toEqual([
       "one",
-      `${"x".repeat(159)}…`,
+      "x".repeat(200),
       "three",
+      "four",
       "…2 more lines…",
-      "six",
       "seven",
       "eight",
+      "nine",
     ]);
-    expect(result.uiEvent.uiText.fullLines).toEqual(result.uiEvent.uiText.previewLines);
     expect(sendCancel).not.toHaveBeenCalled();
   });
 

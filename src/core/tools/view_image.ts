@@ -3,8 +3,9 @@ import { Type } from "typebox";
 import { z } from "zod";
 import { formatBytes } from "../utils/truncate.js";
 import { formatZodError } from "../utils/zod.js";
-import type { ToolActivity, ToolUiText } from "./activity.js";
+import type { ToolActivity } from "./activity.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
+import { buildToolRunPresentation } from "./presentation.js";
 import {
   type AgentTool,
   createTextToolOutcome,
@@ -56,7 +57,7 @@ function parseViewImageArgs(
   return { ok: true, data: parsed.data };
 }
 
-function getViewImageDisplayTarget(raw: unknown): string {
+function getViewImageSubject(raw: unknown): string {
   const parsedArgs = parseViewImageArgs(raw);
   return parsedArgs.ok ? parsedArgs.data.path : "(invalid arguments)";
 }
@@ -225,24 +226,15 @@ async function prepareImageForModel(
   throw new Error(`Image could not be reduced below ${targetSizeLabel}.`);
 }
 
-function buildViewImageUiText(args: { mimeType: string; fullText: string }): ToolUiText {
-  const { mimeType, fullText } = args;
-  const trimmedFullText = fullText.trimEnd();
-  const fullLines = trimmedFullText
-    ? trimmedFullText.split("\n").map((text) => ({ text }))
-    : [{ text: mimeType }];
-
-  return {
-    previewLines: [],
-    statusLine: mimeType,
-    fullLines,
-  };
-}
-
 export function createViewImageToolDefinition(backend: ToolExecutionBackend): AgentTool {
   return {
     schema: VIEW_IMAGE_TOOL,
-    describe: (toolCall) => ({ headerTarget: getViewImageDisplayTarget(toolCall.arguments) }),
+    describe: (toolCall) => {
+      const subject = getViewImageSubject(toolCall.arguments);
+      return {
+        presentation: buildToolRunPresentation({ toolName: TOOL_NAME_VIEW_IMAGE, subject }),
+      };
+    },
     async execute(
       toolCall: ToolCall,
       context: ToolExecutionContext,
@@ -250,7 +242,7 @@ export function createViewImageToolDefinition(backend: ToolExecutionBackend): Ag
       return executeTool(context, async () => {
         const parsedArgs = parseViewImageArgs(toolCall.arguments);
         const path = parsedArgs.ok ? parsedArgs.data.path : "";
-        const headerTarget = getViewImageDisplayTarget(toolCall.arguments);
+        const subject = getViewImageSubject(toolCall.arguments);
 
         const blocked = (
           reason: string,
@@ -261,7 +253,11 @@ export function createViewImageToolDefinition(backend: ToolExecutionBackend): Ag
             type: "view_image_blocked",
             toolCallId: toolCall.id,
             path: path || "(invalid path)",
-            headerTarget,
+            presentation: buildToolRunPresentation({
+              toolName: TOOL_NAME_VIEW_IMAGE,
+              subject: subject,
+              details: [{ text: reason, tone: "error" }],
+            }),
             reason,
           };
           return { content: outcome.content, outcome: outcome.outcome, uiEvent };
@@ -299,18 +295,15 @@ export function createViewImageToolDefinition(backend: ToolExecutionBackend): Ag
             outcome: "succeeded",
           };
 
-          const uiText = buildViewImageUiText({
-            mimeType: encodedImage.mimeType,
-            fullText: resultText,
-          });
           const uiEvent: ToolActivity = {
             type: "view_image_success",
             toolCallId: toolCall.id,
             path: resolvedPath,
-            headerTarget: resolvedPath,
-            mimeType: encodedImage.mimeType,
-            bytes: encodedImage.content.byteLength,
-            uiText,
+            presentation: buildToolRunPresentation({
+              toolName: TOOL_NAME_VIEW_IMAGE,
+              subject: resolvedPath,
+              metadata: [encodedImage.mimeType],
+            }),
           };
 
           return { content: outcome.content, outcome: outcome.outcome, uiEvent };

@@ -5,15 +5,19 @@ import { Type } from "typebox";
 import { z } from "zod";
 import { formatCwd } from "../utils/format.js";
 import { bytesToTokens, formatTokenEstimate } from "../utils/token.js";
-import { buildHeadTailPreviewLines } from "../utils/tool_preview.js";
 import {
   formatBytes,
   TRUNCATION_MARKER,
   type TruncationResult,
   truncateForTokens,
 } from "../utils/truncate.js";
-import type { ToolActivity, ToolUiLine, ToolUiText } from "./activity.js";
+import type { ToolActivity } from "./activity.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
+import {
+  buildToolRunPresentation,
+  type ToolCardLine,
+  type ToolRunPresentation,
+} from "./presentation.js";
 import {
   type AgentTool,
   createTextToolOutcome,
@@ -258,9 +262,6 @@ export function formatBashUserMessageText(args: {
   return `Bash command output:\n${bashContextText}`;
 }
 
-const COMPACT_OUTPUT_HEAD_LINES = 3;
-const COMPACT_OUTPUT_TAIL_LINES = 3;
-
 function formatDurationMs(durationMs: number | null | undefined): string {
   if (durationMs === null || durationMs === undefined || !Number.isFinite(durationMs)) {
     return "?ms";
@@ -271,25 +272,22 @@ function formatDurationMs(durationMs: number | null | undefined): string {
   return `${Math.round(ms / 1000)}s`;
 }
 
-export function buildBashUiText(args: {
+export function buildBashPresentation(args: {
+  toolName: string;
+  subject: string;
   truncationInfo: BashTruncationInfo;
   exitCode: number | null;
   durationMs?: number;
   workingDirectory?: string;
-  previewLines?: { head?: number; tail?: number };
-  fullText?: string;
-}): ToolUiText {
+  actionLabel?: string;
+}): ToolRunPresentation {
   const { truncationInfo, exitCode, durationMs } = args;
   const { model, captureTruncated } = truncationInfo;
 
-  const previewSource = truncationInfo.output;
-  const outputLinesPreview = buildHeadTailPreviewLines(previewSource, {
-    headLines: args.previewLines?.head ?? COMPACT_OUTPUT_HEAD_LINES,
-    tailLines: args.previewLines?.tail ?? COMPACT_OUTPUT_TAIL_LINES,
-  });
-  const previewLines: ToolUiLine[] = outputLinesPreview.map((line) => ({
-    text: line,
-  }));
+  const detailText = truncationInfo.output.replace(/\r\n?/g, "\n").trimEnd();
+  const details: ToolCardLine[] = detailText
+    ? detailText.split("\n").map((text) => ({ text }))
+    : [];
 
   const outputLines = model.outputLines;
   const outputBytes = model.outputBytes;
@@ -301,7 +299,6 @@ export function buildBashUiText(args: {
     : undefined;
   const durationLabel = formatDurationMs(durationMs);
   const lineLabel = hasOutput ? `${outputLines} line${outputLines === 1 ? "" : "s"}` : "no output";
-  const bytesLabel = hasOutput ? formatBytes(outputBytes) : undefined;
   const tokenLabel = hasOutput ? formatTokenEstimate(outputBytes) : undefined;
   const summaryParts: string[] = [];
   if (model.truncated || captureTruncated) {
@@ -311,20 +308,20 @@ export function buildBashUiText(args: {
   if (workingDirectoryLabel) {
     summaryParts.push(workingDirectoryLabel);
   }
-  summaryParts.push(durationLabel, lineLabel);
-  if (tokenLabel && bytesLabel) {
-    summaryParts.push(tokenLabel, bytesLabel);
+  summaryParts.push(durationLabel);
+  if (tokenLabel) {
+    summaryParts.push(tokenLabel);
   }
-  const summaryLine = summaryParts.join(" · ");
-
-  const fullText = args.fullText?.trimEnd() ?? "";
-  const fullLines: ToolUiLine[] = fullText ? fullText.split("\n").map((text) => ({ text })) : [];
-
-  return {
-    previewLines,
-    statusLine: summaryLine,
-    fullLines,
-  };
+  summaryParts.push(lineLabel);
+  return buildToolRunPresentation({
+    toolName: args.toolName,
+    subject: args.subject,
+    details,
+    metadata: summaryParts,
+    actionOverrides: args.actionLabel
+      ? { succeeded: args.actionLabel, failed: args.actionLabel }
+      : undefined,
+  });
 }
 
 function resolveBashWorkingDirectory(args: {
@@ -387,18 +384,20 @@ function parseBashArgs(raw: unknown):
   };
 }
 
-function getBashDisplayTarget(raw: unknown): string {
-  const parsedArgs = parseBashArgs(raw);
-  if (!parsedArgs.ok) {
-    return "(invalid arguments)";
-  }
-  return parsedArgs.data.commandForDisplay.split(/\r?\n/)[0] ?? parsedArgs.data.commandForDisplay;
+function getBashSubject(raw: unknown): string {
+  const parsed = parseBashArgs(raw);
+  return parsed.ok ? parsed.data.commandForDisplay : parsed.commandForDisplay;
 }
 
 export function createBashToolDefinition(backend: ToolExecutionBackend, cwd: string): AgentTool {
   return {
     schema: BASH_TOOL,
-    describe: (toolCall) => ({ headerTarget: getBashDisplayTarget(toolCall.arguments) }),
+    describe: (toolCall) => ({
+      presentation: buildToolRunPresentation({
+        toolName: TOOL_NAME_BASH,
+        subject: getBashSubject(toolCall.arguments),
+      }),
+    }),
     async execute(
       toolCall: ToolCall,
       context: ToolExecutionContext,
@@ -408,7 +407,7 @@ export function createBashToolDefinition(backend: ToolExecutionBackend, cwd: str
       const commandForDisplay = parsedArgs.ok
         ? parsedArgs.data.commandForDisplay
         : parsedArgs.commandForDisplay;
-      const headerTarget = getBashDisplayTarget(toolCall.arguments);
+      const subject = commandForDisplay;
 
       const blocked = (reason: string): ToolImplementationOutcome => {
         const outcome = createTextToolOutcome(reason, "blocked");
@@ -416,7 +415,11 @@ export function createBashToolDefinition(backend: ToolExecutionBackend, cwd: str
           type: "bash_blocked",
           toolCallId: toolCall.id,
           command: commandForDisplay,
-          headerTarget,
+          presentation: buildToolRunPresentation({
+            toolName: TOOL_NAME_BASH,
+            subject: commandForDisplay,
+            details: [{ text: reason, tone: "error" }],
+          }),
           reason,
         };
         return { content: outcome.content, outcome: outcome.outcome, uiEvent };
@@ -465,12 +468,13 @@ export function createBashToolDefinition(backend: ToolExecutionBackend, cwd: str
             );
             const toolText = formatBashToolResultText({ truncationInfo, exitCode });
             const isError = exitCode === null || exitCode !== 0;
-            const uiText = buildBashUiText({
+            const presentation = buildBashPresentation({
+              toolName: TOOL_NAME_BASH,
+              subject: command,
               truncationInfo,
               exitCode,
               durationMs,
               workingDirectory: workingDirectory ? effectiveWorkingDirectory : undefined,
-              fullText: toolText,
             });
 
             const outcome = createTextToolOutcome(
@@ -481,11 +485,8 @@ export function createBashToolDefinition(backend: ToolExecutionBackend, cwd: str
               type: "bash_execution",
               toolCallId: toolCall.id,
               command,
-              headerTarget,
+              presentation,
               exitCode,
-              truncationInfo,
-              uiText,
-              durationMs,
             };
             return { content: outcome.content, outcome: outcome.outcome, uiEvent };
           } catch (e) {
@@ -494,7 +495,11 @@ export function createBashToolDefinition(backend: ToolExecutionBackend, cwd: str
             const uiEvent: ToolActivity = {
               type: "bash_blocked",
               command: commandForDisplay,
-              headerTarget,
+              presentation: buildToolRunPresentation({
+                toolName: TOOL_NAME_BASH,
+                subject: commandForDisplay,
+                details: [{ text: msg, tone: "error" }],
+              }),
               reason: msg,
               toolCallId: toolCall.id,
             };
@@ -505,7 +510,10 @@ export function createBashToolDefinition(backend: ToolExecutionBackend, cwd: str
           type: "bash_started",
           toolCallId: toolCall.id,
           command,
-          headerTarget,
+          presentation: buildToolRunPresentation({
+            toolName: TOOL_NAME_BASH,
+            subject: command,
+          }),
         },
       );
     },

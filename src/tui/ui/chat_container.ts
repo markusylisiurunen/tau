@@ -5,7 +5,6 @@ import {
   renderChatMessage,
 } from "./chat_message_model.js";
 import type { Theme } from "./theme/index.js";
-import type { ToolUiRegistry } from "./tool_ui_registry.js";
 
 type ChatMessageRecord = {
   id: string;
@@ -17,19 +16,16 @@ type ChatMessageRecord = {
 export class ChatContainerComponent extends Container {
   private chatContainer: Container;
   private theme: Theme;
-  private toolUiRegistry: ToolUiRegistry;
   private thoughtsVisible: boolean = false;
-  private compactToolUi: boolean = false;
   private allMessages: ChatMessageRecord[] = [];
   private idToIndex: Map<string, number> = new Map();
   private cachedRenderWidth?: number;
   private cachedRenderLines?: string[];
 
-  constructor(theme: Theme, toolUiRegistry: ToolUiRegistry, thoughtsVisible = false) {
+  constructor(theme: Theme, thoughtsVisible = false) {
     super();
 
     this.theme = theme;
-    this.toolUiRegistry = toolUiRegistry;
     this.thoughtsVisible = thoughtsVisible;
 
     this.chatContainer = new Container();
@@ -87,8 +83,6 @@ export class ChatContainerComponent extends Container {
       const updated = rendered.update(model, {
         theme: this.theme,
         thoughtsVisible: this.thoughtsVisible,
-        compactToolUi: this.compactToolUi,
-        toolUiRegistry: this.toolUiRegistry,
       });
 
       if (updated) {
@@ -123,12 +117,6 @@ export class ChatContainerComponent extends Container {
   setThinkingVisibility(visible: boolean) {
     if (this.thoughtsVisible === visible) return;
     this.thoughtsVisible = visible;
-    this.rebuild();
-  }
-
-  setCompactToolUi(compact: boolean): void {
-    if (this.compactToolUi === compact) return;
-    this.compactToolUi = compact;
     this.rebuild();
   }
 
@@ -198,8 +186,6 @@ export class ChatContainerComponent extends Container {
     const rendered = renderChatMessage(record.model, {
       theme: this.theme,
       thoughtsVisible: this.thoughtsVisible,
-      compactToolUi: this.compactToolUi,
-      toolUiRegistry: this.toolUiRegistry,
     });
     record.renderedMessage = rendered;
     return rendered;

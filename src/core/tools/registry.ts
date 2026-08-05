@@ -1,5 +1,6 @@
 import type { Tool, ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
 import type { ToolActivity } from "./activity.js";
+import type { ToolRunPresentation } from "./presentation.js";
 
 export type ToolExecutionOutcome = {
   content: ToolResultMessage["content"];
@@ -38,8 +39,7 @@ export async function executeTool(
 }
 
 export type ToolCallDescription = {
-  headerTarget: string;
-  code?: string;
+  presentation: ToolRunPresentation;
 };
 
 export type ToolExecutionContext = {

@@ -5,6 +5,7 @@ import type { AgentSupervisor } from "../subagents/agent_supervisor.js";
 import { formatInterruptAgentResult } from "../subagents/format.js";
 import { parseToolArgs } from "../utils/zod.js";
 import type { ToolActivity } from "./activity.js";
+import { buildToolRunPresentation } from "./presentation.js";
 import {
   type AgentTool,
   createTextToolOutcome,
@@ -13,7 +14,7 @@ import {
   type ToolExecutionOutcome,
   type ToolImplementationOutcome,
 } from "./registry.js";
-import { buildSubagentUiText, formatSubagentStatusLine } from "./subagent_ui.js";
+import { buildSubagentPresentation, formatSubagentMetadata } from "./subagent_ui.js";
 import { TOOL_NAME_INTERRUPT_AGENT } from "./tool_names.js";
 
 const INTERRUPT_AGENT_DESCRIPTION = [
@@ -39,7 +40,7 @@ const interruptArgsSchema = z.object({
   id: z.string().trim().min(1),
 });
 
-function getInterruptAgentDisplayTarget(raw: unknown): string {
+function getInterruptAgentSubject(raw: unknown): string {
   const parsedArgs = parseToolArgs(interruptArgsSchema, raw);
   return parsedArgs.ok ? parsedArgs.data.id : "(invalid arguments)";
 }
@@ -47,22 +48,31 @@ function getInterruptAgentDisplayTarget(raw: unknown): string {
 export function createInterruptAgentToolDefinition(supervisor: AgentSupervisor): AgentTool {
   return {
     schema: INTERRUPT_AGENT_TOOL,
-    describe: (toolCall) => ({ headerTarget: getInterruptAgentDisplayTarget(toolCall.arguments) }),
+    describe: (toolCall) => {
+      const subject = getInterruptAgentSubject(toolCall.arguments);
+      return {
+        presentation: buildToolRunPresentation({ toolName: TOOL_NAME_INTERRUPT_AGENT, subject }),
+      };
+    },
     async execute(
       toolCall: ToolCall,
       context: ToolExecutionContext,
     ): Promise<ToolExecutionOutcome> {
       const { signal } = context;
       let id = "";
-      const headerTarget = getInterruptAgentDisplayTarget(toolCall.arguments);
+      const subject = getInterruptAgentSubject(toolCall.arguments);
 
       const blocked = (reason: string): ToolImplementationOutcome => {
         const outcome = createTextToolOutcome(reason, "blocked");
         const uiEvent: ToolActivity = {
-          type: "interrupt_agent_blocked",
+          type: "tool_call_blocked",
           toolCallId: toolCall.id,
-          agentId: id || undefined,
-          headerTarget,
+          toolName: TOOL_NAME_INTERRUPT_AGENT,
+          presentation: buildToolRunPresentation({
+            toolName: TOOL_NAME_INTERRUPT_AGENT,
+            subject: subject,
+            details: [{ text: reason, tone: "error" }],
+          }),
           reason,
         };
         return { content: outcome.content, outcome: outcome.outcome, uiEvent };
@@ -98,54 +108,47 @@ export function createInterruptAgentToolDefinition(supervisor: AgentSupervisor):
               state.run.status === "running"
                 ? undefined
                 : Math.max(0, state.run.finishedAt - state.run.startedAt);
-            const statusText = formatSubagentStatusLine({
-              costTotal: state.costTotal,
-              durationMs,
-            });
-            const uiText = buildSubagentUiText({
+            const presentation = buildSubagentPresentation({
+              toolName: TOOL_NAME_INTERRUPT_AGENT,
+              subject: subject,
               output: resultText,
-              statusText,
-              maxOutputLines: 16,
-              fullText: resultText,
+              metadata: formatSubagentMetadata({ costTotal: state.costTotal, durationMs }),
             });
             const uiEvent: ToolActivity = {
-              type: "interrupt_agent_finished",
+              type: "tool_call_finished",
               toolCallId: toolCall.id,
-              agentId: id,
-              headerTarget,
+              toolName: TOOL_NAME_INTERRUPT_AGENT,
+              presentation,
               status: "success",
-              finalStatus: state.run.status,
-              uiText,
             };
             const outcome = createTextToolOutcome(resultText, "succeeded");
             return { content: outcome.content, outcome: outcome.outcome, uiEvent };
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             const reason = message.trim() || "The interrupt_agent request failed.";
-            const uiText = buildSubagentUiText({
-              output: reason,
-              statusText: "error",
-              maxOutputLines: 16,
-              fullText: reason,
-            });
             const uiEvent: ToolActivity = {
-              type: "interrupt_agent_finished",
+              type: "tool_call_finished",
               toolCallId: toolCall.id,
-              agentId: id,
-              headerTarget,
+              toolName: TOOL_NAME_INTERRUPT_AGENT,
+              presentation: buildSubagentPresentation({
+                toolName: TOOL_NAME_INTERRUPT_AGENT,
+                subject: subject,
+                output: reason,
+              }),
               status: "error",
-              message: reason,
-              uiText,
             };
             const outcome = createTextToolOutcome(reason, signal.aborted ? "cancelled" : "failed");
             return { content: outcome.content, outcome: outcome.outcome, uiEvent };
           }
         },
         {
-          type: "interrupt_agent_started",
+          type: "tool_call_started",
           toolCallId: toolCall.id,
-          agentId: id,
-          headerTarget,
+          toolName: TOOL_NAME_INTERRUPT_AGENT,
+          presentation: buildToolRunPresentation({
+            toolName: TOOL_NAME_INTERRUPT_AGENT,
+            subject: subject,
+          }),
         },
       );
     },

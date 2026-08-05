@@ -105,7 +105,7 @@ describe("view_image tool", () => {
         throw new Error("expected success ui event");
       }
 
-      expect(result.uiEvent.uiText.statusLine).toBe("image/png");
+      expect(result.uiEvent.presentation.metadata).toEqual(["image/png"]);
       expect(getTextBlock(result.toolResult.content)).toBe(`Viewed ${filePath} (image/png)`);
 
       const imageBlock = getImageBlock(result.toolResult.content);
@@ -175,13 +175,12 @@ describe("view_image tool", () => {
       const outputMetadata = await sharp(outputBuffer).metadata();
 
       expect(outputBuffer.byteLength).toBeLessThanOrEqual(VIEW_IMAGE_MODEL_MAX_BYTES);
-      expect(result.uiEvent.bytes).toBe(outputBuffer.byteLength);
-      expect(result.uiEvent.mimeType).toBe(imageBlock.mimeType);
+      expect(result.uiEvent.presentation.metadata).toEqual([imageBlock.mimeType]);
       expect(Math.max(outputMetadata.width ?? 0, outputMetadata.height ?? 0)).toBeLessThanOrEqual(
         2000,
       );
       expect(getTextBlock(result.toolResult.content)).toBe(
-        `Viewed ${filePath} (${result.uiEvent.mimeType})`,
+        `Viewed ${filePath} (${imageBlock.mimeType})`,
       );
     } finally {
       fx.cleanup();

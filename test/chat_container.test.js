@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ChatContainerComponent } from "../dist/tui/ui/chat_container.js";
 import { createUiTheme } from "../dist/tui/ui/theme/index.js";
-import { createToolUiRegistry } from "../dist/tui/ui/tool_ui_registry.js";
 
 function inspectChatContainer(container) {
   return {
@@ -12,7 +11,7 @@ function inspectChatContainer(container) {
 
 describe("ChatContainerComponent", () => {
   it("replaces an existing message when adding another message with the same id", () => {
-    const container = new ChatContainerComponent(createUiTheme("plain"), createToolUiRegistry());
+    const container = new ChatContainerComponent(createUiTheme("plain"));
 
     container.addMessage({ type: "system", text: "first", kind: "muted" }, "tool-call-id");
     container.addMessage({ type: "system", text: "second", kind: "muted" }, "tool-call-id");

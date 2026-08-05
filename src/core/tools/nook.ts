@@ -106,7 +106,7 @@ function parseNookArguments(raw: unknown): ParsedCodeModeArguments<NookArgs> {
     typeof raw === "object" && raw !== null && typeof (raw as { code?: unknown }).code === "string"
       ? (raw as { code: string }).code
       : "";
-  const displayTarget =
+  const subject =
     rawCode
       .split(/\r?\n/)
       .map((line) => line.trim())
@@ -117,14 +117,14 @@ function parseNookArguments(raw: unknown): ParsedCodeModeArguments<NookArgs> {
       ok: false,
       error: formatZodError(parsed.error),
       code: rawCode,
-      displayTarget,
+      subject,
     };
   }
   return {
     ok: true,
     args: parsed.data,
     code: parsed.data.code,
-    displayTarget,
+    subject,
   };
 }
 

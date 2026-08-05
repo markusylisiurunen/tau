@@ -19,7 +19,8 @@ import { buildDiffReviewInstructions } from "../core/diff_review/review_instruct
 import { type CoreDeps, createDefaultCoreDeps } from "../core/runtime/deps.js";
 import { runDirectBashCommand } from "../core/session/direct_bash.js";
 import { SUBAGENT_ACTIVITY_FACET_KIND, type SubagentUiEvent } from "../core/subagents/types.js";
-import type { ToolActivity } from "../core/tools/activity.js";
+import { buildToolRunPresentation, parseToolRunPresentation } from "../core/tools/presentation.js";
+import { TOOL_NAME_BASH } from "../core/tools/tool_names.js";
 import { REASONING_LEVELS, type ReasoningEffort } from "../core/types.js";
 import { formatAdaptiveNumber, formatTokenWindow } from "../core/utils/format.js";
 import { extractAssistantText } from "../core/utils/messages.js";
@@ -138,7 +139,6 @@ export class SessionChatController {
   private isBashMode = false;
   private isBashIncognito = false;
   private showThinking = false;
-  private compactToolUi = true;
   private currentTurnStartedAt?: number;
   private lastTurnDurationMs = 0;
   private turnTimer?: ReturnType<typeof setInterval>;
@@ -204,7 +204,6 @@ export class SessionChatController {
 
   start(): void {
     this.view.setThinkingVisibility(this.showThinking);
-    this.view.setCompactToolUi(this.compactToolUi);
     this.view.addMessage({
       type: "app_intro",
       title: this.buildStartupIntroTitle(),
@@ -245,7 +244,6 @@ export class SessionChatController {
   getInputHandlers(): ChatViewInputHandlers {
     return {
       onCtrlT: () => this.toggleThinkingVisibility(),
-      onCtrlO: () => this.toggleCompactToolUi(),
       onShiftTab: () => void this.cycleReasoningLevel(),
       onCtrlP: () => void this.cyclePersonality(),
       onCtrlS: () => void this.stashEditorToClipboard(),
@@ -504,22 +502,17 @@ export class SessionChatController {
     }
 
     const toolCallId = `bash-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const headerTarget = command.split(/\r?\n/, 1)[0] ?? command;
 
     this.isStreaming = true;
     this.startTurnTimer();
     this.view.startWorkingIcon();
     this.view.updateLocalToolUi({
       toolCallId,
-      toolName: "bash",
       status: "running",
-      headerTarget,
-      activity: {
-        type: "bash_started",
-        toolCallId,
-        command,
-        headerTarget,
-      },
+      presentation: buildToolRunPresentation({
+        toolName: TOOL_NAME_BASH,
+        subject: command,
+      }),
     });
     this.refreshStatus();
 
@@ -531,6 +524,7 @@ export class SessionChatController {
       const result = await runDirectBashCommand({
         command,
         backend,
+        actionLabel: options.labelOverride,
         addToContext: options.addToContext,
         addUserText: async (text) => {
           const recorded = await this.session.record(text, {
@@ -545,38 +539,20 @@ export class SessionChatController {
       }
       this.view.updateLocalToolUi({
         toolCallId,
-        toolName: "bash",
         status: result.exitCode === 0 ? "succeeded" : "failed",
-        headerTarget,
-        activity: {
-          type: "bash_execution",
-          toolCallId,
-          command: result.command,
-          headerTarget,
-          exitCode: result.exitCode,
-          truncationInfo: result.truncationInfo,
-          uiText: result.uiText,
-          durationMs: result.durationMs,
-          labelOverride: options.labelOverride,
-        },
-        resultText: result.uiText.fullLines.map((line) => line.text).join("\n"),
+        presentation: result.presentation,
       });
       await this.syncFromSessionSnapshot();
     } catch (error) {
       const reason = (error as Error).message || "bash failed";
       this.view.updateLocalToolUi({
         toolCallId,
-        toolName: "bash",
         status: "blocked",
-        headerTarget,
-        activity: {
-          type: "bash_blocked",
-          toolCallId,
-          command,
-          headerTarget,
-          reason,
-        },
-        resultText: reason,
+        presentation: buildToolRunPresentation({
+          toolName: TOOL_NAME_BASH,
+          subject: command,
+          details: [{ text: reason, tone: "error" }],
+        }),
       });
       await this.syncFromSessionSnapshot();
     } finally {
@@ -1554,15 +1530,6 @@ export class SessionChatController {
     );
   }
 
-  private toggleCompactToolUi(): void {
-    this.compactToolUi = !this.compactToolUi;
-    this.view.setCompactToolUi(this.compactToolUi);
-    this.view.addSystemMessage(
-      this.compactToolUi ? "compact tool ui enabled" : "compact tool ui disabled",
-      "success",
-    );
-  }
-
   private async cyclePersonality(): Promise<void> {
     const personas = this.snapshot.catalog.personas;
     if (personas.length === 0) {
@@ -2477,17 +2444,6 @@ function isCoreMessage(message: SessionProtocolMessage["message"]): message is M
   }
 }
 
-function isToolUiEvent(value: unknown): value is ToolActivity {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "type" in value &&
-    typeof value.type === "string" &&
-    "toolCallId" in value &&
-    typeof value.toolCallId === "string"
-  );
-}
-
 function getToolUiModelsInModelOrder(snapshot: SessionProtocolSnapshot): ToolUiModel[] {
   const facetsByToolId = new Map<string, SessionProtocolSnapshot["facets"][string]>();
   for (const facet of Object.values(snapshot.facets)) {
@@ -2495,55 +2451,35 @@ function getToolUiModelsInModelOrder(snapshot: SessionProtocolSnapshot): ToolUiM
       facetsByToolId.set(facet.subject.id, facet);
     }
   }
-  const messagesById = new Map(snapshot.messages.map((message) => [message.id, message]));
 
   return getToolIdsInModelOrder(snapshot).map((toolId) => {
     const tool = snapshot.tools[toolId]!;
-    const activities = toolUiEventsFromFacet(facetsByToolId.get(toolId));
-    const activity = activities.at(-1);
-    const resultMessage =
-      tool.status === "streaming" ? undefined : messagesById.get(tool.resultMessageId ?? "");
-    const resultMessageText =
-      resultMessage?.message.role === "toolResult"
-        ? resultMessage.message.content
-            .flatMap((content) => (content.type === "text" ? [content.text] : []))
-            .join("\n")
-        : undefined;
-    const resultText =
-      resultMessageText || (tool.status === "streaming" ? undefined : (tool.error ?? tool.summary));
-    const activityCode = activity && "code" in activity ? activity.code : undefined;
-    const code = activityCode ?? getToolCallCode(tool, messagesById);
     return {
       toolCallId: tool.toolCallId,
-      toolName: tool.toolName,
       status: tool.status,
-      headerTarget: activity?.headerTarget ?? tool.toolName,
-      ...(code !== undefined ? { code } : {}),
-      ...(activity ? { activity } : {}),
-      ...(resultText ? { resultText } : {}),
+      presentation: getToolPresentation(facetsByToolId.get(toolId), tool.toolCallId),
     };
   });
 }
 
-function getToolCallCode(
-  tool: SessionProtocolSnapshot["tools"][string],
-  messagesById: ReadonlyMap<string, SessionProtocolMessage>,
-): string | undefined {
-  if (tool.status === "streaming") return undefined;
-  const message = messagesById.get(tool.call.messageId);
-  if (message?.message.role !== "assistant") return undefined;
-  const content = message.message.content[tool.call.contentIndex];
-  if (
-    content?.type !== "toolCall" ||
-    content.id !== tool.toolCallId ||
-    typeof content.arguments !== "object" ||
-    content.arguments === null ||
-    !("code" in content.arguments) ||
-    typeof content.arguments.code !== "string"
-  ) {
-    return undefined;
+function getToolPresentation(
+  facet: SessionProtocolSnapshot["facets"][string] | undefined,
+  toolCallId: string,
+) {
+  if (facet?.kind !== "tau.tool-ui-events" || !Array.isArray(facet.data.events)) {
+    throw new Error(`missing tool presentation for '${toolCallId}'`);
   }
-  return content.arguments.code;
+  const event = facet.data.events.at(-1);
+  if (
+    typeof event !== "object" ||
+    event === null ||
+    !("toolCallId" in event) ||
+    event.toolCallId !== toolCallId ||
+    !("presentation" in event)
+  ) {
+    throw new Error(`missing tool presentation for '${toolCallId}'`);
+  }
+  return parseToolRunPresentation(event.presentation);
 }
 
 function getToolIdsInModelOrder(snapshot: SessionProtocolSnapshot): string[] {
@@ -2561,15 +2497,6 @@ function getToolIdsInModelOrder(snapshot: SessionProtocolSnapshot): string[] {
       );
     })
     .map((tool) => tool.id);
-}
-
-function toolUiEventsFromFacet(
-  facet: SessionProtocolSnapshot["facets"][string] | undefined,
-): ToolActivity[] {
-  if (facet?.kind !== "tau.tool-ui-events" || !Array.isArray(facet.data.events)) {
-    return [];
-  }
-  return facet.data.events.filter(isToolUiEvent);
 }
 
 function getSubagentActivity(

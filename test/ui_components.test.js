@@ -3,14 +3,13 @@ import chalk from "chalk";
 import stripAnsi from "strip-ansi";
 import { expect, test, vi } from "vitest";
 import { createCommandRegistry } from "../dist/core/commands/index.js";
+import { buildToolRunPresentation } from "../dist/core/tools/presentation.js";
 import { TuiChatView } from "../dist/tui/chat_view.js";
 import { AssistantMessageComponent } from "../dist/tui/ui/assistant_message.js";
 import { ChatContainerComponent } from "../dist/tui/ui/chat_container.js";
 import { renderChatMessage } from "../dist/tui/ui/chat_message_model.js";
 import { AutocompleteList } from "../dist/tui/ui/components/autocomplete_list.js";
-import { HeaderLineComponent } from "../dist/tui/ui/components/header_line.js";
 import {
-  OneLineSegmentsComponent,
   truncateFromEndByWidth,
   truncateFromEndByWidthPreserveAnsi,
 } from "../dist/tui/ui/components/one_line_segments.js";
@@ -22,7 +21,6 @@ import { SessionDividerComponent } from "../dist/tui/ui/session_divider.js";
 import { SlashAutocompleteProvider } from "../dist/tui/ui/slash_autocomplete.js";
 import { SubagentPanelComponent } from "../dist/tui/ui/subagent_panel.js";
 import { createUiTheme } from "../dist/tui/ui/theme/index.js";
-import { createToolUiRegistry } from "../dist/tui/ui/tool_ui_registry.js";
 import { UserMessageComponent } from "../dist/tui/ui/user_message.js";
 import { createTagTheme, renderLines, renderText } from "./ui_helpers.js";
 
@@ -59,18 +57,16 @@ function createSubagentState(id, title) {
 
 function createToolModel(label) {
   const toolCallId = `tool-${label}`;
+  const presentation = buildToolRunPresentation({
+    toolName: "bash",
+    subject: label,
+    details: [{ text: "blocked", tone: "error" }],
+  });
   return {
     toolCallId,
     toolName: "bash",
     status: "blocked",
-    headerTarget: label,
-    activity: {
-      type: "bash_blocked",
-      toolCallId,
-      command: label,
-      headerTarget: label,
-      reason: "blocked",
-    },
+    presentation,
   };
 }
 
@@ -280,8 +276,6 @@ test("renderChatMessage renders diff review status with review styling", () => {
     {
       theme,
       thoughtsVisible: false,
-      compactToolUi: true,
-      toolUiRegistry: createToolUiRegistry(),
     },
   );
 
@@ -353,9 +347,7 @@ test("AssistantMessageComponent toggles partial thinking visibility", () => {
 
 test("ChatContainerComponent hides empty assistant messages even when thoughts are visible", () => {
   const theme = createTagTheme();
-  const toolUiRegistry = createToolUiRegistry();
-  const container = new ChatContainerComponent(theme, toolUiRegistry, true);
-  container.setCompactToolUi(true);
+  const container = new ChatContainerComponent(theme, true);
 
   container.addMessage({ type: "tool", tool: createToolModel("tool a") });
   container.addMessage({ type: "assistant_partial", text: "", thinking: "" });
@@ -466,37 +458,6 @@ test("FooterComponent compacts cwd before truncating and keeps ellipsis styled",
   expect(truncatedLine).toContain("<textDim>");
   expect(truncatedLine).toContain("…</textDim>");
   expect(truncatedLine).not.toContain("</textDim>…");
-});
-
-test("OneLineSegmentsComponent truncates flex segments", () => {
-  const component = new OneLineSegmentsComponent(
-    [
-      { text: "hello", style: (s) => s },
-      { text: "world", style: (s) => s },
-    ],
-    [1],
-  );
-  const line = renderLines(component, 8)[0];
-  expect(line).toBe("hellowo…");
-});
-
-test("HeaderLineComponent wraps styled header text by character", () => {
-  const component = new HeaderLineComponent({
-    segments: [
-      { text: " ", style: (s) => s },
-      { text: "✓", style: (s) => `<ok>${s}</ok>` },
-      { text: " ", style: (s) => s },
-      { text: "ran", style: (s) => `<muted>${s}</muted>` },
-      { text: " ", style: (s) => s },
-      { text: "alpha beta gamma delta epsilon", style: (s) => `<accent>${s}</accent>` },
-    ],
-  });
-
-  const lines = renderLines(component, 20);
-  expect(lines).toEqual([
-    " <ok>✓</ok> <muted>ran</muted> <accent>alpha beta ga</accent>",
-    "<accent>mma delta epsilon</accent>",
-  ]);
 });
 
 test("truncateFromEndByWidth respects max width", () => {

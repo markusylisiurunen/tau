@@ -548,6 +548,128 @@ describe("LocalSessionHost", () => {
     }
   });
 
+  it("continues retry from completed tool results without truncating history", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "tau-retry-tool-history-"));
+    const historyStore = new LocalHistoryStore(":memory:");
+    const truncateHistory = vi.spyOn(historyStore, "truncateFromSources");
+    const toolBackend = createLocalToolExecutionBackend();
+    const runBash = vi.spyOn(toolBackend, "runBash");
+    const executionEnvironment = createTestExecutionEnvironment(
+      { kind: "local", cwd, home: cwd },
+      toolBackend,
+    );
+    const host = createHostForEnvironment(new MemorySessionStore(), executionEnvironment, {
+      history: new HistoryManager(historyStore),
+    });
+
+    try {
+      const session = await host.createSession({
+        executionEnvironment: { kind: "local", cwd },
+        attributes: { source: "test" },
+      });
+      const toolCall = fauxToolCall("bash", { command: "printf once" }, { id: "retry-tool" });
+      const toolMessage = fauxAssistantMessage([toolCall], { stopReason: "toolUse" });
+      const interruptedMessage = fauxAssistantMessage("interrupted", { stopReason: "aborted" });
+      const completedMessage = fauxAssistantMessage("continued");
+      const secondSubturnStarted = deferred();
+      const contexts = [];
+      let subturn = 0;
+      session.runtime.agent.spec.model.stream = (context, options) => {
+        contexts.push(context);
+        subturn += 1;
+        if (subturn === 1) {
+          return {
+            async *[Symbol.asyncIterator]() {
+              yield { type: "toolcall_start", contentIndex: 0, partial: toolMessage };
+              yield {
+                type: "toolcall_end",
+                contentIndex: 0,
+                toolCall,
+                partial: toolMessage,
+              };
+            },
+            async result() {
+              return toolMessage;
+            },
+          };
+        }
+        if (subturn === 2) {
+          secondSubturnStarted.resolve();
+          return {
+            async *[Symbol.asyncIterator]() {
+              if (!options.signal.aborted) {
+                await new Promise((resolve) =>
+                  options.signal.addEventListener("abort", resolve, { once: true }),
+                );
+              }
+            },
+            async result() {
+              return interruptedMessage;
+            },
+          };
+        }
+        return {
+          async *[Symbol.asyncIterator]() {},
+          async result() {
+            return completedMessage;
+          },
+        };
+      };
+
+      await session.record({ text: "run the tool" });
+      const firstTurn = session.runTurn();
+      await secondSubturnStarted.promise;
+      expect(runBash).toHaveBeenCalledOnce();
+      expect(session.interruptTurn()).toBe(true);
+      await expect(firstTurn).resolves.toMatchObject({ status: "aborted" });
+
+      const snapshotBeforeRetry = await session.snapshot();
+      const runtimeIdsBeforeRetry = session.runtime.rawHistoryEntries.map((entry) => entry.id);
+      const transcriptBeforeRetry = await historyStore.read({
+        sessionId: session.sessionId,
+        limit: 10,
+      });
+
+      await expect(session.retryTurn()).resolves.toMatchObject({ status: "completed" });
+
+      const snapshotAfterRetry = await session.snapshot();
+      const transcriptAfterRetry = await historyStore.read({
+        sessionId: session.sessionId,
+        limit: 10,
+      });
+      expect(
+        snapshotAfterRetry.messages
+          .slice(0, snapshotBeforeRetry.messages.length)
+          .map((message) => message.id),
+      ).toEqual(snapshotBeforeRetry.messages.map((message) => message.id));
+      expect(
+        session.runtime.rawHistoryEntries
+          .slice(0, runtimeIdsBeforeRetry.length)
+          .map((entry) => entry.id),
+      ).toEqual(runtimeIdsBeforeRetry);
+      expect(transcriptAfterRetry.entries.slice(0, transcriptBeforeRetry.entries.length)).toEqual(
+        transcriptBeforeRetry.entries,
+      );
+      expect(truncateHistory).not.toHaveBeenCalled();
+      expect(runBash).toHaveBeenCalledOnce();
+      expect(contexts[2].messages.map((message) => message.role)).toEqual([
+        "user",
+        "assistant",
+        "toolResult",
+      ]);
+      expect(contexts[2].messages[1].content).toContainEqual(
+        expect.objectContaining({ type: "toolCall", id: toolCall.id }),
+      );
+      expect(contexts[2].messages[2]).toMatchObject({
+        role: "toolResult",
+        toolCallId: toolCall.id,
+      });
+    } finally {
+      await host.shutdown();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("creates, attaches, lists, snapshots, and shuts down local sessions", async () => {
     const store = new MemorySessionStore();
     const host = createHost(store);

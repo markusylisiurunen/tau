@@ -854,7 +854,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         "goal-controlled turns cannot be retried; resume a blocked goal or start a new goal",
       );
     }
-    if (!userMessage || !(await this.session.prepareRetry(userMessage.id))) {
+    if (!userMessage) {
       throw new SessionRetryUnavailableError("no user turn is available to retry");
     }
     return await this.runTurn();

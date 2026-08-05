@@ -565,28 +565,6 @@ export class AgentRuntime {
     return true;
   }
 
-  async retryFromHistoryEntryId(historyEntryId: string): Promise<boolean> {
-    this.assertActive();
-    if (this.status !== "idle") {
-      throw new Error("cannot retry a running agent");
-    }
-
-    const historyIndex = this.historyEntries.findIndex((entry) => entry.id === historyEntryId);
-    const entry = this.historyEntries[historyIndex];
-    if (historyIndex < 0 || entry?.message.role !== "user") return false;
-    const removedEntryIds = this.historyEntries.slice(historyIndex + 1).map((item) => item.id);
-    if (removedEntryIds.length === 0) return true;
-    this.replaceHistoryEntries(this.historyEntries.slice(0, historyIndex + 1));
-    await this.deliver({
-      type: "history_rewound",
-      historyEntryId: entry.id,
-      text: this.extractRewindUserText(entry.message),
-      removedEntryIds,
-      revision: this.revision,
-    });
-    return true;
-  }
-
   async rewindToHistoryEntryId(historyEntryId: string): Promise<RewindResult | undefined> {
     this.assertActive();
     if (this.status !== "idle") {

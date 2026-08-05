@@ -6,12 +6,12 @@ import {
   decodeKittyPrintable,
   getKeybindings,
   matchesKey,
-  SelectList,
   type SelectListLayoutOptions,
-  type SelectListTheme,
   truncateToWidth,
   visibleWidth,
 } from "@earendil-works/pi-tui";
+import type { TuiAutocompleteItem } from "../autocomplete_item.js";
+import { AutocompleteList, type AutocompleteListTheme } from "./autocomplete_list.js";
 import { UndoStack } from "./undo_stack.js";
 
 const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
@@ -30,6 +30,7 @@ const SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
   truncatePrimary: ({ text, maxWidth }) => truncateToWidth(text, maxWidth, "…"),
 };
 const ATTACHMENT_AUTOCOMPLETE_DEBOUNCE_MS = 20;
+const AUTOCOMPLETE_MAX_VISIBLE = 8;
 
 function isWhitespaceChar(char: string): boolean {
   return /\s/.test(char);
@@ -216,7 +217,7 @@ interface LayoutLine {
 
 export interface EditorTheme {
   borderColor: (str: string) => string;
-  selectList: SelectListTheme;
+  selectList: AutocompleteListTheme;
 }
 
 export class Editor implements Component {
@@ -236,7 +237,7 @@ export class Editor implements Component {
 
   // Autocomplete support
   private autocompleteProvider?: AutocompleteProvider;
-  protected autocompleteList?: SelectList;
+  protected autocompleteList?: AutocompleteList;
   private autocompleteState: "regular" | "force" | null = null;
   private autocompletePrefix: string = "";
   private autocompleteAbort?: AbortController;
@@ -519,12 +520,13 @@ export class Editor implements Component {
           this.state.cursorLine = result.cursorLine;
           this.state.cursorCol = result.cursorCol;
           const shouldRetrigger =
-            this.autocompletePrefix.startsWith("@") &&
-            this.shouldRetriggerMentionAutocomplete(
-              result.lines,
-              result.cursorLine,
-              result.cursorCol,
-            );
+            (selected as TuiAutocompleteItem).autocompleteAction === "navigate" ||
+            (this.autocompletePrefix.startsWith("@") &&
+              this.shouldRetriggerMentionAutocomplete(
+                result.lines,
+                result.cursorLine,
+                result.cursorCol,
+              ));
           this.cancelAutocomplete();
           if (this.onChange) this.onChange(this.getText());
           if (shouldRetrigger) {
@@ -550,17 +552,23 @@ export class Editor implements Component {
           this.state.cursorLine = result.cursorLine;
           this.state.cursorCol = result.cursorCol;
 
-          if (this.autocompletePrefix.startsWith("/")) {
+          const autocompleteAction = (selected as TuiAutocompleteItem).autocompleteAction;
+          const shouldSubmit =
+            autocompleteAction === "submit" ||
+            (autocompleteAction !== "navigate" && this.autocompletePrefix.startsWith("/"));
+
+          if (shouldSubmit) {
             this.cancelAutocomplete();
             // Fall through to submit
           } else {
             const shouldRetrigger =
-              this.autocompletePrefix.startsWith("@") &&
-              this.shouldRetriggerMentionAutocomplete(
-                result.lines,
-                result.cursorLine,
-                result.cursorCol,
-              );
+              autocompleteAction === "navigate" ||
+              (this.autocompletePrefix.startsWith("@") &&
+                this.shouldRetriggerMentionAutocomplete(
+                  result.lines,
+                  result.cursorLine,
+                  result.cursorCol,
+                ));
             this.cancelAutocomplete();
             if (this.onChange) this.onChange(this.getText());
             if (shouldRetrigger) {
@@ -1050,19 +1058,7 @@ export class Editor implements Component {
       this.onChange(this.getText());
     }
 
-    // Update or re-trigger autocomplete after backspace
-    if (this.autocompleteState) {
-      this.updateAutocomplete();
-    } else {
-      // If autocomplete was cancelled (no matches), re-trigger if we're in a completable context
-      const currentLine = this.state.lines[this.state.cursorLine] || "";
-      const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);
-      if (this.isInSlashCommandContext(textBeforeCursor)) {
-        this.tryTriggerAutocomplete();
-      } else if (this.isMentionAutocompleteContext(textBeforeCursor)) {
-        this.tryTriggerAutocomplete();
-      }
-    }
+    this.refreshAutocompleteAfterEdit();
   }
 
   private moveToLineStart(): void {
@@ -1101,6 +1097,7 @@ export class Editor implements Component {
     if (this.onChange) {
       this.onChange(this.getText());
     }
+    this.refreshAutocompleteAfterEdit();
   }
 
   private deleteToEndOfLine(): void {
@@ -1125,6 +1122,7 @@ export class Editor implements Component {
     if (this.onChange) {
       this.onChange(this.getText());
     }
+    this.refreshAutocompleteAfterEdit();
   }
 
   private deleteWordBackwards(): void {
@@ -1158,6 +1156,7 @@ export class Editor implements Component {
     if (this.onChange) {
       this.onChange(this.getText());
     }
+    this.refreshAutocompleteAfterEdit();
   }
 
   private handleForwardDelete(): void {
@@ -1192,18 +1191,7 @@ export class Editor implements Component {
       this.onChange(this.getText());
     }
 
-    // Update or re-trigger autocomplete after forward delete
-    if (this.autocompleteState) {
-      this.updateAutocomplete();
-    } else {
-      const currentLine = this.state.lines[this.state.cursorLine] || "";
-      const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);
-      if (this.isInSlashCommandContext(textBeforeCursor)) {
-        this.tryTriggerAutocomplete();
-      } else if (this.isMentionAutocompleteContext(textBeforeCursor)) {
-        this.tryTriggerAutocomplete();
-      }
-    }
+    this.refreshAutocompleteAfterEdit();
   }
 
   /**
@@ -1524,8 +1512,13 @@ export class Editor implements Component {
   private createAutocompleteList(
     _prefix: string,
     items: Array<{ value: string; label: string; description?: string }>,
-  ): SelectList {
-    return new SelectList(items, 5, this.theme.selectList, SELECT_LIST_LAYOUT);
+  ): AutocompleteList {
+    return new AutocompleteList(
+      items,
+      AUTOCOMPLETE_MAX_VISIBLE,
+      this.theme.selectList,
+      SELECT_LIST_LAYOUT,
+    );
   }
 
   protected tryTriggerAutocomplete(explicitTab: boolean = false): void {
@@ -1750,6 +1743,22 @@ export class Editor implements Component {
     return this.autocompleteState !== null;
   }
 
+  private refreshAutocompleteAfterEdit(): void {
+    if (this.autocompleteState) {
+      this.updateAutocomplete();
+      return;
+    }
+
+    const currentLine = this.state.lines[this.state.cursorLine] || "";
+    const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);
+    if (
+      this.isInSlashCommandContext(textBeforeCursor) ||
+      this.isMentionAutocompleteContext(textBeforeCursor)
+    ) {
+      this.tryTriggerAutocomplete();
+    }
+  }
+
   private updateAutocomplete(): void {
     if (!this.autocompleteState || !this.autocompleteProvider) return;
     this.requestAutocomplete({ force: this.autocompleteState === "force", explicitTab: false });
@@ -1768,8 +1777,6 @@ export class Editor implements Component {
     if (this.onChange) {
       this.onChange(this.getText());
     }
-    if (this.autocompleteState) {
-      this.updateAutocomplete();
-    }
+    this.refreshAutocompleteAfterEdit();
   }
 }

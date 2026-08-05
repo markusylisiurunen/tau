@@ -966,7 +966,7 @@ describe("SessionChatController", () => {
 
     controller.start();
 
-    expect(view.status.footer.commandHint).toBe("compacting context...");
+    expect(view.status.footer.statusHint).toBe("compacting context...");
   });
 
   it("renders auto-compaction resets with the main-style divider and retained notice", async () => {
@@ -1167,7 +1167,7 @@ describe("SessionChatController", () => {
     expect(view.workingIconStops).toBe(1);
     expect(controller.isStreaming).toBe(false);
     expect(controller.submittedTurnInProgress).toBe(false);
-    expect(view.status.footer.commandHint).toBeUndefined();
+    expect(view.status.footer.statusHint).toBeUndefined();
   });
 
   it("shows the protocol cause when a submitted turn fails", async () => {
@@ -1230,7 +1230,7 @@ describe("SessionChatController", () => {
     expect(view.workingIconStarts).toBe(1);
     expect(view.workingIconStops).toBe(1);
     expect(controller.isStreaming).toBe(false);
-    expect(view.status.footer.commandHint).toBeUndefined();
+    expect(view.status.footer.statusHint).toBeUndefined();
   });
 
   it("starts and stops caffeinate around submitted session turns when enabled", async () => {
@@ -1531,7 +1531,7 @@ describe("SessionChatController", () => {
     });
 
     expect(view.workingIconStarts).toBe(1);
-    expect(view.status.footer.commandHint).toBeUndefined();
+    expect(view.status.footer.statusHint).toBeUndefined();
 
     const assistantMessage = createAssistantMessage("observed reply");
     session.emit({
@@ -1602,7 +1602,7 @@ describe("SessionChatController", () => {
     expect(view.workingIconStops).toBe(1);
     expect(controller.isStreaming).toBe(false);
     expect(controller.submittedTurnInProgress).toBe(true);
-    expect(view.status.footer.commandHint).toBeUndefined();
+    expect(view.status.footer.statusHint).toBeUndefined();
 
     controller.getInputHandlers().onSubmit("queued while response pending");
     await flush();
@@ -3080,7 +3080,7 @@ describe("SessionChatController", () => {
     });
     controller.start();
 
-    controller.getInputHandlers().onSubmit("/compact:summary-and-last preserve decisions");
+    controller.getInputHandlers().onSubmit("/compact-keep-last preserve decisions");
     await flush();
 
     expect(session.compact).toHaveBeenCalledWith("summary-and-last", {
@@ -3173,14 +3173,14 @@ describe("SessionChatController", () => {
     });
     controller.start();
 
-    controller.getInputHandlers().onSubmit("/compact:summary-only");
+    controller.getInputHandlers().onSubmit("/compact-all");
     await flush();
 
-    expect(view.status.footer.commandHint).toBe("compacting context...");
+    expect(view.status.footer.statusHint).toBe("compacting context...");
     pendingCompact.resolve();
     await flush();
 
-    expect(view.status.footer.commandHint).toBeUndefined();
+    expect(view.status.footer.statusHint).toBeUndefined();
   });
 
   it("uses the shared slash command parser for session command dispatch", async () => {
@@ -3205,7 +3205,7 @@ describe("SessionChatController", () => {
     expect(view.systems.some((message) => message.text.includes("commands:"))).toBe(true);
   });
 
-  it("tracks session editor input modes and command hints while typing", async () => {
+  it("tracks session editor input modes without command hints", async () => {
     const session = new FakeSession();
     const view = new FakeView();
     const controller = new SessionChatController({
@@ -3228,7 +3228,7 @@ describe("SessionChatController", () => {
 
     handlers.onChange("/reload");
     expect(view.status.editor.mode).toBe("normal");
-    expect(view.status.footer.commandHint).toContain("reload prompts");
+    expect(view.status.footer.statusHint).toBeUndefined();
   });
 
   it("switches session personas through the session protocol", async () => {
@@ -4131,7 +4131,7 @@ describe("SessionChatController", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const speechHints = view.statusUpdates
-      .map((status) => status.footer.commandHint)
+      .map((status) => status.footer.statusHint)
       .filter((hint) => hint !== undefined);
     expect(speechHints).toEqual(
       expect.arrayContaining([
@@ -4141,7 +4141,7 @@ describe("SessionChatController", () => {
         "playing speech (0/1 played, 1/1 ready)...",
       ]),
     );
-    expect(view.status.footer.commandHint).toBeUndefined();
+    expect(view.status.footer.statusHint).toBeUndefined();
     expect(spawn).toHaveBeenNthCalledWith(1, "mktemp", ["/tmp/tau-speak.XXXXXX"]);
     expect(spawn).toHaveBeenNthCalledWith(
       2,

@@ -57,10 +57,11 @@ const PALETTE_TEXT_TOKENS = [
   "editorBorderXhigh",
   "editorBorderMax",
   "editorSubagentBorder",
+  "editorBorderBash",
   "editorBorderRecording",
+  "autocompleteSelectedText",
   "statusWarn",
   "statusError",
-  "modeBash",
   "actionRunning",
   "actionSuccess",
   "actionError",
@@ -70,12 +71,14 @@ const PALETTE_TEXT_TOKENS = [
   "toastSuccess",
   "toastWarn",
   "toastError",
+  "userText",
   "userReviewText",
   "userReviewTextMuted",
   "userReviewTextDim",
 ] as const satisfies readonly PaletteColorToken[];
 
 const PALETTE_BG_TOKENS = [
+  "autocompleteSelectedSurface",
   "userSurface",
   "userReviewSurface",
 ] as const satisfies readonly PaletteColorToken[];

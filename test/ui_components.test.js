@@ -1,4 +1,5 @@
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import chalk from "chalk";
 import stripAnsi from "strip-ansi";
 import { expect, test, vi } from "vitest";
 import { createCommandRegistry } from "../dist/core/commands/index.js";
@@ -6,6 +7,7 @@ import { TuiChatView } from "../dist/tui/chat_view.js";
 import { AssistantMessageComponent } from "../dist/tui/ui/assistant_message.js";
 import { ChatContainerComponent } from "../dist/tui/ui/chat_container.js";
 import { renderChatMessage } from "../dist/tui/ui/chat_message_model.js";
+import { AutocompleteList } from "../dist/tui/ui/components/autocomplete_list.js";
 import { HeaderLineComponent } from "../dist/tui/ui/components/header_line.js";
 import {
   OneLineSegmentsComponent,
@@ -19,6 +21,7 @@ import { RewindPickerComponent } from "../dist/tui/ui/rewind_picker.js";
 import { SessionDividerComponent } from "../dist/tui/ui/session_divider.js";
 import { SlashAutocompleteProvider } from "../dist/tui/ui/slash_autocomplete.js";
 import { SubagentPanelComponent } from "../dist/tui/ui/subagent_panel.js";
+import { createUiTheme } from "../dist/tui/ui/theme/index.js";
 import { createToolUiRegistry } from "../dist/tui/ui/tool_ui_registry.js";
 import { UserMessageComponent } from "../dist/tui/ui/user_message.js";
 import { createTagTheme, renderLines, renderText } from "./ui_helpers.js";
@@ -101,6 +104,45 @@ async function waitForAutocomplete(ms = 0) {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+test("TuiChatView switches repeatedly through its retained theme catalog", () => {
+  const previousLevel = chalk.level;
+  chalk.level = 3;
+  try {
+    const view = Object.create(TuiChatView.prototype);
+    view.terminalAppearance = "dark";
+    view.themes = [
+      {
+        id: "first",
+        tokens: { brandAccent: "#ff0000" },
+        sourcePath: "first",
+        scope: "project",
+      },
+      {
+        id: "second",
+        tokens: { brandAccent: "#00ff00" },
+        sourcePath: "second",
+        scope: "project",
+      },
+    ];
+    view.chatContainer = { setTheme() {} };
+    view.footer = { setTheme() {} };
+    view.pendingMessages = { setTheme() {} };
+    view.subagentPanel = { setTheme() {} };
+    view.editor = { setUiTheme() {} };
+    view.editorPane = { setTheme() {} };
+    view.ui = { invalidate() {}, requestRender() {} };
+
+    view.updateTheme({ themeId: "first" });
+    const first = view.uiTheme.palette.brandAccent("selected");
+    view.updateTheme({ themeId: "second" });
+    const second = view.uiTheme.palette.brandAccent("selected");
+
+    expect(first).not.toBe(second);
+  } finally {
+    chalk.level = previousLevel;
+  }
+});
+
 test("TuiChatView tool reconciliation does not reset subagent state", () => {
   const reconcileSession = vi.fn();
   const resetSubagents = vi.fn();
@@ -153,16 +195,33 @@ test("SessionDividerComponent renders a muted divider line", () => {
   expect(lines[0]).toBe("<textMuted>── new session ─────</textMuted>");
 });
 
+test("UserMessageComponent renders prefixed plain text with hanging indentation", () => {
+  const component = new UserMessageComponent(createUiTheme("plain"), {
+    text: "hey, how\nare you?",
+  });
+
+  expect(renderLines(component, 40)).toEqual([" > hey, how", "   are you?"]);
+
+  component.update({ text: "hey, how are you?" });
+  expect(renderLines(component, 12)).toEqual([" > hey, how", "   are you?"]);
+
+  component.update({ text: "**still plain**" });
+  expect(renderText(component, 40).trim()).toBe("> **still plain**");
+});
+
 test("UserMessageComponent applies review styling", () => {
   const theme = createTagTheme();
   const component = new UserMessageComponent(theme, {
     text: "reviewed the staged changes",
     kind: "review",
   });
-  const text = renderText(component, 60);
+  const lines = renderLines(component, 60);
+  const text = lines.join("\n");
+  expect(lines.every((line) => stripTags(line).trim().length > 0)).toBe(true);
   expect(text).toContain("<userReviewSurface>");
-  expect(text).toContain("<userReviewText>reviewed the staged");
-  expect(text).toContain("changes</userReviewText>");
+  expect(text).toContain("<userReviewText>");
+  expect(text).toContain("<bold>");
+  expect(stripTags(text).trimStart()).toMatch(/^> reviewed/);
 });
 
 test("renderChatMessage renders diff review status with review styling", () => {
@@ -344,6 +403,20 @@ test("FooterComponent renders session status", () => {
   expect(line).toContain("<textDim>ctx 10/100 · $0.01</textDim>");
 });
 
+test("FooterComponent renders operation status hints", () => {
+  const theme = createTagTheme();
+  const ui = { requestRender() {} };
+  const footer = new FooterComponent(theme, ui);
+  footer.setStatus({
+    contextUsage: "ctx 10/100",
+    sessionCost: "$0.01",
+    statusHint: "compacting context...",
+    pursuingGoal: false,
+  });
+
+  expect(renderText(footer, 120)).toContain("compacting context...");
+});
+
 test("FooterComponent labels active autonomous goal work", () => {
   const theme = createTagTheme();
   const ui = { requestRender() {} };
@@ -439,6 +512,14 @@ test("truncateFromEndByWidthPreserveAnsi keeps the ellipsis inside the active st
   expect(stripAnsi(truncated)).toBe("hello…");
   expect(truncated).toContain("hello…\x1b[0m");
   expect(truncated).not.toContain("\x1b[0m…");
+});
+
+test("CustomEditor renders one content row when empty", () => {
+  const theme = createTagTheme();
+  const editor = new CustomEditor(theme);
+
+  const lines = editor.render(40).map(stripTags);
+  expect(lines).toHaveLength(3);
 });
 
 test("CustomEditor clamps wrapped lines to the inner width", () => {
@@ -560,6 +641,10 @@ test("CustomEditor refreshes slash autocomplete after insertTextAtCursor", async
   editor.handleInput("/");
   await waitForAutocomplete();
   expect(editor.isShowingAutocomplete()).toBe(true);
+  const autocomplete = editor.render(80).join("\n");
+  expect(autocomplete).not.toContain("→");
+  expect(autocomplete).toContain("<autocompleteSelectedSurface>");
+  expect(autocomplete).toContain("<autocompleteSelectedText>");
 
   editor.insertTextAtCursor("zzzz");
   await waitForAutocomplete();
@@ -570,6 +655,165 @@ test("CustomEditor refreshes slash autocomplete after insertTextAtCursor", async
   editor.handleInput("\r");
 
   expect(submitted).toBe("/zzzz");
+});
+
+test("AutocompleteList keeps truncated selection padding inside its full-width background", () => {
+  const theme = createTagTheme();
+  const list = new AutocompleteList(
+    [
+      {
+        value: "persona:gpt-5.6-sol-chatgpt-coder",
+        label: "persona:gpt-5.6-sol-chatgpt-coder",
+        description: "switch to gpt-5.6-sol-chatgpt-coder",
+      },
+    ],
+    5,
+    theme.editorTheme.selectList,
+    {
+      minPrimaryColumnWidth: 12,
+      maxPrimaryColumnWidth: 32,
+      truncatePrimary: ({ text, maxWidth }) => truncateToWidth(text, maxWidth, "…"),
+    },
+  );
+
+  const line = list.render(50)[0];
+  const plain = stripTags(line);
+  expect(line).toMatch(/^<autocompleteSelectedSurface>/);
+  expect(line).toMatch(/<\/autocompleteSelectedSurface>$/);
+  expect(line).not.toContain("\x1b");
+  expect(plain).toMatch(/^ \S/);
+  expect(plain).toMatch(/\s$/);
+  expect(plain).toContain("…");
+  expect(visibleWidth(plain)).toBe(50);
+});
+
+test("CustomEditor renders autocomplete items with one-column side padding", async () => {
+  const editor = new CustomEditor(createUiTheme("plain"));
+  editor.setAutocompleteProvider(createSlashProvider());
+
+  editor.handleInput("/");
+  await waitForAutocomplete();
+
+  const rendered = editor.render(50);
+  const suggestions = rendered.slice(3, 11);
+  expect(suggestions).toHaveLength(8);
+  for (const line of suggestions) {
+    expect(line).toMatch(/^ \S/);
+    expect(line).toMatch(/\s$/);
+    expect(visibleWidth(line)).toBe(50);
+  }
+  expect(rendered[11]).toMatch(/^ \(/);
+});
+
+test("SlashAutocompleteProvider exposes sorted command submenus", async () => {
+  const provider = createSlashProvider({
+    personas: [{ id: "zeta" }, { id: "alpha" }],
+    prompts: [{ id: "review" }],
+    themes: [{ id: "gold" }, { id: "cyan" }],
+  });
+  const options = { signal: new AbortController().signal };
+
+  const topLevel = await provider.getSuggestions(["/"], 0, 1, options);
+  const topLevelLabels = topLevel.items.map((item) => item.label);
+  expect(topLevelLabels).toEqual(
+    [...topLevelLabels].sort((left, right) => left.localeCompare(right)),
+  );
+  expect(topLevel.items.filter((item) => item.label === "persona")).toEqual([
+    expect.objectContaining({ value: "persona:", autocompleteAction: "navigate" }),
+  ]);
+  expect(topLevelLabels.every((label) => !label.includes(":"))).toBe(true);
+  expect(topLevelLabels).toEqual(
+    expect.arrayContaining(["compact-all", "compact-keep-last", "copy-code", "copy-text"]),
+  );
+  expect(topLevel.items.every((item) => item.description)).toBe(true);
+  expect(topLevel.items.find((item) => item.label === "help")?.description).toBe(
+    "show commands and keyboard shortcuts",
+  );
+  expect(topLevel.items.find((item) => item.label === "persona")?.description).toBe(
+    "change model, instructions, and tools",
+  );
+
+  const filtered = await provider.getSuggestions(["/pera"], 0, 5, options);
+  expect(filtered.items[0]?.label).toBe("persona");
+  expect(await provider.getSuggestions(["/keyboard"], 0, 9, options)).toBeNull();
+
+  const personas = await provider.getSuggestions(["/persona:"], 0, 9, options);
+  expect(personas.items.map((item) => item.label)).toEqual(["alpha", "zeta"]);
+  expect(personas.items.every((item) => item.autocompleteAction === "submit")).toBe(true);
+
+  const modelProvider = createSlashProvider({
+    personas: [
+      {
+        id: "gpt-5.6-luna-chatgpt-fast-coder",
+        label: "GPT-5.6 Luna ChatGPT Fast Coder",
+      },
+      { id: "gpt-5.6-sol-chatgpt-coder", label: "GPT-5.6 Sol ChatGPT Coder" },
+      {
+        id: "gpt-5.6-sol-chatgpt-fast-coder",
+        label: "GPT-5.6 Sol ChatGPT Fast Coder",
+      },
+    ],
+  });
+  const query = "/persona:5.6solchatgptcoder";
+  const matchingPersonas = await modelProvider.getSuggestions([query], 0, query.length, options);
+  expect(matchingPersonas.items.map((item) => item.label)).toEqual([
+    "gpt-5.6-sol-chatgpt-coder",
+    "gpt-5.6-sol-chatgpt-fast-coder",
+  ]);
+
+  const aliasProvider = createSlashProvider({
+    personas: [{ id: "alpha", label: "GPT Fast" }],
+  });
+  expect(
+    await aliasProvider.getSuggestions(["/persona:gptfast"], 0, "/persona:gptfast".length, options),
+  ).toBeNull();
+});
+
+test("CustomEditor navigates submenus and submits repeated theme selections", async () => {
+  const editor = new CustomEditor(createTagTheme());
+  const submitted = [];
+  editor.onSubmit = (text) => submitted.push(text);
+  editor.setAutocompleteProvider(createSlashProvider({ themes: [{ id: "gold" }, { id: "cyan" }] }));
+
+  for (const char of "/the") editor.handleInput(char);
+  await waitForAutocomplete(25);
+  editor.handleInput("\r");
+  await waitForAutocomplete();
+  expect(editor.getText()).toBe("/theme:");
+  expect(editor.isShowingAutocomplete()).toBe(true);
+  editor.handleInput("\x1b[B");
+  editor.handleInput("\r");
+  expect(submitted).toEqual(["/theme:gold"]);
+
+  editor.setUiTheme(createTagTheme());
+  for (const char of "/the") editor.handleInput(char);
+  await waitForAutocomplete(25);
+  editor.handleInput("\r");
+  await waitForAutocomplete();
+  editor.handleInput("\r");
+  expect(submitted).toEqual(["/theme:gold", "/theme:cyan"]);
+});
+
+test("CustomEditor refreshes autocomplete after word and line deletion", async () => {
+  const editor = new CustomEditor(createUiTheme("plain"));
+  editor.setAutocompleteProvider(
+    createSlashProvider({ personas: [{ id: "luna" }, { id: "sol" }] }),
+  );
+
+  for (const char of "/persona:luna") editor.handleInput(char);
+  await waitForAutocomplete();
+  expect(editor.isShowingAutocomplete()).toBe(true);
+  expect(editor.render(60).join("\n")).not.toContain(" sol");
+
+  editor.handleInput("\x17");
+  await waitForAutocomplete();
+  expect(editor.getText()).toBe("/persona:");
+  expect(editor.render(60).join("\n")).toContain(" sol");
+
+  editor.handleInput("\x15");
+  await waitForAutocomplete();
+  expect(editor.getText()).toBe("");
+  expect(editor.isShowingAutocomplete()).toBe(false);
 });
 
 test("CustomEditor keeps the exact file mention match from the real provider", async () => {
@@ -693,6 +937,8 @@ test("RewindPickerComponent shows at most eight options", () => {
   const optionLines = lines.filter((line) => line.includes("message-"));
 
   expect(optionLines).toHaveLength(8);
+  expect(lines[0]).toMatch(/^┌/);
+  expect(lines.at(-1)).toMatch(/^└/);
   expect(lines.join("\n")).toContain("message-12");
   expect(lines.join("\n")).not.toContain("message-01");
 });

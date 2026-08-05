@@ -322,8 +322,8 @@ In TUI mode, `--debug` respects `--persona` and `--no-agent-context-files`, so y
 
 ## Commands
 
-- `/help`, `/new`, `/exit`, `/rewind`, `/diff [git diff args...]` (opens the TUI-local diff review tool), `/goal [objective|resume|clear]` (manages a persisted autonomous goal; show and clear remain available while work is active), `/copy:text`, `/copy:code`, `/reload`, `/listen` (macOS only; can record while assistant works; warns on Linux), `/speak` (macOS only; speaks the last assistant message)
-- `/compact:summary-only`, `/compact:summary-and-last` - Manually compact history into a single synthetic user summary message with compaction-model-selected original user messages copied verbatim inside the summary (optionally includes last assistant message verbatim when available); automatic compaction is separate and keeps a retained recent tail
+- `/help`, `/new`, `/exit`, `/rewind`, `/diff [git diff args...]` (opens the TUI-local diff review tool), `/goal [objective|resume|clear]` (manages a persisted autonomous goal; show and clear remain available while work is active), `/copy-text`, `/copy-code`, `/reload`, `/listen` (macOS only; can record while assistant works; warns on Linux), `/speak` (macOS only; speaks the last assistant message)
+- `/compact-all`, `/compact-keep-last` - Manually compact history into a single synthetic user summary message with compaction-model-selected original user messages copied verbatim inside the summary (optionally includes last assistant message verbatim when available); automatic compaction is separate and keeps a retained recent tail
 - `/persona:<id>`, `/prompt:<id>`, `/theme:<id>`
 - `!<cmd>` - Direct login Bash execution (bypasses model)
 - `!!<cmd>` - Direct login Bash execution without adding output to the model context

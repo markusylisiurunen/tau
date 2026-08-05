@@ -69,13 +69,13 @@ export class SubagentEditorPaneComponent implements Component {
     const border = this.theme.palette.editorSubagentBorder;
     if (width <= 1) return border("─").repeat(Math.max(0, width));
     if (width === 2) {
-      return `${border("╭")}${border("╮")}`;
+      return `${border("┌")}${border("┐")}`;
     }
 
     const innerWidth = width - 2;
     const dash = border("─");
-    const leftCorner = border("╭");
-    const rightCorner = border("╮");
+    const leftCorner = border("┌");
+    const rightCorner = border("┐");
     const labelWidth = Math.max(0, innerWidth - 4);
     const label = labelWidth > 0 ? truncateFromEndByWidth(SUBAGENT_HEADER_LABEL, labelWidth) : "";
     const labelSegment = label ? ` ${this.theme.palette.textDim(label)} ` : "";

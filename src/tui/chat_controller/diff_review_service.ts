@@ -85,7 +85,7 @@ export class DiffReviewService {
     return this.state !== undefined;
   }
 
-  getCommandHint(defaultHint?: string): string | undefined {
+  getStatusHint(defaultHint?: string): string | undefined {
     if (!this.state) {
       return defaultHint;
     }

@@ -1,8 +1,10 @@
-import type { EditorTheme, MarkdownTheme, SelectListTheme } from "@earendil-works/pi-tui";
+import type { MarkdownTheme } from "@earendil-works/pi-tui";
 import { Chalk } from "chalk";
 import { builtinThemes } from "../../../core/config/builtin_themes.js";
 import type { ReasoningEffort } from "../../../core/types.js";
 import { assertNever } from "../../../core/utils/never.js";
+import type { AutocompleteListTheme } from "../components/autocomplete_list.js";
+import type { EditorTheme } from "../components/editor.js";
 import { coercePaletteOverrides, createPalette, type PaletteOverrides } from "./palette.js";
 
 const chalk = new Chalk({ level: 3 });
@@ -37,12 +39,14 @@ export interface Palette {
   editorBorderXhigh: (text: string) => string;
   editorBorderMax: (text: string) => string;
   editorSubagentBorder: (text: string) => string;
+  editorBorderBash: (text: string) => string;
   editorBorderRecording: (text: string) => string;
+  autocompleteSelectedSurface: (text: string) => string;
+  autocompleteSelectedText: (text: string) => string;
 
   // Status
   statusWarn: (text: string) => string;
   statusError: (text: string) => string;
-  modeBash: (text: string) => string;
 
   // Action
   actionRunning: (text: string) => string;
@@ -61,6 +65,7 @@ export interface Palette {
 
   // User
   userSurface: (text: string) => string;
+  userText: (text: string) => string;
   userReviewSurface: (text: string) => string;
   userReviewText: (text: string) => string;
   userReviewTextMuted: (text: string) => string;
@@ -125,10 +130,12 @@ function createMarkdownTheme(palette: Palette, text: TextStyles): MarkdownTheme 
   };
 }
 
-function createSelectListTheme(palette: Palette, text: TextStyles): SelectListTheme {
+function createSelectListTheme(palette: Palette, text: TextStyles): AutocompleteListTheme {
   return {
     selectedPrefix: (textValue) => text.bold(palette.brandAccent(textValue)),
     selectedText: (textValue) => text.bold(palette.brandAccent(textValue)),
+    selectedBackground: (textValue) => palette.autocompleteSelectedSurface(textValue),
+    selectedForeground: (textValue) => text.bold(palette.autocompleteSelectedText(textValue)),
     description: (textValue) => palette.textMuted(textValue),
     scrollInfo: (textValue) => palette.textDim(textValue),
     noMatch: (textValue) => palette.textMuted(textValue),

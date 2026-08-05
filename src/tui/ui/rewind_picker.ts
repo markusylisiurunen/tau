@@ -98,11 +98,11 @@ export class RewindPickerComponent implements Component {
   private renderHeaderLine(width: number, innerWidth: number): string {
     const borderColor = this.borderColor();
     if (width === 2) {
-      return `${borderColor("╭")}${borderColor("╮")}`;
+      return `${borderColor("┌")}${borderColor("┐")}`;
     }
 
-    const leftCorner = borderColor("╭");
-    const rightCorner = borderColor("╮");
+    const leftCorner = borderColor("┌");
+    const rightCorner = borderColor("┐");
     const dash = borderColor("─");
     const label = this.theme.palette.textDim(" rewind ");
 
@@ -116,7 +116,7 @@ export class RewindPickerComponent implements Component {
 
   private renderFooterLine(innerWidth: number): string {
     const borderColor = this.borderColor();
-    return `${borderColor("╰")}${borderColor("─").repeat(innerWidth)}${borderColor("╯")}`;
+    return `${borderColor("└")}${borderColor("─").repeat(innerWidth)}${borderColor("┘")}`;
   }
 
   private pad(text: string, width: number): string {

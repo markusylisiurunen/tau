@@ -10,7 +10,7 @@ import type { Theme } from "./theme/index.js";
 
 const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 const DEFAULT_EDITOR_MAX_LINES = 22;
-const MIN_EDITOR_LINES = 5;
+const MIN_EDITOR_LINES = 3;
 
 export class CustomEditor extends Editor {
   private uiTheme: Theme;
@@ -88,7 +88,7 @@ export class CustomEditor extends Editor {
     const maxContentLines = Math.max(1, maxLines - 2);
     const minContentLines = Math.max(1, minLines - 2);
     const contentLines = this.renderEditorContent(innerWidth, maxContentLines, minContentLines);
-    const autocompleteLines = this.renderAutocompleteLines(innerWidth);
+    const autocompleteLines = this.renderAutocompleteLines(width);
 
     const vertical = this.borderColor("│");
     const rendered: string[] = [];
@@ -106,8 +106,7 @@ export class CustomEditor extends Editor {
 
     if (autocompleteLines.length > 0) {
       for (const line of autocompleteLines) {
-        const padded = this.padToWidth(line, width - 1);
-        rendered.push(` ${padded}`);
+        rendered.push(this.padToWidth(line, width));
       }
     }
 
@@ -453,7 +452,7 @@ export class CustomEditor extends Editor {
   }
 
   private renderHeaderLine(width: number): string {
-    return this.renderHeaderLineWithCorners(width, "╭", "╮");
+    return this.renderHeaderLineWithCorners(width, "┌", "┐");
   }
 
   private renderHeaderLineWithCorners(
@@ -520,7 +519,7 @@ export class CustomEditor extends Editor {
   private renderFooterLine(width: number): string {
     if (width <= 1) return this.borderColor("─").repeat(Math.max(0, width));
     const innerWidth = Math.max(0, width - 2);
-    return `${this.borderColor("╰")}${this.borderColor("─").repeat(innerWidth)}${this.borderColor("╯")}`;
+    return `${this.borderColor("└")}${this.borderColor("─").repeat(innerWidth)}${this.borderColor("┘")}`;
   }
 
   private padToWidth(line: string, width: number): string {

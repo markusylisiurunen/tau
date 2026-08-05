@@ -52,9 +52,9 @@ describe("slash mention autocomplete", () => {
       agents: ["default", "reviewer"],
     });
 
-    expect(await getMentionValues(provider, "@@")).toEqual(["skill:", "agent:"]);
+    expect(await getMentionValues(provider, "@@")).toEqual(["agent:", "skill:"]);
     expect(await getMentionValues(provider, "@@sk")).toEqual(["skill:"]);
-    expect(await getMentionValues(provider, "@@skill:")).toEqual(["foo-skill", "bar-skill"]);
+    expect(await getMentionValues(provider, "@@skill:")).toEqual(["bar-skill", "foo-skill"]);
     expect(await getMentionValues(provider, "@@agent:d")).toEqual(["default"]);
   });
 

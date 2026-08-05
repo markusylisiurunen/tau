@@ -7,7 +7,7 @@ export interface FooterStatus {
   contextUsage: string;
   sessionCost: string;
   duration?: string;
-  commandHint?: string;
+  statusHint?: string;
   pursuingGoal: boolean;
 }
 
@@ -89,8 +89,8 @@ export class FooterComponent implements Component {
       ? `${this.status.duration ? `${this.status.duration} · ` : ""}${this.status.contextUsage} · ${this.status.sessionCost}`
       : "";
     const toast = this.toast;
-    const commandHint = this.status?.commandHint?.trim();
-    const leftRaw = toast ? toast.text : commandHint || leftFull;
+    const statusHint = this.status?.statusHint?.trim();
+    const leftRaw = toast ? toast.text : statusHint || leftFull;
     const leftStyle = toast ? this.getToastStyle(toast.kind) : palette.textDim;
     const availableWidth = Math.max(0, width - iconWidth - goalPrefixWidth - 3);
     const left = truncateFromEndByWidth(leftRaw, availableWidth);

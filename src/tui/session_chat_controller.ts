@@ -47,7 +47,6 @@ import {
   copyAssistantCodeToClipboard,
   copyAssistantTextToClipboard,
 } from "./chat_controller/assistant_clipboard.js";
-import { getCommandHint } from "./chat_controller/command_hints.js";
 import {
   type DiffReviewReturnedReview,
   DiffReviewService,
@@ -140,7 +139,6 @@ export class SessionChatController {
   private isBashIncognito = false;
   private showThinking = false;
   private compactToolUi = true;
-  private commandHint?: string;
   private currentTurnStartedAt?: number;
   private lastTurnDurationMs = 0;
   private turnTimer?: ReturnType<typeof setInterval>;
@@ -395,7 +393,6 @@ export class SessionChatController {
   private handleEditorChange(text: string): void {
     const wasBash = this.isBashMode;
     const wasBashIncognito = this.isBashIncognito;
-    const previousCommandHint = this.commandHint;
 
     if (text.trim().length > 0) {
       this.lastEmptySubmitAt = undefined;
@@ -405,27 +402,10 @@ export class SessionChatController {
     const isIncognito = trimmed.startsWith("!!");
     this.isBashIncognito = isIncognito;
     this.isBashMode = trimmed.startsWith("!") && !isIncognito;
-    this.commandHint = this.getCommandHintForInput(text);
 
-    if (
-      wasBash !== this.isBashMode ||
-      wasBashIncognito !== this.isBashIncognito ||
-      previousCommandHint !== this.commandHint
-    ) {
+    if (wasBash !== this.isBashMode || wasBashIncognito !== this.isBashIncognito) {
       this.refreshStatus();
     }
-  }
-
-  private getCommandHintForInput(text: string): string | undefined {
-    const trimmed = text.trimStart();
-    if (!trimmed.startsWith("/") || !this.isSingleLineInput(text)) {
-      return undefined;
-    }
-    const parsed = this.commandRegistry.parse(trimmed);
-    if (parsed.type === "unknown") {
-      return undefined;
-    }
-    return getCommandHint(parsed);
   }
 
   getAutocompleteSources(): {
@@ -1871,8 +1851,8 @@ export class SessionChatController {
         contextUsage: this.getContextUsageString(),
         sessionCost: this.getSessionCostString(),
         duration: this.getTurnDurationString(),
-        commandHint: this.diffReviewService.getCommandHint(
-          this.getSessionOperationStatusHint() ?? this.speechStatusHint ?? this.commandHint,
+        statusHint: this.diffReviewService.getStatusHint(
+          this.getSessionOperationStatusHint() ?? this.speechStatusHint,
         ),
         pursuingGoal: this.snapshot.goal?.status === "active",
       },

@@ -32,7 +32,7 @@ export type ChatViewStatus = {
     contextUsage: string;
     sessionCost: string;
     duration: string;
-    commandHint?: string;
+    statusHint?: string;
     pursuingGoal: boolean;
   };
   editor: {
@@ -131,6 +131,7 @@ export class TuiChatView implements ChatView {
   private activeInputPane: Component;
   private uiTheme: Theme;
   private terminalAppearance: ThemeAppearance;
+  private themes: ThemeDefinition[];
   private toolUiRegistry = createToolUiRegistry();
   private toolUiRouter: ToolUiRouter;
   private lastStatus?: ChatViewStatus;
@@ -146,9 +147,10 @@ export class TuiChatView implements ChatView {
     themes?: ThemeDefinition[];
   }) {
     this.terminalAppearance = options.terminalAppearance ?? "dark";
+    this.themes = options.themes ?? [];
     const themeTokens = resolveThemeTokensById(
       options.themeId,
-      options.themes,
+      this.themes,
       this.terminalAppearance,
     );
     const paletteOverrides = coercePaletteOverrides(themeTokens);
@@ -255,7 +257,7 @@ export class TuiChatView implements ChatView {
       contextUsage: status.footer.contextUsage,
       sessionCost: status.footer.sessionCost,
       duration: status.footer.duration,
-      commandHint: status.footer.commandHint,
+      statusHint: status.footer.statusHint,
       pursuingGoal: status.footer.pursuingGoal,
     });
 
@@ -439,9 +441,12 @@ export class TuiChatView implements ChatView {
   }
 
   updateTheme(options: { themeId?: string; themes?: ThemeDefinition[] }): void {
+    if (options.themes) {
+      this.themes = options.themes;
+    }
     const themeTokens = resolveThemeTokensById(
       options.themeId,
-      options.themes,
+      this.themes,
       this.terminalAppearance,
     );
     const paletteOverrides = coercePaletteOverrides(themeTokens);
@@ -480,7 +485,7 @@ export class TuiChatView implements ChatView {
   private updateEditorVisualState(state: ChatViewStatus["editor"]): void {
     const { palette } = this.uiTheme;
     if (state.mode === "bash" || state.mode === "bash_incognito") {
-      this.editor.borderColor = (s: string) => palette.modeBash(s);
+      this.editor.borderColor = (s: string) => palette.editorBorderBash(s);
     } else if (state.mode === "recording") {
       this.editor.borderColor = (s: string) => palette.editorBorderRecording(s);
     } else {

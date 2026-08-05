@@ -1,8 +1,13 @@
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it, vi } from "vitest";
 import { resolveHistoryRemoteTarget } from "../dist/core/history/config.js";
 import { LocalHistoryStore } from "../dist/core/history/local_history_store.js";
+import { HISTORY_INITIAL_MIGRATION_SQL } from "../dist/core/history/migrations.js";
 import { RemoteHistoryClient } from "../dist/core/history/remote_history_client.js";
+import { setupHistoryService } from "../dist/core/history/setup.js";
 import {
   assistantHistoryEntries,
   toolHistoryEntry,
@@ -16,7 +21,6 @@ import historyWorker, {
   formatDigestEntry,
   generateDigest,
   isDigestContextOverflowError,
-  migrateHistoryDatabase,
   refreshDigestIfNeeded,
   runAi,
   selectHistoryReadPage,
@@ -100,9 +104,11 @@ function createD1Harness(options = {}) {
           return null;
         }),
         all: vi.fn(async () => ({
-          results: query.includes("SELECT version FROM history_schema_migrations")
-            ? (options.migrationVersions ?? []).map((version) => ({ version }))
-            : [],
+          results: query.includes("SELECT entry_id FROM entries")
+            ? (options.existingEntryIds ?? []).map((entry_id) => ({ entry_id }))
+            : query.includes("FROM ranked_sessions")
+              ? (options.searchRows ?? [])
+              : [],
         })),
         run: vi.fn(async () => ({ success: true })),
       };
@@ -154,6 +160,10 @@ function createSqliteD1Harness() {
     },
   };
   return { database, sqlite };
+}
+
+function initializeHistoryD1(harness) {
+  harness.sqlite.exec(HISTORY_INITIAL_MIGRATION_SQL);
 }
 
 async function callHistoryWorker(path, body, harness) {
@@ -668,43 +678,166 @@ describe("session history", () => {
     });
   });
 
-  it("applies and records sequential D1 schema migrations", async () => {
-    const fresh = createD1Harness();
-    await expect(migrateHistoryDatabase(fresh.database)).resolves.toBeUndefined();
-    const schemaTableStatement = fresh.prepared.find((statement) =>
-      statement.query.includes("CREATE TABLE IF NOT EXISTS history_schema_migrations"),
-    );
-    expect(schemaTableStatement?.run).toHaveBeenCalledOnce();
-    expect(fresh.database.batch).toHaveBeenCalledTimes(3);
-    const migrationStatements = fresh.database.batch.mock.calls.flatMap(
-      ([statements]) => statements,
-    );
-    expect(migrationStatements.map((statement) => statement.query)).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining("CREATE TABLE IF NOT EXISTS sessions"),
-        expect.stringContaining("CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts"),
-        expect.stringContaining("CREATE TABLE IF NOT EXISTS digest_worker_lease"),
-        expect.stringContaining("ALTER TABLE sessions ADD COLUMN digest_failure_count"),
-        expect.stringContaining("INSERT OR IGNORE INTO history_schema_migrations"),
-      ]),
-    );
+  it("defines an idempotent D1 migration and preserves legacy migration state", () => {
+    const sqlite = new DatabaseSync(":memory:");
+    try {
+      sqlite.exec(HISTORY_INITIAL_MIGRATION_SQL);
+      sqlite
+        .prepare(
+          "INSERT INTO sessions (session_id, attributes_json, created_at, updated_at) VALUES (?, '{}', ?, ?)",
+        )
+        .run("existing", 1, 2);
+      sqlite.exec(`
+        CREATE TABLE history_schema_migrations (
+          version INTEGER PRIMARY KEY,
+          applied_at INTEGER NOT NULL
+        );
+        INSERT INTO history_schema_migrations (version, applied_at) VALUES (1, 1), (2, 1), (3, 1);
+      `);
 
-    const versionOne = createD1Harness({ migrationVersions: [1] });
-    await expect(migrateHistoryDatabase(versionOne.database)).resolves.toBeUndefined();
-    expect(versionOne.database.batch).toHaveBeenCalledTimes(2);
+      sqlite.exec(HISTORY_INITIAL_MIGRATION_SQL);
 
-    const versionTwo = createD1Harness({ migrationVersions: [1, 2] });
-    await expect(migrateHistoryDatabase(versionTwo.database)).resolves.toBeUndefined();
-    expect(versionTwo.database.batch).toHaveBeenCalledOnce();
+      expect(
+        sqlite.prepare("SELECT session_id, created_at, updated_at FROM sessions").get(),
+      ).toEqual({ session_id: "existing", created_at: 1, updated_at: 2 });
+      expect(sqlite.prepare("SELECT version FROM history_schema_migrations").all()).toEqual([
+        { version: 1 },
+        { version: 2 },
+        { version: 3 },
+      ]);
+      expect(
+        sqlite
+          .prepare("PRAGMA table_info(sessions)")
+          .all()
+          .map((column) => column.name),
+      ).toEqual([
+        "session_id",
+        "attributes_json",
+        "created_at",
+        "updated_at",
+        "transcript_revision",
+        "digest_title",
+        "digest_summary",
+        "digest_through_entry_id",
+        "digest_failure_count",
+        "digest_next_attempt_at",
+        "digest_last_attempt_at",
+        "digest_last_success_at",
+        "digest_last_error",
+      ]);
+    } finally {
+      sqlite.close();
+    }
+  });
 
-    const current = createD1Harness({ migrationVersions: [1, 2, 3] });
-    await expect(migrateHistoryDatabase(current.database)).resolves.toBeUndefined();
-    expect(current.database.batch).not.toHaveBeenCalled();
-
-    const newer = createD1Harness({ migrationVersions: [1, 2, 3, 4] });
-    await expect(migrateHistoryDatabase(newer.database)).rejects.toThrow(
-      "newer than supported version 3",
+  it("applies official D1 migrations before history Worker deployment", async () => {
+    const root = mkdtempSync(join(tmpdir(), "tau-history-setup-test-"));
+    const binDirectory = join(root, "bin");
+    const wranglerPath = join(binDirectory, "wrangler");
+    const callsPath = join(root, "calls.txt");
+    mkdirSync(binDirectory);
+    writeFileSync(
+      wranglerPath,
+      [
+        "#!/usr/bin/env node",
+        'import { appendFileSync, existsSync, readFileSync } from "node:fs";',
+        'import { join } from "node:path";',
+        "const args = process.argv.slice(2);",
+        'appendFileSync(process.env.TEST_CALLS, args.join(" ") + "\\n");',
+        'if (args[0] === "d1" && args[1] === "list") {',
+        '  console.log(process.env.TEST_FRESH === "1" ? "[]" : JSON.stringify([{ name: "tau-history", uuid: "database-id" }]));',
+        "  process.exit(0);",
+        "}",
+        'if (args[0] === "d1" && args[1] === "create") process.exit(0);',
+        'if (args[0] === "d1" && args[1] === "info") {',
+        '  console.log(JSON.stringify({ uuid: "database-id" }));',
+        "  process.exit(0);",
+        "}",
+        'if (args[0] === "deploy" || (args[0] === "d1" && args[1] === "migrations")) {',
+        '  const config = JSON.parse(readFileSync(join(process.cwd(), "wrangler.json"), "utf8"));',
+        "  if (config.observability?.enabled !== true) process.exit(31);",
+        '  if (config.d1_databases?.[0]?.migrations_dir !== "migrations") process.exit(32);',
+        '  const migration = join(process.cwd(), "migrations", "0001_initial.sql");',
+        "  if (!existsSync(migration)) process.exit(33);",
+        '  const sql = readFileSync(migration, "utf8");',
+        '  if (sql.includes("DROP TABLE IF EXISTS history_schema_migrations")) process.exit(34);',
+        '  if (args[0] === "d1" && process.env.TEST_FAIL_MIGRATION === "1") process.exit(35);',
+        "  process.exit(0);",
+        "}",
+        'if (args[0] === "secret") process.exit(0);',
+        "process.exit(99);",
+      ].join("\n"),
     );
+    chmodSync(wranglerPath, 0o755);
+
+    try {
+      const baseEnv = {
+        ...process.env,
+        PATH: `${binDirectory}:${process.env.PATH}`,
+        CLOUDFLARE_API_TOKEN: "test-token",
+        TEST_CALLS: callsPath,
+      };
+      await setupHistoryService({
+        domain: "history.example.com",
+        zoneName: "example.com",
+        apiKey: "test-key",
+        env: baseEnv,
+        stdout: () => {},
+      });
+      expect(readFileSync(callsPath, "utf8").trim().split("\n")).toEqual([
+        "d1 list --json",
+        "d1 migrations apply tau-history --remote",
+        "deploy",
+        "secret put API_KEY",
+      ]);
+
+      writeFileSync(callsPath, "");
+      await setupHistoryService({
+        domain: "history.example.com",
+        zoneName: "example.com",
+        apiKey: "test-key",
+        env: { ...baseEnv, TEST_FRESH: "1" },
+        stdout: () => {},
+      });
+      expect(readFileSync(callsPath, "utf8").trim().split("\n")).toEqual([
+        "d1 list --json",
+        "d1 create tau-history",
+        "d1 info tau-history --json",
+        "d1 migrations apply tau-history --remote",
+        "deploy",
+        "secret put API_KEY",
+      ]);
+
+      writeFileSync(callsPath, "");
+      await expect(
+        setupHistoryService({
+          domain: "history.example.com",
+          zoneName: "example.com",
+          apiKey: "test-key",
+          env: { ...baseEnv, TEST_FAIL_MIGRATION: "1", TEST_FRESH: "1" },
+          stdout: () => {},
+        }),
+      ).rejects.toThrow("wrangler d1 migrations apply tau-history --remote failed");
+      await setupHistoryService({
+        domain: "history.example.com",
+        zoneName: "example.com",
+        apiKey: "test-key",
+        env: baseEnv,
+        stdout: () => {},
+      });
+      expect(readFileSync(callsPath, "utf8").trim().split("\n")).toEqual([
+        "d1 list --json",
+        "d1 create tau-history",
+        "d1 info tau-history --json",
+        "d1 migrations apply tau-history --remote",
+        "d1 list --json",
+        "d1 migrations apply tau-history --remote",
+        "deploy",
+        "secret put API_KEY",
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("commits every remote replication operation through one D1 batch", async () => {
@@ -795,6 +928,90 @@ describe("session history", () => {
     expect(duplicate.status).toBe(200);
     await expect(duplicate.json()).resolves.toEqual({ applied: 0 });
     expect(duplicateHarness.database.batch).not.toHaveBeenCalled();
+  });
+
+  it("enforces remote search and entry byte limits", async () => {
+    const excessiveSearch = await callHistoryWorker("/v1/search", { limit: 76 }, createD1Harness());
+    expect(excessiveSearch.status).toBe(400);
+    await expect(excessiveSearch.json()).resolves.toEqual({
+      error: { code: "invalid_request", message: "limit must be an integer from 1 to 75" },
+    });
+
+    const boundedHarness = createD1Harness({
+      searchRows: Array.from({ length: 75 }, (_, index) => ({
+        session_id: `session-${index}`,
+        attributes_json: "{}",
+        created_at: index,
+        updated_at: index,
+      })),
+    });
+    const boundedSearch = await callHistoryWorker(
+      "/v1/search",
+      { query: "session", limit: 75 },
+      boundedHarness,
+    );
+    expect(boundedSearch.status).toBe(200);
+    const snippetQuery = boundedHarness.prepared.find((statement) =>
+      statement.query.includes("WITH ranked_snippets"),
+    );
+    expect(snippetQuery.values).toHaveLength(76);
+
+    const oversizedEntry = await callHistoryWorker(
+      "/v1/operations",
+      {
+        operations: [
+          {
+            id: "append-oversized",
+            sessionId: "session-1",
+            type: "append",
+            entries: [createTextEntry("oversized", "user", "x".repeat(1024 * 1024), 1)],
+          },
+        ],
+      },
+      createD1Harness(),
+    );
+    expect(oversizedEntry.status).toBe(400);
+    await expect(oversizedEntry.json()).resolves.toEqual({
+      error: {
+        code: "invalid_request",
+        message: "entries must not exceed 1048576 serialized bytes",
+      },
+    });
+  });
+
+  it("checks append duplicates once and byte-bounds D1 search text", async () => {
+    const harness = createD1Harness({ existingEntryIds: ["existing"] });
+    const largeEntry = createTextEntry("large", "user", "😀".repeat(200_000), 2);
+
+    await expect(
+      applyOperation(harness.database, {
+        id: "append-bounded",
+        sessionId: "session-1",
+        type: "append",
+        entries: [createTextEntry("existing", "user", "old", 1), largeEntry, largeEntry],
+      }),
+    ).resolves.toBe(true);
+
+    const duplicateQueries = harness.prepared.filter((statement) =>
+      statement.query.includes("SELECT entry_id FROM entries"),
+    );
+    expect(duplicateQueries).toHaveLength(1);
+    expect(duplicateQueries[0].values).toEqual(["session-1", "existing", "large", "large"]);
+    expect(
+      harness.prepared.some((statement) =>
+        statement.query.includes("SELECT 1 AS found FROM entries"),
+      ),
+    ).toBe(false);
+
+    const insertedEntry = harness.prepared.find((statement) =>
+      statement.query.includes("INSERT INTO entries ("),
+    );
+    expect(Buffer.byteLength(insertedEntry.values[5], "utf8")).toBeLessThanOrEqual(512 * 1024);
+    expect(
+      harness.database.batch.mock.calls[0][0].filter((statement) =>
+        statement.query.includes("INSERT INTO entries ("),
+      ),
+    ).toHaveLength(1);
   });
 
   it("does not generate digests during replication requests", async () => {
@@ -892,7 +1109,7 @@ describe("session history", () => {
   it("paginates distinct remote search sessions when one session has many matches", async () => {
     const harness = createSqliteD1Harness();
     try {
-      await migrateHistoryDatabase(harness.database);
+      initializeHistoryD1(harness);
       const insertSession = harness.sqlite.prepare(
         "INSERT INTO sessions (session_id, attributes_json, created_at, updated_at) VALUES (?, '{}', ?, ?)",
       );
@@ -960,7 +1177,7 @@ describe("session history", () => {
   it("rejects stale digest writes after the transcript changes", async () => {
     const harness = createSqliteD1Harness();
     try {
-      await migrateHistoryDatabase(harness.database);
+      initializeHistoryD1(harness);
       await applyOperation(harness.database, {
         id: "create-digest-race",
         sessionId: "digest-race",
@@ -1034,7 +1251,7 @@ describe("session history", () => {
   it("leases one scheduled digest at a time", async () => {
     const harness = createSqliteD1Harness();
     try {
-      await migrateHistoryDatabase(harness.database);
+      initializeHistoryD1(harness);
       for (const sessionId of ["scheduled-1", "scheduled-2", "scheduled-3", "scheduled-4"]) {
         await applyOperation(harness.database, {
           id: `create-${sessionId}`,
@@ -1115,7 +1332,7 @@ describe("session history", () => {
     const nowSpy = vi.spyOn(Date, "now").mockReturnValue(now);
     const harness = createSqliteD1Harness();
     try {
-      await migrateHistoryDatabase(harness.database);
+      initializeHistoryD1(harness);
       for (const sessionId of ["below-threshold", "entry-threshold", "staleness-deadline"]) {
         await applyOperation(harness.database, {
           id: `create-${sessionId}`,
@@ -1202,7 +1419,7 @@ describe("session history", () => {
     const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
     const harness = createSqliteD1Harness();
     try {
-      await migrateHistoryDatabase(harness.database);
+      initializeHistoryD1(harness);
       for (const [sessionId, timestamp] of [
         ["failing", now - 20 * 60 * 1_000],
         ["healthy", now - 19 * 60 * 1_000],
@@ -1540,6 +1757,10 @@ describe("session history", () => {
       },
       expect.any(AbortSignal),
     );
+
+    const excessiveLimit = await runTool(tool, "await history.search({ limit: 76 });");
+    expect(toolText(excessiveLimit)).toContain("expected number to be <=75");
+    expect(history.search).toHaveBeenCalledTimes(1);
 
     const docsResult = await runTool(tool, "console.log(docs);");
     expect(toolText(docsResult)).toContain("every term must occur");

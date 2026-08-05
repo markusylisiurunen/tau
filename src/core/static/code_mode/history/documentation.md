@@ -31,7 +31,7 @@ All options are optional:
 
 - `query`: text to match against transcript content and generated digest titles and summaries when available. The query is tokenized into terms, and every term must occur in the same digest or transcript entry. For example, `"database migration"` requires both terms but not necessarily as an exact phrase. Separate searches can express alternative terminology when needed.
 - `attributes`: string values require exact matches; `{ contains: string }` values require ordinary case-sensitive substring matches. Every supplied attribute must match. Text and attribute filters combine.
-- `limit`: integer from 1 to 100, default 10.
+- `limit`: integer from 1 to 75, default 10.
 - `cursor`: opaque continuation cursor from `nextCursor`. Continue with the same query and attributes.
 
 With neither `query` nor `attributes`, results are the most recently updated sessions.

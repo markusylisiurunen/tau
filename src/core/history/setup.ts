@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnWithCapture } from "../utils/spawn_capture.js";
+import { HISTORY_INITIAL_MIGRATION_NAME, HISTORY_INITIAL_MIGRATION_SQL } from "./migrations.js";
 
 const WORKER_NAME = "tau-history";
 const DATABASE_NAME = "tau-history";
@@ -40,12 +41,18 @@ export async function setupHistoryService(options: HistorySetupOptions): Promise
   if (!zoneName) throw new Error("zone name is required");
   const suppliedApiKey = options.apiKey?.trim() || env.TAU_HISTORY_API_KEY?.trim();
   const apiKey = suppliedApiKey || generateApiKey();
-  const databaseId = await ensureDatabase(env, stdout);
+  const database = await ensureDatabase(env, stdout);
   const temporaryDirectory = mkdtempSync(join(tmpdir(), "tau-history-"));
   try {
-    writeWorkerProject(temporaryDirectory, { domain, zoneName, databaseId });
+    writeWorkerProject(temporaryDirectory, {
+      domain,
+      zoneName,
+      databaseId: database.id,
+    });
+    if (database.created) await applyHistoryMigrations(temporaryDirectory, env, stdout);
     stdout(`deploying Worker ${WORKER_NAME} with Wrangler...`);
     await runWrangler(["deploy"], { cwd: temporaryDirectory, env });
+    if (!database.created) await applyHistoryMigrations(temporaryDirectory, env, stdout);
     await runWrangler(["secret", "put", "API_KEY"], {
       cwd: temporaryDirectory,
       env,
@@ -133,21 +140,21 @@ function isMissingHistoryResource(output: string): boolean {
 async function ensureDatabase(
   env: NodeJS.ProcessEnv,
   stdout: (line: string) => void,
-): Promise<string> {
+): Promise<{ id: string; created: boolean }> {
   const listed = await runWrangler(["d1", "list", "--json"], { env });
   const databases = JSON.parse(listed.output) as D1DatabaseInfo[];
   const existing = databases.find((database) => database.name === DATABASE_NAME);
   if (existing) {
     const id = databaseId(existing);
     stdout(`D1 database ${DATABASE_NAME} already exists`);
-    return id;
+    return { id, created: false };
   }
 
   await runWrangler(["d1", "create", DATABASE_NAME], { env });
   const info = await runWrangler(["d1", "info", DATABASE_NAME, "--json"], { env });
   const id = databaseId(JSON.parse(info.output) as D1DatabaseInfo);
   stdout(`created D1 database ${DATABASE_NAME}`);
-  return id;
+  return { id, created: true };
 }
 
 function databaseId(database: D1DatabaseInfo): string {
@@ -164,6 +171,29 @@ function databaseId(database: D1DatabaseInfo): string {
   throw new Error("Wrangler returned D1 database data without an ID");
 }
 
+async function applyHistoryMigrations(
+  directory: string,
+  env: NodeJS.ProcessEnv,
+  stdout: (line: string) => void,
+): Promise<void> {
+  stdout(`applying D1 migrations for ${DATABASE_NAME}...`);
+  await runWrangler(["d1", "migrations", "apply", DATABASE_NAME, "--remote"], {
+    cwd: directory,
+    env,
+  });
+  stdout(`applied D1 migrations for ${DATABASE_NAME}`);
+}
+
+function writeHistoryMigration(directory: string): void {
+  const migrationsDirectory = join(directory, "migrations");
+  mkdirSync(migrationsDirectory, { recursive: true });
+  writeFileSync(
+    join(migrationsDirectory, HISTORY_INITIAL_MIGRATION_NAME),
+    HISTORY_INITIAL_MIGRATION_SQL,
+    "utf8",
+  );
+}
+
 function writeWorkerProject(
   directory: string,
   options: { domain: string; zoneName: string; databaseId: string },
@@ -175,6 +205,7 @@ function writeWorkerProject(
   const destination = join(directory, "worker", "index.js");
   mkdirSync(dirname(destination), { recursive: true });
   copyFileSync(workerPath, destination);
+  writeHistoryMigration(directory);
   writeFileSync(
     join(directory, "wrangler.json"),
     JSON.stringify(
@@ -189,9 +220,11 @@ function writeWorkerProject(
             binding: "DB",
             database_name: DATABASE_NAME,
             database_id: options.databaseId,
+            migrations_dir: "migrations",
           },
         ],
         ai: { binding: "AI" },
+        observability: { enabled: true },
         triggers: { crons: ["* * * * *"] },
       },
       null,

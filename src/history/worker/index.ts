@@ -81,9 +81,11 @@ const DIGEST_TEXT_CONFIG = {
   },
 } satisfies NonNullable<ResponsesInput["text"]>;
 const MAX_BODY_BYTES = 8 * 1024 * 1024;
+const MAX_ENTRY_BYTES = 1024 * 1024;
+const MAX_ENTRY_SEARCH_TEXT_BYTES = 512 * 1024;
 const MAX_OPERATIONS = 10;
 const MAX_ENTRIES_PER_OPERATION = 25;
-const MAX_SEARCH_LIMIT = 100;
+const MAX_SEARCH_LIMIT = 75;
 const MAX_READ_LIMIT = 100;
 const MAX_READ_PAGE_PAYLOAD_BYTES = 12 * 1024 * 1024;
 const DIGEST_NEW_ENTRY_THRESHOLD = 8;
@@ -98,80 +100,6 @@ const DIGEST_MAX_SPLIT_DEPTH = 3;
 const DIGEST_IDLE_MS = 10 * 60 * 1_000;
 const DIGEST_LEASE_MS = 30 * 60 * 1_000;
 const DIGEST_SESSIONS_PER_CRON = 3;
-
-const HISTORY_SCHEMA_MIGRATIONS = [
-  {
-    version: 1,
-    statements: [
-      `CREATE TABLE IF NOT EXISTS sessions (
-        session_id TEXT PRIMARY KEY,
-        attributes_json TEXT NOT NULL,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL,
-        transcript_revision INTEGER NOT NULL DEFAULT 0,
-        digest_title TEXT,
-        digest_summary TEXT,
-        digest_through_entry_id TEXT
-      )`,
-      `CREATE TABLE IF NOT EXISTS attributes (
-        session_id TEXT NOT NULL,
-        key TEXT NOT NULL,
-        value TEXT NOT NULL,
-        PRIMARY KEY (session_id, key)
-      )`,
-      "CREATE INDEX IF NOT EXISTS attributes_lookup ON attributes(key, value, session_id)",
-      `CREATE TABLE IF NOT EXISTS entries (
-        session_id TEXT NOT NULL,
-        position INTEGER NOT NULL,
-        entry_id TEXT NOT NULL,
-        timestamp INTEGER NOT NULL,
-        payload_json TEXT NOT NULL,
-        search_text TEXT NOT NULL,
-        PRIMARY KEY (session_id, entry_id),
-        UNIQUE (session_id, position)
-      )`,
-      "CREATE INDEX IF NOT EXISTS entries_order ON entries(session_id, position)",
-      `CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(
-        session_id UNINDEXED,
-        entry_id UNINDEXED,
-        position UNINDEXED,
-        text
-      )`,
-      `CREATE VIRTUAL TABLE IF NOT EXISTS sessions_fts USING fts5(
-        session_id UNINDEXED,
-        title,
-        summary
-      )`,
-      `CREATE TABLE IF NOT EXISTS operations (
-        operation_id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL,
-        applied_at INTEGER NOT NULL
-      )`,
-    ],
-  },
-  {
-    version: 2,
-    statements: [
-      `CREATE TABLE IF NOT EXISTS digest_worker_lease (
-        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-        claimed_at INTEGER
-      )`,
-      "INSERT OR IGNORE INTO digest_worker_lease (singleton, claimed_at) VALUES (1, NULL)",
-    ],
-  },
-  {
-    version: 3,
-    statements: [
-      "ALTER TABLE sessions ADD COLUMN digest_failure_count INTEGER NOT NULL DEFAULT 0",
-      "ALTER TABLE sessions ADD COLUMN digest_next_attempt_at INTEGER",
-      "ALTER TABLE sessions ADD COLUMN digest_last_attempt_at INTEGER",
-      "ALTER TABLE sessions ADD COLUMN digest_last_success_at INTEGER",
-      "ALTER TABLE sessions ADD COLUMN digest_last_error TEXT",
-    ],
-  },
-] as const;
-
-let initialization: Promise<void> | undefined;
 
 class HistoryApiError extends Error {
   constructor(
@@ -194,7 +122,6 @@ export default {
     if (request.method !== "POST") return error("method_not_allowed", "Use POST", 405);
 
     try {
-      await initialize(env.DB);
       if (new URL(request.url).pathname === "/v1/operations") {
         const body = await readJson(request);
         const operations = parseOperations(body);
@@ -226,7 +153,6 @@ export default {
   },
 
   async scheduled(_controller: unknown, env: Env, _context: ExecutionContext): Promise<void> {
-    await initialize(env.DB);
     const claimedAt = Date.now();
     const lease = await env.DB.prepare(
       `UPDATE digest_worker_lease
@@ -377,56 +303,6 @@ function authorize(request: Request, env: Env): boolean {
   return request.headers.get("authorization") === `Bearer ${expected}`;
 }
 
-async function initialize(database: D1Database): Promise<void> {
-  if (!initialization) {
-    initialization = migrateHistoryDatabase(database).catch((caught) => {
-      initialization = undefined;
-      throw caught;
-    });
-  }
-  await initialization;
-}
-
-export async function migrateHistoryDatabase(database: D1Database): Promise<void> {
-  await database
-    .prepare(
-      `CREATE TABLE IF NOT EXISTS history_schema_migrations (
-        version INTEGER PRIMARY KEY,
-        applied_at INTEGER NOT NULL
-      )`,
-    )
-    .run();
-  const rows = await database
-    .prepare("SELECT version FROM history_schema_migrations ORDER BY version")
-    .all<{ version: number }>();
-  const applied = new Set(rows.results.map((row) => Number(row.version)));
-  const latestKnown = HISTORY_SCHEMA_MIGRATIONS.at(-1)?.version ?? 0;
-  const latestApplied = Math.max(0, ...applied);
-  if (latestApplied > latestKnown) {
-    throw new Error(
-      `history database schema ${latestApplied} is newer than supported version ${latestKnown}`,
-    );
-  }
-  for (let version = 1; version <= latestApplied; version += 1) {
-    if (!applied.has(version)) {
-      throw new Error(
-        `history database schema migrations are not sequential at version ${version}`,
-      );
-    }
-  }
-  for (const migration of HISTORY_SCHEMA_MIGRATIONS) {
-    if (applied.has(migration.version)) continue;
-    await database.batch([
-      ...migration.statements.map((statement) => database.prepare(statement)),
-      database
-        .prepare(
-          "INSERT OR IGNORE INTO history_schema_migrations (version, applied_at) VALUES (?, ?)",
-        )
-        .bind(migration.version, Date.now()),
-    ]);
-  }
-}
-
 export async function applyOperation(database: D1Database, operation: Operation): Promise<boolean> {
   const existing = await database
     .prepare("SELECT 1 AS found FROM operations WHERE operation_id = ?")
@@ -480,14 +356,19 @@ export async function applyOperation(database: D1Database, operation: Operation)
       .prepare("SELECT COALESCE(MAX(position), 0) AS position FROM entries WHERE session_id = ?")
       .bind(operation.sessionId)
       .first<{ position: number }>();
+    const existingEntries = await database
+      .prepare(
+        `SELECT entry_id FROM entries
+         WHERE session_id = ? AND entry_id IN (${operation.entries.map(() => "?").join(", ")})`,
+      )
+      .bind(operation.sessionId, ...operation.entries.map((entry) => entry.id))
+      .all<{ entry_id: string }>();
+    const existingEntryIds = new Set(existingEntries.results.map((row) => row.entry_id));
     let position = Number(current?.position ?? 0);
     let updatedAt = 0;
     for (const entry of operation.entries) {
-      const duplicate = await database
-        .prepare("SELECT 1 AS found FROM entries WHERE session_id = ? AND entry_id = ?")
-        .bind(operation.sessionId, entry.id)
-        .first();
-      if (duplicate) continue;
+      if (existingEntryIds.has(entry.id)) continue;
+      existingEntryIds.add(entry.id);
       position += 1;
       updatedAt = Math.max(updatedAt, entry.timestamp);
       const searchText = entrySearchText(entry);
@@ -1089,7 +970,7 @@ function parseEntry(raw: unknown): HistoryEntry {
     if (!Object.hasOwn(entry, "content")) {
       throw invalidRequest(`${type} entry.content is required`);
     }
-    return { ...base, type, content: entry.content };
+    return validateEntrySize({ ...base, type, content: entry.content });
   }
 
   if (!Object.hasOwn(entry, "arguments") || !Object.hasOwn(entry, "result")) {
@@ -1104,14 +985,21 @@ function parseEntry(raw: unknown): HistoryEntry {
   ) {
     throw invalidRequest("tool entry.outcome is invalid");
   }
-  return {
+  return validateEntrySize({
     ...base,
     type,
     name: requiredString(entry.name, "tool entry.name", 256),
     arguments: entry.arguments,
     result: entry.result,
     outcome,
-  };
+  });
+}
+
+function validateEntrySize(entry: HistoryEntry): HistoryEntry {
+  if (utf8ByteLength(JSON.stringify(entry)) > MAX_ENTRY_BYTES) {
+    throw invalidRequest(`entries must not exceed ${MAX_ENTRY_BYTES} serialized bytes`);
+  }
+  return entry;
 }
 
 function parseAttributeFilters(raw: unknown): Record<string, string | { contains: string }> {
@@ -1191,7 +1079,8 @@ async function readJson(request: Request): Promise<unknown> {
 }
 
 function entrySearchText(entry: HistoryEntry): string {
-  return recursiveText(entry).slice(0, 1_000_000);
+  const bytes = new TextEncoder().encode(recursiveText(entry));
+  return decodeUtf8Head(bytes, MAX_ENTRY_SEARCH_TEXT_BYTES);
 }
 
 function recursiveText(value: unknown): string {

@@ -1726,6 +1726,13 @@ describe("session history", () => {
     expect(HISTORY_TOOL.description).toContain(
       "only when the user or other active instructions directly ask you",
     );
+    expect(HISTORY_TOOL.description).toContain(
+      "your first call to it must be a documentation-only program",
+    );
+    expect(HISTORY_TOOL.description).toContain("console.log(docs)");
+    expect(HISTORY_TOOL.description).toContain("later tool call that uses history");
+    expect(HISTORY_TOOL.description).toContain("Do not guess SDK signatures");
+    expect(HISTORY_TOOL.description).not.toContain("history.search(");
     const history = {
       search: vi.fn(async () => ({
         sessions: [

@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { HistoryQuery } from "../history/types.js";
 import { formatZodError } from "../utils/zod.js";
 import {
+  buildCodeModeToolDescription,
   type CodeModeToolImplementation,
   createCodeModeToolDefinition,
   type ParsedCodeModeArguments,
@@ -17,16 +18,14 @@ import { TOOL_NAME_HISTORY } from "./tool_names.js";
 const HISTORY_CODE_MODE_TIMEOUT_MS = 60_000;
 const HISTORY_CODE_MODE_OUTPUT_TOKENS = 8_192;
 
-const HISTORY_DESCRIPTION = [
-  "Run a one-shot JavaScript program to search and read durable transcripts from the configured history collection.",
-  "Use this tool only when the user or other active instructions directly ask you to reference, search, or read historical transcripts; do not invoke it merely because prior sessions might be relevant.",
-  "The tool is read-only and has global visibility across repositories and execution environments.",
-  "Top-level await is supported. The program receives history, docs, and console globals.",
-  "Only text written through console methods is returned; program return values are ignored.",
-  "Use history.search to find concise session descriptors, then history.read only for the selected transcripts and ranges needed.",
-  "Ordinary JavaScript can filter, map, group, and combine returned data.",
-  "To discover the available APIs, run a program that prints docs with console.log(docs), then use that documentation in the next turn.",
-].join(" ");
+const HISTORY_DESCRIPTION = buildCodeModeToolDescription({
+  sdkGlobal: "history",
+  introduction: [
+    "Run a one-shot JavaScript program to search and read durable transcripts from the configured history collection.",
+    "Use this tool only when the user or other active instructions directly ask you to reference, search, or read historical transcripts; do not invoke it merely because prior sessions might be relevant.",
+    "The tool is read-only and has global visibility across repositories and execution environments.",
+  ],
+});
 
 export const HISTORY_TOOL: Tool = {
   name: TOOL_NAME_HISTORY,

@@ -17,6 +17,29 @@ export type ParsedCodeModeArguments<TArgs> =
   | { ok: true; args: TArgs; code: string; displayTarget: string }
   | { ok: false; error: string; code: string; displayTarget: string };
 
+type CodeModeToolDescriptionOptions = {
+  sdkGlobal: string;
+  introduction: string[];
+  additionalDocumentation?: string[];
+};
+
+export function buildCodeModeToolDescription({
+  sdkGlobal,
+  introduction,
+  additionalDocumentation = [],
+}: CodeModeToolDescriptionOptions): string {
+  return [
+    ...introduction,
+    `Top-level await is supported. The program receives ${sdkGlobal}, docs, and console globals.`,
+    "Only text written through console methods is returned; program return values are ignored.",
+    "The SDK is progressively disclosed through docs.",
+    "When this tool is useful for a task, your first call to it must be a documentation-only program that does nothing except print docs with console.log(docs).",
+    `Read the returned documentation before writing a later tool call that uses ${sdkGlobal}.`,
+    "Do not guess SDK signatures or reuse signatures from other code-mode tools.",
+    ...additionalDocumentation,
+  ].join(" ");
+}
+
 export type CodeModeToolImplementation<TArgs> = {
   schema: Tool;
   outputPolicy: BashOutputPolicy;

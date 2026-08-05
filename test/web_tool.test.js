@@ -63,10 +63,14 @@ function getToolText(result) {
 }
 
 describe("Exa web code-mode tool", () => {
-  it("directs documentation research toward agent-friendly resources", () => {
+  it("requires documentation-only progressive disclosure before SDK use", () => {
     expect(WEB_TOOL.description).toContain(
-      "When search identifies an official documentation site, run web.discover",
+      "your first call to it must be a documentation-only program",
     );
+    expect(WEB_TOOL.description).toContain("console.log(docs)");
+    expect(WEB_TOOL.description).toContain("later tool call that uses web");
+    expect(WEB_TOOL.description).toContain("Do not guess SDK signatures");
+    expect(WEB_TOOL.description).not.toContain("web.search(");
   });
 
   it("resolves the Exa API key from the environment before config", () => {

@@ -5,9 +5,9 @@ The one-shot JavaScript runtime provides these globals:
 - `nook.templates`: list, copy, save, and delete editable templates.
 - `nook.kv`: get, put, import, export, delete, and list per-site JSON KV entries.
 - `docs`: this agent-facing SDK document.
-- `console`: program output. Only text written through console methods is returned; return values are ignored.
+- `console`: program output. Only text written through console methods is returned; program return values are ignored.
 
-Top-level `await` is supported. Calls may run concurrently with `Promise.all`.
+Top-level `await` is supported. A program may make at most 64 SDK calls, with at most four running concurrently, and must finish within 60 seconds. Independent calls can run concurrently with `Promise.all` within that limit.
 
 Use absolute file system paths. Generated code has no direct filesystem, process, environment, network, credential, import, timer, or `fetch` access. Nook methods are the only platform capability.
 
@@ -15,11 +15,13 @@ Use absolute file system paths. Generated code has no direct filesystem, process
 
 `docs` describes this agent-facing management SDK. `nook.skill()` is separate and returns the configured Nook deployment's app-authoring guide, including its browser SDK and KV contract.
 
-When authoring or modifying a Nook app, print the skill before writing the app:
+When authoring or modifying a Nook app, retrieve the skill in a separate documentation-only Nook call:
 
 ```js
 console.log(await nook.skill());
 ```
+
+Do not combine skill retrieval with management SDK operations. Read the returned guide before writing or modifying the app in later tool calls.
 
 ## Sites
 
@@ -211,4 +213,4 @@ Copy, inspect or modify with filesystem tools in later calls, build with Bash, t
 
 ## Output guidance
 
-Print only information needed for the task. Prefer concise labeled text over serialized response objects. Select relevant fields when possible; when all fields matter, flatten and label them compactly. Emit JSON only when the user explicitly requests JSON or another machine-readable result.
+Output is limited to roughly 8,192 tokens. Print only information needed for the task. Prefer concise labeled text over serialized response objects. Select relevant fields when possible; when all fields matter, flatten and label them compactly. Emit JSON only when the user explicitly requests JSON or another machine-readable result.

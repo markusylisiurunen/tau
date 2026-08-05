@@ -5,6 +5,7 @@ import { z } from "zod";
 import { type Config, getExaApiKey } from "../config/index.js";
 import { formatZodError } from "../utils/zod.js";
 import {
+  buildCodeModeToolDescription,
   type CodeModeToolImplementation,
   createCodeModeToolDefinition,
   type ParsedCodeModeArguments,
@@ -20,15 +21,13 @@ const WEB_CODE_MODE_OUTPUT_TOKENS = 8_192;
 const EXA_API_BASE_URL = "https://api.exa.ai";
 const EXA_MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 
-const WEB_DESCRIPTION = [
-  "Run a one-shot JavaScript program to search the web and retrieve page content.",
-  "Use this tool only when the user asks to browse or search the web, provides a URL, or otherwise clearly implies that web access is needed.",
-  "For direct URLs, use web.discover first and print a concise discovery report before retrieving content in the next turn. If discovery advertises a Markdown representation or llms.txt file, do not pass that URL to web.fetch; retrieve it in a separate Bash call with curl. Use web.fetch only as a fallback for ordinary pages when no suitable agent-friendly resource exists or extraction is preferable. When search identifies an official documentation site, run web.discover on the relevant result or documentation root before retrieving individual pages.",
-  "Top-level await is supported. The program receives web, docs, and console globals.",
-  "Only text written through console methods is returned; program return values are ignored.",
-  "Format results as concise, readable plain text instead of dumping raw JSON. Select only relevant fields when possible. When all fields are needed, still flatten and label them compactly rather than serializing the response object. Emit JSON only when the user explicitly requests JSON or another machine-readable result.",
-  "To discover the available web APIs, run a program that prints docs with console.log(docs), then use that documentation in the next turn.",
-].join(" ");
+const WEB_DESCRIPTION = buildCodeModeToolDescription({
+  sdkGlobal: "web",
+  introduction: [
+    "Run a one-shot JavaScript program to search the web and retrieve page content.",
+    "Use this tool only when the user asks to browse or search the web, provides a URL, or otherwise clearly implies that web access is needed.",
+  ],
+});
 
 export const WEB_TOOL: Tool = {
   name: TOOL_NAME_WEB,

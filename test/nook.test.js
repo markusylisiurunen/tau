@@ -746,9 +746,15 @@ function getToolText(result) {
 }
 
 describe("nook code-mode tool", () => {
-  it("advertises docs discovery and the separate Nook-served skill", () => {
+  it("requires sequential docs and app-skill discovery before SDK use", () => {
+    expect(NOOK_TOOL.description).toContain(
+      "your first call to it must be a documentation-only program",
+    );
     expect(NOOK_TOOL.description).toContain("console.log(docs)");
-    expect(NOOK_TOOL.description).toContain("nook.skill()");
+    expect(NOOK_TOOL.description).toContain("later tool call that uses nook");
+    expect(NOOK_TOOL.description).toContain("Do not guess SDK signatures");
+    expect(NOOK_TOOL.description).toContain("treat nook.skill() as a second documentation step");
+    expect(NOOK_TOOL.description).toContain("does nothing except console.log(await nook.skill())");
     expect(NOOK_TOOL.parameters.required).toEqual(["code"]);
   });
 

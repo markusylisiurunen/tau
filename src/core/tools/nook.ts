@@ -11,6 +11,7 @@ import {
 import { validateNookSiteSlug, validateNookTemplateName } from "../nook/validation.js";
 import { formatZodError } from "../utils/zod.js";
 import {
+  buildCodeModeToolDescription,
   type CodeModeToolImplementation,
   createCodeModeToolDefinition,
   type ParsedCodeModeArguments,
@@ -25,17 +26,17 @@ const NOOK_CODE_MODE_OUTPUT_TOKENS = 8_192;
 const MAX_KV_KEY_LENGTH = 256;
 const MAX_KV_VALUE_BYTES = 64 * 1024;
 
-const NOOK_DESCRIPTION = [
-  "Run a one-shot JavaScript program to operate the configured Nook platform: Tau's Cloudflare-backed static mini-app host for publishing built front-end artifacts with optional per-site same-origin JSON KV.",
-  "Do not use this tool autonomously; use it only when the user asks to manage Nook, deploy/publish/host an app or artifact, inspect Nook state, or manage Nook KV.",
-  "If the user asks to deploy a static artifact or mini-app, this is usually the right deployment target.",
-  "Top-level await is supported. The program receives nook, docs, and console globals.",
-  "Only text written through console methods is returned; program return values are ignored.",
-  "To discover the available Nook APIs, run a program that prints docs with console.log(docs), then use that documentation in the next turn.",
-  "The static docs describe the agent-facing SDK. When app-authoring guidance or the browser/KV contract is needed, print await nook.skill() before authoring the app.",
-  "When preparing site files for deployment, write the complete site directory under a fresh mktemp directory and deploy that directory; do not scatter generated site files into the project tree.",
-  "Sites and templates can be copied to an existing empty destination directory. Edit/build copied files normally, then deploy a built static directory separately.",
-].join(" ");
+const NOOK_DESCRIPTION = buildCodeModeToolDescription({
+  sdkGlobal: "nook",
+  introduction: [
+    "Run a one-shot JavaScript program to operate the configured Nook platform: Tau's Cloudflare-backed static mini-app host for publishing built front-end artifacts with optional per-site same-origin JSON KV.",
+    "Do not use this tool autonomously; use it only when the user asks to manage Nook, deploy/publish/host an app or artifact, inspect Nook state, or manage Nook KV.",
+    "If the user asks to deploy a static artifact or mini-app, this is usually the right deployment target.",
+  ],
+  additionalDocumentation: [
+    "When app-authoring guidance is needed, treat nook.skill() as a second documentation step: after reading docs, run a separate documentation-only call that does nothing except console.log(await nook.skill()). Read the returned guide before authoring or modifying the app in later calls.",
+  ],
+});
 
 export const NOOK_TOOL: Tool = {
   name: TOOL_NAME_NOOK,

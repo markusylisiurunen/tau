@@ -4,9 +4,9 @@ The one-shot JavaScript runtime provides these globals:
 - `web.search(query, options?)`: search the web and return relevant page highlights.
 - `web.fetch(urls, options?)`: retrieve highlights or bounded text from known URLs through the web extraction service.
 - `docs`: this document.
-- `console`: program output. Only text written through console methods is returned; return values are ignored.
+- `console`: program output. Only text written through console methods is returned; program return values are ignored.
 
-Top-level `await` is supported. Calls may run concurrently with `Promise.all`.
+Top-level `await` is supported. A program may make at most 64 SDK calls, with at most four running concurrently, and must finish within 60 seconds. Independent calls can run concurrently with `Promise.all` within that limit.
 
 ## Defaults
 
@@ -245,4 +245,4 @@ In the next turn, retrieve the selected Markdown representation or `llms.txt` wi
 
 ## Output guidance
 
-Print only information needed for the task. Prefer concise labeled text over serialized response objects. Select relevant fields when possible; when all fields matter, flatten and label them compactly. Emit JSON only when the user explicitly requests JSON or another machine-readable result.
+Output is limited to roughly 8,192 tokens. Print only information needed for the task. Prefer concise labeled text over serialized response objects. Select relevant fields when possible; when all fields matter, flatten and label them compactly. Emit JSON only when the user explicitly requests JSON or another machine-readable result.

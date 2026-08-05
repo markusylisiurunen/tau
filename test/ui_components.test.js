@@ -891,24 +891,39 @@ test("RewindPickerComponent shows at most eight options", () => {
   const items = Array.from({ length: 12 }, (_, index) => ({
     id: String(index),
     label: `message-${String(index + 1).padStart(2, "0")}`,
+    description: "now",
   }));
   const picker = new RewindPickerComponent(theme, items);
 
-  const lines = renderLines(picker, 60).map(stripTags);
+  const rendered = renderLines(picker, 60);
+  const lines = rendered.map(stripTags);
   const optionLines = lines.filter((line) => line.includes("message-"));
 
   expect(optionLines).toHaveLength(8);
-  expect(lines[0]).toMatch(/^┌/);
-  expect(lines.at(-1)).toMatch(/^└/);
+  expect(lines[0]).toBe(" rewind · enter select · esc cancel");
+  expect(lines.join("\n")).not.toMatch(/[┌┐└┘│]/);
+  expect(rendered.join("\n")).toContain("<autocompleteSelectedSurface>");
+  expect(rendered.join("\n")).toContain("<textMuted>now</textMuted>");
+  expect(lines.join("\n")).toContain(" now     message-12");
   expect(lines.join("\n")).toContain("message-12");
   expect(lines.join("\n")).not.toContain("message-01");
+});
+
+test("RewindPickerComponent gives the message the remaining terminal width", () => {
+  const message = "x".repeat(64);
+  const picker = new RewindPickerComponent(createUiTheme("plain"), [
+    { id: "0", label: message, description: "2m ago" },
+  ]);
+
+  expect(renderText(picker, 80)).toContain(message);
+  expect(renderText(picker, 30)).toContain("2m ago  x");
 });
 
 test("RewindPickerComponent confirms and cancels selection", () => {
   const theme = createTagTheme();
   const items = [
-    { id: "0", label: "first" },
-    { id: "1", label: "second" },
+    { id: "0", label: "first", description: "2m ago" },
+    { id: "1", label: "second", description: "now" },
   ];
   const picker = new RewindPickerComponent(theme, items);
 

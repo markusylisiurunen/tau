@@ -17,6 +17,7 @@ import {
 } from "../dist/protocol/session_protocol.js";
 import { TauSessionProtocolResponseError } from "../dist/transport/errors.js";
 import { formatDiffReviewUserMessage } from "../dist/tui/chat_controller/diff_review_user_message.js";
+import { formatRewindCandidateAge } from "../dist/tui/chat_controller/history_labels.js";
 import { copyTextToClipboard } from "../dist/tui/clipboard.js";
 import { createTuiClientTools, SessionChatApp } from "../dist/tui/session_chat_app.js";
 import { SessionChatController } from "../dist/tui/session_chat_controller.js";
@@ -807,6 +808,17 @@ function createMockDeps(spawn = vi.fn(), platform = "darwin") {
     spawn,
   };
 }
+
+describe("formatRewindCandidateAge", () => {
+  const now = 10 * 24 * 60 * 60 * 1000;
+
+  it("formats compact relative ages", () => {
+    expect(formatRewindCandidateAge(now - 30_000, now)).toBe("now");
+    expect(formatRewindCandidateAge(now - 2 * 60_000, now)).toBe("2m ago");
+    expect(formatRewindCandidateAge(now - 3 * 60 * 60_000, now)).toBe("3h ago");
+    expect(formatRewindCandidateAge(now - 4 * 24 * 60 * 60_000, now)).toBe("4d ago");
+  });
+});
 
 describe("SessionChatController", () => {
   it("renders the main-style startup intro and compact remote cwd label", async () => {
@@ -4365,6 +4377,8 @@ describe("SessionChatController", () => {
   });
 
   it("rewinds session history from the selected user message", async () => {
+    const now = 10 * 24 * 60 * 60 * 1000;
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(now);
     const session = new FakeSession(
       createSnapshot([
         {
@@ -4372,6 +4386,7 @@ describe("SessionChatController", () => {
           message: {
             role: "user",
             content: [{ type: "text", text: "first message" }],
+            timestamp: now - 2 * 60_000,
           },
         },
         {
@@ -4389,6 +4404,7 @@ describe("SessionChatController", () => {
           message: {
             role: "user",
             content: [{ type: "text", text: "second message" }],
+            timestamp: now - 30_000,
           },
         },
         {
@@ -4404,6 +4420,7 @@ describe("SessionChatController", () => {
           message: {
             role: "user",
             content: [{ type: "text", text: "third message" }],
+            timestamp: now - 2 * 60 * 60_000,
           },
         },
       ]),
@@ -4421,10 +4438,10 @@ describe("SessionChatController", () => {
     await flush();
 
     expect(view.rewindPickerShows).toHaveLength(1);
-    expect(view.rewindPickerShows[0].items.map((item) => item.label)).toEqual([
-      "first message",
-      "second message",
-      "third message",
+    expect(view.rewindPickerShows[0].items).toEqual([
+      { id: "history-1", label: "first message", description: "2m ago" },
+      { id: "history-2", label: "second message", description: "now" },
+      { id: "history-3", label: "third message", description: "2h ago" },
     ]);
 
     view.rewindPickerShows[0].onSelect("history-2");
@@ -4435,6 +4452,7 @@ describe("SessionChatController", () => {
     expect(view.removeMessagesFromCalls).toEqual(["history-2"]);
     expect(view.removed).toEqual(expect.arrayContaining(["history-2", "history-3"]));
     expect(view.editorText).toBe("second message");
+    nowSpy.mockRestore();
   });
 
   it("warns when there are no session user messages to rewind", async () => {

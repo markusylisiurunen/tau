@@ -18,6 +18,13 @@ export type AutocompleteListTheme = SelectListTheme & {
   selectedForeground: (text: string) => string;
 };
 
+export type AutocompleteListLayoutOptions = SelectListLayoutOptions & {
+  primaryTone?: "default" | "muted";
+  descriptionTone?: "default" | "muted";
+  descriptionBreakpoint?: number;
+  minDescriptionWidth?: number;
+};
+
 function normalizeToSingleLine(text: string): string {
   return text.replace(/[\r\n]+/g, " ").trim();
 }
@@ -37,7 +44,7 @@ export class AutocompleteList implements Component {
     items: SelectItem[],
     private readonly maxVisible: number,
     private readonly theme: AutocompleteListTheme,
-    private readonly layout: SelectListLayoutOptions = {},
+    private readonly layout: AutocompleteListLayoutOptions = {},
   ) {
     this.items = items;
   }
@@ -108,8 +115,9 @@ export class AutocompleteList implements Component {
     const prefixWidth = 1;
     const description = item.description ? normalizeToSingleLine(item.description) : undefined;
     let line: string;
+    let lineWidth: number;
 
-    if (description && width > 40) {
+    if (description && width > (this.layout.descriptionBreakpoint ?? 40)) {
       const effectivePrimaryColumnWidth = Math.max(
         1,
         Math.min(primaryColumnWidth, width - prefixWidth - 4),
@@ -124,22 +132,41 @@ export class AutocompleteList implements Component {
       const spacing = " ".repeat(Math.max(1, effectivePrimaryColumnWidth - visibleWidth(primary)));
       const remainingWidth = width - prefixWidth - visibleWidth(primary) - spacing.length - 1;
 
-      if (remainingWidth > MIN_DESCRIPTION_WIDTH) {
+      if (remainingWidth > (this.layout.minDescriptionWidth ?? MIN_DESCRIPTION_WIDTH)) {
         const truncatedDescription = stripAnsi(truncateToWidth(description, remainingWidth, ""));
-        line = selected
-          ? `${prefix}${primary}${spacing}${truncatedDescription}`
-          : `${prefix}${primary}${this.theme.description(spacing + truncatedDescription)}`;
+        line = `${prefix}${this.stylePrimary(primary, selected)}${this.styleDescription(
+          spacing + truncatedDescription,
+          selected,
+        )}`;
+        lineWidth =
+          prefixWidth + visibleWidth(primary) + spacing.length + visibleWidth(truncatedDescription);
       } else {
-        line = `${prefix}${this.truncatePrimary(item, selected, width - prefixWidth - 1, width)}`;
+        const primaryOnly = this.truncatePrimary(item, selected, width - prefixWidth - 1, width);
+        line = `${prefix}${this.stylePrimary(primaryOnly, selected)}`;
+        lineWidth = prefixWidth + visibleWidth(primaryOnly);
       }
     } else {
-      line = `${prefix}${this.truncatePrimary(item, selected, width - prefixWidth - 1, width)}`;
+      const primaryOnly = this.truncatePrimary(item, selected, width - prefixWidth - 1, width);
+      line = `${prefix}${this.stylePrimary(primaryOnly, selected)}`;
+      lineWidth = prefixWidth + visibleWidth(primaryOnly);
     }
 
     if (!selected) return line;
 
-    const padded = `${line}${" ".repeat(Math.max(0, width - visibleWidth(line)))}`;
-    return this.theme.selectedBackground(this.theme.selectedForeground(padded));
+    const padded = `${line}${" ".repeat(Math.max(0, width - lineWidth))}`;
+    return this.theme.selectedBackground(padded);
+  }
+
+  private stylePrimary(text: string, selected: boolean): string {
+    if (this.layout.primaryTone === "muted") return this.theme.description(text);
+    return selected ? this.theme.selectedForeground(text) : text;
+  }
+
+  private styleDescription(text: string, selected: boolean): string {
+    if ((this.layout.descriptionTone ?? "muted") === "muted") {
+      return this.theme.description(text);
+    }
+    return selected ? this.theme.selectedForeground(text) : text;
   }
 
   private getPrimaryColumnWidth(): number {

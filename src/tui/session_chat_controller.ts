@@ -53,7 +53,10 @@ import {
   DiffReviewService,
 } from "./chat_controller/diff_review_service.js";
 import { formatDiffReviewUserMessage } from "./chat_controller/diff_review_user_message.js";
-import { formatRewindCandidateLabel } from "./chat_controller/history_labels.js";
+import {
+  formatRewindCandidateAge,
+  formatRewindCandidateLabel,
+} from "./chat_controller/history_labels.js";
 import {
   buildHistoryMessageModel,
   extractHistoryUserText,
@@ -2199,6 +2202,7 @@ export class SessionChatController {
           id: entry.id,
           text,
           label: formatRewindCandidateLabel(text),
+          description: formatRewindCandidateAge(entry.message.timestamp),
         },
       ];
     });
@@ -2209,7 +2213,7 @@ export class SessionChatController {
     }
 
     this.view.showRewindPicker({
-      items: candidates.map(({ id, label }) => ({ id, label })),
+      items: candidates.map(({ id, label, description }) => ({ id, label, description })),
       onSelect: (id) => {
         const selected = candidates.find((candidate) => candidate.id === id);
         if (!selected) {

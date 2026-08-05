@@ -54,5 +54,4 @@ CREATE TABLE IF NOT EXISTS digest_worker_lease (
   claimed_at INTEGER
 );
 INSERT OR IGNORE INTO digest_worker_lease (singleton, claimed_at) VALUES (1, NULL);
-DROP TABLE IF EXISTS history_schema_migrations;
 `;

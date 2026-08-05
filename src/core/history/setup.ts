@@ -41,18 +41,13 @@ export async function setupHistoryService(options: HistorySetupOptions): Promise
   if (!zoneName) throw new Error("zone name is required");
   const suppliedApiKey = options.apiKey?.trim() || env.TAU_HISTORY_API_KEY?.trim();
   const apiKey = suppliedApiKey || generateApiKey();
-  const database = await ensureDatabase(env, stdout);
+  const databaseId = await ensureDatabase(env, stdout);
   const temporaryDirectory = mkdtempSync(join(tmpdir(), "tau-history-"));
   try {
-    writeWorkerProject(temporaryDirectory, {
-      domain,
-      zoneName,
-      databaseId: database.id,
-    });
-    if (database.created) await applyHistoryMigrations(temporaryDirectory, env, stdout);
+    writeWorkerProject(temporaryDirectory, { domain, zoneName, databaseId });
+    await applyHistoryMigrations(temporaryDirectory, env, stdout);
     stdout(`deploying Worker ${WORKER_NAME} with Wrangler...`);
     await runWrangler(["deploy"], { cwd: temporaryDirectory, env });
-    if (!database.created) await applyHistoryMigrations(temporaryDirectory, env, stdout);
     await runWrangler(["secret", "put", "API_KEY"], {
       cwd: temporaryDirectory,
       env,
@@ -140,21 +135,21 @@ function isMissingHistoryResource(output: string): boolean {
 async function ensureDatabase(
   env: NodeJS.ProcessEnv,
   stdout: (line: string) => void,
-): Promise<{ id: string; created: boolean }> {
+): Promise<string> {
   const listed = await runWrangler(["d1", "list", "--json"], { env });
   const databases = JSON.parse(listed.output) as D1DatabaseInfo[];
   const existing = databases.find((database) => database.name === DATABASE_NAME);
   if (existing) {
     const id = databaseId(existing);
     stdout(`D1 database ${DATABASE_NAME} already exists`);
-    return { id, created: false };
+    return id;
   }
 
   await runWrangler(["d1", "create", DATABASE_NAME], { env });
   const info = await runWrangler(["d1", "info", DATABASE_NAME, "--json"], { env });
   const id = databaseId(JSON.parse(info.output) as D1DatabaseInfo);
   stdout(`created D1 database ${DATABASE_NAME}`);
-  return { id, created: true };
+  return id;
 }
 
 function databaseId(database: D1DatabaseInfo): string {

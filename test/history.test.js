@@ -678,7 +678,7 @@ describe("session history", () => {
     });
   });
 
-  it("defines an idempotent D1 migration and removes legacy migration state", () => {
+  it("defines an idempotent D1 migration and preserves legacy migration state", () => {
     const sqlite = new DatabaseSync(":memory:");
     try {
       sqlite.exec(HISTORY_INITIAL_MIGRATION_SQL);
@@ -692,7 +692,7 @@ describe("session history", () => {
           version INTEGER PRIMARY KEY,
           applied_at INTEGER NOT NULL
         );
-        INSERT INTO history_schema_migrations (version, applied_at) VALUES (3, 1);
+        INSERT INTO history_schema_migrations (version, applied_at) VALUES (1, 1), (2, 1), (3, 1);
       `);
 
       sqlite.exec(HISTORY_INITIAL_MIGRATION_SQL);
@@ -700,11 +700,11 @@ describe("session history", () => {
       expect(
         sqlite.prepare("SELECT session_id, created_at, updated_at FROM sessions").get(),
       ).toEqual({ session_id: "existing", created_at: 1, updated_at: 2 });
-      expect(
-        sqlite
-          .prepare("SELECT name FROM sqlite_master WHERE name = 'history_schema_migrations'")
-          .get(),
-      ).toBeUndefined();
+      expect(sqlite.prepare("SELECT version FROM history_schema_migrations").all()).toEqual([
+        { version: 1 },
+        { version: 2 },
+        { version: 3 },
+      ]);
       expect(
         sqlite
           .prepare("PRAGMA table_info(sessions)")
@@ -730,7 +730,7 @@ describe("session history", () => {
     }
   });
 
-  it("orders official D1 migrations safely around history Worker deployment", async () => {
+  it("applies official D1 migrations before history Worker deployment", async () => {
     const root = mkdtempSync(join(tmpdir(), "tau-history-setup-test-"));
     const binDirectory = join(root, "bin");
     const wranglerPath = join(binDirectory, "wrangler");
@@ -760,7 +760,8 @@ describe("session history", () => {
         '  const migration = join(process.cwd(), "migrations", "0001_initial.sql");',
         "  if (!existsSync(migration)) process.exit(33);",
         '  const sql = readFileSync(migration, "utf8");',
-        '  if (!sql.includes("DROP TABLE IF EXISTS history_schema_migrations")) process.exit(34);',
+        '  if (sql.includes("DROP TABLE IF EXISTS history_schema_migrations")) process.exit(34);',
+        '  if (args[0] === "d1" && process.env.TEST_FAIL_MIGRATION === "1") process.exit(35);',
         "  process.exit(0);",
         "}",
         'if (args[0] === "secret") process.exit(0);',
@@ -785,8 +786,8 @@ describe("session history", () => {
       });
       expect(readFileSync(callsPath, "utf8").trim().split("\n")).toEqual([
         "d1 list --json",
-        "deploy",
         "d1 migrations apply tau-history --remote",
+        "deploy",
         "secret put API_KEY",
       ]);
 
@@ -802,6 +803,34 @@ describe("session history", () => {
         "d1 list --json",
         "d1 create tau-history",
         "d1 info tau-history --json",
+        "d1 migrations apply tau-history --remote",
+        "deploy",
+        "secret put API_KEY",
+      ]);
+
+      writeFileSync(callsPath, "");
+      await expect(
+        setupHistoryService({
+          domain: "history.example.com",
+          zoneName: "example.com",
+          apiKey: "test-key",
+          env: { ...baseEnv, TEST_FAIL_MIGRATION: "1", TEST_FRESH: "1" },
+          stdout: () => {},
+        }),
+      ).rejects.toThrow("wrangler d1 migrations apply tau-history --remote failed");
+      await setupHistoryService({
+        domain: "history.example.com",
+        zoneName: "example.com",
+        apiKey: "test-key",
+        env: baseEnv,
+        stdout: () => {},
+      });
+      expect(readFileSync(callsPath, "utf8").trim().split("\n")).toEqual([
+        "d1 list --json",
+        "d1 create tau-history",
+        "d1 info tau-history --json",
+        "d1 migrations apply tau-history --remote",
+        "d1 list --json",
         "d1 migrations apply tau-history --remote",
         "deploy",
         "secret put API_KEY",

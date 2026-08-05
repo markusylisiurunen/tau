@@ -40,7 +40,7 @@ export type ToolRunPresentation = {
 export const TOOL_CARD_SUBJECT_MAX_LINES = 8;
 export const TOOL_CARD_DEFAULT_DETAILS_MAX_LINES = 7;
 export const TOOL_CARD_TRUNCATED_DETAILS_MAX_LINES = 17;
-export const TOOL_CARD_MAX_LINE_CHARS = 256;
+export const TOOL_CARD_MAX_LINE_CHARS = 512;
 
 function isBoundedLine(text: string): boolean {
   return (

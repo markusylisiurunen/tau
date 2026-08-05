@@ -212,29 +212,11 @@ type PersonaSpec = {
 
 const PERSONA_SPECS: PersonaSpec[] = [
   {
-    id: "opus-4.8",
-    description: "Claude Opus 4.8",
+    id: "opus-5",
+    description: "Claude Opus 5",
     provider: "anthropic",
-    modelId: "claude-opus-4-8",
+    modelId: "claude-opus-5",
     allowedReasoningLevels: ["low", "medium", "high", "xhigh", "max"],
-    settings: { reasoning: "medium" },
-    skills: "*",
-  },
-  {
-    id: "opus-4.6",
-    description: "Claude Opus 4.6",
-    provider: "anthropic",
-    modelId: "claude-opus-4-6",
-    allowedReasoningLevels: ["low", "medium", "high", "max"],
-    settings: { reasoning: "medium" },
-    skills: "*",
-  },
-  {
-    id: "gpt-5.5",
-    description: "GPT-5.5",
-    provider: "openai",
-    modelId: "gpt-5.5",
-    allowedReasoningLevels: ["low", "medium", "high", "xhigh"],
     settings: { reasoning: "medium" },
     skills: "*",
   },
@@ -266,15 +248,6 @@ const PERSONA_SPECS: PersonaSpec[] = [
     skills: "*",
   },
   {
-    id: "gpt-5.5-chatgpt",
-    description: "GPT-5.5 (ChatGPT)",
-    provider: "openai-codex",
-    modelId: "gpt-5.5",
-    allowedReasoningLevels: ["low", "medium", "high", "xhigh"],
-    settings: { reasoning: "medium" },
-    skills: "*",
-  },
-  {
     id: "gpt-5.6-sol-chatgpt",
     description: "GPT-5.6 Sol (ChatGPT)",
     provider: "openai-codex",
@@ -299,15 +272,6 @@ const PERSONA_SPECS: PersonaSpec[] = [
     modelId: "gpt-5.6-luna",
     allowedReasoningLevels: ["low", "medium", "high", "xhigh", "max"],
     settings: { reasoning: "medium" },
-    skills: "*",
-  },
-  {
-    id: "gpt-5.5-chatgpt-fast",
-    description: "GPT-5.5 Fast (ChatGPT)",
-    provider: "openai-codex",
-    modelId: "gpt-5.5",
-    allowedReasoningLevels: ["low", "medium", "high", "xhigh"],
-    settings: { reasoning: "medium", serviceTier: "priority" },
     skills: "*",
   },
   {
@@ -338,26 +302,17 @@ const PERSONA_SPECS: PersonaSpec[] = [
     skills: "*",
   },
   {
-    id: "gemini-3.1-pro",
-    description: "Gemini 3.1 Pro",
+    id: "gemini-3.6-flash",
+    description: "Gemini 3.6 Flash",
     provider: "google",
-    modelId: "gemini-3.1-pro-preview",
-    allowedReasoningLevels: ["low", "medium", "high"],
-    settings: { reasoning: "low" },
-    skills: "*",
-  },
-  {
-    id: "gemini-3-flash",
-    description: "Gemini 3 Flash",
-    provider: "google",
-    modelId: "gemini-3-flash-preview",
+    modelId: "gemini-3.6-flash",
     allowedReasoningLevels: ["low", "medium", "high"],
     settings: { reasoning: "medium" },
     skills: "*",
   },
 ];
 
-export const DEFAULT_BUILTIN_PERSONA_ID = "opus-4.8-chat";
+export const DEFAULT_BUILTIN_PERSONA_ID = "opus-5-chat";
 
 type Variant = "chat" | "coder";
 
@@ -432,7 +387,7 @@ export function createBuiltinPersonas(modelResolver: ModelResolver = resolveMode
     }
 
     return [buildPersona(spec, "chat", modelResolver), buildPersona(spec, "coder", modelResolver)];
-  });
+  }).sort((left, right) => left.id.localeCompare(right.id));
 }
 
 export const personas: Persona[] = createBuiltinPersonas();

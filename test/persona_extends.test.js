@@ -68,7 +68,7 @@ describe("custom personas", () => {
         [
           "---",
           "id: haiku-clone-of-gpt-coder",
-          "extends: gpt-5.5-coder",
+          "extends: gpt-5.6-sol-coder",
           "provider: anthropic",
           "model: claude-haiku-4-5",
           "---",
@@ -80,7 +80,7 @@ describe("custom personas", () => {
       const { personas, errors } = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
       expect(errors).toEqual([]);
 
-      const base = personas.find((p) => p.id === "gpt-5.5-coder");
+      const base = personas.find((p) => p.id === "gpt-5.6-sol-coder");
       const clone = personas.find((p) => p.id === "haiku-clone-of-gpt-coder");
 
       expect(base).toBeTruthy();
@@ -129,13 +129,13 @@ describe("custom personas", () => {
 
       expect(errors).toEqual([]);
       expect(personas.find((persona) => persona.id === "nook-persona")?.tools).toEqual(["nook"]);
-      expect(personas.find((persona) => persona.id === "opus-4.8-chat")?.tools).toContain("nook");
+      expect(personas.find((persona) => persona.id === "opus-5-chat")?.tools).toContain("nook");
     } finally {
       fx.cleanup();
     }
   });
 
-  it("keeps both built-in opus personas available", async () => {
+  it("sorts built-in personas alphabetically", async () => {
     const fx = setupFixture();
 
     try {
@@ -143,30 +143,54 @@ describe("custom personas", () => {
       const { personas, errors } = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
       expect(errors).toEqual([]);
 
-      expect(personas.find((persona) => persona.id === "opus-4.6-chat")?.model.id).toBe(
-        "claude-opus-4-6",
+      const ids = personas.map((persona) => persona.id);
+      expect(ids).toEqual([...ids].sort((left, right) => left.localeCompare(right)));
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("loads only the current built-in opus personas", async () => {
+    const fx = setupFixture();
+
+    try {
+      const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
+      const { personas, errors } = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
+      expect(errors).toEqual([]);
+
+      expect(personas.find((persona) => persona.id === "opus-4.6-chat")).toBeUndefined();
+      expect(personas.find((persona) => persona.id === "opus-4.8-chat")).toBeUndefined();
+      expect(personas.find((persona) => persona.id === "opus-5-chat")?.model.id).toBe(
+        "claude-opus-5",
       );
-      expect(personas.find((persona) => persona.id === "opus-4.6-chat")?.settings.reasoning).toBe(
+      expect(personas.find((persona) => persona.id === "opus-5-chat")?.settings.reasoning).toBe(
         "medium",
       );
       expect(
-        personas.find((persona) => persona.id === "opus-4.6-chat")?.allowedReasoningLevels,
-      ).toEqual(["low", "medium", "high", "max"]);
-      expect(personas.find((persona) => persona.id === "opus-4.6-coder")?.model.id).toBe(
-        "claude-opus-4-6",
-      );
-      expect(personas.find((persona) => persona.id === "opus-4.8-chat")?.model.id).toBe(
-        "claude-opus-4-8",
-      );
-      expect(personas.find((persona) => persona.id === "opus-4.8-chat")?.settings.reasoning).toBe(
-        "medium",
-      );
-      expect(
-        personas.find((persona) => persona.id === "opus-4.8-chat")?.allowedReasoningLevels,
+        personas.find((persona) => persona.id === "opus-5-chat")?.allowedReasoningLevels,
       ).toEqual(["low", "medium", "high", "xhigh", "max"]);
-      expect(personas.find((persona) => persona.id === "opus-4.8-coder")?.model.id).toBe(
-        "claude-opus-4-8",
+      expect(personas.find((persona) => persona.id === "opus-5-coder")?.model.id).toBe(
+        "claude-opus-5",
       );
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("loads only the current built-in Gemini persona", async () => {
+    const fx = setupFixture();
+
+    try {
+      const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
+      const { personas, errors } = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
+      expect(errors).toEqual([]);
+
+      expect(personas.find((persona) => persona.id === "gemini-3.1-pro-chat")).toBeUndefined();
+      expect(personas.find((persona) => persona.id === "gemini-3-flash-chat")).toBeUndefined();
+      expect(personas.find((persona) => persona.id === "gemini-3.6-flash-chat")?.model.id).toBe(
+        "gemini-3.6-flash",
+      );
+      expect(personas.find((persona) => persona.id === "gemini-3.6-flash-coder")).toBeUndefined();
     } finally {
       fx.cleanup();
     }
@@ -187,19 +211,11 @@ describe("custom personas", () => {
         personas.find((persona) => persona.id === "gpt-5.4-chatgpt-fast-chat"),
       ).toBeUndefined();
 
-      expect(personas.find((persona) => persona.id === "gpt-5.5-chat")?.model.id).toBe("gpt-5.5");
-      expect(personas.find((persona) => persona.id === "gpt-5.5-coder")?.model.id).toBe("gpt-5.5");
-      expect(personas.find((persona) => persona.id === "gpt-5.5-chatgpt-chat")?.model.id).toBe(
-        "gpt-5.5",
-      );
-      expect(personas.find((persona) => persona.id === "gpt-5.5-chatgpt-coder")?.model.id).toBe(
-        "gpt-5.5",
-      );
-      expect(personas.find((persona) => persona.id === "gpt-5.5-chatgpt")).toBeUndefined();
+      expect(personas.find((persona) => persona.id === "gpt-5.5-chat")).toBeUndefined();
+      expect(personas.find((persona) => persona.id === "gpt-5.5-chatgpt-chat")).toBeUndefined();
       expect(
-        personas.find((persona) => persona.id === "gpt-5.5-chatgpt-fast-chat")?.settings
-          .serviceTier,
-      ).toBe("priority");
+        personas.find((persona) => persona.id === "gpt-5.5-chatgpt-fast-chat"),
+      ).toBeUndefined();
 
       expect(personas.find((persona) => persona.id === "gpt-5.6-sol-chat")?.model.id).toBe(
         "gpt-5.6-sol",
@@ -242,7 +258,7 @@ describe("custom personas", () => {
               openai: {
                 models: [
                   {
-                    id: "gpt-5.5",
+                    id: "gpt-5.6-sol",
                     contextWindow: 400000,
                   },
                 ],
@@ -250,7 +266,7 @@ describe("custom personas", () => {
               "openai-codex": {
                 models: [
                   {
-                    id: "gpt-5.5",
+                    id: "gpt-5.6-sol",
                     contextWindow: 400000,
                   },
                 ],
@@ -266,24 +282,24 @@ describe("custom personas", () => {
       const { personas, errors } = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
       expect(errors).toEqual([]);
 
-      expect(personas.find((persona) => persona.id === "gpt-5.5-chat")?.model.contextWindow).toBe(
-        400000,
-      );
-      expect(personas.find((persona) => persona.id === "gpt-5.5-coder")?.model.contextWindow).toBe(
-        400000,
-      );
       expect(
-        personas.find((persona) => persona.id === "gpt-5.5-chatgpt-chat")?.model.contextWindow,
+        personas.find((persona) => persona.id === "gpt-5.6-sol-chat")?.model.contextWindow,
       ).toBe(400000);
       expect(
-        personas.find((persona) => persona.id === "gpt-5.5-chatgpt-coder")?.model.contextWindow,
+        personas.find((persona) => persona.id === "gpt-5.6-sol-coder")?.model.contextWindow,
       ).toBe(400000);
       expect(
-        personas.find((persona) => persona.id === "gpt-5.5-chatgpt-fast-chat")?.settings
+        personas.find((persona) => persona.id === "gpt-5.6-sol-chatgpt-chat")?.model.contextWindow,
+      ).toBe(400000);
+      expect(
+        personas.find((persona) => persona.id === "gpt-5.6-sol-chatgpt-coder")?.model.contextWindow,
+      ).toBe(400000);
+      expect(
+        personas.find((persona) => persona.id === "gpt-5.6-sol-chatgpt-fast-chat")?.settings
           .serviceTier,
       ).toBe("priority");
       expect(
-        personas.find((persona) => persona.id === "gpt-5.5-chatgpt-fast-coder")?.settings
+        personas.find((persona) => persona.id === "gpt-5.6-sol-chatgpt-fast-coder")?.settings
           .serviceTier,
       ).toBe("priority");
     } finally {
@@ -297,10 +313,10 @@ describe("custom personas", () => {
     try {
       mkdirSync(join(fx.home, ".config", "tau", "personas"), { recursive: true });
       writeFileSync(
-        join(fx.home, ".config", "tau", "personas", "gpt-5.5-chat.md"),
+        join(fx.home, ".config", "tau", "personas", "gpt-5.6-sol-chat.md"),
         [
           "---",
-          "id: gpt-5.5-chat",
+          "id: gpt-5.6-sol-chat",
           "provider: anthropic",
           "model: claude-haiku-4-5",
           "---",
@@ -316,7 +332,7 @@ describe("custom personas", () => {
       );
       expect(errors).toEqual([]);
 
-      expect(personas.map((p) => p.id)).toEqual(["gpt-5.5-chat"]);
+      expect(personas.map((p) => p.id)).toEqual(["gpt-5.6-sol-chat"]);
       expect(personas[0].source).toBe("user");
       expect(personas[0].skills).toBe("*");
     } finally {
@@ -506,8 +522,8 @@ describe("custom personas", () => {
           "  analyst:",
           "    systemPrompt: analyze repository state",
           "    launchModels:",
-          "      - openai/gpt-5.5:high",
-          "      - openai/gpt-5.5:high",
+          "      - openai/gpt-5.6-sol:high",
+          "      - openai/gpt-5.6-sol:high",
           "---",
           "persona with launch models",
           "",
@@ -518,7 +534,7 @@ describe("custom personas", () => {
       const { personas, errors } = await loadAllContentWithModelResolver(
         {
           subagents: {
-            defaultLaunchModels: ["openai/gpt-5.5:low"],
+            defaultLaunchModels: ["openai/gpt-5.6-sol:low"],
           },
         },
         { deps, cwd: fx.cwd },
@@ -527,8 +543,8 @@ describe("custom personas", () => {
 
       const customPersona = personas.find((persona) => persona.id === "launch-models");
       expect(customPersona).toBeTruthy();
-      expect(customPersona.subagents.analyst.launchModels).toEqual(["openai/gpt-5.5:high"]);
-      expect(customPersona.subagents.default.launchModels).toEqual(["openai/gpt-5.5:low"]);
+      expect(customPersona.subagents.analyst.launchModels).toEqual(["openai/gpt-5.6-sol:high"]);
+      expect(customPersona.subagents.default.launchModels).toEqual(["openai/gpt-5.6-sol:low"]);
     } finally {
       fx.cleanup();
     }
@@ -542,20 +558,22 @@ describe("custom personas", () => {
       const withOverrides = await loadAllContentWithModelResolver(
         {
           subagents: {
-            defaultLaunchModels: ["openai/gpt-5.5:low"],
+            defaultLaunchModels: ["openai/gpt-5.6-sol:low"],
           },
         },
         { deps, cwd: fx.cwd },
       );
 
       const withOverridesPersona = withOverrides.personas.find(
-        (persona) => persona.id === "gpt-5.5-chat",
+        (persona) => persona.id === "gpt-5.6-sol-chat",
       );
-      expect(withOverridesPersona.subagents.default.launchModels).toEqual(["openai/gpt-5.5:low"]);
+      expect(withOverridesPersona.subagents.default.launchModels).toEqual([
+        "openai/gpt-5.6-sol:low",
+      ]);
 
       const withoutOverrides = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
       const withoutOverridesPersona = withoutOverrides.personas.find(
-        (persona) => persona.id === "gpt-5.5-chat",
+        (persona) => persona.id === "gpt-5.6-sol-chat",
       );
       expect(withoutOverridesPersona.subagents.default.launchModels).toBeUndefined();
     } finally {

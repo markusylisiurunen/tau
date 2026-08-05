@@ -28,7 +28,7 @@ import {
 } from "@markusylisiurunen/tau/sdk";
 
 const client = await createTauSdkClient({
-  persona: "gpt-5.5-coder",
+  persona: "gpt-5.6-sol-coder",
 });
 
 const session = await client.sessions.create({

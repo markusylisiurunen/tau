@@ -78,7 +78,7 @@ describe("cli", () => {
       expect(result.status).toBe(0);
       expect(result.stdout).toContain("tau debug info");
       expect(result.stdout).toContain("personas (0)");
-      expect(result.stderr).toContain("defaultPersona 'opus-4.8-chat' not found");
+      expect(result.stderr).toContain("defaultPersona 'opus-5-chat' not found");
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

@@ -27,7 +27,7 @@ function createSubagentState(overrides = {}) {
     name: "default",
     title: "child task",
     availability: "running",
-    model: { provider: "anthropic", id: "claude-opus-4-8", reasoning: "medium" },
+    model: { provider: "anthropic", id: "claude-opus-5", reasoning: "medium" },
     workingDirectory: "/repo/current",
     createdAt: 10,
     run: {
@@ -67,7 +67,7 @@ function createModelResolver(cwd = "/repo/current", home = "/repo") {
 }
 
 function createFixture(overrides = {}) {
-  const anthropic = personas.find((persona) => persona.id === "opus-4.8-chat")?.model;
+  const anthropic = personas.find((persona) => persona.id === "opus-5-chat")?.model;
   expect(anthropic).toBeTruthy();
   const supervisor = {
     spawn: vi.fn(({ runtimeConfig, title }) => ({
@@ -95,12 +95,12 @@ function createFixture(overrides = {}) {
     skills: "*",
     source: "project",
     subagents: {
-      default: { launchModels: ["openai/gpt-5.5:high"] },
+      default: { launchModels: ["openai/gpt-5.6-sol:high"] },
       researcher: {
         systemPrompt: "research",
         model: anthropic,
         settings: { reasoning: "medium" },
-        launchModels: ["openai/gpt-5.5:high"],
+        launchModels: ["openai/gpt-5.6-sol:high"],
       },
       fixed: { systemPrompt: "fixed", model: anthropic },
     },
@@ -356,7 +356,7 @@ describe("spawn_agent tool", () => {
     const { tool, supervisor } = createFixture();
     const { dispatch, result } = await execute(tool, {
       ...baseArguments,
-      model: "openai/gpt-5.5:high",
+      model: "openai/gpt-5.6-sol:high",
     });
 
     expect(dispatch.startedUiEvent).toMatchObject({
@@ -368,7 +368,7 @@ describe("spawn_agent tool", () => {
     expect(getText(result.toolResult)).toBe(
       [
         "Spawned `agent-1` · research task",
-        "researcher · openai/gpt-5.5:high · /repo/current",
+        "researcher · openai/gpt-5.6-sol:high · /repo/current",
         "run 1 running · capacity 1/8",
       ].join("\n"),
     );
@@ -390,11 +390,11 @@ describe("spawn_agent tool", () => {
     const missing = await execute(tool, {
       ...baseArguments,
       name: "fixed",
-      model: "openai/gpt-5.5:high",
+      model: "openai/gpt-5.6-sol:high",
     });
     const disallowed = await execute(tool, {
       ...baseArguments,
-      model: "openai/gpt-5.5:medium",
+      model: "openai/gpt-5.6-sol:medium",
     });
 
     expect(missing.result.toolResult.outcome).toBe("blocked");

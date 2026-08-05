@@ -72,7 +72,7 @@ to force a specific Codex account for this run, set `TAU_CODEX_ACCOUNT` to the a
 tau writes JSONL usage logs to `~/.config/tau/logs/usage-YYYY-MM-DD.jsonl` for every assistant response (main and sub-agent). summarize usage with:
 
 ```sh
-tau usage --since 2025-01-01 --persona gpt-5.5-coder
+tau usage --since 2025-01-01 --persona gpt-5.6-sol-coder
 ```
 
 filters: `--since`, `--persona`, `--provider`, `--model`.
@@ -82,7 +82,7 @@ filters: `--since`, `--persona`, `--provider`, `--model`.
 tau can run without the TUI via NDJSON RPC over stdin/stdout:
 
 ```sh
-tau rpc --persona gpt-5.5-coder
+tau rpc --persona gpt-5.6-sol-coder
 ```
 
 RPC mode reuses the same startup config and persona loading as interactive mode. stdin/stdout are reserved for protocol traffic in this mode (piped stdin is **not** treated as an initial user message). `--caffeinated` is a macOS-only TUI flag and is rejected outside TUI mode.
@@ -386,14 +386,11 @@ tau uses `caffeinate -i` and only holds the sleep assertion during active assist
 
 tau comes with several built-in personas across different models:
 
-- **Claude Opus 4.6** (Anthropic): `opus-4.6-chat`, `opus-4.6-coder`
-- **Claude Opus 4.8** (Anthropic): `opus-4.8-chat`, `opus-4.8-coder`
-- **GPT-5.5** (OpenAI): `gpt-5.5-chat`, `gpt-5.5-coder`
-- **GPT-5.5 Fast (ChatGPT)** and **GPT-5.6 Fast (ChatGPT)** (OpenAI Codex, priority tier): `gpt-5.5-chatgpt-fast-chat`, `gpt-5.5-chatgpt-fast-coder`, `gpt-5.6-sol-chatgpt-fast-chat`, `gpt-5.6-sol-chatgpt-fast-coder`, `gpt-5.6-terra-chatgpt-fast-chat`, `gpt-5.6-terra-chatgpt-fast-coder`, `gpt-5.6-luna-chatgpt-fast-chat`, `gpt-5.6-luna-chatgpt-fast-coder`
-- **GPT-5.5 (ChatGPT)** (OpenAI Codex): `gpt-5.5-chatgpt-chat`, `gpt-5.5-chatgpt-coder`
+- **Claude Opus 5** (Anthropic): `opus-5-chat`, `opus-5-coder`
 - **GPT-5.6 Sol**, **GPT-5.6 Terra**, and **GPT-5.6 Luna** (OpenAI): `gpt-5.6-sol-chat`, `gpt-5.6-sol-coder`, `gpt-5.6-terra-chat`, `gpt-5.6-terra-coder`, `gpt-5.6-luna-chat`, `gpt-5.6-luna-coder`
 - **GPT-5.6 Sol (ChatGPT)**, **GPT-5.6 Terra (ChatGPT)**, and **GPT-5.6 Luna (ChatGPT)** (OpenAI Codex): `gpt-5.6-sol-chatgpt-chat`, `gpt-5.6-sol-chatgpt-coder`, `gpt-5.6-terra-chatgpt-chat`, `gpt-5.6-terra-chatgpt-coder`, `gpt-5.6-luna-chatgpt-chat`, `gpt-5.6-luna-chatgpt-coder`
-- **Gemini 3.1 Pro** and **Gemini 3 Flash** (Google): `gemini-3.1-pro-chat`, `gemini-3-flash-chat`
+- **GPT-5.6 Fast (ChatGPT)** (OpenAI Codex, priority tier): `gpt-5.6-sol-chatgpt-fast-chat`, `gpt-5.6-sol-chatgpt-fast-coder`, `gpt-5.6-terra-chatgpt-fast-chat`, `gpt-5.6-terra-chatgpt-fast-coder`, `gpt-5.6-luna-chatgpt-fast-chat`, `gpt-5.6-luna-chatgpt-fast-coder`
+- **Gemini 3.6 Flash** (Google): `gemini-3.6-flash-chat`
 
 chat variants are for general-purpose assistance; coder variants are optimized for software engineering. built-in personas include the `default` sub-agent for background tasks unless disabled.
 
@@ -402,7 +399,7 @@ switch personas at startup with `--persona` or mid-session with `/persona:<id>`:
 persona id matching is exact/case-sensitive.
 
 ```sh
-tau --persona opus-4.8-coder
+tau --persona opus-5-coder
 ```
 
 ## sub-agents
@@ -434,7 +431,7 @@ when you write custom skills, you can specify trigger sensitivity in the skill d
 some models support extended thinking, where they reason through problems before responding. cycle through reasoning levels with `shift+tab`, or set one at startup:
 
 ```sh
-tau --persona opus-4.8-chat:high
+tau --persona opus-5-chat:high
 ```
 
 reasoning changes made while the assistant is working apply to the next independently submitted or queued turn. the active turn keeps the full execution spec it captured when it started, including tool-call subturns and steering continuations.
@@ -452,7 +449,7 @@ reference sub-agents with `@@agent:<name>` (for example, `@@agent:default`). exa
 you can also pipe content directly:
 
 ```sh
-cat src/tui/session_chat_app.ts | tau --persona opus-4.8-chat
+cat src/tui/session_chat_app.ts | tau --persona opus-5-chat
 ```
 
 by default, tau injects your AGENTS.md into the system prompt. use `--no-agent-context-files` to disable this behavior. tau searches for AGENTS.md in the current directory and parent directories up to your home folder (or filesystem root if cwd is outside home). tau also includes a paths-only listing of `AGENTS.md` files in child directories under the current working directory, excluding any file already injected in full. this nested scan is breadth-first and stops after 8,192 directories or 16 levels. it skips standard VCS, dependency, build, virtual-environment, and cache directories at every level. when scanning directly from the execution home, it also skips direct tool-managed children such as `.cargo`, `.config`, `.local`, `.npm`, and platform data directories (`Library` on macOS and `snap` on Linux). project-local directories with the same tool-managed names remain visible. use `agentContextFiles` for important files that must be included independently of the nested scan.
@@ -542,7 +539,7 @@ model definitions can be extended and overridden through `~/.config/tau/models.j
     "exa": "...",
     "mistral": "..."
   },
-  "defaultPersona": "gpt-5.5-chat",
+  "defaultPersona": "gpt-5.6-sol-chat",
   "disableBuiltinPersonas": false,
   "disableBuiltinThemes": false,
   "defaultTheme": "solarized",
@@ -568,7 +565,7 @@ model definitions can be extended and overridden through `~/.config/tau/models.j
   ],
   "subagents": {
     "defaultLaunchModels": [
-      "openai/gpt-5.5:high",
+      "openai/gpt-5.6-sol:high",
       "anthropic/claude-haiku-4-5:low"
     ]
   },
@@ -606,7 +603,7 @@ model definitions can be extended and overridden through `~/.config/tau/models.j
     "apiKeyEnv": "TAU_HISTORY_API_KEY"
   },
   "modelSystemNotices": {
-    "openai-codex/gpt-5.5": "avoid apply_patch heredocs, use tau tools directly"
+    "openai-codex/gpt-5.6-sol": "avoid apply_patch heredocs, use tau tools directly"
   }
 }
 ```
@@ -722,7 +719,7 @@ create your own personas by adding markdown files to `~/.config/tau/personas/` (
 ---
 id: my-assistant
 provider: anthropic
-model: claude-opus-4-8
+model: claude-opus-5
 ---
 
 you are a helpful assistant specialized in my workflow. focus on clarity and efficiency.
@@ -732,7 +729,7 @@ the frontmatter defines the persona. required fields:
 
 - `id`: unique id used by `--persona` and `/persona:<id>`
 - `provider`: model provider id (for example `openai`, `anthropic`, `google`)
-- `model`: model id for the provider (for example `gpt-5.4`, `claude-opus-4-8`)
+- `model`: model id for the provider (for example `gpt-5.4`, `claude-opus-5`)
 
 custom personas/subagents can reference model ids that are not bundled yet, as long as the provider is known. built-in personas use the merged model catalog, so `models.json` can override bundled model definitions. see [docs/models.md](docs/models.md).
 
@@ -742,7 +739,7 @@ optional frontmatter fields:
 
 - `label`: display name shown in the ui (defaults to the base persona label if `extends` is used)
 - `description`: human-readable description used in lists/autocomplete
-- `extends`: inherit optional fields from a built-in persona id (for example `gpt-5.5-coder`). `provider` and `model` are still required. if the markdown body is empty, the base persona's system prompt is used.
+- `extends`: inherit optional fields from a built-in persona id (for example `gpt-5.6-sol-coder`). `provider` and `model` are still required. if the markdown body is empty, the base persona's system prompt is used.
 - `reasoning`: one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`
 - `serviceTier`: `priority` or `flex` for providers that support service tiers (currently `openai` and `openai-codex`)
 - `allowedReasoningLevels`: list of reasoning levels shown in the ui
@@ -761,7 +758,7 @@ optional frontmatter fields:
       reasoning: medium
       tools: [web, bash]
       launchModels:
-        - openai/gpt-5.5:high
+        - openai/gpt-5.6-sol:high
         - anthropic/claude-haiku-4-5:medium
   ```
 - `tools`: list of tool names to enable for this persona. allowed: `bash`, `write`, `edit`, `view_image`, `web`, `nook`, `history`, `spawn_agent`, `send_input_to_agent`, `wait_for_agents`, `list_agents`, `interrupt_agent`. if omitted, defaults to `bash`, `write`, `edit`, `view_image`, `web`, `nook`, `history` (and subagent tools when subagents are enabled). `nook` is available only when effective Nook configuration is also present.
@@ -775,7 +772,7 @@ to clone a built-in persona but swap the provider/model, use `extends`:
 ```markdown
 ---
 id: my-haiku-coder
-extends: gpt-5.5-coder
+extends: gpt-5.6-sol-coder
 provider: anthropic
 model: claude-haiku-4-5
 ---

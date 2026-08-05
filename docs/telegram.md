@@ -38,7 +38,7 @@ Telegram runner settings are loaded from the JSON file passed to `--config-file`
       "ref": "main",
       "workspaceRoot": "projects/tau",
       "description": "Tau terminal client",
-      "persona": "gpt-5.5-coder",
+      "persona": "gpt-5.6-sol-coder",
       "noAgentContextFiles": false
     },
     "cowork": {

@@ -17,7 +17,7 @@ tau attach --auth-token "$TAU_WS_AUTH_TOKEN" ws://vps:8787
 start it like this:
 
 ```sh
-tau rpc --persona gpt-5.5-coder
+tau rpc --persona gpt-5.6-sol-coder
 ```
 
 The terminal UI can attach to any command that exposes this protocol over stdio:
@@ -334,7 +334,7 @@ Establishes observation for that session on this connection and returns the auth
     "goal": null,
     "costTotal": 0,
     "settings": {
-      "personaId": "gpt-5.5-coder",
+      "personaId": "gpt-5.6-sol-coder",
       "reasoning": "medium"
     },
     "bootstrap": { "...": "model and prompt bootstrap metadata" },
@@ -737,7 +737,7 @@ params (required):
 ```json
 {
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
-  "personaId": "gpt-5.5-coder"
+  "personaId": "gpt-5.6-sol-coder"
 }
 ```
 

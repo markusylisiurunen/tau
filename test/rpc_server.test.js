@@ -474,6 +474,7 @@ function createHarness(options = {}) {
         }
         return interrupted;
       }),
+      recordTurnInterruption: vi.fn(async () => {}),
       waitForActiveWork: vi.fn(async () => {
         await Promise.allSettled([activeTurnSettlement, ...activeWorkPromises]);
       }),
@@ -2171,6 +2172,7 @@ describe("rpc_server", () => {
       request("interrupt", "session.interrupt", { sessionId: "session-1" }),
     );
     await runningSubmit;
+    expect(harness.seededSession.recordTurnInterruption).toHaveBeenCalledOnce();
 
     await harness.server.handleLine(request("list", "session.list", {}));
     await harness.server.handleLine(

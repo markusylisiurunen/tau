@@ -395,16 +395,16 @@ export class SessionChatController {
   }
 
   private showHelp(): void {
-    this.view.addTranscriptNotice(
-      this.commandRegistry.buildHelpText({
+    this.view.addMessage({
+      type: "transcript_text",
+      text: this.commandRegistry.buildHelpText({
         agentsFiles: this.getAgentsFilePaths(),
         skills: this.snapshot.catalog.skills,
         themes: this.themeIds,
         formatPath: (path) =>
           formatPathForSessionDisplay(path, this.snapshot.executionEnvironment.home),
       }),
-      "default",
-    );
+    });
   }
 
   private switchTheme(themeId: string): void {
@@ -768,9 +768,7 @@ export class SessionChatController {
     this.assistantInterruptRequested = true;
     try {
       const result = await this.session.interrupt();
-      if (result.interrupted) {
-        this.view.addTranscriptNotice("assistant turn interrupted", "default");
-      } else {
+      if (!result.interrupted) {
         this.assistantInterruptRequested = false;
       }
     } catch (error) {

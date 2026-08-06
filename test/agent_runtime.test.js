@@ -489,7 +489,7 @@ describe("AgentRuntime", () => {
     const call = {
       id: "missing-call",
       type: "toolCall",
-      name: "missing_tool",
+      name: "missing\r\ntool",
       arguments: {},
     };
     const toolMessage = createAssistant(persona, [call], { stopReason: "toolUse" });
@@ -507,6 +507,13 @@ describe("AgentRuntime", () => {
         toolName: call.name,
       }),
     );
+    expect(events).toContainEqual({
+      type: "feedback",
+      tone: "error",
+      title: "tool is unavailable",
+      content: [`tool '${call.name}' is not available for this turn`],
+      presentation: "transcript",
+    });
     expect(
       events.some((event) => event.type === "tool_run_finished" && event.toolCallId === call.id),
     ).toBe(false);

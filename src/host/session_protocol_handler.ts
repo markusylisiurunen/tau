@@ -1093,10 +1093,15 @@ export class SessionProtocolHandler {
       return;
     }
 
-    const result = await this.enqueueMutation(state, () => {
+    const result = await this.enqueueMutation(state, async () => {
+      const wasAssistantTurn = Boolean(state.live.activeSubmit) || state.session.isTurnRunning;
+      const wasAlreadyInterrupting = state.live.interrupting;
       const interrupted = state.session.interruptActiveWork();
       if (interrupted) {
         state.live.interrupting = true;
+        if (wasAssistantTurn && !wasAlreadyInterrupting) {
+          await state.session.recordTurnInterruption();
+        }
       }
       this.rejectPendingBoundarySubmissions(state, "session was interrupted");
       return {

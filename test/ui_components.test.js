@@ -26,6 +26,7 @@ import {
   projectTranscriptNoticeContent,
   TranscriptNoticeComponent,
 } from "../dist/tui/ui/transcript_notice.js";
+import { TranscriptTextComponent } from "../dist/tui/ui/transcript_text.js";
 import { UserMessageComponent } from "../dist/tui/ui/user_message.js";
 import { createTagTheme, renderLines, renderText } from "./ui_helpers.js";
 
@@ -427,6 +428,16 @@ test("TranscriptNoticeComponent renders a colored title and dim bounded content"
   expect(rendered).toContain(`${content.at(-1)}</textDim>`);
 });
 
+test("TranscriptTextComponent renders complete muted text", () => {
+  const text = Array.from({ length: 20 }, (_, index) => `help line ${index + 1}`).join("\n");
+  const component = new TranscriptTextComponent(createTagTheme(), { text });
+
+  const rendered = renderText(component, 80);
+  expect(rendered).toContain("<textMuted>help line 1");
+  expect(rendered).toContain("help line 20</textMuted>");
+  expect(rendered).not.toContain("more lines");
+});
+
 test("AssistantMessageComponent toggles partial thinking visibility", () => {
   const theme = createTagTheme();
   const component = new AssistantMessageComponent(theme, undefined, false);
@@ -543,6 +554,27 @@ test("FooterComponent renders activity instead of regular status", () => {
     expect(regularText).toContain("<textDim>○</textDim>");
     expect(regularText).toContain("tau-one");
     expect(regularText).not.toContain("compacting context");
+  } finally {
+    footer.dispose();
+    vi.useRealTimers();
+  }
+});
+
+test("FooterComponent gives notices precedence over active work", () => {
+  vi.useFakeTimers();
+  const theme = createTagTheme();
+  const ui = { requestRender() {} };
+  const footer = new FooterComponent(theme, ui, { random: () => 0 });
+
+  try {
+    footer.setStatus({ type: "activity", label: "compacting context" });
+    footer.showNotice("wait for tau to become idle", "default", 1_000);
+
+    expect(renderText(footer, 120)).toContain("<feedback>wait for tau to become idle</feedback>");
+    expect(renderText(footer, 120)).not.toContain("compacting context");
+
+    vi.advanceTimersByTime(1_000);
+    expect(renderText(footer, 120)).toContain("<feedback>compacting context</feedback>");
   } finally {
     footer.dispose();
     vi.useRealTimers();

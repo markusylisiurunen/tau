@@ -445,7 +445,10 @@ const unsubscribePendingUserMessages = session.onPendingUserMessages(
 const unsubscribeEphemeral = session.onEphemeral((message) => {
   if (message.event.type === "ephemeral-agent.thread-update") {
     console.log(message.event.threadId, message.event.update.lastActivityText);
-  } else if (message.event.type === "feedback.notice") {
+  } else if (
+    message.event.type === "feedback.notice" &&
+    message.event.presentation === "transcript"
+  ) {
     console.log(message.event.tone, message.event.title, message.event.content);
   }
 });

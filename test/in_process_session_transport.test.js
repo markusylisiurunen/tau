@@ -141,6 +141,7 @@ function createHostedSession(sessionId, sessions, options = {}) {
       return true;
     }),
     interruptActiveWork: vi.fn(() => hostedSession.interruptTurn()),
+    async recordTurnInterruption() {},
     async waitForActiveWork() {},
     async exec() {
       return createProtocolExecResult({

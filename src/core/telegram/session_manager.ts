@@ -262,6 +262,7 @@ type SessionEntry = {
   consumedFacetEventCounts: Map<string, number>;
   emittedAssistantMessageIds: Set<string>;
   emittedNoticeIds: Set<string>;
+  emittedErrorNoticeIds: Set<string>;
   emittedTurnFailureIds: Set<string>;
 };
 
@@ -319,7 +320,7 @@ export type TelegramSessionManagerEvent =
   | TelegramSessionProvisionFailure;
 
 export function formatTelegramTimelineNotice(notice: SessionProtocolTimelineNotice): string {
-  return notice.content?.length ? `${notice.title}: ${notice.content.join("\n")}` : notice.title;
+  return notice.title;
 }
 
 export type TelegramSessionSubmitOptions = {
@@ -487,6 +488,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       consumedFacetEventCounts: new Map(),
       emittedAssistantMessageIds: new Set(),
       emittedNoticeIds: new Set(),
+      emittedErrorNoticeIds: new Set(),
       emittedTurnFailureIds: new Set(),
     };
 
@@ -709,6 +711,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
         consumedFacetEventCounts: new Map(),
         emittedAssistantMessageIds: new Set(),
         emittedNoticeIds: new Set(),
+        emittedErrorNoticeIds: new Set(),
         emittedTurnFailureIds: new Set(),
       };
       this.sessions.set(record.id, entry);
@@ -1085,6 +1088,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     const previousSubmit = entry.activeSubmit;
     const tauSession = entry.tauSession;
     const payload = this.buildSubmitPayload(text, additionalSystemMessage);
+    const errorNoticeCountBeforeSubmit = entry.emittedErrorNoticeIds.size;
 
     let submitPromise!: Promise<void>;
     submitPromise = (async () => {
@@ -1102,7 +1106,11 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
         });
 
         if (!entry.cancelRequested) {
-          if (failure && !entry.emittedTurnFailureIds.has(result.userHistoryEntryId)) {
+          if (
+            failure &&
+            entry.emittedErrorNoticeIds.size === errorNoticeCountBeforeSubmit &&
+            !entry.emittedTurnFailureIds.has(result.userHistoryEntryId)
+          ) {
             entry.emittedTurnFailureIds.add(result.userHistoryEntryId);
             this.emit({
               type: "session-turn-failed",
@@ -1531,6 +1539,9 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       return;
     }
     entry.emittedNoticeIds.add(id);
+    if (notice.severity === "error") {
+      entry.emittedErrorNoticeIds.add(id);
+    }
     this.emit({
       type: "session-notice",
       sessionId: entry.record.id,

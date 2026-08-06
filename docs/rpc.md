@@ -195,7 +195,7 @@ params (required):
   "id": "init-1",
   "ok": true,
   "result": {
-    "protocolVersion": 8,
+    "protocolVersion": 9,
     "methods": [
       "initialize",
       "session.create",
@@ -656,7 +656,7 @@ returns:
 }
 ```
 
-`isTurnRunning` can still be `true` immediately after interrupt is requested while active turn, command, maintenance, or sampling cleanup is still in progress.
+`isTurnRunning` can still be `true` immediately after interrupt is requested while active turn, command, maintenance, or sampling cleanup is still in progress. Interrupting an assistant turn also appends a durable session notice so every observer and later recovery can identify the interruption.
 
 #### session.snapshot
 

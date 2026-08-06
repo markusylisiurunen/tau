@@ -66,6 +66,7 @@ export type TauHostedSession = {
   retryTurn(): Promise<SessionProtocolTurnOutcome>;
   interruptTurn(): boolean;
   interruptActiveWork(): boolean;
+  recordTurnInterruption(): Promise<void>;
   waitForActiveWork(): Promise<void>;
   requestTurnBoundaryStop(): boolean;
   cancelTurnBoundaryStop(): boolean;

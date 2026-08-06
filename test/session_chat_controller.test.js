@@ -898,9 +898,11 @@ describe("SessionChatController", () => {
     expect(view.status.footer.contextUsage).toBe("↑0 ↓0 r0 w0 · 0.0%/128k");
 
     await controller.onUserInput("/help");
-    expect(view.feedback.at(-1)?.text).toContain("context:\n  ~/repo/AGENTS.md");
-    expect(view.feedback.at(-1)?.text).not.toContain("~/repo/src/AGENTS.md");
-    expect(view.feedback.at(-1)?.text).toContain("skills:\n  alpha (~/.tau/skills)");
+    const help = view.messages.at(-1)?.model;
+    expect(help).toMatchObject({ type: "transcript_text" });
+    expect(help.text).toContain("context:\n  ~/repo/AGENTS.md");
+    expect(help.text).not.toContain("~/repo/src/AGENTS.md");
+    expect(help.text).toContain("skills:\n  alpha (~/.tau/skills)");
   });
 
   it("renders persisted protocol notices in timeline order", async () => {
@@ -1522,7 +1524,7 @@ describe("SessionChatController", () => {
     expect(view.status.footer.type).toBe("regular");
   });
 
-  it("shows one transcript notice when interrupting an assistant turn", async () => {
+  it("leaves interrupted-turn feedback to the synchronized session", async () => {
     const session = new FakeSession();
     const view = new FakeView();
     const controller = new SessionChatController({
@@ -1539,9 +1541,7 @@ describe("SessionChatController", () => {
     await flush();
 
     expect(session.interrupt).toHaveBeenCalledTimes(1);
-    expect(
-      view.transcriptNotices.filter((notice) => notice.text === "assistant turn interrupted"),
-    ).toEqual([{ text: "assistant turn interrupted", tone: "default" }]);
+    expect(view.transcriptNotices).toEqual([]);
     expect(view.footerNotices).toEqual([]);
   });
 
@@ -3820,7 +3820,12 @@ describe("SessionChatController", () => {
 
     expect(session.reload).toHaveBeenCalledTimes(1);
     expect(session.submit).not.toHaveBeenCalled();
-    expect(view.feedback.some((message) => message.text.includes("commands:"))).toBe(true);
+    expect(
+      view.messages.some(
+        (message) =>
+          message.model.type === "transcript_text" && message.model.text.includes("commands:"),
+      ),
+    ).toBe(true);
   });
 
   it("tracks session editor input modes without command hints", async () => {

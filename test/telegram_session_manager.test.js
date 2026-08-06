@@ -286,6 +286,7 @@ describe("telegram session manager", () => {
         notice: {
           severity: "warn",
           title: "A live warning arrived.",
+          content: ["Internal diagnostic details."],
           subject: { type: "session" },
           timestamp: 2,
         },
@@ -750,6 +751,64 @@ describe("telegram session manager", () => {
     });
 
     await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+  });
+
+  it("uses title-only model failure notices instead of generic turn failures", async () => {
+    const clientHarness = createClientHarness();
+    const failedTurn = deferred();
+    clientHarness.session.submit = vi.fn(async () => await failedTurn.promise);
+    const manager = createDemoSessionManager(clientHarness);
+    const events = [];
+    manager.onEvent((event) => events.push(event));
+
+    const created = await manager.createSession({ projectId: "demo" });
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+
+    await manager.sendMessage(created.id, "fail once");
+    await waitFor(() => manager.getSession(created.id)?.state === "running");
+    clientHarness.emitDelta(
+      createPatchDelta(
+        [
+          {
+            type: "timeline.append",
+            item: {
+              type: "notice",
+              id: "model-failure-assistant-1",
+              notice: {
+                severity: "error",
+                title: "model request failed",
+                content: ["OpenAI is unavailable"],
+                subject: { type: "message", id: "assistant-1" },
+                timestamp: 1,
+              },
+            },
+          },
+        ],
+        1,
+        "assistant-message",
+      ),
+    );
+    failedTurn.resolve({
+      userHistoryEntryId: "history-failed",
+      turn: {
+        status: "failed",
+        stopReason: "error",
+        errorMessage: "OpenAI is unavailable",
+      },
+    });
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "session-notice",
+        sessionId: created.id,
+        severity: "error",
+        text: "model request failed",
+      }),
+    );
+    expect(events.filter((event) => event.type === "session-turn-failed")).toEqual([]);
+
+    await manager.close();
   });
 
   it("keeps a provider-failed turn recoverable and accepts the next message", async () => {

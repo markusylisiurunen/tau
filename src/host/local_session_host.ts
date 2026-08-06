@@ -993,6 +993,24 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     return interrupted;
   }
 
+  async recordTurnInterruption(): Promise<void> {
+    this.assertActive();
+    await this.enqueueMutation(async () => {
+      const item: SessionProtocolTimelineItem = {
+        type: "notice",
+        id: `assistant-interruption-${randomUUID()}`,
+        notice: {
+          severity: "info",
+          title: "assistant turn interrupted",
+          subject: { type: "session" },
+          timestamp: Date.now(),
+        },
+      };
+      this.timelineExtras.push(item);
+      await this.emitPatch("notice", [{ type: "timeline.append", item: structuredClone(item) }]);
+    });
+  }
+
   async waitForActiveWork(): Promise<void> {
     await Promise.allSettled([
       ...(this.activeTurnPromise ? [this.activeTurnPromise] : []),

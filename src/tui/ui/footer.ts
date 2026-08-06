@@ -148,6 +148,14 @@ export class FooterComponent implements Component {
     if (width <= 0) return [""];
 
     const { palette } = this.theme;
+    const notice = this.notice;
+    if (notice) {
+      const availableWidth = Math.max(0, width - 2);
+      const text = truncateFromEndByWidth(notice.text, availableWidth);
+      const padding = " ".repeat(Math.max(0, availableWidth - visibleWidth(text)));
+      return [` ${this.getNoticeStyle(notice.tone)(text)}${padding} `];
+    }
+
     if (this.status?.type === "activity") {
       const iconChar = this.animation[this.animationFrame % this.animation.length]!;
       const icon = palette.feedback(iconChar);
@@ -155,14 +163,6 @@ export class FooterComponent implements Component {
       const text = truncateFromEndByWidth(this.status.label.trim(), availableWidth);
       const padding = " ".repeat(Math.max(0, availableWidth - visibleWidth(text)));
       return [` ${icon} ${palette.feedback(text)}${padding} `];
-    }
-
-    const notice = this.notice;
-    if (notice) {
-      const availableWidth = Math.max(0, width - 2);
-      const text = truncateFromEndByWidth(notice.text, availableWidth);
-      const padding = " ".repeat(Math.max(0, availableWidth - visibleWidth(text)));
-      return [` ${this.getNoticeStyle(notice.tone)(text)}${padding} `];
     }
 
     const isCompleting = this.completionTimeoutId !== null;
@@ -185,14 +185,13 @@ export class FooterComponent implements Component {
   }
 
   private syncAnimation(): void {
-    const mode =
-      this.status?.type === "activity"
+    const mode = this.notice
+      ? null
+      : this.status?.type === "activity"
         ? "activity"
-        : this.notice
-          ? null
-          : this.working
-            ? "working"
-            : null;
+        : this.working
+          ? "working"
+          : null;
     if (mode === this.animationMode) return;
 
     this.stopAnimation();

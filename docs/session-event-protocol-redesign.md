@@ -234,7 +234,9 @@ type SessionTimelineItem =
 
 type SessionNotice = {
   severity: "info" | "warn" | "error";
-  text: string;
+  title: string;
+  content?: string[];
+  subject: { type: "session" } | { type: "message"; id: string };
   timestamp: number;
 };
 
@@ -659,7 +661,11 @@ Replace the same draft assistant message with the committed final assistant mess
           "id": "notice-1",
           "notice": {
             "severity": "warn",
-            "text": "retrying after transient error",
+            "title": "session history is unavailable",
+            "content": [
+              "this session will continue without durable history recording or recall"
+            ],
+            "subject": { "type": "session" },
             "timestamp": 1782800000000
           }
         }

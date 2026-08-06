@@ -7,6 +7,7 @@ import type { Theme } from "./theme/index.js";
 import { ToolCardComponent } from "./tool_card.js";
 import type { ToolUiModel } from "./tool_ui_model.js";
 import { TranscriptNoticeComponent, type TranscriptNoticeModel } from "./transcript_notice.js";
+import { TranscriptTextComponent, type TranscriptTextModel } from "./transcript_text.js";
 import { UserMessageComponent, type UserMessageModel } from "./user_message.js";
 
 export type ChatMessageModel =
@@ -14,6 +15,7 @@ export type ChatMessageModel =
   | AssistantMessageModel
   | (DiffReviewMessageModel & { type: "diff_review" })
   | (TranscriptNoticeModel & { type: "transcript_notice" })
+  | (TranscriptTextModel & { type: "transcript_text" })
   | (UserMessageModel & { type: "user" })
   | {
       type: "tool";
@@ -121,6 +123,18 @@ export function renderChatMessage(
             ...(nextModel.content ? { content: nextModel.content } : {}),
             tone: nextModel.tone,
           });
+          return true;
+        },
+      };
+    }
+    case "transcript_text": {
+      const component = new TranscriptTextComponent(theme, { text: model.text });
+      return {
+        component,
+        isAssistant: false,
+        update: (nextModel) => {
+          if (nextModel.type !== "transcript_text") return false;
+          component.update({ text: nextModel.text });
           return true;
         },
       };

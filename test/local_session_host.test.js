@@ -1575,6 +1575,51 @@ describe("LocalSessionHost", () => {
     await host.shutdown();
   });
 
+  it("persists interrupted assistant feedback for every observer", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const hostedSession = await host.createSession(localCreateInput);
+    let observedSnapshot = await hostedSession.snapshot();
+    hostedSession.onDelta((delta) => {
+      observedSnapshot = applySessionProtocolDelta(observedSnapshot, delta);
+    });
+    hostedSession.runtime.agent.spec.model.stream = (_context, options) => ({
+      async *[Symbol.asyncIterator]() {
+        await new Promise((resolve) =>
+          options.signal.addEventListener("abort", resolve, { once: true }),
+        );
+      },
+      async result() {
+        return fauxAssistantMessage("", { stopReason: "aborted" });
+      },
+    });
+
+    await hostedSession.record({ text: "wait" });
+    const turn = hostedSession.runTurn();
+    await vi.waitFor(() => expect(hostedSession.runtime.isTurnRunning).toBe(true));
+    expect(hostedSession.interruptTurn()).toBe(true);
+    await hostedSession.recordTurnInterruption();
+    await expect(turn).resolves.toEqual({ status: "aborted", stopReason: "aborted" });
+
+    const persistedSnapshot = await store.loadSession(hostedSession.sessionId);
+    const interruptionNotice = observedSnapshot.timeline.find(
+      (item) => item.type === "notice" && item.notice.title === "assistant turn interrupted",
+    );
+    expect(interruptionNotice).toMatchObject({
+      type: "notice",
+      id: expect.stringMatching(/^assistant-interruption-/),
+      notice: {
+        severity: "info",
+        title: "assistant turn interrupted",
+        subject: { type: "session" },
+        timestamp: expect.any(Number),
+      },
+    });
+    expect(persistedSnapshot?.timeline).toContainEqual(interruptionNotice);
+
+    await host.shutdown();
+  });
+
   it("omits custom model headers from protocol snapshots", async () => {
     const store = new MemorySessionStore();
     const persona = {
@@ -1649,6 +1694,59 @@ describe("LocalSessionHost", () => {
     expect((await hostedSession.snapshot()).timeline).not.toContainEqual(
       expect.objectContaining({ type: "notice" }),
     );
+  });
+
+  it("keeps malformed model tool names out of feedback titles", async () => {
+    const host = createHost(new MemorySessionStore());
+    const hostedSession = await host.createSession(localCreateInput);
+    const malformedToolName = "missing\r\ntool";
+    const responses = [
+      fauxAssistantMessage([fauxToolCall(malformedToolName, {}, { id: "missing-call" })], {
+        stopReason: "toolUse",
+      }),
+      fauxAssistantMessage("continued"),
+    ];
+    const ephemeralMessages = [];
+    hostedSession.onEphemeral((message) => ephemeralMessages.push(message));
+    hostedSession.runtime.agent.spec.model.stream = () => {
+      const response = responses.shift();
+      return {
+        async *[Symbol.asyncIterator]() {
+          const toolCall = response.content.find((content) => content.type === "toolCall");
+          if (toolCall) {
+            yield { type: "toolcall_start", contentIndex: 0, partial: response };
+            yield {
+              type: "toolcall_end",
+              contentIndex: 0,
+              toolCall,
+              partial: response,
+            };
+          }
+        },
+        async result() {
+          return response;
+        },
+      };
+    };
+
+    await hostedSession.record({ text: "use the missing tool" });
+    await expect(hostedSession.runTurn()).resolves.toEqual({
+      status: "completed",
+      stopReason: "stop",
+    });
+    expect(ephemeralMessages).toContainEqual(
+      expect.objectContaining({
+        event: {
+          type: "feedback.notice",
+          tone: "error",
+          title: "tool is unavailable",
+          content: [`tool '${malformedToolName}' is not available for this turn`],
+          presentation: "transcript",
+        },
+      }),
+    );
+
+    await host.shutdown();
   });
 
   it("clears running auto-compaction operations on compaction end", async () => {

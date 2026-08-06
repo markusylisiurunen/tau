@@ -755,7 +755,8 @@ async function* runPreparedToolCall(
     yield {
       type: "feedback",
       tone: "error",
-      title: prepared.message,
+      title: "tool is unavailable",
+      content: [prepared.message],
       presentation: "transcript",
     };
     return completeToolRun(
@@ -837,8 +838,8 @@ async function* runPreparedToolCall(
     yield {
       type: "feedback",
       tone: "error",
-      title: `failed to execute tool '${toolCall.name}'`,
-      content: [errorMessage, `tool call id: ${toolCall.id}`],
+      title: "tool execution failed",
+      content: [`tool: ${toolCall.name}`, errorMessage, `tool call id: ${toolCall.id}`],
       presentation: "transcript",
     };
     return completeToolRun(

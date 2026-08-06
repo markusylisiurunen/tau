@@ -3,18 +3,17 @@ import { AppIntroComponent, type AppIntroModel } from "./app_intro.js";
 import { AssistantMessageComponent, type AssistantMessageModel } from "./assistant_message.js";
 import { DiffReviewMessageComponent, type DiffReviewMessageModel } from "./diff_review_message.js";
 import { SessionDividerComponent, type SessionDividerModel } from "./session_divider.js";
-import type { SystemMessageModel } from "./system_message.js";
-import { SystemMessageComponent } from "./system_message.js";
 import type { Theme } from "./theme/index.js";
 import { ToolCardComponent } from "./tool_card.js";
 import type { ToolUiModel } from "./tool_ui_model.js";
+import { TranscriptNoticeComponent, type TranscriptNoticeModel } from "./transcript_notice.js";
 import { UserMessageComponent, type UserMessageModel } from "./user_message.js";
 
 export type ChatMessageModel =
   | (AppIntroModel & { type: "app_intro" })
   | AssistantMessageModel
   | (DiffReviewMessageModel & { type: "diff_review" })
-  | (SystemMessageModel & { type: "system" })
+  | (TranscriptNoticeModel & { type: "transcript_notice" })
   | (UserMessageModel & { type: "user" })
   | {
       type: "tool";
@@ -106,17 +105,22 @@ export function renderChatMessage(
         },
       };
     }
-    case "system": {
-      const component = new SystemMessageComponent(theme, {
-        text: model.text,
-        kind: model.kind,
+    case "transcript_notice": {
+      const component = new TranscriptNoticeComponent(theme, {
+        title: model.title,
+        ...(model.content ? { content: model.content } : {}),
+        tone: model.tone,
       });
       return {
         component,
         isAssistant: false,
         update: (nextModel) => {
-          if (nextModel.type !== "system") return false;
-          component.update({ text: nextModel.text, kind: nextModel.kind });
+          if (nextModel.type !== "transcript_notice") return false;
+          component.update({
+            title: nextModel.title,
+            ...(nextModel.content ? { content: nextModel.content } : {}),
+            tone: nextModel.tone,
+          });
           return true;
         },
       };

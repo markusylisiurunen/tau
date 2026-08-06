@@ -8,7 +8,7 @@ import type {
   ToolCall,
   ToolResultMessage,
 } from "@earendil-works/pi-ai";
-import type { AgentEvent } from "../agent/events.js";
+import type { AgentEvent, AgentFeedback } from "../agent/events.js";
 import type { ToolActivity } from "../tools/activity.js";
 import { buildToolRunPresentation } from "../tools/presentation.js";
 import type {
@@ -22,7 +22,7 @@ import { type AssistantPartialSnapshot, MessageAccumulator } from "./message_acc
 
 const ASSISTANT_PARTIAL_MIN_INTERVAL_MS = 33;
 
-type NoticeEvent = Extract<AgentEvent, { type: "notice" }>;
+type FeedbackEvent = Extract<AgentEvent, { type: "feedback" }>;
 type ModelRetryEvent = Extract<
   AgentEvent,
   { type: "model_retry_scheduled" | "model_retry_started" }
@@ -61,19 +61,19 @@ type RunnerToolResultEvent = {
 };
 
 type ModelRunnerEvent =
-  | NoticeEvent
+  | FeedbackEvent
   | ModelRetryEvent
   | RunnerAssistantPartialEvent
   | RunnerToolCallStreamingEvent
   | RunnerToolCallDiscardedEvent;
 type ToolRunnerEvent =
-  | NoticeEvent
+  | FeedbackEvent
   | ToolActivityAgentEvent
   | ToolRunAgentEvent
   | AcknowledgedToolRunnerEvent
   | RunnerToolResultEvent;
 type RetryOptions = {
-  notice?: { text: string; severity?: NoticeEvent["severity"] };
+  feedback?: AgentFeedback;
   shouldRetryAfterError?: (args: { error: unknown; model: Model<Api> }) => boolean;
   onRetry?: () => void;
   maxRetries?: number;
@@ -369,11 +369,10 @@ export async function* runModelSubturn(
     }
   };
 
-  const retryNotice = retry?.notice
+  const retryFeedback = retry?.feedback
     ? {
-        type: "notice" as const,
-        severity: retry.notice.severity ?? "info",
-        text: retry.notice.text,
+        type: "feedback" as const,
+        ...retry.feedback,
       }
     : undefined;
   const maxRetries = retry?.maxRetries ?? 1;
@@ -413,8 +412,8 @@ export async function* runModelSubturn(
         attempt += 1;
         retry?.onRetry?.();
         yield { type: "model_retry_scheduled", attempt, delayMs };
-        if (retryNotice) {
-          yield retryNotice;
+        if (retryFeedback) {
+          yield retryFeedback;
         }
         await waitForRetry();
         if (signal.aborted) {
@@ -434,8 +433,8 @@ export async function* runModelSubturn(
         attempt += 1;
         retry?.onRetry?.();
         yield { type: "model_retry_scheduled", attempt, delayMs };
-        if (retryNotice) {
-          yield retryNotice;
+        if (retryFeedback) {
+          yield retryFeedback;
         }
         await waitForRetry();
         if (signal.aborted) {
@@ -476,7 +475,7 @@ function prepareToolCall(
     return {
       type: "rejected",
       toolCall,
-      message: `Tool '${toolCall.name}' is not available for this turn.`,
+      message: `tool '${toolCall.name}' is not available for this turn`,
     };
   }
 
@@ -753,7 +752,12 @@ async function* runPreparedToolCall(
   now: () => number = Date.now,
 ): AsyncGenerator<ToolRunnerEvent, CompletedToolRun, void> {
   if (prepared.type === "rejected") {
-    yield { type: "notice", severity: "error", text: prepared.message };
+    yield {
+      type: "feedback",
+      tone: "error",
+      title: prepared.message,
+      presentation: "transcript",
+    };
     return completeToolRun(
       prepared.toolCall,
       { content: [{ type: "text", text: prepared.message }], outcome: "blocked" },
@@ -831,15 +835,17 @@ async function* runPreparedToolCall(
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     yield {
-      type: "notice",
-      severity: "error",
-      text: `Tool '${toolCall.name}' (${toolCall.id}) execution failed: ${errorMessage}`,
+      type: "feedback",
+      tone: "error",
+      title: `failed to execute tool '${toolCall.name}'`,
+      content: [errorMessage, `tool call id: ${toolCall.id}`],
+      presentation: "transcript",
     };
     return completeToolRun(
       toolCall,
       {
         content: [
-          { type: "text", text: `Tool '${toolCall.name}' execution failed: ${errorMessage}` },
+          { type: "text", text: `tool '${toolCall.name}' execution failed: ${errorMessage}` },
         ],
         outcome: signal.aborted ? "cancelled" : "failed",
       },

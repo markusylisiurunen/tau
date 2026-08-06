@@ -568,7 +568,9 @@ class FakeSession {
 class FakeView {
   messages = [];
   removed = [];
-  systems = [];
+  feedback = [];
+  footerNotices = [];
+  transcriptNotices = [];
   toolModels = [];
   localToolModels = [];
   rewindPickerShows = [];
@@ -619,8 +621,13 @@ class FakeView {
   updateAssistantMessage(id, model) {
     this.updateMessage(id, model);
   }
-  addSystemMessage(text, kind, options) {
-    this.systems.push({ text, kind, options });
+  showFooterNotice(text, tone, durationMs = 3000) {
+    this.feedback.push({ text, tone });
+    this.footerNotices.push({ text, tone, durationMs });
+  }
+  addTranscriptNotice(text, tone, content) {
+    this.feedback.push({ text, tone, ...(content ? { content } : {}) });
+    this.transcriptNotices.push({ text, tone, ...(content ? { content } : {}) });
   }
   setThinkingVisibility() {}
   updateStatus(status) {
@@ -891,9 +898,9 @@ describe("SessionChatController", () => {
     expect(view.status.footer.contextUsage).toBe("↑0 ↓0 r0 w0 · 0.0%/128k");
 
     await controller.onUserInput("/help");
-    expect(view.systems.at(-1)?.text).toContain("context:\n  ~/repo/AGENTS.md");
-    expect(view.systems.at(-1)?.text).not.toContain("~/repo/src/AGENTS.md");
-    expect(view.systems.at(-1)?.text).toContain("skills:\n  alpha (~/.tau/skills)");
+    expect(view.feedback.at(-1)?.text).toContain("context:\n  ~/repo/AGENTS.md");
+    expect(view.feedback.at(-1)?.text).not.toContain("~/repo/src/AGENTS.md");
+    expect(view.feedback.at(-1)?.text).toContain("skills:\n  alpha (~/.tau/skills)");
   });
 
   it("renders persisted protocol notices in timeline order", async () => {
@@ -904,7 +911,8 @@ describe("SessionChatController", () => {
           id: "notice-history-unavailable",
           notice: {
             severity: "warn",
-            text: "Session history is unavailable. This session will continue.",
+            title: "Session history is unavailable. This session will continue.",
+            subject: { type: "session" },
             timestamp: 1,
           },
         },
@@ -924,16 +932,21 @@ describe("SessionChatController", () => {
     expect(view.messages).toContainEqual({
       id: "notice-history-unavailable",
       model: {
-        type: "system",
-        kind: "warn",
-        text: "Session history is unavailable. This session will continue.",
+        type: "transcript_notice",
+        tone: "default",
+        title: "Session history is unavailable. This session will continue.",
       },
     });
 
     const liveNotice = {
       type: "notice",
       id: "notice-live-warning",
-      notice: { severity: "warn", text: "A live warning arrived.", timestamp: 2 },
+      notice: {
+        severity: "warn",
+        title: "A live warning arrived.",
+        subject: { type: "session" },
+        timestamp: 2,
+      },
     };
     for (const listener of session.listeners) {
       listener({
@@ -949,8 +962,68 @@ describe("SessionChatController", () => {
 
     expect(view.messages).toContainEqual({
       id: "notice-live-warning",
-      model: { type: "system", kind: "warn", text: "A live warning arrived." },
+      model: {
+        type: "transcript_notice",
+        tone: "default",
+        title: "A live warning arrived.",
+      },
     });
+  });
+
+  it("renders host feedback without adding it to the session timeline", async () => {
+    const session = new FakeSession();
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "in-process",
+    });
+    controller.start();
+
+    const emit = (event) => {
+      for (const listener of session.ephemeralListeners) {
+        listener({
+          version: SESSION_PROTOCOL_VERSION,
+          type: "session.ephemeral",
+          sessionId: session.id,
+          event,
+        });
+      }
+    };
+
+    emit({ type: "feedback.activity.started", id: "activity-1", text: "compacting context" });
+    expect(view.status.footer).toEqual({ type: "activity", label: "compacting context" });
+
+    emit({ type: "feedback.activity.finished", id: "activity-1" });
+    expect(view.status.footer.type).toBe("regular");
+
+    emit({
+      type: "feedback.notice",
+      title: "retrying after transient error",
+      tone: "default",
+      presentation: "footer",
+      durationMs: 3_000,
+    });
+    expect(view.footerNotices.at(-1)).toEqual({
+      text: "retrying after transient error",
+      tone: "default",
+      durationMs: 3_000,
+    });
+
+    emit({
+      type: "feedback.notice",
+      title: "model request failed",
+      content: ["provider unavailable"],
+      tone: "error",
+      presentation: "transcript",
+    });
+    expect(view.transcriptNotices.at(-1)).toEqual({
+      text: "model request failed",
+      tone: "error",
+      content: ["provider unavailable"],
+    });
+    expect(session.snapshotValue.timeline).toEqual([]);
   });
 
   it("shows auto-compaction operation status in the footer", async () => {
@@ -978,22 +1051,29 @@ describe("SessionChatController", () => {
 
     controller.start();
 
-    expect(view.status.footer.statusHint).toBe("compacting context...");
+    expect(view.status.footer).toEqual({
+      type: "activity",
+      label: "compacting context",
+    });
   });
 
-  it("renders auto-compaction resets with the main-style divider and retained notice", async () => {
+  it("freezes the old transcript from auto-compaction metadata when the start delta was missed", async () => {
+    const retainedEntry = {
+      id: "retained-entry",
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "retained before compaction" }],
+      },
+    };
     const runningSnapshot = createProtocolSnapshot({
       sessionId: "session-1",
       revision: 1,
+      historyEntries: [retainedEntry],
       timeline: [
         {
-          type: "operation",
-          id: "operation-auto-compaction",
-          operation: {
-            kind: "auto-compaction",
-            status: "running",
-            startedAt: 1,
-          },
+          type: "message",
+          id: `timeline-${retainedEntry.id}`,
+          messageId: retainedEntry.id,
         },
       ],
     });
@@ -1004,8 +1084,11 @@ describe("SessionChatController", () => {
         summary: "compacted summary",
         preservedUserMessages: [],
         cutType: "turn-boundary",
-        retainedMessageCount: 3,
+        retainedMessageCount: 1,
       },
+    ]);
+    const continuationText = prependTauUserMetadata("", [
+      { type: "auto-compaction-continuation", version: 1 },
     ]);
     const compactedSnapshot = createProtocolSnapshot({
       sessionId: "session-1",
@@ -1017,6 +1100,22 @@ describe("SessionChatController", () => {
             role: "user",
             content: [{ type: "text", text: compactedText }],
           },
+        },
+        retainedEntry,
+        {
+          id: "continuation-entry",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: continuationText }],
+          },
+        },
+      ],
+      timeline: [
+        { type: "message", id: "timeline-summary-entry", messageId: "summary-entry" },
+        {
+          type: "message",
+          id: `timeline-${retainedEntry.id}`,
+          messageId: retainedEntry.id,
         },
       ],
     });
@@ -1036,23 +1135,140 @@ describe("SessionChatController", () => {
 
     expect(view.messages).toContainEqual(
       expect.objectContaining({
-        model: { type: "session_divider", label: "new session" },
+        model: { type: "session_divider", label: "compacted context" },
       }),
     );
-    expect(view.messages).toContainEqual(
-      expect.objectContaining({
-        model: { type: "user", text: "compacted summary" },
-      }),
+    expect(view.messages).toContainEqual({
+      id: "summary-entry",
+      model: { type: "user", text: "compacted summary" },
+    });
+    expect(view.messages.filter((message) => message.id === retainedEntry.id)).toEqual([
+      {
+        id: retainedEntry.id,
+        model: { type: "user", text: "retained before compaction" },
+      },
+    ]);
+    expect(view.transcriptNotices).toContainEqual({
+      text: "retained 1 recent message",
+      tone: "default",
+    });
+
+    const attachedSession = new FakeSession(compactedSnapshot);
+    const attachedView = new FakeView();
+    const attachedController = new SessionChatController({
+      view: attachedView,
+      session: attachedSession,
+      snapshot: await attachedSession.snapshot(),
+      targetLabel: "in-process",
+    });
+    attachedController.start();
+    expect(attachedView.messages.some((message) => message.id === retainedEntry.id)).toBe(false);
+    expect(attachedView.messages).toContainEqual({
+      id: "summary-entry",
+      model: { type: "user", text: "compacted summary" },
+    });
+    expect(attachedView.messages.some((message) => message.model.type === "session_divider")).toBe(
+      false,
     );
-    expect(view.messages).toContainEqual(
-      expect.objectContaining({
-        model: {
-          type: "system",
-          text: "retained 3 recent messages",
-          kind: "muted",
+
+    const replacedRetainedEntry = {
+      id: retainedEntry.id,
+      state: "committed",
+      modelVisible: true,
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "updated retained message" }],
+        timestamp: 2,
+      },
+    };
+    for (const listener of session.listeners) {
+      listener(createMessageReplaceDelta(session.id, 2, replacedRetainedEntry));
+    }
+    expect(view.messages.find((message) => message.id === retainedEntry.id)?.model).toEqual({
+      type: "user",
+      text: "retained before compaction",
+    });
+
+    const nextEntry = {
+      id: "post-compaction-entry",
+      state: "committed",
+      modelVisible: true,
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "after compaction" }],
+        timestamp: 3,
+      },
+    };
+    for (const listener of session.listeners) {
+      listener(createMessageAppendDelta(session.id, 3, nextEntry));
+    }
+    expect(view.messages).toContainEqual({
+      id: nextEntry.id,
+      model: { type: "user", text: "after compaction" },
+    });
+
+    const secondCompactedText = prependTauUserMetadata("second compacted summary", [
+      {
+        type: "auto-compaction",
+        version: 1,
+        summary: "second compacted summary",
+        preservedUserMessages: [],
+        cutType: "turn-boundary",
+        retainedMessageCount: 1,
+      },
+    ]);
+    const secondCompactedSnapshot = createProtocolSnapshot({
+      sessionId: "session-1",
+      revision: 4,
+      agentState: { revision: 4, contextEpoch: "fixture-context" },
+      historyEntries: [
+        {
+          id: "second-summary-entry",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: secondCompactedText }],
+          },
         },
-      }),
-    );
+        nextEntry,
+        {
+          id: "second-continuation-entry",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: continuationText }],
+          },
+        },
+      ],
+      timeline: [
+        {
+          type: "message",
+          id: "timeline-second-summary-entry",
+          messageId: "second-summary-entry",
+        },
+        {
+          type: "message",
+          id: `timeline-${nextEntry.id}`,
+          messageId: nextEntry.id,
+        },
+      ],
+    });
+    for (const listener of session.listeners) {
+      listener(createResetDelta(session.id, 3, secondCompactedSnapshot, "maintenance"));
+    }
+
+    expect(
+      view.messages.filter((message) => message.model.type === "session_divider"),
+    ).toHaveLength(2);
+    expect(view.messages.filter((message) => message.id === nextEntry.id)).toEqual([
+      {
+        id: nextEntry.id,
+        model: { type: "user", text: "after compaction" },
+      },
+    ]);
+    expect(view.messages).toContainEqual({
+      id: "second-summary-entry",
+      model: { type: "user", text: "second compacted summary" },
+    });
+    await attachedController.dispose();
   });
 
   it("hydrates a session snapshot and submits through the observed session", async () => {
@@ -1096,6 +1312,64 @@ describe("SessionChatController", () => {
         }),
       ]),
     );
+  });
+
+  it("renders a persisted provider failure once without transient turn feedback", async () => {
+    const failedAssistant = {
+      ...createAssistantMessage("partial response"),
+      stopReason: "error",
+      errorMessage: "Codex request failed with request-id-89abde88",
+    };
+    const baseSnapshot = createSnapshot([
+      { id: "user-failed", message: { role: "user", content: [{ type: "text", text: "try" }] } },
+      { id: "assistant-failed", message: failedAssistant },
+    ]);
+    const snapshot = updateSnapshot(baseSnapshot, {
+      timeline: [
+        ...baseSnapshot.timeline,
+        {
+          type: "notice",
+          id: "model-failure-assistant-failed",
+          notice: {
+            severity: "error",
+            title: "model request failed",
+            content: [failedAssistant.errorMessage],
+            subject: { type: "message", id: "assistant-failed" },
+            timestamp: failedAssistant.timestamp,
+          },
+        },
+      ],
+    });
+    const session = new FakeSession(snapshot);
+    session.emitSubmitEvents = false;
+    session.submit = vi.fn(async () => ({
+      userHistoryEntryId: "user-failed",
+      turn: { status: "failed", stopReason: "error", errorMessage: failedAssistant.errorMessage },
+    }));
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot,
+      targetLabel: "in-process",
+    });
+
+    controller.start();
+    controller.getInputHandlers().onSubmit("try");
+    await flush();
+
+    expect(view.messages.filter((message) => message.model.type === "transcript_notice")).toEqual([
+      {
+        id: "model-failure-assistant-failed",
+        model: {
+          type: "transcript_notice",
+          title: "model request failed",
+          content: [failedAssistant.errorMessage],
+          tone: "error",
+        },
+      },
+    ]);
+    expect(view.transcriptNotices).toEqual([]);
   });
 
   it("renders submitted user messages from session deltas", async () => {
@@ -1165,11 +1439,12 @@ describe("SessionChatController", () => {
     controller.getInputHandlers().onSubmit("hello session");
     await flush();
 
-    expect(view.systems).toEqual(
+    expect(view.feedback).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          text: "session turn failed: submit rejected",
-          kind: "error",
+          text: "failed to run assistant turn",
+          tone: "error",
+          content: ["submit rejected"],
         }),
       ]),
     );
@@ -1179,7 +1454,7 @@ describe("SessionChatController", () => {
     expect(view.workingIconStops).toBe(1);
     expect(controller.isStreaming).toBe(false);
     expect(controller.submittedTurnInProgress).toBe(false);
-    expect(view.status.footer.statusHint).toBeUndefined();
+    expect(view.status.footer.type).toBe("regular");
   });
 
   it("shows the protocol cause when a submitted turn fails", async () => {
@@ -1206,10 +1481,11 @@ describe("SessionChatController", () => {
     controller.getInputHandlers().onSubmit("hello session");
     await flush();
 
-    expect(view.systems).toContainEqual(
+    expect(view.feedback).toContainEqual(
       expect.objectContaining({
-        text: "session turn failed: failed to run session turn: session snapshot is invalid",
-        kind: "error",
+        text: "failed to run assistant turn",
+        tone: "error",
+        content: ["failed to run session turn: session snapshot is invalid"],
       }),
     );
   });
@@ -1231,18 +1507,42 @@ describe("SessionChatController", () => {
     controller.getInputHandlers().onSubmit("hello session");
     await flush();
 
-    expect(view.systems).toEqual(
+    expect(view.feedback).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          text: "session turn failed: submit rejected",
-          kind: "error",
+          text: "failed to run assistant turn",
+          tone: "error",
+          content: ["submit rejected"],
         }),
       ]),
     );
     expect(view.workingIconStarts).toBe(1);
     expect(view.workingIconStops).toBe(1);
     expect(controller.isStreaming).toBe(false);
-    expect(view.status.footer.statusHint).toBeUndefined();
+    expect(view.status.footer.type).toBe("regular");
+  });
+
+  it("shows one transcript notice when interrupting an assistant turn", async () => {
+    const session = new FakeSession();
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "in-process",
+    });
+    controller.start();
+    controller.isStreaming = true;
+
+    controller.getInputHandlers().onEscape();
+    controller.getInputHandlers().onEscape();
+    await flush();
+
+    expect(session.interrupt).toHaveBeenCalledTimes(1);
+    expect(
+      view.transcriptNotices.filter((notice) => notice.text === "assistant turn interrupted"),
+    ).toEqual([{ text: "assistant turn interrupted", tone: "default" }]);
+    expect(view.footerNotices).toEqual([]);
   });
 
   it("starts and stops caffeinate around submitted session turns when enabled", async () => {
@@ -1543,7 +1843,7 @@ describe("SessionChatController", () => {
     });
 
     expect(view.workingIconStarts).toBe(1);
-    expect(view.status.footer.statusHint).toBeUndefined();
+    expect(view.status.footer.type).toBe("regular");
 
     const assistantMessage = createAssistantMessage("observed reply");
     session.emit({
@@ -1614,14 +1914,14 @@ describe("SessionChatController", () => {
     expect(view.workingIconStops).toBe(1);
     expect(controller.isStreaming).toBe(false);
     expect(controller.submittedTurnInProgress).toBe(true);
-    expect(view.status.footer.statusHint).toBeUndefined();
+    expect(view.status.footer.type).toBe("regular");
 
     controller.getInputHandlers().onSubmit("queued while response pending");
     await flush();
 
     expect(delayedSubmit).toHaveBeenCalledTimes(1);
     expect(session.queue).toHaveBeenCalledWith("queued while response pending");
-    expect(view.systems).toEqual([]);
+    expect(view.feedback).toEqual([]);
 
     session.submit = vi.fn(async (_text, options = {}) => ({
       userHistoryEntryId: options.historyEntryId ?? "queued-user",
@@ -1789,7 +2089,7 @@ describe("SessionChatController", () => {
     await flush();
 
     expect(session.steer).toHaveBeenCalledWith("change direction");
-    expect(view.systems).toEqual([]);
+    expect(view.feedback).toEqual([]);
   });
 
   it("shows protocol causes when queueing and steering fail", async () => {
@@ -1829,15 +2129,17 @@ describe("SessionChatController", () => {
     controller.getInputHandlers().onSteerSubmit?.("steer this");
     await flush();
 
-    expect(view.systems).toEqual(
+    expect(view.feedback).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          text: "queueing failed: failed to drain pending user message: queued commit failed",
-          kind: "error",
+          text: "failed to queue message",
+          tone: "error",
+          content: ["failed to drain pending user message: queued commit failed"],
         }),
         expect.objectContaining({
-          text: "steering failed: steering turn failed: session snapshot is invalid",
-          kind: "error",
+          text: "failed to steer assistant",
+          tone: "error",
+          content: ["steering turn failed: session snapshot is invalid"],
         }),
       ]),
     );
@@ -1890,9 +2192,9 @@ describe("SessionChatController", () => {
     controller.getInputHandlers().onSubmit("/help");
     await flush();
 
-    expect(view.systems).toContainEqual(
+    expect(view.feedback).toContainEqual(
       expect.objectContaining({
-        kind: "warn",
+        tone: "default",
         text: "wait for tau to become idle before running commands",
       }),
     );
@@ -2017,7 +2319,7 @@ describe("SessionChatController", () => {
 
     expect(session.submit).not.toHaveBeenCalled();
     expect(session.queue).toHaveBeenCalledWith("queued after attach");
-    expect(view.systems).toEqual([]);
+    expect(view.feedback).toEqual([]);
 
     session.snapshotValue = createSnapshot([
       {
@@ -2190,8 +2492,8 @@ describe("SessionChatController", () => {
     );
     controller.getInputHandlers().onCtrlT();
 
-    expect(view.systems).toContainEqual(
-      expect.objectContaining({ kind: "success", text: "thoughts visible" }),
+    expect(view.feedback).toContainEqual(
+      expect.objectContaining({ tone: "default", text: "thoughts visible" }),
     );
     expect(
       controller.snapshot.messages.find((entry) => entry.id === "assistant-thinking-streaming"),
@@ -3238,16 +3540,178 @@ describe("SessionChatController", () => {
       guidance: "preserve decisions",
     });
     expect(session.submit).not.toHaveBeenCalled();
-    expect(view.messages).toContainEqual({
+    const dividerIndexes = view.messages.flatMap((message, index) =>
+      message.model.type === "session_divider" ? [index] : [],
+    );
+    const summaryIndex = view.messages.findIndex((message) => message.id === "summary-entry");
+    expect(dividerIndexes).toHaveLength(1);
+    expect(view.messages[dividerIndexes[0]]?.model).toEqual({
+      type: "session_divider",
+      label: "compacted context",
+    });
+    expect(dividerIndexes[0]).toBeLessThan(summaryIndex);
+    expect(view.messages[summaryIndex]).toEqual({
       id: "summary-entry",
       model: { type: "user", text: "compacted summary: preserve decisions" },
     });
-    expect(view.systems).toContainEqual(
-      expect.objectContaining({
-        kind: "success",
-        text: "session compacted. previous context and last assistant message have been included.",
-      }),
+    expect(view.feedback).toEqual([]);
+  });
+
+  it("renders one divider before a manually compacted reset", async () => {
+    const session = new FakeSession(
+      createSnapshot([
+        {
+          id: "history-1",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "persisted" }],
+          },
+        },
+      ]),
     );
+    session.compact = vi.fn(async () => {
+      const runningSnapshot = updateSnapshot(session.snapshotValue, {
+        revision: session.snapshotValue.revision + 1,
+        timeline: [
+          ...session.snapshotValue.timeline,
+          {
+            type: "operation",
+            id: "operation-manual-compaction",
+            operation: {
+              kind: "manual-compaction",
+              status: "running",
+              startedAt: 1,
+            },
+          },
+        ],
+      });
+      for (const listener of session.listeners) {
+        listener(
+          createResetDelta(
+            session.id,
+            session.snapshotValue.revision,
+            runningSnapshot,
+            "maintenance",
+          ),
+        );
+      }
+
+      const compactedSnapshot = createProtocolSnapshot({
+        sessionId: session.id,
+        revision: runningSnapshot.revision + 1,
+        agentState: {
+          revision: runningSnapshot.agentState.revision + 1,
+          contextEpoch: runningSnapshot.agentState.contextEpoch,
+        },
+        historyEntries: [
+          {
+            id: "summary-entry",
+            message: {
+              role: "user",
+              content: [{ type: "text", text: "compacted summary" }],
+            },
+          },
+        ],
+      });
+      session.snapshotValue = compactedSnapshot;
+      for (const listener of session.listeners) {
+        listener(
+          createResetDelta(session.id, runningSnapshot.revision, compactedSnapshot, "maintenance"),
+        );
+      }
+      return {
+        snapshot: compactedSnapshot,
+        compactionMessage: "compacted summary",
+        includedLastAssistant: false,
+      };
+    });
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "in-process",
+    });
+    controller.start();
+
+    controller.getInputHandlers().onSubmit("/compact-all");
+    await flush();
+
+    const dividerIndexes = view.messages.flatMap((message, index) =>
+      message.model.type === "session_divider" ? [index] : [],
+    );
+    const summaryIndex = view.messages.findIndex((message) => message.id === "summary-entry");
+    expect(dividerIndexes).toHaveLength(1);
+    expect(view.messages[dividerIndexes[0]]?.model).toEqual({
+      type: "session_divider",
+      label: "compacted context",
+    });
+    expect(dividerIndexes[0]).toBeLessThan(summaryIndex);
+    expect(dividerIndexes.filter((index) => index > summaryIndex)).toEqual([]);
+  });
+
+  it("renders manual compaction failures as transcript errors", async () => {
+    const session = new FakeSession();
+    session.compact = vi.fn(async () => {
+      const runningSnapshot = updateSnapshot(session.snapshotValue, {
+        revision: session.snapshotValue.revision + 1,
+        timeline: [
+          ...session.snapshotValue.timeline,
+          {
+            type: "operation",
+            id: "operation-manual-compaction",
+            operation: {
+              kind: "manual-compaction",
+              status: "running",
+              startedAt: 1,
+            },
+          },
+        ],
+      });
+      for (const listener of session.listeners) {
+        listener(
+          createResetDelta(
+            session.id,
+            session.snapshotValue.revision,
+            runningSnapshot,
+            "maintenance",
+          ),
+        );
+      }
+
+      const failedSnapshot = updateSnapshot(runningSnapshot, {
+        revision: runningSnapshot.revision + 1,
+        timeline: runningSnapshot.timeline.filter((item) => item.type !== "operation"),
+      });
+      session.snapshotValue = failedSnapshot;
+      for (const listener of session.listeners) {
+        listener(
+          createResetDelta(session.id, runningSnapshot.revision, failedSnapshot, "maintenance"),
+        );
+      }
+      throw new Error("no conversation to compact.");
+    });
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "in-process",
+    });
+    controller.start();
+
+    controller.getInputHandlers().onSubmit("/compact-all");
+    await flush();
+
+    expect(view.transcriptNotices).toEqual([
+      {
+        text: "failed to compact session",
+        tone: "error",
+        content: ["no conversation to compact."],
+      },
+    ]);
+    expect(view.messages.filter((message) => message.model.type === "session_divider")).toEqual([]);
+    expect(view.status.footer.type).toBe("regular");
   });
 
   it("routes goal controls through the session protocol and reflects goal status", async () => {
@@ -3270,8 +3734,8 @@ describe("SessionChatController", () => {
     controller.isStreaming = true;
     controller.getInputHandlers().onSubmit("/goal");
     await flush();
-    expect(view.systems).toContainEqual(
-      expect.objectContaining({ text: "goal active: Ship the feature" }),
+    expect(view.feedback).toContainEqual(
+      expect.objectContaining({ text: "goal active", content: ["Ship the feature"] }),
     );
 
     controller.getInputHandlers().onSubmit("/goal clear");
@@ -3284,9 +3748,9 @@ describe("SessionChatController", () => {
     await flush();
     expect(session.startGoal).toHaveBeenCalledOnce();
     expect(session.resumeGoal).not.toHaveBeenCalled();
-    expect(view.systems).toContainEqual(
+    expect(view.feedback).toContainEqual(
       expect.objectContaining({
-        kind: "warn",
+        tone: "default",
         text: "wait for tau to become idle before running commands",
       }),
     );
@@ -3327,11 +3791,14 @@ describe("SessionChatController", () => {
     controller.getInputHandlers().onSubmit("/compact-all");
     await flush();
 
-    expect(view.status.footer.statusHint).toBe("compacting context...");
+    expect(view.status.footer).toEqual({
+      type: "activity",
+      label: "compacting context",
+    });
     pendingCompact.resolve();
     await flush();
 
-    expect(view.status.footer.statusHint).toBeUndefined();
+    expect(view.status.footer.type).toBe("regular");
   });
 
   it("uses the shared slash command parser for session command dispatch", async () => {
@@ -3353,7 +3820,7 @@ describe("SessionChatController", () => {
 
     expect(session.reload).toHaveBeenCalledTimes(1);
     expect(session.submit).not.toHaveBeenCalled();
-    expect(view.systems.some((message) => message.text.includes("commands:"))).toBe(true);
+    expect(view.feedback.some((message) => message.text.includes("commands:"))).toBe(true);
   });
 
   it("tracks session editor input modes without command hints", async () => {
@@ -3379,7 +3846,7 @@ describe("SessionChatController", () => {
 
     handlers.onChange("/reload");
     expect(view.status.editor.mode).toBe("normal");
-    expect(view.status.footer.statusHint).toBeUndefined();
+    expect(view.status.footer.type).toBe("regular");
   });
 
   it("switches session personas through the session protocol", async () => {
@@ -3398,9 +3865,9 @@ describe("SessionChatController", () => {
 
     expect(session.setPersona).toHaveBeenCalledWith("persona-2");
     expect(view.status.editor.personaName).toBe("Persona 2");
-    expect(view.systems).toContainEqual(
+    expect(view.feedback).toContainEqual(
       expect.objectContaining({
-        kind: "success",
+        tone: "default",
         text: "switched to Persona 2 (gpt-5.5)",
       }),
     );
@@ -3460,10 +3927,9 @@ describe("SessionChatController", () => {
 
     expect(session.setReasoning).toHaveBeenCalledWith("minimal");
     expect(view.status.editor.reasoningLabel).toBe("minimal");
-    expect(view.systems).not.toContainEqual({
+    expect(view.feedback).not.toContainEqual({
       text: "cannot change reasoning while a session turn is running",
-      kind: "warn",
-      options: undefined,
+      tone: "default",
     });
   });
 
@@ -3501,12 +3967,16 @@ describe("SessionChatController", () => {
     await flush();
 
     expect(session.reload).toHaveBeenCalledTimes(1);
-    expect(view.systems).toContainEqual(
-      expect.objectContaining({ kind: "warn", text: "reload warning" }),
-    );
-    expect(view.systems).toContainEqual(
+    expect(view.feedback).toContainEqual(
       expect.objectContaining({
-        kind: "success",
+        tone: "default",
+        text: "configuration warning",
+        content: ["reload warning"],
+      }),
+    );
+    expect(view.feedback).toContainEqual(
+      expect.objectContaining({
+        tone: "default",
         text: "reloaded: 2 personas, 2 prompts, 1 skills.",
       }),
     );
@@ -3536,10 +4006,9 @@ describe("SessionChatController", () => {
 
     expect(copyTextToClipboard).toHaveBeenCalledWith("line 1\nline 2");
     expect(view.editorText).toBe("");
-    expect(view.systems).toContainEqual({
+    expect(view.feedback).toContainEqual({
       text: "stashed input to clipboard",
-      kind: "success",
-      options: undefined,
+      tone: "default",
     });
   });
 
@@ -3558,10 +4027,9 @@ describe("SessionChatController", () => {
     controller.getInputHandlers().onCtrlS();
     await flush();
 
-    expect(view.systems).toContainEqual({
+    expect(view.feedback).toContainEqual({
       text: "no input to stash yet",
-      kind: "warn",
-      options: undefined,
+      tone: "default",
     });
   });
 
@@ -3598,7 +4066,7 @@ describe("SessionChatController", () => {
     await flush();
 
     expect(session.interruptSubagent).toHaveBeenCalledWith("subagent-1");
-    expect(view.systems).not.toContainEqual(
+    expect(view.feedback).not.toContainEqual(
       expect.objectContaining({
         text: expect.stringContaining("unknown subagent id"),
       }),
@@ -3620,10 +4088,9 @@ describe("SessionChatController", () => {
     await flush();
 
     expect(session.interruptSubagent).not.toHaveBeenCalled();
-    expect(view.systems).toContainEqual({
+    expect(view.feedback).toContainEqual({
       text: "no active subagent selected",
-      kind: "warn",
-      options: undefined,
+      tone: "default",
     });
   });
 
@@ -3643,10 +4110,9 @@ describe("SessionChatController", () => {
     await flush();
 
     expect(session.interruptSubagent).toHaveBeenCalledWith("missing-subagent");
-    expect(view.systems).toContainEqual({
+    expect(view.feedback).toContainEqual({
       text: "unknown subagent id: missing-subagent",
-      kind: "warn",
-      options: undefined,
+      tone: "default",
     });
   });
 
@@ -3710,10 +4176,10 @@ describe("SessionChatController", () => {
     expect(session.closeEphemeralContext).toHaveBeenCalledWith("ephemeral-1");
     expect(session.record.mock.calls[0][0]).toContain("returned review from local diff tool");
     expect(session.operationLog.slice(-2)).toEqual(["close-ephemeral", "record"]);
-    expect(view.systems).toContainEqual(
+    expect(view.feedback).toContainEqual(
       expect.objectContaining({
-        kind: "success",
-        text: "diff review added to the conversation. tau did not run yet.",
+        tone: "default",
+        text: "diff review added; no assistant turn started",
       }),
     );
   });
@@ -3748,11 +4214,15 @@ describe("SessionChatController", () => {
       ]),
     );
     expect(view.messages.some((message) => message.model.type === "user")).toBe(false);
-    expect(view.systems).toContainEqual(
-      expect.objectContaining({ kind: "error", text: "diff review failed: record failed" }),
+    expect(view.feedback).toContainEqual(
+      expect.objectContaining({
+        tone: "error",
+        text: "failed to run diff review",
+        content: ["record failed"],
+      }),
     );
-    expect(view.systems).not.toContainEqual(
-      expect.objectContaining({ kind: "success", text: expect.stringContaining("added") }),
+    expect(view.feedback).not.toContainEqual(
+      expect.objectContaining({ tone: "default", text: expect.stringContaining("added") }),
     );
   });
 
@@ -3802,15 +4272,15 @@ describe("SessionChatController", () => {
       ]),
     );
     expect(view.messages.some((message) => message.model.status === "failed")).toBe(false);
-    expect(view.systems).toContainEqual(
+    expect(view.feedback).toContainEqual(
       expect.objectContaining({
-        kind: "success",
-        text: "diff review added to the conversation. tau did not run yet.",
+        tone: "default",
+        text: "diff review added; no assistant turn started",
       }),
     );
-    expect(view.systems).not.toContainEqual(
+    expect(view.feedback).not.toContainEqual(
       expect.objectContaining({
-        kind: "error",
+        tone: "error",
         text: expect.stringContaining("connection closed"),
       }),
     );
@@ -3849,10 +4319,9 @@ describe("SessionChatController", () => {
     expect(session.submit).not.toHaveBeenCalled();
     expect(session.queue).not.toHaveBeenCalled();
     expect(createSession).not.toHaveBeenCalled();
-    expect(view.systems).toContainEqual({
+    expect(view.feedback).toContainEqual({
       text: "wait for tau to become idle before submitting input",
-      kind: "warn",
-      options: undefined,
+      tone: "default",
     });
 
     releaseRecord.resolve();
@@ -4052,12 +4521,12 @@ describe("SessionChatController", () => {
     await flush();
 
     expect(spawn).not.toHaveBeenCalled();
-    expect(view.systems).toContainEqual({
+    expect(view.footerNotices).toContainEqual({
       text: "/listen is currently supported only on macOS.",
-      kind: "warn",
-      options: undefined,
+      tone: "default",
+      durationMs: 3000,
     });
-    expect(view.systems).not.toContainEqual(
+    expect(view.feedback).not.toContainEqual(
       expect.objectContaining({
         text: expect.stringContaining("not supported in protocol attach mode"),
       }),
@@ -4137,6 +4606,11 @@ describe("SessionChatController", () => {
 
     expect(view.editorEnabledUpdates).toContain(true);
     expect(view.editorText).toBe("session transcript");
+    expect(view.statusUpdates).toContainEqual(
+      expect.objectContaining({
+        footer: { type: "activity", label: "transcribing voice input" },
+      }),
+    );
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(spawn).toHaveBeenNthCalledWith(1, "mktemp", ["/tmp/tau-listen.XXXXXX"]);
     expect(spawn).toHaveBeenNthCalledWith(
@@ -4150,6 +4624,45 @@ describe("SessionChatController", () => {
       }),
     );
     expect(session.submit).not.toHaveBeenCalled();
+  });
+
+  it("shows voice transcription failures as temporary footer errors", async () => {
+    const audioPath = join(tmpdir(), `tau-session-listen-failure-${Date.now()}.wav`);
+    await writeFile(audioPath, Buffer.alloc(2048, 1));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Promise.reject(new Error("service unavailable"))),
+    );
+
+    const session = new FakeSession();
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "in-process",
+      deps: createMockDeps(),
+      config: { apiKeys: { mistral: "mistral-key" } },
+    });
+    controller.listenRecording = {
+      audioPath,
+      stopRequested: false,
+      abortController: new AbortController(),
+      completion: Promise.resolve(),
+    };
+
+    try {
+      await controller.stopListenCapture();
+    } finally {
+      vi.unstubAllGlobals();
+      await rm(audioPath, { force: true });
+    }
+
+    expect(view.transcriptNotices.at(-1)).toEqual({
+      text: "failed to transcribe speech",
+      tone: "error",
+      content: ["service unavailable"],
+    });
   });
 
   it("routes /speak as a client-side command in session attach", async () => {
@@ -4167,12 +4680,12 @@ describe("SessionChatController", () => {
     controller.getInputHandlers().onSubmit("/speak");
     await flush();
 
-    expect(view.systems).toContainEqual({
+    expect(view.footerNotices).toContainEqual({
       text: "no assistant message to speak yet.",
-      kind: "warn",
-      options: undefined,
+      tone: "default",
+      durationMs: 3000,
     });
-    expect(view.systems).not.toContainEqual(
+    expect(view.feedback).not.toContainEqual(
       expect.objectContaining({
         text: expect.stringContaining("not supported in protocol attach mode"),
       }),
@@ -4282,17 +4795,17 @@ describe("SessionChatController", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const speechHints = view.statusUpdates
-      .map((status) => status.footer.statusHint)
+      .map((status) => (status.footer.type === "activity" ? status.footer.label : undefined))
       .filter((hint) => hint !== undefined);
     expect(speechHints).toEqual(
       expect.arrayContaining([
-        "rewriting for speech...",
-        "generating speech chunks (0 out of 1 ready)...",
-        "generating speech chunks (1 out of 1 ready)...",
-        "playing speech (0/1 played, 1/1 ready)...",
+        "rewriting for speech",
+        "generating speech chunks (0 out of 1 ready)",
+        "generating speech chunks (1 out of 1 ready)",
+        "playing speech (0/1 played, 1/1 ready)",
       ]),
     );
-    expect(view.status.footer.statusHint).toBeUndefined();
+    expect(view.status.footer.type).toBe("regular");
     expect(spawn).toHaveBeenNthCalledWith(1, "mktemp", ["/tmp/tau-speak.XXXXXX"]);
     expect(spawn).toHaveBeenNthCalledWith(
       2,
@@ -4385,7 +4898,7 @@ describe("SessionChatController", () => {
       model: { type: "user", text: "persisted" },
     });
     expect(view.resetToolUiSession.mock.calls.length).toBeGreaterThan(resetCountBeforeNew);
-    expect(view.systems).not.toContainEqual(
+    expect(view.feedback).not.toContainEqual(
       expect.objectContaining({ text: "created new session" }),
     );
     expect(view.messages.length).toBeGreaterThan(messageCountBeforeNew);
@@ -4394,8 +4907,8 @@ describe("SessionChatController", () => {
         model: { type: "session_divider", label: "new session" },
       }),
     );
-    expect(view.systems).toContainEqual(
-      expect.objectContaining({ text: "session id: session-2", kind: "muted" }),
+    expect(view.feedback).toContainEqual(
+      expect.objectContaining({ text: "session id", tone: "default", content: ["session-2"] }),
     );
   });
 
@@ -4476,10 +4989,9 @@ describe("SessionChatController", () => {
 
     expect(createSession).toHaveBeenCalledTimes(1);
     expect(session.unobserve).not.toHaveBeenCalled();
-    expect(view.systems).toContainEqual({
+    expect(view.feedback).toContainEqual({
       text: "wait for tau to become idle before submitting input",
-      kind: "warn",
-      options: undefined,
+      tone: "default",
     });
 
     sessionCreated.resolve(nextSession);
@@ -4487,6 +4999,7 @@ describe("SessionChatController", () => {
 
     expect(session.unobserve).toHaveBeenCalledTimes(1);
     expect(nextSession.listeners.size).toBe(1);
+    expect(nextSession.ephemeralListeners.size).toBe(1);
     expect(nextSession.pendingUserMessagesListeners.size).toBe(1);
   });
 
@@ -4510,12 +5023,13 @@ describe("SessionChatController", () => {
     await controller.onUserInput("/new");
 
     expect(nextSession.unobserve).toHaveBeenCalledTimes(1);
+    expect(nextSession.ephemeralListeners.size).toBe(0);
     expect(session.unobserve).not.toHaveBeenCalled();
     expect(session.listeners.size).toBe(1);
-    expect(view.systems).toContainEqual({
-      text: "new session failed: snapshot unavailable",
-      kind: "error",
-      options: undefined,
+    expect(view.feedback).toContainEqual({
+      text: "failed to create session",
+      tone: "error",
+      content: ["snapshot unavailable"],
     });
   });
 
@@ -4613,10 +5127,9 @@ describe("SessionChatController", () => {
     await flush();
 
     expect(view.rewindPickerShows).toHaveLength(0);
-    expect(view.systems).toContainEqual({
+    expect(view.feedback).toContainEqual({
       text: "no user messages available to rewind.",
-      kind: "warn",
-      options: undefined,
+      tone: "default",
     });
   });
 });

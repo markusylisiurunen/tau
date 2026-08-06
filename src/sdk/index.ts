@@ -1,5 +1,7 @@
 export type {
   SessionProtocolDelta,
+  SessionProtocolFeedbackEvent,
+  SessionProtocolFeedbackTone,
   SessionProtocolPendingUserMessage,
   SessionProtocolPendingUserMessagesMessage,
   SessionProtocolPendingUserMessagesState,

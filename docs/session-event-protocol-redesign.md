@@ -218,6 +218,8 @@ If the user interrupts mid-stream, the streamed assistant content is retained. T
 
 The client should be able to inspect every message, regardless of whether the default chat surface chooses to show it prominently. Tool result message text remains model-facing; client-only structured data belongs in `facets`.
 
+Automatic compaction replaces the active model transcript with a metadata-tagged summary, a retained range, and a metadata-tagged continuation message. The retained range remains in `messages` for model context but is not a second visual copy. On a live transition, the TUI freezes its prior transcript segment as client-local history and excludes the retained range from the new active projection; a client attaching afterward renders only the summary and later active messages. Frozen messages, notices, and tool cards leave active snapshot reconciliation permanently.
+
 This removes the need for `activeTurn`. "Currently running" is derived from snapshot state: `lifecycle === "running"`, draft/interrupted messages, running tools, running agents, and running operations. On interrupt, the host applies ordinary changes: mark the draft assistant message `interrupted`, cancel or finish running tools/agents/operations, and set `lifecycle` to `idle` when cleanup finishes.
 
 ### timeline
@@ -657,7 +659,7 @@ Replace the same draft assistant message with the committed final assistant mess
           "id": "notice-1",
           "notice": {
             "severity": "warn",
-            "text": "auto-retrying after transient error",
+            "text": "retrying after transient error",
             "timestamp": 1782800000000
           }
         }

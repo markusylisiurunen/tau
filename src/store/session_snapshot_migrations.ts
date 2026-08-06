@@ -2,7 +2,7 @@ import type { SessionProtocolSnapshot } from "../protocol/session_protocol.js";
 import { validateSessionProtocolResult } from "../protocol/session_protocol.js";
 
 export const STORED_SESSION_DOCUMENT_FORMAT = "tau-session" as const;
-export const STORED_SESSION_DOCUMENT_VERSION = 5 as const;
+export const STORED_SESSION_DOCUMENT_VERSION = 6 as const;
 export const LEGACY_SESSION_CONTEXT_EPOCH = "legacy-v3";
 
 export type StoredSessionDocument = {
@@ -19,6 +19,7 @@ const storedSessionMigrations = new Map<number, StoredSessionMigration>([
   [2, migrateStoredSessionV2ToV3],
   [3, migrateStoredSessionV3ToV4],
   [4, migrateStoredSessionV4ToV5],
+  [5, migrateStoredSessionV5ToV6],
 ]);
 
 export class UnsupportedStoredSessionVersionError extends Error {
@@ -137,6 +138,26 @@ function migrateStoredSessionV4ToV5(value: unknown): unknown {
   const snapshot = structuredClone(value);
   if (!("attributes" in snapshot)) snapshot.attributes = {};
   if (!("createdAt" in snapshot)) snapshot.createdAt = earliestSnapshotTimestamp(snapshot);
+  return snapshot;
+}
+
+function migrateStoredSessionV5ToV6(value: unknown): unknown {
+  if (!isRecord(value)) {
+    throw new Error("stored session snapshot must be an object");
+  }
+
+  const snapshot = structuredClone(value);
+  if (!Array.isArray(snapshot.timeline)) return snapshot;
+  for (const item of snapshot.timeline) {
+    if (!isRecord(item) || item.type !== "notice" || !isRecord(item.notice)) continue;
+    if (!("title" in item.notice) && typeof item.notice.text === "string") {
+      const [title = "", ...content] = item.notice.text.replace(/\r\n?/g, "\n").split("\n");
+      item.notice.title = title.trim() || "session notice";
+      if (content.length > 0) item.notice.content = content;
+    }
+    delete item.notice.text;
+    if (!("subject" in item.notice)) item.notice.subject = { type: "session" };
+  }
   return snapshot;
 }
 

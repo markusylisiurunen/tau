@@ -41,7 +41,12 @@ function createNoticeDelta(sessionId, revision, text) {
           item: {
             type: "notice",
             id: `notice-${revision}-${text}`,
-            notice: { severity: "info", text, timestamp: revision },
+            notice: {
+              severity: "info",
+              title: text,
+              subject: { type: "session" },
+              timestamp: revision,
+            },
           },
         },
       ],
@@ -570,7 +575,7 @@ function deltaHasNotice(line, text) {
     line.type === "session.delta" &&
     line.delta?.type === "snapshot.patch" &&
     line.delta.changes.some(
-      (change) => change.type === "timeline.append" && change.item.notice?.text === text,
+      (change) => change.type === "timeline.append" && change.item.notice?.title === text,
     )
   );
 }
@@ -792,7 +797,7 @@ describe("rpc_server", () => {
           line.sessionId === "session-2" &&
           line.delta?.changes?.some(
             (change) =>
-              change.type === "timeline.append" && change.item.notice?.text === "streaming",
+              change.type === "timeline.append" && change.item.notice?.title === "streaming",
           ),
       ),
     );
@@ -801,7 +806,8 @@ describe("rpc_server", () => {
         line.type === "session.delta" &&
         line.sessionId === "session-2" &&
         line.delta?.changes?.some(
-          (change) => change.type === "timeline.append" && change.item.notice?.text === "streaming",
+          (change) =>
+            change.type === "timeline.append" && change.item.notice?.title === "streaming",
         ),
     );
     expect(createdSubmitEvent).toEqual(
@@ -1049,7 +1055,7 @@ describe("rpc_server", () => {
           line.type === "session.delta" &&
           line.delta?.changes?.some(
             (change) =>
-              change.type === "timeline.append" && change.item.notice?.text === "streaming",
+              change.type === "timeline.append" && change.item.notice?.title === "streaming",
           ),
       ),
     );
@@ -1077,7 +1083,8 @@ describe("rpc_server", () => {
       (line) =>
         line.type === "session.delta" &&
         line.delta?.changes?.some(
-          (change) => change.type === "timeline.append" && change.item.notice?.text === "streaming",
+          (change) =>
+            change.type === "timeline.append" && change.item.notice?.title === "streaming",
         ),
     );
     expect(submitEvent).toEqual(
@@ -1381,14 +1388,14 @@ describe("rpc_server", () => {
     await submit;
     await waitFor(() => harness.lines.some((line) => deltaHasNotice(line, "finished")));
 
-    const noticeTexts = harness.lines
+    const noticeTitles = harness.lines
       .filter((line) => line.type === "session.delta" && line.reason === "notice")
       .flatMap((line) =>
         line.delta.changes
           .filter((change) => change.type === "timeline.append" && change.item.notice)
-          .map((change) => change.item.notice.text),
+          .map((change) => change.item.notice.title),
       );
-    expect(noticeTexts).toEqual(["streaming", "finished"]);
+    expect(noticeTitles).toEqual(["streaming", "finished"]);
   });
 
   it("waits for interrupted active submits before host shutdown on close", async () => {

@@ -66,7 +66,7 @@ WebSocket clients receive the same `ready`, `response`, `session.delta`, and `se
 every protocol message includes `version`.
 
 ```json
-{ "version": 8, "type": "..." }
+{ "version": 9, "type": "..." }
 ```
 
 server-to-client messages are:
@@ -87,7 +87,7 @@ when the rpc server starts, it immediately emits a `ready` line:
 
 ```json
 {
-  "version": 8,
+  "version": 9,
   "type": "ready",
   "methods": [
     "initialize",
@@ -157,7 +157,7 @@ all requests use this envelope:
 
 ```json
 {
-  "version": 8,
+  "version": 9,
   "type": "request",
   "id": "req-1",
   "method": "session.submit",
@@ -190,7 +190,7 @@ params (required):
 
 ```json
 {
-  "version": 8,
+  "version": 9,
   "type": "response",
   "id": "init-1",
   "ok": true,
@@ -439,7 +439,7 @@ if another turn is already running, tau returns:
 
 ```json
 {
-  "version": 8,
+  "version": 9,
   "type": "response",
   "id": "submit-2",
   "ok": false,
@@ -678,7 +678,7 @@ returns current session state:
 - `catalog` (lightweight personas, prompt metadata, and skills available to observed clients)
 - `executionEnvironment` (where tools/files/commands execute)
 - `messages` (complete synchronized transcript with stable message ids)
-- `timeline` (default render projection; may omit messages that still exist in `messages`)
+- `timeline` (default render projection; may omit messages that still exist in `messages`; structured notices carry a required title, optional full-fidelity content lines, severity, timestamp, and a session or message subject)
 - `tools` (semantic tool execution state keyed by tool call id; `streaming` runs expose only tool identity plus draft-message origin, while executable states reference a complete assistant `toolCall` through `call`)
 - `agents` (semantic subagent execution state)
 - `facets` (client-only structured metadata attached to session/message/tool/agent/operation subjects)
@@ -688,6 +688,8 @@ Tool status is projected from semantic runtime outcomes (`succeeded`, `failed`, 
 derive transcript length from `messages.length`; the protocol does not duplicate it. The first committed message is the effective system instruction message. Running state is derived from `lifecycle`, draft/interrupted messages, tools, agents, and operations; there is no `activeTurn` side object. If an assistant turn is interrupted mid-stream, the streamed content is retained as an `interrupted` assistant message and remains model-visible unless the host intentionally marks that record `modelVisible: false`.
 
 User message text in `messages` is the raw recoverable Tau session text. It may start with Tau's internal metadata prefix, which is persisted for recovery but is never sent to the model or shown to users. After that metadata is removed, user text may start with one or more strict hidden model instruction blocks in the form `<system>...</system>\n`; these blocks are sent to the model as part of the user turn but should be hidden from user-facing renderers. Clients that render user messages should derive display text by removing Tau metadata and then removing only leading exact `<system>...</system>\n` blocks from user messages. Do not apply this display projection to assistant, tool, or protocol system messages.
+
+After automatic compaction, the message carrying `auto-compaction` metadata is the active transcript summary. Messages between that summary and the later `auto-compaction-continuation` message are retained model context and should not be rendered again. On a live transition, the Tau TUI leaves the prior transcript segment in place as immutable client-local history and starts a `compacted context` segment; a client that first attaches after compaction has no prior local segment and renders only the active projection. Frozen messages, notices, and tool cards no longer participate in snapshot reconciliation.
 
 #### session.startGoal
 
@@ -883,7 +885,7 @@ observed-session changes are broadcast as `session.delta` messages:
 
 ```json
 {
-  "version": 8,
+  "version": 9,
   "type": "session.delta",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "fromRevision": 1,
@@ -907,7 +909,7 @@ observed-session changes are broadcast as `session.delta` messages:
 
 ```json
 {
-  "version": 8,
+  "version": 9,
   "type": "session.delta",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "fromRevision": null,
@@ -938,7 +940,7 @@ notes:
 
 ```json
 {
-  "version": 8,
+  "version": 9,
   "type": "session.pendingUserMessages",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "state": {
@@ -957,11 +959,30 @@ Pending messages are shared across attached clients and survive client detach wh
 
 ## ephemeral events
 
-`session.ephemeral` messages carry non-recoverable observed-session activity that is intentionally not stored in `SessionSnapshot`. The current use is live ephemeral-agent progress:
+`session.ephemeral` messages carry non-recoverable observed-session activity that is intentionally not stored in `SessionSnapshot`. They carry live ephemeral-agent progress and session feedback. Feedback events are either activity lifecycle events or notices:
 
 ```json
 {
-  "version": 8,
+  "version": 9,
+  "type": "session.ephemeral",
+  "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
+  "event": {
+    "type": "feedback.notice",
+    "title": "retrying after transient error",
+    "tone": "default",
+    "presentation": "footer",
+    "durationMs": 3000
+  }
+}
+```
+
+Activity uses paired `feedback.activity.started` and `feedback.activity.finished` events with the same `id`; the started event also carries `text`. Notice tone is `default` or `error`. Footer notices require a `title` plus a positive `durationMs` of at most 60 seconds. Transcript notices use `presentation: "transcript"`, omit the duration, and may carry full-fidelity `content` lines. Ephemeral feedback is client-local presentation state and is never added to the session timeline. Recoverable failures such as provider errors instead use structured timeline notices in the snapshot; clients may apply their own bounded presentation without truncating the stored content.
+
+Ephemeral-agent progress uses the same envelope:
+
+```json
+{
+  "version": 9,
   "type": "session.ephemeral",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "event": {
@@ -992,7 +1013,7 @@ error responses use:
 
 ```json
 {
-  "version": 8,
+  "version": 9,
   "type": "response",
   "id": "req-1",
   "ok": false,

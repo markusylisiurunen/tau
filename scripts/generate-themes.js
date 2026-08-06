@@ -45,6 +45,7 @@ const generatePalette = (brandHue, appearance) => {
   const HUE_DIFF_PLUS = wrapHue(108);
   const HUE_DIFF_MINUS = wrapHue(12);
   const HUE_SUCCESS = wrapHue(108);
+  const HUE_FEEDBACK = wrapHue(112);
   const HUE_WARN = wrapHue(36);
   const HUE_ERROR = wrapHue(12);
   const HUE_EDITOR_BORDER_BASH = wrapHue(92);
@@ -83,13 +84,12 @@ const generatePalette = (brandHue, appearance) => {
   ]);
   const diffRemove = transform(diffAdd, [setH(HUE_DIFF_MINUS)]);
 
-  const toastSuccess = transform(brandAccent, [
-    setH(HUE_SUCCESS),
+  const feedback = transform(brandAccent, [
+    setH(HUE_FEEDBACK),
     scaleC(1.08),
     shiftL(isDark ? 6 : 0),
   ]);
-  const toastWarn = transform(toastSuccess, [setH(HUE_WARN)]);
-  const toastError = transform(toastSuccess, [setH(HUE_ERROR)]);
+  const feedbackError = transform(feedback, [setH(HUE_ERROR)]);
 
   const userReviewSurface = transform(brandAccent, [
     setH(HUE_REVIEW),
@@ -103,9 +103,6 @@ const generatePalette = (brandHue, appearance) => {
   ]);
   const userReviewTextMuted = transform(userReviewText, [scaleC(0.36), shiftL(isDark ? -12 : 12)]);
   const userReviewTextDim = transform(userReviewText, [scaleC(0.16), shiftL(isDark ? -24 : 24)]);
-
-  const statusWarn = transform(brandAccent, [setH(HUE_WARN), scaleC(0.92), setL(isDark ? 68 : 44)]);
-  const statusError = transform(statusWarn, [setH(HUE_ERROR)]);
 
   return {
     brandAccent: toHex(brandAccent),
@@ -124,8 +121,8 @@ const generatePalette = (brandHue, appearance) => {
     autocompleteSelectedSurface: toHex(userSurface),
     autocompleteSelectedText: toHex(userText),
 
-    statusWarn: toHex(statusWarn),
-    statusError: toHex(statusError),
+    feedback: toHex(feedback),
+    feedbackError: toHex(feedbackError),
 
     actionRunning: toHex(actionRunning),
     actionSuccess: toHex(actionSuccess),
@@ -134,10 +131,6 @@ const generatePalette = (brandHue, appearance) => {
 
     diffAdd: toHex(diffAdd),
     diffRemove: toHex(diffRemove),
-
-    toastSuccess: toHex(toastSuccess),
-    toastWarn: toHex(toastWarn),
-    toastError: toHex(toastError),
 
     userSurface: toHex(userSurface),
     userText: toHex(userText),

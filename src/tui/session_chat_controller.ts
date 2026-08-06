@@ -37,6 +37,7 @@ import { APP_VERSION } from "../core/version.js";
 import type {
   SessionProtocolCreateParams,
   SessionProtocolDeltaMessage,
+  SessionProtocolEphemeralMessage,
   SessionProtocolMessage,
   SessionProtocolPendingUserMessagesMessage,
   SessionProtocolSnapshot,
@@ -136,14 +137,18 @@ export class SessionChatController {
   private snapshot: SessionProtocolSnapshot;
   private readonly renderedMessageIds: string[] = [];
   private readonly hiddenHistoryEntryIds = new Set<string>();
+  private transcriptProjection?: TranscriptProjection;
   private observedSessionRevision: number;
   private eventUnsubscribe?: () => void;
+  private ephemeralUnsubscribe?: () => void;
   private pendingUserMessagesUnsubscribe?: () => void;
+  private readonly hostActivities = new Map<string, string>();
   private snapshotRecovery?: Promise<void>;
   private readonly snapshotRecoveryDeltas: SessionProtocolDeltaMessage[] = [];
   private hasPendingUserMessages = false;
   private pendingIdleNotification = false;
   private isStreaming = false;
+  private assistantInterruptRequested = false;
   private submittedTurnInProgress = false;
   private manualCompactionInProgress = false;
   private localDiffReviewInProgress = false;
@@ -159,7 +164,7 @@ export class SessionChatController {
   private listenRecording?: ListenRecording;
   private listenTransition?: Promise<void>;
   private isTranscribingListen = false;
-  private speechStatusHint?: string;
+  private speechActivityLabel?: string;
   private readonly caffeinated: boolean;
   private turnCaffeinate?: TurnCaffeinateSession;
   private disableCaffeinateForSession = false;
@@ -173,6 +178,7 @@ export class SessionChatController {
     this.session = options.session;
     this.createSession = options.createSession;
     this.snapshot = options.snapshot;
+    this.transcriptProjection = createInitialTranscriptProjection(options.snapshot);
     this.targetLabel = options.targetLabel;
     this.configuredClientToolNames = options.configuredClientToolNames ?? [];
     this.config = options.config ?? {};
@@ -200,7 +206,8 @@ export class SessionChatController {
       persona: (id) => this.setPersona(id),
       prompt: (id) => this.insertPrompt(id),
       theme: (id) => this.switchTheme(id),
-      unknown: () => this.view.addSystemMessage("unknown command. type /help.", "error"),
+      unknown: () =>
+        this.view.addTranscriptNotice("unknown command", "error", ["type /help for commands"]),
     };
     this.diffReviewService = new DiffReviewService({
       view: this.view,
@@ -224,6 +231,7 @@ export class SessionChatController {
     this.renderSnapshot(this.snapshot);
     this.hydrateRunningSnapshotState();
     this.eventUnsubscribe = this.session.onDelta((delta) => this.onSdkDelta(delta));
+    this.ephemeralUnsubscribe = this.session.onEphemeral((message) => this.onSdkEphemeral(message));
     this.pendingUserMessagesUnsubscribe = this.session.onPendingUserMessages((message) =>
       this.onSdkPendingUserMessages(message),
     );
@@ -232,6 +240,7 @@ export class SessionChatController {
 
   async dispose(): Promise<void> {
     this.eventUnsubscribe?.();
+    this.ephemeralUnsubscribe?.();
     this.pendingUserMessagesUnsubscribe?.();
     if (this.listenTransition) {
       await this.listenTransition;
@@ -321,7 +330,10 @@ export class SessionChatController {
 
     if (this.isSessionOperationActive()) {
       if (this.isBlockingSessionOperationActive()) {
-        this.view.addSystemMessage("wait for tau to become idle before submitting input", "warn");
+        this.view.showFooterNotice(
+          "wait for tau to become idle before submitting input",
+          "default",
+        );
         return;
       }
       if (trimmed.startsWith("/") && this.isSingleLineInput(text)) {
@@ -330,9 +342,9 @@ export class SessionChatController {
           if (this.isStreaming && this.commandRegistry.allowsDuringStreaming(parsed)) {
             await this.commandRegistry.dispatch(parsed, this.commandHandlers);
           } else {
-            this.view.addSystemMessage(
+            this.view.showFooterNotice(
               "wait for tau to become idle before running commands",
-              "warn",
+              "default",
             );
           }
           return;
@@ -383,7 +395,7 @@ export class SessionChatController {
   }
 
   private showHelp(): void {
-    this.view.addSystemMessage(
+    this.view.addTranscriptNotice(
       this.commandRegistry.buildHelpText({
         agentsFiles: this.getAgentsFilePaths(),
         skills: this.snapshot.catalog.skills,
@@ -391,13 +403,13 @@ export class SessionChatController {
         formatPath: (path) =>
           formatPathForSessionDisplay(path, this.snapshot.executionEnvironment.home),
       }),
-      "muted",
+      "default",
     );
   }
 
   private switchTheme(themeId: string): void {
     this.view.updateTheme(themeId);
-    this.view.addSystemMessage(`theme set to ${themeId}`, "success");
+    this.view.showFooterNotice(`theme set to ${themeId}`, "default");
   }
 
   private handleEditorChange(text: string): void {
@@ -592,7 +604,7 @@ export class SessionChatController {
     }
 
     if (this.isBlockingSessionOperationActive()) {
-      this.view.addSystemMessage("wait for tau to become idle before submitting input", "warn");
+      this.view.showFooterNotice("wait for tau to become idle before submitting input", "default");
       return;
     }
 
@@ -602,7 +614,9 @@ export class SessionChatController {
   private submitQueuedText(text: string): void {
     void this.session.queue(text).catch((error) => {
       if (!this.isPendingMessageCancellation(error)) {
-        this.view.addSystemMessage(`queueing failed: ${formatSessionError(error)}`, "error");
+        this.view.addTranscriptNotice("failed to queue message", "error", [
+          formatSessionError(error),
+        ]);
       }
     });
   }
@@ -610,7 +624,9 @@ export class SessionChatController {
   private submitSteeringText(text: string): void {
     void this.session.steer(text).catch((error) => {
       if (!this.isPendingMessageCancellation(error)) {
-        this.view.addSystemMessage(`steering failed: ${formatSessionError(error)}`, "error");
+        this.view.addTranscriptNotice("failed to steer assistant", "error", [
+          formatSessionError(error),
+        ]);
       }
     });
   }
@@ -630,10 +646,9 @@ export class SessionChatController {
       );
       this.view.requestRender();
     } catch (error) {
-      this.view.addSystemMessage(
-        `pending message cancellation failed: ${(error as Error).message}`,
-        "error",
-      );
+      this.view.addTranscriptNotice("failed to cancel pending messages", "error", [
+        (error as Error).message,
+      ]);
     }
   }
 
@@ -685,7 +700,9 @@ export class SessionChatController {
         return;
       }
       this.disableCaffeinateForSession = true;
-      this.view.addSystemMessage(`failed to run caffeinate: ${(error as Error).message}`, "warn");
+      this.view.addTranscriptNotice("caffeinate unavailable", "default", [
+        (error as Error).message,
+      ]);
     }
   }
 
@@ -697,6 +714,7 @@ export class SessionChatController {
     }
 
     this.isStreaming = true;
+    this.assistantInterruptRequested = false;
     this.submittedTurnInProgress = true;
     this.startTurnTimer();
     this.startTurnCaffeinate();
@@ -706,16 +724,13 @@ export class SessionChatController {
     try {
       const result = await task();
       if (result.turn.status === "blocked") {
-        this.view.addSystemMessage(`turn blocked: ${result.turn.message}`, "error");
-      } else if (result.turn.status === "failed") {
-        this.view.addSystemMessage(
-          `turn failed: ${result.turn.errorMessage ?? "model provider returned an error"}`,
-          "error",
-        );
+        this.view.addTranscriptNotice("turn blocked", "error", [result.turn.message]);
       }
       await this.syncFromSessionSnapshot();
     } catch (error) {
-      this.view.addSystemMessage(`session turn failed: ${formatSessionError(error)}`, "error");
+      this.view.addTranscriptNotice("failed to run assistant turn", "error", [
+        formatSessionError(error),
+      ]);
       this.stopVisibleSessionTurn();
       void this.stopTurnCaffeinate();
       await this.syncFromSessionSnapshot();
@@ -729,7 +744,7 @@ export class SessionChatController {
 
   private async interrupt(): Promise<void> {
     if (this.interruptLifecycle.interruptActiveTask()) {
-      this.view.addSystemMessage("interrupted", "error");
+      this.view.showFooterNotice("interrupted", "default");
       return;
     }
 
@@ -742,28 +757,33 @@ export class SessionChatController {
       if (!this.speakTask.abortController.signal.aborted) {
         this.speakTask.abortController.abort();
       }
-      this.view.addSystemMessage("interrupted", "error");
+      this.view.showFooterNotice("interrupted", "default");
       return;
     }
 
-    if (!this.isStreaming) {
+    if (!this.isStreaming || this.assistantInterruptRequested) {
       return;
     }
 
+    this.assistantInterruptRequested = true;
     try {
       const result = await this.session.interrupt();
-      this.view.addSystemMessage(
-        result.interrupted ? "interrupted" : "interrupt requested",
-        "error",
-      );
+      if (result.interrupted) {
+        this.view.addTranscriptNotice("assistant turn interrupted", "default");
+      } else {
+        this.assistantInterruptRequested = false;
+      }
     } catch (error) {
-      this.view.addSystemMessage(`interrupt failed: ${(error as Error).message}`, "error");
+      this.assistantInterruptRequested = false;
+      this.view.addTranscriptNotice("failed to interrupt assistant", "error", [
+        (error as Error).message,
+      ]);
     }
   }
 
   private async toggleListenCapture(): Promise<void> {
     if (this.listenTransition) {
-      this.view.addSystemMessage("speech recording state change already in progress", "warn");
+      this.view.showFooterNotice("speech recording state change already in progress", "default");
       return;
     }
 
@@ -777,17 +797,17 @@ export class SessionChatController {
 
   private async startListenCaptureFromCommand(): Promise<void> {
     if (this.listenTransition) {
-      this.view.addSystemMessage("speech recording state change already in progress", "warn");
+      this.view.showFooterNotice("speech recording state change already in progress", "default");
       return;
     }
 
     if (this.listenRecording) {
-      this.view.addSystemMessage("speech recording already in progress", "warn");
+      this.view.showFooterNotice("speech recording already in progress", "default");
       return;
     }
 
     if (this.isTranscribingListen) {
-      this.view.addSystemMessage("speech transcription already in progress", "warn");
+      this.view.showFooterNotice("speech transcription already in progress", "default");
       return;
     }
 
@@ -813,16 +833,15 @@ export class SessionChatController {
 
   private async startListenCapture(): Promise<void> {
     if (this.deps.env.platform() !== "darwin") {
-      this.view.addSystemMessage("/listen is currently supported only on macOS.", "warn");
+      this.view.showFooterNotice("/listen is currently supported only on macOS.", "default");
       return;
     }
 
     const apiKey = getSpeechToTextApiKey(this.config, this.deps);
     if (!apiKey) {
-      this.view.addSystemMessage(
+      this.view.addTranscriptNotice("speech-to-text is not configured", "error", [
         getSpeechToTextApiKeyErrorMessage(this.config, "use /listen"),
-        "error",
-      );
+      ]);
       return;
     }
 
@@ -854,7 +873,7 @@ export class SessionChatController {
       if (audioPath) {
         await cleanupListenTempFile(audioPath);
       }
-      this.view.addSystemMessage(`failed to start recording: ${(err as Error).message}`, "error");
+      this.view.addTranscriptNotice("failed to start recording", "error", [(err as Error).message]);
     }
   }
 
@@ -873,16 +892,17 @@ export class SessionChatController {
     try {
       await recording.completion;
     } catch (err) {
-      this.view.addSystemMessage(`recording failed: ${(err as Error).message}`, "error");
+      this.view.addTranscriptNotice("failed to record audio", "error", [(err as Error).message]);
       await cleanupListenTempFile(recording.audioPath);
       return;
     }
 
     this.isTranscribingListen = true;
+    this.refreshStatus();
     try {
       const audio = await readListenAudio(recording.audioPath);
       if (audio.byteLength < LISTEN_RECORDING_MIN_BYTES) {
-        this.view.addSystemMessage("recording too short, try again", "warn");
+        this.view.showFooterNotice("recording too short, try again", "default");
         return;
       }
 
@@ -899,9 +919,12 @@ export class SessionChatController {
 
       this.view.insertEditorTextAtCursor(text);
     } catch (err) {
-      this.view.addSystemMessage(`speech transcription failed: ${(err as Error).message}`, "error");
+      this.view.addTranscriptNotice("failed to transcribe speech", "error", [
+        (err as Error).message,
+      ]);
     } finally {
       this.isTranscribingListen = false;
+      this.refreshStatus();
       await cleanupListenTempFile(recording.audioPath);
     }
   }
@@ -940,7 +963,7 @@ export class SessionChatController {
           : result.closeSignal
             ? `ffmpeg terminated by signal ${result.closeSignal}`
             : "ffmpeg exited";
-      this.view.addSystemMessage(`recording stopped unexpectedly (${detail})`, "error");
+      this.view.addTranscriptNotice("recording stopped unexpectedly", "error", [detail]);
       await cleanupListenTempFile(recording.audioPath);
     } catch (err) {
       this.clearListenRecordingMaxDurationTimeout(recording);
@@ -951,12 +974,11 @@ export class SessionChatController {
       this.refreshStatus();
       const error = err as NodeJS.ErrnoException;
       if (error.code === "ENOENT") {
-        this.view.addSystemMessage(
-          "ffmpeg not found. install it with: brew install ffmpeg",
-          "error",
-        );
+        this.view.addTranscriptNotice("ffmpeg not found", "error", [
+          "install it with: brew install ffmpeg",
+        ]);
       } else {
-        this.view.addSystemMessage(`recording failed: ${error.message}`, "error");
+        this.view.addTranscriptNotice("failed to record audio", "error", [error.message]);
       }
       await cleanupListenTempFile(recording.audioPath);
     }
@@ -970,15 +992,15 @@ export class SessionChatController {
 
   private async createNewSession(): Promise<void> {
     if (this.isSessionOperationActive()) {
-      this.view.addSystemMessage(
+      this.view.showFooterNotice(
         "cannot create a new session while another session operation is running",
-        "warn",
+        "default",
       );
       return;
     }
 
     if (!this.createSession) {
-      this.view.addSystemMessage("new session creation is unavailable", "error");
+      this.view.addTranscriptNotice("cannot create a new session", "error");
       return;
     }
 
@@ -1000,12 +1022,14 @@ export class SessionChatController {
 
     let nextSession: TauSdkSession | undefined;
     let nextEventUnsubscribe: (() => void) | undefined;
+    let nextEphemeralUnsubscribe: (() => void) | undefined;
     let nextPendingUserMessagesUnsubscribe: (() => void) | undefined;
     let installed = false;
     try {
       nextSession = await this.createSession(createInput);
       const nextSnapshot = await nextSession.snapshot();
       const pendingDeltas: SessionProtocolDeltaMessage[] = [];
+      const pendingEphemeralMessages: SessionProtocolEphemeralMessage[] = [];
       const pendingUserMessages: SessionProtocolPendingUserMessagesMessage[] = [];
       let forwardEvents = false;
       nextEventUnsubscribe = nextSession.onDelta((delta) => {
@@ -1013,6 +1037,13 @@ export class SessionChatController {
           this.onSdkDelta(delta);
         } else {
           pendingDeltas.push(delta);
+        }
+      });
+      nextEphemeralUnsubscribe = nextSession.onEphemeral((message) => {
+        if (forwardEvents) {
+          this.onSdkEphemeral(message);
+        } else {
+          pendingEphemeralMessages.push(message);
         }
       });
       nextPendingUserMessagesUnsubscribe = nextSession.onPendingUserMessages((message) => {
@@ -1025,11 +1056,14 @@ export class SessionChatController {
 
       const previousSession = this.session;
       this.eventUnsubscribe?.();
+      this.ephemeralUnsubscribe?.();
       this.pendingUserMessagesUnsubscribe?.();
       this.session = nextSession;
       this.snapshot = nextSnapshot;
       this.observedSessionRevision = nextSnapshot.revision;
+      this.hostActivities.clear();
       this.eventUnsubscribe = nextEventUnsubscribe;
+      this.ephemeralUnsubscribe = nextEphemeralUnsubscribe;
       this.pendingUserMessagesUnsubscribe = nextPendingUserMessagesUnsubscribe;
       installed = true;
 
@@ -1041,6 +1075,9 @@ export class SessionChatController {
       for (const delta of pendingDeltas) {
         this.onSdkDelta(delta);
       }
+      for (const message of pendingEphemeralMessages) {
+        this.onSdkEphemeral(message);
+      }
       for (const message of pendingUserMessages) {
         this.onSdkPendingUserMessages(message);
       }
@@ -1049,18 +1086,20 @@ export class SessionChatController {
       try {
         await previousSession.unobserve();
       } catch (detachError) {
-        this.view.addSystemMessage(
-          `old session unobserve failed: ${(detachError as Error).message}`,
-          "warn",
-        );
+        this.view.addTranscriptNotice("failed to detach previous session", "error", [
+          (detachError as Error).message,
+        ]);
       }
     } catch (error) {
       if (!installed && nextSession) {
         nextEventUnsubscribe?.();
+        nextEphemeralUnsubscribe?.();
         nextPendingUserMessagesUnsubscribe?.();
         await nextSession.unobserve().catch(() => undefined);
       }
-      this.view.addSystemMessage(`new session failed: ${(error as Error).message}`, "error");
+      this.view.addTranscriptNotice("failed to create session", "error", [
+        (error as Error).message,
+      ]);
     } finally {
       this.sessionReplacementInProgress = false;
       this.refreshStatus();
@@ -1093,6 +1132,29 @@ export class SessionChatController {
     this.hasPendingUserMessages = message.state.messages.length > 0;
     this.view.setPendingUserMessages(message.state.messages);
     this.sendPendingIdleNotification();
+  }
+
+  private onSdkEphemeral(message: SessionProtocolEphemeralMessage): void {
+    const event = message.event;
+    switch (event.type) {
+      case "feedback.activity.started":
+        this.hostActivities.set(event.id, event.text);
+        this.refreshStatus();
+        return;
+      case "feedback.activity.finished":
+        this.hostActivities.delete(event.id);
+        this.refreshStatus();
+        return;
+      case "feedback.notice":
+        if (event.presentation === "footer") {
+          this.view.showFooterNotice(event.title, event.tone, event.durationMs);
+        } else {
+          this.view.addTranscriptNotice(event.title, event.tone, event.content);
+        }
+        return;
+      case "ephemeral-agent.thread-update":
+        return;
+    }
   }
 
   private onSdkDelta(delta: SessionProtocolDeltaMessage): void {
@@ -1134,14 +1196,16 @@ export class SessionChatController {
       }
 
       const nextSnapshot = applySessionProtocolDelta(this.snapshot, delta);
-      if (this.shouldRenderAutoCompactedReset(delta)) {
-        this.renderAutoCompactedReset(nextSnapshot);
+      if (this.shouldRenderCompactedReset(delta)) {
+        this.renderCompactedReset(nextSnapshot);
       } else {
         this.syncRenderedHistory(nextSnapshot);
       }
       this.refreshStatus();
     } catch (error) {
-      this.view.addSystemMessage(`session delta failed: ${(error as Error).message}`, "warn");
+      this.view.addTranscriptNotice("failed to update session", "error", [
+        (error as Error).message,
+      ]);
       return false;
     }
     return true;
@@ -1165,6 +1229,7 @@ export class SessionChatController {
     if (
       !message ||
       this.hiddenHistoryEntryIds.has(message.id) ||
+      !this.isMessageProjected(message.id) ||
       !isMessageInTimeline(nextSnapshot, message.id)
     ) {
       return true;
@@ -1236,7 +1301,9 @@ export class SessionChatController {
 
     this.snapshot = applySessionProtocolDelta(this.snapshot, delta);
     this.observedSessionRevision = Math.max(this.observedSessionRevision, this.snapshot.revision);
-    this.view.reconcileToolUiSession(getToolUiModelsInModelOrder(this.snapshot));
+    this.view.reconcileToolUiSession(
+      getToolUiModelsInModelOrder(this.snapshot, this.transcriptProjection),
+    );
     this.refreshStatus();
     return true;
   }
@@ -1245,14 +1312,15 @@ export class SessionChatController {
     this.snapshot = snapshot;
     this.observedSessionRevision = Math.max(this.observedSessionRevision, snapshot.revision);
     this.assistantMessages = [];
-    for (const item of getRenderableTimelineItems(snapshot)) {
+    for (const item of getRenderableTimelineItems(snapshot, this.transcriptProjection)) {
       if (item.type === "notice") {
         this.renderedMessageIds.push(
           this.view.addMessage(
             {
-              type: "system",
-              text: item.text,
-              kind: item.severity === "info" ? "muted" : item.severity,
+              type: "transcript_notice",
+              title: item.title,
+              ...(item.content ? { content: item.content } : {}),
+              tone: item.severity === "error" ? "error" : "default",
             },
             item.id,
           ),
@@ -1261,6 +1329,7 @@ export class SessionChatController {
         this.renderProtocolMessage(item.message);
       }
     }
+    this.assistantMessages = this.collectAssistantMessages(snapshot);
     this.syncSnapshotToolAndAgentUi(snapshot);
   }
 
@@ -1280,9 +1349,6 @@ export class SessionChatController {
       return;
     }
 
-    if (isAssistantMessage(message.message)) {
-      this.assistantMessages.push(message.message);
-    }
     this.renderedMessageIds.push(this.view.addMessage(model, message.id));
   }
 
@@ -1290,7 +1356,7 @@ export class SessionChatController {
     this.snapshot = snapshot;
     this.observedSessionRevision = Math.max(this.observedSessionRevision, snapshot.revision);
 
-    const items = getRenderableTimelineItems(snapshot);
+    const items = getRenderableTimelineItems(snapshot, this.transcriptProjection);
     const snapshotIds = new Set(items.map((item) => item.id));
     const staleIds = this.renderedMessageIds.filter((id) => !snapshotIds.has(id));
     if (staleIds.length > 0) {
@@ -1315,9 +1381,10 @@ export class SessionChatController {
       const model =
         item.type === "notice"
           ? {
-              type: "system" as const,
-              text: item.text,
-              kind: item.severity === "info" ? ("muted" as const) : item.severity,
+              type: "transcript_notice" as const,
+              title: item.title,
+              ...(item.content ? { content: item.content } : {}),
+              tone: item.severity === "error" ? ("error" as const) : ("default" as const),
             }
           : this.buildProtocolMessageModel(item.message);
       if (!model) {
@@ -1379,8 +1446,17 @@ export class SessionChatController {
     this.finishObservedSessionTurn();
   }
 
+  private isMessageProjected(messageId: string): boolean {
+    return !(
+      this.transcriptProjection?.frozenItemIds.has(messageId) ||
+      this.transcriptProjection?.hiddenMessageIds.has(messageId)
+    );
+  }
+
   private syncSnapshotToolAndAgentUi(snapshot: SessionProtocolSnapshot): void {
-    this.view.reconcileToolUiSession(getToolUiModelsInModelOrder(snapshot));
+    this.view.reconcileToolUiSession(
+      getToolUiModelsInModelOrder(snapshot, this.transcriptProjection),
+    );
     this.view.reconcileSubagentUiSession(
       Object.values(snapshot.agents).map((agent) => ({
         state: structuredClone(agent),
@@ -1392,7 +1468,7 @@ export class SessionChatController {
   private collectAssistantMessages(snapshot: SessionProtocolSnapshot): AssistantMessage[] {
     const messages: AssistantMessage[] = [];
     for (const entry of snapshot.messages) {
-      if (isAssistantMessage(entry.message)) {
+      if (this.isMessageProjected(entry.id) && isAssistantMessage(entry.message)) {
         messages.push(entry.message);
       }
     }
@@ -1401,11 +1477,18 @@ export class SessionChatController {
 
   private async syncFromSessionSnapshot(): Promise<boolean> {
     try {
-      this.syncRenderedHistory(await this.session.snapshot());
+      const snapshot = await this.session.snapshot();
+      if (this.hasNewAutoCompactionBoundary(snapshot)) {
+        this.renderCompactedReset(snapshot);
+      } else {
+        this.syncRenderedHistory(snapshot);
+      }
       this.refreshStatus();
       return true;
     } catch (error) {
-      this.view.addSystemMessage(`snapshot refresh failed: ${(error as Error).message}`, "warn");
+      this.view.addTranscriptNotice("failed to refresh session", "error", [
+        (error as Error).message,
+      ]);
       return false;
     }
   }
@@ -1434,6 +1517,7 @@ export class SessionChatController {
       return false;
     }
     this.isStreaming = false;
+    this.assistantInterruptRequested = false;
     this.view.stopWorkingIcon();
     this.stopTurnTimer();
     this.refreshStatus();
@@ -1446,6 +1530,7 @@ export class SessionChatController {
     }
 
     this.isStreaming = true;
+    this.assistantInterruptRequested = false;
     this.startTurnTimer();
     this.startTurnCaffeinate();
     this.view.startWorkingIcon();
@@ -1500,56 +1585,80 @@ export class SessionChatController {
   }
 
   private startLocalUiSession(): void {
+    this.transcriptProjection = undefined;
     this.hiddenHistoryEntryIds.clear();
     this.renderedMessageIds.splice(0);
     this.view.addMessage({ type: "session_divider", label: "new session" });
   }
 
+  private startCompactedUiSession(hiddenMessageIds: readonly string[] = []): void {
+    this.transcriptProjection = {
+      frozenItemIds: new Set([
+        ...(this.transcriptProjection?.frozenItemIds ?? []),
+        ...this.renderedMessageIds,
+      ]),
+      hiddenMessageIds: new Set([
+        ...(this.transcriptProjection?.hiddenMessageIds ?? []),
+        ...hiddenMessageIds,
+      ]),
+    };
+    this.hiddenHistoryEntryIds.clear();
+    this.renderedMessageIds.splice(0);
+    this.view.addMessage({ type: "session_divider", label: "compacted context" });
+  }
+
   private addSessionIdentityMessage(): void {
-    this.view.addSystemMessage(this.formatSessionIdentityText(), "muted");
+    this.view.addTranscriptNotice("session id", "default", [this.snapshot.sessionId]);
   }
 
   private renderCompactedSnapshot(snapshot: SessionProtocolSnapshot): void {
-    this.startLocalUiSession();
+    this.view.resetToolUiSessionPreservingSubagents();
+    this.startCompactedUiSession();
     this.renderSnapshot(snapshot);
   }
 
-  private shouldRenderAutoCompactedReset(delta: SessionProtocolDeltaMessage): boolean {
+  private shouldRenderCompactedReset(delta: SessionProtocolDeltaMessage): boolean {
     return (
       delta.reason === "maintenance" &&
       delta.delta.type === "snapshot.reset" &&
-      this.hasRunningAutoCompactionOperation(this.snapshot)
+      delta.delta.snapshot.agentState.revision > this.snapshot.agentState.revision &&
+      (this.hasRunningCompactionOperation(this.snapshot) ||
+        this.hasNewAutoCompactionBoundary(delta.delta.snapshot))
     );
   }
 
-  private renderAutoCompactedReset(snapshot: SessionProtocolSnapshot): void {
+  private hasNewAutoCompactionBoundary(snapshot: SessionProtocolSnapshot): boolean {
+    const boundary = findAutoCompactionTranscriptBoundary(snapshot);
+    return (
+      boundary !== undefined &&
+      !this.snapshot.messages.some((entry) => entry.id === boundary.summaryMessageId)
+    );
+  }
+
+  private renderCompactedReset(snapshot: SessionProtocolSnapshot): void {
+    const boundary = findAutoCompactionTranscriptBoundary(snapshot);
     this.view.resetToolUiSessionPreservingSubagents();
-    this.startLocalUiSession();
+    this.startCompactedUiSession(boundary?.hiddenMessageIds);
     this.renderSnapshot(snapshot);
 
-    const metadata = this.getAutoCompactionMetadata(snapshot);
-    if (metadata) {
-      this.view.addMessage({
-        type: "system",
-        text: formatAutoCompactionRetainedText(metadata),
-        kind: "muted",
-      });
+    if (boundary) {
+      this.view.addTranscriptNotice(formatAutoCompactionRetainedText(boundary.metadata), "default");
     }
   }
 
   private toggleThinkingVisibility(): void {
     this.showThinking = !this.showThinking;
     this.view.setThinkingVisibility(this.showThinking);
-    this.view.addSystemMessage(
+    this.view.showFooterNotice(
       this.showThinking ? "thoughts visible" : "thoughts hidden",
-      "success",
+      "default",
     );
   }
 
   private async cyclePersonality(): Promise<void> {
     const personas = this.snapshot.catalog.personas;
     if (personas.length === 0) {
-      this.view.addSystemMessage("no personas available.", "warn");
+      this.view.showFooterNotice("no personas available.", "default");
       return;
     }
 
@@ -1575,7 +1684,9 @@ export class SessionChatController {
       };
       this.refreshStatus();
     } catch (error) {
-      this.view.addSystemMessage(`reasoning change failed: ${(error as Error).message}`, "error");
+      this.view.addTranscriptNotice("failed to change reasoning", "error", [
+        (error as Error).message,
+      ]);
     }
   }
 
@@ -1601,7 +1712,7 @@ export class SessionChatController {
   private async setPersona(rawId: string): Promise<void> {
     const id = rawId.trim();
     if (!id) {
-      this.view.addSystemMessage("missing persona id", "error");
+      this.view.addTranscriptNotice("missing persona id", "error");
       return;
     }
 
@@ -1609,12 +1720,15 @@ export class SessionChatController {
       (candidate) => candidate.id.toLowerCase() === id.toLowerCase(),
     );
     if (!persona) {
-      this.view.addSystemMessage(`unknown persona '${id}'.`, "error");
+      this.view.addTranscriptNotice("unknown persona", "error", [id]);
       return;
     }
 
     if (this.isSessionOperationActive()) {
-      this.view.addSystemMessage("cannot switch persona while a session turn is running", "warn");
+      this.view.showFooterNotice(
+        "cannot switch persona while a session turn is running",
+        "default",
+      );
       return;
     }
 
@@ -1622,19 +1736,21 @@ export class SessionChatController {
       this.snapshot = await this.session.setPersona(persona.id);
       this.syncRenderedHistory(this.snapshot);
       this.refreshStatus();
-      this.view.addSystemMessage(
+      this.view.showFooterNotice(
         `switched to ${persona.label} (${this.snapshot.bootstrap.model.id})`,
-        "success",
+        "default",
       );
     } catch (error) {
-      this.view.addSystemMessage(`persona switch failed: ${(error as Error).message}`, "error");
+      this.view.addTranscriptNotice("failed to switch persona", "error", [
+        (error as Error).message,
+      ]);
     }
   }
 
   private async insertPrompt(rawId: string): Promise<void> {
     const id = rawId.trim();
     if (!id) {
-      this.view.addSystemMessage("missing prompt id", "error");
+      this.view.addTranscriptNotice("missing prompt id", "error");
       return;
     }
 
@@ -1642,7 +1758,7 @@ export class SessionChatController {
       (candidate) => candidate.id.toLowerCase() === id.toLowerCase(),
     );
     if (!prompt) {
-      this.view.addSystemMessage(`unknown prompt '${id}'.`, "error");
+      this.view.addTranscriptNotice("unknown prompt", "error", [id]);
       return;
     }
 
@@ -1650,13 +1766,13 @@ export class SessionChatController {
       const resolved = await this.session.resolvePrompt(prompt.id);
       this.view.setEditorText(resolved.text);
     } catch (error) {
-      this.view.addSystemMessage(`prompt load failed: ${(error as Error).message}`, "error");
+      this.view.addTranscriptNotice("failed to load prompt", "error", [(error as Error).message]);
     }
   }
 
   private async reloadContent(): Promise<void> {
     if (this.isSessionOperationActive()) {
-      this.view.addSystemMessage("cannot reload while a session turn is running", "warn");
+      this.view.showFooterNotice("cannot reload while a session turn is running", "default");
       return;
     }
 
@@ -1667,7 +1783,7 @@ export class SessionChatController {
       this.refreshStatus();
 
       for (const warning of result.warnings) {
-        this.view.addSystemMessage(warning, "warn");
+        this.view.addTranscriptNotice("configuration warning", "default", [warning]);
       }
 
       const summary = [
@@ -1676,9 +1792,11 @@ export class SessionChatController {
         `${result.counts.skills} skills`,
         ...formatAgentsMdReloadSummary(this.getAgentsFilePaths().length),
       ].join(", ");
-      this.view.addSystemMessage(`reloaded: ${summary}.`, "success");
+      this.view.showFooterNotice(`reloaded: ${summary}.`, "default");
     } catch (error) {
-      this.view.addSystemMessage(`reload failed: ${(error as Error).message}`, "error");
+      this.view.addTranscriptNotice("failed to reload session content", "error", [
+        (error as Error).message,
+      ]);
     }
   }
 
@@ -1687,29 +1805,24 @@ export class SessionChatController {
     guidanceText?: string,
   ): Promise<void> {
     if (this.isSessionOperationActive()) {
-      this.view.addSystemMessage("cannot compact while a session turn is running", "warn");
+      this.view.showFooterNotice("cannot compact while a session turn is running", "default");
       return;
     }
 
     const guidance = guidanceText?.trim() ?? "";
     this.manualCompactionInProgress = true;
     this.refreshStatus();
-    this.view.addSystemMessage("summarizing session...", "success");
 
     try {
       const result = await this.session.compact(mode, {
         ...(guidance ? { guidance } : {}),
       });
-      this.renderCompactedSnapshot(result.snapshot);
-      const message =
-        mode === "summary-and-last" && result.includedLastAssistant
-          ? "session compacted. previous context and last assistant message have been included."
-          : "session compacted. previous context has been summarized.";
-      this.view.addSystemMessage(message, "success");
+      if (result.snapshot.revision > this.snapshot.revision) {
+        this.renderCompactedSnapshot(result.snapshot);
+      }
     } catch (error) {
       const message = (error as Error).message || "compaction failed";
-      const kind = message === "no conversation to compact." ? "warn" : "error";
-      this.view.addSystemMessage(kind === "warn" ? message : `compact failed: ${message}`, kind);
+      this.view.addTranscriptNotice("failed to compact session", "error", [message]);
     } finally {
       this.manualCompactionInProgress = false;
       this.refreshStatus();
@@ -1721,9 +1834,10 @@ export class SessionChatController {
   ): Promise<void> {
     if (action.type === "show") {
       const goal = this.snapshot.goal;
-      this.view.addSystemMessage(
-        goal ? `goal ${goal.status}: ${goal.objective}` : "no session goal",
-        goal ? "success" : "muted",
+      this.view.addTranscriptNotice(
+        goal ? `goal ${goal.status}` : "no session goal",
+        "default",
+        goal ? [goal.objective] : undefined,
       );
       return;
     }
@@ -1740,47 +1854,49 @@ export class SessionChatController {
     try {
       this.snapshot = await this.session.clearGoal();
       this.refreshStatus();
-      this.view.addSystemMessage("session goal cleared", "success");
+      this.view.showFooterNotice("session goal cleared", "default");
     } catch (error) {
-      this.view.addSystemMessage(`goal clear failed: ${(error as Error).message}`, "error");
+      this.view.addTranscriptNotice("failed to clear goal", "error", [(error as Error).message]);
     }
   }
 
   private async speakLastAssistantMessage(): Promise<void> {
     if (this.speakTask) {
-      this.view.addSystemMessage("speech playback already in progress", "warn");
+      this.view.showFooterNotice("speech playback already in progress", "default");
       return;
     }
 
     if (this.isSessionOperationActive()) {
-      this.view.addSystemMessage("wait for the assistant to finish before speaking", "warn");
+      this.view.showFooterNotice("wait for the assistant to finish before speaking", "default");
       return;
     }
 
     if (this.deps.env.platform() !== "darwin") {
-      this.view.addSystemMessage("/speak is currently supported only on macOS.", "warn");
+      this.view.showFooterNotice("/speak is currently supported only on macOS.", "default");
       return;
     }
 
     const lastAssistant = this.getLastAssistantMessage();
     if (!lastAssistant) {
-      this.view.addSystemMessage("no assistant message to speak yet.", "warn");
+      this.view.showFooterNotice("no assistant message to speak yet.", "default");
       return;
     }
 
     const sourceText = extractAssistantText(lastAssistant).trim();
     if (!sourceText) {
-      this.view.addSystemMessage("last assistant message was empty.", "warn");
+      this.view.showFooterNotice("last assistant message was empty.", "default");
       return;
     }
 
     const apiKey = getGoogleApiKey(this.config, this.deps.env.env());
     if (!apiKey) {
-      this.view.addSystemMessage("set GEMINI_API_KEY or apiKeys.google to use /speak", "error");
+      this.view.addTranscriptNotice("speech synthesis is not configured", "error", [
+        "set GEMINI_API_KEY or apiKeys.google to use /speak",
+      ]);
       return;
     }
 
-    this.speechStatusHint = "rewriting for speech...";
+    this.speechActivityLabel = "rewriting for speech";
     this.refreshStatus();
     this.view.startWorkingIcon();
 
@@ -1799,12 +1915,14 @@ export class SessionChatController {
       if (abortController.signal.aborted) {
         return;
       }
-      this.view.addSystemMessage(`speech synthesis failed: ${(err as Error).message}`, "error");
+      this.view.addTranscriptNotice("failed to synthesize speech", "error", [
+        (err as Error).message,
+      ]);
     } finally {
       if (this.speakTask === task) {
         this.speakTask = undefined;
       }
-      this.speechStatusHint = undefined;
+      this.speechActivityLabel = undefined;
       this.view.stopWorkingIcon();
       this.refreshStatus();
       this.view.requestRender();
@@ -1821,25 +1939,26 @@ export class SessionChatController {
       apiKey: args.apiKey,
       sourceText: args.sourceText,
       signal: args.signal,
-      onStatusHint: (hint) => {
-        this.speechStatusHint = hint;
+      onActivityLabel: (hint) => {
+        this.speechActivityLabel = hint;
         this.refreshStatus();
       },
     });
   }
 
   private refreshStatus(): void {
+    const activityLabel = this.getActivityLabel();
     this.view.updateStatus({
-      footer: {
-        cwdLabel: this.getFooterCwdLabel(),
-        contextUsage: this.getContextUsageString(),
-        sessionCost: this.getSessionCostString(),
-        duration: this.getTurnDurationString(),
-        statusHint: this.diffReviewService.getStatusHint(
-          this.getSessionOperationStatusHint() ?? this.speechStatusHint,
-        ),
-        pursuingGoal: this.snapshot.goal?.status === "active",
-      },
+      footer: activityLabel
+        ? { type: "activity", label: activityLabel }
+        : {
+            type: "regular",
+            cwdLabel: this.getFooterCwdLabel(),
+            contextUsage: this.getContextUsageString(),
+            sessionCost: this.getSessionCostString(),
+            duration: this.getTurnDurationString(),
+            pursuingGoal: this.snapshot.goal?.status === "active",
+          },
       editor: {
         mode: this.getInputMode(),
         personaName: this.getCurrentPersonaSnapshot()?.label ?? this.snapshot.settings.personaId,
@@ -1860,19 +1979,25 @@ export class SessionChatController {
     return "normal";
   }
 
-  private getSessionOperationStatusHint(): string | undefined {
-    if (this.manualCompactionInProgress) {
-      return "compacting context...";
+  private getActivityLabel(): string | undefined {
+    if (this.manualCompactionInProgress || this.hasRunningCompactionOperation(this.snapshot)) {
+      return "compacting context";
     }
-    const hasRunningAutoCompaction = this.hasRunningAutoCompactionOperation(this.snapshot);
-    return hasRunningAutoCompaction ? "compacting context..." : undefined;
+    if (this.isTranscribingListen) {
+      return "transcribing voice input";
+    }
+    return (
+      this.diffReviewService.getActivityLabel(this.speechActivityLabel) ??
+      Array.from(this.hostActivities.values()).at(-1)
+    );
   }
 
-  private hasRunningAutoCompactionOperation(snapshot: SessionProtocolSnapshot): boolean {
+  private hasRunningCompactionOperation(snapshot: SessionProtocolSnapshot): boolean {
     return snapshot.timeline.some(
       (item) =>
         item.type === "operation" &&
-        item.operation.kind === "auto-compaction" &&
+        (item.operation.kind === "auto-compaction" ||
+          item.operation.kind === "manual-compaction") &&
         item.operation.status === "running",
     );
   }
@@ -2006,24 +2131,6 @@ export class SessionChatController {
     return [...files];
   }
 
-  private getAutoCompactionMetadata(snapshot: SessionProtocolSnapshot):
-    | {
-        cutType: "turn-boundary" | "split-turn";
-        retainedMessageCount: number;
-      }
-    | undefined {
-    for (const entry of snapshot.messages) {
-      if (!isCoreMessage(entry.message)) {
-        continue;
-      }
-      const metadata = getAutoCompactionMetadataFromMessage(entry.message);
-      if (metadata) {
-        return metadata;
-      }
-    }
-    return undefined;
-  }
-
   private async copyLastAssistantText(): Promise<void> {
     await copyAssistantTextToClipboard({
       view: this.view,
@@ -2053,12 +2160,12 @@ export class SessionChatController {
 
   private async startDiffReview(argsText: string): Promise<void> {
     if (this.diffReviewService.isActive()) {
-      this.view.addSystemMessage("diff review is already active.", "warn");
+      this.view.showFooterNotice("diff review is already active.", "default");
       return;
     }
 
     if (!this.isDiffReviewIdle()) {
-      this.view.addSystemMessage("wait for tau to become idle before starting /diff.", "warn");
+      this.view.showFooterNotice("wait for tau to become idle before starting /diff.", "default");
       return;
     }
 
@@ -2198,6 +2305,7 @@ export class SessionChatController {
     const candidates = this.snapshot.messages.flatMap((entry) => {
       if (
         !entry.modelVisible ||
+        !this.isMessageProjected(entry.id) ||
         entry.message.role !== "user" ||
         hasAutoCompactionContinuationMetadata(entry.message)
       ) {
@@ -2218,7 +2326,7 @@ export class SessionChatController {
     });
 
     if (candidates.length === 0) {
-      this.view.addSystemMessage("no user messages available to rewind.", "warn");
+      this.view.showFooterNotice("no user messages available to rewind.", "default");
       return;
     }
 
@@ -2228,7 +2336,7 @@ export class SessionChatController {
         const selected = candidates.find((candidate) => candidate.id === id);
         if (!selected) {
           this.view.hideRewindPicker();
-          this.view.addSystemMessage("rewind selection failed.", "error");
+          this.view.addTranscriptNotice("failed to select rewind point", "error");
           return;
         }
         void this.applyRewindSelection(selected.id);
@@ -2250,14 +2358,14 @@ export class SessionChatController {
       this.view.setEditorText(rewound.text);
       this.refreshStatus();
     } catch {
-      this.view.addSystemMessage("rewind failed.", "error");
+      this.view.addTranscriptNotice("failed to rewind session", "error");
     }
   }
 
   private interruptSelectedSubagent(): void {
     const selectedId = this.view.getSelectedSubagentId();
     if (!selectedId) {
-      this.view.addSystemMessage("no active subagent selected", "warn");
+      this.view.showFooterNotice("no active subagent selected", "default");
       return;
     }
 
@@ -2265,30 +2373,31 @@ export class SessionChatController {
       .interruptSubagent(selectedId)
       .then((result) => {
         if (!result.found) {
-          this.view.addSystemMessage(`unknown subagent id: ${selectedId}`, "warn");
+          this.view.showFooterNotice(`unknown subagent id: ${selectedId}`, "default");
         }
       })
       .catch((err) => {
-        this.view.addSystemMessage(
-          `failed to interrupt subagent: ${(err as Error).message}`,
-          "error",
-        );
+        this.view.addTranscriptNotice("failed to interrupt subagent", "error", [
+          (err as Error).message,
+        ]);
       });
   }
 
   private async stashEditorToClipboard(): Promise<void> {
     const text = this.view.getExpandedEditorText();
     if (!text.trim()) {
-      this.view.addSystemMessage("no input to stash yet", "warn");
+      this.view.showFooterNotice("no input to stash yet", "default");
       return;
     }
 
     try {
       await copyTextToClipboard(text);
       this.view.setEditorText("");
-      this.view.addSystemMessage("stashed input to clipboard", "success");
+      this.view.showFooterNotice("stashed input to clipboard", "default");
     } catch (err) {
-      this.view.addSystemMessage(`clipboard copy failed: ${(err as Error).message}`, "error");
+      this.view.addTranscriptNotice("failed to copy to clipboard", "error", [
+        (err as Error).message,
+      ]);
     }
   }
 
@@ -2320,29 +2429,70 @@ function formatSessionError(error: unknown): string {
   return cause && cause !== message ? `${message}: ${cause}` : message;
 }
 
+type TranscriptProjection = {
+  frozenItemIds: ReadonlySet<string>;
+  hiddenMessageIds: ReadonlySet<string>;
+};
+
+type AutoCompactionTranscriptBoundary = {
+  summaryMessageId: string;
+  metadata: {
+    cutType: "turn-boundary" | "split-turn";
+    retainedMessageCount: number;
+  };
+  hiddenMessageIds: string[];
+};
+
+function createInitialTranscriptProjection(
+  snapshot: SessionProtocolSnapshot,
+): TranscriptProjection | undefined {
+  const boundary = findAutoCompactionTranscriptBoundary(snapshot);
+  if (!boundary) {
+    return undefined;
+  }
+  return {
+    frozenItemIds: new Set(),
+    hiddenMessageIds: new Set(boundary.hiddenMessageIds),
+  };
+}
+
 type RenderableTimelineItem =
   | { type: "message"; id: string; message: SessionProtocolMessage }
   | {
       type: "notice";
       id: string;
       severity: "info" | "warn" | "error";
-      text: string;
+      title: string;
+      content?: string[];
     };
 
-function getRenderableTimelineItems(snapshot: SessionProtocolSnapshot): RenderableTimelineItem[] {
+function getRenderableTimelineItems(
+  snapshot: SessionProtocolSnapshot,
+  projection?: TranscriptProjection,
+): RenderableTimelineItem[] {
   const messagesById = new Map(snapshot.messages.map((message) => [message.id, message]));
+  const isMessageHidden = (id: string) =>
+    projection?.frozenItemIds.has(id) === true || projection?.hiddenMessageIds.has(id) === true;
+
   return snapshot.timeline.flatMap((item): RenderableTimelineItem[] => {
     if (item.type === "notice") {
+      if (
+        projection?.frozenItemIds.has(item.id) ||
+        (item.notice.subject.type === "message" && isMessageHidden(item.notice.subject.id))
+      ) {
+        return [];
+      }
       return [
         {
           type: "notice",
           id: item.id,
           severity: item.notice.severity,
-          text: item.notice.text,
+          title: item.notice.title,
+          ...(item.notice.content ? { content: item.notice.content } : {}),
         },
       ];
     }
-    if (item.type !== "message") {
+    if (item.type !== "message" || isMessageHidden(item.messageId)) {
       return [];
     }
     const message = messagesById.get(item.messageId);
@@ -2428,6 +2578,41 @@ function formatAgentsMdReloadSummary(count: number): string[] {
   return [`${count} AGENTS.md`];
 }
 
+function findAutoCompactionTranscriptBoundary(
+  snapshot: SessionProtocolSnapshot,
+): AutoCompactionTranscriptBoundary | undefined {
+  for (let summaryIndex = snapshot.messages.length - 1; summaryIndex >= 0; summaryIndex -= 1) {
+    const summaryEntry = snapshot.messages[summaryIndex]!;
+    if (!isCoreMessage(summaryEntry.message)) continue;
+    const metadata = getAutoCompactionMetadataFromMessage(summaryEntry.message);
+    if (!metadata) continue;
+
+    const continuationOffset = snapshot.messages
+      .slice(summaryIndex + 1)
+      .findIndex(
+        (entry) =>
+          isCoreMessage(entry.message) && hasAutoCompactionContinuationMetadata(entry.message),
+      );
+    if (continuationOffset < 0) continue;
+
+    const continuationIndex = summaryIndex + continuationOffset + 1;
+    const hiddenMessageIds = snapshot.messages
+      .slice(summaryIndex + 1, continuationIndex)
+      .map((entry) => entry.id);
+    if (hiddenMessageIds.length !== metadata.retainedMessageCount) continue;
+
+    return {
+      summaryMessageId: summaryEntry.id,
+      metadata: {
+        cutType: metadata.cutType,
+        retainedMessageCount: metadata.retainedMessageCount,
+      },
+      hiddenMessageIds,
+    };
+  }
+  return undefined;
+}
+
 function formatAutoCompactionRetainedText(result: {
   cutType: "turn-boundary" | "split-turn";
   retainedMessageCount: number;
@@ -2472,7 +2657,10 @@ const RECOVERED_TOOL_ACTION_LABELS = {
   cancelled: "cancelled",
 };
 
-function getToolUiModelsInModelOrder(snapshot: SessionProtocolSnapshot): ToolUiModel[] {
+function getToolUiModelsInModelOrder(
+  snapshot: SessionProtocolSnapshot,
+  projection?: TranscriptProjection,
+): ToolUiModel[] {
   const facetsByToolId = new Map<string, SessionProtocolSnapshot["facets"][string]>();
   for (const facet of Object.values(snapshot.facets)) {
     if (facet.kind === "tau.tool-ui-events" && facet.subject.type === "tool") {
@@ -2480,13 +2668,19 @@ function getToolUiModelsInModelOrder(snapshot: SessionProtocolSnapshot): ToolUiM
     }
   }
 
-  return getToolIdsInModelOrder(snapshot).map((toolId) => {
+  return getToolIdsInModelOrder(snapshot).flatMap((toolId): ToolUiModel[] => {
     const tool = snapshot.tools[toolId]!;
-    return {
-      toolCallId: tool.toolCallId,
-      status: tool.status,
-      presentation: getToolPresentation(snapshot, tool, facetsByToolId.get(toolId)),
-    };
+    const messageId = tool.status === "streaming" ? tool.origin.messageId : tool.call.messageId;
+    if (projection?.frozenItemIds.has(messageId) || projection?.hiddenMessageIds.has(messageId)) {
+      return [];
+    }
+    return [
+      {
+        toolCallId: tool.toolCallId,
+        status: tool.status,
+        presentation: getToolPresentation(snapshot, tool, facetsByToolId.get(toolId)),
+      },
+    ];
   });
 }
 

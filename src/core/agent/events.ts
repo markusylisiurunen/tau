@@ -18,6 +18,20 @@ export type AgentCompactionResult = {
   retainedMessageCount: number;
 };
 
+export type AgentFeedback =
+  | {
+      tone: "default" | "error";
+      title: string;
+      presentation: "footer";
+      durationMs: number;
+    }
+  | {
+      tone: "default" | "error";
+      title: string;
+      content?: string[];
+      presentation: "transcript";
+    };
+
 export type AgentEvent =
   | { type: "turn_started"; turnId: string; historyEntryId: string }
   | {
@@ -135,6 +149,6 @@ export type AgentEvent =
       tokens: number;
       revision: number;
     }
-  | { type: "notice"; severity: "info" | "warn" | "error"; text: string };
+  | ({ type: "feedback" } & AgentFeedback);
 
 export type AgentEventSink = (event: AgentEvent) => Promise<void>;

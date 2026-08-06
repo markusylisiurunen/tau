@@ -173,8 +173,8 @@ describe("AgentRuntime", () => {
     expect(streamModel).toHaveBeenCalledTimes(2);
     expect(events).not.toContainEqual(
       expect.objectContaining({
-        type: "notice",
-        text: "stopped after 2 model subturns to avoid an infinite loop.",
+        type: "feedback",
+        title: "stopped after 2 model attempts to avoid an infinite loop.",
       }),
     );
   });
@@ -204,13 +204,14 @@ describe("AgentRuntime", () => {
       aborted: false,
       limitReached: {
         reason: "model-subturn-limit",
-        message: "stopped after 1 model subturn without producing a final response.",
+        message: "stopped after 1 model attempt without producing a final response",
       },
     });
     expect(events).toContainEqual({
-      type: "notice",
-      severity: "error",
-      text: "stopped after 1 model subturn without producing a final response.",
+      type: "feedback",
+      tone: "error",
+      title: "stopped after 1 model attempt without producing a final response",
+      presentation: "transcript",
     });
     expect(events.findLast((event) => event.type === "turn_finished")).toMatchObject({
       outcome: "failed",
@@ -586,6 +587,13 @@ describe("AgentRuntime", () => {
     await runtime.submit("retry safely");
 
     expect(events).toContainEqual({ type: "model_retry_scheduled", attempt: 1, delayMs: 0 });
+    expect(events).toContainEqual({
+      type: "feedback",
+      tone: "default",
+      title: "retrying after transient error",
+      presentation: "footer",
+      durationMs: 3_000,
+    });
     expect(events).toContainEqual({ type: "model_retry_started", attempt: 1 });
     expect(runtime.rawHistory).toHaveLength(2);
     expect(runtime.rawHistory.at(-1).content[0].text).toBe("recovered");

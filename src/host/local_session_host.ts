@@ -1308,16 +1308,11 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       });
 
       signal.throwIfAborted();
-      return await this.enqueueMutation(async () => {
-        this.reconcileProjections();
-        const snapshot = await this.commitSnapshot();
-        this.emitSnapshotReset("maintenance", snapshot);
-        return {
-          snapshot,
-          compactionMessage: result.compactionMessage,
-          includedLastAssistant: result.includedLastAssistant,
-        };
-      });
+      return {
+        snapshot: await this.snapshot(),
+        compactionMessage: result.compactionMessage,
+        includedLastAssistant: result.includedLastAssistant,
+      };
     });
   }
 
@@ -1763,6 +1758,17 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       }
     }
 
+    this.timelineExtras.splice(
+      0,
+      this.timelineExtras.length,
+      ...this.timelineExtras.filter(
+        (item) =>
+          item.type !== "notice" ||
+          item.notice.subject.type === "session" ||
+          messageIds.has(item.notice.subject.id),
+      ),
+    );
+
     for (const [id, tool] of this.tools) {
       const messageId = tool.status === "streaming" ? tool.origin.messageId : tool.call.messageId;
       if (
@@ -1882,7 +1888,21 @@ class LocalHostedSessionHandle implements LocalHostedSession {
           messageId: message.id,
         }),
       );
-    return [...messageItems, ...structuredClone(this.timelineExtras)];
+    const noticesByMessageId = new Map<string, SessionProtocolTimelineItem[]>();
+    for (const item of this.timelineExtras) {
+      if (item.type !== "notice" || item.notice.subject.type !== "message") continue;
+      const items = noticesByMessageId.get(item.notice.subject.id) ?? [];
+      items.push(item);
+      noticesByMessageId.set(item.notice.subject.id, items);
+    }
+    const timeline = messageItems.flatMap((item) => [
+      item,
+      ...(item.type === "message" ? (noticesByMessageId.get(item.messageId) ?? []) : []),
+    ]);
+    const trailingExtras = this.timelineExtras.filter(
+      (item) => item.type !== "notice" || item.notice.subject.type === "session",
+    );
+    return structuredClone([...timeline, ...trailingExtras]);
   }
 
   private shouldIncludeMessageInTimeline(message: SessionProtocolMessage): boolean {
@@ -1904,14 +1924,15 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     );
   }
 
-  private clearRunningAutoCompactionOperations(): void {
+  private clearRunningCompactionOperations(): void {
     this.timelineExtras.splice(
       0,
       this.timelineExtras.length,
       ...this.timelineExtras.filter(
         (item) =>
           item.type !== "operation" ||
-          item.operation.kind !== "auto-compaction" ||
+          (item.operation.kind !== "auto-compaction" &&
+            item.operation.kind !== "manual-compaction") ||
           item.operation.status !== "running",
       ),
     );
@@ -2062,7 +2083,9 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       id: HISTORY_UNAVAILABLE_NOTICE_ID,
       notice: {
         severity: "warn",
-        text: `Session history is unavailable: ${reason}. This session will continue without durable history recording or recall.`,
+        title: "session history is unavailable",
+        content: [reason, "this session will continue without durable history recording or recall"],
+        subject: { type: "session" },
         timestamp: Date.now(),
       },
     };
@@ -2320,6 +2343,10 @@ class LocalHostedSessionHandle implements LocalHostedSession {
           cost: { total: cost },
           agent: { type: "main" },
         });
+        const failureNotice = createModelFailureTimelineItem(event.historyEntryId, event.message);
+        if (failureNotice) {
+          this.timelineExtras.push(failureNotice);
+        }
         await this.emitPatch("assistant-message", [
           this.agentStateChange(),
           { type: "cost.set", costTotal: this.costTotal },
@@ -2336,6 +2363,9 @@ class LocalHostedSessionHandle implements LocalHostedSession {
             ? [{ type: "lifecycle.set" as const, lifecycle }]
             : []),
           ...toolChanges,
+          ...(failureNotice
+            ? [{ type: "timeline.append" as const, item: structuredClone(failureNotice) }]
+            : []),
         ]);
         await this.recordHistoryFailure(
           this.history.append(
@@ -2459,26 +2489,37 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         }
         return;
       }
-      case "notice": {
-        const item: SessionProtocolTimelineItem = {
-          type: "notice",
-          id: `notice-${Date.now()}-${this.timelineExtras.length}`,
-          notice: {
-            severity: event.severity,
-            text: event.text,
-            timestamp: Date.now(),
-          },
-        };
-        this.timelineExtras.push(item);
-        await this.emitPatch("notice", [{ type: "timeline.append", item: structuredClone(item) }]);
+      case "feedback": {
+        this.emitEphemeral(
+          createSessionProtocolEphemeralMessage({
+            sessionId: this.sessionId,
+            event:
+              event.presentation === "footer"
+                ? {
+                    type: "feedback.notice",
+                    title: event.title,
+                    tone: event.tone,
+                    presentation: "footer",
+                    durationMs: event.durationMs,
+                  }
+                : {
+                    type: "feedback.notice",
+                    title: event.title,
+                    ...(event.content ? { content: event.content } : {}),
+                    tone: event.tone,
+                    presentation: "transcript",
+                  },
+          }),
+        );
         return;
       }
       case "compaction_start": {
+        const kind = event.reason === "manual" ? "manual-compaction" : "auto-compaction";
         const item: SessionProtocolTimelineItem = {
           type: "operation",
-          id: `operation-auto-compaction-${Date.now()}`,
+          id: `operation-${kind}-${randomUUID()}`,
           operation: {
-            kind: "auto-compaction",
+            kind,
             status: "running",
             startedAt: Date.now(),
           },
@@ -2487,13 +2528,39 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         await this.emitPatch("maintenance", [
           { type: "timeline.append", item: structuredClone(item) },
         ]);
+        this.emitEphemeral(
+          createSessionProtocolEphemeralMessage({
+            sessionId: this.sessionId,
+            event: {
+              type: "feedback.activity.started",
+              id: item.id,
+              text: "compacting context",
+            },
+          }),
+        );
         return;
       }
-      case "compaction_end":
-        this.clearRunningAutoCompactionOperations();
+      case "compaction_end": {
+        const activityId = this.timelineExtras.findLast(
+          (item) =>
+            item.type === "operation" &&
+            (item.operation.kind === "auto-compaction" ||
+              item.operation.kind === "manual-compaction") &&
+            item.operation.status === "running",
+        )?.id;
+        if (activityId) {
+          this.emitEphemeral(
+            createSessionProtocolEphemeralMessage({
+              sessionId: this.sessionId,
+              event: { type: "feedback.activity.finished", id: activityId },
+            }),
+          );
+        }
+        this.clearRunningCompactionOperations();
         this.reconcileProjections();
         await this.emitSnapshotReset("maintenance", await this.commitSnapshot());
         return;
+      }
       case "tool_activity":
         await this.recordToolUiEvent(event.activity);
         return;
@@ -2795,6 +2862,27 @@ function formatErrorDiagnostic(error: unknown): string {
     current = current instanceof Error ? current.cause : undefined;
   }
   return messages.filter((message, index) => message && message !== messages[index - 1]).join(": ");
+}
+
+function createModelFailureTimelineItem(
+  historyEntryId: string,
+  message: AssistantMessage,
+): SessionProtocolTimelineItem | undefined {
+  if (message.stopReason !== "error") return undefined;
+  const afterToolExecution = message.content.some((content) => content.type === "toolCall");
+  return {
+    type: "notice",
+    id: `model-failure-${historyEntryId}`,
+    notice: {
+      severity: "error",
+      title: afterToolExecution
+        ? "model request failed after tool execution"
+        : "model request failed",
+      content: [message.errorMessage ?? "the model provider returned an unknown error"],
+      subject: { type: "message", id: historyEntryId },
+      timestamp: message.timestamp,
+    },
+  };
 }
 
 function abortedTurnOutcome(): SessionProtocolTurnOutcome {

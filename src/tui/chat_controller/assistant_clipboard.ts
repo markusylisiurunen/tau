@@ -8,21 +8,23 @@ export async function copyAssistantTextToClipboard(options: {
   message: AssistantMessage | undefined;
 }): Promise<void> {
   if (!options.message) {
-    options.view.addSystemMessage("no assistant message to copy yet.", "warn");
+    options.view.showFooterNotice("no assistant message to copy yet.", "default");
     return;
   }
 
   const text = extractAssistantText(options.message);
   if (!text.trim()) {
-    options.view.addSystemMessage("last assistant message was empty.", "warn");
+    options.view.showFooterNotice("last assistant message was empty.", "default");
     return;
   }
 
   try {
     await copyTextToClipboard(text);
-    options.view.addSystemMessage("copied last assistant message to clipboard.", "success");
+    options.view.showFooterNotice("copied last assistant message to clipboard.", "default");
   } catch (error) {
-    options.view.addSystemMessage(`clipboard copy failed: ${(error as Error).message}`, "error");
+    options.view.addTranscriptNotice("failed to copy to clipboard", "error", [
+      (error as Error).message,
+    ]);
   }
 }
 
@@ -31,20 +33,22 @@ export async function copyAssistantCodeToClipboard(options: {
   message: AssistantMessage | undefined;
 }): Promise<void> {
   if (!options.message) {
-    options.view.addSystemMessage("no assistant message to copy yet.", "warn");
+    options.view.showFooterNotice("no assistant message to copy yet.", "default");
     return;
   }
 
   const code = extractAllFencedCodeBlocks(extractAssistantText(options.message));
   if (!code) {
-    options.view.addSystemMessage("no code block to copy yet.", "warn");
+    options.view.showFooterNotice("no code block to copy yet.", "default");
     return;
   }
 
   try {
     await copyTextToClipboard(code);
-    options.view.addSystemMessage("copied all code blocks to clipboard.", "success");
+    options.view.showFooterNotice("copied all code blocks to clipboard.", "default");
   } catch (error) {
-    options.view.addSystemMessage(`clipboard copy failed: ${(error as Error).message}`, "error");
+    options.view.addTranscriptNotice("failed to copy to clipboard", "error", [
+      (error as Error).message,
+    ]);
   }
 }

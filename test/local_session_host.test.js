@@ -404,7 +404,12 @@ describe("LocalSessionHost", () => {
           type: "notice",
           notice: expect.objectContaining({
             severity: "warn",
-            text: expect.stringContaining("This session will continue"),
+            title: "session history is unavailable",
+            content: [
+              expect.any(String),
+              "this session will continue without durable history recording or recall",
+            ],
+            subject: { type: "session" },
           }),
         }),
       );
@@ -1498,7 +1503,8 @@ describe("LocalSessionHost", () => {
     hostedSession.onDelta((delta) => {
       observedSnapshot = applySessionProtocolDelta(observedSnapshot, delta);
     });
-    const streamError = new Error("stream failed");
+    const providerError = `stream failed ${"x".repeat(3_000)} request-id-89abde88`;
+    const streamError = new Error(providerError);
     const partial = fauxAssistantMessage("partial response");
     hostedSession.runtime.agent.spec.model.stream = () => ({
       async *[Symbol.asyncIterator]() {
@@ -1519,7 +1525,7 @@ describe("LocalSessionHost", () => {
     await expect(hostedSession.runTurn()).resolves.toEqual({
       status: "failed",
       stopReason: "error",
-      errorMessage: "stream failed",
+      errorMessage: providerError,
     });
 
     const persistedSnapshot = await store.loadSession(hostedSession.sessionId);
@@ -1536,11 +1542,35 @@ describe("LocalSessionHost", () => {
       modelVisible: true,
       message: {
         stopReason: "error",
-        errorMessage: "stream failed",
+        errorMessage: providerError,
         content: [{ type: "text", text: "partial response" }],
       },
     });
     expect(persistedAssistant).toEqual(observedAssistant);
+
+    const observedNotice = observedSnapshot.timeline.find(
+      (item) => item.type === "notice" && item.notice.subject.type === "message",
+    );
+    const persistedNotice = persistedSnapshot?.timeline.find(
+      (item) => item.type === "notice" && item.notice.subject.type === "message",
+    );
+    expect(observedNotice).toEqual({
+      type: "notice",
+      id: `model-failure-${observedAssistant.id}`,
+      notice: {
+        severity: "error",
+        title: "model request failed",
+        content: [providerError],
+        subject: { type: "message", id: observedAssistant.id },
+        timestamp: observedAssistant.message.timestamp,
+      },
+    });
+    expect(persistedNotice).toEqual(observedNotice);
+    expect(observedSnapshot.timeline.indexOf(observedNotice)).toBe(
+      observedSnapshot.timeline.findIndex(
+        (item) => item.type === "message" && item.messageId === observedAssistant.id,
+      ) + 1,
+    );
 
     await host.shutdown();
   });
@@ -1561,6 +1591,64 @@ describe("LocalSessionHost", () => {
 
     expect(snapshot.bootstrap.model).toEqual(expectedModel(persona));
     expect(snapshot.bootstrap.model).not.toHaveProperty("headers");
+  });
+
+  it("projects manual compaction activity", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const hostedSession = await host.createSession(localCreateInput);
+    await hostedSession.snapshot();
+
+    const deltas = [];
+    const ephemeralMessages = [];
+    hostedSession.onDelta((delta) => deltas.push(delta));
+    hostedSession.onEphemeral((message) => ephemeralMessages.push(message));
+
+    await hostedSession.enqueueRuntimeEvent({ type: "compaction_start", reason: "manual" });
+
+    expect(deltas.at(-1).delta.changes).toEqual([
+      expect.objectContaining({
+        type: "timeline.append",
+        item: expect.objectContaining({
+          type: "operation",
+          operation: expect.objectContaining({
+            kind: "manual-compaction",
+            status: "running",
+          }),
+        }),
+      }),
+    ]);
+    expect(ephemeralMessages.at(-1).event).toEqual({
+      type: "feedback.activity.started",
+      id: expect.stringContaining("manual-compaction"),
+      text: "compacting context",
+    });
+  });
+
+  it("emits runtime feedback without adding it to the timeline", async () => {
+    const host = createHost(new MemorySessionStore());
+    const hostedSession = await host.createSession(localCreateInput);
+    const ephemeralMessages = [];
+    hostedSession.onEphemeral((message) => ephemeralMessages.push(message));
+
+    await hostedSession.enqueueRuntimeEvent({
+      type: "feedback",
+      tone: "default",
+      title: "retrying after transient error",
+      presentation: "footer",
+      durationMs: 3_000,
+    });
+
+    expect(ephemeralMessages.at(-1).event).toEqual({
+      type: "feedback.notice",
+      tone: "default",
+      title: "retrying after transient error",
+      presentation: "footer",
+      durationMs: 3_000,
+    });
+    expect((await hostedSession.snapshot()).timeline).not.toContainEqual(
+      expect.objectContaining({ type: "notice" }),
+    );
   });
 
   it("clears running auto-compaction operations on compaction end", async () => {
@@ -1618,18 +1706,21 @@ describe("LocalSessionHost", () => {
     const historyEntryId = await hostedSession.session.commitUserText("rewind me");
     await hostedSession.snapshot();
 
-    await hostedSession.enqueueRuntimeEvent({
-      type: "notice",
-      severity: "warn",
-      text: "keep this notice",
-    });
+    await hostedSession.recordHistoryFailure("keep this notice");
     await hostedSession.rewindToHistoryEntryId(historyEntryId);
 
     const snapshot = await hostedSession.snapshot();
     expect(snapshot.timeline).toContainEqual(
       expect.objectContaining({
         type: "notice",
-        notice: expect.objectContaining({ text: "keep this notice" }),
+        notice: expect.objectContaining({
+          title: "session history is unavailable",
+          content: [
+            "keep this notice",
+            "this session will continue without durable history recording or recall",
+          ],
+          subject: { type: "session" },
+        }),
       }),
     );
   });

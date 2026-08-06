@@ -1858,7 +1858,8 @@ describe("telegram adapter", () => {
           id: "notice-history-unavailable",
           notice: {
             severity: "warn",
-            text: "Recovered history warning.",
+            title: "Recovered history warning.",
+            subject: { type: "session" },
             timestamp: 1,
           },
         },

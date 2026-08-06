@@ -353,10 +353,9 @@ available palette tokens (theme keys):
 
 - core: `brandAccent`, `textMuted`, `textDim`, `linkText`, `thinkingText`, `codeInlineText`, `codeBlockText`
 - editor: `editorBorder`, `editorSubagentBorder`, `editorBorderBash`, `editorBorderRecording`, `editorPlaceholder`, `autocompleteSelectedSurface`, `autocompleteSelectedText`
-- status: `statusWarn`, `statusError`
+- feedback: `feedback`, `feedbackError`
 - action: `actionRunning`, `actionSuccess`, `actionError`, `actionOutput`
 - diff: `diffAdd`, `diffRemove`
-- toasts: `toastSuccess`, `toastWarn`, `toastError`
 - user: `userSurface`, `userText`, `userReviewSurface`, `userReviewText`, `userReviewTextMuted`, `userReviewTextDim`
 
 example theme file (`.tau/themes/solarized.json`):

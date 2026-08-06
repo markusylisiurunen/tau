@@ -40,9 +40,8 @@ function getStatusStyle(status: ToolUiModel["status"], theme: Theme): (text: str
       return theme.palette.actionSuccess;
     case "failed":
     case "blocked":
-      return theme.palette.actionError;
     case "cancelled":
-      return theme.palette.statusWarn;
+      return theme.palette.actionError;
   }
 }
 

@@ -8,7 +8,7 @@ import type {
 } from "@earendil-works/pi-ai";
 import { type ZodError, z } from "zod";
 
-export const SESSION_PROTOCOL_VERSION = 8 as const;
+export const SESSION_PROTOCOL_VERSION = 9 as const;
 export const SESSION_PROTOCOL_MAX_EXEC_CAPTURE_BYTES = 24 * 1024 * 1024;
 export const SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES = 16 * 1024 * 1024;
 
@@ -408,12 +408,14 @@ export type SessionProtocolMessage = {
 
 export type SessionProtocolTimelineItem =
   | { type: "message"; id: string; messageId: string }
-  | { type: "notice"; id: string; notice: SessionProtocolNotice }
+  | { type: "notice"; id: string; notice: SessionProtocolTimelineNotice }
   | { type: "operation"; id: string; operation: SessionProtocolOperation };
 
-export type SessionProtocolNotice = {
+export type SessionProtocolTimelineNotice = {
   severity: "info" | "warn" | "error";
-  text: string;
+  title: string;
+  content?: string[];
+  subject: { type: "session" } | { type: "message"; id: string };
   timestamp: number;
 };
 
@@ -960,7 +962,36 @@ export type SessionProtocolEphemeralAgentThreadUpdateEvent = {
   };
 };
 
-export type SessionProtocolEphemeralEvent = SessionProtocolEphemeralAgentThreadUpdateEvent;
+export type SessionProtocolFeedbackTone = "default" | "error";
+
+export type SessionProtocolFeedbackEvent =
+  | {
+      type: "feedback.activity.started";
+      id: string;
+      text: string;
+    }
+  | {
+      type: "feedback.activity.finished";
+      id: string;
+    }
+  | {
+      type: "feedback.notice";
+      title: string;
+      tone: SessionProtocolFeedbackTone;
+      presentation: "footer";
+      durationMs: number;
+    }
+  | {
+      type: "feedback.notice";
+      title: string;
+      content?: string[];
+      tone: SessionProtocolFeedbackTone;
+      presentation: "transcript";
+    };
+
+export type SessionProtocolEphemeralEvent =
+  | SessionProtocolEphemeralAgentThreadUpdateEvent
+  | SessionProtocolFeedbackEvent;
 
 export type SessionProtocolEphemeralMessage = {
   version: typeof SESSION_PROTOCOL_VERSION;
@@ -1059,6 +1090,10 @@ const nonEmptyStringSchema = z
   .string()
   .min(1)
   .refine((value) => value.trim().length > 0);
+const noticeTitleSchema = nonEmptyStringSchema.refine(
+  (value) => !value.includes("\n") && !value.includes("\r"),
+  "notice title must be one line",
+);
 const sessionProtocolRequestIdSchema = nonEmptyStringSchema;
 const nullableSessionProtocolRequestIdSchema = sessionProtocolRequestIdSchema.nullable();
 const absolutePathSchema = nonEmptyStringSchema.refine((value) => value.startsWith("/"));
@@ -1806,7 +1841,12 @@ const sessionProtocolMessageSchema = z
 const sessionProtocolNoticeSchema = z
   .object({
     severity: z.enum(["info", "warn", "error"]),
-    text: z.string(),
+    title: noticeTitleSchema,
+    content: z.array(z.string()).min(1).optional(),
+    subject: z.union([
+      z.object({ type: z.literal("session") }).strip(),
+      z.object({ type: z.literal("message"), id: nonEmptyStringSchema }).strip(),
+    ]),
     timestamp: z.number().finite(),
   })
   .strip();
@@ -2102,6 +2142,17 @@ const sessionProtocolSnapshotSchema = z
           code: "custom",
           path: ["timeline"],
           message: `timeline message item '${item.id}' references unknown message '${item.messageId}'`,
+        });
+      }
+      if (
+        item.type === "notice" &&
+        item.notice.subject.type === "message" &&
+        !messagesById.has(item.notice.subject.id)
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["timeline"],
+          message: `timeline notice '${item.id}' references unknown message '${item.notice.subject.id}'`,
         });
       }
       if (item.type === "operation") {
@@ -2438,7 +2489,44 @@ const sessionProtocolEphemeralAgentThreadUpdateEventSchema = z
   })
   .strip();
 
-const sessionProtocolEphemeralEventSchema = sessionProtocolEphemeralAgentThreadUpdateEventSchema;
+const sessionProtocolFeedbackEventSchema = z.union([
+  z
+    .object({
+      type: z.literal("feedback.activity.started"),
+      id: nonEmptyStringSchema,
+      text: nonEmptyStringSchema,
+    })
+    .strip(),
+  z
+    .object({
+      type: z.literal("feedback.activity.finished"),
+      id: nonEmptyStringSchema,
+    })
+    .strip(),
+  z
+    .object({
+      type: z.literal("feedback.notice"),
+      title: noticeTitleSchema,
+      tone: z.enum(["default", "error"]),
+      presentation: z.literal("footer"),
+      durationMs: z.number().int().positive().max(60_000),
+    })
+    .strip(),
+  z
+    .object({
+      type: z.literal("feedback.notice"),
+      title: noticeTitleSchema,
+      content: z.array(z.string()).min(1).optional(),
+      tone: z.enum(["default", "error"]),
+      presentation: z.literal("transcript"),
+    })
+    .strip(),
+]);
+
+const sessionProtocolEphemeralEventSchema = z.union([
+  sessionProtocolEphemeralAgentThreadUpdateEventSchema,
+  sessionProtocolFeedbackEventSchema,
+]);
 
 const sessionProtocolEphemeralMessageSchema = z
   .object({
@@ -2999,6 +3087,14 @@ function hasSameTimelineReferences(
   if (previous.type !== item.type) return false;
   if (previous.type === "message" && item.type === "message") {
     return previous.messageId === item.messageId;
+  }
+  if (previous.type === "notice" && item.type === "notice") {
+    if (previous.notice.subject.type !== item.notice.subject.type) return false;
+    return (
+      previous.notice.subject.type === "session" ||
+      (item.notice.subject.type === "message" &&
+        previous.notice.subject.id === item.notice.subject.id)
+    );
   }
   return true;
 }

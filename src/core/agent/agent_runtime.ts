@@ -1141,13 +1141,14 @@ export class AgentRuntime {
     const limitReached =
       needsAnotherSubturn && subturns >= turnSettings.maxModelSubturns && !signal.aborted;
     const limitMessage = limitReached
-      ? `stopped after ${turnSettings.maxModelSubturns} model subturn${turnSettings.maxModelSubturns === 1 ? "" : "s"} without producing a final response.`
+      ? `stopped after ${turnSettings.maxModelSubturns} model attempt${turnSettings.maxModelSubturns === 1 ? "" : "s"} without producing a final response`
       : undefined;
     if (limitMessage) {
       yield {
-        type: "notice",
-        severity: "error",
-        text: limitMessage,
+        type: "feedback",
+        tone: "error",
+        title: limitMessage,
+        presentation: "transcript",
       };
     }
 
@@ -1428,7 +1429,12 @@ export class AgentRuntime {
         onRetry: () => consumeSubturnRetry(retryBudget),
         maxRetries: retryBudget.remaining,
         delayMs: turnSettings.retryPolicy.delayMs,
-        notice: { text: "auto-retrying after transient error", severity: "warn" },
+        feedback: {
+          tone: "default",
+          title: "retrying after transient error",
+          presentation: "footer",
+          durationMs: 3_000,
+        },
       },
     });
     const toolRunner = new SequentialToolCallRunner(
@@ -1514,13 +1520,6 @@ export class AgentRuntime {
           if (!signal.aborted) {
             await this.noteProviderError(turnSettings.model, errorMessage);
           }
-          if (toolRecoveryMode === "continue") {
-            yield {
-              type: "notice",
-              severity: "error",
-              text: `model stream failed after tool execution: ${errorMessage}`,
-            };
-          }
           continue;
         }
         if (next.source === "tool_error") {
@@ -1592,14 +1591,6 @@ export class AgentRuntime {
               };
             }
 
-            if (toolRecoveryMode === "continue") {
-              const notice: AgentEvent = {
-                type: "notice",
-                severity: "error",
-                text: `model stream failed after tool execution: ${finalMessage.errorMessage ?? "unknown provider error"}`,
-              };
-              yield notice;
-            }
             if (!toolRecoveryMode) {
               for (const toolResult of pendingToolResults.splice(0)) {
                 const toolHistoryEntryId = this.addMessage(toolResult);
@@ -1698,8 +1689,8 @@ export class AgentRuntime {
                   id: `invalid-tool-call-${randomUUID()}`,
                 };
                 const message = invalidId
-                  ? "Model returned a tool call with an empty ID."
-                  : `Model returned duplicate tool call ID '${admittedToolCall.id}'.`;
+                  ? "model returned a tool call with an empty ID"
+                  : `model returned duplicate tool call ID '${admittedToolCall.id}'`;
                 admittedToolCalls.push(toolCall);
                 const admission = toolRunner.prepareRejected(toolCall, message);
                 admissions.push({

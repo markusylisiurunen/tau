@@ -20,6 +20,7 @@ import { formatZodError } from "../utils/zod.js";
 import type { TelegramProjectPreferenceStore } from "./project_preferences.js";
 import {
   createScopedTelegramSessionManager,
+  formatTelegramTimelineNotice,
   type TelegramSessionManager,
   TelegramSessionManagerError,
   type TelegramSessionManagerEvent,
@@ -1347,7 +1348,7 @@ class TelegramAdapterImpl {
       if (!snapshot) continue;
       for (const item of snapshot.timeline) {
         if (item.type === "notice" && item.notice.severity !== "info") {
-          this.notifySession(sessionId, item.notice.text);
+          this.notifySession(sessionId, formatTelegramTimelineNotice(item.notice));
         }
       }
     }

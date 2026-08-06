@@ -1710,6 +1710,33 @@ describe("session_protocol", () => {
     expect(
       validateSessionProtocolResult("session.snapshot", {
         ...createProtocolSnapshot(),
+        timeline: [
+          {
+            type: "notice",
+            id: "notice-missing",
+            notice: {
+              severity: "error",
+              title: "model request failed",
+              content: ["provider error"],
+              subject: { type: "message", id: "missing-message" },
+              timestamp: 1,
+            },
+          },
+        ],
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+        message: expect.stringContaining(
+          "timeline notice 'notice-missing' references unknown message 'missing-message'",
+        ),
+      }),
+    });
+
+    expect(
+      validateSessionProtocolResult("session.snapshot", {
+        ...createProtocolSnapshot(),
         bootstrap: {
           ...createProtocolSnapshot().bootstrap,
           prompt: {
@@ -1806,7 +1833,16 @@ describe("session_protocol", () => {
     const snapshot = createProtocolSnapshot({
       messages,
       timeline: [
-        { type: "notice", id: "notice-1", notice: { severity: "info", text: "hi", timestamp: 1 } },
+        {
+          type: "notice",
+          id: "notice-1",
+          notice: {
+            severity: "info",
+            title: "hi",
+            subject: { type: "session" },
+            timestamp: 1,
+          },
+        },
       ],
       tools: { "tool-1": tool },
       agents: { "agent-1": agent },
@@ -2188,6 +2224,21 @@ describe("session_protocol", () => {
     expect(parseSessionProtocolOutgoingLine(JSON.stringify(ephemeral))).toEqual({
       ok: true,
       message: ephemeral,
+    });
+
+    const feedback = createSessionProtocolEphemeralMessage({
+      sessionId: "session-1",
+      event: {
+        type: "feedback.notice",
+        title: "retrying after transient error",
+        tone: "default",
+        presentation: "footer",
+        durationMs: 3_000,
+      },
+    });
+    expect(parseSessionProtocolOutgoingLine(JSON.stringify(feedback))).toEqual({
+      ok: true,
+      message: feedback,
     });
 
     const contentDelta = createSessionProtocolDeltaMessage({

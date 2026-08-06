@@ -282,6 +282,52 @@ describe("FileSessionStore", () => {
     });
   });
 
+  it("migrates version 5 timeline notices to structured notice content", async () => {
+    await withTempStore(async (store, directory) => {
+      const snapshot = createSnapshot("session-1", "hello");
+      const expected = {
+        ...snapshot,
+        timeline: [
+          ...snapshot.timeline,
+          {
+            type: "notice",
+            id: "legacy-notice",
+            notice: {
+              severity: "warn",
+              title: "history unavailable",
+              content: ["the session will continue"],
+              subject: { type: "session" },
+              timestamp: 2,
+            },
+          },
+        ],
+      };
+      const legacy = {
+        ...snapshot,
+        timeline: [
+          ...snapshot.timeline,
+          {
+            type: "notice",
+            id: "legacy-notice",
+            notice: {
+              severity: "warn",
+              text: "history unavailable\nthe session will continue",
+              timestamp: 2,
+            },
+          },
+        ],
+      };
+      await mkdir(directory, { recursive: true });
+      await writeFile(
+        join(directory, "c2Vzc2lvbi0x.json"),
+        JSON.stringify({ format: STORED_SESSION_DOCUMENT_FORMAT, version: 5, snapshot: legacy }),
+        "utf8",
+      );
+
+      await expect(store.loadSession("session-1")).resolves.toEqual(expected);
+    });
+  });
+
   it("rejects stored sessions written by a newer storage version", async () => {
     await withTempStore(async (store, directory) => {
       await mkdir(directory, { recursive: true });

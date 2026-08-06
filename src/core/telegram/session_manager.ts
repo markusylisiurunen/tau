@@ -11,12 +11,12 @@ import type {
   SessionProtocolFacet,
   SessionProtocolInterruptResult,
   SessionProtocolMessage,
-  SessionProtocolNotice,
   SessionProtocolReasoningEffort,
   SessionProtocolSettingsUpdateResult,
   SessionProtocolSnapshot,
   SessionProtocolSteerResult,
   SessionProtocolSubmitResult,
+  SessionProtocolTimelineNotice,
   SessionProtocolUnobserveResult,
 } from "../../protocol/session_protocol.js";
 import { TauSessionProtocolResponseError } from "../../transport/errors.js";
@@ -317,6 +317,10 @@ export type TelegramSessionManagerEvent =
       progress: TelegramSessionProgress;
     }
   | TelegramSessionProvisionFailure;
+
+export function formatTelegramTimelineNotice(notice: SessionProtocolTimelineNotice): string {
+  return notice.content?.length ? `${notice.title}: ${notice.content.join("\n")}` : notice.title;
+}
 
 export type TelegramSessionSubmitOptions = {
   additionalSystemMessage?: string;
@@ -1518,7 +1522,11 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     }
   }
 
-  private handleNotice(entry: SessionEntry, id: string, notice: SessionProtocolNotice): void {
+  private handleNotice(
+    entry: SessionEntry,
+    id: string,
+    notice: SessionProtocolTimelineNotice,
+  ): void {
     if (notice.severity === "info" || entry.emittedNoticeIds.has(id)) {
       return;
     }
@@ -1529,7 +1537,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       projectId: entry.record.projectId,
       timestamp: this.now().toISOString(),
       severity: notice.severity,
-      text: notice.text,
+      text: formatTelegramTimelineNotice(notice),
     });
   }
 

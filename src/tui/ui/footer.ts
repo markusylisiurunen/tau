@@ -1,16 +1,21 @@
 import { type Component, type TUI, visibleWidth } from "@earendil-works/pi-tui";
+import type { SessionProtocolFeedbackTone } from "../../protocol/session_protocol.js";
 import { truncateFromEndByWidth } from "./components/one_line_segments.js";
-import type { SystemMessageKind } from "./system_message.js";
 import type { Theme } from "./theme/index.js";
 
-export interface FooterStatus {
-  cwdLabel: string;
-  contextUsage: string;
-  sessionCost: string;
-  duration: string;
-  statusHint?: string;
-  pursuingGoal: boolean;
-}
+export type FooterStatus =
+  | {
+      type: "regular";
+      cwdLabel: string;
+      contextUsage: string;
+      sessionCost: string;
+      duration: string;
+      pursuingGoal: boolean;
+    }
+  | {
+      type: "activity";
+      label: string;
+    };
 
 const WORKING_ANIMATIONS = [
   ["⠋", "⠙", "⠸", "⠴", "⠦", "⠇"],
@@ -47,23 +52,26 @@ const WORKING_ANIMATIONS = [
 ] as const;
 
 const WORKING_FRAME_INTERVALS = [120, 120, 120, 120, 80] as const;
+export const DEFAULT_FOOTER_NOTICE_DURATION_MS = 3000;
 const COMPLETION_DURATION_MS = 3000;
+const IDLE_ICON = "○";
 
 export class FooterComponent implements Component {
-  private ui: TUI;
+  private readonly ui: TUI;
   private theme: Theme;
   private readonly random: () => number;
 
-  private idleIcon = "○";
-  private workingAnimation: readonly string[] = WORKING_ANIMATIONS[0]!;
-  private lastWorkingAnimationIndex = -1;
-  private currentAnimationFrame = 0;
-  private iconIntervalId: ReturnType<typeof setInterval> | null = null;
+  private animation: readonly string[] = WORKING_ANIMATIONS[0]!;
+  private lastAnimationIndex = -1;
+  private animationFrame = 0;
+  private animationMode: "working" | "activity" | null = null;
+  private animationIntervalId: ReturnType<typeof setInterval> | null = null;
+  private working = false;
   private completionTimeoutId: ReturnType<typeof setTimeout> | null = null;
-  private toastTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  private noticeTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
   private status: FooterStatus | null = null;
-  private toast: { text: string; kind: SystemMessageKind } | null = null;
+  private notice: { text: string; tone: SessionProtocolFeedbackTone } | null = null;
 
   constructor(theme: Theme, ui: TUI, options: { random?: () => number } = {}) {
     this.theme = theme;
@@ -78,63 +86,58 @@ export class FooterComponent implements Component {
   }
 
   startWorkingIcon(): void {
-    if (this.iconIntervalId) return;
+    if (this.working) return;
+    this.working = true;
     if (this.completionTimeoutId) {
       clearTimeout(this.completionTimeoutId);
       this.completionTimeoutId = null;
     }
-
-    const animationIndex = this.selectWorkingAnimationIndex();
-    this.workingAnimation = WORKING_ANIMATIONS[animationIndex]!;
-    this.currentAnimationFrame = 0;
-    this.requestAnimationRender();
-    this.iconIntervalId = setInterval(() => {
-      this.currentAnimationFrame += 1;
-      this.requestAnimationRender();
-    }, WORKING_FRAME_INTERVALS[animationIndex]!);
+    this.syncAnimation();
   }
 
   stop(): void {
-    if (!this.iconIntervalId) return;
+    if (!this.working) return;
+    this.working = false;
+    if (this.status?.type === "activity") {
+      this.syncAnimation();
+      return;
+    }
 
-    clearInterval(this.iconIntervalId);
-    this.iconIntervalId = null;
-    this.currentAnimationFrame = 0;
-    this.requestAnimationRender();
     this.completionTimeoutId = setTimeout(() => {
       this.completionTimeoutId = null;
-      this.requestAnimationRender();
+      this.ui.requestRender();
     }, COMPLETION_DURATION_MS);
+    this.syncAnimation();
   }
 
   dispose(): void {
-    if (this.iconIntervalId) {
-      clearInterval(this.iconIntervalId);
-      this.iconIntervalId = null;
-    }
+    this.stopAnimation();
     if (this.completionTimeoutId) {
       clearTimeout(this.completionTimeoutId);
       this.completionTimeoutId = null;
     }
-    if (this.toastTimeoutId) {
-      clearTimeout(this.toastTimeoutId);
-      this.toastTimeoutId = null;
+    if (this.noticeTimeoutId) {
+      clearTimeout(this.noticeTimeoutId);
+      this.noticeTimeoutId = null;
     }
   }
 
   setStatus(status: FooterStatus): void {
     this.status = status;
+    this.syncAnimation();
   }
 
-  showToast(text: string, kind: SystemMessageKind, durationMs: number = 3000): void {
-    if (this.toastTimeoutId) {
-      clearTimeout(this.toastTimeoutId);
+  showNotice(text: string, tone: SessionProtocolFeedbackTone, durationMs: number): void {
+    if (this.noticeTimeoutId) {
+      clearTimeout(this.noticeTimeoutId);
     }
-    this.toast = { text, kind };
+    this.notice = { text, tone };
+    this.syncAnimation();
     this.ui.requestRender();
-    this.toastTimeoutId = setTimeout(() => {
-      this.toast = null;
-      this.toastTimeoutId = null;
+    this.noticeTimeoutId = setTimeout(() => {
+      this.notice = null;
+      this.noticeTimeoutId = null;
+      this.syncAnimation();
       this.ui.requestRender();
     }, durationMs);
   }
@@ -145,52 +148,98 @@ export class FooterComponent implements Component {
     if (width <= 0) return [""];
 
     const { palette } = this.theme;
-    const isWorking = this.iconIntervalId !== null;
+    if (this.status?.type === "activity") {
+      const iconChar = this.animation[this.animationFrame % this.animation.length]!;
+      const icon = palette.feedback(iconChar);
+      const availableWidth = Math.max(0, width - visibleWidth(iconChar) - 3);
+      const text = truncateFromEndByWidth(this.status.label.trim(), availableWidth);
+      const padding = " ".repeat(Math.max(0, availableWidth - visibleWidth(text)));
+      return [` ${icon} ${palette.feedback(text)}${padding} `];
+    }
+
+    const notice = this.notice;
+    if (notice) {
+      const availableWidth = Math.max(0, width - 2);
+      const text = truncateFromEndByWidth(notice.text, availableWidth);
+      const padding = " ".repeat(Math.max(0, availableWidth - visibleWidth(text)));
+      return [` ${this.getNoticeStyle(notice.tone)(text)}${padding} `];
+    }
+
     const isCompleting = this.completionTimeoutId !== null;
-    const iconChar = isWorking
-      ? this.workingAnimation[this.currentAnimationFrame % this.workingAnimation.length]!
+    const iconChar = this.working
+      ? this.animation[this.animationFrame % this.animation.length]!
       : isCompleting
         ? "●"
-        : this.idleIcon;
-    const activityStyle = isWorking || isCompleting ? palette.brandAccent : palette.textDim;
+        : IDLE_ICON;
+    const activityStyle = this.working || isCompleting ? palette.brandAccent : palette.textDim;
     const icon = activityStyle(iconChar);
     const iconWidth = visibleWidth(iconChar);
     const availableWidth = Math.max(0, width - iconWidth - 3);
-    const toast = this.toast;
-    const statusHint = this.status?.statusHint?.trim();
-    const goalStatus = isWorking && this.status?.pursuingGoal ? "pursuing goal" : "";
-    const transientText = toast?.text ?? statusHint ?? goalStatus;
-    const rawText = transientText || this.buildStatusLine(availableWidth);
-    const style = toast
-      ? this.getToastStyle(toast.kind)
-      : goalStatus && rawText === goalStatus
-        ? activityStyle
-        : palette.textDim;
+    const goalStatus = this.working && this.status?.pursuingGoal ? "pursuing goal" : "";
+    const rawText = goalStatus || this.buildStatusLine(availableWidth);
+    const style = goalStatus ? activityStyle : palette.textDim;
     const text = truncateFromEndByWidth(rawText, availableWidth);
     const padding = " ".repeat(Math.max(0, availableWidth - visibleWidth(text)));
 
     return [` ${icon} ${style(text)}${padding} `];
   }
 
-  private selectWorkingAnimationIndex(): number {
+  private syncAnimation(): void {
+    const mode =
+      this.status?.type === "activity"
+        ? "activity"
+        : this.notice
+          ? null
+          : this.working
+            ? "working"
+            : null;
+    if (mode === this.animationMode) return;
+
+    this.stopAnimation();
+    this.animationMode = mode;
+    if (!mode) {
+      this.ui.requestRender();
+      return;
+    }
+    if (mode === "activity" && this.completionTimeoutId) {
+      clearTimeout(this.completionTimeoutId);
+      this.completionTimeoutId = null;
+    }
+
+    const animationIndex = this.selectAnimationIndex();
+    this.animation = WORKING_ANIMATIONS[animationIndex]!;
+    this.animationFrame = 0;
+    this.ui.requestRender();
+    this.animationIntervalId = setInterval(() => {
+      this.animationFrame += 1;
+      this.ui.requestRender();
+    }, WORKING_FRAME_INTERVALS[animationIndex]!);
+  }
+
+  private stopAnimation(): void {
+    if (this.animationIntervalId) {
+      clearInterval(this.animationIntervalId);
+      this.animationIntervalId = null;
+    }
+    this.animationFrame = 0;
+    this.animationMode = null;
+  }
+
+  private selectAnimationIndex(): number {
     const randomIndex = Math.min(
       WORKING_ANIMATIONS.length - 1,
       Math.floor(this.random() * WORKING_ANIMATIONS.length),
     );
     const index =
-      randomIndex === this.lastWorkingAnimationIndex
+      randomIndex === this.lastAnimationIndex
         ? (randomIndex + 1) % WORKING_ANIMATIONS.length
         : randomIndex;
-    this.lastWorkingAnimationIndex = index;
+    this.lastAnimationIndex = index;
     return index;
   }
 
-  private requestAnimationRender(): void {
-    this.ui.requestRender();
-  }
-
   private buildStatusLine(availableWidth: number): string {
-    if (!this.status) return "";
+    if (this.status?.type !== "regular") return "";
 
     const { duration, cwdLabel, contextUsage, sessionCost } = this.status;
     const build = (cwd: string) =>
@@ -205,12 +254,9 @@ export class FooterComponent implements Component {
     return build(compactCwdLabel(cwdLabel, cwdWidth));
   }
 
-  private getToastStyle(kind: SystemMessageKind): (text: string) => string {
+  private getNoticeStyle(tone: SessionProtocolFeedbackTone): (text: string) => string {
     const { palette } = this.theme;
-    if (kind === "error") return palette.toastError;
-    if (kind === "warn") return palette.toastWarn;
-    if (kind === "muted") return palette.textMuted;
-    return palette.toastSuccess;
+    return tone === "error" ? palette.feedbackError : palette.feedback;
   }
 }
 

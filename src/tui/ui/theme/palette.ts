@@ -58,17 +58,14 @@ const PALETTE_TEXT_TOKENS = [
   "editorBorderRecording",
   "editorPlaceholder",
   "autocompleteSelectedText",
-  "statusWarn",
-  "statusError",
+  "feedback",
+  "feedbackError",
   "actionRunning",
   "actionSuccess",
   "actionError",
   "actionOutput",
   "diffAdd",
   "diffRemove",
-  "toastSuccess",
-  "toastWarn",
-  "toastError",
   "userText",
   "userReviewText",
   "userReviewTextMuted",
@@ -304,19 +301,18 @@ function deriveActionColors(terminalColors: TerminalColors): [string, string, st
   ) as [string, string, string];
 }
 
-const NOTIFICATION_HUES = [108, 70, 12] as const;
-const NOTIFICATION_TARGET_CHROMA = 0.55;
+const FEEDBACK_HUES = [112, 12] as const;
+const FEEDBACK_TARGET_CHROMA = 0.55;
 
-function deriveNotificationColors(terminalColors: TerminalColors): [string, string, string] {
+function deriveFeedbackColors(terminalColors: TerminalColors): [string, string] {
   const foreground = new Color("srgb", [
     terminalColors.foreground.r,
     terminalColors.foreground.g,
     terminalColors.foreground.b,
   ]).to("oklch");
   const lightness = foreground.get("oklch.l") * 0.965;
-  const chroma = resolveCommonChroma(lightness, NOTIFICATION_TARGET_CHROMA, NOTIFICATION_HUES);
-  return NOTIFICATION_HUES.map((hue) => deriveSemanticTextHex(lightness, chroma, hue)) as [
-    string,
+  const chroma = resolveCommonChroma(lightness, FEEDBACK_TARGET_CHROMA, FEEDBACK_HUES);
+  return FEEDBACK_HUES.map((hue) => deriveSemanticTextHex(lightness, chroma, hue)) as [
     string,
     string,
   ];
@@ -474,13 +470,10 @@ export function deriveBuiltinPaletteOverrides(
   derived.actionRunning = warning;
   derived.actionSuccess = success;
   derived.actionError = error;
-  derived.statusWarn = warning;
 
-  const [toastSuccess, toastWarn, toastError] = deriveNotificationColors(terminalColors);
-  derived.toastSuccess = toastSuccess;
-  derived.toastWarn = toastWarn;
-  derived.toastError = toastError;
-  derived.statusError = toastError;
+  const [feedback, feedbackError] = deriveFeedbackColors(terminalColors);
+  derived.feedback = feedback;
+  derived.feedbackError = feedbackError;
 
   const [diffAdd, diffRemove] = deriveDiffColors(terminalColors);
   derived.diffAdd = diffAdd;

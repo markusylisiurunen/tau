@@ -352,7 +352,7 @@ export class AgentSupervisor {
     if (result.finalMessage.stopReason === "error") {
       this.finishFailed(record, {
         kind: "provider-error",
-        message: result.finalMessage.errorMessage ?? "Model returned an unspecified error.",
+        message: result.finalMessage.errorMessage ?? "model returned an unspecified error.",
         stopReason: result.finalMessage.stopReason,
       });
       return;
@@ -441,8 +441,8 @@ export class AgentSupervisor {
       case "turn_started":
         text = "assistant: thinking";
         break;
-      case "notice":
-        text = event.text;
+      case "feedback":
+        text = event.title;
         break;
       default:
         return;

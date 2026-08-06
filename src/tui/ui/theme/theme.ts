@@ -37,9 +37,9 @@ export interface Palette {
   autocompleteSelectedSurface: (text: string) => string;
   autocompleteSelectedText: (text: string) => string;
 
-  // Status
-  statusWarn: (text: string) => string;
-  statusError: (text: string) => string;
+  // Feedback
+  feedback: (text: string) => string;
+  feedbackError: (text: string) => string;
 
   // Action
   actionRunning: (text: string) => string;
@@ -50,11 +50,6 @@ export interface Palette {
   // Diff
   diffAdd: (text: string) => string;
   diffRemove: (text: string) => string;
-
-  // Toasts
-  toastSuccess: (text: string) => string;
-  toastWarn: (text: string) => string;
-  toastError: (text: string) => string;
 
   // User
   userSurface: (text: string) => string;

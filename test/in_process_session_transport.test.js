@@ -34,7 +34,12 @@ function createNoticeDelta(sessionId, revision, text) {
           item: {
             type: "notice",
             id: `notice-${revision}`,
-            notice: { severity: "info", text, timestamp: revision },
+            notice: {
+              severity: "info",
+              title: text,
+              subject: { type: "session" },
+              timestamp: revision,
+            },
           },
         },
       ],

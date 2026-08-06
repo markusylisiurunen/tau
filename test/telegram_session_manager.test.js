@@ -246,7 +246,8 @@ describe("telegram session manager", () => {
             id: "notice-history-unavailable",
             notice: {
               severity: "warn",
-              text: "Session history is unavailable. This session will continue.",
+              title: "Session history is unavailable. This session will continue.",
+              subject: { type: "session" },
               timestamp: 1,
             },
           },
@@ -282,7 +283,12 @@ describe("telegram session manager", () => {
       item: {
         type: "notice",
         id: "notice-live-warning",
-        notice: { severity: "warn", text: "A live warning arrived.", timestamp: 2 },
+        notice: {
+          severity: "warn",
+          title: "A live warning arrived.",
+          subject: { type: "session" },
+          timestamp: 2,
+        },
       },
     };
     clientHarness.emitDelta(createPatchDelta([liveNotice], 1, "notice"));

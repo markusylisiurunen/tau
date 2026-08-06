@@ -15,14 +15,21 @@ export interface AuthProviderAdapter {
   removeAccount: (authStorage: AuthStorage, accountId: string) => boolean;
   setAccountEnabled: (authStorage: AuthStorage, accountId: string, enabled: boolean) => boolean;
   listAccountInfo: (authStorage: AuthStorage) => Promise<AuthAccountInfo[]>;
-  selectAccount: (authStorage: AuthStorage) => Promise<AuthProviderSelection | undefined>;
+  selectAccount: (
+    authStorage: AuthStorage,
+    options?: { signal?: AbortSignal },
+  ) => Promise<AuthProviderSelection | undefined>;
   selectAccountFromList?: (accounts: AuthAccountInfo[]) => string | undefined;
-  getApiKeyForAccount: (authStorage: AuthStorage, accountId: string) => Promise<string | undefined>;
+  getApiKeyForAccount: (
+    authStorage: AuthStorage,
+    accountId: string,
+    options?: { signal?: AbortSignal },
+  ) => Promise<string | undefined>;
   getForcedAccountId?: (authStorage: AuthStorage) => string | undefined;
   isAccountUsable?: (
     authStorage: AuthStorage,
     accountId: string,
-    options?: { apiKey?: string },
+    options?: { apiKey?: string; signal?: AbortSignal },
   ) => Promise<boolean>;
   handleProviderError?: (
     authStorage: AuthStorage,

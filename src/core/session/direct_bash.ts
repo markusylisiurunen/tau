@@ -59,6 +59,7 @@ export async function runDirectBashCommand(
     durationMs,
     workingDirectory: options.workingDirectory,
     actionLabel: options.actionLabel,
+    detailTruncation: { maxLines: 33, strategy: "middle" },
   });
   const userHistoryEntryId =
     options.addToContext && options.addUserText

@@ -3112,6 +3112,10 @@ describe("SessionChatController", () => {
 
   it("runs direct shell commands in the session execution environment", async () => {
     const session = new FakeSession();
+    const outputLines = Array.from({ length: 40 }, (_, index) => `line ${index + 1}`);
+    session.exec.mockResolvedValueOnce(
+      createProtocolExecResult({ output: `${outputLines.join("\n")}\n` }),
+    );
     const view = new FakeView();
     const controller = new SessionChatController({
       view,
@@ -3146,6 +3150,11 @@ describe("SessionChatController", () => {
           presentation: expect.objectContaining({
             subject: "pwd",
             actionByStatus: expect.objectContaining({ succeeded: "you ran" }),
+            details: [
+              ...outputLines.slice(0, 16).map((text) => ({ text, wrap: "character" })),
+              { text: "…8 more lines…", wrap: "word" },
+              ...outputLines.slice(-16).map((text) => ({ text, wrap: "character" })),
+            ],
           }),
         }),
       ]),
@@ -3162,6 +3171,10 @@ describe("SessionChatController", () => {
 
   it("runs incognito direct shell commands without adding session context", async () => {
     const session = new FakeSession();
+    const outputLines = Array.from({ length: 40 }, (_, index) => `line ${index + 1}`);
+    session.exec.mockResolvedValueOnce(
+      createProtocolExecResult({ output: `${outputLines.join("\n")}\n` }),
+    );
     const view = new FakeView();
     const controller = new SessionChatController({
       view,
@@ -3186,6 +3199,11 @@ describe("SessionChatController", () => {
           presentation: expect.objectContaining({
             subject: "pwd",
             actionByStatus: expect.objectContaining({ succeeded: "incognito" }),
+            details: [
+              ...outputLines.slice(0, 16).map((text) => ({ text, wrap: "character" })),
+              { text: "…8 more lines…", wrap: "word" },
+              ...outputLines.slice(-16).map((text) => ({ text, wrap: "character" })),
+            ],
           }),
         }),
       ]),

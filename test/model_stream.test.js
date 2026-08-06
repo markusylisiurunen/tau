@@ -122,17 +122,17 @@ describe("model stream option resolution", () => {
     expect(openaiModel).toBeDefined();
     expect(openaiModel.api).toBe("openai-responses");
     expect(openaiModel.cost).toEqual({
-      input: 1,
-      output: 6,
-      cacheRead: 0.1,
-      cacheWrite: 1.25,
+      input: 0.2,
+      output: 1.2,
+      cacheRead: 0.02,
+      cacheWrite: 0.25,
       tiers: [
         {
           inputTokensAbove: 272000,
-          input: 2,
-          output: 9,
-          cacheRead: 0.2,
-          cacheWrite: 2.5,
+          input: 0.4,
+          output: 1.8,
+          cacheRead: 0.04,
+          cacheWrite: 0.5,
         },
       ],
     });
@@ -158,11 +158,11 @@ describe("model stream option resolution", () => {
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
     });
 
-    expect(cost.input).toBeCloseTo(0.546);
-    expect(cost.output).toBeCloseTo(0.009);
+    expect(cost.input).toBeCloseTo(0.1092);
+    expect(cost.output).toBeCloseTo(0.0018);
     expect(cost.cacheRead).toBe(0);
     expect(cost.cacheWrite).toBe(0);
-    expect(cost.total).toBeCloseTo(0.555);
+    expect(cost.total).toBeCloseTo(0.111);
   });
 
   test("resolves configured api keys through the pi-ai models runtime", async () => {

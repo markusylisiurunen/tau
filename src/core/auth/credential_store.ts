@@ -1,4 +1,9 @@
-import type { Credential, CredentialInfo, CredentialStore } from "@earendil-works/pi-ai";
+import type {
+  AuthOperationOptions,
+  Credential,
+  CredentialInfo,
+  CredentialStore,
+} from "@earendil-works/pi-ai";
 import type { Config } from "../config/schema.js";
 import { getApiKeyForProvider } from "../config/schema.js";
 import { resolveProviderApiKey } from "../models/catalog.js";
@@ -22,8 +27,10 @@ type CredentialStoreOptions = {
 export class TauCredentialStore implements CredentialStore {
   constructor(private readonly options: CredentialStoreOptions) {}
 
-  async read(providerId: string): Promise<Credential | undefined> {
-    const stored = await this.readStoredCredential(providerId);
+  async read(providerId: string, options?: AuthOperationOptions): Promise<Credential | undefined> {
+    options?.signal?.throwIfAborted();
+    const stored = await this.readStoredCredential(providerId, options?.signal);
+    options?.signal?.throwIfAborted();
     if (stored) {
       return stored.credential;
     }
@@ -31,7 +38,8 @@ export class TauCredentialStore implements CredentialStore {
     return this.readConfiguredCredential(providerId);
   }
 
-  async list(): Promise<readonly CredentialInfo[]> {
+  async list(options?: AuthOperationOptions): Promise<readonly CredentialInfo[]> {
+    options?.signal?.throwIfAborted();
     this.options.authStorage.reload();
     const invalidReason = this.options.authStorage.getInvalidReason();
     if (invalidReason) {
@@ -49,9 +57,13 @@ export class TauCredentialStore implements CredentialStore {
   async modify(
     providerId: string,
     fn: (current: Credential | undefined) => Promise<Credential | undefined>,
+    options?: AuthOperationOptions,
   ): Promise<Credential | undefined> {
-    const current = await this.readStoredCredential(providerId);
+    options?.signal?.throwIfAborted();
+    const current = await this.readStoredCredential(providerId, options?.signal);
+    options?.signal?.throwIfAborted();
     const next = await fn(current?.credential);
+    options?.signal?.throwIfAborted();
     if (!next) {
       return current?.credential;
     }
@@ -91,7 +103,8 @@ export class TauCredentialStore implements CredentialStore {
     return stored ? credentialFromStoredAccount(stored) : undefined;
   }
 
-  async delete(providerId: string): Promise<void> {
+  async delete(providerId: string, options?: AuthOperationOptions): Promise<void> {
+    options?.signal?.throwIfAborted();
     this.options.authStorage.update((data) => {
       delete data.providers[providerId];
     });
@@ -139,6 +152,7 @@ export class TauCredentialStore implements CredentialStore {
 
   private async readStoredCredential(
     providerId: string,
+    signal?: AbortSignal,
   ): Promise<{ credential: Credential; accountId: string; account: StoredAccount } | undefined> {
     this.options.authStorage.reload();
     const invalidReason = this.options.authStorage.getInvalidReason();
@@ -157,6 +171,7 @@ export class TauCredentialStore implements CredentialStore {
             this.options.authStorage,
             this.options.env ?? process.env,
             this.options.getSessionId?.(),
+            signal,
           )
         : provider.accounts[0];
     if (!account) {
@@ -255,13 +270,17 @@ async function selectCodexAccount(
   authStorage: AuthStorage,
   env: NodeJS.ProcessEnv,
   sessionId?: string,
+  signal?: AbortSignal,
 ): Promise<StoredAccount | undefined> {
+  signal?.throwIfAborted();
   const forcedAccount = getForcedCodexAccount(authStorage, env);
   if (forcedAccount) {
     if (sessionId) {
       setCodexSessionSelection(sessionId, forcedAccount.accountId);
     }
-    const apiKey = await codexAdapter.getApiKeyForAccount(authStorage, forcedAccount.accountId);
+    const apiKey = await codexAdapter.getApiKeyForAccount(authStorage, forcedAccount.accountId, {
+      signal,
+    });
     if (!apiKey) {
       if (sessionId) {
         clearCodexSessionSelection(sessionId);
@@ -288,9 +307,11 @@ async function selectCodexAccount(
         selectedAccountId,
       );
       if (selectedAccount?.type === "oauth" && !selectedAccount.disabled) {
-        const apiKey = await codexAdapter.getApiKeyForAccount(authStorage, selectedAccountId);
+        const apiKey = await codexAdapter.getApiKeyForAccount(authStorage, selectedAccountId, {
+          signal,
+        });
         const usable = apiKey
-          ? await codexAdapter.isAccountUsable(authStorage, selectedAccountId, { apiKey })
+          ? await codexAdapter.isAccountUsable(authStorage, selectedAccountId, { apiKey, signal })
           : false;
         if (usable) {
           return getStoredAccountById(authStorage, OPENAI_CODEX_PROVIDER_ID, selectedAccountId);
@@ -300,7 +321,8 @@ async function selectCodexAccount(
     }
   }
 
-  const selection = await codexAdapter.selectAccount(authStorage);
+  const selection = await codexAdapter.selectAccount(authStorage, { signal });
+  signal?.throwIfAborted();
   if (!selection) {
     return undefined;
   }

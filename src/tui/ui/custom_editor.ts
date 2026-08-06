@@ -12,7 +12,7 @@ const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme
 const DEFAULT_EDITOR_MAX_LINES = 22;
 const MIN_EDITOR_LINES = 3;
 const EDITOR_PLACEHOLDER =
-  "ask the agent anything · / for commands · ! for shell mode · ctrl+y for voice";
+  "ask the agent anything · / for commands · ! for bash mode · ctrl+y for voice";
 
 export class CustomEditor extends Editor {
   private uiTheme: Theme;

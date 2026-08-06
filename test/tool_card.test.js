@@ -82,7 +82,7 @@ describe("tool cards", () => {
         }),
         22,
       ).split("\n"),
-    ).toEqual([" ⏵ running web console", " .log('alpha beta')"]);
+    ).toEqual([" » running web console", " .log('alpha beta')"]);
   });
 
   it("uses the prefix width only on the first word-wrapped subject line", () => {
@@ -135,24 +135,24 @@ describe("tool cards", () => {
     );
   });
 
-  it("uses the running marker color while preparing, queued, and running", () => {
+  it("uses static active markers with status-specific colors", () => {
     const presentation = buildToolRunPresentation({ toolName: "bash", subject: "pwd" });
-    for (const status of ["streaming", "running"]) {
+    const cases = [
+      { status: "streaming", marker: "◌", color: "textMuted" },
+      { status: "queued", marker: "○", color: "textMuted" },
+      { status: "running", marker: "»", color: "actionRunning" },
+    ];
+
+    for (const { status, marker, color } of cases) {
       const rendered = renderText(
-        new ToolCardComponent({ model: { toolCallId: status, status, presentation }, theme }),
+        new ToolCardComponent({
+          model: { toolCallId: status, status, presentation },
+          theme,
+        }),
         120,
       );
-      expect(rendered).toContain("<actionRunning>⏵</actionRunning>");
+      expect(rendered).toContain(`<${color}>${marker}</${color}>`);
     }
-
-    const queued = renderText(
-      new ToolCardComponent({
-        model: { toolCallId: "queued", status: "queued", presentation },
-        theme,
-      }),
-      120,
-    );
-    expect(queued).toContain("<actionRunning>⏵</actionRunning>");
   });
 
   it("preserves edit addition and removal colors", () => {

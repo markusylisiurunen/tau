@@ -67,7 +67,11 @@ import {
   extractHistoryUserText,
 } from "./chat_controller/history_message_model.js";
 import { InterruptLifecycle } from "./chat_controller/interrupt_lifecycle.js";
-import { formatDurationMs, formatSessionCost } from "./chat_controller/status_format.js";
+import {
+  formatDurationMs,
+  formatFooterTokenCount,
+  formatSessionCost,
+} from "./chat_controller/status_format.js";
 import type { ChatInputMode, ChatView, ChatViewInputHandlers } from "./chat_view.js";
 import { copyTextToClipboard } from "./clipboard.js";
 import { DOUBLE_PRESS_WINDOW_MS } from "./constants.js";
@@ -1879,7 +1883,7 @@ export class SessionChatController {
       ? this.getContextWindowForLastTurn(last)
       : this.getBootstrapContextWindow();
     const { input, read, write, output } = this.getSessionUsageTotals();
-    const stats = `↑${formatTokenWindow(input)} ↓${formatTokenWindow(output)} r${formatTokenWindow(read)} w${formatTokenWindow(write)}`;
+    const stats = `↑${formatFooterTokenCount(input)} ↓${formatFooterTokenCount(output)} r${formatFooterTokenCount(read)} w${formatFooterTokenCount(write)}`;
     const contextWindowUsageTokens = getAssistantContextWindowUsage(last);
     const percent = windowTokens > 0 ? (contextWindowUsageTokens / windowTokens) * 100 : 0;
     const percentStr = `${formatAdaptiveNumber(percent, 1, 3)}%`;

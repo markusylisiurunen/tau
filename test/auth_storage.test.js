@@ -1110,6 +1110,67 @@ describe("AuthManager and TauCredentialStore", () => {
     }
   });
 
+  it("propagates credential read cancellation through codex refresh and usage requests", async () => {
+    const fx = createTempAuthPath();
+    try {
+      writeFileSync(
+        fx.authPath,
+        JSON.stringify({
+          providers: {
+            "openai-codex": {
+              accounts: [
+                {
+                  type: "oauth",
+                  accountId: "acct-cancel",
+                  providerAccountId: "provider-cancel",
+                  access: "access-cancel",
+                  refresh: "refresh-cancel",
+                  expires: 0,
+                },
+              ],
+            },
+          },
+        }),
+        { mode: 0o600 },
+      );
+
+      const abortController = new AbortController();
+      codexRefresh.mockImplementation(async (credential) => ({
+        ...credential,
+        expires: Number.MAX_SAFE_INTEGER,
+      }));
+      const fetchStarted = deferred();
+      let fetchSignal;
+      vi.stubGlobal(
+        "fetch",
+        vi.fn((_url, init) => {
+          fetchSignal = init?.signal;
+          fetchStarted.resolve();
+          return new Promise((_resolve, reject) => {
+            const onAbort = () => reject(fetchSignal.reason);
+            fetchSignal.addEventListener("abort", onAbort, { once: true });
+            if (fetchSignal.aborted) onAbort();
+          });
+        }),
+      );
+
+      const store = new TauCredentialStore({
+        authStorage: new AuthStorage(fx.authPath),
+        getConfig: () => ({}),
+      });
+      const read = store.read("openai-codex", { signal: abortController.signal });
+      await fetchStarted.promise;
+
+      expect(codexRefresh.mock.calls[0]?.[1]).toBe(abortController.signal);
+      expect(fetchSignal).toBe(abortController.signal);
+
+      abortController.abort();
+      await expect(read).rejects.toMatchObject({ name: "AbortError" });
+    } finally {
+      fx.cleanup();
+    }
+  });
+
   it("lists stored credential metadata without resolving credentials", async () => {
     const fx = createTempAuthPath();
     try {

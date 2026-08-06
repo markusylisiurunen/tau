@@ -1,5 +1,5 @@
-import type { AutocompleteProvider, Component } from "@earendil-works/pi-tui";
-import { Spacer, TUI } from "@earendil-works/pi-tui";
+import type { AutocompleteProvider, Component, TUI } from "@earendil-works/pi-tui";
+import { Spacer, TuiMainScreen } from "@earendil-works/pi-tui";
 import { resolveThemeTokensForAppearance, type ThemeDefinition } from "../core/config/index.js";
 import type { SubagentUiEvent } from "../core/subagents/types.js";
 import type { ReasoningEffort } from "../core/types.js";
@@ -137,7 +137,7 @@ export class TuiChatView implements ChatView {
     this.terminalColors = options.terminalColors ?? FALLBACK_TERMINAL_COLORS;
     this.themes = options.themes;
     this.uiTheme = createUiTheme("ansi", this.resolvePaletteOverrides(options.themeId));
-    this.ui = new TUI(createAppTerminal());
+    this.ui = new TuiMainScreen(createAppTerminal());
     this.chatContainer = new ChatContainerComponent(this.uiTheme, options.showThinking);
     this.footer = new FooterComponent(this.uiTheme, this.ui);
     this.pendingMessages = new PendingMessagesComponent(this.uiTheme);
@@ -164,6 +164,7 @@ export class TuiChatView implements ChatView {
 
   stop(): void {
     this.setRecordingIndicatorActive(false);
+    this.footer.dispose();
     this.ui.stop();
     // Ensure cursor is visible after shutdown (some terminals keep it hidden).
     this.ui.terminal.showCursor();
@@ -431,7 +432,7 @@ export class TuiChatView implements ChatView {
     }
 
     if (state.mode === "bash" || state.mode === "bash_incognito") {
-      const label = state.mode === "bash_incognito" ? "bash incognito" : "bash";
+      const label = state.mode === "bash_incognito" ? "$ bash incognito" : "$ bash";
       this.editor.setHeader(label, "", { leftStyle: this.editor.borderColor });
       return;
     }

@@ -143,6 +143,28 @@ test("TuiChatView switches repeatedly through its retained theme catalog", () =>
   }
 });
 
+test("TuiChatView labels direct command editor modes as bash", () => {
+  const view = Object.create(TuiChatView.prototype);
+  const setPlaceholderVisible = vi.fn();
+  const setHeader = vi.fn();
+  view.uiTheme = createUiTheme("plain");
+  view.editor = { setPlaceholderVisible, setHeader };
+
+  view.updateEditorVisualState({
+    mode: "bash",
+    personaName: "Persona",
+    reasoningLabel: "high",
+  });
+  expect(setHeader).toHaveBeenLastCalledWith("$ bash", "", expect.any(Object));
+
+  view.updateEditorVisualState({
+    mode: "bash_incognito",
+    personaName: "Persona",
+    reasoningLabel: "high",
+  });
+  expect(setHeader).toHaveBeenLastCalledWith("$ bash incognito", "", expect.any(Object));
+});
+
 test("TuiChatView tool reconciliation does not reset subagent state", () => {
   const reconcileSession = vi.fn();
   const resetSubagents = vi.fn();
@@ -421,10 +443,11 @@ test("FooterComponent replaces normal status with operation hints", () => {
   expect(text).not.toContain("tau-one");
 });
 
-test("FooterComponent replaces normal status during active autonomous goal work", () => {
+test("FooterComponent animates active goal work and settles after completion", () => {
+  vi.useFakeTimers();
   const theme = createTagTheme();
   const ui = { requestRender() {} };
-  const footer = new FooterComponent(theme, ui);
+  const footer = new FooterComponent(theme, ui, { random: () => 0 });
   footer.setStatus({
     cwdLabel: "~/Code/tau-one",
     contextUsage: "ctx 10/100",
@@ -433,19 +456,78 @@ test("FooterComponent replaces normal status during active autonomous goal work"
     pursuingGoal: true,
   });
 
-  const idleLine = renderLines(footer, 120)[0];
-  expect(idleLine).not.toContain("pursuing goal");
-  expect(idleLine).toContain("<textDim>24s · ~/Code/tau-one · ctx 10/100 · $0.01</textDim>");
-
-  footer.startWorkingIcon();
   try {
+    const idleLine = renderLines(footer, 120)[0];
+    expect(idleLine).not.toContain("pursuing goal");
+    expect(idleLine).toContain("<textDim>24s · ~/Code/tau-one · ctx 10/100 · $0.01</textDim>");
+
+    footer.startWorkingIcon();
     const activeLine = renderLines(footer, 120)[0];
     expect(activeLine).toContain(
       "<brandAccent>⠋</brandAccent> <brandAccent>pursuing goal</brandAccent>",
     );
     expect(activeLine).not.toContain("tau-one");
-  } finally {
+
     footer.stop();
+    expect(renderLines(footer, 120)[0]).toContain("<brandAccent>●</brandAccent>");
+    vi.advanceTimersByTime(3000);
+    expect(renderLines(footer, 120)[0]).toContain("<textDim>○</textDim>");
+  } finally {
+    footer.dispose();
+    vi.useRealTimers();
+  }
+});
+
+test("FooterComponent selects from five working animations without immediate repeats", () => {
+  const theme = createTagTheme();
+  const ui = { requestRender() {} };
+  const choices = [
+    { random: 0.01, marker: "⠋" },
+    { random: 0.21, marker: "⠽" },
+    { random: 0.41, marker: "⠋" },
+    { random: 0.61, marker: "⠄" },
+    { random: 0.81, marker: "⠀" },
+  ];
+
+  for (const choice of choices) {
+    const footer = new FooterComponent(theme, ui, { random: () => choice.random });
+    footer.startWorkingIcon();
+    expect(renderLines(footer, 20)[0]).toContain(`<brandAccent>${choice.marker}</brandAccent>`);
+    footer.dispose();
+  }
+
+  const footer = new FooterComponent(theme, ui, { random: () => 0 });
+  footer.startWorkingIcon();
+  expect(renderLines(footer, 20)[0]).toContain("<brandAccent>⠋</brandAccent>");
+  footer.stop();
+  footer.startWorkingIcon();
+  expect(renderLines(footer, 20)[0]).toContain("<brandAccent>⠽</brandAccent>");
+  footer.dispose();
+});
+
+test("FooterComponent uses distinct standard and sand cadences", () => {
+  vi.useFakeTimers();
+  const theme = createTagTheme();
+  const ui = { requestRender() {} };
+  const dots = new FooterComponent(theme, ui, { random: () => 0 });
+  const sand = new FooterComponent(theme, ui, { random: () => 0.99 });
+
+  try {
+    dots.startWorkingIcon();
+    sand.startWorkingIcon();
+    expect(renderLines(dots, 20)[0]).toContain("<brandAccent>⠋</brandAccent>");
+    expect(renderLines(sand, 20)[0]).toContain("<brandAccent>⠀</brandAccent>");
+
+    vi.advanceTimersByTime(120);
+    expect(renderLines(dots, 20)[0]).toContain("<brandAccent>⠙</brandAccent>");
+    expect(renderLines(sand, 20)[0]).toContain("<brandAccent>⠀</brandAccent>");
+
+    vi.advanceTimersByTime(40);
+    expect(renderLines(sand, 20)[0]).toContain("<brandAccent>⠁</brandAccent>");
+  } finally {
+    dots.dispose();
+    sand.dispose();
+    vi.useRealTimers();
   }
 });
 

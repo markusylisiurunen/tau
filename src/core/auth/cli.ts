@@ -1,4 +1,4 @@
-import type { AuthInteraction, AuthPrompt, OAuthCredential } from "@earendil-works/pi-ai";
+import type { AuthPrompt, OAuthCredential, ProviderAuthInteraction } from "@earendil-works/pi-ai";
 import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
 import { Chalk } from "chalk";
 import { AuthManager } from "./auth_manager.js";
@@ -7,7 +7,7 @@ import type { AuthStorage } from "./auth_storage.js";
 export type AuthLog = (message: string) => void;
 export type AuthPromptFn = (prompt: AuthPrompt) => Promise<string>;
 
-export type AuthLoginHandler = (interaction: AuthInteraction) => Promise<OAuthCredential>;
+export type AuthLoginHandler = (interaction: ProviderAuthInteraction) => Promise<OAuthCredential>;
 
 export type OAuthProviderSpec = {
   id: string;
@@ -198,6 +198,7 @@ export async function runLoginCommand(options: {
   log(`logging in to ${provider}...`);
 
   const credentials = await handler({
+    signal: new AbortController().signal,
     prompt: options.prompt,
     notify: (event) => {
       if (event.type === "auth_url") {

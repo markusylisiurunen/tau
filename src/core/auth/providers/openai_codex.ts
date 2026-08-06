@@ -159,7 +159,11 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
     return accountInfo.filter((account): account is AuthAccountInfo => account !== undefined);
   }
 
-  async selectAccount(authStorage: AuthStorage): Promise<AuthProviderSelection | undefined> {
+  async selectAccount(
+    authStorage: AuthStorage,
+    options?: { signal?: AbortSignal },
+  ): Promise<AuthProviderSelection | undefined> {
+    options?.signal?.throwIfAborted();
     const forcedAccount = resolveForcedAccount(authStorage);
     if (forcedAccount?.disabled) {
       throw new Error(
@@ -168,7 +172,7 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
       );
     }
     if (forcedAccount) {
-      const apiKey = await this.getApiKeyForAccount(authStorage, forcedAccount.accountId);
+      const apiKey = await this.getApiKeyForAccount(authStorage, forcedAccount.accountId, options);
       return apiKey && isAccountEnabled(authStorage, forcedAccount.accountId)
         ? { accountId: forcedAccount.accountId, apiKey }
         : undefined;
@@ -182,7 +186,11 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
     candidates.sort((a, b) => compareAccountPriority(a, b, now));
 
     for (const candidate of candidates) {
-      const apiKey = await this.getApiKeyForAccount(authStorage, candidate.account.accountId);
+      const apiKey = await this.getApiKeyForAccount(
+        authStorage,
+        candidate.account.accountId,
+        options,
+      );
       if (!apiKey) continue;
 
       let usage = candidate.usage;
@@ -190,6 +198,7 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
         const refreshed = await this.getUsageSnapshot(authStorage, candidate.account, {
           apiKey,
           forceRefresh: true,
+          signal: options?.signal,
         });
         usage = refreshed.usage ?? usage;
       }
@@ -222,13 +231,19 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
   async getApiKeyForAccount(
     authStorage: AuthStorage,
     accountId: string,
+    options?: { signal?: AbortSignal },
   ): Promise<string | undefined> {
+    options?.signal?.throwIfAborted();
     const account = getAccounts(authStorage).find((entry) => entry.accountId === accountId);
     if (!account) return undefined;
 
     let credential = toOAuthCredential(account);
     if (Date.now() >= credential.expires) {
-      credential = await openaiCodexOAuth.refresh(credential);
+      credential = await openaiCodexOAuth.refresh(
+        credential,
+        options?.signal ?? new AbortController().signal,
+      );
+      options?.signal?.throwIfAborted();
     }
 
     const updateResult = updateStoredOAuthAccount(authStorage, account, (current) =>
@@ -240,7 +255,9 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
       return undefined;
     }
 
-    return (await openaiCodexOAuth.toAuth(toOAuthCredential(updateResult.account))).apiKey;
+    const apiKey = (await openaiCodexOAuth.toAuth(toOAuthCredential(updateResult.account))).apiKey;
+    options?.signal?.throwIfAborted();
+    return apiKey;
   }
 
   getForcedAccountId(authStorage: AuthStorage): string | undefined {
@@ -250,8 +267,9 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
   async isAccountUsable(
     authStorage: AuthStorage,
     accountId: string,
-    options?: { apiKey?: string },
+    options?: { apiKey?: string; signal?: AbortSignal },
   ): Promise<boolean> {
+    options?.signal?.throwIfAborted();
     const account = getAccounts(authStorage).find((entry) => entry.accountId === accountId);
     if (!account || account.disabled) return false;
 
@@ -259,6 +277,7 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
       apiKey: options?.apiKey,
       refreshIfExpired: true,
       refreshIfMissing: true,
+      signal: options?.signal,
     });
     return (
       isUsageUsable(usageSnapshot.usage, nowSeconds()) && isAccountEnabled(authStorage, accountId)
@@ -298,7 +317,10 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
     account: CodexAccount,
   ): Promise<AccountRefreshResult | undefined> {
     try {
-      const refreshedCredentials = await openaiCodexOAuth.refresh(toOAuthCredential(account));
+      const refreshedCredentials = await openaiCodexOAuth.refresh(
+        toOAuthCredential(account),
+        new AbortController().signal,
+      );
       const updateResult = updateStoredOAuthAccount(authStorage, account, (current) =>
         shouldUpdateAccount(current, refreshedCredentials)
           ? mergeUpdatedCredentials(current, refreshedCredentials)
@@ -331,8 +353,10 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
       forceRefresh?: boolean;
       refreshIfExpired?: boolean;
       refreshIfMissing?: boolean;
+      signal?: AbortSignal;
     },
   ): Promise<UsageSnapshotResult> {
+    options?.signal?.throwIfAborted();
     const now = nowSeconds();
     const usage = account.usage;
     const shouldRefresh =
@@ -343,12 +367,20 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
 
     try {
       const apiKey =
-        options?.apiKey ?? (await this.getApiKeyForAccount(authStorage, account.accountId));
+        options?.apiKey ??
+        (await this.getApiKeyForAccount(authStorage, account.accountId, {
+          signal: options?.signal,
+        }));
       if (!apiKey) return { usage, refreshStatus: "failed" };
 
       const refreshedAccount =
         getAccounts(authStorage).find((entry) => entry.accountId === account.accountId) ?? account;
-      const refreshedUsage = await fetchUsage(apiKey, refreshedAccount.providerAccountId);
+      const refreshedUsage = await fetchUsage(
+        apiKey,
+        refreshedAccount.providerAccountId,
+        options?.signal,
+      );
+      options?.signal?.throwIfAborted();
       if (!refreshedUsage) return { usage, refreshStatus: "failed" };
 
       const updateResult = updateStoredOAuthAccount(authStorage, refreshedAccount, (current) => ({
@@ -363,6 +395,7 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
         refreshStatus: updateResult.status === "changed" ? "failed" : "succeeded",
       };
     } catch (error) {
+      options?.signal?.throwIfAborted();
       if (error instanceof UnexpectedUsageWindowError) {
         throw error;
       }
@@ -526,6 +559,7 @@ function matchesIdentifier(account: CodexAccount, identifier: string): boolean {
 async function fetchUsage(
   apiKey: string,
   providerAccountId?: string,
+  signal?: AbortSignal,
 ): Promise<AuthAccountUsage | undefined> {
   const headers: Record<string, string> = {
     Authorization: `Bearer ${apiKey}`,
@@ -535,7 +569,7 @@ async function fetchUsage(
     headers["ChatGPT-Account-Id"] = providerAccountId;
   }
 
-  const response = await fetch(USAGE_ENDPOINT, { method: "GET", headers });
+  const response = await fetch(USAGE_ENDPOINT, { method: "GET", headers, signal });
   if (!response.ok) return undefined;
 
   const root = asRecord((await response.json()) as unknown);

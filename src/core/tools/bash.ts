@@ -274,6 +274,7 @@ export function buildBashPresentation(args: {
   workingDirectory?: string;
   includeExitCode?: boolean;
   actionLabel?: string;
+  detailTruncation?: { maxLines: number; strategy: "head" | "middle" };
 }): ToolRunPresentation {
   const { truncationInfo, exitCode, durationMs } = args;
   const { model, captureTruncated } = truncationInfo;
@@ -317,6 +318,7 @@ export function buildBashPresentation(args: {
     subject: args.subject,
     details,
     metadata: summaryParts,
+    ...(args.detailTruncation ? { detailTruncation: args.detailTruncation } : {}),
     actionOverrides: args.actionLabel
       ? { succeeded: args.actionLabel, failed: args.actionLabel }
       : undefined,

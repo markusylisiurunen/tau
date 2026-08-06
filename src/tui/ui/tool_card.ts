@@ -15,9 +15,11 @@ function getPresentationStatus(
 function getMarker(status: ToolUiModel["status"]): string {
   switch (status) {
     case "streaming":
+      return "◌";
     case "queued":
+      return "○";
     case "running":
-      return "⏵";
+      return "»";
     case "succeeded":
       return "✓";
     case "failed":
@@ -31,6 +33,7 @@ function getStatusStyle(status: ToolUiModel["status"], theme: Theme): (text: str
   switch (status) {
     case "streaming":
     case "queued":
+      return theme.palette.textMuted;
     case "running":
       return theme.palette.actionRunning;
     case "succeeded":
@@ -119,8 +122,8 @@ function wrapByWord(text: string, firstLineWidth: number, continuationWidth: num
   return output;
 }
 
-function wrapSubject(model: ToolUiModel, width: number): string {
-  const prefixWidth = visibleWidth(` ${getMarker(model.status)} ${getActionText(model)} `);
+function wrapSubject(model: ToolUiModel, marker: string, width: number): string {
+  const prefixWidth = visibleWidth(` ${marker} ${getActionText(model)} `);
   const lines =
     model.presentation.subjectWrap === "character"
       ? wrapByCharacter(model.presentation.subject, width - prefixWidth, width - 1)
@@ -128,13 +131,19 @@ function wrapSubject(model: ToolUiModel, width: number): string {
   return lines.join("\n");
 }
 
-function renderToolCard(model: ToolUiModel, theme: Theme, subject: string, width: number): string {
+function renderToolCard(
+  model: ToolUiModel,
+  theme: Theme,
+  marker: string,
+  subject: string,
+  width: number,
+): string {
   const statusStyle = getStatusStyle(model.status, theme);
   const actionText = getActionText(model);
   const subjectLines = subject.split("\n");
   const firstSubjectLine = subjectLines[0] ?? "";
   const lines = [
-    ` ${theme.text.bold(statusStyle(getMarker(model.status)))} ${theme.palette.textMuted(actionText)} ${theme.palette.brandAccent(firstSubjectLine)}`,
+    ` ${theme.text.bold(statusStyle(marker))} ${theme.palette.textMuted(actionText)} ${theme.palette.brandAccent(firstSubjectLine)}`,
     ...subjectLines.slice(1).map((line) => ` ${theme.palette.brandAccent(line)}`),
     ...model.presentation.details.flatMap((line) => {
       const detailLines =
@@ -164,7 +173,8 @@ export class ToolCardComponent implements Component, UiComponent<ToolCardProps> 
 
   render(width: number): string[] {
     const { model, theme } = this.props;
-    const subject = wrapSubject(model, width);
-    return new Text(renderToolCard(model, theme, subject, width), 0, 0).render(width);
+    const marker = getMarker(model.status);
+    const subject = wrapSubject(model, marker, width);
+    return new Text(renderToolCard(model, theme, marker, subject, width), 0, 0).render(width);
   }
 }

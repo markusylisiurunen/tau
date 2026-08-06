@@ -1,14 +1,15 @@
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import chalk from "chalk";
 import stripAnsi from "strip-ansi";
 import { expect, test, vi } from "vitest";
 import { createCommandRegistry } from "../dist/core/commands/index.js";
+import { buildToolRunPresentation } from "../dist/core/tools/presentation.js";
 import { TuiChatView } from "../dist/tui/chat_view.js";
 import { AssistantMessageComponent } from "../dist/tui/ui/assistant_message.js";
 import { ChatContainerComponent } from "../dist/tui/ui/chat_container.js";
 import { renderChatMessage } from "../dist/tui/ui/chat_message_model.js";
-import { HeaderLineComponent } from "../dist/tui/ui/components/header_line.js";
+import { AutocompleteList } from "../dist/tui/ui/components/autocomplete_list.js";
 import {
-  OneLineSegmentsComponent,
   truncateFromEndByWidth,
   truncateFromEndByWidthPreserveAnsi,
 } from "../dist/tui/ui/components/one_line_segments.js";
@@ -19,7 +20,7 @@ import { RewindPickerComponent } from "../dist/tui/ui/rewind_picker.js";
 import { SessionDividerComponent } from "../dist/tui/ui/session_divider.js";
 import { SlashAutocompleteProvider } from "../dist/tui/ui/slash_autocomplete.js";
 import { SubagentPanelComponent } from "../dist/tui/ui/subagent_panel.js";
-import { createToolUiRegistry } from "../dist/tui/ui/tool_ui_registry.js";
+import { createUiTheme } from "../dist/tui/ui/theme/index.js";
 import { UserMessageComponent } from "../dist/tui/ui/user_message.js";
 import { createTagTheme, renderLines, renderText } from "./ui_helpers.js";
 
@@ -56,18 +57,16 @@ function createSubagentState(id, title) {
 
 function createToolModel(label) {
   const toolCallId = `tool-${label}`;
+  const presentation = buildToolRunPresentation({
+    toolName: "bash",
+    subject: label,
+    details: [{ text: "blocked" }],
+  });
   return {
     toolCallId,
     toolName: "bash",
     status: "blocked",
-    headerTarget: label,
-    activity: {
-      type: "bash_blocked",
-      toolCallId,
-      command: label,
-      headerTarget: label,
-      reason: "blocked",
-    },
+    presentation,
   };
 }
 
@@ -100,6 +99,49 @@ function applyCompletion(lines, cursorLine, cursorCol, item, prefix) {
 async function waitForAutocomplete(ms = 0) {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+test("TuiChatView switches repeatedly through its retained theme catalog", () => {
+  const previousLevel = chalk.level;
+  chalk.level = 3;
+  try {
+    const view = Object.create(TuiChatView.prototype);
+    view.terminalColors = {
+      foreground: { r: 0.8, g: 0.8, b: 0.8 },
+      background: { r: 0.1, g: 0.1, b: 0.1 },
+      appearance: "dark",
+    };
+    view.themes = [
+      {
+        id: "first",
+        tokens: { brandAccent: "#ff0000" },
+        sourcePath: "first",
+        scope: "project",
+      },
+      {
+        id: "second",
+        tokens: { brandAccent: "#00ff00" },
+        sourcePath: "second",
+        scope: "project",
+      },
+    ];
+    view.chatContainer = { setTheme() {} };
+    view.footer = { setTheme() {} };
+    view.pendingMessages = { setTheme() {} };
+    view.subagentPanel = { setTheme() {} };
+    view.editor = { setUiTheme() {} };
+    view.editorPane = { setTheme() {} };
+    view.ui = { invalidate() {}, requestRender() {} };
+
+    view.updateTheme("first");
+    const first = view.uiTheme.palette.brandAccent("selected");
+    view.updateTheme("second");
+    const second = view.uiTheme.palette.brandAccent("selected");
+
+    expect(first).not.toBe(second);
+  } finally {
+    chalk.level = previousLevel;
+  }
+});
 
 test("TuiChatView tool reconciliation does not reset subagent state", () => {
   const reconcileSession = vi.fn();
@@ -153,16 +195,33 @@ test("SessionDividerComponent renders a muted divider line", () => {
   expect(lines[0]).toBe("<textMuted>── new session ─────</textMuted>");
 });
 
+test("UserMessageComponent renders aligned plain text", () => {
+  const component = new UserMessageComponent(createUiTheme("plain"), {
+    text: "hey, how\nare you?",
+  });
+
+  expect(renderLines(component, 40)).toEqual([" hey, how", " are you?"]);
+
+  component.update({ text: "hey, how are you?" });
+  expect(renderLines(component, 12)).toEqual([" hey, how", " are you?"]);
+
+  component.update({ text: "**still plain**" });
+  expect(renderText(component, 40).trim()).toBe("**still plain**");
+});
+
 test("UserMessageComponent applies review styling", () => {
   const theme = createTagTheme();
   const component = new UserMessageComponent(theme, {
     text: "reviewed the staged changes",
     kind: "review",
   });
-  const text = renderText(component, 60);
+  const lines = renderLines(component, 60);
+  const text = lines.join("\n");
+  expect(lines.every((line) => stripTags(line).trim().length > 0)).toBe(true);
   expect(text).toContain("<userReviewSurface>");
-  expect(text).toContain("<userReviewText>reviewed the staged");
-  expect(text).toContain("changes</userReviewText>");
+  expect(text).toContain("<userReviewText>");
+  expect(text).toContain("<bold>");
+  expect(stripTags(text).trimStart()).toMatch(/^reviewed/);
 });
 
 test("renderChatMessage renders diff review status with review styling", () => {
@@ -221,8 +280,6 @@ test("renderChatMessage renders diff review status with review styling", () => {
     {
       theme,
       thoughtsVisible: false,
-      compactToolUi: true,
-      toolUiRegistry: createToolUiRegistry(),
     },
   );
 
@@ -294,9 +351,7 @@ test("AssistantMessageComponent toggles partial thinking visibility", () => {
 
 test("ChatContainerComponent hides empty assistant messages even when thoughts are visible", () => {
   const theme = createTagTheme();
-  const toolUiRegistry = createToolUiRegistry();
-  const container = new ChatContainerComponent(theme, toolUiRegistry, true);
-  container.setCompactToolUi(true);
+  const container = new ChatContainerComponent(theme, true);
 
   container.addMessage({ type: "tool", tool: createToolModel("tool a") });
   container.addMessage({ type: "assistant_partial", text: "", thinking: "" });
@@ -331,24 +386,47 @@ test("PendingMessagesComponent distinguishes steering and queued previews", () =
   );
 });
 
-test("FooterComponent renders session status", () => {
+test("FooterComponent renders dense session status", () => {
   const theme = createTagTheme();
   const ui = { requestRender() {} };
   const footer = new FooterComponent(theme, ui);
   footer.setStatus({
-    contextUsage: "ctx 10/100",
-    sessionCost: "$0.01",
+    cwdLabel: "~/Code/tau-one",
+    contextUsage: "↑578k ↓87k r58M w0 · 76.9%/372k",
+    sessionCost: "$63.52",
+    duration: "1m 1s",
     pursuingGoal: false,
   });
   const line = renderLines(footer, 120)[0];
-  expect(line).toContain("<textDim>ctx 10/100 · $0.01</textDim>");
+  expect(line).toContain(
+    "<textDim>1m 1s · ~/Code/tau-one · ↑578k ↓87k r58M w0 · 76.9%/372k · $63.52</textDim>",
+  );
 });
 
-test("FooterComponent labels active autonomous goal work", () => {
+test("FooterComponent replaces normal status with operation hints", () => {
   const theme = createTagTheme();
   const ui = { requestRender() {} };
   const footer = new FooterComponent(theme, ui);
   footer.setStatus({
+    cwdLabel: "~/Code/tau-one",
+    contextUsage: "ctx 10/100",
+    sessionCost: "$0.01",
+    duration: "12s",
+    statusHint: "compacting context...",
+    pursuingGoal: false,
+  });
+
+  const text = renderText(footer, 120);
+  expect(text).toContain("compacting context...");
+  expect(text).not.toContain("tau-one");
+});
+
+test("FooterComponent replaces normal status during active autonomous goal work", () => {
+  const theme = createTagTheme();
+  const ui = { requestRender() {} };
+  const footer = new FooterComponent(theme, ui);
+  footer.setStatus({
+    cwdLabel: "~/Code/tau-one",
     contextUsage: "ctx 10/100",
     sessionCost: "$0.01",
     duration: "24s",
@@ -357,35 +435,41 @@ test("FooterComponent labels active autonomous goal work", () => {
 
   const idleLine = renderLines(footer, 120)[0];
   expect(idleLine).not.toContain("pursuing goal");
-  expect(idleLine).toContain("<textDim>24s · ctx 10/100 · $0.01</textDim>");
+  expect(idleLine).toContain("<textDim>24s · ~/Code/tau-one · ctx 10/100 · $0.01</textDim>");
 
   footer.startWorkingIcon();
   try {
     const activeLine = renderLines(footer, 120)[0];
     expect(activeLine).toContain(
-      "<brandAccent>⠋</brandAccent> <brandAccent>pursuing goal</brandAccent> <textDim>·</textDim>",
+      "<brandAccent>⠋</brandAccent> <brandAccent>pursuing goal</brandAccent>",
     );
+    expect(activeLine).not.toContain("tau-one");
   } finally {
     footer.stop();
   }
 });
 
-test("FooterComponent compacts cwd before truncating and keeps ellipsis styled", () => {
+test("FooterComponent compacts cwd before truncating the complete status", () => {
   const theme = createTagTheme();
   const ui = { requestRender() {} };
   const footer = new FooterComponent(theme, ui);
   footer.setStatus({
+    cwdLabel: "~/Code/company/projects/tau-one",
     contextUsage: "ctx",
     sessionCost: "$0.01",
+    duration: "12s",
     pursuingGoal: false,
   });
 
-  const compactLine = renderLines(footer, 50)[0];
-  expect(compactLine).toContain("<textDim>ctx · $0.01</textDim>");
+  const compactLine = renderLines(footer, 42)[0];
+  expect(compactLine).toContain("~/…/tau-one");
+  expect(compactLine).toContain("ctx · $0.01");
 
   footer.setStatus({
+    cwdLabel: "~/Code/company/projects/tau-one",
     contextUsage: "this is a very long context usage string",
     sessionCost: "$0.01",
+    duration: "12s",
     pursuingGoal: false,
   });
 
@@ -393,37 +477,6 @@ test("FooterComponent compacts cwd before truncating and keeps ellipsis styled",
   expect(truncatedLine).toContain("<textDim>");
   expect(truncatedLine).toContain("…</textDim>");
   expect(truncatedLine).not.toContain("</textDim>…");
-});
-
-test("OneLineSegmentsComponent truncates flex segments", () => {
-  const component = new OneLineSegmentsComponent(
-    [
-      { text: "hello", style: (s) => s },
-      { text: "world", style: (s) => s },
-    ],
-    [1],
-  );
-  const line = renderLines(component, 8)[0];
-  expect(line).toBe("hellowo…");
-});
-
-test("HeaderLineComponent wraps styled header text by character", () => {
-  const component = new HeaderLineComponent({
-    segments: [
-      { text: " ", style: (s) => s },
-      { text: "✓", style: (s) => `<ok>${s}</ok>` },
-      { text: " ", style: (s) => s },
-      { text: "ran", style: (s) => `<muted>${s}</muted>` },
-      { text: " ", style: (s) => s },
-      { text: "alpha beta gamma delta epsilon", style: (s) => `<accent>${s}</accent>` },
-    ],
-  });
-
-  const lines = renderLines(component, 20);
-  expect(lines).toEqual([
-    " <ok>✓</ok> <muted>ran</muted> <accent>alpha beta ga</accent>",
-    "<accent>mma delta epsilon</accent>",
-  ]);
 });
 
 test("truncateFromEndByWidth respects max width", () => {
@@ -439,6 +492,20 @@ test("truncateFromEndByWidthPreserveAnsi keeps the ellipsis inside the active st
   expect(stripAnsi(truncated)).toBe("hello…");
   expect(truncated).toContain("hello…\x1b[0m");
   expect(truncated).not.toContain("\x1b[0m…");
+});
+
+test("CustomEditor renders a presentation-only placeholder when empty", () => {
+  const theme = createTagTheme();
+  const editor = new CustomEditor(theme);
+
+  const rendered = editor.render(80);
+  expect(rendered.map(stripTags)).toHaveLength(3);
+  expect(rendered.join("\n")).toContain("<editorPlaceholder>");
+  expect(rendered.join("\n")).toContain("ask the agent anything");
+  expect(editor.getText()).toBe("");
+
+  editor.setPlaceholderVisible(false);
+  expect(editor.render(80).join("\n")).not.toContain("ask the agent anything");
 });
 
 test("CustomEditor clamps wrapped lines to the inner width", () => {
@@ -560,6 +627,10 @@ test("CustomEditor refreshes slash autocomplete after insertTextAtCursor", async
   editor.handleInput("/");
   await waitForAutocomplete();
   expect(editor.isShowingAutocomplete()).toBe(true);
+  const autocomplete = editor.render(80).join("\n");
+  expect(autocomplete).not.toContain("→");
+  expect(autocomplete).toContain("<autocompleteSelectedSurface>");
+  expect(autocomplete).toContain("<autocompleteSelectedText>");
 
   editor.insertTextAtCursor("zzzz");
   await waitForAutocomplete();
@@ -570,6 +641,167 @@ test("CustomEditor refreshes slash autocomplete after insertTextAtCursor", async
   editor.handleInput("\r");
 
   expect(submitted).toBe("/zzzz");
+});
+
+test("AutocompleteList keeps truncated selection padding inside its full-width background", () => {
+  const theme = createTagTheme();
+  const list = new AutocompleteList(
+    [
+      {
+        value: "persona:gpt-5.6-sol-chatgpt-coder",
+        label: "persona:gpt-5.6-sol-chatgpt-coder",
+        description: "switch to gpt-5.6-sol-chatgpt-coder",
+      },
+    ],
+    5,
+    theme.editorTheme.selectList,
+    {
+      minPrimaryColumnWidth: 12,
+      maxPrimaryColumnWidth: 32,
+      truncatePrimary: ({ text, maxWidth }) => truncateToWidth(text, maxWidth, "…"),
+    },
+  );
+
+  const line = list.render(50)[0];
+  const plain = stripTags(line);
+  expect(line).toMatch(/^<autocompleteSelectedSurface>/);
+  expect(line).toMatch(/<\/autocompleteSelectedSurface>$/);
+  expect(line).toContain("<autocompleteSelectedText>");
+  expect(line).not.toContain("<textMuted>");
+  expect(line).not.toContain("\x1b");
+  expect(plain).toMatch(/^ \S/);
+  expect(plain).toMatch(/\s$/);
+  expect(plain).toContain("…");
+  expect(visibleWidth(plain)).toBe(50);
+});
+
+test("CustomEditor renders autocomplete items with one-column side padding", async () => {
+  const editor = new CustomEditor(createUiTheme("plain"));
+  editor.setAutocompleteProvider(createSlashProvider());
+
+  editor.handleInput("/");
+  await waitForAutocomplete();
+
+  const rendered = editor.render(50);
+  const suggestions = rendered.slice(3, 11);
+  expect(suggestions).toHaveLength(8);
+  for (const line of suggestions) {
+    expect(line).toMatch(/^ \S/);
+    expect(line).toMatch(/\s$/);
+    expect(visibleWidth(line)).toBe(50);
+  }
+  expect(rendered[11]).toMatch(/^ \(/);
+});
+
+test("SlashAutocompleteProvider exposes sorted command submenus", async () => {
+  const provider = createSlashProvider({
+    personas: [{ id: "zeta" }, { id: "alpha" }],
+    prompts: [{ id: "review" }],
+    themes: [{ id: "gold" }, { id: "cyan" }],
+  });
+  const options = { signal: new AbortController().signal };
+
+  const topLevel = await provider.getSuggestions(["/"], 0, 1, options);
+  const topLevelLabels = topLevel.items.map((item) => item.label);
+  expect(topLevelLabels).toEqual(
+    [...topLevelLabels].sort((left, right) => left.localeCompare(right)),
+  );
+  expect(topLevel.items.filter((item) => item.label === "persona")).toEqual([
+    expect.objectContaining({ value: "persona:", autocompleteAction: "navigate" }),
+  ]);
+  expect(topLevelLabels.every((label) => !label.includes(":"))).toBe(true);
+  expect(topLevelLabels).toEqual(
+    expect.arrayContaining(["compact-all", "compact-keep-last", "copy-code", "copy-text"]),
+  );
+  expect(topLevel.items.every((item) => item.description)).toBe(true);
+  expect(topLevel.items.find((item) => item.label === "help")?.description).toBe(
+    "show commands and keyboard shortcuts",
+  );
+  expect(topLevel.items.find((item) => item.label === "persona")?.description).toBe(
+    "change model, instructions, and tools",
+  );
+
+  const filtered = await provider.getSuggestions(["/pera"], 0, 5, options);
+  expect(filtered.items[0]?.label).toBe("persona");
+  expect(await provider.getSuggestions(["/keyboard"], 0, 9, options)).toBeNull();
+
+  const personas = await provider.getSuggestions(["/persona:"], 0, 9, options);
+  expect(personas.items.map((item) => item.label)).toEqual(["alpha", "zeta"]);
+  expect(personas.items.every((item) => item.autocompleteAction === "submit")).toBe(true);
+
+  const modelProvider = createSlashProvider({
+    personas: [
+      {
+        id: "gpt-5.6-luna-chatgpt-fast-coder",
+        label: "GPT-5.6 Luna ChatGPT Fast Coder",
+      },
+      { id: "gpt-5.6-sol-chatgpt-coder", label: "GPT-5.6 Sol ChatGPT Coder" },
+      {
+        id: "gpt-5.6-sol-chatgpt-fast-coder",
+        label: "GPT-5.6 Sol ChatGPT Fast Coder",
+      },
+    ],
+  });
+  const query = "/persona:5.6solchatgptcoder";
+  const matchingPersonas = await modelProvider.getSuggestions([query], 0, query.length, options);
+  expect(matchingPersonas.items.map((item) => item.label)).toEqual([
+    "gpt-5.6-sol-chatgpt-coder",
+    "gpt-5.6-sol-chatgpt-fast-coder",
+  ]);
+
+  const aliasProvider = createSlashProvider({
+    personas: [{ id: "alpha", label: "GPT Fast" }],
+  });
+  expect(
+    await aliasProvider.getSuggestions(["/persona:gptfast"], 0, "/persona:gptfast".length, options),
+  ).toBeNull();
+});
+
+test("CustomEditor navigates submenus and submits repeated theme selections", async () => {
+  const editor = new CustomEditor(createTagTheme());
+  const submitted = [];
+  editor.onSubmit = (text) => submitted.push(text);
+  editor.setAutocompleteProvider(createSlashProvider({ themes: [{ id: "gold" }, { id: "cyan" }] }));
+
+  for (const char of "/the") editor.handleInput(char);
+  await waitForAutocomplete(25);
+  editor.handleInput("\r");
+  await waitForAutocomplete();
+  expect(editor.getText()).toBe("/theme:");
+  expect(editor.isShowingAutocomplete()).toBe(true);
+  editor.handleInput("\x1b[B");
+  editor.handleInput("\r");
+  expect(submitted).toEqual(["/theme:gold"]);
+
+  editor.setUiTheme(createTagTheme());
+  for (const char of "/the") editor.handleInput(char);
+  await waitForAutocomplete(25);
+  editor.handleInput("\r");
+  await waitForAutocomplete();
+  editor.handleInput("\r");
+  expect(submitted).toEqual(["/theme:gold", "/theme:cyan"]);
+});
+
+test("CustomEditor refreshes autocomplete after word and line deletion", async () => {
+  const editor = new CustomEditor(createUiTheme("plain"));
+  editor.setAutocompleteProvider(
+    createSlashProvider({ personas: [{ id: "luna" }, { id: "sol" }] }),
+  );
+
+  for (const char of "/persona:luna") editor.handleInput(char);
+  await waitForAutocomplete();
+  expect(editor.isShowingAutocomplete()).toBe(true);
+  expect(editor.render(60).join("\n")).not.toContain(" sol");
+
+  editor.handleInput("\x17");
+  await waitForAutocomplete();
+  expect(editor.getText()).toBe("/persona:");
+  expect(editor.render(60).join("\n")).toContain(" sol");
+
+  editor.handleInput("\x15");
+  await waitForAutocomplete();
+  expect(editor.getText()).toBe("");
+  expect(editor.isShowingAutocomplete()).toBe(false);
 });
 
 test("CustomEditor keeps the exact file mention match from the real provider", async () => {
@@ -686,22 +918,39 @@ test("RewindPickerComponent shows at most eight options", () => {
   const items = Array.from({ length: 12 }, (_, index) => ({
     id: String(index),
     label: `message-${String(index + 1).padStart(2, "0")}`,
+    description: "now",
   }));
   const picker = new RewindPickerComponent(theme, items);
 
-  const lines = renderLines(picker, 60).map(stripTags);
+  const rendered = renderLines(picker, 60);
+  const lines = rendered.map(stripTags);
   const optionLines = lines.filter((line) => line.includes("message-"));
 
   expect(optionLines).toHaveLength(8);
+  expect(lines[0]).toBe(" rewind · enter select · esc cancel");
+  expect(lines.join("\n")).not.toMatch(/[┌┐└┘│]/);
+  expect(rendered.join("\n")).toContain("<autocompleteSelectedSurface>");
+  expect(rendered.join("\n")).toContain("<textMuted>now</textMuted>");
+  expect(lines.join("\n")).toContain(" now     message-12");
   expect(lines.join("\n")).toContain("message-12");
   expect(lines.join("\n")).not.toContain("message-01");
+});
+
+test("RewindPickerComponent gives the message the remaining terminal width", () => {
+  const message = "x".repeat(64);
+  const picker = new RewindPickerComponent(createUiTheme("plain"), [
+    { id: "0", label: message, description: "2m ago" },
+  ]);
+
+  expect(renderText(picker, 80)).toContain(message);
+  expect(renderText(picker, 30)).toContain("2m ago  x");
 });
 
 test("RewindPickerComponent confirms and cancels selection", () => {
   const theme = createTagTheme();
   const items = [
-    { id: "0", label: "first" },
-    { id: "1", label: "second" },
+    { id: "0", label: "first", description: "2m ago" },
+    { id: "1", label: "second", description: "now" },
   ];
   const picker = new RewindPickerComponent(theme, items);
 

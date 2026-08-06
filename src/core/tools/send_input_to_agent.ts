@@ -6,6 +6,7 @@ import { formatSendInputToAgentResult } from "../subagents/format.js";
 import type { SubagentStateSnapshot } from "../subagents/types.js";
 import { parseToolArgs } from "../utils/zod.js";
 import type { ToolActivity } from "./activity.js";
+import { buildToolRunPresentation } from "./presentation.js";
 import {
   type AgentTool,
   createTextToolOutcome,
@@ -14,7 +15,7 @@ import {
   type ToolExecutionOutcome,
   type ToolImplementationOutcome,
 } from "./registry.js";
-import { buildSubagentUiText } from "./subagent_ui.js";
+import { buildSubagentPresentation } from "./subagent_ui.js";
 import { TOOL_NAME_SEND_INPUT_TO_AGENT } from "./tool_names.js";
 
 const SEND_INPUT_TO_AGENT_DESCRIPTION = [
@@ -23,7 +24,7 @@ const SEND_INPUT_TO_AGENT_DESCRIPTION = [
   "Starting a new run replaces the previously retained response.",
 ].join(" ");
 
-const SEND_INPUT_TO_AGENT_ID_DESCRIPTION = "Subagent id to send input to.";
+const SEND_INPUT_TO_AGENT_ID_DESCRIPTION = "Single-line subagent id to send input to.";
 
 const SEND_INPUT_TO_AGENT_PROMPT_DESCRIPTION = [
   "The prompt to send to the subagent.",
@@ -35,7 +36,10 @@ export const SEND_INPUT_TO_AGENT_TOOL: Tool = {
   description: SEND_INPUT_TO_AGENT_DESCRIPTION,
   parameters: Type.Object(
     {
-      id: Type.String({ description: SEND_INPUT_TO_AGENT_ID_DESCRIPTION }),
+      id: Type.String({
+        description: SEND_INPUT_TO_AGENT_ID_DESCRIPTION,
+        pattern: "^[^\\r\\n]+$",
+      }),
       prompt: Type.String({ description: SEND_INPUT_TO_AGENT_PROMPT_DESCRIPTION }),
     },
     { additionalProperties: false },
@@ -43,7 +47,11 @@ export const SEND_INPUT_TO_AGENT_TOOL: Tool = {
 };
 
 const sendInputArgsSchema = z.object({
-  id: z.string().trim().min(1),
+  id: z
+    .string()
+    .trim()
+    .min(1)
+    .refine((id) => !/[\r\n]/.test(id), "Subagent ID must be a single line."),
   prompt: z.string().trim().min(1),
 });
 
@@ -51,7 +59,7 @@ function resolveSnapshotTarget(snapshot: SubagentStateSnapshot) {
   return { name: snapshot.name, title: snapshot.title };
 }
 
-function getSendInputDisplayTarget(raw: unknown, supervisor: AgentSupervisor): string {
+function getSendInputSubject(raw: unknown, supervisor: AgentSupervisor): string {
   const parsedArgs = parseToolArgs(sendInputArgsSchema, raw);
   if (!parsedArgs.ok) {
     return "(invalid arguments)";
@@ -63,9 +71,15 @@ function getSendInputDisplayTarget(raw: unknown, supervisor: AgentSupervisor): s
 export function createSendInputToAgentToolDefinition(supervisor: AgentSupervisor): AgentTool {
   return {
     schema: SEND_INPUT_TO_AGENT_TOOL,
-    describe: (toolCall) => ({
-      headerTarget: getSendInputDisplayTarget(toolCall.arguments, supervisor),
-    }),
+    describe: (toolCall) => {
+      const subject = getSendInputSubject(toolCall.arguments, supervisor);
+      return {
+        presentation: buildToolRunPresentation({
+          toolName: TOOL_NAME_SEND_INPUT_TO_AGENT,
+          subject,
+        }),
+      };
+    },
     async execute(
       toolCall: ToolCall,
       context: ToolExecutionContext,
@@ -73,20 +87,19 @@ export function createSendInputToAgentToolDefinition(supervisor: AgentSupervisor
       const { signal } = context;
       let id = "";
       let prompt = "";
-      const headerTarget = getSendInputDisplayTarget(toolCall.arguments, supervisor);
+      const subject = getSendInputSubject(toolCall.arguments, supervisor);
 
-      const blocked = (
-        reason: string,
-        details?: { id?: string; name?: string; title?: string },
-      ) => {
+      const blocked = (reason: string, details?: { title?: string }) => {
         const outcome = createTextToolOutcome(reason, "blocked");
         const uiEvent: ToolActivity = {
-          type: "send_input_to_agent_blocked",
+          type: "tool_call_blocked",
           toolCallId: toolCall.id,
-          agentId: details?.id ?? (id || undefined),
-          name: details?.name ?? undefined,
-          title: details?.title ?? headerTarget,
-          headerTarget: details?.title ?? headerTarget,
+          toolName: TOOL_NAME_SEND_INPUT_TO_AGENT,
+          presentation: buildToolRunPresentation({
+            toolName: TOOL_NAME_SEND_INPUT_TO_AGENT,
+            subject: details?.title ?? subject,
+            details: [{ text: reason }],
+          }),
           reason,
         };
         return {
@@ -105,7 +118,7 @@ export function createSendInputToAgentToolDefinition(supervisor: AgentSupervisor
 
       const snapshot = supervisor.getSnapshot(id);
       if (!snapshot) {
-        return executeTool(context, () => blocked(`Unknown subagent ID: ${id}`, { id, title: id }));
+        return executeTool(context, () => blocked(`Unknown subagent ID: ${id}`, { title: id }));
       }
 
       const target = resolveSnapshotTarget(snapshot);
@@ -116,22 +129,16 @@ export function createSendInputToAgentToolDefinition(supervisor: AgentSupervisor
           if (signal?.aborted) {
             const reason = "Aborted.";
             const outcome = createTextToolOutcome(reason, "cancelled");
-            const uiText = buildSubagentUiText({
-              output: reason,
-              statusText: `${target.name} · ${id}`,
-              maxOutputLines: 16,
-              fullText: reason,
+            const presentation = buildToolRunPresentation({
+              toolName: TOOL_NAME_SEND_INPUT_TO_AGENT,
+              subject: target.title,
             });
             const uiEvent: ToolActivity = {
-              type: "send_input_to_agent_finished",
+              type: "tool_call_finished",
               toolCallId: toolCall.id,
-              agentId: id,
-              name: target.name,
-              title: target.title,
-              headerTarget: target.title,
+              toolName: TOOL_NAME_SEND_INPUT_TO_AGENT,
+              presentation,
               status: "error",
-              message: reason,
-              uiText,
             };
             return { content: outcome.content, outcome: outcome.outcome, uiEvent };
           }
@@ -141,12 +148,14 @@ export function createSendInputToAgentToolDefinition(supervisor: AgentSupervisor
           if (!sendResult.ok) {
             const outcome = createTextToolOutcome(sendResult.reason, "blocked");
             const uiEvent: ToolActivity = {
-              type: "send_input_to_agent_blocked",
+              type: "tool_call_blocked",
               toolCallId: toolCall.id,
-              agentId: id,
-              name: target.name,
-              title: target.title,
-              headerTarget: target.title,
+              toolName: TOOL_NAME_SEND_INPUT_TO_AGENT,
+              presentation: buildToolRunPresentation({
+                toolName: TOOL_NAME_SEND_INPUT_TO_AGENT,
+                subject: target.title,
+                details: [{ text: sendResult.reason }],
+              }),
               reason: sendResult.reason,
             };
             return { content: outcome.content, outcome: outcome.outcome, uiEvent };
@@ -154,31 +163,29 @@ export function createSendInputToAgentToolDefinition(supervisor: AgentSupervisor
 
           const resultText = formatSendInputToAgentResult(sendResult.state, sendResult.capacity);
           const outcome = createTextToolOutcome(resultText, "succeeded");
-          const uiText = buildSubagentUiText({
+          const presentation = buildSubagentPresentation({
+            toolName: TOOL_NAME_SEND_INPUT_TO_AGENT,
+            subject: sendResult.state.title,
             output: prompt,
-            statusText: `${sendResult.state.name} · ${sendResult.state.id}`,
-            maxOutputLines: 16,
-            fullText: resultText,
+            detailTruncation: { maxLines: 17, strategy: "middle" },
           });
           const uiEvent: ToolActivity = {
-            type: "send_input_to_agent_finished",
+            type: "tool_call_finished",
             toolCallId: toolCall.id,
-            agentId: sendResult.state.id,
-            name: sendResult.state.name,
-            title: sendResult.state.title,
-            headerTarget: sendResult.state.title,
+            toolName: TOOL_NAME_SEND_INPUT_TO_AGENT,
+            presentation,
             status: "success",
-            uiText,
           };
           return { content: outcome.content, outcome: outcome.outcome, uiEvent };
         },
         {
-          type: "send_input_to_agent_started",
+          type: "tool_call_started",
           toolCallId: toolCall.id,
-          agentId: id,
-          name: target.name,
-          title: target.title,
-          headerTarget: target.title,
+          toolName: TOOL_NAME_SEND_INPUT_TO_AGENT,
+          presentation: buildToolRunPresentation({
+            toolName: TOOL_NAME_SEND_INPUT_TO_AGENT,
+            subject: target.title,
+          }),
         },
       );
     },

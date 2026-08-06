@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { buildToolRunPresentation } from "../dist/core/tools/presentation.js";
 import {
   applySessionProtocolDelta,
   createSessionProtocolDeltaMessage,
@@ -2363,7 +2364,10 @@ describe("session_protocol", () => {
                     type: "bash_started",
                     toolCallId: "tool-1",
                     command: "echo hi",
-                    headerTarget: "echo hi",
+                    presentation: buildToolRunPresentation({
+                      toolName: "bash",
+                      subject: "echo hi",
+                    }),
                   },
                 ],
               },

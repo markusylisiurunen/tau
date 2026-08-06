@@ -1,30 +1,31 @@
+import { type Component, type SelectItem, truncateToWidth } from "@earendil-works/pi-tui";
 import {
-  type Component,
-  type SelectItem,
-  SelectList,
-  type SelectListLayoutOptions,
-  truncateToWidth,
-  visibleWidth,
-} from "@earendil-works/pi-tui";
+  AutocompleteList,
+  type AutocompleteListLayoutOptions,
+} from "./components/autocomplete_list.js";
 import type { Theme } from "./theme/index.js";
 
 const REWIND_PICKER_MAX_VISIBLE = 8;
-const SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
-  minPrimaryColumnWidth: 12,
-  maxPrimaryColumnWidth: 32,
+const REWIND_LIST_LAYOUT: AutocompleteListLayoutOptions = {
+  minPrimaryColumnWidth: 8,
+  maxPrimaryColumnWidth: 12,
   truncatePrimary: ({ text, maxWidth }) => truncateToWidth(text, maxWidth, "…"),
+  primaryTone: "muted",
+  descriptionTone: "default",
+  descriptionBreakpoint: 0,
+  minDescriptionWidth: 0,
 };
 
 export type RewindPickerItem = {
   id: string;
   label: string;
-  description?: string;
+  description: string;
 };
 
 export class RewindPickerComponent implements Component {
   private theme: Theme;
   private readonly items: RewindPickerItem[];
-  private list: SelectList;
+  private list: AutocompleteList;
 
   public onSelect?: (id: string) => void;
   public onCancel?: () => void;
@@ -32,13 +33,13 @@ export class RewindPickerComponent implements Component {
   constructor(theme: Theme, items: RewindPickerItem[]) {
     this.theme = theme;
     this.items = items;
-    this.list = this.createSelectList(items);
+    this.list = this.createList(items);
   }
 
   setTheme(theme: Theme): void {
     const selected = this.list.getSelectedItem();
     this.theme = theme;
-    this.list = this.createSelectList(this.items);
+    this.list = this.createList(this.items);
 
     if (selected) {
       const index = this.items.findIndex((item) => item.id === selected.value);
@@ -53,74 +54,30 @@ export class RewindPickerComponent implements Component {
   }
 
   render(width: number): string[] {
-    if (width <= 1) {
-      return [this.borderColor()("─").repeat(Math.max(0, width))];
-    }
-
-    const innerWidth = Math.max(0, width - 2);
-    const header = this.renderHeaderLine(width, innerWidth);
-    const footer = this.renderFooterLine(innerWidth);
-    const vertical = this.borderColor()("│");
-    const listLines = this.list
-      .render(innerWidth)
-      .map((line) => `${vertical}${this.pad(line, innerWidth)}${vertical}`);
-
-    return [header, ...listLines, footer];
+    const header = truncateToWidth(" rewind · enter select · esc cancel", width, "…");
+    return [this.theme.palette.textDim(header), ...this.list.render(width)];
   }
 
   handleInput(data: string): void {
     this.list.handleInput(data);
   }
 
-  private createSelectList(items: RewindPickerItem[]): SelectList {
+  private createList(items: RewindPickerItem[]): AutocompleteList {
     const selectItems: SelectItem[] = items.map((item) => ({
       value: item.id,
-      label: item.label,
-      description: item.description,
+      label: item.description,
+      description: item.label,
     }));
 
-    const list = new SelectList(
+    const list = new AutocompleteList(
       selectItems,
       REWIND_PICKER_MAX_VISIBLE,
       this.theme.editorTheme.selectList,
-      SELECT_LIST_LAYOUT,
+      REWIND_LIST_LAYOUT,
     );
     list.setSelectedIndex(Math.max(0, selectItems.length - 1));
     list.onSelect = (item) => this.onSelect?.(item.value);
     list.onCancel = () => this.onCancel?.();
     return list;
-  }
-
-  private borderColor(): (text: string) => string {
-    return this.theme.editorBorderForReasoning("none");
-  }
-
-  private renderHeaderLine(width: number, innerWidth: number): string {
-    const borderColor = this.borderColor();
-    if (width === 2) {
-      return `${borderColor("╭")}${borderColor("╮")}`;
-    }
-
-    const leftCorner = borderColor("╭");
-    const rightCorner = borderColor("╮");
-    const dash = borderColor("─");
-    const label = this.theme.palette.textDim(" rewind ");
-
-    if (innerWidth <= 0 || innerWidth < visibleWidth(label)) {
-      return `${leftCorner}${dash.repeat(innerWidth)}${rightCorner}`;
-    }
-
-    const fillWidth = Math.max(0, innerWidth - visibleWidth(label));
-    return `${leftCorner}${label}${dash.repeat(fillWidth)}${rightCorner}`;
-  }
-
-  private renderFooterLine(innerWidth: number): string {
-    const borderColor = this.borderColor();
-    return `${borderColor("╰")}${borderColor("─").repeat(innerWidth)}${borderColor("╯")}`;
-  }
-
-  private pad(text: string, width: number): string {
-    const padding = Math.max(0, width - visibleWidth(text));
-    return `${text}${" ".repeat(padding)}`;
   }
 }

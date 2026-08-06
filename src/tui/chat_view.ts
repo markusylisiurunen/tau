@@ -1,16 +1,11 @@
 import type { AutocompleteProvider, Component } from "@earendil-works/pi-tui";
 import { Spacer, TUI } from "@earendil-works/pi-tui";
-import {
-  resolveThemeTokensById,
-  type ThemeAppearance,
-  type ThemeDefinition,
-} from "../core/config/index.js";
+import { resolveThemeTokensForAppearance, type ThemeDefinition } from "../core/config/index.js";
 import type { SubagentUiEvent } from "../core/subagents/types.js";
-import type { ToolActivity, ToolUiText } from "../core/tools/activity.js";
-import type { BashTruncationInfo } from "../core/tools/bash.js";
 import type { ReasoningEffort } from "../core/types.js";
 import type { SessionProtocolPendingUserMessage } from "../protocol/session_protocol.js";
 import { createAppTerminal } from "./terminal.js";
+import { FALLBACK_TERMINAL_COLORS, type TerminalColors } from "./terminal_appearance.js";
 import { ToolUiRouter } from "./tool_ui_router.js";
 import { ChatContainerComponent } from "./ui/chat_container.js";
 import type { AssistantMessageModel, ChatMessageModel } from "./ui/chat_message_model.js";
@@ -21,23 +16,28 @@ import { RewindPickerComponent, type RewindPickerItem } from "./ui/rewind_picker
 import { SubagentEditorPaneComponent } from "./ui/subagent_editor_pane.js";
 import { SubagentPanelComponent, type SubagentPanelSnapshot } from "./ui/subagent_panel.js";
 import type { SystemMessageKind } from "./ui/system_message.js";
-import { coercePaletteOverrides, createUiTheme, type Theme } from "./ui/theme/index.js";
+import {
+  coercePaletteOverrides,
+  createUiTheme,
+  deriveBuiltinPaletteOverrides,
+  type PaletteOverrides,
+  type Theme,
+} from "./ui/theme/index.js";
 import type { ToolUiModel } from "./ui/tool_ui_model.js";
-import { createToolUiRegistry } from "./ui/tool_ui_registry.js";
 
 export type ChatInputMode = "normal" | "bash" | "bash_incognito" | "recording";
 
 export type ChatViewStatus = {
   footer: {
+    cwdLabel: string;
     contextUsage: string;
     sessionCost: string;
     duration: string;
-    commandHint?: string;
+    statusHint?: string;
     pursuingGoal: boolean;
   };
   editor: {
     mode: ChatInputMode;
-    cwdLabel: string;
     personaName: string;
     reasoningLabel: string;
     reasoning?: ReasoningEffort;
@@ -47,7 +47,6 @@ export type ChatViewStatus = {
 export type ChatViewInputHandlers = {
   onCtrlC?: () => void;
   onCtrlT?: () => void;
-  onCtrlO?: () => void;
   onShiftTab?: () => void;
   onCtrlP?: () => void;
   onCtrlS?: () => void;
@@ -83,7 +82,6 @@ export interface ChatView {
     options?: { toastDurationMs?: number; persist?: boolean },
   ): void;
   setThinkingVisibility(show: boolean): void;
-  setCompactToolUi(compact: boolean): void;
   updateStatus(status: ChatViewStatus): void;
   startWorkingIcon(): void;
   stopWorkingIcon(): void;
@@ -108,15 +106,7 @@ export interface ChatView {
   getEditorLines(): string[];
   bindInputHandlers(handlers: ChatViewInputHandlers): void;
   setAutocompleteProvider(provider: AutocompleteProvider): void;
-  addBashExecutionMessage(args: {
-    command: string;
-    exitCode: number | null;
-    truncationInfo: BashTruncationInfo;
-    uiText: ToolUiText;
-    durationMs?: number;
-    labelOverride?: string;
-  }): void;
-  updateTheme(options: { themeId?: string; themes?: ThemeDefinition[] }): void;
+  updateTheme(themeId: string): void;
 }
 
 export class TuiChatView implements ChatView {
@@ -130,8 +120,8 @@ export class TuiChatView implements ChatView {
   private rewindPicker?: RewindPickerComponent;
   private activeInputPane: Component;
   private uiTheme: Theme;
-  private terminalAppearance: ThemeAppearance;
-  private toolUiRegistry = createToolUiRegistry();
+  private readonly terminalColors: TerminalColors;
+  private readonly themes: ThemeDefinition[];
   private toolUiRouter: ToolUiRouter;
   private lastStatus?: ChatViewStatus;
   private recordingIndicatorFrame = 0;
@@ -139,27 +129,16 @@ export class TuiChatView implements ChatView {
   private recordingIndicatorTimer?: ReturnType<typeof setInterval>;
 
   constructor(options: {
-    compactToolUi: boolean;
     showThinking: boolean;
-    terminalAppearance?: ThemeAppearance;
+    terminalColors?: TerminalColors;
     themeId?: string;
-    themes?: ThemeDefinition[];
+    themes: ThemeDefinition[];
   }) {
-    this.terminalAppearance = options.terminalAppearance ?? "dark";
-    const themeTokens = resolveThemeTokensById(
-      options.themeId,
-      options.themes,
-      this.terminalAppearance,
-    );
-    const paletteOverrides = coercePaletteOverrides(themeTokens);
-    this.uiTheme = createUiTheme("ansi", paletteOverrides);
+    this.terminalColors = options.terminalColors ?? FALLBACK_TERMINAL_COLORS;
+    this.themes = options.themes;
+    this.uiTheme = createUiTheme("ansi", this.resolvePaletteOverrides(options.themeId));
     this.ui = new TUI(createAppTerminal());
-    this.chatContainer = new ChatContainerComponent(
-      this.uiTheme,
-      this.toolUiRegistry,
-      options.showThinking,
-    );
-    this.chatContainer.setCompactToolUi(options.compactToolUi);
+    this.chatContainer = new ChatContainerComponent(this.uiTheme, options.showThinking);
     this.footer = new FooterComponent(this.uiTheme, this.ui);
     this.pendingMessages = new PendingMessagesComponent(this.uiTheme);
     this.subagentPanel = new SubagentPanelComponent(this.uiTheme);
@@ -243,19 +222,15 @@ export class TuiChatView implements ChatView {
     this.ui.requestRender();
   }
 
-  setCompactToolUi(compact: boolean): void {
-    this.chatContainer.setCompactToolUi(compact);
-    this.ui.requestRender();
-  }
-
   updateStatus(status: ChatViewStatus): void {
     this.lastStatus = status;
     this.setRecordingIndicatorActive(status.editor.mode === "recording");
     this.footer.setStatus({
+      cwdLabel: status.footer.cwdLabel,
       contextUsage: status.footer.contextUsage,
       sessionCost: status.footer.sessionCost,
       duration: status.footer.duration,
-      commandHint: status.footer.commandHint,
+      statusHint: status.footer.statusHint,
       pursuingGoal: status.footer.pursuingGoal,
     });
 
@@ -384,7 +359,6 @@ export class TuiChatView implements ChatView {
   bindInputHandlers(handlers: ChatViewInputHandlers): void {
     this.editor.onCtrlC = handlers.onCtrlC;
     this.editor.onCtrlT = handlers.onCtrlT;
-    this.editor.onCtrlO = handlers.onCtrlO;
     this.editor.onShiftTab = handlers.onShiftTab;
     this.editor.onCtrlP = handlers.onCtrlP;
     this.editor.onCtrlS = handlers.onCtrlS;
@@ -403,49 +377,17 @@ export class TuiChatView implements ChatView {
     this.editor.setAutocompleteProvider(provider);
   }
 
-  addBashExecutionMessage(args: {
-    command: string;
-    exitCode: number | null;
-    truncationInfo: BashTruncationInfo;
-    uiText: ToolUiText;
-    durationMs?: number;
-    labelOverride?: string;
-  }): void {
-    const toolCallId = `bash-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const headerTarget = args.command.split(/\r?\n/)[0] ?? args.command;
-    const event: ToolActivity = {
-      type: "bash_execution",
-      toolCallId,
-      command: args.command,
-      headerTarget,
-      exitCode: args.exitCode,
-      truncationInfo: args.truncationInfo,
-      uiText: args.uiText,
-      durationMs: args.durationMs,
-      labelOverride: args.labelOverride,
-    };
-    this.chatContainer.addMessage({
-      type: "tool",
-      tool: {
-        toolCallId,
-        toolName: "bash",
-        status: args.exitCode === 0 ? "succeeded" : "failed",
-        headerTarget,
-        activity: event,
-        resultText: args.uiText.fullLines.map((line) => line.text).join("\n"),
-      },
-    });
-    this.ui.requestRender();
+  private resolvePaletteOverrides(themeId: string | undefined): PaletteOverrides | undefined {
+    const theme = this.themes.find((candidate) => candidate.id === themeId);
+    const tokens = resolveThemeTokensForAppearance(theme, this.terminalColors.appearance);
+    const seeds = coercePaletteOverrides(tokens);
+    return theme?.scope === "builtin"
+      ? deriveBuiltinPaletteOverrides(seeds, this.terminalColors)
+      : seeds;
   }
 
-  updateTheme(options: { themeId?: string; themes?: ThemeDefinition[] }): void {
-    const themeTokens = resolveThemeTokensById(
-      options.themeId,
-      options.themes,
-      this.terminalAppearance,
-    );
-    const paletteOverrides = coercePaletteOverrides(themeTokens);
-    this.uiTheme = createUiTheme("ansi", paletteOverrides);
+  updateTheme(themeId: string): void {
+    this.uiTheme = createUiTheme("ansi", this.resolvePaletteOverrides(themeId));
 
     this.chatContainer.setTheme(this.uiTheme);
     this.footer.setTheme(this.uiTheme);
@@ -479,12 +421,13 @@ export class TuiChatView implements ChatView {
 
   private updateEditorVisualState(state: ChatViewStatus["editor"]): void {
     const { palette } = this.uiTheme;
+    this.editor.setPlaceholderVisible(state.mode === "normal");
     if (state.mode === "bash" || state.mode === "bash_incognito") {
-      this.editor.borderColor = (s: string) => palette.modeBash(s);
+      this.editor.borderColor = (s: string) => palette.editorBorderBash(s);
     } else if (state.mode === "recording") {
       this.editor.borderColor = (s: string) => palette.editorBorderRecording(s);
     } else {
-      this.editor.borderColor = this.uiTheme.editorBorderForReasoning(state.reasoning);
+      this.editor.borderColor = palette.editorBorder;
     }
 
     if (state.mode === "bash" || state.mode === "bash_incognito") {
@@ -504,7 +447,7 @@ export class TuiChatView implements ChatView {
       return;
     }
 
-    this.editor.setHeader(state.cwdLabel, `${state.personaName} (${state.reasoningLabel})`);
+    this.editor.setHeader("", `${state.personaName} (${state.reasoningLabel})`);
   }
 
   private setRecordingIndicatorActive(active: boolean): void {

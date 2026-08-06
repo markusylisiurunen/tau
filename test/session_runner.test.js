@@ -9,6 +9,7 @@ import { runDirectBashCommand } from "../dist/core/session/direct_bash.js";
 import { runModelSubturn, SequentialToolCallRunner } from "../dist/core/session/runner.js";
 import { BASH_DEFAULT_TIMEOUT_MS } from "../dist/core/tools/bash.js";
 import { scopeToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
+import { buildToolRunPresentation } from "../dist/core/tools/presentation.js";
 import { ToolRegistry } from "../dist/core/tools/registry.js";
 import { buildCompactionUserMessage } from "../dist/core/utils/compact.js";
 import { autocompleteProjectPathsWithBackend } from "../dist/core/utils/project_files.js";
@@ -455,14 +456,16 @@ describe("session runner", () => {
           description: "activity tool",
           parameters: { type: "object", properties: {}, additionalProperties: false },
         },
-        describe: () => ({ headerTarget: call.name }),
+        describe: () => ({
+          presentation: buildToolRunPresentation({ toolName: call.name, subject: call.name }),
+        }),
         execute: async (_call, context) => {
           await context.emitActivity({
             type: "tool_call_blocked",
             toolCallId: call.id,
             toolName: call.name,
-            headerTarget: call.name,
             reason: "activity",
+            presentation: buildToolRunPresentation({ toolName: call.name, subject: call.name }),
           });
           return { content: [{ type: "text", text: "done" }], outcome: "succeeded" };
         },
@@ -793,6 +796,8 @@ describe("session execution backend plumbing", () => {
     const result = await runDirectBashCommand({
       command: "echo hello",
       backend,
+      workingDirectory: "/repo",
+      actionLabel: "ran",
       signal,
       addToContext: true,
       addUserText,
@@ -811,6 +816,8 @@ describe("session execution backend plumbing", () => {
     await runDirectBashCommand({
       command: "echo skipped",
       backend,
+      workingDirectory: "/repo",
+      actionLabel: "ran",
       addToContext: false,
       addUserText,
       now: () => 100,
@@ -836,6 +843,8 @@ describe("session execution backend plumbing", () => {
     await runDirectBashCommand({
       command: "false",
       backend,
+      workingDirectory: "/repo",
+      actionLabel: "ran",
       addToContext: true,
       addUserText,
     });

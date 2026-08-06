@@ -14,6 +14,13 @@ function setupFixture() {
   };
 }
 
+function getToolText(result) {
+  return result.toolResult.content
+    .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join("\n");
+}
+
 async function runTool(tool, toolCall, signal = new AbortController().signal) {
   const activities = [];
   const outcome = await tool.execute(toolCall, {
@@ -63,6 +70,125 @@ describe("edit tool", () => {
         "input.txt",
         "output.txt",
       ]);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("enforces single-line paths in the tool contract", async () => {
+    const editTool = createEditToolDefinition(createLocalToolExecutionBackend());
+
+    expect(editTool.schema.parameters.properties.path.pattern).toBe("^[^\\r\\n]+$");
+
+    const result = await runTool(editTool, {
+      id: "tool-invalid-path",
+      name: TOOL_NAME_EDIT,
+      arguments: {
+        path: "one\ntwo",
+        oldText: "one",
+        newText: "two",
+      },
+    });
+
+    expect(result.toolResult.outcome).toBe("blocked");
+    expect(getToolText(result)).toBe("Invalid arguments: path must be a single line.");
+
+    const emptyOldText = await runTool(editTool, {
+      id: "tool-empty-old-text",
+      name: TOOL_NAME_EDIT,
+      arguments: {
+        path: "file.txt",
+        oldText: "",
+        newText: "two",
+      },
+    });
+
+    expect(emptyOldText.toolResult.outcome).toBe("blocked");
+    expect(getToolText(emptyOldText)).toBe("Invalid arguments: oldText must not be empty.");
+  });
+
+  it("renders the complete dim line diff with net metadata", async () => {
+    const fx = setupFixture();
+
+    try {
+      const filePath = join(fx.dir, "large-edit.txt");
+      const oldText = Array.from({ length: 20 }, (_, index) => `old ${index + 1}`).join("\n");
+      const newText = Array.from({ length: 22 }, (_, index) => `new ${index + 1}`).join("\n");
+      writeFileSync(filePath, oldText);
+
+      const editTool = createEditToolDefinition(createLocalToolExecutionBackend());
+      const result = await runTool(editTool, {
+        id: "tool-full-diff",
+        name: TOOL_NAME_EDIT,
+        arguments: { path: filePath, oldText, newText },
+      });
+
+      expect(result.toolResult.outcome).toBe("succeeded");
+      expect(getToolText(result)).toBe(`Successfully edited ${filePath}.`);
+      expect(result.uiEvent.presentation.details).toHaveLength(42);
+      expect(result.uiEvent.presentation.details.every((line) => line.wrap === "character")).toBe(
+        true,
+      );
+      expect(
+        result.uiEvent.presentation.details.slice(0, 20).every((line) => line.tone === "removed"),
+      ).toBe(true);
+      expect(
+        result.uiEvent.presentation.details.slice(20).every((line) => line.tone === "added"),
+      ).toBe(true);
+      expect(result.uiEvent.presentation.metadata).toEqual([
+        "+2 lines",
+        `+${newText.length - oldText.length} chars`,
+      ]);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("returns focused guidance for unmatched and ambiguous edits", async () => {
+    const fx = setupFixture();
+
+    try {
+      const filePath = join(fx.dir, "example.txt");
+      const editTool = createEditToolDefinition(createLocalToolExecutionBackend());
+
+      writeFileSync(filePath, "target");
+      const whitespaceMismatch = await runTool(editTool, {
+        id: "tool-whitespace-mismatch",
+        name: TOOL_NAME_EDIT,
+        arguments: { path: filePath, oldText: "  target  ", newText: "replacement" },
+      });
+      expect(getToolText(whitespaceMismatch)).toBe(
+        "No exact match for oldText was found in the file. Read the file first to see its current content. Hint: Found matches when ignoring leading/trailing whitespace.",
+      );
+
+      const multilineMismatch = await runTool(editTool, {
+        id: "tool-multiline-mismatch",
+        name: TOOL_NAME_EDIT,
+        arguments: { path: filePath, oldText: "target\nmissing", newText: "replacement" },
+      });
+      expect(getToolText(multilineMismatch)).toBe(
+        "No exact match for oldText was found in the file. Read the file first to see its current content.",
+      );
+
+      writeFileSync(filePath, "alpha and gamma");
+      const partialWords = await runTool(editTool, {
+        id: "tool-partial-words",
+        name: TOOL_NAME_EDIT,
+        arguments: { path: filePath, oldText: "alpha beta gamma", newText: "replacement" },
+      });
+      expect(getToolText(partialWords)).toBe(
+        "No exact match for oldText was found in the file. Read the file first to see its current content.",
+      );
+
+      writeFileSync(filePath, "target\ntarget");
+      const multipleMatches = await runTool(editTool, {
+        id: "tool-multiple-matches",
+        name: TOOL_NAME_EDIT,
+        arguments: { path: filePath, oldText: "target", newText: "replacement" },
+      });
+      expect(getToolText(multipleMatches)).toBe(
+        "Found 2 matches for oldText, but exactly 1 is required. Make oldText more specific to match only one location.",
+      );
     } finally {
       fx.cleanup();
     }

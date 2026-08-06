@@ -33,6 +33,9 @@ const shiftL = (lightnessDelta) => (color) => {
     .clone()
     .set("oklch.l", clamp(color.get("oklch.l") * 100 + lightnessDelta, 0, 100) / 100);
 };
+const scaleL = (factor) => (color) => {
+  return color.clone().set("oklch.l", clamp(color.get("oklch.l") * factor, 0, 1));
+};
 const scaleC = (factor) => (color) => {
   return color.clone().set("oklch.c", Math.max(0, color.get("oklch.c") * factor));
 };
@@ -44,35 +47,25 @@ const generatePalette = (brandHue, appearance) => {
   const HUE_SUCCESS = wrapHue(108);
   const HUE_WARN = wrapHue(36);
   const HUE_ERROR = wrapHue(12);
-  const HUE_CODE = wrapHue(HUE_BRAND + 24);
-  const HUE_EDITOR_BORDER = HUE_BRAND;
-  const HUE_EDITOR_SUBAGENT_BORDER = wrapHue(HUE_BRAND - 32);
-  const HUE_EDITOR_RECORDING_BORDER = HUE_ERROR;
+  const HUE_EDITOR_BORDER_BASH = wrapHue(92);
+  const HUE_EDITOR_BORDER_RECORDING = HUE_ERROR;
   const HUE_REVIEW = wrapHue(132);
-  const HUE_BASH = wrapHue(92);
 
   const isDark = appearance === "dark";
 
-  const brandAccent = makeColor(isDark ? 72 : 48, isDark ? 0.1 : 0.2, HUE_BRAND);
+  const brandAccent = makeColor(isDark ? 78 : 54, isDark ? 0.06 : 0.12, HUE_BRAND);
   const textMuted = transform(brandAccent, [scaleC(0.1), shiftL(isDark ? -8 : 8)]);
   const textDim = transform(brandAccent, [scaleC(0.05), shiftL(isDark ? -22 : 22)]);
-  const codeText = transform(brandAccent, [setH(HUE_CODE)]);
 
-  const editorBorder = transform(brandAccent, [
-    setH(HUE_EDITOR_BORDER),
-    scaleC(0.56),
-    shiftL(isDark ? -10 : 10),
+  const editorBorder = transform(brandAccent, [scaleL(0.88), scaleC(0.5)]);
+  const editorSpecialBorder = transform(brandAccent, [scaleC(0.9), setL(isDark ? 78 : 32)]);
+  const editorBorderBash = transform(editorSpecialBorder, [setH(HUE_EDITOR_BORDER_BASH)]);
+  const editorBorderRecording = transform(editorSpecialBorder, [setH(HUE_EDITOR_BORDER_RECORDING)]);
+  const userSurface = transform(brandAccent, [
+    scaleC(isDark ? 0.1 : 0.025),
+    setL(isDark ? 27 : 98),
   ]);
-  const editorSubagentBorder = transform(brandAccent, [
-    setH(HUE_EDITOR_SUBAGENT_BORDER),
-    scaleC(0.96),
-    shiftL(isDark ? 16 : 10),
-  ]);
-  const editorRecordingBorder = transform(brandAccent, [
-    setH(HUE_EDITOR_RECORDING_BORDER),
-    scaleC(0.72),
-    setL(isDark ? 72 : 38),
-  ]);
+  const userText = transform(brandAccent, [scaleC(0.06), setL(isDark ? 92 : 16)]);
 
   const actionRunning = transform(brandAccent, [
     setH(HUE_WARN),
@@ -98,7 +91,6 @@ const generatePalette = (brandHue, appearance) => {
   const toastWarn = transform(toastSuccess, [setH(HUE_WARN)]);
   const toastError = transform(toastSuccess, [setH(HUE_ERROR)]);
 
-  const userSurface = transform(brandAccent, [scaleC(isDark ? 0.01 : 0), setL(isDark ? 21 : 97)]);
   const userReviewSurface = transform(brandAccent, [
     setH(HUE_REVIEW),
     scaleC(isDark ? 0.16 : 0.03),
@@ -121,23 +113,19 @@ const generatePalette = (brandHue, appearance) => {
     textDim: toHex(textDim),
     linkText: toHex(brandAccent),
     thinkingText: toHex(textDim),
-    codeInlineText: toHex(codeText),
-    codeBlockText: toHex(codeText),
+    codeInlineText: toHex(brandAccent),
+    codeBlockText: toHex(brandAccent),
 
-    editorBorderNone: toHex(editorBorder),
-    editorBorderMinimal: toHex(editorBorder),
-    editorBorderLow: toHex(editorBorder),
-    editorBorderMedium: toHex(editorBorder),
-    editorBorderHigh: toHex(editorBorder),
-    editorBorderXhigh: toHex(editorBorder),
-    editorBorderMax: toHex(editorBorder),
-    editorSubagentBorder: toHex(editorSubagentBorder),
-    editorBorderRecording: toHex(editorRecordingBorder),
+    editorBorder: toHex(editorBorder),
+    editorSubagentBorder: toHex(editorBorder),
+    editorBorderBash: toHex(editorBorderBash),
+    editorBorderRecording: toHex(editorBorderRecording),
+    editorPlaceholder: toHex(textDim),
+    autocompleteSelectedSurface: toHex(userSurface),
+    autocompleteSelectedText: toHex(userText),
 
     statusWarn: toHex(statusWarn),
     statusError: toHex(statusError),
-
-    modeBash: toHex(transform(brandAccent, [setH(HUE_BASH), shiftL(isDark ? 12 : -10)])),
 
     actionRunning: toHex(actionRunning),
     actionSuccess: toHex(actionSuccess),
@@ -152,6 +140,7 @@ const generatePalette = (brandHue, appearance) => {
     toastError: toHex(toastError),
 
     userSurface: toHex(userSurface),
+    userText: toHex(userText),
     userReviewSurface: toHex(userReviewSurface),
     userReviewText: toHex(userReviewText),
     userReviewTextMuted: toHex(userReviewTextMuted),

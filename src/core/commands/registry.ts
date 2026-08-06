@@ -154,7 +154,6 @@ export class CommandRegistry<Ctx = unknown> {
       ["shift+tab", "cycle reasoning effort"],
       ["ctrl+p", "cycle personality"],
       ["ctrl+t", "toggle thoughts visibility"],
-      ["ctrl+o", "toggle compact tool UI"],
       ["ctrl+s", "stash input to clipboard"],
       ["ctrl+y", "toggle voice recording"],
       ["ctrl+enter", "steer running assistant with editor input"],
@@ -187,7 +186,7 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     id: "help",
     usage: "/help",
     description: "show this help",
-    autocompleteDescription: "show help",
+    autocompleteDescription: "show commands and keyboard shortcuts",
     argument: "none",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
@@ -201,7 +200,7 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     id: "exit",
     usage: "/exit",
     description: "exit tau",
-    autocompleteDescription: "exit tau",
+    autocompleteDescription: "close the TUI",
     argument: "none",
     allowDuringStreaming: true,
     parse: (raw) => {
@@ -216,7 +215,7 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     id: "new",
     usage: "/new",
     description: "new session",
-    autocompleteDescription: "new session",
+    autocompleteDescription: "start a new session",
     argument: "none",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
@@ -230,7 +229,7 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     id: "rewind",
     usage: "/rewind",
     description: "rewind context to an earlier user message",
-    autocompleteDescription: "rewind context to a selected user message",
+    autocompleteDescription: "choose an earlier user message",
     argument: "none",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
@@ -244,7 +243,7 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     id: "diff",
     usage: "/diff [git diff args...]",
     description: "open the local diff review tool for the session diff",
-    autocompleteDescription: "open diff review for git diff args",
+    autocompleteDescription: "review a git diff",
     argument: "none",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
@@ -281,13 +280,13 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
 
   registry.register({
     id: "compactSummaryOnly",
-    usage: "/compact:summary-only",
+    usage: "/compact-all",
     description: "summarize and start new session",
-    autocompleteDescription: "compact history to a summary",
+    autocompleteDescription: "replace all history with a summary",
     argument: "none",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
-      if (command !== "/compact:summary-only") return null;
+      if (command !== "/compact-all") return null;
       return { type: "compactSummaryOnly", extra };
     },
     run: (ctx, command) => ctx.compactSummaryOnly(command.extra),
@@ -295,13 +294,13 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
 
   registry.register({
     id: "compactSummaryAndLast",
-    usage: "/compact:summary-and-last",
+    usage: "/compact-keep-last",
     description: "summarize and include previous last assistant message",
-    autocompleteDescription: "compact history, keep last assistant message",
+    autocompleteDescription: "summarize history and retain the last response",
     argument: "none",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
-      if (command !== "/compact:summary-and-last") return null;
+      if (command !== "/compact-keep-last") return null;
       return { type: "compactSummaryAndLast", extra };
     },
     run: (ctx, command) => ctx.compactSummaryAndLast(command.extra),
@@ -325,7 +324,7 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     id: "listen",
     usage: "/listen",
     description: "start voice recording and transcription",
-    autocompleteDescription: "start voice recording",
+    autocompleteDescription: "record and transcribe voice input",
     argument: "none",
     allowDuringStreaming: true,
     parse: (raw) => {
@@ -340,7 +339,7 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     id: "speak",
     usage: "/speak",
     description: "speak the last assistant message aloud",
-    autocompleteDescription: "speak the last assistant message",
+    autocompleteDescription: "read the last response aloud",
     argument: "none",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
@@ -352,13 +351,13 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
 
   registry.register({
     id: "copyText",
-    usage: "/copy:text",
+    usage: "/copy-text",
     description: "copy last assistant message",
-    autocompleteDescription: "copy last assistant message",
+    autocompleteDescription: "copy the last response as plain text",
     argument: "none",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
-      if (command !== "/copy:text") return null;
+      if (command !== "/copy-text") return null;
       return { type: "copyText", extra };
     },
     run: (ctx) => ctx.copyText(),
@@ -366,13 +365,13 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
 
   registry.register({
     id: "copyCode",
-    usage: "/copy:code",
+    usage: "/copy-code",
     description: "copy code blocks from last assistant message",
-    autocompleteDescription: "copy code blocks from last assistant message",
+    autocompleteDescription: "copy code blocks from the last response",
     argument: "none",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
-      if (command !== "/copy:code") return null;
+      if (command !== "/copy-code") return null;
       return { type: "copyCode", extra };
     },
     run: (ctx) => ctx.copyCode(),
@@ -382,6 +381,7 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     id: "persona",
     usage: "/persona:<id>",
     description: "switch persona",
+    autocompleteDescription: "change model, instructions, and tools",
     argument: "persona",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
@@ -397,6 +397,7 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     id: "prompt",
     usage: "/prompt:<id>",
     description: "insert prompt template",
+    autocompleteDescription: "insert a saved prompt into the editor",
     argument: "prompt",
     allowDuringStreaming: true,
     parse: (raw) => {
@@ -413,6 +414,7 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
     id: "theme",
     usage: "/theme:<id>",
     description: "switch theme",
+    autocompleteDescription: "change TUI colors",
     argument: "theme",
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);

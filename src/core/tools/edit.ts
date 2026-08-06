@@ -3,8 +3,9 @@ import { Type } from "typebox";
 import { z } from "zod";
 import { buildLineDiff } from "../utils/line_diff.js";
 import { formatZodError } from "../utils/zod.js";
-import type { ToolActivity, ToolUiLine, ToolUiText } from "./activity.js";
+import type { ToolActivity } from "./activity.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
+import { buildToolRunPresentation, type ToolCardLine } from "./presentation.js";
 import {
   type AgentTool,
   createTextToolOutcome,
@@ -21,7 +22,7 @@ const EDIT_DESCRIPTION = [
   "Fails if the file doesn't exist, if oldText is not found, or if multiple matches exist.",
 ].join(" ");
 
-const EDIT_PATH_DESCRIPTION = "Absolute or relative path to the file to edit.";
+const EDIT_PATH_DESCRIPTION = "Single-line absolute or relative path to the file to edit.";
 const EDIT_OLD_TEXT_DESCRIPTION = [
   "The exact text to find and replace, including whitespace and newlines.",
   "Must match exactly one occurrence.",
@@ -34,7 +35,10 @@ export const EDIT_TOOL: Tool = {
   description: EDIT_DESCRIPTION,
   parameters: Type.Object(
     {
-      path: Type.String({ description: EDIT_PATH_DESCRIPTION }),
+      path: Type.String({
+        description: EDIT_PATH_DESCRIPTION,
+        pattern: "^[^\\r\\n]+$",
+      }),
       oldText: Type.String({ description: EDIT_OLD_TEXT_DESCRIPTION }),
       newText: Type.String({ description: EDIT_NEW_TEXT_DESCRIPTION }),
     },
@@ -42,11 +46,13 @@ export const EDIT_TOOL: Tool = {
   ),
 };
 
-const editArgsSchema = z.object({
-  path: z.string().trim().min(1),
-  oldText: z.string().min(1),
-  newText: z.string(),
-});
+const editArgsSchema = z
+  .object({
+    path: z.string(),
+    oldText: z.string(),
+    newText: z.string(),
+  })
+  .strict();
 
 function parseEditArgs(
   raw: unknown,
@@ -57,10 +63,20 @@ function parseEditArgs(
   if (!parsed.success) {
     return { ok: false, error: formatZodError(parsed.error) };
   }
-  return { ok: true, data: parsed.data };
+  const path = parsed.data.path.trim();
+  if (!path) {
+    return { ok: false, error: "path must not be empty." };
+  }
+  if (/[\r\n]/.test(path)) {
+    return { ok: false, error: "path must be a single line." };
+  }
+  if (!parsed.data.oldText) {
+    return { ok: false, error: "oldText must not be empty." };
+  }
+  return { ok: true, data: { ...parsed.data, path } };
 }
 
-function getEditDisplayTarget(raw: unknown): string {
+function getEditSubject(raw: unknown): string {
   const parsedArgs = parseEditArgs(raw);
   return parsedArgs.ok ? parsedArgs.data.path : "(invalid arguments)";
 }
@@ -78,56 +94,45 @@ function countOccurrences(content: string, search: string): number {
   return count;
 }
 
-function findMatchContext(content: string, search: string, contextLines: number = 2): string {
-  const index = content.indexOf(search);
-  if (index === -1) return "";
-
-  const lines = content.split(/\r?\n/);
-  const matchLineIndex = content.slice(0, index).split(/\r?\n/).length - 1;
-
-  const startLine = Math.max(0, matchLineIndex - contextLines);
-  const endLine = Math.min(lines.length - 1, matchLineIndex + contextLines);
-
-  const contextSnippet = lines.slice(startLine, endLine + 1).join("\n");
-  return `Lines ${startLine + 1}-${endLine + 1}:\n${contextSnippet}`;
+function formatSignedDelta(value: number, unit: string): string {
+  const prefix = value > 0 ? "+" : "";
+  return `${prefix}${value} ${unit}${Math.abs(value) === 1 ? "" : "s"}`;
 }
 
-function formatEditToolResultText(args: { summaryLine: string }): string {
-  return args.summaryLine;
-}
-
-function buildEditUiText(args: {
-  summaryLine: string;
-  statusLine: string;
+function buildEditPresentation(args: {
+  subject: string;
   diffLines: string[];
-}): ToolUiText {
-  const { summaryLine, statusLine, diffLines } = args;
-
-  const formatLine = (line: string): ToolUiLine => {
-    const text = line;
-    if (line.startsWith("+ ")) return { text, tone: "diffAdd" };
-    if (line.startsWith("- ")) return { text, tone: "diffRemove" };
-    return { text };
-  };
-
-  const previewLines: ToolUiLine[] = diffLines.map((line) => formatLine(line));
-
-  const fullLines: ToolUiLine[] = [{ text: summaryLine }];
-  if (diffLines.length > 0) {
-    fullLines.push({ text: "" }, ...diffLines.map((line) => formatLine(line)));
-  }
-
-  return {
-    previewLines,
-    statusLine,
-    fullLines,
-  };
+  added: number;
+  removed: number;
+  oldLength: number;
+  newLength: number;
+}) {
+  const details: ToolCardLine[] = args.diffLines.map((text) => {
+    if (text.startsWith("+ ")) return { text, tone: "added", wrap: "character" };
+    if (text.startsWith("- ")) return { text, tone: "removed", wrap: "character" };
+    return { text, wrap: "character" };
+  });
+  return buildToolRunPresentation({
+    toolName: TOOL_NAME_EDIT,
+    subject: args.subject,
+    details,
+    detailTruncation: false,
+    metadata: [
+      formatSignedDelta(args.added - args.removed, "line"),
+      formatSignedDelta(args.newLength - args.oldLength, "char"),
+    ],
+  });
 }
 
 export function createEditToolDefinition(backend: ToolExecutionBackend): AgentTool {
   return {
     schema: EDIT_TOOL,
-    describe: (toolCall) => ({ headerTarget: getEditDisplayTarget(toolCall.arguments) }),
+    describe: (toolCall) => {
+      const subject = getEditSubject(toolCall.arguments);
+      return {
+        presentation: buildToolRunPresentation({ toolName: TOOL_NAME_EDIT, subject }),
+      };
+    },
     async execute(
       toolCall: ToolCall,
       context: ToolExecutionContext,
@@ -135,7 +140,7 @@ export function createEditToolDefinition(backend: ToolExecutionBackend): AgentTo
       return executeTool(context, async () => {
         const parsedArgs = parseEditArgs(toolCall.arguments);
         const path = parsedArgs.ok ? parsedArgs.data.path : "";
-        const headerTarget = getEditDisplayTarget(toolCall.arguments);
+        const subject = getEditSubject(toolCall.arguments);
 
         const blocked = (
           reason: string,
@@ -146,7 +151,11 @@ export function createEditToolDefinition(backend: ToolExecutionBackend): AgentTo
             type: "edit_blocked",
             toolCallId: toolCall.id,
             path: path || "(invalid path)",
-            headerTarget,
+            presentation: buildToolRunPresentation({
+              toolName: TOOL_NAME_EDIT,
+              subject: subject,
+              details: [{ text: reason }],
+            }),
             reason,
           };
           return { content: outcome.content, outcome: outcome.outcome, uiEvent };
@@ -173,69 +182,43 @@ export function createEditToolDefinition(backend: ToolExecutionBackend): AgentTo
         const matchCount = countOccurrences(content, oldText);
 
         if (matchCount === 0) {
-          // Provide helpful context for debugging
+          const noMatchMessage =
+            "No exact match for oldText was found in the file. Read the file first to see its current content.";
           const trimmedOld = oldText.trim();
-          const trimmedCount = trimmedOld !== oldText ? countOccurrences(content, trimmedOld) : 0;
-
-          let hint = "";
-          if (trimmedCount > 0) {
-            hint =
-              " Hint: Found matches when ignoring leading/trailing whitespace. Check that your oldText exactly matches the file content, including whitespace.";
-          } else if (oldText.includes("\n")) {
-            hint =
-              " Hint: Your search contains newlines. Ensure line endings match the file (LF vs CRLF) and indentation is exact.";
-          } else {
-            // Check for partial matches
-            const words = oldText.split(/\s+/).filter((w) => w.length > 3);
-            const partialMatches = words.filter((w) => content.includes(w));
-            if (partialMatches.length > 0 && partialMatches.length < words.length) {
-              hint = ` Hint: Some words from oldText were found ('${partialMatches.slice(0, 3).join("', '")}'), but the exact string was not. Check for typos or extra whitespace.`;
-            }
-          }
-
+          const hasWhitespaceOnlyMismatch =
+            trimmedOld !== oldText && countOccurrences(content, trimmedOld) > 0;
           return blocked(
-            `No exact match for oldText was found in the file.${hint} Read the file first to see its current content.`,
+            hasWhitespaceOnlyMismatch
+              ? `${noMatchMessage} Hint: Found matches when ignoring leading/trailing whitespace.`
+              : noMatchMessage,
           );
         }
 
         if (matchCount > 1) {
-          const firstMatchContext = findMatchContext(content, oldText);
           return blocked(
-            `Found ${matchCount} matches for oldText, but exactly 1 is required. Make oldText more specific to match only one location.\n\nFirst match context:\n${firstMatchContext}`,
+            `Found ${matchCount} matches for oldText, but exactly 1 is required. Make oldText more specific to match only one location.`,
           );
         }
 
-        // Exactly one match -> perform the replacement
         const newContent = content.replace(oldText, () => newText);
 
         try {
           await backend.writeFile(path, newContent);
 
           const { lines: diffLines, added, removed } = buildLineDiff(oldText, newText);
-          const sizeDiff = newText.length - oldText.length;
-          const sizeDiffStr =
-            sizeDiff === 0
-              ? "Same size"
-              : sizeDiff > 0
-                ? `+${sizeDiff} chars`
-                : `${sizeDiff} chars`;
-          const summaryLine = `Successfully edited ${path}: ${oldText.length} → ${newText.length} chars (${sizeDiffStr})`;
-          const statusLine = `+${added}, -${removed} · ${oldText.length} → ${newText.length} chars (${sizeDiffStr})`;
-
-          const resultText = formatEditToolResultText({ summaryLine });
-
-          const outcome = createTextToolOutcome(resultText, "succeeded");
-          const uiText = buildEditUiText({ summaryLine, statusLine, diffLines });
+          const outcome = createTextToolOutcome(`Successfully edited ${path}.`, "succeeded");
           const uiEvent: ToolActivity = {
             type: "edit_success",
             toolCallId: toolCall.id,
             path,
-            headerTarget,
-            oldLength: oldText.length,
-            newLength: newText.length,
-            oldText,
-            newText,
-            uiText,
+            presentation: buildEditPresentation({
+              subject: subject,
+              diffLines,
+              added,
+              removed,
+              oldLength: oldText.length,
+              newLength: newText.length,
+            }),
           };
           return { content: outcome.content, outcome: outcome.outcome, uiEvent };
         } catch (e) {

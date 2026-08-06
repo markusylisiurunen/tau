@@ -7,7 +7,6 @@ import type {
   CommandClientToolConfig,
   Config,
   DiffToolConfig,
-  ThemeAppearance,
   ThemeDefinition,
 } from "../core/config/index.js";
 import { DIFF_REVIEW_TOOL } from "../core/diff_review/index.js";
@@ -23,6 +22,7 @@ import { TuiChatView } from "./chat_view.js";
 import { createCommandClientTools } from "./command_client_tools.js";
 import { EXIT_DOUBLE_PRESS_WINDOW_MS, EXIT_TOAST_DURATION_MS } from "./constants.js";
 import { SessionChatController } from "./session_chat_controller.js";
+import type { TerminalColors } from "./terminal_appearance.js";
 import { SlashAutocompleteProvider } from "./ui/slash_autocomplete.js";
 
 export type SessionChatAppOptions = {
@@ -30,7 +30,7 @@ export type SessionChatAppOptions = {
   client: TauSdkClient;
   configuredClientToolNames: string[];
   targetLabel: string;
-  terminalAppearance?: ThemeAppearance | Promise<ThemeAppearance>;
+  terminalColors?: TerminalColors | Promise<TerminalColors>;
   themeId?: string;
   themes?: ThemeDefinition[];
   config?: Config;
@@ -208,15 +208,14 @@ export class SessionChatApp {
 
   static async open(options: SessionChatAppOptions): Promise<SessionChatApp> {
     try {
-      const [session, terminalAppearance] = await Promise.all([
+      const [session, terminalColors] = await Promise.all([
         resolveSession(options.client, options.sessionSelection),
-        options.terminalAppearance,
+        options.terminalColors,
       ]);
       const snapshot = await session.snapshot();
       const view = new TuiChatView({
-        compactToolUi: true,
         showThinking: false,
-        terminalAppearance,
+        terminalColors,
         themeId: options.themeId,
         themes: options.themes ?? [],
       });

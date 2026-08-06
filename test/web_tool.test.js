@@ -315,6 +315,13 @@ describe("Exa web code-mode tool", () => {
     });
 
     expect(result.toolResult.outcome).toBe("succeeded");
+    expect(result.uiEvent.presentation.operation).toBe("web");
+    expect(result.uiEvent.presentation.metadata.some((part) => part.startsWith("exit "))).toBe(
+      false,
+    );
+    expect(result.uiEvent.presentation.metadata[0]).toMatch(/^(?:\d+ms|\d+(?:\.\d+)?s)$/);
+    expect(result.uiEvent.presentation.metadata[1]).toMatch(/^~\d+ tokens?$/);
+    expect(result.uiEvent.presentation.metadata[2]).toMatch(/^\d+ lines?$/);
     expect(client.search).toHaveBeenCalledWith(
       "tau",
       {
@@ -502,7 +509,10 @@ describe("Exa web code-mode tool", () => {
     const { result } = await run;
     expect(result.toolResult.outcome).toBe("cancelled");
     expect(getToolText(result)).toContain("(tau) aborted");
-    expect(result.uiEvent.uiText.previewLines).toContainEqual({ text: "(tau) aborted" });
+    expect(result.uiEvent.presentation.details).toContainEqual({
+      text: "(tau) aborted",
+      wrap: "word",
+    });
   });
 
   it("cancels and settles provider requests before returning", async () => {
@@ -566,8 +576,9 @@ describe("Exa web code-mode tool", () => {
     expect(providerSettled).toBe(true);
     expect(result.toolResult.outcome).toBe("cancelled");
     expect(getToolText(result)).toContain("(tau) timed out after 1000ms");
-    expect(result.uiEvent.uiText.previewLines).toContainEqual({
+    expect(result.uiEvent.presentation.details).toContainEqual({
       text: "(tau) timed out after 1000ms",
+      wrap: "word",
     });
   });
 

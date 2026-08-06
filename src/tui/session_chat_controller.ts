@@ -19,9 +19,14 @@ import { buildDiffReviewInstructions } from "../core/diff_review/review_instruct
 import { type CoreDeps, createDefaultCoreDeps } from "../core/runtime/deps.js";
 import { runDirectBashCommand } from "../core/session/direct_bash.js";
 import { SUBAGENT_ACTIVITY_FACET_KIND, type SubagentUiEvent } from "../core/subagents/types.js";
-import type { ToolActivity } from "../core/tools/activity.js";
+import {
+  buildToolRunPresentation,
+  parseToolRunPresentation,
+  TOOL_UI_FACET_VERSION,
+} from "../core/tools/presentation.js";
+import { TOOL_NAME_BASH } from "../core/tools/tool_names.js";
 import { REASONING_LEVELS, type ReasoningEffort } from "../core/types.js";
-import { formatAdaptiveNumber, formatTokenWindow } from "../core/utils/format.js";
+import { formatAdaptiveNumber, formatCwd, formatTokenWindow } from "../core/utils/format.js";
 import { extractAssistantText } from "../core/utils/messages.js";
 import { collectSpeechToTextContext } from "../core/utils/speech_to_text_context.js";
 import {
@@ -35,6 +40,7 @@ import type {
   SessionProtocolMessage,
   SessionProtocolPendingUserMessagesMessage,
   SessionProtocolSnapshot,
+  SessionProtocolToolRun,
 } from "../protocol/session_protocol.js";
 import { applySessionProtocolDelta } from "../protocol/session_protocol.js";
 import type {
@@ -47,13 +53,15 @@ import {
   copyAssistantCodeToClipboard,
   copyAssistantTextToClipboard,
 } from "./chat_controller/assistant_clipboard.js";
-import { getCommandHint } from "./chat_controller/command_hints.js";
 import {
   type DiffReviewReturnedReview,
   DiffReviewService,
 } from "./chat_controller/diff_review_service.js";
 import { formatDiffReviewUserMessage } from "./chat_controller/diff_review_user_message.js";
-import { formatRewindCandidateLabel } from "./chat_controller/history_labels.js";
+import {
+  formatRewindCandidateAge,
+  formatRewindCandidateLabel,
+} from "./chat_controller/history_labels.js";
 import {
   buildHistoryMessageModel,
   extractHistoryUserText,
@@ -139,8 +147,6 @@ export class SessionChatController {
   private isBashMode = false;
   private isBashIncognito = false;
   private showThinking = false;
-  private compactToolUi = true;
-  private commandHint?: string;
   private currentTurnStartedAt?: number;
   private lastTurnDurationMs = 0;
   private turnTimer?: ReturnType<typeof setInterval>;
@@ -206,7 +212,6 @@ export class SessionChatController {
 
   start(): void {
     this.view.setThinkingVisibility(this.showThinking);
-    this.view.setCompactToolUi(this.compactToolUi);
     this.view.addMessage({
       type: "app_intro",
       title: this.buildStartupIntroTitle(),
@@ -247,7 +252,6 @@ export class SessionChatController {
   getInputHandlers(): ChatViewInputHandlers {
     return {
       onCtrlT: () => this.toggleThinkingVisibility(),
-      onCtrlO: () => this.toggleCompactToolUi(),
       onShiftTab: () => void this.cycleReasoningLevel(),
       onCtrlP: () => void this.cyclePersonality(),
       onCtrlS: () => void this.stashEditorToClipboard(),
@@ -388,14 +392,13 @@ export class SessionChatController {
   }
 
   private switchTheme(themeId: string): void {
-    this.view.updateTheme({ themeId });
+    this.view.updateTheme(themeId);
     this.view.addSystemMessage(`theme set to ${themeId}`, "success");
   }
 
   private handleEditorChange(text: string): void {
     const wasBash = this.isBashMode;
     const wasBashIncognito = this.isBashIncognito;
-    const previousCommandHint = this.commandHint;
 
     if (text.trim().length > 0) {
       this.lastEmptySubmitAt = undefined;
@@ -405,27 +408,10 @@ export class SessionChatController {
     const isIncognito = trimmed.startsWith("!!");
     this.isBashIncognito = isIncognito;
     this.isBashMode = trimmed.startsWith("!") && !isIncognito;
-    this.commandHint = this.getCommandHintForInput(text);
 
-    if (
-      wasBash !== this.isBashMode ||
-      wasBashIncognito !== this.isBashIncognito ||
-      previousCommandHint !== this.commandHint
-    ) {
+    if (wasBash !== this.isBashMode || wasBashIncognito !== this.isBashIncognito) {
       this.refreshStatus();
     }
-  }
-
-  private getCommandHintForInput(text: string): string | undefined {
-    const trimmed = text.trimStart();
-    if (!trimmed.startsWith("/") || !this.isSingleLineInput(text)) {
-      return undefined;
-    }
-    const parsed = this.commandRegistry.parse(trimmed);
-    if (parsed.type === "unknown") {
-      return undefined;
-    }
-    return getCommandHint(parsed);
   }
 
   getAutocompleteSources(): {
@@ -524,22 +510,19 @@ export class SessionChatController {
     }
 
     const toolCallId = `bash-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const headerTarget = command.split(/\r?\n/, 1)[0] ?? command;
+    const workingDirectory = this.snapshot.executionEnvironment.cwd;
 
     this.isStreaming = true;
     this.startTurnTimer();
     this.view.startWorkingIcon();
     this.view.updateLocalToolUi({
       toolCallId,
-      toolName: "bash",
       status: "running",
-      headerTarget,
-      activity: {
-        type: "bash_started",
-        toolCallId,
-        command,
-        headerTarget,
-      },
+      presentation: buildToolRunPresentation({
+        toolName: TOOL_NAME_BASH,
+        subject: command,
+        metadata: [formatCwd(workingDirectory)],
+      }),
     });
     this.refreshStatus();
 
@@ -551,6 +534,8 @@ export class SessionChatController {
       const result = await runDirectBashCommand({
         command,
         backend,
+        workingDirectory,
+        actionLabel: options.labelOverride,
         addToContext: options.addToContext,
         addUserText: async (text) => {
           const recorded = await this.session.record(text, {
@@ -565,38 +550,21 @@ export class SessionChatController {
       }
       this.view.updateLocalToolUi({
         toolCallId,
-        toolName: "bash",
         status: result.exitCode === 0 ? "succeeded" : "failed",
-        headerTarget,
-        activity: {
-          type: "bash_execution",
-          toolCallId,
-          command: result.command,
-          headerTarget,
-          exitCode: result.exitCode,
-          truncationInfo: result.truncationInfo,
-          uiText: result.uiText,
-          durationMs: result.durationMs,
-          labelOverride: options.labelOverride,
-        },
-        resultText: result.uiText.fullLines.map((line) => line.text).join("\n"),
+        presentation: result.presentation,
       });
       await this.syncFromSessionSnapshot();
     } catch (error) {
       const reason = (error as Error).message || "bash failed";
       this.view.updateLocalToolUi({
         toolCallId,
-        toolName: "bash",
         status: "blocked",
-        headerTarget,
-        activity: {
-          type: "bash_blocked",
-          toolCallId,
-          command,
-          headerTarget,
-          reason,
-        },
-        resultText: reason,
+        presentation: buildToolRunPresentation({
+          toolName: TOOL_NAME_BASH,
+          subject: command,
+          details: [{ text: reason }],
+          metadata: [formatCwd(workingDirectory)],
+        }),
       });
       await this.syncFromSessionSnapshot();
     } finally {
@@ -1574,15 +1542,6 @@ export class SessionChatController {
     );
   }
 
-  private toggleCompactToolUi(): void {
-    this.compactToolUi = !this.compactToolUi;
-    this.view.setCompactToolUi(this.compactToolUi);
-    this.view.addSystemMessage(
-      this.compactToolUi ? "compact tool ui enabled" : "compact tool ui disabled",
-      "success",
-    );
-  }
-
   private async cyclePersonality(): Promise<void> {
     const personas = this.snapshot.catalog.personas;
     if (personas.length === 0) {
@@ -1868,17 +1827,17 @@ export class SessionChatController {
   private refreshStatus(): void {
     this.view.updateStatus({
       footer: {
+        cwdLabel: this.getFooterCwdLabel(),
         contextUsage: this.getContextUsageString(),
         sessionCost: this.getSessionCostString(),
         duration: this.getTurnDurationString(),
-        commandHint: this.diffReviewService.getCommandHint(
-          this.getSessionOperationStatusHint() ?? this.speechStatusHint ?? this.commandHint,
+        statusHint: this.diffReviewService.getStatusHint(
+          this.getSessionOperationStatusHint() ?? this.speechStatusHint,
         ),
         pursuingGoal: this.snapshot.goal?.status === "active",
       },
       editor: {
         mode: this.getInputMode(),
-        cwdLabel: this.getFooterCwdLabel(),
         personaName: this.getCurrentPersonaSnapshot()?.label ?? this.snapshot.settings.personaId,
         reasoningLabel: this.snapshot.settings.reasoning ?? "none",
         reasoning:
@@ -1920,7 +1879,7 @@ export class SessionChatController {
       ? this.getContextWindowForLastTurn(last)
       : this.getBootstrapContextWindow();
     const { input, read, write, output } = this.getSessionUsageTotals();
-    const stats = `↑${formatTokenWindow(input)} ↓${formatTokenWindow(output)} (r${formatTokenWindow(read)} w${formatTokenWindow(write)})`;
+    const stats = `↑${formatTokenWindow(input)} ↓${formatTokenWindow(output)} r${formatTokenWindow(read)} w${formatTokenWindow(write)}`;
     const contextWindowUsageTokens = getAssistantContextWindowUsage(last);
     const percent = windowTokens > 0 ? (contextWindowUsageTokens / windowTokens) * 100 : 0;
     const percentStr = `${formatAdaptiveNumber(percent, 1, 3)}%`;
@@ -2231,6 +2190,7 @@ export class SessionChatController {
       return;
     }
 
+    const now = Date.now();
     const candidates = this.snapshot.messages.flatMap((entry) => {
       if (
         !entry.modelVisible ||
@@ -2248,6 +2208,7 @@ export class SessionChatController {
           id: entry.id,
           text,
           label: formatRewindCandidateLabel(text),
+          description: formatRewindCandidateAge(entry.message.timestamp, now),
         },
       ];
     });
@@ -2258,7 +2219,7 @@ export class SessionChatController {
     }
 
     this.view.showRewindPicker({
-      items: candidates.map(({ id, label }) => ({ id, label })),
+      items: candidates.map(({ id, label, description }) => ({ id, label, description })),
       onSelect: (id) => {
         const selected = candidates.find((candidate) => candidate.id === id);
         if (!selected) {
@@ -2497,16 +2458,15 @@ function isCoreMessage(message: SessionProtocolMessage["message"]): message is M
   }
 }
 
-function isToolUiEvent(value: unknown): value is ToolActivity {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "type" in value &&
-    typeof value.type === "string" &&
-    "toolCallId" in value &&
-    typeof value.toolCallId === "string"
-  );
-}
+const RECOVERED_TOOL_ACTION_LABELS = {
+  preparing: "preparing",
+  queued: "queued",
+  running: "running",
+  succeeded: "completed",
+  failed: "failed",
+  blocked: "blocked",
+  cancelled: "cancelled",
+};
 
 function getToolUiModelsInModelOrder(snapshot: SessionProtocolSnapshot): ToolUiModel[] {
   const facetsByToolId = new Map<string, SessionProtocolSnapshot["facets"][string]>();
@@ -2515,55 +2475,81 @@ function getToolUiModelsInModelOrder(snapshot: SessionProtocolSnapshot): ToolUiM
       facetsByToolId.set(facet.subject.id, facet);
     }
   }
-  const messagesById = new Map(snapshot.messages.map((message) => [message.id, message]));
 
   return getToolIdsInModelOrder(snapshot).map((toolId) => {
     const tool = snapshot.tools[toolId]!;
-    const activities = toolUiEventsFromFacet(facetsByToolId.get(toolId));
-    const activity = activities.at(-1);
-    const resultMessage =
-      tool.status === "streaming" ? undefined : messagesById.get(tool.resultMessageId ?? "");
-    const resultMessageText =
-      resultMessage?.message.role === "toolResult"
-        ? resultMessage.message.content
-            .flatMap((content) => (content.type === "text" ? [content.text] : []))
-            .join("\n")
-        : undefined;
-    const resultText =
-      resultMessageText || (tool.status === "streaming" ? undefined : (tool.error ?? tool.summary));
-    const activityCode = activity && "code" in activity ? activity.code : undefined;
-    const code = activityCode ?? getToolCallCode(tool, messagesById);
     return {
       toolCallId: tool.toolCallId,
-      toolName: tool.toolName,
       status: tool.status,
-      headerTarget: activity?.headerTarget ?? tool.toolName,
-      ...(code !== undefined ? { code } : {}),
-      ...(activity ? { activity } : {}),
-      ...(resultText ? { resultText } : {}),
+      presentation: getToolPresentation(snapshot, tool, facetsByToolId.get(toolId)),
     };
   });
 }
 
-function getToolCallCode(
-  tool: SessionProtocolSnapshot["tools"][string],
-  messagesById: ReadonlyMap<string, SessionProtocolMessage>,
-): string | undefined {
-  if (tool.status === "streaming") return undefined;
-  const message = messagesById.get(tool.call.messageId);
-  if (message?.message.role !== "assistant") return undefined;
-  const content = message.message.content[tool.call.contentIndex];
+function getToolPresentation(
+  snapshot: SessionProtocolSnapshot,
+  tool: SessionProtocolToolRun,
+  facet: SessionProtocolSnapshot["facets"][string] | undefined,
+) {
+  if (facet?.kind !== "tau.tool-ui-events" || facet.version !== TOOL_UI_FACET_VERSION) {
+    return buildRecoveredToolPresentation(snapshot, tool);
+  }
+  if (!Array.isArray(facet.data.events)) {
+    throw new Error(`missing tool presentation for '${tool.toolCallId}'`);
+  }
+  const event = facet.data.events.at(-1);
   if (
-    content?.type !== "toolCall" ||
-    content.id !== tool.toolCallId ||
-    typeof content.arguments !== "object" ||
-    content.arguments === null ||
-    !("code" in content.arguments) ||
-    typeof content.arguments.code !== "string"
+    typeof event !== "object" ||
+    event === null ||
+    !("toolCallId" in event) ||
+    event.toolCallId !== tool.toolCallId ||
+    !("presentation" in event)
   ) {
+    throw new Error(`missing tool presentation for '${tool.toolCallId}'`);
+  }
+  return parseToolRunPresentation(event.presentation);
+}
+
+function buildRecoveredToolPresentation(
+  snapshot: SessionProtocolSnapshot,
+  tool: SessionProtocolToolRun,
+) {
+  const result = getRecoveredToolResult(snapshot, tool);
+  return buildToolRunPresentation({
+    toolName: tool.toolName,
+    subject: tool.toolName,
+    details: result ? [{ text: result, wrap: "character" }] : [],
+    actionOverrides: RECOVERED_TOOL_ACTION_LABELS,
+  });
+}
+
+function getRecoveredToolResult(
+  snapshot: SessionProtocolSnapshot,
+  tool: SessionProtocolToolRun,
+): string | undefined {
+  if (tool.status === "streaming") {
     return undefined;
   }
-  return content.arguments.code;
+
+  const resultEntry = tool.resultMessageId
+    ? snapshot.messages.find((entry) => entry.id === tool.resultMessageId)
+    : snapshot.messages.find(
+        (entry) =>
+          entry.message.role === "toolResult" && entry.message.toolCallId === tool.toolCallId,
+      );
+  const resultMessage = resultEntry?.message;
+  if (resultMessage?.role === "toolResult" && resultMessage.toolCallId === tool.toolCallId) {
+    const text = resultMessage.content
+      .filter((block): block is { type: "text"; text: string } => block.type === "text")
+      .map((block) => block.text)
+      .join("\n")
+      .trimEnd();
+    if (text) {
+      return text;
+    }
+  }
+
+  return tool.error?.trim() || tool.summary?.trim() || undefined;
 }
 
 function getToolIdsInModelOrder(snapshot: SessionProtocolSnapshot): string[] {
@@ -2581,15 +2567,6 @@ function getToolIdsInModelOrder(snapshot: SessionProtocolSnapshot): string[] {
       );
     })
     .map((tool) => tool.id);
-}
-
-function toolUiEventsFromFacet(
-  facet: SessionProtocolSnapshot["facets"][string] | undefined,
-): ToolActivity[] {
-  if (facet?.kind !== "tau.tool-ui-events" || !Array.isArray(facet.data.events)) {
-    return [];
-  }
-  return facet.data.events.filter(isToolUiEvent);
 }
 
 function getSubagentActivity(

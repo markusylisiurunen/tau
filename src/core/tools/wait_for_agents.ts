@@ -4,9 +4,9 @@ import { z } from "zod";
 import type { AgentSupervisor } from "../subagents/agent_supervisor.js";
 import { formatWaitForAgentsResult } from "../subagents/format.js";
 import type { SubagentStateSnapshot } from "../subagents/types.js";
-import { truncateForTokens } from "../utils/truncate.js";
 import { parseToolArgs } from "../utils/zod.js";
 import type { ToolActivity } from "./activity.js";
+import { buildToolRunPresentation, type ToolCardLineInput } from "./presentation.js";
 import {
   type AgentTool,
   createTextToolOutcome,
@@ -15,7 +15,7 @@ import {
   type ToolExecutionOutcome,
   type ToolImplementationOutcome,
 } from "./registry.js";
-import { buildSubagentUiText, formatSubagentStatusLine } from "./subagent_ui.js";
+import { buildSubagentPresentation, formatSubagentMetadata } from "./subagent_ui.js";
 import { TOOL_NAME_WAIT_FOR_AGENTS } from "./tool_names.js";
 
 const WAIT_FOR_AGENTS_DESCRIPTION = [
@@ -24,69 +24,123 @@ const WAIT_FOR_AGENTS_DESCRIPTION = [
   "Responses are retained and may be read repeatedly by calling this tool again with a completed agent id.",
 ].join(" ");
 
-const WAIT_FOR_AGENTS_IDS_DESCRIPTION = "List of subagent ids to wait for.";
-const WAIT_FOR_AGENTS_OUTPUT_MAX_TOKENS = 256;
+const WAIT_FOR_AGENTS_IDS_DESCRIPTION = "List of single-line subagent ids to wait for.";
+const WAIT_FOR_AGENTS_RESPONSE_MAX_LINES = 17;
 
 export const WAIT_FOR_AGENTS_TOOL: Tool = {
   name: TOOL_NAME_WAIT_FOR_AGENTS,
   description: WAIT_FOR_AGENTS_DESCRIPTION,
   parameters: Type.Object(
     {
-      ids: Type.Array(Type.String({ description: WAIT_FOR_AGENTS_IDS_DESCRIPTION }), {
-        minItems: 1,
-      }),
+      ids: Type.Array(
+        Type.String({
+          description: WAIT_FOR_AGENTS_IDS_DESCRIPTION,
+          pattern: "^[^\\r\\n]+$",
+        }),
+        { minItems: 1 },
+      ),
     },
     { additionalProperties: false },
   ),
 };
 
 const waitArgsSchema = z.object({
-  ids: z.array(z.string().trim().min(1)).min(1),
+  ids: z
+    .array(
+      z
+        .string()
+        .trim()
+        .min(1)
+        .refine((id) => !/[\r\n]/.test(id), "Subagent ID must be a single line."),
+    )
+    .min(1),
 });
 
 function getWaitDurationMs(states: SubagentStateSnapshot[]): number | undefined {
-  if (states.length === 0) return undefined;
-  let earliest = Number.POSITIVE_INFINITY;
-  let latest = 0;
-  for (const state of states) {
-    earliest = Math.min(earliest, state.run.startedAt);
-    latest = Math.max(latest, state.run.status === "running" ? Date.now() : state.run.finishedAt);
-  }
-  return Number.isFinite(earliest) ? Math.max(0, latest - earliest) : undefined;
+  const durations = states.flatMap((state) =>
+    state.run.status === "running" ? [] : [Math.max(0, state.run.finishedAt - state.run.startedAt)],
+  );
+  return durations.length > 0 ? Math.max(...durations) : undefined;
 }
 
 function getWaitCostTotal(states: SubagentStateSnapshot[]): number {
-  return states.reduce((sum, state) => sum + state.costTotal, 0);
+  return states.reduce(
+    (sum, state) => (state.run.status === "running" ? sum : sum + state.costTotal),
+    0,
+  );
 }
 
-function formatAgentIdsDisplayTarget(ids: string[]): string {
+function truncateResponseLines(response: string): string[] {
+  const text = response.replace(/\r\n?/g, "\n").trimEnd() || "(empty response)";
+  const lines = text.split("\n");
+  if (lines.length <= WAIT_FOR_AGENTS_RESPONSE_MAX_LINES) return lines;
+
+  const head = lines.slice(0, 8);
+  const tail = lines.slice(-8);
+  return [...head, `…${lines.length - 16} more lines…`, ...tail];
+}
+
+function buildWaitDetails(states: SubagentStateSnapshot[]): ToolCardLineInput[] {
+  return states.flatMap((state): ToolCardLineInput[] => {
+    if (state.run.status === "running") return [];
+
+    const details: ToolCardLineInput[] = [
+      { text: `${state.id} · ${state.title} · ${state.run.status}` },
+    ];
+    if (state.run.status === "succeeded") {
+      details.push(
+        { text: "Response:" },
+        ...truncateResponseLines(state.run.response).map((text) => ({ text })),
+      );
+      return details;
+    }
+
+    const stopReason =
+      state.run.failure.kind === "provider-error"
+        ? ` (stop reason: ${state.run.failure.stopReason})`
+        : "";
+    details.push({ text: `${state.run.failure.message}${stopReason}` });
+    return details;
+  });
+}
+
+function formatAgentIdsSubject(ids: string[]): string {
   return ids.join(", ");
 }
 
-function getWaitForAgentsDisplayTarget(raw: unknown): string {
+function getWaitForAgentsSubject(raw: unknown): string {
   const parsedArgs = parseToolArgs(waitArgsSchema, raw);
-  return parsedArgs.ok ? formatAgentIdsDisplayTarget(parsedArgs.data.ids) : "(invalid arguments)";
+  return parsedArgs.ok ? formatAgentIdsSubject(parsedArgs.data.ids) : "(invalid arguments)";
 }
 
 export function createWaitForAgentsToolDefinition(supervisor: AgentSupervisor): AgentTool {
   return {
     schema: WAIT_FOR_AGENTS_TOOL,
-    describe: (toolCall) => ({ headerTarget: getWaitForAgentsDisplayTarget(toolCall.arguments) }),
+    describe: (toolCall) => {
+      const subject = getWaitForAgentsSubject(toolCall.arguments);
+      return {
+        presentation: buildToolRunPresentation({ toolName: TOOL_NAME_WAIT_FOR_AGENTS, subject }),
+      };
+    },
     async execute(
       toolCall: ToolCall,
       context: ToolExecutionContext,
     ): Promise<ToolExecutionOutcome> {
       const { signal } = context;
       let ids: string[] = [];
-      const headerTarget = getWaitForAgentsDisplayTarget(toolCall.arguments);
+      const subject = getWaitForAgentsSubject(toolCall.arguments);
 
       const blocked = (reason: string): ToolImplementationOutcome => {
         const outcome = createTextToolOutcome(reason, "blocked");
         const uiEvent: ToolActivity = {
-          type: "wait_for_agents_blocked",
+          type: "tool_call_blocked",
           toolCallId: toolCall.id,
-          agentIds: ids,
-          headerTarget,
+          toolName: TOOL_NAME_WAIT_FOR_AGENTS,
+          presentation: buildToolRunPresentation({
+            toolName: TOOL_NAME_WAIT_FOR_AGENTS,
+            subject: subject,
+            details: [{ text: reason }],
+          }),
           reason,
         };
         return { content: outcome.content, outcome: outcome.outcome, uiEvent };
@@ -98,7 +152,7 @@ export function createWaitForAgentsToolDefinition(supervisor: AgentSupervisor): 
       }
 
       ids = [...new Set(parsedArgs.data.ids)];
-      const dedupedTarget = formatAgentIdsDisplayTarget(ids);
+      const dedupedTarget = formatAgentIdsSubject(ids);
 
       return executeTool(
         context,
@@ -107,55 +161,57 @@ export function createWaitForAgentsToolDefinition(supervisor: AgentSupervisor): 
             const states = await supervisor.waitForAgents(ids, signal);
             const capacity = supervisor.getCapacity();
             const resultText = formatWaitForAgentsResult(states, capacity);
-            const outputText = truncateForTokens(resultText, {
-              maxTokens: WAIT_FOR_AGENTS_OUTPUT_MAX_TOKENS * states.length,
-              strategy: "head",
-            }).content.trimEnd();
-            const statusText = formatSubagentStatusLine({
-              costTotal: getWaitCostTotal(states),
-              durationMs: getWaitDurationMs(states),
-            });
-            const uiText = buildSubagentUiText({
-              output: outputText,
-              statusText,
-              fullText: resultText,
+            const presentation = buildToolRunPresentation({
+              toolName: TOOL_NAME_WAIT_FOR_AGENTS,
+              subject: dedupedTarget,
+              details: buildWaitDetails(states),
+              detailTruncation: false,
+              metadata: formatSubagentMetadata({
+                costTotal: getWaitCostTotal(states),
+                durationMs: getWaitDurationMs(states),
+              }),
             });
             const uiEvent: ToolActivity = {
-              type: "wait_for_agents_finished",
+              type: "tool_call_finished",
               toolCallId: toolCall.id,
-              agentIds: ids,
-              headerTarget: dedupedTarget,
+              toolName: TOOL_NAME_WAIT_FOR_AGENTS,
+              presentation,
               status: "success",
-              uiText,
             };
             const outcome = createTextToolOutcome(resultText, "succeeded");
             return { content: outcome.content, outcome: outcome.outcome, uiEvent };
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             const reason = message.trim() || "The wait_for_agents request failed.";
-            const uiText = buildSubagentUiText({
-              output: reason,
-              statusText: "error",
-              fullText: reason,
-            });
+            const presentation = signal.aborted
+              ? buildToolRunPresentation({
+                  toolName: TOOL_NAME_WAIT_FOR_AGENTS,
+                  subject: dedupedTarget,
+                })
+              : buildSubagentPresentation({
+                  toolName: TOOL_NAME_WAIT_FOR_AGENTS,
+                  subject: dedupedTarget,
+                  output: reason,
+                });
             const uiEvent: ToolActivity = {
-              type: "wait_for_agents_finished",
+              type: "tool_call_finished",
               toolCallId: toolCall.id,
-              agentIds: ids,
-              headerTarget: dedupedTarget,
+              toolName: TOOL_NAME_WAIT_FOR_AGENTS,
+              presentation,
               status: "error",
-              message: reason,
-              uiText,
             };
             const outcome = createTextToolOutcome(reason, signal.aborted ? "cancelled" : "failed");
             return { content: outcome.content, outcome: outcome.outcome, uiEvent };
           }
         },
         {
-          type: "wait_for_agents_started",
+          type: "tool_call_started",
           toolCallId: toolCall.id,
-          agentIds: ids,
-          headerTarget: dedupedTarget,
+          toolName: TOOL_NAME_WAIT_FOR_AGENTS,
+          presentation: buildToolRunPresentation({
+            toolName: TOOL_NAME_WAIT_FOR_AGENTS,
+            subject: dedupedTarget,
+          }),
         },
       );
     },

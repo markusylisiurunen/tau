@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Tool, ToolCall } from "@earendil-works/pi-ai";
-import type { ToolActivity, ToolUiText } from "../core/tools/activity.js";
+import type { ToolActivity } from "../core/tools/activity.js";
+import { buildToolRunPresentation, formatToolDurationMs } from "../core/tools/presentation.js";
 import {
   type AgentTool,
   createTextToolOutcome,
@@ -14,8 +15,6 @@ import {
   TOOL_NAME_UPDATE_GOAL,
 } from "../core/tools/tool_names.js";
 import { formatTokenEstimate } from "../core/utils/token.js";
-import { buildHeadTailPreviewLines } from "../core/utils/tool_preview.js";
-import { formatBytes } from "../core/utils/truncate.js";
 import type {
   SessionProtocolClientToolCallMessage,
   SessionProtocolClientToolCancelMessage,
@@ -25,9 +24,6 @@ import { SESSION_PROTOCOL_VERSION } from "../protocol/session_protocol.js";
 
 const DEFAULT_ACK_TIMEOUT_MS = 5_000;
 const DEFAULT_EXECUTION_TIMEOUT_MS = 60_000;
-const CLIENT_TOOL_UI_HEAD_LINES = 3;
-const CLIENT_TOOL_UI_TAIL_LINES = 3;
-const CLIENT_TOOL_UI_MAX_LINE_CHARS = 160;
 const HOST_TOOL_NAMES = new Set([
   "bash",
   "write",
@@ -310,43 +306,42 @@ export class ClientToolBroker {
 function createClientToolFinishedUiEvent(
   toolCall: ToolCall,
   outcome: ToolExecutionOutcome,
+  durationMs: number,
 ): ToolActivity {
+  const isError = outcome.outcome !== "succeeded";
   return {
-    type: "client_tool_finished",
+    type: "tool_call_finished",
     toolCallId: toolCall.id,
     toolName: toolCall.name,
-    headerTarget: toolCall.name,
-    status: outcome.outcome === "succeeded" ? "success" : "error",
-    uiText: createClientToolUiText(
+    presentation: createClientToolPresentation(
+      toolCall.name,
       extractToolOutcomeText(outcome),
-      outcome.outcome !== "succeeded",
+      durationMs,
     ),
+    status: isError ? "error" : "success",
   };
 }
 
-function createClientToolUiText(content: string, isError: boolean): ToolUiText {
+function createClientToolPresentation(toolName: string, content: string, durationMs: number) {
   const trimmed = content.trimEnd();
   const lineCount = trimmed ? trimmed.split("\n").length : 0;
   const contentBytes = Buffer.byteLength(trimmed, "utf8");
-  const previewLines = buildHeadTailPreviewLines(trimmed || (isError ? "failed" : "ok"), {
-    headLines: CLIENT_TOOL_UI_HEAD_LINES,
-    tailLines: CLIENT_TOOL_UI_TAIL_LINES,
-    maxLineChars: CLIENT_TOOL_UI_MAX_LINE_CHARS,
-  }).map((text) => ({ text }));
-  const statusLine = [
-    isError ? "error" : "success",
-    formatLineCount(lineCount),
-    contentBytes > 0 ? formatTokenEstimate(contentBytes) : undefined,
-    contentBytes > 0 ? formatBytes(contentBytes) : undefined,
-  ]
-    .filter(Boolean)
-    .join(" · ");
-
-  return {
-    previewLines,
-    statusLine,
-    fullLines: previewLines,
-  };
+  const details = trimmed
+    ? trimmed
+        .replace(/\r\n?/g, "\n")
+        .split("\n")
+        .map((text) => ({ text }))
+    : [];
+  return buildToolRunPresentation({
+    toolName,
+    subject: toolName,
+    details,
+    metadata: [
+      formatToolDurationMs(durationMs),
+      contentBytes > 0 ? formatTokenEstimate(contentBytes) : undefined,
+      formatLineCount(lineCount),
+    ].filter((part): part is string => part !== undefined),
+  });
 }
 
 function extractToolOutcomeText(outcome: ToolExecutionOutcome): string {
@@ -380,18 +375,22 @@ function createClientToolDefinition(
 
   return {
     schema,
-    describe: () => ({ headerTarget: tool.name }),
+    describe: () => ({
+      presentation: buildToolRunPresentation({ toolName: tool.name, subject: tool.name }),
+    }),
     async execute(
       toolCall: ToolCall,
       context: ToolExecutionContext,
     ): Promise<ToolExecutionOutcome> {
       const { signal } = context;
       return executeTool(context, async () => {
+        const startedAt = Date.now();
         const toolResult = await broker.dispatch({ sessionId, clientId, tool, toolCall, signal });
+        const durationMs = Math.max(0, Date.now() - startedAt);
         return {
           content: toolResult.content,
           outcome: toolResult.outcome,
-          uiEvent: createClientToolFinishedUiEvent(toolCall, toolResult),
+          uiEvent: createClientToolFinishedUiEvent(toolCall, toolResult, durationMs),
         };
       });
     },

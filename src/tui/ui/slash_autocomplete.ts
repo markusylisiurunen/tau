@@ -1,10 +1,25 @@
-import type { AutocompleteItem, AutocompleteProvider } from "@earendil-works/pi-tui";
+import type { AutocompleteProvider } from "@earendil-works/pi-tui";
 import type { CommandRegistry } from "../../core/commands/index.js";
 import { fuzzyFilter } from "../../core/utils/fuzzy.js";
+import type { TuiAutocompleteItem } from "./autocomplete_item.js";
 
 const MENTION_TOKEN_REGEX = /(?:^|[\t ])(@[^\t ]*)$/;
 
 type MentionKind = "skill" | "agent";
+
+function sortAutocompleteItems(items: TuiAutocompleteItem[]): TuiAutocompleteItem[] {
+  return [...items].sort((left, right) => {
+    const labelOrder = left.label.localeCompare(right.label, undefined, { sensitivity: "base" });
+    return labelOrder !== 0 ? labelOrder : left.value.localeCompare(right.value);
+  });
+}
+
+function filterAutocompleteItems(
+  items: TuiAutocompleteItem[],
+  query: string,
+): TuiAutocompleteItem[] {
+  return fuzzyFilter(sortAutocompleteItems(items), query, (item) => item.label);
+}
 
 export function getMentionAutocompleteToken(beforeCursor: string): string | null {
   const match = beforeCursor.match(MENTION_TOKEN_REGEX);
@@ -73,7 +88,7 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
     cursorLine: number,
     cursorCol: number,
     _options: { signal: AbortSignal; force?: boolean },
-  ): Promise<{ items: AutocompleteItem[]; prefix: string } | null> {
+  ): Promise<{ items: TuiAutocompleteItem[]; prefix: string } | null> {
     const line = lines[cursorLine] ?? "";
     const beforeCursor = line.slice(0, cursorCol);
 
@@ -97,7 +112,7 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
     lines: string[],
     cursorLine: number,
     cursorCol: number,
-    item: AutocompleteItem,
+    item: TuiAutocompleteItem,
     prefix: string,
   ): { lines: string[]; cursorLine: number; cursorCol: number } {
     const line = lines[cursorLine] ?? "";
@@ -128,7 +143,7 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
   private getMentionSuggestions(
     beforeCursor: string,
     signal: AbortSignal,
-  ): Promise<{ items: AutocompleteItem[]; prefix: string } | null> {
+  ): Promise<{ items: TuiAutocompleteItem[]; prefix: string } | null> {
     const token = getMentionAutocompleteToken(beforeCursor);
     if (!token) return Promise.resolve(null);
 
@@ -142,7 +157,7 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
   private async getFileMentionSuggestions(
     token: string,
     signal: AbortSignal,
-  ): Promise<{ items: AutocompleteItem[]; prefix: string } | null> {
+  ): Promise<{ items: TuiAutocompleteItem[]; prefix: string } | null> {
     const valuePrefix = token.slice(1);
     const paths = await this.getPaths(valuePrefix, 25, signal);
     if (signal.aborted) return null;
@@ -154,7 +169,7 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
 
   private getTypedMentionSuggestions(
     token: string,
-  ): { items: AutocompleteItem[]; prefix: string } | null {
+  ): { items: TuiAutocompleteItem[]; prefix: string } | null {
     const body = token.slice(2);
     const colonIndex = body.indexOf(":");
 
@@ -170,16 +185,18 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
   private getMentionKindSuggestions(
     token: string,
     kindPrefix: string,
-  ): { items: AutocompleteItem[]; prefix: string } | null {
+  ): { items: TuiAutocompleteItem[]; prefix: string } | null {
     const kinds = this.getAvailableMentionKinds();
     if (kinds.length === 0) return null;
 
-    const filtered = fuzzyFilter(kinds, kindPrefix, (k) => `${k.kind} ${k.description}`);
-    const items = filtered.map((k) => ({
-      value: `${k.kind}:`,
-      label: k.kind,
-      description: k.description,
-    }));
+    const items = filterAutocompleteItems(
+      kinds.map((kind) => ({
+        value: `${kind.kind}:`,
+        label: kind.kind,
+        description: kind.description,
+      })),
+      kindPrefix,
+    );
 
     if (items.length === 0) return null;
     return { items, prefix: token };
@@ -189,12 +206,14 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
     kind: MentionKind,
     valuePrefix: string,
     token: string,
-  ): { items: AutocompleteItem[]; prefix: string } | null {
+  ): { items: TuiAutocompleteItem[]; prefix: string } | null {
     const source = this.getMentionSource(kind);
     if (!source) return null;
 
-    const filtered = fuzzyFilter(source, valuePrefix, (p) => p);
-    const items = filtered.slice(0, 25).map((p) => ({ value: p, label: p }));
+    const items = filterAutocompleteItems(
+      source.map((value) => ({ value, label: value })),
+      valuePrefix,
+    ).slice(0, 25);
 
     if (items.length === 0) return null;
     return { items, prefix: token };
@@ -222,7 +241,7 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
 
   private getArgumentSuggestions(
     afterSlash: string,
-  ): { items: AutocompleteItem[]; prefix: string } | null {
+  ): { items: TuiAutocompleteItem[]; prefix: string } | null {
     const personaMatch = afterSlash.match(/^persona:(.*)$/i);
     if (personaMatch) {
       return this.buildArgSuggestions(personaMatch[1] ?? "", this.getPersonas());
@@ -244,12 +263,17 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
   private buildArgSuggestions(
     argPrefix: string,
     suggestions: Array<{ id: string; label?: string }>,
-  ): { items: AutocompleteItem[]; prefix: string } | null {
-    const filtered = fuzzyFilter(suggestions, argPrefix, (p) => `${p.id} ${p.label ?? ""}`);
+  ): { items: TuiAutocompleteItem[]; prefix: string } | null {
+    const sortedSuggestions = [...suggestions].sort((left, right) =>
+      left.id.localeCompare(right.id, undefined, { sensitivity: "base" }),
+    );
+    const filtered = fuzzyFilter(sortedSuggestions, argPrefix, (suggestion) => suggestion.id);
+    const showDescriptions = filtered.every((p) => p.label && p.label !== p.id);
     const items = filtered.map((p) => ({
       value: p.id,
       label: p.id,
-      description: p.label,
+      ...(showDescriptions && p.label ? { description: p.label } : {}),
+      autocompleteAction: "submit" as const,
     }));
 
     if (items.length === 0) return null;
@@ -258,78 +282,47 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
 
   private getCommandSuggestions(
     afterSlash: string,
-  ): { items: AutocompleteItem[]; prefix: string } | null {
-    const candidates: Array<{ item: AutocompleteItem; searchText: string }> = [];
+  ): { items: TuiAutocompleteItem[]; prefix: string } | null {
+    const candidates: TuiAutocompleteItem[] = [];
 
-    const commandInfos = this.commandRegistry.list();
-
-    for (const command of commandInfos) {
-      if (command.argument !== "none") continue;
+    for (const command of this.commandRegistry.list()) {
       const usage = command.usage.startsWith("/") ? command.usage.slice(1) : command.usage;
+      const description = command.autocompleteDescription;
+
+      if (command.argument !== "none") {
+        const hasChildren =
+          command.argument === "persona"
+            ? this.getPersonas().length > 0
+            : command.argument === "prompt"
+              ? this.getPrompts().length > 0
+              : this.getThemes().length > 0;
+        if (!hasChildren) continue;
+
+        candidates.push({
+          value: `${command.argument}:`,
+          label: command.argument,
+          ...(description ? { description } : {}),
+          autocompleteAction: "navigate",
+        });
+        continue;
+      }
+
       const value = usage.split(/\s+/, 1)[0] ?? usage;
-      const description = command.autocompleteDescription ?? command.description;
       candidates.push({
-        item: { value, label: value, description },
-        searchText: `${usage} ${description}`,
+        value,
+        label: value,
+        ...(description ? { description } : {}),
+        autocompleteAction: "submit",
       });
     }
 
-    const hasPersona = commandInfos.some((command) => command.argument === "persona");
-    if (hasPersona) {
-      for (const p of this.getPersonas()) {
-        const full = `persona:${p.id}`;
-        candidates.push({
-          item: {
-            value: full,
-            label: full,
-            description: p.label ? `switch to ${p.label}` : "switch persona",
-          },
-          searchText: `${p.id} ${p.label ?? ""} ${full}`,
-        });
-      }
-    }
-
-    const hasPrompt = commandInfos.some((command) => command.argument === "prompt");
-    if (hasPrompt) {
-      for (const t of this.getPrompts()) {
-        const full = `prompt:${t.id}`;
-        candidates.push({
-          item: {
-            value: full,
-            label: full,
-            description: t.label ? `insert ${t.label}` : "insert prompt template",
-          },
-          searchText: `${t.id} ${t.label ?? ""} ${full}`,
-        });
-      }
-    }
-
-    const hasTheme = commandInfos.some((command) => command.argument === "theme");
-    if (hasTheme) {
-      const themes = this.getThemes();
-      if (themes.length > 0) {
-        for (const t of themes) {
-          const full = `theme:${t.id}`;
-          candidates.push({
-            item: {
-              value: full,
-              label: full,
-              description: t.label ? `switch to ${t.label}` : "switch theme",
-            },
-            searchText: `${t.id} ${t.label ?? ""} ${full}`,
-          });
-        }
-      }
-    }
-
-    const filteredCandidates = fuzzyFilter(candidates, afterSlash, (c) => c.searchText);
-    const items = filteredCandidates.map((c) => c.item);
+    const items = filterAutocompleteItems(candidates, afterSlash);
 
     if (items.length === 0) return null;
     return { items, prefix: `/${afterSlash}` };
   }
 
-  private buildInsertText(item: AutocompleteItem, prefix: string, beforePrefix: string): string {
+  private buildInsertText(item: TuiAutocompleteItem, prefix: string, beforePrefix: string): string {
     if (prefix.startsWith("@@")) {
       const mentionMatch = prefix.match(/^@@([^:\s]+):/);
       if (mentionMatch) {

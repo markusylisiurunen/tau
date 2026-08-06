@@ -10,6 +10,7 @@ import type {
 } from "@earendil-works/pi-ai";
 import type { AgentEvent } from "../agent/events.js";
 import type { ToolActivity } from "../tools/activity.js";
+import { buildToolRunPresentation } from "../tools/presentation.js";
 import type {
   AgentTool,
   ToolExecutionContext,
@@ -504,7 +505,11 @@ function createToolBlockedEvent(toolCall: ToolCall, reason: string): ToolActivit
       type: "tool_call_blocked",
       toolCallId: toolCall.id,
       toolName: toolCall.name,
-      headerTarget: toolCall.name,
+      presentation: buildToolRunPresentation({
+        toolName: toolCall.name,
+        subject: toolCall.name,
+        details: [{ text: reason }],
+      }),
       reason,
     },
   };

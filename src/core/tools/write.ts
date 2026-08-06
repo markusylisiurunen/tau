@@ -2,15 +2,11 @@ import type { Tool, ToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { z } from "zod";
 import { formatTokenEstimate } from "../utils/token.js";
-import {
-  applyPreviewPolicy,
-  buildCompactPreviewLines,
-  WRITE_UI_PREVIEW_LINES,
-} from "../utils/tool_preview.js";
 import { formatBytes } from "../utils/truncate.js";
 import { formatZodError } from "../utils/zod.js";
-import type { ToolActivity, ToolUiLine, ToolUiText } from "./activity.js";
+import type { ToolActivity } from "./activity.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
+import { buildToolRunPresentation, type ToolRunPresentation } from "./presentation.js";
 import {
   type AgentTool,
   createTextToolOutcome,
@@ -26,7 +22,7 @@ const WRITE_DESCRIPTION = [
   "Creates parent directories as needed.",
 ].join(" ");
 
-const WRITE_PATH_DESCRIPTION = "Absolute or relative path to the file to write.";
+const WRITE_PATH_DESCRIPTION = "Single-line absolute or relative path to the file to write.";
 const WRITE_CONTENT_DESCRIPTION = "The content to write to the file.";
 
 export const WRITE_TOOL: Tool = {
@@ -34,7 +30,10 @@ export const WRITE_TOOL: Tool = {
   description: WRITE_DESCRIPTION,
   parameters: Type.Object(
     {
-      path: Type.String({ description: WRITE_PATH_DESCRIPTION }),
+      path: Type.String({
+        description: WRITE_PATH_DESCRIPTION,
+        pattern: "^[^\\r\\n]+$",
+      }),
       content: Type.String({ description: WRITE_CONTENT_DESCRIPTION }),
     },
     { additionalProperties: false },
@@ -42,7 +41,11 @@ export const WRITE_TOOL: Tool = {
 };
 
 const writeArgsSchema = z.object({
-  path: z.string().trim().min(1),
+  path: z
+    .string()
+    .trim()
+    .min(1)
+    .refine((path) => !/[\r\n]/.test(path), "Path must be a single line."),
   content: z.string(),
 });
 
@@ -56,51 +59,39 @@ function parseWriteArgs(
   return { ok: true, data: parsed.data };
 }
 
-function getWriteDisplayTarget(raw: unknown): string {
+function getWriteSubject(raw: unknown): string {
   const parsedArgs = parseWriteArgs(raw);
   return parsedArgs.ok ? parsedArgs.data.path : "(invalid arguments)";
 }
 
-function buildWriteUiText(args: {
+function buildWritePresentation(args: {
+  subject: string;
   bytes: number;
   lines: number;
   content: string;
-  fullText: string;
-}): ToolUiText {
-  const { bytes, lines, content, fullText } = args;
-  const { previewLines: previewContentLines } = applyPreviewPolicy(content, {
-    maxLines: WRITE_UI_PREVIEW_LINES,
-    strategy: "head",
+}): ToolRunPresentation {
+  const { subject, bytes, lines, content } = args;
+  const detailText = content.replace(/\r\n?/g, "\n").trimEnd();
+  return buildToolRunPresentation({
+    toolName: TOOL_NAME_WRITE,
+    subject,
+    details: detailText
+      ? detailText.split("\n").map((text) => ({ text, wrap: "character" as const }))
+      : [],
+    detailTruncation: { maxLines: 16, strategy: "head" },
+    metadata: [formatTokenEstimate(bytes), `${lines} ${lines === 1 ? "line" : "lines"}`],
   });
-
-  const compactLines = buildCompactPreviewLines(previewContentLines, {
-    totalLines: lines,
-    maxLines: 16,
-    unitLabel: "lines",
-    indent: 0,
-  });
-  const infoText = `${lines} lines · ${formatTokenEstimate(bytes)} · ${formatBytes(bytes)}`;
-  const summaryLine = infoText;
-  const previewLines: ToolUiLine[] = compactLines
-    ? compactLines.split("\n").map((text) => ({ text }))
-    : [];
-
-  const trimmedFullText = fullText.trimEnd();
-  const fullLines: ToolUiLine[] = trimmedFullText
-    ? trimmedFullText.split("\n").map((text) => ({ text }))
-    : [];
-
-  return {
-    previewLines,
-    statusLine: summaryLine,
-    fullLines,
-  };
 }
 
 export function createWriteToolDefinition(backend: ToolExecutionBackend): AgentTool {
   return {
     schema: WRITE_TOOL,
-    describe: (toolCall) => ({ headerTarget: getWriteDisplayTarget(toolCall.arguments) }),
+    describe: (toolCall) => {
+      const subject = getWriteSubject(toolCall.arguments);
+      return {
+        presentation: buildToolRunPresentation({ toolName: TOOL_NAME_WRITE, subject }),
+      };
+    },
     async execute(
       toolCall: ToolCall,
       context: ToolExecutionContext,
@@ -108,7 +99,7 @@ export function createWriteToolDefinition(backend: ToolExecutionBackend): AgentT
       return executeTool(context, async () => {
         const parsedArgs = parseWriteArgs(toolCall.arguments);
         const path = parsedArgs.ok ? parsedArgs.data.path : "";
-        const headerTarget = getWriteDisplayTarget(toolCall.arguments);
+        const subject = getWriteSubject(toolCall.arguments);
 
         const blocked = (
           reason: string,
@@ -119,7 +110,11 @@ export function createWriteToolDefinition(backend: ToolExecutionBackend): AgentT
             type: "write_blocked",
             toolCallId: toolCall.id,
             path: path || "(invalid path)",
-            headerTarget,
+            presentation: buildToolRunPresentation({
+              toolName: TOOL_NAME_WRITE,
+              subject: subject,
+              details: [{ text: reason }],
+            }),
             reason,
           };
           return { content: outcome.content, outcome: outcome.outcome, uiEvent };
@@ -136,16 +131,16 @@ export function createWriteToolDefinition(backend: ToolExecutionBackend): AgentT
           const resultText = `Successfully wrote ${formatBytes(bytes)} (${lines} lines) to ${path}`;
 
           const outcome = createTextToolOutcome(resultText, "succeeded");
-          const uiText = buildWriteUiText({ bytes, lines, content, fullText: resultText });
           const uiEvent: ToolActivity = {
             type: "write_success",
             toolCallId: toolCall.id,
             path,
-            headerTarget,
-            bytes,
-            lines,
-            content,
-            uiText,
+            presentation: buildWritePresentation({
+              subject: subject,
+              bytes,
+              lines,
+              content,
+            }),
           };
           return { content: outcome.content, outcome: outcome.outcome, uiEvent };
         } catch (e) {

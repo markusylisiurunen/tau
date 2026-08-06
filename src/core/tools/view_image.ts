@@ -3,8 +3,9 @@ import { Type } from "typebox";
 import { z } from "zod";
 import { formatBytes } from "../utils/truncate.js";
 import { formatZodError } from "../utils/zod.js";
-import type { ToolActivity, ToolUiText } from "./activity.js";
+import type { ToolActivity } from "./activity.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
+import { buildToolRunPresentation } from "./presentation.js";
 import {
   type AgentTool,
   createTextToolOutcome,
@@ -20,7 +21,7 @@ const VIEW_IMAGE_DESCRIPTION = [
   "Only use this tool when the user explicitly requests viewing or analyzing an image.",
 ].join(" ");
 
-const VIEW_IMAGE_PATH_DESCRIPTION = "Path to the image file to view.";
+const VIEW_IMAGE_PATH_DESCRIPTION = "Single-line path to the image file to view.";
 
 const VIEW_IMAGE_READ_MAX_BYTES = 50 * 1024 * 1024;
 const VIEW_IMAGE_MODEL_MAX_BYTES = 2.5 * 1024 * 1024;
@@ -36,14 +37,21 @@ export const VIEW_IMAGE_TOOL: Tool = {
   description: VIEW_IMAGE_DESCRIPTION,
   parameters: Type.Object(
     {
-      path: Type.String({ description: VIEW_IMAGE_PATH_DESCRIPTION }),
+      path: Type.String({
+        description: VIEW_IMAGE_PATH_DESCRIPTION,
+        pattern: "^[^\\r\\n]+$",
+      }),
     },
     { additionalProperties: false },
   ),
 };
 
 const viewImageArgsSchema = z.object({
-  path: z.string().trim().min(1),
+  path: z
+    .string()
+    .trim()
+    .min(1)
+    .refine((path) => !/[\r\n]/.test(path), "Path must be a single line."),
 });
 
 function parseViewImageArgs(
@@ -56,7 +64,7 @@ function parseViewImageArgs(
   return { ok: true, data: parsed.data };
 }
 
-function getViewImageDisplayTarget(raw: unknown): string {
+function getViewImageSubject(raw: unknown): string {
   const parsedArgs = parseViewImageArgs(raw);
   return parsedArgs.ok ? parsedArgs.data.path : "(invalid arguments)";
 }
@@ -80,6 +88,8 @@ type ImageEncodePlan =
 type EncodedImage = {
   content: Buffer;
   mimeType: SupportedImageType;
+  width: number;
+  height: number;
 };
 
 type Sharp = typeof import("sharp")["default"];
@@ -142,28 +152,26 @@ async function encodeImageCandidate(args: {
   });
 
   if (plan.mimeType === "image/jpeg") {
-    return {
-      mimeType: "image/jpeg",
-      content: await pipeline.jpeg({ quality: plan.quality }).toBuffer(),
-    };
+    const { data, info } = await pipeline
+      .jpeg({ quality: plan.quality })
+      .toBuffer({ resolveWithObject: true });
+    return { mimeType: "image/jpeg", content: data, width: info.width, height: info.height };
   }
 
   if (plan.mimeType === "image/png") {
-    return {
-      mimeType: "image/png",
-      content: await pipeline.png({ compressionLevel: 9 }).toBuffer(),
-    };
+    const { data, info } = await pipeline
+      .png({ compressionLevel: 9 })
+      .toBuffer({ resolveWithObject: true });
+    return { mimeType: "image/png", content: data, width: info.width, height: info.height };
   }
 
-  return {
-    mimeType: "image/webp",
-    content: await pipeline
-      .webp({
-        quality: plan.quality,
-        lossless: plan.lossless,
-      })
-      .toBuffer(),
-  };
+  const { data, info } = await pipeline
+    .webp({
+      quality: plan.quality,
+      lossless: plan.lossless,
+    })
+    .toBuffer({ resolveWithObject: true });
+  return { mimeType: "image/webp", content: data, width: info.width, height: info.height };
 }
 
 async function prepareImageForModel(
@@ -184,7 +192,7 @@ async function prepareImageForModel(
     height <= VIEW_IMAGE_MAX_DIMENSION_PX &&
     content.byteLength <= VIEW_IMAGE_MODEL_MAX_BYTES
   ) {
-    return { content, mimeType: sourceMimeType };
+    return { content, mimeType: sourceMimeType, width, height };
   }
 
   const maxDimension = Math.min(VIEW_IMAGE_MAX_DIMENSION_PX, Math.max(width, height));
@@ -225,24 +233,15 @@ async function prepareImageForModel(
   throw new Error(`Image could not be reduced below ${targetSizeLabel}.`);
 }
 
-function buildViewImageUiText(args: { mimeType: string; fullText: string }): ToolUiText {
-  const { mimeType, fullText } = args;
-  const trimmedFullText = fullText.trimEnd();
-  const fullLines = trimmedFullText
-    ? trimmedFullText.split("\n").map((text) => ({ text }))
-    : [{ text: mimeType }];
-
-  return {
-    previewLines: [],
-    statusLine: mimeType,
-    fullLines,
-  };
-}
-
 export function createViewImageToolDefinition(backend: ToolExecutionBackend): AgentTool {
   return {
     schema: VIEW_IMAGE_TOOL,
-    describe: (toolCall) => ({ headerTarget: getViewImageDisplayTarget(toolCall.arguments) }),
+    describe: (toolCall) => {
+      const subject = getViewImageSubject(toolCall.arguments);
+      return {
+        presentation: buildToolRunPresentation({ toolName: TOOL_NAME_VIEW_IMAGE, subject }),
+      };
+    },
     async execute(
       toolCall: ToolCall,
       context: ToolExecutionContext,
@@ -250,7 +249,7 @@ export function createViewImageToolDefinition(backend: ToolExecutionBackend): Ag
       return executeTool(context, async () => {
         const parsedArgs = parseViewImageArgs(toolCall.arguments);
         const path = parsedArgs.ok ? parsedArgs.data.path : "";
-        const headerTarget = getViewImageDisplayTarget(toolCall.arguments);
+        const subject = getViewImageSubject(toolCall.arguments);
 
         const blocked = (
           reason: string,
@@ -261,7 +260,11 @@ export function createViewImageToolDefinition(backend: ToolExecutionBackend): Ag
             type: "view_image_blocked",
             toolCallId: toolCall.id,
             path: path || "(invalid path)",
-            headerTarget,
+            presentation: buildToolRunPresentation({
+              toolName: TOOL_NAME_VIEW_IMAGE,
+              subject: subject,
+              details: [{ text: reason }],
+            }),
             reason,
           };
           return { content: outcome.content, outcome: outcome.outcome, uiEvent };
@@ -299,18 +302,15 @@ export function createViewImageToolDefinition(backend: ToolExecutionBackend): Ag
             outcome: "succeeded",
           };
 
-          const uiText = buildViewImageUiText({
-            mimeType: encodedImage.mimeType,
-            fullText: resultText,
-          });
           const uiEvent: ToolActivity = {
             type: "view_image_success",
             toolCallId: toolCall.id,
             path: resolvedPath,
-            headerTarget: resolvedPath,
-            mimeType: encodedImage.mimeType,
-            bytes: encodedImage.content.byteLength,
-            uiText,
+            presentation: buildToolRunPresentation({
+              toolName: TOOL_NAME_VIEW_IMAGE,
+              subject,
+              metadata: [encodedImage.mimeType, `${encodedImage.width}×${encodedImage.height}`],
+            }),
           };
 
           return { content: outcome.content, outcome: outcome.outcome, uiEvent };

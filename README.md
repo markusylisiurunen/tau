@@ -105,7 +105,7 @@ then attach the terminal UI from another machine:
 tau attach --auth-token "$TAU_WS_AUTH_TOKEN" ws://vps:8787
 ```
 
-Without `--session` or `--new`, attach lists hosted sessions and prompts for the session to open. Persisted session files use a versioned storage format and older unwrapped snapshots are migrated during recovery. Use `--session <id>` to attach to an existing persisted session directly:
+Without `--session` or `--new`, attach lists hosted sessions and prompts for the session to open. Persisted session files are durable user data in a versioned storage format and remain openable by newer Tau versions. Recovery preserves the semantic session while allowing presentation-only or otherwise nonessential historical state to be normalized, regenerated, or shown in a simpler form. An upgrade must not require deleting an older session merely because an internal persisted shape changed. Use `--session <id>` to attach to an existing persisted session directly:
 
 ```sh
 tau attach --session 0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3 --auth-token "$TAU_WS_AUTH_TOKEN" ws://vps:8787
@@ -136,7 +136,7 @@ For stdio attach, use `--session <id>` before `--`:
 tau attach --session 0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3 -- ssh vps 'cd /path/to/repo && tau rpc'
 ```
 
-Session attach renders the authoritative session snapshot, streams recoverable `session.delta` updates and independently revisioned, non-persisted `session.pendingUserMessages` replacements, submits normal user input through `session.submit`, `session.queue`, and `session.steer`, supports steering/interruption, runs `!`/`!!` Bash commands in the session execution environment, records `/listen` from the local microphone, speaks `/speak` locally, reloads session content with `/reload`, switches session personas with `/persona:<id>` or `Ctrl+P`, inserts session prompt templates with `/prompt:<id>`, manages persistent autonomous goals with `/goal`, compacts the session with `/compact:*`, creates a new session with `/new`, and exits with `/exit` or `Ctrl+C` twice.
+Session attach renders the authoritative session snapshot, streams recoverable `session.delta` updates and independently revisioned, non-persisted `session.pendingUserMessages` replacements, submits normal user input through `session.submit`, `session.queue`, and `session.steer`, supports steering/interruption, runs `!`/`!!` Bash commands in the session execution environment, records `/listen` from the local microphone, speaks `/speak` locally, reloads session content with `/reload`, switches session personas with `/persona:<id>` or `Ctrl+P`, inserts session prompt templates with `/prompt:<id>`, manages persistent autonomous goals with `/goal`, compacts the session with `/compact-all` or `/compact-keep-last`, creates a new session with `/new`, and exits with `/exit` or `Ctrl+C` twice.
 
 The TUI advertises client tools for diff review, input prefill, and the effective command-backed tools selected from global definitions. `prefill_input` fills only an empty editor and leaves existing draft text unchanged. Pass `--no-client-tools` to `tau` or `tau attach` to advertise no TUI client tools, for example when another TUI attached to the same session already owns them.
 
@@ -338,19 +338,19 @@ tau can load custom palette overrides from theme files. create a theme at:
 
 then set `"defaultTheme": "<id>"` in config. any palette token not defined in the file renders as plain text. theme values accept `#rgb`, `#rrggbb`, `rgb(r, g, b)`, or `hsl(h, s%, l%)`. hex without `#` is ignored.
 
-built-in themes are available by default with ids: `crimson`, `ember`, `gold`, `lime`, `grass`, `emerald`, `jade`, `teal`, `cyan`, `azure`, `cobalt`, `violet`, `purple`, `magenta`, `rose`. built-ins auto-adapt to dark/light terminal backgrounds via OSC 11 detection at startup (best effort, dark fallback). set `defaultTheme` to one of these ids, or disable them with `disableBuiltinThemes`.
+built-in themes are available by default with ids: `crimson`, `ember`, `gold`, `lime`, `grass`, `emerald`, `jade`, `teal`, `cyan`, `azure`, `cobalt`, `violet`, `purple`, `magenta`, `rose`. built-ins derive their runtime palettes from terminal foreground/background colors detected through OSC 10/11 at startup (best effort, dark fallback). set `defaultTheme` to one of these ids, or disable them with `disableBuiltinThemes`.
 
 custom themes loaded from `.tau/themes` or `~/.config/tau/themes` are single-variant and use exactly the tokens you define.
 
 available palette tokens (theme keys):
 
 - core: `brandAccent`, `textMuted`, `textDim`, `linkText`, `thinkingText`, `codeInlineText`, `codeBlockText`
-- editor: `editorBorderNone`, `editorBorderMinimal`, `editorBorderLow`, `editorBorderMedium`, `editorBorderHigh`, `editorBorderXhigh`, `editorBorderMax`, `editorSubagentBorder`, `editorBorderRecording`
-- status: `statusWarn`, `statusError`, `modeBash`
+- editor: `editorBorder`, `editorSubagentBorder`, `editorBorderBash`, `editorBorderRecording`, `editorPlaceholder`, `autocompleteSelectedSurface`, `autocompleteSelectedText`
+- status: `statusWarn`, `statusError`
 - action: `actionRunning`, `actionSuccess`, `actionError`, `actionOutput`
 - diff: `diffAdd`, `diffRemove`
 - toasts: `toastSuccess`, `toastWarn`, `toastError`
-- user: `userSurface`, `userReviewSurface`, `userReviewText`, `userReviewTextMuted`, `userReviewTextDim`
+- user: `userSurface`, `userText`, `userReviewSurface`, `userReviewText`, `userReviewTextMuted`, `userReviewTextDim`
 
 example theme file (`.tau/themes/solarized.json`):
 
@@ -474,15 +474,15 @@ tau supports slash commands for common actions:
 | `/new` | clear the session and start fresh |
 | `/exit` | exit the TUI |
 | `/rewind` | open a picker to rewind context from a selected user message |
-| `/copy:text` | copy the last assistant message |
-| `/copy:code` | copy just the code blocks |
+| `/copy-text` | copy the last assistant message |
+| `/copy-code` | copy just the code blocks |
 | `/reload` | reload personas, model overrides, prompts, skills, and AGENTS.md |
 | `/listen` | start microphone recording and transcribe into the editor (macOS only) |
 | `/speak` | speak the last assistant message aloud (macOS only) |
 | `/diff [git diff args...]` | open the local diff review tool for the current session; git snapshot and review-agent work run on the session host |
 | `/goal [objective\|resume\|clear]` | show, start, resume, or clear a persistent autonomous goal |
-| `/compact:summary-only` | compress history into one synthetic user summary message |
-| `/compact:summary-and-last` | compress history and include the last assistant message verbatim when present |
+| `/compact-all` | compress history into one synthetic user summary message |
+| `/compact-keep-last` | compress history and include the last assistant message verbatim when present |
 | `/persona:<id>` | switch to a different persona |
 | `/prompt:<id>` | insert a saved prompt template |
 | `/theme:<id>` | switch to a loaded theme |
@@ -493,7 +493,7 @@ tau supports slash commands for common actions:
 
 tau automatically compacts long sessions when the latest successful provider-reported usage from the active model plus Tau's estimate of model-visible content added since that response approaches the model context limit. Tau checks before every model subturn, so one user turn can compact more than once. automatic compaction summarizes older context, retrying the summary call once on failure, asks the compaction model to select original user messages to append verbatim inside the summary by history id, retains a recent tail while middle-truncating individual textual tool and recovery results above roughly 8,192 estimated tokens, and inserts a hidden continuation note so the assistant continues without asking you to repeat context. before replacing history, Tau best-effort archives the pre-compaction conversation as ordered `.txt` and `.json` pairs in an agent-specific execution-environment temp directory. assistant thinking is omitted. the text file middle-truncates tool results for easier lookup, while JSON retains untruncated archived content. every archivable summarized record is labeled with its history entry id, so the compaction model may cite an id for bulky exact details and the continuing assistant can resolve it from the archive. the continuation note includes the temporary paths when archiving succeeds.
 
-the compact commands are manual and useful when you want to force context replacement. they replace prior context with a single synthetic user summary message, including compaction-model-selected original user messages verbatim inside that summary, and do not retain a recent tail. compaction prompts middle-truncate each textual tool result to roughly 2,048 estimated tokens without changing live history. `/compact:summary-and-last` also includes the last assistant message verbatim when present.
+the compact commands are manual and useful when you want to force context replacement. they replace prior context with a single synthetic user summary message, including compaction-model-selected original user messages verbatim inside that summary, and do not retain a recent tail. compaction prompts middle-truncate each textual tool result to roughly 2,048 estimated tokens without changing live history. `/compact-keep-last` also includes the last assistant message verbatim when present.
 
 `/listen` (or `ctrl+y`) starts microphone recording on macOS, including while the assistant is working. while recording, editor typing is disabled, and `ctrl+y` stops recording and starts transcription at the cursor using the configured speech-to-text provider. `esc` stops recording first without interrupting the assistant; press it again to interrupt active work. recording also auto-stops after 5 minutes. on Linux, `/listen` is currently unavailable and tau shows a warning.
 
@@ -510,7 +510,6 @@ the compact commands are manual and useful when you want to force context replac
 | `shift+tab`  | cycle reasoning effort                    |
 | `ctrl+p`     | cycle personality                         |
 | `ctrl+t`     | toggle thinking visibility                |
-| `ctrl+o`     | toggle compact tool display               |
 | `ctrl+s`     | stash input to clipboard                  |
 | `ctrl+y`     | toggle voice recording (`/listen`)        |
 | `ctrl+g`     | interrupt selected sub-agent              |
@@ -632,7 +631,7 @@ supported built-in diff tool code themes are: `andromeeda`, `aurora-x`, `ayu-dar
 
 the `subagents.defaultLaunchModels` field configures allowed `spawn_agent` launch overrides for the built-in `default` sub-agent. values must use `<provider>/<model>:<effort>`.
 
-`autoCompact` controls automatic session compaction and merges field-by-field across config levels. it is enabled by default with `reserveTokens: 16384` and `keepRecentTokens: 20000`. before every model subturn, Tau compares the latest successful provider-reported assistant usage from the active model plus an estimated token count for model-visible messages appended since that response against the model context window minus the reserve. when the threshold is crossed, Tau summarizes older context with at most two summary attempts, asks the compaction model to select original user messages to append verbatim inside the summary by history id, retains recent messages while middle-truncating individual textual tool and recovery results above roughly 8,192 estimated tokens, and best-effort archives the untruncated pre-compaction conversation, excluding assistant thinking, in the execution environment's OS temp directory. archivable summarized records carry history entry ids that the compaction model may cite when bulky exact details are better retrieved from the archive than copied into the summary. manual `/compact:*` commands remain summary-replacement commands and do not create these archives.
+`autoCompact` controls automatic session compaction and merges field-by-field across config levels. it is enabled by default with `reserveTokens: 16384` and `keepRecentTokens: 20000`. before every model subturn, Tau compares the latest successful provider-reported assistant usage from the active model plus an estimated token count for model-visible messages appended since that response against the model context window minus the reserve. when the threshold is crossed, Tau summarizes older context with at most two summary attempts, asks the compaction model to select original user messages to append verbatim inside the summary by history id, retains recent messages while middle-truncating individual textual tool and recovery results above roughly 8,192 estimated tokens, and best-effort archives the untruncated pre-compaction conversation, excluding assistant thinking, in the execution environment's OS temp directory. archivable summarized records carry history entry ids that the compaction model may cite when bulky exact details are better retrieved from the archive than copied into the summary. manual `/compact-all` and `/compact-keep-last` commands remain summary-replacement commands and do not create these archives.
 
 the `modelSystemNotices` field maps `<provider>/<model>` to a notice string. provider ids must be known and model ids are exact/case-sensitive against the merged configured model catalog (built-in + layered `models.json`). when Tau commits a main-session or sub-agent input, it prepends the notice for the active model as an ordinary `<system>...</system>` block. the persisted block is subsequently treated like any other system prefix, so compaction sees notices already present in the source history. tau does not prepend the current notice to the compaction prompt or to synthetic compaction messages, and the generated summary is not required to reproduce it. ephemeral agents never receive model system notices, and maintenance model calls do not resolve or add fresh notices.
 
@@ -817,7 +816,7 @@ tau connects your terminal to large language models, giving them tools to intera
 
 the model sees your messages, any file contents you've shared, and the results of tool calls. it doesn't have ambient access to your filesystem; it only sees what you show it or what it explicitly requests through tools.
 
-tool calls are displayed as soon as the model identifies the tool, before its arguments finish streaming. every built-in and client-provided tool uses the same `preparing` → `queued` → `running` → terminal lifecycle; tools with clear action wording present those states naturally, such as `writing` and `wrote`, while other tools use generic labels. tool-specific output enriches the card without replacing that lifecycle. use `ctrl+o` to toggle between compact and detailed views.
+tool calls are displayed as soon as the model identifies the tool, before its arguments finish streaming. every built-in and client-provided tool uses the same `preparing` → `queued` → `running` → terminal lifecycle and one compact card grammar; tools with clear action wording present those states naturally, such as `writing` and `wrote`, while code-mode tools pair generic lifecycle actions with an explicit `web`, `history`, or `nook` operation label. multiline subjects show at most eight lines (four from the start, an omission marker, and three from the end); bash, code-mode, and file-path subjects wrap at character boundaries while other subjects wrap at word boundaries. terminal output, write content, and edit diff details also wrap at character boundaries; natural-language details wrap at word boundaries. details default to at most seven lines (three from each end around an omission marker). write previews instead show up to sixteen detail lines using fifteen lines from the start plus an omission marker, spawn-agent and follow-up prompts plus each completed wait response show up to seventeen lines using eight lines from each end around an omission marker, list-agent previews preserve the complete formatted listing, interrupt-agent details preserve all model-facing result lines, create-goal and non-completing update-goal details preserve only the objective lines, and edit previews preserve the complete line diff. subjects and details allow at most 512 characters per line. metadata enriches the card without replacing that lifecycle. saved sessions with an older tool-presentation format remain openable: historical tools use a generic card built from their name, status, and up to seven stored textual result lines, without displaying stored tool arguments.
 
 ## tool output truncation
 

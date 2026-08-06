@@ -85,6 +85,21 @@ async function runTool(tool, toolCall, signal = new AbortController().signal) {
 }
 
 describe("view_image tool", () => {
+  it("enforces a single-line path contract", async () => {
+    const tool = createViewImageToolDefinition(createLocalToolExecutionBackend());
+
+    expect(tool.schema.parameters.properties.path.pattern).toBe("^[^\\r\\n]+$");
+
+    const result = await runTool(tool, {
+      id: "tool-invalid-path",
+      name: TOOL_NAME_VIEW_IMAGE,
+      arguments: { path: "one\ntwo" },
+    });
+    expect(result.toolResult.outcome).toBe("blocked");
+    expect(result.uiEvent.presentation.details[0].text).toContain("single line");
+    expect(result.uiEvent.presentation.details[0].tone).toBeUndefined();
+  });
+
   it("downscales images to fit inside a 2000x2000 square", async () => {
     const fx = setupFixture();
 
@@ -105,7 +120,7 @@ describe("view_image tool", () => {
         throw new Error("expected success ui event");
       }
 
-      expect(result.uiEvent.uiText.statusLine).toBe("image/png");
+      expect(result.uiEvent.presentation.metadata).toEqual(["image/png", "2000×1500"]);
       expect(getTextBlock(result.toolResult.content)).toBe(`Viewed ${filePath} (image/png)`);
 
       const imageBlock = getImageBlock(result.toolResult.content);
@@ -126,12 +141,12 @@ describe("view_image tool", () => {
       await createPng(filePath, 640, 480);
       const original = readFileSync(filePath);
 
-      const backend = createLocalToolExecutionBackend();
+      const backend = createLocalToolExecutionBackend({ env: { cwd: () => fx.dir } });
       const tool = createViewImageToolDefinition(backend);
       const result = await runTool(tool, {
         id: "tool-2",
         name: TOOL_NAME_VIEW_IMAGE,
-        arguments: { path: filePath },
+        arguments: { path: "small.png" },
       });
 
       expect(result.uiEvent.type).toBe("view_image_success");
@@ -139,6 +154,8 @@ describe("view_image tool", () => {
         throw new Error("expected success ui event");
       }
 
+      expect(result.uiEvent.presentation.subject).toBe("small.png");
+      expect(result.uiEvent.presentation.metadata).toEqual(["image/png", "640×480"]);
       const imageBlock = getImageBlock(result.toolResult.content);
       const outputBuffer = Buffer.from(imageBlock.data, "base64");
       expect(outputBuffer.equals(original)).toBe(true);
@@ -175,13 +192,15 @@ describe("view_image tool", () => {
       const outputMetadata = await sharp(outputBuffer).metadata();
 
       expect(outputBuffer.byteLength).toBeLessThanOrEqual(VIEW_IMAGE_MODEL_MAX_BYTES);
-      expect(result.uiEvent.bytes).toBe(outputBuffer.byteLength);
-      expect(result.uiEvent.mimeType).toBe(imageBlock.mimeType);
+      expect(result.uiEvent.presentation.metadata).toEqual([
+        imageBlock.mimeType,
+        `${outputMetadata.width}×${outputMetadata.height}`,
+      ]);
       expect(Math.max(outputMetadata.width ?? 0, outputMetadata.height ?? 0)).toBeLessThanOrEqual(
         2000,
       );
       expect(getTextBlock(result.toolResult.content)).toBe(
-        `Viewed ${filePath} (${result.uiEvent.mimeType})`,
+        `Viewed ${filePath} (${imageBlock.mimeType})`,
       );
     } finally {
       fx.cleanup();

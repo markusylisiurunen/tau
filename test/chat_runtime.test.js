@@ -75,6 +75,23 @@ describe("ChatRuntime", () => {
     expect(runtime.agent.spec.systemPrompt).toBe(runtime.promptComposition.baseSystemPrompt);
   });
 
+  it("uses method-specific goal action labels", () => {
+    const runtime = createRuntime();
+    const expectations = [
+      ["get_goal", "checking", "checked"],
+      ["create_goal", "creating", "created"],
+      ["update_goal", "updating", "updated"],
+    ];
+
+    for (const [toolName, running, succeeded] of expectations) {
+      const presentation = runtime.agent.spec.tools
+        .get(toolName)
+        .describe(fauxToolCall(toolName, {})).presentation;
+      expect(presentation.actionByStatus.running).toBe(running);
+      expect(presentation.actionByStatus.succeeded).toBe(succeeded);
+    }
+  });
+
   it("returns the current goal as model-facing text", async () => {
     const runtime = createRuntime({
       goalManager: {
@@ -100,24 +117,26 @@ Ship &lt;all&gt; requirements
 </goal-objective>`);
   });
 
-  it("returns the created goal policy as model-facing text", async () => {
+  it("returns the created goal policy to the model and presents only the full objective", async () => {
     const runtime = createRuntime();
     const createGoal = runtime.agent.spec.tools.get("create_goal");
+    const objective = `Ship <all> requirements\n${"x".repeat(400)}\nwithout truncation`;
+    const activities = [];
 
-    const outcome = await createGoal.execute(
-      fauxToolCall("create_goal", { objective: "Ship <all> requirements" }),
-      {
-        agentId: "agent-1",
-        turnId: "turn-1",
-        assistantMessageId: "assistant-1",
-        signal: new AbortController().signal,
-        emitActivity: async () => {},
-      },
-    );
+    const outcome = await createGoal.execute(fauxToolCall("create_goal", { objective }), {
+      agentId: "agent-1",
+      turnId: "turn-1",
+      assistantMessageId: "assistant-1",
+      signal: new AbortController().signal,
+      emitActivity: async (activity) => activities.push(activity),
+    });
 
     expect(outcome.content[0].text).toMatch(/^Session goal created\.\n\nAn active session goal/);
     expect(outcome.content[0].text).toContain(
-      "<goal-objective>\nShip &lt;all&gt; requirements\n</goal-objective>",
+      `<goal-objective>\nShip &lt;all&gt; requirements\n${"x".repeat(400)}\nwithout truncation\n</goal-objective>`,
+    );
+    expect(activities.at(-1).presentation.details.map((line) => line.text)).toEqual(
+      objective.split("\n"),
     );
   });
 
@@ -152,36 +171,43 @@ Ship &lt;all&gt; requirements
       },
     });
     const updateGoal = runtime.agent.spec.tools.get("update_goal");
+    const objective = `Ship <all> requirements\n${"x".repeat(400)}\nwithout truncation`;
+    const activities = [];
     const context = {
       agentId: "agent-1",
       turnId: "turn-1",
       assistantMessageId: "assistant-1",
       signal: new AbortController().signal,
-      emitActivity: async () => {},
+      emitActivity: async (activity) => activities.push(activity),
     };
 
-    const active = await updateGoal.execute(
-      fauxToolCall("update_goal", { objective: "Ship <all> requirements" }),
-      context,
-    );
+    const active = await updateGoal.execute(fauxToolCall("update_goal", { objective }), context);
+    const activePresentation = activities.at(-1).presentation;
     const blocked = await updateGoal.execute(
       fauxToolCall("update_goal", { status: "blocked" }),
       context,
     );
+    const blockedPresentation = activities.at(-1).presentation;
     const complete = await updateGoal.execute(
       fauxToolCall("update_goal", { status: "complete" }),
       context,
     );
+    const completePresentation = activities.at(-1).presentation;
 
     expect(active.content[0].text).toMatch(/^Session goal updated\.\n\nAn active session goal/);
     expect(active.content[0].text).toContain(
-      "<goal-objective>\nShip &lt;all&gt; requirements\n</goal-objective>",
+      `<goal-objective>\nShip &lt;all&gt; requirements\n${"x".repeat(400)}\nwithout truncation\n</goal-objective>`,
     );
+    expect(activePresentation.details.map((line) => line.text)).toEqual(objective.split("\n"));
     expect(blocked.content[0].text).toMatch(
       /^Session goal updated\.\n\nThe session goal is now blocked/,
     );
     expect(blocked.content[0].text).not.toContain("An active session goal is in effect");
+    expect(blockedPresentation.details.map((line) => line.text)).toEqual(objective.split("\n"));
     expect(complete.content[0].text).toBe("The session goal is complete and has been cleared.");
+    expect(completePresentation.details.map((line) => line.text)).toEqual([
+      "The session goal is complete and has been cleared.",
+    ]);
   });
 
   it("requires both persona selection and config to expose Nook", () => {

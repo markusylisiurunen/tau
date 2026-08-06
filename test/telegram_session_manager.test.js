@@ -7,6 +7,7 @@ import {
   createTelegramSessionManager,
   TelegramSessionManagerError,
 } from "../dist/core/telegram/session_manager.js";
+import { buildToolRunPresentation } from "../dist/core/tools/presentation.js";
 import { SESSION_PROTOCOL_VERSION } from "../dist/protocol/session_protocol.js";
 import { TauSessionProtocolResponseError } from "../dist/transport/errors.js";
 import { createProtocolSnapshot } from "./helpers/session_protocol_fixtures.js";
@@ -120,7 +121,7 @@ function createToolUiFacetChange(toolCallId, eventOrEvents) {
       id: `tool-ui-${toolCallId}`,
       subject: { type: "tool", id: toolCallId },
       kind: "tau.tool-ui-events",
-      version: 1,
+      version: 2,
       data: { events },
     },
   };
@@ -1685,7 +1686,7 @@ describe("telegram session manager", () => {
           type: "bash_started",
           toolCallId: "1",
           command: "npm run check",
-          headerTarget: "npm run check",
+          presentation: buildToolRunPresentation({ toolName: "bash", subject: "npm run check" }),
         }),
       ]),
     );
@@ -1696,12 +1697,10 @@ describe("telegram session manager", () => {
           type: "edit_success",
           toolCallId: "2",
           path: "src/core/telegram/adapter.ts",
-          headerTarget: "src/core/telegram/adapter.ts",
-          oldLength: 1,
-          newLength: 2,
-          oldText: "a",
-          newText: "b",
-          uiText: { previewLines: [], fullLines: [] },
+          presentation: buildToolRunPresentation({
+            toolName: "edit",
+            subject: "src/core/telegram/adapter.ts",
+          }),
         }),
       ]),
     );
@@ -1712,11 +1711,10 @@ describe("telegram session manager", () => {
           type: "write_success",
           toolCallId: "3",
           path: "docs/telegram.md",
-          headerTarget: "docs/telegram.md",
-          bytes: 10,
-          lines: 1,
-          content: "hello",
-          uiText: { previewLines: [], fullLines: [] },
+          presentation: buildToolRunPresentation({
+            toolName: "write",
+            subject: "docs/telegram.md",
+          }),
         }),
       ]),
     );
@@ -1941,17 +1939,13 @@ describe("telegram session manager", () => {
       type: "bash_started",
       toolCallId: "1",
       command: "npm run check",
-      headerTarget: "npm run check",
+      presentation: buildToolRunPresentation({ toolName: "bash", subject: "npm run check" }),
     };
     const writeSuccess = {
       type: "write_success",
       toolCallId: "1",
       path: "docs/telegram.md",
-      headerTarget: "docs/telegram.md",
-      bytes: 10,
-      lines: 1,
-      content: "hello",
-      uiText: { previewLines: [], fullLines: [] },
+      presentation: buildToolRunPresentation({ toolName: "write", subject: "docs/telegram.md" }),
     };
 
     clientHarness.emitDelta(createPatchDelta([createToolUiFacetChange("1", bashStarted)]));

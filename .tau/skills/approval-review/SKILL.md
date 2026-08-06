@@ -63,7 +63,7 @@ Read the full change and enough surrounding code, tests, documentation, configur
 - Dependencies and external services introduced or removed.
 - What tests prove, what they do not prove, and the current verification state.
 
-Actively review for correctness and missing protections while building this model. The goal is not merely to explain decisions the author documented. Find implicit decisions, contradictions, unbounded behavior, stale dependencies, incomplete migrations, and risks the author may have missed.
+Actively review for correctness and missing protections while building this model. The goal is not merely to explain decisions the author documented. Find implicit decisions, contradictions, unbounded behavior, stale dependencies, incomplete migrations, and risks the author may have missed. Treat durable versioned filesystem data as an openability contract: evaluate whether the chosen migration, normalization, regeneration, version handling, or intentional degradation strategy preserves semantic access while keeping the current runtime canonical.
 
 Do not claim the change is safe, complete, or merge-ready until the evidence supports it.
 

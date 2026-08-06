@@ -68,7 +68,7 @@ const content = readContent(value.content, result) ?? [
 ];
 ```
 
-Choose the canonical serialized shape. Make its parser and serializer symmetric, reject unexpected alternatives, and migrate or reset obsolete data when project context permits.
+Choose the canonical serialized shape. Make its parser and serializer symmetric and reject unexpected alternatives. When persisted data has an openability contract, handle older representations at the owning version or recovery boundary using the simplest appropriate migration, normalization, regeneration, or intentional degradation strategy; keep the current internal type canonical.
 
 ```ts
 // tighter

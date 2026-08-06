@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildBashUiText,
+  buildBashPresentation,
   createBashToolDefinition,
   formatBashToolResultText,
   getBashOutputPolicy,
@@ -53,6 +53,7 @@ async function runTool(tool, toolCall, signal = new AbortController().signal) {
 describe("bash output policy", () => {
   it("rejects unknown execution arguments", async () => {
     const tool = createBashToolDefinition(backend, "/project");
+    expect(tool.schema.parameters.properties.workingDirectory.pattern).toBe("^[^\\r\\n]+$");
     const result = await runTool(
       tool,
       {
@@ -64,6 +65,29 @@ describe("bash output policy", () => {
     );
 
     expect(result.toolResult.outcome).toBe("blocked");
+
+    const invalidPath = await runTool(tool, {
+      id: "bash-invalid-cwd",
+      name: "bash",
+      arguments: { command: "pwd", workingDirectory: "one\ntwo" },
+    });
+    expect(invalidPath.toolResult.outcome).toBe("blocked");
+    expect(invalidPath.uiEvent.presentation.details[0].text).toContain("single line");
+  });
+
+  it("shows the effective working directory throughout the tool lifecycle", async () => {
+    const tool = createBashToolDefinition(backend, "/project");
+    const toolCall = {
+      id: "bash-cwd",
+      name: "bash",
+      arguments: { command: "pwd" },
+    };
+
+    expect(tool.describe(toolCall).presentation.metadata).toEqual(["/project"]);
+
+    const result = await runTool(tool, toolCall);
+    expect(result.activities[0].presentation.metadata).toEqual(["/project"]);
+    expect(result.uiEvent.presentation.metadata).toContain("/project");
   });
 
   it("gates default output and includes maxOutputTokens instructions", async () => {
@@ -143,8 +167,32 @@ describe("bash output policy", () => {
     expect(toolText).toBe("Command produced no output (exit 0)");
   });
 
-  it("omits working directory when it is not provided", () => {
-    const uiText = buildBashUiText({
+  it("marks terminal output for character wrapping", () => {
+    const presentation = buildBashPresentation({
+      toolName: "bash",
+      subject: "echo test",
+      truncationInfo: {
+        output: "alpha beta",
+        model: {
+          truncated: false,
+          totalLines: 1,
+          outputLines: 1,
+          totalBytes: 10,
+          outputBytes: 10,
+        },
+        captureTruncated: false,
+      },
+      exitCode: 0,
+      durationMs: 0,
+    });
+
+    expect(presentation.details).toEqual([{ text: "alpha beta", wrap: "character" }]);
+  });
+
+  it("omits empty-output metadata", () => {
+    const presentation = buildBashPresentation({
+      toolName: "bash",
+      subject: "echo test",
       truncationInfo: {
         output: "",
         model: {
@@ -160,11 +208,13 @@ describe("bash output policy", () => {
       durationMs: 12,
     });
 
-    expect(uiText.statusLine).toBe("exit 0 · 12ms · no output");
+    expect(presentation.metadata).toEqual(["exit 0", "12ms"]);
   });
 
   it("shows working directory after exit status", () => {
-    const uiText = buildBashUiText({
+    const presentation = buildBashPresentation({
+      toolName: "bash",
+      subject: "echo test",
       truncationInfo: {
         output: "",
         model: {
@@ -181,6 +231,6 @@ describe("bash output policy", () => {
       durationMs: 12,
     });
 
-    expect(uiText.statusLine).toBe("exit 0 · /tmp/tau · 12ms · no output");
+    expect(presentation.metadata).toEqual(["exit 0", "/tmp/tau", "12ms"]);
   });
 });

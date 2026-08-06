@@ -6,9 +6,8 @@ import { SessionDividerComponent, type SessionDividerModel } from "./session_div
 import type { SystemMessageModel } from "./system_message.js";
 import { SystemMessageComponent } from "./system_message.js";
 import type { Theme } from "./theme/index.js";
-import { buildToolOutputProps, renderToolOutput } from "./tool_output.js";
+import { ToolCardComponent } from "./tool_card.js";
 import type { ToolUiModel } from "./tool_ui_model.js";
-import type { ToolUiRegistry } from "./tool_ui_registry.js";
 import { UserMessageComponent, type UserMessageModel } from "./user_message.js";
 
 export type ChatMessageModel =
@@ -28,8 +27,6 @@ export type { AssistantMessageModel };
 export interface ChatMessageRenderOptions {
   theme: Theme;
   thoughtsVisible: boolean;
-  compactToolUi: boolean;
-  toolUiRegistry: ToolUiRegistry;
 }
 
 export interface RenderedMessage {
@@ -47,7 +44,7 @@ export function renderChatMessage(
   model: ChatMessageModel,
   options: ChatMessageRenderOptions,
 ): RenderedMessage {
-  const { theme, thoughtsVisible, compactToolUi, toolUiRegistry } = options;
+  const { theme, thoughtsVisible } = options;
 
   switch (model.type) {
     case "app_intro": {
@@ -140,21 +137,13 @@ export function renderChatMessage(
       };
     }
     case "tool": {
-      const view = toolUiRegistry.renderModel(model.tool, {
-        theme,
-        compact: compactToolUi,
-      });
-      const component = renderToolOutput(view, compactToolUi);
+      const component = new ToolCardComponent({ model: model.tool, theme });
       return {
         component,
         isAssistant: false,
         update: (nextModel, nextOptions) => {
           if (nextModel.type !== "tool") return false;
-          const nextView = nextOptions.toolUiRegistry.renderModel(nextModel.tool, {
-            theme: nextOptions.theme,
-            compact: nextOptions.compactToolUi,
-          });
-          component.update(buildToolOutputProps(nextView, nextOptions.compactToolUi));
+          component.update({ model: nextModel.tool, theme: nextOptions.theme });
           return true;
         },
       };

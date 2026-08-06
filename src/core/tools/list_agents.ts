@@ -5,6 +5,7 @@ import type { AgentSupervisor } from "../subagents/agent_supervisor.js";
 import { formatListAgentsResult } from "../subagents/format.js";
 import { parseToolArgs } from "../utils/zod.js";
 import type { ToolActivity } from "./activity.js";
+import { buildToolRunPresentation } from "./presentation.js";
 import {
   type AgentTool,
   createTextToolOutcome,
@@ -13,7 +14,7 @@ import {
   type ToolExecutionOutcome,
   type ToolImplementationOutcome,
 } from "./registry.js";
-import { buildSubagentUiText } from "./subagent_ui.js";
+import { buildSubagentPresentation } from "./subagent_ui.js";
 import { TOOL_NAME_LIST_AGENTS } from "./tool_names.js";
 
 const LIST_AGENTS_DESCRIPTION = [
@@ -32,7 +33,12 @@ const listArgsSchema = z.object({}).strict();
 export function createListAgentsToolDefinition(supervisor: AgentSupervisor): AgentTool {
   return {
     schema: LIST_AGENTS_TOOL,
-    describe: () => ({ headerTarget: "subagents" }),
+    describe: () => ({
+      presentation: buildToolRunPresentation({
+        toolName: TOOL_NAME_LIST_AGENTS,
+        subject: "subagents",
+      }),
+    }),
     async execute(
       toolCall: ToolCall,
       context: ToolExecutionContext,
@@ -40,9 +46,14 @@ export function createListAgentsToolDefinition(supervisor: AgentSupervisor): Age
       const blocked = (reason: string): ToolImplementationOutcome => {
         const outcome = createTextToolOutcome(reason, "blocked");
         const uiEvent: ToolActivity = {
-          type: "list_agents_blocked",
+          type: "tool_call_blocked",
           toolCallId: toolCall.id,
-          headerTarget: "subagents",
+          toolName: TOOL_NAME_LIST_AGENTS,
+          presentation: buildToolRunPresentation({
+            toolName: TOOL_NAME_LIST_AGENTS,
+            subject: "subagents",
+            details: [{ text: reason }],
+          }),
           reason,
         };
         return { content: outcome.content, outcome: outcome.outcome, uiEvent };
@@ -60,25 +71,29 @@ export function createListAgentsToolDefinition(supervisor: AgentSupervisor): Age
           const capacity = supervisor.getCapacity();
           const resultText = formatListAgentsResult(states, capacity);
           const outcome = createTextToolOutcome(resultText, "succeeded");
-          const uiText = buildSubagentUiText({
+          const presentation = buildSubagentPresentation({
+            toolName: TOOL_NAME_LIST_AGENTS,
+            subject: "subagents",
             output: resultText,
-            statusText: `running ${capacity.running}/${capacity.limit}`,
-            maxOutputLines: 16,
-            fullText: resultText,
+            detailTruncation: false,
           });
           const uiEvent: ToolActivity = {
-            type: "list_agents_finished",
+            type: "tool_call_finished",
             toolCallId: toolCall.id,
-            headerTarget: "subagents",
+            toolName: TOOL_NAME_LIST_AGENTS,
+            presentation,
             status: "success",
-            uiText,
           };
           return { content: outcome.content, outcome: outcome.outcome, uiEvent };
         },
         {
-          type: "list_agents_started",
+          type: "tool_call_started",
           toolCallId: toolCall.id,
-          headerTarget: "subagents",
+          toolName: TOOL_NAME_LIST_AGENTS,
+          presentation: buildToolRunPresentation({
+            toolName: TOOL_NAME_LIST_AGENTS,
+            subject: "subagents",
+          }),
         },
       );
     },

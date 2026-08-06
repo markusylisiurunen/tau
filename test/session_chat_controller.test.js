@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { buildAutoCompactionContinuationMessage } from "../dist/core/session/compaction.js";
+import { buildToolRunPresentation } from "../dist/core/tools/presentation.js";
 import {
   hasAutoCompactionContinuationMetadata,
   prependTauUserMetadata,
@@ -14,8 +15,10 @@ import {
   applySessionProtocolDelta,
   SESSION_PROTOCOL_VERSION,
 } from "../dist/protocol/session_protocol.js";
+import { FileSessionStore } from "../dist/store/file_session_store.js";
 import { TauSessionProtocolResponseError } from "../dist/transport/errors.js";
 import { formatDiffReviewUserMessage } from "../dist/tui/chat_controller/diff_review_user_message.js";
+import { formatRewindCandidateAge } from "../dist/tui/chat_controller/history_labels.js";
 import { copyTextToClipboard } from "../dist/tui/clipboard.js";
 import { createTuiClientTools, SessionChatApp } from "../dist/tui/session_chat_app.js";
 import { SessionChatController } from "../dist/tui/session_chat_controller.js";
@@ -620,7 +623,6 @@ class FakeView {
     this.systems.push({ text, kind, options });
   }
   setThinkingVisibility() {}
-  setCompactToolUi() {}
   updateStatus(status) {
     this.status = status;
     this.statusUpdates.push(status);
@@ -690,7 +692,6 @@ class FakeView {
   }
   bindInputHandlers() {}
   setAutocompleteProvider() {}
-  addBashExecutionMessage() {}
   updateTheme = vi.fn();
 }
 
@@ -809,6 +810,17 @@ function createMockDeps(spawn = vi.fn(), platform = "darwin") {
   };
 }
 
+describe("formatRewindCandidateAge", () => {
+  const now = 10 * 24 * 60 * 60 * 1000;
+
+  it("formats compact relative ages", () => {
+    expect(formatRewindCandidateAge(now - 30_000, now)).toBe("now");
+    expect(formatRewindCandidateAge(now - 2 * 60_000, now)).toBe("2m ago");
+    expect(formatRewindCandidateAge(now - 3 * 60 * 60_000, now)).toBe("3h ago");
+    expect(formatRewindCandidateAge(now - 4 * 24 * 60 * 60_000, now)).toBe("4d ago");
+  });
+});
+
 describe("SessionChatController", () => {
   it("renders the main-style startup intro and compact remote cwd label", async () => {
     const systemPrompt = [
@@ -875,8 +887,8 @@ describe("SessionChatController", () => {
     expect(intro.body).not.toContain("~/repo/src/AGENTS.md");
     expect(intro.body).toContain("session id: session-1");
     expect(intro.body).not.toContain("ssh host tau rpc");
-    expect(view.status.editor.cwdLabel).toBe("remote · ~/repo");
-    expect(view.status.footer.contextUsage).toBe("↑0 ↓0 (r0 w0) · 0.0%/128k");
+    expect(view.status.footer.cwdLabel).toBe("remote · ~/repo");
+    expect(view.status.footer.contextUsage).toBe("↑0 ↓0 r0 w0 · 0.0%/128k");
 
     await controller.onUserInput("/help");
     expect(view.systems.at(-1)?.text).toContain("context:\n  ~/repo/AGENTS.md");
@@ -966,7 +978,7 @@ describe("SessionChatController", () => {
 
     controller.start();
 
-    expect(view.status.footer.commandHint).toBe("compacting context...");
+    expect(view.status.footer.statusHint).toBe("compacting context...");
   });
 
   it("renders auto-compaction resets with the main-style divider and retained notice", async () => {
@@ -1066,7 +1078,7 @@ describe("SessionChatController", () => {
 
     controller.start();
     expect(view.messages.map((message) => message.id)).toContain("history-1");
-    expect(view.status.editor.cwdLabel).toBe("remote · /session/repo");
+    expect(view.status.footer.cwdLabel).toBe("remote · /session/repo");
 
     controller.getInputHandlers().onSubmit("hello session");
     await flush();
@@ -1167,7 +1179,7 @@ describe("SessionChatController", () => {
     expect(view.workingIconStops).toBe(1);
     expect(controller.isStreaming).toBe(false);
     expect(controller.submittedTurnInProgress).toBe(false);
-    expect(view.status.footer.commandHint).toBeUndefined();
+    expect(view.status.footer.statusHint).toBeUndefined();
   });
 
   it("shows the protocol cause when a submitted turn fails", async () => {
@@ -1230,7 +1242,7 @@ describe("SessionChatController", () => {
     expect(view.workingIconStarts).toBe(1);
     expect(view.workingIconStops).toBe(1);
     expect(controller.isStreaming).toBe(false);
-    expect(view.status.footer.commandHint).toBeUndefined();
+    expect(view.status.footer.statusHint).toBeUndefined();
   });
 
   it("starts and stops caffeinate around submitted session turns when enabled", async () => {
@@ -1531,7 +1543,7 @@ describe("SessionChatController", () => {
     });
 
     expect(view.workingIconStarts).toBe(1);
-    expect(view.status.footer.commandHint).toBeUndefined();
+    expect(view.status.footer.statusHint).toBeUndefined();
 
     const assistantMessage = createAssistantMessage("observed reply");
     session.emit({
@@ -1602,7 +1614,7 @@ describe("SessionChatController", () => {
     expect(view.workingIconStops).toBe(1);
     expect(controller.isStreaming).toBe(false);
     expect(controller.submittedTurnInProgress).toBe(true);
-    expect(view.status.footer.commandHint).toBeUndefined();
+    expect(view.status.footer.statusHint).toBeUndefined();
 
     controller.getInputHandlers().onSubmit("queued while response pending");
     await flush();
@@ -2454,14 +2466,17 @@ describe("SessionChatController", () => {
           id: "tool-ui-write-call",
           subject: { type: "tool", id: "write-call" },
           kind: "tau.tool-ui-events",
-          version: 1,
+          version: 2,
           data: {
             events: [
               {
                 type: "tool_call_streaming",
                 toolCallId: "write-call",
                 toolName: "write",
-                headerTarget: "write",
+                presentation: buildToolRunPresentation({
+                  toolName: "write",
+                  subject: "write",
+                }),
               },
             ],
           },
@@ -2470,14 +2485,17 @@ describe("SessionChatController", () => {
           id: "tool-ui-tool-b",
           subject: { type: "tool", id: "tool-b" },
           kind: "tau.tool-ui-events",
-          version: 1,
+          version: 2,
           data: {
             events: [
               {
                 type: "tool_call_queued",
                 toolCallId: "tool-b",
                 toolName: "bash",
-                headerTarget: "bash",
+                presentation: buildToolRunPresentation({
+                  toolName: "bash",
+                  subject: "echo b",
+                }),
               },
             ],
           },
@@ -2486,14 +2504,17 @@ describe("SessionChatController", () => {
           id: "tool-ui-tool-a",
           subject: { type: "tool", id: "tool-a" },
           kind: "tau.tool-ui-events",
-          version: 1,
+          version: 2,
           data: {
             events: [
               {
                 type: "tool_call_queued",
                 toolCallId: "tool-a",
                 toolName: "bash",
-                headerTarget: "bash",
+                presentation: buildToolRunPresentation({
+                  toolName: "bash",
+                  subject: "echo a",
+                }),
               },
             ],
           },
@@ -2581,41 +2602,29 @@ describe("SessionChatController", () => {
           id: "tool-ui-tool-a",
           subject: { type: "tool", id: "tool-a" },
           kind: "tau.tool-ui-events",
-          version: 1,
+          version: 2,
           data: {
             events: [
               {
                 type: "tool_call_queued",
                 toolCallId: "tool-a",
                 toolName: "bash",
-                headerTarget: "bash",
+                presentation: buildToolRunPresentation({
+                  toolName: "bash",
+                  subject: "echo a",
+                }),
               },
               {
                 type: "bash_execution",
                 toolCallId: "tool-a",
                 command: "echo a",
-                headerTarget: "echo a",
+                presentation: buildToolRunPresentation({
+                  toolName: "bash",
+                  subject: "echo a",
+                  details: [{ text: "a" }],
+                  metadata: ["exit 0"],
+                }),
                 exitCode: 0,
-                truncationInfo: {
-                  output: "a\n",
-                  model: {
-                    content: "a\n",
-                    truncated: false,
-                    truncatedBy: null,
-                    totalLines: 2,
-                    totalBytes: 2,
-                    outputLines: 2,
-                    outputBytes: 2,
-                    maxLines: 2,
-                    maxTokens: 8192,
-                  },
-                  captureTruncated: false,
-                },
-                uiText: {
-                  previewLines: [{ text: "a" }],
-                  statusLine: "exit 0",
-                  fullLines: [{ text: "a" }],
-                },
               },
             ],
           },
@@ -2638,11 +2647,137 @@ describe("SessionChatController", () => {
       expect.objectContaining({
         toolCallId: "tool-a",
         status: "succeeded",
-        activity: expect.objectContaining({ type: "bash_execution" }),
-        resultText: expect.stringContaining("a"),
+        presentation: expect.objectContaining({
+          subject: "echo a",
+          details: [{ text: "a", wrap: "word" }],
+        }),
       }),
     ]);
     await controller.dispose();
+  });
+
+  it("opens a filesystem snapshot with an older tool presentation facet", async () => {
+    const baseSnapshot = createSnapshot();
+    const result = Array.from({ length: 10 }, (_, index) => `result ${index + 1}`).join("\n");
+    const snapshot = updateSnapshot(baseSnapshot, {
+      messages: [
+        ...baseSnapshot.messages,
+        {
+          id: "assistant-tools",
+          state: "committed",
+          modelVisible: true,
+          message: createAssistantToolCallMessage([
+            {
+              type: "toolCall",
+              id: "tool-a",
+              name: "bash",
+              arguments: { command: "do-not-render-this-command" },
+            },
+          ]),
+        },
+        {
+          id: "tool-a-result",
+          state: "committed",
+          modelVisible: true,
+          message: {
+            role: "toolResult",
+            toolCallId: "tool-a",
+            toolName: "bash",
+            content: [{ type: "text", text: result }],
+            isError: false,
+            timestamp: 2,
+          },
+        },
+      ],
+      timeline: [
+        {
+          type: "message",
+          id: "timeline-assistant-tools",
+          messageId: "assistant-tools",
+        },
+        {
+          type: "message",
+          id: "timeline-tool-a-result",
+          messageId: "tool-a-result",
+        },
+      ],
+      tools: {
+        "tool-a": {
+          id: "tool-a",
+          toolCallId: "tool-a",
+          toolName: "bash",
+          call: { messageId: "assistant-tools", contentIndex: 0 },
+          status: "succeeded",
+          resultMessageId: "tool-a-result",
+          facetIds: ["tool-ui-tool-a"],
+        },
+      },
+      facets: {
+        "tool-ui-tool-a": {
+          id: "tool-ui-tool-a",
+          subject: { type: "tool", id: "tool-a" },
+          kind: "tau.tool-ui-events",
+          version: 1,
+          data: {
+            events: [
+              {
+                type: "bash_execution",
+                toolCallId: "tool-a",
+                command: "do-not-render-this-command",
+                headerTarget: "do-not-render-this-command",
+              },
+            ],
+          },
+        },
+      },
+    });
+    const directory = join(
+      tmpdir(),
+      `tau-old-tool-presentation-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    );
+    try {
+      const store = new FileSessionStore({ directory });
+      await store.commitSessionSnapshot(snapshot);
+      const storedSnapshot = await store.loadSession(snapshot.sessionId);
+      expect(storedSnapshot).toBeDefined();
+      if (!storedSnapshot) throw new Error("expected stored session snapshot");
+
+      const session = new FakeSession(storedSnapshot);
+      const view = new FakeView();
+      const controller = new SessionChatController({
+        view,
+        session,
+        snapshot: await session.snapshot(),
+        targetLabel: "ssh host tau rpc",
+      });
+
+      controller.start();
+
+      expect(view.messages.some((message) => message.id === "tool-a-result")).toBe(false);
+      expect(view.toolModels).toEqual([
+        expect.objectContaining({
+          toolCallId: "tool-a",
+          status: "succeeded",
+          presentation: expect.objectContaining({
+            actionByStatus: expect.objectContaining({ succeeded: "completed" }),
+            subject: "bash",
+            details: [
+              { text: "result 1", wrap: "character" },
+              { text: "result 2", wrap: "character" },
+              { text: "result 3", wrap: "character" },
+              { text: "…4 more lines…", wrap: "word" },
+              { text: "result 8", wrap: "character" },
+              { text: "result 9", wrap: "character" },
+              { text: "result 10", wrap: "character" },
+            ],
+          }),
+        }),
+      ]);
+      expect(JSON.stringify(view.toolModels)).not.toContain("do-not-render-this-command");
+      await controller.dispose();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it("applies tool status and presentation facet deltas independently", async () => {
@@ -2650,13 +2785,13 @@ describe("SessionChatController", () => {
       type: "tool_call_queued",
       toolCallId: "tool-a",
       toolName: "bash",
-      headerTarget: "bash",
+      presentation: buildToolRunPresentation({ toolName: "bash", subject: "echo a" }),
     };
     const startedEvent = {
       type: "bash_started",
       toolCallId: "tool-a",
-      command: "echo a",
-      headerTarget: "echo a",
+      command: "echo a\necho b",
+      presentation: buildToolRunPresentation({ toolName: "bash", subject: "echo a\necho b" }),
     };
     const snapshot = updateSnapshot(createSnapshot(), {
       revision: 3,
@@ -2689,7 +2824,7 @@ describe("SessionChatController", () => {
           id: "tool-ui-tool-a",
           subject: { type: "tool", id: "tool-a" },
           kind: "tau.tool-ui-events",
-          version: 1,
+          version: 2,
           data: { events: [queuedEvent] },
         },
       },
@@ -2740,7 +2875,7 @@ describe("SessionChatController", () => {
       expect.objectContaining({
         toolCallId: "tool-a",
         status: "running",
-        activity: queuedEvent,
+        presentation: expect.objectContaining({ subject: "echo a" }),
       }),
     ]);
 
@@ -2760,7 +2895,7 @@ describe("SessionChatController", () => {
               id: "tool-ui-tool-a",
               subject: { type: "tool", id: "tool-a" },
               kind: "tau.tool-ui-events",
-              version: 1,
+              version: 2,
               data: { events: [queuedEvent, startedEvent] },
             },
           },
@@ -2777,7 +2912,7 @@ describe("SessionChatController", () => {
       expect.objectContaining({
         toolCallId: "tool-a",
         status: "running",
-        activity: startedEvent,
+        presentation: expect.objectContaining({ subject: "echo a\necho b" }),
       }),
     ]);
     expect(view.status.footer.sessionCost).toBe("$0.42");
@@ -3004,14 +3139,13 @@ describe("SessionChatController", () => {
       expect.arrayContaining([
         expect.objectContaining({
           status: "running",
-          activity: expect.objectContaining({ type: "bash_started", command: "pwd" }),
+          presentation: expect.objectContaining({ subject: "pwd" }),
         }),
         expect.objectContaining({
           status: "succeeded",
-          activity: expect.objectContaining({
-            type: "bash_execution",
-            command: "pwd",
-            labelOverride: "you ran",
+          presentation: expect.objectContaining({
+            subject: "pwd",
+            actionByStatus: expect.objectContaining({ succeeded: "you ran" }),
           }),
         }),
       ]),
@@ -3049,10 +3183,9 @@ describe("SessionChatController", () => {
       expect.arrayContaining([
         expect.objectContaining({
           status: "succeeded",
-          activity: expect.objectContaining({
-            type: "bash_execution",
-            command: "pwd",
-            labelOverride: "incognito",
+          presentation: expect.objectContaining({
+            subject: "pwd",
+            actionByStatus: expect.objectContaining({ succeeded: "incognito" }),
           }),
         }),
       ]),
@@ -3080,7 +3213,7 @@ describe("SessionChatController", () => {
     });
     controller.start();
 
-    controller.getInputHandlers().onSubmit("/compact:summary-and-last preserve decisions");
+    controller.getInputHandlers().onSubmit("/compact-keep-last preserve decisions");
     await flush();
 
     expect(session.compact).toHaveBeenCalledWith("summary-and-last", {
@@ -3173,14 +3306,14 @@ describe("SessionChatController", () => {
     });
     controller.start();
 
-    controller.getInputHandlers().onSubmit("/compact:summary-only");
+    controller.getInputHandlers().onSubmit("/compact-all");
     await flush();
 
-    expect(view.status.footer.commandHint).toBe("compacting context...");
+    expect(view.status.footer.statusHint).toBe("compacting context...");
     pendingCompact.resolve();
     await flush();
 
-    expect(view.status.footer.commandHint).toBeUndefined();
+    expect(view.status.footer.statusHint).toBeUndefined();
   });
 
   it("uses the shared slash command parser for session command dispatch", async () => {
@@ -3205,7 +3338,7 @@ describe("SessionChatController", () => {
     expect(view.systems.some((message) => message.text.includes("commands:"))).toBe(true);
   });
 
-  it("tracks session editor input modes and command hints while typing", async () => {
+  it("tracks session editor input modes without command hints", async () => {
     const session = new FakeSession();
     const view = new FakeView();
     const controller = new SessionChatController({
@@ -3228,7 +3361,7 @@ describe("SessionChatController", () => {
 
     handlers.onChange("/reload");
     expect(view.status.editor.mode).toBe("normal");
-    expect(view.status.footer.commandHint).toContain("reload prompts");
+    expect(view.status.footer.statusHint).toBeUndefined();
   });
 
   it("switches session personas through the session protocol", async () => {
@@ -4131,7 +4264,7 @@ describe("SessionChatController", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const speechHints = view.statusUpdates
-      .map((status) => status.footer.commandHint)
+      .map((status) => status.footer.statusHint)
       .filter((hint) => hint !== undefined);
     expect(speechHints).toEqual(
       expect.arrayContaining([
@@ -4141,7 +4274,7 @@ describe("SessionChatController", () => {
         "playing speech (0/1 played, 1/1 ready)...",
       ]),
     );
-    expect(view.status.footer.commandHint).toBeUndefined();
+    expect(view.status.footer.statusHint).toBeUndefined();
     expect(spawn).toHaveBeenNthCalledWith(1, "mktemp", ["/tmp/tau-speak.XXXXXX"]);
     expect(spawn).toHaveBeenNthCalledWith(
       2,
@@ -4369,6 +4502,8 @@ describe("SessionChatController", () => {
   });
 
   it("rewinds session history from the selected user message", async () => {
+    const now = 10 * 24 * 60 * 60 * 1000;
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(now);
     const session = new FakeSession(
       createSnapshot([
         {
@@ -4376,6 +4511,7 @@ describe("SessionChatController", () => {
           message: {
             role: "user",
             content: [{ type: "text", text: "first message" }],
+            timestamp: now - 2 * 60_000,
           },
         },
         {
@@ -4393,6 +4529,7 @@ describe("SessionChatController", () => {
           message: {
             role: "user",
             content: [{ type: "text", text: "second message" }],
+            timestamp: now - 30_000,
           },
         },
         {
@@ -4408,6 +4545,7 @@ describe("SessionChatController", () => {
           message: {
             role: "user",
             content: [{ type: "text", text: "third message" }],
+            timestamp: now - 2 * 60 * 60_000,
           },
         },
       ]),
@@ -4425,10 +4563,10 @@ describe("SessionChatController", () => {
     await flush();
 
     expect(view.rewindPickerShows).toHaveLength(1);
-    expect(view.rewindPickerShows[0].items.map((item) => item.label)).toEqual([
-      "first message",
-      "second message",
-      "third message",
+    expect(view.rewindPickerShows[0].items).toEqual([
+      { id: "history-1", label: "first message", description: "2m ago" },
+      { id: "history-2", label: "second message", description: "now" },
+      { id: "history-3", label: "third message", description: "2h ago" },
     ]);
 
     view.rewindPickerShows[0].onSelect("history-2");
@@ -4439,6 +4577,7 @@ describe("SessionChatController", () => {
     expect(view.removeMessagesFromCalls).toEqual(["history-2"]);
     expect(view.removed).toEqual(expect.arrayContaining(["history-2", "history-3"]));
     expect(view.editorText).toBe("second message");
+    nowSpy.mockRestore();
   });
 
   it("warns when there are no session user messages to rewind", async () => {

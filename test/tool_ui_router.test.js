@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { buildToolRunPresentation } from "../dist/core/tools/presentation.js";
 import { ToolUiRouter } from "../dist/tui/tool_ui_router.js";
 
 function createHarness() {
@@ -44,9 +45,8 @@ function createHarness() {
 function toolModel(toolCallId, status, overrides = {}) {
   return {
     toolCallId,
-    toolName: "write",
     status,
-    headerTarget: "file.txt",
+    presentation: buildToolRunPresentation({ toolName: "write", subject: "file.txt" }),
     ...overrides,
   };
 }
@@ -56,15 +56,8 @@ describe("ToolUiRouter", () => {
     const harness = createHarness();
     harness.router.updateLocal({
       toolCallId: "local-call",
-      toolName: "bash",
       status: "running",
-      headerTarget: "pwd",
-      activity: {
-        type: "bash_started",
-        toolCallId: "local-call",
-        command: "pwd",
-        headerTarget: "pwd",
-      },
+      presentation: buildToolRunPresentation({ toolName: "bash", subject: "pwd" }),
     });
     harness.router.reconcileSession([
       toolModel("stale-call", "queued"),
@@ -107,9 +100,11 @@ describe("ToolUiRouter", () => {
     const harness = createHarness();
     harness.router.updateLocal({
       toolCallId: "local-call",
-      toolName: "client_tool",
       status: "queued",
-      headerTarget: "client_tool",
+      presentation: buildToolRunPresentation({
+        toolName: "client_tool",
+        subject: "client_tool",
+      }),
     });
     harness.router.reconcileSession([toolModel("session-call", "running")]);
 

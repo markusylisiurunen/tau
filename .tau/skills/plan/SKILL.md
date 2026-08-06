@@ -34,7 +34,7 @@ One paragraph: what is being built and why.
 
 ### Background
 
-The context a developer would need: relevant existing behavior, constraints, edge cases, and dependencies.
+The context a developer would need: relevant existing behavior, constraints, edge cases, and dependencies. When the target changes durable versioned filesystem data, state the openability requirement, semantic data that must remain accessible, acceptable degradation, chosen owning-boundary compatibility strategy, and representative old-file recovery coverage.
 
 ### Plan
 

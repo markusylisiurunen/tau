@@ -10,7 +10,9 @@ import type { Theme } from "./theme/index.js";
 
 const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 const DEFAULT_EDITOR_MAX_LINES = 22;
-const MIN_EDITOR_LINES = 5;
+const MIN_EDITOR_LINES = 3;
+const EDITOR_PLACEHOLDER =
+  "ask the agent anything · / for commands · ! for shell mode · ctrl+y for voice";
 
 export class CustomEditor extends Editor {
   private uiTheme: Theme;
@@ -23,10 +25,10 @@ export class CustomEditor extends Editor {
   private scrollTop = 0;
   private lastEscapeAt?: number;
   private inputEnabled = true;
+  private placeholderVisible = true;
 
   public onCtrlC?: () => void;
   public onCtrlT?: () => void;
-  public onCtrlO?: () => void;
   public onEscape?: () => void;
   public onShiftTab?: () => void;
   public onCtrlP?: () => void;
@@ -65,6 +67,10 @@ export class CustomEditor extends Editor {
     this.inputEnabled = enabled;
   }
 
+  setPlaceholderVisible(visible: boolean): void {
+    this.placeholderVisible = visible;
+  }
+
   setHeader(
     left: string,
     right: string,
@@ -88,7 +94,7 @@ export class CustomEditor extends Editor {
     const maxContentLines = Math.max(1, maxLines - 2);
     const minContentLines = Math.max(1, minLines - 2);
     const contentLines = this.renderEditorContent(innerWidth, maxContentLines, minContentLines);
-    const autocompleteLines = this.renderAutocompleteLines(innerWidth);
+    const autocompleteLines = this.renderAutocompleteLines(width);
 
     const vertical = this.borderColor("│");
     const rendered: string[] = [];
@@ -106,8 +112,7 @@ export class CustomEditor extends Editor {
 
     if (autocompleteLines.length > 0) {
       for (const line of autocompleteLines) {
-        const padded = this.padToWidth(line, width - 1);
-        rendered.push(` ${padded}`);
+        rendered.push(this.padToWidth(line, width));
       }
     }
 
@@ -143,11 +148,6 @@ export class CustomEditor extends Editor {
 
     if (matchesKey(data, Key.ctrl("t")) && this.onCtrlT) {
       this.onCtrlT();
-      return;
-    }
-
-    if (matchesKey(data, Key.ctrl("o")) && this.onCtrlO && !this.isShowingAutocomplete()) {
-      this.onCtrlO();
       return;
     }
 
@@ -453,7 +453,7 @@ export class CustomEditor extends Editor {
   }
 
   private renderHeaderLine(width: number): string {
-    return this.renderHeaderLineWithCorners(width, "╭", "╮");
+    return this.renderHeaderLineWithCorners(width, "┌", "┐");
   }
 
   private renderHeaderLineWithCorners(
@@ -520,7 +520,7 @@ export class CustomEditor extends Editor {
   private renderFooterLine(width: number): string {
     if (width <= 1) return this.borderColor("─").repeat(Math.max(0, width));
     const innerWidth = Math.max(0, width - 2);
-    return `${this.borderColor("╰")}${this.borderColor("─").repeat(innerWidth)}${this.borderColor("╯")}`;
+    return `${this.borderColor("└")}${this.borderColor("─").repeat(innerWidth)}${this.borderColor("┘")}`;
   }
 
   private padToWidth(line: string, width: number): string {
@@ -543,6 +543,15 @@ export class CustomEditor extends Editor {
     minContentLines: number,
   ): string[] {
     if (width <= 0) return [""];
+    if (this.placeholderVisible && this.getText() === "") {
+      const placeholder = truncateFromEndByWidth(EDITOR_PLACEHOLDER, Math.max(0, width - 1));
+      const firstLine = this.padToWidth(
+        `${this.cursorStyle(" ")}${this.uiTheme.palette.editorPlaceholder(placeholder)}`,
+        width,
+      );
+      return [firstLine, ...Array.from({ length: minContentLines - 1 }, () => " ".repeat(width))];
+    }
+
     const layoutLines = this.layoutTextPreserveIndent(width);
     const visibleLines = this.sliceVisibleLayoutLines(layoutLines, maxContentLines);
     const lines: string[] = [];

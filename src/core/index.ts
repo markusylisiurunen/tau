@@ -25,6 +25,7 @@ export {
   runListCommand,
   runLoginCommand,
   runLogoutCommand,
+  runSetAccountEnabledCommand,
   SUPPORTED_OAUTH_PROVIDERS,
 } from "./auth/index.js";
 export type { CliOptions } from "./cli.js";

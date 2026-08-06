@@ -77,7 +77,9 @@ function printAuthHelp(): void {
       "usage:",
       "  tau auth login <provider>",
       "  tau auth list",
-      "  tau auth logout <provider> --account <email>",
+      "  tau auth disable <provider> --account <email-or-id>",
+      "  tau auth enable <provider> --account <email-or-id>",
+      "  tau auth logout <provider> --account <email-or-id>",
       "",
       "providers:",
       "  codex  OpenAI Codex (ChatGPT Plus/Pro)",
@@ -85,6 +87,8 @@ function printAuthHelp(): void {
       "examples:",
       "  tau auth login codex",
       "  tau auth list",
+      "  tau auth disable codex --account user@example.com",
+      "  tau auth enable codex --account user@example.com",
       "  tau auth logout codex --account user@example.com",
     ].join("\n"),
   );
@@ -621,6 +625,7 @@ if (argv[0] === "auth") {
     runListCommand,
     runLoginCommand,
     runLogoutCommand,
+    runSetAccountEnabledCommand,
   } = await import("./core/auth/index.js");
   let command: AuthCliCommand;
   try {
@@ -669,6 +674,15 @@ if (argv[0] === "auth") {
       });
     } else if (command.type === "logout") {
       await runLogoutCommand({
+        providerArg: command.providerArg,
+        accountId: command.accountId,
+        authStorage,
+        authPath,
+        prompt,
+      });
+    } else if (command.type === "enable" || command.type === "disable") {
+      await runSetAccountEnabledCommand({
+        enabled: command.type === "enable",
         providerArg: command.providerArg,
         accountId: command.accountId,
         authStorage,

@@ -41,7 +41,12 @@ export class AuthManager {
       const accounts = await adapter.listAccountInfo(this.authStorage);
       if (accounts.length > 0) {
         const forcedAccountId = adapter.getForcedAccountId?.(this.authStorage);
-        const selectedAccountId = forcedAccountId ?? adapter.selectAccountFromList?.(accounts);
+        const candidateAccountId = forcedAccountId ?? adapter.selectAccountFromList?.(accounts);
+        const selectedAccountId = accounts.some(
+          (account) => account.accountId === candidateAccountId && !account.disabled,
+        )
+          ? candidateAccountId
+          : undefined;
         results.push({
           providerId: adapter.id,
           providerLabel: adapter.label,
@@ -54,24 +59,35 @@ export class AuthManager {
   }
 
   addOAuthAccount(providerId: string, credentials: OAuthCredential): void {
-    const adapter = this.adapters.get(providerId);
-    if (!adapter) {
-      throw new Error(`unsupported auth provider "${providerId}"`);
-    }
+    const adapter = this.getAdapter(providerId);
     this.authStorage.reload();
     adapter.validateOAuthCredentials?.(credentials);
     adapter.addOAuthAccount(this.authStorage, credentials);
   }
 
   removeAccount(providerId: string, accountId: string): void {
-    const adapter = this.adapters.get(providerId);
-    if (!adapter) {
-      throw new Error(`unsupported auth provider "${providerId}"`);
-    }
+    const adapter = this.getAdapter(providerId);
     this.authStorage.reload();
     const removed = adapter.removeAccount(this.authStorage, accountId);
     if (!removed) {
       throw new Error(`account "${accountId}" not found for provider "${providerId}"`);
     }
+  }
+
+  setAccountEnabled(providerId: string, accountId: string, enabled: boolean): void {
+    const adapter = this.getAdapter(providerId);
+    this.authStorage.reload();
+    const updated = adapter.setAccountEnabled(this.authStorage, accountId, enabled);
+    if (!updated) {
+      throw new Error(`account "${accountId}" not found for provider "${providerId}"`);
+    }
+  }
+
+  private getAdapter(providerId: string): AuthProviderAdapter {
+    const adapter = this.adapters.get(providerId);
+    if (!adapter) {
+      throw new Error(`unsupported auth provider "${providerId}"`);
+    }
+    return adapter;
   }
 }

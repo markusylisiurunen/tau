@@ -13,6 +13,7 @@ export interface AuthProviderAdapter {
   validateOAuthCredentials?: (credentials: OAuthCredential) => void;
   addOAuthAccount: (authStorage: AuthStorage, credentials: OAuthCredential) => void;
   removeAccount: (authStorage: AuthStorage, accountId: string) => boolean;
+  setAccountEnabled: (authStorage: AuthStorage, accountId: string, enabled: boolean) => boolean;
   listAccountInfo: (authStorage: AuthStorage) => Promise<AuthAccountInfo[]>;
   selectAccount: (authStorage: AuthStorage) => Promise<AuthProviderSelection | undefined>;
   selectAccountFromList?: (accounts: AuthAccountInfo[]) => string | undefined;

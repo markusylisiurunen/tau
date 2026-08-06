@@ -106,6 +106,37 @@ describe("AuthStorage", () => {
     }
   });
 
+  it("defaults existing OAuth accounts to enabled", () => {
+    const fx = createTempAuthPath();
+    try {
+      writeFileSync(
+        fx.authPath,
+        JSON.stringify({
+          providers: {
+            "openai-codex": {
+              accounts: [
+                {
+                  type: "oauth",
+                  accountId: "acct-existing",
+                  access: "existing-access",
+                  refresh: "existing-refresh",
+                  expires: 1,
+                },
+              ],
+            },
+          },
+        }),
+      );
+
+      const storage = new AuthStorage(fx.authPath);
+
+      expect(storage.getInvalidReason()).toBeUndefined();
+      expect(storage.getData().providers["openai-codex"].accounts[0].disabled).toBe(false);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
   it("rejects auth.json when any account entry is invalid", () => {
     const fx = createTempAuthPath();
     try {
@@ -769,6 +800,25 @@ describe("AuthManager and TauCredentialStore", () => {
                   },
                   {
                     type: "oauth",
+                    accountId: "acct-disabled",
+                    disabled: true,
+                    providerAccountId: "provider-disabled",
+                    access: "access-disabled",
+                    refresh: "refresh-disabled",
+                    expires: 0,
+                    usage: {
+                      windows: [
+                        {
+                          name: "primary",
+                          usedPercent: 100,
+                          resetAt: 4102444800,
+                          windowSeconds: 18000,
+                        },
+                      ],
+                    },
+                  },
+                  {
+                    type: "oauth",
                     accountId: "acct-next",
                     providerAccountId: "provider-next",
                     access: "access-next",
@@ -830,6 +880,130 @@ describe("AuthManager and TauCredentialStore", () => {
 
       expect(credential?.type).toBe("oauth");
       expect(credential?.refresh).toBe("refresh-next");
+      expect(
+        fetch.mock.calls.some(
+          ([, init]) => init.headers["ChatGPT-Account-Id"] === "provider-disabled",
+        ),
+      ).toBe(false);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("excludes disabled accounts from automatic selection", async () => {
+    const fx = createTempAuthPath();
+    try {
+      writeFileSync(
+        fx.authPath,
+        JSON.stringify({
+          providers: {
+            "openai-codex": {
+              accounts: [
+                {
+                  type: "oauth",
+                  accountId: "acct-disabled",
+                  disabled: true,
+                  access: "access-disabled",
+                  refresh: "refresh-disabled",
+                  expires: Number.MAX_SAFE_INTEGER,
+                  usage: {
+                    windows: [
+                      {
+                        name: "primary",
+                        usedPercent: 90,
+                        resetAt: 4102444800,
+                        windowSeconds: 18000,
+                      },
+                    ],
+                  },
+                },
+                {
+                  type: "oauth",
+                  accountId: "acct-enabled",
+                  access: "access-enabled",
+                  refresh: "refresh-enabled",
+                  expires: Number.MAX_SAFE_INTEGER,
+                  usage: {
+                    windows: [
+                      {
+                        name: "primary",
+                        usedPercent: 10,
+                        resetAt: 4102444800,
+                        windowSeconds: 18000,
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          },
+        }),
+        { mode: 0o600 },
+      );
+      const storage = new AuthStorage(fx.authPath);
+      const store = new TauCredentialStore({ authStorage: storage, getConfig: () => ({}) });
+
+      const credential = await store.read("openai-codex");
+      expect(credential?.type).toBe("oauth");
+      expect(credential?.refresh).toBe("refresh-enabled");
+
+      new AuthManager(storage).setAccountEnabled("openai-codex", "acct-enabled", false);
+      await expect(store.read("openai-codex")).resolves.toBeUndefined();
+      expect(codexToAuth).toHaveBeenCalledOnce();
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("does not complete an in-flight selection after the account is disabled", async () => {
+    const fx = createTempAuthPath();
+    try {
+      writeFileSync(
+        fx.authPath,
+        JSON.stringify({
+          providers: {
+            "openai-codex": {
+              accounts: [
+                {
+                  type: "oauth",
+                  accountId: "acct-disable-race",
+                  access: "access-disable-race",
+                  refresh: "refresh-disable-race",
+                  expires: Number.MAX_SAFE_INTEGER,
+                  usage: {
+                    windows: [
+                      {
+                        name: "primary",
+                        usedPercent: 10,
+                        resetAt: 4102444800,
+                        windowSeconds: 18000,
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          },
+        }),
+        { mode: 0o600 },
+      );
+      const authStarted = deferred();
+      const releaseAuth = deferred();
+      codexToAuth.mockImplementation(async () => {
+        authStarted.resolve();
+        return await releaseAuth.promise;
+      });
+      const storage = new AuthStorage(fx.authPath);
+      const selection = new TauCredentialStore({
+        authStorage: storage,
+        getConfig: () => ({}),
+      }).read("openai-codex");
+      await authStarted.promise;
+
+      new AuthManager(storage).setAccountEnabled("openai-codex", "acct-disable-race", false);
+      releaseAuth.resolve({ apiKey: "api-disable-race" });
+
+      await expect(selection).resolves.toBeUndefined();
     } finally {
       fx.cleanup();
     }
@@ -930,6 +1104,55 @@ describe("AuthManager and TauCredentialStore", () => {
     }
   });
 
+  it("rejects a forced disabled codex account", async () => {
+    const fx = createTempAuthPath();
+    try {
+      writeFileSync(
+        fx.authPath,
+        JSON.stringify({
+          providers: {
+            "openai-codex": {
+              accounts: [
+                {
+                  type: "oauth",
+                  accountId: "acct-disabled-forced",
+                  disabled: true,
+                  access: createAccessToken({
+                    accountId: "acct-disabled-forced",
+                    email: "disabled@example.com",
+                    plan: "plus",
+                  }),
+                  refresh: "refresh-disabled",
+                  expires: Number.MAX_SAFE_INTEGER,
+                },
+                {
+                  type: "oauth",
+                  accountId: "acct-enabled-fallback",
+                  access: "access-enabled",
+                  refresh: "refresh-enabled",
+                  expires: Number.MAX_SAFE_INTEGER,
+                },
+              ],
+            },
+          },
+        }),
+        { mode: 0o600 },
+      );
+      const store = new TauCredentialStore({
+        authStorage: new AuthStorage(fx.authPath),
+        getConfig: () => ({}),
+        env: { TAU_CODEX_ACCOUNT: "disabled@example.com" },
+      });
+
+      await expect(store.read("openai-codex")).rejects.toThrow(
+        'TAU_CODEX_ACCOUNT matched disabled Codex account "acct-disabled-forced"',
+      );
+      expect(codexToAuth).not.toHaveBeenCalled();
+    } finally {
+      fx.cleanup();
+    }
+  });
+
   it("keeps codex account selection sticky per model runtime session", async () => {
     const fx = createTempAuthPath();
     try {
@@ -985,7 +1208,7 @@ describe("AuthManager and TauCredentialStore", () => {
         ),
       );
 
-      let sessionId = "session-1";
+      let sessionId = "sticky-disable-session-1";
       const storage = new AuthStorage(fx.authPath);
       const store = new TauCredentialStore({
         authStorage: storage,
@@ -1007,7 +1230,12 @@ describe("AuthManager and TauCredentialStore", () => {
       expect(sameSession?.type).toBe("oauth");
       expect(sameSession?.refresh).toBe("refresh-a");
 
-      sessionId = "session-2";
+      new AuthManager(storage).setAccountEnabled("openai-codex", "acct-a", false);
+      const afterDisable = await store.read("openai-codex");
+      expect(afterDisable?.type).toBe("oauth");
+      expect(afterDisable?.refresh).toBe("refresh-b");
+
+      sessionId = "sticky-disable-session-2";
       const nextSession = await store.read("openai-codex");
       expect(nextSession?.type).toBe("oauth");
       expect(nextSession?.refresh).toBe("refresh-b");

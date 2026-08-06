@@ -34,6 +34,7 @@ const authStorageDataSchema = z
                 .object({
                   type: z.literal("oauth"),
                   accountId: nonEmptyStringSchema,
+                  disabled: z.boolean().default(false),
                   providerAccountId: nonEmptyStringSchema.optional(),
                   access: nonEmptyStringSchema,
                   refresh: nonEmptyStringSchema,

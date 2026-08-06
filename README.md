@@ -57,13 +57,20 @@ to list authenticated accounts and usage:
 tau auth list
 ```
 
+to keep an account authenticated while excluding it from agent sessions, disable it by email or account id. disabled accounts remain visible in `tau auth list` and continue to refresh credentials and usage:
+
+```sh
+tau auth disable codex --account <email-or-id>
+tau auth enable codex --account <email-or-id>
+```
+
 to remove stored credentials:
 
 ```sh
-tau auth logout codex --account <email>
+tau auth logout codex --account <email-or-id>
 ```
 
-to force a specific Codex account for this run, set `TAU_CODEX_ACCOUNT` to the account email or account id (same matching as `auth logout`). when set, tau will only use that account and will not fail over.
+to force a specific Codex account for this run, set `TAU_CODEX_ACCOUNT` to the account email or account id (same matching as `auth logout`). when set, tau will only use that account and will not fail over. forcing a disabled account fails until the account is enabled again.
 
 `openai-codex` does **not** use `OPENAI_API_KEY` or `apiKeys.openai`; it relies on the OAuth tokens in `~/.config/tau/auth.json`.
 

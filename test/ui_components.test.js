@@ -105,7 +105,11 @@ test("TuiChatView switches repeatedly through its retained theme catalog", () =>
   chalk.level = 3;
   try {
     const view = Object.create(TuiChatView.prototype);
-    view.terminalAppearance = "dark";
+    view.terminalColors = {
+      foreground: { r: 0.8, g: 0.8, b: 0.8 },
+      background: { r: 0.1, g: 0.1, b: 0.1 },
+      appearance: "dark",
+    };
     view.themes = [
       {
         id: "first",
@@ -479,12 +483,18 @@ test("truncateFromEndByWidthPreserveAnsi keeps the ellipsis inside the active st
   expect(truncated).not.toContain("\x1b[0m…");
 });
 
-test("CustomEditor renders one content row when empty", () => {
+test("CustomEditor renders a presentation-only placeholder when empty", () => {
   const theme = createTagTheme();
   const editor = new CustomEditor(theme);
 
-  const lines = editor.render(40).map(stripTags);
-  expect(lines).toHaveLength(3);
+  const rendered = editor.render(80);
+  expect(rendered.map(stripTags)).toHaveLength(3);
+  expect(rendered.join("\n")).toContain("<editorPlaceholder>");
+  expect(rendered.join("\n")).toContain("ask the agent anything");
+  expect(editor.getText()).toBe("");
+
+  editor.setPlaceholderVisible(false);
+  expect(editor.render(80).join("\n")).not.toContain("ask the agent anything");
 });
 
 test("CustomEditor clamps wrapped lines to the inner width", () => {
@@ -645,6 +655,8 @@ test("AutocompleteList keeps truncated selection padding inside its full-width b
   const plain = stripTags(line);
   expect(line).toMatch(/^<autocompleteSelectedSurface>/);
   expect(line).toMatch(/<\/autocompleteSelectedSurface>$/);
+  expect(line).toContain("<autocompleteSelectedText>");
+  expect(line).not.toContain("<textMuted>");
   expect(line).not.toContain("\x1b");
   expect(plain).toMatch(/^ \S/);
   expect(plain).toMatch(/\s$/);

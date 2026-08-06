@@ -1,6 +1,7 @@
 export {
   coercePaletteOverrides,
   createPalette,
+  deriveBuiltinPaletteOverrides,
   getPaletteToken,
   type PaletteOverrides,
 } from "./palette.js";

@@ -50,18 +50,7 @@ export class DiffReviewMessageComponent implements Component, UiComponent<DiffRe
 
     const lines = buildDiffReviewLines(this.theme, this.model);
     const contentWidth = Math.max(0, width - 2);
-    return [
-      this.renderBlankLine(width),
-      ...lines.map((line) => this.renderLine(line, width, contentWidth)),
-      this.renderBlankLine(width),
-    ];
-  }
-
-  private renderBlankLine(width: number): string {
-    if (width < 2) {
-      return "";
-    }
-    return this.theme.palette.userReviewSurface(" ".repeat(width));
+    return lines.map((line) => this.renderLine(line, width, contentWidth));
   }
 
   private renderLine(line: DiffReviewLine, width: number, contentWidth: number): string {

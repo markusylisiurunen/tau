@@ -1,14 +1,11 @@
 import type { AutocompleteProvider, Component } from "@earendil-works/pi-tui";
 import { Spacer, TUI } from "@earendil-works/pi-tui";
-import {
-  resolveThemeTokensById,
-  type ThemeAppearance,
-  type ThemeDefinition,
-} from "../core/config/index.js";
+import { resolveThemeTokensForAppearance, type ThemeDefinition } from "../core/config/index.js";
 import type { SubagentUiEvent } from "../core/subagents/types.js";
 import type { ReasoningEffort } from "../core/types.js";
 import type { SessionProtocolPendingUserMessage } from "../protocol/session_protocol.js";
 import { createAppTerminal } from "./terminal.js";
+import { FALLBACK_TERMINAL_COLORS, type TerminalColors } from "./terminal_appearance.js";
 import { ToolUiRouter } from "./tool_ui_router.js";
 import { ChatContainerComponent } from "./ui/chat_container.js";
 import type { AssistantMessageModel, ChatMessageModel } from "./ui/chat_message_model.js";
@@ -19,7 +16,13 @@ import { RewindPickerComponent, type RewindPickerItem } from "./ui/rewind_picker
 import { SubagentEditorPaneComponent } from "./ui/subagent_editor_pane.js";
 import { SubagentPanelComponent, type SubagentPanelSnapshot } from "./ui/subagent_panel.js";
 import type { SystemMessageKind } from "./ui/system_message.js";
-import { coercePaletteOverrides, createUiTheme, type Theme } from "./ui/theme/index.js";
+import {
+  coercePaletteOverrides,
+  createUiTheme,
+  deriveBuiltinPaletteOverrides,
+  type PaletteOverrides,
+  type Theme,
+} from "./ui/theme/index.js";
 import type { ToolUiModel } from "./ui/tool_ui_model.js";
 
 export type ChatInputMode = "normal" | "bash" | "bash_incognito" | "recording";
@@ -117,7 +120,7 @@ export class TuiChatView implements ChatView {
   private rewindPicker?: RewindPickerComponent;
   private activeInputPane: Component;
   private uiTheme: Theme;
-  private terminalAppearance: ThemeAppearance;
+  private readonly terminalColors: TerminalColors;
   private readonly themes: ThemeDefinition[];
   private toolUiRouter: ToolUiRouter;
   private lastStatus?: ChatViewStatus;
@@ -127,19 +130,13 @@ export class TuiChatView implements ChatView {
 
   constructor(options: {
     showThinking: boolean;
-    terminalAppearance?: ThemeAppearance;
+    terminalColors?: TerminalColors;
     themeId?: string;
     themes: ThemeDefinition[];
   }) {
-    this.terminalAppearance = options.terminalAppearance ?? "dark";
+    this.terminalColors = options.terminalColors ?? FALLBACK_TERMINAL_COLORS;
     this.themes = options.themes;
-    const themeTokens = resolveThemeTokensById(
-      options.themeId,
-      this.themes,
-      this.terminalAppearance,
-    );
-    const paletteOverrides = coercePaletteOverrides(themeTokens);
-    this.uiTheme = createUiTheme("ansi", paletteOverrides);
+    this.uiTheme = createUiTheme("ansi", this.resolvePaletteOverrides(options.themeId));
     this.ui = new TUI(createAppTerminal());
     this.chatContainer = new ChatContainerComponent(this.uiTheme, options.showThinking);
     this.footer = new FooterComponent(this.uiTheme, this.ui);
@@ -379,10 +376,17 @@ export class TuiChatView implements ChatView {
     this.editor.setAutocompleteProvider(provider);
   }
 
+  private resolvePaletteOverrides(themeId: string | undefined): PaletteOverrides | undefined {
+    const theme = this.themes.find((candidate) => candidate.id === themeId);
+    const tokens = resolveThemeTokensForAppearance(theme, this.terminalColors.appearance);
+    const seeds = coercePaletteOverrides(tokens);
+    return theme?.scope === "builtin"
+      ? deriveBuiltinPaletteOverrides(seeds, this.terminalColors)
+      : seeds;
+  }
+
   updateTheme(themeId: string): void {
-    const themeTokens = resolveThemeTokensById(themeId, this.themes, this.terminalAppearance);
-    const paletteOverrides = coercePaletteOverrides(themeTokens);
-    this.uiTheme = createUiTheme("ansi", paletteOverrides);
+    this.uiTheme = createUiTheme("ansi", this.resolvePaletteOverrides(themeId));
 
     this.chatContainer.setTheme(this.uiTheme);
     this.footer.setTheme(this.uiTheme);
@@ -416,12 +420,13 @@ export class TuiChatView implements ChatView {
 
   private updateEditorVisualState(state: ChatViewStatus["editor"]): void {
     const { palette } = this.uiTheme;
+    this.editor.setPlaceholderVisible(state.mode === "normal");
     if (state.mode === "bash" || state.mode === "bash_incognito") {
       this.editor.borderColor = (s: string) => palette.editorBorderBash(s);
     } else if (state.mode === "recording") {
       this.editor.borderColor = (s: string) => palette.editorBorderRecording(s);
     } else {
-      this.editor.borderColor = this.uiTheme.editorBorderForReasoning(state.reasoning);
+      this.editor.borderColor = palette.editorBorder;
     }
 
     if (state.mode === "bash" || state.mode === "bash_incognito") {

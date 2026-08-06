@@ -11,6 +11,8 @@ import type { Theme } from "./theme/index.js";
 const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 const DEFAULT_EDITOR_MAX_LINES = 22;
 const MIN_EDITOR_LINES = 3;
+const EDITOR_PLACEHOLDER =
+  "ask the agent anything · / for commands · ! for shell mode · ctrl+y for voice";
 
 export class CustomEditor extends Editor {
   private uiTheme: Theme;
@@ -23,6 +25,7 @@ export class CustomEditor extends Editor {
   private scrollTop = 0;
   private lastEscapeAt?: number;
   private inputEnabled = true;
+  private placeholderVisible = true;
 
   public onCtrlC?: () => void;
   public onCtrlT?: () => void;
@@ -62,6 +65,10 @@ export class CustomEditor extends Editor {
 
   setInputEnabled(enabled: boolean): void {
     this.inputEnabled = enabled;
+  }
+
+  setPlaceholderVisible(visible: boolean): void {
+    this.placeholderVisible = visible;
   }
 
   setHeader(
@@ -536,6 +543,15 @@ export class CustomEditor extends Editor {
     minContentLines: number,
   ): string[] {
     if (width <= 0) return [""];
+    if (this.placeholderVisible && this.getText() === "") {
+      const placeholder = truncateFromEndByWidth(EDITOR_PLACEHOLDER, Math.max(0, width - 1));
+      const firstLine = this.padToWidth(
+        `${this.cursorStyle(" ")}${this.uiTheme.palette.editorPlaceholder(placeholder)}`,
+        width,
+      );
+      return [firstLine, ...Array.from({ length: minContentLines - 1 }, () => " ".repeat(width))];
+    }
+
     const layoutLines = this.layoutTextPreserveIndent(width);
     const visibleLines = this.sliceVisibleLayoutLines(layoutLines, maxContentLines);
     const lines: string[] = [];

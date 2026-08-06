@@ -39,7 +39,7 @@ import { createTauSdkClientWithHostConfig } from "./sdk/local_client.js";
 import { FileSessionStore, getDefaultSessionStoreDirectory } from "./store/file_session_store.js";
 import { createTuiClientTools, SessionChatApp } from "./tui/index.js";
 import { createLocalTuiSessionAttributes } from "./tui/session_creation_attributes.js";
-import { detectTerminalAppearance } from "./tui/terminal_appearance.js";
+import { detectTerminalColors } from "./tui/terminal_appearance.js";
 
 const cwd = process.cwd();
 const configDeps = createDefaultConfigDeps();
@@ -936,7 +936,7 @@ if (isAttachSubcommand) {
     throw new Error("missing attach target");
   }
 
-  const terminalAppearance = await detectTerminalAppearance();
+  const terminalColors = await detectTerminalColors();
   const defaultDiffTool = createBuiltInDiffToolConfig({
     nodeExecutablePath: process.execPath,
     cliEntryPath: fileURLToPath(import.meta.url),
@@ -957,7 +957,7 @@ if (isAttachSubcommand) {
           command: attach.target.command[0]!,
           args: attach.target.command.slice(1),
           sessionSelection,
-          terminalAppearance,
+          terminalColors,
           themeId: config.defaultTheme,
           themes,
           config,
@@ -969,7 +969,7 @@ if (isAttachSubcommand) {
           url: attach.target.url,
           authToken: attach.authToken ?? process.env.TAU_WS_AUTH_TOKEN,
           sessionSelection,
-          terminalAppearance,
+          terminalColors,
           themeId: config.defaultTheme,
           themes,
           config,
@@ -1218,7 +1218,7 @@ if (personas.length === 0) {
 
 const initialUserMessage = await readPipedStdin();
 
-const terminalAppearance = detectTerminalAppearance();
+const terminalColors = detectTerminalColors();
 const defaultDiffTool = createBuiltInDiffToolConfig({
   nodeExecutablePath: process.execPath,
   cliEntryPath: fileURLToPath(import.meta.url),
@@ -1258,7 +1258,7 @@ const app = await SessionChatApp.open({
     },
   },
   themes,
-  terminalAppearance,
+  terminalColors,
   themeId: config.defaultTheme,
   initialUserMessage,
   config,

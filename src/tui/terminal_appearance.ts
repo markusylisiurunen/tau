@@ -2,10 +2,34 @@ import { closeSync, openSync, writeSync } from "node:fs";
 import { ReadStream } from "node:tty";
 import type { ThemeAppearance } from "../core/config/index.js";
 
-const OSC11_QUERY = "\x1b]11;?\x07";
-const OSC11_PREFIX = "\x1b]11;";
+const OSC_FOREGROUND_QUERY = "\x1b]10;?\x07";
+const OSC_BACKGROUND_QUERY = "\x1b]11;?\x07";
 const OSC_BEL_TERMINATOR = "\x07";
 const OSC_ST_TERMINATOR = "\x1b\\";
+
+export type TerminalRgbColor = {
+  r: number;
+  g: number;
+  b: number;
+};
+
+export type TerminalColors = {
+  foreground: TerminalRgbColor;
+  background: TerminalRgbColor;
+  appearance: ThemeAppearance;
+};
+
+export const FALLBACK_TERMINAL_COLORS: TerminalColors = {
+  foreground: { r: 0xd4 / 255, g: 0xd4 / 255, b: 0xd4 / 255 },
+  background: { r: 0x1e / 255, g: 0x1e / 255, b: 0x1e / 255 },
+  appearance: "dark",
+};
+
+const LIGHT_FALLBACK_FOREGROUND: TerminalRgbColor = {
+  r: 0x24 / 255,
+  g: 0x24 / 255,
+  b: 0x24 / 255,
+};
 
 type InputStream = NodeJS.ReadStream & {
   isRaw?: boolean;
@@ -18,9 +42,12 @@ type ProbeTerminal = {
   cleanup: () => void;
 };
 
-export function parseOsc11BackgroundRgb(
-  data: string,
-): { r: number; g: number; b: number } | undefined {
+type OscColorResponses = {
+  foreground?: TerminalRgbColor;
+  background?: TerminalRgbColor;
+};
+
+export function parseOsc11BackgroundRgb(data: string): TerminalRgbColor | undefined {
   const match = data.match(/rgb:([0-9a-fA-F]{2,4})\/([0-9a-fA-F]{2,4})\/([0-9a-fA-F]{2,4})/);
   if (!match) return undefined;
 
@@ -48,11 +75,7 @@ export function parseOsc11BackgroundRgb(
   return { r, g, b };
 }
 
-export function classifyTerminalAppearance(rgb: {
-  r: number;
-  g: number;
-  b: number;
-}): ThemeAppearance {
+export function classifyTerminalAppearance(rgb: TerminalRgbColor): ThemeAppearance {
   const luminance = rgb.r * 0.2126 + rgb.g * 0.7152 + rgb.b * 0.0722;
   return luminance > 0.5 ? "light" : "dark";
 }
@@ -94,8 +117,9 @@ function createProbeTerminal(): ProbeTerminal | undefined {
   }
 }
 
-function extractOsc11Response(buffer: string): string | undefined {
-  const prefixIndex = buffer.indexOf(OSC11_PREFIX);
+function extractOscResponse(buffer: string, code: 10 | 11): string | undefined {
+  const prefix = `\x1b]${code};`;
+  const prefixIndex = buffer.indexOf(prefix);
   if (prefixIndex === -1) return undefined;
 
   const tail = buffer.slice(prefixIndex);
@@ -113,18 +137,19 @@ function extractOsc11Response(buffer: string): string | undefined {
   return tail.slice(0, stIndex + OSC_ST_TERMINATOR.length);
 }
 
-async function queryOsc11Background(
+async function queryTerminalColors(
   input: InputStream,
   write: (data: string) => void,
   timeoutMs: number,
-): Promise<string | undefined> {
+): Promise<OscColorResponses> {
   let settled = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let buffer = "";
+  const responses: OscColorResponses = {};
   const wasRaw = input.isRaw ?? false;
 
   return new Promise((resolve) => {
-    const finish = (value: string | undefined) => {
+    const finish = () => {
       if (settled) return;
       settled = true;
 
@@ -138,14 +163,22 @@ async function queryOsc11Background(
         input.setRawMode(false);
       }
 
-      resolve(value);
+      resolve(responses);
     };
 
     const onData = (chunk: string | Buffer) => {
       buffer += typeof chunk === "string" ? chunk : chunk.toString("utf8");
-      const response = extractOsc11Response(buffer);
-      if (response) {
-        finish(response);
+
+      if (!responses.foreground) {
+        const response = extractOscResponse(buffer, 10);
+        responses.foreground = response ? parseOsc11BackgroundRgb(response) : undefined;
+      }
+      if (!responses.background) {
+        const response = extractOscResponse(buffer, 11);
+        responses.background = response ? parseOsc11BackgroundRgb(response) : undefined;
+      }
+      if (responses.foreground && responses.background) {
+        finish();
       }
     };
 
@@ -157,36 +190,36 @@ async function queryOsc11Background(
       input.setRawMode(true);
     }
 
-    timer = setTimeout(() => finish(undefined), timeoutMs);
+    timer = setTimeout(finish, timeoutMs);
 
     try {
-      write(OSC11_QUERY);
+      write(`${OSC_FOREGROUND_QUERY}${OSC_BACKGROUND_QUERY}`);
     } catch {
-      finish(undefined);
+      finish();
     }
   });
 }
 
-export async function detectTerminalAppearance(timeoutMs = 100): Promise<ThemeAppearance> {
+export async function detectTerminalColors(timeoutMs = 100): Promise<TerminalColors> {
   const terminal = createProbeTerminal();
   if (!terminal) {
-    return "dark";
+    return FALLBACK_TERMINAL_COLORS;
   }
 
   try {
-    const response = await queryOsc11Background(terminal.input, terminal.write, timeoutMs);
-    if (!response) {
-      return "dark";
-    }
+    const detected = await queryTerminalColors(terminal.input, terminal.write, timeoutMs);
+    const background = detected.background ?? FALLBACK_TERMINAL_COLORS.background;
+    const appearance = classifyTerminalAppearance(background);
+    const fallbackForeground =
+      appearance === "light" ? LIGHT_FALLBACK_FOREGROUND : FALLBACK_TERMINAL_COLORS.foreground;
 
-    const rgb = parseOsc11BackgroundRgb(response);
-    if (!rgb) {
-      return "dark";
-    }
-
-    return classifyTerminalAppearance(rgb);
+    return {
+      foreground: detected.foreground ?? fallbackForeground,
+      background,
+      appearance,
+    };
   } catch {
-    return "dark";
+    return FALLBACK_TERMINAL_COLORS;
   } finally {
     terminal.cleanup();
   }

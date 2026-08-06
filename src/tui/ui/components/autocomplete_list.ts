@@ -137,39 +137,36 @@ export class AutocompleteList implements Component {
 
       if (remainingWidth > (this.layout.minDescriptionWidth ?? MIN_DESCRIPTION_WIDTH)) {
         const truncatedDescription = stripAnsi(truncateToWidth(description, remainingWidth, ""));
-        line = `${prefix}${this.stylePrimary(primary, selected)}${this.styleDescription(
-          spacing + truncatedDescription,
-          selected,
-        )}`;
+        line = selected
+          ? `${prefix}${primary}${spacing}${truncatedDescription}`
+          : `${prefix}${this.stylePrimary(primary)}${this.styleDescription(spacing + truncatedDescription)}`;
         lineWidth =
           prefixWidth + visibleWidth(primary) + spacing.length + visibleWidth(truncatedDescription);
       } else {
         const primaryOnly = this.truncatePrimary(item, selected, width - prefixWidth - 1, width);
-        line = `${prefix}${this.stylePrimary(primaryOnly, selected)}`;
+        line = `${prefix}${selected ? primaryOnly : this.stylePrimary(primaryOnly)}`;
         lineWidth = prefixWidth + visibleWidth(primaryOnly);
       }
     } else {
       const primaryOnly = this.truncatePrimary(item, selected, width - prefixWidth - 1, width);
-      line = `${prefix}${this.stylePrimary(primaryOnly, selected)}`;
+      line = `${prefix}${selected ? primaryOnly : this.stylePrimary(primaryOnly)}`;
       lineWidth = prefixWidth + visibleWidth(primaryOnly);
     }
 
     if (!selected) return line;
 
     const padded = `${line}${" ".repeat(Math.max(0, width - lineWidth))}`;
-    return this.theme.selectedBackground(padded);
+    return this.theme.selectedBackground(this.theme.selectedForeground(padded));
   }
 
-  private stylePrimary(text: string, selected: boolean): string {
-    if (this.layout.primaryTone === "muted") return this.theme.description(text);
-    return selected ? this.theme.selectedForeground(text) : text;
+  private stylePrimary(text: string): string {
+    return this.layout.primaryTone === "muted" ? this.theme.description(text) : text;
   }
 
-  private styleDescription(text: string, selected: boolean): string {
-    if ((this.layout.descriptionTone ?? "muted") === "muted") {
-      return this.theme.description(text);
-    }
-    return selected ? this.theme.selectedForeground(text) : text;
+  private styleDescription(text: string): string {
+    return (this.layout.descriptionTone ?? "muted") === "muted"
+      ? this.theme.description(text)
+      : text;
   }
 
   private getPrimaryColumnWidth(): number {

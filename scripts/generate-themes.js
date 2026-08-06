@@ -116,16 +116,11 @@ const generatePalette = (brandHue, appearance) => {
     codeInlineText: toHex(brandAccent),
     codeBlockText: toHex(brandAccent),
 
-    editorBorderNone: toHex(editorBorder),
-    editorBorderMinimal: toHex(editorBorder),
-    editorBorderLow: toHex(editorBorder),
-    editorBorderMedium: toHex(editorBorder),
-    editorBorderHigh: toHex(editorBorder),
-    editorBorderXhigh: toHex(editorBorder),
-    editorBorderMax: toHex(editorBorder),
+    editorBorder: toHex(editorBorder),
     editorSubagentBorder: toHex(editorBorder),
     editorBorderBash: toHex(editorBorderBash),
     editorBorderRecording: toHex(editorBorderRecording),
+    editorPlaceholder: toHex(textDim),
     autocompleteSelectedSurface: toHex(userSurface),
     autocompleteSelectedText: toHex(userText),
 

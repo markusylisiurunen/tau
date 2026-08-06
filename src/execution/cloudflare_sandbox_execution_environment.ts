@@ -531,7 +531,7 @@ export class CloudflareSandboxBridgeClient {
   ): Promise<void> {
     const response = await this.request(
       `/v1/sandbox/${encodeURIComponent(sandboxId)}/file/${encodeBridgeFilePath(path)}`,
-      { method: "PUT", body: content, signal },
+      { method: "PUT", body: Uint8Array.from(content), signal },
     );
     if (!response.ok) {
       throw await this.createHttpError(response);

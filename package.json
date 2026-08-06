@@ -31,6 +31,7 @@
     "@earendil-works/pi-tui": "0.83.0",
     "@fly/sprites": "^0.1.0",
     "chalk": "^6.0.0",
+    "colorjs.io": "^0.7.1",
     "file-type": "^22.0.1",
     "jose": "^6.2.7",
     "ses": "2.2.0",
@@ -46,7 +47,6 @@
     "@cloudflare/workers-types": "^5.20260804.1",
     "@types/node": "^25.9.5",
     "@types/ws": "^8.18.1",
-    "colorjs.io": "^0.7.1",
     "prettier": "^3.9.6",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"

@@ -1,8 +1,6 @@
 import type { MarkdownTheme } from "@earendil-works/pi-tui";
 import { Chalk } from "chalk";
 import { builtinThemes } from "../../../core/config/builtin_themes.js";
-import type { ReasoningEffort } from "../../../core/types.js";
-import { assertNever } from "../../../core/utils/never.js";
 import type { AutocompleteListTheme } from "../components/autocomplete_list.js";
 import type { EditorTheme } from "../components/editor.js";
 import { coercePaletteOverrides, createPalette, type PaletteOverrides } from "./palette.js";
@@ -31,16 +29,11 @@ export interface Palette {
   textDefault: (text: string) => string;
 
   // Editor
-  editorBorderNone: (text: string) => string;
-  editorBorderMinimal: (text: string) => string;
-  editorBorderLow: (text: string) => string;
-  editorBorderMedium: (text: string) => string;
-  editorBorderHigh: (text: string) => string;
-  editorBorderXhigh: (text: string) => string;
-  editorBorderMax: (text: string) => string;
+  editorBorder: (text: string) => string;
   editorSubagentBorder: (text: string) => string;
   editorBorderBash: (text: string) => string;
   editorBorderRecording: (text: string) => string;
+  editorPlaceholder: (text: string) => string;
   autocompleteSelectedSurface: (text: string) => string;
   autocompleteSelectedText: (text: string) => string;
 
@@ -78,7 +71,6 @@ export interface Theme {
   markdownTheme: MarkdownTheme;
   editorTheme: EditorTheme;
   text: TextStyles;
-  editorBorderForReasoning: (effort?: ReasoningEffort) => (text: string) => string;
 }
 
 function tagWrapper(label: string): (text: string) => string {
@@ -140,32 +132,6 @@ function createSelectListTheme(palette: Palette, text: TextStyles): Autocomplete
   };
 }
 
-function createEditorBorderForReasoning(
-  palette: Palette,
-): (effort?: ReasoningEffort) => (text: string) => string {
-  return (effort?: ReasoningEffort) => {
-    switch (effort) {
-      case undefined:
-      case "none":
-        return palette.editorBorderNone;
-      case "minimal":
-        return palette.editorBorderMinimal;
-      case "low":
-        return palette.editorBorderLow;
-      case "medium":
-        return palette.editorBorderMedium;
-      case "high":
-        return palette.editorBorderHigh;
-      case "xhigh":
-        return palette.editorBorderXhigh;
-      case "max":
-        return palette.editorBorderMax;
-      default:
-        assertNever(effort);
-    }
-  };
-}
-
 const defaultPaletteOverrides = coercePaletteOverrides(
   builtinThemes.find((theme) => theme.id === "gold")?.tokens,
 );
@@ -175,10 +141,9 @@ export function createUiTheme(mode: ThemeMode = "ansi", overrides?: PaletteOverr
   const text = createTextStyles(mode);
   const markdownTheme = createMarkdownTheme(palette, text);
   const selectListTheme = createSelectListTheme(palette, text);
-  const editorBorderForReasoning = createEditorBorderForReasoning(palette);
 
   const editorTheme: EditorTheme = {
-    borderColor: (textValue) => editorBorderForReasoning("none")(textValue),
+    borderColor: (textValue) => palette.editorBorder(textValue),
     selectList: selectListTheme,
   };
 
@@ -188,7 +153,6 @@ export function createUiTheme(mode: ThemeMode = "ansi", overrides?: PaletteOverr
     markdownTheme,
     editorTheme,
     text,
-    editorBorderForReasoning,
   };
 }
 
@@ -196,4 +160,3 @@ export const theme: Theme = createUiTheme("ansi");
 export const palette = theme.palette;
 export const markdownTheme = theme.markdownTheme;
 export const editorTheme = theme.editorTheme;
-export const editorBorderForReasoning = theme.editorBorderForReasoning;

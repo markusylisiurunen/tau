@@ -508,7 +508,7 @@ function createToolBlockedEvent(toolCall: ToolCall, reason: string): ToolActivit
       presentation: buildToolRunPresentation({
         toolName: toolCall.name,
         subject: toolCall.name,
-        details: [{ text: reason, tone: "error" }],
+        details: [{ text: reason }],
       }),
       reason,
     },

@@ -6,7 +6,7 @@ import {
 import type { Theme } from "./theme/index.js";
 
 const REWIND_PICKER_MAX_VISIBLE = 8;
-const SELECT_LIST_LAYOUT: AutocompleteListLayoutOptions = {
+const REWIND_LIST_LAYOUT: AutocompleteListLayoutOptions = {
   minPrimaryColumnWidth: 8,
   maxPrimaryColumnWidth: 12,
   truncatePrimary: ({ text, maxWidth }) => truncateToWidth(text, maxWidth, "…"),
@@ -73,7 +73,7 @@ export class RewindPickerComponent implements Component {
       selectItems,
       REWIND_PICKER_MAX_VISIBLE,
       this.theme.editorTheme.selectList,
-      SELECT_LIST_LAYOUT,
+      REWIND_LIST_LAYOUT,
     );
     list.setSelectedIndex(Math.max(0, selectItems.length - 1));
     list.onSelect = (item) => this.onSelect?.(item.value);

@@ -6,7 +6,7 @@ import type { Theme } from "./theme/index.js";
 export interface FooterStatus {
   contextUsage: string;
   sessionCost: string;
-  duration?: string;
+  duration: string;
   statusHint?: string;
   pursuingGoal: boolean;
 }

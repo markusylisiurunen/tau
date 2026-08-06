@@ -10,7 +10,6 @@ import type { ToolRunPresentation } from "../tools/presentation.js";
 import { TOOL_NAME_BASH } from "../tools/tool_names.js";
 
 export type DirectBashExecutionResult = {
-  command: string;
   exitCode: number | null;
   presentation: ToolRunPresentation;
   userHistoryEntryId?: string;
@@ -67,7 +66,6 @@ export async function runDirectBashCommand(
       : undefined;
 
   return {
-    command: options.command,
     exitCode,
     presentation,
     ...(userHistoryEntryId !== undefined ? { userHistoryEntryId } : {}),

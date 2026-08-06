@@ -132,8 +132,6 @@ function createMarkdownTheme(palette: Palette, text: TextStyles): MarkdownTheme 
 
 function createSelectListTheme(palette: Palette, text: TextStyles): AutocompleteListTheme {
   return {
-    selectedPrefix: (textValue) => text.bold(palette.brandAccent(textValue)),
-    selectedText: (textValue) => text.bold(palette.brandAccent(textValue)),
     selectedBackground: (textValue) => palette.autocompleteSelectedSurface(textValue),
     selectedForeground: (textValue) => text.bold(palette.autocompleteSelectedText(textValue)),
     description: (textValue) => palette.textMuted(textValue),

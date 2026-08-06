@@ -113,7 +113,6 @@ export function createGoalToolDefinitions(manager: GoalManager): AgentTool[] {
         text: `Session goal created.\n\n${buildGoalPolicy(goal)}`,
         presentation: {
           details: [{ text: goal.objective }],
-          preserveDetails: true,
         },
       };
     }),
@@ -128,7 +127,6 @@ export function createGoalToolDefinitions(manager: GoalManager): AgentTool[] {
         text: `Session goal updated.\n\n${instruction}`,
         presentation: {
           details: [{ text: goal.objective }],
-          preserveDetails: true,
         },
       };
     }),
@@ -137,7 +135,6 @@ export function createGoalToolDefinitions(manager: GoalManager): AgentTool[] {
 
 type GoalToolSuccessPresentation = {
   details: ToolCardLineInput[];
-  preserveDetails?: boolean;
 };
 
 type GoalToolExecutionResult = {
@@ -174,7 +171,6 @@ function createGoalTool<T>(
         outcome: ToolExecutionOutcome["outcome"],
         successPresentation?: GoalToolSuccessPresentation,
       ): ReturnType<typeof createTextToolOutcome> & { uiEvent: ToolActivity } => {
-        const preserveDetails = successPresentation?.preserveDetails === true;
         return {
           ...createTextToolOutcome(text, outcome),
           uiEvent: {
@@ -184,12 +180,8 @@ function createGoalTool<T>(
             presentation: buildToolRunPresentation({
               toolName: schema.name,
               subject: "goal",
-              details: successPresentation?.details ?? [
-                { text, ...(outcome === "succeeded" ? {} : { tone: "error" as const }) },
-              ],
-              ...(preserveDetails
-                ? { detailTruncation: false as const, truncateDetailLines: false as const }
-                : {}),
+              details: successPresentation?.details ?? [{ text }],
+              ...(successPresentation ? { detailTruncation: false as const } : {}),
               actionOverrides,
             }),
             status: outcome === "succeeded" ? "success" : "error",

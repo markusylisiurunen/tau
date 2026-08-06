@@ -270,7 +270,7 @@ export function buildBashPresentation(args: {
   subject: string;
   truncationInfo: BashTruncationInfo;
   exitCode: number | null;
-  durationMs?: number;
+  durationMs: number;
   workingDirectory?: string;
   includeExitCode?: boolean;
   actionLabel?: string;

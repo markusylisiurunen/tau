@@ -10,7 +10,7 @@ export function formatRewindCandidateLabel(text: string): string {
   return firstLine;
 }
 
-export function formatRewindCandidateAge(timestamp: number, now: number = Date.now()): string {
+export function formatRewindCandidateAge(timestamp: number, now: number): string {
   const elapsed = Math.max(0, now - timestamp);
   if (elapsed < MINUTE_MS) return "now";
   if (elapsed < HOUR_MS) return `${Math.floor(elapsed / MINUTE_MS)}m ago`;

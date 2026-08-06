@@ -126,7 +126,7 @@ export function createCodeModeToolDefinition<TArgs>(
             toolName: implementation.schema.name,
             operation: implementation.schema.name,
             subject: parsed.code || subject,
-            details: [{ text: reason, tone: "error" }],
+            details: [{ text: reason }],
           }),
           reason,
         };

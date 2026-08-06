@@ -456,7 +456,7 @@ describe("interrupt_agent tool", () => {
     );
   });
 
-  it("renders the exact model-facing result without line truncation", async () => {
+  it("renders every model-facing interrupt result line", async () => {
     const failureMessage = "x".repeat(400);
     const state = createSubagentState({
       availability: "idle",

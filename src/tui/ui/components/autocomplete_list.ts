@@ -3,7 +3,6 @@ import {
   getKeybindings,
   type SelectItem,
   type SelectListLayoutOptions,
-  type SelectListTheme,
   truncateToWidth,
   visibleWidth,
 } from "@earendil-works/pi-tui";
@@ -13,9 +12,12 @@ const DEFAULT_PRIMARY_COLUMN_WIDTH = 32;
 const PRIMARY_COLUMN_GAP = 2;
 const MIN_DESCRIPTION_WIDTH = 10;
 
-export type AutocompleteListTheme = SelectListTheme & {
+export type AutocompleteListTheme = {
   selectedBackground: (text: string) => string;
   selectedForeground: (text: string) => string;
+  description: (text: string) => string;
+  scrollInfo: (text: string) => string;
+  noMatch: (text: string) => string;
 };
 
 export type AutocompleteListLayoutOptions = SelectListLayoutOptions & {
@@ -76,6 +78,7 @@ export class AutocompleteList implements Component {
   invalidate(): void {}
 
   render(width: number): string[] {
+    if (width <= 0) return [""];
     if (this.items.length === 0) {
       return [this.theme.noMatch("  No matching commands")];
     }
@@ -99,7 +102,7 @@ export class AutocompleteList implements Component {
 
     if (startIndex > 0 || endIndex < this.items.length) {
       const scrollText = ` (${this.selectedIndex + 1}/${this.items.length})`;
-      lines.push(this.theme.scrollInfo(truncateToWidth(scrollText, width - 2, "")));
+      lines.push(this.theme.scrollInfo(truncateToWidth(scrollText, Math.max(0, width - 2), "")));
     }
 
     return lines;

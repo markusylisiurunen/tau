@@ -98,7 +98,7 @@ export function createSendInputToAgentToolDefinition(supervisor: AgentSupervisor
           presentation: buildToolRunPresentation({
             toolName: TOOL_NAME_SEND_INPUT_TO_AGENT,
             subject: details?.title ?? subject,
-            details: [{ text: reason, tone: "error" }],
+            details: [{ text: reason }],
           }),
           reason,
         };
@@ -154,7 +154,7 @@ export function createSendInputToAgentToolDefinition(supervisor: AgentSupervisor
               presentation: buildToolRunPresentation({
                 toolName: TOOL_NAME_SEND_INPUT_TO_AGENT,
                 subject: target.title,
-                details: [{ text: sendResult.reason, tone: "error" }],
+                details: [{ text: sendResult.reason }],
               }),
               reason: sendResult.reason,
             };

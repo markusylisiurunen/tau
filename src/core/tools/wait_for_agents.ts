@@ -139,7 +139,7 @@ export function createWaitForAgentsToolDefinition(supervisor: AgentSupervisor): 
           presentation: buildToolRunPresentation({
             toolName: TOOL_NAME_WAIT_FOR_AGENTS,
             subject: subject,
-            details: [{ text: reason, tone: "error" }],
+            details: [{ text: reason }],
           }),
           reason,
         };

@@ -155,22 +155,6 @@ describe("tool cards", () => {
     expect(queued).toContain("<actionRunning>⏵</actionRunning>");
   });
 
-  it("renders error details with the same dim style as other details", () => {
-    const model = {
-      toolCallId: "bash-blocked",
-      status: "blocked",
-      presentation: buildToolRunPresentation({
-        toolName: "bash",
-        subject: "false",
-        details: [{ text: "blocked", tone: "error" }],
-      }),
-    };
-
-    expect(renderText(new ToolCardComponent({ model, theme }), 120)).toContain(
-      "<textDim>blocked</textDim>",
-    );
-  });
-
   it("preserves edit addition and removal colors", () => {
     const model = {
       toolCallId: "edit",

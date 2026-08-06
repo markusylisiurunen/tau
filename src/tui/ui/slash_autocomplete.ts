@@ -8,7 +8,7 @@ const MENTION_TOKEN_REGEX = /(?:^|[\t ])(@[^\t ]*)$/;
 type MentionKind = "skill" | "agent";
 
 function sortAutocompleteItems(items: TuiAutocompleteItem[]): TuiAutocompleteItem[] {
-  return items.sort((left, right) => {
+  return [...items].sort((left, right) => {
     const labelOrder = left.label.localeCompare(right.label, undefined, { sensitivity: "base" });
     return labelOrder !== 0 ? labelOrder : left.value.localeCompare(right.value);
   });
@@ -161,10 +161,7 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
     const valuePrefix = token.slice(1);
     const paths = await this.getPaths(valuePrefix, 25, signal);
     if (signal.aborted) return null;
-    const items = filterAutocompleteItems(
-      paths.map((path) => ({ value: path, label: path })),
-      valuePrefix,
-    );
+    const items = paths.map((path) => ({ value: path, label: path }));
 
     if (items.length === 0) return null;
     return { items, prefix: token };

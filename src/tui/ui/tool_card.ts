@@ -55,8 +55,6 @@ function styleDetail(line: ToolCardLine, theme: Theme): string {
       return theme.palette.diffAdd(line.text);
     case "removed":
       return theme.palette.diffRemove(line.text);
-    case "error":
-      return theme.palette.textDim(line.text);
     case undefined:
       return theme.palette.textDim(line.text);
   }

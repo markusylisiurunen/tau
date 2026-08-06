@@ -52,7 +52,7 @@ export function createListAgentsToolDefinition(supervisor: AgentSupervisor): Age
           presentation: buildToolRunPresentation({
             toolName: TOOL_NAME_LIST_AGENTS,
             subject: "subagents",
-            details: [{ text: reason, tone: "error" }],
+            details: [{ text: reason }],
           }),
           reason,
         };

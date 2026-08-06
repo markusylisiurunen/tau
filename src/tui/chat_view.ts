@@ -103,7 +103,7 @@ export interface ChatView {
   getEditorLines(): string[];
   bindInputHandlers(handlers: ChatViewInputHandlers): void;
   setAutocompleteProvider(provider: AutocompleteProvider): void;
-  updateTheme(options: { themeId?: string; themes?: ThemeDefinition[] }): void;
+  updateTheme(themeId: string): void;
 }
 
 export class TuiChatView implements ChatView {
@@ -118,7 +118,7 @@ export class TuiChatView implements ChatView {
   private activeInputPane: Component;
   private uiTheme: Theme;
   private terminalAppearance: ThemeAppearance;
-  private themes: ThemeDefinition[];
+  private readonly themes: ThemeDefinition[];
   private toolUiRouter: ToolUiRouter;
   private lastStatus?: ChatViewStatus;
   private recordingIndicatorFrame = 0;
@@ -129,10 +129,10 @@ export class TuiChatView implements ChatView {
     showThinking: boolean;
     terminalAppearance?: ThemeAppearance;
     themeId?: string;
-    themes?: ThemeDefinition[];
+    themes: ThemeDefinition[];
   }) {
     this.terminalAppearance = options.terminalAppearance ?? "dark";
-    this.themes = options.themes ?? [];
+    this.themes = options.themes;
     const themeTokens = resolveThemeTokensById(
       options.themeId,
       this.themes,
@@ -379,15 +379,8 @@ export class TuiChatView implements ChatView {
     this.editor.setAutocompleteProvider(provider);
   }
 
-  updateTheme(options: { themeId?: string; themes?: ThemeDefinition[] }): void {
-    if (options.themes) {
-      this.themes = options.themes;
-    }
-    const themeTokens = resolveThemeTokensById(
-      options.themeId,
-      this.themes,
-      this.terminalAppearance,
-    );
+  updateTheme(themeId: string): void {
+    const themeTokens = resolveThemeTokensById(themeId, this.themes, this.terminalAppearance);
     const paletteOverrides = coercePaletteOverrides(themeTokens);
     this.uiTheme = createUiTheme("ansi", paletteOverrides);
 

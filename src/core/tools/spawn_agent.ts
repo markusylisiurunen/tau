@@ -180,7 +180,7 @@ export function createSpawnAgentToolDefinition(options: {
           presentation: buildToolRunPresentation({
             toolName: TOOL_NAME_SPAWN_AGENT,
             subject: details?.title ?? subject,
-            details: [{ text: reason, tone: "error" }],
+            details: [{ text: reason }],
             metadata: [presentationWorkingDirectory],
           }),
           reason,
@@ -351,7 +351,7 @@ export function createSpawnAgentToolDefinition(options: {
               presentation: buildToolRunPresentation({
                 toolName: TOOL_NAME_SPAWN_AGENT,
                 subject: subject,
-                details: [{ text: spawnResult.reason, tone: "error" }],
+                details: [{ text: spawnResult.reason }],
                 metadata: [statusWorkingDirectory],
               }),
               reason: spawnResult.reason,

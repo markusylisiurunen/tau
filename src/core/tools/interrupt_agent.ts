@@ -78,9 +78,8 @@ export function createInterruptAgentToolDefinition(supervisor: AgentSupervisor):
           presentation: buildToolRunPresentation({
             toolName: TOOL_NAME_INTERRUPT_AGENT,
             subject: subject,
-            details: [{ text: reason, tone: "error" }],
+            details: [{ text: reason }],
             detailTruncation: false,
-            truncateDetailLines: false,
           }),
           reason,
         };
@@ -122,7 +121,6 @@ export function createInterruptAgentToolDefinition(supervisor: AgentSupervisor):
               subject: subject,
               output: resultText,
               detailTruncation: false,
-              truncateDetailLines: false,
               metadata: formatSubagentMetadata({ costTotal: state.costTotal, durationMs }),
             });
             const uiEvent: ToolActivity = {
@@ -147,7 +145,6 @@ export function createInterruptAgentToolDefinition(supervisor: AgentSupervisor):
                   subject,
                   output: reason,
                   detailTruncation: false,
-                  truncateDetailLines: false,
                 });
             const uiEvent: ToolActivity = {
               type: "tool_call_finished",

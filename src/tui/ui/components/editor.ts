@@ -24,7 +24,7 @@ const APC_PATTERN = "\\x1b_[^\\x07\\x1b]*(?:\\x07|\\x1b\\\\)";
 const CSI_REGEX = new RegExp(CSI_PATTERN, "g");
 const OSC_REGEX = new RegExp(OSC_PATTERN, "g");
 const APC_REGEX = new RegExp(APC_PATTERN, "g");
-const SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
+const AUTOCOMPLETE_LIST_LAYOUT: SelectListLayoutOptions = {
   minPrimaryColumnWidth: 12,
   maxPrimaryColumnWidth: 32,
   truncatePrimary: ({ text, maxWidth }) => truncateToWidth(text, maxWidth, "…"),
@@ -1517,7 +1517,7 @@ export class Editor implements Component {
       items,
       AUTOCOMPLETE_MAX_VISIBLE,
       this.theme.selectList,
-      SELECT_LIST_LAYOUT,
+      AUTOCOMPLETE_LIST_LAYOUT,
     );
   }
 

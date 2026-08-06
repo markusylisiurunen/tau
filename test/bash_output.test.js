@@ -183,6 +183,7 @@ describe("bash output policy", () => {
         captureTruncated: false,
       },
       exitCode: 0,
+      durationMs: 0,
     });
 
     expect(presentation.details).toEqual([{ text: "alpha beta", wrap: "character" }]);

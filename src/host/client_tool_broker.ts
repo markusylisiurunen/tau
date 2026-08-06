@@ -316,19 +316,13 @@ function createClientToolFinishedUiEvent(
     presentation: createClientToolPresentation(
       toolCall.name,
       extractToolOutcomeText(outcome),
-      isError,
       durationMs,
     ),
     status: isError ? "error" : "success",
   };
 }
 
-function createClientToolPresentation(
-  toolName: string,
-  content: string,
-  isError: boolean,
-  durationMs: number,
-) {
+function createClientToolPresentation(toolName: string, content: string, durationMs: number) {
   const trimmed = content.trimEnd();
   const lineCount = trimmed ? trimmed.split("\n").length : 0;
   const contentBytes = Buffer.byteLength(trimmed, "utf8");
@@ -336,7 +330,7 @@ function createClientToolPresentation(
     ? trimmed
         .replace(/\r\n?/g, "\n")
         .split("\n")
-        .map((text) => ({ text, ...(isError ? { tone: "error" as const } : {}) }))
+        .map((text) => ({ text }))
     : [];
   return buildToolRunPresentation({
     toolName,

@@ -6,7 +6,6 @@ export function buildSubagentPresentation(args: {
   subject: string;
   output: string;
   detailTruncation?: false | { maxLines: number; strategy: "head" | "middle" };
-  truncateDetailLines?: false;
   metadata?: string[];
 }): ToolRunPresentation {
   const output = args.output.trimEnd();
@@ -15,7 +14,6 @@ export function buildSubagentPresentation(args: {
     subject: args.subject,
     details: output ? output.split("\n").map((text) => ({ text })) : [],
     ...(args.detailTruncation !== undefined ? { detailTruncation: args.detailTruncation } : {}),
-    ...(args.truncateDetailLines === false ? { truncateDetailLines: false as const } : {}),
     metadata: args.metadata ?? [],
   });
 }

@@ -60,7 +60,7 @@ function createToolModel(label) {
   const presentation = buildToolRunPresentation({
     toolName: "bash",
     subject: label,
-    details: [{ text: "blocked", tone: "error" }],
+    details: [{ text: "blocked" }],
   });
   return {
     toolCallId,
@@ -128,9 +128,9 @@ test("TuiChatView switches repeatedly through its retained theme catalog", () =>
     view.editorPane = { setTheme() {} };
     view.ui = { invalidate() {}, requestRender() {} };
 
-    view.updateTheme({ themeId: "first" });
+    view.updateTheme("first");
     const first = view.uiTheme.palette.brandAccent("selected");
-    view.updateTheme({ themeId: "second" });
+    view.updateTheme("second");
     const second = view.uiTheme.palette.brandAccent("selected");
 
     expect(first).not.toBe(second);
@@ -389,6 +389,7 @@ test("FooterComponent renders session status", () => {
   footer.setStatus({
     contextUsage: "ctx 10/100",
     sessionCost: "$0.01",
+    duration: "",
     pursuingGoal: false,
   });
   const line = renderLines(footer, 120)[0];
@@ -402,6 +403,7 @@ test("FooterComponent renders operation status hints", () => {
   footer.setStatus({
     contextUsage: "ctx 10/100",
     sessionCost: "$0.01",
+    duration: "",
     statusHint: "compacting context...",
     pursuingGoal: false,
   });
@@ -442,6 +444,7 @@ test("FooterComponent compacts cwd before truncating and keeps ellipsis styled",
   footer.setStatus({
     contextUsage: "ctx",
     sessionCost: "$0.01",
+    duration: "",
     pursuingGoal: false,
   });
 
@@ -451,6 +454,7 @@ test("FooterComponent compacts cwd before truncating and keeps ellipsis styled",
   footer.setStatus({
     contextUsage: "this is a very long context usage string",
     sessionCost: "$0.01",
+    duration: "",
     pursuingGoal: false,
   });
 

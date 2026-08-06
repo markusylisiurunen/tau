@@ -392,7 +392,7 @@ export class SessionChatController {
   }
 
   private switchTheme(themeId: string): void {
-    this.view.updateTheme({ themeId });
+    this.view.updateTheme(themeId);
     this.view.addSystemMessage(`theme set to ${themeId}`, "success");
   }
 
@@ -2190,6 +2190,7 @@ export class SessionChatController {
       return;
     }
 
+    const now = Date.now();
     const candidates = this.snapshot.messages.flatMap((entry) => {
       if (
         !entry.modelVisible ||
@@ -2207,7 +2208,7 @@ export class SessionChatController {
           id: entry.id,
           text,
           label: formatRewindCandidateLabel(text),
-          description: formatRewindCandidateAge(entry.message.timestamp),
+          description: formatRewindCandidateAge(entry.message.timestamp, now),
         },
       ];
     });

@@ -31,7 +31,7 @@ describe("tool cards", () => {
     };
 
     expect(renderText(new ToolCardComponent({ model, theme }), 120).split("\n")).toEqual([
-      " <actionSuccess>✓</actionSuccess> <textMuted>ran</textMuted> <brandAccent>node <<'NODE'</brandAccent>",
+      " <bold><actionSuccess>✓</actionSuccess></bold> <textMuted>ran</textMuted> <brandAccent>node <<'NODE'</brandAccent>",
       " <brandAccent>console.log('line one');</brandAccent>",
       " <brandAccent>console.log('line two');</brandAccent>",
       " <brandAccent>NODE</brandAccent>",
@@ -130,7 +130,7 @@ describe("tool cards", () => {
       }),
     };
 
-    expect(renderText(new ToolCardComponent({ model, theme }), 120)).toContain(
+    expect(renderText(new ToolCardComponent({ model, theme }), 160)).toContain(
       "<textMuted>running web</textMuted> <brandAccent>console.log('ok')</brandAccent>",
     );
   });

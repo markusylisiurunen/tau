@@ -134,7 +134,7 @@ function renderToolCard(model: ToolUiModel, theme: Theme, subject: string, width
   const subjectLines = subject.split("\n");
   const firstSubjectLine = subjectLines[0] ?? "";
   const lines = [
-    ` ${statusStyle(getMarker(model.status))} ${theme.palette.textMuted(actionText)} ${theme.palette.brandAccent(firstSubjectLine)}`,
+    ` ${theme.text.bold(statusStyle(getMarker(model.status)))} ${theme.palette.textMuted(actionText)} ${theme.palette.brandAccent(firstSubjectLine)}`,
     ...subjectLines.slice(1).map((line) => ` ${theme.palette.brandAccent(line)}`),
     ...model.presentation.details.flatMap((line) => {
       const detailLines =

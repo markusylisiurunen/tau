@@ -287,8 +287,8 @@ function resolveCommonChroma(
   return minimumChroma;
 }
 
-const ACTION_HUES = [82, 108, 12] as const;
-const ACTION_TARGET_CHROMA = 0.12;
+const ACTION_HUES = [70, 108, 12] as const;
+const ACTION_TARGET_CHROMA = 0.15;
 
 function deriveActionColors(terminalColors: TerminalColors): [string, string, string] {
   const foreground = new Color("srgb", [
@@ -296,7 +296,7 @@ function deriveActionColors(terminalColors: TerminalColors): [string, string, st
     terminalColors.foreground.g,
     terminalColors.foreground.b,
   ]).to("oklch");
-  const lightness = Math.max(0, foreground.get("oklch.l") - 0.06);
+  const lightness = Math.max(0, foreground.get("oklch.l") - 0.1);
   const chroma = resolveCommonChroma(lightness, ACTION_TARGET_CHROMA, ACTION_HUES);
 
   return ACTION_HUES.map((hue) =>
@@ -304,7 +304,7 @@ function deriveActionColors(terminalColors: TerminalColors): [string, string, st
   ) as [string, string, string];
 }
 
-const NOTIFICATION_HUES = [108, 82, 12] as const;
+const NOTIFICATION_HUES = [108, 70, 12] as const;
 const NOTIFICATION_TARGET_CHROMA = 0.55;
 
 function deriveNotificationColors(terminalColors: TerminalColors): [string, string, string] {
@@ -436,8 +436,11 @@ export function deriveBuiltinPaletteOverrides(
     const brandText = deriveSemanticTextHex(brandLightness, 0.04, getColorHue(brandSeed));
     derived.brandAccent = brandText;
     derived.linkText = brandText;
-    derived.codeInlineText = brandText;
-    derived.codeBlockText = brandText;
+
+    const codeLightness = new Color(brandText).to("oklch").get("oklch.l");
+    const codeText = deriveSemanticTextHex(codeLightness, 0.055, 77);
+    derived.codeInlineText = codeText;
+    derived.codeBlockText = codeText;
 
     const borders = deriveBorderColors(brandText, terminalColors);
     derived.editorBorder = borders.normal;

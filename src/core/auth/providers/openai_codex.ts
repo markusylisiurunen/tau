@@ -260,7 +260,9 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
       refreshIfExpired: true,
       refreshIfMissing: true,
     });
-    return isUsageUsable(usageSnapshot.usage, nowSeconds());
+    return (
+      isUsageUsable(usageSnapshot.usage, nowSeconds()) && isAccountEnabled(authStorage, accountId)
+    );
   }
 
   async handleProviderError(

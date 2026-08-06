@@ -77,6 +77,10 @@ export class AuthManager {
   setAccountEnabled(providerId: string, accountId: string, enabled: boolean): void {
     const adapter = this.getAdapter(providerId);
     this.authStorage.reload();
+    const invalidReason = this.authStorage.getInvalidReason();
+    if (invalidReason) {
+      throw new Error(invalidReason);
+    }
     const updated = adapter.setAccountEnabled(this.authStorage, accountId, enabled);
     if (!updated) {
       throw new Error(`account "${accountId}" not found for provider "${providerId}"`);

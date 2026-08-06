@@ -276,6 +276,22 @@ describe("AuthStorage", () => {
 });
 
 describe("AuthManager and TauCredentialStore", () => {
+  it("preserves invalid auth storage when changing account state", () => {
+    const fx = createTempAuthPath();
+    try {
+      const invalidAuth = '{"providers":';
+      writeFileSync(fx.authPath, invalidAuth, { mode: 0o600 });
+      const storage = new AuthStorage(fx.authPath);
+
+      expect(() =>
+        new AuthManager(storage).setAccountEnabled("openai-codex", "acct-invalid", false),
+      ).toThrow("failed to parse auth.json");
+      expect(readFileSync(fx.authPath, "utf8")).toBe(invalidAuth);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
   it("does not restore an account removed during an in-flight refresh", async () => {
     const fx = createTempAuthPath();
     try {
@@ -1004,6 +1020,91 @@ describe("AuthManager and TauCredentialStore", () => {
       releaseAuth.resolve({ apiKey: "api-disable-race" });
 
       await expect(selection).resolves.toBeUndefined();
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("does not return a sticky account disabled during a usage refresh", async () => {
+    const fx = createTempAuthPath();
+    try {
+      writeFileSync(
+        fx.authPath,
+        JSON.stringify({
+          providers: {
+            "openai-codex": {
+              accounts: [
+                {
+                  type: "oauth",
+                  accountId: "acct-usage-disable-race",
+                  providerAccountId: "provider-usage-disable-race",
+                  access: "access-usage-disable-race",
+                  refresh: "refresh-usage-disable-race",
+                  expires: Number.MAX_SAFE_INTEGER,
+                  usage: {
+                    windows: [
+                      {
+                        name: "primary",
+                        usedPercent: 10,
+                        resetAt: 4102444800,
+                        windowSeconds: 18000,
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          },
+        }),
+        { mode: 0o600 },
+      );
+      const storage = new AuthStorage(fx.authPath);
+      const store = new TauCredentialStore({
+        authStorage: storage,
+        getConfig: () => ({}),
+        getSessionId: () => "usage-disable-race-session",
+      });
+      await expect(store.read("openai-codex")).resolves.toMatchObject({
+        refresh: "refresh-usage-disable-race",
+      });
+      storage.update((data) => {
+        data.providers["openai-codex"].accounts[0].usage.windows[0].resetAt = 1;
+      });
+
+      const usageStarted = deferred();
+      const releaseUsage = deferred();
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => {
+          usageStarted.resolve();
+          await releaseUsage.promise;
+          return {
+            ok: true,
+            json: async () => ({
+              rate_limit: {
+                primary_window: {
+                  used_percent: 10,
+                  reset_at: 4102444800,
+                  limit_window_seconds: 18000,
+                },
+              },
+            }),
+          };
+        }),
+      );
+
+      const selection = store.read("openai-codex");
+      await usageStarted.promise;
+      new AuthManager(new AuthStorage(fx.authPath)).setAccountEnabled(
+        "openai-codex",
+        "acct-usage-disable-race",
+        false,
+      );
+      releaseUsage.resolve();
+
+      await expect(selection).resolves.toBeUndefined();
+      const saved = JSON.parse(readFileSync(fx.authPath, "utf8"));
+      expect(saved.providers["openai-codex"].accounts[0].disabled).toBe(true);
     } finally {
       fx.cleanup();
     }

@@ -4,6 +4,7 @@ import type { SystemMessageKind } from "./system_message.js";
 import type { Theme } from "./theme/index.js";
 
 export interface FooterStatus {
+  cwdLabel: string;
   contextUsage: string;
   sessionCost: string;
   duration: string;
@@ -81,22 +82,37 @@ export class FooterComponent implements Component {
     const activityStyle = this.iconIntervalId ? palette.brandAccent : palette.textDim;
     const icon = activityStyle(iconChar);
     const iconWidth = visibleWidth(iconChar);
-    const goalText = this.iconIntervalId && this.status?.pursuingGoal ? "pursuing goal" : "";
-    const goalPrefix = goalText ? `${activityStyle(goalText)} ${palette.textDim("·")} ` : "";
-    const goalPrefixWidth = goalText ? visibleWidth(goalText) + 3 : 0;
-
-    const leftFull = this.status
-      ? `${this.status.duration ? `${this.status.duration} · ` : ""}${this.status.contextUsage} · ${this.status.sessionCost}`
-      : "";
+    const availableWidth = Math.max(0, width - iconWidth - 3);
     const toast = this.toast;
     const statusHint = this.status?.statusHint?.trim();
-    const leftRaw = toast ? toast.text : statusHint || leftFull;
-    const leftStyle = toast ? this.getToastStyle(toast.kind) : palette.textDim;
-    const availableWidth = Math.max(0, width - iconWidth - goalPrefixWidth - 3);
-    const left = truncateFromEndByWidth(leftRaw, availableWidth);
-    const padding = " ".repeat(Math.max(0, availableWidth - visibleWidth(left)));
+    const goalStatus = this.iconIntervalId && this.status?.pursuingGoal ? "pursuing goal" : "";
+    const transientText = toast?.text ?? statusHint ?? goalStatus;
+    const rawText = transientText || this.buildStatusLine(availableWidth);
+    const style = toast
+      ? this.getToastStyle(toast.kind)
+      : goalStatus && rawText === goalStatus
+        ? activityStyle
+        : palette.textDim;
+    const text = truncateFromEndByWidth(rawText, availableWidth);
+    const padding = " ".repeat(Math.max(0, availableWidth - visibleWidth(text)));
 
-    return [` ${icon} ${goalPrefix}${leftStyle(left)}${padding} `];
+    return [` ${icon} ${style(text)}${padding} `];
+  }
+
+  private buildStatusLine(availableWidth: number): string {
+    if (!this.status) return "";
+
+    const { duration, cwdLabel, contextUsage, sessionCost } = this.status;
+    const build = (cwd: string) =>
+      [duration, cwd, contextUsage, sessionCost].filter(Boolean).join(" · ");
+    const full = build(cwdLabel);
+    if (visibleWidth(full) <= availableWidth) {
+      return full;
+    }
+
+    const overflow = visibleWidth(full) - availableWidth;
+    const cwdWidth = Math.max(1, visibleWidth(cwdLabel) - overflow);
+    return build(compactCwdLabel(cwdLabel, cwdWidth));
   }
 
   private getToastStyle(kind: SystemMessageKind): (text: string) => string {
@@ -106,4 +122,41 @@ export class FooterComponent implements Component {
     if (kind === "muted") return palette.textMuted;
     return palette.toastSuccess;
   }
+}
+
+function compactCwdLabel(label: string, maxWidth: number): string {
+  if (maxWidth <= 0) return "";
+  if (visibleWidth(label) <= maxWidth) return label;
+
+  const remotePrefix = label.startsWith("remote · ") ? "remote · " : "";
+  const path = remotePrefix ? label.slice(remotePrefix.length) : label;
+  const basename = path.split("/").filter(Boolean).at(-1) ?? path;
+  const root = path.startsWith("~/") ? "~/" : path.startsWith("/") ? "/" : "";
+  const candidates = [
+    `${remotePrefix}${root}…/${basename}`,
+    `${root}…/${basename}`,
+    `…/${basename}`,
+    basename,
+  ];
+
+  for (const candidate of candidates) {
+    if (visibleWidth(candidate) <= maxWidth) {
+      return candidate;
+    }
+  }
+
+  return truncateFromStartByWidth(basename, maxWidth);
+}
+
+function truncateFromStartByWidth(text: string, maxWidth: number): string {
+  if (maxWidth <= 0) return "";
+  if (visibleWidth(text) <= maxWidth) return text;
+  if (maxWidth === 1) return "…";
+
+  let suffix = "";
+  for (const character of Array.from(text).reverse()) {
+    if (visibleWidth(`…${character}${suffix}`) > maxWidth) break;
+    suffix = `${character}${suffix}`;
+  }
+  return `…${suffix}`;
 }

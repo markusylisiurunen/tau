@@ -386,40 +386,47 @@ test("PendingMessagesComponent distinguishes steering and queued previews", () =
   );
 });
 
-test("FooterComponent renders session status", () => {
+test("FooterComponent renders dense session status", () => {
   const theme = createTagTheme();
   const ui = { requestRender() {} };
   const footer = new FooterComponent(theme, ui);
   footer.setStatus({
-    contextUsage: "ctx 10/100",
-    sessionCost: "$0.01",
-    duration: "",
+    cwdLabel: "~/Code/tau-one",
+    contextUsage: "↑578k ↓87k r58M w0 · 76.9%/372k",
+    sessionCost: "$63.52",
+    duration: "1m 1s",
     pursuingGoal: false,
   });
   const line = renderLines(footer, 120)[0];
-  expect(line).toContain("<textDim>ctx 10/100 · $0.01</textDim>");
+  expect(line).toContain(
+    "<textDim>1m 1s · ~/Code/tau-one · ↑578k ↓87k r58M w0 · 76.9%/372k · $63.52</textDim>",
+  );
 });
 
-test("FooterComponent renders operation status hints", () => {
+test("FooterComponent replaces normal status with operation hints", () => {
   const theme = createTagTheme();
   const ui = { requestRender() {} };
   const footer = new FooterComponent(theme, ui);
   footer.setStatus({
+    cwdLabel: "~/Code/tau-one",
     contextUsage: "ctx 10/100",
     sessionCost: "$0.01",
-    duration: "",
+    duration: "12s",
     statusHint: "compacting context...",
     pursuingGoal: false,
   });
 
-  expect(renderText(footer, 120)).toContain("compacting context...");
+  const text = renderText(footer, 120);
+  expect(text).toContain("compacting context...");
+  expect(text).not.toContain("tau-one");
 });
 
-test("FooterComponent labels active autonomous goal work", () => {
+test("FooterComponent replaces normal status during active autonomous goal work", () => {
   const theme = createTagTheme();
   const ui = { requestRender() {} };
   const footer = new FooterComponent(theme, ui);
   footer.setStatus({
+    cwdLabel: "~/Code/tau-one",
     contextUsage: "ctx 10/100",
     sessionCost: "$0.01",
     duration: "24s",
@@ -428,37 +435,41 @@ test("FooterComponent labels active autonomous goal work", () => {
 
   const idleLine = renderLines(footer, 120)[0];
   expect(idleLine).not.toContain("pursuing goal");
-  expect(idleLine).toContain("<textDim>24s · ctx 10/100 · $0.01</textDim>");
+  expect(idleLine).toContain("<textDim>24s · ~/Code/tau-one · ctx 10/100 · $0.01</textDim>");
 
   footer.startWorkingIcon();
   try {
     const activeLine = renderLines(footer, 120)[0];
     expect(activeLine).toContain(
-      "<brandAccent>⠋</brandAccent> <brandAccent>pursuing goal</brandAccent> <textDim>·</textDim>",
+      "<brandAccent>⠋</brandAccent> <brandAccent>pursuing goal</brandAccent>",
     );
+    expect(activeLine).not.toContain("tau-one");
   } finally {
     footer.stop();
   }
 });
 
-test("FooterComponent compacts cwd before truncating and keeps ellipsis styled", () => {
+test("FooterComponent compacts cwd before truncating the complete status", () => {
   const theme = createTagTheme();
   const ui = { requestRender() {} };
   const footer = new FooterComponent(theme, ui);
   footer.setStatus({
+    cwdLabel: "~/Code/company/projects/tau-one",
     contextUsage: "ctx",
     sessionCost: "$0.01",
-    duration: "",
+    duration: "12s",
     pursuingGoal: false,
   });
 
-  const compactLine = renderLines(footer, 50)[0];
-  expect(compactLine).toContain("<textDim>ctx · $0.01</textDim>");
+  const compactLine = renderLines(footer, 42)[0];
+  expect(compactLine).toContain("~/…/tau-one");
+  expect(compactLine).toContain("ctx · $0.01");
 
   footer.setStatus({
+    cwdLabel: "~/Code/company/projects/tau-one",
     contextUsage: "this is a very long context usage string",
     sessionCost: "$0.01",
-    duration: "",
+    duration: "12s",
     pursuingGoal: false,
   });
 

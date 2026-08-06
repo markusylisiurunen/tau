@@ -29,6 +29,7 @@ export type ChatInputMode = "normal" | "bash" | "bash_incognito" | "recording";
 
 export type ChatViewStatus = {
   footer: {
+    cwdLabel: string;
     contextUsage: string;
     sessionCost: string;
     duration: string;
@@ -37,7 +38,6 @@ export type ChatViewStatus = {
   };
   editor: {
     mode: ChatInputMode;
-    cwdLabel: string;
     personaName: string;
     reasoningLabel: string;
     reasoning?: ReasoningEffort;
@@ -226,6 +226,7 @@ export class TuiChatView implements ChatView {
     this.lastStatus = status;
     this.setRecordingIndicatorActive(status.editor.mode === "recording");
     this.footer.setStatus({
+      cwdLabel: status.footer.cwdLabel,
       contextUsage: status.footer.contextUsage,
       sessionCost: status.footer.sessionCost,
       duration: status.footer.duration,
@@ -446,7 +447,7 @@ export class TuiChatView implements ChatView {
       return;
     }
 
-    this.editor.setHeader(state.cwdLabel, `${state.personaName} (${state.reasoningLabel})`);
+    this.editor.setHeader("", `${state.personaName} (${state.reasoningLabel})`);
   }
 
   private setRecordingIndicatorActive(active: boolean): void {

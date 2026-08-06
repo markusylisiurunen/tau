@@ -1827,6 +1827,7 @@ export class SessionChatController {
   private refreshStatus(): void {
     this.view.updateStatus({
       footer: {
+        cwdLabel: this.getFooterCwdLabel(),
         contextUsage: this.getContextUsageString(),
         sessionCost: this.getSessionCostString(),
         duration: this.getTurnDurationString(),
@@ -1837,7 +1838,6 @@ export class SessionChatController {
       },
       editor: {
         mode: this.getInputMode(),
-        cwdLabel: this.getFooterCwdLabel(),
         personaName: this.getCurrentPersonaSnapshot()?.label ?? this.snapshot.settings.personaId,
         reasoningLabel: this.snapshot.settings.reasoning ?? "none",
         reasoning:
@@ -1879,7 +1879,7 @@ export class SessionChatController {
       ? this.getContextWindowForLastTurn(last)
       : this.getBootstrapContextWindow();
     const { input, read, write, output } = this.getSessionUsageTotals();
-    const stats = `↑${formatTokenWindow(input)} ↓${formatTokenWindow(output)} (r${formatTokenWindow(read)} w${formatTokenWindow(write)})`;
+    const stats = `↑${formatTokenWindow(input)} ↓${formatTokenWindow(output)} r${formatTokenWindow(read)} w${formatTokenWindow(write)}`;
     const contextWindowUsageTokens = getAssistantContextWindowUsage(last);
     const percent = windowTokens > 0 ? (contextWindowUsageTokens / windowTokens) * 100 : 0;
     const percentStr = `${formatAdaptiveNumber(percent, 1, 3)}%`;

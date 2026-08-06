@@ -887,8 +887,8 @@ describe("SessionChatController", () => {
     expect(intro.body).not.toContain("~/repo/src/AGENTS.md");
     expect(intro.body).toContain("session id: session-1");
     expect(intro.body).not.toContain("ssh host tau rpc");
-    expect(view.status.editor.cwdLabel).toBe("remote · ~/repo");
-    expect(view.status.footer.contextUsage).toBe("↑0 ↓0 (r0 w0) · 0.0%/128k");
+    expect(view.status.footer.cwdLabel).toBe("remote · ~/repo");
+    expect(view.status.footer.contextUsage).toBe("↑0 ↓0 r0 w0 · 0.0%/128k");
 
     await controller.onUserInput("/help");
     expect(view.systems.at(-1)?.text).toContain("context:\n  ~/repo/AGENTS.md");
@@ -1078,7 +1078,7 @@ describe("SessionChatController", () => {
 
     controller.start();
     expect(view.messages.map((message) => message.id)).toContain("history-1");
-    expect(view.status.editor.cwdLabel).toBe("remote · /session/repo");
+    expect(view.status.footer.cwdLabel).toBe("remote · /session/repo");
 
     controller.getInputHandlers().onSubmit("hello session");
     await flush();

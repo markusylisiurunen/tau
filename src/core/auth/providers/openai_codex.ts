@@ -62,6 +62,7 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
     const account: CodexAccount = {
       type: "oauth",
       accountId,
+      disabled: false,
       providerAccountId: normalizeString(credentials.accountId) ?? claims.accountId,
       access: credentials.access,
       refresh: credentials.refresh,
@@ -76,7 +77,11 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
         (entry) => entry.type === "oauth" && entry.accountId === accountId,
       );
       if (existingIndex >= 0) {
-        providerData.accounts[existingIndex] = account;
+        const existing = providerData.accounts[existingIndex]!;
+        providerData.accounts[existingIndex] = {
+          ...account,
+          disabled: existing.type === "oauth" && existing.disabled,
+        };
       } else {
         providerData.accounts.push(account);
       }
@@ -97,6 +102,20 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
       });
     });
     return removed;
+  }
+
+  setAccountEnabled(authStorage: AuthStorage, accountId: string, enabled: boolean): boolean {
+    const normalizedId = normalizeIdentifier(accountId);
+    let updated = false;
+    authStorage.update((data) => {
+      const account = ensureProvider(data, PROVIDER_ID).accounts.find(
+        (entry) => entry.type === "oauth" && matchesIdentifier(entry, normalizedId),
+      );
+      if (account?.type !== "oauth") return;
+      account.disabled = !enabled;
+      updated = true;
+    });
+    return updated;
   }
 
   async listAccountInfo(authStorage: AuthStorage): Promise<AuthAccountInfo[]> {
@@ -127,6 +146,7 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
         return {
           provider: PROVIDER_ID,
           accountId: currentAccount.accountId,
+          disabled: currentAccount.disabled,
           email: identity.email,
           plan: identity.plan,
           credentialExpired: Date.now() >= currentAccount.expires,
@@ -140,14 +160,22 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
   }
 
   async selectAccount(authStorage: AuthStorage): Promise<AuthProviderSelection | undefined> {
-    const accounts = getAccounts(authStorage);
-    if (accounts.length === 0) return undefined;
-
-    const forcedAccountId = this.getForcedAccountId(authStorage);
-    if (forcedAccountId) {
-      const apiKey = await this.getApiKeyForAccount(authStorage, forcedAccountId);
-      return apiKey ? { accountId: forcedAccountId, apiKey } : undefined;
+    const forcedAccount = resolveForcedAccount(authStorage);
+    if (forcedAccount?.disabled) {
+      throw new Error(
+        `${FORCED_ACCOUNT_ENV} matched disabled Codex account "${forcedAccount.accountId}". ` +
+          `Run "tau auth enable codex --account ${forcedAccount.accountId}" to enable it.`,
+      );
     }
+    if (forcedAccount) {
+      const apiKey = await this.getApiKeyForAccount(authStorage, forcedAccount.accountId);
+      return apiKey && isAccountEnabled(authStorage, forcedAccount.accountId)
+        ? { accountId: forcedAccount.accountId, apiKey }
+        : undefined;
+    }
+
+    const accounts = getSelectableAccounts(authStorage);
+    if (accounts.length === 0) return undefined;
 
     const now = nowSeconds();
     const candidates = accounts.map((account, index) => ({ account, index, usage: account.usage }));
@@ -166,7 +194,7 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
         usage = refreshed.usage ?? usage;
       }
 
-      if (isUsageUsable(usage, now)) {
+      if (isUsageUsable(usage, now) && isAccountEnabled(authStorage, candidate.account.accountId)) {
         return { accountId: candidate.account.accountId, apiKey };
       }
     }
@@ -182,6 +210,7 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
 
     const now = nowSeconds();
     const candidates = accounts
+      .filter((account) => !account.disabled)
       .map((account, index) => ({ accountId: account.accountId, usage: account.usage, index }))
       .filter((candidate) => isUsageUsable(candidate.usage, now));
     if (candidates.length === 0) return undefined;
@@ -224,14 +253,16 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
     options?: { apiKey?: string },
   ): Promise<boolean> {
     const account = getAccounts(authStorage).find((entry) => entry.accountId === accountId);
-    if (!account) return false;
+    if (!account || account.disabled) return false;
 
     const usageSnapshot = await this.getUsageSnapshot(authStorage, account, {
       apiKey: options?.apiKey,
       refreshIfExpired: true,
       refreshIfMissing: true,
     });
-    return isUsageUsable(usageSnapshot.usage, nowSeconds());
+    return (
+      isUsageUsable(usageSnapshot.usage, nowSeconds()) && isAccountEnabled(authStorage, accountId)
+    );
   }
 
   async handleProviderError(
@@ -239,7 +270,7 @@ export class OpenAICodexAdapter implements AuthProviderAdapter {
     accountId: string,
     _error: unknown,
   ): Promise<boolean> {
-    const accounts = getAccounts(authStorage);
+    const accounts = getSelectableAccounts(authStorage);
     if (accounts.length === 0) return false;
 
     const selectedAccount = accounts.find((account) => account.accountId === accountId);
@@ -353,7 +384,17 @@ function getAccounts(authStorage: AuthStorage): CodexAccount[] {
   return provider.accounts.filter((account): account is CodexAccount => account.type === "oauth");
 }
 
-function resolveForcedAccountId(authStorage: AuthStorage): string | undefined {
+function getSelectableAccounts(authStorage: AuthStorage): CodexAccount[] {
+  return getAccounts(authStorage).filter((account) => !account.disabled);
+}
+
+function isAccountEnabled(authStorage: AuthStorage, accountId: string): boolean {
+  return getAccounts(authStorage).some(
+    (account) => account.accountId === accountId && !account.disabled,
+  );
+}
+
+function resolveForcedAccount(authStorage: AuthStorage): CodexAccount | undefined {
   const forced = readForcedAccountIdentifier();
   if (!forced) return undefined;
 
@@ -367,7 +408,11 @@ function resolveForcedAccountId(authStorage: AuthStorage): string | undefined {
     );
   }
 
-  return account.accountId;
+  return account;
+}
+
+function resolveForcedAccountId(authStorage: AuthStorage): string | undefined {
+  return resolveForcedAccount(authStorage)?.accountId;
 }
 
 function getForcedAccountIdFromList(accounts: AuthAccountInfo[]): string | undefined {

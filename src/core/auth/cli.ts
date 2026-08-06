@@ -19,7 +19,7 @@ export type AuthCliCommand =
   | { type: "help" }
   | { type: "login"; providerArg?: string }
   | { type: "list" }
-  | { type: "logout"; providerArg?: string; accountId: string };
+  | { type: "logout" | "enable" | "disable"; providerArg?: string; accountId: string };
 
 export const SUPPORTED_OAUTH_PROVIDERS: OAuthProviderSpec[] = [
   { id: "openai-codex", cliId: "codex", label: "OpenAI Codex (ChatGPT Plus/Pro)" },
@@ -75,47 +75,54 @@ export function parseAuthCliArgs(args: string[]): AuthCliCommand {
     return { type: "list" };
   }
 
-  if (subcommand === "logout") {
-    let index = 0;
-    let providerArg: string | undefined;
-    if (subcommandArgs[index] && !subcommandArgs[index]!.startsWith("-")) {
-      providerArg = subcommandArgs[index];
-      index += 1;
-    }
-
-    let accountId: string | undefined;
-    while (index < subcommandArgs.length) {
-      const argument = subcommandArgs[index]!;
-      if (argument !== "--account") {
-        throw new Error(
-          argument.startsWith("-")
-            ? `unknown auth logout option "${argument}"`
-            : `unexpected auth logout argument "${argument}"`,
-        );
-      }
-      if (accountId !== undefined) {
-        throw new Error('duplicate auth logout option "--account"');
-      }
-
-      const value = subcommandArgs[index + 1];
-      if (!value || value.startsWith("--")) {
-        throw new Error('missing value for auth logout option "--account"');
-      }
-      accountId = value;
-      index += 2;
-    }
-
-    if (!accountId) {
-      throw new Error("missing --account <id> for logout");
-    }
-    return {
-      type: "logout",
-      ...(providerArg ? { providerArg } : {}),
-      accountId,
-    };
+  if (subcommand === "logout" || subcommand === "enable" || subcommand === "disable") {
+    return parseAccountCommand(subcommand, subcommandArgs);
   }
 
   throw new Error(`unknown auth subcommand "${subcommand ?? ""}"`);
+}
+
+function parseAccountCommand(
+  subcommand: "logout" | "enable" | "disable",
+  args: string[],
+): Extract<AuthCliCommand, { type: "logout" | "enable" | "disable" }> {
+  let index = 0;
+  let providerArg: string | undefined;
+  if (args[index] && !args[index]!.startsWith("-")) {
+    providerArg = args[index];
+    index += 1;
+  }
+
+  let accountId: string | undefined;
+  while (index < args.length) {
+    const argument = args[index]!;
+    if (argument !== "--account") {
+      throw new Error(
+        argument.startsWith("-")
+          ? `unknown auth ${subcommand} option "${argument}"`
+          : `unexpected auth ${subcommand} argument "${argument}"`,
+      );
+    }
+    if (accountId !== undefined) {
+      throw new Error(`duplicate auth ${subcommand} option "--account"`);
+    }
+
+    const value = args[index + 1];
+    if (!value || value.startsWith("--")) {
+      throw new Error(`missing value for auth ${subcommand} option "--account"`);
+    }
+    accountId = value;
+    index += 2;
+  }
+
+  if (!accountId) {
+    throw new Error(`missing --account <id> for ${subcommand}`);
+  }
+  return {
+    type: subcommand,
+    ...(providerArg ? { providerArg } : {}),
+    accountId,
+  };
 }
 
 function normalizeProvider(value: string): string {
@@ -225,7 +232,7 @@ export async function runLoginCommand(options: {
 
 export async function runLogoutCommand(options: {
   providerArg?: string;
-  accountId?: string;
+  accountId: string;
   authStorage: AuthStorage;
   authPath: string;
   prompt: AuthPromptFn;
@@ -240,13 +247,33 @@ export async function runLogoutCommand(options: {
     provider = await promptForProvider(options.prompt, log, providers);
   }
 
-  if (!options.accountId) {
-    throw new Error("missing --account <id> for logout");
-  }
-
   const authManager = new AuthManager(options.authStorage);
   authManager.removeAccount(provider, options.accountId);
   log(`removed account ${options.accountId} for ${provider} from ${options.authPath}`);
+}
+
+export async function runSetAccountEnabledCommand(options: {
+  enabled: boolean;
+  providerArg?: string;
+  accountId: string;
+  authStorage: AuthStorage;
+  authPath: string;
+  prompt: AuthPromptFn;
+  log?: AuthLog;
+  providers?: OAuthProviderSpec[];
+}): Promise<void> {
+  const log = options.log ?? console.log;
+  const providers = options.providers ?? SUPPORTED_OAUTH_PROVIDERS;
+
+  let provider = resolveProvider(options.providerArg, providers);
+  if (!provider) {
+    provider = await promptForProvider(options.prompt, log, providers);
+  }
+
+  const authManager = new AuthManager(options.authStorage);
+  authManager.setAccountEnabled(provider, options.accountId, options.enabled);
+  const action = options.enabled ? "enabled" : "disabled";
+  log(`${action} account ${options.accountId} for ${provider} in ${options.authPath}`);
 }
 
 export async function runListCommand(options: {
@@ -271,7 +298,8 @@ export async function runListCommand(options: {
       const marker = isSelected ? chalk.yellow("*") : " ";
       const label = account.email ?? account.accountId;
       const plan = account.plan ? `[${account.plan}]` : undefined;
-      const headerSegments = [`  ${marker}`, label, plan].filter(Boolean);
+      const disabled = account.disabled ? "[disabled]" : undefined;
+      const headerSegments = [`  ${marker}`, label, plan, disabled].filter(Boolean);
       log(headerSegments.join(" "));
       if (account.credentialRefreshStatus === "failed") {
         log(

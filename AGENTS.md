@@ -312,8 +312,9 @@ In TUI mode, `--debug` respects `--persona` and `--no-agent-context-files`, so y
 - `tau attach [--session <id> | --new --cwd <path>] [--auth-token <token>] [--no-client-tools] ws://host:port` - Run the terminal UI against a WebSocket session host
 - `tau attach [--session <id> | --new --cwd <path>] [--no-client-tools] -- <command...>` - Run the terminal UI against a session-protocol command, for example `ssh vps 'tau rpc'`; without `--session` or `--new`, attach lists hosted sessions and prompts for a selection, and new sessions require a host-local execution cwd
 - `tau auth login codex` - Browser or device-code OAuth login for ChatGPT Plus/Pro; stores `~/.config/tau/auth.json`
-- `tau auth list` - List authenticated accounts and usage windows
-- `tau auth logout codex --account <email>` - Remove stored OAuth credentials
+- `tau auth list` - List authenticated accounts and usage windows, including disabled accounts
+- `tau auth disable codex --account <email-or-id>` / `tau auth enable codex --account <email-or-id>` - Exclude an authenticated account from agent selection or make it selectable again
+- `tau auth logout codex --account <email-or-id>` - Remove stored OAuth credentials
 - `tau usage` - Summarize usage logs from `~/.config/tau/logs/`
 - `tau install [--global] [--force] [--prompt <id> | --skill <name>]` - Install starter prompts and skills (or one selected item)
 - `tau tool pdf-unpack <file.pdf>` - OCR a PDF with Mistral, render local page patches with `pdftoppm`, and print the artifact paths.
@@ -322,7 +323,7 @@ In TUI mode, `--debug` respects `--persona` and `--no-agent-context-files`, so y
 - `tau nook deploy <dir> --site <slug> [--public]`, `tau nook copy <site> <dir>`, `tau nook list`, `tau nook delete <site>`, `tau nook skill`, `tau nook template ...`, and `tau nook kv ...` - Operate a configured Nook target
 - `tau telegram --config-file <path>` - Run the Telegram bot adapter over local in-process Tau SDK sessions
 - `tau diff-tool [--help]` - Built-in browser diff review demo tool and reference implementation for the diff-review protocol
-- `TAU_CODEX_ACCOUNT` (env var) - Force a specific Codex account by email or account id (same matching as logout); disables failover
+- `TAU_CODEX_ACCOUNT` (env var) - Force a specific enabled Codex account by email or account id (same matching as logout); disables failover and rejects disabled matches
 - `EXA_API_KEY` (env var) - Optional override for `apiKeys.exa` used by `web.search` and `web.fetch`
 - `GEMINI_API_KEY` (env var) - Optional override for `apiKeys.google` used by Google Gemini models, `/speak`, and Google speech-to-text
 - `MISTRAL_API_KEY` (env var) - Optional override for Mistral `/listen` microphone transcription, Telegram audio transcription, and `tau tool pdf-unpack`

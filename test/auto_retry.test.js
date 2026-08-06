@@ -20,6 +20,7 @@ describe("auto retry", () => {
       "timed out waiting for response",
       "timeout",
       "retry delay exceeded",
+      "Codex error: An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists. Please include the request ID 89abde88-40ee-40f7-9ad7-40aeb2fbee63 in your message.",
       "The system is currently experiencing high demand and cannot process your request. Your request exceeds the maximum usage size allowed during peak load. For improved capacity reliability, consider switching to Provisioned Throughput.",
     ];
 
@@ -35,12 +36,20 @@ describe("auto retry", () => {
   });
 
   it("does not retry non-transient assistant errors", () => {
-    const error = {
-      role: "assistant",
-      stopReason: "error",
-      errorMessage: "invalid api key provided",
-    };
+    const nonRetryableMessages = [
+      "invalid api key provided",
+      "An error occurred while processing your request because the input is invalid.",
+      "Please include the request ID 89abde88-40ee-40f7-9ad7-40aeb2fbee63 in your message.",
+    ];
 
-    expect(shouldAutoRetry({ model, error })).toBe(false);
+    for (const message of nonRetryableMessages) {
+      const error = {
+        role: "assistant",
+        stopReason: "error",
+        errorMessage: message,
+      };
+
+      expect(shouldAutoRetry({ model, error }), message).toBe(false);
+    }
   });
 });

@@ -7,7 +7,7 @@ export type AutoRetryContext = {
 };
 
 const RETRYABLE_ERROR_REGEX =
-  /overloaded|provider.?returned.?error|high.?demand|peak.?load|maximum.?usage.?size|provisioned.?throughput|rate.?limit|too many requests|429|500|502|503|504|service.?unavailable|server.?error|internal.?error|network.?error|connection.?error|connection.?refused|connection.?lost|websocket.?closed|websocket.?error|other side closed|fetch failed|upstream.?connect|reset before headers|socket hang up|ended without|http2 request did not get a response|timed? out|timeout|terminated|retry delay/i;
+  /overloaded|provider.?returned.?error|high.?demand|peak.?load|maximum.?usage.?size|provisioned.?throughput|rate.?limit|too many requests|429|500|502|503|504|service.?unavailable|server.?error|internal.?error|network.?error|connection.?error|connection.?refused|connection.?lost|websocket.?closed|websocket.?error|other side closed|fetch failed|upstream.?connect|reset before headers|socket hang up|ended without|http2 request did not get a response|timed? out|timeout|terminated|retry delay|you can retry your request/i;
 
 function asAssistantMessage(error: unknown): AssistantMessage | undefined {
   if (!error || typeof error !== "object") {

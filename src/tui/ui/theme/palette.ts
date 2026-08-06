@@ -288,7 +288,7 @@ function resolveCommonChroma(
 }
 
 const ACTION_HUES = [70, 108, 12] as const;
-const ACTION_TARGET_CHROMA = 0.15;
+const ACTION_TARGET_CHROMA = 0.13;
 
 function deriveActionColors(terminalColors: TerminalColors): [string, string, string] {
   const foreground = new Color("srgb", [
@@ -296,7 +296,7 @@ function deriveActionColors(terminalColors: TerminalColors): [string, string, st
     terminalColors.foreground.g,
     terminalColors.foreground.b,
   ]).to("oklch");
-  const lightness = Math.max(0, foreground.get("oklch.l") - 0.1);
+  const lightness = Math.max(0, foreground.get("oklch.l") - 0.08);
   const chroma = resolveCommonChroma(lightness, ACTION_TARGET_CHROMA, ACTION_HUES);
 
   return ACTION_HUES.map((hue) =>

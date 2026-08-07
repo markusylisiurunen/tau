@@ -314,6 +314,24 @@ describe("AgentRuntime", () => {
     expect(streamModel).toHaveBeenCalledOnce();
   });
 
+  it("rolls back user input when its durable event sink fails", async () => {
+    const sinkError = new Error("user persistence failed");
+    const { runtime } = createRuntime({
+      eventSink: async (event) => {
+        if (event.type === "user_message") throw sinkError;
+      },
+    });
+
+    await expect(
+      runtime.commitUserText("do not retain", { historyEntryId: "user-1" }),
+    ).rejects.toBe(sinkError);
+
+    expect(runtime.state).toMatchObject({ revision: 0, historyEntries: [] });
+    await expect(runtime.commitUserText("retry safely", { historyEntryId: "user-1" })).rejects.toBe(
+      sinkError,
+    );
+  });
+
   it("retains accepted input when the event sink fails and aborts later delivery", async () => {
     const sinkError = new Error("projection failed");
     const eventSink = vi.fn(async (event) => {

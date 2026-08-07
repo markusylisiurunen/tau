@@ -568,6 +568,51 @@ describe("LocalSessionHost", () => {
     await host.shutdown();
   });
 
+  it("rolls back turn acceptance when its atomic snapshot fails to persist", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const session = await host.createSession(localCreateInput);
+    await session.snapshot();
+    const commitSessionSnapshot = store.commitSessionSnapshot.bind(store);
+    let rejectAcceptance = true;
+    store.commitSessionSnapshot = vi.fn(async (snapshot, options) => {
+      if (
+        rejectAcceptance &&
+        snapshot.messages.some((message) => message.id === "failed-acceptance")
+      ) {
+        rejectAcceptance = false;
+        throw new Error("acceptance persistence failed");
+      }
+      await commitSessionSnapshot(snapshot, options);
+    });
+
+    await expect(
+      session.acceptTurn({ text: "persist atomically", historyEntryId: "failed-acceptance" }),
+    ).rejects.toThrow("acceptance persistence failed");
+
+    expect(
+      session.runtime.rawHistoryEntries.some((entry) => entry.id === "failed-acceptance"),
+    ).toBe(false);
+    await expect(session.snapshot()).resolves.toMatchObject({
+      messages: [expect.objectContaining({ id: "system" })],
+      turns: {},
+    });
+    await expect(
+      session.acceptTurn({ text: "retry safely", historyEntryId: "failed-acceptance" }),
+    ).resolves.toMatchObject({
+      userHistoryEntryId: "failed-acceptance",
+      snapshot: {
+        turns: {
+          "failed-acceptance": {
+            userHistoryEntryId: "failed-acceptance",
+            state: "running",
+          },
+        },
+      },
+    });
+    await host.shutdown();
+  });
+
   it.each([
     {
       label: "failed",

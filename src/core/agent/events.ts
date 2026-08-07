@@ -10,6 +10,10 @@ import type { ReasoningEffort } from "../types.js";
 
 export type AgentTurnOutcome = "completed" | "stopped" | "interrupted" | "blocked" | "failed";
 
+export type AgentTurnFailure =
+  | { reason: "model-subturn-limit"; message: string }
+  | { reason: "auto-compaction-failed"; message: string };
+
 export type AgentCompactionResult = {
   summaryHistoryEntryId: string;
   continuationHistoryEntryId: string;
@@ -39,6 +43,7 @@ export type AgentEvent =
       turnId: string;
       historyEntryId: string;
       outcome: AgentTurnOutcome;
+      failure?: AgentTurnFailure;
     }
   | { type: "user_message"; historyEntryId: string; message: UserMessage; revision: number }
   | {
@@ -145,7 +150,7 @@ export type AgentEvent =
   | {
       type: "usage_checkpoint";
       historyEntryId: string;
-      contextEpoch: string;
+      modelContextKey: string;
       tokens: number;
       revision: number;
     }

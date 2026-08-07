@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import type { Api, AssistantMessage, Message, Model, ToolCall } from "@earendil-works/pi-ai";
 import type { AgentStateRecovery, AgentSubturnResult } from "../core/agent/agent_runtime.js";
-import type { AgentEvent } from "../core/agent/events.js";
+import type { AgentEvent, AgentTurnFailure } from "../core/agent/events.js";
 import { type Config, resolvePromptTemplateWithBackend } from "../core/config/index.js";
 import type { HistoryManager } from "../core/history/history_manager.js";
 import {
@@ -33,11 +33,7 @@ import {
   filterProjectPathAutocompleteEntries,
   loadProjectPathAutocompleteEntriesWithBackend,
 } from "../core/utils/project_files.js";
-import {
-  hasAutoCompactionContinuationMetadata,
-  hasGoalTurnMetadata,
-  isTauUserMessageHidden,
-} from "../core/utils/user_metadata.js";
+import { hasGoalTurnMetadata } from "../core/utils/user_metadata.js";
 import type {
   ExecutionEnvironment,
   ExecutionEnvironmentResolver,
@@ -51,8 +47,8 @@ import type {
   SessionProtocolCompactResult,
   SessionProtocolContentCatalogSnapshot,
   SessionProtocolCreateParams,
+  SessionProtocolDeltaCause,
   SessionProtocolDeltaMessage,
-  SessionProtocolDeltaReason,
   SessionProtocolDraftAssistantMessage,
   SessionProtocolEphemeralCloseResult,
   SessionProtocolEphemeralCreateParams,
@@ -67,6 +63,7 @@ import type {
   SessionProtocolInterruptSubagentResult,
   SessionProtocolMessage,
   SessionProtocolModelSnapshot,
+  SessionProtocolOperation,
   SessionProtocolPersonaSnapshot,
   SessionProtocolRecordParams,
   SessionProtocolRecordResult,
@@ -83,6 +80,7 @@ import type {
   SessionProtocolStartGoalResult,
   SessionProtocolSubagentSnapshot,
   SessionProtocolTimelineItem,
+  SessionProtocolTimelineNotice,
   SessionProtocolToolRun,
   SessionProtocolTurnOutcome,
 } from "../protocol/session_protocol.js";
@@ -91,7 +89,7 @@ import {
   createSessionProtocolDeltaMessage,
   createSessionProtocolEphemeralMessage,
 } from "../protocol/session_protocol.js";
-import { LEGACY_SESSION_CONTEXT_EPOCH } from "../store/session_snapshot_migrations.js";
+import { LEGACY_SESSION_MODEL_CONTEXT_KEY } from "../store/session_snapshot_migrations.js";
 import type { SessionStore } from "../store/session_store.js";
 import { ClientToolBroker } from "./client_tool_broker.js";
 import { createExecutionEnvironmentSubagentRuntimeResolver } from "./execution_runtime.js";
@@ -231,7 +229,7 @@ export class LocalSessionHost implements TauSessionHost {
       const agentRecovery = hostedSession.runtime.restoreState({
         agentId: recovered.snapshot.sessionId,
         revision: recovered.snapshot.agentState.revision,
-        contextEpoch: recovered.snapshot.agentState.contextEpoch,
+        modelContextKey: recovered.snapshot.agentState.modelContextKey,
         historyEntries: recovered.snapshot.messages.flatMap((entry) =>
           entry.modelVisible && isCoreMessage(entry.message)
             ? [{ id: entry.id, message: entry.message }]
@@ -613,6 +611,18 @@ type ActiveLogicalTurn = {
   pendingSteering: BufferedLogicalSteering[];
 };
 
+type SessionProtocolSimpleDeltaCause = Exclude<
+  SessionProtocolDeltaCause,
+  { type: "compaction" | "rewind" | "resync" }
+>["type"];
+
+type LocalDeltaCause = SessionProtocolSimpleDeltaCause | SessionProtocolDeltaCause;
+type TurnFailureNotice = AgentTurnFailure | { reason: "runtime-error"; message: string };
+
+function normalizeDeltaCause(cause: LocalDeltaCause): SessionProtocolDeltaCause {
+  return typeof cause === "string" ? { type: cause } : cause;
+}
+
 class LocalHostedSessionHandle implements LocalHostedSession {
   readonly session: ChatRuntime;
   private committedSessionId: string;
@@ -620,11 +630,9 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   private persistedSnapshot?: SessionProtocolSnapshot;
   private draftAssistantMessage?: SessionProtocolMessage;
   private readonly messageStates = new Map<string, SessionProtocolMessage["state"]>();
-  private readonly turnOutcomes = new Map<string, SessionProtocolTurnOutcome>();
-  private restoredMessageIds?: Set<string>;
-  private restoredTimelineMessageIds?: Set<string>;
-  private readonly timelineExtras: SessionProtocolTimelineItem[] = [];
+  private timeline: SessionProtocolSnapshot["timeline"] = { epoch: 1, sequence: 0, items: [] };
   private readonly tools = new Map<string, SessionProtocolToolRun>();
+  private readonly operations = new Map<string, SessionProtocolOperation>();
   private readonly agents = new Map<string, SessionProtocolAgentRun>();
   private readonly agentCostTotals = new Map<string, number>();
   private readonly facets = new Map<string, SessionProtocolFacet>();
@@ -771,7 +779,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         if (logicalTurn.cancellationRequested) {
           return {
             userHistoryEntryId,
-            turn: await this.cancelLogicalTurn(userHistoryEntryId),
+            turn: await this.cancelLogicalTurn(),
           };
         }
         return {
@@ -809,7 +817,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
           text: buildGoalContinuationText(goal),
         });
         if (logicalTurn.cancellationRequested) {
-          return { turn: await this.cancelLogicalTurn(userHistoryEntryId) };
+          return { turn: await this.cancelLogicalTurn() };
         }
         return { turn: await this.runTurnNow(logicalTurn, userHistoryEntryId) };
       } catch (error) {
@@ -906,7 +914,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
     while (true) {
       if (logicalTurn.cancellationRequested) {
-        return await this.cancelLogicalTurn(rootUserMessage.id);
+        return await this.cancelLogicalTurn();
       }
 
       const committedSteering: CommittedLogicalSteering[] = [];
@@ -915,14 +923,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
           committedSteering.push(await this.commitBufferedLogicalSteering(logicalTurn));
         }
         if (logicalTurn.cancellationRequested) {
-          return await this.cancelLogicalTurn(rootUserMessage.id, committedSteering);
-        }
-
-        const userMessage = this.session.rawHistoryEntries.findLast(
-          (entry) => entry.message.role === "user",
-        );
-        if (!userMessage) {
-          throw new Error("cannot run a turn without a user message");
+          return await this.cancelLogicalTurn(committedSteering);
         }
 
         const result = await this.runtime.runTurn();
@@ -933,15 +934,8 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         const initialOutcome = turnOutcomeFromResult(result, result.finalMessage);
         const terminalOutcome = turnOutcomeFromResult(terminalResult, terminalResult.finalMessage);
         await this.enqueueMutation(async () => {
-          this.turnOutcomes.set(userMessage.id, initialOutcome);
-          for (const steering of committedSteering) {
-            this.turnOutcomes.set(steering.historyEntryId, initialOutcome);
-          }
           if (this.goal?.status === "active") {
             goalRootHistoryEntryId ??= rootUserMessage.id;
-          }
-          if (goalRootHistoryEntryId) {
-            this.turnOutcomes.set(goalRootHistoryEntryId, terminalOutcome);
           }
           if (terminalOutcome.status !== "completed" && this.goal?.status === "active") {
             this.goal = { ...this.goal, status: "blocked" };
@@ -950,7 +944,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         });
         this.resolveCommittedLogicalSteering(committedSteering, initialOutcome);
         if (logicalTurn.cancellationRequested) {
-          return await this.cancelLogicalTurn(rootUserMessage.id);
+          return await this.cancelLogicalTurn();
         }
         if (terminalOutcome.status !== "completed" || this.goal?.status !== "active") {
           return goalRootHistoryEntryId ? terminalOutcome : initialOutcome;
@@ -961,9 +955,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         await this.session.commitUserText(buildGoalContinuationText(this.goal));
       } catch (error) {
         this.rejectCommittedLogicalSteering(committedSteering, error);
-        await this.cleanupFailedTurn(rootUserMessage.id, committedSteering, error).catch(
-          () => undefined,
-        );
+        await this.cleanupFailedTurn(rootUserMessage.id, error).catch(() => undefined);
         throw error;
       }
     }
@@ -991,24 +983,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       }
     }
     return interrupted;
-  }
-
-  async recordTurnInterruption(): Promise<void> {
-    this.assertActive();
-    await this.enqueueMutation(async () => {
-      const item: SessionProtocolTimelineItem = {
-        type: "notice",
-        id: `assistant-interruption-${randomUUID()}`,
-        notice: {
-          severity: "info",
-          title: "assistant turn interrupted",
-          subject: { type: "session" },
-          timestamp: Date.now(),
-        },
-      };
-      this.timelineExtras.push(item);
-      await this.emitPatch("notice", [{ type: "timeline.append", item: structuredClone(item) }]);
-    });
   }
 
   async waitForActiveWork(): Promise<void> {
@@ -1042,14 +1016,10 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         applied: submission.applied.then((association) => ({
           userHistoryEntryId: association.historyEntryId,
         })),
-        result: submission.result.then(async (association) => {
-          const turn = turnOutcomeFromResult(association.result, association.result.finalMessage);
-          await this.commitSteeringTurnOutcome(association.historyEntryId, turn);
-          return {
-            userHistoryEntryId: association.historyEntryId,
-            turn,
-          };
-        }),
+        result: submission.result.then((association) => ({
+          userHistoryEntryId: association.historyEntryId,
+          turn: turnOutcomeFromResult(association.result, association.result.finalMessage),
+        })),
       };
     }
 
@@ -1139,7 +1109,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
             sessionId: snapshot.sessionId,
             fromRevision,
             toRevision: snapshot.revision,
-            reason: "configuration",
+            cause: { type: "configuration" },
             delta: {
               type: "snapshot.patch",
               changes: [{ type: "settings.set", settings: snapshot.settings }],
@@ -1383,6 +1353,13 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
   async rewindToHistoryEntryId(historyEntryId: string): Promise<SessionProtocolRewindResult> {
     this.assertActive();
+    if (
+      !this.timeline.items.some(
+        (item) => item.type === "message" && item.messageId === historyEntryId,
+      )
+    ) {
+      throw new Error("rewind failed");
+    }
     const result = await this.session.rewindToHistoryEntryId(historyEntryId);
     if (!result) {
       throw new Error("rewind failed");
@@ -1669,15 +1646,10 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   }
 
   private async cancelLogicalTurn(
-    rootHistoryEntryId: string,
     committedSteering: CommittedLogicalSteering[] = [],
   ): Promise<SessionProtocolTurnOutcome> {
     const outcome = abortedTurnOutcome();
     await this.enqueueMutation(async () => {
-      this.turnOutcomes.set(rootHistoryEntryId, outcome);
-      for (const steering of committedSteering) {
-        this.turnOutcomes.set(steering.historyEntryId, outcome);
-      }
       if (this.goal?.status === "active") {
         this.goal = { ...this.goal, status: "blocked" };
       }
@@ -1689,6 +1661,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
   private async commitSnapshot(): Promise<SessionProtocolSnapshot> {
     this.assertNotDisposed();
+    this.reconcileProjections();
     const draft = this.buildSnapshotDraft();
 
     await this.switchSnapshotSession(draft.sessionId);
@@ -1728,7 +1701,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   }
 
   private async commitSnapshotPatch(
-    reason: SessionProtocolDeltaReason,
+    cause: LocalDeltaCause,
     changes: SessionProtocolChange[],
   ): Promise<SessionProtocolDeltaMessage> {
     this.assertNotDisposed();
@@ -1741,7 +1714,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       sessionId: current.sessionId,
       fromRevision: current.revision,
       toRevision: current.revision + 1,
-      reason,
+      cause: normalizeDeltaCause(cause),
       delta: { type: "snapshot.patch", changes },
     });
     const snapshot = applySessionProtocolDelta(current, delta);
@@ -1769,23 +1742,9 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   private reconcileProjections(options: { removeMissingAgents?: boolean } = {}): void {
     const messageIds = new Set(this.session.rawHistoryEntries.map((entry) => entry.id));
     messageIds.add("system");
-
-    for (const id of this.turnOutcomes.keys()) {
-      if (!messageIds.has(id)) {
-        this.turnOutcomes.delete(id);
-      }
+    if (this.draftAssistantMessage) {
+      messageIds.add(this.draftAssistantMessage.id);
     }
-
-    this.timelineExtras.splice(
-      0,
-      this.timelineExtras.length,
-      ...this.timelineExtras.filter(
-        (item) =>
-          item.type !== "notice" ||
-          item.notice.subject.type === "session" ||
-          messageIds.has(item.notice.subject.id),
-      ),
-    );
 
     for (const [id, tool] of this.tools) {
       const messageId = tool.status === "streaming" ? tool.origin.messageId : tool.call.messageId;
@@ -1807,16 +1766,43 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       }
     }
 
-    const operationIds = new Set(
-      this.timelineExtras.filter((item) => item.type === "operation").map((item) => item.id),
-    );
+    for (const id of this.operations.keys()) {
+      const hasTimelineItem = this.timeline.items.some(
+        (item) => item.type === "operation" && item.operationId === id,
+      );
+      if (!hasTimelineItem) {
+        this.operations.delete(id);
+      }
+    }
+
+    this.timeline.items = this.timeline.items.filter((item) => {
+      switch (item.type) {
+        case "message":
+          return messageIds.has(item.messageId);
+        case "tool":
+          return this.tools.has(item.toolId);
+        case "notice":
+          return (
+            item.notice.subject.type === "session" ||
+            (item.notice.subject.type === "message" && messageIds.has(item.notice.subject.id)) ||
+            (item.notice.subject.type === "tool" && this.tools.has(item.notice.subject.id)) ||
+            (item.notice.subject.type === "agent" && this.agents.has(item.notice.subject.id)) ||
+            (item.notice.subject.type === "operation" &&
+              this.operations.has(item.notice.subject.id))
+          );
+        case "operation":
+          return this.operations.has(item.operationId);
+      }
+      return false;
+    });
+
     for (const [id, facet] of this.facets) {
       const subjectExists =
         facet.subject.type === "session" ||
         (facet.subject.type === "message" && messageIds.has(facet.subject.id)) ||
         (facet.subject.type === "tool" && this.tools.has(facet.subject.id)) ||
         (facet.subject.type === "agent" && this.agents.has(facet.subject.id)) ||
-        (facet.subject.type === "operation" && operationIds.has(facet.subject.id));
+        (facet.subject.type === "operation" && this.operations.has(facet.subject.id));
       if (!subjectExists) {
         this.facets.delete(id);
       }
@@ -1832,7 +1818,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       createdAt: this.createdAt,
       agentState: {
         revision: agentState.revision,
-        contextEpoch: agentState.contextEpoch,
+        modelContextKey: agentState.modelContextKey,
         ...(agentState.usageCheckpoint
           ? { usageCheckpoint: { ...agentState.usageCheckpoint } }
           : {}),
@@ -1859,8 +1845,9 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       catalog: structuredClone(this.catalog),
       executionEnvironment: this.executionEnvironment.snapshot(),
       messages,
-      timeline: this.buildTimeline(messages),
+      timeline: structuredClone(this.timeline),
       tools: Object.fromEntries(this.tools),
+      operations: Object.fromEntries(this.operations),
       agents: Object.fromEntries(this.agents),
       facets: Object.fromEntries(this.facets),
     };
@@ -1877,16 +1864,14 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         timestamp: 0,
       },
     };
-    const historyMessages = this.session.rawHistoryEntries.map((entry): SessionProtocolMessage => {
-      const turn = this.turnOutcomes.get(entry.id);
-      return {
+    const historyMessages = this.session.rawHistoryEntries.map(
+      (entry): SessionProtocolMessage => ({
         id: entry.id,
         state: this.messageStates.get(entry.id) ?? "committed",
         modelVisible: true,
         message: entry.message,
-        ...(turn ? { turn } : {}),
-      };
-    });
+      }),
+    );
     return [
       systemMessage,
       ...historyMessages,
@@ -1894,86 +1879,106 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     ];
   }
 
-  private buildTimeline(
-    messages: readonly SessionProtocolMessage[],
-  ): SessionProtocolTimelineItem[] {
-    const messageItems = messages
-      .filter((message) => this.shouldIncludeMessageInTimeline(message))
-      .map(
-        (message): SessionProtocolTimelineItem => ({
-          type: "message",
-          id: `timeline-${message.id}`,
-          messageId: message.id,
-        }),
-      );
-    const noticesByMessageId = new Map<string, SessionProtocolTimelineItem[]>();
-    for (const item of this.timelineExtras) {
-      if (item.type !== "notice" || item.notice.subject.type !== "message") continue;
-      const items = noticesByMessageId.get(item.notice.subject.id) ?? [];
-      items.push(item);
-      noticesByMessageId.set(item.notice.subject.id, items);
-    }
-    const timeline = messageItems.flatMap((item) => [
-      item,
-      ...(item.type === "message" ? (noticesByMessageId.get(item.messageId) ?? []) : []),
-    ]);
-    const trailingExtras = this.timelineExtras.filter(
-      (item) => item.type !== "notice" || item.notice.subject.type === "session",
-    );
-    return structuredClone([...timeline, ...trailingExtras]);
+  private nextTimelineItemBase(
+    id: string,
+    createdAt: number,
+  ): {
+    id: string;
+    sequence: number;
+    createdAt: number;
+  } {
+    this.timeline.sequence += 1;
+    return { id, sequence: this.timeline.sequence, createdAt };
   }
 
-  private shouldIncludeMessageInTimeline(message: SessionProtocolMessage): boolean {
-    if (message.id === "system") {
-      return false;
-    }
-    if (
-      isCoreMessage(message.message) &&
-      (isTauUserMessageHidden(message.message) ||
-        hasAutoCompactionContinuationMetadata(message.message))
-    ) {
-      return false;
-    }
-    if (!this.restoredTimelineMessageIds || !this.restoredMessageIds) {
-      return true;
-    }
-    return (
-      this.restoredTimelineMessageIds.has(message.id) || !this.restoredMessageIds.has(message.id)
+  private appendMessageTimelineItem(
+    messageId: string,
+    createdAt: number,
+  ): SessionProtocolTimelineItem {
+    const item: SessionProtocolTimelineItem = {
+      ...this.nextTimelineItemBase(`timeline-message-${messageId}`, createdAt),
+      type: "message",
+      messageId,
+    };
+    this.timeline.items.push(item);
+    return item;
+  }
+
+  private appendToolTimelineItem(toolId: string, createdAt: number): SessionProtocolTimelineItem {
+    const item: SessionProtocolTimelineItem = {
+      ...this.nextTimelineItemBase(`timeline-tool-${toolId}`, createdAt),
+      type: "tool",
+      toolId,
+    };
+    this.timeline.items.push(item);
+    return item;
+  }
+
+  private appendNoticeTimelineItem(
+    id: string,
+    createdAt: number,
+    notice: SessionProtocolTimelineNotice,
+  ): SessionProtocolTimelineItem {
+    const item: SessionProtocolTimelineItem = {
+      ...this.nextTimelineItemBase(id, createdAt),
+      type: "notice",
+      notice,
+    };
+    this.timeline.items.push(item);
+    return item;
+  }
+
+  private appendTurnFailureTimelineItem(
+    historyEntryId: string,
+    failure: TurnFailureNotice,
+  ): SessionProtocolTimelineItem {
+    const blocked = failure.reason === "auto-compaction-failed";
+    return this.appendNoticeTimelineItem(
+      `turn-${blocked ? "blocked" : "failed"}-${randomUUID()}`,
+      Date.now(),
+      {
+        kind: blocked ? "tau.turn.blocked" : "tau.turn.failed",
+        version: 1,
+        severity: "error",
+        subject: { type: "message", id: historyEntryId },
+        presentation: {
+          title: blocked ? "turn blocked" : "turn failed",
+          content: [failure.message],
+        },
+        data: { reason: failure.reason },
+      },
     );
   }
 
-  private clearRunningCompactionOperations(): void {
-    this.timelineExtras.splice(
-      0,
-      this.timelineExtras.length,
-      ...this.timelineExtras.filter(
-        (item) =>
-          item.type !== "operation" ||
-          (item.operation.kind !== "auto-compaction" &&
-            item.operation.kind !== "manual-compaction") ||
-          item.operation.status !== "running",
-      ),
-    );
+  private appendOperationTimelineItem(
+    operation: SessionProtocolOperation,
+  ): SessionProtocolTimelineItem {
+    const item: SessionProtocolTimelineItem = {
+      ...this.nextTimelineItemBase(`timeline-operation-${operation.id}`, operation.startedAt),
+      type: "operation",
+      operationId: operation.id,
+    };
+    this.operations.set(operation.id, operation);
+    this.timeline.items.push(item);
+    return item;
+  }
+
+  private removeTimelineItem(id: string): void {
+    this.timeline.items = this.timeline.items.filter((item) => item.id !== id);
   }
 
   private restoreProtocolState(snapshot: SessionProtocolSnapshot | undefined): void {
     if (!snapshot) {
       return;
     }
-    this.restoredMessageIds = new Set(snapshot.messages.map((message) => message.id));
-    this.restoredTimelineMessageIds = new Set(
-      snapshot.timeline.filter((item) => item.type === "message").map((item) => item.messageId),
-    );
-    this.timelineExtras.splice(
-      0,
-      this.timelineExtras.length,
-      ...snapshot.timeline
-        .filter((item) => item.type !== "message")
-        .map((item) => structuredClone(item)),
-    );
+    this.timeline = structuredClone(snapshot.timeline);
     this.tools.clear();
     for (const [id, tool] of Object.entries(snapshot.tools)) {
       this.tools.set(id, structuredClone(tool));
+    }
+    this.operations.clear();
+    for (const [id, operation] of Object.entries(snapshot.operations)) {
+      this.operations.set(id, structuredClone(operation));
     }
     this.agents.clear();
     this.agentCostTotals.clear();
@@ -1991,13 +1996,9 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       (message) => message.state === "draft" && !historyEntryIds.has(message.id),
     );
     this.messageStates.clear();
-    this.turnOutcomes.clear();
     for (const message of snapshot.messages) {
       if (message.state !== "committed" && message.state !== "draft") {
         this.messageStates.set(message.id, message.state);
-      }
-      if (message.turn) {
-        this.turnOutcomes.set(message.id, message.turn);
       }
     }
   }
@@ -2059,56 +2060,38 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     await this.enqueueMutation(() => this.recordRuntimeEvent(event));
   }
 
-  private async commitSteeringTurnOutcome(
-    historyEntryId: string,
-    turn: SessionProtocolTurnOutcome,
-  ): Promise<void> {
-    await this.enqueueMutation(async () => {
-      this.turnOutcomes.set(historyEntryId, turn);
-      const message = this.committedSnapshot?.messages.find(
-        (candidate) => candidate.id === historyEntryId,
-      );
-      if (!message) {
-        throw new Error(`missing steering user message '${historyEntryId}'`);
-      }
-      if (isDeepStrictEqual(message.turn, turn)) {
-        return;
-      }
-      await this.emitPatch("assistant-message", [
-        {
-          type: "message.replace",
-          message: { ...structuredClone(message), turn },
-        },
-      ]);
-    });
-  }
-
   private removeToolRun(tool: SessionProtocolToolRun, changes: SessionProtocolChange[]): void {
     this.tools.delete(tool.id);
+    const timelineItemId = `timeline-tool-${tool.id}`;
+    this.removeTimelineItem(timelineItemId);
     for (const facetId of tool.facetIds) {
       this.facets.delete(facetId);
       changes.push({ type: "facet.remove", id: facetId });
     }
-    changes.push({ type: "tool.remove", id: tool.id });
+    changes.push(
+      { type: "tool.remove", id: tool.id },
+      { type: "timeline.remove", id: timelineItemId },
+    );
   }
 
   async recordHistoryFailure(reason: string | undefined): Promise<void> {
-    if (!reason || this.timelineExtras.some((item) => item.id === HISTORY_UNAVAILABLE_NOTICE_ID)) {
+    if (!reason || this.timeline.items.some((item) => item.id === HISTORY_UNAVAILABLE_NOTICE_ID)) {
       return;
     }
-    const item: SessionProtocolTimelineItem = {
-      type: "notice",
-      id: HISTORY_UNAVAILABLE_NOTICE_ID,
-      notice: {
-        severity: "warn",
+    const item = this.appendNoticeTimelineItem(HISTORY_UNAVAILABLE_NOTICE_ID, Date.now(), {
+      kind: "tau.history.unavailable",
+      version: 1,
+      severity: "warn",
+      subject: { type: "session" },
+      presentation: {
         title: "session history is unavailable",
         content: [reason, "this session will continue without durable history recording or recall"],
-        subject: { type: "session" },
-        timestamp: Date.now(),
       },
-    };
-    this.timelineExtras.push(item);
-    await this.emitPatch("notice", [{ type: "timeline.append", item: structuredClone(item) }]);
+      data: {},
+    });
+    await this.emitPatch({ type: "notice" }, [
+      { type: "timeline.append", item: structuredClone(item) },
+    ]);
   }
 
   private async appendToolHistory(
@@ -2152,7 +2135,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       type: "agent-state.set",
       agentState: {
         revision: state.revision,
-        contextEpoch: state.contextEpoch,
+        modelContextKey: state.modelContextKey,
         ...(state.usageCheckpoint ? { usageCheckpoint: { ...state.usageCheckpoint } } : {}),
       },
     };
@@ -2167,15 +2150,18 @@ class LocalHostedSessionHandle implements LocalHostedSession {
           modelVisible: false,
           message: { role: "assistant", content: [], timestamp: Date.now() },
         };
-        const timelineItem = timelineItemForMessage(this.draftAssistantMessage.id);
+        const timelineItem = this.appendMessageTimelineItem(
+          this.draftAssistantMessage.id,
+          this.draftAssistantMessage.message.timestamp,
+        );
         await this.emitPatch(
           "assistant-stream",
           [
             {
               type: "message.append",
               message: structuredClone(this.draftAssistantMessage),
-              timelineItem,
             },
+            { type: "timeline.append", item: structuredClone(timelineItem) },
             { type: "lifecycle.set", lifecycle: "running" },
           ],
           { persist: false },
@@ -2228,9 +2214,11 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         };
         this.tools.set(tool.id, tool);
         this.facets.set(facet.id, facet);
+        const timelineItem = this.appendToolTimelineItem(tool.id, Date.now());
         changes.push(
           { type: "tool.set", tool: structuredClone(tool) },
           { type: "facet.set", facet: structuredClone(facet) },
+          { type: "timeline.append", item: structuredClone(timelineItem) },
         );
         await this.emitPatch("tool-run", changes, { persist: false });
         return;
@@ -2288,6 +2276,10 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       }
       case "user_message": {
         const pendingGoal = this.pendingGoalCommit;
+        const timelineItem = this.appendMessageTimelineItem(
+          event.historyEntryId,
+          event.message.timestamp,
+        );
         await this.emitPatch(
           "user-message",
           [
@@ -2303,8 +2295,8 @@ class LocalHostedSessionHandle implements LocalHostedSession {
                 modelVisible: true,
                 message: event.message,
               },
-              timelineItem: timelineItemForMessage(event.historyEntryId),
             },
+            { type: "timeline.append", item: structuredClone(timelineItem) },
           ],
           { persist: true },
         );
@@ -2320,9 +2312,21 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         }
         return;
       }
-      case "history_rewound":
+      case "history_rewound": {
+        const rewindItem = this.timeline.items.find(
+          (item) => item.type === "message" && item.messageId === event.historyEntryId,
+        );
+        if (!rewindItem) {
+          throw new Error(`missing timeline item for rewind message '${event.historyEntryId}'`);
+        }
+        const cutoffSequence = rewindItem.sequence - 1;
+        this.timeline.items = this.timeline.items.filter((item) => item.sequence <= cutoffSequence);
         this.reconcileProjections({ removeMissingAgents: true });
-        await this.emitSnapshotResetIfChanged("maintenance");
+        const snapshot = await this.commitSnapshot();
+        this.emitSnapshotReset(
+          { type: "rewind", epoch: this.timeline.epoch, cutoffSequence },
+          snapshot,
+        );
         await this.recordHistoryFailure(
           this.history.truncateFromSources(
             this.sessionId,
@@ -2331,6 +2335,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
           ),
         );
         return;
+      }
       case "assistant_final": {
         this.draftAssistantMessage = undefined;
         const messageState = event.message.stopReason === "aborted" ? "interrupted" : "committed";
@@ -2361,10 +2366,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
           cost: { total: cost },
           agent: { type: "main" },
         });
-        const failureNotice = createModelFailureTimelineItem(event.historyEntryId, event.message);
-        if (failureNotice) {
-          this.timelineExtras.push(failureNotice);
-        }
         await this.emitPatch("assistant-message", [
           this.agentStateChange(),
           { type: "cost.set", costTotal: this.costTotal },
@@ -2381,9 +2382,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
             ? [{ type: "lifecycle.set" as const, lifecycle }]
             : []),
           ...toolChanges,
-          ...(failureNotice
-            ? [{ type: "timeline.append" as const, item: structuredClone(failureNotice) }]
-            : []),
         ]);
         await this.recordHistoryFailure(
           this.history.append(
@@ -2447,7 +2445,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
                 modelVisible: true,
                 message: event.message,
               },
-              timelineItem: timelineItemForMessage(event.historyEntryId),
             },
             { type: "tool.set", tool: structuredClone(nextTool) },
           ]);
@@ -2464,7 +2461,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
               modelVisible: true,
               message: event.message,
             },
-            timelineItem: timelineItemForMessage(event.historyEntryId),
           },
         ]);
         return;
@@ -2501,89 +2497,158 @@ class LocalHostedSessionHandle implements LocalHostedSession {
           changes.push({ type: "tool.set", tool: structuredClone(nextTool) });
           historyTools.push({ tool: existing, result: toolResult });
         }
-        await this.emitPatch("recovery", changes);
+        await this.emitPatch({ type: "resync" }, changes);
         for (const { tool, result } of historyTools) {
           await this.appendToolHistory(tool, event.historyEntryId, result);
         }
         return;
       }
       case "feedback": {
+        if (event.presentation === "footer") {
+          this.emitEphemeral(
+            createSessionProtocolEphemeralMessage({
+              sessionId: this.sessionId,
+              event: {
+                type: "feedback.notice",
+                title: event.title,
+                tone: event.tone,
+                presentation: "footer",
+                durationMs: event.durationMs,
+              },
+            }),
+          );
+          return;
+        }
+
+        const createdAt = Date.now();
+        const item: SessionProtocolTimelineItem = {
+          ...this.nextTimelineItemBase(`ephemeral-notice-${randomUUID()}`, createdAt),
+          type: "notice",
+          notice: {
+            kind: "tau.runtime.feedback",
+            version: 1,
+            severity: event.tone === "error" ? "error" : "info",
+            subject: { type: "session" },
+            presentation: {
+              title: event.title,
+              ...(event.content ? { content: event.content } : {}),
+            },
+            data: {},
+          },
+        };
+        await this.emitPatch("notice", [
+          {
+            type: "timeline.advance",
+            epoch: this.timeline.epoch,
+            sequence: item.sequence,
+          },
+        ]);
         this.emitEphemeral(
           createSessionProtocolEphemeralMessage({
             sessionId: this.sessionId,
-            event:
-              event.presentation === "footer"
-                ? {
-                    type: "feedback.notice",
-                    title: event.title,
-                    tone: event.tone,
-                    presentation: "footer",
-                    durationMs: event.durationMs,
-                  }
-                : {
-                    type: "feedback.notice",
-                    title: event.title,
-                    ...(event.content ? { content: event.content } : {}),
-                    tone: event.tone,
-                    presentation: "transcript",
-                  },
+            event: { type: "timeline.item", epoch: this.timeline.epoch, item },
           }),
         );
         return;
       }
       case "compaction_start": {
         const kind = event.reason === "manual" ? "manual-compaction" : "auto-compaction";
-        const item: SessionProtocolTimelineItem = {
-          type: "operation",
-          id: `operation-${kind}-${randomUUID()}`,
-          operation: {
-            kind,
-            status: "running",
-            startedAt: Date.now(),
-          },
+        const operation: SessionProtocolOperation = {
+          id: `${kind}-${randomUUID()}`,
+          kind,
+          status: "running",
+          startedAt: Date.now(),
         };
-        this.timelineExtras.push(item);
+        const item = this.appendOperationTimelineItem(operation);
         await this.emitPatch("maintenance", [
+          { type: "operation.set", operation: structuredClone(operation) },
           { type: "timeline.append", item: structuredClone(item) },
         ]);
-        this.emitEphemeral(
-          createSessionProtocolEphemeralMessage({
-            sessionId: this.sessionId,
-            event: {
-              type: "feedback.activity.started",
-              id: item.id,
-              text: "compacting context",
-            },
-          }),
-        );
         return;
       }
       case "compaction_end": {
-        const activityId = this.timelineExtras.findLast(
-          (item) =>
-            item.type === "operation" &&
-            (item.operation.kind === "auto-compaction" ||
-              item.operation.kind === "manual-compaction") &&
-            item.operation.status === "running",
-        )?.id;
-        if (activityId) {
-          this.emitEphemeral(
-            createSessionProtocolEphemeralMessage({
-              sessionId: this.sessionId,
-              event: { type: "feedback.activity.finished", id: activityId },
-            }),
+        const operation = [...this.operations.values()].findLast(
+          (candidate) =>
+            (candidate.kind === "auto-compaction" || candidate.kind === "manual-compaction") &&
+            candidate.status === "running",
+        );
+        if (operation) {
+          const finishedAt = Date.now();
+          const finishedOperation: SessionProtocolOperation =
+            event.outcome === "compacted"
+              ? { ...operation, status: "succeeded", finishedAt }
+              : event.outcome === "failed"
+                ? {
+                    ...operation,
+                    status: "failed",
+                    finishedAt,
+                    error: event.errorMessage,
+                  }
+                : event.outcome === "skipped"
+                  ? {
+                      ...operation,
+                      status: "skipped",
+                      finishedAt,
+                      reason: "no-eligible-history",
+                    }
+                  : {
+                      ...operation,
+                      status: "cancelled",
+                      finishedAt,
+                      reason: "interrupted",
+                    };
+          this.operations.set(operation.id, finishedOperation);
+          await this.emitPatch("maintenance", [
+            { type: "operation.set", operation: structuredClone(finishedOperation) },
+          ]);
+        }
+
+        if (event.outcome !== "compacted") {
+          return;
+        }
+
+        const previousEpoch = this.timeline.epoch;
+        this.timeline = { epoch: previousEpoch + 1, sequence: 0, items: [] };
+        this.tools.clear();
+        this.operations.clear();
+        this.facets.clear();
+        this.draftAssistantMessage = undefined;
+        this.reconcileProjections({ removeMissingAgents: true });
+        const summary = this.session.rawHistoryEntries.find(
+          (entry) => entry.id === event.result.summaryHistoryEntryId,
+        );
+        if (!summary) {
+          throw new Error(
+            `missing compaction summary '${event.result.summaryHistoryEntryId}' in runtime history`,
           );
         }
-        this.clearRunningCompactionOperations();
-        this.reconcileProjections();
-        await this.emitSnapshotReset("maintenance", await this.commitSnapshot());
+        this.appendMessageTimelineItem(summary.id, summary.message.timestamp);
+        const snapshot = await this.commitSnapshot();
+        this.emitSnapshotReset(
+          {
+            type: "compaction",
+            previousEpoch,
+            epoch: this.timeline.epoch,
+            kind: event.reason === "manual" ? "manual" : "auto",
+            cutType: event.result.cutType,
+            retainedMessageCount: event.result.retainedMessageCount,
+          },
+          snapshot,
+        );
         return;
       }
       case "tool_activity":
         await this.recordToolUiEvent(event.activity);
         return;
+      case "turn_finished": {
+        if (!event.failure) {
+          return;
+        }
+        const item = this.appendTurnFailureTimelineItem(event.historyEntryId, event.failure);
+        await this.emitPatch("notice", [{ type: "timeline.append", item: structuredClone(item) }]);
+        return;
+      }
       case "turn_started":
-      case "turn_finished":
       case "tool_call_admitted":
       case "model_retry_scheduled":
       case "model_retry_started":
@@ -2676,12 +2741,16 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     nextDraft: SessionProtocolMessage,
   ): SessionProtocolChange[] {
     if (!previousDraft) {
+      const timelineItem = this.appendMessageTimelineItem(
+        nextDraft.id,
+        nextDraft.message.timestamp,
+      );
       return [
         {
           type: "message.append",
           message: structuredClone(nextDraft),
-          timelineItem: timelineItemForMessage(nextDraft.id),
         },
+        { type: "timeline.append", item: structuredClone(timelineItem) },
       ];
     }
 
@@ -2698,7 +2767,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   }
 
   private async emitPatch(
-    reason: SessionProtocolDeltaReason,
+    cause: LocalDeltaCause,
     changes: SessionProtocolChange[],
     options: { persist?: boolean } = {},
   ): Promise<void> {
@@ -2709,15 +2778,15 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       if (options.persist === false) {
         const snapshot = { ...this.buildSnapshotDraft(), revision: 1 };
         this.committedSnapshot = snapshot;
-        this.emitSnapshotReset(reason, snapshot);
+        this.emitSnapshotReset(cause, snapshot);
         return;
       }
       const snapshot = await this.commitSnapshot();
-      this.emitSnapshotReset(reason, snapshot);
+      this.emitSnapshotReset(cause, snapshot);
       return;
     }
     if (options.persist !== false) {
-      this.emitDelta(await this.commitSnapshotPatch(reason, changes));
+      this.emitDelta(await this.commitSnapshotPatch(cause, changes));
       return;
     }
 
@@ -2725,37 +2794,34 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       sessionId: this.committedSnapshot.sessionId,
       fromRevision: this.committedSnapshot.revision,
       toRevision: this.committedSnapshot.revision + 1,
-      reason,
+      cause: normalizeDeltaCause(cause),
       delta: { type: "snapshot.patch", changes },
     });
     this.committedSnapshot = applySessionProtocolDelta(this.committedSnapshot, delta);
     this.emitDelta(delta);
   }
 
-  private emitSnapshotReset(
-    reason: SessionProtocolDeltaReason,
-    snapshot: SessionProtocolSnapshot,
-  ): void {
+  private emitSnapshotReset(cause: LocalDeltaCause, snapshot: SessionProtocolSnapshot): void {
     this.emitDelta(
       createSessionProtocolDeltaMessage({
         sessionId: snapshot.sessionId,
         fromRevision: null,
         toRevision: snapshot.revision,
-        reason,
+        cause: normalizeDeltaCause(cause),
         delta: { type: "snapshot.reset", snapshot },
       }),
     );
   }
 
-  private async enqueueSnapshotResetIfChanged(reason: SessionProtocolDeltaReason): Promise<void> {
-    await this.enqueueMutation(() => this.emitSnapshotResetIfChanged(reason));
+  private async enqueueSnapshotResetIfChanged(cause: LocalDeltaCause): Promise<void> {
+    await this.enqueueMutation(() => this.emitSnapshotResetIfChanged(cause));
   }
 
-  private async emitSnapshotResetIfChanged(reason: SessionProtocolDeltaReason): Promise<void> {
+  private async emitSnapshotResetIfChanged(cause: LocalDeltaCause): Promise<void> {
     const previousRevision = this.committedSnapshot?.revision;
     const snapshot = await this.commitSnapshot();
     if (snapshot.revision !== previousRevision) {
-      this.emitSnapshotReset(reason, snapshot);
+      this.emitSnapshotReset(cause, snapshot);
     }
   }
 
@@ -2815,6 +2881,10 @@ class LocalHostedSessionHandle implements LocalHostedSession {
             };
       this.tools.set(content.id, nextTool);
       changes.push({ type: "tool.set", tool: structuredClone(nextTool) });
+      if (!existing) {
+        const timelineItem = this.appendToolTimelineItem(content.id, Date.now());
+        changes.push({ type: "timeline.append", item: structuredClone(timelineItem) });
+      }
     }
 
     return changes;
@@ -2830,26 +2900,17 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     await this.session.commitInterruptedAssistant(interruptedMessage, draft.id);
   }
 
-  private async cleanupFailedTurn(
-    rootHistoryEntryId: string,
-    committedSteering: CommittedLogicalSteering[],
-    error: unknown,
-  ): Promise<void> {
+  private async cleanupFailedTurn(rootHistoryEntryId: string, error: unknown): Promise<void> {
     if (this.draftAssistantMessage) {
       await this.interruptDraftAssistantMessage().catch(() => undefined);
     }
 
     const diagnostic = formatErrorDiagnostic(error);
     await this.enqueueMutation(async () => {
-      const outcome: SessionProtocolTurnOutcome = {
-        status: "failed",
-        stopReason: "error",
-        errorMessage: diagnostic,
-      };
-      this.turnOutcomes.set(rootHistoryEntryId, outcome);
-      for (const steering of committedSteering) {
-        this.turnOutcomes.set(steering.historyEntryId, outcome);
-      }
+      this.appendTurnFailureTimelineItem(rootHistoryEntryId, {
+        reason: "runtime-error",
+        message: diagnostic,
+      });
       if (this.goal?.status === "active") {
         this.goal = { ...this.goal, status: "blocked" };
       }
@@ -2880,27 +2941,6 @@ function formatErrorDiagnostic(error: unknown): string {
     current = current instanceof Error ? current.cause : undefined;
   }
   return messages.filter((message, index) => message && message !== messages[index - 1]).join(": ");
-}
-
-function createModelFailureTimelineItem(
-  historyEntryId: string,
-  message: AssistantMessage,
-): SessionProtocolTimelineItem | undefined {
-  if (message.stopReason !== "error") return undefined;
-  const afterToolExecution = message.content.some((content) => content.type === "toolCall");
-  return {
-    type: "notice",
-    id: `model-failure-${historyEntryId}`,
-    notice: {
-      severity: "error",
-      title: afterToolExecution
-        ? "model request failed after tool execution"
-        : "model request failed",
-      content: [message.errorMessage ?? "the model provider returned an unknown error"],
-      subject: { type: "message", id: historyEntryId },
-      timestamp: message.timestamp,
-    },
-  };
 }
 
 function abortedTurnOutcome(): SessionProtocolTurnOutcome {
@@ -3030,7 +3070,8 @@ function normalizeRecoveredSnapshot(snapshot: SessionProtocolSnapshot): {
   legacyAgentState: boolean;
 } {
   const recovered = cloneSessionProtocolSnapshot(snapshot);
-  const legacyAgentState = recovered.agentState.contextEpoch === LEGACY_SESSION_CONTEXT_EPOCH;
+  const legacyAgentState =
+    recovered.agentState.modelContextKey === LEGACY_SESSION_MODEL_CONTEXT_KEY;
   let changed = recovered.lifecycle !== "idle" || legacyAgentState;
   recovered.lifecycle = "idle";
   if (recovered.goal?.status === "active") {
@@ -3043,6 +3084,19 @@ function normalizeRecoveredSnapshot(snapshot: SessionProtocolSnapshot): {
     recovered.facets = Object.fromEntries(
       Object.entries(recovered.facets).filter(([, facet]) => facet.subject.type !== "agent"),
     );
+  }
+  const recoveredAt = Date.now();
+  for (const [id, operation] of Object.entries(recovered.operations)) {
+    if (operation.status !== "running") {
+      continue;
+    }
+    changed = true;
+    recovered.operations[id] = {
+      ...operation,
+      status: "cancelled",
+      finishedAt: recoveredAt,
+      reason: "session-recovered",
+    };
   }
   const streamingToolIds = new Set(
     Object.values(recovered.tools)
@@ -3058,6 +3112,15 @@ function normalizeRecoveredSnapshot(snapshot: SessionProtocolSnapshot): {
       Object.entries(recovered.facets).filter(
         ([, facet]) => facet.subject.type !== "tool" || !streamingToolIds.has(facet.subject.id),
       ),
+    );
+    recovered.timeline.items = recovered.timeline.items.filter(
+      (item) =>
+        !(item.type === "tool" && streamingToolIds.has(item.toolId)) &&
+        !(
+          item.type === "notice" &&
+          item.notice.subject.type === "tool" &&
+          streamingToolIds.has(item.notice.subject.id)
+        ),
     );
   }
   let recoveredAgentHistory = false;
@@ -3080,7 +3143,7 @@ function normalizeRecoveredSnapshot(snapshot: SessionProtocolSnapshot): {
   if (recoveredAgentHistory) {
     recovered.agentState = {
       revision: recovered.agentState.revision + 1,
-      contextEpoch: recovered.agentState.contextEpoch,
+      modelContextKey: recovered.agentState.modelContextKey,
       ...(recovered.agentState.usageCheckpoint
         ? { usageCheckpoint: { ...recovered.agentState.usageCheckpoint } }
         : {}),
@@ -3105,14 +3168,6 @@ function promptCompositionFromSnapshot(
 
 function cloneSubagentPrompts(subagentPrompts: Record<string, string>): Record<string, string> {
   return { ...subagentPrompts };
-}
-
-function timelineItemForMessage(messageId: string): SessionProtocolTimelineItem {
-  return {
-    type: "message",
-    id: `timeline-${messageId}`,
-    messageId,
-  };
 }
 
 function isCoreMessage(message: SessionProtocolMessage["message"]): message is Message {

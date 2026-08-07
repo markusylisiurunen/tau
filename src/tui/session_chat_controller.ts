@@ -29,10 +29,7 @@ import { REASONING_LEVELS, type ReasoningEffort } from "../core/types.js";
 import { formatAdaptiveNumber, formatCwd, formatTokenWindow } from "../core/utils/format.js";
 import { extractAssistantText } from "../core/utils/messages.js";
 import { collectSpeechToTextContext } from "../core/utils/speech_to_text_context.js";
-import {
-  getAutoCompactionMetadataFromMessage,
-  hasAutoCompactionContinuationMetadata,
-} from "../core/utils/user_metadata.js";
+import { hasAutoCompactionContinuationMetadata } from "../core/utils/user_metadata.js";
 import { APP_VERSION } from "../core/version.js";
 import type {
   SessionProtocolCreateParams,
@@ -41,6 +38,7 @@ import type {
   SessionProtocolMessage,
   SessionProtocolPendingUserMessagesMessage,
   SessionProtocolSnapshot,
+  SessionProtocolTimelineItem,
   SessionProtocolToolRun,
 } from "../protocol/session_protocol.js";
 import { applySessionProtocolDelta } from "../protocol/session_protocol.js";
@@ -137,12 +135,11 @@ export class SessionChatController {
   private snapshot: SessionProtocolSnapshot;
   private readonly renderedMessageIds: string[] = [];
   private readonly hiddenHistoryEntryIds = new Set<string>();
-  private transcriptProjection?: TranscriptProjection;
+  private readonly ephemeralTimelineItems = new Map<string, SessionProtocolTimelineItem>();
   private observedSessionRevision: number;
   private eventUnsubscribe?: () => void;
   private ephemeralUnsubscribe?: () => void;
   private pendingUserMessagesUnsubscribe?: () => void;
-  private readonly hostActivities = new Map<string, string>();
   private snapshotRecovery?: Promise<void>;
   private readonly snapshotRecoveryDeltas: SessionProtocolDeltaMessage[] = [];
   private hasPendingUserMessages = false;
@@ -160,7 +157,6 @@ export class SessionChatController {
   private lastTurnDurationMs = 0;
   private turnTimer?: ReturnType<typeof setInterval>;
   private lastEmptySubmitAt?: number;
-  private assistantMessages: AssistantMessage[] = [];
   private listenRecording?: ListenRecording;
   private listenTransition?: Promise<void>;
   private isTranscribingListen = false;
@@ -178,7 +174,6 @@ export class SessionChatController {
     this.session = options.session;
     this.createSession = options.createSession;
     this.snapshot = options.snapshot;
-    this.transcriptProjection = createInitialTranscriptProjection(options.snapshot);
     this.targetLabel = options.targetLabel;
     this.configuredClientToolNames = options.configuredClientToolNames ?? [];
     this.config = options.config ?? {};
@@ -722,10 +717,7 @@ export class SessionChatController {
     this.refreshStatus();
 
     try {
-      const result = await task();
-      if (result.turn.status === "blocked") {
-        this.view.addTranscriptNotice("turn blocked", "error", [result.turn.message]);
-      }
+      await task();
       await this.syncFromSessionSnapshot();
     } catch (error) {
       this.view.addTranscriptNotice("failed to run assistant turn", "error", [
@@ -1059,14 +1051,12 @@ export class SessionChatController {
       this.session = nextSession;
       this.snapshot = nextSnapshot;
       this.observedSessionRevision = nextSnapshot.revision;
-      this.hostActivities.clear();
       this.eventUnsubscribe = nextEventUnsubscribe;
       this.ephemeralUnsubscribe = nextEphemeralUnsubscribe;
       this.pendingUserMessagesUnsubscribe = nextPendingUserMessagesUnsubscribe;
       installed = true;
 
       this.view.resetToolUiSession();
-      this.assistantMessages = [];
       this.startLocalUiSession();
       this.addSessionIdentityMessage();
       this.renderSnapshot(this.snapshot);
@@ -1135,20 +1125,15 @@ export class SessionChatController {
   private onSdkEphemeral(message: SessionProtocolEphemeralMessage): void {
     const event = message.event;
     switch (event.type) {
-      case "feedback.activity.started":
-        this.hostActivities.set(event.id, event.text);
-        this.refreshStatus();
-        return;
-      case "feedback.activity.finished":
-        this.hostActivities.delete(event.id);
-        this.refreshStatus();
-        return;
       case "feedback.notice":
-        if (event.presentation === "footer") {
-          this.view.showFooterNotice(event.title, event.tone, event.durationMs);
-        } else {
-          this.view.addTranscriptNotice(event.title, event.tone, event.content);
+        this.view.showFooterNotice(event.title, event.tone, event.durationMs);
+        return;
+      case "timeline.item":
+        if (event.epoch !== this.snapshot.timeline.epoch) {
+          return;
         }
+        this.ephemeralTimelineItems.set(event.item.id, event.item);
+        this.syncRenderedHistory(this.snapshot);
         return;
       case "ephemeral-agent.thread-update":
         return;
@@ -1170,11 +1155,7 @@ export class SessionChatController {
   }
 
   private tryApplySdkDelta(delta: SessionProtocolDeltaMessage): boolean {
-    if (delta.delta.type === "snapshot.reset" && delta.toRevision < this.snapshot.revision) {
-      return true;
-    }
-
-    if (delta.delta.type === "snapshot.patch" && delta.toRevision <= this.snapshot.revision) {
+    if (delta.toRevision <= this.snapshot.revision) {
       return true;
     }
 
@@ -1194,9 +1175,18 @@ export class SessionChatController {
       }
 
       const nextSnapshot = applySessionProtocolDelta(this.snapshot, delta);
-      if (this.shouldRenderCompactedReset(delta)) {
-        this.renderCompactedReset(nextSnapshot);
+      if (delta.cause.type === "compaction" && delta.delta.type === "snapshot.reset") {
+        this.renderCompactedReset(nextSnapshot, delta.cause);
       } else {
+        if (delta.cause.type === "rewind") {
+          for (const [id, item] of this.ephemeralTimelineItems) {
+            if (item.sequence > delta.cause.cutoffSequence) {
+              this.ephemeralTimelineItems.delete(id);
+            }
+          }
+        } else if (nextSnapshot.timeline.epoch !== this.snapshot.timeline.epoch) {
+          this.ephemeralTimelineItems.clear();
+        }
         this.syncRenderedHistory(nextSnapshot);
       }
       this.refreshStatus();
@@ -1297,11 +1287,8 @@ export class SessionChatController {
       return false;
     }
 
-    this.snapshot = applySessionProtocolDelta(this.snapshot, delta);
-    this.observedSessionRevision = Math.max(this.observedSessionRevision, this.snapshot.revision);
-    this.view.reconcileToolUiSession(
-      getToolUiModelsInModelOrder(this.snapshot, this.transcriptProjection),
-    );
+    const nextSnapshot = applySessionProtocolDelta(this.snapshot, delta);
+    this.syncRenderedHistory(nextSnapshot);
     this.refreshStatus();
     return true;
   }
@@ -1309,8 +1296,7 @@ export class SessionChatController {
   private renderSnapshot(snapshot: SessionProtocolSnapshot): void {
     this.snapshot = snapshot;
     this.observedSessionRevision = Math.max(this.observedSessionRevision, snapshot.revision);
-    this.assistantMessages = [];
-    for (const item of getRenderableTimelineItems(snapshot, this.transcriptProjection)) {
+    for (const item of getRenderableTimelineItems(snapshot, this.ephemeralTimelineItems.values())) {
       if (item.type === "notice") {
         this.renderedMessageIds.push(
           this.view.addMessage(
@@ -1323,11 +1309,14 @@ export class SessionChatController {
             item.id,
           ),
         );
+      } else if (item.type === "tool") {
+        this.renderedMessageIds.push(
+          this.view.addMessage({ type: "tool", tool: item.model }, item.id),
+        );
       } else {
         this.renderProtocolMessage(item.message);
       }
     }
-    this.assistantMessages = this.collectAssistantMessages(snapshot);
     this.syncSnapshotToolAndAgentUi(snapshot);
   }
 
@@ -1354,7 +1343,7 @@ export class SessionChatController {
     this.snapshot = snapshot;
     this.observedSessionRevision = Math.max(this.observedSessionRevision, snapshot.revision);
 
-    const items = getRenderableTimelineItems(snapshot, this.transcriptProjection);
+    const items = getRenderableTimelineItems(snapshot, this.ephemeralTimelineItems.values());
     const snapshotIds = new Set(items.map((item) => item.id));
     const staleIds = this.renderedMessageIds.filter((id) => !snapshotIds.has(id));
     if (staleIds.length > 0) {
@@ -1384,7 +1373,9 @@ export class SessionChatController {
               ...(item.content ? { content: item.content } : {}),
               tone: item.severity === "error" ? ("error" as const) : ("default" as const),
             }
-          : this.buildProtocolMessageModel(item.message);
+          : item.type === "tool"
+            ? ({ type: "tool" as const, tool: item.model } as const)
+            : this.buildProtocolMessageModel(item.message);
       if (!model) {
         continue;
       }
@@ -1400,7 +1391,6 @@ export class SessionChatController {
       }
     }
 
-    this.assistantMessages = this.collectAssistantMessages(snapshot);
     this.updateStreamingStateFromSnapshot(snapshot);
     this.syncSnapshotToolAndAgentUi(snapshot);
   }
@@ -1445,16 +1435,10 @@ export class SessionChatController {
   }
 
   private isMessageProjected(messageId: string): boolean {
-    return !(
-      this.transcriptProjection?.frozenItemIds.has(messageId) ||
-      this.transcriptProjection?.hiddenMessageIds.has(messageId)
-    );
+    return isMessageInTimeline(this.snapshot, messageId);
   }
 
   private syncSnapshotToolAndAgentUi(snapshot: SessionProtocolSnapshot): void {
-    this.view.reconcileToolUiSession(
-      getToolUiModelsInModelOrder(snapshot, this.transcriptProjection),
-    );
     this.view.reconcileSubagentUiSession(
       Object.values(snapshot.agents).map((agent) => ({
         state: structuredClone(agent),
@@ -1463,21 +1447,11 @@ export class SessionChatController {
     );
   }
 
-  private collectAssistantMessages(snapshot: SessionProtocolSnapshot): AssistantMessage[] {
-    const messages: AssistantMessage[] = [];
-    for (const entry of snapshot.messages) {
-      if (this.isMessageProjected(entry.id) && isAssistantMessage(entry.message)) {
-        messages.push(entry.message);
-      }
-    }
-    return messages;
-  }
-
   private async syncFromSessionSnapshot(): Promise<boolean> {
     try {
       const snapshot = await this.session.snapshot();
-      if (this.hasNewAutoCompactionBoundary(snapshot)) {
-        this.renderCompactedReset(snapshot);
+      if (snapshot.timeline.epoch > this.snapshot.timeline.epoch) {
+        this.renderCompactedSnapshot(snapshot);
       } else {
         this.syncRenderedHistory(snapshot);
       }
@@ -1583,23 +1557,14 @@ export class SessionChatController {
   }
 
   private startLocalUiSession(): void {
-    this.transcriptProjection = undefined;
+    this.ephemeralTimelineItems.clear();
     this.hiddenHistoryEntryIds.clear();
     this.renderedMessageIds.splice(0);
     this.view.addMessage({ type: "session_divider", label: "new session" });
   }
 
-  private startCompactedUiSession(hiddenMessageIds: readonly string[] = []): void {
-    this.transcriptProjection = {
-      frozenItemIds: new Set([
-        ...(this.transcriptProjection?.frozenItemIds ?? []),
-        ...this.renderedMessageIds,
-      ]),
-      hiddenMessageIds: new Set([
-        ...(this.transcriptProjection?.hiddenMessageIds ?? []),
-        ...hiddenMessageIds,
-      ]),
-    };
+  private startCompactedUiSession(): void {
+    this.ephemeralTimelineItems.clear();
     this.hiddenHistoryEntryIds.clear();
     this.renderedMessageIds.splice(0);
     this.view.addMessage({ type: "session_divider", label: "compacted context" });
@@ -1615,32 +1580,16 @@ export class SessionChatController {
     this.renderSnapshot(snapshot);
   }
 
-  private shouldRenderCompactedReset(delta: SessionProtocolDeltaMessage): boolean {
-    return (
-      delta.reason === "maintenance" &&
-      delta.delta.type === "snapshot.reset" &&
-      delta.delta.snapshot.agentState.revision > this.snapshot.agentState.revision &&
-      (this.hasRunningCompactionOperation(this.snapshot) ||
-        this.hasNewAutoCompactionBoundary(delta.delta.snapshot))
-    );
-  }
-
-  private hasNewAutoCompactionBoundary(snapshot: SessionProtocolSnapshot): boolean {
-    const boundary = findAutoCompactionTranscriptBoundary(snapshot);
-    return (
-      boundary !== undefined &&
-      !this.snapshot.messages.some((entry) => entry.id === boundary.summaryMessageId)
-    );
-  }
-
-  private renderCompactedReset(snapshot: SessionProtocolSnapshot): void {
-    const boundary = findAutoCompactionTranscriptBoundary(snapshot);
+  private renderCompactedReset(
+    snapshot: SessionProtocolSnapshot,
+    cause: Extract<SessionProtocolDeltaMessage["cause"], { type: "compaction" }>,
+  ): void {
     this.view.resetToolUiSessionPreservingSubagents();
-    this.startCompactedUiSession(boundary?.hiddenMessageIds);
+    this.startCompactedUiSession();
     this.renderSnapshot(snapshot);
 
-    if (boundary) {
-      this.view.addTranscriptNotice(formatAutoCompactionRetainedText(boundary.metadata), "default");
+    if (cause.kind === "auto") {
+      this.view.addTranscriptNotice(formatAutoCompactionRetainedText(cause), "default");
     }
   }
 
@@ -1984,20 +1933,20 @@ export class SessionChatController {
     if (this.isTranscribingListen) {
       return "transcribing voice input";
     }
-    return (
-      this.diffReviewService.getActivityLabel(this.speechActivityLabel) ??
-      Array.from(this.hostActivities.values()).at(-1)
-    );
+    return this.diffReviewService.getActivityLabel(this.speechActivityLabel);
   }
 
   private hasRunningCompactionOperation(snapshot: SessionProtocolSnapshot): boolean {
-    return snapshot.timeline.some(
-      (item) =>
-        item.type === "operation" &&
-        (item.operation.kind === "auto-compaction" ||
-          item.operation.kind === "manual-compaction") &&
-        item.operation.status === "running",
-    );
+    return snapshot.timeline.items.some((item) => {
+      if (item.type !== "operation") {
+        return false;
+      }
+      const operation = snapshot.operations[item.operationId];
+      return (
+        operation?.status === "running" &&
+        (operation.kind === "auto-compaction" || operation.kind === "manual-compaction")
+      );
+    });
   }
 
   private getContextUsageString(): string {
@@ -2047,12 +1996,8 @@ export class SessionChatController {
   }
 
   private getLastAssistantMessage(): AssistantMessage | undefined {
-    if (this.assistantMessages.length > 0) {
-      return this.assistantMessages[this.assistantMessages.length - 1];
-    }
-
-    for (let i = this.snapshot.messages.length - 1; i >= 0; i -= 1) {
-      const message = this.snapshot.messages[i]?.message;
+    for (let index = this.snapshot.messages.length - 1; index >= 0; index -= 1) {
+      const message = this.snapshot.messages[index]?.message;
       if (isAssistantMessage(message)) {
         return message;
       }
@@ -2427,35 +2372,9 @@ function formatSessionError(error: unknown): string {
   return cause && cause !== message ? `${message}: ${cause}` : message;
 }
 
-type TranscriptProjection = {
-  frozenItemIds: ReadonlySet<string>;
-  hiddenMessageIds: ReadonlySet<string>;
-};
-
-type AutoCompactionTranscriptBoundary = {
-  summaryMessageId: string;
-  metadata: {
-    cutType: "turn-boundary" | "split-turn";
-    retainedMessageCount: number;
-  };
-  hiddenMessageIds: string[];
-};
-
-function createInitialTranscriptProjection(
-  snapshot: SessionProtocolSnapshot,
-): TranscriptProjection | undefined {
-  const boundary = findAutoCompactionTranscriptBoundary(snapshot);
-  if (!boundary) {
-    return undefined;
-  }
-  return {
-    frozenItemIds: new Set(),
-    hiddenMessageIds: new Set(boundary.hiddenMessageIds),
-  };
-}
-
 type RenderableTimelineItem =
   | { type: "message"; id: string; message: SessionProtocolMessage }
+  | { type: "tool"; id: string; model: ToolUiModel }
   | {
       type: "notice";
       id: string;
@@ -2466,40 +2385,81 @@ type RenderableTimelineItem =
 
 function getRenderableTimelineItems(
   snapshot: SessionProtocolSnapshot,
-  projection?: TranscriptProjection,
+  ephemeralItems: Iterable<SessionProtocolTimelineItem>,
 ): RenderableTimelineItem[] {
   const messagesById = new Map(snapshot.messages.map((message) => [message.id, message]));
-  const isMessageHidden = (id: string) =>
-    projection?.frozenItemIds.has(id) === true || projection?.hiddenMessageIds.has(id) === true;
+  const items = [...snapshot.timeline.items, ...ephemeralItems].sort(
+    (left, right) => left.sequence - right.sequence,
+  );
 
-  return snapshot.timeline.flatMap((item): RenderableTimelineItem[] => {
+  return items.flatMap((item): RenderableTimelineItem[] => {
     if (item.type === "notice") {
-      if (
-        projection?.frozenItemIds.has(item.id) ||
-        (item.notice.subject.type === "message" && isMessageHidden(item.notice.subject.id))
-      ) {
-        return [];
-      }
       return [
         {
           type: "notice",
           id: item.id,
           severity: item.notice.severity,
-          title: item.notice.title,
-          ...(item.notice.content ? { content: item.notice.content } : {}),
+          title: item.notice.presentation.title,
+          ...(item.notice.presentation.content
+            ? { content: item.notice.presentation.content }
+            : {}),
         },
       ];
     }
-    if (item.type !== "message" || isMessageHidden(item.messageId)) {
-      return [];
+    if (item.type === "message") {
+      const message = messagesById.get(item.messageId);
+      if (!message) {
+        return [];
+      }
+      const outcomeNotice = getMessageOutcomeNotice(message);
+      return [
+        { type: "message", id: message.id, message },
+        ...(outcomeNotice ? [outcomeNotice] : []),
+      ];
     }
-    const message = messagesById.get(item.messageId);
-    return message ? [{ type: "message", id: message.id, message }] : [];
+    if (item.type === "tool") {
+      const tool = snapshot.tools[item.toolId];
+      return tool ? [{ type: "tool", id: item.id, model: buildToolUiModel(snapshot, tool) }] : [];
+    }
+    return [];
   });
 }
 
+function getMessageOutcomeNotice(
+  message: SessionProtocolMessage,
+): Extract<RenderableTimelineItem, { type: "notice" }> | undefined {
+  if (!isAssistantMessage(message.message)) {
+    return undefined;
+  }
+  if (message.message.stopReason === "error") {
+    const afterToolExecution = message.message.content.some(
+      (content) => content.type === "toolCall",
+    );
+    return {
+      type: "notice",
+      id: `presentation:failure:${message.id}`,
+      severity: "error",
+      title: afterToolExecution
+        ? "model request failed after tool execution"
+        : "model request failed",
+      content: [message.message.errorMessage ?? "the model provider returned an unknown error"],
+    };
+  }
+  if (message.state === "interrupted") {
+    return {
+      type: "notice",
+      id: `presentation:interruption:${message.id}`,
+      severity: "info",
+      title: "assistant turn interrupted",
+    };
+  }
+  return undefined;
+}
+
 function isMessageInTimeline(snapshot: SessionProtocolSnapshot, messageId: string): boolean {
-  return snapshot.timeline.some((item) => item.type === "message" && item.messageId === messageId);
+  return snapshot.timeline.items.some(
+    (item) => item.type === "message" && item.messageId === messageId,
+  );
 }
 
 function assistantPartialFromProtocolMessage(message: SessionProtocolMessage): {
@@ -2576,41 +2536,6 @@ function formatAgentsMdReloadSummary(count: number): string[] {
   return [`${count} AGENTS.md`];
 }
 
-function findAutoCompactionTranscriptBoundary(
-  snapshot: SessionProtocolSnapshot,
-): AutoCompactionTranscriptBoundary | undefined {
-  for (let summaryIndex = snapshot.messages.length - 1; summaryIndex >= 0; summaryIndex -= 1) {
-    const summaryEntry = snapshot.messages[summaryIndex]!;
-    if (!isCoreMessage(summaryEntry.message)) continue;
-    const metadata = getAutoCompactionMetadataFromMessage(summaryEntry.message);
-    if (!metadata) continue;
-
-    const continuationOffset = snapshot.messages
-      .slice(summaryIndex + 1)
-      .findIndex(
-        (entry) =>
-          isCoreMessage(entry.message) && hasAutoCompactionContinuationMetadata(entry.message),
-      );
-    if (continuationOffset < 0) continue;
-
-    const continuationIndex = summaryIndex + continuationOffset + 1;
-    const hiddenMessageIds = snapshot.messages
-      .slice(summaryIndex + 1, continuationIndex)
-      .map((entry) => entry.id);
-    if (hiddenMessageIds.length !== metadata.retainedMessageCount) continue;
-
-    return {
-      summaryMessageId: summaryEntry.id,
-      metadata: {
-        cutType: metadata.cutType,
-        retainedMessageCount: metadata.retainedMessageCount,
-      },
-      hiddenMessageIds,
-    };
-  }
-  return undefined;
-}
-
 function formatAutoCompactionRetainedText(result: {
   cutType: "turn-boundary" | "split-turn";
   retainedMessageCount: number;
@@ -2655,31 +2580,21 @@ const RECOVERED_TOOL_ACTION_LABELS = {
   cancelled: "cancelled",
 };
 
-function getToolUiModelsInModelOrder(
+function buildToolUiModel(
   snapshot: SessionProtocolSnapshot,
-  projection?: TranscriptProjection,
-): ToolUiModel[] {
-  const facetsByToolId = new Map<string, SessionProtocolSnapshot["facets"][string]>();
-  for (const facet of Object.values(snapshot.facets)) {
-    if (facet.kind === "tau.tool-ui-events" && facet.subject.type === "tool") {
-      facetsByToolId.set(facet.subject.id, facet);
-    }
-  }
-
-  return getToolIdsInModelOrder(snapshot).flatMap((toolId): ToolUiModel[] => {
-    const tool = snapshot.tools[toolId]!;
-    const messageId = tool.status === "streaming" ? tool.origin.messageId : tool.call.messageId;
-    if (projection?.frozenItemIds.has(messageId) || projection?.hiddenMessageIds.has(messageId)) {
-      return [];
-    }
-    return [
-      {
-        toolCallId: tool.toolCallId,
-        status: tool.status,
-        presentation: getToolPresentation(snapshot, tool, facetsByToolId.get(toolId)),
-      },
-    ];
-  });
+  tool: SessionProtocolToolRun,
+): ToolUiModel {
+  const facet = Object.values(snapshot.facets).find(
+    (candidate) =>
+      candidate.kind === "tau.tool-ui-events" &&
+      candidate.subject.type === "tool" &&
+      candidate.subject.id === tool.id,
+  );
+  return {
+    toolCallId: tool.toolCallId,
+    status: tool.status,
+    presentation: getToolPresentation(snapshot, tool, facet),
+  };
 }
 
 function getToolPresentation(
@@ -2746,23 +2661,6 @@ function getRecoveredToolResult(
   }
 
   return tool.error?.trim() || tool.summary?.trim() || undefined;
-}
-
-function getToolIdsInModelOrder(snapshot: SessionProtocolSnapshot): string[] {
-  const messageOrder = new Map(snapshot.messages.map((message, index) => [message.id, index]));
-  return Object.values(snapshot.tools)
-    .sort((left, right) => {
-      const leftPosition = left.status === "streaming" ? left.origin : left.call;
-      const rightPosition = right.status === "streaming" ? right.origin : right.call;
-      const leftMessageIndex = messageOrder.get(leftPosition.messageId) ?? Number.MAX_SAFE_INTEGER;
-      const rightMessageIndex =
-        messageOrder.get(rightPosition.messageId) ?? Number.MAX_SAFE_INTEGER;
-      return (
-        leftMessageIndex - rightMessageIndex ||
-        leftPosition.contentIndex - rightPosition.contentIndex
-      );
-    })
-    .map((tool) => tool.id);
 }
 
 function getSubagentActivity(

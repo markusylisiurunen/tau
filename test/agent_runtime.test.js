@@ -207,25 +207,23 @@ describe("AgentRuntime", () => {
         message: "stopped after 1 model attempt without producing a final response",
       },
     });
-    expect(events).toContainEqual({
-      type: "feedback",
-      tone: "error",
-      title: "stopped after 1 model attempt without producing a final response",
-      presentation: "transcript",
-    });
     expect(events.findLast((event) => event.type === "turn_finished")).toMatchObject({
       outcome: "failed",
+      failure: {
+        reason: "model-subturn-limit",
+        message: "stopped after 1 model attempt without producing a final response",
+      },
     });
   });
 
   it("preserves usage checkpoints when recovering missing tool results", () => {
     const { runtime, spec, persona } = createRuntime();
-    const contextEpoch = runtime.state.contextEpoch;
+    const modelContextKey = runtime.state.modelContextKey;
     const toolCall = fauxToolCall("bash", { command: "pwd" }, { id: "dangling-tool" });
     const assistant = createAssistant(persona, [toolCall], { stopReason: "toolUse" });
     const checkpoint = {
       historyEntryId: "assistant-1",
-      contextEpoch,
+      modelContextKey,
       tokens: 42,
     };
     const recovered = new AgentRuntime({
@@ -250,7 +248,7 @@ describe("AgentRuntime", () => {
           },
           { id: "assistant-1", message: assistant },
         ],
-        contextEpoch,
+        modelContextKey,
         usageCheckpoint: checkpoint,
       },
     });
@@ -697,6 +695,10 @@ describe("AgentRuntime", () => {
       reason: "threshold",
       outcome: "failed",
       errorMessage: "summary unavailable",
+    });
+    expect(events.findLast((event) => event.type === "turn_finished")).toMatchObject({
+      outcome: "blocked",
+      failure: { reason: "auto-compaction-failed", message: "summary unavailable" },
     });
     expect(runtime.rawHistory.at(-1).content[0].text).toBe("second request");
     expect(streamModel).toHaveBeenCalledTimes(3);

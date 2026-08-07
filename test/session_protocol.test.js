@@ -1689,13 +1689,19 @@ describe("session_protocol", () => {
     expect(
       validateSessionProtocolResult("session.snapshot", {
         ...createProtocolSnapshot(),
-        timeline: [
-          {
-            type: "message",
-            id: "timeline-missing",
-            messageId: "missing-message",
-          },
-        ],
+        timeline: {
+          epoch: 1,
+          sequence: 1,
+          items: [
+            {
+              type: "message",
+              id: "timeline-missing",
+              sequence: 1,
+              createdAt: 0,
+              messageId: "missing-message",
+            },
+          ],
+        },
       }),
     ).toEqual({
       ok: false,
@@ -1710,26 +1716,36 @@ describe("session_protocol", () => {
     expect(
       validateSessionProtocolResult("session.snapshot", {
         ...createProtocolSnapshot(),
-        timeline: [
-          {
-            type: "notice",
-            id: "notice-missing",
-            notice: {
-              severity: "error",
-              title: "model request failed",
-              content: ["provider error"],
-              subject: { type: "message", id: "missing-message" },
-              timestamp: 1,
+        timeline: {
+          epoch: 1,
+          sequence: 1,
+          items: [
+            {
+              type: "notice",
+              id: "notice-missing",
+              sequence: 1,
+              createdAt: 1,
+              notice: {
+                kind: "tau.test.notice",
+                version: 1,
+                severity: "error",
+                subject: { type: "message", id: "missing-message" },
+                presentation: {
+                  title: "model request failed",
+                  content: ["provider error"],
+                },
+                data: {},
+              },
             },
-          },
-        ],
+          ],
+        },
       }),
     ).toEqual({
       ok: false,
       error: expect.objectContaining({
         code: SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
         message: expect.stringContaining(
-          "timeline notice 'notice-missing' references unknown message 'missing-message'",
+          "timeline notice 'notice-missing' references an unknown message subject",
         ),
       }),
     });
@@ -1863,6 +1879,14 @@ describe("session_protocol", () => {
           : message,
       ),
       tools: { "streaming-tool": streamingTool },
+      timeline: {
+        ...snapshot.timeline,
+        items: snapshot.timeline.items.map((item) =>
+          item.type === "tool"
+            ? { ...item, id: "timeline-tool-streaming-tool", toolId: "streaming-tool" }
+            : item,
+        ),
+      },
     });
     expect(streamingResult).toEqual(
       expect.objectContaining({
@@ -1877,10 +1901,10 @@ describe("session_protocol", () => {
         ...snapshot,
         agentState: {
           revision: 1,
-          contextEpoch: "current-epoch",
+          modelContextKey: "current-epoch",
           usageCheckpoint: {
             historyEntryId: "assistant-1",
-            contextEpoch: "stale-epoch",
+            modelContextKey: "stale-epoch",
             tokens: 10,
           },
         },
@@ -1888,7 +1912,9 @@ describe("session_protocol", () => {
     ).toEqual({
       ok: false,
       error: expect.objectContaining({
-        message: expect.stringContaining("usage checkpoint context epoch must match agent state"),
+        message: expect.stringContaining(
+          "usage checkpoint model context key must match agent state",
+        ),
       }),
     });
     expect(
@@ -1896,10 +1922,10 @@ describe("session_protocol", () => {
         ...snapshot,
         agentState: {
           revision: 1,
-          contextEpoch: "current-epoch",
+          modelContextKey: "current-epoch",
           usageCheckpoint: {
             historyEntryId: "assistant-1",
-            contextEpoch: "current-epoch",
+            modelContextKey: "current-epoch",
             tokens: 10,
           },
         },
@@ -2029,7 +2055,7 @@ describe("session_protocol", () => {
       sessionId: "session-1",
       fromRevision: 1,
       toRevision: 2,
-      reason: "notice",
+      cause: { type: "notice" },
       delta: {
         type: "snapshot.patch",
         changes: [{ type: "lifecycle.set", lifecycle: "idle" }],
@@ -2041,7 +2067,7 @@ describe("session_protocol", () => {
       sessionId: "session-1",
       fromRevision: 1,
       toRevision: 2,
-      reason: "notice",
+      cause: { type: "notice" },
       delta: {
         type: "snapshot.patch",
         changes: [{ type: "lifecycle.set", lifecycle: "idle" }],
@@ -2056,7 +2082,7 @@ describe("session_protocol", () => {
       sessionId: "session-1",
       fromRevision: 2,
       toRevision: 3,
-      reason: "configuration",
+      cause: { type: "configuration" },
       delta: {
         type: "snapshot.patch",
         changes: [
@@ -2084,7 +2110,7 @@ describe("session_protocol", () => {
       sessionId: "session-1",
       fromRevision: 3,
       toRevision: 4,
-      reason: "goal",
+      cause: { type: "goal" },
       delta: {
         type: "snapshot.patch",
         changes: [
@@ -2104,7 +2130,7 @@ describe("session_protocol", () => {
       sessionId: "session-1",
       fromRevision: 2,
       toRevision: 3,
-      reason: "maintenance",
+      cause: { type: "maintenance" },
       delta: {
         type: "snapshot.patch",
         changes: [
@@ -2112,10 +2138,10 @@ describe("session_protocol", () => {
             type: "agent-state.set",
             agentState: {
               revision: 1,
-              contextEpoch: "epoch-1",
+              modelContextKey: "epoch-1",
               usageCheckpoint: {
                 historyEntryId: "missing-assistant",
-                contextEpoch: "epoch-1",
+                modelContextKey: "epoch-1",
                 tokens: 10,
               },
             },
@@ -2147,10 +2173,10 @@ describe("session_protocol", () => {
       ],
       agentState: {
         revision: 1,
-        contextEpoch: "epoch-1",
+        modelContextKey: "epoch-1",
         usageCheckpoint: {
           historyEntryId: "checkpoint-assistant",
-          contextEpoch: "epoch-1",
+          modelContextKey: "epoch-1",
           tokens: 10,
         },
       },
@@ -2159,7 +2185,7 @@ describe("session_protocol", () => {
       sessionId: "session-1",
       fromRevision: 2,
       toRevision: 3,
-      reason: "assistant-stream",
+      cause: { type: "assistant-stream" },
       delta: {
         type: "snapshot.patch",
         changes: [
@@ -2245,7 +2271,7 @@ describe("session_protocol", () => {
       sessionId: "session-1",
       fromRevision: 2,
       toRevision: 3,
-      reason: "assistant-stream",
+      cause: { type: "assistant-stream" },
       delta: {
         type: "snapshot.patch",
         changes: [
@@ -2300,7 +2326,7 @@ describe("session_protocol", () => {
       sessionId: "session-1",
       fromRevision: 2,
       toRevision: 3,
-      reason: "assistant-stream",
+      cause: { type: "assistant-stream" },
       delta: {
         type: "snapshot.patch",
         changes: [
@@ -2392,7 +2418,7 @@ describe("session_protocol", () => {
       sessionId: "session-1",
       fromRevision: 3,
       toRevision: 4,
-      reason: "tool-run",
+      cause: { type: "tool-run" },
       delta: {
         type: "snapshot.patch",
         changes: [
@@ -2460,7 +2486,7 @@ describe("session_protocol", () => {
       sessionId: "session-1",
       fromRevision: 3,
       toRevision: 4,
-      reason: "tool-run",
+      cause: { type: "tool-run" },
       delta: {
         type: "snapshot.patch",
         changes: [
@@ -2515,7 +2541,7 @@ describe("session_protocol", () => {
         sessionId: "session-1",
         fromRevision: 2,
         toRevision: 3,
-        reason: "assistant-stream",
+        cause: { type: "assistant-stream" },
         delta: {
           type: "snapshot.patch",
           changes: [
@@ -2533,7 +2559,7 @@ describe("session_protocol", () => {
         sessionId: "session-1",
         fromRevision: 2,
         toRevision: 3,
-        reason: "assistant-stream",
+        cause: { type: "assistant-stream" },
         delta: {
           type: "snapshot.patch",
           changes: [
@@ -2553,7 +2579,7 @@ describe("session_protocol", () => {
         sessionId: "session-1",
         fromRevision: null,
         toRevision: 2,
-        reason: "notice",
+        cause: { type: "notice" },
         delta: { type: "snapshot.patch", changes: [] },
       }),
     ).toThrow("session protocol delta message is invalid");
@@ -2562,7 +2588,7 @@ describe("session_protocol", () => {
         sessionId: "session-1",
         fromRevision: 2,
         toRevision: 2,
-        reason: "notice",
+        cause: { type: "notice" },
         delta: { type: "snapshot.patch", changes: [] },
       }),
     ).toThrow("snapshot.patch toRevision must be greater than fromRevision");
@@ -2571,7 +2597,7 @@ describe("session_protocol", () => {
         sessionId: "",
         fromRevision: 1,
         toRevision: 2,
-        reason: "notice",
+        cause: { type: "notice" },
         delta: { type: "snapshot.patch", changes: [] },
       }),
     ).toThrow("session protocol delta message is invalid");
@@ -2628,5 +2654,113 @@ describe("session_protocol", () => {
     expect(() =>
       createSessionProtocolErrorResponse("req-bad", "not-a-code", "bad request"),
     ).toThrow("session protocol error response is invalid");
+  });
+
+  it("requires canonical terminal operation fields", () => {
+    const createOperationDelta = (operation) =>
+      createSessionProtocolDeltaMessage({
+        sessionId: "session-1",
+        fromRevision: 1,
+        toRevision: 2,
+        cause: { type: "maintenance" },
+        delta: {
+          type: "snapshot.patch",
+          changes: [{ type: "operation.set", operation }],
+        },
+      });
+    const base = {
+      id: "operation-1",
+      kind: "auto-compaction",
+      startedAt: 1,
+    };
+
+    for (const operation of [
+      { ...base, status: "succeeded" },
+      { ...base, status: "failed", finishedAt: 2 },
+      { ...base, status: "skipped", finishedAt: 2 },
+      { ...base, status: "cancelled", finishedAt: 2 },
+    ]) {
+      expect(() => createOperationDelta(operation)).toThrow(
+        "session protocol delta message is invalid",
+      );
+    }
+
+    expect(
+      createOperationDelta({
+        ...base,
+        status: "running",
+        finishedAt: 2,
+        error: "stale failure",
+        summary: "stale summary",
+        data: { stale: true },
+      }).delta.changes,
+    ).toEqual([
+      {
+        type: "operation.set",
+        operation: { ...base, status: "running" },
+      },
+    ]);
+  });
+
+  it("validates destructive reset causes against the current timeline", () => {
+    const current = createProtocolSnapshot({
+      sessionId: "session-1",
+      revision: 1,
+      historyEntries: [
+        {
+          id: "user-1",
+          message: { role: "user", content: [{ type: "text", text: "hello" }] },
+        },
+      ],
+    });
+    const nextEpochSnapshot = createProtocolSnapshot({
+      sessionId: "session-1",
+      revision: 2,
+    });
+    nextEpochSnapshot.timeline.epoch = 2;
+
+    const staleCompaction = createSessionProtocolDeltaMessage({
+      sessionId: "session-1",
+      fromRevision: null,
+      toRevision: 2,
+      cause: {
+        type: "compaction",
+        previousEpoch: 1,
+        epoch: 2,
+        kind: "auto",
+        cutType: "turn-boundary",
+        retainedMessageCount: 0,
+      },
+      delta: { type: "snapshot.reset", snapshot: nextEpochSnapshot },
+    });
+    expect(() => applySessionProtocolDelta(nextEpochSnapshot, staleCompaction)).toThrow(
+      "compaction delta previous epoch 1 does not match current timeline epoch 2",
+    );
+
+    const wrongEpochRewind = createSessionProtocolDeltaMessage({
+      sessionId: "session-1",
+      fromRevision: null,
+      toRevision: 2,
+      cause: { type: "rewind", epoch: 2, cutoffSequence: 0 },
+      delta: { type: "snapshot.reset", snapshot: nextEpochSnapshot },
+    });
+    expect(() => applySessionProtocolDelta(current, wrongEpochRewind)).toThrow(
+      "rewind delta epoch 2 does not match current timeline epoch 1",
+    );
+
+    const rewoundSnapshot = createProtocolSnapshot({
+      sessionId: "session-1",
+      revision: 2,
+    });
+    const invalidCutoffRewind = createSessionProtocolDeltaMessage({
+      sessionId: "session-1",
+      fromRevision: null,
+      toRevision: 2,
+      cause: { type: "rewind", epoch: 1, cutoffSequence: 2 },
+      delta: { type: "snapshot.reset", snapshot: rewoundSnapshot },
+    });
+    expect(() => applySessionProtocolDelta(current, invalidCutoffRewind)).toThrow(
+      "rewind delta cutoff sequence 2 exceeds current timeline sequence 1",
+    );
   });
 });

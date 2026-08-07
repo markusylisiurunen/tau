@@ -20,7 +20,6 @@ import { formatZodError } from "../utils/zod.js";
 import type { TelegramProjectPreferenceStore } from "./project_preferences.js";
 import {
   createScopedTelegramSessionManager,
-  formatTelegramTimelineNotice,
   type TelegramSessionManager,
   TelegramSessionManagerError,
   type TelegramSessionManagerEvent,
@@ -1331,27 +1330,6 @@ class TelegramAdapterImpl {
       pollIntervalMs: this.pollIntervalMs,
       requestTimeoutSeconds: this.requestTimeoutSeconds,
     });
-  }
-
-  async replayRecoveredNotices(): Promise<void> {
-    for (const sessionId of this.chatsBySession.keys()) {
-      let snapshot: SessionProtocolSnapshot | undefined;
-      try {
-        snapshot = await this.sessionManager.getSessionSnapshot(sessionId);
-      } catch (error) {
-        this.log("warn", "failed to replay recovered session notices", {
-          sessionId,
-          cause: error instanceof Error ? error.message : String(error),
-        });
-        continue;
-      }
-      if (!snapshot) continue;
-      for (const item of snapshot.timeline) {
-        if (item.type === "notice" && item.notice.severity !== "info") {
-          this.notifySession(sessionId, formatTelegramTimelineNotice(item.notice));
-        }
-      }
-    }
   }
 
   async close(): Promise<void> {
@@ -3406,7 +3384,6 @@ export async function startTelegramAdapter(
     api,
     botUsername,
   });
-  await adapter.replayRecoveredNotices();
 
   return {
     close: () => adapter.close(),

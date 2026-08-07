@@ -330,7 +330,7 @@ Establishes observation for that session on this connection and returns the auth
     "revision": 1,
     "agentState": {
       "revision": 0,
-      "contextEpoch": "8f98c4..."
+      "modelContextKey": "8f98c4..."
     },
     "lifecycle": "idle",
     "goal": null,
@@ -347,8 +347,9 @@ Establishes observation for that session on this connection and returns the auth
       "home": "/home/user"
     },
     "messages": [],
-    "timeline": [],
+    "timeline": { "epoch": 1, "sequence": 0, "items": [] },
     "tools": {},
+    "operations": {},
     "agents": {},
     "facets": {}
   },
@@ -433,7 +434,7 @@ success result:
 }
 ```
 
-`turn` is a discriminated terminal outcome. completed turns include the model `stopReason`; failed turns use status `failed`, stop reason `error`, and an optional `errorMessage`; interrupted turns use status and stop reason `aborted`. blocked turns include a reason and message instead of a stop reason. currently the only blocked reason is `auto-compaction-failed`, which means tau could not compact safely before continuing the turn. The outcome is also persisted on the submitted user message in session snapshots.
+`turn` is the request's discriminated terminal outcome. Completed turns include the model `stopReason`; failed turns use status `failed`, stop reason `error`, and an optional `errorMessage`; interrupted turns use status and stop reason `aborted`. Blocked turns include a reason and message instead of a stop reason. Currently the only blocked reason is `auto-compaction-failed`, which means Tau could not compact safely before continuing the turn. Completed outcomes are not duplicated in snapshots. Exceptional failed or blocked outcomes that are not already represented by a failed assistant message are persisted at settlement as semantic `tau.turn.failed` or `tau.turn.blocked` timeline notices.
 
 if another turn is already running, tau returns:
 
@@ -656,7 +657,7 @@ returns:
 }
 ```
 
-`isTurnRunning` can still be `true` immediately after interrupt is requested while active turn, command, maintenance, or sampling cleanup is still in progress. Interrupting an assistant turn also appends a durable session notice so every observer and later recovery can identify the interruption.
+`isTurnRunning` can still be `true` immediately after interrupt is requested while active turn, command, maintenance, or sampling cleanup is still in progress. Assistant interruption is represented by canonical assistant-message state; Tau does not append a duplicate interruption notice.
 
 #### session.snapshot
 
@@ -670,7 +671,7 @@ returns current session state:
 
 - `sessionId`
 - `revision` (monotonic protocol snapshot revision for this session id)
-- `agentState` (the independent durable agent revision, context epoch, and optional provider usage checkpoint used to resume context accounting after recovery)
+- `agentState` (the independent durable agent revision, model context key, and optional provider usage checkpoint used to resume context accounting after recovery)
 - `lifecycle` (`"idle"` or `"running"`)
 - `goal` (the persisted `{ objective, status }` goal, or `null`; status is `"active"` or `"blocked"`)
 - `settings` (current persona id, reasoning, and service tier)
@@ -678,8 +679,9 @@ returns current session state:
 - `catalog` (lightweight personas, prompt metadata, and skills available to observed clients)
 - `executionEnvironment` (where tools/files/commands execute)
 - `messages` (complete synchronized transcript with stable message ids)
-- `timeline` (default render projection; may omit messages that still exist in `messages`; structured notices carry a required title, optional full-fidelity content lines, severity, timestamp, and a session or message subject)
+- `timeline` (the host-owned active render sequence with numeric `epoch`, per-epoch sequence high-water mark, and ordered message/tool/notice/operation reference items; it may omit context-only messages)
 - `tools` (semantic tool execution state keyed by tool call id; `streaming` runs expose only tool identity plus draft-message origin, while executable states reference a complete assistant `toolCall` through `call`)
+- `operations` (mutable maintenance operation state keyed by operation id; timeline items establish placement; terminal status variants require their completion time and status-specific error or reason)
 - `agents` (semantic subagent execution state)
 - `facets` (client-only structured metadata attached to session/message/tool/agent/operation subjects)
 
@@ -689,7 +691,7 @@ derive transcript length from `messages.length`; the protocol does not duplicate
 
 User message text in `messages` is the raw recoverable Tau session text. It may start with Tau's internal metadata prefix, which is persisted for recovery but is never sent to the model or shown to users. After that metadata is removed, user text may start with one or more strict hidden model instruction blocks in the form `<system>...</system>\n`; these blocks are sent to the model as part of the user turn but should be hidden from user-facing renderers. Clients that render user messages should derive display text by removing Tau metadata and then removing only leading exact `<system>...</system>\n` blocks from user messages. Do not apply this display projection to assistant, tool, or protocol system messages.
 
-After automatic compaction, the message carrying `auto-compaction` metadata is the active transcript summary. Messages between that summary and the later `auto-compaction-continuation` message are retained model context and should not be rendered again. On a live transition, the Tau TUI leaves the prior transcript segment in place as immutable client-local history and starts a `compacted context` segment; a client that first attaches after compaction has no prior local segment and renders only the active projection. Frozen messages, notices, and tool cards no longer participate in snapshot reconciliation.
+Successful manual or automatic compaction increments `timeline.epoch` exactly once and replaces the active recoverable timeline with the summary. Optional retained-tail and continuation messages remain in `messages` as model context but have no timeline items. A live client uses the structured compaction delta cause to leave the prior epoch in place as immutable client-local history and start a `compacted context` segment. A client attaching afterward renders only the persisted active epoch. Failed, skipped, or aborted compaction does not change the epoch.
 
 #### session.startGoal
 
@@ -890,7 +892,7 @@ observed-session changes are broadcast as `session.delta` messages:
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "fromRevision": 1,
   "toRevision": 2,
-  "reason": "assistant-stream",
+  "cause": { "type": "assistant-stream" },
   "delta": {
     "type": "snapshot.patch",
     "changes": [
@@ -914,7 +916,7 @@ observed-session changes are broadcast as `session.delta` messages:
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "fromRevision": null,
   "toRevision": 7,
-  "reason": "recovery",
+  "cause": { "type": "resync" },
   "delta": {
     "type": "snapshot.reset",
     "snapshot": { "...": "complete authoritative session snapshot" }
@@ -922,17 +924,17 @@ observed-session changes are broadcast as `session.delta` messages:
 }
 ```
 
-`snapshot.patch` changes include lifecycle, goal, message, timeline, tool, agent, and facet updates. High-rate assistant streaming uses `message.content.append` after the draft assistant message exists so clients do not receive the full accumulated assistant text on every frame. A content append targets only draft assistant messages and must include non-empty `text` and/or `thinking`; when a thinking block is created, clients insert it before the text block so applying patches reconstructs the canonical assistant content order. Maintenance operations such as reload, rewind, and compaction may use `snapshot.reset` when replacing the complete state is clearer than sending a long patch sequence.
+`snapshot.patch` changes include lifecycle, goal, message, timeline, tool, operation, agent, and facet updates. Message and timeline appends are separate explicit changes in the same atomic patch. High-rate assistant streaming uses `message.content.append` after the draft assistant message exists so clients do not receive the full accumulated assistant text on every frame. A content append targets only draft assistant messages and must include non-empty `text` and/or `thinking`; when a thinking block is created, clients insert it before the text block so applying patches reconstructs the canonical assistant content order.
 
-`reason` describes why the transition happened and is for logging, animation, and client policy. Correctness comes from applying the delta. Current reasons are `user-message`, `assistant-stream`, `assistant-message`, `tool-run`, `tool-result`, `notice`, `agent-run`, `maintenance`, `configuration`, `goal`, and `recovery`.
+`cause` describes the semantic transition. Ordinary causes are `user-message`, `assistant-stream`, `assistant-message`, `tool-run`, `tool-result`, `notice`, `agent-run`, `maintenance`, `configuration`, and `goal`. `compaction` includes the previous and new epochs, manual/automatic kind, cut type, and retained-message count. `rewind` includes the active epoch and cutoff sequence. `resync` identifies recovery synchronization. Compaction and rewind use `snapshot.reset`; clients must use the structured cause instead of inferring transitions from message metadata or titles. Applying a destructive reset requires its previous/current epoch and rewind cutoff to match the current timeline state. Deltas whose target revision has already been observed are stale and must not replay presentation transitions.
 
 notes:
 
 - every delta includes `sessionId`.
 - deltas do not include `requestId`; request ids correlate request/response pairs, while deltas are broadcast facts about observed session state.
 - queued and steering requests each receive their own response when accepted work settles.
-- notices and maintenance operations are stored as timeline items, so late-attaching clients can reconstruct them from `session.snapshot`.
-- tool progress, tool UI payloads, and subagent progress are stored in `tools`, `agents`, and `facets` instead of live-only side-channel events.
+- durable notices and maintenance operations are stored through timeline references plus semantic snapshot state, so late-attaching clients reconstruct their fixed placement.
+- tool placement comes from timeline items, mutable tool/operation state comes from keyed maps, and tool UI/subagent presentation comes from facets.
 
 ## pending user messages
 
@@ -959,7 +961,7 @@ Pending messages are shared across attached clients and survive client detach wh
 
 ## ephemeral events
 
-`session.ephemeral` messages carry non-recoverable observed-session activity that is intentionally not stored in `SessionSnapshot`. They carry live ephemeral-agent progress and session feedback. Feedback events are either activity lifecycle events or notices:
+`session.ephemeral` messages carry non-recoverable observed-session state that is intentionally not stored in `SessionSnapshot`. They carry live ephemeral-agent progress and one-shot session feedback notices:
 
 ```json
 {
@@ -976,7 +978,9 @@ Pending messages are shared across attached clients and survive client detach wh
 }
 ```
 
-Activity uses paired `feedback.activity.started` and `feedback.activity.finished` events with the same `id`; the started event also carries `text`. Notice tone is `default` or `error`. Footer notices require a `title` plus a positive `durationMs` of at most 60 seconds. Transcript notices use `presentation: "transcript"`, omit the duration, and may carry full-fidelity `content` lines. Ephemeral feedback is client-local presentation state and is never added to the session timeline. Recoverable failures such as provider errors instead use structured timeline notices in the snapshot; clients may apply their own bounded presentation without truncating the stored content.
+Footer notices require a `title`, `default` or `error` tone, and a positive `durationMs` of at most 60 seconds. Stateful host activity is represented by semantic snapshot state such as a running maintenance operation, not a parallel ephemeral lifecycle.
+
+Ephemeral transcript notices use `{ "type": "timeline.item", "epoch": number, "item": noticeTimelineItem }`. They share the durable notice contract and `(epoch, sequence)` ordering, but the item is sent only to currently attached clients and is omitted from persisted snapshots. The host persists the advanced timeline sequence high-water mark so a later durable item cannot reuse the ephemeral sequence. Durable notices use an open lowercase dotted `kind`, version, severity, generic subject, bounded presentation, and structured data. `tau.*` kinds are reserved for Tau core. Clients use kinds and live request outcomes rather than parsing titles or correlating notice timing. Provider failures and interruptions remain canonical assistant-message state instead of duplicate notices. The Tau TUI derives transcript feedback at the affected message's timeline position, while exceptional failed or blocked turns without a failed assistant are themselves durable semantic notices.
 
 Ephemeral-agent progress uses the same envelope:
 

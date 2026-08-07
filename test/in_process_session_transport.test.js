@@ -25,7 +25,7 @@ function createNoticeDelta(sessionId, revision, text) {
     sessionId,
     fromRevision: revision,
     toRevision: revision + 1,
-    reason: "notice",
+    cause: { type: "notice" },
     delta: {
       type: "snapshot.patch",
       changes: [
@@ -34,11 +34,15 @@ function createNoticeDelta(sessionId, revision, text) {
           item: {
             type: "notice",
             id: `notice-${revision}`,
+            sequence: revision,
+            createdAt: revision,
             notice: {
+              kind: "tau.test.notice",
+              version: 1,
               severity: "info",
-              title: text,
               subject: { type: "session" },
-              timestamp: revision,
+              presentation: { title: text },
+              data: {},
             },
           },
         },
@@ -141,7 +145,6 @@ function createHostedSession(sessionId, sessions, options = {}) {
       return true;
     }),
     interruptActiveWork: vi.fn(() => hostedSession.interruptTurn()),
-    async recordTurnInterruption() {},
     async waitForActiveWork() {},
     async exec() {
       return createProtocolExecResult({

@@ -32,7 +32,7 @@ function createNoticeDelta(sessionId, revision, text) {
     sessionId,
     fromRevision: revision,
     toRevision: revision + 1,
-    reason: "notice",
+    cause: { type: "notice" },
     delta: {
       type: "snapshot.patch",
       changes: [
@@ -41,11 +41,15 @@ function createNoticeDelta(sessionId, revision, text) {
           item: {
             type: "notice",
             id: `notice-${revision}-${text}`,
+            sequence: revision,
+            createdAt: revision,
             notice: {
+              kind: "tau.test.notice",
+              version: 1,
               severity: "info",
-              title: text,
               subject: { type: "session" },
-              timestamp: revision,
+              presentation: { title: text },
+              data: {},
             },
           },
         },
@@ -95,7 +99,7 @@ function createAgentDelta(sessionId, revision, event) {
     sessionId,
     fromRevision: revision,
     toRevision: revision + 1,
-    reason: "agent-run",
+    cause: { type: "agent-run" },
     delta: {
       type: "snapshot.patch",
       changes: [
@@ -420,7 +424,7 @@ function createHarness(options = {}) {
           sessionId,
           fromRevision,
           toRevision: snapshot.revision,
-          reason: "configuration",
+          cause: { type: "configuration" },
           delta: {
             type: "snapshot.patch",
             changes: [{ type: "settings.set", settings: snapshot.settings }],
@@ -474,7 +478,6 @@ function createHarness(options = {}) {
         }
         return interrupted;
       }),
-      recordTurnInterruption: vi.fn(async () => {}),
       waitForActiveWork: vi.fn(async () => {
         await Promise.allSettled([activeTurnSettlement, ...activeWorkPromises]);
       }),
@@ -576,7 +579,8 @@ function deltaHasNotice(line, text) {
     line.type === "session.delta" &&
     line.delta?.type === "snapshot.patch" &&
     line.delta.changes.some(
-      (change) => change.type === "timeline.append" && change.item.notice?.title === text,
+      (change) =>
+        change.type === "timeline.append" && change.item.notice?.presentation.title === text,
     )
   );
 }
@@ -798,7 +802,8 @@ describe("rpc_server", () => {
           line.sessionId === "session-2" &&
           line.delta?.changes?.some(
             (change) =>
-              change.type === "timeline.append" && change.item.notice?.title === "streaming",
+              change.type === "timeline.append" &&
+              change.item.notice?.presentation.title === "streaming",
           ),
       ),
     );
@@ -808,13 +813,14 @@ describe("rpc_server", () => {
         line.sessionId === "session-2" &&
         line.delta?.changes?.some(
           (change) =>
-            change.type === "timeline.append" && change.item.notice?.title === "streaming",
+            change.type === "timeline.append" &&
+            change.item.notice?.presentation.title === "streaming",
         ),
     );
     expect(createdSubmitEvent).toEqual(
       expect.objectContaining({
         sessionId: "session-2",
-        reason: "notice",
+        cause: { type: "notice" },
       }),
     );
     (await harness.host.observeSession("session-2")).releaseTurn();
@@ -1056,7 +1062,8 @@ describe("rpc_server", () => {
           line.type === "session.delta" &&
           line.delta?.changes?.some(
             (change) =>
-              change.type === "timeline.append" && change.item.notice?.title === "streaming",
+              change.type === "timeline.append" &&
+              change.item.notice?.presentation.title === "streaming",
           ),
       ),
     );
@@ -1085,23 +1092,24 @@ describe("rpc_server", () => {
         line.type === "session.delta" &&
         line.delta?.changes?.some(
           (change) =>
-            change.type === "timeline.append" && change.item.notice?.title === "streaming",
+            change.type === "timeline.append" &&
+            change.item.notice?.presentation.title === "streaming",
         ),
     );
     expect(submitEvent).toEqual(
       expect.objectContaining({
         type: "session.delta",
-        reason: "notice",
+        cause: { type: "notice" },
       }),
     );
 
     const subagentEvent = harness.lines.find(
-      (line) => line.type === "session.delta" && line.reason === "agent-run",
+      (line) => line.type === "session.delta" && line.cause?.type === "agent-run",
     );
     expect(subagentEvent).toEqual(
       expect.objectContaining({
         type: "session.delta",
-        reason: "agent-run",
+        cause: { type: "agent-run" },
       }),
     );
 
@@ -1155,14 +1163,14 @@ describe("rpc_server", () => {
           line.type === "session.delta" &&
           line.sessionId === "session-1" &&
           line.delta?.type === "snapshot.patch" &&
-          line.reason === "configuration",
+          line.cause?.type === "configuration",
       ),
     );
     expect(observerLines.find((line) => line.type === "session.delta")).toEqual(
       expect.objectContaining({
         sessionId: "session-1",
         toRevision: expect.any(Number),
-        reason: "configuration",
+        cause: { type: "configuration" },
         delta: expect.objectContaining({ type: "snapshot.patch" }),
       }),
     );
@@ -1390,11 +1398,11 @@ describe("rpc_server", () => {
     await waitFor(() => harness.lines.some((line) => deltaHasNotice(line, "finished")));
 
     const noticeTitles = harness.lines
-      .filter((line) => line.type === "session.delta" && line.reason === "notice")
+      .filter((line) => line.type === "session.delta" && line.cause?.type === "notice")
       .flatMap((line) =>
         line.delta.changes
           .filter((change) => change.type === "timeline.append" && change.item.notice)
-          .map((change) => change.item.notice.title),
+          .map((change) => change.item.notice.presentation.title),
       );
     expect(noticeTitles).toEqual(["streaming", "finished"]);
   });
@@ -1977,7 +1985,7 @@ describe("rpc_server", () => {
     expect(lateSubagentEvent).toEqual(
       expect.objectContaining({
         type: "session.delta",
-        reason: "agent-run",
+        cause: { type: "agent-run" },
       }),
     );
 
@@ -2172,7 +2180,7 @@ describe("rpc_server", () => {
       request("interrupt", "session.interrupt", { sessionId: "session-1" }),
     );
     await runningSubmit;
-    expect(harness.seededSession.recordTurnInterruption).toHaveBeenCalledOnce();
+    expect(harness.seededSession.interruptActiveWork).toHaveBeenCalledOnce();
 
     await harness.server.handleLine(request("list", "session.list", {}));
     await harness.server.handleLine(

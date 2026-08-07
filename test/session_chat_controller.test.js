@@ -85,6 +85,7 @@ function updateSnapshot(snapshot, overrides = {}) {
     messages: overrides.messages,
     timeline: overrides.timeline,
     tools: overrides.tools ?? snapshot.tools,
+    operations: overrides.operations ?? snapshot.operations,
     agents: overrides.agents ?? snapshot.agents,
     facets: overrides.facets ?? snapshot.facets,
   });
@@ -163,7 +164,9 @@ function createMessageAppendDelta(sessionId, fromRevision, message, state = "com
     sessionId,
     fromRevision,
     toRevision: fromRevision + 1,
-    reason: message.message.role === "assistant" ? "assistant-message" : "user-message",
+    cause: {
+      type: message.message.role === "assistant" ? "assistant-message" : "user-message",
+    },
     delta: {
       type: "snapshot.patch",
       changes: [
@@ -171,9 +174,14 @@ function createMessageAppendDelta(sessionId, fromRevision, message, state = "com
         {
           type: "message.append",
           message: { ...message, state },
-          timelineItem: {
+        },
+        {
+          type: "timeline.append",
+          item: {
             type: "message",
             id: `timeline-${message.id}`,
+            sequence: fromRevision + 1,
+            createdAt: message.message.timestamp ?? 0,
             messageId: message.id,
           },
         },
@@ -189,7 +197,7 @@ function createMessageReplaceDelta(sessionId, fromRevision, message, reason = "a
     sessionId,
     fromRevision,
     toRevision: fromRevision + 1,
-    reason,
+    cause: { type: reason },
     delta: {
       type: "snapshot.patch",
       changes: [
@@ -210,7 +218,7 @@ function createResetDelta(sessionId, fromRevision, snapshot, reason = "configura
     sessionId,
     fromRevision,
     toRevision: snapshot.revision,
-    reason,
+    cause: typeof reason === "string" ? { type: reason } : reason,
     delta: { type: "snapshot.reset", snapshot },
   };
 }
@@ -230,6 +238,11 @@ class FakeSession {
     }
     const historyEntryId = options.historyEntryId ?? "generated-user";
     if (this.emitSubmitEvents) {
+      this.emit({
+        type: "user_message",
+        historyEntryId,
+        message: { role: "user", content: [{ type: "text", text }], timestamp: 1 },
+      });
       this.emit({
         type: "assistant_start",
         historyEntryId: "assistant-1",
@@ -389,6 +402,7 @@ class FakeSession {
     const compactionMessage = options.guidance
       ? `compacted summary: ${options.guidance}`
       : "compacted summary";
+    const previousEpoch = this.snapshotValue.timeline.epoch;
     this.snapshotValue = updateSnapshot(this.snapshotValue, {
       revision: this.snapshotValue.revision + 1,
       historyEntries: [
@@ -401,6 +415,7 @@ class FakeSession {
         },
       ],
     });
+    this.snapshotValue.timeline.epoch = previousEpoch + 1;
     return {
       snapshot: this.snapshotValue,
       compactionMessage,
@@ -513,6 +528,19 @@ class FakeSession {
   emit(event) {
     const fromRevision = this.snapshotValue.revision;
     for (const listener of this.listeners) {
+      if (event.type === "user_message") {
+        const message = {
+          id: event.historyEntryId,
+          state: "committed",
+          modelVisible: true,
+          message: event.message,
+        };
+        this.snapshotValue = updateSnapshot(this.snapshotValue, {
+          revision: fromRevision + 1,
+          messages: [...this.snapshotValue.messages, message],
+        });
+        listener(createMessageAppendDelta(this.id, fromRevision, message));
+      }
       if (event.type === "assistant_start") {
         const draftMessage = {
           id: event.historyEntryId,
@@ -524,14 +552,20 @@ class FakeSession {
           revision: fromRevision + 1,
           lifecycle: "running",
           messages: [...this.snapshotValue.messages, draftMessage],
-          timeline: [
-            ...this.snapshotValue.timeline,
-            {
-              type: "message",
-              id: `timeline-${event.historyEntryId}`,
-              messageId: event.historyEntryId,
-            },
-          ],
+          timeline: {
+            ...this.snapshotValue.timeline.items,
+            sequence: this.snapshotValue.timeline.sequence + 1,
+            items: [
+              ...this.snapshotValue.timeline.items,
+              {
+                type: "message",
+                id: `timeline-${event.historyEntryId}`,
+                sequence: this.snapshotValue.timeline.sequence + 1,
+                createdAt: draftMessage.message.timestamp,
+                messageId: event.historyEntryId,
+              },
+            ],
+          },
         });
         listener(createMessageAppendDelta(this.id, fromRevision, draftMessage, "draft"));
       }
@@ -597,11 +631,22 @@ class FakeView {
   removeMessages(ids) {
     this.removed.push(...ids);
     this.messages = this.messages.filter((message) => !ids.includes(message.id));
+    this.toolModels = this.messages.flatMap((message) =>
+      message.model.type === "tool" ? [structuredClone(message.model.tool)] : [],
+    );
   }
   removeMessagesFrom(id) {
     this.removeMessagesFromCalls.push(id);
   }
   addMessage(model, id = `view-${this.messages.length + 1}`) {
+    if (model.type === "tool") {
+      const index = this.toolModels.findIndex((tool) => tool.toolCallId === model.tool.toolCallId);
+      if (index === -1) {
+        this.toolModels.push(structuredClone(model.tool));
+      } else {
+        this.toolModels[index] = structuredClone(model.tool);
+      }
+    }
     const existing = this.messages.find((message) => message.id === id);
     if (existing) {
       existing.model = model;
@@ -611,6 +656,14 @@ class FakeView {
     return id;
   }
   updateMessage(id, model) {
+    if (model.type === "tool") {
+      const index = this.toolModels.findIndex((tool) => tool.toolCallId === model.tool.toolCallId);
+      if (index === -1) {
+        this.toolModels.push(structuredClone(model.tool));
+      } else {
+        this.toolModels[index] = structuredClone(model.tool);
+      }
+    }
     const message = this.messages.find((item) => item.id === id);
     if (message) {
       message.model = model;
@@ -943,11 +996,15 @@ describe("SessionChatController", () => {
     const liveNotice = {
       type: "notice",
       id: "notice-live-warning",
+      sequence: snapshot.timeline.sequence + 1,
+      createdAt: 2,
       notice: {
+        kind: "tau.test.notice",
+        version: 1,
         severity: "warn",
-        title: "A live warning arrived.",
         subject: { type: "session" },
-        timestamp: 2,
+        presentation: { title: "A live warning arrived." },
+        data: {},
       },
     };
     for (const listener of session.listeners) {
@@ -957,7 +1014,7 @@ describe("SessionChatController", () => {
         sessionId: session.id,
         fromRevision: snapshot.revision,
         toRevision: snapshot.revision + 1,
-        reason: "notice",
+        cause: { type: "notice" },
         delta: { type: "snapshot.patch", changes: [{ type: "timeline.append", item: liveNotice }] },
       });
     }
@@ -972,7 +1029,7 @@ describe("SessionChatController", () => {
     });
   });
 
-  it("renders host feedback without adding it to the session timeline", async () => {
+  it("renders host feedback across a revision gap without adding it to the timeline", async () => {
     const session = new FakeSession();
     const view = new FakeView();
     const controller = new SessionChatController({
@@ -994,12 +1051,6 @@ describe("SessionChatController", () => {
       }
     };
 
-    emit({ type: "feedback.activity.started", id: "activity-1", text: "compacting context" });
-    expect(view.status.footer).toEqual({ type: "activity", label: "compacting context" });
-
-    emit({ type: "feedback.activity.finished", id: "activity-1" });
-    expect(view.status.footer.type).toBe("regular");
-
     emit({
       type: "feedback.notice",
       title: "retrying after transient error",
@@ -1013,19 +1064,167 @@ describe("SessionChatController", () => {
       durationMs: 3_000,
     });
 
-    emit({
-      type: "feedback.notice",
-      title: "model request failed",
-      content: ["provider unavailable"],
-      tone: "error",
-      presentation: "transcript",
+    for (const listener of session.listeners) {
+      listener({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "session.delta",
+        sessionId: session.id,
+        fromRevision: 2,
+        toRevision: 3,
+        cause: { type: "notice" },
+        delta: {
+          type: "snapshot.patch",
+          changes: [{ type: "timeline.advance", epoch: 1, sequence: 1 }],
+        },
+      });
+    }
+    const timelineEvent = {
+      type: "timeline.item",
+      epoch: 1,
+      item: {
+        type: "notice",
+        id: "ephemeral-model-failure",
+        sequence: 1,
+        createdAt: 1,
+        notice: {
+          kind: "tau.test.feedback",
+          version: 1,
+          severity: "error",
+          subject: { type: "session" },
+          presentation: {
+            title: "model request failed",
+            content: ["provider unavailable"],
+          },
+          data: {},
+        },
+      },
+    };
+    emit(timelineEvent);
+    emit(timelineEvent);
+    expect(view.messages.filter((message) => message.id === "ephemeral-model-failure")).toEqual([
+      {
+        id: "ephemeral-model-failure",
+        model: {
+          type: "transcript_notice",
+          title: "model request failed",
+          tone: "error",
+          content: ["provider unavailable"],
+        },
+      },
+    ]);
+    expect(session.snapshotValue.timeline).toEqual({ epoch: 1, sequence: 0, items: [] });
+  });
+
+  it("merges ephemeral timeline items by sequence and truncates them on rewind", async () => {
+    const snapshot = createSnapshot([
+      {
+        id: "user-1",
+        message: { role: "user", content: [{ type: "text", text: "keep" }] },
+      },
+    ]);
+    const session = new FakeSession(snapshot);
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot,
+      targetLabel: "in-process",
     });
-    expect(view.transcriptNotices.at(-1)).toEqual({
-      text: "model request failed",
-      tone: "error",
-      content: ["provider unavailable"],
+    controller.start();
+
+    for (const listener of session.listeners) {
+      listener({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "session.delta",
+        sessionId: session.id,
+        fromRevision: 1,
+        toRevision: 2,
+        cause: { type: "notice" },
+        delta: {
+          type: "snapshot.patch",
+          changes: [{ type: "timeline.advance", epoch: 1, sequence: 2 }],
+        },
+      });
+    }
+    const ephemeralItem = {
+      type: "notice",
+      id: "ephemeral-2",
+      sequence: 2,
+      createdAt: 2,
+      notice: {
+        kind: "tau.test.ephemeral",
+        version: 1,
+        severity: "info",
+        subject: { type: "session" },
+        presentation: { title: "ephemeral second" },
+        data: {},
+      },
+    };
+    for (const listener of session.ephemeralListeners) {
+      listener({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "session.ephemeral",
+        sessionId: session.id,
+        event: { type: "timeline.item", epoch: 1, item: ephemeralItem },
+      });
+    }
+    const durableItem = {
+      type: "notice",
+      id: "durable-3",
+      sequence: 3,
+      createdAt: 3,
+      notice: {
+        kind: "tau.test.durable",
+        version: 1,
+        severity: "warn",
+        subject: { type: "session" },
+        presentation: { title: "durable third" },
+        data: {},
+      },
+    };
+    for (const listener of session.listeners) {
+      listener({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "session.delta",
+        sessionId: session.id,
+        fromRevision: 2,
+        toRevision: 3,
+        cause: { type: "notice" },
+        delta: {
+          type: "snapshot.patch",
+          changes: [{ type: "timeline.append", item: durableItem }],
+        },
+      });
+    }
+
+    expect(view.messages.map((message) => message.id)).toEqual([
+      "view-1",
+      "user-1",
+      "ephemeral-2",
+      "durable-3",
+    ]);
+
+    const rewoundSnapshot = createProtocolSnapshot({
+      ...snapshot,
+      revision: 4,
+      messages: snapshot.messages,
+      timeline: {
+        epoch: 1,
+        sequence: 3,
+        items: snapshot.timeline.items,
+      },
     });
-    expect(session.snapshotValue.timeline).toEqual([]);
+    for (const listener of session.listeners) {
+      listener(
+        createResetDelta(session.id, 3, rewoundSnapshot, {
+          type: "rewind",
+          epoch: 1,
+          cutoffSequence: 1,
+        }),
+      );
+    }
+
+    expect(view.messages.map((message) => message.id)).toEqual(["view-1", "user-1"]);
   });
 
   it("shows auto-compaction operation status in the footer", async () => {
@@ -1057,6 +1256,32 @@ describe("SessionChatController", () => {
       type: "activity",
       label: "compacting context",
     });
+
+    for (const listener of session.listeners) {
+      listener({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "session.delta",
+        sessionId: session.id,
+        fromRevision: snapshot.revision,
+        toRevision: snapshot.revision + 1,
+        cause: { type: "maintenance" },
+        delta: {
+          type: "snapshot.patch",
+          changes: [
+            {
+              type: "operation.set",
+              operation: {
+                ...snapshot.operations["operation-auto-compaction"],
+                status: "cancelled",
+                finishedAt: 2,
+                reason: "interrupted",
+              },
+            },
+          ],
+        },
+      });
+    }
+    expect(view.status.footer.type).toBe("regular");
   });
 
   it("freezes the old transcript from auto-compaction metadata when the start delta was missed", async () => {
@@ -1112,15 +1337,9 @@ describe("SessionChatController", () => {
           },
         },
       ],
-      timeline: [
-        { type: "message", id: "timeline-summary-entry", messageId: "summary-entry" },
-        {
-          type: "message",
-          id: `timeline-${retainedEntry.id}`,
-          messageId: retainedEntry.id,
-        },
-      ],
+      timeline: [{ type: "message", id: "timeline-summary-entry", messageId: "summary-entry" }],
     });
+    compactedSnapshot.timeline.epoch = 2;
     const session = new FakeSession(runningSnapshot);
     const view = new FakeView();
     const controller = new SessionChatController({
@@ -1131,10 +1350,23 @@ describe("SessionChatController", () => {
     });
     controller.start();
 
+    const compactionDelta = createResetDelta(session.id, 1, compactedSnapshot, {
+      type: "compaction",
+      previousEpoch: 1,
+      epoch: 2,
+      kind: "auto",
+      cutType: "turn-boundary",
+      retainedMessageCount: 1,
+    });
     for (const listener of session.listeners) {
-      listener(createResetDelta(session.id, 1, compactedSnapshot, "maintenance"));
+      listener(compactionDelta);
+      listener(compactionDelta);
     }
 
+    expect(
+      view.messages.filter((message) => message.model.type === "session_divider"),
+    ).toHaveLength(1);
+    expect(view.messages.filter((message) => message.id === "summary-entry")).toHaveLength(1);
     expect(view.messages).toContainEqual(
       expect.objectContaining({
         model: { type: "session_divider", label: "compacted context" },
@@ -1221,8 +1453,8 @@ describe("SessionChatController", () => {
     ]);
     const secondCompactedSnapshot = createProtocolSnapshot({
       sessionId: "session-1",
-      revision: 4,
-      agentState: { revision: 4, contextEpoch: "fixture-context" },
+      revision: 5,
+      agentState: { revision: 4, modelContextKey: "fixture-context" },
       historyEntries: [
         {
           id: "second-summary-entry",
@@ -1246,15 +1478,20 @@ describe("SessionChatController", () => {
           id: "timeline-second-summary-entry",
           messageId: "second-summary-entry",
         },
-        {
-          type: "message",
-          id: `timeline-${nextEntry.id}`,
-          messageId: nextEntry.id,
-        },
       ],
     });
+    secondCompactedSnapshot.timeline.epoch = 3;
     for (const listener of session.listeners) {
-      listener(createResetDelta(session.id, 3, secondCompactedSnapshot, "maintenance"));
+      listener(
+        createResetDelta(session.id, 4, secondCompactedSnapshot, {
+          type: "compaction",
+          previousEpoch: 2,
+          epoch: 3,
+          kind: "auto",
+          cutType: "turn-boundary",
+          retainedMessageCount: 1,
+        }),
+      );
     }
 
     expect(
@@ -1271,6 +1508,100 @@ describe("SessionChatController", () => {
       model: { type: "user", text: "second compacted summary" },
     });
     await attachedController.dispose();
+  });
+
+  it("targets assistant commands from the compacted snapshot instead of frozen UI history", async () => {
+    const frozenAssistant = {
+      id: "frozen-assistant",
+      message: createAssistantMessage("frozen response"),
+    };
+    const retainedAssistant = {
+      id: "retained-assistant",
+      message: createAssistantMessage("retained snapshot response"),
+    };
+    const runningSnapshot = createProtocolSnapshot({
+      sessionId: "session-1",
+      revision: 1,
+      agentState: { revision: 1, modelContextKey: "fixture-context" },
+      historyEntries: [frozenAssistant],
+      timeline: [
+        {
+          type: "message",
+          id: `timeline-${frozenAssistant.id}`,
+          messageId: frozenAssistant.id,
+        },
+      ],
+    });
+    const compactedText = prependTauUserMetadata("compacted summary", [
+      {
+        type: "auto-compaction",
+        version: 1,
+        summary: "compacted summary",
+        preservedUserMessages: [],
+        cutType: "turn-boundary",
+        retainedMessageCount: 1,
+      },
+    ]);
+    const continuationText = prependTauUserMetadata("", [
+      { type: "auto-compaction-continuation", version: 1 },
+    ]);
+    const compactedSnapshot = createProtocolSnapshot({
+      sessionId: "session-1",
+      revision: 2,
+      agentState: { revision: 2, modelContextKey: "fixture-context" },
+      historyEntries: [
+        {
+          id: "summary-entry",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: compactedText }],
+          },
+        },
+        retainedAssistant,
+        {
+          id: "continuation-entry",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: continuationText }],
+          },
+        },
+      ],
+      timeline: [{ type: "message", id: "timeline-summary-entry", messageId: "summary-entry" }],
+    });
+    compactedSnapshot.timeline.epoch = 2;
+    const session = new FakeSession(runningSnapshot);
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "in-process",
+    });
+    controller.start();
+
+    for (const listener of session.listeners) {
+      listener(
+        createResetDelta(session.id, 1, compactedSnapshot, {
+          type: "compaction",
+          previousEpoch: 1,
+          epoch: 2,
+          kind: "auto",
+          cutType: "turn-boundary",
+          retainedMessageCount: 1,
+        }),
+      );
+    }
+    expect(view.messages).toContainEqual({
+      id: frozenAssistant.id,
+      model: expect.objectContaining({ type: "assistant" }),
+    });
+    expect(view.messages.some((message) => message.id === retainedAssistant.id)).toBe(false);
+
+    vi.mocked(copyTextToClipboard).mockClear();
+    controller.getInputHandlers().onSubmit("/copy-text");
+    await flush();
+
+    expect(copyTextToClipboard).toHaveBeenCalledWith("retained snapshot response");
   });
 
   it("hydrates a session snapshot and submits through the observed session", async () => {
@@ -1316,32 +1647,16 @@ describe("SessionChatController", () => {
     );
   });
 
-  it("renders a persisted provider failure once without transient turn feedback", async () => {
+  it("projects a provider failure once from canonical assistant state", async () => {
     const failedAssistant = {
       ...createAssistantMessage("partial response"),
       stopReason: "error",
       errorMessage: "Codex request failed with request-id-89abde88",
     };
-    const baseSnapshot = createSnapshot([
+    const snapshot = createSnapshot([
       { id: "user-failed", message: { role: "user", content: [{ type: "text", text: "try" }] } },
       { id: "assistant-failed", message: failedAssistant },
     ]);
-    const snapshot = updateSnapshot(baseSnapshot, {
-      timeline: [
-        ...baseSnapshot.timeline,
-        {
-          type: "notice",
-          id: "model-failure-assistant-failed",
-          notice: {
-            severity: "error",
-            title: "model request failed",
-            content: [failedAssistant.errorMessage],
-            subject: { type: "message", id: "assistant-failed" },
-            timestamp: failedAssistant.timestamp,
-          },
-        },
-      ],
-    });
     const session = new FakeSession(snapshot);
     session.emitSubmitEvents = false;
     session.submit = vi.fn(async () => ({
@@ -1362,7 +1677,7 @@ describe("SessionChatController", () => {
 
     expect(view.messages.filter((message) => message.model.type === "transcript_notice")).toEqual([
       {
-        id: "model-failure-assistant-failed",
+        id: "presentation:failure:assistant-failed",
         model: {
           type: "transcript_notice",
           title: "model request failed",
@@ -1522,6 +1837,39 @@ describe("SessionChatController", () => {
     expect(view.workingIconStops).toBe(1);
     expect(controller.isStreaming).toBe(false);
     expect(view.status.footer.type).toBe("regular");
+  });
+
+  it("projects interruption feedback from canonical assistant state", async () => {
+    const baseSnapshot = createSnapshot([
+      {
+        id: "assistant-interrupted",
+        message: { ...createAssistantMessage("partial response"), stopReason: "aborted" },
+      },
+    ]);
+    const snapshot = updateSnapshot(baseSnapshot, {
+      messages: baseSnapshot.messages.map((message) =>
+        message.id === "assistant-interrupted" ? { ...message, state: "interrupted" } : message,
+      ),
+    });
+    const session = new FakeSession(snapshot);
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot,
+      targetLabel: "in-process",
+    });
+
+    controller.start();
+
+    expect(view.messages).toContainEqual({
+      id: "presentation:interruption:assistant-interrupted",
+      model: {
+        type: "transcript_notice",
+        title: "assistant turn interrupted",
+        tone: "default",
+      },
+    });
   });
 
   it("leaves interrupted-turn feedback to the synchronized session", async () => {
@@ -2281,7 +2629,7 @@ describe("SessionChatController", () => {
           },
         ],
         timeline: [
-          ...baseSnapshot.timeline,
+          ...baseSnapshot.timeline.items,
           {
             type: "message",
             id: "timeline-assistant-active",
@@ -2360,7 +2708,7 @@ describe("SessionChatController", () => {
         },
       ],
       timeline: [
-        ...baseSnapshot.timeline,
+        ...baseSnapshot.timeline.items,
         {
           type: "message",
           id: "timeline-assistant-streaming",
@@ -2387,7 +2735,7 @@ describe("SessionChatController", () => {
       sessionId: session.id,
       fromRevision: 3,
       toRevision: 4,
-      reason: "assistant-stream",
+      cause: { type: "assistant-stream" },
       delta: {
         type: "snapshot.patch",
         changes: [
@@ -2437,7 +2785,7 @@ describe("SessionChatController", () => {
         },
       ],
       timeline: [
-        ...baseSnapshot.timeline,
+        ...baseSnapshot.timeline.items,
         {
           type: "message",
           id: "timeline-assistant-thinking-streaming",
@@ -2462,7 +2810,7 @@ describe("SessionChatController", () => {
       sessionId: session.id,
       fromRevision: 3,
       toRevision: 4,
-      reason: "assistant-stream",
+      cause: { type: "assistant-stream" },
       delta: {
         type: "snapshot.patch",
         changes: [
@@ -2619,7 +2967,7 @@ describe("SessionChatController", () => {
       sessionId: session.id,
       fromRevision: 3,
       toRevision: 4,
-      reason: "assistant-stream",
+      cause: { type: "assistant-stream" },
       delta: {
         type: "snapshot.patch",
         changes: [
@@ -2944,7 +3292,7 @@ describe("SessionChatController", () => {
 
     controller.start();
 
-    expect(view.messages.some((message) => message.id === "tool-a")).toBe(false);
+    expect(view.messages.some((message) => message.id === "timeline-tool-tool-a")).toBe(true);
     expect(view.toolModels).toEqual([
       expect.objectContaining({
         toolCallId: "tool-a",
@@ -3148,7 +3496,7 @@ describe("SessionChatController", () => {
       sessionId: session.id,
       fromRevision: 3,
       toRevision: 4,
-      reason: "tool-run",
+      cause: { type: "tool-run" },
       delta: {
         type: "snapshot.patch",
         changes: [
@@ -3384,7 +3732,7 @@ describe("SessionChatController", () => {
       sessionId: session.id,
       fromRevision: 3,
       toRevision: 4,
-      reason: "agent-run",
+      cause: { type: "agent-run" },
       delta: {
         type: "snapshot.patch",
         changes: [
@@ -3573,7 +3921,7 @@ describe("SessionChatController", () => {
       const runningSnapshot = updateSnapshot(session.snapshotValue, {
         revision: session.snapshotValue.revision + 1,
         timeline: [
-          ...session.snapshotValue.timeline,
+          ...session.snapshotValue.timeline.items,
           {
             type: "operation",
             id: "operation-manual-compaction",
@@ -3601,7 +3949,7 @@ describe("SessionChatController", () => {
         revision: runningSnapshot.revision + 1,
         agentState: {
           revision: runningSnapshot.agentState.revision + 1,
-          contextEpoch: runningSnapshot.agentState.contextEpoch,
+          modelContextKey: runningSnapshot.agentState.modelContextKey,
         },
         historyEntries: [
           {
@@ -3613,10 +3961,18 @@ describe("SessionChatController", () => {
           },
         ],
       });
+      compactedSnapshot.timeline.epoch = runningSnapshot.timeline.epoch + 1;
       session.snapshotValue = compactedSnapshot;
       for (const listener of session.listeners) {
         listener(
-          createResetDelta(session.id, runningSnapshot.revision, compactedSnapshot, "maintenance"),
+          createResetDelta(session.id, runningSnapshot.revision, compactedSnapshot, {
+            type: "compaction",
+            previousEpoch: runningSnapshot.timeline.epoch,
+            epoch: compactedSnapshot.timeline.epoch,
+            kind: "manual",
+            cutType: "turn-boundary",
+            retainedMessageCount: 0,
+          }),
         );
       }
       return {
@@ -3656,7 +4012,7 @@ describe("SessionChatController", () => {
       const runningSnapshot = updateSnapshot(session.snapshotValue, {
         revision: session.snapshotValue.revision + 1,
         timeline: [
-          ...session.snapshotValue.timeline,
+          ...session.snapshotValue.timeline.items,
           {
             type: "operation",
             id: "operation-manual-compaction",
@@ -3681,7 +4037,7 @@ describe("SessionChatController", () => {
 
       const failedSnapshot = updateSnapshot(runningSnapshot, {
         revision: runningSnapshot.revision + 1,
-        timeline: runningSnapshot.timeline.filter((item) => item.type !== "operation"),
+        timeline: runningSnapshot.timeline.items.filter((item) => item.type !== "operation"),
       });
       session.snapshotValue = failedSnapshot;
       for (const listener of session.listeners) {

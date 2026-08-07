@@ -96,7 +96,7 @@ describe("sdk npm pack types", () => {
           '  sessionId: "session-1",',
           "  fromRevision: 1,",
           "  toRevision: 2,",
-          '  reason: "notice",',
+          '  cause: { type: "notice" },',
           '  delta: { type: "snapshot.patch", changes: [{ type: "lifecycle.set", lifecycle: "idle" }] },',
           "};",
           "",

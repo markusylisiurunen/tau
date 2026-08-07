@@ -8,7 +8,6 @@ import {
 } from "../dist/protocol/session_protocol.js";
 import {
   createTauSdkClientFromTransport,
-  getTauSdkSessionTurnOutcome,
   TauProcessError,
   TauSessionClientError,
   TauTransportError,
@@ -133,7 +132,7 @@ function createNoticeDelta(sessionId, revision, text) {
     sessionId,
     fromRevision: revision,
     toRevision: revision + 1,
-    reason: "notice",
+    cause: { type: "notice" },
     delta: {
       type: "snapshot.patch",
       changes: [
@@ -142,11 +141,15 @@ function createNoticeDelta(sessionId, revision, text) {
           item: {
             type: "notice",
             id: `notice-${revision}`,
+            sequence: revision,
+            createdAt: revision,
             notice: {
+              kind: "tau.test.notice",
+              version: 1,
               severity: "info",
-              title: text,
               subject: { type: "session" },
-              timestamp: revision,
+              presentation: { title: text },
+              data: {},
             },
           },
         },
@@ -464,28 +467,6 @@ async function createConnectedClient(child, options = {}) {
 }
 
 describe("sdk_client", () => {
-  it("reads a persisted turn outcome by user history entry id", () => {
-    const outcome = {
-      status: "failed",
-      stopReason: "error",
-      errorMessage: "Service Unavailable",
-    };
-    const snapshot = createProtocolSnapshot({
-      messages: [
-        {
-          id: "user-1",
-          state: "committed",
-          modelVisible: true,
-          message: { role: "user", content: "hello", timestamp: 1 },
-          turn: outcome,
-        },
-      ],
-    });
-
-    expect(getTauSdkSessionTurnOutcome(snapshot, "user-1")).toEqual(outcome);
-    expect(getTauSdkSessionTurnOutcome(snapshot, "missing")).toBeUndefined();
-  });
-
   it("keeps published sdk declarations free of core type imports", () => {
     const indexDeclaration = readFileSync(
       new URL("../dist/sdk/index.d.ts", import.meta.url),

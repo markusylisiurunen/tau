@@ -1,753 +1,160 @@
 # session event protocol redesign
 
-This document records the snapshot/delta session protocol design that replaced the old `event`/`session_update` split.
-
-## problem
-
-The current protocol sends two different live channels:
-
-- `event`, which carries core runtime events such as assistant partials, tool UI events, notices, subagent UI events, and compaction lifecycle events.
-- `session_update`, which tells clients that the authoritative snapshot changed and should be refreshed.
-
-That split makes the session only partly reconstructable. A client that observes the whole stream can render rich state, but a client that starts from `session.snapshot` cannot reconstruct the same state because important facts are only present in side-channel events:
-
-- Tool progress is UI-shaped and not stored as semantic session state.
-- Notices are not model-facing and are not stored in the snapshot.
-- Subagent progress is live-only.
-- Automatic compaction lifecycle is live-only except for the final rewritten history.
-- The snapshot contains the active assistant partial as a special side object instead of as part of the message log clients already render.
-
-The protocol should instead make the snapshot the only renderable source of truth. Live events should be deterministic deltas over that snapshot.
+This document records the canonical snapshot/delta session protocol that replaced the old `event`/`session_update` split.
 
 ## goals
 
-- A client can attach, call `session.snapshot`, and render the full current UI from that snapshot.
-- A client can process live updates with `process(oldSnapshot, delta) -> newSnapshot`.
-- If the client misses a delta, it can detect the revision gap and call `session.snapshot`.
-- There is one live session update channel, not separate runtime-event and snapshot-update channels.
+- A client can attach, render the active session from one authoritative snapshot, and continue by applying deltas.
+- Applying `process(oldSnapshot, delta)` reconstructs the next snapshot exactly.
+- Revision gaps are detectable and recoverable with a fresh snapshot.
+- Ordered transcript placement survives detach and recovery when persistence is intended.
+- Ephemeral transcript feedback uses the same ordering domain without becoming recoverable state.
 - Model-facing history remains distinct from client-facing session state.
-- Non-model-facing structured metadata can be attached to model-facing records without encoding it in tool result text.
-- Event and delta names are symmetrical, domain-shaped, and stable.
-- Complex rebases such as reload, rewind, and compaction are allowed to send a full replacement snapshot instead of large bespoke patch sequences.
+- Mutable semantic state has one canonical owner.
 
-## core invariant
+## snapshot ownership
 
-Every live message that describes session state is a state transition:
+`SessionSnapshot` owns:
+
+- immutable session identity, creation attributes, and creation time
+- protocol revision and lifecycle
+- durable agent state, including its independent revision and model context key
+- goal, settings, bootstrap metadata, catalog, execution environment, and cumulative cost
+- complete synchronized model-facing and recoverable messages
+- the active ordered timeline
+- semantic tool, operation, and subagent maps
+- versioned client presentation facets
+
+The timeline is not regenerated from messages or other maps. The host owns it directly:
 
 ```ts
-function process(
-  snapshot: SessionSnapshot,
-  message: SessionDeltaMessage,
-): SessionSnapshot {
-  if (message.delta.type === "snapshot.reset") {
-    if (message.delta.snapshot.revision !== message.toRevision) {
-      throw new InvalidDeltaError();
-    }
-    return message.delta.snapshot;
-  }
-
-  if (snapshot.revision !== message.fromRevision) {
-    throw new RevisionGapError();
-  }
-
-  const next = applyPatch(snapshot, message.delta);
-  next.revision = message.toRevision;
-  return next;
+interface SessionProtocolTimeline {
+  epoch: number;
+  sequence: number;
+  items: SessionProtocolTimelineItem[];
 }
 ```
 
-`revision` is the protocol state revision. It increments when observable session state changes, including streaming assistant partials and tool progress. It is not a disk persistence revision.
+`epoch` is a positive monotonically increasing context-era number. `sequence` is the current epoch’s monotonic high-water mark. Timeline items have stable IDs, creation timestamps, and unique sequences in ascending order.
 
-## wire message
+## timeline items
 
-The protocol replaces `event` and `session_update` with one observed-session message:
+The active timeline contains ordered references or values for four item types:
 
-```ts
-type SessionDeltaMessage = {
-  version: 8;
-  type: "session.delta";
-  sessionId: string;
-  fromRevision: number | null;
-  toRevision: number;
-  reason: SessionDeltaReason;
-  delta: SessionDelta;
-};
-```
+- `message`, referencing `snapshot.messages`
+- `tool`, referencing `snapshot.tools`
+- `notice`, carrying a semantic notice value
+- `operation`, referencing `snapshot.operations`
 
-`fromRevision` is `null` only when the delta is a full reset that can be applied without a prior snapshot.
+Mutable tool and operation lifecycle state stays in keyed maps. Their timeline items establish permanent placement and are not rewritten as state changes.
 
-```ts
-type SessionDeltaReason =
-  | "user-message"
-  | "assistant-stream"
-  | "assistant-message"
-  | "tool-run"
-  | "tool-result"
-  | "notice"
-  | "agent-run"
-  | "maintenance"
-  | "configuration"
-  | "goal"
-  | "recovery";
+A message may exist in `snapshot.messages` without a timeline item. This is intentional for model-visible context that should not be rendered in the active transcript, such as automatic-compaction retained tails and hidden continuation messages.
 
-type SessionDelta =
-  | {
-      type: "snapshot.patch";
-      changes: SessionChange[];
-    }
-  | {
-      type: "snapshot.reset";
-      snapshot: SessionSnapshot;
-    };
-```
+The protocol validates item identity, sequence ordering, epoch consistency, and every message/tool/operation reference. Tool and operation map entries must have exactly one corresponding timeline item.
 
-The names deliberately separate transport shape from domain cause:
+## notices
 
-- `session.delta` is the live wire message.
-- `snapshot.patch` means "apply these changes to your current snapshot".
-- `snapshot.reset` means "replace your snapshot with this complete one".
-- `reason` is for client policy, logging, and animations; correctness comes from the delta.
-
-## snapshot
-
-The snapshot should be renderable without live event history:
+A timeline notice is a semantic, versioned value:
 
 ```ts
-type SessionSnapshot = {
-  sessionId: string;
-  revision: number;
-  agentState: {
-    revision: number;
-    contextEpoch: string;
-    usageCheckpoint?: {
-      historyEntryId: string;
-      contextEpoch: string;
-      tokens: number;
-    };
-  };
-
-  lifecycle: "idle" | "running";
-  goal: SessionGoal | null;
-  settings: SessionSettingsSnapshot;
-  bootstrap: SessionBootstrapSnapshot;
-  catalog: SessionContentCatalogSnapshot;
-  executionEnvironment: SessionExecutionEnvironmentSnapshot;
-
-  messages: SessionMessage[];
-  timeline: SessionTimelineItem[];
-  tools: Record<string, SessionToolRun>;
-  agents: Record<string, SessionAgentRun>;
-  facets: Record<string, SessionFacet>;
-};
-```
-
-`agentState.revision` is the durable conversation revision and is independent of the protocol snapshot revision. The context epoch and optional provider usage checkpoint let recovery preserve automatic-compaction accounting when the execution-ready agent spec is unchanged.
-
-```ts
-type SessionGoal = {
-  objective: string;
-  status: "active" | "blocked";
-};
-```
-
-### settings, bootstrap, and catalog
-
-`settings` are the small mutable knobs that define how the next turn runs.
-
-```ts
-type SessionSettingsSnapshot = {
-  personaId: string;
-  reasoning?: ReasoningEffort;
-  serviceTier?: "priority" | "flex";
-};
-```
-
-`bootstrap` describes resolved runtime facts that clients need to understand the session: selected model/provider metadata and prompt-composition identifiers. Execution environment identity lives in the top-level `executionEnvironment` snapshot field. Bootstrap should not duplicate large prompt bodies or mutable per-turn settings that already live in `settings`.
-
-There should not be a broad `runtimeConfig` blob in the snapshot. If a config value is needed by clients, promote it to an explicit field in `settings`, `bootstrap`, or `catalog`. If it is only used by the host, keep it host-side.
-
-The effective system instructions are represented as the first item in `messages`, not as a side field. They are static for the session. Explicit reload operations can replace the snapshot with a new first system message.
-
-```ts
-type SessionSystemMessage = {
-  role: "system";
-  content: string;
-  timestamp: number;
-};
-```
-
-`catalog` is lightweight and session-specific. It is for discovery and fast client affordances, not for caching all execution-environment content. For example, prompt catalog entries should include `id`, `label`, and optional `description`, but not the full template body. When a prompt is invoked, the host loads the latest prompt content from the execution environment at that moment. The same rule applies to skills, personas, subagents, available reasoning levels, and similar session-owned content.
-
-Themes are not part of the session snapshot. Theme selection and theme files are TUI-local presentation state and should be read from disk where the TUI runs.
-
-```ts
-type SessionPromptCatalogEntry = {
-  id: string;
-  label?: string;
-  description?: string;
-};
-```
-
-This keeps snapshots small and avoids stale cached prompt bodies while preserving autocomplete and client navigation.
-
-### messages
-
-`messages` are the complete session transcript. This is the replacement for `historyEntries`.
-
-```ts
-type SessionMessage = {
-  id: string;
-  state: "draft" | "committed" | "interrupted" | "discarded";
-  modelVisible: boolean;
-  message: SessionProtocolMessage;
-};
-
-type SessionProtocolMessage =
-  | SessionSystemMessage
-  | Message
-  | {
-      role: "assistant";
-      content: (TextContent | ThinkingContent | ToolCall)[];
-      timestamp: number;
-    };
-```
-
-The first committed message is the system message. User messages, assistant messages, tool calls, and tool results follow in session order. `messages` is the complete synchronized transcript, including model-facing entries that may not appear on the default UI timeline. Draft assistant messages are updated in place while streaming. When the model response completes, the same message is replaced with a committed assistant message containing final provider metadata and usage.
-
-If the user interrupts mid-stream, the streamed assistant content is retained. The draft is replaced with `state: "interrupted"` and remains available for rendering and future model context. The default is `modelVisible: true`; use `modelVisible: false` only for records that are intentionally excluded from future model input.
-
-The client should be able to inspect every message, regardless of whether the default chat surface chooses to show it prominently. Tool result message text remains model-facing; client-only structured data belongs in `facets`.
-
-Automatic compaction replaces the active model transcript with a metadata-tagged summary, a retained range, and a metadata-tagged continuation message. The retained range remains in `messages` for model context but is not a second visual copy. On a live transition, the TUI freezes its prior transcript segment as client-local history and excludes the retained range from the new active projection; a client attaching afterward renders only the summary and later active messages. Frozen messages, notices, and tool cards leave active snapshot reconciliation permanently.
-
-This removes the need for `activeTurn`. "Currently running" is derived from snapshot state: `lifecycle === "running"`, draft/interrupted messages, running tools, running agents, and running operations. On interrupt, the host applies ordinary changes: mark the draft assistant message `interrupted`, cancel or finish running tools/agents/operations, and set `lifecycle` to `idle` when cleanup finishes.
-
-### timeline
-
-`timeline` is the default conversation-surface projection. It controls what the standard client surface renders and in what order. It is allowed to omit messages. Omitted messages are not hidden from clients because they still live in `messages`; advanced clients can render the full transcript from `messages` directly.
-
-```ts
-type SessionTimelineItem =
-  | { type: "message"; id: string; messageId: string }
-  | { type: "notice"; id: string; notice: SessionNotice }
-  | { type: "operation"; id: string; operation: SessionOperation };
-
-type SessionNotice = {
-  severity: "info" | "warn" | "error";
-  title: string;
-  content?: string[];
-  subject: { type: "session" } | { type: "message"; id: string };
-  timestamp: number;
-};
-
-type SessionOperation = {
-  kind: "auto-compaction" | "manual-compaction" | "reload" | "rewind";
-  status: "running" | "succeeded" | "failed" | "cancelled" | "skipped";
-  startedAt: number;
-  finishedAt?: number;
-  summary?: string;
-  error?: string;
-  data?: Record<string, unknown>;
-};
-```
-
-This is how notices become reconstructable. They are not model messages, but they are session records.
-
-### tools
-
-`tools` stores semantic tool execution state keyed by tool call id.
-
-```ts
-type SessionToolRun = {
-  id: string;
-  toolCallId: string;
-  toolName: string;
-  call: {
-    messageId: string;
-    contentIndex: number;
-  };
-  status:
-    "queued" | "running" | "succeeded" | "failed" | "blocked" | "cancelled";
-  startedAt?: number;
-  finishedAt?: number;
-  resultMessageId?: string;
-  summary?: string;
-  error?: string;
-  facetIds: string[];
-};
-```
-
-Clients render known tools by reading the assistant `toolCall` arguments, the matching `SessionToolRun`, the matching tool result message when present, and any attached facets. Unknown tools still have a stable fallback: render the tool name, arguments, status, result text, and generic facets.
-
-### agents
-
-`agents` stores subagent state. Subagent state is no longer a side-channel panel event.
-
-```ts
-type SessionAgentRun = {
-  id: string;
-  name: string;
-  title: string;
-  availability: "running" | "idle";
-  model: {
-    provider: string;
-    id: string;
-    reasoning: ReasoningEffort;
-  };
-  workingDirectory: string;
-  createdAt: number;
-  run:
-    | {
-        revision: number;
-        status: "running";
-        startedAt: number;
-        interruptRequested: boolean;
-      }
-    | {
-        revision: number;
-        status: "succeeded";
-        startedAt: number;
-        finishedAt: number;
-        interruptRequested: boolean;
-        response: string;
-      }
-    | {
-        revision: number;
-        status: "failed" | "interrupted";
-        startedAt: number;
-        finishedAt: number;
-        interruptRequested: boolean;
-        failure: {
-          kind: string;
-          message: string;
-          stopReason?: string;
-        };
-      };
-  costTotal: number;
-  usage: {
-    input: number;
-    output: number;
-    cacheRead: number;
-    cacheWrite: number;
-    contextWindowUsageTokens: number;
-    contextWindow: number;
-  };
-};
-```
-
-### facets
-
-`facets` are typed, client-facing, non-model-facing structured metadata attached to canonical session records.
-
-```ts
-type SessionFacet = {
-  id: string;
-  subject: SessionFacetSubject;
+interface SessionProtocolNotice {
   kind: string;
   version: number;
+  severity: "info" | "warning" | "error";
+  subject: SessionProtocolSubject;
+  presentation: {
+    title: string;
+    content?: string[];
+  };
   data: Record<string, unknown>;
-};
-
-type SessionFacetSubject =
-  | { type: "session" }
-  | { type: "message"; id: string }
-  | { type: "tool"; id: string }
-  | { type: "agent"; id: string }
-  | { type: "operation"; id: string };
-```
-
-Facet examples:
-
-```ts
-{
-  id: "facet-tool-call-123-bash",
-  subject: { type: "tool", id: "call-123" },
-  kind: "tool.bash.execution",
-  version: 1,
-  data: {
-    command: "npm run check",
-    cwd: "/repo",
-    exitCode: 0,
-    durationMs: 12403,
-    truncated: false
-  }
 }
 ```
 
-```ts
-{
-  id: "facet-tool-call-456-diff-review",
-  subject: { type: "tool", id: "call-456" },
-  kind: "tool.diff-review.session",
-  version: 1,
-  data: {
-    reviewedFiles: ["src/protocol/session_protocol.ts"],
-    reviewAgents: [{ threadId: "review-1", status: "success" }]
-  }
-}
-```
+Notice kinds are open lowercase dotted identifiers. `tau.*` is reserved for Tau core. Clients branch on `kind`, `version`, or live request outcomes, never presentation text, generated IDs, notice counts, or arrival timing.
 
-Facets are the extension point. Adding richer client rendering for a tool should usually add or update a facet, not invent a new protocol event.
+Provider failure and interruption are already represented by canonical assistant-message state. The host does not emit duplicate durable notices for those states, and the TUI projects their feedback immediately after the affected timeline message. When a turn fails or becomes blocked without a failed assistant message, the host appends one semantic `tau.turn.failed` or `tau.turn.blocked` notice at settlement. Completed request outcomes are returned to the caller but are not duplicated in the snapshot.
 
-## patch changes
+## ephemeral feedback
 
-Patch changes are intentionally small and regular:
+`session.ephemeral` carries three distinct forms of non-snapshot state:
 
-```ts
-type SessionChange =
-  | { type: "lifecycle.set"; lifecycle: SessionSnapshot["lifecycle"] }
-  | { type: "goal.set"; goal: SessionGoal | null }
-  | {
-      type: "message.append";
-      message: SessionMessage;
-      timelineItem?: SessionTimelineItem;
-    }
-  | { type: "message.replace"; message: SessionMessage }
-  | {
-      type: "message.content.append";
-      messageId: string;
-      text?: string;
-      thinking?: string;
-      timestamp: number;
-    }
-  | { type: "timeline.append"; item: SessionTimelineItem }
-  | { type: "timeline.replace"; item: SessionTimelineItem }
-  | { type: "timeline.remove"; id: string }
-  | { type: "tool.set"; tool: SessionToolRun }
-  | { type: "tool.remove"; id: string }
-  | { type: "agent.set"; agent: SessionAgentRun }
-  | { type: "agent.remove"; id: string }
-  | { type: "facet.set"; facet: SessionFacet }
-  | { type: "facet.remove"; id: string };
-```
+- bounded footer notices
+- ordered ephemeral transcript notice items
+- ephemeral agent thread updates
 
-`message.append.timelineItem` is optional. The message append itself keeps all clients synchronized with the full transcript. The optional timeline item only says that the default conversation surface should render that message. This supports model-facing messages that are intentionally absent from the UI while still remaining fully reconstructable from `messages`.
+An ephemeral transcript item has the same notice timeline-item shape as a durable notice plus the active `epoch`. Before emission, the host persists a `timeline.advance` change that raises the sequence high-water mark. The item itself is not added to `timeline.items` and is not stored.
 
-`message.content.append` is for high-rate assistant streaming. It appends non-empty text and/or thinking content to an existing draft assistant message without resending the full accumulated message on every frame. It only targets draft assistant messages. When an append creates a thinking block, clients insert it before the text block so applying the patch still reconstructs the next snapshot exactly.
+This gives attached clients canonical ordering while ensuring reattached clients do not recover the item. Persisting the high-water mark prevents a later durable item from reusing its sequence.
 
-For broad rewrites, do not overfit patch changes:
+A client accepts an ephemeral timeline item when its epoch matches the active snapshot epoch. The host emits it only after persisting its sequence allocation, so a client whose snapshot sequence is temporarily behind during revision recovery still trusts the live item. It merges durable and ephemeral items by sequence.
 
-- `session.reload`: `snapshot.reset`
-- `session.setReasoning`: `settings.set`
-- `session.setPersona`: `snapshot.reset`
-- `session.compact`: `snapshot.reset`
-- `session.rewind`: `snapshot.reset`
+## deltas
 
-Those operations already return authoritative snapshots and can change multiple independent areas at once. Reset is simpler and less error-prone than a long patch.
+Every `session.delta` contains:
 
-## typical flows
+- `fromRevision`
+- `toRevision`
+- a structured `cause`
+- either `snapshot.patch` or `snapshot.reset`
 
-### user submission
+Patch changes are explicit and atomic. Message insertion and timeline placement are separate changes, so a message can intentionally remain context-only. High-rate assistant output uses `message.content.append` rather than repeatedly replacing the accumulated message.
 
-```json
-{
-  "type": "session.delta",
-  "fromRevision": 10,
-  "toRevision": 11,
-  "reason": "user-message",
-  "delta": {
-    "type": "snapshot.patch",
-    "changes": [
-      {
-        "type": "message.append",
-        "message": {
-          "id": "msg-user-1",
-          "state": "committed",
-          "modelVisible": true,
-          "message": { "role": "user" }
-        },
-        "timelineItem": {
-          "type": "message",
-          "id": "tl-user-1",
-          "messageId": "msg-user-1"
-        }
-      },
-      { "type": "lifecycle.set", "lifecycle": "running" }
-    ]
-  }
-}
-```
+Ordinary delta causes identify user, assistant, tool, notice, agent, maintenance, configuration, and goal transitions. Destructive transitions carry required structure:
 
-### assistant stream
+- `compaction`: kind, cut, previous epoch, new epoch, and retained-message count
+- `rewind`: epoch and cutoff sequence
+- `resync`: authoritative recovery synchronization
 
-The first assistant chunk appends a draft message. Later chunks append text or thinking to the same draft message with `message.content.append`.
+Clients use these causes rather than inferring transitions from message metadata, operation counts, notice counts, or timing. Delta application validates destructive causes against the current timeline: compaction must name the current epoch as its predecessor, and rewind must name the current epoch with a cutoff no greater than its sequence high-water mark. Deltas targeting an already-observed revision are stale and do not replay presentation transitions.
 
-```json
-{
-  "type": "session.delta",
-  "fromRevision": 11,
-  "toRevision": 12,
-  "reason": "assistant-stream",
-  "delta": {
-    "type": "snapshot.patch",
-    "changes": [
-      {
-        "type": "message.append",
-        "message": {
-          "id": "msg-assistant-1",
-          "state": "draft",
-          "modelVisible": false,
-          "message": {
-            "role": "assistant",
-            "timestamp": 1782800000000,
-            "content": [{ "type": "text", "text": "I will inspect" }]
-          }
-        },
-        "timelineItem": {
-          "type": "message",
-          "id": "tl-assistant-1",
-          "messageId": "msg-assistant-1"
-        }
-      }
-    ]
-  }
-}
-```
+## compaction
 
-Later stream update:
+Successful manual or automatic compaction is an epoch replacement:
 
-```json
-{
-  "type": "session.delta",
-  "fromRevision": 12,
-  "toRevision": 13,
-  "reason": "assistant-stream",
-  "delta": {
-    "type": "snapshot.patch",
-    "changes": [
-      {
-        "type": "message.content.append",
-        "messageId": "msg-assistant-1",
-        "text": " inspect the protocol",
-        "timestamp": 1782800000000
-      }
-    ]
-  }
-}
-```
+1. The host clears the active timeline and timeline-owned tool, operation, notice, and presentation state.
+2. It increments the epoch exactly once.
+3. It keeps the new epoch’s sequence high-water mark at zero until the summary is appended.
+4. It appends the compaction summary as the first active timeline item.
+5. It publishes a reset with a structured compaction cause.
 
-### interrupt during assistant stream
+Optional automatic-compaction retained-tail and continuation messages remain model-visible in `snapshot.messages`, but they do not receive timeline items.
 
-Interrupting does not need a separate turn object. The draft message is kept as transcript state and marked interrupted.
+Failed, skipped, or aborted compaction remains in the current epoch. Its operation stays at the point where it occurred.
 
-```json
-{
-  "type": "session.delta",
-  "reason": "assistant-stream",
-  "delta": {
-    "type": "snapshot.patch",
-    "changes": [
-      {
-        "type": "message.replace",
-        "message": {
-          "id": "msg-assistant-1",
-          "state": "interrupted",
-          "modelVisible": true,
-          "message": {
-            "role": "assistant",
-            "timestamp": 1782800000000,
-            "content": [
-              { "type": "text", "text": "I will inspect the protocol" }
-            ]
-          }
-        }
-      },
-      { "type": "lifecycle.set", "lifecycle": "idle" }
-    ]
-  }
-}
-```
+A client present for a successful transition may freeze the previous epoch as immutable client-local presentation and start a `compacted context` segment. That frozen history is not persisted or reconciled. A client attaching later sees only the current recoverable epoch. The compaction operation is also the sole host-owned activity state: clients derive running presentation from it rather than coordinating a second ephemeral start/finish lifecycle.
 
-### assistant final with tool call
+## rewind
 
-Replace the same draft assistant message with the committed final assistant message, then attach tool run records for each assistant tool call.
+Rewind removes the selected message and all later active state. The host determines the selected item’s sequence and resets to the same epoch with a cutoff immediately before it.
 
-```json
-{
-  "type": "session.delta",
-  "reason": "assistant-message",
-  "delta": {
-    "type": "snapshot.patch",
-    "changes": [
-      {
-        "type": "message.replace",
-        "message": {
-          "id": "msg-assistant-1",
-          "state": "committed",
-          "modelVisible": true,
-          "message": { "role": "assistant" }
-        }
-      },
-      {
-        "type": "tool.set",
-        "tool": {
-          "id": "call-1",
-          "toolCallId": "call-1",
-          "toolName": "bash",
-          "call": { "messageId": "msg-assistant-1", "contentIndex": 1 },
-          "status": "queued",
-          "facetIds": []
-        }
-      }
-    ]
-  }
-}
-```
+The reset removes every timeline item after the cutoff, including messages, tools, notices, and operations, then reconciles the semantic maps and facets to the retained state. Attached clients also remove ephemeral timeline items after the cutoff.
 
-### tool completion
+The timeline sequence remains at its previous high-water mark. New items continue above it, so sequence values are never reused after rewind.
 
-```json
-{
-  "type": "session.delta",
-  "reason": "tool-result",
-  "delta": {
-    "type": "snapshot.patch",
-    "changes": [
-      {
-        "type": "message.append",
-        "message": {
-          "id": "msg-tool-1",
-          "state": "committed",
-          "modelVisible": true,
-          "message": { "role": "toolResult" }
-        },
-        "timelineItem": {
-          "type": "message",
-          "id": "tl-tool-1",
-          "messageId": "msg-tool-1"
-        }
-      },
-      {
-        "type": "tool.set",
-        "tool": {
-          "id": "call-1",
-          "toolCallId": "call-1",
-          "toolName": "bash",
-          "call": { "messageId": "msg-assistant-1", "contentIndex": 1 },
-          "status": "succeeded",
-          "resultMessageId": "msg-tool-1",
-          "summary": "exit 0",
-          "facetIds": ["facet-call-1-bash"]
-        }
-      },
-      {
-        "type": "facet.set",
-        "facet": {
-          "id": "facet-call-1-bash",
-          "subject": { "type": "tool", "id": "call-1" },
-          "kind": "tool.bash.execution",
-          "version": 1,
-          "data": { "exitCode": 0, "durationMs": 218, "truncated": false }
-        }
-      }
-    ]
-  }
-}
-```
+## recovery and storage migration
 
-### notice
+Current runtime and wire contracts use only the canonical timeline shape. Compatibility for shipped filesystem sessions is confined to the storage migration boundary.
 
-```json
-{
-  "type": "session.delta",
-  "reason": "notice",
-  "delta": {
-    "type": "snapshot.patch",
-    "changes": [
-      {
-        "type": "timeline.append",
-        "item": {
-          "type": "notice",
-          "id": "notice-1",
-          "notice": {
-            "severity": "warn",
-            "title": "session history is unavailable",
-            "content": [
-              "this session will continue without durable history recording or recall"
-            ],
-            "subject": { "type": "session" },
-            "timestamp": 1782800000000
-          }
-        }
-      }
-    ]
-  }
-}
-```
+The idempotent version-6 storage normalizer converts older array timelines, including already-written version-6 documents, into epoch 1. It reconstructs historical tool placement once, moves embedded operation values into `snapshot.operations`, normalizes legacy operation terminal fields and notices, converts meaningful persisted failed/blocked message outcomes into semantic turn notices, drops redundant completed outcomes, and renames the old agent context fingerprint to `modelContextKey`. After normalization, ordinary protocol validation applies.
 
-### compaction
+Recovery discards supervised subagent runtime state and agent-owned facets because those runtimes do not survive process restart. It finishes persisted running maintenance operations as cancelled with a completion time and `session-recovered` reason because their execution cannot survive, while retaining their timeline placement. Durable timeline order and the semantic data needed to open the session remain recoverable.
 
-Automatic compaction can show a running operation, then reset the full snapshot when history is rewritten.
+## pending messages and other live state
 
-```json
-{
-  "type": "session.delta",
-  "reason": "maintenance",
-  "delta": {
-    "type": "snapshot.patch",
-    "changes": [
-      {
-        "type": "timeline.append",
-        "item": {
-          "type": "operation",
-          "id": "op-1",
-          "operation": {
-            "kind": "auto-compaction",
-            "status": "running",
-            "startedAt": 1782800000000
-          }
-        }
-      }
-    ]
-  }
-}
-```
+Queued and steering user messages are not timeline items. They use a separate full-replacement `session.pendingUserMessages` channel with an independent revision. They are shared among clients attached to the same in-memory session and start empty on recovery.
 
-Then:
+Ephemeral agent threads use their dedicated live event family. They are not folded into snapshot timeline state.
 
-```json
-{
-  "type": "session.delta",
-  "fromRevision": null,
-  "toRevision": 42,
-  "reason": "maintenance",
-  "delta": {
-    "type": "snapshot.reset",
-    "snapshot": {
-      "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
-      "revision": 42
-    }
-  }
-}
-```
+## client rules
 
-## client rendering model
+A conforming client:
 
-The client should not receive UI events. It should render from snapshot state:
-
-- Conversation rows come from `timeline`.
-- Message timeline items dereference `messages`. Not every message must have a timeline item.
-- Full transcript views, debugging views, and protocol clients that need model context read directly from `messages`.
-- Notices are timeline records.
-- Tool cards are rendered from assistant `toolCall` blocks plus `tools[toolCall.id]`, matching tool result messages, and facets.
-- Subagent panels are rendered from `agents`.
-- Active assistant text is rendered from the current draft assistant message, whether or not the UI chooses to expose all other messages.
-- Running maintenance is rendered from timeline operations.
-
-Known tool renderers can use typed facets. Unknown tools can still render name, arguments, status, result content, and facet summaries.
-
-## implementation checklist
-
-1. Snapshot-owned stores: `timeline`, `tools`, `agents`, and `facets`.
-2. Internal runtime events translated into `SessionChange[]` at the host boundary.
-3. Host wraps changes as `session.delta` messages with strict revision increments.
-4. Tool UI payloads are stored as `SessionToolRun` updates and typed facets before they cross the protocol boundary.
-5. Notices are timeline notice records.
-6. Subagent UI events are stored as `agents` updates.
-7. `snapshot.reset` is used for reload, persona changes, rewind, and compact; reasoning changes use `settings.set`.
-8. Transports and SDK listeners expose `session.delta`; ephemeral agent progress uses `session.ephemeral`.
-9. TUI rendering is driven from snapshots and local delta application.
-10. Themes stay in TUI-local config/content loading rather than the session protocol.
-11. Wire-level `eventVersion`, `event`, `tool_ui`, and `session_update` semantics are removed from the session protocol.
-
-This is a breaking wire-protocol change, which is appropriate before v1. Avoid aliases or compatibility shims in the protocol. Filesystem-backed `tau-session` documents are a separate durable-data contract: newer versions must keep them openable, using the owning boundary's appropriate migration, normalization, regeneration, or intentional degradation strategy while preserving canonical current runtime shapes.
+- installs the observe snapshot and pending-message baselines before processing buffered events
+- verifies delta revision continuity
+- applies protocol deltas rather than reconstructing snapshot state independently
+- renders active transcript order from `timeline.items`
+- reads mutable tool and operation state through timeline references
+- merges accepted ephemeral transcript items by `(epoch, sequence)`
+- discards old-epoch ephemeral items on compaction and post-cutoff items on rewind
+- treats frozen prior epochs as optional client-local presentation
+- refreshes with `session.snapshot` after a revision gap

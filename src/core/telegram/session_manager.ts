@@ -262,7 +262,6 @@ type SessionEntry = {
   consumedFacetEventCounts: Map<string, number>;
   emittedAssistantMessageIds: Set<string>;
   emittedNoticeIds: Set<string>;
-  emittedErrorNoticeIds: Set<string>;
   emittedTurnFailureIds: Set<string>;
 };
 
@@ -319,8 +318,20 @@ export type TelegramSessionManagerEvent =
     }
   | TelegramSessionProvisionFailure;
 
-export function formatTelegramTimelineNotice(notice: SessionProtocolTimelineNotice): string {
-  return notice.title;
+function shouldDeliverTelegramTimelineNotice(
+  notice: SessionProtocolTimelineNotice,
+): notice is SessionProtocolTimelineNotice & { severity: "warn" | "error" } {
+  return (
+    notice.severity !== "info" &&
+    notice.kind !== "tau.turn.failed" &&
+    notice.kind !== "tau.turn.blocked"
+  );
+}
+
+function formatTelegramTimelineNotice(notice: SessionProtocolTimelineNotice): string {
+  const title = notice.presentation.title.trim();
+  const sentence = `${title.charAt(0).toLocaleUpperCase()}${title.slice(1)}`;
+  return /[.!?]$/.test(sentence) ? sentence : `${sentence}.`;
 }
 
 export type TelegramSessionSubmitOptions = {
@@ -488,7 +499,6 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       consumedFacetEventCounts: new Map(),
       emittedAssistantMessageIds: new Set(),
       emittedNoticeIds: new Set(),
-      emittedErrorNoticeIds: new Set(),
       emittedTurnFailureIds: new Set(),
     };
 
@@ -711,7 +721,6 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
         consumedFacetEventCounts: new Map(),
         emittedAssistantMessageIds: new Set(),
         emittedNoticeIds: new Set(),
-        emittedErrorNoticeIds: new Set(),
         emittedTurnFailureIds: new Set(),
       };
       this.sessions.set(record.id, entry);
@@ -842,7 +851,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     entry.unsubscribeClientEvents = tauSession.onDelta((event) => {
       this.handleClientEvent(entry, event);
     });
-    this.handleSnapshotNotices(entry, await tauSession.snapshot());
+    this.initializeSnapshotDeliveryState(entry, await tauSession.snapshot());
     entry.record.error = undefined;
     this.setState(entry, "waiting-input");
     this.log(entry, "info", "session recovered", { tauSessionId, workspacePath });
@@ -951,7 +960,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       entry.unsubscribeClientEvents = tauSession.onDelta((event) => {
         this.handleClientEvent(entry, event);
       });
-      this.handleSnapshotNotices(entry, await tauSession.snapshot());
+      this.initializeSnapshotDeliveryState(entry, await tauSession.snapshot());
 
       this.log(entry, "info", "session preparation complete", {
         durationMs: elapsedMs(sessionPreparationStart),
@@ -1088,7 +1097,6 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     const previousSubmit = entry.activeSubmit;
     const tauSession = entry.tauSession;
     const payload = this.buildSubmitPayload(text, additionalSystemMessage);
-    const errorNoticeCountBeforeSubmit = entry.emittedErrorNoticeIds.size;
 
     let submitPromise!: Promise<void>;
     submitPromise = (async () => {
@@ -1106,11 +1114,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
         });
 
         if (!entry.cancelRequested) {
-          if (
-            failure &&
-            entry.emittedErrorNoticeIds.size === errorNoticeCountBeforeSubmit &&
-            !entry.emittedTurnFailureIds.has(result.userHistoryEntryId)
-          ) {
+          if (failure && !entry.emittedTurnFailureIds.has(result.userHistoryEntryId)) {
             entry.emittedTurnFailureIds.add(result.userHistoryEntryId);
             this.emit({
               type: "session-turn-failed",
@@ -1487,7 +1491,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
   private handleClientEvent(entry: SessionEntry, clientEvent: TelegramSessionClientEvent): void {
     if (clientEvent.delta.type === "snapshot.reset") {
       this.handleSnapshotNotices(entry, clientEvent.delta.snapshot);
-      if (clientEvent.reason !== "assistant-message") {
+      if (clientEvent.cause.type !== "assistant-message") {
         return;
       }
 
@@ -1512,7 +1516,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
         continue;
       }
 
-      if (clientEvent.reason !== "assistant-message") {
+      if (clientEvent.cause.type !== "assistant-message") {
         continue;
       }
 
@@ -1522,8 +1526,24 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     }
   }
 
+  private initializeSnapshotDeliveryState(
+    entry: SessionEntry,
+    snapshot: SessionProtocolSnapshot,
+  ): void {
+    for (const message of snapshot.messages) {
+      if (message.state === "committed" && isAssistantMessage(message.message)) {
+        entry.emittedAssistantMessageIds.add(message.id);
+      }
+    }
+    for (const item of snapshot.timeline.items) {
+      if (item.type === "notice") {
+        entry.emittedNoticeIds.add(item.id);
+      }
+    }
+  }
+
   private handleSnapshotNotices(entry: SessionEntry, snapshot: SessionProtocolSnapshot): void {
-    for (const item of snapshot.timeline) {
+    for (const item of snapshot.timeline.items) {
       if (item.type === "notice") {
         this.handleNotice(entry, item.id, item.notice);
       }
@@ -1535,13 +1555,10 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     id: string,
     notice: SessionProtocolTimelineNotice,
   ): void {
-    if (notice.severity === "info" || entry.emittedNoticeIds.has(id)) {
+    if (!shouldDeliverTelegramTimelineNotice(notice) || entry.emittedNoticeIds.has(id)) {
       return;
     }
     entry.emittedNoticeIds.add(id);
-    if (notice.severity === "error") {
-      entry.emittedErrorNoticeIds.add(id);
-    }
     this.emit({
       type: "session-notice",
       sessionId: entry.record.id,

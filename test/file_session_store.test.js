@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { FileSessionStore } from "../dist/store/file_session_store.js";
 import {
-  LEGACY_SESSION_CONTEXT_EPOCH,
+  LEGACY_SESSION_MODEL_CONTEXT_KEY,
   STORED_SESSION_DOCUMENT_FORMAT,
   STORED_SESSION_DOCUMENT_VERSION,
 } from "../dist/store/session_snapshot_migrations.js";
@@ -171,7 +171,20 @@ describe("FileSessionStore", () => {
           },
         },
       });
-      const { agentState: _agentState, costTotal: _costTotal, ...legacy } = current;
+      const {
+        agentState: _agentState,
+        costTotal: _costTotal,
+        operations: _operations,
+        ...legacy
+      } = current;
+      legacy.timeline = [
+        { type: "message", id: "timeline-assistant-1", messageId: "assistant-1" },
+        {
+          type: "operation",
+          id: "operation-prune",
+          operation: { kind: "prune", status: "succeeded", startedAt: 1, finishedAt: 2 },
+        },
+      ];
       await mkdir(directory, { recursive: true });
       await writeFile(join(directory, "c2Vzc2lvbi0x.json"), JSON.stringify(legacy), "utf8");
 
@@ -179,9 +192,14 @@ describe("FileSessionStore", () => {
         ...current,
         agentState: {
           revision: current.revision,
-          contextEpoch: LEGACY_SESSION_CONTEXT_EPOCH,
+          modelContextKey: LEGACY_SESSION_MODEL_CONTEXT_KEY,
         },
-        timeline: [{ type: "message", id: "timeline-assistant-1", messageId: "assistant-1" }],
+        timeline: {
+          epoch: 1,
+          sequence: 2,
+          items: current.timeline.items.filter((item) => item.type !== "operation"),
+        },
+        operations: {},
         tools: {
           "tool-1": {
             ...current.tools["tool-1"],
@@ -282,49 +300,284 @@ describe("FileSessionStore", () => {
     });
   });
 
-  it("migrates version 5 timeline notices to structured notice content", async () => {
+  it.each([5, STORED_SESSION_DOCUMENT_VERSION])(
+    "normalizes version %i array timelines and legacy notices",
+    async (version) => {
+      await withTempStore(async (store, directory) => {
+        const snapshot = createSnapshot("session-1", "hello");
+        const expected = {
+          ...snapshot,
+          timeline: {
+            epoch: 1,
+            sequence: 2,
+            items: [
+              ...snapshot.timeline.items,
+              {
+                type: "notice",
+                id: "legacy-notice",
+                sequence: 2,
+                createdAt: 2,
+                notice: {
+                  kind: "tau.recovered.notice",
+                  version: 1,
+                  severity: "warn",
+                  subject: { type: "session" },
+                  presentation: {
+                    title: "history unavailable",
+                    content: ["the session will continue"],
+                  },
+                  data: {},
+                },
+              },
+            ],
+          },
+        };
+        const legacy = {
+          ...snapshot,
+          timeline: [
+            ...snapshot.timeline.items.map(
+              ({ sequence: _sequence, createdAt: _createdAt, ...item }) => item,
+            ),
+            {
+              type: "notice",
+              id: "legacy-notice",
+              notice: {
+                severity: "warn",
+                text: "history unavailable\nthe session will continue",
+                timestamp: 2,
+              },
+            },
+          ],
+        };
+        await mkdir(directory, { recursive: true });
+        await writeFile(
+          join(directory, "c2Vzc2lvbi0x.json"),
+          JSON.stringify({ format: STORED_SESSION_DOCUMENT_FORMAT, version, snapshot: legacy }),
+          "utf8",
+        );
+
+        await expect(store.loadSession("session-1")).resolves.toEqual(expected);
+      });
+    },
+  );
+
+  it("normalizes legacy terminal operation fields", async () => {
     await withTempStore(async (store, directory) => {
       const snapshot = createSnapshot("session-1", "hello");
-      const expected = {
-        ...snapshot,
-        timeline: [
-          ...snapshot.timeline,
-          {
-            type: "notice",
-            id: "legacy-notice",
-            notice: {
-              severity: "warn",
-              title: "history unavailable",
-              content: ["the session will continue"],
-              subject: { type: "session" },
-              timestamp: 2,
-            },
-          },
-        ],
-      };
       const legacy = {
         ...snapshot,
-        timeline: [
+        timeline: {
           ...snapshot.timeline,
-          {
-            type: "notice",
-            id: "legacy-notice",
-            notice: {
-              severity: "warn",
-              text: "history unavailable\nthe session will continue",
-              timestamp: 2,
+          sequence: 2,
+          items: [
+            ...snapshot.timeline.items,
+            {
+              type: "operation",
+              id: "timeline-operation-1",
+              sequence: 2,
+              createdAt: 1,
+              operationId: "operation-1",
             },
+          ],
+        },
+        operations: {
+          "operation-1": {
+            id: "operation-1",
+            kind: "manual-compaction",
+            status: "cancelled",
+            startedAt: 1,
+            summary: "legacy summary",
+            data: { legacy: true },
           },
-        ],
+        },
       };
       await mkdir(directory, { recursive: true });
       await writeFile(
         join(directory, "c2Vzc2lvbi0x.json"),
-        JSON.stringify({ format: STORED_SESSION_DOCUMENT_FORMAT, version: 5, snapshot: legacy }),
+        JSON.stringify({
+          format: STORED_SESSION_DOCUMENT_FORMAT,
+          version: STORED_SESSION_DOCUMENT_VERSION,
+          snapshot: legacy,
+        }),
         "utf8",
       );
 
-      await expect(store.loadSession("session-1")).resolves.toEqual(expected);
+      await expect(store.loadSession("session-1")).resolves.toEqual({
+        ...snapshot,
+        timeline: legacy.timeline,
+        operations: {
+          "operation-1": {
+            id: "operation-1",
+            kind: "manual-compaction",
+            status: "cancelled",
+            startedAt: 1,
+            finishedAt: 1,
+            reason: "session-recovered",
+          },
+        },
+      });
+    });
+  });
+
+  it("migrates persisted blocked turn outcomes to ordered notices", async () => {
+    await withTempStore(async (store, directory) => {
+      const snapshot = createSnapshot("session-1", "hello");
+      const legacy = structuredClone(snapshot);
+      legacy.messages.find((message) => message.id === "entry-1").turn = {
+        status: "blocked",
+        reason: "auto-compaction-failed",
+        message: "summary unavailable",
+      };
+      await mkdir(directory, { recursive: true });
+      await writeFile(
+        join(directory, "c2Vzc2lvbi0x.json"),
+        JSON.stringify({
+          format: STORED_SESSION_DOCUMENT_FORMAT,
+          version: STORED_SESSION_DOCUMENT_VERSION,
+          snapshot: legacy,
+        }),
+        "utf8",
+      );
+
+      await expect(store.loadSession("session-1")).resolves.toEqual({
+        ...snapshot,
+        timeline: {
+          epoch: 1,
+          sequence: 2,
+          items: [
+            ...snapshot.timeline.items,
+            {
+              type: "notice",
+              id: "recovered-turn-blocked-entry-1",
+              sequence: 2,
+              createdAt: 0,
+              notice: {
+                kind: "tau.turn.blocked",
+                version: 1,
+                severity: "error",
+                subject: { type: "message", id: "entry-1" },
+                presentation: {
+                  title: "turn blocked",
+                  content: ["summary unavailable"],
+                },
+                data: { reason: "auto-compaction-failed" },
+              },
+            },
+          ],
+        },
+      });
+    });
+  });
+
+  it("migrates persisted failed turn outcomes to ordered notices", async () => {
+    await withTempStore(async (store, directory) => {
+      const snapshot = createSnapshot("session-1", "hello");
+      const legacy = structuredClone(snapshot);
+      legacy.messages.find((message) => message.id === "entry-1").turn = {
+        status: "failed",
+        stopReason: "error",
+        errorMessage: "model attempt limit reached",
+      };
+      await mkdir(directory, { recursive: true });
+      await writeFile(
+        join(directory, "c2Vzc2lvbi0x.json"),
+        JSON.stringify({
+          format: STORED_SESSION_DOCUMENT_FORMAT,
+          version: STORED_SESSION_DOCUMENT_VERSION,
+          snapshot: legacy,
+        }),
+        "utf8",
+      );
+
+      await expect(store.loadSession("session-1")).resolves.toMatchObject({
+        messages: snapshot.messages,
+        timeline: {
+          sequence: 2,
+          items: [
+            snapshot.timeline.items[0],
+            {
+              type: "notice",
+              id: "recovered-turn-failed-entry-1",
+              sequence: 2,
+              notice: {
+                kind: "tau.turn.failed",
+                subject: { type: "message", id: "entry-1" },
+                presentation: {
+                  title: "turn failed",
+                  content: ["model attempt limit reached"],
+                },
+                data: { reason: "recovered-turn-failure" },
+              },
+            },
+          ],
+        },
+      });
+    });
+  });
+
+  it("drops persisted completed turn outcomes", async () => {
+    await withTempStore(async (store, directory) => {
+      const snapshot = createSnapshot("session-1", "hello");
+      const legacy = structuredClone(snapshot);
+      legacy.messages.find((message) => message.id === "entry-1").turn = {
+        status: "completed",
+        stopReason: "stop",
+      };
+      await mkdir(directory, { recursive: true });
+      await writeFile(
+        join(directory, "c2Vzc2lvbi0x.json"),
+        JSON.stringify({
+          format: STORED_SESSION_DOCUMENT_FORMAT,
+          version: STORED_SESSION_DOCUMENT_VERSION,
+          snapshot: legacy,
+        }),
+        "utf8",
+      );
+
+      await expect(store.loadSession("session-1")).resolves.toEqual(snapshot);
+    });
+  });
+
+  it("does not duplicate persisted failures represented by an assistant error", async () => {
+    await withTempStore(async (store, directory) => {
+      const snapshot = createProtocolSnapshot({
+        sessionId: "session-1",
+        historyEntries: [
+          {
+            id: "entry-1",
+            message: { role: "user", content: [{ type: "text", text: "hello" }] },
+          },
+          {
+            id: "entry-2",
+            message: {
+              role: "assistant",
+              content: [],
+              provider: "openai",
+              model: "gpt-5.5",
+              stopReason: "error",
+              errorMessage: "provider unavailable",
+            },
+          },
+        ],
+      });
+      const legacy = structuredClone(snapshot);
+      legacy.messages.find((message) => message.id === "entry-1").turn = {
+        status: "failed",
+        stopReason: "error",
+        errorMessage: "provider unavailable",
+      };
+      await mkdir(directory, { recursive: true });
+      await writeFile(
+        join(directory, "c2Vzc2lvbi0x.json"),
+        JSON.stringify({
+          format: STORED_SESSION_DOCUMENT_FORMAT,
+          version: STORED_SESSION_DOCUMENT_VERSION,
+          snapshot: legacy,
+        }),
+        "utf8",
+      );
+
+      await expect(store.loadSession("session-1")).resolves.toEqual(snapshot);
     });
   });
 

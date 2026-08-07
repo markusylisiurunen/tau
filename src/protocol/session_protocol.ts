@@ -403,31 +403,81 @@ export type SessionProtocolMessage = {
   state: SessionProtocolMessageState;
   modelVisible: boolean;
   message: SessionProtocolMessagePayload;
-  turn?: SessionProtocolTurnOutcome;
+};
+
+export type SessionProtocolSubject =
+  | { type: "session" }
+  | { type: "message"; id: string }
+  | { type: "tool"; id: string }
+  | { type: "agent"; id: string }
+  | { type: "operation"; id: string };
+
+export type SessionProtocolTimelineNotice = {
+  kind: string;
+  version: number;
+  severity: "info" | "warn" | "error";
+  subject: SessionProtocolSubject;
+  presentation: {
+    title: string;
+    content?: string[];
+  };
+  data: Record<string, unknown>;
 };
 
 export type SessionProtocolTimelineItem =
-  | { type: "message"; id: string; messageId: string }
-  | { type: "notice"; id: string; notice: SessionProtocolTimelineNotice }
-  | { type: "operation"; id: string; operation: SessionProtocolOperation };
+  | {
+      type: "message";
+      id: string;
+      sequence: number;
+      createdAt: number;
+      messageId: string;
+    }
+  | {
+      type: "tool";
+      id: string;
+      sequence: number;
+      createdAt: number;
+      toolId: string;
+    }
+  | {
+      type: "notice";
+      id: string;
+      sequence: number;
+      createdAt: number;
+      notice: SessionProtocolTimelineNotice;
+    }
+  | {
+      type: "operation";
+      id: string;
+      sequence: number;
+      createdAt: number;
+      operationId: string;
+    };
 
-export type SessionProtocolTimelineNotice = {
-  severity: "info" | "warn" | "error";
-  title: string;
-  content?: string[];
-  subject: { type: "session" } | { type: "message"; id: string };
-  timestamp: number;
+export type SessionProtocolTimeline = {
+  epoch: number;
+  sequence: number;
+  items: SessionProtocolTimelineItem[];
 };
 
-export type SessionProtocolOperation = {
+type SessionProtocolOperationBase = {
+  id: string;
   kind: "auto-compaction" | "manual-compaction" | "reload" | "rewind";
-  status: "running" | "succeeded" | "failed" | "cancelled" | "skipped";
   startedAt: number;
-  finishedAt?: number;
-  summary?: string;
-  error?: string;
-  data?: Record<string, unknown>;
 };
+
+export type SessionProtocolOperation = SessionProtocolOperationBase &
+  (
+    | { status: "running" }
+    | { status: "succeeded"; finishedAt: number }
+    | { status: "failed"; finishedAt: number; error: string }
+    | { status: "skipped"; finishedAt: number; reason: "no-eligible-history" }
+    | {
+        status: "cancelled";
+        finishedAt: number;
+        reason: "interrupted" | "session-recovered";
+      }
+  );
 
 export type SessionProtocolPromptCompositionSnapshot = {
   environmentTag: string;
@@ -563,10 +613,10 @@ export type SessionProtocolExecutionEnvironmentSnapshot =
 
 export type SessionProtocolAgentStateSnapshot = {
   revision: number;
-  contextEpoch: string;
+  modelContextKey: string;
   usageCheckpoint?: {
     historyEntryId: string;
-    contextEpoch: string;
+    modelContextKey: string;
     tokens: number;
   };
 };
@@ -590,8 +640,9 @@ export type SessionProtocolSnapshot = {
   catalog: SessionProtocolContentCatalogSnapshot;
   executionEnvironment: SessionProtocolExecutionEnvironmentSnapshot;
   messages: SessionProtocolMessage[];
-  timeline: SessionProtocolTimelineItem[];
+  timeline: SessionProtocolTimeline;
   tools: Record<string, SessionProtocolToolRun>;
+  operations: Record<string, SessionProtocolOperation>;
   agents: Record<string, SessionProtocolAgentRun>;
   facets: Record<string, SessionProtocolFacet>;
 };
@@ -692,12 +743,7 @@ export type SessionProtocolAgentRun = {
   };
 };
 
-export type SessionProtocolFacetSubject =
-  | { type: "session" }
-  | { type: "message"; id: string }
-  | { type: "tool"; id: string }
-  | { type: "agent"; id: string }
-  | { type: "operation"; id: string };
+export type SessionProtocolFacetSubject = SessionProtocolSubject;
 
 export type SessionProtocolFacet = {
   id: string;
@@ -853,18 +899,30 @@ export type SessionProtocolParsedResponseMessage =
   | SessionProtocolParsedSuccessResponseMessage
   | SessionProtocolErrorResponseMessage;
 
-export type SessionProtocolDeltaReason =
-  | "user-message"
-  | "assistant-stream"
-  | "assistant-message"
-  | "tool-run"
-  | "tool-result"
-  | "notice"
-  | "agent-run"
-  | "maintenance"
-  | "configuration"
-  | "goal"
-  | "recovery";
+export type SessionProtocolDeltaCause =
+  | {
+      type:
+        | "user-message"
+        | "assistant-stream"
+        | "assistant-message"
+        | "tool-run"
+        | "tool-result"
+        | "notice"
+        | "agent-run"
+        | "maintenance"
+        | "configuration"
+        | "goal";
+    }
+  | {
+      type: "compaction";
+      previousEpoch: number;
+      epoch: number;
+      kind: "auto" | "manual";
+      cutType: "turn-boundary" | "split-turn";
+      retainedMessageCount: number;
+    }
+  | { type: "rewind"; epoch: number; cutoffSequence: number }
+  | { type: "resync" };
 
 export type SessionProtocolChange =
   | { type: "agent-state.set"; agentState: SessionProtocolAgentStateSnapshot }
@@ -872,11 +930,7 @@ export type SessionProtocolChange =
   | { type: "goal.set"; goal: SessionProtocolGoal | null }
   | { type: "cost.set"; costTotal: number }
   | { type: "settings.set"; settings: SessionProtocolSettingsSnapshot }
-  | {
-      type: "message.append";
-      message: SessionProtocolMessage;
-      timelineItem?: SessionProtocolTimelineItem;
-    }
+  | { type: "message.append"; message: SessionProtocolMessage }
   | { type: "message.replace"; message: SessionProtocolMessage }
   | {
       type: "message.content.append";
@@ -886,10 +940,12 @@ export type SessionProtocolChange =
       timestamp: number;
     }
   | { type: "timeline.append"; item: SessionProtocolTimelineItem }
-  | { type: "timeline.replace"; item: SessionProtocolTimelineItem }
   | { type: "timeline.remove"; id: string }
+  | { type: "timeline.advance"; epoch: number; sequence: number }
   | { type: "tool.set"; tool: SessionProtocolToolRun }
   | { type: "tool.remove"; id: string }
+  | { type: "operation.set"; operation: SessionProtocolOperation }
+  | { type: "operation.remove"; id: string }
   | { type: "agent.set"; agent: SessionProtocolAgentRun }
   | { type: "agent.remove"; id: string }
   | { type: "facet.set"; facet: SessionProtocolFacet }
@@ -911,7 +967,7 @@ export type SessionProtocolDeltaMessage = {
   sessionId: string;
   fromRevision: number | null;
   toRevision: number;
-  reason: SessionProtocolDeltaReason;
+  cause: SessionProtocolDeltaCause;
   delta: SessionProtocolDelta;
 };
 
@@ -964,34 +1020,24 @@ export type SessionProtocolEphemeralAgentThreadUpdateEvent = {
 
 export type SessionProtocolFeedbackTone = "default" | "error";
 
-export type SessionProtocolFeedbackEvent =
-  | {
-      type: "feedback.activity.started";
-      id: string;
-      text: string;
-    }
-  | {
-      type: "feedback.activity.finished";
-      id: string;
-    }
-  | {
-      type: "feedback.notice";
-      title: string;
-      tone: SessionProtocolFeedbackTone;
-      presentation: "footer";
-      durationMs: number;
-    }
-  | {
-      type: "feedback.notice";
-      title: string;
-      content?: string[];
-      tone: SessionProtocolFeedbackTone;
-      presentation: "transcript";
-    };
+export type SessionProtocolFeedbackEvent = {
+  type: "feedback.notice";
+  title: string;
+  tone: SessionProtocolFeedbackTone;
+  presentation: "footer";
+  durationMs: number;
+};
+
+export type SessionProtocolEphemeralTimelineEvent = {
+  type: "timeline.item";
+  epoch: number;
+  item: Extract<SessionProtocolTimelineItem, { type: "notice" }>;
+};
 
 export type SessionProtocolEphemeralEvent =
   | SessionProtocolEphemeralAgentThreadUpdateEvent
-  | SessionProtocolFeedbackEvent;
+  | SessionProtocolFeedbackEvent
+  | SessionProtocolEphemeralTimelineEvent;
 
 export type SessionProtocolEphemeralMessage = {
   version: typeof SESSION_PROTOCOL_VERSION;
@@ -1834,58 +1880,143 @@ const sessionProtocolMessageSchema = z
     state: z.enum(["draft", "committed", "interrupted", "discarded"]),
     modelVisible: z.boolean(),
     message: sessionProtocolMessagePayloadSchema,
-    turn: sessionProtocolTurnOutcomeSchema.optional(),
   })
   .strip() as z.ZodType<SessionProtocolMessage>;
 
+const sessionProtocolSubjectSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("session") }).strip(),
+  z.object({ type: z.literal("message"), id: nonEmptyStringSchema }).strip(),
+  z.object({ type: z.literal("tool"), id: nonEmptyStringSchema }).strip(),
+  z.object({ type: z.literal("agent"), id: nonEmptyStringSchema }).strip(),
+  z.object({ type: z.literal("operation"), id: nonEmptyStringSchema }).strip(),
+]);
+
+const timelineNoticeKindSchema = nonEmptyStringSchema.regex(
+  /^[a-z0-9-]+(?:\.[a-z0-9-]+)+$/,
+  "timeline notice kind must be a lowercase dotted identifier",
+);
+
 const sessionProtocolNoticeSchema = z
   .object({
+    kind: timelineNoticeKindSchema,
+    version: z.number().int().positive(),
     severity: z.enum(["info", "warn", "error"]),
-    title: noticeTitleSchema,
-    content: z.array(z.string()).min(1).optional(),
-    subject: z.union([
-      z.object({ type: z.literal("session") }).strip(),
-      z.object({ type: z.literal("message"), id: nonEmptyStringSchema }).strip(),
-    ]),
-    timestamp: z.number().finite(),
+    subject: sessionProtocolSubjectSchema,
+    presentation: z
+      .object({
+        title: noticeTitleSchema,
+        content: z.array(z.string()).min(1).optional(),
+      })
+      .strip(),
+    data: z.record(z.string(), z.unknown()),
   })
   .strip();
 
-const sessionProtocolOperationSchema = z
-  .object({
-    kind: z.enum(["auto-compaction", "manual-compaction", "reload", "rewind"]),
-    status: z.enum(["running", "succeeded", "failed", "cancelled", "skipped"]),
-    startedAt: z.number().finite(),
-    finishedAt: z.number().finite().optional(),
-    summary: z.string().optional(),
-    error: z.string().optional(),
-    data: z.record(z.string(), z.unknown()).optional(),
-  })
-  .strip();
+const sessionProtocolOperationBaseSchema = {
+  id: nonEmptyStringSchema,
+  kind: z.enum(["auto-compaction", "manual-compaction", "reload", "rewind"]),
+  startedAt: z.number().finite(),
+};
+
+const sessionProtocolOperationSchema = z.discriminatedUnion("status", [
+  z.object({ ...sessionProtocolOperationBaseSchema, status: z.literal("running") }).strip(),
+  z
+    .object({
+      ...sessionProtocolOperationBaseSchema,
+      status: z.literal("succeeded"),
+      finishedAt: z.number().finite(),
+    })
+    .strip(),
+  z
+    .object({
+      ...sessionProtocolOperationBaseSchema,
+      status: z.literal("failed"),
+      finishedAt: z.number().finite(),
+      error: nonEmptyStringSchema,
+    })
+    .strip(),
+  z
+    .object({
+      ...sessionProtocolOperationBaseSchema,
+      status: z.literal("skipped"),
+      finishedAt: z.number().finite(),
+      reason: z.literal("no-eligible-history"),
+    })
+    .strip(),
+  z
+    .object({
+      ...sessionProtocolOperationBaseSchema,
+      status: z.literal("cancelled"),
+      finishedAt: z.number().finite(),
+      reason: z.enum(["interrupted", "session-recovered"]),
+    })
+    .strip(),
+]);
+
+const sessionProtocolTimelineItemBaseSchema = {
+  id: nonEmptyStringSchema,
+  sequence: z.number().int().positive(),
+  createdAt: z.number().finite().nonnegative(),
+};
 
 const sessionProtocolTimelineItemSchema = z.discriminatedUnion("type", [
   z
     .object({
+      ...sessionProtocolTimelineItemBaseSchema,
       type: z.literal("message"),
-      id: nonEmptyStringSchema,
       messageId: nonEmptyStringSchema,
     })
     .strip(),
   z
     .object({
+      ...sessionProtocolTimelineItemBaseSchema,
+      type: z.literal("tool"),
+      toolId: nonEmptyStringSchema,
+    })
+    .strip(),
+  z
+    .object({
+      ...sessionProtocolTimelineItemBaseSchema,
       type: z.literal("notice"),
-      id: nonEmptyStringSchema,
       notice: sessionProtocolNoticeSchema,
     })
     .strip(),
   z
     .object({
+      ...sessionProtocolTimelineItemBaseSchema,
       type: z.literal("operation"),
-      id: nonEmptyStringSchema,
-      operation: sessionProtocolOperationSchema,
+      operationId: nonEmptyStringSchema,
     })
     .strip(),
 ]);
+
+const sessionProtocolTimelineSchema = z
+  .object({
+    epoch: z.number().int().positive(),
+    sequence: z.number().int().nonnegative(),
+    items: z.array(sessionProtocolTimelineItemSchema),
+  })
+  .strip()
+  .superRefine((timeline, ctx) => {
+    let previousSequence = 0;
+    for (const [index, item] of timeline.items.entries()) {
+      if (item.sequence <= previousSequence) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["items", index, "sequence"],
+          message: "timeline item sequences must be strictly increasing",
+        });
+      }
+      if (item.sequence > timeline.sequence) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["items", index, "sequence"],
+          message: "timeline item sequence exceeds the timeline high-water sequence",
+        });
+      }
+      previousSequence = item.sequence;
+    }
+  });
 
 const sessionProtocolToolRunBaseSchema = z.object({
   id: nonEmptyStringSchema,
@@ -2017,18 +2148,10 @@ const sessionProtocolAgentRunSchema = z
     }
   });
 
-const sessionProtocolFacetSubjectSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("session") }).strip(),
-  z.object({ type: z.literal("message"), id: nonEmptyStringSchema }).strip(),
-  z.object({ type: z.literal("tool"), id: nonEmptyStringSchema }).strip(),
-  z.object({ type: z.literal("agent"), id: nonEmptyStringSchema }).strip(),
-  z.object({ type: z.literal("operation"), id: nonEmptyStringSchema }).strip(),
-]);
-
 const sessionProtocolFacetSchema = z
   .object({
     id: nonEmptyStringSchema,
-    subject: sessionProtocolFacetSubjectSchema,
+    subject: sessionProtocolSubjectSchema,
     kind: nonEmptyStringSchema,
     version: z.number().int().positive(),
     data: z.record(z.string(), z.unknown()),
@@ -2045,11 +2168,11 @@ const sessionProtocolGoalSchema = z
 const sessionProtocolAgentStateSnapshotSchema = z
   .object({
     revision: z.number().int().nonnegative(),
-    contextEpoch: nonEmptyStringSchema,
+    modelContextKey: nonEmptyStringSchema,
     usageCheckpoint: z
       .object({
         historyEntryId: nonEmptyStringSchema,
-        contextEpoch: nonEmptyStringSchema,
+        modelContextKey: nonEmptyStringSchema,
         tokens: z.number().int().nonnegative(),
       })
       .strip()
@@ -2072,8 +2195,9 @@ const sessionProtocolSnapshotSchema = z
     catalog: sessionProtocolContentCatalogSnapshotSchema,
     executionEnvironment: sessionProtocolExecutionEnvironmentSnapshotSchema,
     messages: z.array(sessionProtocolMessageSchema),
-    timeline: z.array(sessionProtocolTimelineItemSchema),
+    timeline: sessionProtocolTimelineSchema,
     tools: z.record(nonEmptyStringSchema, sessionProtocolToolRunSchema),
+    operations: z.record(nonEmptyStringSchema, sessionProtocolOperationSchema),
     agents: z.record(nonEmptyStringSchema, sessionProtocolAgentRunSchema),
     facets: z.record(nonEmptyStringSchema, sessionProtocolFacetSchema),
   })
@@ -2088,22 +2212,15 @@ const sessionProtocolSnapshotSchema = z
           message: `duplicate message id '${message.id}'`,
         });
       }
-      if (message.turn && message.message.role !== "user") {
-        ctx.addIssue({
-          code: "custom",
-          path: ["messages"],
-          message: `turn outcome belongs to non-user message '${message.id}'`,
-        });
-      }
       messagesById.set(message.id, message);
     }
     const checkpoint = snapshot.agentState.usageCheckpoint;
     if (checkpoint) {
-      if (checkpoint.contextEpoch !== snapshot.agentState.contextEpoch) {
+      if (checkpoint.modelContextKey !== snapshot.agentState.modelContextKey) {
         ctx.addIssue({
           code: "custom",
-          path: ["agentState", "usageCheckpoint", "contextEpoch"],
-          message: "usage checkpoint context epoch must match agent state",
+          path: ["agentState", "usageCheckpoint", "modelContextKey"],
+          message: "usage checkpoint model context key must match agent state",
         });
       }
       const checkpointMessage = messagesById.get(checkpoint.historyEntryId);
@@ -2126,41 +2243,115 @@ const sessionProtocolSnapshotSchema = z
       }
     }
 
+    const subjectExists = (subject: SessionProtocolSubject): boolean =>
+      subject.type === "session" ||
+      (subject.type === "message" && messagesById.has(subject.id)) ||
+      (subject.type === "tool" && snapshot.tools[subject.id] !== undefined) ||
+      (subject.type === "agent" && snapshot.agents[subject.id] !== undefined) ||
+      (subject.type === "operation" && snapshot.operations[subject.id] !== undefined);
+
     const timelineIds = new Set<string>();
-    const operationIds = new Set<string>();
-    for (const item of snapshot.timeline) {
+    const timelineSequences = new Set<number>();
+    const timelineToolIds = new Set<string>();
+    const timelineOperationIds = new Set<string>();
+    let previousTimelineSequence = 0;
+    for (const item of snapshot.timeline.items) {
       if (timelineIds.has(item.id)) {
         ctx.addIssue({
           code: "custom",
-          path: ["timeline"],
+          path: ["timeline", "items"],
           message: `duplicate timeline item id '${item.id}'`,
         });
       }
       timelineIds.add(item.id);
-      if (item.type === "message" && !messagesById.has(item.messageId)) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["timeline"],
-          message: `timeline message item '${item.id}' references unknown message '${item.messageId}'`,
-        });
-      }
       if (
-        item.type === "notice" &&
-        item.notice.subject.type === "message" &&
-        !messagesById.has(item.notice.subject.id)
+        timelineSequences.has(item.sequence) ||
+        item.sequence <= previousTimelineSequence ||
+        item.sequence > snapshot.timeline.sequence
       ) {
         ctx.addIssue({
           code: "custom",
-          path: ["timeline"],
-          message: `timeline notice '${item.id}' references unknown message '${item.notice.subject.id}'`,
+          path: ["timeline", "items"],
+          message: `timeline item '${item.id}' has invalid sequence '${item.sequence}'`,
         });
       }
+      timelineSequences.add(item.sequence);
+      previousTimelineSequence = item.sequence;
+      if (item.type === "message" && !messagesById.has(item.messageId)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["timeline", "items"],
+          message: `timeline message item '${item.id}' references unknown message '${item.messageId}'`,
+        });
+      }
+      if (item.type === "tool") {
+        if (timelineToolIds.has(item.toolId)) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["timeline", "items"],
+            message: `tool '${item.toolId}' has multiple timeline items`,
+          });
+        }
+        timelineToolIds.add(item.toolId);
+        if (snapshot.tools[item.toolId] === undefined) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["timeline", "items"],
+            message: `timeline tool item '${item.id}' references unknown tool '${item.toolId}'`,
+          });
+        }
+      }
       if (item.type === "operation") {
-        operationIds.add(item.id);
+        if (timelineOperationIds.has(item.operationId)) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["timeline", "items"],
+            message: `operation '${item.operationId}' has multiple timeline items`,
+          });
+        }
+        timelineOperationIds.add(item.operationId);
+        if (snapshot.operations[item.operationId] === undefined) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["timeline", "items"],
+            message: `timeline operation item '${item.id}' references unknown operation '${item.operationId}'`,
+          });
+        }
+      }
+      if (item.type === "notice" && !subjectExists(item.notice.subject)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["timeline", "items"],
+          message: `timeline notice '${item.id}' references an unknown ${item.notice.subject.type} subject`,
+        });
+      }
+    }
+
+    for (const [id, operation] of Object.entries(snapshot.operations)) {
+      if (!timelineOperationIds.has(id)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["operations", id],
+          message: `operation '${id}' has no timeline item`,
+        });
+      }
+      if (id !== operation.id) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["operations", id],
+          message: `operation map key '${id}' does not match embedded id '${operation.id}'`,
+        });
       }
     }
 
     for (const [id, tool] of Object.entries(snapshot.tools)) {
+      if (!timelineToolIds.has(id)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["tools", id],
+          message: `tool '${id}' has no timeline item`,
+        });
+      }
       if (id !== tool.id || id !== tool.toolCallId) {
         ctx.addIssue({
           code: "custom",
@@ -2263,13 +2454,7 @@ const sessionProtocolSnapshotSchema = z
           message: `facet map key '${id}' does not match embedded id '${facet.id}'`,
         });
       }
-      const subjectExists =
-        facet.subject.type === "session" ||
-        (facet.subject.type === "message" && messagesById.has(facet.subject.id)) ||
-        (facet.subject.type === "tool" && snapshot.tools[facet.subject.id] !== undefined) ||
-        (facet.subject.type === "agent" && snapshot.agents[facet.subject.id] !== undefined) ||
-        (facet.subject.type === "operation" && operationIds.has(facet.subject.id));
-      if (!subjectExists) {
+      if (!subjectExists(facet.subject)) {
         ctx.addIssue({
           code: "custom",
           path: ["facets", id, "subject"],
@@ -2279,18 +2464,41 @@ const sessionProtocolSnapshotSchema = z
     }
   }) as z.ZodType<SessionProtocolSnapshot>;
 
-const sessionProtocolDeltaReasonSchema = z.enum([
-  "user-message",
-  "assistant-stream",
-  "assistant-message",
-  "tool-run",
-  "tool-result",
-  "notice",
-  "agent-run",
-  "maintenance",
-  "configuration",
-  "goal",
-  "recovery",
+const sessionProtocolDeltaCauseSchema = z.union([
+  z
+    .object({
+      type: z.enum([
+        "user-message",
+        "assistant-stream",
+        "assistant-message",
+        "tool-run",
+        "tool-result",
+        "notice",
+        "agent-run",
+        "maintenance",
+        "configuration",
+        "goal",
+      ]),
+    })
+    .strip(),
+  z
+    .object({
+      type: z.literal("compaction"),
+      previousEpoch: z.number().int().positive(),
+      epoch: z.number().int().positive(),
+      kind: z.enum(["auto", "manual"]),
+      cutType: z.enum(["turn-boundary", "split-turn"]),
+      retainedMessageCount: z.number().int().nonnegative(),
+    })
+    .strip(),
+  z
+    .object({
+      type: z.literal("rewind"),
+      epoch: z.number().int().positive(),
+      cutoffSequence: z.number().int().nonnegative(),
+    })
+    .strip(),
+  z.object({ type: z.literal("resync") }).strip(),
 ]);
 
 const sessionProtocolChangeSchema = z.discriminatedUnion("type", [
@@ -2328,7 +2536,6 @@ const sessionProtocolChangeSchema = z.discriminatedUnion("type", [
     .object({
       type: z.literal("message.append"),
       message: sessionProtocolMessageSchema,
-      timelineItem: sessionProtocolTimelineItemSchema.optional(),
     })
     .strip(),
   z
@@ -2354,14 +2561,15 @@ const sessionProtocolChangeSchema = z.discriminatedUnion("type", [
     .strip(),
   z
     .object({
-      type: z.literal("timeline.replace"),
-      item: sessionProtocolTimelineItemSchema,
+      type: z.literal("timeline.remove"),
+      id: nonEmptyStringSchema,
     })
     .strip(),
   z
     .object({
-      type: z.literal("timeline.remove"),
-      id: nonEmptyStringSchema,
+      type: z.literal("timeline.advance"),
+      epoch: z.number().int().positive(),
+      sequence: z.number().int().positive(),
     })
     .strip(),
   z
@@ -2373,6 +2581,18 @@ const sessionProtocolChangeSchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("tool.remove"),
+      id: nonEmptyStringSchema,
+    })
+    .strip(),
+  z
+    .object({
+      type: z.literal("operation.set"),
+      operation: sessionProtocolOperationSchema,
+    })
+    .strip(),
+  z
+    .object({
+      type: z.literal("operation.remove"),
       id: nonEmptyStringSchema,
     })
     .strip(),
@@ -2424,7 +2644,7 @@ const sessionProtocolDeltaMessageSchema = z
     sessionId: nonEmptyStringSchema,
     fromRevision: z.number().int().positive().nullable(),
     toRevision: z.number().int().positive(),
-    reason: sessionProtocolDeltaReasonSchema,
+    cause: sessionProtocolDeltaCauseSchema,
     delta: sessionProtocolDeltaSchema,
   })
   .strip()
@@ -2472,6 +2692,33 @@ const sessionProtocolDeltaMessageSchema = z
         message: "snapshot.reset revision must equal toRevision",
       });
     }
+    if (message.cause.type === "compaction") {
+      if (
+        message.delta.type !== "snapshot.reset" ||
+        message.cause.epoch !== message.cause.previousEpoch + 1 ||
+        message.delta.snapshot.timeline.epoch !== message.cause.epoch
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["cause"],
+          message: "compaction cause must reset the snapshot to the next timeline epoch",
+        });
+      }
+    }
+    if (message.cause.type === "rewind") {
+      const { cutoffSequence, epoch } = message.cause;
+      if (
+        message.delta.type !== "snapshot.reset" ||
+        message.delta.snapshot.timeline.epoch !== epoch ||
+        message.delta.snapshot.timeline.items.some((item) => item.sequence > cutoffSequence)
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["cause"],
+          message: "rewind cause must reset and truncate the active timeline epoch",
+        });
+      }
+    }
   });
 
 const sessionProtocolEphemeralAgentThreadUpdateEventSchema = z
@@ -2489,43 +2736,31 @@ const sessionProtocolEphemeralAgentThreadUpdateEventSchema = z
   })
   .strip();
 
-const sessionProtocolFeedbackEventSchema = z.union([
-  z
-    .object({
-      type: z.literal("feedback.activity.started"),
-      id: nonEmptyStringSchema,
-      text: nonEmptyStringSchema,
-    })
-    .strip(),
-  z
-    .object({
-      type: z.literal("feedback.activity.finished"),
-      id: nonEmptyStringSchema,
-    })
-    .strip(),
-  z
-    .object({
-      type: z.literal("feedback.notice"),
-      title: noticeTitleSchema,
-      tone: z.enum(["default", "error"]),
-      presentation: z.literal("footer"),
-      durationMs: z.number().int().positive().max(60_000),
-    })
-    .strip(),
-  z
-    .object({
-      type: z.literal("feedback.notice"),
-      title: noticeTitleSchema,
-      content: z.array(z.string()).min(1).optional(),
-      tone: z.enum(["default", "error"]),
-      presentation: z.literal("transcript"),
-    })
-    .strip(),
-]);
+const sessionProtocolFeedbackEventSchema = z
+  .object({
+    type: z.literal("feedback.notice"),
+    title: noticeTitleSchema,
+    tone: z.enum(["default", "error"]),
+    presentation: z.literal("footer"),
+    durationMs: z.number().int().positive().max(60_000),
+  })
+  .strip();
+
+const sessionProtocolEphemeralTimelineEventSchema = z
+  .object({
+    type: z.literal("timeline.item"),
+    epoch: z.number().int().positive(),
+    item: sessionProtocolTimelineItemSchema.refine(
+      (item) => item.type === "notice",
+      "ephemeral timeline items must be notices",
+    ),
+  })
+  .strip();
 
 const sessionProtocolEphemeralEventSchema = z.union([
   sessionProtocolEphemeralAgentThreadUpdateEventSchema,
   sessionProtocolFeedbackEventSchema,
+  sessionProtocolEphemeralTimelineEventSchema,
 ]);
 
 const sessionProtocolEphemeralMessageSchema = z
@@ -2822,7 +3057,7 @@ export function createSessionProtocolDeltaMessage(options: {
   sessionId: string;
   fromRevision: number | null;
   toRevision: number;
-  reason: SessionProtocolDeltaReason;
+  cause: SessionProtocolDeltaCause;
   delta: SessionProtocolDelta;
 }): SessionProtocolDeltaMessage {
   const message = {
@@ -2831,7 +3066,7 @@ export function createSessionProtocolDeltaMessage(options: {
     sessionId: options.sessionId,
     fromRevision: options.fromRevision,
     toRevision: options.toRevision,
-    reason: options.reason,
+    cause: options.cause,
     delta: options.delta,
   };
   const parsedMessage = sessionProtocolDeltaMessageSchema.safeParse(message);
@@ -2884,6 +3119,36 @@ export function createSessionProtocolPendingUserMessagesMessage(options: {
   return parsedMessage.data as SessionProtocolPendingUserMessagesMessage;
 }
 
+function validateSnapshotResetCause(
+  snapshot: SessionProtocolSnapshot,
+  message: SessionProtocolDeltaMessage,
+): void {
+  if (message.delta.type !== "snapshot.reset") {
+    return;
+  }
+  if (
+    message.cause.type === "compaction" &&
+    message.cause.previousEpoch !== snapshot.timeline.epoch
+  ) {
+    throw new Error(
+      `compaction delta previous epoch ${message.cause.previousEpoch} does not match current timeline epoch ${snapshot.timeline.epoch}`,
+    );
+  }
+  if (message.cause.type !== "rewind") {
+    return;
+  }
+  if (message.cause.epoch !== snapshot.timeline.epoch) {
+    throw new Error(
+      `rewind delta epoch ${message.cause.epoch} does not match current timeline epoch ${snapshot.timeline.epoch}`,
+    );
+  }
+  if (message.cause.cutoffSequence > snapshot.timeline.sequence) {
+    throw new Error(
+      `rewind delta cutoff sequence ${message.cause.cutoffSequence} exceeds current timeline sequence ${snapshot.timeline.sequence}`,
+    );
+  }
+}
+
 export function applySessionProtocolDelta(
   snapshot: SessionProtocolSnapshot,
   message: SessionProtocolDeltaMessage,
@@ -2895,6 +3160,7 @@ export function applySessionProtocolDelta(
   }
 
   if (message.delta.type === "snapshot.reset") {
+    validateSnapshotResetCause(snapshot, message);
     return structuredClone(message.delta.snapshot);
   }
 
@@ -2936,9 +3202,6 @@ export function applySessionProtocolDelta(
         break;
       case "message.append":
         next.messages.push(structuredClone(change.message));
-        if (change.timelineItem) {
-          next.timeline.push(structuredClone(change.timelineItem));
-        }
         break;
       case "message.replace": {
         const index = next.messages.findIndex((entry) => entry.id === change.message.id);
@@ -2954,25 +3217,29 @@ export function applySessionProtocolDelta(
         break;
       }
       case "timeline.append":
-        next.timeline.push(structuredClone(change.item));
+        next.timeline.items.push(structuredClone(change.item));
+        next.timeline.sequence = Math.max(next.timeline.sequence, change.item.sequence);
         break;
-      case "timeline.replace": {
-        const index = next.timeline.findIndex((item) => item.id === change.item.id);
-        if (index === -1) {
-          next.timeline.push(structuredClone(change.item));
-        } else {
-          next.timeline[index] = structuredClone(change.item);
-        }
-        break;
-      }
       case "timeline.remove":
-        next.timeline = next.timeline.filter((item) => item.id !== change.id);
+        next.timeline.items = next.timeline.items.filter((item) => item.id !== change.id);
+        break;
+      case "timeline.advance":
+        if (next.timeline.epoch !== change.epoch) {
+          throw new Error("timeline advance epoch does not match the active epoch");
+        }
+        next.timeline.sequence = Math.max(next.timeline.sequence, change.sequence);
         break;
       case "tool.set":
         next.tools[change.tool.id] = structuredClone(change.tool);
         break;
       case "tool.remove":
         delete next.tools[change.id];
+        break;
+      case "operation.set":
+        next.operations[change.operation.id] = structuredClone(change.operation);
+        break;
+      case "operation.remove":
+        delete next.operations[change.id];
         break;
       case "agent.set":
         next.agents[change.agent.id] = structuredClone(change.agent);
@@ -3026,17 +3293,16 @@ function changeCanInvalidateSnapshot(
       const previous = snapshot.facets[change.facet.id];
       return !previous || !hasSameFacetSubject(previous, change.facet);
     }
-    case "timeline.replace": {
-      const previous = snapshot.timeline.find((item) => item.id === change.item.id);
-      return !previous || !hasSameTimelineReferences(previous, change.item);
-    }
     case "agent-state.set":
     case "message.append":
     case "message.replace":
     case "message.content.append":
     case "timeline.append":
     case "timeline.remove":
+    case "timeline.advance":
     case "tool.remove":
+    case "operation.set":
+    case "operation.remove":
     case "agent.remove":
     case "facet.remove":
       return true;
@@ -3080,25 +3346,6 @@ function hasSameFacetSubject(previous: SessionProtocolFacet, facet: SessionProto
   );
 }
 
-function hasSameTimelineReferences(
-  previous: SessionProtocolTimelineItem,
-  item: SessionProtocolTimelineItem,
-): boolean {
-  if (previous.type !== item.type) return false;
-  if (previous.type === "message" && item.type === "message") {
-    return previous.messageId === item.messageId;
-  }
-  if (previous.type === "notice" && item.type === "notice") {
-    if (previous.notice.subject.type !== item.notice.subject.type) return false;
-    return (
-      previous.notice.subject.type === "session" ||
-      (item.notice.subject.type === "message" &&
-        previous.notice.subject.id === item.notice.subject.id)
-    );
-  }
-  return true;
-}
-
 function applyKeyedRecordDelta(
   snapshot: SessionProtocolSnapshot,
   message: SessionProtocolDeltaMessage,
@@ -3108,12 +3355,17 @@ function applyKeyedRecordDelta(
   }
 
   let nextTools: SessionProtocolSnapshot["tools"] | undefined;
+  let nextOperations: SessionProtocolSnapshot["operations"] | undefined;
   let nextAgents: SessionProtocolSnapshot["agents"] | undefined;
   let nextFacets: SessionProtocolSnapshot["facets"] | undefined;
 
   const cloneTools = () => {
     nextTools ??= { ...snapshot.tools };
     return nextTools;
+  };
+  const cloneOperations = () => {
+    nextOperations ??= { ...snapshot.operations };
+    return nextOperations;
   };
   const cloneAgents = () => {
     nextAgents ??= { ...snapshot.agents };
@@ -3131,6 +3383,12 @@ function applyKeyedRecordDelta(
         break;
       case "tool.remove":
         delete cloneTools()[change.id];
+        break;
+      case "operation.set":
+        cloneOperations()[change.operation.id] = structuredClone(change.operation);
+        break;
+      case "operation.remove":
+        delete cloneOperations()[change.id];
         break;
       case "agent.set":
         cloneAgents()[change.agent.id] = structuredClone(change.agent);
@@ -3153,6 +3411,7 @@ function applyKeyedRecordDelta(
     ...snapshot,
     revision: message.toRevision,
     ...(nextTools ? { tools: nextTools } : {}),
+    ...(nextOperations ? { operations: nextOperations } : {}),
     ...(nextAgents ? { agents: nextAgents } : {}),
     ...(nextFacets ? { facets: nextFacets } : {}),
   };
@@ -4443,8 +4702,8 @@ function parseSessionProtocolDeltaMessage(payload: unknown): SessionProtocolOutg
       return fail("session.delta.toRevision must be a positive integer");
     }
 
-    if (hasIssue(deltaMessage.error, ["reason"])) {
-      return fail("session.delta.reason is invalid");
+    if (hasIssue(deltaMessage.error, ["cause"])) {
+      return fail("session.delta.cause is invalid");
     }
 
     if (hasIssue(deltaMessage.error, ["delta"])) {
@@ -4462,7 +4721,7 @@ function parseSessionProtocolDeltaMessage(payload: unknown): SessionProtocolOutg
       sessionId: deltaMessage.data.sessionId,
       fromRevision: deltaMessage.data.fromRevision,
       toRevision: deltaMessage.data.toRevision,
-      reason: deltaMessage.data.reason,
+      cause: deltaMessage.data.cause,
       delta: deltaMessage.data.delta,
     },
   };

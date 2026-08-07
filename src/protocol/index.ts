@@ -132,6 +132,7 @@ export type {
   SessionProtocolTimelineNotice,
   SessionProtocolToolRun,
   SessionProtocolTurnOutcome,
+  SessionProtocolTurnRecord,
   SessionProtocolTurnResult,
   SessionProtocolUnobserveParams,
   SessionProtocolUnobserveResult,

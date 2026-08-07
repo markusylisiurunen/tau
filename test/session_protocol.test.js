@@ -2657,6 +2657,74 @@ describe("session_protocol", () => {
     ).toThrow("session protocol error response is invalid");
   });
 
+  it("validates and applies durable turn record deltas", () => {
+    const snapshot = createProtocolSnapshot({ sessionId: "session-1", revision: 1 });
+    const running = {
+      userHistoryEntryId: "turn-1",
+      state: "running",
+    };
+    const accepted = applySessionProtocolDelta(
+      snapshot,
+      createSessionProtocolDeltaMessage({
+        sessionId: "session-1",
+        fromRevision: 1,
+        toRevision: 2,
+        cause: { type: "user-message" },
+        delta: { type: "snapshot.patch", changes: [{ type: "turn.set", turn: running }] },
+      }),
+    );
+    expect(accepted.turns).toEqual({ "turn-1": running });
+    expect(accepted.messages).toBe(snapshot.messages);
+    expect(accepted.timeline).toBe(snapshot.timeline);
+
+    const settled = {
+      userHistoryEntryId: "turn-1",
+      state: "settled",
+      outcome: { status: "completed", stopReason: "stop" },
+    };
+    expect(
+      applySessionProtocolDelta(
+        accepted,
+        createSessionProtocolDeltaMessage({
+          sessionId: "session-1",
+          fromRevision: 2,
+          toRevision: 3,
+          cause: { type: "assistant-message" },
+          delta: { type: "snapshot.patch", changes: [{ type: "turn.set", turn: settled }] },
+        }),
+      ).turns,
+    ).toEqual({ "turn-1": settled });
+
+    expect(() =>
+      applySessionProtocolDelta(
+        { ...accepted, turns: { "turn-1": settled } },
+        createSessionProtocolDeltaMessage({
+          sessionId: "session-1",
+          fromRevision: 2,
+          toRevision: 3,
+          cause: { type: "user-message" },
+          delta: { type: "snapshot.patch", changes: [{ type: "turn.set", turn: running }] },
+        }),
+      ),
+    ).toThrow("settled turn 'turn-1' cannot be changed");
+
+    expect(
+      validateSessionProtocolResult("session.snapshot", {
+        ...snapshot,
+        turns: {
+          "turn-1": { userHistoryEntryId: "different-turn", state: "running" },
+        },
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        message: expect.stringContaining(
+          "turn map key 'turn-1' does not match embedded user history entry id 'different-turn'",
+        ),
+      }),
+    });
+  });
+
   it("bounds notice presentation before it enters the protocol", () => {
     const presentation = projectSessionProtocolNoticePresentation(
       "t".repeat(600),

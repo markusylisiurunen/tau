@@ -6,6 +6,7 @@ export type {
   SessionProtocolPendingUserMessagesMessage,
   SessionProtocolPendingUserMessagesState,
   SessionProtocolSnapshot,
+  SessionProtocolTurnRecord,
 } from "../protocol/index.js";
 export { applySessionProtocolDelta } from "../protocol/index.js";
 export type {
@@ -74,6 +75,7 @@ export type {
   TauSdkSessionSubmitResult,
   TauSdkSessionSummary,
   TauSdkSessionTurnOutcome,
+  TauSdkSessionTurnRecord,
   TauSdkSessionUnobserveResult,
   TauSdkSessionUserMessageOptions,
   TauSdkTransportClientOptions,
@@ -81,3 +83,18 @@ export type {
 } from "./types.js";
 export type { TauSdkUserTextProjection } from "./user_text.js";
 export { getTauUserDisplayText, getTauUserModelText, projectTauUserText } from "./user_text.js";
+
+export function getTauSdkSessionTurnRecord(
+  snapshot: import("../protocol/index.js").SessionProtocolSnapshot,
+  userHistoryEntryId: string,
+): import("./types.js").TauSdkSessionTurnRecord | undefined {
+  return snapshot.turns[userHistoryEntryId];
+}
+
+export function getTauSdkSessionTurnOutcome(
+  snapshot: import("../protocol/index.js").SessionProtocolSnapshot,
+  userHistoryEntryId: string,
+): import("./types.js").TauSdkSessionTurnOutcome | undefined {
+  const record = snapshot.turns[userHistoryEntryId];
+  return record?.state === "settled" ? record.outcome : undefined;
+}

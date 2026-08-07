@@ -139,6 +139,7 @@ export function createProtocolSnapshot(overrides = {}) {
       home: "/home/user",
     },
     messages,
+    turns: overrides.turns ?? {},
     timeline,
     tools,
     operations,

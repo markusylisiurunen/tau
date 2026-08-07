@@ -112,6 +112,12 @@ function createHostedSession(sessionId, sessions, options = {}) {
         userHistoryEntryId,
       };
     },
+    async acceptTurn(options) {
+      return await hostedSession.record(options);
+    },
+    async runAcceptedTurn(userHistoryEntryId) {
+      return { userHistoryEntryId, turn: await hostedSession.runTurn() };
+    },
     async runTurn() {
       running = true;
       try {

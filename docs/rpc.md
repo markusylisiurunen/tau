@@ -66,7 +66,7 @@ WebSocket clients receive the same `ready`, `response`, `session.delta`, and `se
 every protocol message includes `version`.
 
 ```json
-{ "version": 9, "type": "..." }
+{ "version": 10, "type": "..." }
 ```
 
 server-to-client messages are:
@@ -87,7 +87,7 @@ when the rpc server starts, it immediately emits a `ready` line:
 
 ```json
 {
-  "version": 9,
+  "version": 10,
   "type": "ready",
   "methods": [
     "initialize",
@@ -147,7 +147,7 @@ state transitions:
 
 Openability preserves access to the semantic session, not byte-for-byte state or identical historical presentation. Depending on the changed persisted contract, recovery may use document migration, independently versioned payload handling, normalization, regeneration from canonical state, or an explicit degraded representation for nonessential data. Compatibility handling stays at the owning version or recovery boundary so current runtime contracts remain canonical. Verification loads representative older files through normal recovery and the affected current consumer, checking that important semantic data remains accessible without requiring identical UI output. Storage-format decoding rejects corrupted documents and documents created by a genuinely newer unsupported storage version; recovery can still fail for independent external reasons such as an unavailable execution environment.
 
-Stored sessions recover from persisted snapshot state, including immutable creation attributes and timestamp, independent durable agent revision/context accounting state, current settings, cumulative cost, bootstrap metadata, catalog metadata, execution environment identity, messages, timeline items, tools, and non-agent facets; host-only config is resolved by the host and is not serialized into the snapshot. The separately stored transcript history is for discovery and reading, not session recovery. Supervised subagent runtimes are not recoverable across process restart, so recovery discards persisted agents and agent-owned facets before returning and rewrites the normalized snapshot. The agent revision is not the protocol snapshot revision. A fresh persisted usage checkpoint lets the first model subturn after recovery make the same automatic-compaction decision as an uninterrupted session. Legacy snapshots without a checkpoint wait for fresh provider usage before automatic compaction. Pending queued and steering messages are transient host state rather than snapshot state: they survive client detach while the hosted session remains in memory, but they are discarded on host restart or session recovery so recovered sessions never resume work without new user input.
+Stored sessions recover from persisted snapshot state, including immutable creation attributes and timestamp, independent durable agent revision/context accounting state, current settings, cumulative cost, bootstrap metadata, catalog metadata, execution environment identity, messages, the durable logical-turn ledger, timeline items, tools, and non-agent facets; host-only config is resolved by the host and is not serialized into the snapshot. The separately stored transcript history is for discovery and reading, not session recovery. Supervised subagent runtimes are not recoverable across process restart, so recovery discards persisted agents and agent-owned facets before returning and rewrites the normalized snapshot. The agent revision is not the protocol snapshot revision. A fresh persisted usage checkpoint lets the first model subturn after recovery make the same automatic-compaction decision as an uninterrupted session. Legacy snapshots without a checkpoint wait for fresh provider usage before automatic compaction. Pending queued and steering messages are transient host state rather than snapshot state: they survive client detach while the hosted session remains in memory, but they are discarded on host restart or session recovery so recovered sessions never resume work without new user input.
 
 Main sessions, supervised background agents, and ephemeral threads use the same stateful agent runtime for model streaming, tool admission and execution, retries, recovery, context accounting, steering boundaries, and compaction. The runtime emits ordered semantic transitions through one awaited sink. The hosted-session adapter applies those transitions to protocol snapshots and persists durable state before acknowledging them; child supervision, ephemeral thread maps and forks, pending normal submissions, and usage attribution are separate host concerns.
 
@@ -157,7 +157,7 @@ all requests use this envelope:
 
 ```json
 {
-  "version": 9,
+  "version": 10,
   "type": "request",
   "id": "req-1",
   "method": "session.submit",
@@ -190,12 +190,12 @@ params (required):
 
 ```json
 {
-  "version": 9,
+  "version": 10,
   "type": "response",
   "id": "init-1",
   "ok": true,
   "result": {
-    "protocolVersion": 9,
+    "protocolVersion": 10,
     "methods": [
       "initialize",
       "session.create",
@@ -434,13 +434,13 @@ success result:
 }
 ```
 
-`turn` is the request's discriminated terminal outcome. Completed turns include the model `stopReason`; failed turns use status `failed`, stop reason `error`, and an optional `errorMessage`; interrupted turns use status and stop reason `aborted`. Blocked turns include a reason and message instead of a stop reason. Currently the only blocked reason is `auto-compaction-failed`, which means Tau could not compact safely before continuing the turn. Completed outcomes are not duplicated in snapshots. Exceptional failed or blocked outcomes that are not already represented by a failed assistant message are persisted at settlement as semantic `tau.turn.failed` or `tau.turn.blocked` timeline notices. A runtime exception successfully settled this way returns a normal success response with a failed turn outcome; if Tau cannot settle the failure, the request returns a protocol error instead.
+`turn` is the request's discriminated terminal outcome. Completed turns include the model `stopReason`; failed turns use status `failed`, stop reason `error`, and an optional `errorMessage`; interrupted turns use status and stop reason `aborted`. Blocked turns include a reason and message instead of a stop reason. Currently the only blocked reason is `auto-compaction-failed`, which means Tau could not compact safely before continuing the turn. Every accepted submitted user turn has a durable `snapshot.turns[userHistoryEntryId]` record. It is `running` once acceptance is committed and becomes `settled` with the same terminal outcome returned by the live request. Compaction and rewind do not remove these receipts, and recovery settles interrupted running records as aborted. Timeline notices remain presentation feedback and are never decoded as outcomes. Exceptional failed or blocked outcomes that are not already represented by a failed assistant message are persisted at settlement as semantic `tau.turn.failed` or `tau.turn.blocked` timeline notices. A runtime exception successfully settled this way returns a normal success response with a failed turn outcome; if Tau cannot settle the failure, the request returns a protocol error instead.
 
 if another turn is already running, tau returns:
 
 ```json
 {
-  "version": 9,
+  "version": 10,
   "type": "response",
   "id": "submit-2",
   "ok": false,
@@ -887,7 +887,7 @@ observed-session changes are broadcast as `session.delta` messages:
 
 ```json
 {
-  "version": 9,
+  "version": 10,
   "type": "session.delta",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "fromRevision": 1,
@@ -911,7 +911,7 @@ observed-session changes are broadcast as `session.delta` messages:
 
 ```json
 {
-  "version": 9,
+  "version": 10,
   "type": "session.delta",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "fromRevision": null,
@@ -924,7 +924,7 @@ observed-session changes are broadcast as `session.delta` messages:
 }
 ```
 
-`snapshot.patch` changes include lifecycle, goal, message, timeline, tool, operation, agent, and facet updates. Message and timeline appends are separate explicit changes in the same atomic patch. High-rate assistant streaming uses `message.content.append` after the draft assistant message exists so clients do not receive the full accumulated assistant text on every frame. A content append targets only draft assistant messages and must include non-empty `text` and/or `thinking`; when a thinking block is created, clients insert it before the text block so applying patches reconstructs the canonical assistant content order.
+`snapshot.patch` changes include lifecycle, goal, logical-turn (`turn.set`), message, timeline, tool, operation, agent, and facet updates. Message and timeline appends are separate explicit changes in the same atomic patch. High-rate assistant streaming uses `message.content.append` after the draft assistant message exists so clients do not receive the full accumulated assistant text on every frame. A content append targets only draft assistant messages and must include non-empty `text` and/or `thinking`; when a thinking block is created, clients insert it before the text block so applying patches reconstructs the canonical assistant content order.
 
 `cause` describes the semantic transition. Ordinary causes are `user-message`, `assistant-stream`, `assistant-message`, `tool-run`, `tool-result`, `notice`, `agent-run`, `maintenance`, `configuration`, and `goal`. `compaction` includes the previous and new epochs, manual/automatic kind, cut type, and retained-message count. `rewind` includes the active epoch and cutoff sequence. `resync` identifies recovery synchronization. Compaction and rewind use `snapshot.reset`; clients must use the structured cause instead of inferring transitions from message metadata or titles. Applying a destructive reset requires its previous/current epoch and rewind cutoff to match the current timeline state. Deltas whose target revision has already been observed are stale and must not replay presentation transitions.
 
@@ -942,7 +942,7 @@ notes:
 
 ```json
 {
-  "version": 9,
+  "version": 10,
   "type": "session.pendingUserMessages",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "state": {
@@ -965,7 +965,7 @@ Pending messages are shared across attached clients and survive client detach wh
 
 ```json
 {
-  "version": 9,
+  "version": 10,
   "type": "session.ephemeral",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "event": {
@@ -986,7 +986,7 @@ Ephemeral-agent progress uses the same envelope:
 
 ```json
 {
-  "version": 9,
+  "version": 10,
   "type": "session.ephemeral",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "event": {
@@ -1017,7 +1017,7 @@ error responses use:
 
 ```json
 {
-  "version": 9,
+  "version": 10,
   "type": "response",
   "id": "req-1",
   "ok": false,

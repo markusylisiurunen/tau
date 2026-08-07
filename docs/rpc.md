@@ -978,7 +978,7 @@ Pending messages are shared across attached clients and survive client detach wh
 }
 ```
 
-Footer notices require a `title`, `default` or `error` tone, and a positive `durationMs` of at most 60 seconds. Stateful host activity is represented by semantic snapshot state such as a running maintenance operation, not a parallel ephemeral lifecycle.
+Footer notices require a `title`, `default` or `error` tone, and a positive `durationMs` of at most 60 seconds. Notice titles are limited to 512 characters. Notice content may contain at most 16 entries of 4,096 characters each. Stateful host activity is represented by semantic snapshot state such as a running maintenance operation, not a parallel ephemeral lifecycle.
 
 Ephemeral transcript notices use `{ "type": "timeline.item", "epoch": number, "item": noticeTimelineItem }`. They share the durable notice contract and `(epoch, sequence)` ordering, but the item is sent only to currently attached clients and is omitted from persisted snapshots. The host persists the advanced timeline sequence high-water mark so a later durable item cannot reuse the ephemeral sequence. Durable notices use an open lowercase dotted `kind`, version, severity, generic subject, bounded presentation, and structured data. `tau.*` kinds are reserved for Tau core. Clients use kinds and live request outcomes rather than parsing titles or correlating notice timing. Provider failures and interruptions remain canonical assistant-message state instead of duplicate notices. The Tau TUI derives transcript feedback at the affected message's timeline position, while exceptional failed or blocked turns without a failed assistant are themselves durable semantic notices.
 

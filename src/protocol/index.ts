@@ -151,6 +151,7 @@ export {
   isSessionProtocolMethod,
   parseSessionProtocolOutgoingLine,
   parseSessionProtocolRequestLine,
+  projectSessionProtocolNoticePresentation,
   SESSION_PROTOCOL_ERROR_CODES,
   SESSION_PROTOCOL_MAX_EXEC_CAPTURE_BYTES,
   SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES,

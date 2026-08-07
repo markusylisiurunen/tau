@@ -1,8 +1,11 @@
 import type { SessionProtocolSnapshot } from "../protocol/session_protocol.js";
-import { validateSessionProtocolResult } from "../protocol/session_protocol.js";
+import {
+  projectSessionProtocolNoticePresentation,
+  validateSessionProtocolResult,
+} from "../protocol/session_protocol.js";
 
 export const STORED_SESSION_DOCUMENT_FORMAT = "tau-session" as const;
-export const STORED_SESSION_DOCUMENT_VERSION = 6 as const;
+export const STORED_SESSION_DOCUMENT_VERSION = 7 as const;
 export const LEGACY_SESSION_MODEL_CONTEXT_KEY = "legacy-v3";
 
 export type StoredSessionDocument = {
@@ -20,6 +23,7 @@ const storedSessionMigrations = new Map<number, StoredSessionMigration>([
   [3, migrateStoredSessionV3ToV4],
   [4, migrateStoredSessionV4ToV5],
   [5, migrateStoredSessionV5ToV6],
+  [6, migrateStoredSessionV6ToV7],
 ]);
 
 export class UnsupportedStoredSessionVersionError extends Error {
@@ -184,6 +188,7 @@ function migrateStoredSessionV5ToV6(value: unknown): unknown {
 
   let sequence = 0;
   const items: Record<string, unknown>[] = [];
+  const timelineToolIds = new Set<string>();
   const operations: Record<string, unknown> = {};
   const append = (item: Record<string, unknown>, createdAt: number): void => {
     sequence += 1;
@@ -198,6 +203,7 @@ function migrateStoredSessionV5ToV6(value: unknown): unknown {
         messageTimestamp(messagesById.get(value.messageId)),
       );
       for (const [toolId, tool] of toolsByMessageId.get(value.messageId) ?? []) {
+        timelineToolIds.add(toolId);
         append(
           { type: "tool", id: `timeline-tool-${toolId}`, toolId },
           numericValue(tool, "startedAt") || messageTimestamp(messagesById.get(value.messageId)),
@@ -229,10 +235,10 @@ function migrateStoredSessionV5ToV6(value: unknown): unknown {
               ? value.notice.severity
               : "info",
             subject: isRecord(value.notice.subject) ? value.notice.subject : { type: "session" },
-            presentation: {
-              title: title || "session notice",
-              ...(content.length > 0 ? { content } : {}),
-            },
+            presentation: projectSessionProtocolNoticePresentation(
+              title || "session notice",
+              content,
+            ),
             data: {},
           },
         },
@@ -250,10 +256,47 @@ function migrateStoredSessionV5ToV6(value: unknown): unknown {
     }
   }
 
+  removeToolsWithoutTimelineItems(snapshot, timelineToolIds);
   snapshot.timeline = { epoch: 1, sequence, items };
   snapshot.operations = operations;
   normalizeStoredOperations(snapshot);
   migrateStoredTurnOutcomes(snapshot);
+  return snapshot;
+}
+
+function migrateStoredSessionV6ToV7(value: unknown): unknown {
+  if (!isRecord(value)) {
+    throw new Error("stored session version 6 snapshot must be an object");
+  }
+
+  const snapshot = structuredClone(value);
+  if (!isRecord(snapshot.timeline) || !Array.isArray(snapshot.timeline.items)) return snapshot;
+
+  for (const item of snapshot.timeline.items) {
+    if (
+      !isRecord(item) ||
+      item.type !== "notice" ||
+      !isRecord(item.notice) ||
+      !isRecord(item.notice.presentation) ||
+      typeof item.notice.presentation.title !== "string"
+    ) {
+      continue;
+    }
+    const content = item.notice.presentation.content;
+    if (
+      content !== undefined &&
+      (!Array.isArray(content) ||
+        content.length === 0 ||
+        !content.every((entry) => typeof entry === "string"))
+    ) {
+      continue;
+    }
+    item.notice.presentation = projectSessionProtocolNoticePresentation(
+      item.notice.presentation.title,
+      content,
+    );
+  }
+
   return snapshot;
 }
 
@@ -392,10 +435,10 @@ function migrateStoredTurnOutcomes(snapshot: Record<string, unknown>): void {
         version: 1,
         severity: "error",
         subject: { type: "message", id: message.id },
-        presentation: {
-          title: blocked ? "turn blocked" : "turn failed",
-          content: [content],
-        },
+        presentation: projectSessionProtocolNoticePresentation(
+          blocked ? "turn blocked" : "turn failed",
+          [content],
+        ),
         data: { reason },
       },
     });
@@ -446,6 +489,33 @@ function numericValue(value: unknown, key: string): number {
 
 function messageTimestamp(message: Record<string, unknown> | undefined): number {
   return message && isRecord(message.message) ? numericValue(message.message, "timestamp") : 0;
+}
+
+function removeToolsWithoutTimelineItems(
+  snapshot: Record<string, unknown>,
+  timelineToolIds: ReadonlySet<string>,
+): void {
+  if (!isRecord(snapshot.tools)) return;
+
+  const removedToolIds = new Set<string>();
+  for (const toolId of Object.keys(snapshot.tools)) {
+    if (timelineToolIds.has(toolId)) continue;
+    delete snapshot.tools[toolId];
+    removedToolIds.add(toolId);
+  }
+
+  if (removedToolIds.size === 0 || !isRecord(snapshot.facets)) return;
+  for (const [facetId, facet] of Object.entries(snapshot.facets)) {
+    if (
+      isRecord(facet) &&
+      isRecord(facet.subject) &&
+      facet.subject.type === "tool" &&
+      typeof facet.subject.id === "string" &&
+      removedToolIds.has(facet.subject.id)
+    ) {
+      delete snapshot.facets[facetId];
+    }
+  }
 }
 
 function removeUnrecoverableAgentPresentation(snapshot: Record<string, unknown>): void {

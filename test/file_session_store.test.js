@@ -372,6 +372,117 @@ describe("FileSessionStore", () => {
     });
   });
 
+  it("drops tool presentation for context-only messages while migrating version 5", async () => {
+    await withTempStore(async (store, directory) => {
+      const snapshot = createProtocolSnapshot({
+        sessionId: "session-1",
+        historyEntries: [
+          {
+            id: "assistant-hidden",
+            message: {
+              role: "assistant",
+              content: [
+                {
+                  type: "toolCall",
+                  id: "tool-hidden",
+                  name: "bash",
+                  arguments: { command: "pwd" },
+                },
+              ],
+              provider: "openai",
+              model: "gpt-5.5",
+              stopReason: "toolUse",
+            },
+          },
+        ],
+        tools: {
+          "tool-hidden": {
+            id: "tool-hidden",
+            toolCallId: "tool-hidden",
+            toolName: "bash",
+            status: "succeeded",
+            call: { messageId: "assistant-hidden", contentIndex: 0 },
+            facetIds: ["tool-hidden-facet"],
+          },
+        },
+        facets: {
+          "tool-hidden-facet": {
+            id: "tool-hidden-facet",
+            subject: { type: "tool", id: "tool-hidden" },
+            kind: "tau.tool-ui-events",
+            version: 1,
+            data: { events: [] },
+          },
+        },
+      });
+      snapshot.timeline = { epoch: 1, sequence: 0, items: [] };
+      const legacy = createVersionFiveSnapshot(snapshot);
+      await mkdir(directory, { recursive: true });
+      await writeFile(
+        join(directory, "c2Vzc2lvbi0x.json"),
+        JSON.stringify({
+          format: STORED_SESSION_DOCUMENT_FORMAT,
+          version: 5,
+          snapshot: legacy,
+        }),
+        "utf8",
+      );
+
+      await expect(store.loadSession("session-1")).resolves.toEqual({
+        ...snapshot,
+        tools: {},
+        facets: {},
+      });
+    });
+  });
+
+  it("bounds notice presentation while migrating version 6", async () => {
+    await withTempStore(async (store, directory) => {
+      const snapshot = createProtocolSnapshot({
+        sessionId: "session-1",
+        timeline: {
+          epoch: 1,
+          sequence: 1,
+          items: [
+            {
+              type: "notice",
+              id: "notice-1",
+              sequence: 1,
+              createdAt: 1,
+              notice: {
+                kind: "tau.test.notice",
+                version: 1,
+                severity: "warn",
+                subject: { type: "session" },
+                presentation: {
+                  title: "t".repeat(600),
+                  content: Array.from({ length: 20 }, () => "x".repeat(5_000)),
+                },
+                data: {},
+              },
+            },
+          ],
+        },
+      });
+      await mkdir(directory, { recursive: true });
+      await writeFile(
+        join(directory, "c2Vzc2lvbi0x.json"),
+        JSON.stringify({
+          format: STORED_SESSION_DOCUMENT_FORMAT,
+          version: 6,
+          snapshot,
+        }),
+        "utf8",
+      );
+
+      const recovered = await store.loadSession("session-1");
+      const presentation = recovered.timeline.items[0].notice.presentation;
+      expect(presentation.title).toHaveLength(512);
+      expect(presentation.content).toHaveLength(16);
+      expect(presentation.content.every((entry) => entry.length <= 4_096)).toBe(true);
+    });
+  });
+
   it("normalizes terminal operation fields while migrating version 5", async () => {
     await withTempStore(async (store, directory) => {
       const snapshot = createSnapshot("session-1", "hello");

@@ -12,6 +12,10 @@ export const SESSION_PROTOCOL_VERSION = 9 as const;
 export const SESSION_PROTOCOL_MAX_EXEC_CAPTURE_BYTES = 24 * 1024 * 1024;
 export const SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES = 16 * 1024 * 1024;
 
+const SESSION_PROTOCOL_NOTICE_TITLE_MAX_CHARS = 512;
+const SESSION_PROTOCOL_NOTICE_CONTENT_MAX_ENTRIES = 16;
+const SESSION_PROTOCOL_NOTICE_CONTENT_ENTRY_MAX_CHARS = 4_096;
+
 export const SESSION_PROTOCOL_METHODS = [
   "initialize",
   "session.create",
@@ -423,6 +427,26 @@ export type SessionProtocolTimelineNotice = {
   };
   data: Record<string, unknown>;
 };
+
+export function projectSessionProtocolNoticePresentation(
+  title: string,
+  content?: readonly string[],
+): SessionProtocolTimelineNotice["presentation"] {
+  const projectedContent = content
+    ? content
+        .slice(0, SESSION_PROTOCOL_NOTICE_CONTENT_MAX_ENTRIES)
+        .map((entry) => truncateNoticeText(entry, SESSION_PROTOCOL_NOTICE_CONTENT_ENTRY_MAX_CHARS))
+    : [];
+  return {
+    title: truncateNoticeText(title, SESSION_PROTOCOL_NOTICE_TITLE_MAX_CHARS),
+    ...(projectedContent.length > 0 ? { content: projectedContent } : {}),
+  };
+}
+
+function truncateNoticeText(value: string, maxChars: number): string {
+  if (value.length <= maxChars) return value;
+  return `${value.slice(0, maxChars - 1)}…`;
+}
 
 export type SessionProtocolTimelineItem =
   | {
@@ -1136,10 +1160,12 @@ const nonEmptyStringSchema = z
   .string()
   .min(1)
   .refine((value) => value.trim().length > 0);
-const noticeTitleSchema = nonEmptyStringSchema.refine(
-  (value) => !value.includes("\n") && !value.includes("\r"),
-  "notice title must be one line",
-);
+const noticeTitleSchema = nonEmptyStringSchema
+  .max(SESSION_PROTOCOL_NOTICE_TITLE_MAX_CHARS)
+  .refine(
+    (value) => !value.includes("\n") && !value.includes("\r"),
+    "notice title must be one line",
+  );
 const sessionProtocolRequestIdSchema = nonEmptyStringSchema;
 const nullableSessionProtocolRequestIdSchema = sessionProtocolRequestIdSchema.nullable();
 const absolutePathSchema = nonEmptyStringSchema.refine((value) => value.startsWith("/"));
@@ -1905,7 +1931,11 @@ const sessionProtocolNoticeSchema = z
     presentation: z
       .object({
         title: noticeTitleSchema,
-        content: z.array(z.string()).min(1).optional(),
+        content: z
+          .array(z.string().max(SESSION_PROTOCOL_NOTICE_CONTENT_ENTRY_MAX_CHARS))
+          .min(1)
+          .max(SESSION_PROTOCOL_NOTICE_CONTENT_MAX_ENTRIES)
+          .optional(),
       })
       .strip(),
     data: z.record(z.string(), z.unknown()),
@@ -3237,7 +3267,12 @@ export function applySessionProtocolDelta(
         if (next.timeline.epoch !== change.epoch) {
           throw new Error("timeline advance epoch does not match the active epoch");
         }
-        next.timeline.sequence = Math.max(next.timeline.sequence, change.sequence);
+        if (change.sequence <= next.timeline.sequence) {
+          throw new Error(
+            `timeline advance sequence ${change.sequence} must exceed current timeline sequence ${next.timeline.sequence}`,
+          );
+        }
+        next.timeline.sequence = change.sequence;
         break;
       case "tool.set":
         next.tools[change.tool.id] = structuredClone(change.tool);

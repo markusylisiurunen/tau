@@ -1501,6 +1501,92 @@ describe("SessionChatController", () => {
     expect(view.messages.some((message) => message.id === "active-ephemeral")).toBe(false);
   });
 
+  it("keeps repeated timeline item ids in their respective compacted segments", async () => {
+    const notice = {
+      type: "notice",
+      id: "notice-history-unavailable",
+      sequence: 1,
+      createdAt: 1,
+      notice: {
+        kind: "tau.history.unavailable",
+        version: 1,
+        severity: "warn",
+        subject: { type: "session" },
+        presentation: { title: "history unavailable before compaction" },
+        data: {},
+      },
+    };
+    const snapshot = createProtocolSnapshot({
+      timeline: { epoch: 1, sequence: 1, items: [notice] },
+    });
+    const session = new FakeSession(snapshot);
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot,
+      targetLabel: "in-process",
+    });
+    controller.start();
+
+    const compactedSnapshot = createProtocolSnapshot({
+      sessionId: snapshot.sessionId,
+      revision: 2,
+      timeline: { epoch: 2, sequence: 0, items: [] },
+    });
+    for (const listener of session.listeners) {
+      listener(
+        createResetDelta(session.id, 1, compactedSnapshot, {
+          type: "compaction",
+          previousEpoch: 1,
+          epoch: 2,
+          kind: "manual",
+          cutType: "turn-boundary",
+          retainedMessageCount: 0,
+        }),
+      );
+      listener({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "session.delta",
+        sessionId: session.id,
+        fromRevision: 2,
+        toRevision: 3,
+        cause: { type: "notice" },
+        delta: {
+          type: "snapshot.patch",
+          changes: [
+            {
+              type: "timeline.append",
+              item: {
+                ...notice,
+                sequence: 1,
+                createdAt: 2,
+                notice: {
+                  ...notice.notice,
+                  presentation: { title: "history unavailable after compaction" },
+                },
+              },
+            },
+          ],
+        },
+      });
+    }
+
+    const notices = view.messages.filter(
+      (message) =>
+        message.model.type === "transcript_notice" &&
+        message.model.title.startsWith("history unavailable"),
+    );
+    expect(notices).toHaveLength(2);
+    expect(notices[0].id).not.toBe(notices[1].id);
+    const dividerIndex = view.messages.findIndex(
+      (message) =>
+        message.model.type === "session_divider" && message.model.label === "compacted context",
+    );
+    expect(view.messages.indexOf(notices[0])).toBeLessThan(dividerIndex);
+    expect(view.messages.indexOf(notices[1])).toBeGreaterThan(dividerIndex);
+  });
+
   it("shows auto-compaction operation status in the footer", async () => {
     const snapshot = createProtocolSnapshot({
       timeline: [

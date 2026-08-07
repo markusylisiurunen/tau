@@ -134,8 +134,11 @@ export class SessionChatController {
   private readonly diffReviewService: DiffReviewService;
   private snapshot: SessionProtocolSnapshot;
   private readonly renderedMessageIds: string[] = [];
+  private readonly viewMessageIds = new Map<string, string>();
+  private readonly usedViewMessageIds = new Set<string>();
   private readonly hiddenHistoryEntryIds = new Set<string>();
   private readonly ephemeralTimelineItems = new Map<string, SessionProtocolTimelineItem>();
+  private renderSegment = 0;
   private observedSessionRevision: number;
   private eventUnsubscribe?: () => void;
   private ephemeralUnsubscribe?: () => void;
@@ -557,7 +560,7 @@ export class SessionChatController {
       });
       if (result.userHistoryEntryId) {
         this.hiddenHistoryEntryIds.add(result.userHistoryEntryId);
-        this.renderedMessageIds.push(result.userHistoryEntryId);
+        this.renderedMessageIds.push(this.getViewMessageId(result.userHistoryEntryId));
       }
       this.view.updateLocalToolUi({
         toolCallId,
@@ -1228,14 +1231,15 @@ export class SessionChatController {
       return true;
     }
 
-    if (this.renderedMessageIds.includes(message.id)) {
+    const viewMessageId = this.getViewMessageId(message.id);
+    if (this.renderedMessageIds.includes(viewMessageId)) {
       if (model.type === "assistant" || model.type === "assistant_partial") {
-        this.view.updateAssistantMessage(message.id, model);
+        this.view.updateAssistantMessage(viewMessageId, model);
       } else {
-        this.view.updateMessage(message.id, model);
+        this.view.updateMessage(viewMessageId, model);
       }
     } else {
-      this.renderedMessageIds.push(this.view.addMessage(model, message.id));
+      this.renderedMessageIds.push(this.view.addMessage(model, viewMessageId));
     }
     return true;
   }
@@ -1293,10 +1297,28 @@ export class SessionChatController {
     return true;
   }
 
+  private getViewMessageId(protocolId: string): string {
+    const existingId = this.viewMessageIds.get(protocolId);
+    if (existingId) return existingId;
+
+    let viewId = protocolId;
+    if (this.usedViewMessageIds.has(viewId)) {
+      const baseId = `timeline-segment:${this.renderSegment}:${protocolId}`;
+      viewId = baseId;
+      for (let suffix = 2; this.usedViewMessageIds.has(viewId); suffix += 1) {
+        viewId = `${baseId}:${suffix}`;
+      }
+    }
+    this.viewMessageIds.set(protocolId, viewId);
+    this.usedViewMessageIds.add(viewId);
+    return viewId;
+  }
+
   private renderSnapshot(snapshot: SessionProtocolSnapshot): void {
     this.snapshot = snapshot;
     this.observedSessionRevision = Math.max(this.observedSessionRevision, snapshot.revision);
     for (const item of getRenderableTimelineItems(snapshot, this.ephemeralTimelineItems.values())) {
+      const viewMessageId = this.getViewMessageId(item.id);
       if (item.type === "notice") {
         this.renderedMessageIds.push(
           this.view.addMessage(
@@ -1306,15 +1328,15 @@ export class SessionChatController {
               ...(item.content ? { content: item.content } : {}),
               tone: item.severity === "error" ? "error" : "default",
             },
-            item.id,
+            viewMessageId,
           ),
         );
       } else if (item.type === "tool") {
         this.renderedMessageIds.push(
-          this.view.addMessage({ type: "tool", tool: item.model }, item.id),
+          this.view.addMessage({ type: "tool", tool: item.model }, viewMessageId),
         );
       } else {
-        this.renderProtocolMessage(item.message);
+        this.renderProtocolMessage(item.message, viewMessageId);
       }
     }
     this.syncSnapshotToolAndAgentUi(snapshot);
@@ -1330,13 +1352,13 @@ export class SessionChatController {
     this.view.startWorkingIcon();
   }
 
-  private renderProtocolMessage(message: SessionProtocolMessage): void {
+  private renderProtocolMessage(message: SessionProtocolMessage, viewMessageId: string): void {
     const model = this.buildProtocolMessageModel(message);
     if (!model) {
       return;
     }
 
-    this.renderedMessageIds.push(this.view.addMessage(model, message.id));
+    this.renderedMessageIds.push(this.view.addMessage(model, viewMessageId));
   }
 
   private syncRenderedHistory(snapshot: SessionProtocolSnapshot): void {
@@ -1344,7 +1366,7 @@ export class SessionChatController {
     this.observedSessionRevision = Math.max(this.observedSessionRevision, snapshot.revision);
 
     const items = getRenderableTimelineItems(snapshot, this.ephemeralTimelineItems.values());
-    const snapshotIds = new Set(items.map((item) => item.id));
+    const snapshotIds = new Set(items.map((item) => this.getViewMessageId(item.id)));
     const staleIds = this.renderedMessageIds.filter((id) => !snapshotIds.has(id));
     if (staleIds.length > 0) {
       this.view.removeMessages(staleIds);
@@ -1358,9 +1380,10 @@ export class SessionChatController {
     );
 
     for (const item of items) {
+      const viewMessageId = this.getViewMessageId(item.id);
       if (item.type === "message" && this.hiddenHistoryEntryIds.has(item.id)) {
-        if (!renderedIds.has(item.id)) {
-          this.renderedMessageIds.push(item.id);
+        if (!renderedIds.has(viewMessageId)) {
+          this.renderedMessageIds.push(viewMessageId);
         }
         continue;
       }
@@ -1380,14 +1403,14 @@ export class SessionChatController {
         continue;
       }
 
-      if (renderedIds.has(item.id)) {
+      if (renderedIds.has(viewMessageId)) {
         if (model.type === "assistant") {
-          this.view.updateAssistantMessage(item.id, model);
+          this.view.updateAssistantMessage(viewMessageId, model);
         } else {
-          this.view.updateMessage(item.id, model);
+          this.view.updateMessage(viewMessageId, model);
         }
       } else {
-        this.renderedMessageIds.push(this.view.addMessage(model, item.id));
+        this.renderedMessageIds.push(this.view.addMessage(model, viewMessageId));
       }
     }
 
@@ -1566,6 +1589,8 @@ export class SessionChatController {
   }
 
   private startLocalUiSession(): void {
+    this.renderSegment += 1;
+    this.viewMessageIds.clear();
     this.ephemeralTimelineItems.clear();
     this.hiddenHistoryEntryIds.clear();
     this.renderedMessageIds.splice(0);
@@ -1573,6 +1598,8 @@ export class SessionChatController {
   }
 
   private startCompactedUiSession(): void {
+    this.renderSegment += 1;
+    this.viewMessageIds.clear();
     this.ephemeralTimelineItems.clear();
     this.hiddenHistoryEntryIds.clear();
     this.renderedMessageIds.splice(0);

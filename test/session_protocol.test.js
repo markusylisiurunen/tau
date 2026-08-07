@@ -11,6 +11,7 @@ import {
   createSessionProtocolSuccessResponse,
   parseSessionProtocolOutgoingLine,
   parseSessionProtocolRequestLine,
+  projectSessionProtocolNoticePresentation,
   SESSION_PROTOCOL_ERROR_CODES,
   SESSION_PROTOCOL_METHODS,
   SESSION_PROTOCOL_VERSION,
@@ -2656,6 +2657,64 @@ describe("session_protocol", () => {
     ).toThrow("session protocol error response is invalid");
   });
 
+  it("bounds notice presentation before it enters the protocol", () => {
+    const presentation = projectSessionProtocolNoticePresentation(
+      "t".repeat(600),
+      Array.from({ length: 20 }, (_, index) => `${index}:${"x".repeat(5_000)}`),
+    );
+    expect(presentation.title).toHaveLength(512);
+    expect(presentation.title.endsWith("…")).toBe(true);
+    expect(presentation.content).toHaveLength(16);
+    expect(presentation.content.every((entry) => entry.length <= 4_096)).toBe(true);
+
+    expect(() =>
+      createSessionProtocolEphemeralMessage({
+        sessionId: "session-1",
+        event: {
+          type: "feedback.notice",
+          title: "t".repeat(513),
+          tone: "error",
+          presentation: "footer",
+          durationMs: 3_000,
+        },
+      }),
+    ).toThrow("session protocol ephemeral message is invalid");
+
+    expect(() =>
+      createSessionProtocolDeltaMessage({
+        sessionId: "session-1",
+        fromRevision: 1,
+        toRevision: 2,
+        cause: { type: "notice" },
+        delta: {
+          type: "snapshot.patch",
+          changes: [
+            {
+              type: "timeline.append",
+              item: {
+                type: "notice",
+                id: "notice-1",
+                sequence: 1,
+                createdAt: 1,
+                notice: {
+                  kind: "tau.test.notice",
+                  version: 1,
+                  severity: "info",
+                  subject: { type: "session" },
+                  presentation: {
+                    title: "test notice",
+                    content: Array.from({ length: 17 }, () => "detail"),
+                  },
+                  data: {},
+                },
+              },
+            },
+          ],
+        },
+      }),
+    ).toThrow("session protocol delta message is invalid");
+  });
+
   it("requires canonical terminal operation fields", () => {
     const createOperationDelta = (operation) =>
       createSessionProtocolDeltaMessage({
@@ -2747,6 +2806,24 @@ describe("session_protocol", () => {
       sequence: 6,
       items: [expect.objectContaining({ id: "notice-6", sequence: 6 })],
     });
+
+    const createAdvanceDelta = (sequence) =>
+      createSessionProtocolDeltaMessage({
+        sessionId: "session-1",
+        fromRevision: 1,
+        toRevision: 2,
+        cause: { type: "notice" },
+        delta: {
+          type: "snapshot.patch",
+          changes: [{ type: "timeline.advance", epoch: 1, sequence }],
+        },
+      });
+    for (const sequence of [2, 5]) {
+      expect(() => applySessionProtocolDelta(current, createAdvanceDelta(sequence))).toThrow(
+        `timeline advance sequence ${sequence} must exceed current timeline sequence 5`,
+      );
+    }
+    expect(applySessionProtocolDelta(current, createAdvanceDelta(6)).timeline.sequence).toBe(6);
   });
 
   it("validates destructive reset causes against the current timeline", () => {

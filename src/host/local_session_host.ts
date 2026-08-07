@@ -88,6 +88,7 @@ import {
   applySessionProtocolDelta,
   createSessionProtocolDeltaMessage,
   createSessionProtocolEphemeralMessage,
+  projectSessionProtocolNoticePresentation,
 } from "../protocol/session_protocol.js";
 import { LEGACY_SESSION_MODEL_CONTEXT_KEY } from "../store/session_snapshot_migrations.js";
 import type { SessionStore } from "../store/session_store.js";
@@ -1946,10 +1947,10 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         version: 1,
         severity: "error",
         subject: { type: "message", id: historyEntryId },
-        presentation: {
-          title: blocked ? "turn blocked" : "turn failed",
-          content: [failure.message],
-        },
+        presentation: projectSessionProtocolNoticePresentation(
+          blocked ? "turn blocked" : "turn failed",
+          [failure.message],
+        ),
         data: { reason: failure.reason },
       },
     );
@@ -2088,10 +2089,10 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       version: 1,
       severity: "warn",
       subject: { type: "session" },
-      presentation: {
-        title: "session history is unavailable",
-        content: [reason, "this session will continue without durable history recording or recall"],
-      },
+      presentation: projectSessionProtocolNoticePresentation("session history is unavailable", [
+        reason,
+        "this session will continue without durable history recording or recall",
+      ]),
       data: {},
     });
     await this.emitPatch({ type: "notice" }, [
@@ -2515,7 +2516,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
               sessionId: this.sessionId,
               event: {
                 type: "feedback.notice",
-                title: event.title,
+                title: projectSessionProtocolNoticePresentation(event.title).title,
                 tone: event.tone,
                 presentation: "footer",
                 durationMs: event.durationMs,
@@ -2534,10 +2535,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
             version: 1,
             severity: event.tone === "error" ? "error" : "info",
             subject: { type: "session" },
-            presentation: {
-              title: event.title,
-              ...(event.content ? { content: event.content } : {}),
-            },
+            presentation: projectSessionProtocolNoticePresentation(event.title, event.content),
             data: {},
           },
         };

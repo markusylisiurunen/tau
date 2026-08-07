@@ -70,7 +70,7 @@ interface SessionProtocolTimelineNotice {
 }
 ```
 
-Notice kinds are open lowercase dotted identifiers. `tau.*` is reserved for Tau core. Clients branch on `kind`, `version`, or live request outcomes, never presentation text, generated IDs, notice counts, or arrival timing.
+Notice kinds are open lowercase dotted identifiers. `tau.*` is reserved for Tau core. Titles are limited to 512 characters, while content is limited to 16 entries of 4,096 characters each. Clients branch on `kind`, `version`, or live request outcomes, never presentation text, generated IDs, notice counts, or arrival timing.
 
 Provider failure and interruption are already represented by canonical assistant-message state. The host does not emit duplicate durable notices for those states, and the TUI projects their feedback immediately after the affected timeline message. When a turn fails or becomes blocked without a failed assistant message, the host appends one semantic `tau.turn.failed` or `tau.turn.blocked` notice at settlement. A runtime exception successfully settled this way returns an ordinary failed turn outcome instead of a protocol error. Completed request outcomes are returned to the caller but are not duplicated in the snapshot.
 

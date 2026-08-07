@@ -108,7 +108,7 @@ function createPatchDelta(changes, revision = 1, reason = "tool-run") {
     sessionId: "rpc-1",
     fromRevision: revision,
     toRevision: revision + 1,
-    reason,
+    cause: { type: reason },
     delta: { type: "snapshot.patch", changes },
   };
 }
@@ -233,7 +233,7 @@ describe("telegram session manager", () => {
     );
   });
 
-  it("emits persisted warning notices for Telegram delivery", async () => {
+  it("delivers fresh-session warnings and deduplicates later notices", async () => {
     const clientHarness = createClientHarness();
     clientHarness.session.snapshot.mockResolvedValue(
       createProtocolSnapshot({
@@ -246,7 +246,8 @@ describe("telegram session manager", () => {
             id: "notice-history-unavailable",
             notice: {
               severity: "warn",
-              text: "Session history is unavailable. This session will continue.",
+              title: "Session history is unavailable. This session will continue.",
+              subject: { type: "session" },
               timestamp: 1,
             },
           },
@@ -268,21 +269,32 @@ describe("telegram session manager", () => {
     const created = await manager.createSession({ projectId: "demo" });
     await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
 
-    expect(events).toContainEqual(
-      expect.objectContaining({
-        type: "session-notice",
-        sessionId: created.id,
-        severity: "warn",
-        text: "Session history is unavailable. This session will continue.",
-      }),
-    );
+    expect(
+      events.filter(
+        (event) =>
+          event.type === "session-notice" &&
+          event.text === "Session history is unavailable. This session will continue.",
+      ),
+    ).toHaveLength(1);
 
     const liveNotice = {
       type: "timeline.append",
       item: {
         type: "notice",
         id: "notice-live-warning",
-        notice: { severity: "warn", text: "A live warning arrived.", timestamp: 2 },
+        sequence: 1,
+        createdAt: 2,
+        notice: {
+          kind: "tau.test.warning",
+          version: 1,
+          severity: "warn",
+          subject: { type: "session" },
+          presentation: {
+            title: "a live warning arrived",
+            content: ["Internal diagnostic details."],
+          },
+          data: {},
+        },
       },
     };
     clientHarness.emitDelta(createPatchDelta([liveNotice], 1, "notice"));
@@ -293,6 +305,35 @@ describe("telegram session manager", () => {
         (event) => event.type === "session-notice" && event.text === "A live warning arrived.",
       ),
     ).toHaveLength(1);
+
+    clientHarness.emitDelta(
+      createPatchDelta(
+        [
+          {
+            type: "timeline.append",
+            item: {
+              type: "notice",
+              id: "turn-failed",
+              sequence: 2,
+              createdAt: 3,
+              notice: {
+                kind: "tau.turn.failed",
+                version: 1,
+                severity: "error",
+                subject: { type: "message", id: "user-1" },
+                presentation: { title: "turn failed", content: ["provider unavailable"] },
+                data: { reason: "runtime-error" },
+              },
+            },
+          },
+        ],
+        3,
+        "notice",
+      ),
+    );
+    expect(
+      events.some((event) => event.type === "session-notice" && event.text === "Turn failed."),
+    ).toBe(false);
   });
 
   it("starts sdk client from the prepared session cwd", async () => {
@@ -744,6 +785,75 @@ describe("telegram session manager", () => {
     });
 
     await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+  });
+
+  it("does not suppress a canonical turn failure after an independent error notice", async () => {
+    const clientHarness = createClientHarness();
+    const failedTurn = deferred();
+    clientHarness.session.submit = vi.fn(async () => await failedTurn.promise);
+    const manager = createDemoSessionManager(clientHarness);
+    const events = [];
+    manager.onEvent((event) => events.push(event));
+
+    const created = await manager.createSession({ projectId: "demo" });
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+
+    await manager.sendMessage(created.id, "fail once");
+    await waitFor(() => manager.getSession(created.id)?.state === "running");
+    clientHarness.emitDelta(
+      createPatchDelta(
+        [
+          {
+            type: "timeline.append",
+            item: {
+              type: "notice",
+              id: "independent-error",
+              sequence: 1,
+              createdAt: 1,
+              notice: {
+                kind: "tau.test.independent-error",
+                version: 1,
+                severity: "error",
+                subject: { type: "session" },
+                presentation: {
+                  title: "independent session error",
+                  content: ["Separate from the model failure"],
+                },
+                data: {},
+              },
+            },
+          },
+        ],
+        1,
+        "assistant-message",
+      ),
+    );
+    failedTurn.resolve({
+      userHistoryEntryId: "history-failed",
+      turn: {
+        status: "failed",
+        stopReason: "error",
+        errorMessage: "OpenAI is unavailable",
+      },
+    });
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "session-notice",
+        sessionId: created.id,
+        severity: "error",
+        text: "Independent session error.",
+      }),
+    );
+    expect(events.filter((event) => event.type === "session-turn-failed")).toEqual([
+      expect.objectContaining({
+        sessionId: created.id,
+        failure: expect.objectContaining({ status: "failed" }),
+      }),
+    ]);
+
+    await manager.close();
   });
 
   it("keeps a provider-failed turn recoverable and accepts the next message", async () => {
@@ -1455,6 +1565,40 @@ describe("telegram session manager", () => {
       await rm(workspacePath, { recursive: true, force: true });
 
       const recoveredClientHarness = createClientHarness();
+      const recoveredSnapshot = createProtocolSnapshot({
+        sessionId: "rpc-1",
+        revision: 1,
+        executionEnvironment: { kind: "local", cwd: workspacePath, home: tempRoot },
+        historyEntries: [
+          {
+            id: "recovered-assistant",
+            message: {
+              role: "assistant",
+              provider: "openai",
+              model: "gpt-5.5",
+              stopReason: "stop",
+              content: [{ type: "text", text: "already delivered" }],
+            },
+          },
+        ],
+        timeline: [
+          {
+            type: "message",
+            id: "timeline-recovered-assistant",
+            messageId: "recovered-assistant",
+          },
+          {
+            type: "notice",
+            id: "recovered-warning",
+            notice: {
+              severity: "warn",
+              title: "already delivered warning",
+              subject: { type: "session" },
+            },
+          },
+        ],
+      });
+      recoveredClientHarness.session.snapshot.mockResolvedValue(recoveredSnapshot);
       const prepareWorkspace = vi.fn(async () => {
         await mkdir(workspacePath, { recursive: true });
         return {
@@ -1471,6 +1615,8 @@ describe("telegram session manager", () => {
         prepareWorkspace,
         createClient: vi.fn(async () => recoveredClientHarness.client),
       });
+      const recoveredEvents = [];
+      recoveredManager.onEvent((event) => recoveredEvents.push(event));
 
       await recoveredManager.initialize();
 
@@ -1483,6 +1629,30 @@ describe("telegram session manager", () => {
         }),
       );
       expect(recoveredClientHarness.client.sessions.observe).toHaveBeenCalledWith("rpc-1");
+      expect(
+        recoveredEvents.filter(
+          (event) => event.type === "session-notice" || event.type === "session-progress",
+        ),
+      ).toEqual([]);
+
+      recoveredClientHarness.emitDelta({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "session.delta",
+        sessionId: "rpc-1",
+        fromRevision: null,
+        toRevision: 2,
+        cause: { type: "assistant-message" },
+        delta: {
+          type: "snapshot.reset",
+          snapshot: { ...recoveredSnapshot, revision: 2 },
+        },
+      });
+      expect(
+        recoveredEvents.filter(
+          (event) => event.type === "session-notice" || event.type === "session-progress",
+        ),
+      ).toEqual([]);
+
       await waitFor(() => recoveredClientHarness.session.exec.mock.calls.length === 1);
       expect(prepareWorkspace).toHaveBeenCalledWith(
         expect.objectContaining({ sessionId: created.id, projectId: "demo" }),
@@ -1885,7 +2055,7 @@ describe("telegram session manager", () => {
       sessionId: "rpc-1",
       fromRevision: 1,
       toRevision: 2,
-      reason: "assistant-message",
+      cause: { type: "assistant-message" },
       delta: { type: "snapshot.reset", snapshot },
     });
 
@@ -1895,7 +2065,7 @@ describe("telegram session manager", () => {
       sessionId: "rpc-1",
       fromRevision: 2,
       toRevision: 3,
-      reason: "assistant-message",
+      cause: { type: "assistant-message" },
       delta: { type: "snapshot.reset", snapshot: { ...snapshot, revision: 3 } },
     });
 

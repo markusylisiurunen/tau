@@ -217,6 +217,10 @@ export async function prepareBashOutput(
   };
 }
 
+function stripBashAbortNote(output: string): string {
+  return output.replace(/(?:\n?\(tau\) aborted)+\s*$/, "");
+}
+
 export function formatBashToolResultText(args: {
   truncationInfo: BashTruncationInfo;
   exitCode: number | null;
@@ -474,12 +478,15 @@ export function createBashToolDefinition(backend: ToolExecutionBackend, cwd: str
               hasMaxOutputTokens,
             });
             const truncationInfo = await prepareBashOutput(
-              output,
+              aborted ? stripBashAbortNote(output) : output,
               captureTruncated,
               outputPolicy,
               backend,
             );
-            const toolText = formatBashToolResultText({ truncationInfo, exitCode });
+            const resultText = formatBashToolResultText({ truncationInfo, exitCode });
+            const toolText = aborted
+              ? [resultText.trimEnd(), "Command was cancelled."].filter(Boolean).join("\n\n")
+              : resultText;
             const isError = exitCode === null || exitCode !== 0;
             const presentation = buildBashPresentation({
               toolName: TOOL_NAME_BASH,
@@ -488,6 +495,7 @@ export function createBashToolDefinition(backend: ToolExecutionBackend, cwd: str
               exitCode,
               durationMs,
               workingDirectory: effectiveWorkingDirectory,
+              includeExitCode: !aborted && !timedOut,
             });
 
             const outcome = createTextToolOutcome(

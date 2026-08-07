@@ -1,5 +1,5 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
+import { Container, Markdown, Spacer } from "@earendil-works/pi-tui";
 import type { UiComponent } from "./components/ui_component.js";
 import type { Theme } from "./theme/index.js";
 
@@ -128,21 +128,6 @@ export class AssistantMessageComponent
         this.contentContainer.addChild(new Markdown(content.text.trim(), 1, 0, markdownTheme));
         this._hasVisibleText = true;
       }
-    }
-
-    const appendStopReason = (line: string, style: (text: string) => string): void => {
-      if (this._hasVisibleText) {
-        this.contentContainer.addChild(new Spacer(1));
-      }
-      this.contentContainer.addChild(new Text(style(line), 1, 0));
-      this._hasVisibleText = true;
-    };
-
-    if (message.stopReason === "aborted") {
-      appendStopReason("aborted", palette.statusWarn);
-    } else if (message.stopReason === "error") {
-      const errorMsg = message.errorMessage || "unknown error";
-      appendStopReason(errorMsg, palette.statusError);
     }
   }
 }

@@ -20,9 +20,9 @@ export function buildHistoryMessageModel(message: Message): ChatMessageModel | u
   }
 
   return {
-    type: "system",
-    text: formatToolResultNotice(message as ToolResultMessage),
-    kind: "muted",
+    type: "transcript_notice",
+    title: formatToolResultNotice(message as ToolResultMessage),
+    tone: "default",
   };
 }
 

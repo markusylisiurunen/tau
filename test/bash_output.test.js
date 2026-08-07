@@ -75,6 +75,39 @@ describe("bash output policy", () => {
     expect(invalidPath.uiEvent.presentation.details[0].text).toContain("single line");
   });
 
+  it("reports cancellation semantically without exposing the backend abort marker", async () => {
+    const cancelledBackend = {
+      ...backend,
+      async runBash() {
+        return {
+          output: "partial output\n(tau) aborted\n",
+          stdout: "partial output\n",
+          stderr: "(tau) aborted\n",
+          exitCode: null,
+          truncated: false,
+          timedOut: false,
+          aborted: true,
+          closeSignal: null,
+        };
+      },
+    };
+    const tool = createBashToolDefinition(cancelledBackend, "/project");
+    const result = await runTool(tool, {
+      id: "bash-cancelled",
+      name: "bash",
+      arguments: { command: "sleep 3" },
+    });
+
+    expect(result.toolResult.outcome).toBe("cancelled");
+    expect(result.toolResult.content).toEqual([
+      { type: "text", text: "partial output\n\nCommand was cancelled." },
+    ]);
+    expect(result.uiEvent.presentation.details).toEqual([
+      { text: "partial output", wrap: "character" },
+    ]);
+    expect(result.uiEvent.presentation.metadata).not.toContain("exit ?");
+  });
+
   it("shows the effective working directory throughout the tool lifecycle", async () => {
     const tool = createBashToolDefinition(backend, "/project");
     const toolCall = {

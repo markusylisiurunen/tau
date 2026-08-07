@@ -1,5 +1,6 @@
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import chalk from "chalk";
+import Color from "colorjs.io";
 import stripAnsi from "strip-ansi";
 import { expect, test, vi } from "vitest";
 import { createCommandRegistry } from "../dist/core/commands/index.js";
@@ -20,7 +21,12 @@ import { RewindPickerComponent } from "../dist/tui/ui/rewind_picker.js";
 import { SessionDividerComponent } from "../dist/tui/ui/session_divider.js";
 import { SlashAutocompleteProvider } from "../dist/tui/ui/slash_autocomplete.js";
 import { SubagentPanelComponent } from "../dist/tui/ui/subagent_panel.js";
-import { createUiTheme } from "../dist/tui/ui/theme/index.js";
+import { createUiTheme, deriveBuiltinPaletteOverrides } from "../dist/tui/ui/theme/index.js";
+import {
+  projectTranscriptNoticeContent,
+  TranscriptNoticeComponent,
+} from "../dist/tui/ui/transcript_notice.js";
+import { TranscriptTextComponent } from "../dist/tui/ui/transcript_text.js";
 import { UserMessageComponent } from "../dist/tui/ui/user_message.js";
 import { createTagTheme, renderLines, renderText } from "./ui_helpers.js";
 
@@ -99,6 +105,27 @@ function applyCompletion(lines, cursorLine, cursorCol, item, prefix) {
 async function waitForAutocomplete(ms = 0) {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+test("TuiChatView positions the shell prompt directly after its final row", () => {
+  const write = vi.fn();
+  const stop = vi.fn();
+  const view = Object.create(TuiChatView.prototype);
+  view.footer = { dispose: vi.fn() };
+  view.ui = {
+    captureRenderState: () => ({
+      previousLines: ["message", "editor", "footer"],
+      hardwareCursorRow: 1,
+    }),
+    terminal: { write },
+    stop,
+  };
+
+  view.stop();
+
+  expect(write).toHaveBeenCalledWith("\r\x1b[1B\r\n");
+  expect(stop).toHaveBeenCalledWith({ preserveScreen: true });
+  expect(write.mock.invocationCallOrder[0]).toBeLessThan(stop.mock.invocationCallOrder[0]);
+});
 
 test("TuiChatView switches repeatedly through its retained theme catalog", () => {
   const previousLevel = chalk.level;
@@ -322,7 +349,7 @@ test("renderChatMessage renders diff review status with review styling", () => {
   expect(plainText).toContain("> reviewer brief ready");
 });
 
-test("AssistantMessageComponent toggles thinking visibility", () => {
+test("AssistantMessageComponent renders content without interruption markers", () => {
   const theme = createTagTheme();
   const component = new AssistantMessageComponent(theme, undefined, false);
   const message = {
@@ -354,6 +381,61 @@ test("AssistantMessageComponent toggles thinking visibility", () => {
   component.setThinkingVisibility(true);
   text = renderText(component, 80);
   expect(text).toContain("hmm");
+
+  component.update({
+    type: "assistant",
+    message: {
+      ...message,
+      stopReason: "aborted",
+      content: [{ type: "text", text: "partial response" }],
+    },
+  });
+  text = renderText(component, 80);
+  expect(text).toContain("partial response");
+  expect(text).not.toContain("aborted");
+
+  component.update({
+    type: "assistant",
+    message: {
+      ...message,
+      stopReason: "error",
+      errorMessage: "provider request failed",
+      content: [{ type: "text", text: "partial response" }],
+    },
+  });
+  text = renderText(component, 80);
+  expect(text).toContain("partial response");
+  expect(text).not.toContain("provider request failed");
+});
+
+test("TranscriptNoticeComponent renders a colored title and dim bounded content", () => {
+  const requestId = "request-id-89abde88-40ee-40f7-9ad7-40aeb2fbee63";
+  const content = projectTranscriptNoticeContent([`${"x".repeat(1_800)}${requestId}`]);
+  const component = new TranscriptNoticeComponent(createTagTheme(), {
+    title: "model request failed",
+    content: [`${"x".repeat(1_800)}${requestId}`],
+    tone: "error",
+  });
+
+  expect(content).toHaveLength(7);
+  expect(content[3]).toBe("…2 more lines…");
+  expect(content.at(-1)).toContain(requestId);
+  expect(content.every((line) => Array.from(line).length <= 256)).toBe(true);
+
+  const rendered = renderText(component, 300);
+  expect(rendered).toContain("<feedbackError>model request failed</feedbackError>");
+  expect(rendered).toContain(`<textDim>${content[0]}`);
+  expect(rendered).toContain(`${content.at(-1)}</textDim>`);
+});
+
+test("TranscriptTextComponent renders complete muted text", () => {
+  const text = Array.from({ length: 20 }, (_, index) => `help line ${index + 1}`).join("\n");
+  const component = new TranscriptTextComponent(createTagTheme(), { text });
+
+  const rendered = renderText(component, 80);
+  expect(rendered).toContain("<textMuted>help line 1");
+  expect(rendered).toContain("help line 20</textMuted>");
+  expect(rendered).not.toContain("more lines");
 });
 
 test("AssistantMessageComponent toggles partial thinking visibility", () => {
@@ -413,6 +495,7 @@ test("FooterComponent renders dense session status", () => {
   const ui = { requestRender() {} };
   const footer = new FooterComponent(theme, ui);
   footer.setStatus({
+    type: "regular",
     cwdLabel: "~/Code/tau-one",
     contextUsage: "↑578k ↓87k r58M w0 · 76.9%/372k",
     sessionCost: "$63.52",
@@ -425,22 +508,108 @@ test("FooterComponent renders dense session status", () => {
   );
 });
 
-test("FooterComponent replaces normal status with operation hints", () => {
+test("feedback tones have matching prominence", () => {
+  const overrides = deriveBuiltinPaletteOverrides(
+    { brandAccent: "#d0b28e" },
+    {
+      foreground: { r: 0.8, g: 0.8, b: 0.8 },
+      background: { r: 0.1, g: 0.1, b: 0.1 },
+      appearance: "dark",
+    },
+  );
+  const feedback = new Color(overrides.feedback).to("oklch");
+  const error = new Color(overrides.feedbackError).to("oklch");
+
+  expect(feedback.get("oklch.l")).toBeCloseTo(error.get("oklch.l"), 2);
+  expect(feedback.get("oklch.c")).toBeCloseTo(error.get("oklch.c"), 2);
+  expect(feedback.get("oklch.h")).not.toBeCloseTo(error.get("oklch.h"), 1);
+});
+
+test("FooterComponent renders activity instead of regular status", () => {
+  vi.useFakeTimers();
+  const theme = createTagTheme();
+  const ui = { requestRender() {} };
+  const footer = new FooterComponent(theme, ui, { random: () => 0 });
+
+  try {
+    footer.setStatus({ type: "activity", label: "compacting context" });
+
+    const text = renderText(footer, 120);
+    expect(text).toContain("<feedback>⠋</feedback>");
+    expect(text).toContain("<feedback>compacting context</feedback>");
+    expect(text).not.toContain("tau-one");
+
+    vi.advanceTimersByTime(120);
+    expect(renderText(footer, 120)).toContain("<feedback>⠙</feedback>");
+
+    footer.setStatus({
+      type: "regular",
+      cwdLabel: "~/Code/tau-one",
+      contextUsage: "ctx 10/100",
+      sessionCost: "$0.01",
+      duration: "12s",
+      pursuingGoal: false,
+    });
+    const regularText = renderText(footer, 120);
+    expect(regularText).toContain("<textDim>○</textDim>");
+    expect(regularText).toContain("tau-one");
+    expect(regularText).not.toContain("compacting context");
+  } finally {
+    footer.dispose();
+    vi.useRealTimers();
+  }
+});
+
+test("FooterComponent gives notices precedence over active work", () => {
+  vi.useFakeTimers();
+  const theme = createTagTheme();
+  const ui = { requestRender() {} };
+  const footer = new FooterComponent(theme, ui, { random: () => 0 });
+
+  try {
+    footer.setStatus({ type: "activity", label: "compacting context" });
+    footer.showNotice("wait for tau to become idle", "default", 1_000);
+
+    expect(renderText(footer, 120)).toContain("<feedback>wait for tau to become idle</feedback>");
+    expect(renderText(footer, 120)).not.toContain("compacting context");
+
+    vi.advanceTimersByTime(1_000);
+    expect(renderText(footer, 120)).toContain("<feedback>compacting context</feedback>");
+  } finally {
+    footer.dispose();
+    vi.useRealTimers();
+  }
+});
+
+test("FooterComponent temporarily replaces regular status with a notice", () => {
+  vi.useFakeTimers();
   const theme = createTagTheme();
   const ui = { requestRender() {} };
   const footer = new FooterComponent(theme, ui);
   footer.setStatus({
+    type: "regular",
     cwdLabel: "~/Code/tau-one",
     contextUsage: "ctx 10/100",
     sessionCost: "$0.01",
     duration: "12s",
-    statusHint: "compacting context...",
     pursuingGoal: false,
   });
 
-  const text = renderText(footer, 120);
-  expect(text).toContain("compacting context...");
-  expect(text).not.toContain("tau-one");
+  try {
+    footer.startWorkingIcon();
+    footer.showNotice("model request failed", "error", 1_000);
+    const noticeText = renderText(footer, 120);
+    expect(noticeText).toContain("<feedbackError>model request failed</feedbackError>");
+    expect(noticeText).not.toContain("○");
+    expect(noticeText).not.toContain("<brandAccent>");
+    expect(noticeText).not.toContain("tau-one");
+
+    vi.advanceTimersByTime(1_000);
+    expect(renderText(footer, 120)).toContain("tau-one");
+  } finally {
+    footer.dispose();
+    vi.useRealTimers();
+  }
 });
 
 test("FooterComponent animates active goal work and settles after completion", () => {
@@ -449,6 +618,7 @@ test("FooterComponent animates active goal work and settles after completion", (
   const ui = { requestRender() {} };
   const footer = new FooterComponent(theme, ui, { random: () => 0 });
   footer.setStatus({
+    type: "regular",
     cwdLabel: "~/Code/tau-one",
     contextUsage: "ctx 10/100",
     sessionCost: "$0.01",
@@ -536,6 +706,7 @@ test("FooterComponent compacts cwd before truncating the complete status", () =>
   const ui = { requestRender() {} };
   const footer = new FooterComponent(theme, ui);
   footer.setStatus({
+    type: "regular",
     cwdLabel: "~/Code/company/projects/tau-one",
     contextUsage: "ctx",
     sessionCost: "$0.01",
@@ -548,6 +719,7 @@ test("FooterComponent compacts cwd before truncating the complete status", () =>
   expect(compactLine).toContain("ctx · $0.01");
 
   footer.setStatus({
+    type: "regular",
     cwdLabel: "~/Code/company/projects/tau-one",
     contextUsage: "this is a very long context usage string",
     sessionCost: "$0.01",

@@ -85,6 +85,7 @@ function updateSnapshot(snapshot, overrides = {}) {
     messages: overrides.messages,
     timeline: overrides.timeline,
     tools: overrides.tools ?? snapshot.tools,
+    operations: overrides.operations ?? snapshot.operations,
     agents: overrides.agents ?? snapshot.agents,
     facets: overrides.facets ?? snapshot.facets,
   });
@@ -163,7 +164,9 @@ function createMessageAppendDelta(sessionId, fromRevision, message, state = "com
     sessionId,
     fromRevision,
     toRevision: fromRevision + 1,
-    reason: message.message.role === "assistant" ? "assistant-message" : "user-message",
+    cause: {
+      type: message.message.role === "assistant" ? "assistant-message" : "user-message",
+    },
     delta: {
       type: "snapshot.patch",
       changes: [
@@ -171,9 +174,14 @@ function createMessageAppendDelta(sessionId, fromRevision, message, state = "com
         {
           type: "message.append",
           message: { ...message, state },
-          timelineItem: {
+        },
+        {
+          type: "timeline.append",
+          item: {
             type: "message",
             id: `timeline-${message.id}`,
+            sequence: fromRevision + 1,
+            createdAt: message.message.timestamp ?? 0,
             messageId: message.id,
           },
         },
@@ -189,7 +197,7 @@ function createMessageReplaceDelta(sessionId, fromRevision, message, reason = "a
     sessionId,
     fromRevision,
     toRevision: fromRevision + 1,
-    reason,
+    cause: { type: reason },
     delta: {
       type: "snapshot.patch",
       changes: [
@@ -210,7 +218,7 @@ function createResetDelta(sessionId, fromRevision, snapshot, reason = "configura
     sessionId,
     fromRevision,
     toRevision: snapshot.revision,
-    reason,
+    cause: typeof reason === "string" ? { type: reason } : reason,
     delta: { type: "snapshot.reset", snapshot },
   };
 }
@@ -230,6 +238,11 @@ class FakeSession {
     }
     const historyEntryId = options.historyEntryId ?? "generated-user";
     if (this.emitSubmitEvents) {
+      this.emit({
+        type: "user_message",
+        historyEntryId,
+        message: { role: "user", content: [{ type: "text", text }], timestamp: 1 },
+      });
       this.emit({
         type: "assistant_start",
         historyEntryId: "assistant-1",
@@ -389,6 +402,7 @@ class FakeSession {
     const compactionMessage = options.guidance
       ? `compacted summary: ${options.guidance}`
       : "compacted summary";
+    const previousEpoch = this.snapshotValue.timeline.epoch;
     this.snapshotValue = updateSnapshot(this.snapshotValue, {
       revision: this.snapshotValue.revision + 1,
       historyEntries: [
@@ -401,6 +415,7 @@ class FakeSession {
         },
       ],
     });
+    this.snapshotValue.timeline.epoch = previousEpoch + 1;
     return {
       snapshot: this.snapshotValue,
       compactionMessage,
@@ -513,6 +528,19 @@ class FakeSession {
   emit(event) {
     const fromRevision = this.snapshotValue.revision;
     for (const listener of this.listeners) {
+      if (event.type === "user_message") {
+        const message = {
+          id: event.historyEntryId,
+          state: "committed",
+          modelVisible: true,
+          message: event.message,
+        };
+        this.snapshotValue = updateSnapshot(this.snapshotValue, {
+          revision: fromRevision + 1,
+          messages: [...this.snapshotValue.messages, message],
+        });
+        listener(createMessageAppendDelta(this.id, fromRevision, message));
+      }
       if (event.type === "assistant_start") {
         const draftMessage = {
           id: event.historyEntryId,
@@ -524,14 +552,20 @@ class FakeSession {
           revision: fromRevision + 1,
           lifecycle: "running",
           messages: [...this.snapshotValue.messages, draftMessage],
-          timeline: [
-            ...this.snapshotValue.timeline,
-            {
-              type: "message",
-              id: `timeline-${event.historyEntryId}`,
-              messageId: event.historyEntryId,
-            },
-          ],
+          timeline: {
+            ...this.snapshotValue.timeline.items,
+            sequence: this.snapshotValue.timeline.sequence + 1,
+            items: [
+              ...this.snapshotValue.timeline.items,
+              {
+                type: "message",
+                id: `timeline-${event.historyEntryId}`,
+                sequence: this.snapshotValue.timeline.sequence + 1,
+                createdAt: draftMessage.message.timestamp,
+                messageId: event.historyEntryId,
+              },
+            ],
+          },
         });
         listener(createMessageAppendDelta(this.id, fromRevision, draftMessage, "draft"));
       }
@@ -568,7 +602,9 @@ class FakeSession {
 class FakeView {
   messages = [];
   removed = [];
-  systems = [];
+  feedback = [];
+  footerNotices = [];
+  transcriptNotices = [];
   toolModels = [];
   localToolModels = [];
   rewindPickerShows = [];
@@ -595,11 +631,22 @@ class FakeView {
   removeMessages(ids) {
     this.removed.push(...ids);
     this.messages = this.messages.filter((message) => !ids.includes(message.id));
+    this.toolModels = this.messages.flatMap((message) =>
+      message.model.type === "tool" ? [structuredClone(message.model.tool)] : [],
+    );
   }
   removeMessagesFrom(id) {
     this.removeMessagesFromCalls.push(id);
   }
   addMessage(model, id = `view-${this.messages.length + 1}`) {
+    if (model.type === "tool") {
+      const index = this.toolModels.findIndex((tool) => tool.toolCallId === model.tool.toolCallId);
+      if (index === -1) {
+        this.toolModels.push(structuredClone(model.tool));
+      } else {
+        this.toolModels[index] = structuredClone(model.tool);
+      }
+    }
     const existing = this.messages.find((message) => message.id === id);
     if (existing) {
       existing.model = model;
@@ -609,6 +656,14 @@ class FakeView {
     return id;
   }
   updateMessage(id, model) {
+    if (model.type === "tool") {
+      const index = this.toolModels.findIndex((tool) => tool.toolCallId === model.tool.toolCallId);
+      if (index === -1) {
+        this.toolModels.push(structuredClone(model.tool));
+      } else {
+        this.toolModels[index] = structuredClone(model.tool);
+      }
+    }
     const message = this.messages.find((item) => item.id === id);
     if (message) {
       message.model = model;
@@ -619,8 +674,13 @@ class FakeView {
   updateAssistantMessage(id, model) {
     this.updateMessage(id, model);
   }
-  addSystemMessage(text, kind, options) {
-    this.systems.push({ text, kind, options });
+  showFooterNotice(text, tone, durationMs = 3000) {
+    this.feedback.push({ text, tone });
+    this.footerNotices.push({ text, tone, durationMs });
+  }
+  addTranscriptNotice(text, tone, content) {
+    this.feedback.push({ text, tone, ...(content ? { content } : {}) });
+    this.transcriptNotices.push({ text, tone, ...(content ? { content } : {}) });
   }
   setThinkingVisibility() {}
   updateStatus(status) {
@@ -891,9 +951,11 @@ describe("SessionChatController", () => {
     expect(view.status.footer.contextUsage).toBe("↑0 ↓0 r0 w0 · 0.0%/128k");
 
     await controller.onUserInput("/help");
-    expect(view.systems.at(-1)?.text).toContain("context:\n  ~/repo/AGENTS.md");
-    expect(view.systems.at(-1)?.text).not.toContain("~/repo/src/AGENTS.md");
-    expect(view.systems.at(-1)?.text).toContain("skills:\n  alpha (~/.tau/skills)");
+    const help = view.messages.at(-1)?.model;
+    expect(help).toMatchObject({ type: "transcript_text" });
+    expect(help.text).toContain("context:\n  ~/repo/AGENTS.md");
+    expect(help.text).not.toContain("~/repo/src/AGENTS.md");
+    expect(help.text).toContain("skills:\n  alpha (~/.tau/skills)");
   });
 
   it("renders persisted protocol notices in timeline order", async () => {
@@ -904,7 +966,8 @@ describe("SessionChatController", () => {
           id: "notice-history-unavailable",
           notice: {
             severity: "warn",
-            text: "Session history is unavailable. This session will continue.",
+            title: "Session history is unavailable. This session will continue.",
+            subject: { type: "session" },
             timestamp: 1,
           },
         },
@@ -924,16 +987,25 @@ describe("SessionChatController", () => {
     expect(view.messages).toContainEqual({
       id: "notice-history-unavailable",
       model: {
-        type: "system",
-        kind: "warn",
-        text: "Session history is unavailable. This session will continue.",
+        type: "transcript_notice",
+        tone: "default",
+        title: "Session history is unavailable. This session will continue.",
       },
     });
 
     const liveNotice = {
       type: "notice",
       id: "notice-live-warning",
-      notice: { severity: "warn", text: "A live warning arrived.", timestamp: 2 },
+      sequence: snapshot.timeline.sequence + 1,
+      createdAt: 2,
+      notice: {
+        kind: "tau.test.notice",
+        version: 1,
+        severity: "warn",
+        subject: { type: "session" },
+        presentation: { title: "A live warning arrived." },
+        data: {},
+      },
     };
     for (const listener of session.listeners) {
       listener({
@@ -942,15 +1014,577 @@ describe("SessionChatController", () => {
         sessionId: session.id,
         fromRevision: snapshot.revision,
         toRevision: snapshot.revision + 1,
-        reason: "notice",
+        cause: { type: "notice" },
         delta: { type: "snapshot.patch", changes: [{ type: "timeline.append", item: liveNotice }] },
       });
     }
 
     expect(view.messages).toContainEqual({
       id: "notice-live-warning",
-      model: { type: "system", kind: "warn", text: "A live warning arrived." },
+      model: {
+        type: "transcript_notice",
+        tone: "default",
+        title: "A live warning arrived.",
+      },
     });
+  });
+
+  it("renders host feedback across a revision gap without adding it to the timeline", async () => {
+    const session = new FakeSession();
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "in-process",
+    });
+    controller.start();
+
+    const emit = (event) => {
+      for (const listener of session.ephemeralListeners) {
+        listener({
+          version: SESSION_PROTOCOL_VERSION,
+          type: "session.ephemeral",
+          sessionId: session.id,
+          event,
+        });
+      }
+    };
+
+    emit({
+      type: "feedback.notice",
+      title: "retrying after transient error",
+      tone: "default",
+      presentation: "footer",
+      durationMs: 3_000,
+    });
+    expect(view.footerNotices.at(-1)).toEqual({
+      text: "retrying after transient error",
+      tone: "default",
+      durationMs: 3_000,
+    });
+
+    for (const listener of session.listeners) {
+      listener({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "session.delta",
+        sessionId: session.id,
+        fromRevision: 2,
+        toRevision: 3,
+        cause: { type: "notice" },
+        delta: {
+          type: "snapshot.patch",
+          changes: [{ type: "timeline.advance", epoch: 1, sequence: 1 }],
+        },
+      });
+    }
+    const timelineEvent = {
+      type: "timeline.item",
+      epoch: 1,
+      item: {
+        type: "notice",
+        id: "ephemeral-model-failure",
+        sequence: 1,
+        createdAt: 1,
+        notice: {
+          kind: "tau.test.feedback",
+          version: 1,
+          severity: "error",
+          subject: { type: "session" },
+          presentation: {
+            title: "model request failed",
+            content: ["provider unavailable"],
+          },
+          data: {},
+        },
+      },
+    };
+    emit(timelineEvent);
+    emit(timelineEvent);
+    expect(view.messages.filter((message) => message.id === "ephemeral-model-failure")).toEqual([
+      {
+        id: "ephemeral-model-failure",
+        model: {
+          type: "transcript_notice",
+          title: "model request failed",
+          tone: "error",
+          content: ["provider unavailable"],
+        },
+      },
+    ]);
+    expect(session.snapshotValue.timeline).toEqual({ epoch: 1, sequence: 0, items: [] });
+  });
+
+  it("merges ephemeral timeline items by sequence and truncates them on rewind", async () => {
+    const snapshot = createSnapshot([
+      {
+        id: "user-1",
+        message: { role: "user", content: [{ type: "text", text: "keep" }] },
+      },
+    ]);
+    const session = new FakeSession(snapshot);
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot,
+      targetLabel: "in-process",
+    });
+    controller.start();
+
+    for (const listener of session.listeners) {
+      listener({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "session.delta",
+        sessionId: session.id,
+        fromRevision: 1,
+        toRevision: 2,
+        cause: { type: "notice" },
+        delta: {
+          type: "snapshot.patch",
+          changes: [{ type: "timeline.advance", epoch: 1, sequence: 2 }],
+        },
+      });
+    }
+    const ephemeralItem = {
+      type: "notice",
+      id: "ephemeral-2",
+      sequence: 2,
+      createdAt: 2,
+      notice: {
+        kind: "tau.test.ephemeral",
+        version: 1,
+        severity: "info",
+        subject: { type: "session" },
+        presentation: { title: "ephemeral second" },
+        data: {},
+      },
+    };
+    for (const listener of session.ephemeralListeners) {
+      listener({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "session.ephemeral",
+        sessionId: session.id,
+        event: { type: "timeline.item", epoch: 1, item: ephemeralItem },
+      });
+    }
+    const durableItem = {
+      type: "notice",
+      id: "durable-3",
+      sequence: 3,
+      createdAt: 3,
+      notice: {
+        kind: "tau.test.durable",
+        version: 1,
+        severity: "warn",
+        subject: { type: "session" },
+        presentation: { title: "durable third" },
+        data: {},
+      },
+    };
+    for (const listener of session.listeners) {
+      listener({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "session.delta",
+        sessionId: session.id,
+        fromRevision: 2,
+        toRevision: 3,
+        cause: { type: "notice" },
+        delta: {
+          type: "snapshot.patch",
+          changes: [{ type: "timeline.append", item: durableItem }],
+        },
+      });
+    }
+
+    expect(view.messages.map((message) => message.id)).toEqual([
+      "view-1",
+      "user-1",
+      "ephemeral-2",
+      "durable-3",
+    ]);
+
+    const rewoundSnapshot = createProtocolSnapshot({
+      ...snapshot,
+      revision: 4,
+      messages: snapshot.messages,
+      timeline: {
+        epoch: 1,
+        sequence: 3,
+        items: snapshot.timeline.items,
+      },
+    });
+    for (const listener of session.listeners) {
+      listener(
+        createResetDelta(session.id, 3, rewoundSnapshot, {
+          type: "rewind",
+          epoch: 1,
+          cutoffSequence: 1,
+        }),
+      );
+    }
+
+    expect(view.messages.map((message) => message.id)).toEqual(["view-1", "user-1"]);
+  });
+
+  it("discards stale ephemeral timeline items during revision-gap recovery", async () => {
+    const snapshot = createSnapshot([
+      {
+        id: "user-1",
+        message: { role: "user", content: [{ type: "text", text: "keep" }] },
+      },
+    ]);
+    const session = new FakeSession(snapshot);
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot,
+      targetLabel: "in-process",
+    });
+    controller.start();
+
+    for (const listener of session.listeners) {
+      listener({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "session.delta",
+        sessionId: session.id,
+        fromRevision: 1,
+        toRevision: 2,
+        cause: { type: "notice" },
+        delta: {
+          type: "snapshot.patch",
+          changes: [{ type: "timeline.advance", epoch: 1, sequence: 2 }],
+        },
+      });
+    }
+    for (const listener of session.ephemeralListeners) {
+      listener({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "session.ephemeral",
+        sessionId: session.id,
+        event: {
+          type: "timeline.item",
+          epoch: 1,
+          item: {
+            type: "notice",
+            id: "stale-ephemeral",
+            sequence: 2,
+            createdAt: 2,
+            notice: {
+              kind: "tau.test.ephemeral",
+              version: 1,
+              severity: "error",
+              subject: { type: "session" },
+              presentation: { title: "stale failure" },
+              data: {},
+            },
+          },
+        },
+      });
+    }
+
+    const recoveredSnapshot = createProtocolSnapshot({
+      ...snapshot,
+      revision: 4,
+      messages: snapshot.messages,
+      timeline: {
+        epoch: 1,
+        sequence: 3,
+        items: snapshot.timeline.items,
+      },
+    });
+    const snapshotResponse = deferred();
+    vi.spyOn(session, "snapshot").mockImplementation(async () => await snapshotResponse.promise);
+    for (const listener of session.listeners) {
+      listener({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "session.delta",
+        sessionId: session.id,
+        fromRevision: 3,
+        toRevision: 4,
+        cause: { type: "notice" },
+        delta: {
+          type: "snapshot.patch",
+          changes: [{ type: "timeline.advance", epoch: 1, sequence: 3 }],
+        },
+      });
+    }
+
+    for (const listener of session.ephemeralListeners) {
+      listener({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "session.ephemeral",
+        sessionId: session.id,
+        event: {
+          type: "timeline.item",
+          epoch: 1,
+          item: {
+            type: "notice",
+            id: "fresh-ephemeral",
+            sequence: 3,
+            createdAt: 3,
+            notice: {
+              kind: "tau.test.ephemeral",
+              version: 1,
+              severity: "info",
+              subject: { type: "session" },
+              presentation: { title: "fresh notice" },
+              data: {},
+            },
+          },
+        },
+      });
+    }
+    snapshotResponse.resolve(recoveredSnapshot);
+    await flush();
+
+    expect(view.messages.some((message) => message.id === "stale-ephemeral")).toBe(false);
+    expect(view.messages).toContainEqual({
+      id: "fresh-ephemeral",
+      model: { type: "transcript_notice", title: "fresh notice", tone: "default" },
+    });
+  });
+
+  it("keeps frozen ephemeral notices during revision-gap recovery", async () => {
+    const snapshot = createSnapshot([
+      {
+        id: "user-1",
+        message: { role: "user", content: [{ type: "text", text: "before compaction" }] },
+      },
+    ]);
+    const session = new FakeSession(snapshot);
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot,
+      targetLabel: "in-process",
+    });
+    controller.start();
+
+    for (const listener of session.listeners) {
+      listener({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "session.delta",
+        sessionId: session.id,
+        fromRevision: 1,
+        toRevision: 2,
+        cause: { type: "notice" },
+        delta: {
+          type: "snapshot.patch",
+          changes: [{ type: "timeline.advance", epoch: 1, sequence: 2 }],
+        },
+      });
+    }
+    for (const listener of session.ephemeralListeners) {
+      listener({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "session.ephemeral",
+        sessionId: session.id,
+        event: {
+          type: "timeline.item",
+          epoch: 1,
+          item: {
+            type: "notice",
+            id: "frozen-ephemeral",
+            sequence: 2,
+            createdAt: 2,
+            notice: {
+              kind: "tau.test.ephemeral",
+              version: 1,
+              severity: "info",
+              subject: { type: "session" },
+              presentation: { title: "frozen notice" },
+              data: {},
+            },
+          },
+        },
+      });
+    }
+
+    const compactedSnapshot = createProtocolSnapshot({
+      sessionId: session.id,
+      revision: 3,
+      historyEntries: [
+        {
+          id: "summary-entry",
+          message: { role: "user", content: [{ type: "text", text: "summary" }] },
+        },
+      ],
+    });
+    compactedSnapshot.timeline.epoch = 2;
+    for (const listener of session.listeners) {
+      listener(
+        createResetDelta(session.id, 2, compactedSnapshot, {
+          type: "compaction",
+          previousEpoch: 1,
+          epoch: 2,
+          kind: "auto",
+          cutType: "turn-boundary",
+          retainedMessageCount: 0,
+        }),
+      );
+    }
+
+    for (const listener of session.listeners) {
+      listener({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "session.delta",
+        sessionId: session.id,
+        fromRevision: 3,
+        toRevision: 4,
+        cause: { type: "notice" },
+        delta: {
+          type: "snapshot.patch",
+          changes: [{ type: "timeline.advance", epoch: 2, sequence: 2 }],
+        },
+      });
+    }
+    for (const listener of session.ephemeralListeners) {
+      listener({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "session.ephemeral",
+        sessionId: session.id,
+        event: {
+          type: "timeline.item",
+          epoch: 2,
+          item: {
+            type: "notice",
+            id: "active-ephemeral",
+            sequence: 2,
+            createdAt: 3,
+            notice: {
+              kind: "tau.test.ephemeral",
+              version: 1,
+              severity: "info",
+              subject: { type: "session" },
+              presentation: { title: "active notice" },
+              data: {},
+            },
+          },
+        },
+      });
+    }
+
+    const recoveredSnapshot = createProtocolSnapshot({
+      ...compactedSnapshot,
+      revision: 6,
+      messages: compactedSnapshot.messages,
+      timeline: {
+        epoch: 2,
+        sequence: 2,
+        items: compactedSnapshot.timeline.items,
+      },
+    });
+    vi.spyOn(session, "snapshot").mockResolvedValue(recoveredSnapshot);
+    for (const listener of session.listeners) {
+      listener({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "session.delta",
+        sessionId: session.id,
+        fromRevision: 5,
+        toRevision: 6,
+        cause: { type: "notice" },
+        delta: {
+          type: "snapshot.patch",
+          changes: [{ type: "timeline.advance", epoch: 2, sequence: 2 }],
+        },
+      });
+    }
+    await flush();
+
+    expect(view.messages).toContainEqual({
+      id: "frozen-ephemeral",
+      model: { type: "transcript_notice", title: "frozen notice", tone: "default" },
+    });
+    expect(view.messages.some((message) => message.id === "active-ephemeral")).toBe(false);
+  });
+
+  it("keeps repeated timeline item ids in their respective compacted segments", async () => {
+    const notice = {
+      type: "notice",
+      id: "notice-history-unavailable",
+      sequence: 1,
+      createdAt: 1,
+      notice: {
+        kind: "tau.history.unavailable",
+        version: 1,
+        severity: "warn",
+        subject: { type: "session" },
+        presentation: { title: "history unavailable before compaction" },
+        data: {},
+      },
+    };
+    const snapshot = createProtocolSnapshot({
+      timeline: { epoch: 1, sequence: 1, items: [notice] },
+    });
+    const session = new FakeSession(snapshot);
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot,
+      targetLabel: "in-process",
+    });
+    controller.start();
+
+    const compactedSnapshot = createProtocolSnapshot({
+      sessionId: snapshot.sessionId,
+      revision: 2,
+      timeline: { epoch: 2, sequence: 0, items: [] },
+    });
+    for (const listener of session.listeners) {
+      listener(
+        createResetDelta(session.id, 1, compactedSnapshot, {
+          type: "compaction",
+          previousEpoch: 1,
+          epoch: 2,
+          kind: "manual",
+          cutType: "turn-boundary",
+          retainedMessageCount: 0,
+        }),
+      );
+      listener({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "session.delta",
+        sessionId: session.id,
+        fromRevision: 2,
+        toRevision: 3,
+        cause: { type: "notice" },
+        delta: {
+          type: "snapshot.patch",
+          changes: [
+            {
+              type: "timeline.append",
+              item: {
+                ...notice,
+                sequence: 1,
+                createdAt: 2,
+                notice: {
+                  ...notice.notice,
+                  presentation: { title: "history unavailable after compaction" },
+                },
+              },
+            },
+          ],
+        },
+      });
+    }
+
+    const notices = view.messages.filter(
+      (message) =>
+        message.model.type === "transcript_notice" &&
+        message.model.title.startsWith("history unavailable"),
+    );
+    expect(notices).toHaveLength(2);
+    expect(notices[0].id).not.toBe(notices[1].id);
+    const dividerIndex = view.messages.findIndex(
+      (message) =>
+        message.model.type === "session_divider" && message.model.label === "compacted context",
+    );
+    expect(view.messages.indexOf(notices[0])).toBeLessThan(dividerIndex);
+    expect(view.messages.indexOf(notices[1])).toBeGreaterThan(dividerIndex);
   });
 
   it("shows auto-compaction operation status in the footer", async () => {
@@ -978,22 +1612,55 @@ describe("SessionChatController", () => {
 
     controller.start();
 
-    expect(view.status.footer.statusHint).toBe("compacting context...");
+    expect(view.status.footer).toEqual({
+      type: "activity",
+      label: "compacting context",
+    });
+
+    for (const listener of session.listeners) {
+      listener({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "session.delta",
+        sessionId: session.id,
+        fromRevision: snapshot.revision,
+        toRevision: snapshot.revision + 1,
+        cause: { type: "maintenance" },
+        delta: {
+          type: "snapshot.patch",
+          changes: [
+            {
+              type: "operation.set",
+              operation: {
+                ...snapshot.operations["operation-auto-compaction"],
+                status: "cancelled",
+                finishedAt: 2,
+                reason: "interrupted",
+              },
+            },
+          ],
+        },
+      });
+    }
+    expect(view.status.footer.type).toBe("regular");
   });
 
-  it("renders auto-compaction resets with the main-style divider and retained notice", async () => {
+  it("freezes the old transcript from auto-compaction metadata when the start delta was missed", async () => {
+    const retainedEntry = {
+      id: "retained-entry",
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "retained before compaction" }],
+      },
+    };
     const runningSnapshot = createProtocolSnapshot({
       sessionId: "session-1",
       revision: 1,
+      historyEntries: [retainedEntry],
       timeline: [
         {
-          type: "operation",
-          id: "operation-auto-compaction",
-          operation: {
-            kind: "auto-compaction",
-            status: "running",
-            startedAt: 1,
-          },
+          type: "message",
+          id: `timeline-${retainedEntry.id}`,
+          messageId: retainedEntry.id,
         },
       ],
     });
@@ -1004,8 +1671,11 @@ describe("SessionChatController", () => {
         summary: "compacted summary",
         preservedUserMessages: [],
         cutType: "turn-boundary",
-        retainedMessageCount: 3,
+        retainedMessageCount: 1,
       },
+    ]);
+    const continuationText = prependTauUserMetadata("", [
+      { type: "auto-compaction-continuation", version: 1 },
     ]);
     const compactedSnapshot = createProtocolSnapshot({
       sessionId: "session-1",
@@ -1018,8 +1688,247 @@ describe("SessionChatController", () => {
             content: [{ type: "text", text: compactedText }],
           },
         },
+        retainedEntry,
+        {
+          id: "continuation-entry",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: continuationText }],
+          },
+        },
+      ],
+      timeline: [{ type: "message", id: "timeline-summary-entry", messageId: "summary-entry" }],
+    });
+    compactedSnapshot.timeline.epoch = 2;
+    const session = new FakeSession(runningSnapshot);
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "in-process",
+    });
+    controller.start();
+
+    const compactionDelta = createResetDelta(session.id, 1, compactedSnapshot, {
+      type: "compaction",
+      previousEpoch: 1,
+      epoch: 2,
+      kind: "auto",
+      cutType: "turn-boundary",
+      retainedMessageCount: 1,
+    });
+    for (const listener of session.listeners) {
+      listener(compactionDelta);
+      listener(compactionDelta);
+    }
+
+    expect(
+      view.messages.filter((message) => message.model.type === "session_divider"),
+    ).toHaveLength(1);
+    expect(view.messages.filter((message) => message.id === "summary-entry")).toHaveLength(1);
+    expect(view.messages).toContainEqual(
+      expect.objectContaining({
+        model: { type: "session_divider", label: "compacted context" },
+      }),
+    );
+    expect(view.messages).toContainEqual({
+      id: "summary-entry",
+      model: { type: "user", text: "compacted summary" },
+    });
+    expect(view.messages.filter((message) => message.id === retainedEntry.id)).toEqual([
+      {
+        id: retainedEntry.id,
+        model: { type: "user", text: "retained before compaction" },
+      },
+    ]);
+    expect(view.transcriptNotices).toContainEqual({
+      text: "retained 1 recent message",
+      tone: "default",
+    });
+
+    const attachedSession = new FakeSession(compactedSnapshot);
+    const attachedView = new FakeView();
+    const attachedController = new SessionChatController({
+      view: attachedView,
+      session: attachedSession,
+      snapshot: await attachedSession.snapshot(),
+      targetLabel: "in-process",
+    });
+    attachedController.start();
+    expect(attachedView.messages.some((message) => message.id === retainedEntry.id)).toBe(false);
+    expect(attachedView.messages).toContainEqual({
+      id: "summary-entry",
+      model: { type: "user", text: "compacted summary" },
+    });
+    expect(attachedView.messages.some((message) => message.model.type === "session_divider")).toBe(
+      false,
+    );
+
+    const replacedRetainedEntry = {
+      id: retainedEntry.id,
+      state: "committed",
+      modelVisible: true,
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "updated retained message" }],
+        timestamp: 2,
+      },
+    };
+    for (const listener of session.listeners) {
+      listener(createMessageReplaceDelta(session.id, 2, replacedRetainedEntry));
+    }
+    expect(view.messages.find((message) => message.id === retainedEntry.id)?.model).toEqual({
+      type: "user",
+      text: "retained before compaction",
+    });
+
+    const nextEntry = {
+      id: "post-compaction-entry",
+      state: "committed",
+      modelVisible: true,
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "after compaction" }],
+        timestamp: 3,
+      },
+    };
+    for (const listener of session.listeners) {
+      listener(createMessageAppendDelta(session.id, 3, nextEntry));
+    }
+    expect(view.messages).toContainEqual({
+      id: nextEntry.id,
+      model: { type: "user", text: "after compaction" },
+    });
+
+    const secondCompactedText = prependTauUserMetadata("second compacted summary", [
+      {
+        type: "auto-compaction",
+        version: 1,
+        summary: "second compacted summary",
+        preservedUserMessages: [],
+        cutType: "turn-boundary",
+        retainedMessageCount: 1,
+      },
+    ]);
+    const secondCompactedSnapshot = createProtocolSnapshot({
+      sessionId: "session-1",
+      revision: 5,
+      agentState: { revision: 4, modelContextKey: "fixture-context" },
+      historyEntries: [
+        {
+          id: "second-summary-entry",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: secondCompactedText }],
+          },
+        },
+        nextEntry,
+        {
+          id: "second-continuation-entry",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: continuationText }],
+          },
+        },
+      ],
+      timeline: [
+        {
+          type: "message",
+          id: "timeline-second-summary-entry",
+          messageId: "second-summary-entry",
+        },
       ],
     });
+    secondCompactedSnapshot.timeline.epoch = 3;
+    for (const listener of session.listeners) {
+      listener(
+        createResetDelta(session.id, 4, secondCompactedSnapshot, {
+          type: "compaction",
+          previousEpoch: 2,
+          epoch: 3,
+          kind: "auto",
+          cutType: "turn-boundary",
+          retainedMessageCount: 1,
+        }),
+      );
+    }
+
+    expect(
+      view.messages.filter((message) => message.model.type === "session_divider"),
+    ).toHaveLength(2);
+    expect(view.messages.filter((message) => message.id === nextEntry.id)).toEqual([
+      {
+        id: nextEntry.id,
+        model: { type: "user", text: "after compaction" },
+      },
+    ]);
+    expect(view.messages).toContainEqual({
+      id: "second-summary-entry",
+      model: { type: "user", text: "second compacted summary" },
+    });
+    await attachedController.dispose();
+  });
+
+  it("targets assistant commands from the compacted snapshot instead of frozen UI history", async () => {
+    const frozenAssistant = {
+      id: "frozen-assistant",
+      message: createAssistantMessage("frozen response"),
+    };
+    const retainedAssistant = {
+      id: "retained-assistant",
+      message: createAssistantMessage("retained snapshot response"),
+    };
+    const runningSnapshot = createProtocolSnapshot({
+      sessionId: "session-1",
+      revision: 1,
+      agentState: { revision: 1, modelContextKey: "fixture-context" },
+      historyEntries: [frozenAssistant],
+      timeline: [
+        {
+          type: "message",
+          id: `timeline-${frozenAssistant.id}`,
+          messageId: frozenAssistant.id,
+        },
+      ],
+    });
+    const compactedText = prependTauUserMetadata("compacted summary", [
+      {
+        type: "auto-compaction",
+        version: 1,
+        summary: "compacted summary",
+        preservedUserMessages: [],
+        cutType: "turn-boundary",
+        retainedMessageCount: 1,
+      },
+    ]);
+    const continuationText = prependTauUserMetadata("", [
+      { type: "auto-compaction-continuation", version: 1 },
+    ]);
+    const compactedSnapshot = createProtocolSnapshot({
+      sessionId: "session-1",
+      revision: 2,
+      agentState: { revision: 2, modelContextKey: "fixture-context" },
+      historyEntries: [
+        {
+          id: "summary-entry",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: compactedText }],
+          },
+        },
+        retainedAssistant,
+        {
+          id: "continuation-entry",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: continuationText }],
+          },
+        },
+      ],
+      timeline: [{ type: "message", id: "timeline-summary-entry", messageId: "summary-entry" }],
+    });
+    compactedSnapshot.timeline.epoch = 2;
     const session = new FakeSession(runningSnapshot);
     const view = new FakeView();
     const controller = new SessionChatController({
@@ -1031,28 +1940,28 @@ describe("SessionChatController", () => {
     controller.start();
 
     for (const listener of session.listeners) {
-      listener(createResetDelta(session.id, 1, compactedSnapshot, "maintenance"));
+      listener(
+        createResetDelta(session.id, 1, compactedSnapshot, {
+          type: "compaction",
+          previousEpoch: 1,
+          epoch: 2,
+          kind: "auto",
+          cutType: "turn-boundary",
+          retainedMessageCount: 1,
+        }),
+      );
     }
+    expect(view.messages).toContainEqual({
+      id: frozenAssistant.id,
+      model: expect.objectContaining({ type: "assistant" }),
+    });
+    expect(view.messages.some((message) => message.id === retainedAssistant.id)).toBe(false);
 
-    expect(view.messages).toContainEqual(
-      expect.objectContaining({
-        model: { type: "session_divider", label: "new session" },
-      }),
-    );
-    expect(view.messages).toContainEqual(
-      expect.objectContaining({
-        model: { type: "user", text: "compacted summary" },
-      }),
-    );
-    expect(view.messages).toContainEqual(
-      expect.objectContaining({
-        model: {
-          type: "system",
-          text: "retained 3 recent messages",
-          kind: "muted",
-        },
-      }),
-    );
+    vi.mocked(copyTextToClipboard).mockClear();
+    controller.getInputHandlers().onSubmit("/copy-text");
+    await flush();
+
+    expect(copyTextToClipboard).toHaveBeenCalledWith("retained snapshot response");
   });
 
   it("hydrates a session snapshot and submits through the observed session", async () => {
@@ -1096,6 +2005,48 @@ describe("SessionChatController", () => {
         }),
       ]),
     );
+  });
+
+  it("projects a provider failure once from canonical assistant state", async () => {
+    const failedAssistant = {
+      ...createAssistantMessage("partial response"),
+      stopReason: "error",
+      errorMessage: "Codex request failed with request-id-89abde88",
+    };
+    const snapshot = createSnapshot([
+      { id: "user-failed", message: { role: "user", content: [{ type: "text", text: "try" }] } },
+      { id: "assistant-failed", message: failedAssistant },
+    ]);
+    const session = new FakeSession(snapshot);
+    session.emitSubmitEvents = false;
+    session.submit = vi.fn(async () => ({
+      userHistoryEntryId: "user-failed",
+      turn: { status: "failed", stopReason: "error", errorMessage: failedAssistant.errorMessage },
+    }));
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot,
+      targetLabel: "in-process",
+    });
+
+    controller.start();
+    controller.getInputHandlers().onSubmit("try");
+    await flush();
+
+    expect(view.messages.filter((message) => message.model.type === "transcript_notice")).toEqual([
+      {
+        id: "presentation:failure:assistant-failed",
+        model: {
+          type: "transcript_notice",
+          title: "model request failed",
+          content: [failedAssistant.errorMessage],
+          tone: "error",
+        },
+      },
+    ]);
+    expect(view.transcriptNotices).toEqual([]);
   });
 
   it("renders submitted user messages from session deltas", async () => {
@@ -1165,11 +2116,12 @@ describe("SessionChatController", () => {
     controller.getInputHandlers().onSubmit("hello session");
     await flush();
 
-    expect(view.systems).toEqual(
+    expect(view.feedback).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          text: "session turn failed: submit rejected",
-          kind: "error",
+          text: "failed to run assistant turn",
+          tone: "error",
+          content: ["submit rejected"],
         }),
       ]),
     );
@@ -1179,7 +2131,7 @@ describe("SessionChatController", () => {
     expect(view.workingIconStops).toBe(1);
     expect(controller.isStreaming).toBe(false);
     expect(controller.submittedTurnInProgress).toBe(false);
-    expect(view.status.footer.statusHint).toBeUndefined();
+    expect(view.status.footer.type).toBe("regular");
   });
 
   it("shows the protocol cause when a submitted turn fails", async () => {
@@ -1206,10 +2158,11 @@ describe("SessionChatController", () => {
     controller.getInputHandlers().onSubmit("hello session");
     await flush();
 
-    expect(view.systems).toContainEqual(
+    expect(view.feedback).toContainEqual(
       expect.objectContaining({
-        text: "session turn failed: failed to run session turn: session snapshot is invalid",
-        kind: "error",
+        text: "failed to run assistant turn",
+        tone: "error",
+        content: ["failed to run session turn: session snapshot is invalid"],
       }),
     );
   });
@@ -1231,18 +2184,73 @@ describe("SessionChatController", () => {
     controller.getInputHandlers().onSubmit("hello session");
     await flush();
 
-    expect(view.systems).toEqual(
+    expect(view.feedback).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          text: "session turn failed: submit rejected",
-          kind: "error",
+          text: "failed to run assistant turn",
+          tone: "error",
+          content: ["submit rejected"],
         }),
       ]),
     );
     expect(view.workingIconStarts).toBe(1);
     expect(view.workingIconStops).toBe(1);
     expect(controller.isStreaming).toBe(false);
-    expect(view.status.footer.statusHint).toBeUndefined();
+    expect(view.status.footer.type).toBe("regular");
+  });
+
+  it("projects interruption feedback from canonical assistant state", async () => {
+    const baseSnapshot = createSnapshot([
+      {
+        id: "assistant-interrupted",
+        message: { ...createAssistantMessage("partial response"), stopReason: "aborted" },
+      },
+    ]);
+    const snapshot = updateSnapshot(baseSnapshot, {
+      messages: baseSnapshot.messages.map((message) =>
+        message.id === "assistant-interrupted" ? { ...message, state: "interrupted" } : message,
+      ),
+    });
+    const session = new FakeSession(snapshot);
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot,
+      targetLabel: "in-process",
+    });
+
+    controller.start();
+
+    expect(view.messages).toContainEqual({
+      id: "presentation:interruption:assistant-interrupted",
+      model: {
+        type: "transcript_notice",
+        title: "assistant turn interrupted",
+        tone: "default",
+      },
+    });
+  });
+
+  it("leaves interrupted-turn feedback to the synchronized session", async () => {
+    const session = new FakeSession();
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "in-process",
+    });
+    controller.start();
+    controller.isStreaming = true;
+
+    controller.getInputHandlers().onEscape();
+    controller.getInputHandlers().onEscape();
+    await flush();
+
+    expect(session.interrupt).toHaveBeenCalledTimes(1);
+    expect(view.transcriptNotices).toEqual([]);
+    expect(view.footerNotices).toEqual([]);
   });
 
   it("starts and stops caffeinate around submitted session turns when enabled", async () => {
@@ -1543,7 +2551,7 @@ describe("SessionChatController", () => {
     });
 
     expect(view.workingIconStarts).toBe(1);
-    expect(view.status.footer.statusHint).toBeUndefined();
+    expect(view.status.footer.type).toBe("regular");
 
     const assistantMessage = createAssistantMessage("observed reply");
     session.emit({
@@ -1614,14 +2622,14 @@ describe("SessionChatController", () => {
     expect(view.workingIconStops).toBe(1);
     expect(controller.isStreaming).toBe(false);
     expect(controller.submittedTurnInProgress).toBe(true);
-    expect(view.status.footer.statusHint).toBeUndefined();
+    expect(view.status.footer.type).toBe("regular");
 
     controller.getInputHandlers().onSubmit("queued while response pending");
     await flush();
 
     expect(delayedSubmit).toHaveBeenCalledTimes(1);
     expect(session.queue).toHaveBeenCalledWith("queued while response pending");
-    expect(view.systems).toEqual([]);
+    expect(view.feedback).toEqual([]);
 
     session.submit = vi.fn(async (_text, options = {}) => ({
       userHistoryEntryId: options.historyEntryId ?? "queued-user",
@@ -1789,7 +2797,7 @@ describe("SessionChatController", () => {
     await flush();
 
     expect(session.steer).toHaveBeenCalledWith("change direction");
-    expect(view.systems).toEqual([]);
+    expect(view.feedback).toEqual([]);
   });
 
   it("shows protocol causes when queueing and steering fail", async () => {
@@ -1829,15 +2837,17 @@ describe("SessionChatController", () => {
     controller.getInputHandlers().onSteerSubmit?.("steer this");
     await flush();
 
-    expect(view.systems).toEqual(
+    expect(view.feedback).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          text: "queueing failed: failed to drain pending user message: queued commit failed",
-          kind: "error",
+          text: "failed to queue message",
+          tone: "error",
+          content: ["failed to drain pending user message: queued commit failed"],
         }),
         expect.objectContaining({
-          text: "steering failed: steering turn failed: session snapshot is invalid",
-          kind: "error",
+          text: "failed to steer assistant",
+          tone: "error",
+          content: ["steering turn failed: session snapshot is invalid"],
         }),
       ]),
     );
@@ -1890,9 +2900,9 @@ describe("SessionChatController", () => {
     controller.getInputHandlers().onSubmit("/help");
     await flush();
 
-    expect(view.systems).toContainEqual(
+    expect(view.feedback).toContainEqual(
       expect.objectContaining({
-        kind: "warn",
+        tone: "default",
         text: "wait for tau to become idle before running commands",
       }),
     );
@@ -1979,7 +2989,7 @@ describe("SessionChatController", () => {
           },
         ],
         timeline: [
-          ...baseSnapshot.timeline,
+          ...baseSnapshot.timeline.items,
           {
             type: "message",
             id: "timeline-assistant-active",
@@ -2017,7 +3027,7 @@ describe("SessionChatController", () => {
 
     expect(session.submit).not.toHaveBeenCalled();
     expect(session.queue).toHaveBeenCalledWith("queued after attach");
-    expect(view.systems).toEqual([]);
+    expect(view.feedback).toEqual([]);
 
     session.snapshotValue = createSnapshot([
       {
@@ -2058,7 +3068,7 @@ describe("SessionChatController", () => {
         },
       ],
       timeline: [
-        ...baseSnapshot.timeline,
+        ...baseSnapshot.timeline.items,
         {
           type: "message",
           id: "timeline-assistant-streaming",
@@ -2085,7 +3095,7 @@ describe("SessionChatController", () => {
       sessionId: session.id,
       fromRevision: 3,
       toRevision: 4,
-      reason: "assistant-stream",
+      cause: { type: "assistant-stream" },
       delta: {
         type: "snapshot.patch",
         changes: [
@@ -2135,7 +3145,7 @@ describe("SessionChatController", () => {
         },
       ],
       timeline: [
-        ...baseSnapshot.timeline,
+        ...baseSnapshot.timeline.items,
         {
           type: "message",
           id: "timeline-assistant-thinking-streaming",
@@ -2160,7 +3170,7 @@ describe("SessionChatController", () => {
       sessionId: session.id,
       fromRevision: 3,
       toRevision: 4,
-      reason: "assistant-stream",
+      cause: { type: "assistant-stream" },
       delta: {
         type: "snapshot.patch",
         changes: [
@@ -2190,8 +3200,8 @@ describe("SessionChatController", () => {
     );
     controller.getInputHandlers().onCtrlT();
 
-    expect(view.systems).toContainEqual(
-      expect.objectContaining({ kind: "success", text: "thoughts visible" }),
+    expect(view.feedback).toContainEqual(
+      expect.objectContaining({ tone: "default", text: "thoughts visible" }),
     );
     expect(
       controller.snapshot.messages.find((entry) => entry.id === "assistant-thinking-streaming"),
@@ -2317,7 +3327,7 @@ describe("SessionChatController", () => {
       sessionId: session.id,
       fromRevision: 3,
       toRevision: 4,
-      reason: "assistant-stream",
+      cause: { type: "assistant-stream" },
       delta: {
         type: "snapshot.patch",
         changes: [
@@ -2642,7 +3652,7 @@ describe("SessionChatController", () => {
 
     controller.start();
 
-    expect(view.messages.some((message) => message.id === "tool-a")).toBe(false);
+    expect(view.messages.some((message) => message.id === "timeline-tool-tool-a")).toBe(true);
     expect(view.toolModels).toEqual([
       expect.objectContaining({
         toolCallId: "tool-a",
@@ -2846,7 +3856,7 @@ describe("SessionChatController", () => {
       sessionId: session.id,
       fromRevision: 3,
       toRevision: 4,
-      reason: "tool-run",
+      cause: { type: "tool-run" },
       delta: {
         type: "snapshot.patch",
         changes: [
@@ -3082,7 +4092,7 @@ describe("SessionChatController", () => {
       sessionId: session.id,
       fromRevision: 3,
       toRevision: 4,
-      reason: "agent-run",
+      cause: { type: "agent-run" },
       delta: {
         type: "snapshot.patch",
         changes: [
@@ -3238,16 +4248,186 @@ describe("SessionChatController", () => {
       guidance: "preserve decisions",
     });
     expect(session.submit).not.toHaveBeenCalled();
-    expect(view.messages).toContainEqual({
+    const dividerIndexes = view.messages.flatMap((message, index) =>
+      message.model.type === "session_divider" ? [index] : [],
+    );
+    const summaryIndex = view.messages.findIndex((message) => message.id === "summary-entry");
+    expect(dividerIndexes).toHaveLength(1);
+    expect(view.messages[dividerIndexes[0]]?.model).toEqual({
+      type: "session_divider",
+      label: "compacted context",
+    });
+    expect(dividerIndexes[0]).toBeLessThan(summaryIndex);
+    expect(view.messages[summaryIndex]).toEqual({
       id: "summary-entry",
       model: { type: "user", text: "compacted summary: preserve decisions" },
     });
-    expect(view.systems).toContainEqual(
-      expect.objectContaining({
-        kind: "success",
-        text: "session compacted. previous context and last assistant message have been included.",
-      }),
+    expect(view.feedback).toEqual([]);
+  });
+
+  it("renders one divider before a manually compacted reset", async () => {
+    const session = new FakeSession(
+      createSnapshot([
+        {
+          id: "history-1",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "persisted" }],
+          },
+        },
+      ]),
     );
+    session.compact = vi.fn(async () => {
+      const runningSnapshot = updateSnapshot(session.snapshotValue, {
+        revision: session.snapshotValue.revision + 1,
+        timeline: [
+          ...session.snapshotValue.timeline.items,
+          {
+            type: "operation",
+            id: "operation-manual-compaction",
+            operation: {
+              kind: "manual-compaction",
+              status: "running",
+              startedAt: 1,
+            },
+          },
+        ],
+      });
+      for (const listener of session.listeners) {
+        listener(
+          createResetDelta(
+            session.id,
+            session.snapshotValue.revision,
+            runningSnapshot,
+            "maintenance",
+          ),
+        );
+      }
+
+      const compactedSnapshot = createProtocolSnapshot({
+        sessionId: session.id,
+        revision: runningSnapshot.revision + 1,
+        agentState: {
+          revision: runningSnapshot.agentState.revision + 1,
+          modelContextKey: runningSnapshot.agentState.modelContextKey,
+        },
+        historyEntries: [
+          {
+            id: "summary-entry",
+            message: {
+              role: "user",
+              content: [{ type: "text", text: "compacted summary" }],
+            },
+          },
+        ],
+      });
+      compactedSnapshot.timeline.epoch = runningSnapshot.timeline.epoch + 1;
+      session.snapshotValue = compactedSnapshot;
+      for (const listener of session.listeners) {
+        listener(
+          createResetDelta(session.id, runningSnapshot.revision, compactedSnapshot, {
+            type: "compaction",
+            previousEpoch: runningSnapshot.timeline.epoch,
+            epoch: compactedSnapshot.timeline.epoch,
+            kind: "manual",
+            cutType: "turn-boundary",
+            retainedMessageCount: 0,
+          }),
+        );
+      }
+      return {
+        snapshot: compactedSnapshot,
+        compactionMessage: "compacted summary",
+        includedLastAssistant: false,
+      };
+    });
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "in-process",
+    });
+    controller.start();
+
+    controller.getInputHandlers().onSubmit("/compact-all");
+    await flush();
+
+    const dividerIndexes = view.messages.flatMap((message, index) =>
+      message.model.type === "session_divider" ? [index] : [],
+    );
+    const summaryIndex = view.messages.findIndex((message) => message.id === "summary-entry");
+    expect(dividerIndexes).toHaveLength(1);
+    expect(view.messages[dividerIndexes[0]]?.model).toEqual({
+      type: "session_divider",
+      label: "compacted context",
+    });
+    expect(dividerIndexes[0]).toBeLessThan(summaryIndex);
+    expect(dividerIndexes.filter((index) => index > summaryIndex)).toEqual([]);
+  });
+
+  it("renders manual compaction failures as transcript errors", async () => {
+    const session = new FakeSession();
+    session.compact = vi.fn(async () => {
+      const runningSnapshot = updateSnapshot(session.snapshotValue, {
+        revision: session.snapshotValue.revision + 1,
+        timeline: [
+          ...session.snapshotValue.timeline.items,
+          {
+            type: "operation",
+            id: "operation-manual-compaction",
+            operation: {
+              kind: "manual-compaction",
+              status: "running",
+              startedAt: 1,
+            },
+          },
+        ],
+      });
+      for (const listener of session.listeners) {
+        listener(
+          createResetDelta(
+            session.id,
+            session.snapshotValue.revision,
+            runningSnapshot,
+            "maintenance",
+          ),
+        );
+      }
+
+      const failedSnapshot = updateSnapshot(runningSnapshot, {
+        revision: runningSnapshot.revision + 1,
+        timeline: runningSnapshot.timeline.items.filter((item) => item.type !== "operation"),
+      });
+      session.snapshotValue = failedSnapshot;
+      for (const listener of session.listeners) {
+        listener(
+          createResetDelta(session.id, runningSnapshot.revision, failedSnapshot, "maintenance"),
+        );
+      }
+      throw new Error("no conversation to compact.");
+    });
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "in-process",
+    });
+    controller.start();
+
+    controller.getInputHandlers().onSubmit("/compact-all");
+    await flush();
+
+    expect(view.transcriptNotices).toEqual([
+      {
+        text: "failed to compact session",
+        tone: "error",
+        content: ["no conversation to compact."],
+      },
+    ]);
+    expect(view.messages.filter((message) => message.model.type === "session_divider")).toEqual([]);
+    expect(view.status.footer.type).toBe("regular");
   });
 
   it("routes goal controls through the session protocol and reflects goal status", async () => {
@@ -3270,8 +4450,8 @@ describe("SessionChatController", () => {
     controller.isStreaming = true;
     controller.getInputHandlers().onSubmit("/goal");
     await flush();
-    expect(view.systems).toContainEqual(
-      expect.objectContaining({ text: "goal active: Ship the feature" }),
+    expect(view.feedback).toContainEqual(
+      expect.objectContaining({ text: "goal active", content: ["Ship the feature"] }),
     );
 
     controller.getInputHandlers().onSubmit("/goal clear");
@@ -3284,9 +4464,9 @@ describe("SessionChatController", () => {
     await flush();
     expect(session.startGoal).toHaveBeenCalledOnce();
     expect(session.resumeGoal).not.toHaveBeenCalled();
-    expect(view.systems).toContainEqual(
+    expect(view.feedback).toContainEqual(
       expect.objectContaining({
-        kind: "warn",
+        tone: "default",
         text: "wait for tau to become idle before running commands",
       }),
     );
@@ -3327,11 +4507,14 @@ describe("SessionChatController", () => {
     controller.getInputHandlers().onSubmit("/compact-all");
     await flush();
 
-    expect(view.status.footer.statusHint).toBe("compacting context...");
+    expect(view.status.footer).toEqual({
+      type: "activity",
+      label: "compacting context",
+    });
     pendingCompact.resolve();
     await flush();
 
-    expect(view.status.footer.statusHint).toBeUndefined();
+    expect(view.status.footer.type).toBe("regular");
   });
 
   it("uses the shared slash command parser for session command dispatch", async () => {
@@ -3353,7 +4536,12 @@ describe("SessionChatController", () => {
 
     expect(session.reload).toHaveBeenCalledTimes(1);
     expect(session.submit).not.toHaveBeenCalled();
-    expect(view.systems.some((message) => message.text.includes("commands:"))).toBe(true);
+    expect(
+      view.messages.some(
+        (message) =>
+          message.model.type === "transcript_text" && message.model.text.includes("commands:"),
+      ),
+    ).toBe(true);
   });
 
   it("tracks session editor input modes without command hints", async () => {
@@ -3379,7 +4567,7 @@ describe("SessionChatController", () => {
 
     handlers.onChange("/reload");
     expect(view.status.editor.mode).toBe("normal");
-    expect(view.status.footer.statusHint).toBeUndefined();
+    expect(view.status.footer.type).toBe("regular");
   });
 
   it("switches session personas through the session protocol", async () => {
@@ -3398,9 +4586,9 @@ describe("SessionChatController", () => {
 
     expect(session.setPersona).toHaveBeenCalledWith("persona-2");
     expect(view.status.editor.personaName).toBe("Persona 2");
-    expect(view.systems).toContainEqual(
+    expect(view.feedback).toContainEqual(
       expect.objectContaining({
-        kind: "success",
+        tone: "default",
         text: "switched to Persona 2 (gpt-5.5)",
       }),
     );
@@ -3460,10 +4648,9 @@ describe("SessionChatController", () => {
 
     expect(session.setReasoning).toHaveBeenCalledWith("minimal");
     expect(view.status.editor.reasoningLabel).toBe("minimal");
-    expect(view.systems).not.toContainEqual({
+    expect(view.feedback).not.toContainEqual({
       text: "cannot change reasoning while a session turn is running",
-      kind: "warn",
-      options: undefined,
+      tone: "default",
     });
   });
 
@@ -3501,12 +4688,16 @@ describe("SessionChatController", () => {
     await flush();
 
     expect(session.reload).toHaveBeenCalledTimes(1);
-    expect(view.systems).toContainEqual(
-      expect.objectContaining({ kind: "warn", text: "reload warning" }),
-    );
-    expect(view.systems).toContainEqual(
+    expect(view.feedback).toContainEqual(
       expect.objectContaining({
-        kind: "success",
+        tone: "default",
+        text: "configuration warning",
+        content: ["reload warning"],
+      }),
+    );
+    expect(view.feedback).toContainEqual(
+      expect.objectContaining({
+        tone: "default",
         text: "reloaded: 2 personas, 2 prompts, 1 skills.",
       }),
     );
@@ -3536,10 +4727,9 @@ describe("SessionChatController", () => {
 
     expect(copyTextToClipboard).toHaveBeenCalledWith("line 1\nline 2");
     expect(view.editorText).toBe("");
-    expect(view.systems).toContainEqual({
+    expect(view.feedback).toContainEqual({
       text: "stashed input to clipboard",
-      kind: "success",
-      options: undefined,
+      tone: "default",
     });
   });
 
@@ -3558,10 +4748,9 @@ describe("SessionChatController", () => {
     controller.getInputHandlers().onCtrlS();
     await flush();
 
-    expect(view.systems).toContainEqual({
+    expect(view.feedback).toContainEqual({
       text: "no input to stash yet",
-      kind: "warn",
-      options: undefined,
+      tone: "default",
     });
   });
 
@@ -3598,7 +4787,7 @@ describe("SessionChatController", () => {
     await flush();
 
     expect(session.interruptSubagent).toHaveBeenCalledWith("subagent-1");
-    expect(view.systems).not.toContainEqual(
+    expect(view.feedback).not.toContainEqual(
       expect.objectContaining({
         text: expect.stringContaining("unknown subagent id"),
       }),
@@ -3620,10 +4809,9 @@ describe("SessionChatController", () => {
     await flush();
 
     expect(session.interruptSubagent).not.toHaveBeenCalled();
-    expect(view.systems).toContainEqual({
+    expect(view.feedback).toContainEqual({
       text: "no active subagent selected",
-      kind: "warn",
-      options: undefined,
+      tone: "default",
     });
   });
 
@@ -3643,10 +4831,9 @@ describe("SessionChatController", () => {
     await flush();
 
     expect(session.interruptSubagent).toHaveBeenCalledWith("missing-subagent");
-    expect(view.systems).toContainEqual({
+    expect(view.feedback).toContainEqual({
       text: "unknown subagent id: missing-subagent",
-      kind: "warn",
-      options: undefined,
+      tone: "default",
     });
   });
 
@@ -3710,10 +4897,10 @@ describe("SessionChatController", () => {
     expect(session.closeEphemeralContext).toHaveBeenCalledWith("ephemeral-1");
     expect(session.record.mock.calls[0][0]).toContain("returned review from local diff tool");
     expect(session.operationLog.slice(-2)).toEqual(["close-ephemeral", "record"]);
-    expect(view.systems).toContainEqual(
+    expect(view.feedback).toContainEqual(
       expect.objectContaining({
-        kind: "success",
-        text: "diff review added to the conversation. tau did not run yet.",
+        tone: "default",
+        text: "diff review added; no assistant turn started",
       }),
     );
   });
@@ -3748,11 +4935,15 @@ describe("SessionChatController", () => {
       ]),
     );
     expect(view.messages.some((message) => message.model.type === "user")).toBe(false);
-    expect(view.systems).toContainEqual(
-      expect.objectContaining({ kind: "error", text: "diff review failed: record failed" }),
+    expect(view.feedback).toContainEqual(
+      expect.objectContaining({
+        tone: "error",
+        text: "failed to run diff review",
+        content: ["record failed"],
+      }),
     );
-    expect(view.systems).not.toContainEqual(
-      expect.objectContaining({ kind: "success", text: expect.stringContaining("added") }),
+    expect(view.feedback).not.toContainEqual(
+      expect.objectContaining({ tone: "default", text: expect.stringContaining("added") }),
     );
   });
 
@@ -3802,15 +4993,15 @@ describe("SessionChatController", () => {
       ]),
     );
     expect(view.messages.some((message) => message.model.status === "failed")).toBe(false);
-    expect(view.systems).toContainEqual(
+    expect(view.feedback).toContainEqual(
       expect.objectContaining({
-        kind: "success",
-        text: "diff review added to the conversation. tau did not run yet.",
+        tone: "default",
+        text: "diff review added; no assistant turn started",
       }),
     );
-    expect(view.systems).not.toContainEqual(
+    expect(view.feedback).not.toContainEqual(
       expect.objectContaining({
-        kind: "error",
+        tone: "error",
         text: expect.stringContaining("connection closed"),
       }),
     );
@@ -3849,10 +5040,9 @@ describe("SessionChatController", () => {
     expect(session.submit).not.toHaveBeenCalled();
     expect(session.queue).not.toHaveBeenCalled();
     expect(createSession).not.toHaveBeenCalled();
-    expect(view.systems).toContainEqual({
+    expect(view.feedback).toContainEqual({
       text: "wait for tau to become idle before submitting input",
-      kind: "warn",
-      options: undefined,
+      tone: "default",
     });
 
     releaseRecord.resolve();
@@ -4052,12 +5242,12 @@ describe("SessionChatController", () => {
     await flush();
 
     expect(spawn).not.toHaveBeenCalled();
-    expect(view.systems).toContainEqual({
+    expect(view.footerNotices).toContainEqual({
       text: "/listen is currently supported only on macOS.",
-      kind: "warn",
-      options: undefined,
+      tone: "default",
+      durationMs: 3000,
     });
-    expect(view.systems).not.toContainEqual(
+    expect(view.feedback).not.toContainEqual(
       expect.objectContaining({
         text: expect.stringContaining("not supported in protocol attach mode"),
       }),
@@ -4137,6 +5327,11 @@ describe("SessionChatController", () => {
 
     expect(view.editorEnabledUpdates).toContain(true);
     expect(view.editorText).toBe("session transcript");
+    expect(view.statusUpdates).toContainEqual(
+      expect.objectContaining({
+        footer: { type: "activity", label: "transcribing voice input" },
+      }),
+    );
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(spawn).toHaveBeenNthCalledWith(1, "mktemp", ["/tmp/tau-listen.XXXXXX"]);
     expect(spawn).toHaveBeenNthCalledWith(
@@ -4150,6 +5345,45 @@ describe("SessionChatController", () => {
       }),
     );
     expect(session.submit).not.toHaveBeenCalled();
+  });
+
+  it("shows voice transcription failures as temporary footer errors", async () => {
+    const audioPath = join(tmpdir(), `tau-session-listen-failure-${Date.now()}.wav`);
+    await writeFile(audioPath, Buffer.alloc(2048, 1));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Promise.reject(new Error("service unavailable"))),
+    );
+
+    const session = new FakeSession();
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "in-process",
+      deps: createMockDeps(),
+      config: { apiKeys: { mistral: "mistral-key" } },
+    });
+    controller.listenRecording = {
+      audioPath,
+      stopRequested: false,
+      abortController: new AbortController(),
+      completion: Promise.resolve(),
+    };
+
+    try {
+      await controller.stopListenCapture();
+    } finally {
+      vi.unstubAllGlobals();
+      await rm(audioPath, { force: true });
+    }
+
+    expect(view.transcriptNotices.at(-1)).toEqual({
+      text: "failed to transcribe speech",
+      tone: "error",
+      content: ["service unavailable"],
+    });
   });
 
   it("routes /speak as a client-side command in session attach", async () => {
@@ -4167,12 +5401,12 @@ describe("SessionChatController", () => {
     controller.getInputHandlers().onSubmit("/speak");
     await flush();
 
-    expect(view.systems).toContainEqual({
+    expect(view.footerNotices).toContainEqual({
       text: "no assistant message to speak yet.",
-      kind: "warn",
-      options: undefined,
+      tone: "default",
+      durationMs: 3000,
     });
-    expect(view.systems).not.toContainEqual(
+    expect(view.feedback).not.toContainEqual(
       expect.objectContaining({
         text: expect.stringContaining("not supported in protocol attach mode"),
       }),
@@ -4282,17 +5516,17 @@ describe("SessionChatController", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const speechHints = view.statusUpdates
-      .map((status) => status.footer.statusHint)
+      .map((status) => (status.footer.type === "activity" ? status.footer.label : undefined))
       .filter((hint) => hint !== undefined);
     expect(speechHints).toEqual(
       expect.arrayContaining([
-        "rewriting for speech...",
-        "generating speech chunks (0 out of 1 ready)...",
-        "generating speech chunks (1 out of 1 ready)...",
-        "playing speech (0/1 played, 1/1 ready)...",
+        "rewriting for speech",
+        "generating speech chunks (0 out of 1 ready)",
+        "generating speech chunks (1 out of 1 ready)",
+        "playing speech (0/1 played, 1/1 ready)",
       ]),
     );
-    expect(view.status.footer.statusHint).toBeUndefined();
+    expect(view.status.footer.type).toBe("regular");
     expect(spawn).toHaveBeenNthCalledWith(1, "mktemp", ["/tmp/tau-speak.XXXXXX"]);
     expect(spawn).toHaveBeenNthCalledWith(
       2,
@@ -4385,7 +5619,7 @@ describe("SessionChatController", () => {
       model: { type: "user", text: "persisted" },
     });
     expect(view.resetToolUiSession.mock.calls.length).toBeGreaterThan(resetCountBeforeNew);
-    expect(view.systems).not.toContainEqual(
+    expect(view.feedback).not.toContainEqual(
       expect.objectContaining({ text: "created new session" }),
     );
     expect(view.messages.length).toBeGreaterThan(messageCountBeforeNew);
@@ -4394,8 +5628,8 @@ describe("SessionChatController", () => {
         model: { type: "session_divider", label: "new session" },
       }),
     );
-    expect(view.systems).toContainEqual(
-      expect.objectContaining({ text: "session id: session-2", kind: "muted" }),
+    expect(view.feedback).toContainEqual(
+      expect.objectContaining({ text: "session id", tone: "default", content: ["session-2"] }),
     );
   });
 
@@ -4476,10 +5710,9 @@ describe("SessionChatController", () => {
 
     expect(createSession).toHaveBeenCalledTimes(1);
     expect(session.unobserve).not.toHaveBeenCalled();
-    expect(view.systems).toContainEqual({
+    expect(view.feedback).toContainEqual({
       text: "wait for tau to become idle before submitting input",
-      kind: "warn",
-      options: undefined,
+      tone: "default",
     });
 
     sessionCreated.resolve(nextSession);
@@ -4487,6 +5720,7 @@ describe("SessionChatController", () => {
 
     expect(session.unobserve).toHaveBeenCalledTimes(1);
     expect(nextSession.listeners.size).toBe(1);
+    expect(nextSession.ephemeralListeners.size).toBe(1);
     expect(nextSession.pendingUserMessagesListeners.size).toBe(1);
   });
 
@@ -4510,12 +5744,13 @@ describe("SessionChatController", () => {
     await controller.onUserInput("/new");
 
     expect(nextSession.unobserve).toHaveBeenCalledTimes(1);
+    expect(nextSession.ephemeralListeners.size).toBe(0);
     expect(session.unobserve).not.toHaveBeenCalled();
     expect(session.listeners.size).toBe(1);
-    expect(view.systems).toContainEqual({
-      text: "new session failed: snapshot unavailable",
-      kind: "error",
-      options: undefined,
+    expect(view.feedback).toContainEqual({
+      text: "failed to create session",
+      tone: "error",
+      content: ["snapshot unavailable"],
     });
   });
 
@@ -4613,10 +5848,9 @@ describe("SessionChatController", () => {
     await flush();
 
     expect(view.rewindPickerShows).toHaveLength(0);
-    expect(view.systems).toContainEqual({
+    expect(view.feedback).toContainEqual({
       text: "no user messages available to rewind.",
-      kind: "warn",
-      options: undefined,
+      tone: "default",
     });
   });
 });

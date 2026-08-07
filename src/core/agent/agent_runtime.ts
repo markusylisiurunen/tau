@@ -74,7 +74,7 @@ export type HistoryEntry = {
 
 export type AgentUsageCheckpoint = {
   historyEntryId: string;
-  contextEpoch: string;
+  modelContextKey: string;
   tokens: number;
 };
 
@@ -82,7 +82,7 @@ export type AgentState = {
   agentId: string;
   revision: number;
   historyEntries: HistoryEntry[];
-  contextEpoch: string;
+  modelContextKey: string;
   usageCheckpoint?: AgentUsageCheckpoint;
 };
 
@@ -187,7 +187,7 @@ export type RewindResult = {
 type AgentTurnSpec = {
   turnId: string;
   historyEntryId: string;
-  contextEpoch: string;
+  modelContextKey: string;
   model: ModelExecutor;
   modelNotice?: string;
   attribution: AgentSpec["attribution"];
@@ -230,7 +230,7 @@ export function createAgentSpec(options: {
   };
 }
 
-function getContextEpoch(spec: AgentSpec): string {
+function getModelContextKey(spec: AgentSpec): string {
   return createHash("sha256")
     .update(
       JSON.stringify({
@@ -334,7 +334,7 @@ export function recoverAgentState(state: AgentState, timestamp: number): AgentSt
       agentId: state.agentId,
       revision: state.revision + historyEntries.length - sourceEntries.length,
       historyEntries,
-      contextEpoch: state.contextEpoch,
+      modelContextKey: state.modelContextKey,
       ...(state.usageCheckpoint ? { usageCheckpoint: { ...state.usageCheckpoint } } : {}),
     },
     recoveredToolResults,
@@ -349,7 +349,7 @@ export class AgentRuntime {
   private readonly getCompactionContinuationSystemMessages?: () => readonly string[];
   private historyEntries: HistoryEntry[];
   private revision: number;
-  private contextEpoch: string;
+  private modelContextKey: string;
   private usageCheckpoint?: AgentUsageCheckpoint;
   private activeAbortController?: AbortController;
   private submitPending = false;
@@ -372,22 +372,22 @@ export class AgentRuntime {
     this.clock = options.clock;
     this.archiveAutoCompaction = options.archiveAutoCompaction;
     this.getCompactionContinuationSystemMessages = options.getCompactionContinuationSystemMessages;
-    const contextEpoch = getContextEpoch(options.spec);
+    const modelContextKey = getModelContextKey(options.spec);
     if (options.state) {
       const recovered = recoverAgentState(options.state, this.clock.now()).state;
       this.agentId = recovered.agentId;
       this.revision = recovered.revision;
       this.historyEntries = recovered.historyEntries;
-      this.contextEpoch = contextEpoch;
+      this.modelContextKey = modelContextKey;
       this.usageCheckpoint =
-        recovered.contextEpoch === contextEpoch && recovered.usageCheckpoint
+        recovered.modelContextKey === modelContextKey && recovered.usageCheckpoint
           ? { ...recovered.usageCheckpoint }
           : undefined;
     } else {
       this.agentId = randomUUID();
       this.revision = 0;
       this.historyEntries = [];
-      this.contextEpoch = contextEpoch;
+      this.modelContextKey = modelContextKey;
     }
   }
 
@@ -408,7 +408,7 @@ export class AgentRuntime {
       agentId: this.agentId,
       revision: this.revision,
       historyEntries: structuredClone(this.historyEntries),
-      contextEpoch: this.contextEpoch,
+      modelContextKey: this.modelContextKey,
       ...(this.usageCheckpoint ? { usageCheckpoint: { ...this.usageCheckpoint } } : {}),
     };
   }
@@ -416,8 +416,8 @@ export class AgentRuntime {
   updateSpec(spec: AgentSpec): void {
     this.assertActive();
     this.currentSpec = spec;
-    this.contextEpoch = getContextEpoch(spec);
-    if (this.usageCheckpoint?.contextEpoch !== this.contextEpoch) {
+    this.modelContextKey = getModelContextKey(spec);
+    if (this.usageCheckpoint?.modelContextKey !== this.modelContextKey) {
       this.usageCheckpoint = undefined;
     }
   }
@@ -443,7 +443,7 @@ export class AgentRuntime {
     this.revision = recovery.state.revision;
     this.historyEntries = recovery.state.historyEntries;
     this.usageCheckpoint =
-      recovery.state.contextEpoch === this.contextEpoch && recovery.state.usageCheckpoint
+      recovery.state.modelContextKey === this.modelContextKey && recovery.state.usageCheckpoint
         ? { ...recovery.state.usageCheckpoint }
         : undefined;
     return recovery;
@@ -784,6 +784,11 @@ export class AgentRuntime {
           turnId: turnSpec.turnId,
           historyEntryId: turnSpec.historyEntryId,
           outcome,
+          ...(result.limitReached
+            ? { failure: result.limitReached }
+            : result.blocked
+              ? { failure: result.blocked }
+              : {}),
         });
         for (const submission of associatedSteering.splice(0)) {
           submission.resolveResult({
@@ -1074,7 +1079,7 @@ export class AgentRuntime {
     return {
       turnId: `turn-${randomUUID()}`,
       historyEntryId: this.getCurrentTurnUserHistoryEntryId(),
-      contextEpoch: getContextEpoch(this.currentSpec),
+      modelContextKey: getModelContextKey(this.currentSpec),
       model: this.currentSpec.model,
       ...(this.currentSpec.modelNotice ? { modelNotice: this.currentSpec.modelNotice } : {}),
       attribution: { ...this.currentSpec.attribution },
@@ -1141,16 +1146,8 @@ export class AgentRuntime {
     const limitReached =
       needsAnotherSubturn && subturns >= turnSettings.maxModelSubturns && !signal.aborted;
     const limitMessage = limitReached
-      ? `stopped after ${turnSettings.maxModelSubturns} model subturn${turnSettings.maxModelSubturns === 1 ? "" : "s"} without producing a final response.`
+      ? `stopped after ${turnSettings.maxModelSubturns} model attempt${turnSettings.maxModelSubturns === 1 ? "" : "s"} without producing a final response`
       : undefined;
-    if (limitMessage) {
-      yield {
-        type: "notice",
-        severity: "error",
-        text: limitMessage,
-      };
-    }
-
     return {
       aborted: signal.aborted,
       ...(limitMessage
@@ -1333,7 +1330,7 @@ export class AgentRuntime {
       return false;
     }
 
-    const usageTokens = this.getFreshContextUsageEstimateTokens(turnSettings.contextEpoch);
+    const usageTokens = this.getFreshContextUsageEstimateTokens(turnSettings.modelContextKey);
     return usageTokens !== undefined && usageTokens > thresholdTokens;
   }
 
@@ -1344,9 +1341,9 @@ export class AgentRuntime {
     return (turnSettings.model.model.contextWindow ?? 0) - settings.reserveTokens;
   }
 
-  private getFreshContextUsageEstimateTokens(contextEpoch: string): number | undefined {
+  private getFreshContextUsageEstimateTokens(modelContextKey: string): number | undefined {
     const checkpoint = this.usageCheckpoint;
-    if (!checkpoint || checkpoint.contextEpoch !== contextEpoch) {
+    if (!checkpoint || checkpoint.modelContextKey !== modelContextKey) {
       return undefined;
     }
     const checkpointIndex = this.historyEntries.findIndex(
@@ -1428,7 +1425,12 @@ export class AgentRuntime {
         onRetry: () => consumeSubturnRetry(retryBudget),
         maxRetries: retryBudget.remaining,
         delayMs: turnSettings.retryPolicy.delayMs,
-        notice: { text: "auto-retrying after transient error", severity: "warn" },
+        feedback: {
+          tone: "default",
+          title: "retrying after transient error",
+          presentation: "footer",
+          durationMs: 3_000,
+        },
       },
     });
     const toolRunner = new SequentialToolCallRunner(
@@ -1514,13 +1516,6 @@ export class AgentRuntime {
           if (!signal.aborted) {
             await this.noteProviderError(turnSettings.model, errorMessage);
           }
-          if (toolRecoveryMode === "continue") {
-            yield {
-              type: "notice",
-              severity: "error",
-              text: `model stream failed after tool execution: ${errorMessage}`,
-            };
-          }
           continue;
         }
         if (next.source === "tool_error") {
@@ -1560,13 +1555,13 @@ export class AgentRuntime {
               finalMessage.stopReason !== "error" &&
               finalMessage.stopReason !== "aborted" &&
               usage &&
-              turnSettings.contextEpoch === this.contextEpoch &&
+              turnSettings.modelContextKey === this.modelContextKey &&
               finalMessage.provider === turnSettings.model.model.provider &&
               finalMessage.model === turnSettings.model.model.id
             ) {
               this.usageCheckpoint = {
                 historyEntryId,
-                contextEpoch: turnSettings.contextEpoch,
+                modelContextKey: turnSettings.modelContextKey,
                 tokens:
                   (usage.input ?? 0) +
                   (usage.cacheRead ?? 0) +
@@ -1586,20 +1581,12 @@ export class AgentRuntime {
               yield {
                 type: "usage_checkpoint",
                 historyEntryId,
-                contextEpoch: this.usageCheckpoint.contextEpoch,
+                modelContextKey: this.usageCheckpoint.modelContextKey,
                 tokens: this.usageCheckpoint.tokens,
                 revision: this.revision,
               };
             }
 
-            if (toolRecoveryMode === "continue") {
-              const notice: AgentEvent = {
-                type: "notice",
-                severity: "error",
-                text: `model stream failed after tool execution: ${finalMessage.errorMessage ?? "unknown provider error"}`,
-              };
-              yield notice;
-            }
             if (!toolRecoveryMode) {
               for (const toolResult of pendingToolResults.splice(0)) {
                 const toolHistoryEntryId = this.addMessage(toolResult);
@@ -1698,8 +1685,8 @@ export class AgentRuntime {
                   id: `invalid-tool-call-${randomUUID()}`,
                 };
                 const message = invalidId
-                  ? "Model returned a tool call with an empty ID."
-                  : `Model returned duplicate tool call ID '${admittedToolCall.id}'.`;
+                  ? "model returned a tool call with an empty ID"
+                  : `model returned duplicate tool call ID '${admittedToolCall.id}'`;
                 admittedToolCalls.push(toolCall);
                 const admission = toolRunner.prepareRejected(toolCall, message);
                 admissions.push({

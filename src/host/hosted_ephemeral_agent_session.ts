@@ -29,7 +29,7 @@ import {
 } from "../core/utils/subagent_utils.js";
 import type { ExecutionEnvironment } from "../execution/execution_environment.js";
 import type {
-  SessionProtocolEphemeralMessage,
+  SessionProtocolEphemeralAgentThreadUpdateEvent,
   SessionProtocolEphemeralSubmitParams,
   SessionProtocolEphemeralSubmitResult,
 } from "../protocol/session_protocol.js";
@@ -67,7 +67,7 @@ export type HostedEphemeralAgentSessionOptions = {
   tools: SubagentToolName[];
   emitUpdate: (
     threadId: string,
-    update: SessionProtocolEphemeralMessage["event"]["update"],
+    update: SessionProtocolEphemeralAgentThreadUpdateEvent["update"],
   ) => void;
   recordUsage?: UsageRecorder;
 };

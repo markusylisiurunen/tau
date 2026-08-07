@@ -68,6 +68,23 @@ export function createProtocolSnapshot(overrides = {}) {
     })),
   ];
 
+  const tools = overrides.tools ?? {};
+  const timelineInput =
+    overrides.timeline ??
+    messages
+      .filter((entry) => entry.id !== "system")
+      .map((entry) => ({
+        type: "message",
+        id: `timeline-${entry.id}`,
+        messageId: entry.id,
+      }));
+  const { timeline, operations } = normalizeFixtureTimeline(
+    timelineInput,
+    messages,
+    tools,
+    overrides.operations,
+  );
+
   const snapshot = {
     sessionId: overrides.sessionId ?? "session-1",
     attributes: overrides.attributes ?? { source: "test" },
@@ -75,7 +92,7 @@ export function createProtocolSnapshot(overrides = {}) {
     revision: overrides.revision ?? 1,
     agentState: overrides.agentState ?? {
       revision: historyEntries.length,
-      contextEpoch: "fixture-context",
+      modelContextKey: "fixture-context",
     },
     lifecycle: overrides.lifecycle ?? "idle",
     goal: overrides.goal ?? null,
@@ -122,16 +139,9 @@ export function createProtocolSnapshot(overrides = {}) {
       home: "/home/user",
     },
     messages,
-    timeline:
-      overrides.timeline ??
-      messages
-        .filter((entry) => entry.id !== "system")
-        .map((entry) => ({
-          type: "message",
-          id: `timeline-${entry.id}`,
-          messageId: entry.id,
-        })),
-    tools: overrides.tools ?? {},
+    timeline,
+    tools,
+    operations,
     agents: overrides.agents ?? {},
     facets: overrides.facets ?? {},
   };
@@ -146,6 +156,94 @@ export function createProtocolSnapshot(overrides = {}) {
   });
 
   return snapshot;
+}
+
+function normalizeFixtureTimeline(input, messages, tools, operationOverrides) {
+  if (!Array.isArray(input)) {
+    return { timeline: input, operations: operationOverrides ?? {} };
+  }
+
+  const messagesById = new Map(messages.map((message) => [message.id, message]));
+  const embeddedOperations = Object.fromEntries(
+    input.flatMap((item) =>
+      item.type === "operation" && item.operation
+        ? [[item.operation.id ?? item.id, { id: item.operation.id ?? item.id, ...item.operation }]]
+        : [],
+    ),
+  );
+  const operations = operationOverrides ?? embeddedOperations;
+  const toolIdsByMessageId = new Map();
+  for (const [toolId, tool] of Object.entries(tools)) {
+    const position = tool.status === "streaming" ? tool.origin : tool.call;
+    const ids = toolIdsByMessageId.get(position.messageId) ?? [];
+    ids.push(toolId);
+    ids.sort((leftId, rightId) => {
+      const left = tools[leftId];
+      const right = tools[rightId];
+      const leftPosition = left.status === "streaming" ? left.origin : left.call;
+      const rightPosition = right.status === "streaming" ? right.origin : right.call;
+      return leftPosition.contentIndex - rightPosition.contentIndex;
+    });
+    toolIdsByMessageId.set(position.messageId, ids);
+  }
+
+  let sequence = 0;
+  const items = [];
+  const append = (item, createdAt = 0) => {
+    sequence += 1;
+    items.push({ ...item, sequence, createdAt });
+  };
+  for (const item of input) {
+    if (item.type === "operation") {
+      const operationId = item.operationId ?? item.operation?.id ?? item.id;
+      append(
+        { type: "operation", id: item.id, operationId },
+        item.createdAt ?? item.operation?.startedAt,
+      );
+      continue;
+    }
+    if (item.type === "notice" && !("kind" in item.notice)) {
+      append(
+        {
+          type: "notice",
+          id: item.id,
+          notice: {
+            kind: "tau.test.notice",
+            version: 1,
+            severity: item.notice.severity,
+            subject: item.notice.subject ?? { type: "session" },
+            presentation: {
+              title: item.notice.title ?? item.notice.text ?? "test notice",
+              ...(item.notice.content ? { content: item.notice.content } : {}),
+            },
+            data: {},
+          },
+        },
+        item.createdAt ?? item.notice.timestamp,
+      );
+      continue;
+    }
+    const createdAt =
+      item.createdAt ??
+      (item.type === "message" ? messagesById.get(item.messageId)?.message.timestamp : 0);
+    append(item, createdAt);
+    if (item.type === "message") {
+      for (const toolId of toolIdsByMessageId.get(item.messageId) ?? []) {
+        append({ type: "tool", id: `timeline-tool-${toolId}`, toolId }, createdAt);
+      }
+    }
+  }
+  for (const [toolId, tool] of Object.entries(tools)) {
+    if (items.some((item) => item.type === "tool" && item.toolId === toolId)) {
+      continue;
+    }
+    const position = tool.status === "streaming" ? tool.origin : tool.call;
+    append(
+      { type: "tool", id: `timeline-tool-${toolId}`, toolId },
+      messagesById.get(position.messageId)?.message.timestamp,
+    );
+  }
+  return { timeline: { epoch: 1, sequence, items }, operations };
 }
 
 export function createProtocolExecResult(overrides = {}) {

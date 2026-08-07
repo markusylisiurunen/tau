@@ -24,10 +24,11 @@ import { applySessionProtocolDelta } from "../dist/protocol/session_protocol.js"
 import { FileSessionStore } from "../dist/store/file_session_store.js";
 import { MemorySessionStore } from "../dist/store/memory_session_store.js";
 import {
-  LEGACY_SESSION_CONTEXT_EPOCH,
+  LEGACY_SESSION_MODEL_CONTEXT_KEY,
   STORED_SESSION_DOCUMENT_FORMAT,
   STORED_SESSION_DOCUMENT_VERSION,
 } from "../dist/store/session_snapshot_migrations.js";
+import { createProtocolSnapshot } from "./helpers/session_protocol_fixtures.js";
 
 const localCreateInput = {
   executionEnvironment: { kind: "local", cwd: "/repo" },
@@ -210,14 +211,14 @@ function createStoredSnapshot(overrides = {}) {
       },
     })),
   ];
-  return {
+  return createProtocolSnapshot({
     sessionId: overrides.sessionId ?? "stored-session",
     attributes: overrides.attributes ?? { source: "test" },
     createdAt: overrides.createdAt ?? 0,
     revision: overrides.revision ?? 1,
     agentState: overrides.agentState ?? {
       revision: historyEntries.length,
-      contextEpoch: "stored-context",
+      modelContextKey: "stored-context",
     },
     lifecycle: overrides.lifecycle ?? "idle",
     goal: overrides.goal ?? null,
@@ -247,15 +248,20 @@ function createStoredSnapshot(overrides = {}) {
           messageId: message.id,
         })),
     tools: overrides.tools ?? {},
+    operations: overrides.operations,
     agents: overrides.agents ?? {},
     facets: overrides.facets ?? {},
-  };
+  });
 }
 
 function historyEntriesFromSnapshot(snapshot) {
   return snapshot.messages
     .filter((entry) => entry.id !== "system" && entry.modelVisible)
     .map((entry) => ({ id: entry.id, message: entry.message }));
+}
+
+function snapshotUserMessageCount(snapshot) {
+  return snapshot.messages.filter((message) => message.message.role === "user").length;
 }
 
 function assistantMessageWithToolCalls(toolCalls, costTotal = 0) {
@@ -398,13 +404,21 @@ describe("LocalSessionHost", () => {
       const session = await host.createSession(localCreateInput);
       const snapshot = await session.snapshot();
 
-      expect(snapshot.timeline).toContainEqual(
+      expect(snapshot.timeline.items).toContainEqual(
         expect.objectContaining({
           id: "notice-history-unavailable",
           type: "notice",
           notice: expect.objectContaining({
+            kind: "tau.history.unavailable",
             severity: "warn",
-            text: expect.stringContaining("This session will continue"),
+            presentation: {
+              title: "session history is unavailable",
+              content: [
+                expect.any(String),
+                "this session will continue without durable history recording or recall",
+              ],
+            },
+            subject: { type: "session" },
           }),
         }),
       );
@@ -432,7 +446,7 @@ describe("LocalSessionHost", () => {
 
     const snapshot = await session.snapshot();
     expect(
-      snapshot.timeline.filter((item) => item.id === "notice-history-unavailable"),
+      snapshot.timeline.items.filter((item) => item.id === "notice-history-unavailable"),
     ).toHaveLength(1);
     expect(snapshot.messages).toEqual(
       expect.arrayContaining([
@@ -450,6 +464,30 @@ describe("LocalSessionHost", () => {
     );
 
     await host.shutdown();
+  });
+
+  it("preserves durable notice position across recovery", async () => {
+    const store = new MemorySessionStore();
+    const originalHost = createHost(store);
+    const originalSession = await originalHost.createSession(localCreateInput);
+    await originalSession.record({ text: "before notice" });
+    await originalSession.recordHistoryFailure("history unavailable");
+    await originalSession.record({ text: "after notice" });
+    const storedSnapshot = await originalSession.snapshot();
+
+    expect(storedSnapshot.timeline.items.map((item) => item.type)).toEqual([
+      "message",
+      "notice",
+      "message",
+    ]);
+
+    const recoveredHost = createHost(store);
+    const recoveredSession = await recoveredHost.observeSession(storedSnapshot.sessionId);
+    expect(recoveredSession).toBeDefined();
+    await expect(recoveredSession?.snapshot()).resolves.toEqual(storedSnapshot);
+
+    await recoveredHost.shutdown();
+    await originalHost.shutdown();
   });
 
   it("captures committed session content and rewinds the active transcript", async () => {
@@ -855,7 +893,7 @@ describe("LocalSessionHost", () => {
     expect(snapshot.goal).toBeNull();
     const startDelta = deltas.find(
       (delta) =>
-        delta.reason === "user-message" &&
+        delta.cause.type === "user-message" &&
         delta.delta.type === "snapshot.patch" &&
         delta.delta.changes.some((change) => change.type === "goal.set"),
     );
@@ -893,12 +931,7 @@ describe("LocalSessionHost", () => {
     const commitSessionSnapshot = store.commitSessionSnapshot.bind(store);
     let paused = false;
     store.commitSessionSnapshot = vi.fn(async (snapshot, options) => {
-      if (
-        !paused &&
-        snapshot.messages.some(
-          (message) => message.message.role === "user" && message.turn?.status === "completed",
-        )
-      ) {
+      if (!paused && snapshotUserMessageCount(snapshot) >= 2) {
         paused = true;
         persistenceReached.resolve();
         await releasePersistence.promise;
@@ -925,9 +958,6 @@ describe("LocalSessionHost", () => {
     expect(streamModel).toHaveBeenCalledOnce();
     const snapshot = await hostedSession.snapshot();
     expect(snapshot.goal).toEqual({ objective: "Finish across turns", status: "blocked" });
-    expect(
-      snapshot.messages.find((message) => message.id === result.userHistoryEntryId)?.turn,
-    ).toEqual(result.turn);
     await host.shutdown();
   });
 
@@ -1024,12 +1054,7 @@ describe("LocalSessionHost", () => {
     const commitSessionSnapshot = store.commitSessionSnapshot.bind(store);
     let paused = false;
     store.commitSessionSnapshot = vi.fn(async (snapshot, options) => {
-      if (
-        !paused &&
-        snapshot.messages.some(
-          (message) => message.message.role === "user" && message.turn?.status === "completed",
-        )
-      ) {
+      if (!paused && snapshotUserMessageCount(snapshot) >= 2) {
         paused = true;
         persistenceReached.resolve();
         await releasePersistence.promise;
@@ -1152,13 +1177,10 @@ describe("LocalSessionHost", () => {
     expect(streamModel).toHaveBeenCalledTimes(2);
     const snapshot = await hostedSession.snapshot();
     expect(snapshot.goal).toEqual({ objective: "Follow steering safely", status: "blocked" });
-    expect(
-      snapshot.messages.find((message) => message.id === result.userHistoryEntryId)?.turn,
-    ).toEqual(result.turn);
     await host.shutdown();
   });
 
-  it("persists failed outcomes for committed steering messages", async () => {
+  it("persists runtime turn failures at the terminal timeline position", async () => {
     const store = new MemorySessionStore();
     const host = createHost(store);
     const hostedSession = await host.createSession(localCreateInput);
@@ -1170,12 +1192,7 @@ describe("LocalSessionHost", () => {
     let paused = false;
     let injectedFailure = false;
     store.commitSessionSnapshot = vi.fn(async (snapshot, options) => {
-      if (
-        !paused &&
-        snapshot.messages.some(
-          (message) => message.message.role === "user" && message.turn?.status === "completed",
-        )
-      ) {
+      if (!paused && snapshotUserMessageCount(snapshot) >= 2) {
         paused = true;
         persistenceReached.resolve();
         await releasePersistence.promise;
@@ -1211,19 +1228,28 @@ describe("LocalSessionHost", () => {
     const run = hostedSession.startGoal("Fail after steering");
     await persistenceReached.promise;
     const steering = hostedSession.steer("change direction");
-    const runResult = expect(run).rejects.toThrow("steering event sink failed");
-    const steeringResult = expect(steering.result).rejects.toThrow("steering event sink failed");
     releasePersistence.resolve();
 
-    const applied = await steering.applied;
-    await Promise.all([runResult, steeringResult]);
-    const snapshot = await hostedSession.snapshot();
-    expect(
-      snapshot.messages.find((message) => message.id === applied.userHistoryEntryId)?.turn,
-    ).toEqual({
+    await steering.applied;
+    const [runResult, steeringResult] = await Promise.all([run, steering.result]);
+    expect(runResult.turn).toEqual({
       status: "failed",
       stopReason: "error",
       errorMessage: "steering event sink failed",
+    });
+    expect(steeringResult.turn).toEqual(runResult.turn);
+    const snapshot = await hostedSession.snapshot();
+    expect(snapshot.timeline.items.at(-1)).toMatchObject({
+      type: "notice",
+      notice: {
+        kind: "tau.turn.failed",
+        severity: "error",
+        presentation: {
+          title: "turn failed",
+          content: ["steering event sink failed"],
+        },
+        data: { reason: "runtime-error" },
+      },
     });
     await host.shutdown();
   });
@@ -1289,6 +1315,42 @@ describe("LocalSessionHost", () => {
     });
     await expect(hostedSession.snapshot()).resolves.toMatchObject({
       goal: { objective: "Finish safely", status: "blocked" },
+    });
+    await host.shutdown();
+  });
+
+  it("normalizes recovered running operations to cancelled", async () => {
+    const store = new MemorySessionStore();
+    const snapshot = createStoredSnapshot({
+      sessionId: "running-operation",
+      timeline: [
+        {
+          type: "operation",
+          id: "operation-1",
+          operation: {
+            kind: "manual-compaction",
+            status: "running",
+            startedAt: 1,
+          },
+        },
+      ],
+    });
+    await store.commitSessionSnapshot(snapshot);
+    const host = createHost(store);
+
+    const recovered = await host.observeSession(snapshot.sessionId);
+
+    await expect(recovered?.snapshot()).resolves.toMatchObject({
+      operations: {
+        "operation-1": {
+          status: "cancelled",
+          finishedAt: expect.any(Number),
+          reason: "session-recovered",
+        },
+      },
+      timeline: {
+        items: [expect.objectContaining({ type: "operation", operationId: "operation-1" })],
+      },
     });
     await host.shutdown();
   });
@@ -1498,7 +1560,8 @@ describe("LocalSessionHost", () => {
     hostedSession.onDelta((delta) => {
       observedSnapshot = applySessionProtocolDelta(observedSnapshot, delta);
     });
-    const streamError = new Error("stream failed");
+    const providerError = `stream failed ${"x".repeat(3_000)} request-id-89abde88`;
+    const streamError = new Error(providerError);
     const partial = fauxAssistantMessage("partial response");
     hostedSession.runtime.agent.spec.model.stream = () => ({
       async *[Symbol.asyncIterator]() {
@@ -1519,7 +1582,7 @@ describe("LocalSessionHost", () => {
     await expect(hostedSession.runTurn()).resolves.toEqual({
       status: "failed",
       stopReason: "error",
-      errorMessage: "stream failed",
+      errorMessage: providerError,
     });
 
     const persistedSnapshot = await store.loadSession(hostedSession.sessionId);
@@ -1536,11 +1599,50 @@ describe("LocalSessionHost", () => {
       modelVisible: true,
       message: {
         stopReason: "error",
-        errorMessage: "stream failed",
+        errorMessage: providerError,
         content: [{ type: "text", text: "partial response" }],
       },
     });
     expect(persistedAssistant).toEqual(observedAssistant);
+
+    expect(persistedSnapshot?.timeline).toEqual(observedSnapshot.timeline);
+    expect(
+      observedSnapshot.timeline.items.some(
+        (item) => item.type === "notice" && item.notice.subject.type === "message",
+      ),
+    ).toBe(false);
+
+    await host.shutdown();
+  });
+
+  it("persists interrupted assistant state without duplicate timeline feedback", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const hostedSession = await host.createSession(localCreateInput);
+    let observedSnapshot = await hostedSession.snapshot();
+    hostedSession.onDelta((delta) => {
+      observedSnapshot = applySessionProtocolDelta(observedSnapshot, delta);
+    });
+    hostedSession.runtime.agent.spec.model.stream = (_context, options) => ({
+      async *[Symbol.asyncIterator]() {
+        await new Promise((resolve) =>
+          options.signal.addEventListener("abort", resolve, { once: true }),
+        );
+      },
+      async result() {
+        return fauxAssistantMessage("", { stopReason: "aborted" });
+      },
+    });
+
+    await hostedSession.record({ text: "wait" });
+    const turn = hostedSession.runTurn();
+    await vi.waitFor(() => expect(hostedSession.runtime.isTurnRunning).toBe(true));
+    expect(hostedSession.interruptTurn()).toBe(true);
+    await expect(turn).resolves.toEqual({ status: "aborted", stopReason: "aborted" });
+
+    const persistedSnapshot = await store.loadSession(hostedSession.sessionId);
+    expect(persistedSnapshot?.timeline).toEqual(observedSnapshot.timeline);
+    expect(observedSnapshot.timeline.items.some((item) => item.type === "notice")).toBe(false);
 
     await host.shutdown();
   });
@@ -1563,7 +1665,226 @@ describe("LocalSessionHost", () => {
     expect(snapshot.bootstrap.model).not.toHaveProperty("headers");
   });
 
-  it("clears running auto-compaction operations on compaction end", async () => {
+  it("projects manual compaction activity through its operation", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const hostedSession = await host.createSession(localCreateInput);
+    await hostedSession.snapshot();
+
+    const deltas = [];
+    const ephemeralMessages = [];
+    hostedSession.onDelta((delta) => deltas.push(delta));
+    hostedSession.onEphemeral((message) => ephemeralMessages.push(message));
+
+    await hostedSession.enqueueRuntimeEvent({ type: "compaction_start", reason: "manual" });
+
+    expect(deltas.at(-1).delta.changes).toEqual([
+      {
+        type: "operation.set",
+        operation: expect.objectContaining({
+          id: expect.stringContaining("manual-compaction"),
+          kind: "manual-compaction",
+          status: "running",
+        }),
+      },
+      {
+        type: "timeline.append",
+        item: expect.objectContaining({
+          type: "operation",
+          operationId: expect.stringContaining("manual-compaction"),
+        }),
+      },
+    ]);
+    expect(ephemeralMessages).toEqual([]);
+  });
+
+  it("replaces the active epoch after successful manual compaction", async () => {
+    const host = createHost(new MemorySessionStore());
+    const hostedSession = await host.createSession(localCreateInput);
+    const responses = [
+      fauxAssistantMessage("first response"),
+      fauxAssistantMessage(
+        "compacted summary\n\n<preserved-user-message-ids>\n[]\n</preserved-user-message-ids>",
+      ),
+    ];
+    hostedSession.runtime.agent.spec.model.stream = () => {
+      const response = responses.shift();
+      if (!response) throw new Error("unexpected model call");
+      return {
+        async *[Symbol.asyncIterator]() {},
+        async result() {
+          return response;
+        },
+      };
+    };
+
+    await hostedSession.record({ text: "compact me" });
+    await expect(hostedSession.runTurn()).resolves.toMatchObject({ status: "completed" });
+    await hostedSession.recordHistoryFailure("old epoch warning");
+    const previousSnapshot = await hostedSession.snapshot();
+    const deltas = [];
+    hostedSession.onDelta((delta) => deltas.push(delta));
+
+    const result = await hostedSession.compact({ mode: "summary-only" });
+
+    expect(result.snapshot.timeline).toMatchObject({
+      epoch: previousSnapshot.timeline.epoch + 1,
+      sequence: 1,
+      items: [expect.objectContaining({ type: "message", sequence: 1 })],
+    });
+    expect(result.snapshot.operations).toEqual({});
+    expect(result.snapshot.tools).toEqual({});
+    expect(result.snapshot.timeline.items.some((item) => item.type === "notice")).toBe(false);
+    expect(result.snapshot.messages).toHaveLength(2);
+    expect(deltas.at(-1)).toMatchObject({
+      cause: {
+        type: "compaction",
+        previousEpoch: previousSnapshot.timeline.epoch,
+        epoch: previousSnapshot.timeline.epoch + 1,
+        kind: "manual",
+        retainedMessageCount: 0,
+      },
+      delta: { type: "snapshot.reset" },
+    });
+
+    await host.shutdown();
+  });
+
+  it("emits runtime feedback without adding it to the timeline", async () => {
+    const host = createHost(new MemorySessionStore());
+    const hostedSession = await host.createSession(localCreateInput);
+    const ephemeralMessages = [];
+    hostedSession.onEphemeral((message) => ephemeralMessages.push(message));
+
+    await hostedSession.enqueueRuntimeEvent({
+      type: "feedback",
+      tone: "default",
+      title: "retrying after transient error",
+      presentation: "footer",
+      durationMs: 3_000,
+    });
+
+    expect(ephemeralMessages.at(-1).event).toEqual({
+      type: "feedback.notice",
+      tone: "default",
+      title: "retrying after transient error",
+      presentation: "footer",
+      durationMs: 3_000,
+    });
+    expect((await hostedSession.snapshot()).timeline.items).not.toContainEqual(
+      expect.objectContaining({ type: "notice" }),
+    );
+  });
+
+  it.each([
+    {
+      outcome: "failed",
+      failure: {
+        reason: "model-subturn-limit",
+        message: "stopped before producing a final response",
+      },
+      kind: "tau.turn.failed",
+      title: "turn failed",
+    },
+    {
+      outcome: "blocked",
+      failure: {
+        reason: "auto-compaction-failed",
+        message: "summary unavailable",
+      },
+      kind: "tau.turn.blocked",
+      title: "turn blocked",
+    },
+  ])("persists $kind at turn settlement", async ({ outcome, failure, kind, title }) => {
+    const host = createHost(new MemorySessionStore());
+    const hostedSession = await host.createSession(localCreateInput);
+    const historyEntryId = await hostedSession.session.commitUserText("run the turn");
+
+    await hostedSession.enqueueRuntimeEvent({
+      type: "turn_finished",
+      turnId: "turn-1",
+      historyEntryId,
+      outcome,
+      failure,
+    });
+
+    const snapshot = await hostedSession.snapshot();
+    expect(snapshot.timeline.items.at(-1)).toMatchObject({
+      type: "notice",
+      notice: {
+        kind,
+        version: 1,
+        severity: "error",
+        subject: { type: "message", id: historyEntryId },
+        presentation: { title, content: [failure.message] },
+        data: { reason: failure.reason },
+      },
+    });
+    await host.shutdown();
+  });
+
+  it("keeps malformed model tool names out of feedback titles", async () => {
+    const host = createHost(new MemorySessionStore());
+    const hostedSession = await host.createSession(localCreateInput);
+    const malformedToolName = "missing\r\ntool";
+    const responses = [
+      fauxAssistantMessage([fauxToolCall(malformedToolName, {}, { id: "missing-call" })], {
+        stopReason: "toolUse",
+      }),
+      fauxAssistantMessage("continued"),
+    ];
+    const ephemeralMessages = [];
+    hostedSession.onEphemeral((message) => ephemeralMessages.push(message));
+    hostedSession.runtime.agent.spec.model.stream = () => {
+      const response = responses.shift();
+      return {
+        async *[Symbol.asyncIterator]() {
+          const toolCall = response.content.find((content) => content.type === "toolCall");
+          if (toolCall) {
+            yield { type: "toolcall_start", contentIndex: 0, partial: response };
+            yield {
+              type: "toolcall_end",
+              contentIndex: 0,
+              toolCall,
+              partial: response,
+            };
+          }
+        },
+        async result() {
+          return response;
+        },
+      };
+    };
+
+    await hostedSession.record({ text: "use the missing tool" });
+    await expect(hostedSession.runTurn()).resolves.toEqual({
+      status: "completed",
+      stopReason: "stop",
+    });
+    expect(ephemeralMessages).toContainEqual(
+      expect.objectContaining({
+        event: {
+          type: "timeline.item",
+          epoch: 1,
+          item: expect.objectContaining({
+            type: "notice",
+            notice: expect.objectContaining({
+              kind: "tau.runtime.feedback",
+              severity: "error",
+              presentation: {
+                title: "tool is unavailable",
+                content: [`tool '${malformedToolName}' is not available for this turn`],
+              },
+            }),
+          }),
+        },
+      }),
+    );
+
+    await host.shutdown();
+  });
+
+  it("keeps a skipped auto-compaction in the active epoch", async () => {
     const store = new MemorySessionStore();
     const host = createHost(store);
     const hostedSession = await host.createSession(localCreateInput);
@@ -1574,64 +1895,93 @@ describe("LocalSessionHost", () => {
 
     await hostedSession.enqueueRuntimeEvent({ type: "compaction_start", reason: "threshold" });
     expect(deltas.at(-1).delta.changes).toEqual([
-      expect.objectContaining({
+      {
+        type: "operation.set",
+        operation: expect.objectContaining({
+          id: expect.stringContaining("auto-compaction"),
+          kind: "auto-compaction",
+          status: "running",
+        }),
+      },
+      {
         type: "timeline.append",
         item: expect.objectContaining({
           type: "operation",
-          operation: expect.objectContaining({
-            kind: "auto-compaction",
-            status: "running",
-          }),
+          operationId: expect.stringContaining("auto-compaction"),
         }),
-      }),
+      },
     ]);
 
     await hostedSession.enqueueRuntimeEvent({
       type: "compaction_end",
       reason: "threshold",
-      outcome: "compacted",
-      result: {
-        summaryHistoryEntryId: "summary-entry",
-        continuationHistoryEntryId: "continuation-entry",
-        compactionMessage: "compacted summary",
-        cutType: "turn-boundary",
-        retainedMessageCount: 1,
-      },
+      outcome: "skipped",
     });
 
-    const reset = deltas.at(-1);
-    expect(reset.delta.type).toBe("snapshot.reset");
-    expect(reset.delta.snapshot.timeline).not.toContainEqual(
+    const snapshot = await hostedSession.snapshot();
+    expect(snapshot.timeline.epoch).toBe(1);
+    expect(Object.values(snapshot.operations)).toContainEqual(
       expect.objectContaining({
-        type: "operation",
-        operation: expect.objectContaining({
-          kind: "auto-compaction",
-          status: "running",
-        }),
+        kind: "auto-compaction",
+        status: "skipped",
+        finishedAt: expect.any(Number),
+        reason: "no-eligible-history",
       }),
     );
   });
 
-  it("preserves timeline notices when rewinding history", async () => {
+  it("rejects rewind targets outside the active timeline before mutating history", async () => {
+    const store = new MemorySessionStore();
+    const historyEntries = [
+      {
+        id: "summary",
+        message: { role: "user", content: [{ type: "text", text: "summary" }], timestamp: 1 },
+      },
+      {
+        id: "retained-user",
+        message: { role: "user", content: [{ type: "text", text: "retained" }], timestamp: 2 },
+      },
+    ];
+    await store.commitSessionSnapshot(
+      createStoredSnapshot({
+        historyEntries,
+        timeline: [{ type: "message", id: "timeline-summary", messageId: "summary" }],
+      }),
+    );
+    const host = createHost(store);
+    const hostedSession = await host.observeSession("stored-session");
+    expect(hostedSession).toBeDefined();
+    const originalHistoryIds = hostedSession.session.rawHistoryEntries.map((entry) => entry.id);
+
+    await expect(hostedSession.rewindToHistoryEntryId("retained-user")).rejects.toThrow(
+      "rewind failed",
+    );
+    expect(hostedSession.session.rawHistoryEntries.map((entry) => entry.id)).toEqual(
+      originalHistoryIds,
+    );
+
+    await host.shutdown();
+  });
+
+  it("truncates timeline notices after the rewound message", async () => {
     const host = createHost(new MemorySessionStore());
     const hostedSession = await host.createSession(localCreateInput);
     const historyEntryId = await hostedSession.session.commitUserText("rewind me");
     await hostedSession.snapshot();
 
-    await hostedSession.enqueueRuntimeEvent({
-      type: "notice",
-      severity: "warn",
-      text: "keep this notice",
-    });
+    await hostedSession.recordHistoryFailure("keep this notice");
     await hostedSession.rewindToHistoryEntryId(historyEntryId);
 
     const snapshot = await hostedSession.snapshot();
-    expect(snapshot.timeline).toContainEqual(
-      expect.objectContaining({
-        type: "notice",
-        notice: expect.objectContaining({ text: "keep this notice" }),
-      }),
-    );
+    expect(snapshot.timeline).toEqual({ epoch: 1, sequence: 2, items: [] });
+
+    await hostedSession.record({ text: "after rewind" });
+    const nextSnapshot = await hostedSession.snapshot();
+    expect(nextSnapshot.timeline).toMatchObject({
+      epoch: 1,
+      sequence: 3,
+      items: [expect.objectContaining({ type: "message", sequence: 3 })],
+    });
   });
 
   it("streams assistant partials as content appends without persisting every frame", async () => {
@@ -1831,17 +2181,28 @@ describe("LocalSessionHost", () => {
     const { userHistoryEntryId } = await hostedSession.record({
       text: "run both",
     });
-    await expect(hostedSession.runTurn()).rejects.toThrow("injected lifecycle failure");
+    await expect(hostedSession.runTurn()).resolves.toEqual({
+      status: "failed",
+      stopReason: "error",
+      errorMessage: "injected lifecycle failure: store unavailable",
+    });
 
     const snapshot = await hostedSession.snapshot();
     expect(snapshot.goal).toEqual({
       objective: "Finish safely",
       status: "blocked",
     });
-    expect(snapshot.messages.find((message) => message.id === userHistoryEntryId)?.turn).toEqual({
-      status: "failed",
-      stopReason: "error",
-      errorMessage: "injected lifecycle failure: store unavailable",
+    expect(snapshot.timeline.items.at(-1)).toMatchObject({
+      type: "notice",
+      notice: {
+        kind: "tau.turn.failed",
+        subject: { type: "message", id: userHistoryEntryId },
+        presentation: {
+          title: "turn failed",
+          content: ["injected lifecycle failure: store unavailable"],
+        },
+        data: { reason: "runtime-error" },
+      },
     });
     expect(
       [goalCall.id, bashCall.id].every(
@@ -1887,16 +2248,26 @@ describe("LocalSessionHost", () => {
     });
 
     const { userHistoryEntryId } = await hostedSession.record({ text: "finish" });
-    await expect(hostedSession.runTurn()).rejects.toThrow("assistant final persistence failed");
+    await expect(hostedSession.runTurn()).resolves.toEqual({
+      status: "failed",
+      stopReason: "error",
+      errorMessage: "assistant final persistence failed",
+    });
 
     const snapshot = await hostedSession.snapshot();
     expect(
       snapshot.messages.filter((message) => message.message.role === "assistant"),
     ).toHaveLength(1);
-    expect(snapshot.messages.find((message) => message.id === userHistoryEntryId)?.turn).toEqual({
-      status: "failed",
-      stopReason: "error",
-      errorMessage: "assistant final persistence failed",
+    expect(snapshot.timeline.items.at(-1)).toMatchObject({
+      type: "notice",
+      notice: {
+        kind: "tau.turn.failed",
+        subject: { type: "message", id: userHistoryEntryId },
+        presentation: {
+          title: "turn failed",
+          content: ["assistant final persistence failed"],
+        },
+      },
     });
     await host.shutdown();
   });
@@ -2414,11 +2785,10 @@ describe("LocalSessionHost", () => {
       expect(secondResult.turn).toEqual({ status: "completed", stopReason: "stop" });
       expect(secondApplied).toEqual({ userHistoryEntryId: secondResult.userHistoryEntryId });
       expect(
-        snapshot.messages.find((message) => message.id === firstResult.userHistoryEntryId),
-      ).toEqual(expect.objectContaining({ turn: firstResult.turn }));
-      expect(
-        snapshot.messages.find((message) => message.id === secondResult.userHistoryEntryId),
-      ).toEqual(expect.objectContaining({ turn: secondResult.turn }));
+        snapshot.timeline.items.some(
+          (item) => item.type === "notice" && item.notice.kind.startsWith("tau.turn."),
+        ),
+      ).toBe(false);
       expect(modelCall).toBe(3);
     } finally {
       await host.shutdown();
@@ -3195,7 +3565,7 @@ describe("LocalSessionHost", () => {
       revision: 5,
       agentState: {
         ...storedSnapshot.agentState,
-        contextEpoch: recoveredSession.runtime.snapshot().contextEpoch,
+        modelContextKey: recoveredSession.runtime.snapshot().modelContextKey,
       },
       agents: {},
       facets: { "session-facet": storedSnapshot.facets["session-facet"] },
@@ -3219,7 +3589,17 @@ describe("LocalSessionHost", () => {
         },
       ],
     });
-    const { agentState: _agentState, ...legacySnapshot } = storedSnapshot;
+    const {
+      agentState: _agentState,
+      operations: _operations,
+      timeline: _timeline,
+      ...legacySnapshot
+    } = storedSnapshot;
+    legacySnapshot.timeline = storedSnapshot.timeline.items.flatMap((item) => {
+      if (item.type !== "message") return [];
+      const { sequence: _sequence, createdAt: _createdAt, ...messageItem } = item;
+      return [messageItem];
+    });
     const path = join(
       directory,
       `${Buffer.from(storedSnapshot.sessionId, "utf8").toString("base64url")}.json`,
@@ -3243,14 +3623,16 @@ describe("LocalSessionHost", () => {
           revision: 8,
           agentState: {
             revision: storedSnapshot.revision,
-            contextEpoch: recoveredSession.runtime.snapshot().contextEpoch,
+            modelContextKey: recoveredSession.runtime.snapshot().modelContextKey,
           },
           messages: expect.arrayContaining([
             expect.objectContaining({ id: "legacy-user", modelVisible: true }),
           ]),
         },
       });
-      expect(persisted.snapshot.agentState.contextEpoch).not.toBe(LEGACY_SESSION_CONTEXT_EPOCH);
+      expect(persisted.snapshot.agentState.modelContextKey).not.toBe(
+        LEGACY_SESSION_MODEL_CONTEXT_KEY,
+      );
     } finally {
       await host.shutdown();
       rmSync(directory, { recursive: true, force: true });
@@ -3283,7 +3665,7 @@ describe("LocalSessionHost", () => {
           },
         },
       ],
-      agentState: { revision: 2, contextEpoch: "stored-context" },
+      agentState: { revision: 2, modelContextKey: "stored-context" },
       tools: {
         [toolCall.id]: {
           id: toolCall.id,
@@ -3979,7 +4361,7 @@ describe("LocalSessionHost", () => {
         revision: 5,
         agentState: {
           revision: 1,
-          contextEpoch: recoveredSession.runtime.snapshot().contextEpoch,
+          modelContextKey: recoveredSession.runtime.snapshot().modelContextKey,
         },
         lifecycle: "idle",
         historyEntries: [
@@ -4003,9 +4385,8 @@ describe("LocalSessionHost", () => {
     );
   });
 
-  it("recovers stale draft assistant messages as interrupted model-visible messages", async () => {
+  it("recovers stale draft assistants and streaming tool placement when history is unavailable", async () => {
     const store = new MemorySessionStore();
-    const host = createHost(store);
     const storedSnapshot = createStoredSnapshot({
       sessionId: "stored-draft",
       revision: 4,
@@ -4065,6 +4446,9 @@ describe("LocalSessionHost", () => {
       },
     });
     await store.commitSessionSnapshot(storedSnapshot);
+    const host = createHost(store, {
+      history: new HistoryManager(undefined, "history unavailable"),
+    });
 
     const recoveredSession = await host.observeSession("stored-draft");
 
@@ -4076,6 +4460,18 @@ describe("LocalSessionHost", () => {
     expect(snapshot.lifecycle).toBe("idle");
     expect(snapshot.tools).toEqual({});
     expect(snapshot.facets).toEqual({});
+    expect(snapshot.timeline).toMatchObject({
+      sequence: 3,
+      items: [
+        expect.objectContaining({ type: "message", sequence: 1 }),
+        expect.objectContaining({
+          type: "notice",
+          id: "notice-history-unavailable",
+          sequence: 3,
+        }),
+      ],
+    });
+    expect(snapshot.timeline.items.some((item) => item.type === "tool")).toBe(false);
     expect(snapshot.messages).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -4098,6 +4494,7 @@ describe("LocalSessionHost", () => {
         }),
       ]),
     );
+    await host.shutdown();
   });
 
   it("lists stale running snapshots as idle stored sessions", async () => {
@@ -4197,7 +4594,7 @@ describe("LocalSessionHost", () => {
         }),
       ]),
     );
-    expect(snapshot.timeline).toEqual([]);
+    expect(snapshot.timeline).toEqual({ epoch: 1, sequence: 0, items: [] });
   });
 
   it("recovers local sessions with their persisted execution home", async () => {

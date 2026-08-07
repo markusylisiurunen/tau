@@ -1,21 +1,27 @@
-import type { AutocompleteProvider, Component, TUI } from "@earendil-works/pi-tui";
+import type { AutocompleteProvider, Component } from "@earendil-works/pi-tui";
 import { Spacer, TuiMainScreen } from "@earendil-works/pi-tui";
 import { resolveThemeTokensForAppearance, type ThemeDefinition } from "../core/config/index.js";
 import type { SubagentUiEvent } from "../core/subagents/types.js";
 import type { ReasoningEffort } from "../core/types.js";
-import type { SessionProtocolPendingUserMessage } from "../protocol/session_protocol.js";
+import type {
+  SessionProtocolFeedbackTone,
+  SessionProtocolPendingUserMessage,
+} from "../protocol/session_protocol.js";
 import { createAppTerminal } from "./terminal.js";
 import { FALLBACK_TERMINAL_COLORS, type TerminalColors } from "./terminal_appearance.js";
 import { ToolUiRouter } from "./tool_ui_router.js";
 import { ChatContainerComponent } from "./ui/chat_container.js";
 import type { AssistantMessageModel, ChatMessageModel } from "./ui/chat_message_model.js";
 import { CustomEditor } from "./ui/custom_editor.js";
-import { FooterComponent } from "./ui/footer.js";
+import {
+  DEFAULT_FOOTER_NOTICE_DURATION_MS,
+  FooterComponent,
+  type FooterStatus,
+} from "./ui/footer.js";
 import { PendingMessagesComponent } from "./ui/pending_messages.js";
 import { RewindPickerComponent, type RewindPickerItem } from "./ui/rewind_picker.js";
 import { SubagentEditorPaneComponent } from "./ui/subagent_editor_pane.js";
 import { SubagentPanelComponent, type SubagentPanelSnapshot } from "./ui/subagent_panel.js";
-import type { SystemMessageKind } from "./ui/system_message.js";
 import {
   coercePaletteOverrides,
   createUiTheme,
@@ -28,14 +34,7 @@ import type { ToolUiModel } from "./ui/tool_ui_model.js";
 export type ChatInputMode = "normal" | "bash" | "bash_incognito" | "recording";
 
 export type ChatViewStatus = {
-  footer: {
-    cwdLabel: string;
-    contextUsage: string;
-    sessionCost: string;
-    duration: string;
-    statusHint?: string;
-    pursuingGoal: boolean;
-  };
+  footer: FooterStatus;
   editor: {
     mode: ChatInputMode;
     personaName: string;
@@ -76,11 +75,8 @@ export interface ChatView {
   addMessage(model: ChatMessageModel, id?: string): string;
   updateMessage(id: string, model: ChatMessageModel): void;
   updateAssistantMessage(id: string, model: AssistantMessageModel): void;
-  addSystemMessage(
-    text: string,
-    kind: SystemMessageKind,
-    options?: { toastDurationMs?: number; persist?: boolean },
-  ): void;
+  showFooterNotice(text: string, tone: SessionProtocolFeedbackTone, durationMs?: number): void;
+  addTranscriptNotice(title: string, tone: SessionProtocolFeedbackTone, content?: string[]): void;
   setThinkingVisibility(show: boolean): void;
   updateStatus(status: ChatViewStatus): void;
   startWorkingIcon(): void;
@@ -110,7 +106,7 @@ export interface ChatView {
 }
 
 export class TuiChatView implements ChatView {
-  private ui: TUI;
+  private ui: TuiMainScreen;
   private chatContainer: ChatContainerComponent;
   private footer: FooterComponent;
   private pendingMessages: PendingMessagesComponent;
@@ -165,9 +161,18 @@ export class TuiChatView implements ChatView {
   stop(): void {
     this.setRecordingIndicatorActive(false);
     this.footer.dispose();
-    this.ui.stop();
-    // Ensure cursor is visible after shutdown (some terminals keep it hidden).
-    this.ui.terminal.showCursor();
+
+    const renderState = this.ui.captureRenderState();
+    if (renderState.previousLines.length > 0) {
+      const targetRow = renderState.previousLines.length - 1;
+      const lineDiff = targetRow - renderState.hardwareCursorRow;
+      let cursorMovement = "\r";
+      if (lineDiff > 0) cursorMovement += `\x1b[${lineDiff}B`;
+      else if (lineDiff < 0) cursorMovement += `\x1b[${-lineDiff}A`;
+      this.ui.terminal.write(`${cursorMovement}\r\n`);
+    }
+
+    this.ui.stop({ preserveScreen: true });
   }
 
   requestRender(): void {
@@ -200,22 +205,31 @@ export class TuiChatView implements ChatView {
     this.ui.requestRender();
   }
 
-  addSystemMessage(
+  showFooterNotice(
     text: string,
-    kind: SystemMessageKind,
-    options?: { toastDurationMs?: number; persist?: boolean },
+    tone: SessionProtocolFeedbackTone,
+    durationMs: number = DEFAULT_FOOTER_NOTICE_DURATION_MS,
   ): void {
-    const cleanedText = this.normalizeSystemMessageText(text, kind);
-    const toastText = this.formatToastText(cleanedText);
-    if (kind !== "muted" && toastText.length > 0) {
-      this.footer.showToast(toastText, kind, options?.toastDurationMs);
+    const cleanedText = this.normalizeFeedbackText(text, tone);
+    const firstLine = cleanedText.split(/\r?\n/, 1)[0] ?? "";
+    const noticeText = firstLine.replace(/\s+/g, " ").trim();
+    if (noticeText) {
+      this.footer.showNotice(noticeText, tone, durationMs);
     }
+  }
 
-    const shouldPersist = options?.persist ?? this.shouldPersistSystemMessage(cleanedText, kind);
-    if (shouldPersist) {
-      this.chatContainer.addMessage({ type: "system", text: cleanedText, kind });
-      this.ui.requestRender();
-    }
+  addTranscriptNotice(title: string, tone: SessionProtocolFeedbackTone, content?: string[]): void {
+    const [cleanedTitle = "", ...titleContent] = this.normalizeFeedbackText(title, tone)
+      .replace(/\r\n?/g, "\n")
+      .split("\n");
+    const noticeContent = [...titleContent, ...(content ?? [])];
+    this.chatContainer.addMessage({
+      type: "transcript_notice",
+      title: cleanedTitle,
+      ...(noticeContent.length > 0 ? { content: noticeContent } : {}),
+      tone,
+    });
+    this.ui.requestRender();
   }
 
   setThinkingVisibility(show: boolean): void {
@@ -226,14 +240,7 @@ export class TuiChatView implements ChatView {
   updateStatus(status: ChatViewStatus): void {
     this.lastStatus = status;
     this.setRecordingIndicatorActive(status.editor.mode === "recording");
-    this.footer.setStatus({
-      cwdLabel: status.footer.cwdLabel,
-      contextUsage: status.footer.contextUsage,
-      sessionCost: status.footer.sessionCost,
-      duration: status.footer.duration,
-      statusHint: status.footer.statusHint,
-      pursuingGoal: status.footer.pursuingGoal,
-    });
+    this.footer.setStatus(status.footer);
 
     this.updateEditorVisualState(status.editor);
     this.ui.requestRender();
@@ -494,8 +501,8 @@ export class TuiChatView implements ChatView {
     return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
   }
 
-  private normalizeSystemMessageText(text: string, kind: SystemMessageKind): string {
-    const cleaned = kind !== "error" ? text : text.replace(/^\s*error:\s*/i, "");
+  private normalizeFeedbackText(text: string, tone: SessionProtocolFeedbackTone): string {
+    const cleaned = tone !== "error" ? text : text.replace(/^\s*error:\s*/i, "");
     return this.stripTrailingPunctuation(cleaned);
   }
 
@@ -503,16 +510,5 @@ export class TuiChatView implements ChatView {
     const trimmed = text.replace(/\s+$/, "");
     if (!trimmed) return trimmed;
     return trimmed.replace(/[.!?…,:;]+$/, "");
-  }
-
-  private formatToastText(text: string): string {
-    const firstLine = text.split(/\r?\n/, 1)[0] ?? "";
-    return firstLine.replace(/\s+/g, " ").trim();
-  }
-
-  private shouldPersistSystemMessage(text: string, kind: SystemMessageKind): boolean {
-    if (kind === "muted" || kind === "error") return true;
-    if (text.includes("\n")) return true;
-    return text.length > 140;
   }
 }

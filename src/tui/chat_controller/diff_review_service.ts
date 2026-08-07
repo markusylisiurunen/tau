@@ -85,9 +85,9 @@ export class DiffReviewService {
     return this.state !== undefined;
   }
 
-  getStatusHint(defaultHint?: string): string | undefined {
+  getActivityLabel(defaultLabel?: string): string | undefined {
     if (!this.state) {
-      return defaultHint;
+      return defaultLabel;
     }
 
     return this.state.phase === "preparing"
@@ -103,13 +103,15 @@ export class DiffReviewService {
     },
   ): Promise<void> {
     if (this.state) {
-      this.view.addSystemMessage("diff review is already active.", "warn");
+      this.view.showFooterNotice("diff review is already active.", "default");
       return;
     }
 
     const diffTool = this.getDiffToolConfig();
     if (!diffTool) {
-      this.view.addSystemMessage("configure diffTool in config.json before using /diff.", "error");
+      this.view.addTranscriptNotice("diff tool is not configured", "error", [
+        "configure diffTool in config.json before using /diff",
+      ]);
       return;
     }
 
@@ -117,7 +119,7 @@ export class DiffReviewService {
     try {
       diffArgs = parseDiffArgsText(argsText);
     } catch (error) {
-      this.view.addSystemMessage(`invalid /diff arguments: ${(error as Error).message}`, "error");
+      this.view.addTranscriptNotice("invalid /diff arguments", "error", [(error as Error).message]);
       return;
     }
 
@@ -185,7 +187,7 @@ export class DiffReviewService {
       } else {
         const message = (error as Error).message;
         finalizeDiffReviewMessage(state, this.view, "failed", message);
-        this.view.addSystemMessage(`diff review failed: ${message}`, "error");
+        this.view.addTranscriptNotice("failed to run diff review", "error", [message]);
       }
     } finally {
       if (!state.messageFinalized && abortController.signal.aborted) {
@@ -338,25 +340,21 @@ export class DiffReviewService {
         state.messageFinalized = false;
         throw error;
       }
-      this.view.addSystemMessage(
-        "diff review added to the conversation. tau did not run yet.",
-        "success",
-      );
+      this.view.showFooterNotice("diff review added; no assistant turn started", "default");
       return;
     }
 
     if (result.reason === "tool_disconnected") {
       finalizeDiffReviewMessage(state, this.view, "cancelled");
-      this.view.addSystemMessage(
-        "diff review tool disconnected or never connected before returning a review.",
-        "warn",
-      );
+      this.view.addTranscriptNotice("diff review tool disconnected", "default", [
+        "the tool did not connect before returning a review",
+      ]);
       return;
     }
 
     if (result.reason === "tool_cancelled") {
       finalizeDiffReviewMessage(state, this.view, "cancelled");
-      this.view.addSystemMessage("diff review cancelled.", "warn");
+      this.view.showFooterNotice("diff review cancelled.", "default");
       return;
     }
 

@@ -181,8 +181,9 @@ function createStatusSnapshot(overrides = {}) {
         },
       },
     ],
-    timeline: [],
+    timeline: { epoch: 1, sequence: 0, items: [] },
     tools: {},
+    operations: {},
     agents: {},
     facets: {},
     ...overrides,
@@ -1848,28 +1849,57 @@ describe("telegram adapter", () => {
     }
   });
 
-  it("replays recovered session warning notices after subscribing", async () => {
+  it("does not replay recovered timeline items after subscribing", async () => {
     const chatId = 470;
     const apiHarness = createApiHarness([]);
     const snapshot = createStatusSnapshot({
-      timeline: [
-        {
-          type: "notice",
-          id: "notice-history-unavailable",
-          notice: {
-            severity: "warn",
-            text: "Recovered history warning.",
-            timestamp: 1,
+      timeline: {
+        epoch: 1,
+        sequence: 2,
+        items: [
+          {
+            type: "notice",
+            id: "notice-history-unavailable",
+            sequence: 1,
+            createdAt: 1,
+            notice: {
+              kind: "tau.history.unavailable",
+              version: 1,
+              severity: "warn",
+              subject: { type: "session" },
+              presentation: {
+                title: "Recovered history warning.",
+                content: ["Internal recovery details must stay out of Telegram."],
+              },
+              data: {},
+            },
           },
-        },
-      ],
+          {
+            type: "notice",
+            id: "notice-turn-failed",
+            sequence: 2,
+            createdAt: 2,
+            notice: {
+              kind: "tau.turn.failed",
+              version: 1,
+              severity: "error",
+              subject: { type: "session" },
+              presentation: { title: "Recovered turn failed." },
+              data: { reason: "runtime-error" },
+            },
+          },
+        ],
+      },
     });
-    const { adapter } = await startNotificationTestAdapter({ chatId, apiHarness, snapshot });
+    const { adapter, manager } = await startNotificationTestAdapter({
+      chatId,
+      apiHarness,
+      snapshot,
+    });
 
     try {
-      await waitFor(() =>
-        apiHarness.sendMessages.some((message) => message.text === "Recovered history warning."),
-      );
+      expect(manager.getSessionSnapshot).not.toHaveBeenCalled();
+      expect(apiHarness.sendMessages).toEqual([]);
     } finally {
       await adapter.close();
     }

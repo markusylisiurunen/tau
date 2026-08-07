@@ -1093,7 +1093,7 @@ export class SessionProtocolHandler {
       return;
     }
 
-    const result = await this.enqueueMutation(state, () => {
+    const result = await this.enqueueMutation(state, async () => {
       const interrupted = state.session.interruptActiveWork();
       if (interrupted) {
         state.live.interrupting = true;

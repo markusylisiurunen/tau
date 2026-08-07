@@ -295,9 +295,7 @@ export class SessionChatApp {
     }
 
     this.lastCtrlCAt = now;
-    this.view.addSystemMessage("press ctrl+c again to quit", "warn", {
-      toastDurationMs: EXIT_TOAST_DURATION_MS,
-    });
+    this.view.showFooterNotice("press ctrl+c again to quit", "default", EXIT_TOAST_DURATION_MS);
   }
 
   private exit(): void {

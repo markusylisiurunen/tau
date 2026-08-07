@@ -10,7 +10,7 @@ export async function runSpeechPlaybackTask(args: {
   apiKey: string;
   sourceText: string;
   signal: AbortSignal;
-  onStatusHint: (hint: string) => void;
+  onActivityLabel: (hint: string) => void;
 }): Promise<void> {
   let audioPath: string | undefined;
   let readyChunks = 0;
@@ -20,7 +20,7 @@ export async function runSpeechPlaybackTask(args: {
 
   const refreshSpeechProgress = (): void => {
     if (totalChunks <= 0) return;
-    args.onStatusHint(
+    args.onActivityLabel(
       playbackStarted
         ? formatSpeechPlaybackProgressMessage(playedChunks, readyChunks, totalChunks)
         : formatSpeechChunkProgressMessage(readyChunks, totalChunks),
@@ -33,9 +33,7 @@ export async function runSpeechPlaybackTask(args: {
       sourceText: args.sourceText,
       signal: args.signal,
       onStageChange: (stage) => {
-        args.onStatusHint(
-          stage === "rewriting" ? "rewriting for speech..." : "generating speech...",
-        );
+        args.onActivityLabel(stage === "rewriting" ? "rewriting for speech" : "generating speech");
       },
       onChunkProgress: ({ ready, total }) => {
         readyChunks = ready;
@@ -123,9 +121,9 @@ async function cleanupTempFile(path: string): Promise<void> {
 }
 
 function formatSpeechChunkProgressMessage(ready: number, total: number): string {
-  return `generating speech chunks (${ready} out of ${total} ready)...`;
+  return `generating speech chunks (${ready} out of ${total} ready)`;
 }
 
 function formatSpeechPlaybackProgressMessage(played: number, ready: number, total: number): string {
-  return `playing speech (${played}/${total} played, ${ready}/${total} ready)...`;
+  return `playing speech (${played}/${total} played, ${ready}/${total} ready)`;
 }

@@ -24,7 +24,6 @@ import {
   TauSessionProtocolResponseError,
   TauTransportError,
   createTauSdkClient,
-  getTauSdkSessionTurnOutcome,
 } from "@markusylisiurunen/tau/sdk";
 
 const client = await createTauSdkClient({
@@ -40,7 +39,7 @@ const session = await client.sessions.create({
 });
 
 const unsubscribe = session.onDelta((delta) => {
-  console.log(delta.sessionId, delta.toRevision, delta.reason);
+  console.log(delta.sessionId, delta.toRevision, delta.cause.type);
 });
 
 try {
@@ -48,11 +47,7 @@ try {
   console.log(submit.userHistoryEntryId, submit.turn.status);
 
   const snapshot = await session.snapshot();
-  const recoveredOutcome = getTauSdkSessionTurnOutcome(
-    snapshot,
-    submit.userHistoryEntryId,
-  );
-  console.log(snapshot.sessionId, recoveredOutcome?.status);
+  console.log(snapshot.sessionId, snapshot.timeline.epoch);
 
   await session.unobserve();
 } catch (error) {
@@ -279,7 +274,7 @@ options:
   - returns an unsubscribe function for the local SDK listener
 - `onEphemeral(listener)`
   - subscribes to non-persisted `session.ephemeral` messages for this session id only
-  - used for live-only progress such as ephemeral agent thread updates
+  - used for live-only progress such as ephemeral agent thread updates and session feedback
 - `unobserve()`
   - sends `session.unobserve` with this session id, stops this connection's server-side observation for the session, and makes this session facade terminal
 - `record(text, options?)`
@@ -288,10 +283,11 @@ options:
 - `submit(text, options?)`
   - sends `session.submit` with this session id
   - returns a discriminated terminal turn outcome with `completed`, `failed`, `aborted`, or `blocked` status
-  - persists the same outcome on the submitted user message; use `getTauSdkSessionTurnOutcome(snapshot, userHistoryEntryId)` after reconnecting
+  - resolves with a failed outcome when the host successfully settles a runtime exception, and rejects only when the request cannot be settled
+  - does not duplicate completed outcomes in snapshots; exceptional failed or blocked outcomes become ordered semantic timeline notices when no failed assistant message already represents them
 - `queue(text, options?)`
   - sends `session.queue` with this session id
-  - accepts active-work queueing semantics from the session protocol
+  - accepts queueing while a turn is active according to the session protocol
 - `steer(text)`
   - sends `session.steer` with this session id
   - accepts active-turn steering semantics from the session protocol
@@ -404,12 +400,12 @@ const second = await session.sample({
 
 ```json
 {
-  "version": 8,
+  "version": 9,
   "type": "session.delta",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "fromRevision": 1,
   "toRevision": 2,
-  "reason": "assistant-stream",
+  "cause": { "type": "assistant-stream" },
   "delta": {
     "type": "snapshot.patch",
     "changes": []
@@ -439,12 +435,19 @@ const unsubscribePendingUserMessages = session.onPendingUserMessages(
 
 ## ephemeral events
 
-`onEphemeral` receives live-only `TauSdkEphemeral` messages. These are not recoverable from snapshots and should be treated as best-effort progress:
+`onEphemeral` receives live-only `TauSdkEphemeral` messages. Footer activities/notices are best-effort presentation. `timeline.item` notices carry the active epoch and canonical sequence for ordered transcript merging, but the items are omitted from persisted snapshots:
 
 ```ts
 const unsubscribeEphemeral = session.onEphemeral((message) => {
   if (message.event.type === "ephemeral-agent.thread-update") {
     console.log(message.event.threadId, message.event.update.lastActivityText);
+  } else if (message.event.type === "timeline.item") {
+    console.log(
+      message.event.epoch,
+      message.event.item.sequence,
+      message.event.item.notice.kind,
+      message.event.item.notice.presentation.title,
+    );
   }
 });
 ```
@@ -465,4 +468,4 @@ all session client and transport errors extend `TauSessionClientError`.
 
 ## exported types
 
-The SDK entrypoint exports the public `TauSdk*` aliases for client/session interfaces, request and result shapes (including `TauSdkSessionSampleInput` and `TauSdkSessionSampleResult`), streamed `TauSdkDelta` and `TauSdkEphemeral` messages, ephemeral agent tools, WebSocket options, session protocol method/request ids, and user-message projection helpers (`projectTauUserText`, `getTauUserModelText`, `getTauUserDisplayText`). It also re-exports the transport interfaces and errors needed to build custom protocol transports.
+The SDK entrypoint exports the public `TauSdk*` aliases for client/session interfaces, request and result shapes (including `TauSdkSessionSampleInput` and `TauSdkSessionSampleResult`), streamed `TauSdkDelta` and `TauSdkEphemeral` messages, session feedback events and tones, ephemeral agent tools, WebSocket options, session protocol method/request ids, and user-message projection helpers (`projectTauUserText`, `getTauUserModelText`, `getTauUserDisplayText`). It also re-exports the transport interfaces and errors needed to build custom protocol transports.

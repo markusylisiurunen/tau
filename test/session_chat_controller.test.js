@@ -1227,6 +1227,280 @@ describe("SessionChatController", () => {
     expect(view.messages.map((message) => message.id)).toEqual(["view-1", "user-1"]);
   });
 
+  it("discards stale ephemeral timeline items during revision-gap recovery", async () => {
+    const snapshot = createSnapshot([
+      {
+        id: "user-1",
+        message: { role: "user", content: [{ type: "text", text: "keep" }] },
+      },
+    ]);
+    const session = new FakeSession(snapshot);
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot,
+      targetLabel: "in-process",
+    });
+    controller.start();
+
+    for (const listener of session.listeners) {
+      listener({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "session.delta",
+        sessionId: session.id,
+        fromRevision: 1,
+        toRevision: 2,
+        cause: { type: "notice" },
+        delta: {
+          type: "snapshot.patch",
+          changes: [{ type: "timeline.advance", epoch: 1, sequence: 2 }],
+        },
+      });
+    }
+    for (const listener of session.ephemeralListeners) {
+      listener({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "session.ephemeral",
+        sessionId: session.id,
+        event: {
+          type: "timeline.item",
+          epoch: 1,
+          item: {
+            type: "notice",
+            id: "stale-ephemeral",
+            sequence: 2,
+            createdAt: 2,
+            notice: {
+              kind: "tau.test.ephemeral",
+              version: 1,
+              severity: "error",
+              subject: { type: "session" },
+              presentation: { title: "stale failure" },
+              data: {},
+            },
+          },
+        },
+      });
+    }
+
+    const recoveredSnapshot = createProtocolSnapshot({
+      ...snapshot,
+      revision: 4,
+      messages: snapshot.messages,
+      timeline: {
+        epoch: 1,
+        sequence: 3,
+        items: snapshot.timeline.items,
+      },
+    });
+    const snapshotResponse = deferred();
+    vi.spyOn(session, "snapshot").mockImplementation(async () => await snapshotResponse.promise);
+    for (const listener of session.listeners) {
+      listener({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "session.delta",
+        sessionId: session.id,
+        fromRevision: 3,
+        toRevision: 4,
+        cause: { type: "notice" },
+        delta: {
+          type: "snapshot.patch",
+          changes: [{ type: "timeline.advance", epoch: 1, sequence: 3 }],
+        },
+      });
+    }
+
+    for (const listener of session.ephemeralListeners) {
+      listener({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "session.ephemeral",
+        sessionId: session.id,
+        event: {
+          type: "timeline.item",
+          epoch: 1,
+          item: {
+            type: "notice",
+            id: "fresh-ephemeral",
+            sequence: 3,
+            createdAt: 3,
+            notice: {
+              kind: "tau.test.ephemeral",
+              version: 1,
+              severity: "info",
+              subject: { type: "session" },
+              presentation: { title: "fresh notice" },
+              data: {},
+            },
+          },
+        },
+      });
+    }
+    snapshotResponse.resolve(recoveredSnapshot);
+    await flush();
+
+    expect(view.messages.some((message) => message.id === "stale-ephemeral")).toBe(false);
+    expect(view.messages).toContainEqual({
+      id: "fresh-ephemeral",
+      model: { type: "transcript_notice", title: "fresh notice", tone: "default" },
+    });
+  });
+
+  it("keeps frozen ephemeral notices during revision-gap recovery", async () => {
+    const snapshot = createSnapshot([
+      {
+        id: "user-1",
+        message: { role: "user", content: [{ type: "text", text: "before compaction" }] },
+      },
+    ]);
+    const session = new FakeSession(snapshot);
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot,
+      targetLabel: "in-process",
+    });
+    controller.start();
+
+    for (const listener of session.listeners) {
+      listener({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "session.delta",
+        sessionId: session.id,
+        fromRevision: 1,
+        toRevision: 2,
+        cause: { type: "notice" },
+        delta: {
+          type: "snapshot.patch",
+          changes: [{ type: "timeline.advance", epoch: 1, sequence: 2 }],
+        },
+      });
+    }
+    for (const listener of session.ephemeralListeners) {
+      listener({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "session.ephemeral",
+        sessionId: session.id,
+        event: {
+          type: "timeline.item",
+          epoch: 1,
+          item: {
+            type: "notice",
+            id: "frozen-ephemeral",
+            sequence: 2,
+            createdAt: 2,
+            notice: {
+              kind: "tau.test.ephemeral",
+              version: 1,
+              severity: "info",
+              subject: { type: "session" },
+              presentation: { title: "frozen notice" },
+              data: {},
+            },
+          },
+        },
+      });
+    }
+
+    const compactedSnapshot = createProtocolSnapshot({
+      sessionId: session.id,
+      revision: 3,
+      historyEntries: [
+        {
+          id: "summary-entry",
+          message: { role: "user", content: [{ type: "text", text: "summary" }] },
+        },
+      ],
+    });
+    compactedSnapshot.timeline.epoch = 2;
+    for (const listener of session.listeners) {
+      listener(
+        createResetDelta(session.id, 2, compactedSnapshot, {
+          type: "compaction",
+          previousEpoch: 1,
+          epoch: 2,
+          kind: "auto",
+          cutType: "turn-boundary",
+          retainedMessageCount: 0,
+        }),
+      );
+    }
+
+    for (const listener of session.listeners) {
+      listener({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "session.delta",
+        sessionId: session.id,
+        fromRevision: 3,
+        toRevision: 4,
+        cause: { type: "notice" },
+        delta: {
+          type: "snapshot.patch",
+          changes: [{ type: "timeline.advance", epoch: 2, sequence: 2 }],
+        },
+      });
+    }
+    for (const listener of session.ephemeralListeners) {
+      listener({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "session.ephemeral",
+        sessionId: session.id,
+        event: {
+          type: "timeline.item",
+          epoch: 2,
+          item: {
+            type: "notice",
+            id: "active-ephemeral",
+            sequence: 2,
+            createdAt: 3,
+            notice: {
+              kind: "tau.test.ephemeral",
+              version: 1,
+              severity: "info",
+              subject: { type: "session" },
+              presentation: { title: "active notice" },
+              data: {},
+            },
+          },
+        },
+      });
+    }
+
+    const recoveredSnapshot = createProtocolSnapshot({
+      ...compactedSnapshot,
+      revision: 6,
+      messages: compactedSnapshot.messages,
+      timeline: {
+        epoch: 2,
+        sequence: 2,
+        items: compactedSnapshot.timeline.items,
+      },
+    });
+    vi.spyOn(session, "snapshot").mockResolvedValue(recoveredSnapshot);
+    for (const listener of session.listeners) {
+      listener({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "session.delta",
+        sessionId: session.id,
+        fromRevision: 5,
+        toRevision: 6,
+        cause: { type: "notice" },
+        delta: {
+          type: "snapshot.patch",
+          changes: [{ type: "timeline.advance", epoch: 2, sequence: 2 }],
+        },
+      });
+    }
+    await flush();
+
+    expect(view.messages).toContainEqual({
+      id: "frozen-ephemeral",
+      model: { type: "transcript_notice", title: "frozen notice", tone: "default" },
+    });
+    expect(view.messages.some((message) => message.id === "active-ephemeral")).toBe(false);
+  });
+
   it("shows auto-compaction operation status in the footer", async () => {
     const snapshot = createProtocolSnapshot({
       timeline: [

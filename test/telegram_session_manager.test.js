@@ -233,7 +233,7 @@ describe("telegram session manager", () => {
     );
   });
 
-  it("treats the initial snapshot as baseline and emits later warning notices", async () => {
+  it("delivers fresh-session warnings and deduplicates later notices", async () => {
     const clientHarness = createClientHarness();
     clientHarness.session.snapshot.mockResolvedValue(
       createProtocolSnapshot({
@@ -269,7 +269,13 @@ describe("telegram session manager", () => {
     const created = await manager.createSession({ projectId: "demo" });
     await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
 
-    expect(events.some((event) => event.type === "session-notice")).toBe(false);
+    expect(
+      events.filter(
+        (event) =>
+          event.type === "session-notice" &&
+          event.text === "Session history is unavailable. This session will continue.",
+      ),
+    ).toHaveLength(1);
 
     const liveNotice = {
       type: "timeline.append",

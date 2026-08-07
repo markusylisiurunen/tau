@@ -283,6 +283,7 @@ options:
 - `submit(text, options?)`
   - sends `session.submit` with this session id
   - returns a discriminated terminal turn outcome with `completed`, `failed`, `aborted`, or `blocked` status
+  - resolves with a failed outcome when the host successfully settles a runtime exception, and rejects only when the request cannot be settled
   - does not duplicate completed outcomes in snapshots; exceptional failed or blocked outcomes become ordered semantic timeline notices when no failed assistant message already represents them
 - `queue(text, options?)`
   - sends `session.queue` with this session id

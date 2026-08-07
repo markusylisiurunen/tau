@@ -2702,6 +2702,53 @@ describe("session_protocol", () => {
     ]);
   });
 
+  it("rejects timeline appends that reuse allocated sequences", () => {
+    const current = createProtocolSnapshot({
+      sessionId: "session-1",
+      revision: 1,
+    });
+    current.timeline.sequence = 5;
+    const createAppendDelta = (sequence) =>
+      createSessionProtocolDeltaMessage({
+        sessionId: "session-1",
+        fromRevision: 1,
+        toRevision: 2,
+        cause: { type: "notice" },
+        delta: {
+          type: "snapshot.patch",
+          changes: [
+            {
+              type: "timeline.append",
+              item: {
+                type: "notice",
+                id: `notice-${sequence}`,
+                sequence,
+                createdAt: sequence,
+                notice: {
+                  kind: "tau.test.notice",
+                  version: 1,
+                  severity: "info",
+                  subject: { type: "session" },
+                  presentation: { title: "test notice" },
+                  data: {},
+                },
+              },
+            },
+          ],
+        },
+      });
+
+    for (const sequence of [2, 5]) {
+      expect(() => applySessionProtocolDelta(current, createAppendDelta(sequence))).toThrow(
+        `timeline append sequence ${sequence} must exceed current timeline sequence 5`,
+      );
+    }
+    expect(applySessionProtocolDelta(current, createAppendDelta(6)).timeline).toMatchObject({
+      sequence: 6,
+      items: [expect.objectContaining({ id: "notice-6", sequence: 6 })],
+    });
+  });
+
   it("validates destructive reset causes against the current timeline", () => {
     const current = createProtocolSnapshot({
       sessionId: "session-1",
@@ -2761,6 +2808,22 @@ describe("session_protocol", () => {
     });
     expect(() => applySessionProtocolDelta(current, invalidCutoffRewind)).toThrow(
       "rewind delta cutoff sequence 2 exceeds current timeline sequence 1",
+    );
+
+    const loweredSequenceSnapshot = createProtocolSnapshot({
+      sessionId: "session-1",
+      revision: 2,
+    });
+    loweredSequenceSnapshot.timeline.sequence = 0;
+    const loweredSequenceRewind = createSessionProtocolDeltaMessage({
+      sessionId: "session-1",
+      fromRevision: null,
+      toRevision: 2,
+      cause: { type: "rewind", epoch: 1, cutoffSequence: 0 },
+      delta: { type: "snapshot.reset", snapshot: loweredSequenceSnapshot },
+    });
+    expect(() => applySessionProtocolDelta(current, loweredSequenceRewind)).toThrow(
+      "rewind delta timeline sequence 0 does not preserve current timeline sequence 1",
     );
   });
 });

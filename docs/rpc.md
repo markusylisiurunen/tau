@@ -434,7 +434,7 @@ success result:
 }
 ```
 
-`turn` is the request's discriminated terminal outcome. Completed turns include the model `stopReason`; failed turns use status `failed`, stop reason `error`, and an optional `errorMessage`; interrupted turns use status and stop reason `aborted`. Blocked turns include a reason and message instead of a stop reason. Currently the only blocked reason is `auto-compaction-failed`, which means Tau could not compact safely before continuing the turn. Completed outcomes are not duplicated in snapshots. Exceptional failed or blocked outcomes that are not already represented by a failed assistant message are persisted at settlement as semantic `tau.turn.failed` or `tau.turn.blocked` timeline notices.
+`turn` is the request's discriminated terminal outcome. Completed turns include the model `stopReason`; failed turns use status `failed`, stop reason `error`, and an optional `errorMessage`; interrupted turns use status and stop reason `aborted`. Blocked turns include a reason and message instead of a stop reason. Currently the only blocked reason is `auto-compaction-failed`, which means Tau could not compact safely before continuing the turn. Completed outcomes are not duplicated in snapshots. Exceptional failed or blocked outcomes that are not already represented by a failed assistant message are persisted at settlement as semantic `tau.turn.failed` or `tau.turn.blocked` timeline notices. A runtime exception successfully settled this way returns a normal success response with a failed turn outcome; if Tau cannot settle the failure, the request returns a protocol error instead.
 
 if another turn is already running, tau returns:
 

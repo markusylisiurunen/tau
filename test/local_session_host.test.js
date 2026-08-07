@@ -1228,12 +1228,16 @@ describe("LocalSessionHost", () => {
     const run = hostedSession.startGoal("Fail after steering");
     await persistenceReached.promise;
     const steering = hostedSession.steer("change direction");
-    const runResult = expect(run).rejects.toThrow("steering event sink failed");
-    const steeringResult = expect(steering.result).rejects.toThrow("steering event sink failed");
     releasePersistence.resolve();
 
     await steering.applied;
-    await Promise.all([runResult, steeringResult]);
+    const [runResult, steeringResult] = await Promise.all([run, steering.result]);
+    expect(runResult.turn).toEqual({
+      status: "failed",
+      stopReason: "error",
+      errorMessage: "steering event sink failed",
+    });
+    expect(steeringResult.turn).toEqual(runResult.turn);
     const snapshot = await hostedSession.snapshot();
     expect(snapshot.timeline.items.at(-1)).toMatchObject({
       type: "notice",
@@ -2177,7 +2181,11 @@ describe("LocalSessionHost", () => {
     const { userHistoryEntryId } = await hostedSession.record({
       text: "run both",
     });
-    await expect(hostedSession.runTurn()).rejects.toThrow("injected lifecycle failure");
+    await expect(hostedSession.runTurn()).resolves.toEqual({
+      status: "failed",
+      stopReason: "error",
+      errorMessage: "injected lifecycle failure: store unavailable",
+    });
 
     const snapshot = await hostedSession.snapshot();
     expect(snapshot.goal).toEqual({
@@ -2240,7 +2248,11 @@ describe("LocalSessionHost", () => {
     });
 
     const { userHistoryEntryId } = await hostedSession.record({ text: "finish" });
-    await expect(hostedSession.runTurn()).rejects.toThrow("assistant final persistence failed");
+    await expect(hostedSession.runTurn()).resolves.toEqual({
+      status: "failed",
+      stopReason: "error",
+      errorMessage: "assistant final persistence failed",
+    });
 
     const snapshot = await hostedSession.snapshot();
     expect(

@@ -57,10 +57,10 @@ The protocol validates item identity, sequence ordering, epoch consistency, and 
 A timeline notice is a semantic, versioned value:
 
 ```ts
-interface SessionProtocolNotice {
+interface SessionProtocolTimelineNotice {
   kind: string;
   version: number;
-  severity: "info" | "warning" | "error";
+  severity: "info" | "warn" | "error";
   subject: SessionProtocolSubject;
   presentation: {
     title: string;
@@ -72,7 +72,7 @@ interface SessionProtocolNotice {
 
 Notice kinds are open lowercase dotted identifiers. `tau.*` is reserved for Tau core. Clients branch on `kind`, `version`, or live request outcomes, never presentation text, generated IDs, notice counts, or arrival timing.
 
-Provider failure and interruption are already represented by canonical assistant-message state. The host does not emit duplicate durable notices for those states, and the TUI projects their feedback immediately after the affected timeline message. When a turn fails or becomes blocked without a failed assistant message, the host appends one semantic `tau.turn.failed` or `tau.turn.blocked` notice at settlement. Completed request outcomes are returned to the caller but are not duplicated in the snapshot.
+Provider failure and interruption are already represented by canonical assistant-message state. The host does not emit duplicate durable notices for those states, and the TUI projects their feedback immediately after the affected timeline message. When a turn fails or becomes blocked without a failed assistant message, the host appends one semantic `tau.turn.failed` or `tau.turn.blocked` notice at settlement. A runtime exception successfully settled this way returns an ordinary failed turn outcome instead of a protocol error. Completed request outcomes are returned to the caller but are not duplicated in the snapshot.
 
 ## ephemeral feedback
 

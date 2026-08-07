@@ -3147,6 +3147,11 @@ function validateSnapshotResetCause(
       `rewind delta cutoff sequence ${message.cause.cutoffSequence} exceeds current timeline sequence ${snapshot.timeline.sequence}`,
     );
   }
+  if (message.delta.snapshot.timeline.sequence !== snapshot.timeline.sequence) {
+    throw new Error(
+      `rewind delta timeline sequence ${message.delta.snapshot.timeline.sequence} does not preserve current timeline sequence ${snapshot.timeline.sequence}`,
+    );
+  }
 }
 
 export function applySessionProtocolDelta(
@@ -3217,8 +3222,13 @@ export function applySessionProtocolDelta(
         break;
       }
       case "timeline.append":
+        if (change.item.sequence <= next.timeline.sequence) {
+          throw new Error(
+            `timeline append sequence ${change.item.sequence} must exceed current timeline sequence ${next.timeline.sequence}`,
+          );
+        }
         next.timeline.items.push(structuredClone(change.item));
-        next.timeline.sequence = Math.max(next.timeline.sequence, change.item.sequence);
+        next.timeline.sequence = change.item.sequence;
         break;
       case "timeline.remove":
         next.timeline.items = next.timeline.items.filter((item) => item.id !== change.id);

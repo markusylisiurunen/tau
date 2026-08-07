@@ -954,9 +954,14 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         }
         await this.session.commitUserText(buildGoalContinuationText(this.goal));
       } catch (error) {
-        this.rejectCommittedLogicalSteering(committedSteering, error);
-        await this.cleanupFailedTurn(rootUserMessage.id, error).catch(() => undefined);
-        throw error;
+        try {
+          const outcome = await this.cleanupFailedTurn(rootUserMessage.id, error);
+          this.resolveCommittedLogicalSteering(committedSteering, outcome);
+          return outcome;
+        } catch {
+          this.rejectCommittedLogicalSteering(committedSteering, error);
+          throw error;
+        }
       }
     }
   }
@@ -2900,7 +2905,10 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     await this.session.commitInterruptedAssistant(interruptedMessage, draft.id);
   }
 
-  private async cleanupFailedTurn(rootHistoryEntryId: string, error: unknown): Promise<void> {
+  private async cleanupFailedTurn(
+    rootHistoryEntryId: string,
+    error: unknown,
+  ): Promise<SessionProtocolTurnOutcome> {
     if (this.draftAssistantMessage) {
       await this.interruptDraftAssistantMessage().catch(() => undefined);
     }
@@ -2928,6 +2936,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       }
       await this.emitSnapshotResetIfChanged("assistant-message");
     });
+    return { status: "failed", stopReason: "error", errorMessage: diagnostic };
   }
 }
 

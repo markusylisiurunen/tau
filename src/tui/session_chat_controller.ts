@@ -1447,9 +1447,14 @@ export class SessionChatController {
     );
   }
 
-  private async syncFromSessionSnapshot(): Promise<boolean> {
+  private async syncFromSessionSnapshot(
+    ephemeralTimelineItemIdsToDiscard?: ReadonlySet<string>,
+  ): Promise<boolean> {
     try {
       const snapshot = await this.session.snapshot();
+      for (const id of ephemeralTimelineItemIdsToDiscard ?? []) {
+        this.ephemeralTimelineItems.delete(id);
+      }
       if (snapshot.timeline.epoch > this.snapshot.timeline.epoch) {
         this.renderCompactedSnapshot(snapshot);
       } else {
@@ -1528,7 +1533,7 @@ export class SessionChatController {
       return;
     }
 
-    this.snapshotRecovery = this.syncFromSessionSnapshot()
+    this.snapshotRecovery = this.syncFromSessionSnapshotAfterRevisionGap()
       .then((synced) => {
         if (synced) {
           return this.replaySnapshotRecoveryDeltas();
@@ -1540,6 +1545,10 @@ export class SessionChatController {
     await this.snapshotRecovery;
   }
 
+  private syncFromSessionSnapshotAfterRevisionGap(): Promise<boolean> {
+    return this.syncFromSessionSnapshot(new Set(this.ephemeralTimelineItems.keys()));
+  }
+
   private async replaySnapshotRecoveryDeltas(): Promise<void> {
     while (this.snapshotRecoveryDeltas.length > 0) {
       const deltas = this.snapshotRecoveryDeltas.splice(0);
@@ -1548,7 +1557,7 @@ export class SessionChatController {
         if (this.tryApplySdkDelta(delta)) {
           continue;
         }
-        if (!(await this.syncFromSessionSnapshot())) {
+        if (!(await this.syncFromSessionSnapshotAfterRevisionGap())) {
           this.snapshotRecoveryDeltas.unshift(delta, ...deltas.slice(index + 1));
           return;
         }

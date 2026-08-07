@@ -851,7 +851,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     entry.unsubscribeClientEvents = tauSession.onDelta((event) => {
       this.handleClientEvent(entry, event);
     });
-    this.initializeSnapshotDeliveryState(entry, await tauSession.snapshot());
+    this.initializeRecoveredSnapshotDeliveryState(entry, await tauSession.snapshot());
     entry.record.error = undefined;
     this.setState(entry, "waiting-input");
     this.log(entry, "info", "session recovered", { tauSessionId, workspacePath });
@@ -960,7 +960,9 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       entry.unsubscribeClientEvents = tauSession.onDelta((event) => {
         this.handleClientEvent(entry, event);
       });
-      this.initializeSnapshotDeliveryState(entry, await tauSession.snapshot());
+      const snapshot = await tauSession.snapshot();
+      this.initializeSnapshotMessageDeliveryState(entry, snapshot);
+      this.handleSnapshotNotices(entry, snapshot);
 
       this.log(entry, "info", "session preparation complete", {
         durationMs: elapsedMs(sessionPreparationStart),
@@ -1526,18 +1528,25 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     }
   }
 
-  private initializeSnapshotDeliveryState(
+  private initializeRecoveredSnapshotDeliveryState(
+    entry: SessionEntry,
+    snapshot: SessionProtocolSnapshot,
+  ): void {
+    this.initializeSnapshotMessageDeliveryState(entry, snapshot);
+    for (const item of snapshot.timeline.items) {
+      if (item.type === "notice") {
+        entry.emittedNoticeIds.add(item.id);
+      }
+    }
+  }
+
+  private initializeSnapshotMessageDeliveryState(
     entry: SessionEntry,
     snapshot: SessionProtocolSnapshot,
   ): void {
     for (const message of snapshot.messages) {
       if (message.state === "committed" && isAssistantMessage(message.message)) {
         entry.emittedAssistantMessageIds.add(message.id);
-      }
-    }
-    for (const item of snapshot.timeline.items) {
-      if (item.type === "notice") {
-        entry.emittedNoticeIds.add(item.id);
       }
     }
   }

@@ -118,24 +118,29 @@ Use this shape:
 ```markdown
 ### question N: concise decision title
 
-Two or more short paragraphs of context explaining the current behavior, why the change takes this direction, and the meaningful tradeoff or consequence. Use a small bullet list when it makes the contract easier to understand.
+One or two short paragraphs explaining the current behavior, why the change takes this direction, and the meaningful tradeoff or consequence. Use a small bullet list when it makes the contract easier to understand.
 
 **Are you okay with <specific decision>?**
 ```
 
 The question must be easy to answer with `okay`, `yes`, or an equivalent when the user agrees. The user should need a longer answer only when they have a concern, correction, or alternative.
 
+Make the question decision-complete, not exhaustive. Include only verified details that could materially change the answer. Prefer a compact before-and-after example or a few representative scenarios when abstract prose would hide the real contract; summarize shared behavior once instead of repeating it for every case.
+
 Provide enough context for a reader who has not opened the PR or source code:
 
-- Define project-specific terms before using them.
+- Use plain language and explain behavior before naming abstractions.
+- Introduce project-specific terms only when they help the decision, and define them briefly.
 - Explain before-and-after behavior when something is replaced.
 - Name the relevant boundary or workflow, not the implementing function.
 - State both the reason for the choice and its cost.
-- Make hidden consequences explicit, especially compatibility, credentials, network reach, persistence, cost, and failure behavior.
+- Make relevant hidden consequences explicit, such as compatibility, credentials, network reach, persistence, cost, or failure behavior.
 
 Avoid:
 
 - Bare yes/no questions without orientation.
+- Dense jargon, compressed architectural shorthand, or unnecessary terminology.
+- Exhaustive scenario catalogs or repeated background that does not affect the decision.
 - File-by-file narration.
 - Function-level mechanics that do not affect a material decision.
 - Leading praise or wording that pressures the user to agree.
@@ -146,7 +151,7 @@ Treat the current decision as open until the user explicitly accepts it, defers 
 
 ## Handle questions and disagreement
 
-When the user asks why something works a certain way, pause the sequence and answer directly. Verify the implementation before defending it. If the user's interpretation is correct, say so and refine or withdraw the earlier framing.
+When the user asks why something works a certain way, pause the sequence and answer directly. Verify the implementation before defending it. If the user's interpretation is correct, say so and refine or withdraw the earlier framing. If the user says a question is too abstract, keep the same decision open and reframe it with concise current-versus-proposed examples. When they request an editable feedback draft, organize it by material scenario with shared context stated once.
 
 End the response with one refined decision question when a decision still remains. Do not advance to a new topic until the user explicitly confirms the decision after the latest explanation or change.
 

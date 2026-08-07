@@ -3118,6 +3118,80 @@ describe("LocalSessionHost", () => {
     }
   });
 
+  it("preserves steering receipts submitted during earlier steering persistence", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+
+    try {
+      const hostedSession = await host.createSession(localCreateInput);
+      await hostedSession.snapshot();
+      const persistenceReached = deferred();
+      const releasePersistence = deferred();
+      const commitSessionSnapshot = store.commitSessionSnapshot.bind(store);
+      let paused = false;
+      store.commitSessionSnapshot = vi.fn(async (snapshot, options) => {
+        if (!paused && snapshotUserMessageCount(snapshot) === 2) {
+          paused = true;
+          persistenceReached.resolve();
+          await releasePersistence.promise;
+        }
+        await commitSessionSnapshot(snapshot, options);
+      });
+      const modelGates = [deferred(), deferred(), deferred()];
+      const modelStarts = [deferred(), deferred(), deferred()];
+      let modelCall = 0;
+      hostedSession.runtime.agent.spec.model.stream = () => {
+        const index = modelCall++;
+        const response = fauxAssistantMessage(`response ${index + 1}`);
+        return {
+          async *[Symbol.asyncIterator]() {
+            modelStarts[index].resolve();
+            await modelGates[index].promise;
+            yield* [];
+          },
+          async result() {
+            return response;
+          },
+        };
+      };
+
+      await hostedSession.record({ text: "original" });
+      const turn = hostedSession.runTurn();
+      await modelStarts[0].promise;
+      const firstSteering = hostedSession.steer("first steer");
+      modelGates[0].resolve();
+      await persistenceReached.promise;
+
+      const secondSteering = hostedSession.steer("second steer");
+      releasePersistence.resolve();
+      const firstApplied = await firstSteering.applied;
+      await modelStarts[1].promise;
+      modelGates[1].resolve();
+      const secondApplied = await secondSteering.applied;
+      await modelStarts[2].promise;
+      modelGates[2].resolve();
+
+      const [firstResult, secondResult] = await Promise.all([
+        firstSteering.result,
+        secondSteering.result,
+        turn,
+      ]);
+      const snapshot = await hostedSession.snapshot();
+      expect(snapshot.turns[firstApplied.userHistoryEntryId]).toEqual({
+        userHistoryEntryId: firstApplied.userHistoryEntryId,
+        state: "settled",
+        outcome: firstResult.turn,
+      });
+      expect(snapshot.turns[secondApplied.userHistoryEntryId]).toEqual({
+        userHistoryEntryId: secondApplied.userHistoryEntryId,
+        state: "settled",
+        outcome: secondResult.turn,
+      });
+    } finally {
+      await host.shutdown();
+    }
+  });
+
   it("serializes overlapping snapshots from the same live local session", async () => {
     const store = new MemorySessionStore();
     const host = createHost(store);

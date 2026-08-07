@@ -45,7 +45,13 @@ export type AgentEvent =
       outcome: AgentTurnOutcome;
       failure?: AgentTurnFailure;
     }
-  | { type: "user_message"; historyEntryId: string; message: UserMessage; revision: number }
+  | {
+      type: "user_message";
+      historyEntryId: string;
+      message: UserMessage;
+      origin: "input" | "steering";
+      revision: number;
+    }
   | {
       type: "history_rewound";
       historyEntryId: string;

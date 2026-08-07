@@ -636,7 +636,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   private timeline: SessionProtocolSnapshot["timeline"] = { epoch: 1, sequence: 0, items: [] };
   private readonly turns = new Map<string, SessionProtocolTurnRecord>();
   private readonly pendingAcceptedTurnHistoryEntryIds = new Set<string>();
-  private readonly pendingRuntimeSteeringIds = new Set<string>();
   private readonly tools = new Map<string, SessionProtocolToolRun>();
   private readonly operations = new Map<string, SessionProtocolOperation>();
   private readonly agents = new Map<string, SessionProtocolAgentRun>();
@@ -1094,16 +1093,11 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     this.assertActive();
     if (this.runtime.isTurnRunning) {
       const submission = this.runtime.steer(text);
-      this.pendingRuntimeSteeringIds.add(submission.id);
       return {
         id: submission.id,
-        applied: submission.applied.then(
-          (association) => ({ userHistoryEntryId: association.historyEntryId }),
-          (error: unknown) => {
-            this.pendingRuntimeSteeringIds.delete(submission.id);
-            throw error;
-          },
-        ),
+        applied: submission.applied.then((association) => ({
+          userHistoryEntryId: association.historyEntryId,
+        })),
         result: submission.result.then(async (association) => {
           const turn = turnOutcomeFromResult(association.result, association.result.finalMessage);
           await this.settleTurn(association.historyEntryId, turn);
@@ -1122,9 +1116,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   cancelSteering(): ReturnType<ChatRuntime["cancelSteering"]> {
     this.assertActive();
     const cancelled = this.runtime.cancelSteering();
-    for (const submission of cancelled) {
-      this.pendingRuntimeSteeringIds.delete(submission.id);
-    }
     const logicalTurn = this.activeLogicalTurn;
     if (!logicalTurn) {
       return cancelled;
@@ -2383,7 +2374,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         const pendingGoal = this.pendingGoalCommit;
         const acceptsTurn =
           this.pendingAcceptedTurnHistoryEntryIds.has(event.historyEntryId) ||
-          this.pendingRuntimeSteeringIds.size > 0;
+          event.origin === "steering";
         const turn: SessionProtocolTurnRecord | undefined = acceptsTurn
           ? { userHistoryEntryId: event.historyEntryId, state: "running" }
           : undefined;
@@ -2420,7 +2411,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         );
         if (turn) {
           this.pendingAcceptedTurnHistoryEntryIds.delete(event.historyEntryId);
-          this.pendingRuntimeSteeringIds.clear();
         }
         await this.recordHistoryFailure(
           this.history.append(

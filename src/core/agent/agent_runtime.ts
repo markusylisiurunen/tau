@@ -487,7 +487,7 @@ export class AgentRuntime {
   private async commitUserTextWithModelNotice(
     textForModel: string,
     modelNotice: string | undefined,
-    options?: { historyEntryId?: string },
+    options?: { historyEntryId?: string; origin?: "input" | "steering" },
   ): Promise<string> {
     this.assertActive();
     const message: UserMessage = {
@@ -507,6 +507,7 @@ export class AgentRuntime {
         type: "user_message",
         historyEntryId: entry.id,
         message,
+        origin: options?.origin ?? "input",
         revision: this.revision,
       });
       return entry.id;
@@ -831,6 +832,7 @@ export class AgentRuntime {
             associatedSteering.flatMap((item) => item.metadata),
           ),
           turnSpec.modelNotice,
+          { origin: "steering" },
         );
         turnSpec = this.continueTurnSettings(turnSpec);
         for (const submission of associatedSteering) {

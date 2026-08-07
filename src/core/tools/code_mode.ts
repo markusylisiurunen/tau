@@ -32,6 +32,7 @@ export function buildCodeModeToolDescription({
   return [
     ...introduction,
     `Top-level await is supported. The program receives ${sdkGlobal}, docs, and console globals.`,
+    "Live clock access through Date and random generation through Math.random() are available.",
     "Only text written through console methods is returned; program return values are ignored.",
     "The SDK is progressively disclosed through docs.",
     "When this tool is useful for a task, your first call to it must be a documentation-only program that does nothing except print docs with console.log(docs).",

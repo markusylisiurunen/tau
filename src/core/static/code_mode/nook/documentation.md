@@ -6,6 +6,8 @@ The one-shot JavaScript runtime provides these globals:
 - `nook.kv`: get, put, import, export, delete, and list per-site JSON KV entries.
 - `docs`: this agent-facing SDK document.
 - `console`: program output. Only text written through console methods is returned; program return values are ignored.
+- `Date`: standard date handling with live current-time access.
+- `Math`: standard math operations, including `Math.random()`.
 
 Top-level `await` is supported. A program may make at most 64 SDK calls, with at most four running concurrently, and must finish within 60 seconds. Independent calls can run concurrently with `Promise.all` within that limit.
 

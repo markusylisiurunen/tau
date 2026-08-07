@@ -777,6 +777,9 @@ describe("nook code-mode tool", () => {
       tool,
       [
         "console.log(typeof process, typeof fetch, typeof require, typeof _requestNook);",
+        "console.log(typeof Date.now(), Number.isFinite(new Date().getTime()), Math.random() >= 0 && Math.random() < 1);",
+        "const DerivedDate = new Date().constructor;",
+        "console.log(DerivedDate === Date, Object.getPrototypeOf(new Date()) === Date.prototype, typeof DerivedDate(), new DerivedDate() instanceof Date, Object.isFrozen(Date), Object.isFrozen(Date.prototype));",
         "console.log('docs=' + docs.includes('nook.sites.deploy'));",
         "console.log('secret=' + docs.includes('top-secret'));",
         "console.log(await nook.skill());",
@@ -788,6 +791,8 @@ describe("nook code-mode tool", () => {
     expect(result.uiEvent).toMatchObject({ type: "code_mode_finished", toolName: "nook" });
     expect(result.toolResult.outcome).toBe("succeeded");
     expect(getToolText(result)).toContain("undefined undefined undefined undefined");
+    expect(getToolText(result)).toContain("number true true");
+    expect(getToolText(result)).toContain("true true string true true true");
     expect(getToolText(result)).toContain("docs=true");
     expect(getToolText(result)).toContain("secret=false");
     expect(getToolText(result)).toContain("# Nook app skill");

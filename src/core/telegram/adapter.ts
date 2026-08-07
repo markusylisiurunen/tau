@@ -1322,6 +1322,9 @@ class TelegramAdapterImpl {
       for (const failure of this.sessionManager.getProvisionFailures(sessionId)) {
         this.onSessionEvent(failure);
       }
+      for (const failure of this.sessionManager.getRecoveredTurnFailures(sessionId)) {
+        this.onSessionEvent(failure);
+      }
     }
 
     void this.syncCommands();
@@ -2708,7 +2711,7 @@ class TelegramAdapterImpl {
         : await this.buildMessageTextWithAttachments(sessionId, text, chatId);
     const sessionManager = this.getSessionManagerForChat(chatId);
     await sessionManager.sendMessage(sessionId, textWithAttachments, {
-      mode: "steer",
+      mode: "auto",
       ...(this.systemMessage ? { additionalSystemMessage: this.systemMessage } : {}),
     });
     this.resetPendingAttachmentQueue(sessionId);

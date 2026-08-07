@@ -8,7 +8,7 @@ import type {
 } from "@earendil-works/pi-ai";
 import { type ZodError, z } from "zod";
 
-export const SESSION_PROTOCOL_VERSION = 9 as const;
+export const SESSION_PROTOCOL_VERSION = 10 as const;
 export const SESSION_PROTOCOL_MAX_EXEC_CAPTURE_BYTES = 24 * 1024 * 1024;
 export const SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES = 16 * 1024 * 1024;
 
@@ -305,6 +305,14 @@ export type SessionProtocolTurnOutcome =
       status: "blocked";
       reason: "auto-compaction-failed";
       message: string;
+    };
+
+export type SessionProtocolTurnRecord =
+  | { userHistoryEntryId: string; state: "running" }
+  | {
+      userHistoryEntryId: string;
+      state: "settled";
+      outcome: SessionProtocolTurnOutcome;
     };
 
 export type SessionProtocolTurnResult = {
@@ -664,6 +672,7 @@ export type SessionProtocolSnapshot = {
   catalog: SessionProtocolContentCatalogSnapshot;
   executionEnvironment: SessionProtocolExecutionEnvironmentSnapshot;
   messages: SessionProtocolMessage[];
+  turns: Record<string, SessionProtocolTurnRecord>;
   timeline: SessionProtocolTimeline;
   tools: Record<string, SessionProtocolToolRun>;
   operations: Record<string, SessionProtocolOperation>;
@@ -954,6 +963,7 @@ export type SessionProtocolChange =
   | { type: "goal.set"; goal: SessionProtocolGoal | null }
   | { type: "cost.set"; costTotal: number }
   | { type: "settings.set"; settings: SessionProtocolSettingsSnapshot }
+  | { type: "turn.set"; turn: SessionProtocolTurnRecord }
   | { type: "message.append"; message: SessionProtocolMessage }
   | { type: "message.replace"; message: SessionProtocolMessage }
   | {
@@ -1160,6 +1170,7 @@ const nonEmptyStringSchema = z
   .string()
   .min(1)
   .refine((value) => value.trim().length > 0);
+const historyEntryIdSchema = nonEmptyStringSchema.transform((value) => value.trim());
 const noticeTitleSchema = nonEmptyStringSchema
   .max(SESSION_PROTOCOL_NOTICE_TITLE_MAX_CHARS)
   .refine(
@@ -1448,7 +1459,7 @@ const sessionProtocolUserMessageParamsSchema = z
   .object({
     sessionId: nonEmptyStringSchema,
     text: nonEmptyStringSchema,
-    historyEntryId: nonEmptyStringSchema.optional(),
+    historyEntryId: historyEntryIdSchema.optional(),
   })
   .strip();
 
@@ -1577,7 +1588,7 @@ const sessionProtocolCompactParamsSchema = z
 const sessionProtocolRewindParamsSchema = z
   .object({
     sessionId: nonEmptyStringSchema,
-    historyEntryId: nonEmptyStringSchema,
+    historyEntryId: historyEntryIdSchema,
   })
   .strip();
 
@@ -2210,6 +2221,17 @@ const sessionProtocolAgentStateSnapshotSchema = z
   })
   .strip();
 
+const sessionProtocolTurnRecordSchema = z.discriminatedUnion("state", [
+  z.object({ userHistoryEntryId: nonEmptyStringSchema, state: z.literal("running") }).strip(),
+  z
+    .object({
+      userHistoryEntryId: nonEmptyStringSchema,
+      state: z.literal("settled"),
+      outcome: sessionProtocolTurnOutcomeSchema,
+    })
+    .strip(),
+]);
+
 const sessionProtocolSnapshotSchema = z
   .object({
     sessionId: nonEmptyStringSchema,
@@ -2225,6 +2247,7 @@ const sessionProtocolSnapshotSchema = z
     catalog: sessionProtocolContentCatalogSnapshotSchema,
     executionEnvironment: sessionProtocolExecutionEnvironmentSnapshotSchema,
     messages: z.array(sessionProtocolMessageSchema),
+    turns: z.record(nonEmptyStringSchema, sessionProtocolTurnRecordSchema),
     timeline: sessionProtocolTimelineSchema,
     tools: z.record(nonEmptyStringSchema, sessionProtocolToolRunSchema),
     operations: z.record(nonEmptyStringSchema, sessionProtocolOperationSchema),
@@ -2466,6 +2489,16 @@ const sessionProtocolSnapshotSchema = z
       }
     }
 
+    for (const [id, turn] of Object.entries(snapshot.turns)) {
+      if (id !== turn.userHistoryEntryId) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["turns", id],
+          message: `turn map key '${id}' does not match embedded user history entry id '${turn.userHistoryEntryId}'`,
+        });
+      }
+    }
+
     for (const [id, agent] of Object.entries(snapshot.agents)) {
       if (id !== agent.id) {
         ctx.addIssue({
@@ -2560,6 +2593,12 @@ const sessionProtocolChangeSchema = z.discriminatedUnion("type", [
     .object({
       type: z.literal("settings.set"),
       settings: sessionProtocolSettingsSnapshotSchema,
+    })
+    .strip(),
+  z
+    .object({
+      type: z.literal("turn.set"),
+      turn: sessionProtocolTurnRecordSchema,
     })
     .strip(),
   z
@@ -3235,6 +3274,9 @@ export function applySessionProtocolDelta(
       case "settings.set":
         next.settings = structuredClone(change.settings);
         break;
+      case "turn.set":
+        setSessionProtocolTurn(next.turns, change.turn);
+        break;
       case "message.append":
         next.messages.push(structuredClone(change.message));
         break;
@@ -3328,6 +3370,7 @@ function changeCanInvalidateSnapshot(
     case "goal.set":
     case "cost.set":
     case "settings.set":
+    case "turn.set":
     case "agent.set":
       return false;
     case "tool.set": {
@@ -3391,6 +3434,24 @@ function hasSameFacetSubject(previous: SessionProtocolFacet, facet: SessionProto
   );
 }
 
+function setSessionProtocolTurn(
+  turns: SessionProtocolSnapshot["turns"],
+  turn: SessionProtocolTurnRecord,
+): void {
+  const previous = Object.hasOwn(turns, turn.userHistoryEntryId)
+    ? turns[turn.userHistoryEntryId]
+    : undefined;
+  if (previous?.state === "settled" && JSON.stringify(previous) !== JSON.stringify(turn)) {
+    throw new Error(`settled turn '${turn.userHistoryEntryId}' cannot be changed`);
+  }
+  Object.defineProperty(turns, turn.userHistoryEntryId, {
+    configurable: true,
+    enumerable: true,
+    value: structuredClone(turn),
+    writable: true,
+  });
+}
+
 function applyKeyedRecordDelta(
   snapshot: SessionProtocolSnapshot,
   message: SessionProtocolDeltaMessage,
@@ -3399,11 +3460,16 @@ function applyKeyedRecordDelta(
     return undefined;
   }
 
+  let nextTurns: SessionProtocolSnapshot["turns"] | undefined;
   let nextTools: SessionProtocolSnapshot["tools"] | undefined;
   let nextOperations: SessionProtocolSnapshot["operations"] | undefined;
   let nextAgents: SessionProtocolSnapshot["agents"] | undefined;
   let nextFacets: SessionProtocolSnapshot["facets"] | undefined;
 
+  const cloneTurns = () => {
+    nextTurns ??= { ...snapshot.turns };
+    return nextTurns;
+  };
   const cloneTools = () => {
     nextTools ??= { ...snapshot.tools };
     return nextTools;
@@ -3423,6 +3489,9 @@ function applyKeyedRecordDelta(
 
   for (const change of message.delta.changes) {
     switch (change.type) {
+      case "turn.set":
+        setSessionProtocolTurn(cloneTurns(), change.turn);
+        break;
       case "tool.set":
         cloneTools()[change.tool.id] = structuredClone(change.tool);
         break;
@@ -3455,6 +3524,7 @@ function applyKeyedRecordDelta(
   return {
     ...snapshot,
     revision: message.toRevision,
+    ...(nextTurns ? { turns: nextTurns } : {}),
     ...(nextTools ? { tools: nextTools } : {}),
     ...(nextOperations ? { operations: nextOperations } : {}),
     ...(nextAgents ? { agents: nextAgents } : {}),

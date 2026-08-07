@@ -238,6 +238,7 @@ function createStoredSnapshot(overrides = {}) {
       home: "/home/user",
     },
     messages,
+    turns: overrides.turns ?? {},
     timeline:
       overrides.timeline ??
       messages
@@ -514,6 +515,290 @@ describe("LocalSessionHost", () => {
     await expect(
       historyStore.read({ sessionId: session.sessionId, limit: 10 }),
     ).resolves.toMatchObject({ entries: [] });
+    await host.shutdown();
+  });
+
+  it("persists turn acceptance atomically and settles the live outcome", async () => {
+    const store = new MemorySessionStore();
+    const commits = [];
+    const commitSessionSnapshot = store.commitSessionSnapshot.bind(store);
+    store.commitSessionSnapshot = vi.fn(async (snapshot, options) => {
+      commits.push(structuredClone(snapshot));
+      await commitSessionSnapshot(snapshot, options);
+    });
+    const host = createHost(store);
+    const session = await host.createSession(localCreateInput);
+    session.runtime.agent.spec.model.stream = () => ({
+      async *[Symbol.asyncIterator]() {},
+      async result() {
+        return fauxAssistantMessage("done");
+      },
+    });
+
+    const accepted = await session.acceptTurn({
+      text: "run durably",
+      historyEntryId: "durable-turn",
+    });
+
+    const acceptanceCommit = commits.find((snapshot) =>
+      snapshot.messages.some((message) => message.id === "durable-turn"),
+    );
+    expect(acceptanceCommit?.turns["durable-turn"]).toEqual({
+      userHistoryEntryId: "durable-turn",
+      state: "running",
+    });
+    expect(accepted.snapshot.turns["durable-turn"]).toEqual(
+      acceptanceCommit?.turns["durable-turn"],
+    );
+
+    const result = await session.runAcceptedTurn(accepted.userHistoryEntryId);
+    expect(result.turn).toEqual({ status: "completed", stopReason: "stop" });
+    await expect(session.snapshot()).resolves.toMatchObject({
+      turns: {
+        "durable-turn": {
+          userHistoryEntryId: "durable-turn",
+          state: "settled",
+          outcome: result.turn,
+        },
+      },
+    });
+    await expect(session.runAcceptedTurn(accepted.userHistoryEntryId)).rejects.toThrow(
+      "turn 'durable-turn' was already settled",
+    );
+    await host.shutdown();
+  });
+
+  it("rolls back turn acceptance when its atomic snapshot fails to persist", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const session = await host.createSession(localCreateInput);
+    await session.snapshot();
+    const commitSessionSnapshot = store.commitSessionSnapshot.bind(store);
+    let rejectAcceptance = true;
+    store.commitSessionSnapshot = vi.fn(async (snapshot, options) => {
+      if (
+        rejectAcceptance &&
+        snapshot.messages.some((message) => message.id === "failed-acceptance")
+      ) {
+        rejectAcceptance = false;
+        throw new Error("acceptance persistence failed");
+      }
+      await commitSessionSnapshot(snapshot, options);
+    });
+
+    await expect(
+      session.acceptTurn({ text: "persist atomically", historyEntryId: "failed-acceptance" }),
+    ).rejects.toThrow("acceptance persistence failed");
+
+    expect(
+      session.runtime.rawHistoryEntries.some((entry) => entry.id === "failed-acceptance"),
+    ).toBe(false);
+    await expect(session.snapshot()).resolves.toMatchObject({
+      messages: [expect.objectContaining({ id: "system" })],
+      turns: {},
+    });
+    await expect(
+      session.acceptTurn({ text: "retry safely", historyEntryId: "failed-acceptance" }),
+    ).resolves.toMatchObject({
+      userHistoryEntryId: "failed-acceptance",
+      snapshot: {
+        turns: {
+          "failed-acceptance": {
+            userHistoryEntryId: "failed-acceptance",
+            state: "running",
+          },
+        },
+      },
+    });
+    await host.shutdown();
+  });
+
+  it.each([
+    {
+      label: "failed",
+      runtimeResult: {
+        aborted: false,
+        limitReached: { reason: "model-subturn-limit", message: "subturn limit reached" },
+        terminalResult: {
+          aborted: false,
+          limitReached: { reason: "model-subturn-limit", message: "subturn limit reached" },
+        },
+      },
+      outcome: { status: "failed", stopReason: "error", errorMessage: "subturn limit reached" },
+    },
+    {
+      label: "blocked",
+      runtimeResult: {
+        aborted: false,
+        blocked: { reason: "auto-compaction-failed", message: "summary unavailable" },
+        terminalResult: {
+          aborted: false,
+          blocked: { reason: "auto-compaction-failed", message: "summary unavailable" },
+        },
+      },
+      outcome: {
+        status: "blocked",
+        reason: "auto-compaction-failed",
+        message: "summary unavailable",
+      },
+    },
+    {
+      label: "aborted",
+      runtimeResult: {
+        aborted: true,
+        terminalResult: { aborted: true },
+      },
+      outcome: { status: "aborted", stopReason: "aborted" },
+    },
+  ])(
+    "settles an accepted $label turn in the durable ledger",
+    async ({ runtimeResult, outcome }) => {
+      const host = createHost(new MemorySessionStore());
+      const session = await host.createSession(localCreateInput);
+      session.runtime.runTurn = vi.fn(async () => runtimeResult);
+
+      const accepted = await session.acceptTurn({ text: "settle durably" });
+      const result = await session.runAcceptedTurn(accepted.userHistoryEntryId);
+
+      expect(result.turn).toEqual(outcome);
+      expect((await session.snapshot()).turns[accepted.userHistoryEntryId]).toEqual({
+        userHistoryEntryId: accepted.userHistoryEntryId,
+        state: "settled",
+        outcome,
+      });
+      await host.shutdown();
+    },
+  );
+
+  it("normalizes accepted turn ids before durable compaction and reuse checks", async () => {
+    const host = createHost(new MemorySessionStore());
+    const session = await host.createSession(localCreateInput);
+    const responses = [
+      fauxAssistantMessage("completed before compaction"),
+      fauxAssistantMessage(
+        "compacted summary\n\n<preserved-user-message-ids>\n[]\n</preserved-user-message-ids>",
+      ),
+    ];
+    session.runtime.agent.spec.model.stream = () => {
+      const response = responses.shift();
+      if (!response) throw new Error("unexpected model call");
+      return {
+        async *[Symbol.asyncIterator]() {},
+        async result() {
+          return response;
+        },
+      };
+    };
+
+    const accepted = await session.acceptTurn({
+      text: "compact this turn",
+      historyEntryId: " compacted-turn ",
+    });
+    expect(accepted.userHistoryEntryId).toBe("compacted-turn");
+    const result = await session.runAcceptedTurn(accepted.userHistoryEntryId);
+    const compacted = await session.compact({ mode: "summary-only" });
+
+    expect(compacted.snapshot.messages.some((message) => message.id === "compacted-turn")).toBe(
+      false,
+    );
+    expect(compacted.snapshot.turns["compacted-turn"]).toEqual({
+      userHistoryEntryId: "compacted-turn",
+      state: "settled",
+      outcome: result.turn,
+    });
+    await expect(
+      session.acceptTurn({ text: "repeat work", historyEntryId: " compacted-turn " }),
+    ).rejects.toThrow("turn 'compacted-turn' was already accepted");
+    await expect(
+      session.record({ text: "reuse message id", historyEntryId: " compacted-turn " }),
+    ).rejects.toThrow("history entry id 'compacted-turn' belongs to an accepted turn");
+    await host.shutdown();
+  });
+
+  it("preserves a running root receipt through split-turn compaction", async () => {
+    const host = createHost(new MemorySessionStore());
+    const session = await host.createSession(localCreateInput);
+    const accepted = await session.acceptTurn({
+      text: "compact while running",
+      historyEntryId: "split-turn-root",
+    });
+    const previousState = session.runtime.agent.snapshot();
+    const summaryText = prependTauUserMetadata("summary", [
+      { type: "compaction", version: 1, summary: "summary", preservedUserMessages: [] },
+    ]);
+    const continuationText = prependTauUserMetadata("", [
+      { type: "auto-compaction-continuation", version: 1 },
+    ]);
+    const revision = previousState.revision + 1;
+    session.runtime.agent.restoreState({
+      ...previousState,
+      revision,
+      historyEntries: [
+        {
+          id: "split-turn-summary",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: summaryText }],
+            timestamp: 1,
+          },
+        },
+        {
+          id: "split-turn-continuation",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: continuationText }],
+            timestamp: 2,
+          },
+        },
+      ],
+    });
+
+    await session.enqueueRuntimeEvent({
+      type: "compaction_end",
+      reason: "threshold",
+      outcome: "compacted",
+      result: {
+        summaryHistoryEntryId: "split-turn-summary",
+        continuationHistoryEntryId: "split-turn-continuation",
+        compactionMessage: summaryText,
+        cutType: "split-turn",
+        retainedMessageCount: 0,
+      },
+      revision,
+    });
+
+    const snapshot = await session.snapshot();
+    expect(snapshot.messages.some((message) => message.id === accepted.userHistoryEntryId)).toBe(
+      false,
+    );
+    expect(snapshot.turns[accepted.userHistoryEntryId]).toEqual({
+      userHistoryEntryId: accepted.userHistoryEntryId,
+      state: "running",
+    });
+    await host.shutdown();
+  });
+
+  it("preserves rewound turn receipts and rejects explicit id reuse", async () => {
+    const host = createHost(new MemorySessionStore());
+    const session = await host.createSession(localCreateInput);
+    await session.acceptTurn({ text: "rewind this turn", historyEntryId: "rewound-turn" });
+
+    await session.rewindToHistoryEntryId("rewound-turn");
+
+    await expect(session.snapshot()).resolves.toMatchObject({
+      turns: {
+        "rewound-turn": {
+          userHistoryEntryId: "rewound-turn",
+          state: "running",
+        },
+      },
+    });
+    await expect(
+      session.acceptTurn({ text: "repeat work", historyEntryId: "rewound-turn" }),
+    ).rejects.toThrow("turn 'rewound-turn' was already accepted");
+    await expect(
+      session.record({ text: "reuse message id", historyEntryId: "rewound-turn" }),
+    ).rejects.toThrow("history entry id 'rewound-turn' belongs to an accepted turn");
     await host.shutdown();
   });
 
@@ -1044,6 +1329,41 @@ describe("LocalSessionHost", () => {
     await host.shutdown();
   });
 
+  it("keeps automatic goal continuations within the root turn receipt", async () => {
+    const host = createHost(new MemorySessionStore());
+    const hostedSession = await host.createSession(localCreateInput);
+    const responses = [
+      fauxAssistantMessage("more work remains"),
+      fauxAssistantMessage("", { stopReason: "aborted" }),
+    ];
+    hostedSession.runtime.agent.spec.model.stream = () => {
+      const response = responses.shift();
+      if (!response) throw new Error("unexpected model call");
+      return {
+        async *[Symbol.asyncIterator]() {},
+        async result() {
+          return response;
+        },
+      };
+    };
+
+    const result = await hostedSession.startGoal("Continue under one root");
+    const snapshot = await hostedSession.snapshot();
+
+    expect(
+      hostedSession.runtime.rawHistoryEntries.filter((entry) => entry.message.role === "user"),
+    ).toHaveLength(2);
+    expect(snapshot.turns).toEqual({
+      [result.userHistoryEntryId]: {
+        userHistoryEntryId: result.userHistoryEntryId,
+        state: "settled",
+        outcome: result.turn,
+      },
+    });
+    expect(result.turn).toEqual({ status: "aborted", stopReason: "aborted" });
+    await host.shutdown();
+  });
+
   it("applies steering received between active goal continuations", async () => {
     const store = new MemorySessionStore();
     const host = createHost(store);
@@ -1177,6 +1497,16 @@ describe("LocalSessionHost", () => {
     expect(streamModel).toHaveBeenCalledTimes(2);
     const snapshot = await hostedSession.snapshot();
     expect(snapshot.goal).toEqual({ objective: "Follow steering safely", status: "blocked" });
+    expect(snapshot.turns[steeringResult.userHistoryEntryId]).toEqual({
+      userHistoryEntryId: steeringResult.userHistoryEntryId,
+      state: "settled",
+      outcome: steeringResult.turn,
+    });
+    expect(snapshot.turns[result.userHistoryEntryId]).toEqual({
+      userHistoryEntryId: result.userHistoryEntryId,
+      state: "settled",
+      outcome: result.turn,
+    });
     await host.shutdown();
   });
 
@@ -2795,6 +3125,80 @@ describe("LocalSessionHost", () => {
     }
   });
 
+  it("preserves steering receipts submitted during earlier steering persistence", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+
+    try {
+      const hostedSession = await host.createSession(localCreateInput);
+      await hostedSession.snapshot();
+      const persistenceReached = deferred();
+      const releasePersistence = deferred();
+      const commitSessionSnapshot = store.commitSessionSnapshot.bind(store);
+      let paused = false;
+      store.commitSessionSnapshot = vi.fn(async (snapshot, options) => {
+        if (!paused && snapshotUserMessageCount(snapshot) === 2) {
+          paused = true;
+          persistenceReached.resolve();
+          await releasePersistence.promise;
+        }
+        await commitSessionSnapshot(snapshot, options);
+      });
+      const modelGates = [deferred(), deferred(), deferred()];
+      const modelStarts = [deferred(), deferred(), deferred()];
+      let modelCall = 0;
+      hostedSession.runtime.agent.spec.model.stream = () => {
+        const index = modelCall++;
+        const response = fauxAssistantMessage(`response ${index + 1}`);
+        return {
+          async *[Symbol.asyncIterator]() {
+            modelStarts[index].resolve();
+            await modelGates[index].promise;
+            yield* [];
+          },
+          async result() {
+            return response;
+          },
+        };
+      };
+
+      await hostedSession.record({ text: "original" });
+      const turn = hostedSession.runTurn();
+      await modelStarts[0].promise;
+      const firstSteering = hostedSession.steer("first steer");
+      modelGates[0].resolve();
+      await persistenceReached.promise;
+
+      const secondSteering = hostedSession.steer("second steer");
+      releasePersistence.resolve();
+      const firstApplied = await firstSteering.applied;
+      await modelStarts[1].promise;
+      modelGates[1].resolve();
+      const secondApplied = await secondSteering.applied;
+      await modelStarts[2].promise;
+      modelGates[2].resolve();
+
+      const [firstResult, secondResult] = await Promise.all([
+        firstSteering.result,
+        secondSteering.result,
+        turn,
+      ]);
+      const snapshot = await hostedSession.snapshot();
+      expect(snapshot.turns[firstApplied.userHistoryEntryId]).toEqual({
+        userHistoryEntryId: firstApplied.userHistoryEntryId,
+        state: "settled",
+        outcome: firstResult.turn,
+      });
+      expect(snapshot.turns[secondApplied.userHistoryEntryId]).toEqual({
+        userHistoryEntryId: secondApplied.userHistoryEntryId,
+        state: "settled",
+        outcome: secondResult.turn,
+      });
+    } finally {
+      await host.shutdown();
+    }
+  });
+
   it("serializes overlapping snapshots from the same live local session", async () => {
     const store = new MemorySessionStore();
     const host = createHost(store);
@@ -4329,9 +4733,12 @@ describe("LocalSessionHost", () => {
     expect(secondEnvironment.dispose).toHaveBeenCalledTimes(1);
   });
 
-  it("recovers stale running snapshots as idle snapshots", async () => {
+  it("aborts a recovered running receipt after its initiating message was removed", async () => {
     const store = new MemorySessionStore();
     const host = createHost(store);
+    const continuationText = prependTauUserMetadata("", [
+      { type: "auto-compaction-continuation", version: 1 },
+    ]);
     await store.commitSessionSnapshot(
       createStoredSnapshot({
         sessionId: "stored-running",
@@ -4339,13 +4746,16 @@ describe("LocalSessionHost", () => {
         lifecycle: "running",
         historyEntries: [
           {
-            id: "entry-1",
+            id: "continuation",
             message: {
               role: "user",
-              content: [{ type: "text", text: "stale turn" }],
+              content: [{ type: "text", text: continuationText }],
             },
           },
         ],
+        turns: {
+          "compacted-root": { userHistoryEntryId: "compacted-root", state: "running" },
+        },
       }),
     );
 
@@ -4366,13 +4776,20 @@ describe("LocalSessionHost", () => {
         lifecycle: "idle",
         historyEntries: [
           {
-            id: "entry-1",
+            id: "continuation",
             message: {
               role: "user",
-              content: [{ type: "text", text: "stale turn" }],
+              content: [{ type: "text", text: continuationText }],
             },
           },
         ],
+        turns: {
+          "compacted-root": {
+            userHistoryEntryId: "compacted-root",
+            state: "settled",
+            outcome: { status: "aborted", stopReason: "aborted" },
+          },
+        },
         systemPrompt: recoveredSession.runtime.promptComposition.baseSystemPrompt,
         bootstrap: {
           model: expectedModel(),

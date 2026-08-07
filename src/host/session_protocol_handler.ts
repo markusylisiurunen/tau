@@ -835,7 +835,7 @@ export class SessionProtocolHandler {
       request.method !== "session.steer" && request.params.historyEntryId
         ? { historyEntryId: request.params.historyEntryId }
         : undefined;
-    const { userHistoryEntryId } = await state.session.record({
+    const { userHistoryEntryId } = await state.session.acceptTurn({
       text: request.params.text,
       ...(addOptions ? { historyEntryId: addOptions.historyEntryId } : {}),
     });
@@ -941,13 +941,8 @@ export class SessionProtocolHandler {
     userHistoryEntryId: string,
   ): Promise<void> {
     try {
-      const turnResult = await state.session.runTurn();
-      await state.session.snapshot();
-
-      const result: SessionProtocolResultByMethod[typeof method] = {
-        userHistoryEntryId,
-        turn: turnResult,
-      };
+      const result: SessionProtocolResultByMethod[typeof method] =
+        await state.session.runAcceptedTurn(userHistoryEntryId);
       this.sendMessage(createSessionProtocolSuccessResponse(requestId, method, result));
     } catch (error) {
       await this.snapshotAfterFailedSubmit(state);

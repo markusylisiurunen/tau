@@ -283,8 +283,9 @@ options:
 - `submit(text, options?)`
   - sends `session.submit` with this session id
   - returns a discriminated terminal turn outcome with `completed`, `failed`, `aborted`, or `blocked` status
+  - the same outcome is durably available in `snapshot.turns[result.userHistoryEntryId]`; use `getTauSdkSessionTurnRecord` to distinguish an accepted running turn from an unknown ID, or `getTauSdkSessionTurnOutcome` for settled outcomes
   - resolves with a failed outcome when the host successfully settles a runtime exception, and rejects only when the request cannot be settled
-  - does not duplicate completed outcomes in snapshots; exceptional failed or blocked outcomes become ordered semantic timeline notices when no failed assistant message already represents them
+  - keeps terminal outcomes in the logical-turn ledger; exceptional failed or blocked outcomes also become ordered semantic timeline notices when no failed assistant message already represents them
 - `queue(text, options?)`
   - sends `session.queue` with this session id
   - accepts queueing while a turn is active according to the session protocol
@@ -400,7 +401,7 @@ const second = await session.sample({
 
 ```json
 {
-  "version": 9,
+  "version": 10,
   "type": "session.delta",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "fromRevision": 1,

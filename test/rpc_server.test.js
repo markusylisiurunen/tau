@@ -289,6 +289,17 @@ function createHarness(options = {}) {
         }
         return await record(recordOptions);
       },
+      async acceptTurn(recordOptions) {
+        if (options.record) {
+          return await options.record(recordOptions, record);
+        }
+        return await record(recordOptions);
+      },
+      async runAcceptedTurn(userHistoryEntryId) {
+        const turn = await hostedSession.runTurn();
+        await hostedSession.snapshot();
+        return { userHistoryEntryId, turn };
+      },
       async runTurn() {
         running = true;
         let settleTurn;

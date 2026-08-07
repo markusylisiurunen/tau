@@ -35,6 +35,7 @@ import type {
   SessionProtocolSteerResult,
   SessionProtocolSubmitResult,
   SessionProtocolTurnOutcome,
+  SessionProtocolTurnRecord,
   SessionProtocolUnobserveResult,
 } from "../protocol/session_protocol.js";
 import type { WebSocketSessionProtocolTransportOptions } from "../transport/index.js";
@@ -50,6 +51,7 @@ export type TauSdkReadyMessage = SessionProtocolReadyMessage;
 export type TauSdkCreateSessionInput = SessionProtocolCreateParams;
 export type TauSdkSessionSummary = SessionProtocolSessionSummary;
 export type TauSdkSessionTurnOutcome = SessionProtocolTurnOutcome;
+export type TauSdkSessionTurnRecord = SessionProtocolTurnRecord;
 export type TauSdkSessionSubmitResult = SessionProtocolSubmitResult;
 export type TauSdkSessionQueueResult = SessionProtocolQueueResult;
 export type TauSdkSessionSteerResult = SessionProtocolSteerResult;

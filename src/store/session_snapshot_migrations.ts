@@ -5,7 +5,7 @@ import {
 } from "../protocol/session_protocol.js";
 
 export const STORED_SESSION_DOCUMENT_FORMAT = "tau-session" as const;
-export const STORED_SESSION_DOCUMENT_VERSION = 7 as const;
+export const STORED_SESSION_DOCUMENT_VERSION = 8 as const;
 export const LEGACY_SESSION_MODEL_CONTEXT_KEY = "legacy-v3";
 
 export type StoredSessionDocument = {
@@ -24,6 +24,7 @@ const storedSessionMigrations = new Map<number, StoredSessionMigration>([
   [4, migrateStoredSessionV4ToV5],
   [5, migrateStoredSessionV5ToV6],
   [6, migrateStoredSessionV6ToV7],
+  [7, migrateStoredSessionV7ToV8],
 ]);
 
 export class UnsupportedStoredSessionVersionError extends Error {
@@ -152,6 +153,7 @@ function migrateStoredSessionV5ToV6(value: unknown): unknown {
 
   const snapshot = structuredClone(value);
   migrateModelContextKey(snapshot);
+  snapshot.turns = collectStoredTurnOutcomes(snapshot);
   if (!Array.isArray(snapshot.timeline)) {
     throw new Error("stored session snapshot timeline must be an array");
   }
@@ -298,6 +300,25 @@ function migrateStoredSessionV6ToV7(value: unknown): unknown {
   }
 
   return snapshot;
+}
+
+function migrateStoredSessionV7ToV8(value: unknown): unknown {
+  if (!isRecord(value)) throw new Error("stored session snapshot must be an object");
+  const snapshot = structuredClone(value);
+  if (!("turns" in snapshot)) snapshot.turns = {};
+  return snapshot;
+}
+
+function collectStoredTurnOutcomes(snapshot: Record<string, unknown>): Record<string, unknown> {
+  if (!Array.isArray(snapshot.messages)) return {};
+  return Object.fromEntries(
+    snapshot.messages.flatMap((message) => {
+      if (!isRecord(message) || typeof message.id !== "string" || !isRecord(message.turn))
+        return [];
+      const outcome = structuredClone(message.turn);
+      return [[message.id, { userHistoryEntryId: message.id, state: "settled", outcome }]];
+    }),
+  );
 }
 
 function normalizeStoredOperations(snapshot: Record<string, unknown>): void {

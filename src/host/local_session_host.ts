@@ -83,6 +83,8 @@ import type {
   SessionProtocolTimelineNotice,
   SessionProtocolToolRun,
   SessionProtocolTurnOutcome,
+  SessionProtocolTurnRecord,
+  SessionProtocolUserMessageTurnResult,
 } from "../protocol/session_protocol.js";
 import {
   applySessionProtocolDelta,
@@ -632,6 +634,8 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   private draftAssistantMessage?: SessionProtocolMessage;
   private readonly messageStates = new Map<string, SessionProtocolMessage["state"]>();
   private timeline: SessionProtocolSnapshot["timeline"] = { epoch: 1, sequence: 0, items: [] };
+  private readonly turns = new Map<string, SessionProtocolTurnRecord>();
+  private readonly pendingAcceptedTurnHistoryEntryIds = new Set<string>();
   private readonly tools = new Map<string, SessionProtocolToolRun>();
   private readonly operations = new Map<string, SessionProtocolOperation>();
   private readonly agents = new Map<string, SessionProtocolAgentRun>();
@@ -774,19 +778,14 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         this.pendingGoalCommit = goal;
       });
       try {
-        const { userHistoryEntryId } = await this.record({
+        const { userHistoryEntryId } = await this.acceptTurn({
           text: prependGoalPolicy(goal.objective, goal),
         });
-        if (logicalTurn.cancellationRequested) {
-          return {
-            userHistoryEntryId,
-            turn: await this.cancelLogicalTurn(),
-          };
-        }
-        return {
-          userHistoryEntryId,
-          turn: await this.runTurnNow(logicalTurn, userHistoryEntryId),
-        };
+        const turn = logicalTurn.cancellationRequested
+          ? await this.cancelLogicalTurn()
+          : await this.runTurnNow(logicalTurn, userHistoryEntryId);
+        await this.settleTurn(userHistoryEntryId, turn);
+        return { userHistoryEntryId, turn };
       } catch (error) {
         if (this.pendingGoalCommit === goal) {
           await this.enqueueMutation(() => {
@@ -814,13 +813,14 @@ class LocalHostedSessionHandle implements LocalHostedSession {
           await this.blockActiveGoal();
           return { turn: abortedTurnOutcome() };
         }
-        const { userHistoryEntryId } = await this.record({
+        const { userHistoryEntryId } = await this.acceptTurn({
           text: buildGoalContinuationText(goal),
         });
-        if (logicalTurn.cancellationRequested) {
-          return { turn: await this.cancelLogicalTurn() };
-        }
-        return { turn: await this.runTurnNow(logicalTurn, userHistoryEntryId) };
+        const turn = logicalTurn.cancellationRequested
+          ? await this.cancelLogicalTurn()
+          : await this.runTurnNow(logicalTurn, userHistoryEntryId);
+        await this.settleTurn(userHistoryEntryId, turn);
+        return { turn };
       } catch (error) {
         await this.blockActiveGoal().catch(() => undefined);
         throw error;
@@ -841,9 +841,20 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     options: Omit<SessionProtocolRecordParams, "sessionId">,
   ): Promise<SessionProtocolRecordResult> {
     this.assertActive();
+    const historyEntryId =
+      options.historyEntryId === undefined
+        ? undefined
+        : normalizeExplicitHistoryEntryId(options.historyEntryId);
+    if (
+      historyEntryId !== undefined &&
+      (this.turns.has(historyEntryId) ||
+        this.pendingAcceptedTurnHistoryEntryIds.has(historyEntryId))
+    ) {
+      throw new Error(`history entry id '${historyEntryId}' belongs to an accepted turn`);
+    }
     const userHistoryEntryId = await this.session.commitUserText(
       options.text,
-      options.historyEntryId ? { historyEntryId: options.historyEntryId } : undefined,
+      historyEntryId === undefined ? undefined : { historyEntryId },
     );
     return {
       snapshot: await this.snapshot(),
@@ -851,8 +862,81 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     };
   }
 
+  async acceptTurn(
+    options: Omit<SessionProtocolRecordParams, "sessionId">,
+  ): Promise<SessionProtocolRecordResult> {
+    this.assertActive();
+    const userHistoryEntryId = this.createTurnHistoryEntryId(options.historyEntryId);
+    this.pendingAcceptedTurnHistoryEntryIds.add(userHistoryEntryId);
+    try {
+      await this.session.commitUserText(options.text, { historyEntryId: userHistoryEntryId });
+      return { snapshot: await this.snapshot(), userHistoryEntryId };
+    } finally {
+      this.pendingAcceptedTurnHistoryEntryIds.delete(userHistoryEntryId);
+    }
+  }
+
+  private createTurnHistoryEntryId(preferredId?: string): string {
+    if (preferredId !== undefined) {
+      const normalizedId = normalizeExplicitHistoryEntryId(preferredId);
+      if (
+        this.turns.has(normalizedId) ||
+        this.pendingAcceptedTurnHistoryEntryIds.has(normalizedId)
+      ) {
+        throw new Error(`turn '${normalizedId}' was already accepted`);
+      }
+      return normalizedId;
+    }
+
+    let id = `history-${randomUUID()}`;
+    const historyEntryIds = new Set(this.session.rawHistoryEntries.map((entry) => entry.id));
+    while (
+      this.turns.has(id) ||
+      this.pendingAcceptedTurnHistoryEntryIds.has(id) ||
+      historyEntryIds.has(id)
+    ) {
+      id = `history-${randomUUID()}`;
+    }
+    return id;
+  }
+
+  async runAcceptedTurn(userHistoryEntryId: string): Promise<SessionProtocolUserMessageTurnResult> {
+    const acceptedTurn = this.turns.get(userHistoryEntryId);
+    if (!acceptedTurn) throw new Error(`turn '${userHistoryEntryId}' was not accepted`);
+    if (acceptedTurn.state === "settled") {
+      throw new Error(`turn '${userHistoryEntryId}' was already settled`);
+    }
+    const turn = await this.runLogicalTurn((logicalTurn) =>
+      this.runTurnNow(logicalTurn, userHistoryEntryId),
+    );
+    await this.settleTurn(userHistoryEntryId, turn);
+    return { userHistoryEntryId, turn };
+  }
+
   async runTurn(): Promise<SessionProtocolTurnOutcome> {
     return await this.runLogicalTurn((logicalTurn) => this.runTurnNow(logicalTurn));
+  }
+
+  private async settleTurn(
+    userHistoryEntryId: string,
+    outcome: SessionProtocolTurnOutcome,
+  ): Promise<void> {
+    await this.enqueueMutation(async () => {
+      const existing = this.turns.get(userHistoryEntryId);
+      if (!existing) {
+        throw new Error(`turn '${userHistoryEntryId}' was not accepted`);
+      }
+      if (existing.state === "settled") {
+        if (isDeepStrictEqual(existing.outcome, outcome)) return;
+        throw new Error(`turn '${userHistoryEntryId}' was already settled`);
+      }
+      const turn: SessionProtocolTurnRecord = { userHistoryEntryId, state: "settled", outcome };
+      this.turns.set(userHistoryEntryId, turn);
+      const delta = await this.commitSnapshotPatch("assistant-message", [
+        { type: "turn.set", turn },
+      ]);
+      this.emitDelta(delta);
+    });
   }
 
   async retryTurn(): Promise<SessionProtocolTurnOutcome> {
@@ -943,7 +1027,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
           }
           await this.emitSnapshotResetIfChanged("assistant-message");
         });
-        this.resolveCommittedLogicalSteering(committedSteering, initialOutcome);
+        await this.resolveCommittedLogicalSteering(committedSteering, initialOutcome);
         if (logicalTurn.cancellationRequested) {
           return await this.cancelLogicalTurn();
         }
@@ -957,7 +1041,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       } catch (error) {
         try {
           const outcome = await this.cleanupFailedTurn(rootUserMessage.id, error);
-          this.resolveCommittedLogicalSteering(committedSteering, outcome);
+          await this.resolveCommittedLogicalSteering(committedSteering, outcome);
           return outcome;
         } catch {
           this.rejectCommittedLogicalSteering(committedSteering, error);
@@ -1022,10 +1106,11 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         applied: submission.applied.then((association) => ({
           userHistoryEntryId: association.historyEntryId,
         })),
-        result: submission.result.then((association) => ({
-          userHistoryEntryId: association.historyEntryId,
-          turn: turnOutcomeFromResult(association.result, association.result.finalMessage),
-        })),
+        result: submission.result.then(async (association) => {
+          const turn = turnOutcomeFromResult(association.result, association.result.finalMessage);
+          await this.settleTurn(association.historyEntryId, turn);
+          return { userHistoryEntryId: association.historyEntryId, turn };
+        }),
       };
     }
 
@@ -1601,12 +1686,19 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       if (goal?.status !== "active") {
         throw new Error("cannot commit logical steering without an active goal");
       }
-      const historyEntryId = await this.session.commitUserText(
-        prependGoalPolicy(
-          formatSteeringUserMessage(submissions.map((submission) => submission.text)),
-          goal,
-        ),
-      );
+      const historyEntryId = this.createTurnHistoryEntryId();
+      this.pendingAcceptedTurnHistoryEntryIds.add(historyEntryId);
+      try {
+        await this.session.commitUserText(
+          prependGoalPolicy(
+            formatSteeringUserMessage(submissions.map((submission) => submission.text)),
+            goal,
+          ),
+          { historyEntryId },
+        );
+      } finally {
+        this.pendingAcceptedTurnHistoryEntryIds.delete(historyEntryId);
+      }
       for (const submission of submissions) {
         submission.resolveApplied({ userHistoryEntryId: historyEntryId });
       }
@@ -1621,11 +1713,12 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     }
   }
 
-  private resolveCommittedLogicalSteering(
+  private async resolveCommittedLogicalSteering(
     committed: CommittedLogicalSteering[],
     turn: SessionProtocolTurnOutcome,
-  ): void {
+  ): Promise<void> {
     for (const { historyEntryId, submissions } of committed) {
+      await this.settleTurn(historyEntryId, turn);
       for (const submission of submissions) {
         submission.resolveResult({ userHistoryEntryId: historyEntryId, turn });
       }
@@ -1661,7 +1754,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       }
       await this.emitSnapshotResetIfChanged("assistant-message");
     });
-    this.resolveCommittedLogicalSteering(committedSteering, outcome);
+    await this.resolveCommittedLogicalSteering(committedSteering, outcome);
     return outcome;
   }
 
@@ -1851,6 +1944,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       catalog: structuredClone(this.catalog),
       executionEnvironment: this.executionEnvironment.snapshot(),
       messages,
+      turns: Object.fromEntries(this.turns),
       timeline: structuredClone(this.timeline),
       tools: Object.fromEntries(this.tools),
       operations: Object.fromEntries(this.operations),
@@ -1978,6 +2072,10 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       return;
     }
     this.timeline = structuredClone(snapshot.timeline);
+    this.turns.clear();
+    for (const [id, turn] of Object.entries(snapshot.turns)) {
+      this.turns.set(id, structuredClone(turn));
+    }
     this.tools.clear();
     for (const [id, tool] of Object.entries(snapshot.tools)) {
       this.tools.set(id, structuredClone(tool));
@@ -2282,6 +2380,18 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       }
       case "user_message": {
         const pendingGoal = this.pendingGoalCommit;
+        const acceptsTurn =
+          this.pendingAcceptedTurnHistoryEntryIds.has(event.historyEntryId) ||
+          event.origin === "steering";
+        const turn: SessionProtocolTurnRecord | undefined = acceptsTurn
+          ? { userHistoryEntryId: event.historyEntryId, state: "running" }
+          : undefined;
+        if (turn) {
+          if (this.turns.has(event.historyEntryId)) {
+            throw new Error(`turn '${event.historyEntryId}' was already accepted`);
+          }
+          this.turns.set(event.historyEntryId, turn);
+        }
         const timelineItem = this.appendMessageTimelineItem(
           event.historyEntryId,
           event.message.timestamp,
@@ -2293,6 +2403,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
             ...(pendingGoal
               ? [{ type: "goal.set" as const, goal: structuredClone(pendingGoal) }]
               : []),
+            ...(turn ? [{ type: "turn.set" as const, turn }] : []),
             {
               type: "message.append",
               message: {
@@ -2306,6 +2417,9 @@ class LocalHostedSessionHandle implements LocalHostedSession {
           ],
           { persist: true },
         );
+        if (turn) {
+          this.pendingAcceptedTurnHistoryEntryIds.delete(event.historyEntryId);
+        }
         await this.recordHistoryFailure(
           this.history.append(
             this.sessionId,
@@ -2938,6 +3052,14 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   }
 }
 
+function normalizeExplicitHistoryEntryId(historyEntryId: string): string {
+  const normalizedId = historyEntryId.trim();
+  if (!normalizedId) {
+    throw new Error("history entry id must not be empty");
+  }
+  return normalizedId;
+}
+
 function formatErrorDiagnostic(error: unknown): string {
   const messages: string[] = [];
   const seen = new Set<unknown>();
@@ -3081,6 +3203,16 @@ function normalizeRecoveredSnapshot(snapshot: SessionProtocolSnapshot): {
     recovered.agentState.modelContextKey === LEGACY_SESSION_MODEL_CONTEXT_KEY;
   let changed = recovered.lifecycle !== "idle" || legacyAgentState;
   recovered.lifecycle = "idle";
+  for (const [id, turn] of Object.entries(recovered.turns)) {
+    if (turn.state === "running") {
+      changed = true;
+      recovered.turns[id] = {
+        userHistoryEntryId: id,
+        state: "settled",
+        outcome: abortedTurnOutcome(),
+      };
+    }
+  }
   if (recovered.goal?.status === "active") {
     changed = true;
     recovered.goal.status = "blocked";

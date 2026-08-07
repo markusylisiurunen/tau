@@ -487,7 +487,7 @@ export class AgentRuntime {
   private async commitUserTextWithModelNotice(
     textForModel: string,
     modelNotice: string | undefined,
-    options?: { historyEntryId?: string },
+    options?: { historyEntryId?: string; origin?: "input" | "steering" },
   ): Promise<string> {
     this.assertActive();
     const message: UserMessage = {
@@ -500,14 +500,28 @@ export class AgentRuntime {
       ],
       timestamp: this.clock.now(),
     };
+    const previousRevision = this.revision;
     const entry = this.appendHistoryEntry(message, options?.historyEntryId);
-    await this.deliver({
-      type: "user_message",
-      historyEntryId: entry.id,
-      message,
-      revision: this.revision,
-    });
-    return entry.id;
+    try {
+      await this.deliver({
+        type: "user_message",
+        historyEntryId: entry.id,
+        message,
+        origin: options?.origin ?? "input",
+        revision: this.revision,
+      });
+      return entry.id;
+    } catch (error) {
+      const appendedEntry = this.historyEntries.at(-1);
+      if (appendedEntry !== entry || this.revision !== previousRevision + 1) {
+        throw new Error(`cannot roll back uncommitted history entry '${entry.id}'`, {
+          cause: error,
+        });
+      }
+      this.historyEntries.pop();
+      this.revision = previousRevision;
+      throw error;
+    }
   }
 
   private addMessage(message: Message, options?: { historyEntryId?: string }): string {
@@ -818,6 +832,7 @@ export class AgentRuntime {
             associatedSteering.flatMap((item) => item.metadata),
           ),
           turnSpec.modelNotice,
+          { origin: "steering" },
         );
         turnSpec = this.continueTurnSettings(turnSpec);
         for (const submission of associatedSteering) {

@@ -39,6 +39,7 @@ import type {
   SessionProtocolStartGoalParams,
   SessionProtocolStartGoalResult,
   SessionProtocolTurnOutcome,
+  SessionProtocolUserMessageTurnResult,
 } from "../protocol/session_protocol.js";
 
 export class EphemeralThreadBusyError extends Error {}
@@ -62,6 +63,10 @@ export type TauHostedSession = {
   record(
     options: Omit<SessionProtocolRecordParams, "sessionId">,
   ): Promise<SessionProtocolRecordResult>;
+  acceptTurn(
+    options: Omit<SessionProtocolRecordParams, "sessionId">,
+  ): Promise<SessionProtocolRecordResult>;
+  runAcceptedTurn(userHistoryEntryId: string): Promise<SessionProtocolUserMessageTurnResult>;
   runTurn(): Promise<SessionProtocolTurnOutcome>;
   retryTurn(): Promise<SessionProtocolTurnOutcome>;
   interruptTurn(): boolean;

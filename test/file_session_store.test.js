@@ -561,6 +561,13 @@ describe("FileSessionStore", () => {
 
       await expect(store.loadSession("session-1")).resolves.toEqual({
         ...snapshot,
+        turns: {
+          "entry-1": {
+            userHistoryEntryId: "entry-1",
+            state: "settled",
+            outcome: legacy.messages.find((message) => message.id === "entry-1").turn,
+          },
+        },
         timeline: {
           epoch: 1,
           sequence: 2,
@@ -611,6 +618,13 @@ describe("FileSessionStore", () => {
 
       await expect(store.loadSession("session-1")).resolves.toMatchObject({
         messages: snapshot.messages,
+        turns: {
+          "entry-1": {
+            userHistoryEntryId: "entry-1",
+            state: "settled",
+            outcome: legacy.messages.find((message) => message.id === "entry-1").turn,
+          },
+        },
         timeline: {
           sequence: 2,
           items: [
@@ -654,6 +668,11 @@ describe("FileSessionStore", () => {
         "utf8",
       );
 
+      snapshot.turns["entry-1"] = {
+        userHistoryEntryId: "entry-1",
+        state: "settled",
+        outcome: legacy.messages.find((message) => message.id === "entry-1").turn,
+      };
       await expect(store.loadSession("session-1")).resolves.toEqual(snapshot);
     });
   });
@@ -697,6 +716,11 @@ describe("FileSessionStore", () => {
         "utf8",
       );
 
+      snapshot.turns["entry-1"] = {
+        userHistoryEntryId: "entry-1",
+        state: "settled",
+        outcome: legacy.messages.find((message) => message.id === "entry-1").turn,
+      };
       await expect(store.loadSession("session-1")).resolves.toEqual(snapshot);
     });
   });

@@ -25,7 +25,11 @@ const WEB_DESCRIPTION = buildCodeModeToolDescription({
   sdkGlobal: "web",
   introduction: [
     "Run a one-shot JavaScript program to search the web and retrieve page content.",
-    "Use this tool only when the user asks to browse or search the web, provides a URL, or otherwise clearly implies that web access is needed.",
+    "Use this tool only when the task requires open-web search or webpage extraction and no more direct or structured source can answer it.",
+    "Before using it, prefer local files and repository data, purpose-built CLIs, first-party APIs and SDKs, and direct structured endpoints.",
+    "A URL alone does not justify using this tool.",
+    "For any GitHub URL, prefer gh for pull requests, issues, releases, repository metadata, and authenticated GitHub access; prefer git for source, diffs, status, and history available from a repository checkout.",
+    "Use this tool only if those options cannot provide the needed information or the user explicitly asks to search the open web or inspect a webpage as a webpage.",
   ],
 });
 

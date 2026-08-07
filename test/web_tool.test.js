@@ -258,6 +258,8 @@ describe("Exa web code-mode tool", () => {
       code: [
         "console.log(typeof process, typeof fetch, typeof require, typeof _requestWeb);",
         "console.log(typeof Date.now(), Number.isFinite(new Date().getTime()), Math.random() >= 0 && Math.random() < 1);",
+        "const DerivedDate = new Date().constructor;",
+        "console.log(DerivedDate === Date, Object.getPrototypeOf(new Date()) === Date.prototype, typeof DerivedDate(), new DerivedDate() instanceof Date, Object.isFrozen(Date), Object.isFrozen(Date.prototype));",
         "try { console.log.constructor('return process')(); } catch { console.log('escape blocked'); }",
         "return 'ignored';",
       ].join("\n"),
@@ -270,6 +272,7 @@ describe("Exa web code-mode tool", () => {
     expect(result.toolResult.outcome).toBe("succeeded");
     expect(getToolText(result)).toContain("undefined undefined undefined undefined");
     expect(getToolText(result)).toContain("number true true");
+    expect(getToolText(result)).toContain("true true string true true true");
     expect(getToolText(result)).toContain("escape blocked");
     expect(getToolText(result)).not.toContain("ignored");
     expect(backend.runNodeScript).not.toHaveBeenCalled();

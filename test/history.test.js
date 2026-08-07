@@ -1756,11 +1756,14 @@ describe("session history", () => {
         'const page = await history.search({ query: "sqlite", attributes: { repository: { contains: "tau" } } });',
         "console.log(page.sessions[0].sessionId);",
         "console.log(typeof Date.now(), Number.isFinite(new Date().getTime()), Math.random() >= 0 && Math.random() < 1);",
+        "const DerivedDate = new Date().constructor;",
+        "console.log(DerivedDate === Date, Object.getPrototypeOf(new Date()) === Date.prototype, typeof DerivedDate(), new DerivedDate() instanceof Date, Object.isFrozen(Date), Object.isFrozen(Date.prototype));",
       ].join("\n"),
     );
 
     expect(toolText(result)).toContain("session-1");
     expect(toolText(result)).toContain("number true true");
+    expect(toolText(result)).toContain("true true string true true true");
     expect(history.search).toHaveBeenCalledWith(
       {
         query: "sqlite",

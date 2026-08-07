@@ -1,5 +1,5 @@
 import { parentPort, workerData } from "node:worker_threads";
-import { codeModeDate, codeModeMath } from "../capabilities.mjs";
+import { codeModeMath, createCodeModeDate } from "../capabilities.mjs";
 
 if (!parentPort) throw new Error("history sandbox requires a parent port");
 if (
@@ -13,6 +13,7 @@ if (
 
 lockdown();
 
+const codeModeDate = createCodeModeDate();
 const pending = new Map();
 let nextRequestId = 1;
 

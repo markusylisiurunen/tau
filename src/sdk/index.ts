@@ -88,13 +88,15 @@ export function getTauSdkSessionTurnRecord(
   snapshot: import("../protocol/index.js").SessionProtocolSnapshot,
   userHistoryEntryId: string,
 ): import("./types.js").TauSdkSessionTurnRecord | undefined {
-  return snapshot.turns[userHistoryEntryId];
+  return Object.hasOwn(snapshot.turns, userHistoryEntryId)
+    ? snapshot.turns[userHistoryEntryId]
+    : undefined;
 }
 
 export function getTauSdkSessionTurnOutcome(
   snapshot: import("../protocol/index.js").SessionProtocolSnapshot,
   userHistoryEntryId: string,
 ): import("./types.js").TauSdkSessionTurnOutcome | undefined {
-  const record = snapshot.turns[userHistoryEntryId];
+  const record = getTauSdkSessionTurnRecord(snapshot, userHistoryEntryId);
   return record?.state === "settled" ? record.outcome : undefined;
 }

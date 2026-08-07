@@ -3438,11 +3438,18 @@ function setSessionProtocolTurn(
   turns: SessionProtocolSnapshot["turns"],
   turn: SessionProtocolTurnRecord,
 ): void {
-  const previous = turns[turn.userHistoryEntryId];
+  const previous = Object.hasOwn(turns, turn.userHistoryEntryId)
+    ? turns[turn.userHistoryEntryId]
+    : undefined;
   if (previous?.state === "settled" && JSON.stringify(previous) !== JSON.stringify(turn)) {
     throw new Error(`settled turn '${turn.userHistoryEntryId}' cannot be changed`);
   }
-  turns[turn.userHistoryEntryId] = structuredClone(turn);
+  Object.defineProperty(turns, turn.userHistoryEntryId, {
+    configurable: true,
+    enumerable: true,
+    value: structuredClone(turn),
+    writable: true,
+  });
 }
 
 function applyKeyedRecordDelta(

@@ -2695,6 +2695,26 @@ describe("session_protocol", () => {
       ).turns,
     ).toEqual({ "turn-1": settled });
 
+    const prototypeTurn = {
+      userHistoryEntryId: "__proto__",
+      state: "running",
+    };
+    const prototypeAccepted = applySessionProtocolDelta(
+      snapshot,
+      createSessionProtocolDeltaMessage({
+        sessionId: "session-1",
+        fromRevision: 1,
+        toRevision: 2,
+        cause: { type: "user-message" },
+        delta: { type: "snapshot.patch", changes: [{ type: "turn.set", turn: prototypeTurn }] },
+      }),
+    );
+    expect(Object.hasOwn(prototypeAccepted.turns, "__proto__")).toBe(true);
+    expect(Object.entries(prototypeAccepted.turns)).toEqual([["__proto__", prototypeTurn]]);
+    expect(JSON.parse(JSON.stringify(prototypeAccepted.turns))).toEqual(
+      Object.fromEntries([["__proto__", prototypeTurn]]),
+    );
+
     expect(() =>
       applySessionProtocolDelta(
         { ...accepted, turns: { "turn-1": settled } },

@@ -481,7 +481,17 @@ describe("sdk_client", () => {
     expect(getTauSdkSessionTurnOutcome(snapshot, "running-turn")).toBeUndefined();
     expect(getTauSdkSessionTurnRecord(snapshot, "settled-turn")).toEqual(settled);
     expect(getTauSdkSessionTurnOutcome(snapshot, "settled-turn")).toEqual(outcome);
-    expect(getTauSdkSessionTurnRecord(snapshot, "missing-turn")).toBeUndefined();
+    for (const unknownId of ["missing-turn", "__proto__", "constructor", "toString"]) {
+      expect(getTauSdkSessionTurnRecord(snapshot, unknownId)).toBeUndefined();
+      expect(getTauSdkSessionTurnOutcome(snapshot, unknownId)).toBeUndefined();
+    }
+
+    const prototypeTurn = { userHistoryEntryId: "__proto__", state: "settled", outcome };
+    const prototypeSnapshot = createProtocolSnapshot({
+      turns: Object.fromEntries([["__proto__", prototypeTurn]]),
+    });
+    expect(getTauSdkSessionTurnRecord(prototypeSnapshot, "__proto__")).toEqual(prototypeTurn);
+    expect(getTauSdkSessionTurnOutcome(prototypeSnapshot, "__proto__")).toEqual(outcome);
   });
 
   it("keeps published sdk declarations free of core type imports", () => {

@@ -1,5 +1,5 @@
 import { parentPort, workerData } from "node:worker_threads";
-import "ses";
+import { codeModeDate, codeModeMath } from "../capabilities.mjs";
 
 if (!parentPort) throw new Error("history sandbox requires a parent port");
 if (
@@ -51,6 +51,8 @@ function writeOutput(stream, text) {
 
 const compartment = new Compartment({
   globals: {
+    Date: codeModeDate,
+    Math: codeModeMath,
     _requestHistory: harden(requestHistory),
     _writeOutput: harden(writeOutput),
     docs: workerData.docs,

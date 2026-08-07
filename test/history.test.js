@@ -1752,10 +1752,15 @@ describe("session history", () => {
     const tool = createHistoryToolDefinition(createBackend(), history);
     const result = await runTool(
       tool,
-      'const page = await history.search({ query: "sqlite", attributes: { repository: { contains: "tau" } } }); console.log(page.sessions[0].sessionId);',
+      [
+        'const page = await history.search({ query: "sqlite", attributes: { repository: { contains: "tau" } } });',
+        "console.log(page.sessions[0].sessionId);",
+        "console.log(typeof Date.now(), Number.isFinite(new Date().getTime()), Math.random() >= 0 && Math.random() < 1);",
+      ].join("\n"),
     );
 
     expect(toolText(result)).toContain("session-1");
+    expect(toolText(result)).toContain("number true true");
     expect(history.search).toHaveBeenCalledWith(
       {
         query: "sqlite",

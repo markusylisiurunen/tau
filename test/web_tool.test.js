@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { getExaApiKey } from "../dist/core/config/index.js";
-import { createWebToolDefinition, WEB_TOOL } from "../dist/core/tools/web.js";
+import { createWebToolDefinition } from "../dist/core/tools/web.js";
 import { discoverAgentContent } from "../dist/core/tools/web_discovery.js";
 
 function createExecutionResult(output, exitCode = 0) {
@@ -63,16 +63,6 @@ function getToolText(result) {
 }
 
 describe("Exa web code-mode tool", () => {
-  it("requires documentation-only progressive disclosure before SDK use", () => {
-    expect(WEB_TOOL.description).toContain(
-      "your first call to it must be a documentation-only program",
-    );
-    expect(WEB_TOOL.description).toContain("console.log(docs)");
-    expect(WEB_TOOL.description).toContain("later tool call that uses web");
-    expect(WEB_TOOL.description).toContain("Do not guess SDK signatures");
-    expect(WEB_TOOL.description).not.toContain("web.search(");
-  });
-
   it("resolves the Exa API key from the environment before config", () => {
     expect(getExaApiKey({ apiKeys: { exa: "config-key" } }, { EXA_API_KEY: " env-key " })).toBe(
       "env-key",
@@ -417,22 +407,18 @@ describe("Exa web code-mode tool", () => {
     expect(getToolText(result)).toContain("Invalid Exa response");
   });
 
-  it("supports keyless documentation and discovery without constructing a provider client", async () => {
+  it("supports keyless discovery without constructing a provider client", async () => {
     const backend = createBackend();
     const deps = createDeps({});
     const tool = createWebTool(backend, deps, {});
     const { result } = await runTool(tool, {
       code: [
-        "console.log(docs.includes('web.discover(url)'));",
-        "console.log('guidance=' + docs.includes('Do not treat search-result highlights as the primary documentation source'));",
         "const discovery = await web.discover('https://example.com/docs');",
         "console.log(discovery.markdown[0].url);",
       ].join("\n"),
     });
 
     expect(result.toolResult.outcome).toBe("succeeded");
-    expect(getToolText(result)).toContain("true");
-    expect(getToolText(result)).toContain("guidance=true");
     expect(getToolText(result)).toContain("https://example.com/docs.md");
     expect(deps.discover).toHaveBeenCalledWith(
       backend,

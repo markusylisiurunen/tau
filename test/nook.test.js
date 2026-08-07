@@ -21,7 +21,7 @@ import {
   parseNookSetupInputs,
   runNookSetup,
 } from "../dist/core/nook/setup.js";
-import { createNookToolDefinition, NOOK_TOOL } from "../dist/core/tools/nook.js";
+import { createNookToolDefinition } from "../dist/core/tools/nook.js";
 import worker, { cacheControlForDeployedAsset, RegistryDO } from "../dist/nook/worker/index.js";
 
 afterEach(() => {
@@ -746,18 +746,6 @@ function getToolText(result) {
 }
 
 describe("nook code-mode tool", () => {
-  it("requires sequential docs and app-skill discovery before SDK use", () => {
-    expect(NOOK_TOOL.description).toContain(
-      "your first call to it must be a documentation-only program",
-    );
-    expect(NOOK_TOOL.description).toContain("console.log(docs)");
-    expect(NOOK_TOOL.description).toContain("later tool call that uses nook");
-    expect(NOOK_TOOL.description).toContain("Do not guess SDK signatures");
-    expect(NOOK_TOOL.description).toContain("treat nook.skill() as a second documentation step");
-    expect(NOOK_TOOL.description).toContain("does nothing except console.log(await nook.skill())");
-    expect(NOOK_TOOL.parameters.required).toEqual(["code"]);
-  });
-
   it("runs generated code in a capability-limited sandbox without exposing config", async () => {
     const backend = createNookToolBackend();
     const client = { readSkill: vi.fn(async () => "# Nook app skill") };

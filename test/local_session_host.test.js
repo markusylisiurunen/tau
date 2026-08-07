@@ -670,7 +670,7 @@ describe("LocalSessionHost", () => {
     },
   );
 
-  it("preserves settled turn receipts when compaction removes their messages", async () => {
+  it("normalizes accepted turn ids before durable compaction and reuse checks", async () => {
     const host = createHost(new MemorySessionStore());
     const session = await host.createSession(localCreateInput);
     const responses = [
@@ -692,8 +692,9 @@ describe("LocalSessionHost", () => {
 
     const accepted = await session.acceptTurn({
       text: "compact this turn",
-      historyEntryId: "compacted-turn",
+      historyEntryId: " compacted-turn ",
     });
+    expect(accepted.userHistoryEntryId).toBe("compacted-turn");
     const result = await session.runAcceptedTurn(accepted.userHistoryEntryId);
     const compacted = await session.compact({ mode: "summary-only" });
 
@@ -705,6 +706,12 @@ describe("LocalSessionHost", () => {
       state: "settled",
       outcome: result.turn,
     });
+    await expect(
+      session.acceptTurn({ text: "repeat work", historyEntryId: " compacted-turn " }),
+    ).rejects.toThrow("turn 'compacted-turn' was already accepted");
+    await expect(
+      session.record({ text: "reuse message id", historyEntryId: " compacted-turn " }),
+    ).rejects.toThrow("history entry id 'compacted-turn' belongs to an accepted turn");
     await host.shutdown();
   });
 

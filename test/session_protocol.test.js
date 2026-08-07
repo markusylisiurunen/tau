@@ -1033,7 +1033,7 @@ describe("session_protocol", () => {
       validateSessionProtocolParams("session.record", {
         sessionId: "session-1",
         text: "review",
-        historyEntryId: "history-1",
+        historyEntryId: " history-1 ",
       }),
     ).toEqual({
       ok: true,
@@ -1055,7 +1055,7 @@ describe("session_protocol", () => {
     expect(
       validateSessionProtocolParams("session.rewind", {
         sessionId: "session-1",
-        historyEntryId: "history-1",
+        historyEntryId: " history-1 ",
       }),
     ).toEqual({
       ok: true,

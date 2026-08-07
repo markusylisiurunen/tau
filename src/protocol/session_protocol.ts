@@ -1170,6 +1170,7 @@ const nonEmptyStringSchema = z
   .string()
   .min(1)
   .refine((value) => value.trim().length > 0);
+const historyEntryIdSchema = nonEmptyStringSchema.transform((value) => value.trim());
 const noticeTitleSchema = nonEmptyStringSchema
   .max(SESSION_PROTOCOL_NOTICE_TITLE_MAX_CHARS)
   .refine(
@@ -1458,7 +1459,7 @@ const sessionProtocolUserMessageParamsSchema = z
   .object({
     sessionId: nonEmptyStringSchema,
     text: nonEmptyStringSchema,
-    historyEntryId: nonEmptyStringSchema.optional(),
+    historyEntryId: historyEntryIdSchema.optional(),
   })
   .strip();
 
@@ -1587,7 +1588,7 @@ const sessionProtocolCompactParamsSchema = z
 const sessionProtocolRewindParamsSchema = z
   .object({
     sessionId: nonEmptyStringSchema,
-    historyEntryId: nonEmptyStringSchema,
+    historyEntryId: historyEntryIdSchema,
   })
   .strip();
 

@@ -841,16 +841,20 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     options: Omit<SessionProtocolRecordParams, "sessionId">,
   ): Promise<SessionProtocolRecordResult> {
     this.assertActive();
+    const historyEntryId =
+      options.historyEntryId === undefined
+        ? undefined
+        : normalizeExplicitHistoryEntryId(options.historyEntryId);
     if (
-      options.historyEntryId &&
-      (this.turns.has(options.historyEntryId) ||
-        this.pendingAcceptedTurnHistoryEntryIds.has(options.historyEntryId))
+      historyEntryId !== undefined &&
+      (this.turns.has(historyEntryId) ||
+        this.pendingAcceptedTurnHistoryEntryIds.has(historyEntryId))
     ) {
-      throw new Error(`history entry id '${options.historyEntryId}' belongs to an accepted turn`);
+      throw new Error(`history entry id '${historyEntryId}' belongs to an accepted turn`);
     }
     const userHistoryEntryId = await this.session.commitUserText(
       options.text,
-      options.historyEntryId ? { historyEntryId: options.historyEntryId } : undefined,
+      historyEntryId === undefined ? undefined : { historyEntryId },
     );
     return {
       snapshot: await this.snapshot(),
@@ -874,10 +878,14 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
   private createTurnHistoryEntryId(preferredId?: string): string {
     if (preferredId !== undefined) {
-      if (this.turns.has(preferredId) || this.pendingAcceptedTurnHistoryEntryIds.has(preferredId)) {
-        throw new Error(`turn '${preferredId}' was already accepted`);
+      const normalizedId = normalizeExplicitHistoryEntryId(preferredId);
+      if (
+        this.turns.has(normalizedId) ||
+        this.pendingAcceptedTurnHistoryEntryIds.has(normalizedId)
+      ) {
+        throw new Error(`turn '${normalizedId}' was already accepted`);
       }
-      return preferredId;
+      return normalizedId;
     }
 
     let id = `history-${randomUUID()}`;
@@ -3042,6 +3050,14 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     });
     return { status: "failed", stopReason: "error", errorMessage: diagnostic };
   }
+}
+
+function normalizeExplicitHistoryEntryId(historyEntryId: string): string {
+  const normalizedId = historyEntryId.trim();
+  if (!normalizedId) {
+    throw new Error("history entry id must not be empty");
+  }
+  return normalizedId;
 }
 
 function formatErrorDiagnostic(error: unknown): string {

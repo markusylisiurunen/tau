@@ -1,19 +1,20 @@
 import { describe, expect, it, vi } from "vitest";
 import { personas } from "../dist/core/personas.js";
-import { createExecutionEnvironmentSubagentRuntimeResolver } from "../dist/host/execution_runtime.js";
+import { createExecutionEnvironmentSubagentPromptResolver } from "../dist/host/execution_runtime.js";
 
 function createPersona(overrides = {}) {
   return {
     id: "target-persona",
     label: "target persona",
     model: personas[0].model,
-    systemPrompt: "target main instructions",
+    systemPrompt: "source main instructions",
     settings: { reasoning: "high" },
     skills: "*",
     source: "project",
+    tools: ["bash", "spawn_agent"],
     subagents: {
       reviewer: {
-        systemPrompt: "target reviewer instructions",
+        systemPrompt: "source reviewer instructions",
         tools: ["bash"],
       },
     },
@@ -21,11 +22,36 @@ function createPersona(overrides = {}) {
   };
 }
 
-describe("execution environment subagent runtime resolver", () => {
-  it("resolves target config, prompt context, and model catalog", async () => {
-    const targetPersona = createPersona();
-    const sessionPersona = createPersona({ systemPrompt: "session instructions" });
-    const modelResolver = vi.fn();
+function createPromptBootstrap(cwd = "/workspace/repo") {
+  return {
+    promptContext: {
+      cwd,
+      home: "/workspace",
+      repoRoot: "/workspace/repo",
+      platform: "linux",
+      nodeVersion: "v24.1.0",
+      includeAgentContext: true,
+      skillsBlock: "### Skills\n\ntarget skill context",
+      projectContextBlock: "### Project context\n\ntarget AGENTS context",
+    },
+    agentsFiles: ["/workspace/repo/docs/AGENTS.md"],
+    unknownSkills: [],
+  };
+}
+
+describe("execution environment subagent prompt resolver", () => {
+  it("combines the source persona with target-directory prompt context", async () => {
+    const sourcePersona = createPersona();
+    const targetPersona = createPersona({
+      systemPrompt: "conflicting target main instructions",
+      settings: { reasoning: "low" },
+      subagents: {
+        reviewer: {
+          systemPrompt: "conflicting target reviewer instructions",
+          tools: ["web"],
+        },
+      },
+    });
     const skills = [
       {
         name: "target-skill",
@@ -38,25 +64,11 @@ describe("execution environment subagent runtime resolver", () => {
       modelSystemNotices: {},
     };
     const resolveRuntimeContext = vi.fn(async () => ({
-      toolRegistry: {},
-      promptBootstrap: {
-        promptContext: {
-          cwd: "/workspace/repo",
-          home: "/workspace",
-          repoRoot: "/workspace/repo",
-          platform: "linux",
-          nodeVersion: "v24.1.0",
-          includeAgentContext: true,
-          skillsBlock: "### Skills\n\ntarget skill context",
-          projectContextBlock: "### Project context\n\ntarget AGENTS context",
-        },
-        agentsFiles: ["/workspace/repo/docs/AGENTS.md"],
-        unknownSkills: [],
-      },
+      promptBootstrap: createPromptBootstrap(),
     }));
     const executionEnvironment = {
       resolveRuntimeConfig: vi.fn(async () => ({
-        bootstrap: { modelResolver: { resolveModel: modelResolver } },
+        bootstrap: { modelResolver: { resolveModel: vi.fn() } },
         config,
         personas: [targetPersona],
         prompts: [],
@@ -66,44 +78,43 @@ describe("execution environment subagent runtime resolver", () => {
       })),
       resolveRuntimeContext,
     };
-    const resolveRuntime = createExecutionEnvironmentSubagentRuntimeResolver({
+    const resolvePrompts = createExecutionEnvironmentSubagentPromptResolver({
       executionEnvironment,
       includeAgentContext: true,
       now: () => Date.parse("2026-01-01T00:00:00.000Z"),
     });
 
-    const runtime = await resolveRuntime({
+    const prompts = await resolvePrompts({
       cwd: "/workspace/repo",
-      persona: sessionPersona,
+      persona: sourcePersona,
     });
 
     expect(executionEnvironment.resolveRuntimeConfig).toHaveBeenCalledWith("/workspace/repo");
     expect(resolveRuntimeContext).toHaveBeenCalledWith({
       cwd: "/workspace/repo",
-      persona: targetPersona,
+      persona: sourcePersona,
       discoveredSkills: skills,
       includeAgentContext: true,
       agentContextFiles: config.agentContextFiles,
     });
-    expect(runtime).toMatchObject({
-      persona: targetPersona,
-      config,
-      modelResolver,
-    });
-    expect(runtime.subagentPrompts.reviewer).toContain("target reviewer instructions");
-    expect(runtime.subagentPrompts.reviewer).toContain("target AGENTS context");
-    expect(runtime.subagentPrompts.reviewer).toContain("target skill context");
-    expect(runtime.subagentPrompts.reviewer).toContain("<cwd>/workspace/repo</cwd>");
-    expect(runtime.subagentPrompts.reviewer).toContain("<platform>linux</platform>");
+    expect(prompts.reviewer).toContain("source reviewer instructions");
+    expect(prompts.reviewer).not.toContain("conflicting target reviewer instructions");
+    expect(prompts.reviewer).toContain("target AGENTS context");
+    expect(prompts.reviewer).toContain("target skill context");
+    expect(prompts.reviewer).toContain("<cwd>/workspace/repo</cwd>");
+    expect(prompts.reviewer).toContain("<platform>linux</platform>");
   });
 
-  it("rejects a persona unavailable in the target working directory", async () => {
-    const resolveRuntimeContext = vi.fn();
+  it("does not require the source persona to exist in the target catalog", async () => {
+    const sourcePersona = createPersona();
+    const resolveRuntimeContext = vi.fn(async () => ({
+      promptBootstrap: createPromptBootstrap("/workspace/other"),
+    }));
     const executionEnvironment = {
       resolveRuntimeConfig: vi.fn(async () => ({
         bootstrap: { modelResolver: { resolveModel: vi.fn() } },
         config: {},
-        personas: [createPersona({ id: "other-persona" })],
+        personas: [],
         prompts: [],
         skills: [],
         themes: [],
@@ -111,17 +122,19 @@ describe("execution environment subagent runtime resolver", () => {
       })),
       resolveRuntimeContext,
     };
-    const resolveRuntime = createExecutionEnvironmentSubagentRuntimeResolver({
+    const resolvePrompts = createExecutionEnvironmentSubagentPromptResolver({
       executionEnvironment,
       includeAgentContext: true,
       now: () => 0,
     });
 
     await expect(
-      resolveRuntime({ cwd: "/workspace/repo", persona: createPersona() }),
-    ).rejects.toThrow(
-      "persona 'target-persona' is not available for working directory '/workspace/repo'",
+      resolvePrompts({ cwd: "/workspace/other", persona: sourcePersona }),
+    ).resolves.toEqual({
+      reviewer: expect.stringContaining("source reviewer instructions"),
+    });
+    expect(resolveRuntimeContext).toHaveBeenCalledWith(
+      expect.objectContaining({ persona: sourcePersona }),
     );
-    expect(resolveRuntimeContext).not.toHaveBeenCalled();
   });
 });

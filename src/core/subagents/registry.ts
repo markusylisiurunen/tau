@@ -58,20 +58,16 @@ export function resolveSubagentEffectiveSettings(args: {
   config: SubagentPersonaConfig;
   launchModel?: SubagentLaunchModel;
 }): SubagentEffectiveSettings {
-  const model = args.launchModel?.model ?? args.config.model ?? args.persona.model;
-  const baseSettings = args.persona.settings ?? {};
-  const mergedSettings = args.config.settings
-    ? { ...baseSettings, ...args.config.settings }
-    : { ...baseSettings };
+  const settings = { ...args.persona.settings };
   if (args.launchModel) {
-    mergedSettings.reasoning = args.launchModel.reasoning;
+    settings.reasoning = args.launchModel.reasoning;
   }
   const tools = args.config.tools
     ? normalizeTools(args.config.tools)
     : getInheritedSubagentTools(args.persona);
   return {
-    model,
-    settings: Object.keys(mergedSettings).length > 0 ? mergedSettings : undefined,
+    model: args.launchModel?.model ?? args.persona.model,
+    settings,
     tools,
   };
 }
@@ -111,7 +107,7 @@ export function formatSubagentsForPrompt(persona: Persona): string | undefined {
   const subagentLines = Object.entries(persona.subagents).map(([name, config]) => {
     const description = getSubagentDescription(name, config) ?? "(No description provided.)";
     const effective = resolveSubagentEffectiveSettings({ persona, config });
-    const reasoning = effective.settings?.reasoning ?? "none";
+    const reasoning = effective.settings.reasoning ?? "none";
     const launchModels = config.launchModels ?? [];
     const launchModelsText =
       launchModels.length > 0

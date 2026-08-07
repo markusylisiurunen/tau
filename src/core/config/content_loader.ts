@@ -76,26 +76,12 @@ type SubagentName = z.infer<typeof SubagentNameSchema>;
 
 const SubagentSpecSchema = z
   .object({
-    provider: z.string().trim().min(1).optional(),
-    model: z.string().trim().min(1).optional(),
-    reasoning: ReasoningEffortSchema.optional(),
-    serviceTier: ServiceTierSchema.optional(),
     tools: z.array(z.string()).optional(),
     launchModels: z.array(z.string()).optional(),
     systemPrompt: z.string().trim().min(1).optional(),
     description: z.string().trim().min(1).optional(),
   })
-  .strip()
-  .superRefine((spec, ctx) => {
-    const hasProvider = spec.provider !== undefined;
-    const hasModel = spec.model !== undefined;
-    if (hasProvider !== hasModel) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "both provider and model are required if specified",
-      });
-    }
-  });
+  .strip();
 
 const SUBAGENT_TOOL_NAME_SET = new Set<SubagentToolName>(SUBAGENT_TOOL_NAMES);
 
@@ -162,7 +148,6 @@ function parseSubagentTools(toolsRaw: string[] | undefined): {
 function cloneSubagentPersonaConfig(config: SubagentPersonaConfig): SubagentPersonaConfig {
   return {
     ...config,
-    ...(config.settings ? { settings: { ...config.settings } } : {}),
     ...(config.tools ? { tools: [...config.tools] } : {}),
     ...(config.launchModels ? { launchModels: [...config.launchModels] } : {}),
   };
@@ -220,8 +205,6 @@ function parseSubagentConfig(
       };
     }
 
-    const provider = specRaw.provider;
-    const model = specRaw.model;
     const toolsResult = parseSubagentTools(specRaw.tools);
     if (toolsResult.error) {
       return { error: `subagent ${validatedName}: ${toolsResult.error}` };
@@ -236,29 +219,9 @@ function parseSubagentConfig(
     }
     const tools = toolsResult.tools;
     const launchModels = launchModelsResult.launchModels;
-    const settings =
-      specRaw.reasoning !== undefined || specRaw.serviceTier !== undefined
-        ? {
-            ...(specRaw.reasoning !== undefined ? { reasoning: specRaw.reasoning } : {}),
-            ...(specRaw.serviceTier !== undefined ? { serviceTier: specRaw.serviceTier } : {}),
-          }
-        : undefined;
-
-    let modelObj: Persona["model"] | undefined;
-    if (provider && model) {
-      modelObj = modelResolver(provider, model);
-      if (!modelObj) {
-        return {
-          error: `subagent ${validatedName}: failed to resolve model "${provider}:${model}"`,
-        };
-      }
-    }
-
     const entry: SubagentPersonaConfig = {
       systemPrompt: specRaw.systemPrompt,
       ...(specRaw.description ? { description: specRaw.description } : {}),
-      ...(modelObj ? { model: modelObj } : {}),
-      ...(settings ? { settings } : {}),
       ...(tools !== undefined ? { tools } : {}),
       ...(launchModels !== undefined ? { launchModels } : {}),
     };
@@ -323,43 +286,10 @@ function resolvePersonaModels(
     };
   }
 
-  if (!persona.subagents) {
-    return {
-      persona: {
-        ...persona,
-        model: resolvedPersonaModel,
-      },
-    };
-  }
-
-  const resolvedSubagents: SubagentConfigMap = {};
-
-  for (const [name, config] of Object.entries(persona.subagents)) {
-    if (!config?.model) {
-      if (config) {
-        resolvedSubagents[name] = cloneSubagentPersonaConfig(config);
-      }
-      continue;
-    }
-
-    const resolvedSubagentModel = modelResolver(config.model.provider, config.model.id);
-    if (!resolvedSubagentModel) {
-      return {
-        error: `subagent ${name}: failed to resolve model "${config.model.provider}:${config.model.id}"`,
-      };
-    }
-
-    resolvedSubagents[name] = {
-      ...cloneSubagentPersonaConfig(config),
-      model: resolvedSubagentModel,
-    };
-  }
-
   return {
     persona: {
       ...persona,
       model: resolvedPersonaModel,
-      subagents: resolvedSubagents,
     },
   };
 }

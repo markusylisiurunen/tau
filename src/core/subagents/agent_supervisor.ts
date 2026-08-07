@@ -163,7 +163,7 @@ export class AgentSupervisor {
       source: "project",
       systemPrompt: runtimeConfig.systemPrompt,
       model: runtimeConfig.model,
-      settings: runtimeConfig.settings ?? {},
+      settings: runtimeConfig.settings,
       tools: runtimeConfig.tools,
       skills: [],
     };

@@ -416,9 +416,9 @@ main-session models always receive `get_goal`, `create_goal`, and `update_goal` 
 
 some personas can run isolated sub-agents via the `spawn_agent`, `send_input_to_agent`, `wait_for_agents`, `list_agents`, and `interrupt_agent` tools. `list_agents` reports each spawned thread's runtime, latest run, usage, context pressure, and response availability. `wait_for_agents` returns retained latest responses as soon as at least one requested agent finishes, and completed responses can be read repeatedly.
 
-the built-in `default` sub-agent is available unless disabled. it inherits the main persona's model, settings, tool access (minus sub-agent management tools), and system prompt. the inherited main prompt is wrapped with default sub-agent-specific rules, and those wrapper rules take precedence on conflicts. custom sub-agents can override model, reasoning, and tools.
+the built-in `default` sub-agent is available unless disabled. all sub-agents inherit the main persona's model and settings unless `spawn_agent` receives an explicit launch override. sub-agents inherit the main persona's eligible tool access by default, while custom definitions can select a narrower tool set. the default sub-agent also inherits the main system prompt, wrapped with default sub-agent-specific rules that take precedence on conflicts.
 
-`spawn_agent` supports an optional launch override string (`model: "<provider>/<model>:<effort>"`) and an optional `workingDirectory`. when `workingDirectory` is set, the sub-agent runs from that directory and its config, model catalog, repository metadata, AGENTS.md context, and skills are resolved through the session execution environment as if tau was started there. launch overrides are allowlisted per subagent. custom subagents can define `launchModels` in persona frontmatter, and the built-in `default` sub-agent uses `subagents.defaultLaunchModels` from config.
+`spawn_agent` supports an optional launch override string (`model: "<provider>/<model>:<effort>"`) and an optional `workingDirectory`. launch overrides are allowlisted per subagent. custom subagents can define `launchModels` in persona frontmatter, and the built-in `default` sub-agent uses `subagents.defaultLaunchModels` from config. when `workingDirectory` resolves to another directory, the sub-agent runs there and rebuilds only its prompt context from that location: environment and repository metadata, AGENTS.md context (including target `agentContextFiles`), and target-discovered skills. the parent session remains the source of truth for the persona, subagent definition, model catalog, runtime config, and tools.
 
 sub-agent progress appears in a sticky panel. use `alt+down` to cycle active subagents and `ctrl+g` to interrupt the selected one's current run. tau caps active subagents at 8.
 
@@ -738,7 +738,7 @@ the frontmatter defines the persona. required fields:
 - `provider`: model provider id (for example `openai`, `anthropic`, `google`)
 - `model`: model id for the provider (for example `gpt-5.4`, `claude-opus-5`)
 
-custom personas/subagents can reference model ids that are not bundled yet, as long as the provider is known. built-in personas use the merged model catalog, so `models.json` can override bundled model definitions. see [docs/models.md](docs/models.md).
+custom personas and subagent launch allowlists can reference model ids that are not bundled yet, as long as the provider is known. built-in personas use the merged model catalog, so `models.json` can override bundled model definitions. see [docs/models.md](docs/models.md).
 
 the persona file name (without the `.md` extension) must match the `id`.
 
@@ -752,7 +752,7 @@ optional frontmatter fields:
 - `allowedReasoningLevels`: list of reasoning levels shown in the ui
 - `skills`: list of enabled skill names (matched by `name` in skill frontmatter), or `"*"` to enable all discovered skills. if omitted, custom personas default to `"*"`. set `skills: []` to disable skills completely.
 - `tools`: optional list of persona-selected host tools. `nook` additionally requires effective Nook configuration before it becomes available.
-- `subagents`: optional map of subagent definitions. the built-in `default` sub-agent is implicit unless `default: false` is provided. custom subagents must include `systemPrompt` and may include `description`, `provider`+`model`, `reasoning`, `serviceTier`, `tools`, and `launchModels` (when specifying a model, `provider` and `model` must be provided together). subagent `tools` accepts `bash`, `write`, `edit`, `view_image`, `web`, and `history`; when omitted, eligible main-persona tools are inherited. names must be lowercase with dashes (max 64 chars). `launchModels` entries must use `<provider>/<model>:<effort>` and are used to allowlist launch-time `spawn_agent` overrides. example:
+- `subagents`: optional map of subagent definitions. the built-in `default` sub-agent is implicit unless `default: false` is provided. custom subagents must include `systemPrompt` and may include `description`, `tools`, and `launchModels`. subagent `tools` accepts `bash`, `write`, `edit`, `view_image`, `web`, and `history`; when omitted, eligible main-persona tools are inherited. names must be lowercase with dashes (max 64 chars). all subagents inherit the active parent model and settings unless `spawn_agent` supplies an allowlisted `launchModels` entry in `<provider>/<model>:<effort>` format. example:
   ```yaml
   subagents:
     default: false
@@ -760,9 +760,6 @@ optional frontmatter fields:
       systemPrompt: |
         you are a focused web research sub-agent.
       description: web research using Exa code mode.
-      provider: anthropic
-      model: claude-haiku-4-5
-      reasoning: medium
       tools: [web, bash]
       launchModels:
         - openai/gpt-5.6-sol:high

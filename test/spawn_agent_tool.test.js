@@ -78,7 +78,7 @@ function createFixture(overrides = {}) {
         model: {
           provider: runtimeConfig.model.provider,
           id: runtimeConfig.model.id,
-          reasoning: runtimeConfig.settings?.reasoning ?? "none",
+          reasoning: runtimeConfig.settings.reasoning ?? "none",
         },
         workingDirectory: runtimeConfig.workingDirectory,
       }),
@@ -90,7 +90,7 @@ function createFixture(overrides = {}) {
     label: "test persona",
     model: anthropic,
     systemPrompt: "main",
-    settings: { reasoning: "low", serviceTier: "priority" },
+    settings: { reasoning: "high", serviceTier: "priority" },
     tools: ["bash", "write", "edit", "history"],
     skills: "*",
     source: "project",
@@ -98,11 +98,9 @@ function createFixture(overrides = {}) {
       default: { launchModels: ["openai/gpt-5.6-sol:high"] },
       researcher: {
         systemPrompt: "research",
-        model: anthropic,
-        settings: { reasoning: "medium" },
         launchModels: ["openai/gpt-5.6-sol:high"],
       },
-      fixed: { systemPrompt: "fixed", model: anthropic },
+      fixed: { systemPrompt: "fixed" },
     },
   };
   const modelResolver = createModelResolver();
@@ -610,8 +608,8 @@ describe("spawn_agent tool", () => {
     expect(supervisor.spawn).not.toHaveBeenCalled();
   });
 
-  it("uses the bound default settings without a launch model override", async () => {
-    const { tool, supervisor } = createFixture();
+  it("inherits the bound parent model and settings without a launch override", async () => {
+    const { tool, supervisor, persona } = createFixture();
     const { result } = await execute(tool, baseArguments);
 
     expect(result.toolResult.outcome).toBe("succeeded");
@@ -622,35 +620,64 @@ describe("spawn_agent tool", () => {
           read: expect.any(Function),
         }),
         runtimeConfig: expect.objectContaining({
-          settings: expect.objectContaining({ reasoning: "medium" }),
+          model: persona.model,
+          settings: persona.settings,
           tools: ["bash", "write", "edit", "history"],
         }),
       }),
     );
   });
 
-  it("resolves relative working directories through the supplied runtime resolver", async () => {
-    const resolveSubagentRuntime = vi.fn(async ({ cwd, persona }) => ({
-      persona,
-      config: { apiKeys: {} },
-      modelResolver: createModelResolver(cwd),
-      subagentPrompts: { researcher: `target prompt: ${cwd}` },
+  it("rebuilds prompts for a different working directory without replacing the parent runtime", async () => {
+    const resolveSubagentPrompts = vi.fn(async ({ cwd }) => ({
+      researcher: `target prompt: ${cwd}`,
     }));
-    const { tool, supervisor } = createFixture({ resolveSubagentRuntime });
+    const sourceConfig = { autoCompact: { enabled: false } };
+    const { tool, supervisor, persona } = createFixture({
+      config: sourceConfig,
+      resolveSubagentPrompts,
+    });
     const { result } = await execute(tool, {
       ...baseArguments,
       workingDirectory: "packages/api",
     });
 
     expect(result.toolResult.outcome).toBe("succeeded");
-    expect(resolveSubagentRuntime).toHaveBeenCalledWith(
-      expect.objectContaining({ cwd: "/repo/current/packages/api" }),
+    expect(resolveSubagentPrompts).toHaveBeenCalledWith({
+      cwd: "/repo/current/packages/api",
+      persona,
+    });
+    expect(supervisor.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: sourceConfig,
+        personaId: persona.id,
+        runtimeConfig: expect.objectContaining({
+          model: persona.model,
+          settings: persona.settings,
+          systemPrompt: "target prompt: /repo/current/packages/api",
+          workingDirectory: "/repo/current/packages/api",
+        }),
+      }),
     );
+  });
+
+  it("treats a working directory resolving to the parent cwd as omission", async () => {
+    const resolveSubagentPrompts = vi.fn();
+    const { tool, supervisor, persona } = createFixture({ resolveSubagentPrompts });
+    const { result } = await execute(tool, {
+      ...baseArguments,
+      workingDirectory: ".",
+    });
+
+    expect(result.toolResult.outcome).toBe("succeeded");
+    expect(resolveSubagentPrompts).not.toHaveBeenCalled();
     expect(supervisor.spawn).toHaveBeenCalledWith(
       expect.objectContaining({
         runtimeConfig: expect.objectContaining({
-          systemPrompt: "target prompt: /repo/current/packages/api",
-          workingDirectory: "/repo/current/packages/api",
+          model: persona.model,
+          settings: persona.settings,
+          systemPrompt: "research prompt",
+          workingDirectory: "/repo/current",
         }),
       }),
     );
@@ -665,6 +692,21 @@ describe("spawn_agent tool", () => {
 
     expect(result.toolResult.outcome).toBe("blocked");
     expect(getText(result.toolResult)).toContain("context resolution is unavailable");
+    expect(supervisor.spawn).not.toHaveBeenCalled();
+  });
+
+  it("blocks without falling back when target prompt resolution fails", async () => {
+    const resolveSubagentPrompts = vi.fn(async () => {
+      throw new Error("target context failed");
+    });
+    const { tool, supervisor } = createFixture({ resolveSubagentPrompts });
+    const { result } = await execute(tool, {
+      ...baseArguments,
+      workingDirectory: "/tmp/project",
+    });
+
+    expect(result.toolResult.outcome).toBe("blocked");
+    expect(getText(result.toolResult)).toContain("target context failed");
     expect(supervisor.spawn).not.toHaveBeenCalled();
   });
 

@@ -1,30 +1,24 @@
 import { composeSessionPrompts } from "../core/runtime/session_prompt_composer.js";
-import type { ResolveSubagentRuntime } from "../core/tools/spawn_agent.js";
+import type { ResolveSubagentPrompts } from "../core/tools/spawn_agent.js";
 import type { ExecutionEnvironment } from "../execution/execution_environment.js";
 
-export function createExecutionEnvironmentSubagentRuntimeResolver(options: {
+export function createExecutionEnvironmentSubagentPromptResolver(options: {
   executionEnvironment: ExecutionEnvironment;
   includeAgentContext: boolean;
   now: () => number;
-}): ResolveSubagentRuntime {
+}): ResolveSubagentPrompts {
   return async ({ cwd, persona }) => {
-    const runtimeConfig = await options.executionEnvironment.resolveRuntimeConfig(cwd);
-    const targetPersona = runtimeConfig.personas.find(
-      (candidate) => candidate.id.toLowerCase() === persona.id.toLowerCase(),
-    );
-    if (!targetPersona) {
-      throw new Error(`persona '${persona.id}' is not available for working directory '${cwd}'`);
-    }
+    const { config, skills } = await options.executionEnvironment.resolveRuntimeConfig(cwd);
     const runtimeContext = await options.executionEnvironment.resolveRuntimeContext({
       cwd,
-      persona: targetPersona,
-      discoveredSkills: runtimeConfig.skills,
+      persona,
+      discoveredSkills: skills,
       includeAgentContext: options.includeAgentContext,
-      agentContextFiles: runtimeConfig.config.agentContextFiles ?? [],
+      agentContextFiles: config.agentContextFiles ?? [],
     });
     const promptContext = runtimeContext.promptBootstrap.promptContext;
-    const composition = composeSessionPrompts({
-      persona: targetPersona,
+    return composeSessionPrompts({
+      persona,
       cwd: promptContext.cwd,
       repoRoot: promptContext.repoRoot,
       datetime: new Date(options.now()).toISOString(),
@@ -32,12 +26,6 @@ export function createExecutionEnvironmentSubagentRuntimeResolver(options: {
       nodeVersion: promptContext.nodeVersion,
       skillsBlock: promptContext.skillsBlock,
       projectContextBlock: promptContext.projectContextBlock,
-    });
-    return {
-      persona: targetPersona,
-      config: runtimeConfig.config,
-      modelResolver: runtimeConfig.bootstrap.modelResolver.resolveModel,
-      subagentPrompts: composition.subagentPrompts,
-    };
+    }).subagentPrompts;
   };
 }

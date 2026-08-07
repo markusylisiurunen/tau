@@ -93,7 +93,7 @@ import {
 import { LEGACY_SESSION_MODEL_CONTEXT_KEY } from "../store/session_snapshot_migrations.js";
 import type { SessionStore } from "../store/session_store.js";
 import { ClientToolBroker } from "./client_tool_broker.js";
-import { createExecutionEnvironmentSubagentRuntimeResolver } from "./execution_runtime.js";
+import { createExecutionEnvironmentSubagentPromptResolver } from "./execution_runtime.js";
 import { HostedEphemeralAgentSession } from "./hosted_ephemeral_agent_session.js";
 import {
   SessionExecBusyError,
@@ -300,7 +300,7 @@ export class LocalSessionHost implements TauSessionHost {
       backend: executionEnvironment.getToolExecutionBackend(),
       clientTools: (sessionId) => this.clientToolBroker.getToolDefinitions(sessionId),
       modelResolver: bootstrap.modelResolver,
-      resolveSubagentRuntime: createExecutionEnvironmentSubagentRuntimeResolver({
+      resolveSubagentPrompts: createExecutionEnvironmentSubagentPromptResolver({
         executionEnvironment,
         includeAgentContext: this.sessionOptions.includeAgentContext,
         now: this.sessionOptions.environment.now,

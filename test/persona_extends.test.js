@@ -435,25 +435,27 @@ describe("custom personas", () => {
     }
   });
 
-  it("parses custom subagent service tiers", async () => {
+  it("does not create custom subagent model or settings overrides", async () => {
     const fx = setupFixture();
 
     try {
       mkdirSync(join(fx.home, ".config", "tau", "personas"), { recursive: true });
       writeFileSync(
-        join(fx.home, ".config", "tau", "personas", "subagent-service-tier.md"),
+        join(fx.home, ".config", "tau", "personas", "subagent-runtime.md"),
         [
           "---",
-          "id: subagent-service-tier",
+          "id: subagent-runtime",
           "provider: anthropic",
           "model: claude-haiku-4-5",
           "subagents:",
           "  analyst:",
           "    systemPrompt: analyze repository state",
-          "    reasoning: medium",
+          "    provider: openai",
+          "    model: gpt-5.6-sol",
+          "    reasoning: none",
           "    serviceTier: flex",
           "---",
-          "persona with subagent service tier",
+          "persona with a subagent",
           "",
         ].join("\n"),
       );
@@ -462,45 +464,11 @@ describe("custom personas", () => {
       const { personas, errors } = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
       expect(errors).toEqual([]);
 
-      const persona = personas.find((entry) => entry.id === "subagent-service-tier");
+      const persona = personas.find((entry) => entry.id === "subagent-runtime");
       expect(persona).toBeTruthy();
-      expect(persona.subagents?.analyst?.settings?.reasoning).toBe("medium");
-      expect(persona.subagents?.analyst?.settings?.serviceTier).toBe("flex");
-    } finally {
-      fx.cleanup();
-    }
-  });
-
-  it("preserves custom subagent reasoning none", async () => {
-    const fx = setupFixture();
-
-    try {
-      mkdirSync(join(fx.home, ".config", "tau", "personas"), { recursive: true });
-      writeFileSync(
-        join(fx.home, ".config", "tau", "personas", "subagent-no-reasoning.md"),
-        [
-          "---",
-          "id: subagent-no-reasoning",
-          "provider: anthropic",
-          "model: claude-haiku-4-5",
-          "reasoning: medium",
-          "subagents:",
-          "  analyst:",
-          "    systemPrompt: analyze repository state",
-          "    reasoning: none",
-          "---",
-          "persona with subagent reasoning override",
-          "",
-        ].join("\n"),
-      );
-
-      const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
-      const { personas, errors } = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
-      expect(errors).toEqual([]);
-
-      const persona = personas.find((entry) => entry.id === "subagent-no-reasoning");
-      expect(persona).toBeTruthy();
-      expect(persona.subagents?.analyst?.settings?.reasoning).toBe("none");
+      expect(persona.subagents?.analyst).toEqual({
+        systemPrompt: "analyze repository state",
+      });
     } finally {
       fx.cleanup();
     }

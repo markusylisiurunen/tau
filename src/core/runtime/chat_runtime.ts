@@ -23,7 +23,7 @@ import { ToolCatalog } from "../tools/catalog.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
 import type { GoalManager } from "../tools/goal.js";
 import { ToolRegistry } from "../tools/registry.js";
-import type { ResolveSubagentRuntime } from "../tools/spawn_agent.js";
+import type { ResolveSubagentPrompts } from "../tools/spawn_agent.js";
 import type { Persona, ReasoningEffort } from "../types.js";
 import type { UsageRecorder } from "../usage/logs.js";
 import { type ResolvedAgentModel, resolveAgentModel } from "./agent_model.js";
@@ -49,7 +49,7 @@ export type CreateChatRuntimeOptions = {
   backend: ToolExecutionBackend;
   clientTools?: (agentId: string) => ReturnType<ToolRegistry["getEnabledTools"]>;
   modelResolver: ModelResolver;
-  resolveSubagentRuntime?: ResolveSubagentRuntime;
+  resolveSubagentPrompts?: ResolveSubagentPrompts;
   promptContext: ChatRuntimePromptContext;
   environment: ChatRuntimeEnvironment;
   eventSink: AgentEventSink;
@@ -74,7 +74,7 @@ export class ChatRuntime {
   private readonly deps: CoreDeps;
   private resolvedModel: ResolvedAgentModel;
   private readonly clientTools?: CreateChatRuntimeOptions["clientTools"];
-  private readonly resolveSubagentRuntime?: ResolveSubagentRuntime;
+  private readonly resolveSubagentPrompts?: ResolveSubagentPrompts;
   private readonly goalManager: GoalManager;
   private readonly historyQuery: HistoryQuery;
   private latestPromptComposition: SessionPromptComposition;
@@ -108,7 +108,7 @@ export class ChatRuntime {
       deps: this.deps,
     });
     this.clientTools = options.clientTools;
-    this.resolveSubagentRuntime = options.resolveSubagentRuntime;
+    this.resolveSubagentPrompts = options.resolveSubagentPrompts;
     this.goalManager = options.goalManager;
     this.historyQuery = options.history;
     this.latestPromptComposition = composition;
@@ -330,8 +330,8 @@ export class ChatRuntime {
       supervisor: this.supervisor,
       goalManager: this.goalManager,
       history: this.historyQuery,
-      ...(this.resolveSubagentRuntime
-        ? { resolveSubagentRuntime: this.resolveSubagentRuntime }
+      ...(this.resolveSubagentPrompts
+        ? { resolveSubagentPrompts: this.resolveSubagentPrompts }
         : {}),
     });
     const clientTools = this.clientTools?.(this.agent?.agentIdValue ?? "pending") ?? [];

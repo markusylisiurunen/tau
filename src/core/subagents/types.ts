@@ -33,8 +33,6 @@ export type SubagentLaunchModel = {
 export type SubagentPersonaConfig = {
   systemPrompt?: string;
   description?: string;
-  model?: Model<Api>;
-  settings?: PersonaSettings;
   tools?: SubagentToolName[];
   launchModels?: string[];
 };
@@ -126,7 +124,7 @@ export type SubagentRuntimeConfig = {
   systemPrompt: string;
   description?: string;
   model: Model<Api>;
-  settings?: PersonaSettings;
+  settings: PersonaSettings;
   tools: SubagentToolName[];
   workingDirectory: string;
 };

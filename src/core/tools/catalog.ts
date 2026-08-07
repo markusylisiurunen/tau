@@ -14,7 +14,7 @@ import { createListAgentsToolDefinition } from "./list_agents.js";
 import { createNookToolDefinition } from "./nook.js";
 import { ToolRegistry } from "./registry.js";
 import { createSendInputToAgentToolDefinition } from "./send_input_to_agent.js";
-import { createSpawnAgentToolDefinition, type ResolveSubagentRuntime } from "./spawn_agent.js";
+import { createSpawnAgentToolDefinition, type ResolveSubagentPrompts } from "./spawn_agent.js";
 import {
   TOOL_NAME_BASH,
   TOOL_NAME_EDIT,
@@ -63,7 +63,7 @@ export const ToolCatalog = {
     supervisor: AgentSupervisor;
     goalManager: GoalManager;
     history: HistoryQuery;
-    resolveSubagentRuntime?: ResolveSubagentRuntime;
+    resolveSubagentPrompts?: ResolveSubagentPrompts;
   }): ToolRegistry {
     const tools = [
       createBashToolDefinition(options.backend, options.cwd),
@@ -81,8 +81,8 @@ export const ToolCatalog = {
         subagentPrompts: options.subagentPrompts,
         history: options.history,
         cwd: options.cwd,
-        ...(options.resolveSubagentRuntime
-          ? { resolveSubagentRuntime: options.resolveSubagentRuntime }
+        ...(options.resolveSubagentPrompts
+          ? { resolveSubagentPrompts: options.resolveSubagentPrompts }
           : {}),
       }),
       createSendInputToAgentToolDefinition(options.supervisor),

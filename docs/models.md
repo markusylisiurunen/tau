@@ -78,7 +78,7 @@ Notes:
 
 ## behavior for unbundled model ids
 
-Custom personas, custom subagents, and subagent launch allowlists can reference model ids that are not bundled yet, as long as the provider is known.
+Custom personas and subagent launch allowlists can reference model ids that are not bundled yet, as long as the provider is known.
 
 When Tau sees an unbundled model id:
 

@@ -122,17 +122,10 @@ function getSpawnAgentWorkingDirectory(raw: unknown, baseCwd: string): string {
   return workingDirectory ? resolve(baseCwd, workingDirectory) : baseCwd;
 }
 
-export type ResolvedSubagentRuntime = {
-  persona: Persona;
-  config: Config;
-  modelResolver: ModelResolver;
-  subagentPrompts: Record<string, string>;
-};
-
-export type ResolveSubagentRuntime = (options: {
+export type ResolveSubagentPrompts = (options: {
   cwd: string;
   persona: Persona;
-}) => Promise<ResolvedSubagentRuntime>;
+}) => Promise<Record<string, string>>;
 
 export function createSpawnAgentToolDefinition(options: {
   backend: ToolExecutionBackend;
@@ -143,7 +136,7 @@ export function createSpawnAgentToolDefinition(options: {
   subagentPrompts: Record<string, string>;
   history: HistoryQuery;
   cwd: string;
-  resolveSubagentRuntime?: ResolveSubagentRuntime;
+  resolveSubagentPrompts?: ResolveSubagentPrompts;
 }): AgentTool {
   const { backend, supervisor } = options;
   return {
@@ -202,54 +195,10 @@ export function createSpawnAgentToolDefinition(options: {
       title = parsedArgs.data.title;
 
       const { persona, cwd: baseCwd, subagentPrompts } = options;
-
-      const cwd = workingDirectory ? resolve(baseCwd, workingDirectory) : baseCwd;
-      let effectivePersona = persona;
-      let config = options.config;
-      let modelResolver = options.modelResolver;
-      let effectiveSubagentPrompts = subagentPrompts;
-      if (workingDirectory) {
-        if (!options.resolveSubagentRuntime) {
-          return executeTool(context, () =>
-            blocked("Working-directory context resolution is unavailable.", { title }),
-          );
-        }
-        try {
-          const runtime = await options.resolveSubagentRuntime({ cwd, persona });
-          effectivePersona = runtime.persona;
-          config = runtime.config;
-          modelResolver = runtime.modelResolver;
-          effectiveSubagentPrompts = runtime.subagentPrompts;
-        } catch (error) {
-          return executeTool(context, () =>
-            blocked(
-              `Failed to build the subagent prompt for workingDirectory '${cwd}': ${(error as Error).message}`,
-              {
-                title,
-              },
-            ),
-          );
-        }
-      }
-      if (!effectivePersona.subagents || Object.keys(effectivePersona.subagents).length === 0) {
-        return executeTool(context, () =>
-          blocked("The spawn_agent tool is not enabled for the resolved persona.", {
-            title,
-          }),
-        );
-      }
-      const personaConfig = effectivePersona.subagents[name];
+      const personaConfig = persona.subagents?.[name];
       if (!personaConfig) {
         return executeTool(context, () =>
-          blocked(`Subagent '${name}' is not enabled for the resolved persona.`, {
-            title,
-          }),
-        );
-      }
-      const systemPrompt = effectiveSubagentPrompts[name];
-      if (!systemPrompt) {
-        return executeTool(context, () =>
-          blocked(`Subagent '${name}' is missing its system prompt.`, {
+          blocked(`Subagent '${name}' is not enabled for the current persona.`, {
             title,
           }),
         );
@@ -257,7 +206,9 @@ export function createSpawnAgentToolDefinition(options: {
 
       let launchModelOverride: SubagentLaunchModel | undefined;
       if (model) {
-        const parsedLaunchModel = parseSubagentLaunchModel(model, { resolveModel: modelResolver });
+        const parsedLaunchModel = parseSubagentLaunchModel(model, {
+          resolveModel: options.modelResolver,
+        });
         if (parsedLaunchModel.error || !parsedLaunchModel.launchModel) {
           return executeTool(context, () =>
             blocked(`Invalid model parameter: ${parsedLaunchModel.error}.`, {
@@ -293,8 +244,39 @@ export function createSpawnAgentToolDefinition(options: {
         launchModelOverride = parsedLaunchModel.launchModel;
       }
 
+      const cwd = workingDirectory ? resolve(baseCwd, workingDirectory) : baseCwd;
+      let effectiveSubagentPrompts = subagentPrompts;
+      if (workingDirectory && cwd !== resolve(baseCwd)) {
+        if (!options.resolveSubagentPrompts) {
+          return executeTool(context, () =>
+            blocked("Working-directory context resolution is unavailable.", { title }),
+          );
+        }
+        try {
+          effectiveSubagentPrompts = await options.resolveSubagentPrompts({ cwd, persona });
+        } catch (error) {
+          return executeTool(context, () =>
+            blocked(
+              `Failed to build the subagent prompt for workingDirectory '${cwd}': ${(error as Error).message}`,
+              {
+                title,
+              },
+            ),
+          );
+        }
+      }
+
+      const systemPrompt = effectiveSubagentPrompts[name];
+      if (!systemPrompt) {
+        return executeTool(context, () =>
+          blocked(`Subagent '${name}' is missing its system prompt.`, {
+            title,
+          }),
+        );
+      }
+
       const effectiveSettings = resolveSubagentEffectiveSettings({
-        persona: effectivePersona,
+        persona,
         config: personaConfig,
         launchModel: launchModelOverride,
       });
@@ -306,7 +288,7 @@ export function createSpawnAgentToolDefinition(options: {
         ...effectiveSettings,
       };
 
-      const modelLabel = `${runtimeConfig.model.provider}/${runtimeConfig.model.id}:${runtimeConfig.settings?.reasoning ?? "none"}`;
+      const modelLabel = `${runtimeConfig.model.provider}/${runtimeConfig.model.id}:${runtimeConfig.settings.reasoning ?? "none"}`;
       const statusWorkingDirectory = formatCwd(runtimeConfig.workingDirectory);
       const statusPrefixParts = [name, modelLabel, statusWorkingDirectory];
 
@@ -336,10 +318,10 @@ export function createSpawnAgentToolDefinition(options: {
             prompt,
             title,
             originHistoryEntryId: context.assistantMessageId,
-            config,
+            config: options.config,
             backend,
             history: options.history,
-            personaId: effectivePersona.id,
+            personaId: persona.id,
           });
 
           if (!spawnResult.ok) {

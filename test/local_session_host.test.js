@@ -3589,7 +3589,17 @@ describe("LocalSessionHost", () => {
         },
       ],
     });
-    const { agentState: _agentState, ...legacySnapshot } = storedSnapshot;
+    const {
+      agentState: _agentState,
+      operations: _operations,
+      timeline: _timeline,
+      ...legacySnapshot
+    } = storedSnapshot;
+    legacySnapshot.timeline = storedSnapshot.timeline.items.flatMap((item) => {
+      if (item.type !== "message") return [];
+      const { sequence: _sequence, createdAt: _createdAt, ...messageItem } = item;
+      return [messageItem];
+    });
     const path = join(
       directory,
       `${Buffer.from(storedSnapshot.sessionId, "utf8").toString("base64url")}.json`,

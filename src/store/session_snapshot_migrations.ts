@@ -19,7 +19,7 @@ const storedSessionMigrations = new Map<number, StoredSessionMigration>([
   [2, migrateStoredSessionV2ToV3],
   [3, migrateStoredSessionV3ToV4],
   [4, migrateStoredSessionV4ToV5],
-  [5, normalizeStoredSessionV6],
+  [5, migrateStoredSessionV5ToV6],
 ]);
 
 export class UnsupportedStoredSessionVersionError extends Error {
@@ -60,8 +60,6 @@ export function parseStoredSessionDocument(value: unknown): StoredSessionDocumen
     snapshot = migration(snapshot);
     version += 1;
   }
-
-  snapshot = normalizeStoredSessionV6(snapshot);
 
   const validated = validateSessionProtocolResult("session.snapshot", snapshot);
   if (!validated.ok) {
@@ -143,19 +141,13 @@ function migrateStoredSessionV4ToV5(value: unknown): unknown {
   return snapshot;
 }
 
-function normalizeStoredSessionV6(value: unknown): unknown {
+function migrateStoredSessionV5ToV6(value: unknown): unknown {
   if (!isRecord(value)) {
     throw new Error("stored session snapshot must be an object");
   }
 
   const snapshot = structuredClone(value);
   migrateModelContextKey(snapshot);
-  if (isRecord(snapshot.timeline) && Array.isArray(snapshot.timeline.items)) {
-    if (!isRecord(snapshot.operations)) snapshot.operations = {};
-    normalizeStoredOperations(snapshot);
-    migrateStoredTurnOutcomes(snapshot);
-    return snapshot;
-  }
   if (!Array.isArray(snapshot.timeline)) {
     throw new Error("stored session snapshot timeline must be an array");
   }

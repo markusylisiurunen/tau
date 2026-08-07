@@ -24,6 +24,24 @@ function createSnapshot(sessionId, text, revision = 1) {
   });
 }
 
+function createVersionFiveSnapshot(snapshot) {
+  const legacy = structuredClone(snapshot);
+  legacy.timeline = legacy.timeline.items.flatMap((item) => {
+    if (item.type !== "message") return [];
+    const { sequence: _sequence, createdAt: _createdAt, ...messageItem } = item;
+    return [messageItem];
+  });
+  delete legacy.operations;
+  legacy.agentState.contextEpoch = legacy.agentState.modelContextKey;
+  delete legacy.agentState.modelContextKey;
+  if (legacy.agentState.usageCheckpoint) {
+    legacy.agentState.usageCheckpoint.contextEpoch =
+      legacy.agentState.usageCheckpoint.modelContextKey;
+    delete legacy.agentState.usageCheckpoint.modelContextKey;
+  }
+  return legacy;
+}
+
 async function withTempStore(test) {
   const directory = join(
     tmpdir(),
@@ -84,8 +102,11 @@ describe("FileSessionStore", () => {
   it("loads unversioned snapshots that already have canonical agent state", async () => {
     await withTempStore(async (store, directory) => {
       const snapshot = createSnapshot("session-1", "hello");
+      const legacy = createVersionFiveSnapshot(snapshot);
+      legacy.agentState.modelContextKey = legacy.agentState.contextEpoch;
+      delete legacy.agentState.contextEpoch;
       await mkdir(directory, { recursive: true });
-      await writeFile(join(directory, "c2Vzc2lvbi0x.json"), JSON.stringify(snapshot), "utf8");
+      await writeFile(join(directory, "c2Vzc2lvbi0x.json"), JSON.stringify(legacy), "utf8");
 
       await expect(store.loadSession("session-1")).resolves.toEqual(snapshot);
     });
@@ -94,7 +115,7 @@ describe("FileSessionStore", () => {
   it("adds the required null goal when migrating version 2 sessions", async () => {
     await withTempStore(async (store, directory) => {
       const snapshot = createSnapshot("session-1", "hello");
-      const { goal: _goal, ...versionTwoSnapshot } = snapshot;
+      const { goal: _goal, ...versionTwoSnapshot } = createVersionFiveSnapshot(snapshot);
       await mkdir(directory, { recursive: true });
       await writeFile(
         join(directory, "c2Vzc2lvbi0x.json"),
@@ -215,7 +236,7 @@ describe("FileSessionStore", () => {
     await withTempStore(async (store, directory) => {
       const snapshot = createSnapshot("session-1", "hello");
       const legacy = {
-        ...snapshot,
+        ...createVersionFiveSnapshot(snapshot),
         tools: {
           "tool-1": {
             id: "tool-1",
@@ -252,7 +273,7 @@ describe("FileSessionStore", () => {
     await withTempStore(async (store, directory) => {
       const snapshot = createSnapshot("session-1", "hello");
       const legacy = {
-        ...snapshot,
+        ...createVersionFiveSnapshot(snapshot),
         agents: {
           "agent-1": {
             id: "agent-1",
@@ -300,103 +321,78 @@ describe("FileSessionStore", () => {
     });
   });
 
-  it.each([5, STORED_SESSION_DOCUMENT_VERSION])(
-    "normalizes version %i array timelines and legacy notices",
-    async (version) => {
-      await withTempStore(async (store, directory) => {
-        const snapshot = createSnapshot("session-1", "hello");
-        const expected = {
-          ...snapshot,
-          timeline: {
-            epoch: 1,
-            sequence: 2,
-            items: [
-              ...snapshot.timeline.items,
-              {
-                type: "notice",
-                id: "legacy-notice",
-                sequence: 2,
-                createdAt: 2,
-                notice: {
-                  kind: "tau.recovered.notice",
-                  version: 1,
-                  severity: "warn",
-                  subject: { type: "session" },
-                  presentation: {
-                    title: "history unavailable",
-                    content: ["the session will continue"],
-                  },
-                  data: {},
-                },
-              },
-            ],
-          },
-        };
-        const legacy = {
-          ...snapshot,
-          timeline: [
-            ...snapshot.timeline.items.map(
-              ({ sequence: _sequence, createdAt: _createdAt, ...item }) => item,
-            ),
-            {
-              type: "notice",
-              id: "legacy-notice",
-              notice: {
-                severity: "warn",
-                text: "history unavailable\nthe session will continue",
-                timestamp: 2,
-              },
-            },
-          ],
-        };
-        await mkdir(directory, { recursive: true });
-        await writeFile(
-          join(directory, "c2Vzc2lvbi0x.json"),
-          JSON.stringify({ format: STORED_SESSION_DOCUMENT_FORMAT, version, snapshot: legacy }),
-          "utf8",
-        );
-
-        await expect(store.loadSession("session-1")).resolves.toEqual(expected);
-      });
-    },
-  );
-
-  it("normalizes legacy terminal operation fields", async () => {
+  it("migrates version 5 array timelines and legacy notices", async () => {
     await withTempStore(async (store, directory) => {
       const snapshot = createSnapshot("session-1", "hello");
-      const legacy = {
+      const expected = {
         ...snapshot,
         timeline: {
-          ...snapshot.timeline,
+          epoch: 1,
           sequence: 2,
           items: [
             ...snapshot.timeline.items,
             {
-              type: "operation",
-              id: "timeline-operation-1",
+              type: "notice",
+              id: "legacy-notice",
               sequence: 2,
-              createdAt: 1,
-              operationId: "operation-1",
+              createdAt: 2,
+              notice: {
+                kind: "tau.recovered.notice",
+                version: 1,
+                severity: "warn",
+                subject: { type: "session" },
+                presentation: {
+                  title: "history unavailable",
+                  content: ["the session will continue"],
+                },
+                data: {},
+              },
             },
           ],
         },
-        operations: {
-          "operation-1": {
-            id: "operation-1",
-            kind: "manual-compaction",
-            status: "cancelled",
-            startedAt: 1,
-            summary: "legacy summary",
-            data: { legacy: true },
-          },
-        },
       };
+      const legacy = createVersionFiveSnapshot(snapshot);
+      legacy.timeline.push({
+        type: "notice",
+        id: "legacy-notice",
+        notice: {
+          severity: "warn",
+          text: "history unavailable\nthe session will continue",
+          timestamp: 2,
+        },
+      });
+      await mkdir(directory, { recursive: true });
+      await writeFile(
+        join(directory, "c2Vzc2lvbi0x.json"),
+        JSON.stringify({ format: STORED_SESSION_DOCUMENT_FORMAT, version: 5, snapshot: legacy }),
+        "utf8",
+      );
+
+      await expect(store.loadSession("session-1")).resolves.toEqual(expected);
+    });
+  });
+
+  it("normalizes terminal operation fields while migrating version 5", async () => {
+    await withTempStore(async (store, directory) => {
+      const snapshot = createSnapshot("session-1", "hello");
+      const legacy = createVersionFiveSnapshot(snapshot);
+      legacy.timeline.push({
+        type: "operation",
+        id: "operation-1",
+        operation: {
+          kind: "manual-compaction",
+          status: "cancelled",
+          startedAt: 1,
+          summary: "legacy summary",
+          data: { legacy: true },
+        },
+      });
       await mkdir(directory, { recursive: true });
       await writeFile(
         join(directory, "c2Vzc2lvbi0x.json"),
         JSON.stringify({
           format: STORED_SESSION_DOCUMENT_FORMAT,
-          version: STORED_SESSION_DOCUMENT_VERSION,
+          version: 5,
           snapshot: legacy,
         }),
         "utf8",
@@ -404,7 +400,20 @@ describe("FileSessionStore", () => {
 
       await expect(store.loadSession("session-1")).resolves.toEqual({
         ...snapshot,
-        timeline: legacy.timeline,
+        timeline: {
+          epoch: 1,
+          sequence: 2,
+          items: [
+            ...snapshot.timeline.items,
+            {
+              type: "operation",
+              id: "operation-1",
+              sequence: 2,
+              createdAt: 1,
+              operationId: "operation-1",
+            },
+          ],
+        },
         operations: {
           "operation-1": {
             id: "operation-1",
@@ -422,7 +431,7 @@ describe("FileSessionStore", () => {
   it("migrates persisted blocked turn outcomes to ordered notices", async () => {
     await withTempStore(async (store, directory) => {
       const snapshot = createSnapshot("session-1", "hello");
-      const legacy = structuredClone(snapshot);
+      const legacy = createVersionFiveSnapshot(snapshot);
       legacy.messages.find((message) => message.id === "entry-1").turn = {
         status: "blocked",
         reason: "auto-compaction-failed",
@@ -433,7 +442,7 @@ describe("FileSessionStore", () => {
         join(directory, "c2Vzc2lvbi0x.json"),
         JSON.stringify({
           format: STORED_SESSION_DOCUMENT_FORMAT,
-          version: STORED_SESSION_DOCUMENT_VERSION,
+          version: 5,
           snapshot: legacy,
         }),
         "utf8",
@@ -472,7 +481,7 @@ describe("FileSessionStore", () => {
   it("migrates persisted failed turn outcomes to ordered notices", async () => {
     await withTempStore(async (store, directory) => {
       const snapshot = createSnapshot("session-1", "hello");
-      const legacy = structuredClone(snapshot);
+      const legacy = createVersionFiveSnapshot(snapshot);
       legacy.messages.find((message) => message.id === "entry-1").turn = {
         status: "failed",
         stopReason: "error",
@@ -483,7 +492,7 @@ describe("FileSessionStore", () => {
         join(directory, "c2Vzc2lvbi0x.json"),
         JSON.stringify({
           format: STORED_SESSION_DOCUMENT_FORMAT,
-          version: STORED_SESSION_DOCUMENT_VERSION,
+          version: 5,
           snapshot: legacy,
         }),
         "utf8",
@@ -518,7 +527,7 @@ describe("FileSessionStore", () => {
   it("drops persisted completed turn outcomes", async () => {
     await withTempStore(async (store, directory) => {
       const snapshot = createSnapshot("session-1", "hello");
-      const legacy = structuredClone(snapshot);
+      const legacy = createVersionFiveSnapshot(snapshot);
       legacy.messages.find((message) => message.id === "entry-1").turn = {
         status: "completed",
         stopReason: "stop",
@@ -528,7 +537,7 @@ describe("FileSessionStore", () => {
         join(directory, "c2Vzc2lvbi0x.json"),
         JSON.stringify({
           format: STORED_SESSION_DOCUMENT_FORMAT,
-          version: STORED_SESSION_DOCUMENT_VERSION,
+          version: 5,
           snapshot: legacy,
         }),
         "utf8",
@@ -560,12 +569,30 @@ describe("FileSessionStore", () => {
           },
         ],
       });
-      const legacy = structuredClone(snapshot);
+      const legacy = createVersionFiveSnapshot(snapshot);
       legacy.messages.find((message) => message.id === "entry-1").turn = {
         status: "failed",
         stopReason: "error",
         errorMessage: "provider unavailable",
       };
+      await mkdir(directory, { recursive: true });
+      await writeFile(
+        join(directory, "c2Vzc2lvbi0x.json"),
+        JSON.stringify({
+          format: STORED_SESSION_DOCUMENT_FORMAT,
+          version: 5,
+          snapshot: legacy,
+        }),
+        "utf8",
+      );
+
+      await expect(store.loadSession("session-1")).resolves.toEqual(snapshot);
+    });
+  });
+
+  it("rejects noncanonical current-version snapshots", async () => {
+    await withTempStore(async (store, directory) => {
+      const legacy = createVersionFiveSnapshot(createSnapshot("session-1", "hello"));
       await mkdir(directory, { recursive: true });
       await writeFile(
         join(directory, "c2Vzc2lvbi0x.json"),
@@ -577,7 +604,9 @@ describe("FileSessionStore", () => {
         "utf8",
       );
 
-      await expect(store.loadSession("session-1")).resolves.toEqual(snapshot);
+      await expect(store.loadSession("session-1")).rejects.toThrow(
+        "stored session snapshot is invalid: session-1",
+      );
     });
   });
 
@@ -616,7 +645,11 @@ describe("FileSessionStore", () => {
       await mkdir(directory, { recursive: true });
       await writeFile(
         join(directory, "c2Vzc2lvbi0x.json"),
-        JSON.stringify(createSnapshot("session-2", "wrong")),
+        JSON.stringify({
+          format: STORED_SESSION_DOCUMENT_FORMAT,
+          version: STORED_SESSION_DOCUMENT_VERSION,
+          snapshot: createSnapshot("session-2", "wrong"),
+        }),
         "utf8",
       );
 
@@ -632,8 +665,12 @@ describe("FileSessionStore", () => {
       await writeFile(
         join(directory, "c2Vzc2lvbi0x.json"),
         JSON.stringify({
-          ...createSnapshot("session-1", "entry"),
-          settings: "invalid",
+          format: STORED_SESSION_DOCUMENT_FORMAT,
+          version: STORED_SESSION_DOCUMENT_VERSION,
+          snapshot: {
+            ...createSnapshot("session-1", "entry"),
+            settings: "invalid",
+          },
         }),
         "utf8",
       );

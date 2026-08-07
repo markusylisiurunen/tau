@@ -27,8 +27,8 @@
     "access": "public"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "0.84.0",
-    "@earendil-works/pi-tui": "0.84.0",
+    "@earendil-works/pi-ai": "0.84.1",
+    "@earendil-works/pi-tui": "0.84.1",
     "@fly/sprites": "^0.2.0",
     "chalk": "^6.0.0",
     "colorjs.io": "^0.7.1",

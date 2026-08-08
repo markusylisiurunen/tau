@@ -3653,6 +3653,33 @@ describe("LocalSessionHost", () => {
     );
   });
 
+  it("publishes explicit subagent activity removals after rewind persistence succeeds", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const hostedSession = await host.createSession(localCreateInput);
+    const historyEntryId = await hostedSession.session.commitUserText("rewind me");
+    await hostedSession.snapshot();
+    const hasSubagent = vi.spyOn(hostedSession.session, "hasSubagent").mockReturnValue(true);
+    const state = createRunningSubagentState();
+    await hostedSession.recordSubagentEvent({ type: "subagent_spawned", state });
+    const messages = [];
+    hostedSession.onSubagentActivities((message) => messages.push(message));
+    hasSubagent.mockReturnValue(false);
+
+    await hostedSession.rewindToHistoryEntryId(historyEntryId);
+
+    expect(hostedSession.subagentActivities()).toEqual({ revision: 3, agents: {} });
+    expect(messages).toEqual([
+      {
+        version: SESSION_PROTOCOL_VERSION,
+        type: "session.subagentActivities",
+        sessionId: hostedSession.sessionId,
+        revision: 3,
+        changes: [{ type: "agent.remove", agentId: state.id }],
+      },
+    ]);
+  });
+
   it("does not publish subagent activity cleanup when rewind persistence fails", async () => {
     const store = new MemorySessionStore();
     const host = createHost(store);

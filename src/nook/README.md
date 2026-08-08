@@ -35,9 +35,9 @@ Setup deploys the bundled Worker as `tau-nook`, creates the `tau-nook-assets` R2
 }
 ```
 
-DNS and Cloudflare Access applications/policies are external V0 setup steps. Setup configures a Worker route for `nook.example.com` in the supplied Cloudflare zone. Configure DNS and Access according to your organization policy and service-token needs.
+DNS and Cloudflare Access applications/policies are external V0 setup steps. Setup configures a Worker route for `nook.example.com` in the supplied Cloudflare zone. Configure one self-hosted Access application for `https://nook.example.com/__nook/*`, not the complete hostname. Disable the application's Cookie Path Attribute so its `CF_Authorization` cookie is scoped to the hostname. Add the user Allow policies needed for private sites and a Service Auth policy for the service token used by Tau.
 
-The setup command writes the Access team domain and application audience into the Worker environment. The Worker validates Cloudflare Access JWTs by loading the Access JWKS from that team domain and checking the token issuer, audience, expiry, and signature. Tau sends service-token headers to Cloudflare Access for CLI/API calls, but the Worker never treats raw service-token headers as authentication.
+The setup command writes the Access team domain and application audience into the Worker environment. Public site paths do not match the Access application and reach the Worker anonymously. Private sites redirect unauthenticated browser navigation through `/__nook/auth`; after Access login, the Worker validates the hostname-scoped JWT and returns the browser to the site. The Worker loads the Access JWKS from the configured team domain and checks every JWT's issuer, audience, expiry, and signature. Tau sends service-token headers to Cloudflare Access for control-plane API calls, but the Worker never treats raw service-token headers as authentication.
 
 Destroy is intentionally explicit:
 
@@ -102,7 +102,7 @@ window.addEventListener("DOMContentLoaded", async () => {
 });
 ```
 
-KV values must be JSON-serializable. Keys and total site KV storage have fixed guardrails in the Worker.
+KV values must be JSON-serializable. Keys and total site KV storage have fixed guardrails in the Worker. Browser KV uses `/<site>/__nook/kv/*`: public deployments expose it anonymously, while private deployments require the hostname-scoped Access cookie. Tau's CLI and model tool instead use the Access-protected `/__nook/api/sites/<site>/kv/*` management route.
 
 ## CLI
 

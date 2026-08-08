@@ -3,6 +3,7 @@ import { chmodSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { runInNewContext } from "node:vm";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getNookAccessClientSecret } from "../dist/core/config/index.js";
@@ -632,6 +633,65 @@ describe("nook worker", () => {
     expect(assetFetch).toHaveBeenCalledWith("sites/demo/deployments/dep_1/app.js");
   });
 
+  it("returns private apps to the current document after KV reauthentication", async () => {
+    const siteFetch = vi.fn(async () =>
+      Response.json({
+        deploymentId: "dep_1",
+        public: true,
+        files: [],
+      }),
+    );
+    const clientResponse = await worker.fetch(
+      new Request("https://nook.example.com/demo/__nook/client.js"),
+      {
+        ASSETS: {},
+        REGISTRY_DO: {
+          idFromName: (name) => name,
+          get: () => ({ fetch: vi.fn() }),
+        },
+        SITE_DO: {
+          idFromName: (name) => name,
+          get: () => ({ fetch: siteFetch }),
+        },
+        NOOK_DOMAIN: "nook.example.com",
+        NOOK_ACCESS_TEAM_DOMAIN: "https://team.cloudflareaccess.com",
+        NOOK_ACCESS_AUD: "aud",
+      },
+    );
+    const clientScript = await clientResponse.text();
+    const assign = vi.fn();
+    const window = {
+      location: {
+        origin: "https://nook.example.com",
+        pathname: "/demo/tasks",
+        search: "?filter=open",
+        hash: "#task-1",
+        assign,
+      },
+    };
+    const fetchImpl = vi.fn(async () =>
+      Response.json(
+        { error: { code: "unauthorized", message: "Authentication required" } },
+        { status: 401 },
+      ),
+    );
+    runInNewContext(clientScript, {
+      document: {
+        currentScript: { src: "https://nook.example.com/demo/__nook/client.js" },
+      },
+      fetch: fetchImpl,
+      URL,
+      window,
+    });
+
+    await expect(window.nook.kv.put("settings", { theme: "dark" })).rejects.toThrow(
+      "Authentication required",
+    );
+    expect(assign).toHaveBeenCalledWith(
+      "https://nook.example.com/__nook/auth?returnTo=%2Fdemo%2Ftasks%3Ffilter%3Dopen%23task-1",
+    );
+  });
+
   it("redirects anonymous private sites through the Access auth endpoint", async () => {
     const siteFetch = vi.fn(async () =>
       Response.json({
@@ -673,7 +733,6 @@ describe("nook worker", () => {
       error: {
         code: "unauthorized",
         message: "Authentication required",
-        authUrl: "https://nook.example.com/__nook/auth?returnTo=%2Fdemo%2F__nook%2Fkv%2Fsettings",
       },
     });
   });

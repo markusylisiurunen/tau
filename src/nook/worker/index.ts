@@ -226,13 +226,18 @@ const CLIENT_JS = `(() => {
     });
     if (!response.ok) {
       let message = response.statusText;
-      let authUrl;
       try {
         const payload = await response.json();
         message = payload && payload.error && payload.error.message ? payload.error.message : message;
-        authUrl = payload && payload.error && payload.error.authUrl;
       } catch {}
-      if (response.status === 401 && authUrl) window.location.assign(authUrl);
+      if (response.status === 401) {
+        const authUrl = new URL("/__nook/auth", window.location.origin);
+        authUrl.searchParams.set(
+          "returnTo",
+          window.location.pathname + window.location.search + window.location.hash
+        );
+        window.location.assign(authUrl.toString());
+      }
       throw new Error(message);
     }
     if (response.status === 204) return null;
@@ -370,19 +375,6 @@ function accessLoginUrl(request: Request): string {
   const loginUrl = new URL("/__nook/auth", requestUrl.origin);
   loginUrl.searchParams.set("returnTo", `${requestUrl.pathname}${requestUrl.search}`);
   return loginUrl.toString();
-}
-
-function authenticationRequired(request: Request): Response {
-  return json(
-    {
-      error: {
-        code: "unauthorized",
-        message: "Authentication required",
-        authUrl: accessLoginUrl(request),
-      },
-    },
-    401,
-  );
 }
 
 function accessReturnUrl(request: Request): URL | undefined {
@@ -968,7 +960,7 @@ async function serveAsset(
     : await privateAccessIdentity(request, env);
   if (!identity) {
     if (sitePath === "/__nook/kv" || sitePath.startsWith("/__nook/kv/")) {
-      return authenticationRequired(request);
+      return error("unauthorized", "Authentication required", 401);
     }
     return Response.redirect(accessLoginUrl(request), 302);
   }

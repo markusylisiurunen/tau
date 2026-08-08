@@ -1,4 +1,5 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
+import type { ToolCardLine, ToolCardWrap } from "../tools/presentation.js";
 import {
   TOOL_NAME_BASH,
   TOOL_NAME_EDIT,
@@ -109,13 +110,40 @@ export type SubagentCapacitySnapshot = {
   limit: number;
 };
 
-export const SUBAGENT_ACTIVITY_FACET_KIND = "tau.subagent-activity";
+export type SubagentActivity =
+  | {
+      type: "assistant";
+      text: string;
+    }
+  | {
+      type: "tool";
+      toolName: string;
+      outcome: "succeeded" | "failed" | "blocked" | "cancelled";
+      presentation: {
+        action: string;
+        operation?: string;
+        subject: string;
+        subjectWrap: ToolCardWrap;
+        details: ToolCardLine[];
+        metadata: string[];
+      };
+    }
+  | {
+      type: "notice";
+      severity: "info" | "warn" | "error";
+      title: string;
+      content?: string[];
+    };
 
-export type SubagentUiEvent =
+export type SubagentEvent =
   | { type: "subagent_spawned"; state: SubagentStateSnapshot }
   | { type: "subagent_run_started"; state: SubagentStateSnapshot }
   | { type: "subagent_updated"; state: SubagentStateSnapshot }
-  | { type: "subagent_activity"; state: SubagentStateSnapshot; text: string }
+  | {
+      type: "subagent_activity";
+      state: SubagentStateSnapshot;
+      activity: SubagentActivity;
+    }
   | { type: "subagent_interrupt_requested"; state: SubagentStateSnapshot }
   | { type: "subagent_finished"; state: SubagentStateSnapshot };
 

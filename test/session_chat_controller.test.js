@@ -229,6 +229,8 @@ class FakeSession {
   ephemeralListeners = new Set();
   pendingUserMessagesListeners = new Set();
   pendingUserMessagesValue = { revision: 1, messages: [] };
+  subagentActivitiesListeners = new Set();
+  subagentActivitiesValue = { revision: 1, agents: {} };
   operationLog = [];
   emitSubmitEvents = true;
   rejectSubmit = false;
@@ -519,6 +521,26 @@ class FakeSession {
       state: structuredClone(this.pendingUserMessagesValue),
     });
     return () => this.pendingUserMessagesListeners.delete(listener);
+  }
+
+  subagentActivities() {
+    return structuredClone(this.subagentActivitiesValue);
+  }
+
+  onSubagentActivities(listener) {
+    this.subagentActivitiesListeners.add(listener);
+    listener({
+      version: SESSION_PROTOCOL_VERSION,
+      type: "session.subagentActivities",
+      sessionId: this.id,
+      revision: this.subagentActivitiesValue.revision,
+      changes: Object.entries(this.subagentActivitiesValue.agents).map(([agentId, state]) => ({
+        type: "agent.set",
+        agentId,
+        state: structuredClone(state),
+      })),
+    });
+    return () => this.subagentActivitiesListeners.delete(listener);
   }
 
   async snapshot() {
@@ -3973,24 +3995,24 @@ describe("SessionChatController", () => {
     await controller.dispose();
   });
 
-  it("reconstructs subagent activity from snapshot presentation state", async () => {
+  it("reconstructs subagent activity from transient session state", async () => {
     const agent = createAgentRun();
     const session = new FakeSession(
       updateSnapshot(createSnapshot(), {
         agents: {
           [agent.id]: agent,
         },
-        facets: {
-          "subagent-activity-agent-1": {
-            id: "subagent-activity-agent-1",
-            subject: { type: "agent", id: agent.id },
-            kind: "tau.subagent-activity",
-            version: 1,
-            data: { text: "reading files" },
-          },
-        },
       }),
     );
+    session.subagentActivitiesValue = {
+      revision: 2,
+      agents: {
+        [agent.id]: {
+          runRevision: 1,
+          activities: [{ type: "assistant", text: "reading files" }],
+        },
+      },
+    };
     const view = new FakeView();
     const controller = new SessionChatController({
       view,
@@ -4007,7 +4029,7 @@ describe("SessionChatController", () => {
           id: "agent-1",
           run: expect.objectContaining({ status: "running" }),
         }),
-        activity: "reading files",
+        activities: [{ type: "assistant", text: "reading files" }],
       },
     ]);
     await controller.dispose();
@@ -4042,13 +4064,13 @@ describe("SessionChatController", () => {
           id: "agent-1",
           run: expect.objectContaining({ status: "succeeded", response: "all clear" }),
         }),
-        activity: undefined,
+        activities: [],
       },
     ]);
     await controller.dispose();
   });
 
-  it("applies agent activity facets without replaying tool UI state", async () => {
+  it("applies typed subagent activities without replaying tool UI state", async () => {
     const initialAgent = createAgentRun();
     const nextAgent = createAgentRun({
       costTotal: 0.02,
@@ -4058,23 +4080,23 @@ describe("SessionChatController", () => {
         contextWindowUsageTokens: 25,
       },
     });
-    const initialFacet = {
-      id: "subagent-activity-agent-1",
-      subject: { type: "agent", id: initialAgent.id },
-      kind: "tau.subagent-activity",
-      version: 1,
-      data: { text: "reading files" },
-    };
-    const nextFacet = { ...initialFacet, data: { text: "checking protocol" } };
     const session = new FakeSession(
       updateSnapshot(createSnapshot(), {
         revision: 3,
         agents: {
           [initialAgent.id]: initialAgent,
         },
-        facets: { [initialFacet.id]: initialFacet },
       }),
     );
+    session.subagentActivitiesValue = {
+      revision: 2,
+      agents: {
+        [initialAgent.id]: {
+          runRevision: 1,
+          activities: [{ type: "assistant", text: "reading files" }],
+        },
+      },
+    };
     const view = new FakeView();
     const controller = new SessionChatController({
       view,
@@ -4098,7 +4120,6 @@ describe("SessionChatController", () => {
         changes: [
           { type: "cost.set", costTotal: 0.02 },
           { type: "agent.set", agent: nextAgent },
-          { type: "facet.set", facet: nextFacet },
         ],
       },
     };
@@ -4107,13 +4128,43 @@ describe("SessionChatController", () => {
     for (const listener of session.listeners) {
       listener(delta);
     }
+    session.subagentActivitiesValue = {
+      revision: 3,
+      agents: {
+        [initialAgent.id]: {
+          runRevision: 1,
+          activities: [
+            { type: "assistant", text: "reading files" },
+            { type: "assistant", text: "checking protocol" },
+          ],
+        },
+      },
+    };
+    for (const listener of session.subagentActivitiesListeners) {
+      listener({
+        version: SESSION_PROTOCOL_VERSION,
+        type: "session.subagentActivities",
+        sessionId: session.id,
+        revision: session.subagentActivitiesValue.revision,
+        changes: [
+          {
+            type: "agent.set",
+            agentId: initialAgent.id,
+            state: structuredClone(session.subagentActivitiesValue.agents[initialAgent.id]),
+          },
+        ],
+      });
+    }
 
     expect(view.resetToolUiSession).toHaveBeenCalledTimes(resetCount);
-    expect(view.subagentEvents).toEqual([]);
+    expect(view.subagentEvents).toEqual([expect.objectContaining({ type: "subagent_updated" })]);
     expect(view.subagentSnapshots).toEqual([
       expect.objectContaining({
         state: expect.objectContaining({ id: "agent-1", costTotal: 0.02 }),
-        activity: "checking protocol",
+        activities: [
+          { type: "assistant", text: "reading files" },
+          { type: "assistant", text: "checking protocol" },
+        ],
       }),
     ]);
     expect(controller.snapshot.agents["agent-1"]).not.toHaveProperty("progress");
@@ -5682,6 +5733,62 @@ describe("SessionChatController", () => {
       id: message.id,
       model: { type: "user", text: "arrived during handoff" },
     });
+  });
+
+  it("reconciles replacement-session activities after buffered agent deltas", async () => {
+    const session = new FakeSession(updateSnapshot(createSnapshot(), { revision: 10 }));
+    const nextSession = new FakeSession();
+    nextSession.id = "session-2";
+    nextSession.snapshotValue = { ...nextSession.snapshotValue, sessionId: nextSession.id };
+    const agent = createAgentRun();
+    const delta = {
+      version: SESSION_PROTOCOL_VERSION,
+      type: "session.delta",
+      sessionId: nextSession.id,
+      fromRevision: nextSession.snapshotValue.revision,
+      toRevision: nextSession.snapshotValue.revision + 1,
+      cause: { type: "agent-run" },
+      delta: {
+        type: "snapshot.patch",
+        changes: [
+          { type: "cost.set", costTotal: 0 },
+          { type: "agent.set", agent },
+        ],
+      },
+    };
+    nextSession.subagentActivitiesValue = {
+      revision: 2,
+      agents: {
+        [agent.id]: {
+          runRevision: agent.run.revision,
+          activities: [{ type: "assistant", text: "arrived during handoff" }],
+        },
+      },
+    };
+    nextSession.onDelta = vi.fn((listener) => {
+      nextSession.listeners.add(listener);
+      nextSession.snapshotValue = applySessionProtocolDelta(nextSession.snapshotValue, delta);
+      listener(delta);
+      return () => nextSession.listeners.delete(listener);
+    });
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      createSession: vi.fn(async () => nextSession),
+      targetLabel: "local",
+    });
+    controller.start();
+
+    await controller.onUserInput("/new");
+
+    expect(view.subagentSnapshots).toEqual([
+      {
+        state: expect.objectContaining({ id: agent.id }),
+        activities: [{ type: "assistant", text: "arrived during handoff" }],
+      },
+    ]);
   });
 
   it("serializes concurrent new-session requests", async () => {

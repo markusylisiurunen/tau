@@ -8,12 +8,16 @@ import type {
   SessionProtocolPendingUserMessagesMessage,
   SessionProtocolReadyMessage,
   SessionProtocolResultByMethod,
+  SessionProtocolSubagentActivitiesMessage,
 } from "../protocol/session_protocol.js";
 
 export type SessionProtocolDeltaListener = (delta: SessionProtocolDeltaMessage) => void;
 export type SessionProtocolEphemeralListener = (message: SessionProtocolEphemeralMessage) => void;
 export type SessionProtocolPendingUserMessagesListener = (
   message: SessionProtocolPendingUserMessagesMessage,
+) => void;
+export type SessionProtocolSubagentActivitiesListener = (
+  message: SessionProtocolSubagentActivitiesMessage,
 ) => void;
 export type SessionProtocolClientToolListener = (message: SessionProtocolClientToolMessage) => void;
 export type SessionProtocolFailureListener = (error: Error) => void;
@@ -28,6 +32,7 @@ export type SessionProtocolTransport = {
   onDelta(listener: SessionProtocolDeltaListener): () => void;
   onEphemeral(listener: SessionProtocolEphemeralListener): () => void;
   onPendingUserMessages(listener: SessionProtocolPendingUserMessagesListener): () => void;
+  onSubagentActivities(listener: SessionProtocolSubagentActivitiesListener): () => void;
   onClientTool(listener: SessionProtocolClientToolListener): () => void;
   onFailure(listener: SessionProtocolFailureListener): () => void;
   close(): Promise<void>;

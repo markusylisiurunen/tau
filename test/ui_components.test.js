@@ -205,26 +205,24 @@ test("TuiChatView tool reconciliation does not reset subagent state", () => {
   expect(resetSubagents).not.toHaveBeenCalled();
 });
 
-test("SubagentPanelComponent reconciles snapshots without discarding surviving state", () => {
+test("SubagentPanelComponent renders authoritative typed activities", () => {
   const panel = new SubagentPanelComponent(createTagTheme());
   const first = createSubagentState("agent-1", "first task");
   const second = createSubagentState("agent-2", "second task");
   panel.reconcile([
-    { state: first, activity: "agent: first snapshot" },
-    { state: second, activity: "agent: second snapshot" },
+    { state: first, activities: [{ type: "assistant", text: "first snapshot" }] },
+    { state: second, activities: [{ type: "assistant", text: "second snapshot" }] },
   ]);
   expect(panel.cycleSelection(1)).toBe("agent-2");
-  panel.handleEvent({
-    type: "subagent_activity",
-    state: { ...second, costTotal: 0.01 },
-    text: "agent: live progress",
-  });
 
   panel.reconcile([
-    { state: first, activity: "agent: first snapshot" },
+    { state: first, activities: [{ type: "assistant", text: "first snapshot" }] },
     {
       state: { ...second, costTotal: 0.01 },
-      activity: "agent: canonical progress",
+      activities: [
+        { type: "assistant", text: "live progress" },
+        { type: "notice", severity: "info", title: "canonical progress" },
+      ],
     },
   ]);
 
@@ -232,7 +230,7 @@ test("SubagentPanelComponent reconciles snapshots without discarding surviving s
   expect(renderText(panel, 80)).toContain("live progress");
   expect(renderText(panel, 80)).toContain("canonical progress");
 
-  panel.reconcile([{ state: first, activity: "agent: first snapshot" }]);
+  panel.reconcile([{ state: first, activities: [{ type: "assistant", text: "first snapshot" }] }]);
   expect(panel.getSelectedId()).toBe("agent-1");
   expect(renderText(panel, 80)).not.toContain("second task");
 });

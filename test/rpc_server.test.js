@@ -102,23 +102,7 @@ function createAgentDelta(sessionId, revision, event) {
     cause: { type: "agent-run" },
     delta: {
       type: "snapshot.patch",
-      changes: [
-        { type: "agent.set", agent },
-        ...(event.text
-          ? [
-              {
-                type: "facet.set",
-                facet: {
-                  id: `subagent-activity-${event.id}`,
-                  subject: { type: "agent", id: event.id },
-                  kind: "tau.subagent-activity",
-                  version: 1,
-                  data: { text: event.text },
-                },
-              },
-            ]
-          : []),
-      ],
+      changes: [{ type: "agent.set", agent }],
     },
   };
 }
@@ -155,6 +139,9 @@ function createHarness(options = {}) {
 
   const createHostedSession = (recoveredSessionId) => {
     const deltaHandlers = new Set();
+    const subagentActivitiesHandlers = new Set();
+    const subagentActivitiesByAgent = {};
+    let subagentActivitiesRevision = 1;
     const historyEntries = [];
     const snapshotDelays = [...(options.snapshotDelays ?? [])];
     let sessionId = recoveredSessionId ?? `session-${nextSessionId++}`;
@@ -225,6 +212,16 @@ function createHarness(options = {}) {
       },
       onEphemeral() {
         return () => {};
+      },
+      subagentActivities() {
+        return {
+          revision: subagentActivitiesRevision,
+          agents: structuredClone(subagentActivitiesByAgent),
+        };
+      },
+      onSubagentActivities(handler) {
+        subagentActivitiesHandlers.add(handler);
+        return () => subagentActivitiesHandlers.delete(handler);
       },
       async snapshot() {
         const snapshotDelay = snapshotDelays.shift() ?? 0;
@@ -514,6 +511,31 @@ function createHarness(options = {}) {
       },
       emitSubagent: (event) => {
         emitDelta(createAgentDelta(sessionId, historyEntries.length + 1, event));
+        if (event.type === "spawned") {
+          subagentActivitiesByAgent[event.id] = { runRevision: 1, activities: [] };
+        } else if (event.activity) {
+          subagentActivitiesByAgent[event.id] = {
+            runRevision: 1,
+            activities: [event.activity],
+          };
+        }
+        subagentActivitiesRevision += 1;
+        const message = {
+          version: SESSION_PROTOCOL_VERSION,
+          type: "session.subagentActivities",
+          sessionId,
+          revision: subagentActivitiesRevision,
+          changes: [
+            {
+              type: "agent.set",
+              agentId: event.id,
+              state: structuredClone(subagentActivitiesByAgent[event.id]),
+            },
+          ],
+        };
+        for (const handler of subagentActivitiesHandlers) {
+          handler(message);
+        }
       },
     };
 
@@ -604,16 +626,16 @@ function deltaHasAgent(line, id) {
   );
 }
 
-function deltaHasAgentActivity(line, id, text) {
+function hasAgentActivity(line, id, text) {
   return (
-    deltaHasAgent(line, id) &&
-    line.delta.changes.some(
+    line.type === "session.subagentActivities" &&
+    line.changes.some(
       (change) =>
-        change.type === "facet.set" &&
-        change.facet.subject.type === "agent" &&
-        change.facet.subject.id === id &&
-        change.facet.kind === "tau.subagent-activity" &&
-        change.facet.data.text === text,
+        change.type === "agent.set" &&
+        change.agentId === id &&
+        change.state.activities.some(
+          (activity) => activity.type === "assistant" && activity.text === text,
+        ),
     )
   );
 }
@@ -1975,7 +1997,7 @@ describe("rpc_server", () => {
     harness.emitSubagent({
       type: "subagent_activity",
       id: "agent-1",
-      text: "still working",
+      activity: { type: "assistant", text: "still working" },
       costTotal: 0,
       usage: {
         input: 0,
@@ -1991,12 +2013,11 @@ describe("rpc_server", () => {
     await secondSubmit;
 
     const lateSubagentEvent = harness.lines.find((line) =>
-      deltaHasAgentActivity(line, "agent-1", "still working"),
+      hasAgentActivity(line, "agent-1", "still working"),
     );
     expect(lateSubagentEvent).toEqual(
       expect.objectContaining({
-        type: "session.delta",
-        cause: { type: "agent-run" },
+        type: "session.subagentActivities",
       }),
     );
 

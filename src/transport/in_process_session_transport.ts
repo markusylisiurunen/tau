@@ -19,6 +19,7 @@ import {
   notifySessionProtocolDeltaListeners,
   notifySessionProtocolEphemeralListeners,
   notifySessionProtocolPendingUserMessagesListeners,
+  notifySessionProtocolSubagentActivitiesListeners,
 } from "./session_protocol_transport_helpers.js";
 import type {
   SessionProtocolClientToolListener,
@@ -26,6 +27,7 @@ import type {
   SessionProtocolEphemeralListener,
   SessionProtocolFailureListener,
   SessionProtocolPendingUserMessagesListener,
+  SessionProtocolSubagentActivitiesListener,
   SessionProtocolTransport,
 } from "./session_transport.js";
 
@@ -41,6 +43,8 @@ export class InProcessSessionProtocolTransport implements SessionProtocolTranspo
   private readonly ephemeralListeners = new Set<SessionProtocolEphemeralListener>();
   private readonly pendingUserMessagesListeners =
     new Set<SessionProtocolPendingUserMessagesListener>();
+  private readonly subagentActivitiesListeners =
+    new Set<SessionProtocolSubagentActivitiesListener>();
   private readonly clientToolListeners = new Set<SessionProtocolClientToolListener>();
   private readonly pendingRequests = new PendingSessionProtocolRequests();
 
@@ -133,6 +137,13 @@ export class InProcessSessionProtocolTransport implements SessionProtocolTranspo
     };
   }
 
+  onSubagentActivities(listener: SessionProtocolSubagentActivitiesListener): () => void {
+    this.subagentActivitiesListeners.add(listener);
+    return () => {
+      this.subagentActivitiesListeners.delete(listener);
+    };
+  }
+
   onClientTool(listener: SessionProtocolClientToolListener): () => void {
     this.clientToolListeners.add(listener);
     return () => {
@@ -155,6 +166,7 @@ export class InProcessSessionProtocolTransport implements SessionProtocolTranspo
     this.deltaListeners.clear();
     this.ephemeralListeners.clear();
     this.pendingUserMessagesListeners.clear();
+    this.subagentActivitiesListeners.clear();
     this.clientToolListeners.clear();
     await this.handler.close(this.closeMode);
   }
@@ -187,6 +199,13 @@ export class InProcessSessionProtocolTransport implements SessionProtocolTranspo
           ignoreListenerErrors: true,
         },
       );
+      return;
+    }
+
+    if (message.type === "session.subagentActivities") {
+      notifySessionProtocolSubagentActivitiesListeners(this.subagentActivitiesListeners, message, {
+        ignoreListenerErrors: true,
+      });
       return;
     }
 

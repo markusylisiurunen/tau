@@ -20,7 +20,16 @@ import {
 import { HostedEphemeralAgentSession } from "../dist/host/hosted_ephemeral_agent_session.js";
 import { LocalSessionHost } from "../dist/host/local_session_host.js";
 import { EphemeralThreadBusyError } from "../dist/host/session_host.js";
-import { applySessionProtocolDelta } from "../dist/protocol/session_protocol.js";
+import {
+  applySessionProtocolDelta,
+  SESSION_PROTOCOL_MAX_SUBAGENT_ASSISTANT_TEXT_BYTES,
+  SESSION_PROTOCOL_MAX_SUBAGENT_NOTICE_CONTENT_BYTES,
+  SESSION_PROTOCOL_MAX_SUBAGENT_SHORT_TEXT_BYTES,
+  SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_DETAILS_BYTES,
+  SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_METADATA_BYTES,
+  SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_SUBJECT_BYTES,
+  SESSION_PROTOCOL_VERSION,
+} from "../dist/protocol/session_protocol.js";
 import { FileSessionStore } from "../dist/store/file_session_store.js";
 import { MemorySessionStore } from "../dist/store/memory_session_store.js";
 import {
@@ -129,6 +138,37 @@ function promptFixture() {
     environmentTag: "<environment></environment>",
     baseSystemPrompt: "system prompt",
     subagentPrompts: {},
+  };
+}
+
+function createRunningSubagentState(id = "child-1") {
+  return {
+    id,
+    name: "default",
+    title: "long task",
+    availability: "running",
+    model: {
+      provider: personas[0].model.provider,
+      id: personas[0].model.id,
+      reasoning: "medium",
+    },
+    workingDirectory: "/repo",
+    createdAt: 1,
+    run: {
+      revision: 1,
+      status: "running",
+      startedAt: 1,
+      interruptRequested: false,
+    },
+    costTotal: 0,
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      contextWindowUsageTokens: 0,
+      contextWindow: 100_000,
+    },
   };
 }
 
@@ -3387,6 +3427,294 @@ describe("LocalSessionHost", () => {
         },
       }),
     );
+  });
+
+  it("owns bounded typed subagent activity state per run", async () => {
+    const host = createHost(new MemorySessionStore());
+    const hostedSession = await host.createSession(localCreateInput);
+    vi.spyOn(hostedSession.session, "hasSubagent").mockReturnValue(true);
+    const state = createRunningSubagentState();
+
+    await hostedSession.recordSubagentEvent({ type: "subagent_spawned", state });
+    for (let index = 0; index < 65; index += 1) {
+      await hostedSession.recordSubagentEvent({
+        type: "subagent_activity",
+        state,
+        activity: { type: "assistant", text: `activity ${index}` },
+      });
+    }
+
+    expect(hostedSession.subagentActivities()).toMatchObject({
+      revision: 67,
+      agents: {
+        "child-1": {
+          runRevision: 1,
+          activities: [
+            { type: "assistant", text: "activity 1" },
+            ...Array.from({ length: 63 }, (_, index) => ({
+              type: "assistant",
+              text: `activity ${index + 2}`,
+            })),
+          ],
+        },
+      },
+    });
+    expect(
+      Object.values((await hostedSession.snapshot()).facets).some(
+        (facet) => facet.subject.type === "agent",
+      ),
+    ).toBe(false);
+
+    await hostedSession.recordSubagentEvent({
+      type: "subagent_run_started",
+      state: {
+        ...state,
+        run: { ...state.run, revision: 2 },
+      },
+    });
+    expect(hostedSession.subagentActivities().agents["child-1"]).toEqual({
+      runRevision: 2,
+      activities: [],
+    });
+  });
+
+  it("publishes complete activity state only for changed subagents", async () => {
+    const host = createHost(new MemorySessionStore());
+    const hostedSession = await host.createSession(localCreateInput);
+    vi.spyOn(hostedSession.session, "hasSubagent").mockReturnValue(true);
+    const first = createRunningSubagentState("child-1");
+    const second = createRunningSubagentState("child-2");
+    await hostedSession.recordSubagentEvent({ type: "subagent_spawned", state: first });
+    await hostedSession.recordSubagentEvent({ type: "subagent_spawned", state: second });
+    const messages = [];
+    hostedSession.onSubagentActivities((message) => messages.push(message));
+
+    await hostedSession.recordSubagentEvent({
+      type: "subagent_activity",
+      state: first,
+      activity: { type: "assistant", text: "first agent only" },
+    });
+
+    expect(messages).toEqual([
+      {
+        version: SESSION_PROTOCOL_VERSION,
+        type: "session.subagentActivities",
+        sessionId: hostedSession.sessionId,
+        revision: 4,
+        changes: [
+          {
+            type: "agent.set",
+            agentId: "child-1",
+            state: {
+              runRevision: 1,
+              activities: [{ type: "assistant", text: "first agent only" }],
+            },
+          },
+        ],
+      },
+    ]);
+    expect(hostedSession.subagentActivities().agents).toHaveProperty("child-2");
+  });
+
+  it("bounds every subagent activity field by UTF-8 content size", async () => {
+    const host = createHost(new MemorySessionStore());
+    const hostedSession = await host.createSession(localCreateInput);
+    vi.spyOn(hostedSession.session, "hasSubagent").mockReturnValue(true);
+    const state = createRunningSubagentState();
+    await hostedSession.recordSubagentEvent({ type: "subagent_spawned", state });
+
+    await hostedSession.recordSubagentEvent({
+      type: "subagent_activity",
+      state,
+      activity: {
+        type: "assistant",
+        text: `${"a".repeat(SESSION_PROTOCOL_MAX_SUBAGENT_ASSISTANT_TEXT_BYTES)}middle${"z".repeat(SESSION_PROTOCOL_MAX_SUBAGENT_ASSISTANT_TEXT_BYTES)}`,
+      },
+    });
+
+    const createEditActivity = (details, metadata = [], subject = "src/large.ts") => {
+      const { actionByStatus, ...presentation } = buildToolRunPresentation({
+        toolName: "edit",
+        subject,
+        details,
+        detailTruncation: false,
+        metadata,
+      });
+      return {
+        type: "tool",
+        toolName: "edit",
+        outcome: "succeeded",
+        presentation: { action: actionByStatus.succeeded, ...presentation },
+      };
+    };
+    const malformedToolNameActivity = createEditActivity(
+      Array.from({ length: 100 }, (_, index) => ({ text: `+ short line ${index}` })),
+    );
+    malformedToolNameActivity.toolName = "missing\r\ntool";
+    await hostedSession.recordSubagentEvent({
+      type: "subagent_activity",
+      state,
+      activity: malformedToolNameActivity,
+    });
+    const largeToolActivity = createEditActivity(
+      Array.from({ length: 100 }, (_, index) => ({
+        text: `+ long line ${index} ${"x".repeat(490)}`,
+      })),
+      Array.from({ length: 33 }, (_, index) => `metadata ${index} ${"m".repeat(490)}`),
+      Array.from({ length: 8 }, () => "s".repeat(512)).join("\n"),
+    );
+    largeToolActivity.toolName = `${"n".repeat(512)}middle${"z".repeat(512)}`;
+    largeToolActivity.presentation.action = `${"a".repeat(512)}middle${"z".repeat(512)}`;
+    largeToolActivity.presentation.operation = `${"o".repeat(512)}middle${"z".repeat(512)}`;
+    await expect(
+      hostedSession.recordSubagentEvent({
+        type: "subagent_activity",
+        state,
+        activity: largeToolActivity,
+      }),
+    ).resolves.toBeUndefined();
+
+    const diagnostic = `tool call id: ${"x".repeat(5_000)}`;
+    await expect(
+      hostedSession.recordSubagentEvent({
+        type: "subagent_activity",
+        state,
+        activity: {
+          type: "notice",
+          severity: "error",
+          title: "😀".repeat(513),
+          content: [
+            diagnostic,
+            ...Array.from({ length: 16 }, (_, index) => `entry ${index} ${"n".repeat(3_000)}`),
+          ],
+        },
+      }),
+    ).resolves.toBeUndefined();
+
+    const [assistantActivity, shortToolActivity, toolActivity, noticeActivity] =
+      hostedSession.subagentActivities().agents["child-1"].activities;
+    expect(Buffer.byteLength(assistantActivity.text, "utf8")).toBeLessThanOrEqual(
+      SESSION_PROTOCOL_MAX_SUBAGENT_ASSISTANT_TEXT_BYTES,
+    );
+    expect(assistantActivity.text).toMatch(/^a+…z+$/);
+    expect(shortToolActivity.toolName).toBe("missing tool");
+    expect(shortToolActivity.presentation.details).toHaveLength(100);
+    expect(toolActivity.toolName).toMatch(/^n+…z+$/);
+    expect(toolActivity.presentation.action).toMatch(/^a+…z+$/);
+    expect(toolActivity.presentation.operation).toMatch(/^o+…z+$/);
+    for (const text of [
+      toolActivity.toolName,
+      toolActivity.presentation.action,
+      toolActivity.presentation.operation,
+    ]) {
+      expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(
+        SESSION_PROTOCOL_MAX_SUBAGENT_SHORT_TEXT_BYTES,
+      );
+    }
+    expect(Buffer.byteLength(toolActivity.presentation.subject, "utf8")).toBeLessThanOrEqual(
+      SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_SUBJECT_BYTES,
+    );
+    expect(toolActivity.presentation.subject).toMatch(/^s[\s\S]*…[\s\S]*s$/);
+    expect(toolActivity.presentation.details.length).toBeLessThan(100);
+    expect(toolActivity.presentation.details[0].text).toContain("long line 0");
+    expect(toolActivity.presentation.details.at(-1).text).toContain("long line 99");
+    expect(toolActivity.presentation.details).toContainEqual(
+      expect.objectContaining({ text: expect.stringMatching(/^…\d+ more lines…$/) }),
+    );
+    expect(
+      Buffer.byteLength(
+        toolActivity.presentation.details.map((detail) => detail.text).join("\n"),
+        "utf8",
+      ),
+    ).toBeLessThanOrEqual(SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_DETAILS_BYTES);
+    expect(toolActivity.presentation.metadata[0]).toContain("metadata 0");
+    expect(toolActivity.presentation.metadata.at(-1)).toContain("metadata 32");
+    expect(toolActivity.presentation.metadata).toContainEqual(
+      expect.stringMatching(/^…\d+ more entries…$/),
+    );
+    expect(
+      Buffer.byteLength(toolActivity.presentation.metadata.join("\n"), "utf8"),
+    ).toBeLessThanOrEqual(SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_METADATA_BYTES);
+    expect(noticeActivity).toMatchObject({
+      type: "notice",
+      severity: "error",
+    });
+    expect(noticeActivity.title.startsWith("😀")).toBe(true);
+    expect(noticeActivity.title.endsWith("😀")).toBe(true);
+    expect(noticeActivity.title).toContain("…");
+    expect(Buffer.byteLength(noticeActivity.title, "utf8")).toBeLessThanOrEqual(
+      SESSION_PROTOCOL_MAX_SUBAGENT_SHORT_TEXT_BYTES,
+    );
+    expect(noticeActivity.content[0]).toMatch(/^tool call id: /);
+    expect(noticeActivity.content.at(-1)).toContain("entry 15");
+    expect(noticeActivity.content).toContainEqual(expect.stringMatching(/^…\d+ more entries…$/));
+    expect(Buffer.byteLength(noticeActivity.content.join("\n"), "utf8")).toBeLessThanOrEqual(
+      SESSION_PROTOCOL_MAX_SUBAGENT_NOTICE_CONTENT_BYTES,
+    );
+  });
+
+  it("publishes explicit subagent activity removals after rewind persistence succeeds", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const hostedSession = await host.createSession(localCreateInput);
+    const historyEntryId = await hostedSession.session.commitUserText("rewind me");
+    await hostedSession.snapshot();
+    const hasSubagent = vi.spyOn(hostedSession.session, "hasSubagent").mockReturnValue(true);
+    const state = createRunningSubagentState();
+    await hostedSession.recordSubagentEvent({ type: "subagent_spawned", state });
+    const messages = [];
+    hostedSession.onSubagentActivities((message) => messages.push(message));
+    hasSubagent.mockReturnValue(false);
+
+    await hostedSession.rewindToHistoryEntryId(historyEntryId);
+
+    expect(hostedSession.subagentActivities()).toEqual({ revision: 3, agents: {} });
+    expect(messages).toEqual([
+      {
+        version: SESSION_PROTOCOL_VERSION,
+        type: "session.subagentActivities",
+        sessionId: hostedSession.sessionId,
+        revision: 3,
+        changes: [{ type: "agent.remove", agentId: state.id }],
+      },
+    ]);
+  });
+
+  it("does not publish subagent activity cleanup when rewind persistence fails", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const hostedSession = await host.createSession(localCreateInput);
+    const historyEntryId = await hostedSession.session.commitUserText("rewind me");
+    await hostedSession.snapshot();
+
+    const hasSubagent = vi.spyOn(hostedSession.session, "hasSubagent").mockReturnValue(true);
+    const state = createRunningSubagentState();
+    await hostedSession.recordSubagentEvent({ type: "subagent_spawned", state });
+    await hostedSession.recordSubagentEvent({
+      type: "subagent_activity",
+      state,
+      activity: { type: "assistant", text: "still visible" },
+    });
+    const activityState = hostedSession.subagentActivities();
+    const activityMessages = [];
+    hostedSession.onSubagentActivities((message) => activityMessages.push(message));
+    hasSubagent.mockReturnValue(false);
+
+    const commitSessionSnapshot = store.commitSessionSnapshot.bind(store);
+    let failNextCommit = true;
+    store.commitSessionSnapshot = vi.fn(async (snapshot, options) => {
+      if (failNextCommit) {
+        failNextCommit = false;
+        throw new Error("rewind persistence failed");
+      }
+      await commitSessionSnapshot(snapshot, options);
+    });
+
+    await expect(hostedSession.rewindToHistoryEntryId(historyEntryId)).rejects.toThrow(
+      "rewind persistence failed",
+    );
+    expect(hostedSession.subagentActivities()).toEqual(activityState);
+    expect(activityMessages).toEqual([]);
   });
 
   it("does not let a reasoning write replace streamed state at the same revision", async () => {

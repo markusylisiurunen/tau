@@ -5,6 +5,7 @@ import type {
   SessionProtocolOutgoingParseFailure,
   SessionProtocolParsedResponseMessage,
   SessionProtocolPendingUserMessagesMessage,
+  SessionProtocolSubagentActivitiesMessage,
 } from "../protocol/session_protocol.js";
 import { TauTransportError } from "./errors.js";
 import type { PendingSessionProtocolRequests } from "./pending_session_protocol_requests.js";
@@ -14,6 +15,7 @@ import type {
   SessionProtocolEphemeralListener,
   SessionProtocolFailureListener,
   SessionProtocolPendingUserMessagesListener,
+  SessionProtocolSubagentActivitiesListener,
 } from "./session_transport.js";
 
 type Deferred<T> = {
@@ -134,6 +136,25 @@ export function notifySessionProtocolEphemeralListeners(
 export function notifySessionProtocolPendingUserMessagesListeners(
   listeners: ReadonlySet<SessionProtocolPendingUserMessagesListener>,
   message: SessionProtocolPendingUserMessagesMessage,
+  options: { ignoreListenerErrors?: boolean } = {},
+): void {
+  for (const listener of [...listeners]) {
+    if (!options.ignoreListenerErrors) {
+      listener(message);
+      continue;
+    }
+
+    try {
+      listener(message);
+    } catch {
+      // listener failures must not break transport processing
+    }
+  }
+}
+
+export function notifySessionProtocolSubagentActivitiesListeners(
+  listeners: ReadonlySet<SessionProtocolSubagentActivitiesListener>,
+  message: SessionProtocolSubagentActivitiesMessage,
   options: { ignoreListenerErrors?: boolean } = {},
 ): void {
   for (const listener of [...listeners]) {

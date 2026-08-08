@@ -16,6 +16,7 @@ import {
   type SessionProtocolRequestId,
   type SessionProtocolRequestMessage,
   type SessionProtocolResultByMethod,
+  type SessionProtocolSubagentActivitiesMessage,
 } from "../protocol/session_protocol.js";
 import {
   EphemeralThreadBusyError,
@@ -88,8 +89,10 @@ type SessionProtocolHandlerSessionState = {
   unsubscribeDelta?: () => void;
   unsubscribeEphemeral?: () => void;
   unsubscribePendingUserMessages?: () => void;
+  unsubscribeSubagentActivities?: () => void;
   bufferedDeltas?: SessionProtocolDeltaMessage[];
   bufferedPendingUserMessages?: SessionProtocolPendingUserMessagesMessage[];
+  bufferedSubagentActivities?: SessionProtocolSubagentActivitiesMessage[];
 };
 
 type SessionMutationQueueState = {
@@ -764,20 +767,24 @@ export class SessionProtocolHandler {
     }
     state.bufferedDeltas ??= [];
     state.bufferedPendingUserMessages ??= [];
+    state.bufferedSubagentActivities ??= [];
 
     let observed = false;
     try {
       const snapshot = await state.session.snapshot();
       const pendingUserMessages = buildPendingUserMessagesState(state.live);
+      const subagentActivities = state.session.subagentActivities();
       this.sendMessage(
         createSessionProtocolSuccessResponse(request.id, "session.observe", {
           snapshot,
           pendingUserMessages,
+          subagentActivities,
         }),
       );
       observed = true;
       this.flushBufferedDeltasAfterSnapshot(state, snapshot.revision);
       this.flushBufferedPendingUserMessagesAfter(state, pendingUserMessages.revision);
+      this.flushBufferedSubagentActivitiesAfter(state, subagentActivities.revision);
     } finally {
       if (!observed && !wasObserved) {
         this.unsubscribeSessionListeners(state);
@@ -785,6 +792,7 @@ export class SessionProtocolHandler {
       } else if (!observed) {
         this.flushBufferedDeltasAfterSnapshot(state, 0);
         this.flushBufferedPendingUserMessagesAfter(state, 0);
+        this.flushBufferedSubagentActivitiesAfter(state, 0);
       }
     }
   }
@@ -1597,6 +1605,17 @@ export class SessionProtocolHandler {
     state.unsubscribePendingUserMessages = () =>
       state.live.listeners.delete(pendingUserMessagesListener);
 
+    state.unsubscribeSubagentActivities = session.onSubagentActivities((message) => {
+      if (this.closed || !this.sessionStates.has(session.sessionId)) {
+        return;
+      }
+      if (state.bufferedSubagentActivities) {
+        state.bufferedSubagentActivities.push(message);
+        return;
+      }
+      this.sendMessage(message);
+    });
+
     this.sessionStates.set(session.sessionId, state);
     try {
       this.clientToolRegistration?.attachSession(session.sessionId);
@@ -1657,6 +1676,23 @@ export class SessionProtocolHandler {
     state.bufferedPendingUserMessages = undefined;
     for (const message of bufferedPendingUserMessages) {
       if (message.state.revision > pendingRevision) {
+        this.sendMessage(message);
+      }
+    }
+  }
+
+  private flushBufferedSubagentActivitiesAfter(
+    state: SessionProtocolHandlerSessionState,
+    activitiesRevision: number,
+  ): void {
+    const bufferedSubagentActivities = state.bufferedSubagentActivities;
+    if (!bufferedSubagentActivities) {
+      return;
+    }
+
+    state.bufferedSubagentActivities = undefined;
+    for (const message of bufferedSubagentActivities) {
+      if (message.revision > activitiesRevision) {
         this.sendMessage(message);
       }
     }
@@ -1746,6 +1782,8 @@ export class SessionProtocolHandler {
     state.unsubscribeEphemeral = undefined;
     state.unsubscribePendingUserMessages?.();
     state.unsubscribePendingUserMessages = undefined;
+    state.unsubscribeSubagentActivities?.();
+    state.unsubscribeSubagentActivities = undefined;
   }
 
   private sendMessage(message: SessionProtocolOutgoingMessage): void {

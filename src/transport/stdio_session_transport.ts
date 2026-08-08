@@ -22,6 +22,7 @@ import {
   notifySessionProtocolEphemeralListeners,
   notifySessionProtocolFailureListeners,
   notifySessionProtocolPendingUserMessagesListeners,
+  notifySessionProtocolSubagentActivitiesListeners,
   waitForPromiseOrTimeout,
   withTimeout,
 } from "./session_protocol_transport_helpers.js";
@@ -31,6 +32,7 @@ import type {
   SessionProtocolEphemeralListener,
   SessionProtocolFailureListener,
   SessionProtocolPendingUserMessagesListener,
+  SessionProtocolSubagentActivitiesListener,
   SessionProtocolTransport,
 } from "./session_transport.js";
 
@@ -65,6 +67,8 @@ export class StdioSessionProtocolTransport implements SessionProtocolTransport {
   private readonly ephemeralListeners = new Set<SessionProtocolEphemeralListener>();
   private readonly pendingUserMessagesListeners =
     new Set<SessionProtocolPendingUserMessagesListener>();
+  private readonly subagentActivitiesListeners =
+    new Set<SessionProtocolSubagentActivitiesListener>();
   private readonly clientToolListeners = new Set<SessionProtocolClientToolListener>();
   private readonly failureListeners = new Set<SessionProtocolFailureListener>();
   private readonly pendingRequests = new PendingSessionProtocolRequests();
@@ -161,6 +165,13 @@ export class StdioSessionProtocolTransport implements SessionProtocolTransport {
     };
   }
 
+  onSubagentActivities(listener: SessionProtocolSubagentActivitiesListener): () => void {
+    this.subagentActivitiesListeners.add(listener);
+    return () => {
+      this.subagentActivitiesListeners.delete(listener);
+    };
+  }
+
   onClientTool(listener: SessionProtocolClientToolListener): () => void {
     this.clientToolListeners.add(listener);
     return () => {
@@ -225,6 +236,7 @@ export class StdioSessionProtocolTransport implements SessionProtocolTransport {
     this.deltaListeners.clear();
     this.ephemeralListeners.clear();
     this.pendingUserMessagesListeners.clear();
+    this.subagentActivitiesListeners.clear();
     this.clientToolListeners.clear();
     this.failureListeners.clear();
 
@@ -387,6 +399,13 @@ export class StdioSessionProtocolTransport implements SessionProtocolTransport {
           ignoreListenerErrors: true,
         },
       );
+      return;
+    }
+
+    if (message.type === "session.subagentActivities") {
+      notifySessionProtocolSubagentActivitiesListeners(this.subagentActivitiesListeners, message, {
+        ignoreListenerErrors: true,
+      });
       return;
     }
 

@@ -498,15 +498,16 @@ function createToolQueuedEvent(
 }
 
 function createToolBlockedEvent(toolCall: ToolCall, reason: string): ToolActivityAgentEvent {
+  const toolName = toolCall.name.replace(/\s+/g, " ").trim() || "(invalid tool name)";
   return {
     type: "tool_activity",
     activity: {
       type: "tool_call_blocked",
       toolCallId: toolCall.id,
-      toolName: toolCall.name,
+      toolName,
       presentation: buildToolRunPresentation({
-        toolName: toolCall.name,
-        subject: toolCall.name,
+        toolName,
+        subject: toolName,
         details: [{ text: reason }],
       }),
       reason,

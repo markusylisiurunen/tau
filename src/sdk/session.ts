@@ -9,6 +9,7 @@ import type {
   SessionProtocolSampleParams,
 } from "../protocol/session_protocol.js";
 import {
+  applySessionProtocolSubagentActivitiesMessage,
   SESSION_PROTOCOL_VERSION,
   validateSessionProtocolParams,
 } from "../protocol/session_protocol.js";
@@ -27,6 +28,8 @@ import type {
   TauSdkSession,
   TauSdkSessionClient,
   TauSdkSessionUserMessageOptions,
+  TauSdkSubagentActivitiesListener,
+  TauSdkSubagentActivitiesState,
   TauSdkTransportClientOptions,
 } from "./types.js";
 
@@ -91,6 +94,10 @@ class TauSdkClientImpl implements TauSdkClient {
 
   subscribePendingUserMessages(listener: TauSdkPendingUserMessagesListener): () => void {
     return this.transport.onPendingUserMessages(listener);
+  }
+
+  subscribeSubagentActivities(listener: TauSdkSubagentActivitiesListener): () => void {
+    return this.transport.onSubagentActivities(listener);
   }
 
   createObservedSession(sessionId: string): TauSdkSessionImpl {
@@ -486,6 +493,7 @@ class TauSdkSessionClientImpl implements TauSdkSessionClient {
       session.assertSessionId(initialState.snapshot.sessionId);
       session.setInitialSnapshot(initialState.snapshot);
       session.setInitialPendingUserMessages(initialState.pendingUserMessages);
+      session.setInitialSubagentActivities(initialState.subagentActivities);
       session.discardBufferedDeltasThrough(initialState.snapshot.revision);
       return session;
     } catch (error) {
@@ -500,12 +508,17 @@ class TauSdkSessionImpl implements TauSdkSession {
   private readonly deltaListeners = new Set<TauSdkDeltaListener>();
   private readonly ephemeralListeners = new Set<TauSdkEphemeralListener>();
   private readonly pendingUserMessagesListeners = new Set<TauSdkPendingUserMessagesListener>();
+  private readonly subagentActivitiesListeners = new Set<TauSdkSubagentActivitiesListener>();
   private readonly bufferedDeltas: Parameters<TauSdkDeltaListener>[0][] = [];
+  private readonly bufferedSubagentActivities: Parameters<TauSdkSubagentActivitiesListener>[0][] =
+    [];
   private readonly unsubscribeClientDeltas: () => void;
   private readonly unsubscribeClientEphemeral: () => void;
   private readonly unsubscribeClientPendingUserMessages: () => void;
+  private readonly unsubscribeClientSubagentActivities: () => void;
   private initialSnapshot?: SessionProtocolResultByMethod["session.snapshot"];
   private pendingUserMessagesValue?: Parameters<TauSdkPendingUserMessagesListener>[0]["state"];
+  private subagentActivitiesValue?: TauSdkSubagentActivitiesState;
 
   constructor(
     private readonly client: TauSdkClientImpl,
@@ -517,6 +530,9 @@ class TauSdkSessionImpl implements TauSdkSession {
     );
     this.unsubscribeClientPendingUserMessages = this.client.subscribePendingUserMessages(
       (message) => this.handlePendingUserMessages(message),
+    );
+    this.unsubscribeClientSubagentActivities = this.client.subscribeSubagentActivities((message) =>
+      this.handleSubagentActivities(message),
     );
   }
 
@@ -530,6 +546,14 @@ class TauSdkSessionImpl implements TauSdkSession {
       throw new TauSessionClientError("tau sdk pending user messages are not initialized");
     }
     return structuredClone(this.pendingUserMessagesValue);
+  }
+
+  subagentActivities(): TauSdkSubagentActivitiesState {
+    this.assertActive();
+    if (!this.subagentActivitiesValue) {
+      throw new TauSessionClientError("tau sdk subagent activities are not initialized");
+    }
+    return structuredClone(this.subagentActivitiesValue);
   }
 
   onDelta(listener: TauSdkDeltaListener): () => void {
@@ -572,6 +596,31 @@ class TauSdkSessionImpl implements TauSdkSession {
     }
     return () => {
       this.pendingUserMessagesListeners.delete(listener);
+    };
+  }
+
+  onSubagentActivities(listener: TauSdkSubagentActivitiesListener): () => void {
+    this.assertActive();
+    this.subagentActivitiesListeners.add(listener);
+    if (this.subagentActivitiesValue) {
+      try {
+        listener({
+          version: SESSION_PROTOCOL_VERSION,
+          type: "session.subagentActivities",
+          sessionId: this.sessionId,
+          revision: this.subagentActivitiesValue.revision,
+          changes: Object.entries(this.subagentActivitiesValue.agents).map(([agentId, state]) => ({
+            type: "agent.set",
+            agentId,
+            state: structuredClone(state),
+          })),
+        });
+      } catch {
+        // SDK subagent-activity listeners must not break session event delivery.
+      }
+    }
+    return () => {
+      this.subagentActivitiesListeners.delete(listener);
     };
   }
 
@@ -815,6 +864,31 @@ class TauSdkSessionImpl implements TauSdkSession {
     }
   }
 
+  private handleSubagentActivities(message: Parameters<TauSdkSubagentActivitiesListener>[0]): void {
+    if (this.isUnobserved || message.sessionId !== this.sessionId) {
+      return;
+    }
+    if (!this.subagentActivitiesValue) {
+      this.bufferedSubagentActivities.push(structuredClone(message));
+      return;
+    }
+    if (message.revision <= this.subagentActivitiesValue.revision) {
+      return;
+    }
+
+    this.subagentActivitiesValue = applySessionProtocolSubagentActivitiesMessage(
+      this.subagentActivitiesValue,
+      message,
+    );
+    for (const listener of [...this.subagentActivitiesListeners]) {
+      try {
+        listener(message);
+      } catch {
+        // SDK subagent-activity listeners must not break session event delivery.
+      }
+    }
+  }
+
   assertSessionId(sessionId: string): void {
     if (sessionId !== this.sessionId) {
       throw new TauSessionClientError(
@@ -835,6 +909,13 @@ class TauSdkSessionImpl implements TauSdkSession {
     }
   }
 
+  setInitialSubagentActivities(state: TauSdkSubagentActivitiesState): void {
+    this.subagentActivitiesValue = structuredClone(state);
+    for (const message of this.bufferedSubagentActivities.splice(0)) {
+      this.handleSubagentActivities(message);
+    }
+  }
+
   discardBufferedDeltasThrough(revision: number): void {
     const retained = this.bufferedDeltas.filter((delta) => delta.toRevision > revision);
     this.bufferedDeltas.splice(0, this.bufferedDeltas.length, ...retained);
@@ -848,10 +929,13 @@ class TauSdkSessionImpl implements TauSdkSession {
     this.unsubscribeClientDeltas();
     this.unsubscribeClientEphemeral();
     this.unsubscribeClientPendingUserMessages();
+    this.unsubscribeClientSubagentActivities();
     this.deltaListeners.clear();
     this.ephemeralListeners.clear();
     this.pendingUserMessagesListeners.clear();
+    this.subagentActivitiesListeners.clear();
     this.bufferedDeltas.splice(0);
+    this.bufferedSubagentActivities.splice(0);
   }
 
   private async runExecRequest<T>(

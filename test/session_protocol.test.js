@@ -2,17 +2,25 @@ import { describe, expect, it } from "vitest";
 import { buildToolRunPresentation } from "../dist/core/tools/presentation.js";
 import {
   applySessionProtocolDelta,
+  applySessionProtocolSubagentActivitiesMessage,
   createSessionProtocolDeltaMessage,
   createSessionProtocolEphemeralMessage,
   createSessionProtocolErrorResponse,
   createSessionProtocolPendingUserMessagesMessage,
   createSessionProtocolReadyMessage,
   createSessionProtocolRequest,
+  createSessionProtocolSubagentActivitiesMessage,
   createSessionProtocolSuccessResponse,
   parseSessionProtocolOutgoingLine,
   parseSessionProtocolRequestLine,
   projectSessionProtocolNoticePresentation,
   SESSION_PROTOCOL_ERROR_CODES,
+  SESSION_PROTOCOL_MAX_SUBAGENT_ASSISTANT_TEXT_BYTES,
+  SESSION_PROTOCOL_MAX_SUBAGENT_NOTICE_CONTENT_BYTES,
+  SESSION_PROTOCOL_MAX_SUBAGENT_SHORT_TEXT_BYTES,
+  SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_DETAILS_BYTES,
+  SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_METADATA_BYTES,
+  SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_SUBJECT_BYTES,
   SESSION_PROTOCOL_METHODS,
   SESSION_PROTOCOL_VERSION,
   validateSessionProtocolParams,
@@ -1225,12 +1233,14 @@ describe("session_protocol", () => {
       validateSessionProtocolResult("session.observe", {
         snapshot,
         pendingUserMessages: { revision: 1, messages: [] },
+        subagentActivities: { revision: 1, agents: {} },
       }),
     ).toEqual({
       ok: true,
       value: {
         snapshot,
         pendingUserMessages: { revision: 1, messages: [] },
+        subagentActivities: { revision: 1, agents: {} },
       },
     });
     expect(validateSessionProtocolResult("session.observe", snapshot)).toEqual({
@@ -2039,6 +2049,182 @@ describe("session_protocol", () => {
         }),
       }),
     );
+  });
+
+  it("parses and constructs typed subagent activity state", () => {
+    const message = createSessionProtocolSubagentActivitiesMessage({
+      sessionId: "session-1",
+      revision: 3,
+      changes: [
+        {
+          type: "agent.set",
+          agentId: "agent-1",
+          state: {
+            runRevision: 2,
+            activities: [
+              { type: "assistant", text: "I found the call sites." },
+              {
+                type: "tool",
+                toolName: "bash",
+                outcome: "succeeded",
+                presentation: {
+                  action: "ran",
+                  subject: "npm test",
+                  subjectWrap: "character",
+                  details: [],
+                  metadata: ["exit 0"],
+                },
+              },
+              { type: "notice", severity: "warn", title: "retrying" },
+            ],
+          },
+        },
+      ],
+    });
+
+    expect(parseSessionProtocolOutgoingLine(JSON.stringify(message))).toEqual({
+      ok: true,
+      message,
+    });
+    const baseline = {
+      revision: 2,
+      agents: {
+        "agent-0": { runRevision: 1, activities: [{ type: "assistant", text: "retained" }] },
+      },
+    };
+    const updated = applySessionProtocolSubagentActivitiesMessage(baseline, message);
+    expect(updated).toEqual({
+      revision: 3,
+      agents: {
+        ...baseline.agents,
+        "agent-1": message.changes[0].state,
+      },
+    });
+    expect(
+      applySessionProtocolSubagentActivitiesMessage(
+        updated,
+        createSessionProtocolSubagentActivitiesMessage({
+          sessionId: "session-1",
+          revision: 4,
+          changes: [{ type: "agent.remove", agentId: "agent-0" }],
+        }),
+      ),
+    ).toEqual({
+      revision: 4,
+      agents: { "agent-1": message.changes[0].state },
+    });
+
+    const createActivityMessage = (activity) =>
+      createSessionProtocolSubagentActivitiesMessage({
+        sessionId: "session-1",
+        revision: 4,
+        changes: [
+          {
+            type: "agent.set",
+            agentId: "agent-1",
+            state: { runRevision: 2, activities: [activity] },
+          },
+        ],
+      });
+    const createToolActivity = (presentation = {}) => ({
+      type: "tool",
+      toolName: "edit",
+      outcome: "succeeded",
+      presentation: {
+        action: "edited",
+        subject: "src/large.ts",
+        subjectWrap: "character",
+        details: [],
+        metadata: [],
+        ...presentation,
+      },
+    });
+    const createToolDetailsMessage = (details) =>
+      createActivityMessage(createToolActivity({ details }));
+    expect(() =>
+      createToolDetailsMessage(
+        Array.from({ length: 100 }, (_, index) => ({
+          text: `short line ${index}`,
+          wrap: "character",
+        })),
+      ),
+    ).not.toThrow();
+    const oversizedDetails = Array.from({ length: 100 }, (_, index) => ({
+      text: `${index} ${"x".repeat(500)}`,
+      wrap: "character",
+    }));
+    expect(
+      Buffer.byteLength(oversizedDetails.map((detail) => detail.text).join("\n"), "utf8"),
+    ).toBeGreaterThan(SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_DETAILS_BYTES);
+    expect(() => createToolDetailsMessage(oversizedDetails)).toThrow(
+      "session protocol subagent activities message is invalid",
+    );
+    expect(() =>
+      createActivityMessage(
+        createToolActivity({
+          subject: "😀".repeat(SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_SUBJECT_BYTES / 4 + 1),
+        }),
+      ),
+    ).toThrow("session protocol subagent activities message is invalid");
+    expect(() =>
+      createActivityMessage(
+        createToolActivity({
+          metadata: ["😀".repeat(SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_METADATA_BYTES / 4 + 1)],
+        }),
+      ),
+    ).toThrow("session protocol subagent activities message is invalid");
+    expect(() =>
+      createActivityMessage({
+        type: "tool",
+        toolName: "😀".repeat(SESSION_PROTOCOL_MAX_SUBAGENT_SHORT_TEXT_BYTES / 4 + 1),
+        outcome: "succeeded",
+        presentation: createToolActivity().presentation,
+      }),
+    ).toThrow("session protocol subagent activities message is invalid");
+    expect(() =>
+      createActivityMessage({
+        type: "assistant",
+        text: "😀".repeat(SESSION_PROTOCOL_MAX_SUBAGENT_ASSISTANT_TEXT_BYTES / 4 + 1),
+      }),
+    ).toThrow("session protocol subagent activities message is invalid");
+    expect(() =>
+      createActivityMessage({
+        type: "notice",
+        severity: "warn",
+        title: "notice",
+        content: ["😀".repeat(SESSION_PROTOCOL_MAX_SUBAGENT_NOTICE_CONTENT_BYTES / 4 + 1)],
+      }),
+    ).toThrow("session protocol subagent activities message is invalid");
+
+    expect(() =>
+      createSessionProtocolSubagentActivitiesMessage({
+        sessionId: "session-1",
+        revision: 4,
+        changes: [
+          {
+            type: "agent.set",
+            agentId: "agent-1",
+            state: {
+              runRevision: 2,
+              activities: Array.from({ length: 65 }, () => ({
+                type: "assistant",
+                text: "working",
+              })),
+            },
+          },
+        ],
+      }),
+    ).toThrow("session protocol subagent activities message is invalid");
+    expect(() =>
+      createSessionProtocolSubagentActivitiesMessage({
+        sessionId: "session-1",
+        revision: 4,
+        changes: [
+          { type: "agent.remove", agentId: "agent-1" },
+          { type: "agent.remove", agentId: "agent-1" },
+        ],
+      }),
+    ).toThrow("session protocol subagent activities message is invalid");
   });
 
   it("builds ready/delta/error messages with versioned envelopes", () => {

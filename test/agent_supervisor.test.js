@@ -145,6 +145,12 @@ describe("AgentSupervisor", () => {
     expect(events.filter((event) => event.type === "subagent_spawned")).toHaveLength(1);
     expect(events.filter((event) => event.type === "subagent_run_started")).toHaveLength(1);
     expect(events.filter((event) => event.type === "subagent_finished")).toHaveLength(2);
+    expect(
+      events.filter((event) => event.type === "subagent_activity").map((event) => event.activity),
+    ).toEqual([
+      { type: "assistant", text: "first result" },
+      { type: "assistant", text: "follow-up result" },
+    ]);
     expect(recordUsage).toHaveBeenCalledTimes(2);
     for (const [entry] of recordUsage.mock.calls) {
       expect(entry.agent).toEqual({ type: "subagent", name: "default" });
@@ -264,7 +270,11 @@ describe("AgentSupervisor", () => {
       truncated: false,
     });
     const model = { ...personas[0].model, contextWindow: 100 };
-    const supervisor = new AgentSupervisor({ onEvent: async () => {}, recordUsage: () => {} });
+    const events = [];
+    const supervisor = new AgentSupervisor({
+      onEvent: async (event) => events.push(event),
+      recordUsage: () => {},
+    });
     const spawned = supervisor.spawn(
       createSpawnOptions({
         backend,
@@ -346,6 +356,24 @@ describe("AgentSupervisor", () => {
       ),
     ).toBe(true);
     expect(backend.runBash).toHaveBeenCalledTimes(2);
+    expect(
+      events
+        .filter((event) => event.type === "subagent_activity" && event.activity.type === "tool")
+        .map((event) => event.activity),
+    ).toEqual([
+      expect.objectContaining({
+        type: "tool",
+        toolName: "bash",
+        outcome: "succeeded",
+        presentation: expect.objectContaining({ action: "ran", subject: "printf first" }),
+      }),
+      expect.objectContaining({
+        type: "tool",
+        toolName: "bash",
+        outcome: "succeeded",
+        presentation: expect.objectContaining({ action: "ran", subject: "printf second" }),
+      }),
+    ]);
   });
 
   it("interrupts a child before its startup event finishes", async () => {
@@ -513,7 +541,7 @@ describe("AgentSupervisor", () => {
     const supervisor = new AgentSupervisor({
       recordUsage: () => {},
       onEvent: async (event) => {
-        if (event.type === "subagent_activity" && event.text === "assistant: thinking") {
+        if (event.type === "subagent_spawned") {
           await progressGate;
         }
       },

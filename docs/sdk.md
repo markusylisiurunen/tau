@@ -242,6 +242,9 @@ options:
 - `subscribePendingUserMessages(listener)`
   - subscribes to all `session.pendingUserMessages` state messages on this client connection
   - returns an unsubscribe function
+- `subscribeSubagentActivities(listener)`
+  - subscribes to all `session.subagentActivities` state messages on this client connection
+  - returns an unsubscribe function
 - `close()`
   - aborts active client-tool handlers and awaits them while closing the transport, then propagates any transport close error
   - for `createTauSdkClient()`, also shuts down the owned in-process host after persisting live session snapshots
@@ -268,6 +271,11 @@ options:
 - `onPendingUserMessages(listener)`
   - subscribes to replacements of only the pending-message state for this session id
   - immediately receives the current state
+- `subagentActivities()`
+  - returns the latest independently revisioned supervised-subagent activity state
+- `onSubagentActivities(listener)`
+  - subscribes to complete per-agent activity replacements and removals for this session id
+  - immediately receives the current agents as `agent.set` changes
 - `onDelta(listener)`
   - subscribes to streamed `session.delta` messages for this session id only
   - replays any deltas received by this session facade before the first local listener was attached
@@ -401,7 +409,7 @@ const second = await session.sample({
 
 ```json
 {
-  "version": 10,
+  "version": 11,
   "type": "session.delta",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "fromRevision": 1,
@@ -432,7 +440,31 @@ const unsubscribePendingUserMessages = session.onPendingUserMessages(
 );
 ```
 
-`session.observe` returns the initial snapshot and pending-message baseline together before the SDK session resolves. Pending-message revisions are independent from snapshot revisions, and each later event replaces only the pending-message list. Pending messages survive client detach but are discarded when the host restarts or the session is recovered from disk.
+`session.observe` returns the initial snapshot, pending-message baseline, and subagent-activity baseline together before the SDK session resolves. Pending-message revisions are independent from snapshot revisions, and each later event replaces only the pending-message list. Pending messages survive client detach but are discarded when the host restarts or the session is recovered from disk.
+
+## subagent activities
+
+`subagentActivities()` and `onSubagentActivities()` expose the authoritative transient activity lists for supervised subagents:
+
+```ts
+console.log(session.subagentActivities().agents);
+
+const unsubscribeSubagentActivities = session.onSubagentActivities(
+  (message) => {
+    for (const change of message.changes) {
+      if (change.type === "agent.remove") {
+        console.log("removed", change.agentId);
+        continue;
+      }
+      for (const activity of change.state.activities) {
+        console.log(change.agentId, change.state.runRevision, activity.type);
+      }
+    }
+  },
+);
+```
+
+`session.observe` supplies the complete baseline used by `subagentActivities()`. Later messages replace the complete current-run list only for each changed agent or explicitly remove an agent; unchanged agents are not resent. A run contains at most the latest 64 typed assistant, settled-tool, and notice activities; follow-up runs reset the list. Activity fields use UTF-8 content limits: 512 bytes for short labels, names, and titles, 4 KiB for tool subjects, 32 KiB for assistant text, 32 KiB across tool-detail text, 8 KiB across tool metadata, and 32 KiB across notice content. Scalars are middle-truncated, while collections preserve entries from both ends around an omission marker. Typed tool activities omit a dedicated `toolCallId` field, although bounded diagnostic notice text may mention one. The state is independent from the durable session snapshot, survives client detach while the hosted session remains in memory, and is discarded on host restart or recovery. Clients decide how to render activities and whether to show completed agents.
 
 ## ephemeral events
 

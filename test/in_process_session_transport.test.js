@@ -79,6 +79,12 @@ function createHostedSession(sessionId, sessions, options = {}) {
     onEphemeral() {
       return () => {};
     },
+    subagentActivities() {
+      return { revision: 1, agents: {} };
+    },
+    onSubagentActivities() {
+      return () => {};
+    },
     session: {
       addUserText(text, options) {
         const id = options?.historyEntryId ?? `history-${nextHistoryEntryId++}`;

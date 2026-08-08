@@ -377,8 +377,11 @@ export async function runNookSetup(args: NookSetupArgs): Promise<void> {
     stdout("Configure DNS for:");
     stdout(`  ${args.domain}`);
     stdout("");
-    stdout("Configure Cloudflare Access for this hostname with application audience:");
-    stdout(`  ${args.accessAud}`);
+    stdout("Configure Cloudflare Access for this control-plane path:");
+    stdout(`  https://${args.domain}/__nook/*`);
+    stdout(`  application audience: ${args.accessAud}`);
+    stdout("  disable the Cookie Path Attribute");
+    stdout("  add user Allow and service-token Service Auth policies");
     stdout("");
     stdout("Add this to Tau config after creating a Cloudflare Access service token:");
     stdout(

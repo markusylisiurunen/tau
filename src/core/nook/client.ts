@@ -168,6 +168,14 @@ export class NookClient {
     return `${this.baseUrl()}/__nook/api/templates/${encodeURIComponent(name)}`;
   }
 
+  private siteKvApiUrl(site: string): string {
+    const validation = validateNookSiteSlug(site);
+    if (!validation.ok) {
+      throw new Error(validation.message);
+    }
+    return `${this.baseUrl()}/__nook/api/sites/${encodeURIComponent(site)}/kv`;
+  }
+
   private authHeaders(): Record<string, string> {
     const secret = getNookAccessClientSecret(this.config, this.env);
     if (!this.config.accessClientId || !secret) {
@@ -484,13 +492,13 @@ export class NookClient {
 
   async getKv(site: string, key: string): Promise<unknown> {
     const result = await this.requestJson<{ value: unknown }>(
-      `${this.siteUrl(site)}/__nook/kv/${encodeURIComponent(key)}`,
+      `${this.siteKvApiUrl(site)}/${encodeURIComponent(key)}`,
     );
     return result.value;
   }
 
   async putKv(site: string, key: string, value: unknown): Promise<{ site: string; key: string }> {
-    return await this.requestJson(`${this.siteUrl(site)}/__nook/kv/${encodeURIComponent(key)}`, {
+    return await this.requestJson(`${this.siteKvApiUrl(site)}/${encodeURIComponent(key)}`, {
       method: "PUT",
       body: JSON.stringify(value),
     });
@@ -500,13 +508,13 @@ export class NookClient {
     site: string,
     key: string,
   ): Promise<{ site: string; key: string; deleted: boolean }> {
-    return await this.requestJson(`${this.siteUrl(site)}/__nook/kv/${encodeURIComponent(key)}`, {
+    return await this.requestJson(`${this.siteKvApiUrl(site)}/${encodeURIComponent(key)}`, {
       method: "DELETE",
     });
   }
 
   async listKv(site: string, prefix?: string): Promise<NookKvListResult> {
-    const url = new URL(`${this.siteUrl(site)}/__nook/kv`);
+    const url = new URL(this.siteKvApiUrl(site));
     if (prefix) {
       url.searchParams.set("prefix", prefix);
     }

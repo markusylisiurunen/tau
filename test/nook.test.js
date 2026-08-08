@@ -207,6 +207,44 @@ describe("nook client cancellation", () => {
   });
 });
 
+describe("nook KV client", () => {
+  it("uses the Access-protected management API", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ value: { theme: "dark" } }))
+      .mockResolvedValueOnce(Response.json({ key: "settings" }))
+      .mockResolvedValueOnce(Response.json({ key: "settings", deleted: true }))
+      .mockResolvedValueOnce(Response.json({ site: "demo", keys: [] }));
+    const client = new NookClient({
+      config: {
+        domain: "nook.example.com",
+        accessClientId: "client-id",
+        accessClientSecret: "client-secret",
+      },
+      fetchImpl,
+    });
+
+    await client.getKv("demo", "todos/1");
+    await client.putKv("demo", "settings", { theme: "dark" });
+    await client.deleteKv("demo", "settings");
+    await client.listKv("demo", "todos/");
+
+    expect(fetchImpl.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual([
+      "/__nook/api/sites/demo/kv/todos%2F1",
+      "/__nook/api/sites/demo/kv/settings",
+      "/__nook/api/sites/demo/kv/settings",
+      "/__nook/api/sites/demo/kv",
+    ]);
+    expect(new URL(String(fetchImpl.mock.calls[3][0])).searchParams.get("prefix")).toBe("todos/");
+    for (const [, init] of fetchImpl.mock.calls) {
+      expect(init.headers).toMatchObject({
+        "CF-Access-Client-Id": "client-id",
+        "CF-Access-Client-Secret": "client-secret",
+      });
+    }
+  });
+});
+
 describe("nook site copy", () => {
   it("copies verified active deployment files into an existing empty directory", async () => {
     const directory = await mkdtemp(join(tmpdir(), "tau-nook-site-copy-test-"));
@@ -434,7 +472,7 @@ describe("nook worker", () => {
     expect([...storage.records.keys()].filter((key) => key.includes("starter"))).toEqual([]);
   });
 
-  it("accepts Cloudflare Access JWTs verified with jose remote JWKS", async () => {
+  it("uses verified Access JWTs for the control plane and private sites", async () => {
     const teamDomain = "https://team.cloudflareaccess.com";
     const audience = "aud";
     const { publicKey, privateKey } = await generateKeyPair("RS256");
@@ -454,31 +492,88 @@ describe("nook worker", () => {
     });
 
     const registryFetch = vi.fn(async () => Response.json({ sites: [] }));
+    const siteFetch = vi.fn(async (request) => {
+      const url = new URL(request.url);
+      if (url.pathname === "/active") {
+        return Response.json({
+          deploymentId: "dep_1",
+          public: false,
+          files: [{ path: "/app.js", contentType: "application/javascript" }],
+        });
+      }
+      if (url.pathname === "/kv/todos%2Fsettings") {
+        expect(request.headers.get("x-nook-actor")).toBe("user@example.com");
+        return Response.json({ value: { theme: "dark" } });
+      }
+      return Response.json({ error: { message: "unexpected" } }, { status: 404 });
+    });
     const env = {
-      ASSETS: {},
+      ASSETS: {
+        get: vi.fn(async () => ({
+          body: new Response("console.log('private');").body,
+          httpMetadata: { contentType: "application/javascript" },
+        })),
+      },
       REGISTRY_DO: {
         idFromName: (name) => name,
         get: () => ({ fetch: registryFetch }),
       },
       SITE_DO: {
         idFromName: (name) => name,
-        get: () => ({ fetch: vi.fn() }),
+        get: () => ({ fetch: siteFetch }),
       },
       NOOK_DOMAIN: "nook.example.com",
       NOOK_ACCESS_TEAM_DOMAIN: teamDomain,
       NOOK_ACCESS_AUD: audience,
     };
 
-    const response = await worker.fetch(
+    const apiResponse = await worker.fetch(
       new Request("https://nook.example.com/__nook/api/sites", {
         headers: { "Cf-Access-Jwt-Assertion": token },
       }),
       env,
     );
-
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ sites: [] });
+    expect(apiResponse.status).toBe(200);
+    expect(await apiResponse.json()).toEqual({ sites: [] });
     expect(registryFetch).toHaveBeenCalledOnce();
+
+    const kvResponse = await worker.fetch(
+      new Request("https://nook.example.com/__nook/api/sites/demo/kv/todos%2Fsettings", {
+        headers: { "Cf-Access-Jwt-Assertion": token },
+      }),
+      env,
+    );
+    expect(kvResponse.status).toBe(200);
+    expect(await kvResponse.json()).toEqual({ value: { theme: "dark" } });
+
+    const assetResponse = await worker.fetch(
+      new Request("https://nook.example.com/demo/app.js", {
+        headers: { Cookie: `CF_Authorization=${token}` },
+      }),
+      env,
+    );
+    expect(assetResponse.status).toBe(200);
+    expect(await assetResponse.text()).toBe("console.log('private');");
+
+    const authResponse = await worker.fetch(
+      new Request("https://nook.example.com/__nook/auth?returnTo=%2Fdemo%2Fapp.js%3Ftheme%3Ddark", {
+        headers: { "Cf-Access-Jwt-Assertion": token },
+        redirect: "manual",
+      }),
+      env,
+    );
+    expect(authResponse.status).toBe(303);
+    expect(authResponse.headers.get("location")).toBe(
+      "https://nook.example.com/demo/app.js?theme=dark",
+    );
+
+    const unsafeAuthResponse = await worker.fetch(
+      new Request("https://nook.example.com/__nook/auth?returnTo=https%3A%2F%2Fexample.com%2F", {
+        headers: { "Cf-Access-Jwt-Assertion": token },
+      }),
+      env,
+    );
+    expect(unsafeAuthResponse.status).toBe(400);
   });
 
   it("serves sites from the first path segment", async () => {
@@ -502,6 +597,85 @@ describe("nook worker", () => {
 
     expect(response.status).toBe(308);
     expect(response.headers.get("location")).toBe("https://nook.example.com/demo/");
+  });
+
+  it("serves public site assets without Access identity", async () => {
+    const siteFetch = vi.fn(async () =>
+      Response.json({
+        deploymentId: "dep_1",
+        public: true,
+        files: [{ path: "/app.js", contentType: "application/javascript" }],
+      }),
+    );
+    const assetFetch = vi.fn(async () => ({
+      body: new Response("console.log('public');").body,
+      httpMetadata: { contentType: "application/javascript" },
+    }));
+
+    const response = await worker.fetch(new Request("https://nook.example.com/demo/app.js"), {
+      ASSETS: { get: assetFetch },
+      REGISTRY_DO: {
+        idFromName: (name) => name,
+        get: () => ({ fetch: vi.fn() }),
+      },
+      SITE_DO: {
+        idFromName: (name) => name,
+        get: () => ({ fetch: siteFetch }),
+      },
+      NOOK_DOMAIN: "nook.example.com",
+      NOOK_ACCESS_TEAM_DOMAIN: "https://team.cloudflareaccess.com",
+      NOOK_ACCESS_AUD: "aud",
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("console.log('public');");
+    expect(assetFetch).toHaveBeenCalledWith("sites/demo/deployments/dep_1/app.js");
+  });
+
+  it("redirects anonymous private sites through the Access auth endpoint", async () => {
+    const siteFetch = vi.fn(async () =>
+      Response.json({
+        deploymentId: "dep_1",
+        public: false,
+        files: [{ path: "/index.html", contentType: "text/html; charset=utf-8" }],
+      }),
+    );
+    const env = {
+      ASSETS: {},
+      REGISTRY_DO: {
+        idFromName: (name) => name,
+        get: () => ({ fetch: vi.fn() }),
+      },
+      SITE_DO: {
+        idFromName: (name) => name,
+        get: () => ({ fetch: siteFetch }),
+      },
+      NOOK_DOMAIN: "nook.example.com",
+      NOOK_ACCESS_TEAM_DOMAIN: "https://team.cloudflareaccess.com",
+      NOOK_ACCESS_AUD: "aud",
+    };
+
+    const response = await worker.fetch(
+      new Request("https://nook.example.com/demo/?theme=dark", { redirect: "manual" }),
+      env,
+    );
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe(
+      "https://nook.example.com/__nook/auth?returnTo=%2Fdemo%2F%3Ftheme%3Ddark",
+    );
+
+    const kvResponse = await worker.fetch(
+      new Request("https://nook.example.com/demo/__nook/kv/settings"),
+      env,
+    );
+    expect(kvResponse.status).toBe(401);
+    expect(await kvResponse.json()).toEqual({
+      error: {
+        code: "unauthorized",
+        message: "Authentication required",
+        authUrl: "https://nook.example.com/__nook/auth?returnTo=%2Fdemo%2F__nook%2Fkv%2Fsettings",
+      },
+    });
   });
 
   it("routes browser KV through the path-scoped site Durable Object", async () => {
@@ -668,6 +842,8 @@ describe("nook setup cli parsing", () => {
 
     expect(outputLines).toContain("created R2 bucket tau-nook-assets");
     expect(outputLines).toContain("wrangler deploy streamed output");
+    expect(outputLines).toContain("  https://nook.example.com/__nook/*");
+    expect(outputLines).toContain("  disable the Cookie Path Attribute");
 
     const existingOutputLines = [];
     await runNookSetup({

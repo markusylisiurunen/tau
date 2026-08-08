@@ -226,10 +226,13 @@ const CLIENT_JS = `(() => {
     });
     if (!response.ok) {
       let message = response.statusText;
+      let authUrl;
       try {
         const payload = await response.json();
         message = payload && payload.error && payload.error.message ? payload.error.message : message;
+        authUrl = payload && payload.error && payload.error.authUrl;
       } catch {}
+      if (response.status === 401 && authUrl) window.location.assign(authUrl);
       throw new Error(message);
     }
     if (response.status === 204) return null;
@@ -351,6 +354,51 @@ async function optionalAccessIdentity(request: Request, env: Env): Promise<Ident
   } catch {
     return { actor: "anonymous" };
   }
+}
+
+async function privateAccessIdentity(request: Request, env: Env): Promise<Identity | undefined> {
+  try {
+    return await requireAccessIdentity(request, env);
+  } catch (err) {
+    if (err instanceof ErrorResponse && err.status === 401) return undefined;
+    throw err;
+  }
+}
+
+function accessLoginUrl(request: Request): string {
+  const requestUrl = new URL(request.url);
+  const loginUrl = new URL("/__nook/auth", requestUrl.origin);
+  loginUrl.searchParams.set("returnTo", `${requestUrl.pathname}${requestUrl.search}`);
+  return loginUrl.toString();
+}
+
+function authenticationRequired(request: Request): Response {
+  return json(
+    {
+      error: {
+        code: "unauthorized",
+        message: "Authentication required",
+        authUrl: accessLoginUrl(request),
+      },
+    },
+    401,
+  );
+}
+
+function accessReturnUrl(request: Request): URL | undefined {
+  const requestUrl = new URL(request.url);
+  const returnTo = requestUrl.searchParams.get("returnTo");
+  if (!returnTo) return undefined;
+  let returnUrl: URL;
+  try {
+    returnUrl = new URL(returnTo, requestUrl.origin);
+  } catch {
+    return undefined;
+  }
+  if (returnUrl.origin !== requestUrl.origin || !parseSitePath(returnUrl.pathname)) {
+    return undefined;
+  }
+  return returnUrl;
 }
 
 function validatePathLabel(value: string, label: string): string | undefined {
@@ -692,6 +740,16 @@ async function handleBaseApi(
     });
   }
 
+  const kvMatch = url.pathname.match(/^\/__nook\/api\/sites\/([^/]+)\/kv(\/.*)?$/);
+  if (kvMatch) {
+    const site = decodeURIComponent(kvMatch[1]!);
+    const slugError = validateSlug(site);
+    if (slugError) return error("invalid_slug", slugError, 400);
+    const active = await siteFetch(env, site, "/active");
+    if (!active.ok) return active;
+    return await handleKv(request, env, site, identity, `/__nook/kv${kvMatch[2] ?? ""}`);
+  }
+
   const match = url.pathname.match(
     /^\/__nook\/api\/sites(?:\/([^/]+))?(?:\/deploy\/([^/]+)\/(file|finish)|\/deploy\/start|\/file)?$/,
   );
@@ -907,7 +965,13 @@ async function serveAsset(
   };
   const identity = active.public
     ? await optionalAccessIdentity(request, env)
-    : await requireAccessIdentity(request, env);
+    : await privateAccessIdentity(request, env);
+  if (!identity) {
+    if (sitePath === "/__nook/kv" || sitePath.startsWith("/__nook/kv/")) {
+      return authenticationRequired(request);
+    }
+    return Response.redirect(accessLoginUrl(request), 302);
+  }
 
   if (sitePath === "/__nook/client.js") {
     return new Response(CLIENT_JS, {
@@ -954,7 +1018,18 @@ export default {
       const parsedHost = parseHost(url, env);
       if (!parsedHost) return error("not_found", "Unknown nook host", 404);
 
+      if (url.pathname === "/__nook/auth") {
+        if (request.method !== "GET") {
+          return error("method_not_allowed", "Method not allowed", 405);
+        }
+        await requireAccessIdentity(request, env);
+        const returnUrl = accessReturnUrl(request);
+        if (!returnUrl) return error("invalid_return_url", "Invalid return URL", 400);
+        return Response.redirect(returnUrl.toString(), 303);
+      }
+
       if (url.pathname === "/__nook/skill") {
+        await requireAccessIdentity(request, env);
         return new Response(SKILL_MARKDOWN, {
           headers: { "content-type": "text/markdown; charset=utf-8" },
         });

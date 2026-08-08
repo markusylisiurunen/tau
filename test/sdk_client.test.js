@@ -309,6 +309,7 @@ class FakeSessionProtocolTransport {
   requests = [];
   listeners = new Set();
   pendingUserMessagesListeners = new Set();
+  subagentActivitiesListeners = new Set();
   clientToolListeners = new Set();
   failureListeners = new Set();
   initializeParams;
@@ -334,6 +335,13 @@ class FakeSessionProtocolTransport {
     };
   }
 
+  onSubagentActivities(listener) {
+    this.subagentActivitiesListeners.add(listener);
+    return () => {
+      this.subagentActivitiesListeners.delete(listener);
+    };
+  }
+
   onClientTool(listener) {
     this.clientToolListeners.add(listener);
     return () => {
@@ -356,6 +364,12 @@ class FakeSessionProtocolTransport {
 
   emitPendingUserMessages(message) {
     for (const listener of this.pendingUserMessagesListeners) {
+      listener(message);
+    }
+  }
+
+  emitSubagentActivities(message) {
+    for (const listener of this.subagentActivitiesListeners) {
       listener(message);
     }
   }
@@ -402,10 +416,20 @@ function createPendingUserMessagesMessage(sessionId, messages = [], revision = 1
   };
 }
 
+function createSubagentActivitiesMessage(sessionId, state) {
+  return {
+    version: SESSION_PROTOCOL_VERSION,
+    type: "session.subagentActivities",
+    sessionId,
+    state,
+  };
+}
+
 function createObserveResult(sessionId, snapshot = createSnapshot(sessionId)) {
   return {
     snapshot,
     pendingUserMessages: { revision: 1, messages: [] },
+    subagentActivities: { revision: 1, agents: {} },
   };
 }
 
@@ -565,6 +589,31 @@ describe("sdk_client", () => {
       messages: [{ id: "queue-1", mode: "queue", text: "queued" }],
     });
     expect(pendingUserMessageStates.at(-1)).toEqual(readySession.pendingUserMessages());
+
+    expect(readySession.subagentActivities()).toEqual({ revision: 1, agents: {} });
+    const subagentActivityStates = [];
+    readySession.onSubagentActivities((message) => subagentActivityStates.push(message.state));
+    transport.emitSubagentActivities(
+      createSubagentActivitiesMessage("session-1", {
+        revision: 2,
+        agents: {
+          "agent-1": {
+            runRevision: 1,
+            activities: [{ type: "assistant", text: "working" }],
+          },
+        },
+      }),
+    );
+    expect(readySession.subagentActivities()).toEqual({
+      revision: 2,
+      agents: {
+        "agent-1": {
+          runRevision: 1,
+          activities: [{ type: "assistant", text: "working" }],
+        },
+      },
+    });
+    expect(subagentActivityStates.at(-1)).toEqual(readySession.subagentActivities());
 
     await expect(readySession.submit("hello", { historyEntryId: "entry-custom" })).resolves.toEqual(
       {

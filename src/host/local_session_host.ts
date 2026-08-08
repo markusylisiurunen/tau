@@ -19,7 +19,7 @@ import type { RuntimePromptBootstrap } from "../core/runtime/runtime_bootstrap.j
 import type { SessionPromptComposition } from "../core/runtime/session_prompt_composer.js";
 import { formatSteeringUserMessage } from "../core/runtime/steering.js";
 import { buildGoalContinuationText, prependGoalPolicy } from "../core/session/goal.js";
-import { SUBAGENT_ACTIVITY_FACET_KIND, type SubagentUiEvent } from "../core/subagents/types.js";
+import type { SubagentEvent } from "../core/subagents/types.js";
 import type { ToolActivity } from "../core/tools/activity.js";
 import { buildToolRunPresentation, TOOL_UI_FACET_VERSION } from "../core/tools/presentation.js";
 import type { Persona, ReasoningEffort, Skill } from "../core/types.js";
@@ -78,6 +78,8 @@ import type {
   SessionProtocolSettingsUpdateResult,
   SessionProtocolSnapshot,
   SessionProtocolStartGoalResult,
+  SessionProtocolSubagentActivitiesMessage,
+  SessionProtocolSubagentActivitiesState,
   SessionProtocolSubagentSnapshot,
   SessionProtocolTimelineItem,
   SessionProtocolTimelineNotice,
@@ -90,7 +92,9 @@ import {
   applySessionProtocolDelta,
   createSessionProtocolDeltaMessage,
   createSessionProtocolEphemeralMessage,
+  createSessionProtocolSubagentActivitiesMessage,
   projectSessionProtocolNoticePresentation,
+  SESSION_PROTOCOL_MAX_SUBAGENT_ACTIVITIES,
 } from "../protocol/session_protocol.js";
 import { LEGACY_SESSION_MODEL_CONTEXT_KEY } from "../store/session_snapshot_migrations.js";
 import type { SessionStore } from "../store/session_store.js";
@@ -648,6 +652,14 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   private readonly ephemeralListeners = new Set<
     (message: SessionProtocolEphemeralMessage) => void
   >();
+  private readonly subagentActivitiesByAgent = new Map<
+    string,
+    SessionProtocolSubagentActivitiesState["agents"][string]
+  >();
+  private readonly subagentActivitiesListeners = new Set<
+    (message: SessionProtocolSubagentActivitiesMessage) => void
+  >();
+  private subagentActivitiesRevision = 1;
   private readonly ephemeralAgentSessions = new Map<string, HostedEphemeralAgentSession>();
   private pathAutocompleteCache?: {
     expiresAt: number;
@@ -732,6 +744,22 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     this.ephemeralListeners.add(handler);
     return () => {
       this.ephemeralListeners.delete(handler);
+    };
+  }
+
+  subagentActivities(): SessionProtocolSubagentActivitiesState {
+    return {
+      revision: this.subagentActivitiesRevision,
+      agents: structuredClone(Object.fromEntries(this.subagentActivitiesByAgent)),
+    };
+  }
+
+  onSubagentActivities(
+    handler: (message: SessionProtocolSubagentActivitiesMessage) => void,
+  ): () => void {
+    this.subagentActivitiesListeners.add(handler);
+    return () => {
+      this.subagentActivitiesListeners.delete(handler);
     };
   }
 
@@ -1862,11 +1890,21 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       }
     }
     if (options.removeMissingAgents) {
+      let activitiesChanged = false;
       for (const id of this.agents.keys()) {
         if (!this.session.hasSubagent(id)) {
           this.agents.delete(id);
           this.agentCostTotals.delete(id);
         }
+      }
+      for (const id of this.subagentActivitiesByAgent.keys()) {
+        if (!this.session.hasSubagent(id)) {
+          this.subagentActivitiesByAgent.delete(id);
+          activitiesChanged = true;
+        }
+      }
+      if (activitiesChanged) {
+        this.publishSubagentActivities();
       }
     }
 
@@ -2161,8 +2199,8 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     return JSON.stringify(current) === JSON.stringify(next) ? revision : revision + 1;
   }
 
-  async recordSubagentEvent(event: SubagentUiEvent): Promise<void> {
-    await this.enqueueMutation(() => this.recordSubagentUiEvent(event));
+  async recordSubagentEvent(event: SubagentEvent): Promise<void> {
+    await this.enqueueMutation(() => this.applySubagentEvent(event));
   }
 
   async enqueueRuntimeEvent(event: AgentEvent): Promise<void> {
@@ -2819,43 +2857,59 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     );
   }
 
-  private async recordSubagentUiEvent(event: SubagentUiEvent): Promise<void> {
+  private async applySubagentEvent(event: SubagentEvent): Promise<void> {
     const agent = agentRunFromSubagentEvent(event);
-    const previousCost = this.agentCostTotals.get(agent.id) ?? 0;
-    this.costTotal += Math.max(0, agent.costTotal - previousCost);
-    this.agentCostTotals.set(agent.id, agent.costTotal);
     if (!this.session.hasSubagent(agent.id)) {
       return;
     }
 
-    this.agents.set(agent.id, agent);
-    const changes: SessionProtocolChange[] = [
-      { type: "cost.set", costTotal: this.costTotal },
-      { type: "agent.set", agent: structuredClone(agent) },
-    ];
-    const facetId = `subagent-activity-${agent.id}`;
     if (event.type === "subagent_activity") {
-      const facet: SessionProtocolFacet = {
-        id: facetId,
-        subject: { type: "agent", id: agent.id },
-        kind: SUBAGENT_ACTIVITY_FACET_KIND,
-        version: 1,
-        data: { text: event.text },
-      };
-      this.facets.set(facet.id, facet);
-      changes.push({ type: "facet.set", facet: structuredClone(facet) });
-    } else if (
-      (event.type === "subagent_run_started" || event.type === "subagent_finished") &&
-      this.facets.delete(facetId)
-    ) {
-      changes.push({ type: "facet.remove", id: facetId });
+      const current = this.subagentActivitiesByAgent.get(agent.id);
+      if (!current || current.runRevision !== agent.run.revision) {
+        throw new Error(`missing activity state for subagent run '${agent.id}'`);
+      }
+      current.activities.push(structuredClone(event.activity));
+      if (current.activities.length > SESSION_PROTOCOL_MAX_SUBAGENT_ACTIVITIES) {
+        current.activities.splice(
+          0,
+          current.activities.length - SESSION_PROTOCOL_MAX_SUBAGENT_ACTIVITIES,
+        );
+      }
+      this.publishSubagentActivities();
+      return;
     }
 
-    await this.emitPatch(
-      "agent-run",
-      changes,
-      event.type === "subagent_activity" ? { persist: false } : {},
-    );
+    const previousCost = this.agentCostTotals.get(agent.id) ?? 0;
+    this.costTotal += Math.max(0, agent.costTotal - previousCost);
+    this.agentCostTotals.set(agent.id, agent.costTotal);
+    this.agents.set(agent.id, agent);
+    await this.emitPatch("agent-run", [
+      { type: "cost.set", costTotal: this.costTotal },
+      { type: "agent.set", agent: structuredClone(agent) },
+    ]);
+
+    if (event.type === "subagent_spawned" || event.type === "subagent_run_started") {
+      this.subagentActivitiesByAgent.set(agent.id, {
+        runRevision: agent.run.revision,
+        activities: [],
+      });
+      this.publishSubagentActivities();
+    }
+  }
+
+  private publishSubagentActivities(): void {
+    this.subagentActivitiesRevision += 1;
+    const message = createSessionProtocolSubagentActivitiesMessage({
+      sessionId: this.sessionId,
+      state: this.subagentActivities(),
+    });
+    for (const listener of [...this.subagentActivitiesListeners]) {
+      try {
+        listener(message);
+      } catch {
+        // Subagent activity observers must not be able to fail hosted session work.
+      }
+    }
   }
 
   private buildAssistantPartialChanges(
@@ -3392,7 +3446,7 @@ function createInterruptedAssistantMessageFromModelSnapshot(
   };
 }
 
-function agentRunFromSubagentEvent(event: SubagentUiEvent): SessionProtocolAgentRun {
+function agentRunFromSubagentEvent(event: SubagentEvent): SessionProtocolAgentRun {
   return structuredClone(event.state);
 }
 

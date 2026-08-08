@@ -8,6 +8,7 @@ import {
   createSessionProtocolPendingUserMessagesMessage,
   createSessionProtocolReadyMessage,
   createSessionProtocolRequest,
+  createSessionProtocolSubagentActivitiesMessage,
   createSessionProtocolSuccessResponse,
   parseSessionProtocolOutgoingLine,
   parseSessionProtocolRequestLine,
@@ -1225,12 +1226,14 @@ describe("session_protocol", () => {
       validateSessionProtocolResult("session.observe", {
         snapshot,
         pendingUserMessages: { revision: 1, messages: [] },
+        subagentActivities: { revision: 1, agents: {} },
       }),
     ).toEqual({
       ok: true,
       value: {
         snapshot,
         pendingUserMessages: { revision: 1, messages: [] },
+        subagentActivities: { revision: 1, agents: {} },
       },
     });
     expect(validateSessionProtocolResult("session.observe", snapshot)).toEqual({
@@ -2039,6 +2042,58 @@ describe("session_protocol", () => {
         }),
       }),
     );
+  });
+
+  it("parses and constructs typed subagent activity state", () => {
+    const message = createSessionProtocolSubagentActivitiesMessage({
+      sessionId: "session-1",
+      state: {
+        revision: 3,
+        agents: {
+          "agent-1": {
+            runRevision: 2,
+            activities: [
+              { type: "assistant", text: "I found the call sites." },
+              {
+                type: "tool",
+                toolName: "bash",
+                outcome: "succeeded",
+                presentation: {
+                  action: "ran",
+                  subject: "npm test",
+                  subjectWrap: "character",
+                  details: [],
+                  metadata: ["exit 0"],
+                },
+              },
+              { type: "notice", severity: "warn", title: "retrying" },
+            ],
+          },
+        },
+      },
+    });
+
+    expect(parseSessionProtocolOutgoingLine(JSON.stringify(message))).toEqual({
+      ok: true,
+      message,
+    });
+    expect(() =>
+      createSessionProtocolSubagentActivitiesMessage({
+        sessionId: "session-1",
+        state: {
+          revision: 4,
+          agents: {
+            "agent-1": {
+              runRevision: 2,
+              activities: Array.from({ length: 65 }, () => ({
+                type: "assistant",
+                text: "working",
+              })),
+            },
+          },
+        },
+      }),
+    ).toThrow("session protocol subagent activities message is invalid");
   });
 
   it("builds ready/delta/error messages with versioned envelopes", () => {

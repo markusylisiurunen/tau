@@ -8,6 +8,7 @@ import { type CoreDeps, createDefaultCoreDeps } from "../runtime/deps.js";
 import { createAutoCompactionArchiver } from "../session/auto_compaction_archive.js";
 import { ToolCatalog } from "../tools/catalog.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
+import type { ToolRunPresentation } from "../tools/presentation.js";
 import type { Persona, ReasoningEffort } from "../types.js";
 import {
   appendUsageLogEntry,
@@ -16,32 +17,19 @@ import {
   type UsageRecorder,
 } from "../usage/logs.js";
 import { extractAssistantText } from "../utils/messages.js";
-import {
-  formatToolUiEventForProgress,
-  getToolResultFirstLine,
-  normalizeOneLine,
-} from "../utils/subagent_utils.js";
 import { formatActiveSubagentsForCompaction } from "./format.js";
 import type {
   SubagentCapacitySnapshot,
+  SubagentEvent,
   SubagentName,
   SubagentRunFailure,
   SubagentRunSnapshot,
   SubagentRuntimeConfig,
   SubagentStateSnapshot,
-  SubagentUiEvent,
   SubagentUsageSnapshot,
 } from "./types.js";
 
 const MAX_ACTIVE_SUBAGENTS = 8;
-const MAX_SUBAGENT_ACTIVITY_CHARS = 500;
-
-function normalizeSubagentActivity(text: string): string {
-  const normalized = normalizeOneLine(text);
-  return normalized.length <= MAX_SUBAGENT_ACTIVITY_CHARS
-    ? normalized
-    : `${normalized.slice(0, MAX_SUBAGENT_ACTIVITY_CHARS - 3)}...`;
-}
 
 export type SubagentSpawnResult =
   | { ok: true; state: SubagentStateSnapshot; capacity: SubagentCapacitySnapshot }
@@ -69,6 +57,8 @@ type SubagentRecord = {
   run: SubagentRunSnapshot;
   costTotal: number;
   usage: SubagentUsageSnapshot;
+  toolPresentations: Map<string, ToolRunPresentation>;
+  blockedToolCalls: Map<string, string>;
   completion: Promise<SubagentRecord>;
 };
 
@@ -97,7 +87,7 @@ export class AgentSupervisor {
 
   constructor(
     private readonly options: {
-      onEvent: (event: SubagentUiEvent) => void | Promise<void>;
+      onEvent: (event: SubagentEvent) => void | Promise<void>;
       recordUsage?: UsageRecorder;
       deps?: CoreDeps;
     },
@@ -217,6 +207,8 @@ export class AgentSupervisor {
         contextWindowUsageTokens: 0,
         contextWindow: runtimeConfig.model.contextWindow,
       },
+      toolPresentations: new Map(),
+      blockedToolCalls: new Map(),
       completion: Promise.resolve(undefined as never),
     };
     this.records.set(id, record);
@@ -246,6 +238,8 @@ export class AgentSupervisor {
       startedAt: this.deps.clock.now(),
       interruptRequested: false,
     };
+    record.toolPresentations.clear();
+    record.blockedToolCalls.clear();
     this.startRun(record, options.prompt, "subagent_run_started");
     return { ok: true, state: this.toSnapshot(record), capacity: this.getCapacity() };
   }
@@ -422,38 +416,89 @@ export class AgentSupervisor {
         agent: { type: "subagent", name: record.name },
       });
       await this.emit({ type: "subagent_updated", state: this.toSnapshot(record) });
+      const text = extractAssistantText(event.message).trim();
+      if (text) {
+        await this.emit({
+          type: "subagent_activity",
+          state: this.toSnapshot(record),
+          activity: { type: "assistant", text },
+        });
+      }
       return;
     }
 
-    let text: string | undefined;
-    switch (event.type) {
-      case "tool_activity":
-        text = formatToolUiEventForProgress(event.activity);
-        break;
-      case "tool_result":
-        if (event.message.isError) {
-          const firstLine = getToolResultFirstLine(event.message);
-          text = firstLine
-            ? `${event.message.toolName}: ${firstLine}`
-            : `${event.message.toolName}: tool returned an error`;
-        }
-        break;
-      case "turn_started":
-        text = "assistant: thinking";
-        break;
-      case "feedback":
-        text = event.title;
-        break;
-      default:
-        return;
+    if (event.type === "tool_activity") {
+      record.toolPresentations.set(event.activity.toolCallId, event.activity.presentation);
+      const blockedToolName = record.blockedToolCalls.get(event.activity.toolCallId);
+      if (blockedToolName) {
+        record.blockedToolCalls.delete(event.activity.toolCallId);
+        await this.emitSettledToolActivity(
+          record,
+          blockedToolName,
+          "blocked",
+          event.activity.presentation,
+        );
+        record.toolPresentations.delete(event.activity.toolCallId);
+      }
+      return;
     }
 
-    const normalized = normalizeSubagentActivity(text ?? "");
-    if (!normalized) return;
+    if (event.type === "tool_run_blocked") {
+      const presentation = record.toolPresentations.get(event.toolCallId);
+      if (!presentation) {
+        record.blockedToolCalls.set(event.toolCallId, event.toolName);
+        return;
+      }
+      record.toolPresentations.delete(event.toolCallId);
+      await this.emitSettledToolActivity(record, event.toolName, "blocked", presentation);
+      return;
+    }
+
+    if (event.type === "tool_run_finished") {
+      const presentation = record.toolPresentations.get(event.toolCallId);
+      if (!presentation) {
+        throw new Error(`missing presentation for settled tool call '${event.toolCallId}'`);
+      }
+      record.toolPresentations.delete(event.toolCallId);
+      await this.emitSettledToolActivity(record, event.toolName, event.outcome, presentation);
+      return;
+    }
+
+    if (event.type === "feedback") {
+      await this.emit({
+        type: "subagent_activity",
+        state: this.toSnapshot(record),
+        activity: {
+          type: "notice",
+          severity: event.tone === "error" ? "error" : "info",
+          title: event.title,
+          ...(event.presentation === "transcript" && event.content
+            ? { content: event.content }
+            : {}),
+        },
+      });
+    }
+  }
+
+  private async emitSettledToolActivity(
+    record: SubagentRecord,
+    toolName: string,
+    outcome: "succeeded" | "failed" | "blocked" | "cancelled",
+    presentation: ToolRunPresentation,
+  ): Promise<void> {
+    const { actionByStatus, ...terminalPresentation } = presentation;
     await this.emit({
       type: "subagent_activity",
       state: this.toSnapshot(record),
-      text: normalized,
+      activity: {
+        type: "tool",
+        toolName,
+        outcome,
+        presentation: {
+          action: actionByStatus[outcome],
+          ...structuredClone(terminalPresentation),
+        },
+      },
     });
   }
 
@@ -478,7 +523,7 @@ export class AgentSupervisor {
     };
   }
 
-  private async emit(event: SubagentUiEvent): Promise<void> {
+  private async emit(event: SubagentEvent): Promise<void> {
     await this.options.onEvent(event);
   }
 }

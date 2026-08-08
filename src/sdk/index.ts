@@ -6,6 +6,9 @@ export type {
   SessionProtocolPendingUserMessagesMessage,
   SessionProtocolPendingUserMessagesState,
   SessionProtocolSnapshot,
+  SessionProtocolSubagentActivitiesMessage,
+  SessionProtocolSubagentActivitiesState,
+  SessionProtocolSubagentActivity,
   SessionProtocolTurnRecord,
 } from "../protocol/index.js";
 export { applySessionProtocolDelta } from "../protocol/index.js";
@@ -15,6 +18,7 @@ export type {
   SessionProtocolFailureListener,
   SessionProtocolPendingUserMessagesListener,
   SessionProtocolSpawnedProcess,
+  SessionProtocolSubagentActivitiesListener,
   SessionProtocolTransport,
   TauSessionProtocolError,
   TauSessionProtocolErrorCode,
@@ -78,6 +82,9 @@ export type {
   TauSdkSessionTurnRecord,
   TauSdkSessionUnobserveResult,
   TauSdkSessionUserMessageOptions,
+  TauSdkSubagentActivitiesListener,
+  TauSdkSubagentActivitiesMessage,
+  TauSdkSubagentActivitiesState,
   TauSdkTransportClientOptions,
   TauSdkWebSocketClientOptions,
 } from "./types.js";

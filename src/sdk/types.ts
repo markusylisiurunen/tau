@@ -33,6 +33,8 @@ import type {
   SessionProtocolSnapshot,
   SessionProtocolStartGoalResult,
   SessionProtocolSteerResult,
+  SessionProtocolSubagentActivitiesMessage,
+  SessionProtocolSubagentActivitiesState,
   SessionProtocolSubmitResult,
   SessionProtocolTurnOutcome,
   SessionProtocolTurnRecord,
@@ -47,6 +49,8 @@ export type TauSdkDelta = SessionProtocolDeltaMessage;
 export type TauSdkEphemeral = SessionProtocolEphemeralMessage;
 export type TauSdkPendingUserMessagesState = SessionProtocolPendingUserMessagesState;
 export type TauSdkPendingUserMessagesMessage = SessionProtocolPendingUserMessagesMessage;
+export type TauSdkSubagentActivitiesState = SessionProtocolSubagentActivitiesState;
+export type TauSdkSubagentActivitiesMessage = SessionProtocolSubagentActivitiesMessage;
 export type TauSdkReadyMessage = SessionProtocolReadyMessage;
 export type TauSdkCreateSessionInput = SessionProtocolCreateParams;
 export type TauSdkSessionSummary = SessionProtocolSessionSummary;
@@ -119,13 +123,16 @@ export type TauSdkSessionUserMessageOptions = {
 export type TauSdkDeltaListener = (delta: TauSdkDelta) => void;
 export type TauSdkEphemeralListener = (message: TauSdkEphemeral) => void;
 export type TauSdkPendingUserMessagesListener = (message: TauSdkPendingUserMessagesMessage) => void;
+export type TauSdkSubagentActivitiesListener = (message: TauSdkSubagentActivitiesMessage) => void;
 
 export type TauSdkSession = {
   readonly id: string;
   pendingUserMessages(): TauSdkPendingUserMessagesState;
+  subagentActivities(): TauSdkSubagentActivitiesState;
   onDelta(listener: TauSdkDeltaListener): () => void;
   onEphemeral(listener: TauSdkEphemeralListener): () => void;
   onPendingUserMessages(listener: TauSdkPendingUserMessagesListener): () => void;
+  onSubagentActivities(listener: TauSdkSubagentActivitiesListener): () => void;
   record(
     text: string,
     options?: TauSdkSessionUserMessageOptions,
@@ -198,5 +205,6 @@ export type TauSdkClient = {
   subscribe(listener: TauSdkDeltaListener): () => void;
   subscribeEphemeral(listener: TauSdkEphemeralListener): () => void;
   subscribePendingUserMessages(listener: TauSdkPendingUserMessagesListener): () => void;
+  subscribeSubagentActivities(listener: TauSdkSubagentActivitiesListener): () => void;
   close(): Promise<void>;
 };

@@ -18,7 +18,7 @@ import type { ModelResolver } from "../models/catalog.js";
 import { createAutoCompactionArchiver } from "../session/auto_compaction_archive.js";
 import { buildGoalPolicy, GOAL_TURN_USER_METADATA } from "../session/goal.js";
 import { AgentSupervisor } from "../subagents/agent_supervisor.js";
-import type { SubagentUiEvent } from "../subagents/types.js";
+import type { SubagentEvent } from "../subagents/types.js";
 import { ToolCatalog } from "../tools/catalog.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
 import type { GoalManager } from "../tools/goal.js";
@@ -54,7 +54,7 @@ export type CreateChatRuntimeOptions = {
   resolveSubagentPrompts?: ResolveSubagentPrompts;
   promptContext: ChatRuntimePromptContext;
   eventSink: AgentEventSink;
-  subagentEventSink: (event: SubagentUiEvent) => void | Promise<void>;
+  subagentEventSink: (event: SubagentEvent) => void | Promise<void>;
   goalManager: GoalManager;
   history: HistoryQuery;
   recordUsage?: UsageRecorder;

@@ -8,9 +8,10 @@ import type {
 } from "@earendil-works/pi-ai";
 import { type ZodError, z } from "zod";
 
-export const SESSION_PROTOCOL_VERSION = 10 as const;
+export const SESSION_PROTOCOL_VERSION = 11 as const;
 export const SESSION_PROTOCOL_MAX_EXEC_CAPTURE_BYTES = 24 * 1024 * 1024;
 export const SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES = 16 * 1024 * 1024;
+export const SESSION_PROTOCOL_MAX_SUBAGENT_ACTIVITIES = 64;
 
 const SESSION_PROTOCOL_NOTICE_TITLE_MAX_CHARS = 512;
 const SESSION_PROTOCOL_NOTICE_CONTENT_MAX_ENTRIES = 16;
@@ -337,6 +338,46 @@ export type SessionProtocolPendingUserMessagesState = {
   messages: SessionProtocolPendingUserMessage[];
 };
 
+export type SessionProtocolSubagentActivity =
+  | {
+      type: "assistant";
+      text: string;
+    }
+  | {
+      type: "tool";
+      toolName: string;
+      outcome: "succeeded" | "failed" | "blocked" | "cancelled";
+      presentation: {
+        action: string;
+        operation?: string;
+        subject: string;
+        subjectWrap: "word" | "character";
+        details: Array<{
+          text: string;
+          tone?: "added" | "removed";
+          wrap: "word" | "character";
+        }>;
+        metadata: string[];
+      };
+    }
+  | {
+      type: "notice";
+      severity: "info" | "warn" | "error";
+      title: string;
+      content?: string[];
+    };
+
+export type SessionProtocolSubagentActivitiesState = {
+  revision: number;
+  agents: Record<
+    string,
+    {
+      runRevision: number;
+      activities: SessionProtocolSubagentActivity[];
+    }
+  >;
+};
+
 export type SessionProtocolCreateResult = {
   sessionId: string;
 };
@@ -348,6 +389,7 @@ export type SessionProtocolClearGoalResult = SessionProtocolSnapshot;
 export type SessionProtocolObserveResult = {
   snapshot: SessionProtocolSnapshot;
   pendingUserMessages: SessionProtocolPendingUserMessagesState;
+  subagentActivities: SessionProtocolSubagentActivitiesState;
 };
 
 export type SessionProtocolCancelPendingMessagesResult = {
@@ -1087,11 +1129,19 @@ export type SessionProtocolPendingUserMessagesMessage = {
   state: SessionProtocolPendingUserMessagesState;
 };
 
+export type SessionProtocolSubagentActivitiesMessage = {
+  version: typeof SESSION_PROTOCOL_VERSION;
+  type: "session.subagentActivities";
+  sessionId: string;
+  state: SessionProtocolSubagentActivitiesState;
+};
+
 export type SessionProtocolOutgoingMessage =
   | SessionProtocolResponseMessage
   | SessionProtocolDeltaMessage
   | SessionProtocolEphemeralMessage
   | SessionProtocolPendingUserMessagesMessage
+  | SessionProtocolSubagentActivitiesMessage
   | SessionProtocolClientToolMessage
   | SessionProtocolReadyMessage;
 
@@ -1100,6 +1150,7 @@ export type SessionProtocolParsedOutgoingMessage =
   | SessionProtocolDeltaMessage
   | SessionProtocolEphemeralMessage
   | SessionProtocolPendingUserMessagesMessage
+  | SessionProtocolSubagentActivitiesMessage
   | SessionProtocolClientToolMessage
   | SessionProtocolReadyMessage;
 
@@ -1396,6 +1447,7 @@ const sessionProtocolOutgoingRoutingSchema = z
       "session.delta",
       "session.ephemeral",
       "session.pendingUserMessages",
+      "session.subagentActivities",
       "session.clientTool.call",
       "session.clientTool.cancel",
       "response",
@@ -2878,6 +2930,81 @@ const sessionProtocolPendingUserMessagesMessageSchema = z
   })
   .strip();
 
+const subagentActivityLineSchema = z
+  .string()
+  .max(512)
+  .refine((text) => !text.includes("\n") && !text.includes("\r"), "must be one line");
+
+const subagentToolPresentationSchema = z
+  .object({
+    action: subagentActivityLineSchema.min(1),
+    operation: subagentActivityLineSchema.min(1).optional(),
+    subject: nonEmptyStringSchema,
+    subjectWrap: z.enum(["word", "character"]),
+    details: z
+      .array(
+        z
+          .object({
+            text: subagentActivityLineSchema,
+            tone: z.enum(["added", "removed"]).optional(),
+            wrap: z.enum(["word", "character"]),
+          })
+          .strip(),
+      )
+      .max(64),
+    metadata: z.array(subagentActivityLineSchema).max(32),
+  })
+  .strip();
+
+const sessionProtocolSubagentActivitySchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("assistant"), text: nonEmptyStringSchema }).strip(),
+  z
+    .object({
+      type: z.literal("tool"),
+      toolName: nonEmptyStringSchema,
+      outcome: z.enum(["succeeded", "failed", "blocked", "cancelled"]),
+      presentation: subagentToolPresentationSchema,
+    })
+    .strip(),
+  z
+    .object({
+      type: z.literal("notice"),
+      severity: z.enum(["info", "warn", "error"]),
+      title: noticeTitleSchema,
+      content: z
+        .array(z.string().max(SESSION_PROTOCOL_NOTICE_CONTENT_ENTRY_MAX_CHARS))
+        .max(SESSION_PROTOCOL_NOTICE_CONTENT_MAX_ENTRIES)
+        .optional(),
+    })
+    .strip(),
+]);
+
+const sessionProtocolSubagentActivitiesStateSchema = z
+  .object({
+    revision: z.number().int().positive(),
+    agents: z.record(
+      nonEmptyStringSchema,
+      z
+        .object({
+          runRevision: z.number().int().positive(),
+          activities: z
+            .array(sessionProtocolSubagentActivitySchema)
+            .max(SESSION_PROTOCOL_MAX_SUBAGENT_ACTIVITIES),
+        })
+        .strip(),
+    ),
+  })
+  .strip() as z.ZodType<SessionProtocolSubagentActivitiesState>;
+
+const sessionProtocolSubagentActivitiesMessageSchema = z
+  .object({
+    version: z.literal(SESSION_PROTOCOL_VERSION),
+    type: z.literal("session.subagentActivities"),
+    sessionId: nonEmptyStringSchema,
+    state: sessionProtocolSubagentActivitiesStateSchema,
+  })
+  .strip();
+
 const sessionProtocolInitializeResultSchema = z
   .object({
     protocolVersion: z.literal(SESSION_PROTOCOL_VERSION),
@@ -2896,6 +3023,7 @@ const sessionProtocolObserveResultSchema = z
   .object({
     snapshot: sessionProtocolSnapshotSchema,
     pendingUserMessages: sessionProtocolPendingUserMessagesStateSchema,
+    subagentActivities: sessionProtocolSubagentActivitiesStateSchema,
   })
   .strip();
 
@@ -3186,6 +3314,26 @@ export function createSessionProtocolPendingUserMessagesMessage(options: {
   }
 
   return parsedMessage.data as SessionProtocolPendingUserMessagesMessage;
+}
+
+export function createSessionProtocolSubagentActivitiesMessage(options: {
+  sessionId: string;
+  state: SessionProtocolSubagentActivitiesState;
+}): SessionProtocolSubagentActivitiesMessage {
+  const message = {
+    version: SESSION_PROTOCOL_VERSION,
+    type: "session.subagentActivities",
+    sessionId: options.sessionId,
+    state: options.state,
+  };
+  const parsedMessage = sessionProtocolSubagentActivitiesMessageSchema.safeParse(message);
+  if (!parsedMessage.success) {
+    throw new Error(
+      `session protocol subagent activities message is invalid: ${formatZodError(parsedMessage.error)}`,
+    );
+  }
+
+  return parsedMessage.data as SessionProtocolSubagentActivitiesMessage;
 }
 
 function validateSnapshotResetCause(
@@ -3919,6 +4067,10 @@ export function parseSessionProtocolOutgoingLine(line: string): SessionProtocolO
 
   if (routing.data.type === "session.pendingUserMessages") {
     return parseSessionProtocolPendingUserMessagesMessage(parsed);
+  }
+
+  if (routing.data.type === "session.subagentActivities") {
+    return parseSessionProtocolSubagentActivitiesMessage(parsed);
   }
 
   if (
@@ -4916,6 +5068,34 @@ function parseSessionProtocolPendingUserMessagesMessage(
   return {
     ok: true,
     message: message.data as SessionProtocolPendingUserMessagesMessage,
+  };
+}
+
+function parseSessionProtocolSubagentActivitiesMessage(
+  payload: unknown,
+): SessionProtocolOutgoingParseResult {
+  const fail = (message: string) =>
+    outgoingParseFailure(
+      "session.subagentActivities",
+      null,
+      SESSION_PROTOCOL_ERROR_CODES.invalidRequest,
+      message,
+    );
+
+  const message = sessionProtocolSubagentActivitiesMessageSchema.safeParse(payload);
+  if (!message.success) {
+    if (hasIssue(message.error, ["sessionId"])) {
+      return fail("session.subagentActivities.sessionId must be a non-empty string");
+    }
+    if (hasIssue(message.error, ["state"])) {
+      return fail("session.subagentActivities.state is invalid");
+    }
+    return fail(`invalid session.subagentActivities message: ${formatZodError(message.error)}`);
+  }
+
+  return {
+    ok: true,
+    message: message.data as SessionProtocolSubagentActivitiesMessage,
   };
 }
 

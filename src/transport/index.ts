@@ -10,6 +10,7 @@ export type {
   SessionProtocolEphemeralListener,
   SessionProtocolFailureListener,
   SessionProtocolPendingUserMessagesListener,
+  SessionProtocolSubagentActivitiesListener,
   SessionProtocolTransport,
 } from "./session_transport.js";
 export type { SessionProtocolSpawnedProcess } from "./stdio_session_transport.js";

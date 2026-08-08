@@ -66,7 +66,7 @@ WebSocket clients receive the same `ready`, `response`, `session.delta`, and `se
 every protocol message includes `version`.
 
 ```json
-{ "version": 10, "type": "..." }
+{ "version": 11, "type": "..." }
 ```
 
 server-to-client messages are:
@@ -75,6 +75,7 @@ server-to-client messages are:
 - `response`
 - `session.delta`
 - `session.pendingUserMessages`
+- `session.subagentActivities`
 - `session.ephemeral`
 
 client-to-server messages are:
@@ -87,7 +88,7 @@ when the rpc server starts, it immediately emits a `ready` line:
 
 ```json
 {
-  "version": 10,
+  "version": 11,
   "type": "ready",
   "methods": [
     "initialize",
@@ -147,7 +148,7 @@ state transitions:
 
 Openability preserves access to the semantic session, not byte-for-byte state or identical historical presentation. Depending on the changed persisted contract, recovery may use document migration, independently versioned payload handling, normalization, regeneration from canonical state, or an explicit degraded representation for nonessential data. Compatibility handling stays at the owning version or recovery boundary so current runtime contracts remain canonical. Verification loads representative older files through normal recovery and the affected current consumer, checking that important semantic data remains accessible without requiring identical UI output. Storage-format decoding rejects corrupted documents and documents created by a genuinely newer unsupported storage version; recovery can still fail for independent external reasons such as an unavailable execution environment.
 
-Stored sessions recover from persisted snapshot state, including immutable creation attributes and timestamp, independent durable agent revision/context accounting state, current settings, cumulative cost, bootstrap metadata, catalog metadata, execution environment identity, messages, the durable logical-turn ledger, timeline items, tools, and non-agent facets; host-only config is resolved by the host and is not serialized into the snapshot. The separately stored transcript history is for discovery and reading, not session recovery. Supervised subagent runtimes are not recoverable across process restart, so recovery discards persisted agents and agent-owned facets before returning and rewrites the normalized snapshot. The agent revision is not the protocol snapshot revision. A fresh persisted usage checkpoint lets the first model subturn after recovery make the same automatic-compaction decision as an uninterrupted session. Legacy snapshots without a checkpoint wait for fresh provider usage before automatic compaction. Pending queued and steering messages are transient host state rather than snapshot state: they survive client detach while the hosted session remains in memory, but they are discarded on host restart or session recovery so recovered sessions never resume work without new user input.
+Stored sessions recover from persisted snapshot state, including immutable creation attributes and timestamp, independent durable agent revision/context accounting state, current settings, cumulative cost, bootstrap metadata, catalog metadata, execution environment identity, messages, the durable logical-turn ledger, timeline items, tools, and non-agent facets; host-only config is resolved by the host and is not serialized into the snapshot. The separately stored transcript history is for discovery and reading, not session recovery. Supervised subagent runtimes are not recoverable across process restart, so recovery discards persisted agents and agent-owned facets before returning and rewrites the normalized snapshot. The agent revision is not the protocol snapshot revision. A fresh persisted usage checkpoint lets the first model subturn after recovery make the same automatic-compaction decision as an uninterrupted session. Legacy snapshots without a checkpoint wait for fresh provider usage before automatic compaction. Pending queued and steering messages and supervised subagent activities are transient host state rather than snapshot state: they survive client detach while the hosted session remains in memory, but they are discarded on host restart or session recovery so recovered sessions never resume work without new user input.
 
 Main sessions, supervised background agents, and ephemeral threads use the same stateful agent runtime for model streaming, tool admission and execution, retries, recovery, context accounting, steering boundaries, and compaction. The runtime emits ordered semantic transitions through one awaited sink. The hosted-session adapter applies those transitions to protocol snapshots and persists durable state before acknowledging them; child supervision, ephemeral thread maps and forks, pending normal submissions, and usage attribution are separate host concerns.
 
@@ -157,7 +158,7 @@ all requests use this envelope:
 
 ```json
 {
-  "version": 10,
+  "version": 11,
   "type": "request",
   "id": "req-1",
   "method": "session.submit",
@@ -190,7 +191,7 @@ params (required):
 
 ```json
 {
-  "version": 10,
+  "version": 11,
   "type": "response",
   "id": "init-1",
   "ok": true,
@@ -356,11 +357,15 @@ Establishes observation for that session on this connection and returns the auth
   "pendingUserMessages": {
     "revision": 1,
     "messages": []
+  },
+  "subagentActivities": {
+    "revision": 1,
+    "agents": {}
   }
 }
 ```
 
-The host buffers snapshot deltas and pending-message replacements while preparing this response. After the response, it sends only updates newer than the returned snapshot and pending-message revisions. Clients therefore install both baselines from the response before applying subsequent events; no separate hydration event is required.
+The host buffers snapshot deltas, pending-message replacements, and subagent-activity replacements while preparing this response. After the response, it sends only updates newer than the returned revisions. Clients therefore install all three baselines from the response before applying subsequent events; no separate hydration event is required.
 
 If the session id is not hosted, returns `not_found`.
 
@@ -440,7 +445,7 @@ if another turn is already running, tau returns:
 
 ```json
 {
-  "version": 10,
+  "version": 11,
   "type": "response",
   "id": "submit-2",
   "ok": false,
@@ -887,7 +892,7 @@ observed-session changes are broadcast as `session.delta` messages:
 
 ```json
 {
-  "version": 10,
+  "version": 11,
   "type": "session.delta",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "fromRevision": 1,
@@ -911,7 +916,7 @@ observed-session changes are broadcast as `session.delta` messages:
 
 ```json
 {
-  "version": 10,
+  "version": 11,
   "type": "session.delta",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "fromRevision": null,
@@ -934,7 +939,7 @@ notes:
 - deltas do not include `requestId`; request ids correlate request/response pairs, while deltas are broadcast facts about observed session state.
 - queued and steering requests each receive their own response when accepted work settles.
 - durable notices and maintenance operations are stored through timeline references plus semantic snapshot state, so late-attaching clients reconstruct their fixed placement.
-- tool placement comes from timeline items, mutable tool/operation state comes from keyed maps, and tool UI/subagent presentation comes from facets.
+- tool placement comes from timeline items, mutable tool/operation state comes from keyed maps, and tool UI presentation comes from facets.
 
 ## pending user messages
 
@@ -942,7 +947,7 @@ notes:
 
 ```json
 {
-  "version": 10,
+  "version": 11,
   "type": "session.pendingUserMessages",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "state": {
@@ -957,7 +962,51 @@ notes:
 
 Pending-message revisions are independent from snapshot revisions. Each event replaces only the pending-message list. The initial baseline is included in the `session.observe` result, and later replacements are sent while the connection observes that session. Pending steering messages are ordered before queued messages because steering has processing priority.
 
-Pending messages are shared across attached clients and survive client detach while the hosted session remains in memory. They are not written to the session store and start empty when a session is recovered from disk. They must not be folded into `session.snapshot` or applied with `applySessionProtocolDelta`. Future non-persisted features should define their own independently revisioned facets rather than extending this replacement payload.
+Pending messages are shared across attached clients and survive client detach while the hosted session remains in memory. They are not written to the session store and start empty when a session is recovered from disk. They must not be folded into `session.snapshot` or applied with `applySessionProtocolDelta`. Future non-persisted features should define their own independently revisioned state channels rather than extending this replacement payload.
+
+## subagent activities
+
+`session.subagentActivities` replaces the current host-owned activity state for every supervised subagent in an observed in-memory session:
+
+```json
+{
+  "version": 11,
+  "type": "session.subagentActivities",
+  "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
+  "state": {
+    "revision": 7,
+    "agents": {
+      "agent-1": {
+        "runRevision": 2,
+        "activities": [
+          { "type": "assistant", "text": "I found the relevant call sites." },
+          {
+            "type": "tool",
+            "toolName": "bash",
+            "outcome": "succeeded",
+            "presentation": {
+              "action": "ran",
+              "subject": "npm test",
+              "subjectWrap": "character",
+              "details": [],
+              "metadata": ["exit 0"]
+            }
+          },
+          {
+            "type": "notice",
+            "severity": "warn",
+            "title": "retrying after transient error"
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+Each event is a full replacement with a revision independent from the snapshot and pending-message revisions. Each agent entry belongs to exactly one run revision and contains at most the latest 64 immutable activities. A follow-up run replaces the prior run's list with an empty list before new activity arrives. Assistant activities contain committed assistant text, tool activities appear only after settlement with terminal producer-owned presentation, and notice activities carry feedback. Thinking and tool-call ids are not exposed.
+
+The initial baseline is included in `session.observe`. Activity state is shared across attached clients and survives client detach while the hosted session remains in memory, but is never stored in `SessionProtocolSnapshot` or the session store and starts empty after recovery. Clients own rendering and whether completed agents remain visible.
 
 ## ephemeral events
 
@@ -965,7 +1014,7 @@ Pending messages are shared across attached clients and survive client detach wh
 
 ```json
 {
-  "version": 10,
+  "version": 11,
   "type": "session.ephemeral",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "event": {
@@ -986,7 +1035,7 @@ Ephemeral-agent progress uses the same envelope:
 
 ```json
 {
-  "version": 10,
+  "version": 11,
   "type": "session.ephemeral",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "event": {
@@ -1017,7 +1066,7 @@ error responses use:
 
 ```json
 {
-  "version": 10,
+  "version": 11,
   "type": "response",
   "id": "req-1",
   "ok": false,

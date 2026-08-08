@@ -3389,6 +3389,82 @@ describe("LocalSessionHost", () => {
     );
   });
 
+  it("owns bounded typed subagent activity state per run", async () => {
+    const host = createHost(new MemorySessionStore());
+    const hostedSession = await host.createSession(localCreateInput);
+    vi.spyOn(hostedSession.session, "hasSubagent").mockReturnValue(true);
+    const state = {
+      id: "child-1",
+      name: "default",
+      title: "long task",
+      availability: "running",
+      model: {
+        provider: personas[0].model.provider,
+        id: personas[0].model.id,
+        reasoning: "medium",
+      },
+      workingDirectory: "/repo",
+      createdAt: 1,
+      run: {
+        revision: 1,
+        status: "running",
+        startedAt: 1,
+        interruptRequested: false,
+      },
+      costTotal: 0,
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        contextWindowUsageTokens: 0,
+        contextWindow: 100_000,
+      },
+    };
+
+    await hostedSession.recordSubagentEvent({ type: "subagent_spawned", state });
+    for (let index = 0; index < 65; index += 1) {
+      await hostedSession.recordSubagentEvent({
+        type: "subagent_activity",
+        state,
+        activity: { type: "assistant", text: `activity ${index}` },
+      });
+    }
+
+    expect(hostedSession.subagentActivities()).toMatchObject({
+      revision: 67,
+      agents: {
+        "child-1": {
+          runRevision: 1,
+          activities: [
+            { type: "assistant", text: "activity 1" },
+            ...Array.from({ length: 63 }, (_, index) => ({
+              type: "assistant",
+              text: `activity ${index + 2}`,
+            })),
+          ],
+        },
+      },
+    });
+    expect(
+      Object.values((await hostedSession.snapshot()).facets).some(
+        (facet) => facet.subject.type === "agent",
+      ),
+    ).toBe(false);
+
+    await hostedSession.recordSubagentEvent({
+      type: "subagent_run_started",
+      state: {
+        ...state,
+        run: { ...state.run, revision: 2 },
+      },
+    });
+    expect(hostedSession.subagentActivities().agents["child-1"]).toEqual({
+      runRevision: 2,
+      activities: [],
+    });
+  });
+
   it("does not let a reasoning write replace streamed state at the same revision", async () => {
     const store = new BlockingCommitStore();
     const host = createHost(store);

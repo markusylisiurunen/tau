@@ -18,7 +18,7 @@ import {
 import { buildDiffReviewInstructions } from "../core/diff_review/review_instructions.js";
 import { type CoreDeps, createDefaultCoreDeps } from "../core/runtime/deps.js";
 import { runDirectBashCommand } from "../core/session/direct_bash.js";
-import { SUBAGENT_ACTIVITY_FACET_KIND, type SubagentUiEvent } from "../core/subagents/types.js";
+import type { SubagentEvent } from "../core/subagents/types.js";
 import {
   buildToolRunPresentation,
   parseToolRunPresentation,
@@ -38,6 +38,8 @@ import type {
   SessionProtocolMessage,
   SessionProtocolPendingUserMessagesMessage,
   SessionProtocolSnapshot,
+  SessionProtocolSubagentActivitiesMessage,
+  SessionProtocolSubagentActivitiesState,
   SessionProtocolTimelineItem,
   SessionProtocolToolRun,
 } from "../protocol/session_protocol.js";
@@ -143,6 +145,8 @@ export class SessionChatController {
   private eventUnsubscribe?: () => void;
   private ephemeralUnsubscribe?: () => void;
   private pendingUserMessagesUnsubscribe?: () => void;
+  private subagentActivitiesUnsubscribe?: () => void;
+  private subagentActivities: SessionProtocolSubagentActivitiesState;
   private snapshotRecovery?: Promise<void>;
   private readonly snapshotRecoveryDeltas: SessionProtocolDeltaMessage[] = [];
   private hasPendingUserMessages = false;
@@ -177,6 +181,7 @@ export class SessionChatController {
     this.session = options.session;
     this.createSession = options.createSession;
     this.snapshot = options.snapshot;
+    this.subagentActivities = options.session.subagentActivities();
     this.targetLabel = options.targetLabel;
     this.configuredClientToolNames = options.configuredClientToolNames ?? [];
     this.config = options.config ?? {};
@@ -233,6 +238,9 @@ export class SessionChatController {
     this.pendingUserMessagesUnsubscribe = this.session.onPendingUserMessages((message) =>
       this.onSdkPendingUserMessages(message),
     );
+    this.subagentActivitiesUnsubscribe = this.session.onSubagentActivities((message) =>
+      this.onSdkSubagentActivities(message),
+    );
     this.refreshStatus();
   }
 
@@ -240,6 +248,7 @@ export class SessionChatController {
     this.eventUnsubscribe?.();
     this.ephemeralUnsubscribe?.();
     this.pendingUserMessagesUnsubscribe?.();
+    this.subagentActivitiesUnsubscribe?.();
     if (this.listenTransition) {
       await this.listenTransition;
     }
@@ -1017,6 +1026,7 @@ export class SessionChatController {
     let nextEventUnsubscribe: (() => void) | undefined;
     let nextEphemeralUnsubscribe: (() => void) | undefined;
     let nextPendingUserMessagesUnsubscribe: (() => void) | undefined;
+    let nextSubagentActivitiesUnsubscribe: (() => void) | undefined;
     let installed = false;
     try {
       nextSession = await this.createSession(createInput);
@@ -1024,6 +1034,7 @@ export class SessionChatController {
       const pendingDeltas: SessionProtocolDeltaMessage[] = [];
       const pendingEphemeralMessages: SessionProtocolEphemeralMessage[] = [];
       const pendingUserMessages: SessionProtocolPendingUserMessagesMessage[] = [];
+      const subagentActivities: SessionProtocolSubagentActivitiesMessage[] = [];
       let forwardEvents = false;
       nextEventUnsubscribe = nextSession.onDelta((delta) => {
         if (forwardEvents) {
@@ -1046,17 +1057,27 @@ export class SessionChatController {
           pendingUserMessages.push(message);
         }
       });
+      nextSubagentActivitiesUnsubscribe = nextSession.onSubagentActivities((message) => {
+        if (forwardEvents) {
+          this.onSdkSubagentActivities(message);
+        } else {
+          subagentActivities.push(message);
+        }
+      });
 
       const previousSession = this.session;
       this.eventUnsubscribe?.();
       this.ephemeralUnsubscribe?.();
       this.pendingUserMessagesUnsubscribe?.();
+      this.subagentActivitiesUnsubscribe?.();
       this.session = nextSession;
       this.snapshot = nextSnapshot;
+      this.subagentActivities = nextSession.subagentActivities();
       this.observedSessionRevision = nextSnapshot.revision;
       this.eventUnsubscribe = nextEventUnsubscribe;
       this.ephemeralUnsubscribe = nextEphemeralUnsubscribe;
       this.pendingUserMessagesUnsubscribe = nextPendingUserMessagesUnsubscribe;
+      this.subagentActivitiesUnsubscribe = nextSubagentActivitiesUnsubscribe;
       installed = true;
 
       this.view.resetToolUiSession();
@@ -1072,6 +1093,9 @@ export class SessionChatController {
       for (const message of pendingUserMessages) {
         this.onSdkPendingUserMessages(message);
       }
+      for (const message of subagentActivities) {
+        this.onSdkSubagentActivities(message);
+      }
       forwardEvents = true;
 
       try {
@@ -1086,6 +1110,7 @@ export class SessionChatController {
         nextEventUnsubscribe?.();
         nextEphemeralUnsubscribe?.();
         nextPendingUserMessagesUnsubscribe?.();
+        nextSubagentActivitiesUnsubscribe?.();
         await nextSession.unobserve().catch(() => undefined);
       }
       this.view.addTranscriptNotice("failed to create session", "error", [
@@ -1123,6 +1148,14 @@ export class SessionChatController {
     this.hasPendingUserMessages = message.state.messages.length > 0;
     this.view.setPendingUserMessages(message.state.messages);
     this.sendPendingIdleNotification();
+  }
+
+  private onSdkSubagentActivities(message: SessionProtocolSubagentActivitiesMessage): void {
+    if (message.state.revision <= this.subagentActivities.revision) {
+      return;
+    }
+    this.subagentActivities = structuredClone(message.state);
+    this.syncSnapshotToolAndAgentUi(this.snapshot);
   }
 
   private onSdkEphemeral(message: SessionProtocolEphemeralMessage): void {
@@ -1463,10 +1496,16 @@ export class SessionChatController {
 
   private syncSnapshotToolAndAgentUi(snapshot: SessionProtocolSnapshot): void {
     this.view.reconcileSubagentUiSession(
-      Object.values(snapshot.agents).map((agent) => ({
-        state: structuredClone(agent),
-        activity: getSubagentActivity(snapshot, agent.id),
-      })),
+      Object.values(snapshot.agents).map((agent) => {
+        const activityState = this.subagentActivities.agents[agent.id];
+        return {
+          state: structuredClone(agent),
+          activities:
+            activityState?.runRevision === agent.run.revision
+              ? structuredClone(activityState.activities)
+              : [],
+        };
+      }),
     );
   }
 
@@ -2699,25 +2738,12 @@ function getRecoveredToolResult(
   return tool.error?.trim() || tool.summary?.trim() || undefined;
 }
 
-function getSubagentActivity(
-  snapshot: SessionProtocolSnapshot,
-  agentId: string,
-): string | undefined {
-  const facet = Object.values(snapshot.facets).find(
-    (candidate) =>
-      candidate.kind === SUBAGENT_ACTIVITY_FACET_KIND &&
-      candidate.subject.type === "agent" &&
-      candidate.subject.id === agentId,
-  );
-  return typeof facet?.data.text === "string" ? facet.data.text : undefined;
-}
-
 function subagentUiEventsFromAgentRun(
   agent: SessionProtocolSnapshot["agents"][string],
   startedType: "subagent_spawned" | "subagent_run_started" = "subagent_spawned",
-): SubagentUiEvent[] {
+): SubagentEvent[] {
   const state = structuredClone(agent);
-  const events: SubagentUiEvent[] = [{ type: startedType, state }];
+  const events: SubagentEvent[] = [{ type: startedType, state }];
   if (agent.run.interruptRequested) {
     events.push({ type: "subagent_interrupt_requested", state });
   }
@@ -2730,7 +2756,7 @@ function subagentUiEventsFromAgentRun(
 function subagentUiEventsForAgentDelta(
   previous: SessionProtocolSnapshot["agents"][string] | undefined,
   next: SessionProtocolSnapshot["agents"][string],
-): SubagentUiEvent[] {
+): SubagentEvent[] {
   if (!previous) {
     return subagentUiEventsFromAgentRun(next);
   }
@@ -2739,7 +2765,7 @@ function subagentUiEventsForAgentDelta(
   }
 
   const state = structuredClone(next);
-  const events: SubagentUiEvent[] = [];
+  const events: SubagentEvent[] = [];
   if (!previous.run.interruptRequested && next.run.interruptRequested) {
     events.push({ type: "subagent_interrupt_requested", state });
   }

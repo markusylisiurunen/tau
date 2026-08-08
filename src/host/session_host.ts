@@ -38,6 +38,8 @@ import type {
   SessionProtocolSnapshot,
   SessionProtocolStartGoalParams,
   SessionProtocolStartGoalResult,
+  SessionProtocolSubagentActivitiesMessage,
+  SessionProtocolSubagentActivitiesState,
   SessionProtocolTurnOutcome,
   SessionProtocolUserMessageTurnResult,
 } from "../protocol/session_protocol.js";
@@ -60,6 +62,10 @@ export type TauHostedSession = {
   getGoal(): SessionProtocolGoal | null;
   onDelta(handler: (delta: SessionProtocolDeltaMessage) => void): () => void;
   onEphemeral(handler: (message: SessionProtocolEphemeralMessage) => void): () => void;
+  subagentActivities(): SessionProtocolSubagentActivitiesState;
+  onSubagentActivities(
+    handler: (message: SessionProtocolSubagentActivitiesMessage) => void,
+  ): () => void;
   record(
     options: Omit<SessionProtocolRecordParams, "sessionId">,
   ): Promise<SessionProtocolRecordResult>;

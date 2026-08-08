@@ -1,7 +1,7 @@
 import type { AutocompleteProvider, Component } from "@earendil-works/pi-tui";
 import { Spacer, TuiMainScreen } from "@earendil-works/pi-tui";
 import { resolveThemeTokensForAppearance, type ThemeDefinition } from "../core/config/index.js";
-import type { SubagentUiEvent } from "../core/subagents/types.js";
+import type { SubagentEvent } from "../core/subagents/types.js";
 import type { ReasoningEffort } from "../core/types.js";
 import type {
   SessionProtocolFeedbackTone,
@@ -82,7 +82,7 @@ export interface ChatView {
   startWorkingIcon(): void;
   stopWorkingIcon(): void;
   updateLocalToolUi(model: ToolUiModel): void;
-  handleSubagentEvent(event: SubagentUiEvent): void;
+  handleSubagentEvent(event: SubagentEvent): void;
   resetToolUiSession(): void;
   reconcileToolUiSession(models: readonly ToolUiModel[]): void;
   reconcileSubagentUiSession(snapshots: readonly SubagentPanelSnapshot[]): void;
@@ -258,7 +258,7 @@ export class TuiChatView implements ChatView {
     this.toolUiRouter.updateLocal(model);
   }
 
-  handleSubagentEvent(event: SubagentUiEvent): void {
+  handleSubagentEvent(event: SubagentEvent): void {
     this.subagentPanel.handleEvent(event);
     this.ui.requestRender();
   }

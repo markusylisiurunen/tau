@@ -242,6 +242,9 @@ options:
 - `subscribePendingUserMessages(listener)`
   - subscribes to all `session.pendingUserMessages` state messages on this client connection
   - returns an unsubscribe function
+- `subscribeSubagentActivities(listener)`
+  - subscribes to all `session.subagentActivities` state messages on this client connection
+  - returns an unsubscribe function
 - `close()`
   - aborts active client-tool handlers and awaits them while closing the transport, then propagates any transport close error
   - for `createTauSdkClient()`, also shuts down the owned in-process host after persisting live session snapshots
@@ -267,6 +270,11 @@ options:
   - returns the latest independently revisioned pending-message state
 - `onPendingUserMessages(listener)`
   - subscribes to replacements of only the pending-message state for this session id
+  - immediately receives the current state
+- `subagentActivities()`
+  - returns the latest independently revisioned supervised-subagent activity state
+- `onSubagentActivities(listener)`
+  - subscribes to full replacements of only the subagent activity state for this session id
   - immediately receives the current state
 - `onDelta(listener)`
   - subscribes to streamed `session.delta` messages for this session id only
@@ -401,7 +409,7 @@ const second = await session.sample({
 
 ```json
 {
-  "version": 10,
+  "version": 11,
   "type": "session.delta",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "fromRevision": 1,
@@ -432,7 +440,27 @@ const unsubscribePendingUserMessages = session.onPendingUserMessages(
 );
 ```
 
-`session.observe` returns the initial snapshot and pending-message baseline together before the SDK session resolves. Pending-message revisions are independent from snapshot revisions, and each later event replaces only the pending-message list. Pending messages survive client detach but are discarded when the host restarts or the session is recovered from disk.
+`session.observe` returns the initial snapshot, pending-message baseline, and subagent-activity baseline together before the SDK session resolves. Pending-message revisions are independent from snapshot revisions, and each later event replaces only the pending-message list. Pending messages survive client detach but are discarded when the host restarts or the session is recovered from disk.
+
+## subagent activities
+
+`subagentActivities()` and `onSubagentActivities()` expose the authoritative transient activity lists for supervised subagents:
+
+```ts
+console.log(session.subagentActivities().agents);
+
+const unsubscribeSubagentActivities = session.onSubagentActivities(
+  (message) => {
+    for (const [agentId, run] of Object.entries(message.state.agents)) {
+      for (const activity of run.activities) {
+        console.log(agentId, run.runRevision, activity.type);
+      }
+    }
+  },
+);
+```
+
+Each message fully replaces the activity state. A run contains at most the latest 64 typed assistant, settled-tool, and notice activities; follow-up runs reset the list. The state is independent from the durable session snapshot, survives client detach while the hosted session remains in memory, and is discarded on host restart or recovery. Clients decide how to render activities and whether to show completed agents.
 
 ## ephemeral events
 

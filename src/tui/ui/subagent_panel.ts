@@ -1,18 +1,13 @@
 import { type Component, visibleWidth } from "@earendil-works/pi-tui";
 import type {
+  SubagentEvent,
   SubagentStateSnapshot,
-  SubagentUiEvent,
   SubagentUsageSnapshot,
 } from "../../core/subagents/types.js";
 import { formatUsageSnapshot, formatUsdCost } from "../../core/utils/format.js";
-import { formatAgentActivityText, formatAgentOutputText } from "./agent_activity_format.js";
+import type { SessionProtocolSubagentActivity } from "../../protocol/session_protocol.js";
 import { truncateFromEndByWidthPreserveAnsi } from "./components/one_line_segments.js";
 import type { Theme } from "./theme/index.js";
-
-type SubagentPanelLine = {
-  kind: "progress" | "output";
-  text: string;
-};
 
 type SubagentPanelEntry = {
   id: string;
@@ -22,15 +17,14 @@ type SubagentPanelEntry = {
   status: SubagentStateSnapshot["run"]["status"];
   costTotal: number;
   usage: SubagentUsageSnapshot;
-  lines: SubagentPanelLine[];
+  activities: SessionProtocolSubagentActivity[];
 };
 
 const MAX_PANEL_LINES = 6;
-const MAX_PANEL_HISTORY = 200;
 
 export type SubagentPanelSnapshot = {
   state: SubagentStateSnapshot;
-  activity?: string;
+  activities: SessionProtocolSubagentActivity[];
 };
 
 export class SubagentPanelComponent implements Component {
@@ -66,15 +60,7 @@ export class SubagentPanelComponent implements Component {
         this.entries.set(entry.id, entry);
       }
 
-      const activity = snapshot.activity?.trim();
-      if (activity && !this.hasLine(entry, "progress", activity)) {
-        this.appendLine(entry, { kind: "progress", text: activity });
-      }
-      const finalText =
-        snapshot.state.run.status === "succeeded" ? snapshot.state.run.response.trim() : "";
-      if (finalText && !this.hasLine(entry, "output", finalText)) {
-        this.appendLine(entry, { kind: "output", text: finalText });
-      }
+      entry.activities = structuredClone(snapshot.activities);
     }
 
     if (!this.selectedId || this.entries.get(this.selectedId)?.status !== "running") {
@@ -86,7 +72,7 @@ export class SubagentPanelComponent implements Component {
     return this.getRunningEntries().length > 0;
   }
 
-  handleEvent(event: SubagentUiEvent): void {
+  handleEvent(event: SubagentEvent): void {
     if (event.type === "subagent_spawned" || event.type === "subagent_run_started") {
       const state = event.state;
       this.entries.set(state.id, this.buildEntry(state));
@@ -100,15 +86,6 @@ export class SubagentPanelComponent implements Component {
       const entry = this.entries.get(event.state.id);
       if (!entry) return;
       this.applySnapshot(entry, event.state);
-      const response =
-        event.state.run.status === "succeeded" ? event.state.run.response : undefined;
-      const finalText = response?.trim() ?? "";
-      if (finalText && !this.hasOutputLine(entry, finalText)) {
-        entry.lines.push({ kind: "output", text: finalText });
-        if (entry.lines.length > MAX_PANEL_HISTORY) {
-          entry.lines.shift();
-        }
-      }
       if (this.selectedId === entry.id && entry.status !== "running") {
         this.selectedId = this.getFirstRunningId();
       }
@@ -122,16 +99,10 @@ export class SubagentPanelComponent implements Component {
       return;
     }
 
-    if (event.type === "subagent_updated" || event.type === "subagent_activity") {
+    if (event.type === "subagent_updated") {
       const entry = this.entries.get(event.state.id);
       if (!entry) return;
       this.applySnapshot(entry, event.state);
-      if (event.type === "subagent_activity" && event.text) {
-        entry.lines.push({ kind: "progress", text: event.text });
-        if (entry.lines.length > MAX_PANEL_HISTORY) {
-          entry.lines.shift();
-        }
-      }
     }
   }
 
@@ -210,14 +181,10 @@ export class SubagentPanelComponent implements Component {
 
   private buildOutputLines(entry: SubagentPanelEntry): string[] {
     const { palette } = this.theme;
-    const formattedLines = entry.lines
-      .map((line) =>
-        line.kind === "output"
-          ? formatAgentOutputText(line.text)
-          : formatAgentActivityText(line.text),
-      )
-      .filter((line): line is string => Boolean(line?.length));
-    const recentLines = formattedLines.slice(-MAX_PANEL_LINES);
+    const recentLines = entry.activities
+      .map(formatSubagentActivity)
+      .filter((line): line is string => Boolean(line))
+      .slice(-MAX_PANEL_LINES);
     const output: string[] = [];
 
     for (const line of recentLines) {
@@ -265,27 +232,6 @@ export class SubagentPanelComponent implements Component {
     return undefined;
   }
 
-  private appendLine(entry: SubagentPanelEntry, line: SubagentPanelLine): void {
-    entry.lines.push(line);
-    if (entry.lines.length > MAX_PANEL_HISTORY) {
-      entry.lines.shift();
-    }
-  }
-
-  private hasLine(
-    entry: SubagentPanelEntry,
-    kind: SubagentPanelLine["kind"],
-    text: string,
-  ): boolean {
-    const trimmed = text.trim();
-    if (!trimmed) return true;
-    return entry.lines.some((line) => line.kind === kind && line.text.trim() === trimmed);
-  }
-
-  private hasOutputLine(entry: SubagentPanelEntry, text: string): boolean {
-    return this.hasLine(entry, "output", text);
-  }
-
   private buildEntry(state: SubagentStateSnapshot): SubagentPanelEntry {
     return {
       id: state.id,
@@ -295,19 +241,37 @@ export class SubagentPanelComponent implements Component {
       status: state.run.status,
       costTotal: state.costTotal,
       usage: state.usage,
-      lines: [],
+      activities: [],
     };
   }
 
   private applySnapshot(entry: SubagentPanelEntry, state: SubagentStateSnapshot): void {
     if (entry.runRevision !== state.run.revision) {
       entry.runRevision = state.run.revision;
-      entry.lines = [];
+      entry.activities = [];
     }
     entry.status = state.run.status;
     entry.costTotal = state.costTotal;
     entry.usage = state.usage;
     entry.name = state.name;
     entry.title = state.title;
+  }
+}
+
+function formatSubagentActivity(activity: SessionProtocolSubagentActivity): string | undefined {
+  switch (activity.type) {
+    case "assistant": {
+      const firstLine = activity.text.trim().split(/\r?\n/, 1)[0]?.trim();
+      return firstLine ? `> ${firstLine}` : undefined;
+    }
+    case "tool": {
+      const operation = activity.presentation.operation
+        ? ` ${activity.presentation.operation}`
+        : "";
+      const subject = activity.presentation.subject.replace(/\s+/g, " ").trim();
+      return `${activity.presentation.action}${operation} ${subject}`;
+    }
+    case "notice":
+      return activity.title;
   }
 }

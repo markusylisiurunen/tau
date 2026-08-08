@@ -132,6 +132,37 @@ function promptFixture() {
   };
 }
 
+function createRunningSubagentState(id = "child-1") {
+  return {
+    id,
+    name: "default",
+    title: "long task",
+    availability: "running",
+    model: {
+      provider: personas[0].model.provider,
+      id: personas[0].model.id,
+      reasoning: "medium",
+    },
+    workingDirectory: "/repo",
+    createdAt: 1,
+    run: {
+      revision: 1,
+      status: "running",
+      startedAt: 1,
+      interruptRequested: false,
+    },
+    costTotal: 0,
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      contextWindowUsageTokens: 0,
+      contextWindow: 100_000,
+    },
+  };
+}
+
 function expectedModel(persona = personas[0]) {
   const thinkingLevelMap = persona.model.thinkingLevelMap
     ? Object.fromEntries(
@@ -3393,34 +3424,7 @@ describe("LocalSessionHost", () => {
     const host = createHost(new MemorySessionStore());
     const hostedSession = await host.createSession(localCreateInput);
     vi.spyOn(hostedSession.session, "hasSubagent").mockReturnValue(true);
-    const state = {
-      id: "child-1",
-      name: "default",
-      title: "long task",
-      availability: "running",
-      model: {
-        provider: personas[0].model.provider,
-        id: personas[0].model.id,
-        reasoning: "medium",
-      },
-      workingDirectory: "/repo",
-      createdAt: 1,
-      run: {
-        revision: 1,
-        status: "running",
-        startedAt: 1,
-        interruptRequested: false,
-      },
-      costTotal: 0,
-      usage: {
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        contextWindowUsageTokens: 0,
-        contextWindow: 100_000,
-      },
-    };
+    const state = createRunningSubagentState();
 
     await hostedSession.recordSubagentEvent({ type: "subagent_spawned", state });
     for (let index = 0; index < 65; index += 1) {
@@ -3463,6 +3467,99 @@ describe("LocalSessionHost", () => {
       runRevision: 2,
       activities: [],
     });
+  });
+
+  it("bounds subagent tool and notice activities at the protocol boundary", async () => {
+    const host = createHost(new MemorySessionStore());
+    const hostedSession = await host.createSession(localCreateInput);
+    vi.spyOn(hostedSession.session, "hasSubagent").mockReturnValue(true);
+    const state = createRunningSubagentState();
+    await hostedSession.recordSubagentEvent({ type: "subagent_spawned", state });
+
+    const { actionByStatus, ...editPresentation } = buildToolRunPresentation({
+      toolName: "edit",
+      subject: "src/large.ts",
+      details: Array.from({ length: 65 }, (_, index) => ({ text: `+ line ${index}` })),
+      detailTruncation: false,
+      metadata: Array.from({ length: 33 }, (_, index) => `metadata ${index}`),
+    });
+    await expect(
+      hostedSession.recordSubagentEvent({
+        type: "subagent_activity",
+        state,
+        activity: {
+          type: "tool",
+          toolName: "edit",
+          outcome: "succeeded",
+          presentation: { action: actionByStatus.succeeded, ...editPresentation },
+        },
+      }),
+    ).resolves.toBeUndefined();
+
+    const diagnostic = `tool call id: ${"x".repeat(5_000)}`;
+    await expect(
+      hostedSession.recordSubagentEvent({
+        type: "subagent_activity",
+        state,
+        activity: {
+          type: "notice",
+          severity: "error",
+          title: "t".repeat(513),
+          content: [diagnostic, ...Array.from({ length: 16 }, (_, index) => `entry ${index}`)],
+        },
+      }),
+    ).resolves.toBeUndefined();
+
+    const [toolActivity, noticeActivity] =
+      hostedSession.subagentActivities().agents["child-1"].activities;
+    expect(toolActivity.presentation.details).toHaveLength(64);
+    expect(toolActivity.presentation.details[32]).toEqual({ text: "…2 more lines…", wrap: "word" });
+    expect(toolActivity.presentation.metadata).toHaveLength(32);
+    expect(noticeActivity).toMatchObject({
+      type: "notice",
+      severity: "error",
+      title: `${"t".repeat(511)}…`,
+    });
+    expect(noticeActivity.content).toHaveLength(16);
+    expect(noticeActivity.content[0]).toHaveLength(4_096);
+    expect(noticeActivity.content[0]).toMatch(/^tool call id: /);
+  });
+
+  it("does not publish subagent activity cleanup when rewind persistence fails", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const hostedSession = await host.createSession(localCreateInput);
+    const historyEntryId = await hostedSession.session.commitUserText("rewind me");
+    await hostedSession.snapshot();
+
+    const hasSubagent = vi.spyOn(hostedSession.session, "hasSubagent").mockReturnValue(true);
+    const state = createRunningSubagentState();
+    await hostedSession.recordSubagentEvent({ type: "subagent_spawned", state });
+    await hostedSession.recordSubagentEvent({
+      type: "subagent_activity",
+      state,
+      activity: { type: "assistant", text: "still visible" },
+    });
+    const activityState = hostedSession.subagentActivities();
+    const activityMessages = [];
+    hostedSession.onSubagentActivities((message) => activityMessages.push(message));
+    hasSubagent.mockReturnValue(false);
+
+    const commitSessionSnapshot = store.commitSessionSnapshot.bind(store);
+    let failNextCommit = true;
+    store.commitSessionSnapshot = vi.fn(async (snapshot, options) => {
+      if (failNextCommit) {
+        failNextCommit = false;
+        throw new Error("rewind persistence failed");
+      }
+      await commitSessionSnapshot(snapshot, options);
+    });
+
+    await expect(hostedSession.rewindToHistoryEntryId(historyEntryId)).rejects.toThrow(
+      "rewind persistence failed",
+    );
+    expect(hostedSession.subagentActivities()).toEqual(activityState);
+    expect(activityMessages).toEqual([]);
   });
 
   it("does not let a reasoning write replace streamed state at the same revision", async () => {

@@ -16,6 +16,8 @@ export const SESSION_PROTOCOL_MAX_SUBAGENT_ACTIVITIES = 64;
 const SESSION_PROTOCOL_NOTICE_TITLE_MAX_CHARS = 512;
 const SESSION_PROTOCOL_NOTICE_CONTENT_MAX_ENTRIES = 16;
 const SESSION_PROTOCOL_NOTICE_CONTENT_ENTRY_MAX_CHARS = 4_096;
+const SESSION_PROTOCOL_SUBAGENT_TOOL_DETAILS_MAX_LINES = 64;
+const SESSION_PROTOCOL_SUBAGENT_TOOL_METADATA_MAX_ENTRIES = 32;
 
 export const SESSION_PROTOCOL_METHODS = [
   "initialize",
@@ -491,6 +493,56 @@ export function projectSessionProtocolNoticePresentation(
     title: truncateNoticeText(title, SESSION_PROTOCOL_NOTICE_TITLE_MAX_CHARS),
     ...(projectedContent.length > 0 ? { content: projectedContent } : {}),
   };
+}
+
+export function projectSessionProtocolSubagentActivity(
+  activity: SessionProtocolSubagentActivity,
+): SessionProtocolSubagentActivity {
+  if (activity.type === "assistant") {
+    return { type: "assistant", text: activity.text };
+  }
+  if (activity.type === "notice") {
+    const presentation = projectSessionProtocolNoticePresentation(activity.title, activity.content);
+    return {
+      type: "notice",
+      severity: activity.severity,
+      title: presentation.title,
+      ...(presentation.content ? { content: presentation.content } : {}),
+    };
+  }
+
+  return {
+    type: "tool",
+    toolName: activity.toolName,
+    outcome: activity.outcome,
+    presentation: {
+      action: activity.presentation.action,
+      ...(activity.presentation.operation ? { operation: activity.presentation.operation } : {}),
+      subject: activity.presentation.subject,
+      subjectWrap: activity.presentation.subjectWrap,
+      details: truncateSubagentActivityDetails(activity.presentation.details),
+      metadata: activity.presentation.metadata.slice(
+        0,
+        SESSION_PROTOCOL_SUBAGENT_TOOL_METADATA_MAX_ENTRIES,
+      ),
+    },
+  };
+}
+
+function truncateSubagentActivityDetails(
+  details: Extract<SessionProtocolSubagentActivity, { type: "tool" }>["presentation"]["details"],
+): Extract<SessionProtocolSubagentActivity, { type: "tool" }>["presentation"]["details"] {
+  if (details.length <= SESSION_PROTOCOL_SUBAGENT_TOOL_DETAILS_MAX_LINES) {
+    return structuredClone(details);
+  }
+  const headCount = Math.ceil((SESSION_PROTOCOL_SUBAGENT_TOOL_DETAILS_MAX_LINES - 1) / 2);
+  const tailCount = SESSION_PROTOCOL_SUBAGENT_TOOL_DETAILS_MAX_LINES - headCount - 1;
+  const omitted = details.length - headCount - tailCount;
+  return [
+    ...structuredClone(details.slice(0, headCount)),
+    { text: `…${omitted} more ${omitted === 1 ? "line" : "lines"}…`, wrap: "word" },
+    ...structuredClone(details.slice(-tailCount)),
+  ];
 }
 
 function truncateNoticeText(value: string, maxChars: number): string {
@@ -2951,8 +3003,10 @@ const subagentToolPresentationSchema = z
           })
           .strip(),
       )
-      .max(64),
-    metadata: z.array(subagentActivityLineSchema).max(32),
+      .max(SESSION_PROTOCOL_SUBAGENT_TOOL_DETAILS_MAX_LINES),
+    metadata: z
+      .array(subagentActivityLineSchema)
+      .max(SESSION_PROTOCOL_SUBAGENT_TOOL_METADATA_MAX_ENTRIES),
   })
   .strip();
 

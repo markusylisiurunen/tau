@@ -94,6 +94,7 @@ import {
   createSessionProtocolEphemeralMessage,
   createSessionProtocolSubagentActivitiesMessage,
   projectSessionProtocolNoticePresentation,
+  projectSessionProtocolSubagentActivity,
   SESSION_PROTOCOL_MAX_SUBAGENT_ACTIVITIES,
 } from "../protocol/session_protocol.js";
 import { LEGACY_SESSION_MODEL_CONTEXT_KEY } from "../store/session_snapshot_migrations.js";
@@ -1791,9 +1792,11 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     return outcome;
   }
 
-  private async commitSnapshot(): Promise<SessionProtocolSnapshot> {
+  private async commitSnapshot(
+    options: { removeMissingAgents?: boolean } = {},
+  ): Promise<SessionProtocolSnapshot> {
     this.assertNotDisposed();
-    this.reconcileProjections();
+    this.reconcileProjections(options);
     const draft = this.buildSnapshotDraft();
 
     await this.switchSnapshotSession(draft.sessionId);
@@ -1803,6 +1806,9 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       revision: this.nextSnapshotRevision(draft),
     };
     if (this.persistedSnapshot && isDeepStrictEqual(this.persistedSnapshot, snapshot)) {
+      if (options.removeMissingAgents) {
+        this.removeMissingSubagentActivities();
+      }
       return cloneSessionProtocolSnapshot(this.committedSnapshot ?? snapshot);
     }
 
@@ -1811,6 +1817,9 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     });
     this.persistedSnapshot = cloneSessionProtocolSnapshot(snapshot);
     this.committedSnapshot = cloneSessionProtocolSnapshot(snapshot);
+    if (options.removeMissingAgents) {
+      this.removeMissingSubagentActivities();
+    }
     return cloneSessionProtocolSnapshot(snapshot);
   }
 
@@ -1890,21 +1899,11 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       }
     }
     if (options.removeMissingAgents) {
-      let activitiesChanged = false;
       for (const id of this.agents.keys()) {
         if (!this.session.hasSubagent(id)) {
           this.agents.delete(id);
           this.agentCostTotals.delete(id);
         }
-      }
-      for (const id of this.subagentActivitiesByAgent.keys()) {
-        if (!this.session.hasSubagent(id)) {
-          this.subagentActivitiesByAgent.delete(id);
-          activitiesChanged = true;
-        }
-      }
-      if (activitiesChanged) {
-        this.publishSubagentActivities();
       }
     }
 
@@ -2484,8 +2483,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         }
         const cutoffSequence = rewindItem.sequence - 1;
         this.timeline.items = this.timeline.items.filter((item) => item.sequence <= cutoffSequence);
-        this.reconcileProjections({ removeMissingAgents: true });
-        const snapshot = await this.commitSnapshot();
+        const snapshot = await this.commitSnapshot({ removeMissingAgents: true });
         this.emitSnapshotReset(
           { type: "rewind", epoch: this.timeline.epoch, cutoffSequence },
           snapshot,
@@ -2773,7 +2771,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         this.operations.clear();
         this.facets.clear();
         this.draftAssistantMessage = undefined;
-        this.reconcileProjections({ removeMissingAgents: true });
         const summary = this.session.rawHistoryEntries.find(
           (entry) => entry.id === event.result.summaryHistoryEntryId,
         );
@@ -2783,7 +2780,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
           );
         }
         this.appendMessageTimelineItem(summary.id, summary.message.timestamp);
-        const snapshot = await this.commitSnapshot();
+        const snapshot = await this.commitSnapshot({ removeMissingAgents: true });
         this.emitSnapshotReset(
           {
             type: "compaction",
@@ -2868,7 +2865,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       if (!current || current.runRevision !== agent.run.revision) {
         throw new Error(`missing activity state for subagent run '${agent.id}'`);
       }
-      current.activities.push(structuredClone(event.activity));
+      current.activities.push(projectSessionProtocolSubagentActivity(event.activity));
       if (current.activities.length > SESSION_PROTOCOL_MAX_SUBAGENT_ACTIVITIES) {
         current.activities.splice(
           0,
@@ -2893,6 +2890,19 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         runRevision: agent.run.revision,
         activities: [],
       });
+      this.publishSubagentActivities();
+    }
+  }
+
+  private removeMissingSubagentActivities(): void {
+    let changed = false;
+    for (const id of this.subagentActivitiesByAgent.keys()) {
+      if (!this.session.hasSubagent(id)) {
+        this.subagentActivitiesByAgent.delete(id);
+        changed = true;
+      }
+    }
+    if (changed) {
       this.publishSubagentActivities();
     }
   }

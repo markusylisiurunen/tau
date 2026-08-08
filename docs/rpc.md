@@ -196,7 +196,7 @@ params (required):
   "id": "init-1",
   "ok": true,
   "result": {
-    "protocolVersion": 10,
+    "protocolVersion": 11,
     "methods": [
       "initialize",
       "session.create",

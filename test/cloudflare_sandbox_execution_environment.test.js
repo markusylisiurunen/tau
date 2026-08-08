@@ -796,7 +796,6 @@ describe("Cloudflare Sandbox execution environment", () => {
         return {
           output: JSON.stringify({
             platform: "linux",
-            nodeVersion: "v24.1.0",
             repoRoot: "/workspace/repo",
             agentsFiles: [
               { path: "/workspace/repo/AGENTS.md", content: "repo instructions" },
@@ -871,7 +870,6 @@ describe("Cloudflare Sandbox execution environment", () => {
     expect(runtimeContext.promptBootstrap.promptContext).toMatchObject({
       repoRoot: "/workspace/repo",
       platform: "linux",
-      nodeVersion: "v24.1.0",
     });
     expect(nodeScriptCalls).toHaveLength(1);
     expect(nodeScriptCalls[0].args[0]).toBe("/workspace/repo");

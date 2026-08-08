@@ -3,11 +3,12 @@ import type { Persona } from "../types.js";
 import { buildBaseSystemPrompt, buildEnvironmentTag } from "../utils/context.js";
 export type ComposeSessionPromptsArgs = {
   persona: Persona;
+  sessionId?: string;
   cwd: string;
   repoRoot?: string;
-  datetime: string;
+  repository?: string;
+  sessionStartedAt: string;
   platform: NodeJS.Platform;
-  nodeVersion: string;
   skillsBlock?: string;
   projectContextBlock?: string;
 };
@@ -20,11 +21,12 @@ export type SessionPromptComposition = {
 
 export function composeSessionPrompts(args: ComposeSessionPromptsArgs): SessionPromptComposition {
   const environmentTag = buildEnvironmentTag({
+    sessionId: args.sessionId,
     cwd: args.cwd,
     repoRoot: args.repoRoot,
-    datetime: args.datetime,
+    repository: args.repository,
+    sessionStartedAt: args.sessionStartedAt,
     platform: args.platform,
-    nodeVersion: args.nodeVersion,
   });
 
   const baseSystemPrompt = buildBaseSystemPrompt({
@@ -46,11 +48,12 @@ export function composeSessionPrompts(args: ComposeSessionPromptsArgs): SessionP
       });
 
       const subagentEnvironmentTag = buildEnvironmentTag({
+        sessionId: args.sessionId,
         cwd: args.cwd,
         repoRoot: args.repoRoot,
-        datetime: args.datetime,
+        repository: args.repository,
+        sessionStartedAt: args.sessionStartedAt,
         platform: args.platform,
-        nodeVersion: args.nodeVersion,
       });
 
       subagentPrompts[name] = buildBaseSystemPrompt({

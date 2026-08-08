@@ -297,18 +297,22 @@ export class LocalSessionHost implements TauSessionHost {
     forceNextSnapshotRevision = false,
   ): Promise<LocalHostedSessionHandle> {
     let hostedSession: LocalHostedSessionHandle;
+    const sessionId = committedSnapshot?.sessionId ?? randomUUID();
+    const createdAt = committedSnapshot?.createdAt ?? this.sessionOptions.environment.now();
     const runtime = ChatRuntime.create({
+      sessionId,
+      createdAt,
       persona: bootstrap.persona,
       backend: executionEnvironment.getToolExecutionBackend(),
       clientTools: (sessionId) => this.clientToolBroker.getToolDefinitions(sessionId),
       modelResolver: bootstrap.modelResolver,
       resolveSubagentPrompts: createExecutionEnvironmentSubagentPromptResolver({
+        sessionId,
         executionEnvironment,
         includeAgentContext: this.sessionOptions.includeAgentContext,
-        now: this.sessionOptions.environment.now,
+        sessionStartedAt: createdAt,
       }),
       promptContext: runtimeContext.promptBootstrap.promptContext,
-      environment: this.sessionOptions.environment,
       eventSink: async (event) => await hostedSession.enqueueRuntimeEvent(event),
       subagentEventSink: async (event) => await hostedSession.recordSubagentEvent(event),
       goalManager: {
@@ -329,7 +333,6 @@ export class LocalSessionHost implements TauSessionHost {
     if (!attributes) {
       throw new Error("session attributes are required");
     }
-    const createdAt = committedSnapshot?.createdAt ?? this.sessionOptions.environment.now();
     hostedSession = new LocalHostedSessionHandle(
       runtime,
       runtimeContext.promptBootstrap,
@@ -1474,6 +1477,8 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     const contextId = `ephemeral-${randomUUID()}`;
     const session = new HostedEphemeralAgentSession({
       contextId,
+      sessionId: this.sessionId,
+      sessionStartedAt: this.createdAt,
       persona: this.runtime.persona,
       config: this.bootstrap.config ?? {},
       discoveredSkills: this.bootstrap.discoveredSkills,

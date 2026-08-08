@@ -3,9 +3,10 @@ import type { ResolveSubagentPrompts } from "../core/tools/spawn_agent.js";
 import type { ExecutionEnvironment } from "../execution/execution_environment.js";
 
 export function createExecutionEnvironmentSubagentPromptResolver(options: {
+  sessionId: string;
   executionEnvironment: ExecutionEnvironment;
   includeAgentContext: boolean;
-  now: () => number;
+  sessionStartedAt: number;
 }): ResolveSubagentPrompts {
   return async ({ cwd, persona }) => {
     const { config, skills } = await options.executionEnvironment.resolveRuntimeConfig(cwd);
@@ -19,11 +20,12 @@ export function createExecutionEnvironmentSubagentPromptResolver(options: {
     const promptContext = runtimeContext.promptBootstrap.promptContext;
     return composeSessionPrompts({
       persona,
+      sessionId: options.sessionId,
       cwd: promptContext.cwd,
       repoRoot: promptContext.repoRoot,
-      datetime: new Date(options.now()).toISOString(),
+      repository: promptContext.repository,
+      sessionStartedAt: new Date(options.sessionStartedAt).toISOString(),
       platform: promptContext.platform,
-      nodeVersion: promptContext.nodeVersion,
       skillsBlock: promptContext.skillsBlock,
       projectContextBlock: promptContext.projectContextBlock,
     }).subagentPrompts;

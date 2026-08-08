@@ -157,9 +157,9 @@ export function printDebugInfo(args: {
     persona: selectedPersona,
     cwd: promptContext.cwd,
     repoRoot: promptContext.repoRoot,
-    datetime,
+    repository: promptContext.repository,
+    sessionStartedAt: datetime,
     platform: promptContext.platform,
-    nodeVersion: promptContext.nodeVersion,
     skillsBlock: promptContext.skillsBlock,
     projectContextBlock: promptContext.projectContextBlock,
   });

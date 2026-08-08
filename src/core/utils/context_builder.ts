@@ -118,29 +118,33 @@ export function buildProjectContextBlock(args: {
 }
 
 export function buildEnvironmentTag(args: {
-  datetime: string;
+  sessionId?: string;
+  sessionStartedAt: string;
   cwd: string;
   repoRoot?: string;
+  repository?: string;
   platform: NodeJS.Platform;
-  nodeVersion: string;
 }): string {
-  const nodeVersion = args.nodeVersion;
-  const platform = args.platform;
-  const lines = [
-    "<environment>",
-    `  <datetime>${args.datetime}</datetime>`,
-    `  <cwd>${args.cwd}</cwd>`,
-  ];
+  const platform =
+    args.platform === "darwin" ? "macOS" : args.platform === "linux" ? "Linux" : args.platform;
+  const lines = ["<environment>"];
+  if (args.sessionId) {
+    lines.push(`- Session ID: \`${args.sessionId}\``);
+  }
+  lines.push(
+    `- Session started at: ${args.sessionStartedAt}`,
+    `- Platform: ${platform}`,
+    `- Current working directory: \`${args.cwd}\``,
+  );
 
   if (args.repoRoot) {
-    lines.push(`  <repo-root>${args.repoRoot}</repo-root>`);
+    if (args.repository) {
+      lines.push(`- Repository: \`${args.repository}\``);
+    }
+    lines.push(`- Repository root: \`${args.repoRoot}\``);
   }
 
-  lines.push(
-    `  <node>${nodeVersion}</node>`,
-    `  <platform>${platform}</platform>`,
-    "</environment>",
-  );
+  lines.push("</environment>");
 
   return lines.join("\n");
 }

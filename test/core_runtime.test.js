@@ -53,16 +53,22 @@ import {
 describe("context builder", () => {
   it("renders environment and project context blocks", () => {
     const tag = buildEnvironmentTag({
-      datetime: "2025-01-01T00:00:00.000Z",
+      sessionId: "session-1",
+      sessionStartedAt: "2025-01-01T00:00:00.000Z",
       cwd: "/repo",
       repoRoot: "/repo",
+      repository: "github.com/example/repo",
       platform: "darwin",
-      nodeVersion: "v20.0.0",
     });
 
-    expect(tag).toContain("<platform>darwin</platform>");
-    expect(tag).toContain("<node>v20.0.0</node>");
-    expect(tag).toContain("<repo-root>/repo</repo-root>");
+    expect(tag).toBe(`<environment>
+- Session ID: \`session-1\`
+- Session started at: 2025-01-01T00:00:00.000Z
+- Platform: macOS
+- Current working directory: \`/repo\`
+- Repository: \`github.com/example/repo\`
+- Repository root: \`/repo\`
+</environment>`);
 
     const readFile = (path) => (path === "/repo/AGENTS.md" ? "# Agents\n" : "");
     const block = buildProjectContextBlock({
@@ -119,8 +125,8 @@ describe("runtime prompt bootstrap", () => {
           return {
             output: JSON.stringify({
               platform: "linux",
-              nodeVersion: "v24.0.0",
               repoRoot: "/workspace/repo",
+              repositoryRemote: "git@GitHub.com:example/repo.git",
               agentsFiles: [
                 { path: "/workspace/repo/AGENTS.md", content: "repo instructions" },
                 { path: "/workspace/AGENTS.md", content: "workspace instructions" },
@@ -134,6 +140,7 @@ describe("runtime prompt bootstrap", () => {
     });
 
     expect(resolved.agentsFiles).toEqual(["/workspace/repo/AGENTS.md", "/workspace/AGENTS.md"]);
+    expect(resolved.promptContext.repository).toBe("github.com/example/repo");
     expect(resolved.promptContext.projectContextBlock).toContain("repo instructions");
     expect(resolved.promptContext.projectContextBlock).toContain("workspace instructions");
     expect(resolved.promptContext.projectContextBlock).toContain("/workspace/repo/src/AGENTS.md");
@@ -339,12 +346,12 @@ describe("session prompt composer", () => {
 
     const result = composeSessionPrompts({
       persona,
+      sessionId: "session-1",
       skillsBlock: "### Skills\n\n- skill-a",
       projectContextBlock: '### Project context\n\n<file path="/repo/AGENTS.md">ctx</file>',
       cwd: "/repo",
-      datetime: "2026-01-01T00:00:00.000Z",
+      sessionStartedAt: "2026-01-01T00:00:00.000Z",
       platform: "darwin",
-      nodeVersion: "v24.0.0",
     });
 
     expect(result.baseSystemPrompt).toContain("main system prompt");
@@ -363,6 +370,7 @@ describe("session prompt composer", () => {
 
     expect(result.subagentPrompts.default).toContain("<inherited-instructions>");
     expect(result.subagentPrompts.default).toContain("main system prompt");
+    expect(result.subagentPrompts.default).toContain("- Session ID: `session-1`");
     expect(result.subagentPrompts.default).not.toContain("{{inherited_instructions}}");
     expect(result.subagentPrompts.default).toContain(
       "You are a subagent supporting the main agent.",
@@ -396,12 +404,11 @@ describe("session prompt composer", () => {
       persona,
       cwd,
       repoRoot: gitRoot,
-      datetime: "2026-01-01T00:00:00.000Z",
+      sessionStartedAt: "2026-01-01T00:00:00.000Z",
       platform: "darwin",
-      nodeVersion: "v24.0.0",
     });
 
-    expect(result.environmentTag).toContain(`<repo-root>${gitRoot}</repo-root>`);
+    expect(result.environmentTag).toContain(`- Repository root: \`${gitRoot}\``);
   });
 
   it("omits subagent prompts when not applicable", () => {
@@ -417,9 +424,8 @@ describe("session prompt composer", () => {
     const result = composeSessionPrompts({
       persona,
       cwd: "/repo",
-      datetime: "2026-01-01T00:00:00.000Z",
+      sessionStartedAt: "2026-01-01T00:00:00.000Z",
       platform: "darwin",
-      nodeVersion: "v24.0.0",
     });
 
     expect(result.baseSystemPrompt).toContain("plain prompt");

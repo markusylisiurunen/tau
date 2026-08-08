@@ -1322,6 +1322,9 @@ class TelegramAdapterImpl {
       for (const failure of this.sessionManager.getProvisionFailures(sessionId)) {
         this.onSessionEvent(failure);
       }
+      for (const notification of this.sessionManager.getPendingTurnNotifications(sessionId)) {
+        this.onSessionEvent(notification);
+      }
     }
 
     void this.syncCommands();
@@ -2708,7 +2711,7 @@ class TelegramAdapterImpl {
         : await this.buildMessageTextWithAttachments(sessionId, text, chatId);
     const sessionManager = this.getSessionManagerForChat(chatId);
     await sessionManager.sendMessage(sessionId, textWithAttachments, {
-      mode: "steer",
+      mode: "auto",
       ...(this.systemMessage ? { additionalSystemMessage: this.systemMessage } : {}),
     });
     this.resetPendingAttachmentQueue(sessionId);
@@ -2884,17 +2887,42 @@ class TelegramAdapterImpl {
       return;
     }
 
-    if (event.type === "session-turn-failed") {
+    if (event.type === "session-turn-failed" || event.type === "session-turn-rejected") {
       if (!this.chatsBySession.has(event.sessionId)) {
         return;
       }
 
-      this.log("error", "telegram session turn failed", {
-        sessionId: event.sessionId,
-        projectId: event.projectId,
-        failure: event.failure,
-      });
-      this.notifySession(event.sessionId, "turn failed. please try again.");
+      this.log(
+        event.type === "session-turn-failed" ? "error" : "warn",
+        event.type === "session-turn-failed"
+          ? "telegram session turn failed"
+          : "telegram session turn rejected",
+        {
+          sessionId: event.sessionId,
+          projectId: event.projectId,
+          ...(event.type === "session-turn-failed" ? { failure: event.failure } : {}),
+        },
+      );
+      const text =
+        event.type === "session-turn-failed"
+          ? "turn failed. please try again."
+          : "your previous message was not submitted. please send it again.";
+      void this.notifySession(event.sessionId, text)
+        .then(async (delivered) => {
+          if (delivered) {
+            await this.sessionManager.acknowledgeTurnNotification(
+              event.sessionId,
+              event.historyEntryId,
+            );
+          }
+        })
+        .catch((error) => {
+          this.log("error", "failed to acknowledge turn notification", {
+            sessionId: event.sessionId,
+            historyEntryId: event.historyEntryId,
+            cause: error instanceof Error ? error.message : String(error),
+          });
+        });
       return;
     }
 
@@ -3010,19 +3038,22 @@ class TelegramAdapterImpl {
     this.notifySession(sessionId, `your ${sessionName} ${stateLabel}.`);
   }
 
-  private notifySession(
+  private async notifySession(
     sessionId: string,
     text: string,
     options: TelegramNotificationOptions = {},
-  ): void {
+  ): Promise<boolean> {
     const chatIds = this.chatsBySession.get(sessionId);
     if (!chatIds || chatIds.size === 0) {
-      return;
+      return false;
     }
 
-    for (const chatId of chatIds) {
-      this.enqueueNotification(sessionId, chatId, text, options);
-    }
+    const deliveries = await Promise.all(
+      [...chatIds].map(
+        async (chatId) => await this.enqueueNotification(sessionId, chatId, text, options),
+      ),
+    );
+    return deliveries.every(Boolean);
   }
 
   private enqueueNotification(
@@ -3030,19 +3061,20 @@ class TelegramAdapterImpl {
     chatId: number,
     text: string,
     options: TelegramNotificationOptions,
-  ): void {
+  ): Promise<boolean> {
     const previousTask = this.notificationQueueTailByChat.get(chatId) ?? Promise.resolve();
-    const queuedTask = previousTask
+    const deliveryTask = previousTask
       .then(async () => {
         if (this.abortController.signal.aborted) {
-          return;
+          return false;
         }
 
         await this.reply(chatId, text, { rich: options.rich });
+        return true;
       })
       .catch((error) => {
         if (this.abortController.signal.aborted) {
-          return;
+          return false;
         }
 
         const deliveryError =
@@ -3062,17 +3094,21 @@ class TelegramAdapterImpl {
             cause: deliveryError.message,
           },
         );
+        return false;
       });
 
-    const trackedTask = queuedTask.finally(() => {
-      this.inFlightNotificationTasks.delete(trackedTask);
-      if (this.notificationQueueTailByChat.get(chatId) === trackedTask) {
-        this.notificationQueueTailByChat.delete(chatId);
-      }
-    });
+    const trackedTask = deliveryTask
+      .then(() => undefined)
+      .finally(() => {
+        this.inFlightNotificationTasks.delete(trackedTask);
+        if (this.notificationQueueTailByChat.get(chatId) === trackedTask) {
+          this.notificationQueueTailByChat.delete(chatId);
+        }
+      });
 
     this.notificationQueueTailByChat.set(chatId, trackedTask);
     this.inFlightNotificationTasks.add(trackedTask);
+    return deliveryTask;
   }
 
   private startTypingIndicators(sessionId: string): void {

@@ -236,6 +236,12 @@ function createSessionManagerHarness(initialSessions = [], options = {}) {
         .filter((failure) => failure.sessionId === sessionId)
         .map((failure) => ({ ...failure })),
     ),
+    getPendingTurnNotifications: vi.fn((sessionId) =>
+      (options.turnNotifications ?? [])
+        .filter((notification) => notification.sessionId === sessionId)
+        .map((notification) => structuredClone(notification)),
+    ),
+    acknowledgeTurnNotification: vi.fn(async () => {}),
     getSessionSnapshot: vi.fn(async (sessionId) => {
       const session = sessions.get(sessionId);
       return session?.snapshot;
@@ -894,7 +900,7 @@ describe("telegram adapter", () => {
       expect(managerHarness.manager.sendMessage).toHaveBeenCalledWith(
         "restored-session",
         expect.stringContaining('text: "continue"'),
-        { mode: "steer" },
+        { mode: "auto" },
       );
       expect(apiHarness.sendMessages.map((entry) => entry.text)).toContain(
         "your demo session restored-session is waiting for input. its goal is blocked. it is using Claude Opus 4.6 with medium reasoning. context usage is 6.0% of 200k tokens. cumulative cost is $0.12.",
@@ -1018,7 +1024,7 @@ describe("telegram adapter", () => {
       expect(sendMessageCall[1]).toContain("<telegram-trigger-message>");
       expect(sendMessageCall[1]).toContain("sender: Grace Hopper (@grace, id 8)");
       expect(sendMessageCall[1]).toContain('text: "please summarize"');
-      expect(sendMessageCall[2]).toEqual({ mode: "steer" });
+      expect(sendMessageCall[2]).toEqual({ mode: "auto" });
       await waitFor(() =>
         apiHarness.setMessageReactions.some(
           (entry) => entry.chatId === groupChatId && entry.messageId === 602,
@@ -1445,7 +1451,7 @@ describe("telegram adapter", () => {
         ownerId: ownerIdForChat(200),
       });
       expect(managerHarness.manager.sendMessage).toHaveBeenCalledWith("s1", "follow up", {
-        mode: "steer",
+        mode: "auto",
         additionalSystemMessage: "telegram guidance",
       });
 
@@ -1553,7 +1559,7 @@ describe("telegram adapter", () => {
 
       const sendMessageCall = managerHarness.manager.sendMessage.mock.calls[0];
       expect(sendMessageCall[0]).toBe("s1");
-      expect(sendMessageCall[2]).toEqual({ mode: "steer" });
+      expect(sendMessageCall[2]).toEqual({ mode: "auto" });
       expect(sendMessageCall[1]).toContain("attachments:");
       expect(sendMessageCall[1]).toContain("mime: application/pdf");
       expect(sendMessageCall[1]).toContain("size_bytes: 9");
@@ -1625,7 +1631,7 @@ describe("telegram adapter", () => {
       await waitFor(() => managerHarness.manager.sendMessage.mock.calls.length === 1);
       expect(apiHarness.downloadFileCalls).toEqual(["voice-123"]);
       expect(managerHarness.manager.sendMessage).toHaveBeenCalledWith("s21", "ship the fix", {
-        mode: "steer",
+        mode: "auto",
       });
       expect(apiHarness.sendMessages).toEqual([
         expect.objectContaining({ chatId: 210, text: "transcribed: ship the fix" }),
@@ -1707,7 +1713,7 @@ describe("telegram adapter", () => {
       expect(managerHarness.manager.sendMessage).toHaveBeenCalledWith(
         "s22",
         "use google transcription",
-        { mode: "steer" },
+        { mode: "auto" },
       );
       expect(geminiFetch).toHaveBeenCalledTimes(1);
       const request = JSON.parse(geminiFetch.mock.calls[0][1].body);
@@ -1931,6 +1937,116 @@ describe("telegram adapter", () => {
     }
   });
 
+  it("delivers turn failures recovered before the adapter subscribed", async () => {
+    const chatId = 469;
+    const nextUpdate = deferred();
+    const apiHarness = createApiHarness([nextUpdate.promise]);
+    const managerHarness = createSessionManagerHarness(
+      [
+        {
+          id: "s-recovered-failure",
+          projectId: "demo",
+          state: "waiting-input",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+      ],
+      {
+        defaultOwnerId: ownerIdForChat(chatId),
+        turnNotifications: [
+          {
+            type: "session-turn-failed",
+            sessionId: "s-recovered-failure",
+            projectId: "demo",
+            timestamp: "2024-01-01T00:01:00.000Z",
+            historyEntryId: "telegram-turn-recovered",
+            failure: {
+              status: "failed",
+              stopReason: "error",
+              errorMessage: "connection lost after settlement",
+            },
+          },
+        ],
+      },
+    );
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() =>
+        apiHarness.sendMessages.some(
+          (message) => message.text === "turn failed. please try again.",
+        ),
+      );
+      await waitFor(() => managerHarness.manager.acknowledgeTurnNotification.mock.calls.length > 0);
+      expect(managerHarness.manager.acknowledgeTurnNotification).toHaveBeenCalledWith(
+        "s-recovered-failure",
+        "telegram-turn-recovered",
+      );
+    } finally {
+      nextUpdate.resolve([]);
+      await adapter.close();
+    }
+  });
+
+  it("keeps rejected-turn notifications pending when Telegram delivery fails", async () => {
+    const chatId = 469;
+    const nextUpdate = deferred();
+    const apiHarness = createApiHarness([nextUpdate.promise]);
+    apiHarness.api.sendMessage.mockRejectedValue(
+      new TelegramRequestError("telegram unavailable", { retryable: false }),
+    );
+    const managerHarness = createSessionManagerHarness(
+      [
+        {
+          id: "s-rejected-turn",
+          projectId: "demo",
+          state: "waiting-input",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+      ],
+      {
+        defaultOwnerId: ownerIdForChat(chatId),
+        turnNotifications: [
+          {
+            type: "session-turn-rejected",
+            sessionId: "s-rejected-turn",
+            projectId: "demo",
+            timestamp: "2024-01-01T00:01:00.000Z",
+            historyEntryId: "telegram-turn-rejected",
+          },
+        ],
+      },
+    );
+    const logs = [];
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+      onLog: (entry) => logs.push(entry),
+    });
+
+    try {
+      await waitFor(() =>
+        logs.some((entry) => entry.message === "failed to send telegram notification"),
+      );
+      expect(managerHarness.manager.acknowledgeTurnNotification).not.toHaveBeenCalled();
+    } finally {
+      nextUpdate.resolve([]);
+      await adapter.close();
+    }
+  });
+
   it("reports a failed turn and keeps routing messages to the same session", async () => {
     const logs = [];
     const nextUpdate = deferred();
@@ -1990,6 +2106,7 @@ describe("telegram adapter", () => {
         sessionId: "s12",
         projectId: "demo",
         timestamp: "2024-01-01T00:01:30.000Z",
+        historyEntryId: "telegram-turn-failed",
         failure: {
           status: "failed",
           stopReason: "error",

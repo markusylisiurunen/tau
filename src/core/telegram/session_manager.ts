@@ -108,8 +108,47 @@ const persistedTelegramSessionRecordV2Schema = persistedTelegramSessionRecordV1S
   error: z.string().min(1).optional(),
 });
 
-const persistedTelegramSessionRecordSchema = persistedTelegramSessionRecordV2Schema.extend({
+const persistedTelegramSessionRecordV3Schema = persistedTelegramSessionRecordV2Schema.extend({
   activeTurnIds: z.array(z.string().min(1)),
+});
+
+const persistedTelegramTurnFailureSchema = z.discriminatedUnion("status", [
+  z
+    .object({
+      status: z.literal("failed"),
+      stopReason: z.literal("error"),
+      errorMessage: z.string().optional(),
+    })
+    .strip(),
+  z
+    .object({
+      status: z.literal("blocked"),
+      reason: z.literal("auto-compaction-failed"),
+      message: z.string(),
+    })
+    .strip(),
+]);
+
+const persistedTelegramTurnNotificationSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal("failed"),
+      historyEntryId: z.string().min(1),
+      timestamp: z.string().datetime(),
+      failure: persistedTelegramTurnFailureSchema,
+    })
+    .strip(),
+  z
+    .object({
+      kind: z.literal("rejected"),
+      historyEntryId: z.string().min(1),
+      timestamp: z.string().datetime(),
+    })
+    .strip(),
+]);
+
+const persistedTelegramSessionRecordSchema = persistedTelegramSessionRecordV3Schema.extend({
+  pendingTurnNotifications: z.array(persistedTelegramTurnNotificationSchema),
 });
 
 const telegramSessionStateSchema = z.discriminatedUnion("version", [
@@ -128,10 +167,18 @@ const telegramSessionStateSchema = z.discriminatedUnion("version", [
   z
     .object({
       version: z.literal(3),
+      sessions: z.array(persistedTelegramSessionRecordV3Schema),
+    })
+    .strip(),
+  z
+    .object({
+      version: z.literal(4),
       sessions: z.array(persistedTelegramSessionRecordSchema),
     })
     .strip(),
 ]);
+
+type PersistedTelegramTurnNotification = z.infer<typeof persistedTelegramTurnNotificationSchema>;
 
 type PersistedTelegramSessionRecord = z.infer<typeof persistedTelegramSessionRecordSchema>;
 
@@ -140,16 +187,24 @@ type PersistedTelegramSessionState = z.infer<typeof telegramSessionStateSchema>;
 function normalizePersistedTelegramSessions(
   state: PersistedTelegramSessionState,
 ): PersistedTelegramSessionRecord[] {
-  if (state.version === 3) {
+  if (state.version === 4) {
     return state.sessions;
   }
+  if (state.version === 3) {
+    return state.sessions.map((record) => ({ ...record, pendingTurnNotifications: [] }));
+  }
   if (state.version === 2) {
-    return state.sessions.map((record) => ({ ...record, activeTurnIds: [] }));
+    return state.sessions.map((record) => ({
+      ...record,
+      activeTurnIds: [],
+      pendingTurnNotifications: [],
+    }));
   }
   return state.sessions.map((record) => ({
     ...record,
     state: record.tauSessionId ? "waiting-input" : "queued",
     activeTurnIds: [],
+    pendingTurnNotifications: [],
   }));
 }
 
@@ -162,6 +217,7 @@ const PUBLIC_SESSION_ID_LENGTH = 8;
 const NANOSECONDS_PER_MILLISECOND = 1_000_000n;
 const PROVISION_SCRIPT_PATH = ".tau/scripts/provision";
 const MAX_PROVISION_DIAGNOSTIC_CHARS = 2_000;
+const TURN_RECOVERY_POLL_INTERVAL_MS = 1_000;
 
 const ACTIVE_STATES: Set<TelegramSessionState> = new Set([
   "queued",
@@ -280,6 +336,9 @@ type SessionEntry = {
   emittedNoticeIds: Set<string>;
   activeTurnIds: Set<string>;
   settledTurnIds: Set<string>;
+  pendingTurnNotifications: Map<string, PersistedTelegramTurnNotification>;
+  emittedTurnNotificationIds: Set<string>;
+  turnChangeResolvers: Map<string, () => void>;
 };
 
 export type TelegramSessionProvisionFailure = {
@@ -298,6 +357,18 @@ export type TelegramSessionTurnFailure = {
   historyEntryId: string;
   failure: Extract<SessionProtocolTurnOutcome, { status: "failed" | "blocked" }>;
 };
+
+export type TelegramSessionTurnRejected = {
+  type: "session-turn-rejected";
+  sessionId: string;
+  projectId: string;
+  timestamp: string;
+  historyEntryId: string;
+};
+
+export type TelegramSessionTurnNotification =
+  | TelegramSessionTurnFailure
+  | TelegramSessionTurnRejected;
 
 export type TelegramSessionManagerEvent =
   | {
@@ -319,7 +390,7 @@ export type TelegramSessionManagerEvent =
       state: TelegramSessionState;
       log: TelegramSessionLogEntry;
     }
-  | TelegramSessionTurnFailure
+  | TelegramSessionTurnNotification
   | {
       type: "session-notice";
       sessionId: string;
@@ -406,7 +477,8 @@ export type TelegramSessionManager = {
   getSession(sessionId: string): TelegramSessionRecord | undefined;
   getLogs(sessionId: string): TelegramSessionLogEntry[] | undefined;
   getProvisionFailures(sessionId: string): TelegramSessionProvisionFailure[];
-  getRecoveredTurnFailures(sessionId: string): TelegramSessionTurnFailure[];
+  getPendingTurnNotifications(sessionId: string): TelegramSessionTurnNotification[];
+  acknowledgeTurnNotification(sessionId: string, historyEntryId: string): Promise<void>;
   getSessionSnapshot(sessionId: string): Promise<SessionProtocolSnapshot | undefined>;
   sendMessage(
     sessionId: string,
@@ -441,7 +513,6 @@ export type TelegramSessionManagerOptions = {
 class TelegramSessionManagerImpl implements TelegramSessionManager {
   private readonly sessions = new Map<string, SessionEntry>();
   private readonly provisionFailures = new Map<string, TelegramSessionProvisionFailure[]>();
-  private readonly recoveredTurnFailures = new Map<string, TelegramSessionTurnFailure[]>();
   private readonly listeners = new Set<(event: TelegramSessionManagerEvent) => void>();
   private readonly projects: Record<string, TelegramProjectConfig>;
   private readonly workspaceRoot: string;
@@ -523,6 +594,9 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       emittedNoticeIds: new Set(),
       activeTurnIds: new Set(),
       settledTurnIds: new Set(),
+      pendingTurnNotifications: new Map(),
+      emittedTurnNotificationIds: new Set(),
+      turnChangeResolvers: new Map(),
     };
 
     this.sessions.set(id, entry);
@@ -575,13 +649,23 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     return (this.provisionFailures.get(sessionId) ?? []).map((failure) => ({ ...failure }));
   }
 
-  getRecoveredTurnFailures(sessionId: string): TelegramSessionTurnFailure[] {
-    if (!this.getEntryBySessionId(sessionId)) {
+  getPendingTurnNotifications(sessionId: string): TelegramSessionTurnNotification[] {
+    const entry = this.getEntryBySessionId(sessionId);
+    if (!entry) {
       return [];
     }
-    return (this.recoveredTurnFailures.get(sessionId) ?? []).map((failure) =>
-      structuredClone(failure),
+    return Array.from(entry.pendingTurnNotifications.values(), (notification) =>
+      this.toTurnNotificationEvent(entry, notification),
     );
+  }
+
+  async acknowledgeTurnNotification(sessionId: string, historyEntryId: string): Promise<void> {
+    const entry = this.requireSession(sessionId);
+    if (!entry.pendingTurnNotifications.delete(historyEntryId)) {
+      return;
+    }
+    entry.emittedTurnNotificationIds.delete(historyEntryId);
+    await this.persistSessions();
   }
 
   async getSessionSnapshot(sessionId: string): Promise<SessionProtocolSnapshot | undefined> {
@@ -636,7 +720,10 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
   async interruptSession(sessionId: string): Promise<TelegramSessionInterruptResult> {
     const entry = this.requireSession(sessionId);
 
-    if (entry.record.state !== "running" || !entry.activeSubmit) {
+    if (
+      entry.record.state !== "running" ||
+      (!entry.activeSubmit && entry.activeTurnIds.size === 0)
+    ) {
       return {
         session: this.toRecord(entry),
         interrupted: false,
@@ -746,7 +833,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
         continue;
       }
 
-      const { activeTurnIds, ...sessionRecord } = record;
+      const { activeTurnIds, pendingTurnNotifications, ...sessionRecord } = record;
       const entry: SessionEntry = {
         record: sessionRecord,
         logs: [],
@@ -758,6 +845,14 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
         emittedNoticeIds: new Set(),
         activeTurnIds: new Set(activeTurnIds),
         settledTurnIds: new Set(),
+        pendingTurnNotifications: new Map(
+          pendingTurnNotifications.map((notification) => [
+            notification.historyEntryId,
+            notification,
+          ]),
+        ),
+        emittedTurnNotificationIds: new Set(),
+        turnChangeResolvers: new Map(),
       };
       this.sessions.set(record.id, entry);
     }
@@ -786,6 +881,9 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     );
 
     await this.persistSessions();
+    for (const entry of this.sessions.values()) {
+      this.emitPendingTurnNotifications(entry);
+    }
   }
 
   private async cleanupOrphanedWorkspaces(): Promise<void> {
@@ -889,7 +987,12 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     });
     this.initializeRecoveredSnapshotDeliveryState(entry, await tauSession.snapshot());
     entry.record.error = undefined;
-    this.setState(entry, "waiting-input");
+    if (entry.activeTurnIds.size > 0) {
+      this.setState(entry, "running");
+      this.trackRecoveredTurns(entry, tauSession);
+    } else {
+      this.setState(entry, "waiting-input");
+    }
     this.log(entry, "info", "session recovered", { tauSessionId, workspacePath });
     if (shouldPrepareWorkspace) {
       this.startProvision(entry, tauSession, provisionTargets);
@@ -905,8 +1008,8 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     const write = this.persistenceQueue
       .catch(() => undefined)
       .then(async () => {
-        const state: Extract<PersistedTelegramSessionState, { version: 3 }> = {
-          version: 3,
+        const state: Extract<PersistedTelegramSessionState, { version: 4 }> = {
+          version: 4,
           sessions: Array.from(this.sessions.values(), (entry) => ({
             id: entry.record.id,
             projectId: entry.record.projectId,
@@ -917,6 +1020,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
             ...(entry.record.tauSessionId ? { tauSessionId: entry.record.tauSessionId } : {}),
             ...(entry.record.error ? { error: entry.record.error } : {}),
             activeTurnIds: [...entry.activeTurnIds],
+            pendingTurnNotifications: [...entry.pendingTurnNotifications.values()],
           })),
         };
         await mkdir(dirname(persistencePath), { recursive: true });
@@ -998,10 +1102,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
         this.handleClientEvent(entry, event);
       });
       const snapshot = await tauSession.snapshot();
-      this.reconcileSnapshotTurns(entry, snapshot, {
-        removeUnknownActiveTurns: false,
-        retainFailures: false,
-      });
+      this.reconcileSnapshotTurns(entry, snapshot, { rejectMissingActiveTurns: false });
       this.initializeSnapshotMessageDeliveryState(entry, snapshot);
       this.handleSnapshotNotices(entry, snapshot);
 
@@ -1170,6 +1271,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
           { owned: true },
         );
         await this.persistSessions();
+        this.emitPendingTurnNotifications(entry);
         this.log(
           entry,
           result.turn.status === "failed" || result.turn.status === "blocked" ? "error" : "info",
@@ -1192,18 +1294,19 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
         if (requestedHistoryEntryId && !requestStarted) {
           entry.activeTurnIds.delete(requestedHistoryEntryId);
         }
-        if (
-          !entry.cancelRequested &&
-          requestedHistoryEntryId &&
-          requestStarted &&
-          (await this.recoverRejectedSubmit(
-            entry,
-            tauSession,
-            requestedHistoryEntryId,
-            error,
-          ).catch(() => false))
-        ) {
-          return;
+        if (!entry.cancelRequested && requestedHistoryEntryId && requestStarted) {
+          try {
+            if (
+              await this.recoverRejectedSubmit(entry, tauSession, requestedHistoryEntryId, error)
+            ) {
+              return;
+            }
+          } catch (recoveryError) {
+            this.log(entry, "warn", "failed to inspect rejected submit", {
+              userHistoryEntryId: requestedHistoryEntryId,
+              cause: formatErrorDiagnostic(recoveryError),
+            });
+          }
         }
         if (!entry.cancelRequested) {
           const diagnostic = formatErrorDiagnostic(error);
@@ -1262,34 +1365,120 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     historyEntryId: string,
     error: unknown,
   ): Promise<boolean> {
-    const snapshot = await tauSession.snapshot().catch(() => undefined);
-    const turn =
-      snapshot && Object.hasOwn(snapshot.turns, historyEntryId)
-        ? snapshot.turns[historyEntryId]
-        : undefined;
+    const snapshot = await tauSession.snapshot();
+    const turn = Object.hasOwn(snapshot.turns, historyEntryId)
+      ? snapshot.turns[historyEntryId]
+      : undefined;
     if (!turn) {
-      entry.activeTurnIds.delete(historyEntryId);
+      this.recordTurnRejection(entry, historyEntryId);
       await this.persistSessions();
-      return false;
+      this.emitPendingTurnNotifications(entry);
+      this.log(entry, "warn", "submit rejected before turn acceptance", {
+        userHistoryEntryId: historyEntryId,
+        cause: formatErrorDiagnostic(error),
+      });
+      return true;
     }
 
     this.reconcileTurnRecord(entry, turn);
     await this.persistSessions();
+    this.emitPendingTurnNotifications(entry);
     this.log(entry, "warn", "submit response recovered from turn ledger", {
       userHistoryEntryId: historyEntryId,
       turn,
       cause: formatErrorDiagnostic(error),
     });
-    if (turn.state === "settled" && entry.activeTurnIds.size === 0) {
+    if (turn.state === "running") {
+      await this.followRunningTurn(entry, tauSession, historyEntryId);
+    } else if (entry.activeTurnIds.size === 0) {
       this.setState(entry, "waiting-input");
     }
     return true;
   }
 
+  private trackRecoveredTurns(entry: SessionEntry, tauSession: TelegramTauSession): void {
+    const trackedTurns = Promise.all(
+      [...entry.activeTurnIds].map(
+        async (historyEntryId) => await this.followRunningTurn(entry, tauSession, historyEntryId),
+      ),
+    ).then(() => undefined);
+    entry.activeSubmit = trackedTurns;
+    void trackedTurns
+      .catch((error) => {
+        this.log(entry, "error", "recovered turn tracking failed", {
+          cause: formatErrorDiagnostic(error),
+        });
+      })
+      .finally(() => {
+        if (entry.activeSubmit === trackedTurns) {
+          entry.activeSubmit = undefined;
+          if (!entry.cancelRequested && entry.record.state === "running") {
+            this.setState(entry, "waiting-input");
+          }
+        }
+      });
+  }
+
+  private async followRunningTurn(
+    entry: SessionEntry,
+    tauSession: TelegramTauSession,
+    historyEntryId: string,
+  ): Promise<void> {
+    while (entry.activeTurnIds.has(historyEntryId) && !entry.cancelRequested) {
+      await this.waitForTurnChange(entry, historyEntryId);
+      if (!entry.activeTurnIds.has(historyEntryId) || entry.cancelRequested) {
+        return;
+      }
+
+      let snapshot: SessionProtocolSnapshot;
+      try {
+        snapshot = await tauSession.snapshot();
+      } catch (error) {
+        this.log(entry, "warn", "failed to refresh recovered turn", {
+          userHistoryEntryId: historyEntryId,
+          cause: formatErrorDiagnostic(error),
+        });
+        continue;
+      }
+
+      const turn = Object.hasOwn(snapshot.turns, historyEntryId)
+        ? snapshot.turns[historyEntryId]
+        : undefined;
+      if (!turn) {
+        this.recordTurnRejection(entry, historyEntryId);
+      } else {
+        this.reconcileTurnRecord(entry, turn);
+      }
+      await this.persistSessions();
+      this.emitPendingTurnNotifications(entry);
+    }
+  }
+
+  private waitForTurnChange(entry: SessionEntry, historyEntryId: string): Promise<void> {
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timeout);
+        entry.abortController.signal.removeEventListener("abort", finish);
+        if (entry.turnChangeResolvers.get(historyEntryId) === finish) {
+          entry.turnChangeResolvers.delete(historyEntryId);
+        }
+        resolve();
+      };
+      const timeout = setTimeout(finish, TURN_RECOVERY_POLL_INTERVAL_MS);
+      entry.turnChangeResolvers.set(historyEntryId, finish);
+      entry.abortController.signal.addEventListener("abort", finish, { once: true });
+    });
+  }
+
   private reconcileTurnRecord(
     entry: SessionEntry,
     turn: SessionProtocolTurnRecord,
-    options: { owned?: boolean; retainFailure?: boolean } = {},
+    options: { owned?: boolean } = {},
   ): boolean {
     const historyEntryId = turn.userHistoryEntryId;
     if (turn.state === "running") {
@@ -1308,8 +1497,9 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     if (!wasActive && !options.owned) {
       return false;
     }
+    entry.turnChangeResolvers.get(historyEntryId)?.();
     if (turn.outcome.status === "failed" || turn.outcome.status === "blocked") {
-      this.recordTurnFailure(entry, historyEntryId, turn.outcome, options.retainFailure ?? false);
+      this.recordTurnFailure(entry, historyEntryId, turn.outcome);
     }
     if (
       entry.activeTurnIds.size === 0 &&
@@ -1326,44 +1516,90 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     entry: SessionEntry,
     historyEntryId: string,
     failure: Extract<SessionProtocolTurnOutcome, { status: "failed" | "blocked" }>,
-    retain: boolean,
   ): void {
-    const event: TelegramSessionTurnFailure = {
-      type: "session-turn-failed",
+    if (entry.pendingTurnNotifications.has(historyEntryId)) {
+      return;
+    }
+    entry.pendingTurnNotifications.set(historyEntryId, {
+      kind: "failed",
+      historyEntryId,
+      timestamp: this.now().toISOString(),
+      failure: structuredClone(failure),
+    });
+  }
+
+  private recordTurnRejection(entry: SessionEntry, historyEntryId: string): void {
+    entry.activeTurnIds.delete(historyEntryId);
+    entry.settledTurnIds.add(historyEntryId);
+    entry.turnChangeResolvers.get(historyEntryId)?.();
+    if (!entry.pendingTurnNotifications.has(historyEntryId)) {
+      entry.pendingTurnNotifications.set(historyEntryId, {
+        kind: "rejected",
+        historyEntryId,
+        timestamp: this.now().toISOString(),
+      });
+    }
+    if (
+      entry.activeTurnIds.size === 0 &&
+      !entry.activeSubmit &&
+      !entry.cancelRequested &&
+      entry.record.state === "running"
+    ) {
+      this.setState(entry, "waiting-input");
+    }
+  }
+
+  private toTurnNotificationEvent(
+    entry: SessionEntry,
+    notification: PersistedTelegramTurnNotification,
+  ): TelegramSessionTurnNotification {
+    if (notification.kind === "failed") {
+      return {
+        type: "session-turn-failed",
+        sessionId: entry.record.id,
+        projectId: entry.record.projectId,
+        timestamp: notification.timestamp,
+        historyEntryId: notification.historyEntryId,
+        failure: structuredClone(notification.failure),
+      };
+    }
+    return {
+      type: "session-turn-rejected",
       sessionId: entry.record.id,
       projectId: entry.record.projectId,
-      timestamp: this.now().toISOString(),
-      historyEntryId,
-      failure: structuredClone(failure),
+      timestamp: notification.timestamp,
+      historyEntryId: notification.historyEntryId,
     };
-    if (retain) {
-      const turnFailures = this.recoveredTurnFailures.get(entry.record.id) ?? [];
-      turnFailures.push(event);
-      this.recoveredTurnFailures.set(entry.record.id, turnFailures);
+  }
+
+  private emitPendingTurnNotifications(entry: SessionEntry): void {
+    for (const notification of entry.pendingTurnNotifications.values()) {
+      if (entry.emittedTurnNotificationIds.has(notification.historyEntryId)) {
+        continue;
+      }
+      entry.emittedTurnNotificationIds.add(notification.historyEntryId);
+      this.emit(this.toTurnNotificationEvent(entry, notification));
     }
-    this.emit(event);
   }
 
   private reconcileSnapshotTurns(
     entry: SessionEntry,
     snapshot: SessionProtocolSnapshot,
-    options: { removeUnknownActiveTurns: boolean; retainFailures: boolean },
+    options: { rejectMissingActiveTurns: boolean },
   ): boolean {
     let changed = false;
     const snapshotTurnIds = new Set(Object.keys(snapshot.turns));
-    if (options.removeUnknownActiveTurns) {
+    if (options.rejectMissingActiveTurns) {
       for (const historyEntryId of entry.activeTurnIds) {
         if (!snapshotTurnIds.has(historyEntryId)) {
-          entry.activeTurnIds.delete(historyEntryId);
+          this.recordTurnRejection(entry, historyEntryId);
           changed = true;
         }
       }
     }
     for (const turn of Object.values(snapshot.turns)) {
       if (turn.state === "running" || entry.activeTurnIds.has(turn.userHistoryEntryId)) {
-        changed =
-          this.reconcileTurnRecord(entry, turn, { retainFailure: options.retainFailures }) ||
-          changed;
+        changed = this.reconcileTurnRecord(entry, turn) || changed;
       } else {
         entry.settledTurnIds.add(turn.userHistoryEntryId);
       }
@@ -1371,14 +1607,18 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     return changed;
   }
 
-  private persistTurnState(): void {
-    void this.persistSessions().catch((error) => {
-      this.onLog?.({
-        level: "error",
-        message: "turn state persistence failed",
-        data: { cause: formatErrorDiagnostic(error) },
+  private persistTurnState(entry: SessionEntry): void {
+    void this.persistSessions()
+      .then(() => {
+        this.emitPendingTurnNotifications(entry);
+      })
+      .catch((error) => {
+        this.onLog?.({
+          level: "error",
+          message: "turn state persistence failed",
+          data: { cause: formatErrorDiagnostic(error) },
+        });
       });
-    });
   }
 
   private buildSessionAttributes(entry: SessionEntry): Record<string, string> {
@@ -1450,7 +1690,6 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     const record = this.toRecord(entry);
     this.sessions.delete(entry.record.id);
     this.provisionFailures.delete(entry.record.id);
-    this.recoveredTurnFailures.delete(entry.record.id);
     await this.persistSessions();
     return record;
   }
@@ -1699,11 +1938,10 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     if (clientEvent.delta.type === "snapshot.reset") {
       if (
         this.reconcileSnapshotTurns(entry, clientEvent.delta.snapshot, {
-          removeUnknownActiveTurns: false,
-          retainFailures: false,
+          rejectMissingActiveTurns: false,
         })
       ) {
-        this.persistTurnState();
+        this.persistTurnState(entry);
       }
       this.handleSnapshotNotices(entry, clientEvent.delta.snapshot);
       if (clientEvent.cause.type !== "assistant-message") {
@@ -1724,7 +1962,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     for (const change of clientEvent.delta.changes) {
       if (change.type === "turn.set") {
         if (this.reconcileTurnRecord(entry, change.turn)) {
-          this.persistTurnState();
+          this.persistTurnState(entry);
         }
         continue;
       }
@@ -1751,10 +1989,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     entry: SessionEntry,
     snapshot: SessionProtocolSnapshot,
   ): void {
-    this.reconcileSnapshotTurns(entry, snapshot, {
-      removeUnknownActiveTurns: true,
-      retainFailures: true,
-    });
+    this.reconcileSnapshotTurns(entry, snapshot, { rejectMissingActiveTurns: true });
     this.initializeSnapshotMessageDeliveryState(entry, snapshot);
     for (const item of snapshot.timeline.items) {
       if (item.type === "notice") {
@@ -1986,13 +2221,18 @@ class ScopedTelegramSessionManager implements TelegramSessionManager {
     return this.sessionManager.getProvisionFailures(sessionId);
   }
 
-  getRecoveredTurnFailures(sessionId: string): TelegramSessionTurnFailure[] {
+  getPendingTurnNotifications(sessionId: string): TelegramSessionTurnNotification[] {
     const session = this.sessionManager.getSession(sessionId);
     if (!session || !this.isVisibleSession(session)) {
       return [];
     }
 
-    return this.sessionManager.getRecoveredTurnFailures(sessionId);
+    return this.sessionManager.getPendingTurnNotifications(sessionId);
+  }
+
+  async acknowledgeTurnNotification(sessionId: string, historyEntryId: string): Promise<void> {
+    this.requireSession(sessionId);
+    await this.sessionManager.acknowledgeTurnNotification(sessionId, historyEntryId);
   }
 
   async getSessionSnapshot(sessionId: string): Promise<SessionProtocolSnapshot | undefined> {

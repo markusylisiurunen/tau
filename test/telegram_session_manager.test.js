@@ -1069,13 +1069,17 @@ describe("telegram session manager", () => {
         ?.some((entry) => entry.message === "submit response recovered from turn ledger"),
     );
     expect(manager.getSession(created.id)?.state).toBe("running");
+    const interrupt = await manager.interruptSession(created.id);
+    expect(interrupt).toEqual(expect.objectContaining({ interrupted: true, isTurnRunning: true }));
 
     const historyEntryId = clientHarness.session.submit.mock.calls[0][1].historyEntryId;
-    clientHarness.emitDelta(
-      createPatchDelta([
-        {
-          type: "turn.set",
-          turn: {
+    clientHarness.session.snapshot.mockResolvedValue(
+      createProtocolSnapshot({
+        sessionId: "rpc-1",
+        revision: 4,
+        executionEnvironment: { kind: "local", cwd: "/tmp/ws/demo", home: "/home/user" },
+        turns: {
+          [historyEntryId]: {
             userHistoryEntryId: historyEntryId,
             state: "settled",
             outcome: {
@@ -1085,7 +1089,7 @@ describe("telegram session manager", () => {
             },
           },
         },
-      ]),
+      }),
     );
     await waitFor(() =>
       events.some(
@@ -1101,7 +1105,7 @@ describe("telegram session manager", () => {
     );
   });
 
-  it("marks the session failed and closes the client when submit rejects", async () => {
+  it("marks the session failed and closes the client when submit recovery cannot read the ledger", async () => {
     const clientHarness = createClientHarness();
     clientHarness.session.submit = vi.fn(async () => {
       throw new Error("submit boom");
@@ -1123,6 +1127,7 @@ describe("telegram session manager", () => {
 
     const created = await manager.createSession({ projectId: "demo" });
     await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+    clientHarness.session.snapshot.mockRejectedValueOnce(new Error("snapshot unavailable"));
 
     const accepted = await manager.sendMessage(created.id, "first");
     expect(accepted.state).toBe("running");
@@ -1263,6 +1268,7 @@ describe("telegram session manager", () => {
 
     const created = await manager.createSession({ projectId: "demo" });
     await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+    clientHarness.session.snapshot.mockRejectedValueOnce(new Error("snapshot unavailable"));
 
     await manager.sendMessage(created.id, "first");
     await waitFor(() => manager.getSession(created.id)?.state === "failed");
@@ -1455,6 +1461,7 @@ describe("telegram session manager", () => {
 
     await manager.sendMessage(failed.id, "fail");
     await waitFor(() => manager.getSession(failed.id)?.state === "running");
+    failedClientHarness.session.snapshot.mockRejectedValueOnce(new Error("snapshot unavailable"));
     failedClientHarness.submitDeferred.reject(new Error("submit boom"));
     await waitFor(() => manager.getSession(failed.id)?.state === "failed");
 
@@ -1542,9 +1549,10 @@ describe("telegram session manager", () => {
     }
   });
 
-  it("persists rejected submissions as recoverable failed-session tombstones", async () => {
+  it("retains unresolved turn ownership when submit recovery cannot read the ledger", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "tau-telegram-session-failure-"));
     const persistencePath = join(tempRoot, "sessions.json");
+    const workspaceRoot = join(tempRoot, "workspaces");
     const clientHarness = createClientHarness();
     clientHarness.session.submit = vi.fn(async () => {
       throw new TauSessionProtocolResponseError({
@@ -1559,13 +1567,14 @@ describe("telegram session manager", () => {
     const logs = [];
     const manager = createTelegramSessionManager({
       projects: { demo: { repo: "git@example.com:demo.git" } },
+      workspaceRoot,
       persistencePath,
       onLog: (entry) => logs.push(entry),
-      prepareWorkspace: vi.fn(async () => ({
-        workspacePath: join(tempRoot, "workspaces", "demo"),
-        sessionCwd: join(tempRoot, "workspaces", "demo"),
-        provisionTargets: [],
-      })),
+      prepareWorkspace: vi.fn(async ({ sessionId }) => {
+        const workspacePath = join(workspaceRoot, "demo", sessionId);
+        await mkdir(workspacePath, { recursive: true });
+        return { workspacePath, sessionCwd: workspacePath, provisionTargets: [] };
+      }),
       createClient: vi.fn(async () => clientHarness.client),
     });
     let recoveredManager;
@@ -1573,15 +1582,17 @@ describe("telegram session manager", () => {
     try {
       const created = await manager.createSession({ projectId: "demo" });
       await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+      clientHarness.session.snapshot.mockRejectedValueOnce(new Error("snapshot unavailable"));
       await manager.sendMessage(created.id, "fail");
       await waitFor(() => manager.getSession(created.id)?.state === "failed");
       await waitFor(() => clientHarness.client.close.mock.calls.length === 1);
       await manager.close();
 
       const diagnostic = "failed to run session turn: snapshot projection failed";
+      const historyEntryId = clientHarness.session.submit.mock.calls[0][1].historyEntryId;
       const state = JSON.parse(await readFile(persistencePath, "utf8"));
       expect(state).toMatchObject({
-        version: 3,
+        version: 4,
         sessions: [
           {
             id: created.id,
@@ -1589,6 +1600,8 @@ describe("telegram session manager", () => {
             state: "failed",
             tauSessionId: "rpc-1",
             error: diagnostic,
+            activeTurnIds: [historyEntryId],
+            pendingTurnNotifications: [],
           },
         ],
       });
@@ -1611,9 +1624,11 @@ describe("telegram session manager", () => {
         ]),
       );
 
-      const createClient = vi.fn(async () => createClientHarness().client);
+      const recoveredClientHarness = createClientHarness();
+      const createClient = vi.fn(async () => recoveredClientHarness.client);
       recoveredManager = createTelegramSessionManager({
         projects: { demo: { repo: "git@example.com:demo.git" } },
+        workspaceRoot,
         persistencePath,
         createClient,
       });
@@ -1622,12 +1637,18 @@ describe("telegram session manager", () => {
       expect(recoveredManager.getSession(created.id)).toEqual(
         expect.objectContaining({
           id: created.id,
-          state: "failed",
+          state: "waiting-input",
           tauSessionId: "rpc-1",
-          error: diagnostic,
+          error: undefined,
         }),
       );
-      expect(createClient).not.toHaveBeenCalled();
+      expect(createClient).toHaveBeenCalledTimes(1);
+      expect(recoveredManager.getPendingTurnNotifications(created.id)).toEqual([
+        expect.objectContaining({
+          type: "session-turn-rejected",
+          historyEntryId,
+        }),
+      ]);
     } finally {
       await recoveredManager?.close();
       await manager.close();
@@ -1672,6 +1693,7 @@ describe("telegram session manager", () => {
           updatedAt: expect.any(String),
           tauSessionId: "rpc-1",
           activeTurnIds: [],
+          pendingTurnNotifications: [],
         },
       ]);
       await rm(workspacePath, { recursive: true, force: true });
@@ -1845,7 +1867,7 @@ describe("telegram session manager", () => {
       await manager.initialize();
 
       expect(manager.getSession("session")?.state).toBe("waiting-input");
-      expect(manager.getRecoveredTurnFailures("session")).toEqual([
+      expect(manager.getPendingTurnNotifications("session")).toEqual([
         expect.objectContaining({
           historyEntryId,
           failure: expect.objectContaining({
@@ -1855,9 +1877,18 @@ describe("telegram session manager", () => {
         }),
       ]);
       expect(events.filter((event) => event.type === "session-turn-failed")).toHaveLength(1);
-      expect(JSON.parse(await readFile(persistencePath, "utf8")).sessions[0].activeTurnIds).toEqual(
-        [],
-      );
+      const recoveredState = JSON.parse(await readFile(persistencePath, "utf8"));
+      expect(recoveredState.version).toBe(4);
+      expect(recoveredState.sessions[0].activeTurnIds).toEqual([]);
+      expect(recoveredState.sessions[0].pendingTurnNotifications).toEqual([
+        expect.objectContaining({ kind: "failed", historyEntryId }),
+      ]);
+
+      await manager.acknowledgeTurnNotification("session", historyEntryId);
+      expect(manager.getPendingTurnNotifications("session")).toEqual([]);
+      expect(
+        JSON.parse(await readFile(persistencePath, "utf8")).sessions[0].pendingTurnNotifications,
+      ).toEqual([]);
     } finally {
       await manager.close();
       await rm(tempRoot, { recursive: true, force: true });

@@ -236,11 +236,12 @@ function createSessionManagerHarness(initialSessions = [], options = {}) {
         .filter((failure) => failure.sessionId === sessionId)
         .map((failure) => ({ ...failure })),
     ),
-    getRecoveredTurnFailures: vi.fn((sessionId) =>
-      (options.turnFailures ?? [])
-        .filter((failure) => failure.sessionId === sessionId)
-        .map((failure) => structuredClone(failure)),
+    getPendingTurnNotifications: vi.fn((sessionId) =>
+      (options.turnNotifications ?? [])
+        .filter((notification) => notification.sessionId === sessionId)
+        .map((notification) => structuredClone(notification)),
     ),
+    acknowledgeTurnNotification: vi.fn(async () => {}),
     getSessionSnapshot: vi.fn(async (sessionId) => {
       const session = sessions.get(sessionId);
       return session?.snapshot;
@@ -1952,7 +1953,7 @@ describe("telegram adapter", () => {
       ],
       {
         defaultOwnerId: ownerIdForChat(chatId),
-        turnFailures: [
+        turnNotifications: [
           {
             type: "session-turn-failed",
             sessionId: "s-recovered-failure",
@@ -1983,6 +1984,63 @@ describe("telegram adapter", () => {
           (message) => message.text === "turn failed. please try again.",
         ),
       );
+      await waitFor(() => managerHarness.manager.acknowledgeTurnNotification.mock.calls.length > 0);
+      expect(managerHarness.manager.acknowledgeTurnNotification).toHaveBeenCalledWith(
+        "s-recovered-failure",
+        "telegram-turn-recovered",
+      );
+    } finally {
+      nextUpdate.resolve([]);
+      await adapter.close();
+    }
+  });
+
+  it("keeps rejected-turn notifications pending when Telegram delivery fails", async () => {
+    const chatId = 469;
+    const nextUpdate = deferred();
+    const apiHarness = createApiHarness([nextUpdate.promise]);
+    apiHarness.api.sendMessage.mockRejectedValue(
+      new TelegramRequestError("telegram unavailable", { retryable: false }),
+    );
+    const managerHarness = createSessionManagerHarness(
+      [
+        {
+          id: "s-rejected-turn",
+          projectId: "demo",
+          state: "waiting-input",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+      ],
+      {
+        defaultOwnerId: ownerIdForChat(chatId),
+        turnNotifications: [
+          {
+            type: "session-turn-rejected",
+            sessionId: "s-rejected-turn",
+            projectId: "demo",
+            timestamp: "2024-01-01T00:01:00.000Z",
+            historyEntryId: "telegram-turn-rejected",
+          },
+        ],
+      },
+    );
+    const logs = [];
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+      onLog: (entry) => logs.push(entry),
+    });
+
+    try {
+      await waitFor(() =>
+        logs.some((entry) => entry.message === "failed to send telegram notification"),
+      );
+      expect(managerHarness.manager.acknowledgeTurnNotification).not.toHaveBeenCalled();
     } finally {
       nextUpdate.resolve([]);
       await adapter.close();
@@ -2048,6 +2106,7 @@ describe("telegram adapter", () => {
         sessionId: "s12",
         projectId: "demo",
         timestamp: "2024-01-01T00:01:30.000Z",
+        historyEntryId: "telegram-turn-failed",
         failure: {
           status: "failed",
           stopReason: "error",

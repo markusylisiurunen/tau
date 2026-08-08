@@ -20,7 +20,10 @@ import {
 import { HostedEphemeralAgentSession } from "../dist/host/hosted_ephemeral_agent_session.js";
 import { LocalSessionHost } from "../dist/host/local_session_host.js";
 import { EphemeralThreadBusyError } from "../dist/host/session_host.js";
-import { applySessionProtocolDelta } from "../dist/protocol/session_protocol.js";
+import {
+  applySessionProtocolDelta,
+  SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_DETAILS_BYTES,
+} from "../dist/protocol/session_protocol.js";
 import { FileSessionStore } from "../dist/store/file_session_store.js";
 import { MemorySessionStore } from "../dist/store/memory_session_store.js";
 import {
@@ -3476,23 +3479,38 @@ describe("LocalSessionHost", () => {
     const state = createRunningSubagentState();
     await hostedSession.recordSubagentEvent({ type: "subagent_spawned", state });
 
-    const { actionByStatus, ...editPresentation } = buildToolRunPresentation({
-      toolName: "edit",
-      subject: "src/large.ts",
-      details: Array.from({ length: 65 }, (_, index) => ({ text: `+ line ${index}` })),
-      detailTruncation: false,
-      metadata: Array.from({ length: 33 }, (_, index) => `metadata ${index}`),
+    const createEditActivity = (details, metadata = []) => {
+      const { actionByStatus, ...presentation } = buildToolRunPresentation({
+        toolName: "edit",
+        subject: "src/large.ts",
+        details,
+        detailTruncation: false,
+        metadata,
+      });
+      return {
+        type: "tool",
+        toolName: "edit",
+        outcome: "succeeded",
+        presentation: { action: actionByStatus.succeeded, ...presentation },
+      };
+    };
+    await hostedSession.recordSubagentEvent({
+      type: "subagent_activity",
+      state,
+      activity: createEditActivity(
+        Array.from({ length: 100 }, (_, index) => ({ text: `+ short line ${index}` })),
+      ),
     });
     await expect(
       hostedSession.recordSubagentEvent({
         type: "subagent_activity",
         state,
-        activity: {
-          type: "tool",
-          toolName: "edit",
-          outcome: "succeeded",
-          presentation: { action: actionByStatus.succeeded, ...editPresentation },
-        },
+        activity: createEditActivity(
+          Array.from({ length: 100 }, (_, index) => ({
+            text: `+ long line ${index} ${"x".repeat(490)}`,
+          })),
+          Array.from({ length: 33 }, (_, index) => `metadata ${index}`),
+        ),
       }),
     ).resolves.toBeUndefined();
 
@@ -3510,10 +3528,18 @@ describe("LocalSessionHost", () => {
       }),
     ).resolves.toBeUndefined();
 
-    const [toolActivity, noticeActivity] =
+    const [shortToolActivity, toolActivity, noticeActivity] =
       hostedSession.subagentActivities().agents["child-1"].activities;
-    expect(toolActivity.presentation.details).toHaveLength(64);
-    expect(toolActivity.presentation.details[32]).toEqual({ text: "…2 more lines…", wrap: "word" });
+    expect(shortToolActivity.presentation.details).toHaveLength(100);
+    expect(toolActivity.presentation.details.length).toBeLessThan(100);
+    expect(toolActivity.presentation.details[0].text).toContain("long line 0");
+    expect(toolActivity.presentation.details.at(-1).text).toContain("long line 99");
+    expect(toolActivity.presentation.details).toContainEqual(
+      expect.objectContaining({ text: expect.stringMatching(/^…\d+ more lines…$/) }),
+    );
+    expect(
+      Buffer.byteLength(JSON.stringify(toolActivity.presentation.details), "utf8"),
+    ).toBeLessThanOrEqual(SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_DETAILS_BYTES);
     expect(toolActivity.presentation.metadata).toHaveLength(32);
     expect(noticeActivity).toMatchObject({
       type: "notice",

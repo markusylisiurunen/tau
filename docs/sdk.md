@@ -460,7 +460,7 @@ const unsubscribeSubagentActivities = session.onSubagentActivities(
 );
 ```
 
-Each message fully replaces the activity state. A run contains at most the latest 64 typed assistant, settled-tool, and notice activities; follow-up runs reset the list. The state is independent from the durable session snapshot, survives client detach while the hosted session remains in memory, and is discarded on host restart or recovery. Clients decide how to render activities and whether to show completed agents.
+Each message fully replaces the activity state. A run contains at most the latest 64 typed assistant, settled-tool, and notice activities; follow-up runs reset the list. Settled-tool detail arrays are projected to at most 32 KiB of serialized data, preserving complete entries from both ends around an omission marker. The state is independent from the durable session snapshot, survives client detach while the hosted session remains in memory, and is discarded on host restart or recovery. Clients decide how to render activities and whether to show completed agents.
 
 ## ephemeral events
 

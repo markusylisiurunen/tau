@@ -14,6 +14,7 @@ import {
   parseSessionProtocolRequestLine,
   projectSessionProtocolNoticePresentation,
   SESSION_PROTOCOL_ERROR_CODES,
+  SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_DETAILS_BYTES,
   SESSION_PROTOCOL_METHODS,
   SESSION_PROTOCOL_VERSION,
   validateSessionProtocolParams,
@@ -2077,6 +2078,52 @@ describe("session_protocol", () => {
       ok: true,
       message,
     });
+
+    const createToolDetailsMessage = (details) =>
+      createSessionProtocolSubagentActivitiesMessage({
+        sessionId: "session-1",
+        state: {
+          revision: 4,
+          agents: {
+            "agent-1": {
+              runRevision: 2,
+              activities: [
+                {
+                  type: "tool",
+                  toolName: "edit",
+                  outcome: "succeeded",
+                  presentation: {
+                    action: "edited",
+                    subject: "src/large.ts",
+                    subjectWrap: "character",
+                    details,
+                    metadata: [],
+                  },
+                },
+              ],
+            },
+          },
+        },
+      });
+    expect(() =>
+      createToolDetailsMessage(
+        Array.from({ length: 100 }, (_, index) => ({
+          text: `short line ${index}`,
+          wrap: "character",
+        })),
+      ),
+    ).not.toThrow();
+    const oversizedDetails = Array.from({ length: 100 }, (_, index) => ({
+      text: `${index} ${"x".repeat(500)}`,
+      wrap: "character",
+    }));
+    expect(Buffer.byteLength(JSON.stringify(oversizedDetails), "utf8")).toBeGreaterThan(
+      SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_DETAILS_BYTES,
+    );
+    expect(() => createToolDetailsMessage(oversizedDetails)).toThrow(
+      "session protocol subagent activities message is invalid",
+    );
+
     expect(() =>
       createSessionProtocolSubagentActivitiesMessage({
         sessionId: "session-1",

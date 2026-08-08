@@ -14,7 +14,12 @@ import {
   parseSessionProtocolRequestLine,
   projectSessionProtocolNoticePresentation,
   SESSION_PROTOCOL_ERROR_CODES,
+  SESSION_PROTOCOL_MAX_SUBAGENT_ASSISTANT_TEXT_BYTES,
+  SESSION_PROTOCOL_MAX_SUBAGENT_NOTICE_CONTENT_BYTES,
+  SESSION_PROTOCOL_MAX_SUBAGENT_SHORT_TEXT_BYTES,
   SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_DETAILS_BYTES,
+  SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_METADATA_BYTES,
+  SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_SUBJECT_BYTES,
   SESSION_PROTOCOL_METHODS,
   SESSION_PROTOCOL_VERSION,
   validateSessionProtocolParams,
@@ -2079,7 +2084,7 @@ describe("session_protocol", () => {
       message,
     });
 
-    const createToolDetailsMessage = (details) =>
+    const createActivityMessage = (activity) =>
       createSessionProtocolSubagentActivitiesMessage({
         sessionId: "session-1",
         state: {
@@ -2087,24 +2092,26 @@ describe("session_protocol", () => {
           agents: {
             "agent-1": {
               runRevision: 2,
-              activities: [
-                {
-                  type: "tool",
-                  toolName: "edit",
-                  outcome: "succeeded",
-                  presentation: {
-                    action: "edited",
-                    subject: "src/large.ts",
-                    subjectWrap: "character",
-                    details,
-                    metadata: [],
-                  },
-                },
-              ],
+              activities: [activity],
             },
           },
         },
       });
+    const createToolActivity = (presentation = {}) => ({
+      type: "tool",
+      toolName: "edit",
+      outcome: "succeeded",
+      presentation: {
+        action: "edited",
+        subject: "src/large.ts",
+        subjectWrap: "character",
+        details: [],
+        metadata: [],
+        ...presentation,
+      },
+    });
+    const createToolDetailsMessage = (details) =>
+      createActivityMessage(createToolActivity({ details }));
     expect(() =>
       createToolDetailsMessage(
         Array.from({ length: 100 }, (_, index) => ({
@@ -2117,12 +2124,48 @@ describe("session_protocol", () => {
       text: `${index} ${"x".repeat(500)}`,
       wrap: "character",
     }));
-    expect(Buffer.byteLength(JSON.stringify(oversizedDetails), "utf8")).toBeGreaterThan(
-      SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_DETAILS_BYTES,
-    );
+    expect(
+      Buffer.byteLength(oversizedDetails.map((detail) => detail.text).join("\n"), "utf8"),
+    ).toBeGreaterThan(SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_DETAILS_BYTES);
     expect(() => createToolDetailsMessage(oversizedDetails)).toThrow(
       "session protocol subagent activities message is invalid",
     );
+    expect(() =>
+      createActivityMessage(
+        createToolActivity({
+          subject: "😀".repeat(SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_SUBJECT_BYTES / 4 + 1),
+        }),
+      ),
+    ).toThrow("session protocol subagent activities message is invalid");
+    expect(() =>
+      createActivityMessage(
+        createToolActivity({
+          metadata: ["😀".repeat(SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_METADATA_BYTES / 4 + 1)],
+        }),
+      ),
+    ).toThrow("session protocol subagent activities message is invalid");
+    expect(() =>
+      createActivityMessage({
+        type: "tool",
+        toolName: "😀".repeat(SESSION_PROTOCOL_MAX_SUBAGENT_SHORT_TEXT_BYTES / 4 + 1),
+        outcome: "succeeded",
+        presentation: createToolActivity().presentation,
+      }),
+    ).toThrow("session protocol subagent activities message is invalid");
+    expect(() =>
+      createActivityMessage({
+        type: "assistant",
+        text: "😀".repeat(SESSION_PROTOCOL_MAX_SUBAGENT_ASSISTANT_TEXT_BYTES / 4 + 1),
+      }),
+    ).toThrow("session protocol subagent activities message is invalid");
+    expect(() =>
+      createActivityMessage({
+        type: "notice",
+        severity: "warn",
+        title: "notice",
+        content: ["😀".repeat(SESSION_PROTOCOL_MAX_SUBAGENT_NOTICE_CONTENT_BYTES / 4 + 1)],
+      }),
+    ).toThrow("session protocol subagent activities message is invalid");
 
     expect(() =>
       createSessionProtocolSubagentActivitiesMessage({

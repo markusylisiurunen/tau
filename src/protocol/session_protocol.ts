@@ -12,12 +12,16 @@ export const SESSION_PROTOCOL_VERSION = 11 as const;
 export const SESSION_PROTOCOL_MAX_EXEC_CAPTURE_BYTES = 24 * 1024 * 1024;
 export const SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES = 16 * 1024 * 1024;
 export const SESSION_PROTOCOL_MAX_SUBAGENT_ACTIVITIES = 64;
+export const SESSION_PROTOCOL_MAX_SUBAGENT_SHORT_TEXT_BYTES = 512;
+export const SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_SUBJECT_BYTES = 4 * 1024;
+export const SESSION_PROTOCOL_MAX_SUBAGENT_ASSISTANT_TEXT_BYTES = 32 * 1024;
 export const SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_DETAILS_BYTES = 32 * 1024;
+export const SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_METADATA_BYTES = 8 * 1024;
+export const SESSION_PROTOCOL_MAX_SUBAGENT_NOTICE_CONTENT_BYTES = 32 * 1024;
 
 const SESSION_PROTOCOL_NOTICE_TITLE_MAX_CHARS = 512;
 const SESSION_PROTOCOL_NOTICE_CONTENT_MAX_ENTRIES = 16;
 const SESSION_PROTOCOL_NOTICE_CONTENT_ENTRY_MAX_CHARS = 4_096;
-const SESSION_PROTOCOL_SUBAGENT_TOOL_METADATA_MAX_ENTRIES = 32;
 const UTF8_ENCODER = new TextEncoder();
 
 export const SESSION_PROTOCOL_METHODS = [
@@ -500,31 +504,52 @@ export function projectSessionProtocolSubagentActivity(
   activity: SessionProtocolSubagentActivity,
 ): SessionProtocolSubagentActivity {
   if (activity.type === "assistant") {
-    return { type: "assistant", text: activity.text };
+    return {
+      type: "assistant",
+      text: truncateUtf8Middle(activity.text, SESSION_PROTOCOL_MAX_SUBAGENT_ASSISTANT_TEXT_BYTES),
+    };
   }
   if (activity.type === "notice") {
-    const presentation = projectSessionProtocolNoticePresentation(activity.title, activity.content);
+    const content = activity.content
+      ? truncateSubagentTextValues(
+          activity.content,
+          SESSION_PROTOCOL_MAX_SUBAGENT_NOTICE_CONTENT_BYTES,
+        )
+      : [];
     return {
       type: "notice",
       severity: activity.severity,
-      title: presentation.title,
-      ...(presentation.content ? { content: presentation.content } : {}),
+      title: truncateUtf8Middle(activity.title, SESSION_PROTOCOL_MAX_SUBAGENT_SHORT_TEXT_BYTES),
+      ...(content.length > 0 ? { content } : {}),
     };
   }
 
   return {
     type: "tool",
-    toolName: activity.toolName,
+    toolName: truncateUtf8Middle(activity.toolName, SESSION_PROTOCOL_MAX_SUBAGENT_SHORT_TEXT_BYTES),
     outcome: activity.outcome,
     presentation: {
-      action: activity.presentation.action,
-      ...(activity.presentation.operation ? { operation: activity.presentation.operation } : {}),
-      subject: activity.presentation.subject,
+      action: truncateUtf8Middle(
+        activity.presentation.action,
+        SESSION_PROTOCOL_MAX_SUBAGENT_SHORT_TEXT_BYTES,
+      ),
+      ...(activity.presentation.operation
+        ? {
+            operation: truncateUtf8Middle(
+              activity.presentation.operation,
+              SESSION_PROTOCOL_MAX_SUBAGENT_SHORT_TEXT_BYTES,
+            ),
+          }
+        : {}),
+      subject: truncateUtf8Middle(
+        activity.presentation.subject,
+        SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_SUBJECT_BYTES,
+      ),
       subjectWrap: activity.presentation.subjectWrap,
       details: truncateSubagentActivityDetails(activity.presentation.details),
-      metadata: activity.presentation.metadata.slice(
-        0,
-        SESSION_PROTOCOL_SUBAGENT_TOOL_METADATA_MAX_ENTRIES,
+      metadata: truncateSubagentTextValues(
+        activity.presentation.metadata,
+        SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_METADATA_BYTES,
       ),
     },
   };
@@ -538,38 +563,75 @@ type SessionProtocolSubagentToolDetails = Extract<
 function truncateSubagentActivityDetails(
   details: SessionProtocolSubagentToolDetails,
 ): SessionProtocolSubagentToolDetails {
-  if (
-    serializedSubagentActivityDetailsBytes(details) <=
-    SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_DETAILS_BYTES
-  ) {
-    return structuredClone(details);
+  return truncateSubagentTextEntries(
+    details,
+    SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_DETAILS_BYTES,
+    (omitted) => ({
+      text: `…${omitted} more ${omitted === 1 ? "line" : "lines"}…`,
+      wrap: "word",
+    }),
+  );
+}
+
+function truncateSubagentTextValues(values: readonly string[], maxBytes: number): string[] {
+  return truncateSubagentTextEntries(
+    values.map((text) => ({ text })),
+    maxBytes,
+    (omitted) => ({
+      text: `…${omitted} more ${omitted === 1 ? "entry" : "entries"}…`,
+    }),
+  ).map((entry) => entry.text);
+}
+
+function truncateSubagentTextEntries<T extends { text: string }>(
+  entries: readonly T[],
+  maxBytes: number,
+  omission: (omitted: number) => T,
+): T[] {
+  const cloned = structuredClone(entries) as T[];
+  if (subagentTextEntriesBytes(cloned) <= maxBytes) {
+    return cloned;
   }
 
-  const itemBytes = details.map(serializedSubagentActivityDetailBytes);
+  const perEntryBytes =
+    cloned.length === 1
+      ? maxBytes
+      : cloned.length === 2
+        ? Math.floor((maxBytes - 1) / 2)
+        : Math.floor((maxBytes - utf8ByteLength(omission(cloned.length - 2).text) - 2) / 2);
+  const bounded = cloned.map((entry) => ({
+    ...entry,
+    text: truncateUtf8Middle(entry.text, perEntryBytes),
+  }));
+  if (subagentTextEntriesBytes(bounded) <= maxBytes) {
+    return bounded;
+  }
+
+  const itemBytes = bounded.map((entry) => utf8ByteLength(entry.text));
   let headCount = 0;
   let tailCount = 0;
   let headBytes = 0;
   let tailBytes = 0;
 
-  while (headCount + tailCount < details.length) {
+  while (headCount + tailCount < bounded.length) {
     const nextKeptCount = headCount + tailCount + 1;
-    const omitted = details.length - nextKeptCount;
+    const omitted = bounded.length - nextKeptCount;
     if (omitted === 0) break;
 
     const headItemBytes = itemBytes[headCount]!;
-    const tailItemBytes = itemBytes[details.length - tailCount - 1]!;
+    const tailItemBytes = itemBytes[bounded.length - tailCount - 1]!;
     const headFits =
-      subagentActivityDetailsProjectionBytes(
+      subagentTextEntriesProjectionBytes(
         nextKeptCount,
         headBytes + headItemBytes + tailBytes,
-        omitted,
-      ) <= SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_DETAILS_BYTES;
+        omission(omitted).text,
+      ) <= maxBytes;
     const tailFits =
-      subagentActivityDetailsProjectionBytes(
+      subagentTextEntriesProjectionBytes(
         nextKeptCount,
         headBytes + tailBytes + tailItemBytes,
-        omitted,
-      ) <= SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_DETAILS_BYTES;
+        omission(omitted).text,
+      ) <= maxBytes;
     if (!headFits && !tailFits) break;
 
     const takeHead =
@@ -586,37 +648,59 @@ function truncateSubagentActivityDetails(
     }
   }
 
-  const omitted = details.length - headCount - tailCount;
+  const omitted = bounded.length - headCount - tailCount;
   return [
-    ...structuredClone(details.slice(0, headCount)),
-    subagentActivityOmission(omitted),
-    ...structuredClone(details.slice(details.length - tailCount)),
+    ...bounded.slice(0, headCount),
+    omission(omitted),
+    ...bounded.slice(bounded.length - tailCount),
   ];
 }
 
-function subagentActivityOmission(omitted: number): SessionProtocolSubagentToolDetails[number] {
-  return { text: `…${omitted} more ${omitted === 1 ? "line" : "lines"}…`, wrap: "word" };
-}
-
-function subagentActivityDetailsProjectionBytes(
+function subagentTextEntriesProjectionBytes(
   keptCount: number,
   keptBytes: number,
-  omitted: number,
+  omissionText: string,
 ): number {
-  const markerBytes = serializedSubagentActivityDetailBytes(subagentActivityOmission(omitted));
-  return 2 + keptBytes + markerBytes + keptCount;
+  return keptBytes + utf8ByteLength(omissionText) + keptCount;
 }
 
-function serializedSubagentActivityDetailsBytes(
-  details: SessionProtocolSubagentToolDetails,
-): number {
-  return utf8ByteLength(JSON.stringify(details));
+function subagentTextEntriesBytes(entries: readonly { text: string }[]): number {
+  if (entries.length === 0) return 0;
+  return (
+    entries.reduce((total, entry) => total + utf8ByteLength(entry.text), 0) + entries.length - 1
+  );
 }
 
-function serializedSubagentActivityDetailBytes(
-  detail: SessionProtocolSubagentToolDetails[number],
-): number {
-  return utf8ByteLength(JSON.stringify(detail));
+function truncateUtf8Middle(value: string, maxBytes: number): string {
+  if (utf8ByteLength(value) <= maxBytes) return value;
+
+  const marker = "…";
+  const markerBytes = utf8ByteLength(marker);
+  const contentBytes = maxBytes - markerBytes;
+  const headBudget = Math.ceil(contentBytes / 2);
+  const tailBudget = contentBytes - headBudget;
+  const characters = Array.from(value);
+  let headCount = 0;
+  let headBytes = 0;
+  while (headCount < characters.length) {
+    const nextBytes = utf8ByteLength(characters[headCount]!);
+    if (headBytes + nextBytes > headBudget) break;
+    headBytes += nextBytes;
+    headCount += 1;
+  }
+
+  let tailCount = 0;
+  let tailBytes = 0;
+  while (tailCount < characters.length - headCount) {
+    const nextBytes = utf8ByteLength(characters[characters.length - tailCount - 1]!);
+    if (tailBytes + nextBytes > tailBudget) break;
+    tailBytes += nextBytes;
+    tailCount += 1;
+  }
+
+  return `${characters.slice(0, headCount).join("")}${marker}${characters
+    .slice(characters.length - tailCount)
+    .join("")}`;
 }
 
 function utf8ByteLength(value: string): number {
@@ -3062,14 +3146,23 @@ const sessionProtocolPendingUserMessagesMessageSchema = z
 
 const subagentActivityLineSchema = z
   .string()
-  .max(512)
   .refine((text) => !text.includes("\n") && !text.includes("\r"), "must be one line");
+const subagentActivityShortTextSchema = subagentActivityLineSchema
+  .min(1)
+  .refine((text) => text.trim().length > 0)
+  .refine(
+    (text) => utf8ByteLength(text) <= SESSION_PROTOCOL_MAX_SUBAGENT_SHORT_TEXT_BYTES,
+    `must not exceed ${SESSION_PROTOCOL_MAX_SUBAGENT_SHORT_TEXT_BYTES} UTF-8 bytes`,
+  );
 
 const subagentToolPresentationSchema = z
   .object({
-    action: subagentActivityLineSchema.min(1),
-    operation: subagentActivityLineSchema.min(1).optional(),
-    subject: nonEmptyStringSchema,
+    action: subagentActivityShortTextSchema,
+    operation: subagentActivityShortTextSchema.optional(),
+    subject: nonEmptyStringSchema.refine(
+      (subject) => utf8ByteLength(subject) <= SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_SUBJECT_BYTES,
+      `must not exceed ${SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_SUBJECT_BYTES} UTF-8 bytes`,
+    ),
     subjectWrap: z.enum(["word", "character"]),
     details: z
       .array(
@@ -3083,22 +3176,34 @@ const subagentToolPresentationSchema = z
       )
       .refine(
         (details) =>
-          serializedSubagentActivityDetailsBytes(details) <=
-          SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_DETAILS_BYTES,
-        `must not exceed ${SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_DETAILS_BYTES} serialized bytes`,
+          subagentTextEntriesBytes(details) <= SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_DETAILS_BYTES,
+        `text must not exceed ${SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_DETAILS_BYTES} UTF-8 bytes`,
       ),
     metadata: z
       .array(subagentActivityLineSchema)
-      .max(SESSION_PROTOCOL_SUBAGENT_TOOL_METADATA_MAX_ENTRIES),
+      .refine(
+        (metadata) =>
+          subagentTextEntriesBytes(metadata.map((text) => ({ text }))) <=
+          SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_METADATA_BYTES,
+        `text must not exceed ${SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_METADATA_BYTES} UTF-8 bytes`,
+      ),
   })
   .strip();
 
 const sessionProtocolSubagentActivitySchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("assistant"), text: nonEmptyStringSchema }).strip(),
+  z
+    .object({
+      type: z.literal("assistant"),
+      text: nonEmptyStringSchema.refine(
+        (text) => utf8ByteLength(text) <= SESSION_PROTOCOL_MAX_SUBAGENT_ASSISTANT_TEXT_BYTES,
+        `must not exceed ${SESSION_PROTOCOL_MAX_SUBAGENT_ASSISTANT_TEXT_BYTES} UTF-8 bytes`,
+      ),
+    })
+    .strip(),
   z
     .object({
       type: z.literal("tool"),
-      toolName: nonEmptyStringSchema,
+      toolName: subagentActivityShortTextSchema,
       outcome: z.enum(["succeeded", "failed", "blocked", "cancelled"]),
       presentation: subagentToolPresentationSchema,
     })
@@ -3107,10 +3212,15 @@ const sessionProtocolSubagentActivitySchema = z.discriminatedUnion("type", [
     .object({
       type: z.literal("notice"),
       severity: z.enum(["info", "warn", "error"]),
-      title: noticeTitleSchema,
+      title: subagentActivityShortTextSchema,
       content: z
-        .array(z.string().max(SESSION_PROTOCOL_NOTICE_CONTENT_ENTRY_MAX_CHARS))
-        .max(SESSION_PROTOCOL_NOTICE_CONTENT_MAX_ENTRIES)
+        .array(z.string())
+        .refine(
+          (content) =>
+            subagentTextEntriesBytes(content.map((text) => ({ text }))) <=
+            SESSION_PROTOCOL_MAX_SUBAGENT_NOTICE_CONTENT_BYTES,
+          `text must not exceed ${SESSION_PROTOCOL_MAX_SUBAGENT_NOTICE_CONTENT_BYTES} UTF-8 bytes`,
+        )
         .optional(),
     })
     .strip(),

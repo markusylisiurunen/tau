@@ -460,7 +460,7 @@ const unsubscribeSubagentActivities = session.onSubagentActivities(
 );
 ```
 
-Each message fully replaces the activity state. A run contains at most the latest 64 typed assistant, settled-tool, and notice activities; follow-up runs reset the list. Settled-tool detail arrays are projected to at most 32 KiB of serialized data, preserving complete entries from both ends around an omission marker. The state is independent from the durable session snapshot, survives client detach while the hosted session remains in memory, and is discarded on host restart or recovery. Clients decide how to render activities and whether to show completed agents.
+Each message fully replaces the activity state. A run contains at most the latest 64 typed assistant, settled-tool, and notice activities; follow-up runs reset the list. Activity fields use UTF-8 content limits: 512 bytes for short labels, names, and titles, 4 KiB for tool subjects, 32 KiB for assistant text, 32 KiB across tool-detail text, 8 KiB across tool metadata, and 32 KiB across notice content. Scalars are middle-truncated, while collections preserve entries from both ends around an omission marker. Typed tool activities omit a dedicated `toolCallId` field, although bounded diagnostic notice text may mention one. The state is independent from the durable session snapshot, survives client detach while the hosted session remains in memory, and is discarded on host restart or recovery. Clients decide how to render activities and whether to show completed agents.
 
 ## ephemeral events
 

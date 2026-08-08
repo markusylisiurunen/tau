@@ -1004,7 +1004,9 @@ Pending messages are shared across attached clients and survive client detach wh
 }
 ```
 
-Each event is a full replacement with a revision independent from the snapshot and pending-message revisions. Each agent entry belongs to exactly one run revision and contains at most the latest 64 immutable activities. A follow-up run replaces the prior run's list with an empty list before new activity arrives. Assistant activities contain committed assistant text, tool activities appear only after settlement with terminal producer-owned presentation, and notice activities carry feedback. Tool detail arrays are projected to at most 32 KiB of serialized data, preserving complete entries from both ends around an omission marker. Thinking and tool-call ids are not exposed.
+Each event is a full replacement with a revision independent from the snapshot and pending-message revisions. Each agent entry belongs to exactly one run revision and contains at most the latest 64 immutable activities. A follow-up run replaces the prior run's list with an empty list before new activity arrives. Assistant activities contain committed assistant text, tool activities appear only after settlement with terminal producer-owned presentation, and notice activities carry feedback.
+
+Activity fields use UTF-8 content limits: 512 bytes for short labels, names, and titles, 4 KiB for tool subjects, 32 KiB for assistant text, 32 KiB across tool-detail text, 8 KiB across tool metadata, and 32 KiB across notice content. Scalars are middle-truncated. Detail, metadata, and notice-content collections preserve entries from both ends around an omission marker. Thinking and dedicated `toolCallId` fields are not exposed; bounded diagnostic notice text may still mention a tool-call id.
 
 The initial baseline is included in `session.observe`. Activity state is shared across attached clients and survives client detach while the hosted session remains in memory, but is never stored in `SessionProtocolSnapshot` or the session store and starts empty after recovery. Clients own rendering and whether completed agents remain visible.
 

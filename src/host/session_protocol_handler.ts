@@ -1692,7 +1692,7 @@ export class SessionProtocolHandler {
 
     state.bufferedSubagentActivities = undefined;
     for (const message of bufferedSubagentActivities) {
-      if (message.state.revision > activitiesRevision) {
+      if (message.revision > activitiesRevision) {
         this.sendMessage(message);
       }
     }

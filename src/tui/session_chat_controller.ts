@@ -43,7 +43,10 @@ import type {
   SessionProtocolTimelineItem,
   SessionProtocolToolRun,
 } from "../protocol/session_protocol.js";
-import { applySessionProtocolDelta } from "../protocol/session_protocol.js";
+import {
+  applySessionProtocolDelta,
+  applySessionProtocolSubagentActivitiesMessage,
+} from "../protocol/session_protocol.js";
 import type {
   TauSdkSession,
   TauSdkSessionRetryResult,
@@ -1096,6 +1099,7 @@ export class SessionChatController {
       for (const message of subagentActivities) {
         this.onSdkSubagentActivities(message);
       }
+      this.syncSnapshotToolAndAgentUi(this.snapshot);
       forwardEvents = true;
 
       try {
@@ -1151,10 +1155,13 @@ export class SessionChatController {
   }
 
   private onSdkSubagentActivities(message: SessionProtocolSubagentActivitiesMessage): void {
-    if (message.state.revision <= this.subagentActivities.revision) {
+    if (message.revision <= this.subagentActivities.revision) {
       return;
     }
-    this.subagentActivities = structuredClone(message.state);
+    this.subagentActivities = applySessionProtocolSubagentActivitiesMessage(
+      this.subagentActivities,
+      message,
+    );
     this.syncSnapshotToolAndAgentUi(this.snapshot);
   }
 

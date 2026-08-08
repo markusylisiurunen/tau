@@ -533,7 +533,12 @@ class FakeSession {
       version: SESSION_PROTOCOL_VERSION,
       type: "session.subagentActivities",
       sessionId: this.id,
-      state: structuredClone(this.subagentActivitiesValue),
+      revision: this.subagentActivitiesValue.revision,
+      changes: Object.entries(this.subagentActivitiesValue.agents).map(([agentId, state]) => ({
+        type: "agent.set",
+        agentId,
+        state: structuredClone(state),
+      })),
     });
     return () => this.subagentActivitiesListeners.delete(listener);
   }
@@ -4140,7 +4145,14 @@ describe("SessionChatController", () => {
         version: SESSION_PROTOCOL_VERSION,
         type: "session.subagentActivities",
         sessionId: session.id,
-        state: structuredClone(session.subagentActivitiesValue),
+        revision: session.subagentActivitiesValue.revision,
+        changes: [
+          {
+            type: "agent.set",
+            agentId: initialAgent.id,
+            state: structuredClone(session.subagentActivitiesValue.agents[initialAgent.id]),
+          },
+        ],
       });
     }
 
@@ -5721,6 +5733,62 @@ describe("SessionChatController", () => {
       id: message.id,
       model: { type: "user", text: "arrived during handoff" },
     });
+  });
+
+  it("reconciles replacement-session activities after buffered agent deltas", async () => {
+    const session = new FakeSession(updateSnapshot(createSnapshot(), { revision: 10 }));
+    const nextSession = new FakeSession();
+    nextSession.id = "session-2";
+    nextSession.snapshotValue = { ...nextSession.snapshotValue, sessionId: nextSession.id };
+    const agent = createAgentRun();
+    const delta = {
+      version: SESSION_PROTOCOL_VERSION,
+      type: "session.delta",
+      sessionId: nextSession.id,
+      fromRevision: nextSession.snapshotValue.revision,
+      toRevision: nextSession.snapshotValue.revision + 1,
+      cause: { type: "agent-run" },
+      delta: {
+        type: "snapshot.patch",
+        changes: [
+          { type: "cost.set", costTotal: 0 },
+          { type: "agent.set", agent },
+        ],
+      },
+    };
+    nextSession.subagentActivitiesValue = {
+      revision: 2,
+      agents: {
+        [agent.id]: {
+          runRevision: agent.run.revision,
+          activities: [{ type: "assistant", text: "arrived during handoff" }],
+        },
+      },
+    };
+    nextSession.onDelta = vi.fn((listener) => {
+      nextSession.listeners.add(listener);
+      nextSession.snapshotValue = applySessionProtocolDelta(nextSession.snapshotValue, delta);
+      listener(delta);
+      return () => nextSession.listeners.delete(listener);
+    });
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      createSession: vi.fn(async () => nextSession),
+      targetLabel: "local",
+    });
+    controller.start();
+
+    await controller.onUserInput("/new");
+
+    expect(view.subagentSnapshots).toEqual([
+      {
+        state: expect.objectContaining({ id: agent.id }),
+        activities: [{ type: "assistant", text: "arrived during handoff" }],
+      },
+    ]);
   });
 
   it("serializes concurrent new-session requests", async () => {

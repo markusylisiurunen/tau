@@ -9,6 +9,7 @@ import type {
   SessionProtocolSampleParams,
 } from "../protocol/session_protocol.js";
 import {
+  applySessionProtocolSubagentActivitiesMessage,
   SESSION_PROTOCOL_VERSION,
   validateSessionProtocolParams,
 } from "../protocol/session_protocol.js";
@@ -28,6 +29,7 @@ import type {
   TauSdkSessionClient,
   TauSdkSessionUserMessageOptions,
   TauSdkSubagentActivitiesListener,
+  TauSdkSubagentActivitiesState,
   TauSdkTransportClientOptions,
 } from "./types.js";
 
@@ -508,13 +510,15 @@ class TauSdkSessionImpl implements TauSdkSession {
   private readonly pendingUserMessagesListeners = new Set<TauSdkPendingUserMessagesListener>();
   private readonly subagentActivitiesListeners = new Set<TauSdkSubagentActivitiesListener>();
   private readonly bufferedDeltas: Parameters<TauSdkDeltaListener>[0][] = [];
+  private readonly bufferedSubagentActivities: Parameters<TauSdkSubagentActivitiesListener>[0][] =
+    [];
   private readonly unsubscribeClientDeltas: () => void;
   private readonly unsubscribeClientEphemeral: () => void;
   private readonly unsubscribeClientPendingUserMessages: () => void;
   private readonly unsubscribeClientSubagentActivities: () => void;
   private initialSnapshot?: SessionProtocolResultByMethod["session.snapshot"];
   private pendingUserMessagesValue?: Parameters<TauSdkPendingUserMessagesListener>[0]["state"];
-  private subagentActivitiesValue?: Parameters<TauSdkSubagentActivitiesListener>[0]["state"];
+  private subagentActivitiesValue?: TauSdkSubagentActivitiesState;
 
   constructor(
     private readonly client: TauSdkClientImpl,
@@ -544,7 +548,7 @@ class TauSdkSessionImpl implements TauSdkSession {
     return structuredClone(this.pendingUserMessagesValue);
   }
 
-  subagentActivities(): Parameters<TauSdkSubagentActivitiesListener>[0]["state"] {
+  subagentActivities(): TauSdkSubagentActivitiesState {
     this.assertActive();
     if (!this.subagentActivitiesValue) {
       throw new TauSessionClientError("tau sdk subagent activities are not initialized");
@@ -604,7 +608,12 @@ class TauSdkSessionImpl implements TauSdkSession {
           version: SESSION_PROTOCOL_VERSION,
           type: "session.subagentActivities",
           sessionId: this.sessionId,
-          state: structuredClone(this.subagentActivitiesValue),
+          revision: this.subagentActivitiesValue.revision,
+          changes: Object.entries(this.subagentActivitiesValue.agents).map(([agentId, state]) => ({
+            type: "agent.set",
+            agentId,
+            state: structuredClone(state),
+          })),
         });
       } catch {
         // SDK subagent-activity listeners must not break session event delivery.
@@ -856,16 +865,21 @@ class TauSdkSessionImpl implements TauSdkSession {
   }
 
   private handleSubagentActivities(message: Parameters<TauSdkSubagentActivitiesListener>[0]): void {
-    if (
-      this.isUnobserved ||
-      message.sessionId !== this.sessionId ||
-      (this.subagentActivitiesValue &&
-        message.state.revision <= this.subagentActivitiesValue.revision)
-    ) {
+    if (this.isUnobserved || message.sessionId !== this.sessionId) {
+      return;
+    }
+    if (!this.subagentActivitiesValue) {
+      this.bufferedSubagentActivities.push(structuredClone(message));
+      return;
+    }
+    if (message.revision <= this.subagentActivitiesValue.revision) {
       return;
     }
 
-    this.subagentActivitiesValue = structuredClone(message.state);
+    this.subagentActivitiesValue = applySessionProtocolSubagentActivitiesMessage(
+      this.subagentActivitiesValue,
+      message,
+    );
     for (const listener of [...this.subagentActivitiesListeners]) {
       try {
         listener(message);
@@ -895,11 +909,10 @@ class TauSdkSessionImpl implements TauSdkSession {
     }
   }
 
-  setInitialSubagentActivities(
-    state: Parameters<TauSdkSubagentActivitiesListener>[0]["state"],
-  ): void {
-    if (!this.subagentActivitiesValue || state.revision > this.subagentActivitiesValue.revision) {
-      this.subagentActivitiesValue = structuredClone(state);
+  setInitialSubagentActivities(state: TauSdkSubagentActivitiesState): void {
+    this.subagentActivitiesValue = structuredClone(state);
+    for (const message of this.bufferedSubagentActivities.splice(0)) {
+      this.handleSubagentActivities(message);
     }
   }
 
@@ -922,6 +935,7 @@ class TauSdkSessionImpl implements TauSdkSession {
     this.pendingUserMessagesListeners.clear();
     this.subagentActivitiesListeners.clear();
     this.bufferedDeltas.splice(0);
+    this.bufferedSubagentActivities.splice(0);
   }
 
   private async runExecRequest<T>(

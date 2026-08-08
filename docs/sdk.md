@@ -274,8 +274,8 @@ options:
 - `subagentActivities()`
   - returns the latest independently revisioned supervised-subagent activity state
 - `onSubagentActivities(listener)`
-  - subscribes to full replacements of only the subagent activity state for this session id
-  - immediately receives the current state
+  - subscribes to complete per-agent activity replacements and removals for this session id
+  - immediately receives the current agents as `agent.set` changes
 - `onDelta(listener)`
   - subscribes to streamed `session.delta` messages for this session id only
   - replays any deltas received by this session facade before the first local listener was attached
@@ -451,16 +451,20 @@ console.log(session.subagentActivities().agents);
 
 const unsubscribeSubagentActivities = session.onSubagentActivities(
   (message) => {
-    for (const [agentId, run] of Object.entries(message.state.agents)) {
-      for (const activity of run.activities) {
-        console.log(agentId, run.runRevision, activity.type);
+    for (const change of message.changes) {
+      if (change.type === "agent.remove") {
+        console.log("removed", change.agentId);
+        continue;
+      }
+      for (const activity of change.state.activities) {
+        console.log(change.agentId, change.state.runRevision, activity.type);
       }
     }
   },
 );
 ```
 
-Each message fully replaces the activity state. A run contains at most the latest 64 typed assistant, settled-tool, and notice activities; follow-up runs reset the list. Activity fields use UTF-8 content limits: 512 bytes for short labels, names, and titles, 4 KiB for tool subjects, 32 KiB for assistant text, 32 KiB across tool-detail text, 8 KiB across tool metadata, and 32 KiB across notice content. Scalars are middle-truncated, while collections preserve entries from both ends around an omission marker. Typed tool activities omit a dedicated `toolCallId` field, although bounded diagnostic notice text may mention one. The state is independent from the durable session snapshot, survives client detach while the hosted session remains in memory, and is discarded on host restart or recovery. Clients decide how to render activities and whether to show completed agents.
+`session.observe` supplies the complete baseline used by `subagentActivities()`. Later messages replace the complete current-run list only for each changed agent or explicitly remove an agent; unchanged agents are not resent. A run contains at most the latest 64 typed assistant, settled-tool, and notice activities; follow-up runs reset the list. Activity fields use UTF-8 content limits: 512 bytes for short labels, names, and titles, 4 KiB for tool subjects, 32 KiB for assistant text, 32 KiB across tool-detail text, 8 KiB across tool metadata, and 32 KiB across notice content. Scalars are middle-truncated, while collections preserve entries from both ends around an omission marker. Typed tool activities omit a dedicated `toolCallId` field, although bounded diagnostic notice text may mention one. The state is independent from the durable session snapshot, survives client detach while the hosted session remains in memory, and is discarded on host restart or recovery. Clients decide how to render activities and whether to show completed agents.
 
 ## ephemeral events
 

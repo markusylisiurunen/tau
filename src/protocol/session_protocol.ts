@@ -374,16 +374,23 @@ export type SessionProtocolSubagentActivity =
       content?: string[];
     };
 
+export type SessionProtocolSubagentActivitiesAgentState = {
+  runRevision: number;
+  activities: SessionProtocolSubagentActivity[];
+};
+
 export type SessionProtocolSubagentActivitiesState = {
   revision: number;
-  agents: Record<
-    string,
-    {
-      runRevision: number;
-      activities: SessionProtocolSubagentActivity[];
-    }
-  >;
+  agents: Record<string, SessionProtocolSubagentActivitiesAgentState>;
 };
+
+export type SessionProtocolSubagentActivitiesChange =
+  | {
+      type: "agent.set";
+      agentId: string;
+      state: SessionProtocolSubagentActivitiesAgentState;
+    }
+  | { type: "agent.remove"; agentId: string };
 
 export type SessionProtocolCreateResult = {
   sessionId: string;
@@ -524,9 +531,10 @@ export function projectSessionProtocolSubagentActivity(
     };
   }
 
+  const toolName = activity.toolName.replace(/\s+/g, " ").trim() || "(invalid tool name)";
   return {
     type: "tool",
-    toolName: truncateUtf8Middle(activity.toolName, SESSION_PROTOCOL_MAX_SUBAGENT_SHORT_TEXT_BYTES),
+    toolName: truncateUtf8Middle(toolName, SESSION_PROTOCOL_MAX_SUBAGENT_SHORT_TEXT_BYTES),
     outcome: activity.outcome,
     presentation: {
       action: truncateUtf8Middle(
@@ -1347,7 +1355,8 @@ export type SessionProtocolSubagentActivitiesMessage = {
   version: typeof SESSION_PROTOCOL_VERSION;
   type: "session.subagentActivities";
   sessionId: string;
-  state: SessionProtocolSubagentActivitiesState;
+  revision: number;
+  changes: SessionProtocolSubagentActivitiesChange[];
 };
 
 export type SessionProtocolOutgoingMessage =
@@ -3226,29 +3235,45 @@ const sessionProtocolSubagentActivitySchema = z.discriminatedUnion("type", [
     .strip(),
 ]);
 
+const sessionProtocolSubagentActivitiesAgentStateSchema = z
+  .object({
+    runRevision: z.number().int().positive(),
+    activities: z
+      .array(sessionProtocolSubagentActivitySchema)
+      .max(SESSION_PROTOCOL_MAX_SUBAGENT_ACTIVITIES),
+  })
+  .strip();
+
 const sessionProtocolSubagentActivitiesStateSchema = z
   .object({
     revision: z.number().int().positive(),
-    agents: z.record(
-      nonEmptyStringSchema,
-      z
-        .object({
-          runRevision: z.number().int().positive(),
-          activities: z
-            .array(sessionProtocolSubagentActivitySchema)
-            .max(SESSION_PROTOCOL_MAX_SUBAGENT_ACTIVITIES),
-        })
-        .strip(),
-    ),
+    agents: z.record(nonEmptyStringSchema, sessionProtocolSubagentActivitiesAgentStateSchema),
   })
   .strip() as z.ZodType<SessionProtocolSubagentActivitiesState>;
+
+const sessionProtocolSubagentActivitiesChangeSchema = z.discriminatedUnion("type", [
+  z
+    .object({
+      type: z.literal("agent.set"),
+      agentId: nonEmptyStringSchema,
+      state: sessionProtocolSubagentActivitiesAgentStateSchema,
+    })
+    .strip(),
+  z.object({ type: z.literal("agent.remove"), agentId: nonEmptyStringSchema }).strip(),
+]);
 
 const sessionProtocolSubagentActivitiesMessageSchema = z
   .object({
     version: z.literal(SESSION_PROTOCOL_VERSION),
     type: z.literal("session.subagentActivities"),
     sessionId: nonEmptyStringSchema,
-    state: sessionProtocolSubagentActivitiesStateSchema,
+    revision: z.number().int().positive(),
+    changes: z
+      .array(sessionProtocolSubagentActivitiesChangeSchema)
+      .refine(
+        (changes) => new Set(changes.map((change) => change.agentId)).size === changes.length,
+        "must not contain duplicate agent ids",
+      ),
   })
   .strip();
 
@@ -3563,15 +3588,36 @@ export function createSessionProtocolPendingUserMessagesMessage(options: {
   return parsedMessage.data as SessionProtocolPendingUserMessagesMessage;
 }
 
+export function applySessionProtocolSubagentActivitiesMessage(
+  state: SessionProtocolSubagentActivitiesState,
+  message: SessionProtocolSubagentActivitiesMessage,
+): SessionProtocolSubagentActivitiesState {
+  if (message.revision <= state.revision) {
+    return structuredClone(state);
+  }
+
+  const agents = { ...state.agents };
+  for (const change of message.changes) {
+    if (change.type === "agent.set") {
+      agents[change.agentId] = structuredClone(change.state);
+    } else {
+      delete agents[change.agentId];
+    }
+  }
+  return { revision: message.revision, agents };
+}
+
 export function createSessionProtocolSubagentActivitiesMessage(options: {
   sessionId: string;
-  state: SessionProtocolSubagentActivitiesState;
+  revision: number;
+  changes: SessionProtocolSubagentActivitiesChange[];
 }): SessionProtocolSubagentActivitiesMessage {
   const message = {
     version: SESSION_PROTOCOL_VERSION,
     type: "session.subagentActivities",
     sessionId: options.sessionId,
-    state: options.state,
+    revision: options.revision,
+    changes: options.changes,
   };
   const parsedMessage = sessionProtocolSubagentActivitiesMessageSchema.safeParse(message);
   if (!parsedMessage.success) {
@@ -5334,8 +5380,11 @@ function parseSessionProtocolSubagentActivitiesMessage(
     if (hasIssue(message.error, ["sessionId"])) {
       return fail("session.subagentActivities.sessionId must be a non-empty string");
     }
-    if (hasIssue(message.error, ["state"])) {
-      return fail("session.subagentActivities.state is invalid");
+    if (hasIssue(message.error, ["revision"])) {
+      return fail("session.subagentActivities.revision is invalid");
+    }
+    if (hasIssue(message.error, ["changes"])) {
+      return fail("session.subagentActivities.changes are invalid");
     }
     return fail(`invalid session.subagentActivities message: ${formatZodError(message.error)}`);
   }

@@ -524,7 +524,14 @@ function createHarness(options = {}) {
           version: SESSION_PROTOCOL_VERSION,
           type: "session.subagentActivities",
           sessionId,
-          state: hostedSession.subagentActivities(),
+          revision: subagentActivitiesRevision,
+          changes: [
+            {
+              type: "agent.set",
+              agentId: event.id,
+              state: structuredClone(subagentActivitiesByAgent[event.id]),
+            },
+          ],
         };
         for (const handler of subagentActivitiesHandlers) {
           handler(message);
@@ -622,8 +629,13 @@ function deltaHasAgent(line, id) {
 function hasAgentActivity(line, id, text) {
   return (
     line.type === "session.subagentActivities" &&
-    line.state.agents[id]?.activities.some(
-      (activity) => activity.type === "assistant" && activity.text === text,
+    line.changes.some(
+      (change) =>
+        change.type === "agent.set" &&
+        change.agentId === id &&
+        change.state.activities.some(
+          (activity) => activity.type === "assistant" && activity.text === text,
+        ),
     )
   );
 }

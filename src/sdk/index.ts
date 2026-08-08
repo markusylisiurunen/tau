@@ -6,12 +6,17 @@ export type {
   SessionProtocolPendingUserMessagesMessage,
   SessionProtocolPendingUserMessagesState,
   SessionProtocolSnapshot,
+  SessionProtocolSubagentActivitiesAgentState,
+  SessionProtocolSubagentActivitiesChange,
   SessionProtocolSubagentActivitiesMessage,
   SessionProtocolSubagentActivitiesState,
   SessionProtocolSubagentActivity,
   SessionProtocolTurnRecord,
 } from "../protocol/index.js";
-export { applySessionProtocolDelta } from "../protocol/index.js";
+export {
+  applySessionProtocolDelta,
+  applySessionProtocolSubagentActivitiesMessage,
+} from "../protocol/index.js";
 export type {
   SessionProtocolDeltaListener,
   SessionProtocolEphemeralListener,

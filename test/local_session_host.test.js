@@ -28,6 +28,7 @@ import {
   SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_DETAILS_BYTES,
   SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_METADATA_BYTES,
   SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_SUBJECT_BYTES,
+  SESSION_PROTOCOL_VERSION,
 } from "../dist/protocol/session_protocol.js";
 import { FileSessionStore } from "../dist/store/file_session_store.js";
 import { MemorySessionStore } from "../dist/store/memory_session_store.js";
@@ -3477,6 +3478,44 @@ describe("LocalSessionHost", () => {
     });
   });
 
+  it("publishes complete activity state only for changed subagents", async () => {
+    const host = createHost(new MemorySessionStore());
+    const hostedSession = await host.createSession(localCreateInput);
+    vi.spyOn(hostedSession.session, "hasSubagent").mockReturnValue(true);
+    const first = createRunningSubagentState("child-1");
+    const second = createRunningSubagentState("child-2");
+    await hostedSession.recordSubagentEvent({ type: "subagent_spawned", state: first });
+    await hostedSession.recordSubagentEvent({ type: "subagent_spawned", state: second });
+    const messages = [];
+    hostedSession.onSubagentActivities((message) => messages.push(message));
+
+    await hostedSession.recordSubagentEvent({
+      type: "subagent_activity",
+      state: first,
+      activity: { type: "assistant", text: "first agent only" },
+    });
+
+    expect(messages).toEqual([
+      {
+        version: SESSION_PROTOCOL_VERSION,
+        type: "session.subagentActivities",
+        sessionId: hostedSession.sessionId,
+        revision: 4,
+        changes: [
+          {
+            type: "agent.set",
+            agentId: "child-1",
+            state: {
+              runRevision: 1,
+              activities: [{ type: "assistant", text: "first agent only" }],
+            },
+          },
+        ],
+      },
+    ]);
+    expect(hostedSession.subagentActivities().agents).toHaveProperty("child-2");
+  });
+
   it("bounds every subagent activity field by UTF-8 content size", async () => {
     const host = createHost(new MemorySessionStore());
     const hostedSession = await host.createSession(localCreateInput);
@@ -3508,12 +3547,14 @@ describe("LocalSessionHost", () => {
         presentation: { action: actionByStatus.succeeded, ...presentation },
       };
     };
+    const malformedToolNameActivity = createEditActivity(
+      Array.from({ length: 100 }, (_, index) => ({ text: `+ short line ${index}` })),
+    );
+    malformedToolNameActivity.toolName = "missing\r\ntool";
     await hostedSession.recordSubagentEvent({
       type: "subagent_activity",
       state,
-      activity: createEditActivity(
-        Array.from({ length: 100 }, (_, index) => ({ text: `+ short line ${index}` })),
-      ),
+      activity: malformedToolNameActivity,
     });
     const largeToolActivity = createEditActivity(
       Array.from({ length: 100 }, (_, index) => ({
@@ -3556,6 +3597,7 @@ describe("LocalSessionHost", () => {
       SESSION_PROTOCOL_MAX_SUBAGENT_ASSISTANT_TEXT_BYTES,
     );
     expect(assistantActivity.text).toMatch(/^a+…z+$/);
+    expect(shortToolActivity.toolName).toBe("missing tool");
     expect(shortToolActivity.presentation.details).toHaveLength(100);
     expect(toolActivity.toolName).toMatch(/^n+…z+$/);
     expect(toolActivity.presentation.action).toMatch(/^a+…z+$/);

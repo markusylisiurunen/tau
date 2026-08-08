@@ -416,12 +416,13 @@ function createPendingUserMessagesMessage(sessionId, messages = [], revision = 1
   };
 }
 
-function createSubagentActivitiesMessage(sessionId, state) {
+function createSubagentActivitiesMessage(sessionId, revision, changes) {
   return {
     version: SESSION_PROTOCOL_VERSION,
     type: "session.subagentActivities",
     sessionId,
-    state,
+    revision,
+    changes,
   };
 }
 
@@ -591,29 +592,28 @@ describe("sdk_client", () => {
     expect(pendingUserMessageStates.at(-1)).toEqual(readySession.pendingUserMessages());
 
     expect(readySession.subagentActivities()).toEqual({ revision: 1, agents: {} });
-    const subagentActivityStates = [];
-    readySession.onSubagentActivities((message) => subagentActivityStates.push(message.state));
-    transport.emitSubagentActivities(
-      createSubagentActivitiesMessage("session-1", {
-        revision: 2,
-        agents: {
-          "agent-1": {
-            runRevision: 1,
-            activities: [{ type: "assistant", text: "working" }],
-          },
-        },
-      }),
-    );
+    const subagentActivityMessages = [];
+    readySession.onSubagentActivities((message) => subagentActivityMessages.push(message));
+    const agentState = {
+      runRevision: 1,
+      activities: [{ type: "assistant", text: "working" }],
+    };
+    const agentSet = { type: "agent.set", agentId: "agent-1", state: agentState };
+    transport.emitSubagentActivities(createSubagentActivitiesMessage("session-1", 2, [agentSet]));
     expect(readySession.subagentActivities()).toEqual({
       revision: 2,
-      agents: {
-        "agent-1": {
-          runRevision: 1,
-          activities: [{ type: "assistant", text: "working" }],
-        },
-      },
+      agents: { "agent-1": agentState },
     });
-    expect(subagentActivityStates.at(-1)).toEqual(readySession.subagentActivities());
+    expect(subagentActivityMessages.at(-1)).toEqual(
+      createSubagentActivitiesMessage("session-1", 2, [agentSet]),
+    );
+
+    transport.emitSubagentActivities(
+      createSubagentActivitiesMessage("session-1", 3, [
+        { type: "agent.remove", agentId: "agent-1" },
+      ]),
+    );
+    expect(readySession.subagentActivities()).toEqual({ revision: 3, agents: {} });
 
     await expect(readySession.submit("hello", { historyEntryId: "entry-custom" })).resolves.toEqual(
       {
@@ -845,9 +845,18 @@ describe("sdk_client", () => {
     unsubscribe();
 
     const bufferedDelta = createNoticeDelta("session-1", 7, "buffered before listener");
+    const bufferedActivityState = {
+      runRevision: 1,
+      activities: [{ type: "assistant", text: "buffered activity" }],
+    };
     transport.onRequest = (method) => {
       if (method === "session.observe") {
         transport.emitDelta(bufferedDelta);
+        transport.emitSubagentActivities(
+          createSubagentActivitiesMessage("session-1", 2, [
+            { type: "agent.set", agentId: "agent-buffered", state: bufferedActivityState },
+          ]),
+        );
       }
     };
     const bufferedSession = await client.sessions.observe("session-1");
@@ -856,6 +865,10 @@ describe("sdk_client", () => {
     const bufferedDeltas = [];
     bufferedSession.onDelta((delta) => bufferedDeltas.push(delta));
     expect(bufferedDeltas).toEqual([bufferedDelta]);
+    expect(bufferedSession.subagentActivities()).toEqual({
+      revision: 2,
+      agents: { "agent-buffered": bufferedActivityState },
+    });
 
     const afterListenerDelta = createNoticeDelta("session-1", 8, "after listener");
     transport.emitDelta(afterListenerDelta);

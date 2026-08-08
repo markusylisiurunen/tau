@@ -523,6 +523,16 @@ describe("AgentRuntime", () => {
         toolName: call.name,
       }),
     );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "tool_activity",
+        activity: expect.objectContaining({
+          type: "tool_call_blocked",
+          toolName: "missing tool",
+          presentation: expect.objectContaining({ subject: "missing tool" }),
+        }),
+      }),
+    );
     expect(events).toContainEqual({
       type: "feedback",
       tone: "error",

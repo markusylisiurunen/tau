@@ -120,6 +120,8 @@ export type {
   SessionProtocolStartGoalResult,
   SessionProtocolSteerParams,
   SessionProtocolSteerResult,
+  SessionProtocolSubagentActivitiesAgentState,
+  SessionProtocolSubagentActivitiesChange,
   SessionProtocolSubagentActivitiesMessage,
   SessionProtocolSubagentActivitiesState,
   SessionProtocolSubagentActivity,
@@ -144,6 +146,7 @@ export type {
 } from "./session_protocol.js";
 export {
   applySessionProtocolDelta,
+  applySessionProtocolSubagentActivitiesMessage,
   createSessionProtocolDeltaMessage,
   createSessionProtocolEphemeralMessage,
   createSessionProtocolError,

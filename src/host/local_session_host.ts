@@ -78,6 +78,7 @@ import type {
   SessionProtocolSettingsUpdateResult,
   SessionProtocolSnapshot,
   SessionProtocolStartGoalResult,
+  SessionProtocolSubagentActivitiesChange,
   SessionProtocolSubagentActivitiesMessage,
   SessionProtocolSubagentActivitiesState,
   SessionProtocolSubagentSnapshot,
@@ -2872,7 +2873,9 @@ class LocalHostedSessionHandle implements LocalHostedSession {
           current.activities.length - SESSION_PROTOCOL_MAX_SUBAGENT_ACTIVITIES,
         );
       }
-      this.publishSubagentActivities();
+      this.publishSubagentActivities([
+        { type: "agent.set", agentId: agent.id, state: structuredClone(current) },
+      ]);
       return;
     }
 
@@ -2886,32 +2889,36 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     ]);
 
     if (event.type === "subagent_spawned" || event.type === "subagent_run_started") {
-      this.subagentActivitiesByAgent.set(agent.id, {
+      const state = {
         runRevision: agent.run.revision,
         activities: [],
-      });
-      this.publishSubagentActivities();
+      };
+      this.subagentActivitiesByAgent.set(agent.id, state);
+      this.publishSubagentActivities([
+        { type: "agent.set", agentId: agent.id, state: structuredClone(state) },
+      ]);
     }
   }
 
   private removeMissingSubagentActivities(): void {
-    let changed = false;
+    const changes: SessionProtocolSubagentActivitiesChange[] = [];
     for (const id of this.subagentActivitiesByAgent.keys()) {
       if (!this.session.hasSubagent(id)) {
         this.subagentActivitiesByAgent.delete(id);
-        changed = true;
+        changes.push({ type: "agent.remove", agentId: id });
       }
     }
-    if (changed) {
-      this.publishSubagentActivities();
+    if (changes.length > 0) {
+      this.publishSubagentActivities(changes);
     }
   }
 
-  private publishSubagentActivities(): void {
+  private publishSubagentActivities(changes: SessionProtocolSubagentActivitiesChange[]): void {
     this.subagentActivitiesRevision += 1;
     const message = createSessionProtocolSubagentActivitiesMessage({
       sessionId: this.sessionId,
-      state: this.subagentActivities(),
+      revision: this.subagentActivitiesRevision,
+      changes,
     });
     for (const listener of [...this.subagentActivitiesListeners]) {
       try {

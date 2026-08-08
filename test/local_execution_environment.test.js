@@ -102,7 +102,6 @@ describe("LocalExecutionEnvironment", () => {
         cwd: () => "/repo",
         home: () => "/home/user",
         platform: () => process.platform,
-        nodeVersion: () => process.version,
         env: () => ({ PATH: process.env.PATH }),
       },
     });
@@ -144,7 +143,6 @@ describe("LocalExecutionEnvironment", () => {
           cwd: () => cwd,
           home: () => cwd,
           platform: () => process.platform,
-          nodeVersion: () => process.version,
           env: () => ({
             PATH: process.env.PATH,
             HOST_TOKEN: "host-secret",
@@ -193,7 +191,6 @@ describe("LocalExecutionEnvironment", () => {
     expect(promptBootstrap.promptContext.home).toBe(process.env.HOME ?? cwd);
     expect(promptBootstrap.promptContext.includeAgentContext).toBe(false);
     expect(promptBootstrap.promptContext.platform).toBe(process.platform);
-    expect(promptBootstrap.promptContext.nodeVersion).toBe(process.version);
     expect(environment.snapshot()).toEqual({
       kind: "local",
       cwd,

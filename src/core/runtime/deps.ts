@@ -16,7 +16,6 @@ export type CoreEnvironment = {
   cwd: () => string;
   home: () => string;
   platform: () => NodeJS.Platform;
-  nodeVersion: () => string;
   env: () => NodeJS.ProcessEnv;
 };
 
@@ -44,7 +43,6 @@ export function createDefaultCoreDeps(): CoreDeps {
       cwd: () => process.cwd(),
       home: () => homedir(),
       platform: () => process.platform,
-      nodeVersion: () => process.version,
       env: () => process.env,
     },
   };

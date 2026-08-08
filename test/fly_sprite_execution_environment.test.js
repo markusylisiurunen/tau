@@ -264,7 +264,6 @@ describe("Fly Sprite execution environment", () => {
         return {
           output: JSON.stringify({
             platform: "linux",
-            nodeVersion: "v24.2.0",
             repoRoot: "/home/sprite/repo",
             agentsFiles: [
               { path: "/home/sprite/repo/AGENTS.md", content: "repo instructions" },
@@ -331,7 +330,6 @@ describe("Fly Sprite execution environment", () => {
     expect(runtimeContext.promptBootstrap.promptContext).toMatchObject({
       repoRoot: "/home/sprite/repo",
       platform: "linux",
-      nodeVersion: "v24.2.0",
     });
     expect(nodeScriptCalls).toHaveLength(1);
     expect(nodeScriptCalls[0].args[0]).toBe("/home/sprite/repo");

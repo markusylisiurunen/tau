@@ -35,8 +35,8 @@ export type ChatRuntimePromptContext = {
   cwd: string;
   home: string;
   repoRoot?: string;
+  repository?: string;
   platform: NodeJS.Platform;
-  nodeVersion: string;
   includeAgentContext: boolean;
   projectContextBlock?: string;
   skillsBlock?: string;
@@ -45,13 +45,14 @@ export type ChatRuntimePromptContext = {
 export type ChatRuntimeEnvironment = { now: () => number };
 
 export type CreateChatRuntimeOptions = {
+  sessionId: string;
+  createdAt: number;
   persona: Persona;
   backend: ToolExecutionBackend;
   clientTools?: (agentId: string) => ReturnType<ToolRegistry["getEnabledTools"]>;
   modelResolver: ModelResolver;
   resolveSubagentPrompts?: ResolveSubagentPrompts;
   promptContext: ChatRuntimePromptContext;
-  environment: ChatRuntimeEnvironment;
   eventSink: AgentEventSink;
   subagentEventSink: (event: SubagentUiEvent) => void | Promise<void>;
   goalManager: GoalManager;
@@ -69,7 +70,7 @@ export class ChatRuntime {
   private currentConfig: Config;
   private currentModelResolver: ModelResolver;
   private promptContext: ChatRuntimePromptContext;
-  private readonly environment: ChatRuntimeEnvironment;
+  private readonly createdAt: number;
   private readonly backend: ToolExecutionBackend;
   private readonly deps: CoreDeps;
   private resolvedModel: ResolvedAgentModel;
@@ -84,11 +85,12 @@ export class ChatRuntime {
       options.initialPromptComposition ??
       composeSessionPrompts({
         persona: options.persona,
+        sessionId: options.sessionId,
         cwd: options.promptContext.cwd,
         repoRoot: options.promptContext.repoRoot,
-        datetime: new Date(options.environment.now()).toISOString(),
+        repository: options.promptContext.repository,
+        sessionStartedAt: new Date(options.createdAt).toISOString(),
         platform: options.promptContext.platform,
-        nodeVersion: options.promptContext.nodeVersion,
         skillsBlock: options.promptContext.skillsBlock,
         projectContextBlock: options.promptContext.projectContextBlock,
       });
@@ -100,7 +102,7 @@ export class ChatRuntime {
     this.currentConfig = options.config;
     this.currentModelResolver = options.modelResolver;
     this.promptContext = { ...options.promptContext };
-    this.environment = options.environment;
+    this.createdAt = options.createdAt;
     this.backend = options.backend;
     this.deps = options.deps ?? createDefaultCoreDeps();
     this.resolvedModel = resolveAgentModel(this.currentPersona, this.currentConfig, {
@@ -119,6 +121,7 @@ export class ChatRuntime {
     });
     const tools = this.buildToolRegistry(composition);
     this.agent = new AgentRuntime({
+      agentId: options.sessionId,
       spec: createAgentSpec({
         ...this.resolvedModel,
         systemPrompt: composition.baseSystemPrompt,
@@ -223,6 +226,7 @@ export class ChatRuntime {
   reset(): void {
     this.supervisor.reset();
     this.agent.reset();
+    this.rebuildSystemPrompts();
   }
 
   dispose(): void {
@@ -343,11 +347,12 @@ export class ChatRuntime {
   private composePromptSet(skillsBlock?: string): SessionPromptComposition {
     return composeSessionPrompts({
       persona: this.currentPersona,
+      sessionId: this.agent.agentIdValue,
       cwd: this.promptContext.cwd,
       repoRoot: this.promptContext.repoRoot,
-      datetime: new Date(this.environment.now()).toISOString(),
+      repository: this.promptContext.repository,
+      sessionStartedAt: new Date(this.createdAt).toISOString(),
       platform: this.promptContext.platform,
-      nodeVersion: this.promptContext.nodeVersion,
       skillsBlock: skillsBlock ?? this.promptContext.skillsBlock,
       projectContextBlock: this.promptContext.projectContextBlock,
     });

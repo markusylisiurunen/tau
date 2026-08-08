@@ -68,7 +68,6 @@ function createTestExecutionEnvironment(
           home: snapshot.home,
           repoRoot: snapshot.cwd,
           platform: "linux",
-          nodeVersion: "v24.0.0",
           includeAgentContext,
         },
         agentsFiles: [],
@@ -348,6 +347,8 @@ describe("HostedEphemeralAgentSession", () => {
     };
     const session = new HostedEphemeralAgentSession({
       contextId: "context-1",
+      sessionId: "session-1",
+      sessionStartedAt: 0,
       persona: personas[0],
       config: {},
       discoveredSkills: [],
@@ -3536,7 +3537,6 @@ describe("LocalSessionHost", () => {
             home: "/home/user",
             repoRoot: "/repo",
             platform: "linux",
-            nodeVersion: "v24.0.0",
             includeAgentContext,
             projectContextBlock: "<project-context>live context</project-context>",
             skillsBlock: `<skills>${persona.id}:${discoveredSkills.length}</skills>`,
@@ -3679,7 +3679,6 @@ describe("LocalSessionHost", () => {
             home: "/home/user",
             repoRoot: "/repo",
             platform: "linux",
-            nodeVersion: "v24.0.0",
             includeAgentContext,
             projectContextBlock: "<project-context>reloaded</project-context>",
             skillsBlock: `<skills>${persona.id}:${discoveredSkills.length}</skills>`,
@@ -3746,7 +3745,7 @@ describe("LocalSessionHost", () => {
 
     expect(systemPrompt).toContain("target AGENTS instructions");
     expect(systemPrompt).toContain("target skill");
-    expect(systemPrompt).toContain("<cwd>/repo</cwd>");
+    expect(systemPrompt).toContain("- Current working directory: `/repo`");
     expect(systemPrompt).toContain("review instructions");
   });
 
@@ -3792,7 +3791,6 @@ describe("LocalSessionHost", () => {
             home: "/home/user",
             repoRoot: "/repo",
             platform: "linux",
-            nodeVersion: "v24.0.0",
             includeAgentContext,
             skillsBlock: `<skills>${persona.id}</skills>`,
           },
@@ -3848,7 +3846,6 @@ describe("LocalSessionHost", () => {
             home: "/home/user",
             repoRoot: "/repo",
             platform: "linux",
-            nodeVersion: "v24.0.0",
             includeAgentContext,
             projectContextBlock: "",
             skillsBlock: `<skills>${persona.id}:${discoveredSkills.length}</skills>`,
@@ -4222,7 +4219,7 @@ describe("LocalSessionHost", () => {
       subagentPrompts: storedSnapshot.bootstrap.prompt.subagentPrompts,
     });
     expect(recoveredSession.runtime.promptComposition.baseSystemPrompt).toContain(
-      "<datetime>2026-01-01T00:00:00.000Z</datetime>",
+      "- Session started at: 2026-01-01T00:00:00.000Z",
     );
   });
 
@@ -4253,7 +4250,6 @@ describe("LocalSessionHost", () => {
             home: "/home/user",
             repoRoot: "/repo",
             platform: "linux",
-            nodeVersion: "v24.0.0",
             includeAgentContext,
             skillsBlock: `<skills>${persona.id}</skills>`,
           },

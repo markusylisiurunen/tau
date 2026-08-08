@@ -4,6 +4,7 @@ import {
 } from "../tools/execution_backend.js";
 import type { Persona, Skill } from "../types.js";
 import { buildProjectContextBlock, buildSkillsIndexBlock } from "../utils/context_builder.js";
+import { normalizeRepositoryReference } from "../utils/repository.js";
 import type { ChatRuntimePromptContext } from "./chat_runtime.js";
 
 export type ResolvedPersonaSkills = {
@@ -228,10 +229,23 @@ try {
   if (value) repoRoot = path.resolve(value);
 } catch {}
 
+let repositoryRemote;
+if (repoRoot) {
+  try {
+    const result = spawnSync("git", ["remote", "get-url", "origin"], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const value = result.status === 0 ? String(result.stdout || "").trim() : "";
+    if (value) repositoryRemote = value;
+  } catch {}
+}
+
 process.stdout.write(JSON.stringify({
   platform: process.platform,
-  nodeVersion: process.version,
   repoRoot,
+  repositoryRemote,
   agentsFiles,
   childAgentsFiles: [...new Set(childAgentsFiles)].sort((a, b) => a.localeCompare(b)),
 }));
@@ -282,8 +296,8 @@ const RUNTIME_PROMPT_CONTEXT_TIMEOUT_MS = 15_000;
 
 type RuntimePromptContextInspection = {
   platform: NodeJS.Platform;
-  nodeVersion: string;
   repoRoot?: string;
+  repositoryRemote?: string;
   agentsFiles: Array<{ path: string; content: string }>;
   childAgentsFiles: string[];
 };
@@ -310,14 +324,17 @@ export async function resolveRuntimePromptBootstrap(
     persona: args.persona,
     discoveredSkills: args.discoveredSkills,
   });
+  const repository = inspection.repositoryRemote
+    ? normalizeRepositoryReference(inspection.repositoryRemote)
+    : undefined;
 
   return {
     promptContext: {
       cwd: args.cwd,
       home: args.home,
       repoRoot: inspection.repoRoot,
+      ...(repository ? { repository } : {}),
       platform: inspection.platform,
-      nodeVersion: inspection.nodeVersion,
       includeAgentContext: args.includeAgentContext,
       projectContextBlock,
       skillsBlock: resolvedSkills.skillsBlock,
@@ -373,8 +390,8 @@ async function inspectRuntimePromptContext(
   const value = parsed as Partial<RuntimePromptContextInspection>;
   if (
     typeof value.platform !== "string" ||
-    typeof value.nodeVersion !== "string" ||
     (value.repoRoot !== undefined && typeof value.repoRoot !== "string") ||
+    (value.repositoryRemote !== undefined && typeof value.repositoryRemote !== "string") ||
     !Array.isArray(value.agentsFiles) ||
     !Array.isArray(value.childAgentsFiles)
   ) {

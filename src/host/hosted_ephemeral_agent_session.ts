@@ -58,6 +58,8 @@ type EphemeralAgentThreadForkSource = {
 
 export type HostedEphemeralAgentSessionOptions = {
   contextId: string;
+  sessionId: string;
+  sessionStartedAt: number;
   persona: Persona;
   config: Config;
   discoveredSkills: Skill[];
@@ -146,11 +148,12 @@ export class HostedEphemeralAgentSession {
     const promptContext = runtimeContext.promptBootstrap.promptContext;
     const composition = composeSessionPrompts({
       persona: this.options.persona,
+      sessionId: this.options.sessionId,
       cwd: promptContext.cwd,
       repoRoot: promptContext.repoRoot,
-      datetime: new Date(deps.clock.now()).toISOString(),
+      repository: promptContext.repository,
+      sessionStartedAt: new Date(this.options.sessionStartedAt).toISOString(),
       platform: promptContext.platform,
-      nodeVersion: promptContext.nodeVersion,
       skillsBlock: promptContext.skillsBlock,
       projectContextBlock: promptContext.projectContextBlock,
     });

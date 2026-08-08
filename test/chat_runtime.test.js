@@ -26,16 +26,13 @@ function createPersona(overrides = {}) {
   };
 }
 
-function createEnvironment(now = Date.parse("2026-01-01T00:00:00.000Z")) {
-  return { now: () => now };
-}
-
 function createPromptContext(overrides = {}) {
   return {
     cwd: "/repo",
     home: "/home/user",
+    repoRoot: "/repo",
+    repository: "github.com/example/repo",
     platform: "linux",
-    nodeVersion: "v24.0.0",
     includeAgentContext: true,
     ...overrides,
   };
@@ -43,11 +40,12 @@ function createPromptContext(overrides = {}) {
 
 function createRuntime(overrides = {}) {
   return ChatRuntime.create({
+    sessionId: "session-1",
+    createdAt: Date.parse("2026-01-01T00:00:00.000Z"),
     persona: createPersona(),
     backend: createLocalToolExecutionBackend(),
     modelResolver: resolveModel,
     promptContext: createPromptContext(),
-    environment: createEnvironment(),
     eventSink: async () => {},
     subagentEventSink: async () => {},
     goalManager: {
@@ -73,6 +71,8 @@ describe("ChatRuntime", () => {
     expect(runtime.agent).toBeInstanceOf(AgentRuntime);
     expect(runtime.agent.spec.tools.schemas.length).toBeGreaterThan(0);
     expect(runtime.agent.spec.systemPrompt).toBe(runtime.promptComposition.baseSystemPrompt);
+    expect(runtime.agent.spec.systemPrompt).toContain("- Session ID: `session-1`");
+    expect(runtime.agent.spec.systemPrompt).toContain("- Repository: `github.com/example/repo`");
   });
 
   it("uses method-specific goal action labels", () => {

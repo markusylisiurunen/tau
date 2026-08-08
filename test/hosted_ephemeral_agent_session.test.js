@@ -59,7 +59,6 @@ function createSession(recordUsage = vi.fn(), config = { autoCompact: { enabled:
           home: "/home/user",
           repoRoot: "/repo",
           platform: "linux",
-          nodeVersion: "v24.0.0",
           includeAgentContext,
         },
         agentsFiles: [],
@@ -74,6 +73,8 @@ function createSession(recordUsage = vi.fn(), config = { autoCompact: { enabled:
     recordUsage,
     session: new HostedEphemeralAgentSession({
       contextId: "ephemeral-1",
+      sessionId: "session-1",
+      sessionStartedAt: 0,
       persona: personas[0],
       config,
       discoveredSkills: [],

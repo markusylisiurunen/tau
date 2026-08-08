@@ -113,6 +113,7 @@ export type AgentSpec = {
 };
 
 type AgentRuntimeOptions = {
+  agentId?: string;
   spec: AgentSpec;
   eventSink: AgentEventSink;
   clock: CoreClock;
@@ -384,7 +385,7 @@ export class AgentRuntime {
           ? { ...recovered.usageCheckpoint }
           : undefined;
     } else {
-      this.agentId = randomUUID();
+      this.agentId = options.agentId ?? randomUUID();
       this.revision = 0;
       this.historyEntries = [];
       this.modelContextKey = modelContextKey;

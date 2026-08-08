@@ -29,7 +29,6 @@ function createPromptBootstrap(cwd = "/workspace/repo") {
       home: "/workspace",
       repoRoot: "/workspace/repo",
       platform: "linux",
-      nodeVersion: "v24.1.0",
       includeAgentContext: true,
       skillsBlock: "### Skills\n\ntarget skill context",
       projectContextBlock: "### Project context\n\ntarget AGENTS context",
@@ -79,9 +78,10 @@ describe("execution environment subagent prompt resolver", () => {
       resolveRuntimeContext,
     };
     const resolvePrompts = createExecutionEnvironmentSubagentPromptResolver({
+      sessionId: "session-1",
       executionEnvironment,
       includeAgentContext: true,
-      now: () => Date.parse("2026-01-01T00:00:00.000Z"),
+      sessionStartedAt: Date.parse("2026-01-01T00:00:00.000Z"),
     });
 
     const prompts = await resolvePrompts({
@@ -101,8 +101,8 @@ describe("execution environment subagent prompt resolver", () => {
     expect(prompts.reviewer).not.toContain("conflicting target reviewer instructions");
     expect(prompts.reviewer).toContain("target AGENTS context");
     expect(prompts.reviewer).toContain("target skill context");
-    expect(prompts.reviewer).toContain("<cwd>/workspace/repo</cwd>");
-    expect(prompts.reviewer).toContain("<platform>linux</platform>");
+    expect(prompts.reviewer).toContain("- Current working directory: `/workspace/repo`");
+    expect(prompts.reviewer).toContain("- Platform: Linux");
   });
 
   it("does not require the source persona to exist in the target catalog", async () => {
@@ -123,9 +123,10 @@ describe("execution environment subagent prompt resolver", () => {
       resolveRuntimeContext,
     };
     const resolvePrompts = createExecutionEnvironmentSubagentPromptResolver({
+      sessionId: "session-1",
       executionEnvironment,
       includeAgentContext: true,
-      now: () => 0,
+      sessionStartedAt: 0,
     });
 
     await expect(

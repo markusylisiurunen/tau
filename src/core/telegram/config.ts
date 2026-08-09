@@ -71,17 +71,23 @@ const telegramBotSchema = z
   })
   .strip();
 
-function createProjectBaseShape(configDir: string) {
+function createProjectBaseShape() {
   return {
-    workspaceRoot: nonEmptyStringSchema.transform((value) => resolve(configDir, value)).optional(),
     description: nonEmptyStringSchema.optional(),
+  };
+}
+
+function createManagedProjectBaseShape(configDir: string) {
+  return {
+    ...createProjectBaseShape(),
+    workspaceRoot: nonEmptyStringSchema.transform((value) => resolve(configDir, value)).optional(),
   };
 }
 
 function createRepositoryProjectSchema(configDir: string) {
   return z
     .object({
-      ...createProjectBaseShape(configDir),
+      ...createManagedProjectBaseShape(configDir),
       repo: nonEmptyStringSchema.refine((value) => isGithubRepoRef(value), {
         message: "must be in owner/repo format (GitHub).",
       }),
@@ -97,10 +103,21 @@ function createRepositoryProjectSchema(configDir: string) {
     .strip();
 }
 
+function createDirectoryProjectSchema(configDir: string) {
+  return z
+    .object({
+      ...createProjectBaseShape(),
+      directory: nonEmptyStringSchema.transform((value) => resolve(configDir, value)),
+      persona: z.string().optional(),
+      noAgentContextFiles: z.boolean().optional(),
+    })
+    .strip();
+}
+
 function createCompositeProjectSchema(configDir: string) {
   return z
     .object({
-      ...createProjectBaseShape(configDir),
+      ...createManagedProjectBaseShape(configDir),
       projectIds: stringListSchema.min(2, "must contain at least two project ids."),
       persona: z.string(),
       instructions: nonEmptyStringSchema.optional(),
@@ -270,16 +287,21 @@ function parseProject(
   }
 
   const hasRepo = Object.hasOwn(rawObject.data, "repo");
+  const hasDirectory = Object.hasOwn(rawObject.data, "directory");
   const hasProjectIds = Object.hasOwn(rawObject.data, "projectIds");
-  if (hasRepo === hasProjectIds) {
+  if ([hasRepo, hasDirectory, hasProjectIds].filter(Boolean).length !== 1) {
     return {
-      errors: [`${sourceLabel}: ${fieldPath} must define exactly one of repo or projectIds.`],
+      errors: [
+        `${sourceLabel}: ${fieldPath} must define exactly one of repo, directory, or projectIds.`,
+      ],
     };
   }
 
   const incompatibleFields = hasRepo
-    ? ["projectIds", "instructions"]
-    : ["repo", "ref", "workingDirectory", "noAgentContextFiles"];
+    ? ["directory", "projectIds", "instructions"]
+    : hasDirectory
+      ? ["repo", "ref", "workingDirectory", "workspaceRoot", "projectIds", "instructions"]
+      : ["repo", "directory", "ref", "workingDirectory", "noAgentContextFiles"];
   const configuredIncompatibleFields = incompatibleFields.filter((field) =>
     Object.hasOwn(rawObject.data, field),
   );
@@ -293,7 +315,9 @@ function parseProject(
 
   const schema = hasRepo
     ? createRepositoryProjectSchema(configDir)
-    : createCompositeProjectSchema(configDir);
+    : hasDirectory
+      ? createDirectoryProjectSchema(configDir)
+      : createCompositeProjectSchema(configDir);
   const parsed = schema.safeParse(rawObject.data);
   if (!parsed.success) {
     return { errors: formatSectionZodErrors(parsed.error, sourceLabel, fieldPath) };
@@ -355,9 +379,10 @@ function parseProjects(
         errors.push(
           `${sourceLabel}: projects.${projectId}.projectIds contains unknown project id '${memberProjectId}'.`,
         );
-      } else if ("projectIds" in memberProject) {
+      } else if (!("repo" in memberProject)) {
+        const memberKind = "directory" in memberProject ? "directory" : "composite";
         errors.push(
-          `${sourceLabel}: projects.${projectId}.projectIds must reference repository projects, not composite project '${memberProjectId}'.`,
+          `${sourceLabel}: projects.${projectId}.projectIds must reference repository projects, not ${memberKind} project '${memberProjectId}'.`,
         );
       }
     }

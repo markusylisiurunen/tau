@@ -1,6 +1,10 @@
 import { mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
-import type { TelegramProjectConfig, TelegramRepositoryProjectConfig } from "../config/schema.js";
+import type {
+  TelegramDirectoryProjectConfig,
+  TelegramProjectConfig,
+  TelegramRepositoryProjectConfig,
+} from "../config/schema.js";
 import { spawnWithCapture } from "../utils/spawn_capture.js";
 
 export type WorkspaceLogLevel = "info" | "error";
@@ -508,6 +512,12 @@ export async function cleanupWorkspacePath(workspacePath: string): Promise<void>
   await rm(workspacePath, { recursive: true, force: true });
 }
 
+function isDirectoryProject(
+  project: TelegramProjectConfig,
+): project is TelegramDirectoryProjectConfig {
+  return "directory" in project;
+}
+
 function isRepositoryProject(
   project: TelegramProjectConfig,
 ): project is TelegramRepositoryProjectConfig {
@@ -708,6 +718,30 @@ export async function prepareWorkspace(
   options: PrepareWorkspaceOptions,
 ): Promise<PreparedWorkspace> {
   const workspaceStart = process.hrtime.bigint();
+
+  if (isDirectoryProject(options.project)) {
+    const workspacePath = options.project.directory;
+    const stats = await stat(workspacePath).catch((error) => {
+      if (getErrorCode(error) === "ENOENT") {
+        throw new Error(`project directory does not exist: ${workspacePath}`);
+      }
+      throw error;
+    });
+    if (!stats.isDirectory()) {
+      throw new Error(`project directory is not a directory: ${workspacePath}`);
+    }
+
+    log(options.onLog, "info", "persistent workspace ready", {
+      workspacePath,
+      durationMs: elapsedMs(workspaceStart),
+    });
+    return {
+      workspacePath,
+      sessionCwd: workspacePath,
+      provisionTargets: [],
+    };
+  }
+
   const workspacePath = resolveWorkspacePath({
     workspaceRoot: options.workspaceRoot,
     projectId: options.projectId,

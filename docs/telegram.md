@@ -23,7 +23,7 @@ Telegram runner settings are loaded from the JSON file passed to `--config-file`
   "bots": {
     "ops": {
       "botToken": "123456:telegram-token",
-      "allowedProjectIds": ["tau", "cowork", "tau_cowork"],
+      "allowedProjectIds": ["me", "tau", "cowork", "tau_cowork"],
       "allowedUserIds": [123456789],
       "allowedChatIds": [123456789],
       "defaultProjectId": "tau",
@@ -33,6 +33,11 @@ Telegram runner settings are loaded from the JSON file passed to `--config-file`
     }
   },
   "projects": {
+    "me": {
+      "directory": "/home/tau/me",
+      "description": "persistent personal workspace",
+      "persona": "gpt-5.6-sol-coder"
+    },
     "tau": {
       "repo": "markusylisiurunen/tau",
       "ref": "main",
@@ -61,7 +66,8 @@ Project ids must contain only lowercase letters, digits, and underscores and may
 Each project is exactly one of:
 
 - A repository project with a GitHub `owner/repo` value and optional `ref`, `workspaceRoot`, `workingDirectory`, `description`, `persona`, and `noAgentContextFiles`.
-- A composite project with at least two unique repository `projectIds`, required `persona`, and optional `workspaceRoot`, `description`, and `instructions`. Composite projects cannot reference other composites.
+- A persistent directory project with a `directory` path and optional `description`, `persona`, and `noAgentContextFiles`.
+- A composite project with at least two unique repository `projectIds`, required `persona`, and optional `workspaceRoot`, `description`, and `instructions`. Composite projects cannot reference directory or composite projects.
 
 Repository project behavior:
 
@@ -72,7 +78,14 @@ Repository project behavior:
 - `ref` is optional, but recommended when every session should start from the same branch.
 - Repositories use an automatic persistent bare cache at `<workspaceRoot>-repo-cache/<projectId>.git`: the first session initializes it with `gh repo clone <owner/repo> <cache> -- --bare`, later sessions run `git fetch --prune origin`, then each session workspace is cloned from the local cache with `git clone --shared`.
 
-A composite session starts from a generated root containing each member in a directory named after its project id. Tau prepares members using their existing repository caches, writes a root `AGENTS.md` describing the workspace, and writes `.tau/config.json` with `agentContextFiles` for member AGENTS files from each repository root through its configured working directory. After the composite session becomes ready, each member repository's provision hook runs from that member's configured working directory. The generated root has no provision hook because it is not a repository. Telegram session attributes include `source: "telegram"`, the project id, and a conventionally normalized `repository` value; composite values join member repositories with commas in `projectIds` order.
+Persistent directory project behavior:
+
+- Relative `directory` values resolve from the Telegram config file directory. JSON paths do not expand `~`, so use an absolute path such as `/home/tau/me` for a home-directory workspace.
+- The directory must already exist. Tau never creates, replaces, provisions, or removes it.
+- Every session for the project uses the same directory as its execution environment cwd, including sessions owned by different chats. Tau does not serialize concurrent work in the shared directory.
+- The directory's normal Tau configuration and context files apply. Persistent directory sessions omit the conventional `repository` creation attribute.
+
+A composite session starts from a generated root containing each member in a directory named after its project id. Tau prepares members using their existing repository caches, writes a root `AGENTS.md` describing the workspace, and writes `.tau/config.json` with `agentContextFiles` for member AGENTS files from each repository root through its configured working directory. After the composite session becomes ready, each member repository's provision hook runs from that member's configured working directory. The generated root has no provision hook because it is not a repository. Repository and composite Telegram session attributes include `source: "telegram"`, the project id, and a conventionally normalized `repository` value; composite values join member repositories with commas in `projectIds` order.
 
 Child `.tau` configuration is not merged into the main composite session. The composite's required persona is authoritative and must be available from the generated root. Subagents launched with a child repository as their working directory resolve that repository's own Tau configuration normally.
 
@@ -80,7 +93,7 @@ Preserved workspaces skip provision hooks during runner restart recovery. A fail
 
 Tau persists active and failed Telegram session records at `<workspaceRoot>-sessions.json` and project preferences at `<workspaceRoot>-project-preferences.json`. Active records include unresolved Tau turn IDs, allowing startup to reconcile requests whose live response was lost against the snapshot's durable turn ledger. If the ledger cannot be read, ownership remains persisted for a later recovery attempt. An accepted running turn remains tracked, periodically reconciled, and interruptible until it settles. A successful ledger read that confirms the request was never accepted returns the session to normal and asks the user to resend the message.
 
-Failed, blocked, and confirmed-unaccepted request notifications remain in the session record until the Telegram adapter successfully delivers and acknowledges them. Delivery can therefore repeat after an interrupted acknowledgement, but an outcome is not silently lost across restarts. Failed records retain the initiating submission diagnostic and Tau session ID until explicitly closed. Startup reconnects a failed record only when it still owns an unresolved turn ID that must be reconciled; other failed records remain failure tombstones without a client. Runner startup removes workspace-root entries that are not referenced by persisted sessions, reconnects recoverable active records to their Tau snapshots, reuses preserved session workspaces, and reconstructs a missing workspace from repository caches before reconnecting. A recovered snapshot establishes the already-observed baseline: existing assistant messages, notices, and unrelated historical turn outcomes are not resent. New warning and error notices observed afterward are delivered by title through the same ordered notification queue as new assistant replies. On Telegram adapter startup, Tau also prunes stale `tau-telegram-attachments-*` directories under the system temp directory.
+Failed, blocked, and confirmed-unaccepted request notifications remain in the session record until the Telegram adapter successfully delivers and acknowledges them. Delivery can therefore repeat after an interrupted acknowledgement, but an outcome is not silently lost across restarts. Failed records retain the initiating submission diagnostic and Tau session ID until explicitly closed. Startup reconnects a failed record only when it still owns an unresolved turn ID that must be reconciled; other failed records remain failure tombstones without a client. Runner startup removes managed workspace-root entries that are not referenced by persisted sessions while always preserving configured persistent directories, reconnects recoverable active records to their Tau snapshots, reuses preserved session workspaces, and reconstructs a missing repository workspace from its cache before reconnecting. A recovered snapshot establishes the already-observed baseline: existing assistant messages, notices, and unrelated historical turn outcomes are not resent. New warning and error notices observed afterward are delivered by title through the same ordered notification queue as new assistant replies. On Telegram adapter startup, Tau also prunes stale `tau-telegram-attachments-*` directories under the system temp directory.
 
 `systemMessage` is prepended to every submitted Telegram message inside a `<system>...</system>` block. `bots.<botId>.systemMessage` is appended after `systemMessage` for Telegram-originated messages only, within the same block.
 
@@ -89,7 +102,7 @@ Failed, blocked, and confirmed-unaccepted request notifications remain in the se
 Supported slash commands:
 
 - `/use_<projectId>` stores the project to use for future `/new` sessions in that Telegram DM or group. It does not create, close, or switch the active session. The preference survives runner restarts. `defaultProjectId` provides the initial preference, and a sole allowed project is selected automatically.
-- `/new` closes the active session, if any, cleans its workspace, and creates its replacement using the stored project preference.
+- `/new` closes the active session, if any, removes its managed workspace while preserving persistent directories, and creates its replacement using the stored project preference.
 - `/status` reports the active session's project, including composite members, plus model, reasoning effort, context usage, and cumulative cost when available. When the session has a goal, it reports whether the goal is active or blocked without including its objective. If the next-session preference differs, it reports both. With no active session, it reports the current preference.
 - `/effort_low`, `/effort_medium`, `/effort_high`, and `/effort_xhigh` set the active session's reasoning effort. Changes made during a run apply to the next independently submitted or queued turn.
 - `/compact` summarizes older conversation context to reduce context usage.
@@ -123,4 +136,4 @@ Optional per-bot allowlists:
 - `allowedUserIds` limits who can trigger turns, run commands, and use callbacks; group messages from other users can still be included as pending context.
 - `allowedChatIds` enables opt-in group chats and can restrict DMs.
 
-Sessions survive normal runner restarts and host reboots. Shutdown interrupts live work, persists running sessions as waiting for input, disconnects SDK clients, and preserves their workspaces. `/new` still closes the previous chat session and removes its workspace.
+Sessions survive normal runner restarts and host reboots. Shutdown interrupts live work, persists running sessions as waiting for input, disconnects SDK clients, and preserves their workspaces. `/new` still closes the previous chat session and removes its managed workspace, while persistent project directories remain intact.

@@ -126,15 +126,16 @@ const client = await createTauSdkClient({
         executionTimeoutMs: 60_000,
       },
       execute: async (_args, context) => {
-        if (context.signal.aborted) throw new Error("aborted");
-        return "picked item";
+        const status =
+          await context.executionEnvironment.exec("git status --short");
+        return status.output || "working tree clean";
       },
     },
   ],
 });
 ```
 
-Tool names must not duplicate host tools or another connected client's tools. Active handlers receive an aborted signal when the host cancels the call, the client closes, or the underlying transport fails; `client.close()` waits for them to settle. The Tau TUI uses this mechanism to advertise `diff_review`; generic SDK clients can advertise their own tools, but `diff_review` itself is TUI-owned.
+Tool names must not duplicate host tools or another connected client's tools. Every handler context includes `executionEnvironment.exec()`, the same execution-environment command operation exposed by `TauSdkSession.exec()`, already bound to the tool call's session and cancellation signal. An optional operation signal is combined with the client-tool signal. Active handlers receive an aborted signal when the host cancels the call, the client closes, or the underlying transport fails; `client.close()` waits for them to settle. The Tau TUI uses this mechanism to advertise `diff_review`; generic SDK clients can advertise their own tools, but `diff_review` itself is TUI-owned.
 
 ### code-mode client tools
 
@@ -172,11 +173,11 @@ const client = await createTauSdkClient({
 });
 ```
 
-Generated code sees exactly one author-defined namespace plus `docs`, `console`, `Date`, and `Math`. Nested API objects must be plain objects with function leaves. Handlers receive model-supplied positional arguments as an array and a context containing an abort signal plus nullable Tau invocation metadata. Arguments and results cross a JSON serialization boundary with a 1 MiB limit per request or response. The runtime prepends canonical Markdown documentation for its installed capabilities and limits to the author-provided API documentation.
+Generated code sees exactly one author-defined namespace plus `docs`, `console`, `Date`, and `Math`. Nested API objects must be plain objects with function leaves. Handlers receive model-supplied positional arguments as an array and a context containing an abort signal, nullable Tau invocation metadata, and the client tool's execution-environment facade when running as a client tool. Direct standalone executions receive `null` for the latter two values. The tool author decides whether to expose any execution-environment operations through the declared generated-code API. Arguments and results cross a JSON serialization boundary with a 1 MiB limit per request or response. The runtime prepends canonical Markdown documentation for its installed capabilities and limits to the author-provided API documentation.
 
 Every execution is limited to 128 total API calls and eight unresolved API calls; exceeding any bridge limit fails immediately. The default timeout is 60 seconds, raw output capture is bounded at 1 MiB, and model-facing output is middle-truncated above roughly 8,192 tokens. An optional `persistOutput(output, context)` callback runs best-effort for every terminal execution and may return `{ path }`; the callback can use `output.contextTruncated`, `output.captureTruncated`, and `output.status` to choose what to retain. Tau adds the returned path to the bounded result.
 
-`executeTauCodeMode()` exposes the same runtime directly and accepts `code`, an optional abort signal, and nullable invocation metadata in addition to the shared definition. It resolves to `{ content }` on success and rejects with the bounded diagnostic on evaluation failure, timeout, cancellation, or bridge failure. The standalone `@markusylisiurunen/tau/code-mode` entry point exports the executor, description helper, and `runTauCodeModeCommand()` adapter for ordinary command-backed client-tool executables.
+`executeTauCodeMode()` exposes the same runtime directly and accepts `code`, an optional abort signal, nullable invocation metadata, and an optional execution-environment facade in addition to the shared definition. It resolves to `{ content }` on success and rejects with the bounded diagnostic on evaluation failure, timeout, cancellation, or bridge failure. The SDK and standalone `@markusylisiurunen/tau/code-mode` entry points export `runTauClientToolCommand()` for ordinary command-backed tools. The standalone entry point also exports the executor, description helper, and `runTauCodeModeCommand()` adapter.
 
 ### `createTauSdkWebSocketClient(options)`
 
@@ -543,4 +544,4 @@ all session client and transport errors extend `TauSessionClientError`.
 
 ## exported types
 
-The SDK entrypoint exports the public `TauSdk*` aliases for client/session interfaces, request and result shapes (including `TauSdkSessionSampleInput` and `TauSdkSessionSampleResult`), streamed `TauSdkDelta` and `TauSdkEphemeral` messages, session feedback events and tones, ephemeral agent tools, WebSocket options, session protocol method/request ids, and user-message projection helpers (`projectTauUserText`, `getTauUserModelText`, `getTauUserDisplayText`). It also re-exports the transport interfaces and errors needed to build custom protocol transports.
+The SDK entrypoint exports the public `TauSdk*` aliases for client/session interfaces, client-tool execution context and environment types, request and result shapes (including `TauSdkSessionSampleInput` and `TauSdkSessionSampleResult`), streamed `TauSdkDelta` and `TauSdkEphemeral` messages, session feedback events and tones, ephemeral agent tools, WebSocket options, session protocol method/request ids, the `runTauClientToolCommand()` adapter, and user-message projection helpers (`projectTauUserText`, `getTauUserModelText`, `getTauUserDisplayText`). It also re-exports the transport interfaces and errors needed to build custom protocol transports.

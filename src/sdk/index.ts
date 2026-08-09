@@ -58,6 +58,11 @@ export {
 } from "../transport/index.js";
 export { createTauSdkClient, createTauSdkWebSocketClient } from "./client.js";
 export {
+  runTauClientToolCommand,
+  TAU_CLIENT_TOOL_COMMAND_PROTOCOL_VERSION,
+  type TauClientToolCommandHandler,
+} from "./client_tool_command.js";
+export {
   createTauCodeModeClientTool,
   type TauSdkCodeModeClientToolOptions,
 } from "./code_mode.js";
@@ -68,6 +73,7 @@ export type {
   TauSdkClientOptions,
   TauSdkClientTool,
   TauSdkClientToolContext,
+  TauSdkClientToolExecutionEnvironment,
   TauSdkClientToolResult,
   TauSdkCreateSessionInput,
   TauSdkDelta,
@@ -90,6 +96,7 @@ export type {
   TauSdkSessionClearGoalResult,
   TauSdkSessionClient,
   TauSdkSessionCompactResult,
+  TauSdkSessionExecOptions,
   TauSdkSessionExecResult,
   TauSdkSessionInterruptResult,
   TauSdkSessionInterruptSubagentResult,

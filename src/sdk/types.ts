@@ -84,10 +84,25 @@ export type TauSdkEphemeralCreateResult = SessionProtocolEphemeralCreateResult;
 export type TauSdkEphemeralSubmitResult = SessionProtocolEphemeralSubmitResult;
 export type TauSdkEphemeralCloseResult = SessionProtocolEphemeralCloseResult;
 
+export type TauSdkSessionExecOptions = {
+  args?: string[];
+  env?: Record<string, string>;
+  stdin?: Buffer;
+  cwd?: string;
+  timeoutMs?: number;
+  maxCaptureBytes?: number;
+  signal?: AbortSignal;
+};
+
+export type TauSdkClientToolExecutionEnvironment = {
+  exec(command: string, options?: TauSdkSessionExecOptions): Promise<TauSdkSessionExecResult>;
+};
+
 export type TauSdkClientToolContext = {
   sessionId: string;
   callId: string;
   signal: AbortSignal;
+  executionEnvironment: TauSdkClientToolExecutionEnvironment;
 };
 
 export type TauSdkClientToolResult = string | { content: string };
@@ -145,18 +160,7 @@ export type TauSdkSession = {
   steer(text: string): Promise<TauSdkSessionSteerResult>;
   cancelPendingMessages(): Promise<TauSdkSessionCancelPendingMessagesResult>;
   retry(): Promise<TauSdkSessionRetryResult>;
-  exec(
-    command: string,
-    options?: {
-      args?: string[];
-      env?: Record<string, string>;
-      stdin?: Buffer;
-      cwd?: string;
-      timeoutMs?: number;
-      maxCaptureBytes?: number;
-      signal?: AbortSignal;
-    },
-  ): Promise<TauSdkSessionExecResult>;
+  exec(command: string, options?: TauSdkSessionExecOptions): Promise<TauSdkSessionExecResult>;
   sample(input: TauSdkSessionSampleInput): Promise<TauSdkSessionSampleResult>;
   interrupt(): Promise<TauSdkSessionInterruptResult>;
   snapshot(): Promise<TauSdkSessionSnapshotResult>;

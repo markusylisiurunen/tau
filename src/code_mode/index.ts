@@ -1,3 +1,8 @@
+export {
+  runTauClientToolCommand,
+  TAU_CLIENT_TOOL_COMMAND_PROTOCOL_VERSION,
+  type TauClientToolCommandHandler,
+} from "../sdk/client_tool_command.js";
 export { runTauCodeModeCommand } from "./command.js";
 export type {
   BuildTauCodeModeToolDescriptionOptions,

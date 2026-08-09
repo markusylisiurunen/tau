@@ -89,8 +89,8 @@ describe("sdk npm pack types", () => {
       writeFileSync(
         validFixturePath,
         [
-          'import type { SessionProtocolFeedbackEvent, SessionProtocolFeedbackTone, SessionProtocolSnapshot, SessionProtocolTransport, TauSdkClient, TauSdkCreateSessionInput, TauSdkDelta, TauSdkInitializeParams, TauSdkRequestId, TauSdkSessionExecResult, TauSdkSessionSampleInput, TauSdkSessionSampleResult, TauSdkSessionSetReasoningResult, TauSdkSessionTurnOutcome, TauSdkSessionTurnRecord, TauSdkReadyMessage, TauSdkTransportClientOptions, TauSdkUserTextProjection } from "@markusylisiurunen/tau/sdk";',
-          'import { StdioSessionProtocolTransport, applySessionProtocolDelta, createTauSdkClient, createTauSdkClientFromTransport, createTauSdkWebSocketClient, getTauSdkSessionTurnOutcome, getTauSdkSessionTurnRecord, getTauUserDisplayText, getTauUserModelText, projectTauUserText } from "@markusylisiurunen/tau/sdk";',
+          'import type { SessionProtocolFeedbackEvent, SessionProtocolFeedbackTone, SessionProtocolSnapshot, SessionProtocolTransport, TauSdkClient, TauSdkClientToolContext, TauSdkCreateSessionInput, TauSdkDelta, TauSdkInitializeParams, TauSdkRequestId, TauSdkSessionExecResult, TauSdkSessionSampleInput, TauSdkSessionSampleResult, TauSdkSessionSetReasoningResult, TauSdkSessionTurnOutcome, TauSdkSessionTurnRecord, TauSdkReadyMessage, TauSdkTransportClientOptions, TauSdkUserTextProjection } from "@markusylisiurunen/tau/sdk";',
+          'import { StdioSessionProtocolTransport, applySessionProtocolDelta, createTauSdkClient, createTauSdkClientFromTransport, createTauSdkWebSocketClient, getTauSdkSessionTurnOutcome, getTauSdkSessionTurnRecord, getTauUserDisplayText, getTauUserModelText, projectTauUserText, runTauClientToolCommand } from "@markusylisiurunen/tau/sdk";',
           "",
           "const sdkDelta: TauSdkDelta = {",
           "  version: 11,",
@@ -121,6 +121,9 @@ describe("sdk npm pack types", () => {
           "const feedbackTone: SessionProtocolFeedbackTone = 'default';",
           "const feedbackEvent: SessionProtocolFeedbackEvent = { type: 'feedback.notice', title: 'retrying', tone: feedbackTone, presentation: 'footer', durationMs: 3000 };",
           "declare const execResult: TauSdkSessionExecResult;",
+          "declare const clientToolContext: TauSdkClientToolContext;",
+          "void clientToolContext.executionEnvironment.exec('pwd');",
+          "void runTauClientToolCommand(async (_args, context) => (await context.executionEnvironment.exec('pwd')).output);",
           "const sampleInput: TauSdkSessionSampleInput = { context: { systemPrompt: 'system', messages: [] }, options: {} };",
           "declare const sampleResult: TauSdkSessionSampleResult;",
           "declare const setReasoningResult: TauSdkSessionSetReasoningResult;",

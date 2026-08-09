@@ -174,11 +174,46 @@ describe("public code-mode runtime", () => {
     await expect(
       tool.execute(
         { code: 'console.log(await linear.issues.get("TAU-418"))' },
-        { ...invocation, signal: new AbortController().signal },
+        {
+          ...invocation,
+          signal: new AbortController().signal,
+          executionEnvironment: {
+            exec: vi.fn(),
+          },
+        },
       ),
     ).resolves.toEqual({
       content: JSON.stringify({ id: "TAU-418", invocation }),
     });
+  });
+
+  it("provides client-tool execution access to trusted code-mode handlers", async () => {
+    const executionEnvironment = {
+      exec: vi.fn(async () => ({ output: "clean" })),
+    };
+    const tool = createTauCodeModeClientTool({
+      ...createDefinition({
+        api: {
+          workspace: {
+            status: async (_args, context) =>
+              (await context.executionEnvironment.exec("git status --short")).output,
+          },
+        },
+      }),
+      description: "Inspect the workspace.",
+    });
+
+    await expect(
+      tool.execute(
+        { code: "console.log(await linear.workspace.status())" },
+        {
+          ...invocation,
+          signal: new AbortController().signal,
+          executionEnvironment,
+        },
+      ),
+    ).resolves.toEqual({ content: "clean" });
+    expect(executionEnvironment.exec).toHaveBeenCalledWith("git status --short");
   });
 
   it("builds the progressive-disclosure description only when requested", () => {
@@ -229,7 +264,8 @@ describe("code-mode command adapter", () => {
       "});",
     ].join("\n");
     const request = {
-      version: 1,
+      version: 2,
+      type: "invoke",
       sessionId: invocation.sessionId,
       callId: invocation.callId,
       arguments: {
@@ -245,6 +281,8 @@ describe("code-mode command adapter", () => {
     expect(result.status).toBe(0);
     expect(result.stderr).toBe("");
     expect(JSON.parse(result.stdout)).toEqual({
+      version: 2,
+      type: "result",
       content: JSON.stringify({ value: "hello", invocation }),
     });
   });

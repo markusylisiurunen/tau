@@ -88,7 +88,7 @@ export function createTuiClientTools(options: {
         if (!controller) {
           throw new Error("diff_review is unavailable because the TUI is not ready");
         }
-        return await controller.runClientDiffReview(args, context.signal);
+        return await controller.runClientDiffReview(args, context);
       },
     },
     {

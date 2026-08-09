@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { truncateToBytesFromEnd } from "./truncate.js";
 
@@ -57,6 +57,8 @@ export async function spawnWithCapture(
     killProcessGroup?: boolean;
     stdio?: ["ignore" | "pipe", "ignore" | "pipe", "ignore" | "pipe"];
     input?: string | Buffer;
+    keepStdinOpen?: boolean;
+    onSpawn?: (child: ChildProcess) => void;
   } = {},
 ): Promise<SpawnCaptureResult> {
   const {
@@ -75,6 +77,8 @@ export async function spawnWithCapture(
     killProcessGroup = false,
     stdio: stdioOption,
     input,
+    keepStdinOpen = false,
+    onSpawn,
   } = options;
   const stdio =
     stdioOption ?? (input === undefined ? ["ignore", "pipe", "pipe"] : ["pipe", "pipe", "pipe"]);
@@ -88,11 +92,6 @@ export async function spawnWithCapture(
       detached,
       stdio,
     });
-
-    if (input !== undefined && child.stdin) {
-      child.stdin.on("error", () => {});
-      child.stdin.end(input);
-    }
 
     const captureCombined = captureOutput === "combined" || captureOutput === "combined-and-split";
     const captureSplit = captureOutput === "split" || captureOutput === "combined-and-split";
@@ -287,5 +286,22 @@ export async function spawnWithCapture(
       }
       settleAfterClose();
     });
+
+    try {
+      onSpawn?.(child);
+      if (input !== undefined && child.stdin) {
+        child.stdin.on("error", () => {});
+        if (keepStdinOpen) {
+          child.stdin.write(input);
+        } else {
+          child.stdin.end(input);
+        }
+      }
+    } catch (error) {
+      settled = true;
+      cleanup();
+      killProcess("SIGTERM");
+      reject(error instanceof Error ? error : new Error(String(error)));
+    }
   });
 }

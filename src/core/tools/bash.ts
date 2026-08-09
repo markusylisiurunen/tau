@@ -159,7 +159,7 @@ async function createBashTempFilePath(backend: ToolExecutionBackend): Promise<st
   }
 }
 
-async function writeBashTempFile(
+export async function writeBashTempFile(
   backend: ToolExecutionBackend,
   content: string,
 ): Promise<string | undefined> {

@@ -688,6 +688,43 @@ A successful command must exit with code zero and write exactly one JSON result 
 
 The `content` string becomes the model-visible tool result. A nonzero exit fails the tool using stderr, falling back to stdout when stderr is empty. Tau runs the command from the TUI's current working directory with the TUI process environment unchanged, limits total output to 1 MiB, and terminates the command's process group on cancellation, terminal transport failure, timeout, or excess output. Process-group termination escalates to `SIGKILL` after two seconds even if the command leader exits first. `executionTimeoutMs` defaults to 60 seconds.
 
+Tau's `@markusylisiurunen/tau/code-mode` export implements this command framing plus the same isolated one-shot JavaScript runtime used by Tau's built-in code-mode tools. A code-mode command remains an ordinary configured client tool with the exact `{ code: string }` schema and a complete author-controlled description:
+
+```json
+{
+  "name": "linear",
+  "defaultEnabled": true,
+  "description": "Search Linear issues. When this tool is useful, your first call must be a documentation-only program that does nothing except print docs with console.log(docs). Read the returned documentation before writing a later tool call that uses linear. Do not guess API signatures.",
+  "parameters": {
+    "type": "object",
+    "properties": { "code": { "type": "string" } },
+    "required": ["code"],
+    "additionalProperties": false
+  },
+  "command": ".config/tau/tools/linear"
+}
+```
+
+The executable owns authenticated clients and explicitly exposes trusted handlers. Handler arguments and results cross a JSON boundary; generated code receives only the declared namespace plus `docs`, `console`, `Date`, and `Math`:
+
+```ts
+#!/usr/bin/env node
+import { runTauCodeModeCommand } from "@markusylisiurunen/tau/code-mode";
+
+await runTauCodeModeCommand({
+  name: "linear",
+  documentation:
+    "# Linear API\n\nUse `linear.issues.get(id)` to read an issue.",
+  api: {
+    issues: {
+      get: async ([id], { signal }) => linearClient.issue(id, { signal }),
+    },
+  },
+});
+```
+
+Tau prepends canonical runtime guidance to the executable's API documentation. The installed runtime therefore documents its actual capabilities, 60-second default timeout, 8,192-token output projection, 128-call total limit, and eight-call concurrency limit without duplicating those details in `config.json`. The optional `buildTauCodeModeToolDescription()` helper produces the recommended progressive-disclosure description, but descriptions are otherwise passed through unchanged.
+
 Configured names must be unique and cannot replace built-in TUI or host tools. Only one observing client may advertise a given name for a session. `--no-client-tools` disables command client tools together with `diff_review` and `prefill_input`.
 
 ### diff review tool

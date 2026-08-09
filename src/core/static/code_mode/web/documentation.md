@@ -1,15 +1,3 @@
-The one-shot JavaScript runtime provides these globals:
-
-- `web.discover(url)`: discover metadata for direct Markdown representations and `llms.txt` files for a direct URL.
-- `web.search(query, options?)`: search the web and return relevant page highlights.
-- `web.fetch(urls, options?)`: retrieve highlights or bounded text from known URLs through the web extraction service.
-- `docs`: this document.
-- `console`: program output. Only text written through console methods is returned; program return values are ignored.
-- `Date`: standard date handling with live current-time access.
-- `Math`: standard math operations, including `Math.random()`.
-
-Top-level `await` is supported. A program may make at most 64 SDK calls, with at most four running concurrently, and must finish within 60 seconds. Independent calls can run concurrently with `Promise.all` within that limit.
-
 ## Defaults
 
 The API is designed for agent workflows and defaults to token-efficient retrieval:
@@ -247,4 +235,4 @@ In the next turn, retrieve the selected Markdown representation or `llms.txt` wi
 
 ## Output guidance
 
-Output is limited to roughly 8,192 tokens. Print only information needed for the task. Prefer concise labeled text over serialized response objects. Select relevant fields when possible; when all fields matter, flatten and label them compactly. Emit JSON only when the user explicitly requests JSON or another machine-readable result.
+Print only information needed for the task. Prefer concise labeled text over serialized response objects. Select relevant fields when possible; when all fields matter, flatten and label them compactly. Emit JSON only when the user explicitly requests JSON or another machine-readable result.

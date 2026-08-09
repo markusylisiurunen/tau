@@ -1,4 +1,23 @@
 export type {
+  BuildTauCodeModeToolDescriptionOptions,
+  ExecuteTauCodeModeOptions,
+  TauCodeModeApi,
+  TauCodeModeDefinition,
+  TauCodeModeExecutionStatus,
+  TauCodeModeHandler,
+  TauCodeModeHandlerContext,
+  TauCodeModeInvocation,
+  TauCodeModeJsonValue,
+  TauCodeModePersistOutput,
+  TauCodeModeResult,
+} from "../code_mode/runtime.js";
+export {
+  buildTauCodeModeToolDescription,
+  executeTauCodeMode,
+  TAU_CODE_MODE_DEFAULT_TIMEOUT_MS,
+  TAU_CODE_MODE_MAX_OUTPUT_TOKENS,
+} from "../code_mode/runtime.js";
+export type {
   SessionProtocolDelta,
   SessionProtocolFeedbackEvent,
   SessionProtocolFeedbackTone,
@@ -38,11 +57,18 @@ export {
   WebSocketSessionProtocolTransport,
 } from "../transport/index.js";
 export { createTauSdkClient, createTauSdkWebSocketClient } from "./client.js";
+export {
+  createTauCodeModeClientTool,
+  type TauSdkCodeModeClientToolOptions,
+} from "./code_mode.js";
 export { createTauSdkClientFromTransport } from "./session.js";
 export type {
   TauSdkAutocompletePathsResult,
   TauSdkClient,
   TauSdkClientOptions,
+  TauSdkClientTool,
+  TauSdkClientToolContext,
+  TauSdkClientToolResult,
   TauSdkCreateSessionInput,
   TauSdkDelta,
   TauSdkDeltaListener,

@@ -8,16 +8,15 @@ import {
   buildCodeModeToolDescription,
   type CodeModeToolImplementation,
   createCodeModeToolDefinition,
+  executeInternalCodeMode,
   type ParsedCodeModeArguments,
 } from "./code_mode.js";
-import { type CodeModeBridgeRequest, executeCodeModeWorker } from "./code_mode_worker.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type { AgentTool } from "./registry.js";
 import { TOOL_NAME_WEB } from "./tool_names.js";
 import { discoverAgentContent } from "./web_discovery.js";
 
 const WEB_CODE_MODE_TIMEOUT_MS = 60_000;
-const WEB_CODE_MODE_OUTPUT_TOKENS = 8_192;
 const EXA_API_BASE_URL = "https://api.exa.ai";
 const EXA_MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 
@@ -143,8 +142,6 @@ const documentation = readFileSync(
   new URL("../static/code_mode/web/documentation.md", import.meta.url),
   "utf8",
 );
-const sandboxRunnerUrl = new URL("../static/code_mode/web/sandbox_runner.mjs", import.meta.url);
-
 async function readExaResponse(response: Response): Promise<string> {
   const contentLength = response.headers.get("content-length");
   if (contentLength !== null && Number(contentLength) > EXA_MAX_RESPONSE_BYTES) {
@@ -428,25 +425,19 @@ function normalizeResponse(value: unknown): {
 }
 
 async function handleWebRequest(
-  request: CodeModeBridgeRequest,
+  method: "discover" | "search" | "fetch",
+  args: unknown[],
   exa: ExaClient | undefined,
   deps: WebToolDeps,
   backend: ToolExecutionBackend,
   signal: AbortSignal,
 ): Promise<unknown> {
-  let args: unknown;
-  try {
-    args = JSON.parse(request.argsJson);
-  } catch {
-    throw new Error("invalid web bridge arguments");
-  }
-
-  switch (request.method) {
+  switch (method) {
     case "discover": {
       if (!Array.isArray(args) || args.length !== 1) {
         throw new Error("web.discover expects one URL");
       }
-      return deps.discover(backend, requireString(args[0], "web.discover url"), signal);
+      return await deps.discover(backend, requireString(args[0], "web.discover url"), signal);
     }
     case "search": {
       if (!exa) throw new Error("Missing Exa API key.");
@@ -459,7 +450,7 @@ async function handleWebRequest(
       return normalizeResponse(await exa.getContents(urls, options, signal));
     }
     default:
-      throw new Error(`unsupported web method '${request.method}'`);
+      throw new Error(`unsupported web method '${method}'`);
   }
 }
 
@@ -471,13 +462,20 @@ function executeWebProgram(
   signal: AbortSignal,
   timeoutMs: number,
 ) {
-  return executeCodeModeWorker({
-    sandboxRunnerUrl,
-    workerData: { code, docs: documentation },
+  return executeInternalCodeMode({
+    name: TOOL_NAME_WEB,
+    documentation,
+    api: {
+      discover: (args, context) =>
+        handleWebRequest("discover", args, exa, deps, backend, context.signal),
+      search: (args, context) =>
+        handleWebRequest("search", args, exa, deps, backend, context.signal),
+      fetch: (args, context) => handleWebRequest("fetch", args, exa, deps, backend, context.signal),
+    },
+    code,
+    backend,
     signal,
     timeoutMs,
-    handleRequest: (request, requestSignal) =>
-      handleWebRequest(request, exa, deps, backend, requestSignal),
   });
 }
 
@@ -494,7 +492,6 @@ export function createWebToolDefinition(
   const timeoutMs = deps.timeoutMs ?? WEB_CODE_MODE_TIMEOUT_MS;
   const implementation: CodeModeToolImplementation<WebArgs> = {
     schema: WEB_TOOL,
-    outputPolicy: { maxTokens: WEB_CODE_MODE_OUTPUT_TOKENS },
     timeoutMs,
     parseArguments: parseWebArguments,
     execute: async ({ code, signal, backend: executionBackend }) => {

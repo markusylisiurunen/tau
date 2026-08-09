@@ -1,9 +1,13 @@
 import type { Tool, ToolCall } from "@earendil-works/pi-ai";
-import { bytesToTokens } from "../utils/token.js";
-import { formatBytes } from "../utils/truncate.js";
+import {
+  buildTauCodeModeToolDescription,
+  runTauCodeMode,
+  type TauCodeModeApi,
+  type TauCodeModeRuntimeResult,
+} from "../../code_mode/runtime.js";
 import type { ToolActivity } from "./activity.js";
-import { type BashOutputPolicy, buildBashPresentation, prepareBashOutput } from "./bash.js";
-import type { BashExecutionResult, ToolExecutionBackend } from "./execution_backend.js";
+import { buildBashPresentation, writeBashTempFile } from "./bash.js";
+import type { ToolExecutionBackend } from "./execution_backend.js";
 import { buildToolRunPresentation } from "./presentation.js";
 import {
   type AgentTool,
@@ -29,22 +33,14 @@ export function buildCodeModeToolDescription({
   introduction,
   additionalDocumentation = [],
 }: CodeModeToolDescriptionOptions): string {
-  return [
-    ...introduction,
-    `Top-level await is supported. The program receives ${sdkGlobal}, docs, and console globals.`,
-    "Live clock access through Date and random generation through Math.random() are available.",
-    "Only text written through console methods is returned; program return values are ignored.",
-    "The SDK is progressively disclosed through docs.",
-    "When this tool is useful for a task, your first call to it must be a documentation-only program that does nothing except print docs with console.log(docs).",
-    `Read the returned documentation before writing a later tool call that uses ${sdkGlobal}.`,
-    "Do not guess SDK signatures or reuse signatures from other code-mode tools.",
-    ...additionalDocumentation,
-  ].join(" ");
+  return buildTauCodeModeToolDescription({
+    name: sdkGlobal,
+    description: [...introduction, ...additionalDocumentation].join(" "),
+  });
 }
 
 export type CodeModeToolImplementation<TArgs> = {
   schema: Tool;
-  outputPolicy: BashOutputPolicy;
   timeoutMs?: number;
   parseArguments(raw: unknown): ParsedCodeModeArguments<TArgs>;
   getBlockedReason?(args: TArgs): string | undefined;
@@ -53,41 +49,45 @@ export type CodeModeToolImplementation<TArgs> = {
     code: string;
     backend: ToolExecutionBackend;
     signal: AbortSignal;
-  }): Promise<BashExecutionResult>;
+  }): Promise<TauCodeModeRuntimeResult>;
 };
 
-function getCodeModeTerminationNote(
-  execution: BashExecutionResult,
-  timeoutMs: number | undefined,
-): string | undefined {
-  if (execution.timedOut) {
-    return `(tau) timed out${timeoutMs === undefined ? "" : ` after ${timeoutMs}ms`}`;
-  }
-  if (execution.aborted) return "(tau) aborted";
-  if (execution.closeSignal) return `(tau) terminated by signal ${execution.closeSignal}`;
-  return undefined;
+export function executeInternalCodeMode(options: {
+  name: string;
+  documentation: string;
+  api: TauCodeModeApi;
+  code: string;
+  backend: ToolExecutionBackend;
+  signal: AbortSignal;
+  timeoutMs?: number;
+}): Promise<TauCodeModeRuntimeResult> {
+  return runTauCodeMode({
+    name: options.name,
+    documentation: options.documentation,
+    api: options.api,
+    code: options.code,
+    signal: options.signal,
+    ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+    persistOutput: async (output) => {
+      if (!output.contextTruncated) return undefined;
+      const path = await writeBashTempFile(options.backend, output.content);
+      return path ? { path } : undefined;
+    },
+  });
 }
 
-function formatCodeModeResultText(
-  truncationInfo: Awaited<ReturnType<typeof prepareBashOutput>>,
-  execution: BashExecutionResult,
-  terminated: boolean,
-): string {
-  const { model, captureTruncated, fullOutputPath } = truncationInfo;
-  if (model.outputBytes === 0 && execution.exitCode === 0) {
-    return "Program produced no output (exit 0)";
+function getCodeModeTerminationNote(
+  runtime: TauCodeModeRuntimeResult,
+  timeoutMs: number | undefined,
+): string | undefined {
+  if (runtime.status === "timed-out") {
+    return `(tau) timed out${timeoutMs === undefined ? "" : ` after ${timeoutMs}ms`}`;
   }
-
-  const output = model.content.trimEnd();
-  const truncationNote =
-    model.truncated || captureTruncated
-      ? `\n\n[Output truncated for context: ${model.outputLines} lines / ${formatBytes(model.outputBytes)} shown of ${model.totalLines} lines / ${formatBytes(model.totalBytes)} (full output estimate: ~${bytesToTokens(model.totalBytes)} tokens).${fullOutputPath ? ` Full output saved to ${fullOutputPath}.` : ""}]`
-      : "";
-  const exitNote =
-    !terminated && execution.exitCode !== null && execution.exitCode !== 0
-      ? `\n(exit ${execution.exitCode})`
-      : "";
-  return `${output || "(no output)"}${truncationNote}${exitNote}`;
+  if (runtime.status === "cancelled") return "(tau) aborted";
+  if (runtime.execution.closeSignal) {
+    return `(tau) terminated by signal ${runtime.execution.closeSignal}`;
+  }
+  return undefined;
 }
 
 export function createCodeModeToolDefinition<TArgs>(
@@ -146,32 +146,17 @@ export function createCodeModeToolDefinition<TArgs>(
         context,
         async () => {
           try {
-            const startedAt = Date.now();
-            const execution = await implementation.execute({
+            const runtime = await implementation.execute({
               args: parsed.args,
               code: parsed.code,
               backend,
               signal,
             });
-            const durationMs = Math.max(0, Date.now() - startedAt);
-            const terminationNote = getCodeModeTerminationNote(execution, implementation.timeoutMs);
-            const output = terminationNote
-              ? `${execution.output}${execution.output && !execution.output.endsWith("\n") ? "\n" : ""}${terminationNote}\n`
-              : execution.output;
-            const truncationInfo = await prepareBashOutput(
-              output,
-              execution.truncated,
-              implementation.outputPolicy,
-              backend,
-            );
-            const toolText = formatCodeModeResultText(
-              truncationInfo,
-              execution,
-              terminationNote !== undefined,
-            );
-            const isError = execution.exitCode === null || execution.exitCode !== 0;
+            const execution = runtime.execution;
+            const terminationNote = getCodeModeTerminationNote(runtime, implementation.timeoutMs);
+            const isError = runtime.status !== "succeeded";
             const semanticOutcome =
-              execution.aborted || execution.timedOut
+              runtime.status === "cancelled" || runtime.status === "timed-out"
                 ? "cancelled"
                 : isError
                   ? "failed"
@@ -180,9 +165,14 @@ export function createCodeModeToolDefinition<TArgs>(
               toolName: implementation.schema.name,
               operation: implementation.schema.name,
               subject: parsed.code || subject,
-              truncationInfo,
+              truncationInfo: {
+                output: runtime.projection.content,
+                model: runtime.projection,
+                captureTruncated: execution.truncated,
+                ...(runtime.persistedPath ? { fullOutputPath: runtime.persistedPath } : {}),
+              },
               exitCode: execution.exitCode,
-              durationMs,
+              durationMs: runtime.durationMs,
               includeExitCode: false,
             });
             const presentation = terminationNote
@@ -193,7 +183,7 @@ export function createCodeModeToolDefinition<TArgs>(
                   ),
                 }
               : outputPresentation;
-            const outcome = createTextToolOutcome(toolText, semanticOutcome);
+            const outcome = createTextToolOutcome(runtime.result.content, semanticOutcome);
             const uiEvent: ToolActivity = {
               type: "code_mode_finished",
               toolCallId: toolCall.id,

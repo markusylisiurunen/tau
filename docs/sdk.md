@@ -136,6 +136,48 @@ const client = await createTauSdkClient({
 
 Tool names must not duplicate host tools or another connected client's tools. Active handlers receive an aborted signal when the host cancels the call, the client closes, or the underlying transport fails; `client.close()` waits for them to settle. The Tau TUI uses this mechanism to advertise `diff_review`; generic SDK clients can advertise their own tools, but `diff_review` itself is TUI-owned.
 
+### code-mode client tools
+
+`createTauCodeModeClientTool()` builds a complete programmatic client tool around Tau's isolated one-shot JavaScript runtime. The supplied `description` is advertised unchanged. `buildTauCodeModeToolDescription()` is an optional helper for authors who want Tau's recommended strict docs-first disclosure text.
+
+```ts
+import {
+  buildTauCodeModeToolDescription,
+  createTauCodeModeClientTool,
+  createTauSdkClient,
+} from "@markusylisiurunen/tau/sdk";
+
+const name = "linear";
+const linearTool = createTauCodeModeClientTool({
+  name,
+  description: buildTauCodeModeToolDescription({
+    name,
+    description: "Search and update Linear issues.",
+  }),
+  documentation:
+    "# Linear API\n\nUse `linear.issues.get(id)` to read an issue.",
+  api: {
+    issues: {
+      get: async ([id], { signal, invocation }) =>
+        linearClient.issue(id, {
+          signal,
+          requestId: invocation?.callId,
+        }),
+    },
+  },
+});
+
+const client = await createTauSdkClient({
+  clientTools: [linearTool],
+});
+```
+
+Generated code sees exactly one author-defined namespace plus `docs`, `console`, `Date`, and `Math`. Nested API objects must be plain objects with function leaves. Handlers receive model-supplied positional arguments as an array and a context containing an abort signal plus nullable Tau invocation metadata. Arguments and results cross a JSON serialization boundary with a 1 MiB limit per request or response. The runtime prepends canonical Markdown documentation for its installed capabilities and limits to the author-provided API documentation.
+
+Every execution is limited to 128 total API calls and eight unresolved API calls; exceeding any bridge limit fails immediately. The default timeout is 60 seconds, raw output capture is bounded at 1 MiB, and model-facing output is middle-truncated above roughly 8,192 tokens. An optional `persistOutput(output, context)` callback runs best-effort for every terminal execution and may return `{ path }`; the callback can use `output.contextTruncated`, `output.captureTruncated`, and `output.status` to choose what to retain. Tau adds the returned path to the bounded result.
+
+`executeTauCodeMode()` exposes the same runtime directly and accepts `code`, an optional abort signal, and nullable invocation metadata in addition to the shared definition. It resolves to `{ content }` on success and rejects with the bounded diagnostic on evaluation failure, timeout, cancellation, or bridge failure. The standalone `@markusylisiurunen/tau/code-mode` entry point exports the executor, description helper, and `runTauCodeModeCommand()` adapter for ordinary command-backed client-tool executables.
+
 ### `createTauSdkWebSocketClient(options)`
 
 creates, connects, and initializes the SDK client over a WebSocket session host started with `tau serve`.

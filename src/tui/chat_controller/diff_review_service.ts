@@ -40,6 +40,7 @@ export type DiffReviewServiceOptions = {
 };
 
 type LocalDiffReviewCallbacks = Pick<DiffReviewServiceOptions, "startSession" | "onReviewReturned">;
+type ModelDiffReviewCallbacks = Pick<DiffReviewServiceOptions, "startSession">;
 
 type DiffReviewState = {
   phase: "preparing" | "active";
@@ -205,7 +206,11 @@ export class DiffReviewService {
     }
   }
 
-  async runModelTool(rawArgs: unknown, signal: AbortSignal): Promise<string> {
+  async runModelTool(
+    rawArgs: unknown,
+    signal: AbortSignal,
+    callbacks: ModelDiffReviewCallbacks = { startSession: this.startSession },
+  ): Promise<string> {
     if (this.state) {
       throw new Error("diff review is already active");
     }
@@ -245,7 +250,7 @@ export class DiffReviewService {
     signal.addEventListener("abort", cancelOnAbort, { once: true });
 
     try {
-      const started = await this.startSession({
+      const started = await callbacks.startSession({
         source: parsedArgs.data.source,
         diffTool,
         signal,

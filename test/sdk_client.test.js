@@ -997,7 +997,10 @@ describe("sdk_client", () => {
       expect(args).toEqual({ choice: "a" });
       expect(context).toMatchObject({ sessionId: "session-1", callId: "call-1" });
       expect(context.signal.aborted).toBe(false);
-      return { content: "picked a" };
+      const execution = await context.executionEnvironment.exec("printf workspace", {
+        cwd: "/repo",
+      });
+      return { content: `picked a from ${execution.output}` };
     });
     const client = await createTauSdkClientFromTransport(transport, {
       clientTools: [
@@ -1059,10 +1062,77 @@ describe("sdk_client", () => {
         params: { sessionId: "session-1", callId: "call-1" },
       },
       {
+        method: "session.exec",
+        params: {
+          sessionId: "session-1",
+          execId: expect.any(String),
+          command: "printf workspace",
+          cwd: "/repo",
+        },
+      },
+      {
         method: "session.clientTool.result",
-        params: { sessionId: "session-1", callId: "call-1", ok: true, content: "picked a" },
+        params: {
+          sessionId: "session-1",
+          callId: "call-1",
+          ok: true,
+          content: "picked a from raw output",
+        },
       },
     ]);
+
+    await client.close();
+  });
+
+  it("cancels execution-environment commands with their client tool", async () => {
+    const transport = new FakeSessionProtocolTransport();
+    transport.onRequest = async (method) => {
+      if (method === "session.exec") {
+        return await new Promise(() => {});
+      }
+      return undefined;
+    };
+    const client = await createTauSdkClientFromTransport(transport, {
+      clientTools: [
+        {
+          schema: {
+            name: "workspace_wait",
+            description: "Wait in the workspace.",
+            parameters: { type: "object", properties: {}, additionalProperties: false },
+          },
+          execute: (_args, context) => context.executionEnvironment.exec("sleep 60"),
+        },
+      ],
+    });
+
+    transport.emitClientTool({
+      version: SESSION_PROTOCOL_VERSION,
+      type: "session.clientTool.call",
+      sessionId: "session-1",
+      callId: "call-1",
+      toolName: "workspace_wait",
+      arguments: {},
+      ackDeadlineMs: 5000,
+      executionDeadlineMs: 60_000,
+    });
+    await waitForFakeRequest(transport, (request) => request.method === "session.exec");
+    const execId = transport.requests.find((request) => request.method === "session.exec").params
+      .execId;
+
+    transport.emitClientTool({
+      version: SESSION_PROTOCOL_VERSION,
+      type: "session.clientTool.cancel",
+      sessionId: "session-1",
+      callId: "call-1",
+      reason: "aborted",
+    });
+    await waitForFakeRequest(
+      transport,
+      (request) => request.method === "session.cancelExec" && request.params.execId === execId,
+    );
+    expect(
+      transport.requests.some((request) => request.method === "session.clientTool.result"),
+    ).toBe(false);
 
     await client.close();
   });

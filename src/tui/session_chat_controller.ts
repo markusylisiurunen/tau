@@ -48,6 +48,8 @@ import {
   applySessionProtocolSubagentActivitiesMessage,
 } from "../protocol/session_protocol.js";
 import type {
+  TauSdkClientToolContext,
+  TauSdkClientToolExecutionEnvironment,
   TauSdkSession,
   TauSdkSessionRetryResult,
   TauSdkSessionSubmitResult,
@@ -554,7 +556,7 @@ export class SessionChatController {
 
     try {
       const backend = createSdkToolExecutionBackend({
-        session: this.session,
+        executionEnvironment: this.session,
         cwd: this.snapshot.executionEnvironment.cwd,
       });
       const result = await runDirectBashCommand({
@@ -2170,8 +2172,13 @@ export class SessionChatController {
     });
   }
 
-  async runClientDiffReview(rawArgs: unknown, signal: AbortSignal): Promise<string> {
-    return await this.diffReviewService.runModelTool(rawArgs, signal);
+  async runClientDiffReview(rawArgs: unknown, context: TauSdkClientToolContext): Promise<string> {
+    const session = this.session;
+    const snapshot = this.snapshot;
+    return await this.diffReviewService.runModelTool(rawArgs, context.signal, {
+      startSession: (args) =>
+        this.startDiffReviewBridge(args, session, snapshot, context.executionEnvironment),
+    });
   }
 
   prefillInput(text: string): string {
@@ -2231,9 +2238,10 @@ export class SessionChatController {
     },
     session: TauSdkSession,
     sessionSnapshot: SessionProtocolSnapshot,
+    executionEnvironment: TauSdkClientToolExecutionEnvironment = session,
   ): Promise<StartedDiffReviewBridge> {
     const cwd = sessionSnapshot.executionEnvironment.cwd;
-    const backend = createSdkToolExecutionBackend({ session, cwd });
+    const backend = createSdkToolExecutionBackend({ executionEnvironment, cwd });
     const snapshot = await captureDiffReviewSnapshot({
       cwd,
       source: args.source,

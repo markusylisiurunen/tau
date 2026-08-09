@@ -5240,9 +5240,17 @@ describe("SessionChatController", () => {
     });
     controller.start();
 
+    const executionEnvironment = {
+      exec: vi.fn((command, options) => session.exec(command, options)),
+    };
     const result = controller.runClientDiffReview(
       { source: "git_diff", diffArgs: ["--", "src/main.ts"] },
-      new AbortController().signal,
+      {
+        sessionId: "session-1",
+        callId: "diff-review-1",
+        signal: new AbortController().signal,
+        executionEnvironment,
+      },
     );
 
     await waitUntil(() =>
@@ -5263,6 +5271,7 @@ describe("SessionChatController", () => {
     expect(session.steer).toHaveBeenCalledWith("adjust the review");
 
     await expect(result).resolves.toContain("Diff review completed.");
+    expect(executionEnvironment.exec).toHaveBeenCalled();
     await expect(result).resolves.toContain("Reviewed scope: git diff -- src/main.ts");
     await expect(result).resolves.toContain("returned review from local diff tool");
     const diffReviewMessage = view.messages.find((message) => message.model.type === "diff_review");

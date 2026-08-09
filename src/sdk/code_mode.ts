@@ -51,6 +51,7 @@ export function createTauCodeModeClientTool(
           sessionId: context.sessionId,
           callId: context.callId,
         },
+        executionEnvironment: context.executionEnvironment,
       });
     },
   };

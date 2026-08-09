@@ -7,6 +7,7 @@ import {
 } from "../core/tools/code_mode_worker.js";
 import { bytesToTokens } from "../core/utils/token.js";
 import { formatBytes, truncateForTokens } from "../core/utils/truncate.js";
+import type { TauSdkClientToolExecutionEnvironment } from "../sdk/types.js";
 
 export const TAU_CODE_MODE_DEFAULT_TIMEOUT_MS = 60_000;
 export const TAU_CODE_MODE_MAX_OUTPUT_TOKENS = 8_192;
@@ -32,6 +33,7 @@ export type TauCodeModeInvocation = {
 export type TauCodeModeHandlerContext = {
   signal: AbortSignal;
   invocation: TauCodeModeInvocation | null;
+  executionEnvironment: TauSdkClientToolExecutionEnvironment | null;
 };
 
 export type TauCodeModeHandler = (
@@ -90,6 +92,7 @@ export type ExecuteTauCodeModeOptions = TauCodeModeDefinition & {
   code: string;
   signal?: AbortSignal;
   invocation?: TauCodeModeInvocation | null;
+  executionEnvironment?: TauSdkClientToolExecutionEnvironment | null;
 };
 
 export type TauCodeModeResult = {
@@ -163,6 +166,7 @@ export async function runTauCodeMode(
   const methods = registerMethods(options.api);
   const timeoutMs = options.timeoutMs ?? TAU_CODE_MODE_DEFAULT_TIMEOUT_MS;
   const invocation = options.invocation ?? null;
+  const executionEnvironment = options.executionEnvironment ?? null;
   const signal = options.signal ?? new AbortController().signal;
   const docs = buildRuntimeDocumentation(options.name, options.documentation, timeoutMs);
   const startedAt = Date.now();
@@ -182,7 +186,11 @@ export async function runTauCodeMode(
         const method = methods[request.methodId];
         if (!method) throw new Error(`unsupported ${options.name} API method`);
         const args = parseBridgeArguments(request.argsJson, options.name, method.path);
-        const value = await method.handler(args, { signal: requestSignal, invocation });
+        const value = await method.handler(args, {
+          signal: requestSignal,
+          invocation,
+          executionEnvironment,
+        });
         return serializeBridgeResult(value, options.name, method.path);
       },
     });
@@ -218,7 +226,7 @@ export async function runTauCodeMode(
           contextTruncated: projection.truncated,
           status,
         },
-        { signal, invocation },
+        { signal, invocation, executionEnvironment },
       );
       if (persisted?.path.trim()) persistedPath = persisted.path;
     } catch {}

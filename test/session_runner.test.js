@@ -554,7 +554,7 @@ describe("session execution backend plumbing", () => {
         };
       },
     };
-    const backend = createSdkToolExecutionBackend({ session, cwd });
+    const backend = createSdkToolExecutionBackend({ executionEnvironment: session, cwd });
     const content = Buffer.from([0, 255, 1]);
 
     try {
@@ -609,7 +609,7 @@ describe("session execution backend plumbing", () => {
       runGit(["add", "tracked.txt"]);
       writeFileSync(join(cwd, "untracked.txt"), "new\n");
 
-      const backend = createSdkToolExecutionBackend({ session, cwd });
+      const backend = createSdkToolExecutionBackend({ executionEnvironment: session, cwd });
       const snapshot = await captureDiffReviewSnapshot({
         cwd,
         source: { kind: "git_diff", diffArgs: [] },
@@ -669,7 +669,7 @@ describe("session execution backend plumbing", () => {
     };
 
     try {
-      const backend = createSdkToolExecutionBackend({ session, cwd });
+      const backend = createSdkToolExecutionBackend({ executionEnvironment: session, cwd });
       const snapshot = await captureDiffReviewSnapshot({
         cwd,
         source: { kind: "patch_files", patchFiles: [patchPath], scopeLabel: "large patch" },

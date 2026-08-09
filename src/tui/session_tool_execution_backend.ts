@@ -7,7 +7,7 @@ import type {
 } from "../core/tools/execution_backend.js";
 import type { SpawnCaptureResult } from "../core/utils/spawn_capture.js";
 import { SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES } from "../protocol/session_protocol.js";
-import type { TauSdkSession } from "../sdk/types.js";
+import type { TauSdkClientToolExecutionEnvironment } from "../sdk/types.js";
 
 const HELPER_TIMEOUT_MS = 10_000;
 const MAX_FILE_BYTES = SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES;
@@ -15,13 +15,13 @@ const MAX_FILE_READ_CAPTURE_BYTES = 4 * Math.ceil(MAX_FILE_BYTES / 3) + 1024;
 const EXEC_ARGUMENTS_COMMAND = 'exec "$0" "$@"';
 
 export function createSdkToolExecutionBackend(options: {
-  session: TauSdkSession;
+  executionEnvironment: TauSdkClientToolExecutionEnvironment;
   cwd: string;
 }): ToolExecutionBackend {
-  const { session, cwd } = options;
+  const { executionEnvironment, cwd } = options;
 
   const runBash: ToolExecutionBackend["runBash"] = async (command, runOptions = {}) => {
-    const result = await session.exec(command, {
+    const result = await executionEnvironment.exec(command, {
       ...(runOptions.args !== undefined ? { args: runOptions.args } : {}),
       ...(runOptions.env !== undefined ? { env: runOptions.env } : {}),
       ...(runOptions.stdin !== undefined ? { stdin: runOptions.stdin } : {}),

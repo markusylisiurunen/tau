@@ -1,5 +1,6 @@
 import stripAnsi from "strip-ansi";
 import {
+  CODE_MODE_MAX_BRIDGE_PAYLOAD_BYTES,
   CODE_MODE_MAX_BRIDGE_REQUESTS,
   CODE_MODE_MAX_CONCURRENT_BRIDGE_REQUESTS,
   executeCodeModeWorker,
@@ -295,14 +296,20 @@ function formatPath(path: string[]): string {
 }
 
 function parseBridgeArguments(argsJson: string, name: string, path: string[]): unknown[] {
+  const method = `${name}.${formatPath(path)}`;
+  if (Buffer.byteLength(argsJson, "utf8") > CODE_MODE_MAX_BRIDGE_PAYLOAD_BYTES) {
+    throw new Error(
+      `${method} arguments exceeded the ${formatBytes(CODE_MODE_MAX_BRIDGE_PAYLOAD_BYTES)} bridge payload limit`,
+    );
+  }
   let args: unknown;
   try {
     args = JSON.parse(argsJson);
   } catch {
-    throw new Error(`invalid ${name}.${formatPath(path)} arguments`);
+    throw new Error(`invalid ${method} arguments`);
   }
   if (!Array.isArray(args)) {
-    throw new Error(`invalid ${name}.${formatPath(path)} arguments`);
+    throw new Error(`invalid ${method} arguments`);
   }
   return args;
 }
@@ -329,6 +336,11 @@ function serializeBridgeResult(value: unknown, name: string, path: string[]): st
   if (json === undefined) {
     throw new Error(`${name}.${formatPath(path)} returned a non-JSON value`);
   }
+  if (Buffer.byteLength(json, "utf8") > CODE_MODE_MAX_BRIDGE_PAYLOAD_BYTES) {
+    throw new Error(
+      `${name}.${formatPath(path)} result exceeded the ${formatBytes(CODE_MODE_MAX_BRIDGE_PAYLOAD_BYTES)} bridge payload limit`,
+    );
+  }
   return json;
 }
 
@@ -349,8 +361,8 @@ function buildRuntimeDocumentation(name: string, documentation: string, timeoutM
     "",
     "## API boundary",
     "",
-    `Arguments passed to \`${name}\` methods and their results cross a JSON serialization boundary.`,
-    `A program may make at most ${CODE_MODE_MAX_BRIDGE_REQUESTS} API calls, with at most ${CODE_MODE_MAX_CONCURRENT_BRIDGE_REQUESTS} unresolved calls concurrently. Exceeding either limit fails the program.`,
+    `Arguments passed to \`${name}\` methods and their results cross a JSON serialization boundary with a ${formatBytes(CODE_MODE_MAX_BRIDGE_PAYLOAD_BYTES)} limit per request or response.`,
+    `A program may make at most ${CODE_MODE_MAX_BRIDGE_REQUESTS} API calls, with at most ${CODE_MODE_MAX_CONCURRENT_BRIDGE_REQUESTS} unresolved calls concurrently. Exceeding any bridge limit fails the program.`,
     `The program must finish within ${formatDuration(timeoutMs)}.`,
     "",
     "## Output",

@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { parentPort, workerData } from "node:worker_threads";
 import { codeModeMath, createCodeModeDate } from "./capabilities.mjs";
 
@@ -10,7 +11,13 @@ if (
   typeof workerData.code !== "string" ||
   typeof workerData.docs !== "string" ||
   typeof workerData.name !== "string" ||
-  !Array.isArray(workerData.methods)
+  !Array.isArray(workerData.methods) ||
+  !Number.isSafeInteger(workerData.maxBridgeRequests) ||
+  workerData.maxBridgeRequests <= 0 ||
+  !Number.isSafeInteger(workerData.maxConcurrentBridgeRequests) ||
+  workerData.maxConcurrentBridgeRequests <= 0 ||
+  !Number.isSafeInteger(workerData.maxBridgePayloadBytes) ||
+  workerData.maxBridgePayloadBytes <= 0
 ) {
   throw new Error("code-mode sandbox received invalid worker data");
 }
@@ -28,6 +35,12 @@ parentPort.on("message", (message) => {
   pending.delete(message.id);
   if (message.ok) {
     try {
+      if (
+        typeof message.valueJson !== "string" ||
+        Buffer.byteLength(message.valueJson, "utf8") > workerData.maxBridgePayloadBytes
+      ) {
+        throw new Error("invalid code-mode bridge response");
+      }
       request.resolve(JSON.parse(message.valueJson));
     } catch {
       request.reject(new Error("code-mode bridge returned invalid JSON"));
@@ -43,6 +56,25 @@ parentPort.on("message", (message) => {
 function requestApi(methodId, argsJson) {
   if (!Number.isSafeInteger(methodId) || methodId < 0 || typeof argsJson !== "string") {
     return Promise.reject(new Error("invalid code-mode bridge request"));
+  }
+  if (Buffer.byteLength(argsJson, "utf8") > workerData.maxBridgePayloadBytes) {
+    return Promise.reject(
+      new Error(
+        `code-mode API arguments exceeded ${workerData.maxBridgePayloadBytes} bridge payload bytes`,
+      ),
+    );
+  }
+  if (nextRequestId > workerData.maxBridgeRequests) {
+    return Promise.reject(
+      new Error(`code-mode sandbox exceeded ${workerData.maxBridgeRequests} bridge requests`),
+    );
+  }
+  if (pending.size >= workerData.maxConcurrentBridgeRequests) {
+    return Promise.reject(
+      new Error(
+        `code-mode sandbox exceeded ${workerData.maxConcurrentBridgeRequests} concurrent bridge requests`,
+      ),
+    );
   }
   const id = nextRequestId++;
   return new Promise((resolve, reject) => {

@@ -6,6 +6,9 @@ import { type BashExecutionResult, DEFAULT_COMMAND_CAPTURE_BYTES } from "./execu
 
 export const CODE_MODE_MAX_BRIDGE_REQUESTS = 128;
 export const CODE_MODE_MAX_CONCURRENT_BRIDGE_REQUESTS = 8;
+export const CODE_MODE_MAX_BRIDGE_PAYLOAD_BYTES = 1024 * 1024;
+
+const CODE_MODE_HANDLER_DRAIN_TIMEOUT_MS = 1_000;
 
 export type CodeModeBridgeRequest = {
   id: number;
@@ -20,7 +23,7 @@ type CodeModeWorkerOptions = {
   workerData: Record<string, unknown>;
   signal: AbortSignal;
   timeoutMs: number;
-  handleRequest(request: CodeModeBridgeRequest, signal: AbortSignal): Promise<unknown>;
+  handleRequest(request: CodeModeBridgeRequest, signal: AbortSignal): Promise<string>;
 };
 
 function appendCapture(current: string, chunk: string): string {
@@ -54,7 +57,13 @@ export function executeCodeModeWorker(
 ): Promise<BashExecutionResult> {
   return new Promise((resolve, reject) => {
     const worker = new Worker(options.sandboxRunnerUrl, {
-      workerData: options.workerData,
+      workerData: {
+        ...options.workerData,
+        maxBridgeRequests: CODE_MODE_MAX_BRIDGE_REQUESTS,
+        maxConcurrentBridgeRequests: CODE_MODE_MAX_CONCURRENT_BRIDGE_REQUESTS,
+        maxBridgePayloadBytes: CODE_MODE_MAX_BRIDGE_PAYLOAD_BYTES,
+      },
+      execArgv: [],
       env: {
         ...(process.env.LANG ? { LANG: process.env.LANG } : {}),
         ...(process.env.LC_ALL ? { LC_ALL: process.env.LC_ALL } : {}),
@@ -102,9 +111,17 @@ export function executeCodeModeWorker(
     };
     const settleRequests = async (): Promise<void> => {
       requestController.abort();
-      while (inFlightRequests.size > 0) {
-        await Promise.allSettled([...inFlightRequests]);
-      }
+      if (inFlightRequests.size === 0) return;
+
+      let drainTimeout: NodeJS.Timeout | undefined;
+      const timeoutPromise = new Promise<void>((resolve) => {
+        drainTimeout = setTimeout(resolve, CODE_MODE_HANDLER_DRAIN_TIMEOUT_MS);
+      });
+      await Promise.race([
+        Promise.allSettled([...inFlightRequests]).then(() => undefined),
+        timeoutPromise,
+      ]);
+      if (drainTimeout) clearTimeout(drainTimeout);
     };
     const terminate = (reason: "abort" | "timeout"): void => {
       if (terminating) return;
@@ -143,6 +160,14 @@ export function executeCodeModeWorker(
         failWorker(new Error("code-mode sandbox sent an invalid bridge request"));
         return;
       }
+      if (Buffer.byteLength(message.argsJson, "utf8") > CODE_MODE_MAX_BRIDGE_PAYLOAD_BYTES) {
+        failWorker(
+          new Error(
+            `code-mode sandbox exceeded ${CODE_MODE_MAX_BRIDGE_PAYLOAD_BYTES} bridge payload bytes`,
+          ),
+        );
+        return;
+      }
       bridgeRequestCount += 1;
       if (bridgeRequestCount > CODE_MODE_MAX_BRIDGE_REQUESTS) {
         failWorker(
@@ -158,16 +183,24 @@ export function executeCodeModeWorker(
         );
         return;
       }
-      const request = options.handleRequest(message, requestSignal).then(
-        (valueJson) => postResponse({ type: "response", id: message.id, ok: true, valueJson }),
-        (error) =>
+      const request = options
+        .handleRequest(message, requestSignal)
+        .then((valueJson) => {
+          if (Buffer.byteLength(valueJson, "utf8") > CODE_MODE_MAX_BRIDGE_PAYLOAD_BYTES) {
+            throw new Error(
+              `code-mode API response exceeded ${CODE_MODE_MAX_BRIDGE_PAYLOAD_BYTES} bridge payload bytes`,
+            );
+          }
+          postResponse({ type: "response", id: message.id, ok: true, valueJson });
+        })
+        .catch((error) =>
           postResponse({
             type: "response",
             id: message.id,
             ok: false,
             error: serializeError(error),
           }),
-      );
+        );
       inFlightRequests.add(request);
       void request.then(() => inFlightRequests.delete(request));
     });

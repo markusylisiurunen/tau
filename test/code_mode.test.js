@@ -50,7 +50,29 @@ describe("public code-mode runtime", () => {
     expect(result.content).toContain("# Code-mode runtime");
     expect(result.content).toContain("at most 128 API calls");
     expect(result.content).toContain("at most 8 unresolved calls concurrently");
+    expect(result.content).toContain("a 1.0 MB limit per request or response");
     expect(result.content).toContain("# Linear API");
+  });
+
+  it("rejects oversized bridge arguments before calling the handler", async () => {
+    const echo = vi.fn(async ([value]) => value);
+
+    await expect(
+      executeTauCodeMode({
+        ...createDefinition({ api: { echo } }),
+        code: 'await linear.echo("x".repeat(1024 * 1024))',
+      }),
+    ).rejects.toThrow("bridge payload bytes");
+    expect(echo).not.toHaveBeenCalled();
+  });
+
+  it("rejects oversized handler results before returning them to the worker", async () => {
+    await expect(
+      executeTauCodeMode({
+        ...createDefinition({ api: { large: async () => "x".repeat(1024 * 1024) } }),
+        code: "await linear.large()",
+      }),
+    ).rejects.toThrow("result exceeded the 1.0 MB bridge payload limit");
   });
 
   it("rejects non-JSON handler results", async () => {
@@ -108,6 +130,31 @@ describe("public code-mode runtime", () => {
     );
   });
 
+  it("settles cancellation when a handler ignores its abort signal", async () => {
+    let markHandlerStarted;
+    const handlerStarted = new Promise((resolve) => {
+      markHandlerStarted = resolve;
+    });
+    const controller = new AbortController();
+    const run = executeTauCodeMode({
+      ...createDefinition({
+        api: {
+          stuck: async () => {
+            markHandlerStarted();
+            return await new Promise(() => {});
+          },
+        },
+      }),
+      code: "await linear.stuck()",
+      signal: controller.signal,
+    });
+
+    await handlerStarted;
+    controller.abort();
+
+    await expect(run).rejects.toThrow("(tau) aborted");
+  });
+
   it("passes SDK descriptions through unchanged", async () => {
     const description = "Use the Linear integration exactly as documented here.";
     const tool = createTauCodeModeClientTool({
@@ -143,6 +190,28 @@ describe("public code-mode runtime", () => {
     ).toBe(
       "Search Linear issues. When this tool is useful, your first call must be a documentation-only program that does nothing except print docs with console.log(docs). Read the returned documentation before writing a later tool call that uses linear. Do not guess API signatures.",
     );
+  });
+
+  it("does not pass parent eval flags to the file-backed worker", () => {
+    const moduleUrl = pathToFileURL(resolve("dist/code_mode/index.js")).href;
+    const script = [
+      `import { executeTauCodeMode } from ${JSON.stringify(moduleUrl)};`,
+      "const result = await executeTauCodeMode({",
+      '  name: "linear",',
+      '  documentation: "# Linear API",',
+      "  api: { echo: async ([value]) => value },",
+      '  code: "console.log(await linear.echo(42))",',
+      "});",
+      "process.stdout.write(result.content);",
+    ].join("\n");
+    const result = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toBe("42");
   });
 });
 

@@ -43,6 +43,8 @@ describe("sdk npm pack types", () => {
       expect(packedFiles.has("dist/sdk/errors.js")).toBe(false);
       expect(packedFiles.has("dist/sdk/stdio_transport.js")).toBe(false);
       expect(packedFiles.has("dist/sdk/stdio_transport.d.ts")).toBe(false);
+      expect(packedFiles.has("dist/code_mode/index.d.ts")).toBe(true);
+      expect(packedFiles.has("dist/core/static/code_mode/sandbox_runner.mjs")).toBe(true);
 
       const tarballPath = join(packDir, packageFilename);
       const consumerDir = join(tempRoot, "consumer");
@@ -157,6 +159,26 @@ describe("sdk npm pack types", () => {
         ].join("\n"),
       );
 
+      const codeModeFixturePath = join(consumerDir, "code-mode.ts");
+      writeFileSync(
+        codeModeFixturePath,
+        [
+          'import type { TauCodeModeApi, TauCodeModePersistOutput } from "@markusylisiurunen/tau/code-mode";',
+          'import { buildTauCodeModeToolDescription, executeTauCodeMode, runTauCodeModeCommand } from "@markusylisiurunen/tau/code-mode";',
+          'import { createTauCodeModeClientTool } from "@markusylisiurunen/tau/sdk";',
+          "",
+          "const api: TauCodeModeApi = { echo: async ([value], context) => ({ value, invocation: context.invocation }) };",
+          "const persistOutput: TauCodeModePersistOutput = async (output) => output.contextTruncated ? { path: '/tmp/output' } : undefined;",
+          "const definition = { name: 'fixture', documentation: '# Fixture API', api, persistOutput };",
+          "const description = buildTauCodeModeToolDescription({ name: 'fixture', description: 'Use the fixture API.' });",
+          "const tool = createTauCodeModeClientTool({ ...definition, description });",
+          "void executeTauCodeMode({ ...definition, code: 'console.log(await fixture.echo(1))' });",
+          "void runTauCodeModeCommand(definition);",
+          "void tool;",
+          "",
+        ].join("\n"),
+      );
+
       const invalidFixturePath = join(consumerDir, "invalid.ts");
       writeFileSync(
         invalidFixturePath,
@@ -206,6 +228,11 @@ describe("sdk npm pack types", () => {
         cwd: consumerDir,
       });
       expect(validCompileResult.status).toBe(0);
+
+      const codeModeCompileResult = run(process.execPath, [...tscArgs, codeModeFixturePath], {
+        cwd: consumerDir,
+      });
+      expect(codeModeCompileResult.status).toBe(0);
 
       const invalidCompileResult = run(process.execPath, [...tscArgs, invalidFixturePath], {
         cwd: consumerDir,

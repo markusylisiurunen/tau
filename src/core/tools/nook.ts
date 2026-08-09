@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import type { Tool } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { z } from "zod";
+import type { TauCodeModeHandler } from "../../code_mode/runtime.js";
 import type { Config } from "../config/index.js";
 import { createNookClientFromConfig } from "../nook/client.js";
 import {
@@ -14,15 +15,14 @@ import {
   buildCodeModeToolDescription,
   type CodeModeToolImplementation,
   createCodeModeToolDefinition,
+  executeInternalCodeMode,
   type ParsedCodeModeArguments,
 } from "./code_mode.js";
-import { type CodeModeBridgeRequest, executeCodeModeWorker } from "./code_mode_worker.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type { AgentTool } from "./registry.js";
 import { TOOL_NAME_NOOK } from "./tool_names.js";
 
 const NOOK_CODE_MODE_TIMEOUT_MS = 60_000;
-const NOOK_CODE_MODE_OUTPUT_TOKENS = 8_192;
 const MAX_KV_KEY_LENGTH = 256;
 const MAX_KV_VALUE_BYTES = 64 * 1024;
 
@@ -99,8 +99,6 @@ const documentation = readFileSync(
   new URL("../static/code_mode/nook/documentation.md", import.meta.url),
   "utf8",
 );
-const sandboxRunnerUrl = new URL("../static/code_mode/nook/sandbox_runner.mjs", import.meta.url);
-
 function parseNookArguments(raw: unknown): ParsedCodeModeArguments<NookArgs> {
   const rawCode =
     typeof raw === "object" && raw !== null && typeof (raw as { code?: unknown }).code === "string"
@@ -126,14 +124,6 @@ function parseNookArguments(raw: unknown): ParsedCodeModeArguments<NookArgs> {
     code: parsed.data.code,
     subject,
   };
-}
-
-function parseBridgeArguments(request: CodeModeBridgeRequest): unknown {
-  try {
-    return JSON.parse(request.argsJson);
-  } catch {
-    throw new Error("invalid nook bridge arguments");
-  }
 }
 
 function parseMethodArguments<T>(method: string, args: unknown, schema: z.ZodType<T>): T {
@@ -253,16 +243,16 @@ async function readKvFromFile(
 }
 
 async function handleNookRequest(
-  request: CodeModeBridgeRequest,
+  method: string,
+  args: unknown[],
   deps: NookToolDeps,
   config: Config,
   backend: ToolExecutionBackend,
   signal: AbortSignal,
 ): Promise<unknown> {
-  const args = parseBridgeArguments(request);
   const createClient = (): NookClient => deps.createClient({ config, signal });
 
-  switch (request.method) {
+  switch (method) {
     case "skill": {
       parseMethodArguments("skill", args, z.tuple([]));
       return createClient().readSkill();
@@ -364,7 +354,7 @@ async function handleNookRequest(
       return result.keys;
     }
     default:
-      throw new Error(`unsupported nook method '${request.method}'`);
+      throw new Error(`unsupported nook method '${method}'`);
   }
 }
 
@@ -376,13 +366,40 @@ function executeNookProgram(
   signal: AbortSignal,
   timeoutMs: number,
 ) {
-  return executeCodeModeWorker({
-    sandboxRunnerUrl,
-    workerData: { code, docs: documentation },
+  const method =
+    (name: string): TauCodeModeHandler =>
+    async (args, context) =>
+      await handleNookRequest(name, args, deps, config, backend, context.signal);
+  return executeInternalCodeMode({
+    name: TOOL_NAME_NOOK,
+    documentation,
+    api: {
+      skill: method("skill"),
+      sites: {
+        list: method("sites.list"),
+        copy: method("sites.copy"),
+        deploy: method("sites.deploy"),
+        delete: method("sites.delete"),
+      },
+      templates: {
+        list: method("templates.list"),
+        copy: method("templates.copy"),
+        save: method("templates.save"),
+        delete: method("templates.delete"),
+      },
+      kv: {
+        get: method("kv.get"),
+        getToFile: method("kv.getToFile"),
+        put: method("kv.put"),
+        putFromFile: method("kv.putFromFile"),
+        delete: method("kv.delete"),
+        list: method("kv.list"),
+      },
+    },
+    code,
+    backend,
     signal,
     timeoutMs,
-    handleRequest: (request, requestSignal) =>
-      handleNookRequest(request, deps, config, backend, requestSignal),
   });
 }
 
@@ -398,7 +415,6 @@ export function createNookToolDefinition(
   const timeoutMs = deps.timeoutMs ?? NOOK_CODE_MODE_TIMEOUT_MS;
   const implementation: CodeModeToolImplementation<NookArgs> = {
     schema: NOOK_TOOL,
-    outputPolicy: { maxTokens: NOOK_CODE_MODE_OUTPUT_TOKENS },
     timeoutMs,
     parseArguments: parseNookArguments,
     getBlockedReason: () => (config.nook ? undefined : "nook is not configured"),

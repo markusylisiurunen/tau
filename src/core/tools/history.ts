@@ -8,15 +8,14 @@ import {
   buildCodeModeToolDescription,
   type CodeModeToolImplementation,
   createCodeModeToolDefinition,
+  executeInternalCodeMode,
   type ParsedCodeModeArguments,
 } from "./code_mode.js";
-import { type CodeModeBridgeRequest, executeCodeModeWorker } from "./code_mode_worker.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import type { AgentTool } from "./registry.js";
 import { TOOL_NAME_HISTORY } from "./tool_names.js";
 
 const HISTORY_CODE_MODE_TIMEOUT_MS = 60_000;
-const HISTORY_CODE_MODE_OUTPUT_TOKENS = 8_192;
 
 const HISTORY_DESCRIPTION = buildCodeModeToolDescription({
   sdkGlobal: "history",
@@ -70,8 +69,6 @@ const documentation = readFileSync(
   new URL("../static/code_mode/history/documentation.md", import.meta.url),
   "utf8",
 );
-const sandboxRunnerUrl = new URL("../static/code_mode/history/sandbox_runner.mjs", import.meta.url);
-
 function parseHistoryArguments(raw: unknown): ParsedCodeModeArguments<HistoryArgs> {
   const rawCode =
     typeof raw === "object" && raw !== null && typeof (raw as { code?: unknown }).code === "string"
@@ -99,40 +96,30 @@ function parseHistoryArguments(raw: unknown): ParsedCodeModeArguments<HistoryArg
   };
 }
 
-function parseBridgeArguments(request: CodeModeBridgeRequest): unknown[] {
-  let args: unknown;
-  try {
-    args = JSON.parse(request.argsJson);
-  } catch {
-    throw new Error("invalid history bridge arguments");
-  }
-  if (!Array.isArray(args) || args.length !== 1) {
-    throw new Error(`history.${request.method} expects one options object`);
-  }
-  return args;
-}
-
 async function handleHistoryRequest(
-  request: CodeModeBridgeRequest,
+  method: "search" | "read",
+  args: unknown[],
   history: HistoryQuery,
   signal: AbortSignal,
 ): Promise<unknown> {
-  const args = parseBridgeArguments(request);
-  if (request.method === "search") {
+  if (args.length !== 1) {
+    throw new Error(`history.${method} expects one options object`);
+  }
+  if (method === "search") {
     const parsed = searchInputSchema.safeParse(args[0] ?? {});
     if (!parsed.success) {
       throw new Error(`Invalid history.search options: ${formatZodError(parsed.error)}`);
     }
     return await history.search(parsed.data, signal);
   }
-  if (request.method === "read") {
+  if (method === "read") {
     const parsed = readInputSchema.safeParse(args[0]);
     if (!parsed.success) {
       throw new Error(`Invalid history.read options: ${formatZodError(parsed.error)}`);
     }
     return await history.read(parsed.data, signal);
   }
-  throw new Error(`unsupported history method '${request.method}'`);
+  throw new Error(`unsupported history method '${method}'`);
 }
 
 export function createHistoryToolDefinition(
@@ -141,17 +128,20 @@ export function createHistoryToolDefinition(
 ): AgentTool {
   const implementation: CodeModeToolImplementation<HistoryArgs> = {
     schema: HISTORY_TOOL,
-    outputPolicy: { maxTokens: HISTORY_CODE_MODE_OUTPUT_TOKENS },
     timeoutMs: HISTORY_CODE_MODE_TIMEOUT_MS,
     parseArguments: parseHistoryArguments,
-    execute: async ({ code, signal }) =>
-      executeCodeModeWorker({
-        sandboxRunnerUrl,
-        workerData: { code, docs: documentation },
+    execute: async ({ code, signal, backend: executionBackend }) =>
+      executeInternalCodeMode({
+        name: TOOL_NAME_HISTORY,
+        documentation,
+        api: {
+          search: (args, context) => handleHistoryRequest("search", args, history, context.signal),
+          read: (args, context) => handleHistoryRequest("read", args, history, context.signal),
+        },
+        code,
+        backend: executionBackend,
         signal,
         timeoutMs: HISTORY_CODE_MODE_TIMEOUT_MS,
-        handleRequest: (request, requestSignal) =>
-          handleHistoryRequest(request, history, requestSignal),
       }),
   };
   return createCodeModeToolDefinition(backend, implementation);

@@ -1229,12 +1229,12 @@ describe("nook code-mode tool", () => {
     const tool = createNookTool(backend, { createClient });
     const result = await runNookCode(
       tool,
-      "await Promise.all(Array.from({ length: 5 }, () => nook.sites.list()))",
+      "await Promise.all(Array.from({ length: 9 }, () => nook.sites.list()))",
     );
 
     expect(result.toolResult.outcome).toBe("failed");
-    expect(getToolText(result)).toContain("exceeded 4 concurrent bridge requests");
-    expect(createClient).toHaveBeenCalledTimes(4);
+    expect(getToolText(result)).toContain("exceeded 8 concurrent bridge requests");
+    expect(createClient).toHaveBeenCalledTimes(8);
   });
 
   it("rejects programs beyond the total bridge request budget", async () => {
@@ -1243,12 +1243,12 @@ describe("nook code-mode tool", () => {
     const tool = createNookTool(backend, { createClient });
     const result = await runNookCode(
       tool,
-      "for (let index = 0; index < 65; index += 1) await nook.sites.list()",
+      "for (let index = 0; index < 129; index += 1) await nook.sites.list()",
     );
 
     expect(result.toolResult.outcome).toBe("failed");
-    expect(getToolText(result)).toContain("exceeded 64 bridge requests");
-    expect(createClient).toHaveBeenCalledTimes(64);
+    expect(getToolText(result)).toContain("exceeded 128 bridge requests");
+    expect(createClient).toHaveBeenCalledTimes(128);
   });
 
   it("cancels and settles Nook requests before returning", async () => {

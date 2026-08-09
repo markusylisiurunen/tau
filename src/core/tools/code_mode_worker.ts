@@ -4,12 +4,12 @@ import { Worker } from "node:worker_threads";
 import { truncateToBytesFromEnd } from "../utils/truncate.js";
 import { type BashExecutionResult, DEFAULT_COMMAND_CAPTURE_BYTES } from "./execution_backend.js";
 
-const MAX_BRIDGE_REQUESTS = 64;
-const MAX_CONCURRENT_BRIDGE_REQUESTS = 4;
+export const CODE_MODE_MAX_BRIDGE_REQUESTS = 128;
+export const CODE_MODE_MAX_CONCURRENT_BRIDGE_REQUESTS = 8;
 
 export type CodeModeBridgeRequest = {
   id: number;
-  method: string;
+  methodId: number;
   argsJson: string;
 };
 
@@ -42,7 +42,9 @@ function isWorkerRequest(value: unknown): value is CodeModeWorkerRequest {
     typeof request.id === "number" &&
     Number.isSafeInteger(request.id) &&
     request.id > 0 &&
-    typeof request.method === "string" &&
+    typeof request.methodId === "number" &&
+    Number.isSafeInteger(request.methodId) &&
+    request.methodId >= 0 &&
     typeof request.argsJson === "string"
   );
 }
@@ -142,20 +144,22 @@ export function executeCodeModeWorker(
         return;
       }
       bridgeRequestCount += 1;
-      if (bridgeRequestCount > MAX_BRIDGE_REQUESTS) {
-        failWorker(new Error(`code-mode sandbox exceeded ${MAX_BRIDGE_REQUESTS} bridge requests`));
+      if (bridgeRequestCount > CODE_MODE_MAX_BRIDGE_REQUESTS) {
+        failWorker(
+          new Error(`code-mode sandbox exceeded ${CODE_MODE_MAX_BRIDGE_REQUESTS} bridge requests`),
+        );
         return;
       }
-      if (inFlightRequests.size >= MAX_CONCURRENT_BRIDGE_REQUESTS) {
+      if (inFlightRequests.size >= CODE_MODE_MAX_CONCURRENT_BRIDGE_REQUESTS) {
         failWorker(
           new Error(
-            `code-mode sandbox exceeded ${MAX_CONCURRENT_BRIDGE_REQUESTS} concurrent bridge requests`,
+            `code-mode sandbox exceeded ${CODE_MODE_MAX_CONCURRENT_BRIDGE_REQUESTS} concurrent bridge requests`,
           ),
         );
         return;
       }
       const request = options.handleRequest(message, requestSignal).then(
-        (value) => postResponse({ type: "response", id: message.id, ok: true, value }),
+        (valueJson) => postResponse({ type: "response", id: message.id, ok: true, valueJson }),
         (error) =>
           postResponse({
             type: "response",

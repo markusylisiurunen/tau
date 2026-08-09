@@ -183,6 +183,46 @@ describe("command client tools", () => {
     );
   });
 
+  it("bounds incomplete protocol frames independently of process capture", async () => {
+    const spawn = vi.fn(async () => createSpawnResult({ stdout: "x".repeat(1024 * 1024 + 1) }));
+    const [tool] = createCommandClientTools([createConfig()], createDeps(spawn));
+
+    await expect(tool.execute({ message: "hello" }, createContext())).rejects.toThrow(
+      "exceeded the 1048576-byte protocol frame limit",
+    );
+  });
+
+  it("limits execution requests to eight active operations", async () => {
+    const script = [
+      `import { runTauClientToolCommand } from ${JSON.stringify(commandModuleUrl)};`,
+      "await runTauClientToolCommand(async (_args, context) => {",
+      "  await Promise.all(Array.from({ length: 9 }, (_, index) =>",
+      '    context.executionEnvironment.exec("sleep", { args: [String(index)] }),',
+      "  ));",
+      '  return "done";',
+      "});",
+    ].join("\n");
+    const [tool] = createCommandClientTools([
+      createConfig({
+        command: process.execPath,
+        args: ["--input-type=module", "--eval", script],
+      }),
+    ]);
+    const executionEnvironment = {
+      exec: vi.fn(
+        (_command, { signal }) =>
+          new Promise((_resolve, reject) => {
+            signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+          }),
+      ),
+    };
+
+    await expect(
+      tool.execute({ message: "hello" }, createContext({ executionEnvironment })),
+    ).rejects.toThrow("exceeded the 8-execution concurrency limit");
+    expect(executionEnvironment.exec).toHaveBeenCalledTimes(8);
+  });
+
   it("rejects invalid protocol output", async () => {
     const invalidJsonSpawn = vi.fn(async () => createSpawnResult({ stdout: "done\n" }));
     const invalidShapeSpawn = vi.fn(async () =>

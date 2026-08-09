@@ -169,6 +169,7 @@ export async function runTauClientToolCommand(handler: TauClientToolCommandHandl
     }
   >();
   let inputEnded = false;
+  let stoppingInput = false;
   let requestSequence = 0;
   let writeQueue = Promise.resolve();
 
@@ -208,8 +209,12 @@ export async function runTauClientToolCommand(handler: TauClientToolCommandHandl
         while (true) {
           const next = await iterator.next();
           if (next.done) {
+            if (stoppingInput) return;
+            const error = new Error("client-tool command input closed during execution");
             inputEnded = true;
-            rejectPending(new Error("client-tool command input closed during execution"));
+            controller.abort(error);
+            rejectPending(error);
+            rejectInput(error);
             return;
           }
           const response = parseExecResponseFrame(next.value);
@@ -224,7 +229,9 @@ export async function runTauClientToolCommand(handler: TauClientToolCommandHandl
           }
         }
       } catch (error) {
+        if (stoppingInput) return;
         inputEnded = true;
+        controller.abort(error);
         rejectPending(error);
         rejectInput(error);
       }
@@ -302,6 +309,7 @@ export async function runTauClientToolCommand(handler: TauClientToolCommandHandl
     process.stderr.write(`${message}\n`);
     process.exitCode = 1;
   } finally {
+    stoppingInput = true;
     rejectPending(new Error("client-tool command finished"));
     lines.close();
     process.stdin.pause();

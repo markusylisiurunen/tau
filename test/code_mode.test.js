@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
@@ -251,7 +251,7 @@ describe("public code-mode runtime", () => {
 });
 
 describe("code-mode command adapter", () => {
-  it("reads and writes the command client-tool framing", () => {
+  it("reads and writes the command client-tool framing", async () => {
     expect(typeof runTauCodeModeCommand).toBe("function");
     const moduleUrl = pathToFileURL(resolve("dist/code_mode/index.js")).href;
     const script = [
@@ -272,11 +272,7 @@ describe("code-mode command adapter", () => {
         code: 'console.log(await linear.echo("hello"))',
       },
     };
-    const result = spawnSync(process.execPath, ["--eval", script], {
-      cwd: process.cwd(),
-      encoding: "utf8",
-      input: JSON.stringify(request),
-    });
+    const result = await runCommandWithOpenStdin(script, request);
 
     expect(result.status).toBe(0);
     expect(result.stderr).toBe("");
@@ -286,4 +282,56 @@ describe("code-mode command adapter", () => {
       content: JSON.stringify({ value: "hello", invocation }),
     });
   });
+
+  it("aborts the handler when protocol input closes", () => {
+    const moduleUrl = pathToFileURL(resolve("dist/sdk/index.js")).href;
+    const script = [
+      `import { runTauClientToolCommand } from ${JSON.stringify(moduleUrl)};`,
+      "await runTauClientToolCommand(async (_args, context) => {",
+      "  await new Promise((_resolve, reject) => {",
+      '    context.signal.addEventListener("abort", () => reject(context.signal.reason), { once: true });',
+      "  });",
+      '  return "unreachable";',
+      "});",
+    ].join("\n");
+    const request = {
+      version: 2,
+      type: "invoke",
+      sessionId: invocation.sessionId,
+      callId: invocation.callId,
+      arguments: {},
+    };
+    const result = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      input: `${JSON.stringify(request)}\n`,
+      timeout: 2000,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.signal).toBeNull();
+    expect(result.stderr).toContain("client-tool command input closed during execution");
+  });
 });
+
+function runCommandWithOpenStdin(script, request) {
+  return new Promise((resolveResult, rejectResult) => {
+    const child = spawn(process.execPath, ["--eval", script], {
+      cwd: process.cwd(),
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("error", rejectResult);
+    child.on("close", (status, signal) => resolveResult({ status, signal, stdout, stderr }));
+    child.stdin.write(`${JSON.stringify(request)}\n`);
+  });
+}

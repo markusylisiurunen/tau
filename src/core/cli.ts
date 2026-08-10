@@ -6,7 +6,6 @@ export type CliOptions = {
   debug: boolean;
   personaId?: string;
   reasoningOverride?: ReasoningEffort;
-  caffeinated: boolean;
   noAgentContextFiles: boolean;
   noClientTools: boolean;
 };
@@ -93,7 +92,6 @@ export function parseCliArgs(argv: string[]): CliOptions {
   let debug = false;
   let personaId: string | undefined;
   let reasoningOverride: ReasoningEffort | undefined;
-  let caffeinated = false;
   let noAgentContextFiles = false;
   let noClientTools = false;
 
@@ -117,11 +115,6 @@ export function parseCliArgs(argv: string[]): CliOptions {
 
     if (arg === "--no-client-tools") {
       noClientTools = true;
-      continue;
-    }
-
-    if (arg === "--caffeinated") {
-      caffeinated = true;
       continue;
     }
 
@@ -151,7 +144,6 @@ export function parseCliArgs(argv: string[]): CliOptions {
     debug,
     personaId,
     reasoningOverride,
-    caffeinated,
     noAgentContextFiles,
     noClientTools,
   };
@@ -186,7 +178,6 @@ export function printHelp(personas: Persona[]): void {
       `  --persona, -p <id>[:<level>]  start with a persona. available: ${personaList}.`,
       `                                optionally specify reasoning level. levels: ${reasoningList}.`,
       `                                if not specified, uses resolved config defaultPersona.`,
-      "  --caffeinated                 keep macOS awake during active assistant turns in TUI mode (no-op on Linux).",
       "  --no-agent-context-files      disable AGENTS.md injection into the system prompt.",
       "  --no-client-tools             disable built-in and configured TUI client tools.",
       "",

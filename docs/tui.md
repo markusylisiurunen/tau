@@ -17,7 +17,7 @@ Tau creates a local execution environment rooted at that directory. A startup pe
 tau --persona gpt-5.6-sol-coder:high
 ```
 
-`-p` is the short form. `--no-agent-context-files` omits `AGENTS.md` and explicitly configured context files, and `--no-client-tools` prevents the TUI from advertising its built-in and configured [client tools](client-tools.md). On macOS, `--caffeinated` runs `caffeinate -i` while assistant turns are active. It is a no-op on Linux and is not an option for `tau attach`.
+`-p` is the short form. `--no-agent-context-files` omits `AGENTS.md` and explicitly configured context files, and `--no-client-tools` prevents the TUI from advertising its built-in and configured [client tools](client-tools.md).
 
 Piped stdin becomes the first message in a local TUI session:
 
@@ -191,7 +191,7 @@ The session host supplies ephemeral review agents, while the local tool owns its
 
 The TUI also advertises diff review as a client tool unless `--no-client-tools` is set. Manual `/diff` remains a TUI command even when model-facing client tools are disabled. See [client tools](client-tools.md) for attachment and multiple-client implications.
 
-## Use speech and keep-awake support
+## Use speech
 
 `/listen` and Ctrl+Y are currently macOS-only. Recording uses local `ffmpeg` with the AVFoundation audio input and stops when Ctrl+Y is pressed again, when Escape is pressed, or after five minutes. The transcript is inserted at the cursor for review and is not submitted automatically.
 
@@ -204,8 +204,6 @@ brew install ffmpeg
 Mistral is the default and needs `MISTRAL_API_KEY` or `apiKeys.mistral`. Set `speechToText.provider` to `gemini` to use `GEMINI_API_KEY` or `apiKeys.google` instead. These settings and credentials are read by the TUI process, including during remote attachment.
 
 `/speak` is also macOS-only. It rewrites the last assistant response for speech, generates audio with Gemini, and plays it through the local `afplay` command. It requires `GEMINI_API_KEY` or `apiKeys.google`, runs only while the session is idle, and can be stopped with Escape.
-
-`tau --caffeinated` keeps macOS awake only during active assistant turns in that local TUI. It does not keep a remote host awake, and it is not accepted by `tau attach`.
 
 ## Reload the right component
 

@@ -10,16 +10,6 @@ describe("cli", () => {
     expect(() => parseCliArgs(["--bogus"])).toThrow("unknown option: --bogus");
   });
 
-  it("parses --caffeinated", () => {
-    const options = parseCliArgs(["--caffeinated"]);
-    expect(options.caffeinated).toBe(true);
-  });
-
-  it("defaults caffeinated to false", () => {
-    const options = parseCliArgs([]);
-    expect(options.caffeinated).toBe(false);
-  });
-
   it("parses --no-client-tools", () => {
     const options = parseCliArgs(["--no-client-tools"]);
     expect(options.noClientTools).toBe(true);

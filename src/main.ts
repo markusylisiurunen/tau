@@ -1080,18 +1080,6 @@ if ((isRpcSubcommand || isServeSubcommand) && cli.debug) {
   process.exit(1);
 }
 
-if (isRpcSubcommand && cli.caffeinated) {
-  // eslint-disable-next-line no-console
-  console.error("--caffeinated is only supported in TUI mode.");
-  process.exit(1);
-}
-
-if (isServeSubcommand && cli.caffeinated) {
-  // eslint-disable-next-line no-console
-  console.error("--caffeinated is only supported in TUI mode.");
-  process.exit(1);
-}
-
 if ((isRpcSubcommand || isServeSubcommand) && cli.noClientTools) {
   // eslint-disable-next-line no-console
   console.error("--no-client-tools is only supported in TUI mode.");
@@ -1284,7 +1272,6 @@ const app = await SessionChatApp.open({
   initialUserMessage,
   config,
   defaultDiffTool,
-  caffeinated: cli.caffeinated,
 });
 sessionChatApp = app;
 

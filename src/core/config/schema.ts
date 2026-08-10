@@ -127,11 +127,14 @@ export type TelegramBotConfig = {
 export type TelegramBotConfigMap = Record<string, TelegramBotConfig>;
 
 type TelegramProjectBaseConfig = {
-  workspaceRoot?: string;
   description?: string;
 };
 
-export type TelegramRepositoryProjectConfig = TelegramProjectBaseConfig & {
+type TelegramManagedProjectBaseConfig = TelegramProjectBaseConfig & {
+  workspaceRoot?: string;
+};
+
+export type TelegramRepositoryProjectConfig = TelegramManagedProjectBaseConfig & {
   repo: string;
   ref?: string;
   workingDirectory?: string;
@@ -139,7 +142,13 @@ export type TelegramRepositoryProjectConfig = TelegramProjectBaseConfig & {
   noAgentContextFiles?: boolean;
 };
 
-export type TelegramCompositeProjectConfig = TelegramProjectBaseConfig & {
+export type TelegramDirectoryProjectConfig = TelegramProjectBaseConfig & {
+  directory: string;
+  persona?: string;
+  noAgentContextFiles?: boolean;
+};
+
+export type TelegramCompositeProjectConfig = TelegramManagedProjectBaseConfig & {
   projectIds: string[];
   persona: string;
   instructions?: string;
@@ -147,6 +156,7 @@ export type TelegramCompositeProjectConfig = TelegramProjectBaseConfig & {
 
 export type TelegramProjectConfig =
   | TelegramRepositoryProjectConfig
+  | TelegramDirectoryProjectConfig
   | TelegramCompositeProjectConfig;
 
 type ConfigDiagnostics = {

@@ -1396,6 +1396,207 @@ describe("telegram session manager", () => {
     expect(cleanupWorkspacePath).toHaveBeenCalledWith("/tmp/ws/demo");
   });
 
+  it("shares and preserves a persistent directory across sessions", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "tau-telegram-persistent-directory-"));
+    const directory = join(tempRoot, "me");
+    await mkdir(directory, { recursive: true });
+    await writeFile(join(directory, "notes.txt"), "keep");
+
+    const clientHarness = createClientHarness();
+    const createClient = vi.fn(async () => clientHarness.client);
+    const cleanupWorkspacePath = vi.fn(async () => {});
+    const manager = createTelegramSessionManager({
+      projects: {
+        me: {
+          directory,
+          persona: "gpt-5.6-sol-coder:high",
+          noAgentContextFiles: true,
+        },
+      },
+      workspaceRoot: join(tempRoot, "managed"),
+      createClient,
+      cleanupWorkspacePath,
+    });
+
+    try {
+      const first = await manager.createSession({ projectId: "me" });
+      const second = await manager.createSession({ projectId: "me" });
+      await waitFor(
+        () =>
+          manager.getSession(first.id)?.state === "waiting-input" &&
+          manager.getSession(second.id)?.state === "waiting-input",
+      );
+
+      expect(createClient).toHaveBeenCalledTimes(2);
+      expect(createClient).toHaveBeenNthCalledWith(1, {
+        cwd: directory,
+        persona: "gpt-5.6-sol-coder:high",
+        noAgentContextFiles: true,
+      });
+      expect(createClient).toHaveBeenNthCalledWith(2, {
+        cwd: directory,
+        persona: "gpt-5.6-sol-coder:high",
+        noAgentContextFiles: true,
+      });
+      expect(clientHarness.client.sessions.create).toHaveBeenCalledTimes(2);
+      expect(clientHarness.client.sessions.create).toHaveBeenCalledWith({
+        executionEnvironment: { kind: "local", cwd: directory },
+        attributes: { source: "telegram", project: "me" },
+      });
+
+      await manager.closeSession(first.id);
+      await manager.closeSession(second.id);
+
+      expect(cleanupWorkspacePath).not.toHaveBeenCalled();
+      expect(await readFile(join(directory, "notes.txt"), "utf8")).toBe("keep");
+    } finally {
+      await manager.close();
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("recovers a persisted session in its configured persistent directory", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "tau-telegram-persistent-recovery-"));
+    const directory = join(tempRoot, "me");
+    const persistencePath = join(tempRoot, "sessions.json");
+    await mkdir(directory, { recursive: true });
+    await writeFile(
+      persistencePath,
+      `${JSON.stringify({
+        version: 1,
+        sessions: [
+          {
+            id: "active",
+            projectId: "me",
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+            tauSessionId: "rpc-1",
+          },
+        ],
+      })}\n`,
+      "utf8",
+    );
+
+    const clientHarness = createClientHarness();
+    clientHarness.session.snapshot.mockResolvedValue(
+      createProtocolSnapshot({
+        sessionId: "rpc-1",
+        revision: 1,
+        executionEnvironment: { kind: "local", cwd: directory, home: tempRoot },
+      }),
+    );
+    const createClient = vi.fn(async () => clientHarness.client);
+    const prepareWorkspace = vi.fn();
+    const manager = createTelegramSessionManager({
+      projects: { me: { directory } },
+      workspaceRoot: join(tempRoot, "managed"),
+      persistencePath,
+      prepareWorkspace,
+      createClient,
+    });
+
+    try {
+      await manager.initialize();
+
+      expect(createClient).toHaveBeenCalledWith({ cwd: directory });
+      expect(prepareWorkspace).not.toHaveBeenCalled();
+      expect(clientHarness.client.sessions.observe).toHaveBeenCalledWith("rpc-1");
+      expect(manager.getSession("active")).toEqual(
+        expect.objectContaining({ workspacePath: directory, state: "waiting-input" }),
+      );
+    } finally {
+      await manager.close();
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects recovery when the configured persistent directory changed", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "tau-telegram-persistent-mismatch-"));
+    const persistedDirectory = join(tempRoot, "old");
+    const configuredDirectory = join(tempRoot, "new");
+    const persistencePath = join(tempRoot, "sessions.json");
+    await Promise.all([mkdir(persistedDirectory), mkdir(configuredDirectory)]);
+    await writeFile(
+      persistencePath,
+      `${JSON.stringify({
+        version: 1,
+        sessions: [
+          {
+            id: "active",
+            projectId: "me",
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+            tauSessionId: "rpc-1",
+          },
+        ],
+      })}\n`,
+      "utf8",
+    );
+
+    const clientHarness = createClientHarness();
+    clientHarness.session.snapshot.mockResolvedValue(
+      createProtocolSnapshot({
+        sessionId: "rpc-1",
+        revision: 1,
+        executionEnvironment: { kind: "local", cwd: persistedDirectory, home: tempRoot },
+      }),
+    );
+    const createClient = vi.fn(async () => clientHarness.client);
+    const manager = createTelegramSessionManager({
+      projects: { me: { directory: configuredDirectory } },
+      workspaceRoot: join(tempRoot, "managed"),
+      persistencePath,
+      createClient,
+    });
+
+    try {
+      await manager.initialize();
+
+      expect(createClient).toHaveBeenCalledWith({ cwd: configuredDirectory });
+      expect(clientHarness.client.sessions.observe).toHaveBeenCalledWith("rpc-1");
+      expect(manager.getSession("active")).toEqual(
+        expect.objectContaining({
+          workspacePath: configuredDirectory,
+          state: "failed",
+          error: `recovery failed: persisted Tau session directory '${persistedDirectory}' does not match configured project directory '${configuredDirectory}'`,
+        }),
+      );
+      expect(clientHarness.session.interrupt).toHaveBeenCalledTimes(1);
+      expect(clientHarness.session.unobserve).toHaveBeenCalledTimes(1);
+      expect(clientHarness.client.close).toHaveBeenCalledTimes(1);
+    } finally {
+      await manager.close();
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves configured persistent directories during startup cleanup", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "tau-telegram-persistent-cleanup-"));
+    const workspaceRoot = join(tempRoot, "workspaces");
+    const directory = join(workspaceRoot, "me");
+    const persistencePath = join(tempRoot, "sessions.json");
+    await mkdir(directory, { recursive: true });
+    await writeFile(join(directory, "notes.txt"), "keep");
+    await mkdir(join(workspaceRoot, "orphan"), { recursive: true });
+
+    const manager = createTelegramSessionManager({
+      projects: { me: { directory } },
+      workspaceRoot,
+      persistencePath,
+      createClient: vi.fn(),
+    });
+
+    try {
+      await manager.initialize();
+
+      expect(await readFile(join(directory, "notes.txt"), "utf8")).toBe("keep");
+      expect(await readdir(workspaceRoot)).toEqual(["me"]);
+    } finally {
+      await manager.close();
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("does not close queued or preparing sessions in bulk", async () => {
     const workspaceDeferred = deferred();
 

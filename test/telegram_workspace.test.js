@@ -86,6 +86,47 @@ describe("telegram workspace", () => {
     ]);
   });
 
+  it("reuses a persistent project directory without modifying it", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const directory = join(workspaceRoot, "me");
+    await mkdir(directory, { recursive: true });
+    await writeFile(join(directory, "notes.txt"), "keep");
+
+    const result = await prepareWorkspace({
+      sessionId: "abc12345",
+      projectId: "me",
+      project: { directory },
+      projects: {},
+      workspaceRoot,
+      defaultWorkspaceRoot: workspaceRoot,
+    });
+
+    expect(result).toEqual({
+      workspacePath: directory,
+      sessionCwd: directory,
+      provisionTargets: [],
+    });
+    expect(await readFile(join(directory, "notes.txt"), "utf8")).toBe("keep");
+    expect(spawnWithCaptureMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a missing persistent project directory", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const directory = join(workspaceRoot, "missing");
+
+    await expect(
+      prepareWorkspace({
+        sessionId: "abc12345",
+        projectId: "me",
+        project: { directory },
+        projects: {},
+        workspaceRoot,
+        defaultWorkspaceRoot: workspaceRoot,
+      }),
+    ).rejects.toThrow(`project directory does not exist: ${directory}`);
+    expect(spawnWithCaptureMock).not.toHaveBeenCalled();
+  });
+
   it("clones repository through a persistent cache and logs phase durations", async () => {
     const workspaceRoot = await createWorkspaceRoot();
     const cachePath = join(`${workspaceRoot}-repo-cache`, "tau.git");

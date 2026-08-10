@@ -65,6 +65,46 @@ describe("telegram cli", () => {
     });
   });
 
+  it("loads persistent directory projects", () => {
+    const { dir, path } = writeConfig({
+      bots: {
+        ops: {
+          botToken: "token",
+          allowedProjectIds: ["me"],
+        },
+      },
+      projects: {
+        me: {
+          directory: "workspaces/me",
+          persona: "gpt-5.6-sol-coder:high",
+          noAgentContextFiles: true,
+        },
+      },
+    });
+
+    expect(loadTelegramConfig(path).projects.me).toEqual({
+      directory: join(dir, "workspaces/me"),
+      persona: "gpt-5.6-sol-coder:high",
+      noAgentContextFiles: true,
+    });
+  });
+
+  it("rejects projects with multiple workspace sources", () => {
+    const { path } = writeConfig({
+      bots: { ops: { botToken: "token" } },
+      projects: {
+        me: {
+          repo: "owner/repo",
+          directory: "/home/tau/me",
+        },
+      },
+    });
+
+    expect(() => loadTelegramConfig(path)).toThrow(
+      "projects.me must define exactly one of repo, directory, or projectIds",
+    );
+  });
+
   it("loads composite projects that reference repository projects", () => {
     const { path } = writeConfig({
       bots: {
@@ -129,6 +169,21 @@ describe("telegram cli", () => {
     });
     expect(() => loadTelegramConfig(rejected.path)).toThrow(
       "bots.ops exposes 93 projects, exceeding Telegram's 100-command limit with built-in commands",
+    );
+  });
+
+  it("rejects composite projects that reference a persistent directory", () => {
+    const { path } = writeConfig({
+      bots: { ops: { botToken: "token" } },
+      projects: {
+        me: { directory: "/home/tau/me" },
+        one: { repo: "owner/one" },
+        combined: { projectIds: ["me", "one"], persona: "gpt-5.6-sol-coder" },
+      },
+    });
+
+    expect(() => loadTelegramConfig(path)).toThrow(
+      "projects.combined.projectIds must reference repository projects, not directory project 'me'",
     );
   });
 

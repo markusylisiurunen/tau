@@ -22,7 +22,7 @@ import type {
   SessionProtocolUnobserveResult,
 } from "../../protocol/session_protocol.js";
 import { TauSessionProtocolResponseError } from "../../transport/errors.js";
-import type { TelegramProjectConfig } from "../config/schema.js";
+import type { TelegramDirectoryProjectConfig, TelegramProjectConfig } from "../config/schema.js";
 import { extractAssistantText } from "../utils/messages.js";
 import { normalizeRepositoryReference } from "../utils/repository.js";
 import { formatTauUserText } from "../utils/user_metadata.js";
@@ -225,6 +225,12 @@ const ACTIVE_STATES: Set<TelegramSessionState> = new Set([
   "running",
   "waiting-input",
 ]);
+
+function isDirectoryProject(
+  project: TelegramProjectConfig,
+): project is TelegramDirectoryProjectConfig {
+  return "directory" in project;
+}
 
 function elapsedMs(startTime: bigint): number {
   return Number((process.hrtime.bigint() - startTime) / NANOSECONDS_PER_MILLISECOND);
@@ -891,6 +897,11 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     const preservedWorkspacePaths: string[] = [];
 
     for (const entry of this.sessions.values()) {
+      if (isDirectoryProject(entry.project)) {
+        preservedWorkspacePaths.push(entry.project.directory);
+        continue;
+      }
+
       const workspaceRoot = resolve(entry.project.workspaceRoot ?? this.workspaceRoot);
       workspaceRoots.add(workspaceRoot);
       preservedWorkspacePaths.push(
@@ -903,7 +914,9 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     }
 
     for (const project of Object.values(this.projects)) {
-      if (project.workspaceRoot) {
+      if (isDirectoryProject(project)) {
+        preservedWorkspacePaths.push(project.directory);
+      } else if (project.workspaceRoot) {
         workspaceRoots.add(resolve(project.workspaceRoot));
       }
     }
@@ -943,11 +956,16 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       throw new Error("persisted session is missing its Tau session id");
     }
 
-    let workspacePath = resolveWorkspacePath({
-      workspaceRoot: entry.project.workspaceRoot ?? this.workspaceRoot,
-      projectId: entry.record.projectId,
-      sessionId: entry.record.id,
-    });
+    const projectWorkspaceRoot = isDirectoryProject(entry.project)
+      ? this.workspaceRoot
+      : (entry.project.workspaceRoot ?? this.workspaceRoot);
+    let workspacePath = isDirectoryProject(entry.project)
+      ? entry.project.directory
+      : resolveWorkspacePath({
+          workspaceRoot: projectWorkspaceRoot,
+          projectId: entry.record.projectId,
+          sessionId: entry.record.id,
+        });
     let sessionCwd = resolve(
       workspacePath,
       "repo" in entry.project ? (entry.project.workingDirectory ?? ".") : ".",
@@ -960,7 +978,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
         projectId: entry.record.projectId,
         project: entry.project,
         projects: this.projects,
-        workspaceRoot: entry.project.workspaceRoot ?? this.workspaceRoot,
+        workspaceRoot: projectWorkspaceRoot,
         defaultWorkspaceRoot: this.workspaceRoot,
         signal: entry.abortController.signal,
         onLog: (workspaceLog) => {
@@ -982,10 +1000,20 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     entry.client = client;
     const tauSession = await client.sessions.observe(tauSessionId);
     entry.tauSession = tauSession;
+    const snapshot = await tauSession.snapshot();
+    if (
+      isDirectoryProject(entry.project) &&
+      (snapshot.executionEnvironment.kind !== "local" ||
+        resolve(snapshot.executionEnvironment.cwd) !== sessionCwd)
+    ) {
+      throw new Error(
+        `persisted Tau session directory '${snapshot.executionEnvironment.cwd}' does not match configured project directory '${sessionCwd}'`,
+      );
+    }
     entry.unsubscribeClientEvents = tauSession.onDelta((event) => {
       this.handleClientEvent(entry, event);
     });
-    this.initializeRecoveredSnapshotDeliveryState(entry, await tauSession.snapshot());
+    this.initializeRecoveredSnapshotDeliveryState(entry, snapshot);
     entry.record.error = undefined;
     if (entry.activeTurnIds.size > 0) {
       this.setState(entry, "running");
@@ -1046,7 +1074,9 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
         projectId: entry.record.projectId,
         project: entry.project,
         projects: this.projects,
-        workspaceRoot: entry.project.workspaceRoot ?? this.workspaceRoot,
+        workspaceRoot: isDirectoryProject(entry.project)
+          ? this.workspaceRoot
+          : (entry.project.workspaceRoot ?? this.workspaceRoot),
         defaultWorkspaceRoot: this.workspaceRoot,
         signal: entry.abortController.signal,
         onLog: (workspaceLog) => {
@@ -1625,10 +1655,12 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     const configuredRepositories =
       "repo" in entry.project
         ? [entry.project.repo]
-        : entry.project.projectIds.flatMap((projectId) => {
-            const project = this.projects[projectId];
-            return project && "repo" in project ? [project.repo] : [];
-          });
+        : "projectIds" in entry.project
+          ? entry.project.projectIds.flatMap((projectId) => {
+              const project = this.projects[projectId];
+              return project && "repo" in project ? [project.repo] : [];
+            })
+          : [];
     const repositories = configuredRepositories.map(
       (repository) =>
         normalizeRepositoryReference(repository, { defaultHost: "github.com" }) ?? repository,
@@ -1645,7 +1677,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     if (entry.project.persona) {
       options.persona = entry.project.persona;
     }
-    if ("repo" in entry.project && entry.project.noAgentContextFiles !== undefined) {
+    if ("noAgentContextFiles" in entry.project && entry.project.noAgentContextFiles !== undefined) {
       options.noAgentContextFiles = entry.project.noAgentContextFiles;
     }
     return options;
@@ -1712,6 +1744,13 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
         await Promise.allSettled(pendingWork);
       }
 
+      if (isDirectoryProject(entry.project)) {
+        this.log(entry, "info", "persistent workspace preserved", {
+          workspacePath: entry.project.directory,
+        });
+        return;
+      }
+
       const workspacePath = this.resolveWorkspacePathForCleanup(entry);
 
       try {
@@ -1736,6 +1775,9 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
   private resolveWorkspacePathForCleanup(entry: SessionEntry): string {
     if (entry.record.workspacePath) {
       return entry.record.workspacePath;
+    }
+    if (isDirectoryProject(entry.project)) {
+      return entry.project.directory;
     }
 
     return resolveWorkspacePath({

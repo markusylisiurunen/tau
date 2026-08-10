@@ -16,10 +16,12 @@ import {
 import { TOOL_NAME_TAU_DOCS } from "./tool_names.js";
 
 const TAU_DOCS_DESCRIPTION = [
-  "Read the version-matched documentation shipped with Tau.",
-  "Use this when answering questions about Tau or before changing Tau configuration or content.",
-  "Begin with index.md, then follow the exact flat .md paths it references.",
-  "The documentation describes supported contracts, not the current effective configuration.",
+  "Read the user-facing documentation shipped with the running Tau version (the Tau host providing this tool, not Tau source code in the agent's workspace).",
+  "Use only when needed to operate or configure Tau, or when the user explicitly asks to consult Tau's documentation.",
+  "Do not call it merely because Tau is mentioned.",
+  "In a Tau source checkout, inspect source and tests instead for questions about implementation, built-in content, defaults, or current branch behavior.",
+  "The documentation does not report effective local configuration.",
+  "Begin with index.md, then follow its exact flat paths.",
 ].join(" ");
 
 const documentationRoot = new URL("../static/tau_docs/", import.meta.url);

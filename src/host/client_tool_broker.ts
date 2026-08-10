@@ -9,11 +9,7 @@ import {
   type ToolExecutionContext,
   type ToolExecutionOutcome,
 } from "../core/tools/registry.js";
-import {
-  TOOL_NAME_CREATE_GOAL,
-  TOOL_NAME_GET_GOAL,
-  TOOL_NAME_UPDATE_GOAL,
-} from "../core/tools/tool_names.js";
+import { HOST_TOOL_NAMES } from "../core/tools/tool_names.js";
 import { formatTokenEstimate } from "../core/utils/token.js";
 import type {
   SessionProtocolClientToolCallMessage,
@@ -24,22 +20,7 @@ import { SESSION_PROTOCOL_VERSION } from "../protocol/session_protocol.js";
 
 const DEFAULT_ACK_TIMEOUT_MS = 5_000;
 const DEFAULT_EXECUTION_TIMEOUT_MS = 60_000;
-const HOST_TOOL_NAMES = new Set([
-  "bash",
-  "write",
-  "edit",
-  "view_image",
-  "spawn_agent",
-  "send_input_to_agent",
-  "wait_for_agents",
-  "list_agents",
-  "interrupt_agent",
-  "web",
-  "nook",
-  TOOL_NAME_GET_GOAL,
-  TOOL_NAME_CREATE_GOAL,
-  TOOL_NAME_UPDATE_GOAL,
-]);
+const HOST_TOOL_NAME_SET = new Set<string>(HOST_TOOL_NAMES);
 
 export type ClientToolExecutionOutcome = (message: SessionProtocolClientToolCallMessage) => void;
 export type ClientToolCancelDispatch = (message: SessionProtocolClientToolCancelMessage) => void;
@@ -83,7 +64,7 @@ export class ClientToolBroker {
       if (names.has(tool.name)) {
         throw new Error(`duplicate client tool '${tool.name}'`);
       }
-      if (HOST_TOOL_NAMES.has(tool.name)) {
+      if (HOST_TOOL_NAME_SET.has(tool.name)) {
         throw new Error(`client tool '${tool.name}' duplicates a host tool`);
       }
       names.add(tool.name);

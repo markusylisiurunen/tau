@@ -33,3 +33,11 @@ export const TOOL_NAMES = [
 ] as const;
 
 export type ToolName = (typeof TOOL_NAMES)[number];
+
+export const HOST_TOOL_NAMES = [
+  ...TOOL_NAMES,
+  TOOL_NAME_TAU_DOCS,
+  TOOL_NAME_GET_GOAL,
+  TOOL_NAME_CREATE_GOAL,
+  TOOL_NAME_UPDATE_GOAL,
+] as const;

@@ -28,8 +28,12 @@ function resultText(result) {
 }
 
 describe("tau_docs tool", () => {
-  it("describes index-first version-matched documentation access", () => {
-    expect(TAU_DOCS_TOOL.description).toContain("version-matched");
+  it("describes scoped index-first documentation access", () => {
+    expect(TAU_DOCS_TOOL.description).toContain("running Tau version");
+    expect(TAU_DOCS_TOOL.description).toContain("Do not call it merely because Tau is mentioned");
+    expect(TAU_DOCS_TOOL.description).toContain(
+      "In a Tau source checkout, inspect source and tests instead",
+    );
     expect(TAU_DOCS_TOOL.description).toContain("Begin with index.md");
     expect(TAU_DOCS_TOOL.parameters.additionalProperties).toBe(false);
   });

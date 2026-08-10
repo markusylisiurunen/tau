@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { HOST_TOOL_NAMES } from "../src/core/tools/tool_names.ts";
 import { ClientToolBroker } from "../src/host/client_tool_broker.ts";
 
 function createToolCall(args = {}) {
@@ -26,26 +27,27 @@ async function runTool(tool, toolCall, signal = new AbortController().signal) {
 }
 
 describe("ClientToolBroker", () => {
-  it.each(["web", "nook", "get_goal", "create_goal", "update_goal"])(
-    "rejects client tools that duplicate the %s host tool",
-    (name) => {
-      const broker = new ClientToolBroker();
+  it("reserves history and tau_docs for the host", () => {
+    expect(HOST_TOOL_NAMES).toEqual(expect.arrayContaining(["history", "tau_docs"]));
+  });
 
-      expect(() =>
-        broker.registerClient({
-          tools: [
-            {
-              name,
-              description: `Conflicting ${name} tool.`,
-              parameters: { type: "object", properties: {}, additionalProperties: false },
-            },
-          ],
-          sendCall: vi.fn(),
-          sendCancel: vi.fn(),
-        }),
-      ).toThrow(`client tool '${name}' duplicates a host tool`);
-    },
-  );
+  it.each(HOST_TOOL_NAMES)("rejects client tools that duplicate the %s host tool", (name) => {
+    const broker = new ClientToolBroker();
+
+    expect(() =>
+      broker.registerClient({
+        tools: [
+          {
+            name,
+            description: `Conflicting ${name} tool.`,
+            parameters: { type: "object", properties: {}, additionalProperties: false },
+          },
+        ],
+        sendCall: vi.fn(),
+        sendCancel: vi.fn(),
+      }),
+    ).toThrow(`client tool '${name}' duplicates a host tool`);
+  });
 
   it("returns full client tool results with a truncated final UI event", async () => {
     const broker = new ClientToolBroker();

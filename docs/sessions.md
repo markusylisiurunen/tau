@@ -42,7 +42,7 @@ Pending queue and steering state survives client detach only while the hosted se
 
 ## Interrupt and retry
 
-Ordinary session interruption is cooperative and scoped to the main session’s active turn or maintenance work. It stops that model or tool workflow and records an interrupted assistant result where one exists. It does not stop independently running supervised subagents; select one with Alt+Down and use Ctrl+G, or call `session.interruptSubagent` from a protocol client. Host shutdown or session disposal cleans up those child runtimes. In the TUI, Escape interrupts client-local foreground work such as diff review, recording, or speech playback before requesting main-session interruption from the host.
+Ordinary session interruption is cooperative. It requests cancellation of the main session’s active turn, all direct executions, isolated model samples, and maintenance work. An interrupted turn records an interrupted assistant result where one exists. It does not stop independently running supervised subagents; select one with Alt+Down and use Ctrl+G, or call `session.interruptSubagent` from a protocol client. Host shutdown or session disposal cleans up those child runtimes. In the TUI, Escape interrupts client-local foreground work such as diff review, recording, or speech playback before requesting main-session interruption from the host.
 
 Retry runs another assistant turn from the current session history. It does not remove the interrupted or failed result, rewind context, or submit the previous user text again. This lets Tau continue from completed tool results without automatically rerunning them. In the TUI, press Enter twice on an empty editor while idle.
 

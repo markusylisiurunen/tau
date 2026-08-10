@@ -10,6 +10,10 @@ describe("cli", () => {
     expect(() => parseCliArgs(["--bogus"])).toThrow("unknown option: --bogus");
   });
 
+  it("rejects the removed rpc subcommand", () => {
+    expect(() => parseCliArgs(["rpc"])).toThrow("unexpected argument: rpc");
+  });
+
   it("parses --no-client-tools", () => {
     const options = parseCliArgs(["--no-client-tools"]);
     expect(options.noClientTools).toBe(true);
@@ -126,9 +130,9 @@ describe("cli", () => {
     }
   });
 
-  it.each(["rpc", "serve"])("rejects --debug in %s mode", (mode) => {
+  it("rejects --debug in serve mode", () => {
     const mainPath = resolve(process.cwd(), "dist/main.js");
-    const result = spawnSync(process.execPath, [mainPath, mode, "--debug"], {
+    const result = spawnSync(process.execPath, [mainPath, "serve", "--debug"], {
       encoding: "utf8",
       env: process.env,
     });
@@ -188,6 +192,18 @@ describe("cli", () => {
     expect(result.stdout).toContain("tau diff-tool [--help]");
     expect(result.stdout).toContain("built-in browser diff review demo tool");
     expect(result.stderr).toBe("");
+  });
+
+  it("rejects the removed command attachment form", () => {
+    const mainPath = resolve(process.cwd(), "dist/main.js");
+    const result = spawnSync(process.execPath, [mainPath, "attach", "--", "true"], {
+      encoding: "utf8",
+      env: process.env,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("unknown attach option: --");
+    expect(result.stdout).toContain("tau attach - terminal TUI over a session protocol transport");
   });
 
   it("rejects relative attach --new cwd before connecting", () => {

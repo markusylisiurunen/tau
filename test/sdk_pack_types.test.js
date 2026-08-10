@@ -39,10 +39,7 @@ describe("sdk npm pack types", () => {
       expect(packageFilename.length).toBeGreaterThan(0);
       const packedFiles = new Set(packEntries[0]?.files?.map((file) => file.path) ?? []);
       expect(packedFiles.size).toBeGreaterThan(0);
-      expect(packedFiles.has("dist/core/modes/rpc_adapter.js")).toBe(false);
       expect(packedFiles.has("dist/sdk/errors.js")).toBe(false);
-      expect(packedFiles.has("dist/sdk/stdio_transport.js")).toBe(false);
-      expect(packedFiles.has("dist/sdk/stdio_transport.d.ts")).toBe(false);
       expect(packedFiles.has("dist/code_mode/index.d.ts")).toBe(true);
       expect(packedFiles.has("dist/core/static/code_mode/sandbox_runner.mjs")).toBe(true);
       expect(packedFiles.has("dist/core/static/tau_docs/index.md")).toBe(true);
@@ -91,7 +88,7 @@ describe("sdk npm pack types", () => {
         validFixturePath,
         [
           'import type { SessionProtocolFeedbackEvent, SessionProtocolFeedbackTone, SessionProtocolSnapshot, SessionProtocolTransport, TauSdkClient, TauSdkClientToolContext, TauSdkCreateSessionInput, TauSdkDelta, TauSdkInitializeParams, TauSdkRequestId, TauSdkSessionExecResult, TauSdkSessionSampleInput, TauSdkSessionSampleResult, TauSdkSessionSetReasoningResult, TauSdkSessionTurnOutcome, TauSdkSessionTurnRecord, TauSdkReadyMessage, TauSdkTransportClientOptions, TauSdkUserTextProjection } from "@markusylisiurunen/tau/sdk";',
-          'import { StdioSessionProtocolTransport, applySessionProtocolDelta, createTauSdkClient, createTauSdkClientFromTransport, createTauSdkWebSocketClient, getTauSdkSessionTurnOutcome, getTauSdkSessionTurnRecord, getTauUserDisplayText, getTauUserModelText, projectTauUserText, runTauClientToolCommand } from "@markusylisiurunen/tau/sdk";',
+          'import { applySessionProtocolDelta, createTauSdkClient, createTauSdkClientFromTransport, createTauSdkWebSocketClient, getTauSdkSessionTurnOutcome, getTauSdkSessionTurnRecord, getTauUserDisplayText, getTauUserModelText, projectTauUserText, runTauClientToolCommand } from "@markusylisiurunen/tau/sdk";',
           "",
           "const sdkDelta: TauSdkDelta = {",
           "  version: 12,",
@@ -114,7 +111,7 @@ describe("sdk npm pack types", () => {
           "};",
           "",
           "declare const transport: SessionProtocolTransport;",
-          "declare const spawnedProcess: ConstructorParameters<typeof StdioSessionProtocolTransport>[0];",
+
           "declare const client: TauSdkClient;",
           "const createInput: TauSdkCreateSessionInput = { executionEnvironment: { kind: 'local', cwd: '/repo' }, attributes: { source: 'fixture' } };",
           "const initializeParams: TauSdkInitializeParams = { client: { name: 'fixture', version: '1' } };",
@@ -143,7 +140,7 @@ describe("sdk npm pack types", () => {
           "void createTauSdkClient({ cwd: '/repo' });",
           "void createTauSdkClientFromTransport(transport, transportOptions);",
           'void createTauSdkWebSocketClient({ url: "ws://localhost:8787", authToken: "secret" });',
-          "void new StdioSessionProtocolTransport(spawnedProcess);",
+
           "void createInput;",
           "void initializeParams;",
           "void requestId;",

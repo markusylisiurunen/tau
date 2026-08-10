@@ -90,19 +90,19 @@ describe("sdk client integration", () => {
       await mkdir(join(repo, ".tau", "personas"), { recursive: true });
       await writeFile(
         join(repo, ".tau", "config.json"),
-        JSON.stringify({ defaultPersona: "rpc-project-persona:high" }),
+        JSON.stringify({ defaultPersona: "sdk-project-persona:high" }),
         "utf8",
       );
       await writeFile(
-        join(repo, ".tau", "personas", "rpc-project-persona.md"),
+        join(repo, ".tau", "personas", "sdk-project-persona.md"),
         [
           "---",
-          "id: rpc-project-persona",
-          "label: RPC Project Persona",
+          "id: sdk-project-persona",
+          "label: SDK Project Persona",
           "provider: openai",
           "model: gpt-5.5",
           "---",
-          "rpc project system prompt",
+          "sdk project system prompt",
         ].join("\n"),
         "utf8",
       );
@@ -119,15 +119,15 @@ describe("sdk client integration", () => {
         const snapshot = await session.snapshot();
 
         expect(snapshot.settings).toEqual({
-          personaId: "rpc-project-persona",
+          personaId: "sdk-project-persona",
           reasoning: "high",
         });
         expect(snapshot.catalog.personas).toEqual(
           expect.arrayContaining([
-            expect.objectContaining({ id: "rpc-project-persona", label: "RPC Project Persona" }),
+            expect.objectContaining({ id: "sdk-project-persona", label: "SDK Project Persona" }),
           ]),
         );
-        expect(snapshot.messages[0].message.content).toContain("rpc project system prompt");
+        expect(snapshot.messages[0].message.content).toContain("sdk project system prompt");
       } finally {
         await client.close();
       }

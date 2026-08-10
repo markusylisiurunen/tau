@@ -34,25 +34,3 @@ export class TauTransportError extends TauSessionClientError {
     this.name = "TauTransportError";
   }
 }
-
-export class TauProcessError extends TauTransportError {
-  readonly exitCode: number | null;
-  readonly signal: NodeJS.Signals | null;
-  readonly stderr: string;
-
-  constructor(
-    message: string,
-    options?: {
-      exitCode?: number | null;
-      signal?: NodeJS.Signals | null;
-      stderr?: string;
-      cause?: unknown;
-    },
-  ) {
-    super(message, options?.cause === undefined ? undefined : { cause: options.cause });
-    this.name = "TauProcessError";
-    this.exitCode = options?.exitCode ?? null;
-    this.signal = options?.signal ?? null;
-    this.stderr = options?.stderr ?? "";
-  }
-}

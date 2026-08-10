@@ -77,11 +77,9 @@ Do not rely on sanitization as a secret store or authorization boundary. Avoid b
 
 Tau command execution uses a fresh non-interactive login Bash. The execution environment's `HOME` controls login startup discovery. Bash can read `/etc/profile`, the first available user login file, and `BASH_ENV`; a login file may also source `.bashrc`.
 
-These files execute with the same operating-system authority as every tool command. A compromised or overly broad startup file can change `PATH`, run commands, disclose data, terminate the shell, or corrupt protocol output. Review startup files in each execution environment, especially targets created from shared images or user homes.
+These files execute with the same operating-system authority as every tool command. A compromised or overly broad startup file can change `PATH`, run commands, disclose data, terminate the shell, or produce unexpected output. Review startup files in each execution environment, especially targets created from shared images or user homes.
 
 Startup files must not print banners, prompt for input, read stdin, require a TTY, launch an editor, or exit the shell unexpectedly. Tau does not suppress their output. There is no TTY, and ordinary agent Bash calls have no stdin, so interactive authentication and terminal prompts fail or wait until timeout. Configure Git, SSH, package managers, and cloud CLIs for deliberate noninteractive use.
-
-`tau rpc` has an additional constraint: stdout is the NDJSON protocol. Shell banners and wrapper diagnostics on stdout break the transport. Send diagnostics to stderr.
 
 ## Trust command client tools as local programs
 
@@ -123,8 +121,6 @@ Tau's listener is plain WebSocket and has no certificate configuration. Across a
 - keep it on a private network whose access controls and confidentiality are understood.
 
 A reverse proxy must preserve WebSocket upgrade behavior and the request query string while protecting both. Restrict who can reach the listener even when a token is configured. Multiple observers are active participants, not read-only viewers: they can submit, steer, interrupt, rewind, and advertise client tools. See [remote sessions](remote-sessions.md).
-
-Stdio attachment relies on the security of the launched command, commonly SSH. Closing that transport also closes its one-shot host. Use a long-running authenticated WebSocket host when work must survive client disconnects.
 
 ## Secure Telegram access and workspaces
 

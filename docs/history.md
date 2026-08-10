@@ -12,7 +12,7 @@ Every Tau host opens a machine-local SQLite database at:
 ~/.config/tau/history.sqlite
 ```
 
-The path belongs to the **host home**. An attached TUI and a remote execution environment do not get separate history stores merely because they participate in the session. Local `tau`, `tau serve`, `tau rpc`, and the default SDK host all use the host machine's database.
+The path belongs to the **host home**. An attached TUI and a remote execution environment do not get separate history stores merely because they participate in the session. Local `tau`, `tau serve`, and the default SDK host all use the host machine's database.
 
 For each session, history stores its immutable creation attributes and an ordered active transcript containing:
 

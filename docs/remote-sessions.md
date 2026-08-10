@@ -1,6 +1,6 @@
 # Remote sessions
 
-Remote sessions let the terminal stay close to the user while the session host and execution environment run elsewhere. Tau does not turn remote work into a second product mode: `tau attach` uses the same TUI over a WebSocket or stdio transport. The important choice is which process should stay alive, who owns credentials and persistence, and where agent-visible commands run.
+Remote sessions let the terminal stay close to the user while the session host and execution environment run elsewhere. Tau does not turn remote work into a second product mode: `tau attach` uses the same TUI over WebSocket. The important boundaries are who owns credentials and persistence and where agent-visible commands run.
 
 ## Choose the connection shape
 
@@ -9,12 +9,10 @@ Use the smallest shape that matches the lifecycle you need.
 | Shape | Best for | Lifetime and ownership |
 | --- | --- | --- |
 | `tau serve` plus WebSocket attach | Long-running hosts, reconnects, and multiple observers | The server owns the host independently of any one TUI. |
-| `tau attach -- ssh … tau rpc` | Ad hoc access through SSH without exposing a listener | The attachment owns one remote RPC process. Closing it shuts that host down. |
-| `tau rpc` directly | Editors, automation, and custom protocol clients over NDJSON | The parent process owns the RPC host and its stdin/stdout. |
 | Node SDK with its default client | Applications that want an in-process host | The SDK client owns the host and closes it with the client. |
 | Node SDK over WebSocket | Applications sharing a long-running `tau serve` host | The server owns sessions; the SDK observes them remotely. |
 
-Use `tau serve` when a turn should continue after a laptop disconnects. Use stdio/SSH when SSH is already the desired security and process boundary and it is acceptable for closing the TUI to stop remote work. The [session protocol](session-protocol.md) and [Node SDK](node-sdk.md) cover developer APIs and wire details; this page stays at the operational level.
+Use `tau serve` for remote TUI and SDK connections. Keep it bound to loopback behind an SSH tunnel when SSH is the desired security boundary. The [session protocol](session-protocol.md) and [Node SDK](node-sdk.md) cover developer APIs and wire details; this page stays at the operational level.
 
 ## Host sessions over WebSocket
 
@@ -58,24 +56,6 @@ Then attach locally:
 tau attach ws://127.0.0.1:8787
 ```
 
-## Attach through stdio and SSH
-
-Anything after `--` is launched as a local child process and must speak Tau’s session protocol over stdin and stdout. SSH makes that child a remote `tau rpc` process:
-
-```sh
-tau attach -- ssh dev@buildbox.example tau rpc
-```
-
-A login shell or project-specific host configuration can be selected in the remote command:
-
-```sh
-tau attach -- ssh dev@buildbox.example 'cd /srv/tau-host && tau rpc'
-```
-
-The remote process’s stdin and stdout are protocol traffic. Shell startup files and wrapper scripts must not print banners to stdout. Put diagnostics on stderr.
-
-This is a one-shot host. When the TUI exits or the transport fails, the local child is terminated, `tau rpc` shuts down its host, active work is interrupted, and durable state is recovered on the next process. Do not use this shape when work must continue through client disconnects; run `tau serve` instead.
-
 ## List, select, create, or attach
 
 Without `--session` or `--new`, `tau attach` asks the host for its session list and opens an interactive selector:
@@ -94,14 +74,6 @@ tau attach \
   ws://127.0.0.1:8787
 ```
 
-The equivalent SSH form is:
-
-```sh
-tau attach \
-  --session 0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3 \
-  -- ssh dev@buildbox.example tau rpc
-```
-
 Create a new session with an absolute cwd in the selected execution environment:
 
 ```sh
@@ -109,15 +81,6 @@ tau attach \
   --new \
   --cwd /srv/workspaces/tau \
   ws://127.0.0.1:8787
-```
-
-For stdio/SSH:
-
-```sh
-tau attach \
-  --new \
-  --cwd /srv/workspaces/tau \
-  -- ssh dev@buildbox.example tau rpc
 ```
 
 For the default `local` execution kind, this path is on the host machine, not the attaching machine. It must already be a usable directory with the desired repository or workspace. Tau creates the session, not the directory or repository.
@@ -215,7 +178,7 @@ Different changes have different owners:
 | Effective model `apiKeys` in execution-environment or session configuration | Wait for idle, then run `/reload`; new sessions also resolve the current values. |
 | Managed Codex auth changed with `tau auth` | No host restart; auth storage is read again on later credential resolutions. |
 | Attaching themes, diff launcher, speech config, or configured client tools | Restart `tau attach`. |
-| Host process environment variables, history target, WebSocket listener, Cloudflare bridge, Fly API target, or host startup flags | Restart `tau serve` or the `tau rpc` process. |
+| Host process environment variables, history target, WebSocket listener, Cloudflare bridge, Fly API target, or host startup flags | Restart `tau serve`. |
 | Host Tau package, built-in tools, protocol, session recovery code, or built-in documentation | Upgrade and restart the host. |
 | TUI package, keybindings, rendering, local speech, or client-tool implementation | Upgrade and restart the attaching client. |
 
@@ -226,8 +189,6 @@ Different changes have different owners:
 A WebSocket connection observes a hosted session; it does not own or delete it. If a TUI disconnects while a turn runs, the host keeps working. Reattach with the same session id to obtain the current persisted state and continue receiving updates.
 
 A clean `tau serve` shutdown interrupts active work, persists live sessions, and closes clients. On restart, the host lists sessions whose execution environments it can restore. Recovery returns sessions idle, drops pending queued and steering messages, discards live subagents, and changes an active persistent goal to blocked. Use `/goal resume` only after checking why the host stopped.
-
-A stdio/SSH connection is different because its RPC process is the host. Closing the connection ends that process. The session remains stored under the remote host user’s `~/.config/tau/sessions` and can be observed by a later `tau rpc` process using the same home and compatible resolver configuration.
 
 ## Use multiple observers carefully
 
@@ -265,10 +226,6 @@ Do not edit the session JSON to change environment identity. Restore the owning 
 
 Verify that server and client use the same token and that a reverse proxy preserves the WebSocket request path and query string. `TAU_WS_AUTH_TOKEN` can silently supply either side, so inspect the environment as well as command-line flags. Do not print the token in shared logs.
 
-### SSH attachment fails before the TUI opens
-
-Run the remote command directly and confirm that `tau rpc` is installed and can start. Protocol stdout must contain only NDJSON. Login banners, shell startup output, or wrapper diagnostics on stdout corrupt the transport; redirect them to stderr or remove them.
-
 ### A reconnect shows an interrupted turn
 
-A client disconnect alone does not stop a WebSocket-hosted turn, but server shutdown does. Stdio/SSH attachment shutdown also ends its host. Review the last assistant and tool states, verify the execution environment with `!!pwd` and `!!git status --short`, then retry or resume a blocked goal intentionally. [Sessions](sessions.md) explains recovery and safe verification.
+A client disconnect alone does not stop a WebSocket-hosted turn, but server shutdown does. Review the last assistant and tool states, verify the execution environment with `!!pwd` and `!!git status --short`, then retry or resume a blocked goal intentionally. [Sessions](sessions.md) explains recovery and safe verification.

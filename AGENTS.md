@@ -43,7 +43,7 @@ The owners are `src/store/session_snapshot_migrations.ts`, `src/store/file_sessi
 
 ## Architecture and ownership boundaries
 
-A common path is client input to the SDK session facade, through a session protocol transport, into the host, then `ChatRuntime` and the shared `AgentRuntime`. Runtime events return through the host's serialized snapshot projection and protocol deltas to every observer. `SessionChatApp` and `SessionChatController` are the canonical TUI path for both local and remote sessions. WebSocket attach, stdio/RPC, SDK, and Telegram use the same host/runtime architecture with different owners and transports.
+A common path is client input to the SDK session facade, through a session protocol transport, into the host, then `ChatRuntime` and the shared `AgentRuntime`. Runtime events return through the host's serialized snapshot projection and protocol deltas to every observer. `SessionChatApp` and `SessionChatController` are the canonical TUI path for both local and remote sessions. WebSocket attach, SDK, and Telegram use the same host/runtime architecture with different owners and transports.
 
 For public mode behavior, read `docs/ownership-and-scope.md`, `docs/remote-sessions.md`, and `docs/node-sdk.md`. Keep the following implementation rules inline while changing code.
 
@@ -161,7 +161,7 @@ Start with the smallest owning area, its callers, and its tests. This map is tas
 
 | Task | Primary owners | Start with tests/docs |
 | --- | --- | --- |
-| CLI startup and mode wiring | `src/main.ts`, `src/core/cli.ts`, `src/core/modes/` | `test/cli.test.js`, `test/rpc_server.test.js`, `docs/getting-started.md` |
+| CLI startup and mode wiring | `src/main.ts`, `src/core/cli.ts`, `src/core/modes/` | `test/cli.test.js`, `test/websocket_session_transport.test.js`, `docs/getting-started.md` |
 | Runtime, model turns, retries, compaction | `src/core/agent/`, `src/core/runtime/`, `src/core/session/`, `src/core/utils/model_stream.ts` | `test/agent_runtime.test.js`, `test/chat_runtime.test.js`, `test/model_stream.test.js`, `docs/sessions.md` |
 | Host lifecycle and session mutations | `src/host/` | `test/local_session_host.test.js`, `test/hosted_ephemeral_agent_session.test.js` |
 | Wire protocol and deltas | `src/protocol/session_protocol.ts` | `test/session_protocol.test.js`, `docs/session-protocol.md`, `docs/session-protocol-methods.md` |

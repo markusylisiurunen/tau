@@ -1,16 +1,14 @@
 # Session protocol
 
-Tau's session protocol is the public wire contract for clients that create, observe, and control hosted sessions. Use it when an integration needs to speak directly to `tau rpc` or `tau serve`. Node applications can usually use the typed [Node SDK](node-sdk.md) instead.
+Tau's session protocol is the public wire contract for clients that create, observe, and control hosted sessions through `tau serve`. Node applications can usually use the typed [Node SDK](node-sdk.md) instead.
 
-The protocol carries the same semantics over stdio and WebSocket. It is request and response based, with separate server messages for observed state, pending input, subagent activity, ephemeral feedback, and delegated client tools. The complete method surface is in the [session protocol method reference](session-protocol-methods.md).
+The protocol is transport-neutral and request and response based, with separate server messages for observed state, pending input, subagent activity, ephemeral feedback, and delegated client tools. Tau currently exposes it over WebSocket. The complete method surface is in the [session protocol method reference](session-protocol-methods.md).
 
-## Choose a transport
+## Connect over WebSocket
 
-`tau rpc` uses UTF-8 NDJSON. The client writes one JSON request per stdin line and reads one JSON server message per stdout line. Stdout is protocol-only. Process diagnostics and login-shell output must go to stderr.
+`tau serve` uses one UTF-8 JSON object per text WebSocket message. Binary messages are not supported. Authentication, TLS, listener setup, SSH tunneling, and host lifetime belong to [remote sessions](remote-sessions.md).
 
-`tau serve` uses one UTF-8 JSON object per text WebSocket message. Binary messages are not supported. Authentication, TLS, listener setup, SSH attachment, and host lifetime belong to [remote sessions](remote-sessions.md).
-
-Both transports expose one host. Starting either server does not create or select a session. A client lists, creates, or observes sessions explicitly.
+The server exposes one host. Starting it does not create or select a session. A client lists, creates, or observes sessions explicitly.
 
 The client, host, and execution environment remain separate logical machines even when they share a process or filesystem. Session paths and commands belong to the execution environment. Persistence, credentials, model work, and protocol coordination belong to the host. Client tools and local UI belong to the connected client. See [ownership and scope](ownership-and-scope.md) before passing paths or credentials across this boundary.
 
@@ -249,7 +247,7 @@ The supported codes are:
 
 When no valid request id can be recovered, an error response uses `id: null`. Error `message` and optional `data` are diagnostic. Branch on `code`, not message text.
 
-A closed stdio stream, process exit, WebSocket close, malformed server payload, unsupported version, or other terminal transport failure rejects all outstanding requests. Stop sending, cancel client-local delegated tools, and reconnect or create a new transport deliberately. A WebSocket disconnect detaches from a long-running host; closing a stdio RPC process shuts down the host it owns.
+A WebSocket close, malformed server payload, unsupported version, or other terminal transport failure rejects all outstanding requests. Stop sending, cancel client-local delegated tools, and reconnect or create a new transport deliberately. A WebSocket disconnect detaches from the long-running host.
 
 ## Coordinate concurrent work
 

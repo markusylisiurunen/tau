@@ -185,7 +185,7 @@ Restart the host process to apply settings used to construct host-wide services,
 - `history`
 - host environment variables and Codex account forcing
 
-For `tau serve` or `tau rpc`, make the changes on the host machine and restart that server. Restarting only an attached TUI does not rebuild the host.
+For `tau serve`, make the changes on the host machine and restart the server. Restarting only an attached TUI does not rebuild the host.
 
 ### New session or runner
 

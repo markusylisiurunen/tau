@@ -12,7 +12,7 @@ Client tools execute on the client machine, not wherever the agent's Bash tool r
 
 ### Host
 
-The **host** creates, observes, persists, and recovers sessions. It owns model calls, credentials, session orchestration, tool binding, history storage, and execution-environment lifecycle. Local `tau` creates an in-process host. `tau serve` and `tau rpc` are standalone host entry points.
+The **host** creates, observes, persists, and recovers sessions. It owns model calls, credentials, session orchestration, tool binding, history storage, and execution-environment lifecycle. Local `tau` creates an in-process host. `tau serve` is the standalone host entry point.
 
 The host's home owns data such as session snapshots, authentication storage, usage logs, and the local history database. Use Tau commands and session operations to manage these stores rather than editing their files directly.
 
@@ -39,9 +39,9 @@ For repository and composite projects it prepares managed workspaces. A configur
 | `tau` | Local TUI process | In-process on the same machine | Local `cwd` where Tau started |
 | `tau attach … ws://…` | Machine running `tau attach` | Machine running `tau serve` | Environment selected or restored by that host |
 | `tau attach … -- <command>` | Machine running `tau attach` | Machine running the protocol command, often reached through SSH | Environment selected or restored by that host |
-| `tau rpc` or `tau serve` | A separate protocol client | The server process | Local or configured hosted environment chosen by the client |
+| `tau serve` | A separate protocol client | The server process | Local or configured hosted environment chosen by the client |
 | Default Node SDK client | SDK caller | In-process with the SDK caller | Usually a local environment supplied at session creation |
-| SDK over WebSocket or stdio | SDK caller | Remote server or command process | Environment selected or restored by that host |
+| SDK over WebSocket | SDK caller | Remote server | Environment selected or restored by that host |
 | `tau telegram` | Telegram runner | In-process on the runner machine | Prepared project workspace or persistent directory |
 
 A Cloudflare Sandbox or Fly Sprite can place the execution environment on another target while the host stays on its own machine. The host keeps provider credentials and orchestration authority; the target owns its paths and commands.

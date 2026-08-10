@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   existsSync,
@@ -55,6 +56,7 @@ function parseOutput(result) {
 function rememberRoot(path) {
   const root = dirname(path);
   roots.add(root);
+  roots.add(`${root}-staging`);
   return root;
 }
 
@@ -97,11 +99,17 @@ describe("code-mode scratch files", () => {
       totalBytes: 15,
     });
 
-    await run('console.log(await files.remove("results.json"))', files, "fourth");
+    const stagingRoot = `${root}-staging`;
+    writeFileSync(join(stagingRoot, ".tau-write-abandoned"), "partial");
+    await expect(run("console.log(await files.list())", files, "fourth")).resolves.toEqual({
+      content: JSON.stringify(listed),
+    });
+
+    await run('console.log(await files.remove("results.json"))', files, "fifth");
     expect(existsSync(written.path)).toBe(false);
   });
 
-  it("isolates agents and rejects paths and symlinks", async () => {
+  it("uses separate agent roots and rejects paths, symlinks, and special files", async () => {
     const firstFiles = createFiles("agent-a");
     const secondFiles = createFiles("agent-b");
     const first = parseOutput(
@@ -124,22 +132,34 @@ describe("code-mode scratch files", () => {
     symlinkSync(outsidePath, join(firstRoot, "link.txt"));
 
     await expect(run('await files.read("link.txt")', firstFiles)).rejects.toThrow("ELOOP");
+
+    const fifoPath = join(firstRoot, "pipe");
+    const fifo = spawnSync("mkfifo", [fifoPath], { encoding: "utf8" });
+    expect(fifo.status, fifo.stderr).toBe(0);
+    await expect(run('await files.read("pipe")', firstFiles)).rejects.toThrow(
+      "scratch path is not a regular file",
+    );
   });
 
-  it("enforces the per-agent file count and total size quotas", async () => {
+  it("enforces write file count and total size limits", async () => {
     const countFiles = createFiles();
     const countSeed = parseOutput(
       await run('console.log(await files.write("0.txt", "x"))', countFiles),
     );
     const countRoot = rememberRoot(countSeed.path);
-    for (let index = 1; index < 128; index += 1) {
+    for (let index = 1; index < 129; index += 1) {
       writeFileSync(join(countRoot, `${index}.txt`), "x");
     }
+
+    const overLimit = parseOutput(await run("console.log(await files.list())", countFiles));
+    expect(overLimit.files).toHaveLength(129);
+    expect(overLimit).toMatchObject({ totalFiles: 129, totalBytes: 129 });
 
     await expect(run('await files.write("overflow.txt", "x")', countFiles)).rejects.toThrow(
       "scratch directory exceeds the 128-file limit",
     );
-    await run('console.log(await files.remove("127.txt"))', countFiles);
+    await run('await files.remove("128.txt")', countFiles);
+    await run('await files.remove("127.txt")', countFiles);
     await expect(
       run('console.log(await files.write("replacement.txt", "x"))', countFiles),
     ).resolves.toEqual({

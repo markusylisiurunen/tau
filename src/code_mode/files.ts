@@ -203,26 +203,33 @@ function validateName(name) {
   }
 }
 
-function getRoot(agentId) {
-  if (typeof agentId !== "string" || agentId.length === 0) fail("agentId must not be empty");
-  const scope = createHash("sha256").update(agentId).digest("hex").slice(0, 32);
-  const root = join(tmpdir(), "tau-code-mode-files-" + scope);
+function ensureOwnedDirectory(path, label) {
   try {
-    mkdirSync(root, { mode: 0o700 });
+    mkdirSync(path, { mode: 0o700 });
   } catch (error) {
     if (error?.code !== "EEXIST") throw error;
   }
-  const stats = lstatSync(root);
+  const stats = lstatSync(path);
   if (stats.isSymbolicLink() || !stats.isDirectory()) {
-    fail("code-mode scratch path is not a directory");
+    fail(label + " path is not a directory");
   }
   if (typeof process.getuid !== "function" || stats.uid !== process.getuid()) {
-    fail("code-mode scratch directory is not owned by the current user");
+    fail(label + " directory is not owned by the current user");
   }
   if ((stats.mode & 0o077) !== 0) {
-    fail("code-mode scratch directory permissions must not allow group or other access");
+    fail(label + " directory permissions must not allow group or other access");
   }
-  return root;
+  return path;
+}
+
+function getRoot(agentId) {
+  if (typeof agentId !== "string" || agentId.length === 0) fail("agentId must not be empty");
+  const scope = createHash("sha256").update(agentId).digest("hex").slice(0, 32);
+  return ensureOwnedDirectory(join(tmpdir(), "tau-code-mode-files-" + scope), "code-mode scratch");
+}
+
+function getStagingRoot(root) {
+  return ensureOwnedDirectory(root + "-staging", "code-mode scratch staging");
 }
 
 function getFilePath(root, name) {
@@ -256,7 +263,10 @@ function listFiles(root) {
 
 function read(root, name) {
   const path = getFilePath(root, name);
-  const descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  const descriptor = openSync(
+    path,
+    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+  );
   try {
     const stats = fstatSync(descriptor);
     if (!stats.isFile()) fail("scratch path is not a regular file");
@@ -284,7 +294,7 @@ function write(root, name, content) {
   if (resultingFiles > MAX_FILES) fail("scratch directory exceeds the 128-file limit");
   if (resultingBytes > MAX_TOTAL_BYTES) fail("scratch directory exceeds the 64 MiB total limit");
 
-  const temporaryPath = join(root, ".tau-write-" + randomUUID());
+  const temporaryPath = join(getStagingRoot(root), ".tau-write-" + randomUUID());
   let descriptor;
   try {
     descriptor = openSync(
@@ -311,7 +321,7 @@ function write(root, name, content) {
 function list(root) {
   const allFiles = listFiles(root);
   return {
-    files: allFiles.slice(0, MAX_FILES),
+    files: allFiles,
     totalFiles: allFiles.length,
     totalBytes: allFiles.reduce((total, file) => total + file.bytes, 0),
   };

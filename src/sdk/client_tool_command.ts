@@ -1,5 +1,10 @@
 import { createInterface } from "node:readline";
+import { StringDecoder } from "node:string_decoder";
 import { z } from "zod";
+import {
+  SESSION_PROTOCOL_MAX_EXEC_CAPTURE_BYTES,
+  SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES,
+} from "../protocol/session_protocol.js";
 import type {
   TauSdkClientToolContext,
   TauSdkClientToolResult,
@@ -8,15 +13,31 @@ import type {
 } from "./types.js";
 
 export const TAU_CLIENT_TOOL_COMMAND_PROTOCOL_VERSION = 3;
+export const TAU_CLIENT_TOOL_COMMAND_MAX_RESULT_BYTES = 1024 * 1024;
+export const TAU_CLIENT_TOOL_COMMAND_MAX_PROTOCOL_FRAME_BYTES = 24 * 1024 * 1024;
+export const TAU_CLIENT_TOOL_COMMAND_MAX_PROTOCOL_BYTES = 192 * 1024 * 1024;
+export const TAU_CLIENT_TOOL_COMMAND_MAX_PROTOCOL_FRAMES = 512;
+
+const maxExecStdinBase64Length = 4 * Math.ceil(SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES / 3);
 
 const execOptionsSchema = z
   .object({
     args: z.array(z.string()).optional(),
     env: z.record(z.string(), z.string()).optional(),
-    stdinBase64: z.string().optional(),
+    stdinBase64: z
+      .string()
+      .max(maxExecStdinBase64Length)
+      .refine(isValidBase64)
+      .refine((value) => decodedBase64ByteLength(value) <= SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES)
+      .optional(),
     cwd: z.string().optional(),
     timeoutMs: z.number().int().positive().optional(),
-    maxCaptureBytes: z.number().int().positive().optional(),
+    maxCaptureBytes: z
+      .number()
+      .int()
+      .positive()
+      .max(SESSION_PROTOCOL_MAX_EXEC_CAPTURE_BYTES)
+      .optional(),
   })
   .strict();
 
@@ -53,7 +74,11 @@ const resultSchema = z
   .object({
     version: z.literal(TAU_CLIENT_TOOL_COMMAND_PROTOCOL_VERSION),
     type: z.literal("result"),
-    content: z.string(),
+    content: z
+      .string()
+      .refine(
+        (value) => Buffer.byteLength(value, "utf8") <= TAU_CLIENT_TOOL_COMMAND_MAX_RESULT_BYTES,
+      ),
   })
   .strict();
 
@@ -153,6 +178,80 @@ export type TauClientToolCommandHandler = (
   context: TauSdkClientToolContext,
 ) => Promise<TauSdkClientToolResult> | TauSdkClientToolResult;
 
+export type TauClientToolCommandOutputEncoder = {
+  encode(frame: TauClientToolCommandOutput): string;
+};
+
+export type TauClientToolCommandOutputDecoder = {
+  push(chunk: Buffer | string): TauClientToolCommandOutput[];
+  end(): TauClientToolCommandOutput[];
+};
+
+export function createTauClientToolCommandOutputEncoder(): TauClientToolCommandOutputEncoder {
+  let totalBytes = 0;
+  let totalFrames = 0;
+  return {
+    encode(frame) {
+      const line = serializeTauClientToolCommandOutput(frame);
+      totalBytes += Buffer.byteLength(line, "utf8");
+      totalFrames += 1;
+      assertProtocolTotals(totalBytes, totalFrames);
+      return line;
+    },
+  };
+}
+
+export function createTauClientToolCommandOutputDecoder(): TauClientToolCommandOutputDecoder {
+  const decoder = new StringDecoder("utf8");
+  let buffer = "";
+  let totalBytes = 0;
+  let totalFrames = 0;
+
+  const consume = (text: string, flush: boolean): TauClientToolCommandOutput[] => {
+    buffer += text;
+    const frames: TauClientToolCommandOutput[] = [];
+    while (true) {
+      const newlineIndex = buffer.indexOf("\n");
+      if (newlineIndex === -1) break;
+      const rawLine = buffer.slice(0, newlineIndex);
+      buffer = buffer.slice(newlineIndex + 1);
+      assertProtocolFrameBytes(Buffer.byteLength(rawLine, "utf8"));
+      const line = rawLine.trim();
+      if (!line) continue;
+      frames.push(parseTauClientToolCommandOutputLine(line));
+      totalFrames += 1;
+      assertProtocolTotals(totalBytes, totalFrames);
+    }
+
+    if (flush && buffer.trim()) {
+      frames.push(parseTauClientToolCommandOutputLine(buffer.trim()));
+      totalFrames += 1;
+      buffer = "";
+      assertProtocolTotals(totalBytes, totalFrames);
+    } else if (
+      Buffer.byteLength(buffer, "utf8") > TAU_CLIENT_TOOL_COMMAND_MAX_PROTOCOL_FRAME_BYTES
+    ) {
+      buffer = "";
+      throw new Error(
+        `command client tool exceeded the ${TAU_CLIENT_TOOL_COMMAND_MAX_PROTOCOL_FRAME_BYTES}-byte protocol frame limit`,
+      );
+    }
+    return frames;
+  };
+
+  return {
+    push(chunk) {
+      const bytes = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+      totalBytes += bytes.byteLength;
+      assertProtocolTotals(totalBytes, totalFrames);
+      return consume(decoder.write(bytes), false);
+    },
+    end() {
+      return consume(decoder.end(), true);
+    },
+  };
+}
+
 export async function runTauClientToolCommand(handler: TauClientToolCommandHandler): Promise<void> {
   const controller = new AbortController();
   const abort = (): void => controller.abort();
@@ -174,9 +273,10 @@ export async function runTauClientToolCommand(handler: TauClientToolCommandHandl
   let stoppingInput = false;
   let requestSequence = 0;
   let writeQueue = Promise.resolve();
+  const outputEncoder = createTauClientToolCommandOutputEncoder();
 
   const writeFrame = async (frame: TauClientToolCommandOutput): Promise<void> => {
-    const line = `${JSON.stringify(frame)}\n`;
+    const line = outputEncoder.encode(frame);
     const write = writeQueue.then(
       () =>
         new Promise<void>((resolve, reject) => {
@@ -331,6 +431,23 @@ export function parseTauClientToolCommandOutput(value: unknown): TauClientToolCo
   return parsed.data;
 }
 
+export function parseTauClientToolCommandOutputLine(line: string): TauClientToolCommandOutput {
+  assertProtocolFrameBytes(Buffer.byteLength(line, "utf8"));
+  let value: unknown;
+  try {
+    value = JSON.parse(line);
+  } catch {
+    throw new Error("command client tool returned invalid JSON protocol framing");
+  }
+  return parseTauClientToolCommandOutput(value);
+}
+
+export function serializeTauClientToolCommandOutput(frame: TauClientToolCommandOutput): string {
+  const line = JSON.stringify(parseTauClientToolCommandOutput(frame));
+  assertProtocolFrameBytes(Buffer.byteLength(line, "utf8"));
+  return `${line}\n`;
+}
+
 export function createTauClientToolCommandInvoke(options: {
   sessionId: string;
   agentId: string;
@@ -372,6 +489,52 @@ export function createTauClientToolCommandExecResponse(options: {
         ok: false,
         error: options.error ?? "execution failed",
       };
+}
+
+function assertProtocolFrameBytes(bytes: number): void {
+  if (bytes > TAU_CLIENT_TOOL_COMMAND_MAX_PROTOCOL_FRAME_BYTES) {
+    throw new Error(
+      `command client tool exceeded the ${TAU_CLIENT_TOOL_COMMAND_MAX_PROTOCOL_FRAME_BYTES}-byte protocol frame limit`,
+    );
+  }
+}
+
+function assertProtocolTotals(bytes: number, frames: number): void {
+  if (bytes > TAU_CLIENT_TOOL_COMMAND_MAX_PROTOCOL_BYTES) {
+    throw new Error(
+      `command client tool exceeded the ${TAU_CLIENT_TOOL_COMMAND_MAX_PROTOCOL_BYTES}-byte protocol traffic limit`,
+    );
+  }
+  if (frames > TAU_CLIENT_TOOL_COMMAND_MAX_PROTOCOL_FRAMES) {
+    throw new Error(
+      `command client tool exceeded the ${TAU_CLIENT_TOOL_COMMAND_MAX_PROTOCOL_FRAMES}-frame protocol limit`,
+    );
+  }
+}
+
+function isValidBase64(value: string): boolean {
+  if (value.length % 4 !== 0) return false;
+  const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+  const contentLength = value.length - padding;
+  for (let index = 0; index < contentLength; index += 1) {
+    const code = value.charCodeAt(index);
+    const valid =
+      (code >= 65 && code <= 90) ||
+      (code >= 97 && code <= 122) ||
+      (code >= 48 && code <= 57) ||
+      code === 43 ||
+      code === 47;
+    if (!valid) return false;
+  }
+  for (let index = contentLength; index < value.length; index += 1) {
+    if (value.charCodeAt(index) !== 61) return false;
+  }
+  return true;
+}
+
+function decodedBase64ByteLength(value: string): number {
+  const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+  return (value.length / 4) * 3 - padding;
 }
 
 function parseInvokeFrame(line: string): TauClientToolCommandInvoke {

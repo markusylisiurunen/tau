@@ -17,7 +17,7 @@ function createSnapshot(sessionId, text, revision = 1) {
 }
 
 describe("MemorySessionStore", () => {
-  it("commits, loads, lists, and deletes session snapshots", async () => {
+  it("commits, loads, and lists session snapshots", async () => {
     const store = new MemorySessionStore();
 
     await expect(
@@ -38,12 +38,9 @@ describe("MemorySessionStore", () => {
       createSnapshot("session-1", "updated", 7),
     );
 
-    await store.deleteSession("session-1");
-    await expect(store.loadSession("session-1")).resolves.toBeUndefined();
-    await expect(store.listSessionSnapshots()).resolves.toEqual([]);
-
     await store.commitSessionSnapshot(createSnapshot("session-2", "hi"));
     await expect(store.listSessionSnapshots()).resolves.toEqual([
+      createSnapshot("session-1", "updated", 7),
       createSnapshot("session-2", "hi"),
     ]);
   });
@@ -74,7 +71,7 @@ describe("MemorySessionStore", () => {
     ).toHaveLength(1);
   });
 
-  it("rejects commits and deletes when the expected revision is stale", async () => {
+  it("rejects commits when the expected revision is stale", async () => {
     const store = new MemorySessionStore();
     await store.commitSessionSnapshot(createSnapshot("session-1", "hello", 1), {
       expectedRevision: 0,
@@ -90,12 +87,9 @@ describe("MemorySessionStore", () => {
         expectedRevision: 1,
       }),
     ).resolves.toBeUndefined();
-    await expect(store.deleteSession("session-1", { expectedRevision: 1 })).rejects.toBeInstanceOf(
-      SessionStoreConflictError,
+    await expect(store.loadSession("session-1")).resolves.toEqual(
+      createSnapshot("session-1", "updated", 2),
     );
-    await expect(
-      store.deleteSession("session-1", { expectedRevision: 2 }),
-    ).resolves.toBeUndefined();
   });
 
   it("rejects invalid snapshots before committing them", async () => {

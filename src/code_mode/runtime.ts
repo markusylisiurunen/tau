@@ -441,7 +441,7 @@ function buildRuntimeDocumentation(
           "- `await files.list()` returns `{ files, totalFiles, totalBytes }`; each file has `{ name, path, bytes }`.",
           "- `await files.remove(name)` removes a file and returns `{ path }`.",
           "",
-          `Names must be single UTF-8 basenames of at most 255 bytes. The directory allows at most ${TAU_CODE_MODE_MAX_FILES} files and ${TAU_CODE_MODE_MAX_TOTAL_FILE_BYTES / (1024 * 1024)} MiB total file content.`,
+          `Names must be single UTF-8 basenames of at most 255 bytes. \`files.write()\` rejects changes above ${TAU_CODE_MODE_MAX_FILES} regular files or ${TAU_CODE_MODE_MAX_TOTAL_FILE_BYTES / (1024 * 1024)} MiB total; Bash-created over-limit contents remain visible and removable.`,
         ]
       : []),
     "",

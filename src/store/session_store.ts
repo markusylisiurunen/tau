@@ -5,10 +5,6 @@ export type SessionStoreCommitOptions = {
   expectedRevision?: number;
 };
 
-export type SessionStoreDeleteOptions = {
-  expectedRevision?: number;
-};
-
 export interface SessionStore {
   commitSessionSnapshot(
     snapshot: SessionProtocolSnapshot,
@@ -16,7 +12,6 @@ export interface SessionStore {
   ): Promise<void>;
   loadSession(sessionId: string): Promise<SessionProtocolSnapshot | undefined>;
   listSessionSnapshots(): Promise<SessionProtocolSnapshot[]>;
-  deleteSession(sessionId: string, options?: SessionStoreDeleteOptions): Promise<void>;
 }
 
 export class SessionStoreConflictError extends Error {

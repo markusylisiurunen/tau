@@ -2,7 +2,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { truncateToBytesFromEnd } from "./truncate.js";
 
-export type SpawnCaptureOutputMode = "split" | "combined" | "combined-and-split";
+export type SpawnCaptureOutputMode = "split" | "combined" | "combined-and-split" | "stderr";
 export type SpawnCaptureStrategy = "head" | "tail";
 
 export type SpawnCaptureResult = {
@@ -94,7 +94,8 @@ export async function spawnWithCapture(
     });
 
     const captureCombined = captureOutput === "combined" || captureOutput === "combined-and-split";
-    const captureSplit = captureOutput === "split" || captureOutput === "combined-and-split";
+    const captureStdout = captureOutput === "split" || captureOutput === "combined-and-split";
+    const captureStderr = captureStdout || captureOutput === "stderr";
 
     const stdoutBuffer: CaptureBuffer = { text: "", bytes: 0 };
     const stderrBuffer: CaptureBuffer = { text: "", bytes: 0 };
@@ -228,19 +229,18 @@ export async function spawnWithCapture(
       if (captureCombined) {
         appendText(outputBuffer, text);
       }
-      if (captureSplit) {
-        if (target === "stdout") {
-          appendText(stdoutBuffer, text);
-        } else {
-          appendText(stderrBuffer, text);
-        }
+      if (target === "stdout" && captureStdout) {
+        appendText(stdoutBuffer, text);
+      }
+      if (target === "stderr" && captureStderr) {
+        appendText(stderrBuffer, text);
       }
     };
 
-    if (stdio[1] === "pipe") {
+    if (stdio[1] === "pipe" && (captureCombined || captureStdout)) {
       child.stdout?.on("data", (chunk) => onData(chunk as Buffer, "stdout"));
     }
-    if (stdio[2] === "pipe") {
+    if (stdio[2] === "pipe" && (captureCombined || captureStderr)) {
       child.stderr?.on("data", (chunk) => onData(chunk as Buffer, "stderr"));
     }
 
@@ -254,21 +254,19 @@ export async function spawnWithCapture(
     child.on("close", (code, signalValue) => {
       if (settled) return;
 
-      const stdoutTail = stdoutDecoder.end();
-      const stderrTail = stderrDecoder.end();
+      const stdoutTail = captureCombined || captureStdout ? stdoutDecoder.end() : "";
+      const stderrTail = captureCombined || captureStderr ? stderrDecoder.end() : "";
 
       if (captureCombined) {
         appendText(outputBuffer, stdoutTail);
         appendText(outputBuffer, stderrTail);
       }
-      if (captureSplit) {
-        appendText(stdoutBuffer, stdoutTail);
-        appendText(stderrBuffer, stderrTail);
-      }
+      if (captureStdout) appendText(stdoutBuffer, stdoutTail);
+      if (captureStderr) appendText(stderrBuffer, stderrTail);
 
       closeResult = {
-        stdout: captureSplit ? stdoutBuffer.text : "",
-        stderr: captureSplit ? stderrBuffer.text : "",
+        stdout: captureStdout ? stdoutBuffer.text : "",
+        stderr: captureStderr ? stderrBuffer.text : "",
         output: captureCombined ? outputBuffer.text : undefined,
         exitCode: code,
         captureLimitExceeded,

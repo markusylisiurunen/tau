@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
 import {
   AgentRuntime,
@@ -71,7 +70,7 @@ export class ChatRuntime {
   private currentConfig: Config;
   private currentModelResolver: ModelResolver;
   private promptContext: ChatRuntimePromptContext;
-  private sessionIdValue: string;
+  private readonly sessionIdValue: string;
   private readonly createdAt: number;
   private readonly backend: ToolExecutionBackend;
   private readonly deps: CoreDeps;
@@ -224,13 +223,6 @@ export class ChatRuntime {
 
   restoreState(state: AgentState): AgentStateRecovery {
     return this.agent.restoreState(state);
-  }
-
-  reset(): void {
-    this.supervisor.reset();
-    this.sessionIdValue = randomUUID();
-    this.agent.reset();
-    this.rebuildSystemPrompts();
   }
 
   dispose(): void {

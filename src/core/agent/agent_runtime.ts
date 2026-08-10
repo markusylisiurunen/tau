@@ -423,17 +423,6 @@ export class AgentRuntime {
     }
   }
 
-  reset(): void {
-    if (this.status === "running") {
-      throw new Error("cannot reset a running agent");
-    }
-    this.closeProviderSessions();
-    this.historyEntries = [];
-    this.revision = 0;
-    this.usageCheckpoint = undefined;
-    this.agentId = randomUUID();
-  }
-
   restoreState(state: AgentState): AgentStateRecovery {
     if (this.status === "running") {
       throw new Error("cannot restore a running agent");

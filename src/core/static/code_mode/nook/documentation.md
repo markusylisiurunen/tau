@@ -1,4 +1,4 @@
-Use absolute file system paths. Generated code has no direct filesystem, process, environment, network, credential, import, timer, or `fetch` access. Nook methods are the only platform capability.
+Use absolute file system paths for Nook methods that accept them. Generated code has no ambient filesystem, process, environment, network, credential, import, timer, or `fetch` access. The separately documented agent-scoped `files` API provides bounded UTF-8 scratch files; Nook methods remain the only Nook platform capability.
 
 ## App-authoring guidance
 

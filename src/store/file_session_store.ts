@@ -23,7 +23,6 @@ import {
   assertExpectedSessionRevision,
   type SessionStore,
   type SessionStoreCommitOptions,
-  type SessionStoreDeleteOptions,
   validateSessionStoreSnapshot,
 } from "./session_store.js";
 
@@ -101,15 +100,6 @@ export class FileSessionStore implements SessionStore {
       }
     }
     return snapshots;
-  }
-
-  async deleteSession(sessionId: string, options: SessionStoreDeleteOptions = {}): Promise<void> {
-    await this.withSnapshotLock(sessionId, async () => {
-      const current = await this.loadSessionUnlocked(sessionId);
-      assertExpectedSessionRevision(sessionId, options.expectedRevision, current);
-      await rm(this.snapshotPath(sessionId), { force: true });
-      await this.cleanupSessionTemporaryFiles(sessionId);
-    });
   }
 
   private async ensureInitialized(): Promise<void> {

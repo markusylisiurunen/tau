@@ -395,10 +395,11 @@ tau uses `caffeinate -i` and only holds the sleep assertion during active assist
 tau comes with several built-in personas across different models:
 
 - **Claude Opus 5** (Anthropic): `opus-5-chat`, `opus-5-coder`
+- **Claude Sonnet 5** (Anthropic): `sonnet-5-chat`, `sonnet-5-coder`
+- **Gemini 3.6 Flash** (Google): `gemini-3.6-flash-chat`
 - **GPT-5.6 Sol**, **GPT-5.6 Terra**, and **GPT-5.6 Luna** (OpenAI): `gpt-5.6-sol-chat`, `gpt-5.6-sol-coder`, `gpt-5.6-terra-chat`, `gpt-5.6-terra-coder`, `gpt-5.6-luna-chat`, `gpt-5.6-luna-coder`
 - **GPT-5.6 Sol (ChatGPT)**, **GPT-5.6 Terra (ChatGPT)**, and **GPT-5.6 Luna (ChatGPT)** (OpenAI Codex): `gpt-5.6-sol-chatgpt-chat`, `gpt-5.6-sol-chatgpt-coder`, `gpt-5.6-terra-chatgpt-chat`, `gpt-5.6-terra-chatgpt-coder`, `gpt-5.6-luna-chatgpt-chat`, `gpt-5.6-luna-chatgpt-coder`
 - **GPT-5.6 Fast (ChatGPT)** (OpenAI Codex, priority tier): `gpt-5.6-sol-chatgpt-fast-chat`, `gpt-5.6-sol-chatgpt-fast-coder`, `gpt-5.6-terra-chatgpt-fast-chat`, `gpt-5.6-terra-chatgpt-fast-coder`, `gpt-5.6-luna-chatgpt-fast-chat`, `gpt-5.6-luna-chatgpt-fast-coder`
-- **Gemini 3.6 Flash** (Google): `gemini-3.6-flash-chat`
 
 chat variants are for general-purpose assistance; coder variants are optimized for software engineering. built-in personas include the `default` sub-agent for background tasks unless disabled.
 

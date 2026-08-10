@@ -150,7 +150,7 @@ describe("custom personas", () => {
     }
   });
 
-  it("loads only the current built-in opus personas", async () => {
+  it("loads only the current built-in Anthropic personas", async () => {
     const fx = setupFixture();
 
     try {
@@ -171,6 +171,18 @@ describe("custom personas", () => {
       ).toEqual(["low", "medium", "high", "xhigh", "max"]);
       expect(personas.find((persona) => persona.id === "opus-5-coder")?.model.id).toBe(
         "claude-opus-5",
+      );
+      expect(personas.find((persona) => persona.id === "sonnet-5-chat")?.model.id).toBe(
+        "claude-sonnet-5",
+      );
+      expect(personas.find((persona) => persona.id === "sonnet-5-chat")?.settings.reasoning).toBe(
+        "medium",
+      );
+      expect(
+        personas.find((persona) => persona.id === "sonnet-5-chat")?.allowedReasoningLevels,
+      ).toEqual(["low", "medium", "high", "xhigh", "max"]);
+      expect(personas.find((persona) => persona.id === "sonnet-5-coder")?.model.id).toBe(
+        "claude-sonnet-5",
       );
     } finally {
       fx.cleanup();

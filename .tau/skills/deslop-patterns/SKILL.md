@@ -37,6 +37,12 @@ Flag code that creates a second owner or bypasses an existing boundary:
 
 Move behavior to its single owning layer. When new behavior does not fit cleanly, reshape that abstraction instead of adding another path.
 
+Use a from-scratch test at every level: with the current requirements and known constraints, would we choose the same boundaries, data flow, and contracts if designing the affected area today? If not, redesign that part and update every affected caller. Do not keep an earlier implementation choice merely because replacing it makes the diff larger.
+
+Keep a fix local only when the problem is genuinely isolated. Step back when a local patch would add an exception, a second source of truth, a duplicate path, or indirect coordination through timing or side effects. These are signs that the underlying design needs to change.
+
+When one part of the system knows the intent, pass it explicitly to the parts that need it. Do not infer it from timing, message text, counts, presentation state, or nearby events. Add the smallest required field or reference at the boundary that owns it and update every consumer of that signal.
+
 ## Contract alignment
 
 Hunt Tau-specific drift across:

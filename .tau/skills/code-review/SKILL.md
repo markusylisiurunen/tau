@@ -37,6 +37,10 @@ Start with the diff, but do not stop there. Read surrounding code, trace call si
 
 Examine every changed file, not just the obvious ones. Trace how changes interact across files. Consider edge cases, error paths, and implicit assumptions. When changes in one file imply corresponding changes elsewhere and those are absent, treat that as a red flag. Do not guess when reading more code would give you the answer. If a change looks suspicious, verify before flagging.
 
+Review the quality of the affected end state, not only whether the patch works locally. Ask whether, with the current requirements and known constraints, we would choose the same boundaries, data flow, and contracts if designing this area today. If the change adds another exception, a second source of truth, a duplicate path, or indirect coordination to avoid fixing the underlying design, review that design choice directly. A larger coherent fix can be proportionate; unrelated pre-existing architecture remains out of scope.
+
+Verify external facts only when they materially affect a potential finding. Start with the nearest exact versioned source available. Use web research only for a specific unresolved question, prefer primary sources, and stop once there is enough evidence. Do not turn the review into a general upstream audit; when a required fact remains unavailable, report it as a gap.
+
 ## What to look for
 
 Actively hunt for issues across these categories:
@@ -47,6 +51,8 @@ Actively hunt for issues across these categories:
 - **Cleanliness**: Leftover debug code (`console.log`, print statements), commented-out code, dead imports.
 - **Maintainability**: Fragile coupling, misleading names, duplicated logic that will drift.
 - **Persistence compatibility**: For durable versioned filesystem data, verify that older files remain openable through an appropriate owning-boundary strategy, important semantic data remains accessible, and current runtime shapes stay canonical. Exact reconstruction of derived or presentation state is not required, but silent semantic data loss or rejection of an older supported document is a correctness bug.
+
+When stateful behavior changes, inspect the relevant creation-to-update or reconciliation path if that is where state can be lost. Do not demand broad lifecycle or integration coverage when the risk is adequately proved at a smaller boundary.
 
 ## When to flag
 

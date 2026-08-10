@@ -39,4 +39,39 @@ describe("session creation attributes", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("deduplicates and bounds repository attributes for large workspaces", () => {
+    const root = mkdtempSync(join(tmpdir(), "tau-session-attributes-"));
+    try {
+      const repositories = Array.from(
+        { length: 24 },
+        (_, index) =>
+          `github.com/example/repository-${String(index).padStart(2, "0")}-${"x".repeat(40)}`,
+      );
+      for (const [index, repository] of repositories.entries()) {
+        createRepository(join(root, `repo-${String(index).padStart(2, "0")}`), `${repository}.git`);
+      }
+      createRepository(join(root, "repo-duplicate"), `${repositories[0]}.git`);
+
+      const attributes = createLocalTuiSessionAttributes(root);
+      const included = attributes.repository.split(",");
+
+      expect(attributes.repository.length).toBeLessThanOrEqual(1_024);
+      expect(included).toEqual(repositories.slice(0, included.length));
+      expect(included.length).toBeLessThan(repositories.length);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("omits an individually oversized repository reference", () => {
+    const root = mkdtempSync(join(tmpdir(), "tau-session-attributes-"));
+    try {
+      createRepository(root, `https://github.com/example/${"x".repeat(1_024)}.git`);
+
+      expect(createLocalTuiSessionAttributes(root)).toEqual({ source: "tui" });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

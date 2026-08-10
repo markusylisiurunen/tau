@@ -113,11 +113,13 @@ const cwdReal = realpath(cwd) || cwd;
 const homeReal = realpath(home) || home;
 const cwdWithinHome = isSameOrParent(homeReal, cwdReal);
 
-function resolveAgentsFile(pathname) {
+function resolveContextFile(pathname, requireAgentsBasename) {
   const resolved = path.resolve(pathname);
-  if (path.basename(resolved) !== "AGENTS.md") return undefined;
+  if (requireAgentsBasename && path.basename(resolved) !== "AGENTS.md") return undefined;
   const canonical = realpath(resolved);
-  if (!canonical || path.basename(canonical) !== "AGENTS.md") return undefined;
+  if (!canonical || (requireAgentsBasename && path.basename(canonical) !== "AGENTS.md")) {
+    return undefined;
+  }
   let stat;
   try {
     stat = fs.statSync(canonical);
@@ -147,8 +149,8 @@ function ancestorCandidates() {
 
 const agentsFiles = [];
 const seenFiles = new Set();
-function addAgentsFile(pathname) {
-  const file = resolveAgentsFile(pathname);
+function addContextFile(pathname, requireAgentsBasename) {
+  const file = resolveContextFile(pathname, requireAgentsBasename);
   if (!file || seenFiles.has(file.canonical)) return;
   seenFiles.add(file.canonical);
   agentsFiles.push({ path: file.path, content: fs.readFileSync(file.canonical, "utf8") });
@@ -156,8 +158,11 @@ function addAgentsFile(pathname) {
 
 const childAgentsFiles = [];
 if (includeAgentContext) {
-  for (const candidate of [...ancestorCandidates(), ...additionalFiles]) {
-    addAgentsFile(candidate);
+  for (const candidate of ancestorCandidates()) {
+    addContextFile(candidate, true);
+  }
+  for (const candidate of additionalFiles) {
+    addContextFile(candidate, false);
   }
 
   const queuedDirs = new Set([cwdReal]);
@@ -177,7 +182,7 @@ if (includeAgentContext) {
       agentsEntry &&
       (agentsEntry.isFile() || agentsEntry.isSymbolicLink())
     ) {
-      const candidate = resolveAgentsFile(path.join(current.dir, agentsEntry.name));
+      const candidate = resolveContextFile(path.join(current.dir, agentsEntry.name), true);
       if (candidate && !seenFiles.has(candidate.canonical)) {
         childAgentsFiles.push(candidate.path);
       }
@@ -314,7 +319,7 @@ export async function resolveRuntimePromptBootstrap(
         readFile: (path) => {
           const content = contentByPath.get(path);
           if (content === undefined) {
-            throw new Error(`missing execution environment AGENTS.md content for ${path}`);
+            throw new Error(`missing execution environment context file content for ${path}`);
           }
           return content;
         },

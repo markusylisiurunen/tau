@@ -1,3 +1,25 @@
+import { SESSION_PROTOCOL_MAX_ATTRIBUTE_VALUE_CHARS } from "../../protocol/session_protocol.js";
+
+export function buildRepositoryAttribute(repositories: string[]): string | undefined {
+  const included: string[] = [];
+  const seen = new Set<string>();
+  let length = 0;
+
+  for (const repository of repositories) {
+    if (seen.has(repository)) continue;
+    seen.add(repository);
+    if (repository.length > SESSION_PROTOCOL_MAX_ATTRIBUTE_VALUE_CHARS) continue;
+
+    const nextLength = length + (included.length > 0 ? 1 : 0) + repository.length;
+    if (nextLength > SESSION_PROTOCOL_MAX_ATTRIBUTE_VALUE_CHARS) break;
+
+    included.push(repository);
+    length = nextLength;
+  }
+
+  return included.length > 0 ? included.join(",") : undefined;
+}
+
 export function normalizeRepositoryReference(
   value: string,
   options: { defaultHost?: string } = {},

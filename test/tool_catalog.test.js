@@ -53,7 +53,7 @@ describe("ToolCatalog", () => {
       history,
     );
 
-    expect(registry.schemas.map((tool) => tool.name)).toEqual(["history"]);
+    expect(registry.schemas.map((tool) => tool.name)).toEqual(["history", "tau_docs"]);
   });
 
   it("scopes every child filesystem and process tool to the child working directory", async () => {

@@ -1,0 +1,28 @@
+{
+  "files": [
+    "index.md",
+    "getting-started.md",
+    "ownership-and-scope.md",
+    "configuration.md",
+    "config-reference.md",
+    "credentials.md",
+    "models.md",
+    "personas.md",
+    "subagents.md",
+    "skills.md",
+    "prompts-and-project-context.md",
+    "tools.md",
+    "client-tools.md",
+    "tui.md",
+    "sessions.md",
+    "remote-sessions.md",
+    "session-protocol.md",
+    "session-protocol-methods.md",
+    "node-sdk.md",
+    "history.md",
+    "nook.md",
+    "telegram.md",
+    "security.md",
+    "troubleshooting.md"
+  ]
+}

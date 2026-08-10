@@ -99,6 +99,7 @@ describe("AgentSupervisor", () => {
     if (!spawned.ok) throw new Error(spawned.reason);
     expect(getRecord(supervisor, spawned.state.id).runtime.spec.tools.schemas).toEqual([
       expect.objectContaining({ name: "history" }),
+      expect.objectContaining({ name: "tau_docs" }),
     ]);
     supervisor.reset();
   });

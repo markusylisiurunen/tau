@@ -260,6 +260,7 @@ export class SessionChatApp {
       view.bindInputHandlers(handlers);
       return app;
     } catch (error) {
+      await Promise.resolve(options.terminalColors).catch(() => undefined);
       await options.client.close();
       throw error;
     }

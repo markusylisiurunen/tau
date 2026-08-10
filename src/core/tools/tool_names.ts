@@ -12,6 +12,7 @@ export const TOOL_NAME_INTERRUPT_AGENT = "interrupt_agent";
 export const TOOL_NAME_WEB = "web";
 export const TOOL_NAME_NOOK = "nook";
 export const TOOL_NAME_HISTORY = "history";
+export const TOOL_NAME_TAU_DOCS = "tau_docs";
 export const TOOL_NAME_GET_GOAL = "get_goal";
 export const TOOL_NAME_CREATE_GOAL = "create_goal";
 export const TOOL_NAME_UPDATE_GOAL = "update_goal";
@@ -32,3 +33,11 @@ export const TOOL_NAMES = [
 ] as const;
 
 export type ToolName = (typeof TOOL_NAMES)[number];
+
+export const HOST_TOOL_NAMES = [
+  ...TOOL_NAMES,
+  TOOL_NAME_TAU_DOCS,
+  TOOL_NAME_GET_GOAL,
+  TOOL_NAME_CREATE_GOAL,
+  TOOL_NAME_UPDATE_GOAL,
+] as const;

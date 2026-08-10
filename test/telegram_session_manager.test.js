@@ -474,6 +474,38 @@ describe("telegram session manager", () => {
     await manager.closeSession(created.id);
   });
 
+  it("bounds repository attributes for large composite projects", async () => {
+    const clientHarness = createClientHarness();
+    const projectIds = Array.from({ length: 24 }, (_, index) => `repo_${index}`);
+    const projects = Object.fromEntries(
+      projectIds.map((projectId, index) => [
+        projectId,
+        { repo: `owner/repository-${String(index).padStart(2, "0")}-${"x".repeat(40)}` },
+      ]),
+    );
+    projects.platform = {
+      projectIds,
+      persona: "gpt-5.6-sol-coder:high",
+    };
+    const manager = createTelegramSessionManager({
+      projects,
+      prepareWorkspace: vi.fn(async () => ({
+        workspacePath: "/tmp/ws/platform",
+        sessionCwd: "/tmp/ws/platform",
+        provisionTargets: [],
+      })),
+      createClient: vi.fn(async () => clientHarness.client),
+    });
+
+    const created = await manager.createSession({ projectId: "platform" });
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+
+    const repository = clientHarness.client.sessions.create.mock.calls[0][0].attributes.repository;
+    expect(repository.length).toBeLessThanOrEqual(1_024);
+    expect(repository.split(",").length).toBeLessThan(projectIds.length);
+    await manager.closeSession(created.id);
+  });
+
   it("provisions each composite repository from its configured working directory", async () => {
     const clientHarness = createClientHarness();
     const manager = createTelegramSessionManager({

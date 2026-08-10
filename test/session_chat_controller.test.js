@@ -917,6 +917,10 @@ describe("SessionChatController", () => {
       "project instructions",
       "</file>",
       "",
+      '<file path="/home/session/repo/docs/AI_GUIDE.md">',
+      "additional instructions",
+      "</file>",
+      "",
       "Nested AGENTS.md files under the current working directory (paths only):",
       "",
       "<nested-agents-files>",
@@ -961,12 +965,14 @@ describe("SessionChatController", () => {
 
     const intro = view.messages.find((message) => message.model.type === "app_intro")?.model;
     expect(intro.title).toContain("tau v");
-    expect(intro.title).toContain("1 AGENTS.md");
+    expect(intro.title).toContain("2 context files");
     expect(intro.title).toContain("1 skills");
     expect(intro.title).toContain("1 client tool");
     expect(intro.title).not.toContain("session");
     expect(intro.body).toContain("skills:\n  alpha (~/.tau/skills)");
-    expect(intro.body).toContain("context:\n  ~/repo/AGENTS.md\n\nclient tools:\n  notify");
+    expect(intro.body).toContain(
+      "context:\n  ~/repo/AGENTS.md\n  ~/repo/docs/AI_GUIDE.md\n\nclient tools:\n  notify",
+    );
     expect(intro.body).not.toContain("diff_review");
     expect(intro.body).not.toContain("prefill_input");
     expect(intro.body).not.toContain("~/repo/src/AGENTS.md");
@@ -978,7 +984,7 @@ describe("SessionChatController", () => {
     await controller.onUserInput("/help");
     const help = view.messages.at(-1)?.model;
     expect(help).toMatchObject({ type: "transcript_text" });
-    expect(help.text).toContain("context:\n  ~/repo/AGENTS.md");
+    expect(help.text).toContain("context:\n  ~/repo/AGENTS.md\n  ~/repo/docs/AI_GUIDE.md");
     expect(help.text).not.toContain("~/repo/src/AGENTS.md");
     expect(help.text).toContain("skills:\n  alpha (~/.tau/skills)");
   });
@@ -5172,6 +5178,42 @@ describe("SessionChatController", () => {
         ],
       }),
     ).toThrow("duplicate TUI client tool 'prefill_input'");
+  });
+
+  it("waits for terminal color detection before closing after session creation fails", async () => {
+    const creationError = new Error("session creation failed");
+    let resolveTerminalColors;
+    const terminalColors = new Promise((resolve) => {
+      resolveTerminalColors = resolve;
+    });
+    const client = {
+      sessions: {
+        create: vi.fn(async () => {
+          throw creationError;
+        }),
+      },
+      close: vi.fn(async () => {}),
+    };
+
+    const opening = SessionChatApp.open({
+      client,
+      configuredClientToolNames: [],
+      targetLabel: "in-process",
+      sessionSelection: { mode: "create", input: {} },
+      terminalColors,
+    });
+    const rejection = expect(opening).rejects.toBe(creationError);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(client.close).not.toHaveBeenCalled();
+
+    resolveTerminalColors({
+      foreground: { r: 1, g: 1, b: 1 },
+      background: { r: 0, g: 0, b: 0 },
+      appearance: "dark",
+    });
+    await rejection;
+    expect(client.close).toHaveBeenCalledOnce();
   });
 
   it("rejects configured tool collisions before spawning a stdio transport", async () => {

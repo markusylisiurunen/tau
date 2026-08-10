@@ -8,6 +8,7 @@ import {
   TOOL_NAME_NOOK,
   TOOL_NAME_SEND_INPUT_TO_AGENT,
   TOOL_NAME_SPAWN_AGENT,
+  TOOL_NAME_TAU_DOCS,
   TOOL_NAME_VIEW_IMAGE,
   TOOL_NAME_WAIT_FOR_AGENTS,
   TOOL_NAME_WEB,
@@ -194,6 +195,16 @@ const TOOL_RUN_ACTION_LABELS: Record<string, ToolRunActionLabels> = {
     blocked: "interruption blocked",
     cancelled: "interruption cancelled",
   },
+  [TOOL_NAME_TAU_DOCS]: {
+    ...GENERIC_TOOL_RUN_ACTION_LABELS,
+    preparing: "preparing docs",
+    queued: "queued docs read",
+    running: "reading docs",
+    succeeded: "read docs",
+    failed: "failed to read docs",
+    blocked: "docs read blocked",
+    cancelled: "docs read cancelled",
+  },
 };
 
 function truncateLine(text: string, maxChars: number): string {
@@ -262,6 +273,7 @@ function getToolRunActionLabels(toolName: string): ToolRunActionLabels {
 
 const CHARACTER_WRAPPED_SUBJECT_TOOLS = new Set([
   TOOL_NAME_BASH,
+  TOOL_NAME_TAU_DOCS,
   TOOL_NAME_WEB,
   TOOL_NAME_HISTORY,
   TOOL_NAME_NOOK,

@@ -11,6 +11,7 @@ import { type ZodError, z } from "zod";
 export const SESSION_PROTOCOL_VERSION = 12 as const;
 export const SESSION_PROTOCOL_MAX_EXEC_CAPTURE_BYTES = 24 * 1024 * 1024;
 export const SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES = 16 * 1024 * 1024;
+export const SESSION_PROTOCOL_MAX_ATTRIBUTE_VALUE_CHARS = 1_024;
 export const SESSION_PROTOCOL_MAX_SUBAGENT_ACTIVITIES = 64;
 export const SESSION_PROTOCOL_MAX_SUBAGENT_SHORT_TEXT_BYTES = 512;
 export const SESSION_PROTOCOL_MAX_SUBAGENT_TOOL_SUBJECT_BYTES = 4 * 1024;
@@ -1461,7 +1462,7 @@ const environmentVariablesSchema = z
   .record(environmentVariableNameSchema, environmentVariableValueSchema)
   .refine((value) => !("HOME" in value), "HOME is controlled by the execution environment");
 const sessionAttributesSchema = z
-  .record(z.string().min(1).max(64), z.string().max(1_024))
+  .record(z.string().min(1).max(64), z.string().max(SESSION_PROTOCOL_MAX_ATTRIBUTE_VALUE_CHARS))
   .refine(
     (attributes) => Object.keys(attributes).length <= 32,
     "at most 32 attributes are allowed",

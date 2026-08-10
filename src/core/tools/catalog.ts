@@ -15,6 +15,7 @@ import { createNookToolDefinition } from "./nook.js";
 import { ToolRegistry } from "./registry.js";
 import { createSendInputToAgentToolDefinition } from "./send_input_to_agent.js";
 import { createSpawnAgentToolDefinition, type ResolveSubagentPrompts } from "./spawn_agent.js";
+import { createTauDocsToolDefinition } from "./tau_docs.js";
 import {
   TOOL_NAME_BASH,
   TOOL_NAME_EDIT,
@@ -96,6 +97,7 @@ export const ToolCatalog = {
     const enabledToolNames = new Set<string>(options.persona.tools);
     return new ToolRegistry([
       ...tools.filter((tool) => enabledToolNames.has(tool.schema.name)),
+      createTauDocsToolDefinition(),
       ...createGoalToolDefinitions(options.goalManager),
     ]);
   },
@@ -137,6 +139,6 @@ export const ToolCatalog = {
           break;
       }
     }
-    return new ToolRegistry(definitions);
+    return new ToolRegistry([...definitions, createTauDocsToolDefinition()]);
   },
 };

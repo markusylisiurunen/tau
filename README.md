@@ -29,7 +29,7 @@ tau
 
 ## Documentation
 
-The [Tau documentation](docs/index.md) is the complete version-matched guide for people and agents. Start there, or go directly to:
+The [Tau documentation](docs/index.md) is the canonical, version-matched product guide. The running host exposes the same files to agents through the intrinsic `tau_docs` tool, so people and agents work from the same contracts. Start there, or go directly to:
 
 - [Getting started](docs/getting-started.md)
 - [Configuration](docs/configuration.md)
@@ -37,5 +37,3 @@ The [Tau documentation](docs/index.md) is the complete version-matched guide for
 - [Node SDK](docs/node-sdk.md)
 - [Remote sessions](docs/remote-sessions.md)
 - [Security](docs/security.md)
-
-Tau ships the same corpus to agents through the intrinsic `tau_docs` tool, so agents and people work from the same contracts.

@@ -1,6 +1,6 @@
 # Tau documentation
 
-Tau ships this documentation with the host so agents and people can work from the same version-matched contracts. It explains how to operate and configure Tau, including the machine boundaries that matter in local and remote sessions.
+Tau ships this canonical product guide with the host so agents and people can work from the same version-matched contracts. It covers supported operation, configuration, integrations, and troubleshooting, including the machine boundaries that matter in local and remote sessions.
 
 The intrinsic `tau_docs` tool reads one exact Markdown path at a time. It does not search files, list current settings, or inspect client-local state. Start here, choose the page that matches the task, and pass its flat path exactly.
 

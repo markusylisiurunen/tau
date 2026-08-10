@@ -76,7 +76,7 @@ The default is `false`. When enabled, at least one valid custom persona must be 
 
 ### `agentContextFiles`
 
-An array of non-empty paths to additional `AGENTS.md`-style context files:
+An array of non-empty paths to additional text files included as project context:
 
 ```json
 {

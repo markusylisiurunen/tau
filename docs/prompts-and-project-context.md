@@ -105,13 +105,13 @@ It additionally skips the direct `Library` child on macOS and `snap` on Linux. A
 
 The limits and exclusions apply only to automatic descendant discovery. They do not constrain explicitly configured context files.
 
-## Add explicit `AGENTS.md` files
+## Add explicit context files
 
-`agentContextFiles` adds specific `AGENTS.md` files to the full injected context. The setting is an array of non-empty path strings:
+`agentContextFiles` adds specific text files to the full injected context. The files can use any name:
 
 ```json
 {
-  "agentContextFiles": ["docs/AGENTS.md", "services/api/AGENTS.md"]
+  "agentContextFiles": ["docs/AI_GUIDE.md", "services/api/AGENTS.md"]
 }
 ```
 
@@ -123,11 +123,11 @@ Paths are resolved from the level that declares them:
 
 Values are additive across configuration levels, from global through the nearest project level. Tau resolves them to paths and removes exact duplicates while preserving order.
 
-An explicit file still has to meet the context boundary: it must resolve to a real file named `AGENTS.md`, its directory must be an ancestor or descendant of the working directory, and an in-home session cannot escape home through a path or symlink. Sibling files are ignored. Missing and ineligible files are not injected.
+An explicit path must resolve to a real file whose directory is an ancestor or descendant of the working directory. An in-home session cannot escape home through a path or symlink. Sibling files, missing files, and ineligible files are not injected.
 
-Explicit descendants are included in full and are removed from the paths-only nested list. Explicit files bypass the automatic child scan's depth, directory-count, and excluded-directory rules.
+Explicit files bypass the automatic child scan's depth, directory-count, and excluded-directory rules. Tau still discovers only `AGENTS.md` automatically; every other filename must be configured explicitly.
 
-`agentContextFiles` is useful when important instructions live below the current working directory but should apply to the whole session. Do not use it as a general arbitrary-file include mechanism; only `AGENTS.md` is accepted.
+Use this setting when important project instructions live outside the ordinary `AGENTS.md` hierarchy. Every included file is sent to the model as project context, so do not include secrets or unrelated content.
 
 ## Disable project context
 
@@ -168,9 +168,9 @@ This mechanism is useful for integrations that need per-message model instructio
 
 ## Reload and verify context
 
-Run `/reload` in an idle TUI session after changing prompts, skills, personas, configuration, or `AGENTS.md`. Reload re-resolves content and rebuilds the active persona's system context. It reports configuration warnings and the resulting counts. Reload is refused while a session turn is active.
+Run `/reload` in an idle TUI session after changing prompts, skills, personas, configuration, or project context files. Reload re-resolves content and rebuilds the active persona's system context. It reports configuration warnings and the resulting counts. Reload is refused while a session turn is active.
 
-For a new local TUI session, debug mode prints discovered content, loaded `AGENTS.md` paths, tool schemas, and the effective system prompt, then exits:
+For a new local TUI session, debug mode prints discovered content, loaded context-file paths, tool schemas, and the effective system prompt, then exits:
 
 ```bash
 tau --debug --persona release-coder

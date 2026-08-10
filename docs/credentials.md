@@ -98,7 +98,7 @@ Login adds a new account or refreshes the matching account. Disable keeps the ac
 
 ### Account selection and failover
 
-Without an override, Tau chooses among enabled accounts with usable quota and keeps the selected account stable for a session. If a provider error reveals that the selected account's tracked quota is exhausted, Tau clears that session selection so a later attempt can choose another usable account. Disabled, expired, unrefreshable, or exhausted accounts are not suitable candidates.
+Without an override, Tau chooses among enabled accounts with usable quota and keeps the selected account stable for a session. If a provider error reveals that the selected account's tracked quota is exhausted, Tau clears that session selection so a later attempt can choose another usable account. Disabled accounts, accounts whose credentials cannot be refreshed, and accounts with exhausted quota are not suitable candidates.
 
 Set `TAU_CODEX_ACCOUNT` in the host process environment to force one stored account by email or account ID:
 

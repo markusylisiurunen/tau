@@ -17,7 +17,7 @@ Tau creates a local execution environment rooted at that directory. A startup pe
 tau --persona gpt-5.6-sol-coder:high
 ```
 
-`-p` is the short form. `--no-agent-context-files` omits AGENTS.md context, and `--no-client-tools` prevents the TUI from advertising its built-in and configured [client tools](client-tools.md). On macOS, `--caffeinated` runs `caffeinate -i` while assistant turns are active. It is a no-op on Linux and is not an option for `tau attach`.
+`-p` is the short form. `--no-agent-context-files` omits `AGENTS.md` and explicitly configured context files, and `--no-client-tools` prevents the TUI from advertising its built-in and configured [client tools](client-tools.md). On macOS, `--caffeinated` runs `caffeinate -i` while assistant turns are active. It is a no-op on Linux and is not an option for `tau attach`.
 
 Piped stdin becomes the first message in a local TUI session:
 
@@ -78,7 +78,7 @@ Then use Shift+Tab to select an allowed reasoning level. Newly added personas do
 
 ## Slash commands
 
-`/help` prints the commands, keybindings, loaded skills, and AGENTS.md context paths visible to the current session.
+`/help` prints the commands, keybindings, loaded skills, and context-file paths visible to the current session.
 
 | Command | Behavior |
 | --- | --- |

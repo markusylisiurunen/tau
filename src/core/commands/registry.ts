@@ -64,7 +64,7 @@ export interface CommandDispatchContext {
 }
 
 export interface HelpTextOptions {
-  agentsFiles?: string[];
+  contextFiles?: string[];
   skills?: Skill[];
   themes?: string[];
   formatPath?: (path: string) => string;
@@ -121,13 +121,13 @@ export class CommandRegistry<Ctx = unknown> {
 
   buildHelpText(options: HelpTextOptions = {}): string {
     const lines: string[] = [];
-    const { agentsFiles, skills, themes } = options;
+    const { contextFiles, skills, themes } = options;
     const formatPath = options.formatPath ?? formatPathForDisplay;
 
-    if (agentsFiles && agentsFiles.length > 0) {
+    if (contextFiles && contextFiles.length > 0) {
       lines.push("context:");
-      agentsFiles.forEach((agentsFile) => {
-        lines.push(`  ${formatPath(agentsFile)}`);
+      contextFiles.forEach((contextFile) => {
+        lines.push(`  ${formatPath(contextFile)}`);
       });
     }
     if (skills && skills.length > 0) {

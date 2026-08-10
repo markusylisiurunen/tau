@@ -917,6 +917,10 @@ describe("SessionChatController", () => {
       "project instructions",
       "</file>",
       "",
+      '<file path="/home/session/repo/docs/AI_GUIDE.md">',
+      "additional instructions",
+      "</file>",
+      "",
       "Nested AGENTS.md files under the current working directory (paths only):",
       "",
       "<nested-agents-files>",
@@ -961,12 +965,14 @@ describe("SessionChatController", () => {
 
     const intro = view.messages.find((message) => message.model.type === "app_intro")?.model;
     expect(intro.title).toContain("tau v");
-    expect(intro.title).toContain("1 AGENTS.md");
+    expect(intro.title).toContain("2 context files");
     expect(intro.title).toContain("1 skills");
     expect(intro.title).toContain("1 client tool");
     expect(intro.title).not.toContain("session");
     expect(intro.body).toContain("skills:\n  alpha (~/.tau/skills)");
-    expect(intro.body).toContain("context:\n  ~/repo/AGENTS.md\n\nclient tools:\n  notify");
+    expect(intro.body).toContain(
+      "context:\n  ~/repo/AGENTS.md\n  ~/repo/docs/AI_GUIDE.md\n\nclient tools:\n  notify",
+    );
     expect(intro.body).not.toContain("diff_review");
     expect(intro.body).not.toContain("prefill_input");
     expect(intro.body).not.toContain("~/repo/src/AGENTS.md");
@@ -978,7 +984,7 @@ describe("SessionChatController", () => {
     await controller.onUserInput("/help");
     const help = view.messages.at(-1)?.model;
     expect(help).toMatchObject({ type: "transcript_text" });
-    expect(help.text).toContain("context:\n  ~/repo/AGENTS.md");
+    expect(help.text).toContain("context:\n  ~/repo/AGENTS.md\n  ~/repo/docs/AI_GUIDE.md");
     expect(help.text).not.toContain("~/repo/src/AGENTS.md");
     expect(help.text).toContain("skills:\n  alpha (~/.tau/skills)");
   });

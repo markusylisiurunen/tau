@@ -410,7 +410,7 @@ export class SessionChatController {
     this.view.addMessage({
       type: "transcript_text",
       text: this.commandRegistry.buildHelpText({
-        agentsFiles: this.getAgentsFilePaths(),
+        contextFiles: this.getContextFilePaths(),
         skills: this.snapshot.catalog.skills,
         themes: this.themeIds,
         formatPath: (path) =>
@@ -471,9 +471,9 @@ export class SessionChatController {
 
   private buildStartupIntroTitle(): string {
     const parts = [`tau v${APP_VERSION}`];
-    const agentsFiles = this.getAgentsFilePaths();
-    if (agentsFiles.length > 0) {
-      parts.push(`${agentsFiles.length} AGENTS.md`);
+    const contextFiles = this.getContextFilePaths();
+    if (contextFiles.length > 0) {
+      parts.push(`${contextFiles.length} context file${contextFiles.length === 1 ? "" : "s"}`);
     }
     if (this.snapshot.catalog.skills.length > 0) {
       parts.push(`${this.snapshot.catalog.skills.length} skills`);
@@ -503,13 +503,13 @@ export class SessionChatController {
       }
     }
 
-    const agentsFiles = this.getAgentsFilePaths().map((path) =>
+    const contextFiles = this.getContextFilePaths().map((path) =>
       formatPathForSessionDisplay(path, this.snapshot.executionEnvironment.home),
     );
-    if (agentsFiles.length > 0) {
+    if (contextFiles.length > 0) {
       lines.push("", "context:");
-      for (const agentsFile of agentsFiles) {
-        lines.push(`  ${agentsFile}`);
+      for (const contextFile of contextFiles) {
+        lines.push(`  ${contextFile}`);
       }
     }
 
@@ -1821,7 +1821,7 @@ export class SessionChatController {
         `${result.counts.personas} personas`,
         `${result.counts.prompts} prompts`,
         `${result.counts.skills} skills`,
-        ...formatAgentsMdReloadSummary(this.getAgentsFilePaths().length),
+        ...formatContextFileReloadSummary(this.getContextFilePaths().length),
       ].join(", ");
       this.view.showFooterNotice(`reloaded: ${summary}.`, "default");
     } catch (error) {
@@ -2140,7 +2140,7 @@ export class SessionChatController {
     return this.targetLabel !== "in-process" || this.snapshot.executionEnvironment.kind !== "local";
   }
 
-  private getAgentsFilePaths(): string[] {
+  private getContextFilePaths(): string[] {
     const systemPrompt = this.snapshot.messages.find((entry) => entry.message.role === "system")
       ?.message.content;
     if (typeof systemPrompt !== "string") {
@@ -2148,7 +2148,7 @@ export class SessionChatController {
     }
 
     const files = new Set<string>();
-    const regex = /<file path="([^"]*AGENTS\.md)">/g;
+    const regex = /^<file path="([^"]+)">$/gm;
     for (const match of systemPrompt.matchAll(regex)) {
       const path = unescapeXmlAttribute(match[1] ?? "");
       if (path) {
@@ -2619,11 +2619,11 @@ function formatPathForSessionDisplay(path: string, home: string): string {
   return path;
 }
 
-function formatAgentsMdReloadSummary(count: number): string[] {
+function formatContextFileReloadSummary(count: number): string[] {
   if (count <= 0) {
     return [];
   }
-  return [`${count} AGENTS.md`];
+  return [`${count} context file${count === 1 ? "" : "s"}`];
 }
 
 function formatAutoCompactionRetainedText(result: {

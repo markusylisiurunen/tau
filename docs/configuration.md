@@ -113,7 +113,7 @@ Other strings that happen to contain paths are not automatically rebased unless 
 
 ## Invalid and unknown fields
 
-Each `config.json` must contain a JSON object. Tau reports malformed JSON, wrong types, invalid enum values, unknown model targets, and fields used at a forbidden scope as startup warnings. It keeps valid fields from the same file and continues merging other levels.
+Each `config.json` must contain a JSON object. Malformed JSON, wrong types, invalid enum values, unknown model targets, and fields used at a forbidden scope produce configuration warnings. Tau keeps valid fields from the same file and continues merging other levels. Run `/reload` in an idle session to see the current warnings.
 
 If a more-specific field is invalid, it is skipped rather than replacing a valid broader value. This can make the broader value remain effective, so do not treat a warning as if the requested override took effect.
 

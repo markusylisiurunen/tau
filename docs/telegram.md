@@ -294,15 +294,15 @@ Tool selection occurs when the session client is created or reconnected. `/reloa
 
 ## Persistence and restart behavior
 
-Normal shutdown interrupts live work, waits for owned activity to settle, disconnects session clients, and persists active records as waiting for input. It preserves repository and composite workspaces rather than deleting them. On restart, Tau reconnects those records to their durable session snapshots.
+Normal shutdown interrupts live work, waits for active work to settle, disconnects sessions, and preserves repository and composite workspaces rather than deleting them. Sessions that finished creation reconnect on restart and retain their conversation. A session interrupted while its workspace or Tau session was still being prepared starts preparation again.
 
-If a referenced repository workspace is missing, Tau reconstructs it from the cache and reconnects the same Tau session. A persistent-directory record is never reconstructed; its configured directory must exist and match the snapshot.
+If a referenced repository workspace is missing, Tau reconstructs it from the cache and reconnects the same session. A persistent-directory workspace is never reconstructed; its configured directory must still exist at the original path.
 
-The runner tracks accepted Telegram turns by durable Tau turn ID. After a lost response, startup reconciles that ID against the session's turn ledger. Running work remains interruptible until it settles. A confirmed unaccepted message prompts the user to resend it; failed or blocked outcomes remain queued until delivery succeeds.
+If the connection is lost after Telegram submits a message, startup checks whether Tau accepted and completed it. Running work remains interruptible until it settles. A confirmed unaccepted message prompts the user to resend it; failed or blocked outcomes remain queued until delivery succeeds.
 
-Recovered snapshots establish a delivery baseline. Tau does not resend existing assistant messages, notices, or unrelated old turn outcomes just because the runner restarted. New warning and error notice titles are delivered after recovery. In-process network retry timers do not survive restart, but durable turn notifications do.
+Tau does not resend earlier assistant messages, notices, or unrelated old outcomes just because the runner restarted. New warning and error notices are delivered after recovery. A restart clears short-lived network retries, but notifications waiting to be delivered remain pending.
 
-A failed record with unresolved work can reconnect for reconciliation. Other failed records remain as tombstones containing the initiating diagnostic until the owning chat replaces or closes the session. Do not edit runner state files to force recovery.
+If a failed session still has unresolved submitted work, Tau can reconnect to determine the outcome. Other failed sessions remain visible with their original diagnostic until the owning chat replaces or closes them. Do not edit runner state files to force recovery.
 
 ## Verify a runner safely
 

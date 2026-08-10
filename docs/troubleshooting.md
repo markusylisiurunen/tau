@@ -28,7 +28,7 @@ tau --debug
 
 Add `--persona <exact-id>` when checking one persona. Debug output includes complete model-facing project context. Keep it private and never use it as a convenient configuration dump. It cannot inspect a running remote host, a hosted target, or an attached client's effective state.
 
-Inside the TUI, `/help` shows current commands, loaded skills, and `AGENTS.md` paths. It is useful for current session visibility, while `/reload` is the operation that asks the host to recollect runtime content.
+Inside the TUI, `/help` shows current commands, loaded skills, and injected context-file paths. It is useful for current session visibility, while `/reload` is the operation that asks the host to recollect runtime content.
 
 ## A configuration change has no effect
 

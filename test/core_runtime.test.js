@@ -253,7 +253,7 @@ describe("runtime prompt bootstrap", () => {
     }
   });
 
-  it("filters explicit AGENTS files to the execution cwd scope", async () => {
+  it("filters explicit context files to the execution cwd scope", async () => {
     const root = mkdtempSync(join(tmpdir(), "tau-runtime-agents-scope-"));
     const home = join(root, "home");
     const backend = join(home, "repo", "backend");
@@ -266,11 +266,11 @@ describe("runtime prompt bootstrap", () => {
     const included = join(scripts, "AGENTS.md");
     const siblingFile = join(sibling, "AGENTS.md");
     const prefixSiblingFile = join(prefixSibling, "AGENTS.md");
-    const wrongName = join(scripts, "NOTES.md");
+    const additionalContext = join(scripts, "AI_GUIDE.md");
     writeFileSync(included, "included instructions", "utf-8");
     writeFileSync(siblingFile, "sibling instructions", "utf-8");
     writeFileSync(prefixSiblingFile, "prefix sibling instructions", "utf-8");
-    writeFileSync(wrongName, "notes", "utf-8");
+    writeFileSync(additionalContext, "additional context", "utf-8");
 
     try {
       const resolved = await resolveRuntimePromptBootstrap({
@@ -279,17 +279,17 @@ describe("runtime prompt bootstrap", () => {
         cwd: backend,
         home,
         includeAgentContext: true,
-        agentContextFiles: [included, siblingFile, prefixSiblingFile, wrongName],
+        agentContextFiles: [included, siblingFile, prefixSiblingFile, additionalContext],
         backend: createLocalToolExecutionBackend(),
       });
 
-      expect(resolved.agentsFiles).toEqual([included]);
+      expect(resolved.agentsFiles).toEqual([included, additionalContext]);
       expect(resolved.promptContext.projectContextBlock).toContain("included instructions");
+      expect(resolved.promptContext.projectContextBlock).toContain("additional context");
       expect(resolved.promptContext.projectContextBlock).not.toContain("sibling instructions");
       expect(resolved.promptContext.projectContextBlock).not.toContain(
         "prefix sibling instructions",
       );
-      expect(resolved.promptContext.projectContextBlock).not.toContain("notes");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

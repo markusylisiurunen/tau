@@ -100,6 +100,7 @@ export type TauSdkClientToolExecutionEnvironment = {
 
 export type TauSdkClientToolContext = {
   sessionId: string;
+  agentId: string;
   callId: string;
   signal: AbortSignal;
   executionEnvironment: TauSdkClientToolExecutionEnvironment;

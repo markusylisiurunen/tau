@@ -1,4 +1,5 @@
 import {
+  createTauCodeModeExecutionEnvironmentFiles,
   executeTauCodeMode,
   type TauCodeModeDefinition,
   validateTauCodeModeDefinition,
@@ -49,9 +50,14 @@ export function createTauCodeModeClientTool(
         signal: context.signal,
         invocation: {
           sessionId: context.sessionId,
+          agentId: context.agentId,
           callId: context.callId,
         },
         executionEnvironment: context.executionEnvironment,
+        files: createTauCodeModeExecutionEnvironmentFiles(
+          context.agentId,
+          context.executionEnvironment,
+        ),
       });
     },
   };

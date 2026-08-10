@@ -7,7 +7,7 @@ import type {
   TauSdkSessionExecResult,
 } from "./types.js";
 
-export const TAU_CLIENT_TOOL_COMMAND_PROTOCOL_VERSION = 2;
+export const TAU_CLIENT_TOOL_COMMAND_PROTOCOL_VERSION = 3;
 
 const execOptionsSchema = z
   .object({
@@ -25,6 +25,7 @@ const invokeSchema = z
     version: z.literal(TAU_CLIENT_TOOL_COMMAND_PROTOCOL_VERSION),
     type: z.literal("invoke"),
     sessionId: z.string().min(1),
+    agentId: z.string().min(1),
     callId: z.string().min(1),
     arguments: z.unknown(),
   })
@@ -91,15 +92,16 @@ const execResponseSchema = z.discriminatedUnion("ok", [
 ]);
 
 export type TauClientToolCommandInvoke = {
-  version: 2;
+  version: 3;
   type: "invoke";
   sessionId: string;
+  agentId: string;
   callId: string;
   arguments: unknown;
 };
 
 export type TauClientToolCommandExecRequest = {
-  version: 2;
+  version: 3;
   type: "exec";
   requestId: string;
   command: string;
@@ -114,13 +116,13 @@ export type TauClientToolCommandExecRequest = {
 };
 
 export type TauClientToolCommandExecCancel = {
-  version: 2;
+  version: 3;
   type: "exec.cancel";
   requestId: string;
 };
 
 export type TauClientToolCommandResult = {
-  version: 2;
+  version: 3;
   type: "result";
   content: string;
 };
@@ -132,14 +134,14 @@ export type TauClientToolCommandOutput =
 
 export type TauClientToolCommandExecResponse =
   | {
-      version: 2;
+      version: 3;
       type: "exec.result";
       requestId: string;
       ok: true;
       result: TauSdkSessionExecResult;
     }
   | {
-      version: 2;
+      version: 3;
       type: "exec.result";
       requestId: string;
       ok: false;
@@ -292,6 +294,7 @@ export async function runTauClientToolCommand(handler: TauClientToolCommandHandl
     const handled = Promise.resolve(
       handler(invocation.arguments, {
         sessionId: invocation.sessionId,
+        agentId: invocation.agentId,
         callId: invocation.callId,
         signal: controller.signal,
         executionEnvironment,
@@ -323,13 +326,14 @@ export function parseTauClientToolCommandOutput(value: unknown): TauClientToolCo
     .discriminatedUnion("type", [execRequestSchema, execCancelSchema, resultSchema])
     .safeParse(value);
   if (!parsed.success) {
-    throw new Error("command client tool returned an invalid version-2 protocol frame");
+    throw new Error("command client tool returned an invalid version-3 protocol frame");
   }
   return parsed.data;
 }
 
 export function createTauClientToolCommandInvoke(options: {
   sessionId: string;
+  agentId: string;
   callId: string;
   arguments: unknown;
 }): TauClientToolCommandInvoke {
@@ -373,7 +377,7 @@ export function createTauClientToolCommandExecResponse(options: {
 function parseInvokeFrame(line: string): TauClientToolCommandInvoke {
   const parsed = invokeSchema.safeParse(parseJsonLine(line));
   if (!parsed.success) {
-    throw new Error("client-tool command received an invalid version-2 invocation");
+    throw new Error("client-tool command received an invalid version-3 invocation");
   }
   return parsed.data;
 }

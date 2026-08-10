@@ -176,6 +176,7 @@ export function createCommandClientTools(
         input: `${JSON.stringify(
           createTauClientToolCommandInvoke({
             sessionId: context.sessionId,
+            agentId: context.agentId,
             callId: context.callId,
             arguments: args,
           }),

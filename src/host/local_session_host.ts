@@ -310,7 +310,7 @@ export class LocalSessionHost implements TauSessionHost {
       createdAt,
       persona: bootstrap.persona,
       backend: executionEnvironment.getToolExecutionBackend(),
-      clientTools: (sessionId) => this.clientToolBroker.getToolDefinitions(sessionId),
+      clientTools: () => this.clientToolBroker.getToolDefinitions(sessionId),
       modelResolver: bootstrap.modelResolver,
       resolveSubagentPrompts: createExecutionEnvironmentSubagentPromptResolver({
         sessionId,

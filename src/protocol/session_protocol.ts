@@ -8,7 +8,7 @@ import type {
 } from "@earendil-works/pi-ai";
 import { type ZodError, z } from "zod";
 
-export const SESSION_PROTOCOL_VERSION = 11 as const;
+export const SESSION_PROTOCOL_VERSION = 12 as const;
 export const SESSION_PROTOCOL_MAX_EXEC_CAPTURE_BYTES = 24 * 1024 * 1024;
 export const SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES = 16 * 1024 * 1024;
 export const SESSION_PROTOCOL_MAX_SUBAGENT_ACTIVITIES = 64;
@@ -1279,6 +1279,7 @@ export type SessionProtocolClientToolCallMessage = {
   version: typeof SESSION_PROTOCOL_VERSION;
   type: "session.clientTool.call";
   sessionId: string;
+  agentId: string;
   callId: string;
   toolName: string;
   arguments: unknown;
@@ -1629,6 +1630,7 @@ const sessionProtocolClientToolCallMessageSchema = z
     version: z.literal(SESSION_PROTOCOL_VERSION),
     type: z.literal("session.clientTool.call"),
     sessionId: nonEmptyStringSchema,
+    agentId: nonEmptyStringSchema,
     callId: nonEmptyStringSchema,
     toolName: nonEmptyStringSchema,
     arguments: z.unknown(),

@@ -7,7 +7,7 @@ import { createProtocolExecResult } from "./helpers/session_protocol_fixtures.js
 const commandModuleUrl = pathToFileURL(resolve("dist/sdk/index.js")).href;
 
 function resultFrame(content = "done") {
-  return `${JSON.stringify({ version: 2, type: "result", content })}\n`;
+  return `${JSON.stringify({ version: 3, type: "result", content })}\n`;
 }
 
 function createSpawnResult(overrides = {}) {
@@ -48,6 +48,7 @@ function createConfig(overrides = {}) {
 function createContext(overrides = {}) {
   return {
     sessionId: "session-1",
+    agentId: "agent-1",
     callId: "call-1",
     signal: new AbortController().signal,
     executionEnvironment: {
@@ -145,9 +146,10 @@ describe("command client tools", () => {
         stdio: ["pipe", "pipe", "pipe"],
         keepStdinOpen: true,
         input: `${JSON.stringify({
-          version: 2,
+          version: 3,
           type: "invoke",
           sessionId: "session-1",
+          agentId: "agent-1",
           callId: "call-1",
           arguments: { message: "hello" },
         })}\n`,
@@ -227,7 +229,7 @@ describe("command client tools", () => {
     const invalidJsonSpawn = vi.fn(async () => createSpawnResult({ stdout: "done\n" }));
     const invalidShapeSpawn = vi.fn(async () =>
       createSpawnResult({
-        stdout: `${JSON.stringify({ version: 2, type: "result", content: "done", extra: true })}\n`,
+        stdout: `${JSON.stringify({ version: 3, type: "result", content: "done", extra: true })}\n`,
       }),
     );
 
@@ -244,7 +246,7 @@ describe("command client tools", () => {
       "invalid JSON protocol framing",
     );
     await expect(invalidShapeTool.execute({ message: "hello" }, createContext())).rejects.toThrow(
-      "invalid version-2 protocol frame",
+      "invalid version-3 protocol frame",
     );
   });
 

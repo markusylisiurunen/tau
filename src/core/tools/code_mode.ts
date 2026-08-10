@@ -47,6 +47,7 @@ export type CodeModeToolImplementation<TArgs> = {
   execute(input: {
     args: TArgs;
     code: string;
+    agentId: string;
     backend: ToolExecutionBackend;
     signal: AbortSignal;
   }): Promise<TauCodeModeRuntimeResult>;
@@ -57,6 +58,7 @@ export function executeInternalCodeMode(options: {
   documentation: string;
   api: TauCodeModeApi;
   code: string;
+  agentId: string;
   backend: ToolExecutionBackend;
   signal: AbortSignal;
   timeoutMs?: number;
@@ -68,6 +70,17 @@ export function executeInternalCodeMode(options: {
     code: options.code,
     signal: options.signal,
     ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+    files: {
+      agentId: options.agentId,
+      adapter: {
+        runNodeScript: async (script, fileOptions) =>
+          await options.backend.runNodeScript(script, [], {
+            signal: fileOptions.signal,
+            stdin: Buffer.from(fileOptions.input),
+            maxCaptureBytes: fileOptions.maxCaptureBytes,
+          }),
+      },
+    },
     persistOutput: async (output) => {
       if (!output.contextTruncated) return undefined;
       const path = await writeBashTempFile(options.backend, output.content);
@@ -149,6 +162,7 @@ export function createCodeModeToolDefinition<TArgs>(
             const runtime = await implementation.execute({
               args: parsed.args,
               code: parsed.code,
+              agentId: context.agentId,
               backend,
               signal,
             });

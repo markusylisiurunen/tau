@@ -71,6 +71,7 @@ describe("ClientToolBroker", () => {
         },
       ],
       sendCall: (message) => {
+        expect(message.agentId).toBe("test-agent");
         broker.ack(message.sessionId, message.callId);
         broker.result(message.sessionId, message.callId, { ok: true, content });
       },

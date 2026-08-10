@@ -11,6 +11,7 @@ import { createTauCodeModeClientTool } from "../dist/sdk/index.js";
 
 const invocation = {
   sessionId: "session-1",
+  agentId: "agent-1",
   callId: "call-1",
 };
 
@@ -51,6 +52,7 @@ describe("public code-mode runtime", () => {
     expect(result.content).toContain("at most 128 API calls");
     expect(result.content).toContain("at most 8 unresolved calls concurrently");
     expect(result.content).toContain("a 1.0 MB limit per request or response");
+    expect(result.content).not.toContain("`files`");
     expect(result.content).toContain("# Linear API");
   });
 
@@ -264,10 +266,9 @@ describe("code-mode command adapter", () => {
       "});",
     ].join("\n");
     const request = {
-      version: 2,
+      version: 3,
       type: "invoke",
-      sessionId: invocation.sessionId,
-      callId: invocation.callId,
+      ...invocation,
       arguments: {
         code: 'console.log(await linear.echo("hello"))',
       },
@@ -277,7 +278,7 @@ describe("code-mode command adapter", () => {
     expect(result.status).toBe(0);
     expect(result.stderr).toBe("");
     expect(JSON.parse(result.stdout)).toEqual({
-      version: 2,
+      version: 3,
       type: "result",
       content: JSON.stringify({ value: "hello", invocation }),
     });
@@ -295,10 +296,9 @@ describe("code-mode command adapter", () => {
       "});",
     ].join("\n");
     const request = {
-      version: 2,
+      version: 3,
       type: "invoke",
-      sessionId: invocation.sessionId,
-      callId: invocation.callId,
+      ...invocation,
       arguments: {},
     };
     const result = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {

@@ -669,13 +669,14 @@ A project or nested directory can select a different exact set without defining 
 
 The most specific `.tau/config.json` selection wins. Unknown names are skipped, and `enabledClientTools: []` disables every configured command client tool for that workspace.
 
-For every call, Tau validates the arguments against the configured schema, starts the command directly without a shell, and speaks a version 2 newline-delimited JSON protocol over stdin and stdout. The initial stdin frame contains the invocation:
+For every call, Tau validates the arguments against the configured schema, starts the command directly without a shell, and speaks a version 3 newline-delimited JSON protocol over stdin and stdout. The initial stdin frame contains the invocation:
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "type": "invoke",
   "sessionId": "session-id",
+  "agentId": "agent-id",
   "callId": "call-id",
   "arguments": { "message": "Build finished" }
 }
@@ -684,10 +685,10 @@ For every call, Tau validates the arguments against the configured schema, start
 Commands may send `exec` frames to run commands in the session execution environment. Tau returns the ordinary `session.exec` result in a matching `exec.result` stdin frame. The command finishes with one stdout result frame:
 
 ```json
-{ "version": 2, "type": "result", "content": "Notification shown." }
+{ "version": 3, "type": "result", "content": "Notification shown." }
 ```
 
-Use `runTauClientToolCommand()` from `@markusylisiurunen/tau/sdk` or `@markusylisiurunen/tau/code-mode` to handle this framing and receive the same `{ sessionId, callId, signal, executionEnvironment }` context as an in-process SDK client tool. The command itself still runs on the TUI machine; only `context.executionEnvironment.exec()` runs through `session.exec` in the session execution environment.
+Use `runTauClientToolCommand()` from `@markusylisiurunen/tau/sdk` or `@markusylisiurunen/tau/code-mode` to handle this framing and receive the same `{ sessionId, agentId, callId, signal, executionEnvironment }` context as an in-process SDK client tool. The command itself still runs on the TUI machine; only `context.executionEnvironment.exec()` runs through `session.exec` in the session execution environment.
 
 The result `content` becomes model-visible. A nonzero exit fails the tool using stderr, falling back to stdout when stderr is empty. Tau runs the command from the TUI's current working directory with the TUI process environment unchanged, limits each command-to-TUI protocol frame and total stdout and stderr to 1 MiB, allows at most eight execution requests to remain active while their responses are delivered with stdin backpressure, and terminates the command's process group on cancellation, terminal transport failure, timeout, or excess output. Closing protocol stdin aborts the command helper and its pending execution requests. Process-group termination escalates to `SIGKILL` after two seconds even if the command leader exits first. `executionTimeoutMs` defaults to 60 seconds.
 
@@ -718,7 +719,7 @@ Tau's `@markusylisiurunen/tau/code-mode` export implements this command framing 
 }
 ```
 
-The executable owns authenticated clients and explicitly exposes trusted handlers. Handler arguments and results cross a JSON boundary; generated code receives only the declared namespace plus `docs`, `console`, `Date`, and `Math`:
+The executable owns authenticated clients and explicitly exposes trusted handlers. Handler arguments and results cross a JSON boundary; generated code receives the declared namespace, agent-scoped `files`, `docs`, `console`, `Date`, and `Math`:
 
 ```ts
 #!/usr/bin/env node
@@ -736,7 +737,7 @@ await runTauCodeModeCommand({
 });
 ```
 
-Trusted code-mode API handlers receive the command's execution-environment facade in their context and may intentionally expose narrower workspace operations through the declared API. Generated code does not receive an undeclared shell namespace. Tau prepends canonical runtime guidance to the executable's API documentation. The installed runtime therefore documents its actual capabilities, 60-second default timeout, 8,192-token output projection, 128-call total limit, and eight-call concurrency limit without duplicating those details in `config.json`. The optional `buildTauCodeModeToolDescription()` helper produces the recommended progressive-disclosure description, but descriptions are otherwise passed through unchanged.
+Trusted code-mode API handlers receive the command's execution-environment facade in their context and may intentionally expose narrower workspace operations through the declared API. Generated code does not receive an undeclared shell namespace. Its `files.read()`, `files.write()`, `files.list()`, and `files.remove()` methods operate on UTF-8 files in an agent-scoped execution-environment temporary directory. The files are shared across code-mode tools and later calls for that agent, and returned absolute paths are usable by Bash. Names are basenames rather than paths; each agent is limited to 128 files and 64 MiB total. The execution environment's temporary filesystem controls the lifetime, and no scratch metadata enters the session snapshot. Tau prepends canonical runtime guidance to the executable's API documentation. The installed runtime therefore documents its actual capabilities, 60-second default timeout, 8,192-token output projection, 128-call total limit, and eight-call concurrency limit without duplicating those details in `config.json`. The optional `buildTauCodeModeToolDescription()` helper produces the recommended progressive-disclosure description, but descriptions are otherwise passed through unchanged.
 
 Configured names must be unique and cannot replace built-in TUI or host tools. Only one observing client may advertise a given name for a session. `--no-client-tools` disables command client tools together with `diff_review` and `prefill_input`.
 

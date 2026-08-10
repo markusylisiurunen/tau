@@ -12,15 +12,20 @@ const context = {
 };
 
 async function execute(tool, path) {
-  return await tool.execute(
+  const activities = [];
+  const result = await tool.execute(
     {
       type: "toolCall",
       id: "tau-docs-call",
       name: TOOL_NAME_TAU_DOCS,
       arguments: { path },
     },
-    context,
+    {
+      ...context,
+      emitActivity: async (activity) => activities.push(activity),
+    },
   );
+  return { ...result, uiEvent: activities.at(-1) };
 }
 
 function resultText(result) {
@@ -42,7 +47,25 @@ describe("tau_docs tool", () => {
     const result = await execute(createTauDocsToolDefinition(), "index.md");
 
     expect(result.outcome).toBe("succeeded");
-    expect(resultText(result)).toContain("# Tau documentation");
+    const content = resultText(result);
+    const lines = content.trimEnd().split("\n");
+    expect(content).toContain("# Tau documentation");
+    expect(result.uiEvent.presentation.subject).toBe("index.md");
+    expect(result.uiEvent.presentation.actionByStatus).toMatchObject({
+      preparing: "preparing docs",
+      queued: "queued docs read",
+      running: "reading docs",
+      succeeded: "read docs",
+    });
+    expect(result.uiEvent.presentation.details.map((line) => line.text)).toEqual([
+      ...lines.slice(0, 3),
+      `…${lines.length - 6} more lines…`,
+      ...lines.slice(-3),
+    ]);
+    expect(result.uiEvent.presentation.metadata).toEqual([
+      `~${Math.floor(Buffer.byteLength(content) / 6)} tokens`,
+      `${lines.length} lines`,
+    ]);
   });
 
   it("rejects unknown and nested paths", async () => {

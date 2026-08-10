@@ -197,12 +197,13 @@ const TOOL_RUN_ACTION_LABELS: Record<string, ToolRunActionLabels> = {
   },
   [TOOL_NAME_TAU_DOCS]: {
     ...GENERIC_TOOL_RUN_ACTION_LABELS,
-    queued: "queued read",
-    running: "reading",
-    succeeded: "read",
-    failed: "failed to read",
-    blocked: "read blocked",
-    cancelled: "read cancelled",
+    preparing: "preparing docs",
+    queued: "queued docs read",
+    running: "reading docs",
+    succeeded: "read docs",
+    failed: "failed to read docs",
+    blocked: "docs read blocked",
+    cancelled: "docs read cancelled",
   },
 };
 

@@ -31,11 +31,10 @@ tau
 
 The [Tau documentation](docs/index.md) is the canonical, version-matched product guide. The running host exposes the same files to agents through the intrinsic `tau_docs` tool, so people and agents work from the same contracts.
 
-Once your first session is running, you can ask Tau itself for a tour:
+Once your first session is running, you can ask Tau itself what it can do:
 
 ```text
-Read the built-in Tau documentation and give me a concise, practical tour of what Tau can do.
-Focus on what would be useful in this project and suggest three things I can try next.
+Using Tau's built-in documentation, briefly explain what Tau can do, covering its core features, built-in tools, optional services, and integrations.
 ```
 
 Or go directly to:

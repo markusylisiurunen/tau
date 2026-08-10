@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import type { Tool, ToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { z } from "zod";
+import { formatTokenEstimate } from "../utils/token.js";
 import { formatZodError } from "../utils/zod.js";
 import type { ToolActivity } from "./activity.js";
 import { buildToolRunPresentation } from "./presentation.js";
@@ -118,6 +119,8 @@ export function createTauDocsToolDefinition(): AgentTool {
 
         try {
           const content = readFileSync(new URL(path, documentationRoot), "utf8");
+          const detailText = content.replace(/\r\n?/g, "\n").trimEnd();
+          const details = detailText ? detailText.split("\n").map((text) => ({ text })) : [];
           const outcome = createTextToolOutcome(content, "succeeded");
           const uiEvent: ToolActivity = {
             type: "tool_call_finished",
@@ -126,7 +129,11 @@ export function createTauDocsToolDefinition(): AgentTool {
             presentation: buildToolRunPresentation({
               toolName: TOOL_NAME_TAU_DOCS,
               subject: path,
-              metadata: [`${Buffer.byteLength(content)} bytes`],
+              details,
+              metadata: [
+                formatTokenEstimate(Buffer.byteLength(content)),
+                `${details.length} ${details.length === 1 ? "line" : "lines"}`,
+              ],
             }),
             status: "success",
           };

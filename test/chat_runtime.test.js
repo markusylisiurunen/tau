@@ -225,12 +225,14 @@ Ship &lt;all&gt; requirements
 
     expect(configuredWithoutPersona.agent.spec.tools.schemas.map((tool) => tool.name)).toEqual([
       "bash",
+      "tau_docs",
       "get_goal",
       "create_goal",
       "update_goal",
     ]);
     expect(personaWithoutConfig.agent.spec.tools.schemas.map((tool) => tool.name)).toEqual([
       "bash",
+      "tau_docs",
       "get_goal",
       "create_goal",
       "update_goal",
@@ -238,6 +240,7 @@ Ship &lt;all&gt; requirements
     expect(enabled.agent.spec.tools.schemas.map((tool) => tool.name)).toEqual([
       "bash",
       "nook",
+      "tau_docs",
       "get_goal",
       "create_goal",
       "update_goal",

@@ -45,6 +45,7 @@ describe("sdk npm pack types", () => {
       expect(packedFiles.has("dist/sdk/stdio_transport.d.ts")).toBe(false);
       expect(packedFiles.has("dist/code_mode/index.d.ts")).toBe(true);
       expect(packedFiles.has("dist/core/static/code_mode/sandbox_runner.mjs")).toBe(true);
+      expect(packedFiles.has("dist/core/static/tau_docs/index.md")).toBe(true);
 
       const tarballPath = join(packDir, packageFilename);
       const consumerDir = join(tempRoot, "consumer");

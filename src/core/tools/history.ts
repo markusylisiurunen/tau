@@ -130,7 +130,7 @@ export function createHistoryToolDefinition(
     schema: HISTORY_TOOL,
     timeoutMs: HISTORY_CODE_MODE_TIMEOUT_MS,
     parseArguments: parseHistoryArguments,
-    execute: async ({ code, signal, backend: executionBackend }) =>
+    execute: async ({ code, agentId, signal, backend: executionBackend }) =>
       executeInternalCodeMode({
         name: TOOL_NAME_HISTORY,
         documentation,
@@ -139,6 +139,7 @@ export function createHistoryToolDefinition(
           read: (args, context) => handleHistoryRequest("read", args, history, context.signal),
         },
         code,
+        agentId,
         backend: executionBackend,
         signal,
         timeoutMs: HISTORY_CODE_MODE_TIMEOUT_MS,

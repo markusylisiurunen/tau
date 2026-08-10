@@ -146,6 +146,7 @@ export class ClientToolBroker {
 
   dispatch(options: {
     sessionId: string;
+    agentId: string;
     clientId: string;
     tool: SessionProtocolClientToolDefinition;
     toolCall: ToolCall;
@@ -194,6 +195,7 @@ export class ClientToolBroker {
         version: SESSION_PROTOCOL_VERSION,
         type: "session.clientTool.call",
         sessionId: options.sessionId,
+        agentId: options.agentId,
         callId,
         toolName: options.tool.name,
         arguments: options.toolCall.arguments,
@@ -385,7 +387,14 @@ function createClientToolDefinition(
       const { signal } = context;
       return executeTool(context, async () => {
         const startedAt = Date.now();
-        const toolResult = await broker.dispatch({ sessionId, clientId, tool, toolCall, signal });
+        const toolResult = await broker.dispatch({
+          sessionId,
+          agentId: context.agentId,
+          clientId,
+          tool,
+          toolCall,
+          signal,
+        });
         const durationMs = Math.max(0, Date.now() - startedAt);
         return {
           content: toolResult.content,

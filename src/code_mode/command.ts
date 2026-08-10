@@ -1,5 +1,6 @@
 import { runTauClientToolCommand } from "../sdk/client_tool_command.js";
 import {
+  createTauCodeModeExecutionEnvironmentFiles,
   executeTauCodeMode,
   type TauCodeModeDefinition,
   validateTauCodeModeDefinition,
@@ -15,9 +16,14 @@ export async function runTauCodeModeCommand(definition: TauCodeModeDefinition): 
       signal: context.signal,
       invocation: {
         sessionId: context.sessionId,
+        agentId: context.agentId,
         callId: context.callId,
       },
       executionEnvironment: context.executionEnvironment,
+      files: createTauCodeModeExecutionEnvironmentFiles(
+        context.agentId,
+        context.executionEnvironment,
+      ),
     });
   });
 }

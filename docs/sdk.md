@@ -135,7 +135,7 @@ const client = await createTauSdkClient({
 });
 ```
 
-Tool names must not duplicate host tools or another connected client's tools. Every handler context includes `executionEnvironment.exec()`, the same execution-environment command operation exposed by `TauSdkSession.exec()`, already bound to the tool call's session and cancellation signal. An optional operation signal is combined with the client-tool signal. Active handlers receive an aborted signal when the host cancels the call, the client closes, or the underlying transport fails; `client.close()` waits for them to settle. The Tau TUI uses this mechanism to advertise `diff_review`; generic SDK clients can advertise their own tools, but `diff_review` itself is TUI-owned.
+Tool names must not duplicate host tools or another connected client's tools. Every handler context includes the routing `sessionId`, owning `agentId`, call ID, cancellation signal, and `executionEnvironment.exec()`, the same execution-environment command operation exposed by `TauSdkSession.exec()`. The execution environment is already bound to the tool call's session and cancellation signal. An optional operation signal is combined with the client-tool signal. Active handlers receive an aborted signal when the host cancels the call, the client closes, or the underlying transport fails; `client.close()` waits for them to settle. The Tau TUI uses this mechanism to advertise `diff_review`; generic SDK clients can advertise their own tools, but `diff_review` itself is TUI-owned.
 
 ### code-mode client tools
 
@@ -173,11 +173,13 @@ const client = await createTauSdkClient({
 });
 ```
 
-Generated code sees exactly one author-defined namespace plus `docs`, `console`, `Date`, and `Math`. Nested API objects must be plain objects with function leaves. Handlers receive model-supplied positional arguments as an array and a context containing an abort signal, nullable Tau invocation metadata, and the client tool's execution-environment facade when running as a client tool. Direct standalone executions receive `null` for the latter two values. The tool author decides whether to expose any execution-environment operations through the declared generated-code API. Arguments and results cross a JSON serialization boundary with a 1 MiB limit per request or response. The runtime prepends canonical Markdown documentation for its installed capabilities and limits to the author-provided API documentation.
+Generated code sees one author-defined namespace plus agent-scoped `files`, `docs`, `console`, `Date`, and `Math`. Nested API objects must be plain objects with function leaves. Handlers receive model-supplied positional arguments as an array and a context containing an abort signal, nullable Tau invocation metadata, and the client tool's execution-environment facade when running as a client tool. Direct standalone executions receive `null` for the latter two values. The tool author decides whether to expose additional execution-environment operations through the declared generated-code API. Arguments and results cross a JSON serialization boundary with a 1 MiB limit per request or response. The runtime prepends canonical Markdown documentation for its installed capabilities and limits to the author-provided API documentation.
+
+`files.write(name, content)` atomically writes UTF-8 text and returns its absolute execution-environment path and byte count. `files.read(name)` reads the current real file, including changes made by Bash. `files.list()` returns name, path, and size metadata for every regular file in the directory, subject to the shared 1 MiB code-mode response limit, while `files.remove(name)` reclaims a file. Names are single basenames. `files.write()` rejects changes above 128 regular files or 64 MiB total, while Bash-created over-limit contents remain visible through `files.list()` and removable. The directory is shared across code-mode tools and later calls by that agent and uses a separate namespace from other agents. This scoping does not restrict the execution environment's existing OS-level authority. Its contents live only as long as the execution environment retains its temporary filesystem; the session snapshot does not store them.
 
 Every execution is limited to 128 total API calls and eight unresolved API calls; exceeding any bridge limit fails immediately. The default timeout is 60 seconds, raw output capture is bounded at 1 MiB, and model-facing output is middle-truncated above roughly 8,192 tokens. An optional `persistOutput(output, context)` callback runs best-effort for every terminal execution and may return `{ path }`; the callback can use `output.contextTruncated`, `output.captureTruncated`, and `output.status` to choose what to retain. Tau adds the returned path to the bounded result.
 
-`executeTauCodeMode()` exposes the same runtime directly and accepts `code`, an optional abort signal, nullable invocation metadata, and an optional execution-environment facade in addition to the shared definition. It resolves to `{ content }` on success and rejects with the bounded diagnostic on evaluation failure, timeout, cancellation, or bridge failure. The SDK and standalone `@markusylisiurunen/tau/code-mode` entry points export `runTauClientToolCommand()` for ordinary command-backed tools. The standalone entry point also exports the executor, description helper, and `runTauCodeModeCommand()` adapter.
+`executeTauCodeMode()` exposes the same runtime directly and accepts `code`, an optional abort signal, nullable invocation metadata, and an optional execution-environment facade in addition to the shared definition. A standalone caller may also provide `files: { agentId, adapter }`; when omitted, the generated runtime does not expose the `files` global or document it. It resolves to `{ content }` on success and rejects with the bounded diagnostic on evaluation failure, timeout, cancellation, or bridge failure. The SDK and standalone `@markusylisiurunen/tau/code-mode` entry points export `runTauClientToolCommand()` for ordinary command-backed tools. The standalone entry point also exports the executor, file-capability types and limits, description helper, and `runTauCodeModeCommand()` adapter.
 
 ### `createTauSdkWebSocketClient(options)`
 
@@ -452,7 +454,7 @@ const second = await session.sample({
 
 ```json
 {
-  "version": 11,
+  "version": 12,
   "type": "session.delta",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "fromRevision": 1,

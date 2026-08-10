@@ -1,13 +1,22 @@
-import { resolve } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import { rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
+import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
+import {
+  TAU_CLIENT_TOOL_COMMAND_MAX_PROTOCOL_FRAME_BYTES,
+  TAU_CLIENT_TOOL_COMMAND_MAX_PROTOCOL_FRAMES,
+} from "../dist/sdk/client_tool_command.js";
 import { createCommandClientTools } from "../dist/tui/command_client_tools.js";
 import { createProtocolExecResult } from "./helpers/session_protocol_fixtures.js";
 
 const commandModuleUrl = pathToFileURL(resolve("dist/sdk/index.js")).href;
+const codeModeModuleUrl = pathToFileURL(resolve("dist/code_mode/index.js")).href;
 
 function resultFrame(content = "done") {
-  return `${JSON.stringify({ version: 2, type: "result", content })}\n`;
+  return `${JSON.stringify({ version: 3, type: "result", content })}\n`;
 }
 
 function createSpawnResult(overrides = {}) {
@@ -48,6 +57,7 @@ function createConfig(overrides = {}) {
 function createContext(overrides = {}) {
   return {
     sessionId: "session-1",
+    agentId: "agent-1",
     callId: "call-1",
     signal: new AbortController().signal,
     executionEnvironment: {
@@ -85,6 +95,65 @@ describe("command client tools", () => {
       stdin: Buffer.from("input"),
       signal: expect.any(AbortSignal),
     });
+  });
+
+  it("carries large scratch-file operations outside the stderr capture budget", async () => {
+    const script = [
+      `import { runTauCodeModeCommand } from ${JSON.stringify(codeModeModuleUrl)};`,
+      "await runTauCodeModeCommand({",
+      '  name: "linear",',
+      '  documentation: "# Linear API",',
+      "  api: { echo: async ([value]) => value },",
+      "});",
+    ].join("\n");
+    const [tool] = createCommandClientTools([
+      createConfig({
+        name: "linear",
+        parameters: {
+          type: "object",
+          properties: { code: { type: "string" } },
+          required: ["code"],
+          additionalProperties: false,
+        },
+        command: process.execPath,
+        args: ["--input-type=module", "--eval", script],
+        executionTimeoutMs: 15_000,
+      }),
+    ]);
+    const backend = createLocalToolExecutionBackend();
+    const executionEnvironment = {
+      exec: (command, options) => backend.runBash(command, options),
+    };
+    const agentId = `test-${randomUUID()}`;
+    const scope = createHash("sha256").update(agentId).digest("hex").slice(0, 32);
+    const root = join(tmpdir(), `tau-code-mode-files-${scope}`);
+
+    try {
+      const result = await tool.execute(
+        {
+          code: [
+            'const first = await files.write("first.txt", "x".repeat(900 * 1024));',
+            'const second = await files.write("second.txt", "y".repeat(900 * 1024));',
+            'const content = await files.read("first.txt");',
+            "console.log({ first, second, length: content.length });",
+          ].join("\n"),
+        },
+        createContext({ agentId, executionEnvironment }),
+      );
+      const output = JSON.parse(result.content);
+
+      expect(dirname(output.first.path)).toBe(root);
+      expect(output).toMatchObject({
+        first: { bytes: 900 * 1024 },
+        second: { bytes: 900 * 1024 },
+        length: 900 * 1024,
+      });
+      expect(output.first.path).not.toBe(output.second.path);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(`${root}-staging`, { recursive: true, force: true });
+      await backend.dispose();
+    }
   });
 
   it("inherits the TUI process cwd and environment unchanged", async () => {
@@ -141,13 +210,15 @@ describe("command client tools", () => {
         timeoutMs: 5000,
         maxCaptureBytes: 1024 * 1024,
         maxCaptureMode: "terminate",
+        captureOutput: "stderr",
         killProcessGroup: true,
         stdio: ["pipe", "pipe", "pipe"],
         keepStdinOpen: true,
         input: `${JSON.stringify({
-          version: 2,
+          version: 3,
           type: "invoke",
           sessionId: "session-1",
+          agentId: "agent-1",
           callId: "call-1",
           arguments: { message: "hello" },
         })}\n`,
@@ -183,12 +254,43 @@ describe("command client tools", () => {
     );
   });
 
-  it("bounds incomplete protocol frames independently of process capture", async () => {
-    const spawn = vi.fn(async () => createSpawnResult({ stdout: "x".repeat(1024 * 1024 + 1) }));
+  it("requires a version-3 result frame", async () => {
+    const spawn = vi.fn(async () => createSpawnResult({ stdout: "" }));
     const [tool] = createCommandClientTools([createConfig()], createDeps(spawn));
 
     await expect(tool.execute({ message: "hello" }, createContext())).rejects.toThrow(
-      "exceeded the 1048576-byte protocol frame limit",
+      "returned no version-3 result frame",
+    );
+  });
+
+  it("bounds incomplete protocol frames independently of stderr capture", async () => {
+    const spawn = vi.fn(async () =>
+      createSpawnResult({
+        stdout: "x".repeat(TAU_CLIENT_TOOL_COMMAND_MAX_PROTOCOL_FRAME_BYTES + 1),
+      }),
+    );
+    const [tool] = createCommandClientTools([createConfig()], createDeps(spawn));
+
+    await expect(tool.execute({ message: "hello" }, createContext())).rejects.toThrow(
+      `exceeded the ${TAU_CLIENT_TOOL_COMMAND_MAX_PROTOCOL_FRAME_BYTES}-byte protocol frame limit`,
+    );
+  });
+
+  it("bounds total protocol frames", async () => {
+    const stdout = Array.from(
+      { length: TAU_CLIENT_TOOL_COMMAND_MAX_PROTOCOL_FRAMES + 1 },
+      (_, index) =>
+        JSON.stringify({
+          version: 3,
+          type: "exec.cancel",
+          requestId: String(index),
+        }),
+    ).join("\n");
+    const spawn = vi.fn(async () => createSpawnResult({ stdout }));
+    const [tool] = createCommandClientTools([createConfig()], createDeps(spawn));
+
+    await expect(tool.execute({ message: "hello" }, createContext())).rejects.toThrow(
+      `exceeded the ${TAU_CLIENT_TOOL_COMMAND_MAX_PROTOCOL_FRAMES}-frame protocol limit`,
     );
   });
 
@@ -227,8 +329,11 @@ describe("command client tools", () => {
     const invalidJsonSpawn = vi.fn(async () => createSpawnResult({ stdout: "done\n" }));
     const invalidShapeSpawn = vi.fn(async () =>
       createSpawnResult({
-        stdout: `${JSON.stringify({ version: 2, type: "result", content: "done", extra: true })}\n`,
+        stdout: `${JSON.stringify({ version: 3, type: "result", content: "done", extra: true })}\n`,
       }),
+    );
+    const oversizedResultSpawn = vi.fn(async () =>
+      createSpawnResult({ stdout: resultFrame("x".repeat(1024 * 1024 + 1)) }),
     );
 
     const [invalidJsonTool] = createCommandClientTools(
@@ -239,16 +344,23 @@ describe("command client tools", () => {
       [createConfig()],
       createDeps(invalidShapeSpawn),
     );
+    const [oversizedResultTool] = createCommandClientTools(
+      [createConfig()],
+      createDeps(oversizedResultSpawn),
+    );
 
     await expect(invalidJsonTool.execute({ message: "hello" }, createContext())).rejects.toThrow(
       "invalid JSON protocol framing",
     );
     await expect(invalidShapeTool.execute({ message: "hello" }, createContext())).rejects.toThrow(
-      "invalid version-2 protocol frame",
+      "invalid version-3 protocol frame",
     );
+    await expect(
+      oversizedResultTool.execute({ message: "hello" }, createContext()),
+    ).rejects.toThrow("invalid version-3 protocol frame");
   });
 
-  it("reports timeout and output-limit termination", async () => {
+  it("reports timeout and stderr-limit termination", async () => {
     const timeoutSpawn = vi.fn(async () => createSpawnResult({ timedOut: true, exitCode: null }));
     const limitSpawn = vi.fn(async () =>
       createSpawnResult({ captureLimitExceeded: true, exitCode: null }),
@@ -260,7 +372,7 @@ describe("command client tools", () => {
       "timed out after 5000ms",
     );
     await expect(limitTool.execute({ message: "hello" }, createContext())).rejects.toThrow(
-      "exceeded the 1048576-byte output limit",
+      "exceeded the 1048576-byte stderr limit",
     );
   });
 });

@@ -189,6 +189,7 @@ class TauSdkClientImpl implements TauSdkClient {
     try {
       const result = await tool.execute(message.arguments, {
         sessionId: message.sessionId,
+        agentId: message.agentId,
         callId: message.callId,
         signal: abortController.signal,
         executionEnvironment: this.createClientToolExecutionEnvironment(

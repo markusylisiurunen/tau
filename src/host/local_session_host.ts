@@ -310,7 +310,7 @@ export class LocalSessionHost implements TauSessionHost {
       createdAt,
       persona: bootstrap.persona,
       backend: executionEnvironment.getToolExecutionBackend(),
-      clientTools: (sessionId) => this.clientToolBroker.getToolDefinitions(sessionId),
+      clientTools: () => this.clientToolBroker.getToolDefinitions(sessionId),
       modelResolver: bootstrap.modelResolver,
       resolveSubagentPrompts: createExecutionEnvironmentSubagentPromptResolver({
         sessionId,
@@ -637,7 +637,6 @@ function normalizeDeltaCause(cause: LocalDeltaCause): SessionProtocolDeltaCause 
 
 class LocalHostedSessionHandle implements LocalHostedSession {
   readonly session: ChatRuntime;
-  private committedSessionId: string;
   private committedSnapshot?: SessionProtocolSnapshot;
   private persistedSnapshot?: SessionProtocolSnapshot;
   private draftAssistantMessage?: SessionProtocolMessage;
@@ -700,7 +699,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     private readonly removeFromHost: (session: LocalHostedSessionHandle) => void = () => {},
   ) {
     this.session = runtime;
-    this.committedSessionId = committedSnapshot?.sessionId ?? this.session.sessionId;
     this.committedSnapshot = committedSnapshot
       ? cloneSessionProtocolSnapshot(committedSnapshot)
       : undefined;
@@ -1800,8 +1798,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     this.reconcileProjections(options);
     const draft = this.buildSnapshotDraft();
 
-    await this.switchSnapshotSession(draft.sessionId);
-
     const snapshot: SessionProtocolSnapshot = {
       ...draft,
       revision: this.nextSnapshotRevision(draft),
@@ -1866,19 +1862,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     this.persistedSnapshot = cloneSessionProtocolSnapshot(snapshot);
     this.committedSnapshot = cloneSessionProtocolSnapshot(snapshot);
     return delta;
-  }
-
-  private async switchSnapshotSession(sessionId: string): Promise<void> {
-    if (this.committedSessionId === sessionId) {
-      return;
-    }
-
-    await this.store.deleteSession(this.committedSessionId, {
-      ...(this.persistedSnapshot ? { expectedRevision: this.persistedSnapshot.revision } : {}),
-    });
-    this.committedSessionId = sessionId;
-    this.committedSnapshot = undefined;
-    this.persistedSnapshot = undefined;
   }
 
   private reconcileProjections(options: { removeMissingAgents?: boolean } = {}): void {
@@ -2173,13 +2156,13 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
   private assertActive(): void {
     if (this.disposing || this.disposed) {
-      throw new Error(`session is shut down: ${this.committedSessionId}`);
+      throw new Error(`session is shut down: ${this.sessionId}`);
     }
   }
 
   private assertNotDisposed(): void {
     if (this.disposed) {
-      throw new Error(`session is shut down: ${this.committedSessionId}`);
+      throw new Error(`session is shut down: ${this.sessionId}`);
     }
   }
 

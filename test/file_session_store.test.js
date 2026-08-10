@@ -56,7 +56,7 @@ async function withTempStore(test) {
 }
 
 describe("FileSessionStore", () => {
-  it("persists, loads, lists, and deletes snapshots", async () => {
+  it("persists, loads, and lists snapshots", async () => {
     await withTempStore(async (store) => {
       await expect(
         store.commitSessionSnapshot(createSnapshot("session/one", "hello")),
@@ -71,12 +71,6 @@ describe("FileSessionStore", () => {
       await expect(store.listSessionSnapshots()).resolves.toEqual([
         createSnapshot("session-two", "hi", 2),
         createSnapshot("session/one", "hello"),
-      ]);
-
-      await store.deleteSession("session/one");
-      await expect(store.loadSession("session/one")).resolves.toBeUndefined();
-      await expect(store.listSessionSnapshots()).resolves.toEqual([
-        createSnapshot("session-two", "hi", 2),
       ]);
 
       await expect(store.loadSession("session-two")).resolves.toEqual(
@@ -844,12 +838,9 @@ describe("FileSessionStore", () => {
           expectedRevision: 1,
         }),
       ).rejects.toBeInstanceOf(SessionStoreConflictError);
-      await expect(
-        store.deleteSession("session-1", { expectedRevision: 1 }),
-      ).rejects.toBeInstanceOf(SessionStoreConflictError);
-      await expect(
-        store.deleteSession("session-1", { expectedRevision: 2 }),
-      ).resolves.toBeUndefined();
+      await expect(store.loadSession("session-1")).resolves.toEqual(
+        createSnapshot("session-1", "updated", 2),
+      );
     });
   });
 
@@ -894,7 +885,7 @@ describe("FileSessionStore", () => {
     });
   });
 
-  it("cleans store-owned snapshot temporaries on startup and deletion", async () => {
+  it("cleans store-owned snapshot temporaries on startup and commit", async () => {
     await withTempStore(async (_store, directory) => {
       await mkdir(directory, { recursive: true });
       const startupTemp = join(
@@ -908,14 +899,14 @@ describe("FileSessionStore", () => {
       await expect(access(startupTemp)).rejects.toMatchObject({ code: "ENOENT" });
 
       await store.commitSessionSnapshot(createSnapshot("session-1", "private"));
-      const deletionTemp = join(
+      const commitTemp = join(
         directory,
         "c2Vzc2lvbi0x.json.100.200.00000000-0000-4000-8000-000000000002.tmp",
       );
-      await writeFile(deletionTemp, "stale", { mode: 0o600 });
+      await writeFile(commitTemp, "stale", { mode: 0o600 });
 
-      await store.deleteSession("session-1");
-      await expect(access(deletionTemp)).rejects.toMatchObject({ code: "ENOENT" });
+      await store.commitSessionSnapshot(createSnapshot("session-1", "updated", 2));
+      await expect(access(commitTemp)).rejects.toMatchObject({ code: "ENOENT" });
     });
   });
 });

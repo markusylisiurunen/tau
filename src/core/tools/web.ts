@@ -459,6 +459,7 @@ function executeWebProgram(
   exa: ExaClient | undefined,
   deps: WebToolDeps,
   backend: ToolExecutionBackend,
+  agentId: string,
   signal: AbortSignal,
   timeoutMs: number,
 ) {
@@ -473,6 +474,7 @@ function executeWebProgram(
       fetch: (args, context) => handleWebRequest("fetch", args, exa, deps, backend, context.signal),
     },
     code,
+    agentId,
     backend,
     signal,
     timeoutMs,
@@ -494,10 +496,10 @@ export function createWebToolDefinition(
     schema: WEB_TOOL,
     timeoutMs,
     parseArguments: parseWebArguments,
-    execute: async ({ code, signal, backend: executionBackend }) => {
+    execute: async ({ code, agentId, signal, backend: executionBackend }) => {
       const apiKey = getExaApiKey(config);
       const exa = apiKey ? deps.createExaClient(apiKey) : undefined;
-      return executeWebProgram(code, exa, deps, executionBackend, signal, timeoutMs);
+      return executeWebProgram(code, exa, deps, executionBackend, agentId, signal, timeoutMs);
     },
   };
 

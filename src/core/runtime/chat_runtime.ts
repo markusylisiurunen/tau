@@ -49,7 +49,7 @@ export type CreateChatRuntimeOptions = {
   createdAt: number;
   persona: Persona;
   backend: ToolExecutionBackend;
-  clientTools?: (agentId: string) => ReturnType<ToolRegistry["getEnabledTools"]>;
+  clientTools?: () => ReturnType<ToolRegistry["getEnabledTools"]>;
   modelResolver: ModelResolver;
   resolveSubagentPrompts?: ResolveSubagentPrompts;
   promptContext: ChatRuntimePromptContext;
@@ -70,6 +70,7 @@ export class ChatRuntime {
   private currentConfig: Config;
   private currentModelResolver: ModelResolver;
   private promptContext: ChatRuntimePromptContext;
+  private readonly sessionIdValue: string;
   private readonly createdAt: number;
   private readonly backend: ToolExecutionBackend;
   private readonly deps: CoreDeps;
@@ -102,6 +103,7 @@ export class ChatRuntime {
     this.currentConfig = options.config;
     this.currentModelResolver = options.modelResolver;
     this.promptContext = { ...options.promptContext };
+    this.sessionIdValue = options.sessionId;
     this.createdAt = options.createdAt;
     this.backend = options.backend;
     this.deps = options.deps ?? createDefaultCoreDeps();
@@ -161,7 +163,7 @@ export class ChatRuntime {
   }
 
   get sessionId(): string {
-    return this.agent.agentIdValue;
+    return this.sessionIdValue;
   }
 
   get history(): readonly Message[] {
@@ -221,12 +223,6 @@ export class ChatRuntime {
 
   restoreState(state: AgentState): AgentStateRecovery {
     return this.agent.restoreState(state);
-  }
-
-  reset(): void {
-    this.supervisor.reset();
-    this.agent.reset();
-    this.rebuildSystemPrompts();
   }
 
   dispose(): void {
@@ -338,7 +334,7 @@ export class ChatRuntime {
         ? { resolveSubagentPrompts: this.resolveSubagentPrompts }
         : {}),
     });
-    const clientTools = this.clientTools?.(this.agent?.agentIdValue ?? "pending") ?? [];
+    const clientTools = this.clientTools?.() ?? [];
     return clientTools.length === 0
       ? registry
       : new ToolRegistry([...registry.getEnabledTools(), ...clientTools]);
@@ -347,7 +343,7 @@ export class ChatRuntime {
   private composePromptSet(skillsBlock?: string): SessionPromptComposition {
     return composeSessionPrompts({
       persona: this.currentPersona,
-      sessionId: this.agent.agentIdValue,
+      sessionId: this.sessionIdValue,
       cwd: this.promptContext.cwd,
       repoRoot: this.promptContext.repoRoot,
       repository: this.promptContext.repository,

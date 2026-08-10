@@ -10,8 +10,15 @@ if (
   workerData === null ||
   typeof workerData.code !== "string" ||
   typeof workerData.docs !== "string" ||
-  typeof workerData.name !== "string" ||
-  !Array.isArray(workerData.methods) ||
+  !Array.isArray(workerData.apis) ||
+  workerData.apis.length === 0 ||
+  workerData.apis.some(
+    (api) =>
+      typeof api !== "object" ||
+      api === null ||
+      typeof api.name !== "string" ||
+      !Array.isArray(api.methods),
+  ) ||
   !Number.isSafeInteger(workerData.maxBridgeRequests) ||
   workerData.maxBridgeRequests <= 0 ||
   !Number.isSafeInteger(workerData.maxConcurrentBridgeRequests) ||
@@ -95,8 +102,7 @@ const compartment = new Compartment({
   globals: {
     Date: codeModeDate,
     Math: codeModeMath,
-    _apiName: workerData.name,
-    _methods: harden(workerData.methods),
+    _apis: harden(workerData.apis),
     _requestApi: harden(requestApi),
     _writeOutput: harden(writeOutput),
     docs: workerData.docs,
@@ -106,12 +112,10 @@ const compartment = new Compartment({
 
 compartment.evaluate(String.raw`
 (() => {
-  const apiName = _apiName;
-  const methods = _methods;
+  const apis = _apis;
   const requestApiBridge = _requestApi;
   const writeOutputBridge = _writeOutput;
-  delete globalThis._apiName;
-  delete globalThis._methods;
+  delete globalThis._apis;
   delete globalThis._requestApi;
   delete globalThis._writeOutput;
 
@@ -152,17 +156,6 @@ compartment.evaluate(String.raw`
     });
   }
 
-  const api = Object.create(null);
-  for (const method of methods) {
-    let target = api;
-    for (const segment of method.path.slice(0, -1)) {
-      target[segment] ??= Object.create(null);
-      target = target[segment];
-    }
-    target[method.path.at(-1)] = (...args) =>
-      requestApiBridge(method.id, serializeArguments(args));
-  }
-
   function freezeApi(value) {
     for (const child of Object.values(value)) {
       if (typeof child === "object" && child !== null) freezeApi(child);
@@ -170,9 +163,21 @@ compartment.evaluate(String.raw`
     return Object.freeze(value);
   }
 
-  Object.defineProperty(globalThis, apiName, {
-    value: freezeApi(api),
-  });
+  for (const definition of apis) {
+    const api = Object.create(null);
+    for (const method of definition.methods) {
+      let target = api;
+      for (const segment of method.path.slice(0, -1)) {
+        target[segment] ??= Object.create(null);
+        target = target[segment];
+      }
+      target[method.path.at(-1)] = (...args) =>
+        requestApiBridge(method.id, serializeArguments(args));
+    }
+    Object.defineProperty(globalThis, definition.name, {
+      value: freezeApi(api),
+    });
+  }
 })();
 `);
 

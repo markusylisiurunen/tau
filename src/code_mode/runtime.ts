@@ -8,13 +8,19 @@ import {
 import { bytesToTokens } from "../core/utils/token.js";
 import { formatBytes, truncateForTokens } from "../core/utils/truncate.js";
 import type { TauSdkClientToolExecutionEnvironment } from "../sdk/types.js";
+import {
+  createTauCodeModeFilesApi,
+  TAU_CODE_MODE_MAX_FILES,
+  TAU_CODE_MODE_MAX_TOTAL_FILE_BYTES,
+  type TauCodeModeFilesOptions,
+} from "./files.js";
 
 export const TAU_CODE_MODE_DEFAULT_TIMEOUT_MS = 60_000;
 export const TAU_CODE_MODE_MAX_OUTPUT_TOKENS = 8_192;
 
 const sandboxRunnerUrl = new URL("../core/static/code_mode/sandbox_runner.mjs", import.meta.url);
 const javascriptIdentifierPattern = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
-const reservedNames = new Set([...Object.getOwnPropertyNames(globalThis), "docs"]);
+const reservedNames = new Set([...Object.getOwnPropertyNames(globalThis), "docs", "files"]);
 const unsafeApiKeys = new Set(["__proto__", "constructor", "prototype"]);
 
 export type TauCodeModeJsonValue =
@@ -27,6 +33,7 @@ export type TauCodeModeJsonValue =
 
 export type TauCodeModeInvocation = {
   sessionId: string;
+  agentId: string;
   callId: string;
 };
 
@@ -93,6 +100,7 @@ export type ExecuteTauCodeModeOptions = TauCodeModeDefinition & {
   signal?: AbortSignal;
   invocation?: TauCodeModeInvocation | null;
   executionEnvironment?: TauSdkClientToolExecutionEnvironment | null;
+  files?: TauCodeModeFilesOptions;
 };
 
 export type TauCodeModeResult = {
@@ -104,10 +112,34 @@ export type BuildTauCodeModeToolDescriptionOptions = {
   description: string;
 };
 
+export function createTauCodeModeExecutionEnvironmentFiles(
+  agentId: string,
+  executionEnvironment: TauSdkClientToolExecutionEnvironment,
+): TauCodeModeFilesOptions {
+  return {
+    agentId,
+    adapter: {
+      runNodeScript: async (script, options) =>
+        await executionEnvironment.exec('exec "$0" "$@"', {
+          args: ["node", "-e", script],
+          stdin: Buffer.from(options.input),
+          signal: options.signal,
+          maxCaptureBytes: options.maxCaptureBytes,
+        }),
+    },
+  };
+}
+
 type RegisteredMethod = {
   id: number;
+  apiName: string;
   path: string[];
   handler: TauCodeModeHandler;
+};
+
+type RegisteredApi = {
+  name: string;
+  methods: RegisteredMethod[];
 };
 
 export type TauCodeModeRuntimeResult = {
@@ -140,7 +172,7 @@ export function validateTauCodeModeDefinition(definition: TauCodeModeDefinition)
     throw new Error("code-mode documentation must not be empty");
   }
   validateTimeout(definition.timeoutMs);
-  registerMethods(definition.api);
+  registerMethods(definition.api, definition.name);
 }
 
 export async function executeTauCodeMode(
@@ -163,12 +195,25 @@ export async function runTauCodeMode(
   }
   validateTimeout(options.timeoutMs);
 
-  const methods = registerMethods(options.api);
+  const apiMethods = registerMethods(options.api, options.name);
+  const filesMethods = options.files
+    ? registerMethods(createTauCodeModeFilesApi(options.files), "files", apiMethods.length)
+    : [];
+  const apis: RegisteredApi[] = [
+    { name: options.name, methods: apiMethods },
+    ...(filesMethods.length > 0 ? [{ name: "files", methods: filesMethods }] : []),
+  ];
+  const methods = apis.flatMap((api) => api.methods);
   const timeoutMs = options.timeoutMs ?? TAU_CODE_MODE_DEFAULT_TIMEOUT_MS;
   const invocation = options.invocation ?? null;
   const executionEnvironment = options.executionEnvironment ?? null;
   const signal = options.signal ?? new AbortController().signal;
-  const docs = buildRuntimeDocumentation(options.name, options.documentation, timeoutMs);
+  const docs = buildRuntimeDocumentation(
+    options.name,
+    options.documentation,
+    timeoutMs,
+    filesMethods.length > 0,
+  );
   const startedAt = Date.now();
   let execution: TauCodeModeExecutionCapture;
   try {
@@ -177,21 +222,23 @@ export async function runTauCodeMode(
       workerData: {
         code: options.code,
         docs,
-        name: options.name,
-        methods: methods.map(({ id, path }) => ({ id, path })),
+        apis: apis.map((api) => ({
+          name: api.name,
+          methods: api.methods.map(({ id, path }) => ({ id, path })),
+        })),
       },
       signal,
       timeoutMs,
       handleRequest: async (request, requestSignal) => {
         const method = methods[request.methodId];
-        if (!method) throw new Error(`unsupported ${options.name} API method`);
-        const args = parseBridgeArguments(request.argsJson, options.name, method.path);
+        if (!method) throw new Error("unsupported code-mode API method");
+        const args = parseBridgeArguments(request.argsJson, method.apiName, method.path);
         const value = await method.handler(args, {
           signal: requestSignal,
           invocation,
           executionEnvironment,
         });
-        return serializeBridgeResult(value, options.name, method.path);
+        return serializeBridgeResult(value, method.apiName, method.path);
       },
     });
   } catch (error) {
@@ -265,7 +312,7 @@ function validateTimeout(timeoutMs: number | undefined): void {
   }
 }
 
-function registerMethods(api: TauCodeModeApi): RegisteredMethod[] {
+function registerMethods(api: TauCodeModeApi, apiName: string, firstId = 0): RegisteredMethod[] {
   const methods: RegisteredMethod[] = [];
   const visit = (value: TauCodeModeApi, path: string[]): void => {
     if (!isPlainObject(value)) {
@@ -283,7 +330,7 @@ function registerMethods(api: TauCodeModeApi): RegisteredMethod[] {
         throw new Error(`code-mode API key '${formatPath(childPath)}' is not allowed`);
       }
       if (typeof child === "function") {
-        methods.push({ id: methods.length, path: childPath, handler: child });
+        methods.push({ id: firstId + methods.length, apiName, path: childPath, handler: child });
       } else {
         visit(child, childPath);
       }
@@ -352,26 +399,51 @@ function serializeBridgeResult(value: unknown, name: string, path: string[]): st
   return json;
 }
 
-function buildRuntimeDocumentation(name: string, documentation: string, timeoutMs: number): string {
+function buildRuntimeDocumentation(
+  name: string,
+  documentation: string,
+  timeoutMs: number,
+  hasFiles: boolean,
+): string {
   return [
     "# Code-mode runtime",
     "",
     "## Available globals",
     "",
     `- \`${name}\`: the explicitly exposed API documented below.`,
+    ...(hasFiles
+      ? ["- `files`: shared UTF-8 scratch files for this agent, documented below."]
+      : []),
     "- `docs`: this document.",
     "- `console`: program output through `debug`, `error`, `info`, `log`, and `warn`.",
     "- `Date`: standard date handling with live current-time access.",
     "- `Math`: standard math operations, including `Math.random()`.",
     "",
     "Top-level `await` is supported. The program return value is ignored; only console output is returned.",
-    "Generated code has no direct filesystem, process, environment, network, credential, import, timer, or `fetch` access.",
+    hasFiles
+      ? "Generated code has no direct process, environment, network, credential, import, timer, or `fetch` access. Filesystem access is limited to the `files` scratch API."
+      : "Generated code has no direct filesystem, process, environment, network, credential, import, timer, or `fetch` access.",
     "",
     "## API boundary",
     "",
-    `Arguments passed to \`${name}\` methods and their results cross a JSON serialization boundary with a ${formatBytes(CODE_MODE_MAX_BRIDGE_PAYLOAD_BYTES)} limit per request or response.`,
+    `Arguments and results cross a JSON serialization boundary with a ${formatBytes(CODE_MODE_MAX_BRIDGE_PAYLOAD_BYTES)} limit per request or response.`,
     `A program may make at most ${CODE_MODE_MAX_BRIDGE_REQUESTS} API calls, with at most ${CODE_MODE_MAX_CONCURRENT_BRIDGE_REQUESTS} unresolved calls concurrently. Exceeding any bridge limit fails the program.`,
     `The program must finish within ${formatDuration(timeoutMs)}.`,
+    ...(hasFiles
+      ? [
+          "",
+          "## Scratch files",
+          "",
+          "Scratch files are real files in an execution-environment temporary directory shared by every code-mode tool for this agent. Returned absolute paths can be used by Bash and other tools. The execution environment controls their lifetime; they are not stored in the session snapshot.",
+          "",
+          "- `await files.write(name, content)` atomically writes UTF-8 text and returns `{ path, bytes }`.",
+          "- `await files.read(name)` reads the current file as UTF-8 text.",
+          "- `await files.list()` returns `{ files, totalFiles, totalBytes }`; each file has `{ name, path, bytes }`.",
+          "- `await files.remove(name)` removes a file and returns `{ path }`.",
+          "",
+          `Names must be single UTF-8 basenames of at most 255 bytes. \`files.write()\` rejects changes above ${TAU_CODE_MODE_MAX_FILES} regular files or ${TAU_CODE_MODE_MAX_TOTAL_FILE_BYTES / (1024 * 1024)} MiB total; Bash-created over-limit contents remain visible and removable.`,
+        ]
+      : []),
     "",
     "## Output",
     "",

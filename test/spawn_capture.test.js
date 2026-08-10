@@ -25,6 +25,31 @@ function isProcessRunning(pid) {
 }
 
 describe("spawnWithCapture", () => {
+  it("captures only stderr when stdout is caller-owned", async () => {
+    let stdout = "";
+    const result = await spawnWithCapture(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        'process.stdout.write("protocol"); process.stderr.write("diagnostic");',
+      ],
+      {
+        captureOutput: "stderr",
+        stdio: ["ignore", "pipe", "pipe"],
+        onSpawn: (child) => {
+          child.stdout.setEncoding("utf8");
+          child.stdout.on("data", (chunk) => {
+            stdout += chunk;
+          });
+        },
+      },
+    );
+
+    expect(stdout).toBe("protocol");
+    expect(result).toMatchObject({ stdout: "", stderr: "diagnostic" });
+  });
+
   it("completes process-group escalation after the leader exits", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "tau-spawn-capture-"));
     const childPidPath = join(tempRoot, "child.pid");

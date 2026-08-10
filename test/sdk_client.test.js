@@ -995,7 +995,11 @@ describe("sdk_client", () => {
     const transport = new FakeSessionProtocolTransport();
     const execute = vi.fn(async (args, context) => {
       expect(args).toEqual({ choice: "a" });
-      expect(context).toMatchObject({ sessionId: "session-1", callId: "call-1" });
+      expect(context).toMatchObject({
+        sessionId: "session-1",
+        agentId: "agent-1",
+        callId: "call-1",
+      });
       expect(context.signal.aborted).toBe(false);
       const execution = await context.executionEnvironment.exec("printf workspace", {
         cwd: "/repo",
@@ -1043,6 +1047,7 @@ describe("sdk_client", () => {
       version: SESSION_PROTOCOL_VERSION,
       type: "session.clientTool.call",
       sessionId: "session-1",
+      agentId: "agent-1",
       callId: "call-1",
       toolName: "local_picker",
       arguments: { choice: "a" },
@@ -1109,6 +1114,7 @@ describe("sdk_client", () => {
       version: SESSION_PROTOCOL_VERSION,
       type: "session.clientTool.call",
       sessionId: "session-1",
+      agentId: "agent-1",
       callId: "call-1",
       toolName: "workspace_wait",
       arguments: {},
@@ -1165,6 +1171,7 @@ describe("sdk_client", () => {
       version: SESSION_PROTOCOL_VERSION,
       type: "session.clientTool.call",
       sessionId: "session-1",
+      agentId: "agent-1",
       callId: "call-1",
       toolName: "local_picker",
       arguments: {},
@@ -1220,6 +1227,7 @@ describe("sdk_client", () => {
       version: SESSION_PROTOCOL_VERSION,
       type: "session.clientTool.call",
       sessionId: "session-1",
+      agentId: "agent-1",
       callId: "call-1",
       toolName: "local_picker",
       arguments: {},
@@ -1274,6 +1282,7 @@ describe("sdk_client", () => {
       version: SESSION_PROTOCOL_VERSION,
       type: "session.clientTool.call",
       sessionId: "session-1",
+      agentId: "agent-1",
       callId: "call-1",
       toolName: "local_picker",
       arguments: {},

@@ -363,6 +363,7 @@ function executeNookProgram(
   deps: NookToolDeps,
   config: Config,
   backend: ToolExecutionBackend,
+  agentId: string,
   signal: AbortSignal,
   timeoutMs: number,
 ) {
@@ -397,6 +398,7 @@ function executeNookProgram(
       },
     },
     code,
+    agentId,
     backend,
     signal,
     timeoutMs,
@@ -418,8 +420,8 @@ export function createNookToolDefinition(
     timeoutMs,
     parseArguments: parseNookArguments,
     getBlockedReason: () => (config.nook ? undefined : "nook is not configured"),
-    execute: async ({ code, signal, backend: executionBackend }) =>
-      executeNookProgram(code, deps, config, executionBackend, signal, timeoutMs),
+    execute: async ({ code, agentId, signal, backend: executionBackend }) =>
+      executeNookProgram(code, deps, config, executionBackend, agentId, signal, timeoutMs),
   };
 
   return createCodeModeToolDefinition(backend, implementation);

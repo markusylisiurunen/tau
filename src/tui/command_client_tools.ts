@@ -1,5 +1,4 @@
 import type { Writable } from "node:stream";
-import { StringDecoder } from "node:string_decoder";
 import { Check, Errors } from "typebox/value";
 import type { CommandClientToolConfig } from "../core/config/client_tools.js";
 import { type CoreDeps, createDefaultCoreDeps } from "../core/runtime/deps.js";
@@ -7,7 +6,7 @@ import { DEFAULT_COMMAND_CAPTURE_BYTES } from "../core/tools/execution_backend.j
 import {
   createTauClientToolCommandExecResponse,
   createTauClientToolCommandInvoke,
-  parseTauClientToolCommandOutput,
+  createTauClientToolCommandOutputDecoder,
   type TauClientToolCommandOutput,
 } from "../sdk/client_tool_command.js";
 import type { TauSdkClientTool, TauSdkClientToolContext } from "../sdk/types.js";
@@ -15,7 +14,6 @@ import type { TauSdkClientTool, TauSdkClientToolContext } from "../sdk/types.js"
 const DEFAULT_EXECUTION_TIMEOUT_MS = 60_000;
 const COMMAND_KILL_GRACE_MS = 2_000;
 const MAX_ACTIVE_EXECUTIONS = 8;
-const MAX_PROTOCOL_FRAME_BYTES = DEFAULT_COMMAND_CAPTURE_BYTES;
 
 type CommandClientToolDeps = Pick<CoreDeps, "spawn">;
 
@@ -47,8 +45,7 @@ export function createCommandClientTools(
       const activeExecutions = new Map<string, AbortController>();
       const executionTasks = new Set<Promise<void>>();
       const seenRequestIds = new Set<string>();
-      const decoder = new StringDecoder("utf8");
-      let stdoutBuffer = "";
+      const outputDecoder = createTauClientToolCommandOutputDecoder();
       let observedStdout = false;
       let finalContent: string | undefined;
       let protocolError: Error | undefined;
@@ -122,42 +119,13 @@ export function createCommandClientTools(
         executionTasks.add(task);
         void task.finally(() => executionTasks.delete(task));
       };
-      const consumeStdout = (text: string): void => {
-        if (protocolError || !text) return;
-        stdoutBuffer += text;
-        while (true) {
-          const newlineIndex = stdoutBuffer.indexOf("\n");
-          if (newlineIndex === -1) break;
-          const rawLine = stdoutBuffer.slice(0, newlineIndex);
-          stdoutBuffer = stdoutBuffer.slice(newlineIndex + 1);
-          if (Buffer.byteLength(rawLine, "utf8") > MAX_PROTOCOL_FRAME_BYTES) {
-            stdoutBuffer = "";
-            failProtocol(
-              new Error(
-                `Command client tool '${config.name}' exceeded the ${MAX_PROTOCOL_FRAME_BYTES}-byte protocol frame limit.`,
-              ),
-            );
-            return;
-          }
-          const line = rawLine.trim();
-          if (!line) continue;
-          try {
-            handleFrame(parseCommandOutputLine(line));
-          } catch (error) {
-            failProtocol(error instanceof Error ? error : new Error(String(error)));
-          }
-          if (protocolError) {
-            stdoutBuffer = "";
-            return;
-          }
-        }
-        if (Buffer.byteLength(stdoutBuffer, "utf8") > MAX_PROTOCOL_FRAME_BYTES) {
-          stdoutBuffer = "";
-          failProtocol(
-            new Error(
-              `Command client tool '${config.name}' exceeded the ${MAX_PROTOCOL_FRAME_BYTES}-byte protocol frame limit.`,
-            ),
-          );
+      const consumeStdout = (chunk?: Buffer | string): void => {
+        if (protocolError) return;
+        try {
+          const frames = chunk === undefined ? outputDecoder.end() : outputDecoder.push(chunk);
+          for (const frame of frames) handleFrame(frame);
+        } catch (error) {
+          failProtocol(error instanceof Error ? error : new Error(String(error)));
         }
       };
 
@@ -168,7 +136,7 @@ export function createCommandClientTools(
         maxCaptureBytes: DEFAULT_COMMAND_CAPTURE_BYTES,
         maxCaptureMode: "terminate",
         maxCaptureStrategy: "head",
-        captureOutput: "split",
+        captureOutput: "stderr",
         killGraceMs: COMMAND_KILL_GRACE_MS,
         killProcessGroup: true,
         stdio: ["pipe", "pipe", "pipe"],
@@ -176,6 +144,7 @@ export function createCommandClientTools(
         input: `${JSON.stringify(
           createTauClientToolCommandInvoke({
             sessionId: context.sessionId,
+            agentId: context.agentId,
             callId: context.callId,
             arguments: args,
           }),
@@ -192,33 +161,15 @@ export function createCommandClientTools(
             writeQueue = write;
             return write;
           };
-          child.stdout?.on("data", (chunk) => consumeStdout(decoder.write(chunk as Buffer)));
+          child.stdout?.on("data", (chunk) => consumeStdout(chunk as Buffer));
         },
       });
 
       for (const controller of activeExecutions.values()) controller.abort();
       await Promise.allSettled(executionTasks);
       activeExecutions.clear();
-      if (observedStdout) {
-        consumeStdout(decoder.end());
-      } else {
-        consumeStdout(result.stdout);
-      }
-      if (!protocolError && stdoutBuffer.trim()) {
-        if (Buffer.byteLength(stdoutBuffer, "utf8") > MAX_PROTOCOL_FRAME_BYTES) {
-          failProtocol(
-            new Error(
-              `Command client tool '${config.name}' exceeded the ${MAX_PROTOCOL_FRAME_BYTES}-byte protocol frame limit.`,
-            ),
-          );
-        } else {
-          try {
-            handleFrame(parseCommandOutputLine(stdoutBuffer.trim()));
-          } catch (error) {
-            failProtocol(error instanceof Error ? error : new Error(String(error)));
-          }
-        }
-      }
+      if (!observedStdout) consumeStdout(result.stdout);
+      consumeStdout();
 
       if (protocolError) throw protocolError;
       if (result.aborted) {
@@ -229,7 +180,7 @@ export function createCommandClientTools(
       }
       if (result.captureLimitExceeded) {
         throw new Error(
-          `Command client tool '${config.name}' exceeded the ${DEFAULT_COMMAND_CAPTURE_BYTES}-byte output limit.`,
+          `Command client tool '${config.name}' exceeded the ${DEFAULT_COMMAND_CAPTURE_BYTES}-byte stderr limit.`,
         );
       }
       if (result.exitCode !== 0) {
@@ -242,7 +193,7 @@ export function createCommandClientTools(
         );
       }
       if (finalContent === undefined) {
-        throw new Error(`Command client tool '${config.name}' returned no version-2 result frame.`);
+        throw new Error(`Command client tool '${config.name}' returned no version-3 result frame.`);
       }
 
       return { content: finalContent };
@@ -305,14 +256,4 @@ async function writeWithBackpressure(stream: Writable, content: string): Promise
       stream.once("drain", onDrain);
     }
   });
-}
-
-function parseCommandOutputLine(line: string): TauClientToolCommandOutput {
-  let value: unknown;
-  try {
-    value = JSON.parse(line);
-  } catch {
-    throw new Error("command client tool returned invalid JSON protocol framing");
-  }
-  return parseTauClientToolCommandOutput(value);
 }

@@ -3,7 +3,6 @@ import {
   assertExpectedSessionRevision,
   type SessionStore,
   type SessionStoreCommitOptions,
-  type SessionStoreDeleteOptions,
   validateSessionStoreSnapshot,
 } from "./session_store.js";
 
@@ -30,15 +29,6 @@ export class MemorySessionStore implements SessionStore {
 
   async listSessionSnapshots(): Promise<SessionProtocolSnapshot[]> {
     return [...this.snapshots.values()].map((snapshot) => cloneSessionSnapshot(snapshot));
-  }
-
-  async deleteSession(sessionId: string, options: SessionStoreDeleteOptions = {}): Promise<void> {
-    assertExpectedSessionRevision(
-      sessionId,
-      options.expectedRevision,
-      this.snapshots.get(sessionId),
-    );
-    this.snapshots.delete(sessionId);
   }
 }
 

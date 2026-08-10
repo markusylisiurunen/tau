@@ -1125,25 +1125,6 @@ describe("LocalSessionHost", () => {
       }),
     );
 
-    const previousId = hostedSession.sessionId;
-    hostedSession.session.reset();
-
-    await expect(host.observeSession(previousId)).resolves.toBeUndefined();
-    await expect(store.loadSession(previousId)).resolves.toBeUndefined();
-    await expect(host.observeSession(hostedSession.sessionId)).resolves.toBe(hostedSession);
-    await expect(hostedSession.snapshot()).resolves.toEqual(
-      expect.objectContaining({
-        sessionId: hostedSession.sessionId,
-        revision: 1,
-      }),
-    );
-    await expect(host.listSessions()).resolves.toEqual([
-      { sessionId: hostedSession.sessionId, lifecycle: "idle" },
-    ]);
-    await expect(store.loadSession(hostedSession.sessionId)).resolves.toEqual(
-      await hostedSession.snapshot(),
-    );
-
     const nextSession = await host.createSession(localCreateInput);
     await expect(host.observeSession(nextSession.sessionId)).resolves.toBe(nextSession);
     expect(nextSession.session.history).toEqual([]);

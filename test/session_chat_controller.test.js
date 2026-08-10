@@ -5180,6 +5180,42 @@ describe("SessionChatController", () => {
     ).toThrow("duplicate TUI client tool 'prefill_input'");
   });
 
+  it("waits for terminal color detection before closing after session creation fails", async () => {
+    const creationError = new Error("session creation failed");
+    let resolveTerminalColors;
+    const terminalColors = new Promise((resolve) => {
+      resolveTerminalColors = resolve;
+    });
+    const client = {
+      sessions: {
+        create: vi.fn(async () => {
+          throw creationError;
+        }),
+      },
+      close: vi.fn(async () => {}),
+    };
+
+    const opening = SessionChatApp.open({
+      client,
+      configuredClientToolNames: [],
+      targetLabel: "in-process",
+      sessionSelection: { mode: "create", input: {} },
+      terminalColors,
+    });
+    const rejection = expect(opening).rejects.toBe(creationError);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(client.close).not.toHaveBeenCalled();
+
+    resolveTerminalColors({
+      foreground: { r: 1, g: 1, b: 1 },
+      background: { r: 0, g: 0, b: 0 },
+      appearance: "dark",
+    });
+    await rejection;
+    expect(client.close).toHaveBeenCalledOnce();
+  });
+
   it("rejects configured tool collisions before spawning a stdio transport", async () => {
     const markerPath = join(
       tmpdir(),

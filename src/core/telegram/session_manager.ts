@@ -24,7 +24,7 @@ import type {
 import { TauSessionProtocolResponseError } from "../../transport/errors.js";
 import type { TelegramDirectoryProjectConfig, TelegramProjectConfig } from "../config/schema.js";
 import { extractAssistantText } from "../utils/messages.js";
-import { normalizeRepositoryReference } from "../utils/repository.js";
+import { buildRepositoryAttribute, normalizeRepositoryReference } from "../utils/repository.js";
 import { formatTauUserText } from "../utils/user_metadata.js";
 import {
   cleanupWorkspacePath as cleanupWorkspacePathOnDisk,
@@ -1661,14 +1661,17 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
               return project && "repo" in project ? [project.repo] : [];
             })
           : [];
-    const repositories = configuredRepositories.map(
-      (repository) =>
-        normalizeRepositoryReference(repository, { defaultHost: "github.com" }) ?? repository,
+    const repository = buildRepositoryAttribute(
+      configuredRepositories.map(
+        (configuredRepository) =>
+          normalizeRepositoryReference(configuredRepository, { defaultHost: "github.com" }) ??
+          configuredRepository,
+      ),
     );
     return {
       source: "telegram",
       project: entry.record.projectId,
-      ...(repositories.length > 0 ? { repository: repositories.join(",") } : {}),
+      ...(repository ? { repository } : {}),
     };
   }
 

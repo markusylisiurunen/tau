@@ -1,13 +1,16 @@
 import { spawnSync } from "node:child_process";
 import { type Dirent, readdirSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
-import { normalizeRepositoryReference } from "../core/utils/repository.js";
+import {
+  buildRepositoryAttribute,
+  normalizeRepositoryReference,
+} from "../core/utils/repository.js";
 
 export function createLocalTuiSessionAttributes(cwd: string): Record<string, string> {
-  const repositories = discoverLocalWorkspaceRepositories(cwd);
+  const repository = buildRepositoryAttribute(discoverLocalWorkspaceRepositories(cwd));
   return {
     source: "tui",
-    ...(repositories.length > 0 ? { repository: repositories.join(",") } : {}),
+    ...(repository ? { repository } : {}),
   };
 }
 

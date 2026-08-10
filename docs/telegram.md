@@ -98,6 +98,12 @@ Failed, blocked, and confirmed-unaccepted request notifications remain in the se
 
 `systemMessage` is prepended to every submitted Telegram message inside a `<system>...</system>` block. `bots.<botId>.systemMessage` is appended after `systemMessage` for Telegram-originated messages only, within the same block.
 
+## command client tools
+
+Each Telegram session advertises the command-backed client tools selected by normal Tau configuration from its prepared workspace. Global `clientTools` definitions remain executable only on the Telegram runner machine, while the workspace's most specific `enabledClientTools` value selects an exact allowlist. Without a workspace selection, only definitions with `defaultEnabled: true` are advertised; `enabledClientTools: []` disables all configured tools. Tool selection is refreshed when the session client is created or reconnected after a runner restart.
+
+Telegram uses the same argument validation, command protocol, execution-environment facade, cancellation, process cleanup, and limits as TUI command tools. It does not advertise TUI-only client tools such as `diff_review` or `prefill_input`. Composite sessions use the generated root configuration, and child repository selections are not merged into that root.
+
 ## Telegram behavior
 
 Supported slash commands:

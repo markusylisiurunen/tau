@@ -4,12 +4,12 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
+import { createCommandClientTools } from "../dist/core/client_tools/command_client_tools.js";
 import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
 import {
   TAU_CLIENT_TOOL_COMMAND_MAX_PROTOCOL_FRAME_BYTES,
   TAU_CLIENT_TOOL_COMMAND_MAX_PROTOCOL_FRAMES,
 } from "../dist/sdk/client_tool_command.js";
-import { createCommandClientTools } from "../dist/tui/command_client_tools.js";
 import { createProtocolExecResult } from "./helpers/session_protocol_fixtures.js";
 
 const commandModuleUrl = pathToFileURL(resolve("dist/sdk/index.js")).href;

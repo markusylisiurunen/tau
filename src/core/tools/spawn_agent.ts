@@ -347,7 +347,7 @@ export function createSpawnAgentToolDefinition(options: {
             toolName: TOOL_NAME_SPAWN_AGENT,
             subject: subject,
             output: prompt,
-            detailTruncation: { maxLines: 17, strategy: "middle" },
+            detailTruncation: false,
             metadata: [...statusPrefixParts, spawnResult.state.id],
           });
           const uiEvent: ToolActivity = {

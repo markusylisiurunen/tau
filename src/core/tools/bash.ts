@@ -16,6 +16,7 @@ import type { ToolExecutionBackend } from "./execution_backend.js";
 import {
   buildToolRunPresentation,
   formatToolDurationMs,
+  type ToolCardDetailTruncation,
   type ToolCardLine,
   type ToolRunPresentation,
 } from "./presentation.js";
@@ -278,7 +279,7 @@ export function buildBashPresentation(args: {
   workingDirectory?: string;
   includeExitCode?: boolean;
   actionLabel?: string;
-  detailTruncation?: { maxLines: number; strategy: "head" | "middle" };
+  detailTruncation?: Exclude<ToolCardDetailTruncation, false>;
 }): ToolRunPresentation {
   const { truncationInfo, exitCode, durationMs } = args;
   const { model, captureTruncated } = truncationInfo;

@@ -167,7 +167,7 @@ export function createSendInputToAgentToolDefinition(supervisor: AgentSupervisor
             toolName: TOOL_NAME_SEND_INPUT_TO_AGENT,
             subject: sendResult.state.title,
             output: prompt,
-            detailTruncation: { maxLines: 17, strategy: "middle" },
+            detailTruncation: false,
           });
           const uiEvent: ToolActivity = {
             type: "tool_call_finished",

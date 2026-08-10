@@ -26,6 +26,14 @@ export type ToolCardLine = {
 
 export type ToolCardLineInput = Omit<ToolCardLine, "wrap"> & { wrap?: ToolCardWrap };
 
+export type ToolCardDetailTruncation =
+  | false
+  | {
+      maxLines: number;
+      maxLineChars: number;
+      strategy: "head" | "middle";
+    };
+
 export type ToolRunPresentationStatus =
   | "preparing"
   | "queued"
@@ -46,26 +54,27 @@ export type ToolRunPresentation = {
   metadata: string[];
 };
 
-export const TOOL_UI_FACET_VERSION = 2;
+export const TOOL_UI_FACET_VERSION = 3;
 export const TOOL_CARD_SUBJECT_MAX_LINES = 8;
 export const TOOL_CARD_DEFAULT_DETAILS_MAX_LINES = 7;
 export const TOOL_CARD_TRUNCATED_DETAILS_MAX_LINES = 33;
 export const TOOL_CARD_MAX_LINE_CHARS = 512;
 
-function isBoundedLine(text: string): boolean {
-  return (
-    !text.includes("\n") &&
-    !text.includes("\r") &&
-    Array.from(text).length <= TOOL_CARD_MAX_LINE_CHARS
-  );
+function isSingleLine(text: string): boolean {
+  return !text.includes("\n") && !text.includes("\r");
 }
 
+function isBoundedLine(text: string): boolean {
+  return isSingleLine(text) && Array.from(text).length <= TOOL_CARD_MAX_LINE_CHARS;
+}
+
+const singleLineSchema = z.string().refine(isSingleLine, "must be one line");
 const boundedLineSchema = z.string().refine(isBoundedLine, "must be one bounded line");
 const boundedLabelSchema = boundedLineSchema.min(1);
 
 const toolCardLineSchema = z
   .object({
-    text: boundedLineSchema,
+    text: singleLineSchema,
     tone: z.enum(["added", "removed"]).optional(),
     wrap: z.enum(["word", "character"]),
   })
@@ -187,14 +196,14 @@ const TOOL_RUN_ACTION_LABELS: Record<string, ToolRunActionLabels> = {
   },
 };
 
-function truncateLine(text: string): string {
+function truncateLine(text: string, maxChars: number): string {
   const characters = Array.from(text);
-  if (characters.length <= TOOL_CARD_MAX_LINE_CHARS) return text;
-  return `${characters.slice(0, TOOL_CARD_MAX_LINE_CHARS - 1).join("")}…`;
+  if (characters.length <= maxChars) return text;
+  return `${characters.slice(0, maxChars - 1).join("")}…`;
 }
 
 function normalizeLabel(text: string): string {
-  return truncateLine(text.replace(/\s+/g, " ").trim());
+  return truncateLine(text.replace(/\s+/g, " ").trim(), TOOL_CARD_MAX_LINE_CHARS);
 }
 
 export function formatToolDurationMs(durationMs: number): string {
@@ -207,9 +216,13 @@ export function formatToolDurationMs(durationMs: number): string {
 function truncateLines(
   lines: ToolCardLine[],
   maxLines: number,
+  maxLineChars: number,
   strategy: "head" | "middle" = "middle",
 ): ToolCardLine[] {
-  const bounded = lines.map((line) => ({ ...line, text: truncateLine(line.text) }));
+  const bounded = lines.map((line) => ({
+    ...line,
+    text: truncateLine(line.text, maxLineChars),
+  }));
   if (bounded.length <= maxLines) return bounded;
 
   if (strategy === "head") {
@@ -217,7 +230,10 @@ function truncateLines(
     const omitted = bounded.length - headCount;
     return [
       ...bounded.slice(0, headCount),
-      { text: `…${omitted} more ${omitted === 1 ? "line" : "lines"}…`, wrap: "word" },
+      {
+        text: truncateLine(`…${omitted} more ${omitted === 1 ? "line" : "lines"}…`, maxLineChars),
+        wrap: "word",
+      },
     ];
   }
 
@@ -226,7 +242,10 @@ function truncateLines(
   const omitted = bounded.length - headCount - tailCount;
   return [
     ...bounded.slice(0, headCount),
-    { text: `…${omitted} more ${omitted === 1 ? "line" : "lines"}…`, wrap: "word" },
+    {
+      text: truncateLine(`…${omitted} more ${omitted === 1 ? "line" : "lines"}…`, maxLineChars),
+      wrap: "word",
+    },
     ...bounded.slice(-tailCount),
   ];
 }
@@ -257,7 +276,7 @@ export function buildToolRunPresentation(args: {
   subject: string;
   subjectWrap?: ToolCardWrap;
   details?: ToolCardLineInput[];
-  detailTruncation?: false | { maxLines: number; strategy: "head" | "middle" };
+  detailTruncation?: ToolCardDetailTruncation;
   metadata?: string[];
   actionOverrides?: Partial<ToolRunActionLabels>;
 }): ToolRunPresentation {
@@ -265,6 +284,7 @@ export function buildToolRunPresentation(args: {
   const boundedSubject = truncateLines(
     subjectLines.map((text) => ({ text, wrap: "word" })),
     TOOL_CARD_SUBJECT_MAX_LINES,
+    TOOL_CARD_MAX_LINE_CHARS,
   )
     .map((line) => line.text)
     .join("\n");
@@ -280,22 +300,32 @@ export function buildToolRunPresentation(args: {
   );
   const detailTruncation = args.detailTruncation ?? {
     maxLines: TOOL_CARD_DEFAULT_DETAILS_MAX_LINES,
+    maxLineChars: TOOL_CARD_MAX_LINE_CHARS,
     strategy: "middle",
   };
-  if (
-    detailTruncation !== false &&
-    (!Number.isInteger(detailTruncation.maxLines) ||
+  if (detailTruncation !== false) {
+    if (
+      !Number.isInteger(detailTruncation.maxLines) ||
       detailTruncation.maxLines < 1 ||
-      detailTruncation.maxLines > TOOL_CARD_TRUNCATED_DETAILS_MAX_LINES)
-  ) {
-    throw new Error(
-      `detail maxLines must be between 1 and ${TOOL_CARD_TRUNCATED_DETAILS_MAX_LINES}`,
-    );
+      detailTruncation.maxLines > TOOL_CARD_TRUNCATED_DETAILS_MAX_LINES
+    ) {
+      throw new Error(
+        `detail maxLines must be between 1 and ${TOOL_CARD_TRUNCATED_DETAILS_MAX_LINES}`,
+      );
+    }
+    if (!Number.isInteger(detailTruncation.maxLineChars) || detailTruncation.maxLineChars < 1) {
+      throw new Error("detail maxLineChars must be a positive integer");
+    }
   }
   const boundedDetails =
     detailTruncation === false
-      ? details.map((line) => ({ ...line, text: truncateLine(line.text) }))
-      : truncateLines(details, detailTruncation.maxLines, detailTruncation.strategy);
+      ? details
+      : truncateLines(
+          details,
+          detailTruncation.maxLines,
+          detailTruncation.maxLineChars,
+          detailTruncation.strategy,
+        );
 
   return parseToolRunPresentation({
     actionByStatus: labels,

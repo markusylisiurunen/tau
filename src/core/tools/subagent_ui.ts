@@ -1,11 +1,15 @@
 import { formatAdaptiveNumber, formatDurationMs } from "../utils/format.js";
-import { buildToolRunPresentation, type ToolRunPresentation } from "./presentation.js";
+import {
+  buildToolRunPresentation,
+  type ToolCardDetailTruncation,
+  type ToolRunPresentation,
+} from "./presentation.js";
 
 export function buildSubagentPresentation(args: {
   toolName: string;
   subject: string;
   output: string;
-  detailTruncation?: false | { maxLines: number; strategy: "head" | "middle" };
+  detailTruncation?: ToolCardDetailTruncation;
   metadata?: string[];
 }): ToolRunPresentation {
   const output = args.output.trimEnd();

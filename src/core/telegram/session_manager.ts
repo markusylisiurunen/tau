@@ -1000,10 +1000,20 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     entry.client = client;
     const tauSession = await client.sessions.observe(tauSessionId);
     entry.tauSession = tauSession;
+    const snapshot = await tauSession.snapshot();
+    if (
+      isDirectoryProject(entry.project) &&
+      (snapshot.executionEnvironment.kind !== "local" ||
+        resolve(snapshot.executionEnvironment.cwd) !== sessionCwd)
+    ) {
+      throw new Error(
+        `persisted Tau session directory '${snapshot.executionEnvironment.cwd}' does not match configured project directory '${sessionCwd}'`,
+      );
+    }
     entry.unsubscribeClientEvents = tauSession.onDelta((event) => {
       this.handleClientEvent(entry, event);
     });
-    this.initializeRecoveredSnapshotDeliveryState(entry, await tauSession.snapshot());
+    this.initializeRecoveredSnapshotDeliveryState(entry, snapshot);
     entry.record.error = undefined;
     if (entry.activeTurnIds.size > 0) {
       this.setState(entry, "running");

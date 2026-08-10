@@ -5,7 +5,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { buildAutoCompactionContinuationMessage } from "../dist/core/session/compaction.js";
-import { buildToolRunPresentation } from "../dist/core/tools/presentation.js";
+import {
+  buildToolRunPresentation,
+  TOOL_UI_FACET_VERSION,
+} from "../dist/core/tools/presentation.js";
 import {
   hasAutoCompactionContinuationMetadata,
   prependTauUserMetadata,
@@ -3498,7 +3501,7 @@ describe("SessionChatController", () => {
           id: "tool-ui-write-call",
           subject: { type: "tool", id: "write-call" },
           kind: "tau.tool-ui-events",
-          version: 2,
+          version: TOOL_UI_FACET_VERSION,
           data: {
             events: [
               {
@@ -3517,7 +3520,7 @@ describe("SessionChatController", () => {
           id: "tool-ui-tool-b",
           subject: { type: "tool", id: "tool-b" },
           kind: "tau.tool-ui-events",
-          version: 2,
+          version: TOOL_UI_FACET_VERSION,
           data: {
             events: [
               {
@@ -3536,7 +3539,7 @@ describe("SessionChatController", () => {
           id: "tool-ui-tool-a",
           subject: { type: "tool", id: "tool-a" },
           kind: "tau.tool-ui-events",
-          version: 2,
+          version: TOOL_UI_FACET_VERSION,
           data: {
             events: [
               {
@@ -3634,7 +3637,7 @@ describe("SessionChatController", () => {
           id: "tool-ui-tool-a",
           subject: { type: "tool", id: "tool-a" },
           kind: "tau.tool-ui-events",
-          version: 2,
+          version: TOOL_UI_FACET_VERSION,
           data: {
             events: [
               {
@@ -3856,7 +3859,7 @@ describe("SessionChatController", () => {
           id: "tool-ui-tool-a",
           subject: { type: "tool", id: "tool-a" },
           kind: "tau.tool-ui-events",
-          version: 2,
+          version: TOOL_UI_FACET_VERSION,
           data: { events: [queuedEvent] },
         },
       },
@@ -3927,7 +3930,7 @@ describe("SessionChatController", () => {
               id: "tool-ui-tool-a",
               subject: { type: "tool", id: "tool-a" },
               kind: "tau.tool-ui-events",
-              version: 2,
+              version: TOOL_UI_FACET_VERSION,
               data: { events: [queuedEvent, startedEvent] },
             },
           },

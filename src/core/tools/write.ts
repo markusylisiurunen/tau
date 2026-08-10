@@ -6,7 +6,11 @@ import { formatBytes } from "../utils/truncate.js";
 import { formatZodError } from "../utils/zod.js";
 import type { ToolActivity } from "./activity.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
-import { buildToolRunPresentation, type ToolRunPresentation } from "./presentation.js";
+import {
+  buildToolRunPresentation,
+  TOOL_CARD_MAX_LINE_CHARS,
+  type ToolRunPresentation,
+} from "./presentation.js";
 import {
   type AgentTool,
   createTextToolOutcome,
@@ -78,7 +82,11 @@ function buildWritePresentation(args: {
     details: detailText
       ? detailText.split("\n").map((text) => ({ text, wrap: "character" as const }))
       : [],
-    detailTruncation: { maxLines: 16, strategy: "head" },
+    detailTruncation: {
+      maxLines: 16,
+      maxLineChars: TOOL_CARD_MAX_LINE_CHARS,
+      strategy: "head",
+    },
     metadata: [formatTokenEstimate(bytes), `${lines} ${lines === 1 ? "line" : "lines"}`],
   });
 }

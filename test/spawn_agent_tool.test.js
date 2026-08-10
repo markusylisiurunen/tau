@@ -219,7 +219,11 @@ describe("send_input_to_agent tool", () => {
       })),
     };
     const tool = createSendInputToAgentToolDefinition(supervisor);
-    const prompt = Array.from({ length: 20 }, (_, index) => `prompt ${index + 1}`).join("\n");
+    const longLine = "x".repeat(600);
+    const prompt = [
+      longLine,
+      ...Array.from({ length: 20 }, (_, index) => `prompt ${index + 1}`),
+    ].join("\n");
 
     expect(tool.schema.parameters.properties.id.pattern).toBe("^[^\\r\\n]+$");
 
@@ -238,11 +242,9 @@ describe("send_input_to_agent tool", () => {
 
     expect(result.toolResult.outcome).toBe("succeeded");
     expect(result.uiEvent.presentation.metadata).toEqual([]);
-    expect(result.uiEvent.presentation.details.map((line) => line.text)).toEqual([
-      ...Array.from({ length: 8 }, (_, index) => `prompt ${index + 1}`),
-      "…4 more lines…",
-      ...Array.from({ length: 8 }, (_, index) => `prompt ${index + 13}`),
-    ]);
+    expect(result.uiEvent.presentation.details.map((line) => line.text)).toEqual(
+      prompt.split("\n"),
+    );
     expect(getText(result.toolResult)).toBe(
       ["Started run 2 for `agent-1` · child task", "capacity 1/8"].join("\n"),
     );
@@ -564,17 +566,19 @@ describe("spawn_agent tool", () => {
     );
   });
 
-  it("shows up to seventeen prompt lines using a balanced preview", async () => {
+  it("preserves the complete prompt presentation", async () => {
     const { tool } = createFixture();
-    const prompt = Array.from({ length: 20 }, (_, index) => `prompt ${index + 1}`).join("\n");
+    const longLine = "x".repeat(600);
+    const prompt = [
+      longLine,
+      ...Array.from({ length: 20 }, (_, index) => `prompt ${index + 1}`),
+    ].join("\n");
 
     const { result } = await execute(tool, { ...baseArguments, prompt });
 
-    expect(result.uiEvent.presentation.details.map((line) => line.text)).toEqual([
-      ...Array.from({ length: 8 }, (_, index) => `prompt ${index + 1}`),
-      "…4 more lines…",
-      ...Array.from({ length: 8 }, (_, index) => `prompt ${index + 13}`),
-    ]);
+    expect(result.uiEvent.presentation.details.map((line) => line.text)).toEqual(
+      prompt.split("\n"),
+    );
   });
 
   it("does not duplicate cancellation as a detail", async () => {

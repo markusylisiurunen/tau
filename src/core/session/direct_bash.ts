@@ -6,7 +6,7 @@ import {
   prepareBashOutput,
 } from "../tools/bash.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
-import type { ToolRunPresentation } from "../tools/presentation.js";
+import { TOOL_CARD_MAX_LINE_CHARS, type ToolRunPresentation } from "../tools/presentation.js";
 import { TOOL_NAME_BASH } from "../tools/tool_names.js";
 
 export type DirectBashExecutionResult = {
@@ -59,7 +59,11 @@ export async function runDirectBashCommand(
     durationMs,
     workingDirectory: options.workingDirectory,
     actionLabel: options.actionLabel,
-    detailTruncation: { maxLines: 33, strategy: "middle" },
+    detailTruncation: {
+      maxLines: 33,
+      maxLineChars: TOOL_CARD_MAX_LINE_CHARS,
+      strategy: "middle",
+    },
   });
   const userHistoryEntryId =
     options.addToContext && options.addUserText

@@ -7,7 +7,10 @@ import {
   createTelegramSessionManager,
   TelegramSessionManagerError,
 } from "../dist/core/telegram/session_manager.js";
-import { buildToolRunPresentation } from "../dist/core/tools/presentation.js";
+import {
+  buildToolRunPresentation,
+  TOOL_UI_FACET_VERSION,
+} from "../dist/core/tools/presentation.js";
 import { SESSION_PROTOCOL_VERSION } from "../dist/protocol/session_protocol.js";
 import { TauSessionProtocolResponseError } from "../dist/transport/errors.js";
 import { createProtocolSnapshot } from "./helpers/session_protocol_fixtures.js";
@@ -127,7 +130,7 @@ function createToolUiFacetChange(toolCallId, eventOrEvents) {
       id: `tool-ui-${toolCallId}`,
       subject: { type: "tool", id: toolCallId },
       kind: "tau.tool-ui-events",
-      version: 2,
+      version: TOOL_UI_FACET_VERSION,
       data: { events },
     },
   };

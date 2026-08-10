@@ -217,6 +217,20 @@ describe("tool cards", () => {
       "detail 7",
     ]);
 
+    const customDetails = buildToolRunPresentation({
+      toolName: "bash",
+      subject: "echo test",
+      details: Array.from({ length: 4 }, (_, index) => ({
+        text: `detail ${index + 1} with long content`,
+      })),
+      detailTruncation: { maxLines: 3, maxLineChars: 8, strategy: "middle" },
+    });
+    expect(customDetails.details.map((line) => line.text)).toEqual([
+      "detail …",
+      "…2 more…",
+      "detail …",
+    ]);
+
     const longLine = "x".repeat(TOOL_CARD_MAX_LINE_CHARS + 10);
     const lineBounded = buildToolRunPresentation({
       toolName: "bash",
@@ -236,7 +250,7 @@ describe("tool cards", () => {
       detailTruncation: false,
     });
     expect(completeDetails.details).toHaveLength(20);
-    expect(Array.from(completeDetails.details[10].text)).toHaveLength(TOOL_CARD_MAX_LINE_CHARS);
+    expect(completeDetails.details[10].text).toBe(longLine);
   });
 
   it("uses a head-only write preview and enforces single-line paths", async () => {
@@ -304,5 +318,11 @@ describe("tool cards", () => {
         details: [{ text: "two\nlines" }],
       }),
     ).toThrow();
+    expect(
+      parseToolRunPresentation({
+        ...presentation,
+        details: [{ text: "x".repeat(TOOL_CARD_MAX_LINE_CHARS + 1), wrap: "word" }],
+      }).details[0].text,
+    ).toHaveLength(TOOL_CARD_MAX_LINE_CHARS + 1);
   });
 });

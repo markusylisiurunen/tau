@@ -787,9 +787,12 @@ if (argv[0] === "nook") {
 }
 
 if (argv[0] === "telegram") {
-  const { printTelegramHelp, runTelegramCommand, TelegramCliError } = await import(
-    "./core/telegram/index.js"
-  );
+  const {
+    createLocalTelegramSessionClient,
+    printTelegramHelp,
+    runTelegramCommand,
+    TelegramCliError,
+  } = await import("./core/telegram/index.js");
   try {
     const telegramConfig = loadConfig(cwd, configDeps);
     await runTelegramCommand(argv.slice(1), {
@@ -797,7 +800,11 @@ if (argv[0] === "telegram") {
       env: process.env,
       config: telegramConfig,
       createSessionClient: async (options) =>
-        await createTauSdkClientWithHostConfig(options, telegramConfig),
+        await createLocalTelegramSessionClient({
+          client: options,
+          hostConfig: telegramConfig,
+          configDeps,
+        }),
     });
     process.exit(0);
   } catch (err) {

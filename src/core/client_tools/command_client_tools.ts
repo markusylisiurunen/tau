@@ -1,15 +1,15 @@
 import type { Writable } from "node:stream";
 import { Check, Errors } from "typebox/value";
-import type { CommandClientToolConfig } from "../core/config/client_tools.js";
-import { type CoreDeps, createDefaultCoreDeps } from "../core/runtime/deps.js";
-import { DEFAULT_COMMAND_CAPTURE_BYTES } from "../core/tools/execution_backend.js";
 import {
   createTauClientToolCommandExecResponse,
   createTauClientToolCommandInvoke,
   createTauClientToolCommandOutputDecoder,
   type TauClientToolCommandOutput,
-} from "../sdk/client_tool_command.js";
-import type { TauSdkClientTool, TauSdkClientToolContext } from "../sdk/types.js";
+} from "../../sdk/client_tool_command.js";
+import type { TauSdkClientTool, TauSdkClientToolContext } from "../../sdk/types.js";
+import type { CommandClientToolConfig } from "../config/client_tools.js";
+import { type CoreDeps, createDefaultCoreDeps } from "../runtime/deps.js";
+import { DEFAULT_COMMAND_CAPTURE_BYTES } from "../tools/execution_backend.js";
 
 const DEFAULT_EXECUTION_TIMEOUT_MS = 60_000;
 const COMMAND_KILL_GRACE_MS = 2_000;

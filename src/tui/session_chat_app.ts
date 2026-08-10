@@ -2,6 +2,7 @@ import { spawn as spawnProcess } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { Type } from "typebox";
 import { z } from "zod";
+import { createCommandClientTools } from "../core/client_tools/command_client_tools.js";
 import { createCommandRegistry } from "../core/commands/index.js";
 import type {
   CommandClientToolConfig,
@@ -19,7 +20,6 @@ import type { TauSdkClient, TauSdkClientTool, TauSdkSession } from "../sdk/types
 import { StdioSessionProtocolTransport } from "../transport/stdio_session_transport.js";
 import { WebSocketSessionProtocolTransport } from "../transport/websocket_session_transport.js";
 import { TuiChatView } from "./chat_view.js";
-import { createCommandClientTools } from "./command_client_tools.js";
 import { EXIT_DOUBLE_PRESS_WINDOW_MS, EXIT_TOAST_DURATION_MS } from "./constants.js";
 import { SessionChatController } from "./session_chat_controller.js";
 import type { TerminalColors } from "./terminal_appearance.js";

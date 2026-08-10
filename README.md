@@ -29,18 +29,13 @@ tau
 
 ## Documentation
 
-The [canonical Tau documentation](docs/tau/index.md) is the version-matched guide to using, managing, and configuring Tau. Start there for the complete operational documentation, or go directly to:
+The [Tau documentation](docs/index.md) is the complete version-matched guide for people and agents. Start there, or go directly to:
 
-- [Getting started](docs/tau/getting-started.md)
-- [Configuration](docs/tau/configuration.md)
-- [Remote sessions](docs/tau/remote-sessions.md)
-- [Security](docs/tau/security.md)
+- [Getting started](docs/getting-started.md)
+- [Configuration](docs/configuration.md)
+- [Session protocol](docs/session-protocol.md)
+- [Node SDK](docs/node-sdk.md)
+- [Remote sessions](docs/remote-sessions.md)
+- [Security](docs/security.md)
 
-Tau also ships this corpus to agents through the intrinsic `tau_docs` tool, so agents and people can work from the same contracts.
-
-## Developer references
-
-The operational corpus intentionally leaves wire-level and typed SDK detail to these focused references:
-
-- [RPC protocol](docs/rpc.md)
-- [Node SDK](docs/sdk.md)
+Tau ships the same corpus to agents through the intrinsic `tau_docs` tool, so agents and people work from the same contracts.

@@ -1,8 +1,9 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { SESSION_PROTOCOL_METHODS } from "../dist/protocol/session_protocol.js";
 
-const docsDir = resolve("docs/tau");
+const docsDir = resolve("docs");
 const manifest = JSON.parse(readFileSync(join(docsDir, "manifest.json"), "utf8"));
 const files = manifest.files;
 const markdownLinkPattern = /\[[^\]]+\]\(([^)]+\.md)\)/g;
@@ -46,5 +47,12 @@ describe("Tau documentation corpus", () => {
         expect(known.has(link), `${file} -> ${link}`).toBe(true);
       }
     }
+  });
+
+  it("documents every session protocol method exactly once", () => {
+    const reference = readFileSync(join(docsDir, "session-protocol-methods.md"), "utf8");
+    const documented = [...reference.matchAll(/^### `([^`]+)`$/gm)].map((match) => match[1]);
+    expect(new Set(documented).size).toBe(documented.length);
+    expect(documented.sort()).toEqual([...SESSION_PROTOCOL_METHODS].sort());
   });
 });

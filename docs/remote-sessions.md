@@ -14,7 +14,7 @@ Use the smallest shape that matches the lifecycle you need.
 | Node SDK with its default client | Applications that want an in-process host | The SDK client owns the host and closes it with the client. |
 | Node SDK over WebSocket | Applications sharing a long-running `tau serve` host | The server owns sessions; the SDK observes them remotely. |
 
-Use `tau serve` when a turn should continue after a laptop disconnects. Use stdio/SSH when SSH is already the desired security and process boundary and it is acceptable for closing the TUI to stop remote work. The [RPC protocol reference](https://github.com/markusylisiurunen/tau/blob/main/docs/rpc.md?plain=1) and [Node SDK reference](https://github.com/markusylisiurunen/tau/blob/main/docs/sdk.md?plain=1) cover developer APIs and wire details; this page stays at the operational level.
+Use `tau serve` when a turn should continue after a laptop disconnects. Use stdio/SSH when SSH is already the desired security and process boundary and it is acceptable for closing the TUI to stop remote work. The [session protocol](session-protocol.md) and [Node SDK](node-sdk.md) cover developer APIs and wire details; this page stays at the operational level.
 
 ## Host sessions over WebSocket
 

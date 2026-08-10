@@ -82,7 +82,7 @@ The snapshot is the recoverable source of truth and owns immutable session creat
 ## Key modules
 
 - `src/main.ts` - Entry point: config loading, CLI parsing, app bootstrap
-- `docs/tau/` - Canonical flat human-and-agent Tau documentation corpus, packaged into `dist/core/static/tau_docs` from `manifest.json`; `docs/rpc.md` and `docs/sdk.md` remain developer references, while legacy topic paths provide compatibility links into the canonical corpus
+- `docs/` - Canonical flat human-and-agent Tau documentation corpus, including the session protocol and Node SDK references, packaged into `dist/core/static/tau_docs` from `manifest.json`
 - `src/protocol/` - Canonical session protocol types, constructors, serializers, and parsers shared by transports and SDK clients
 - `src/code_mode/` - Public shared code-mode runtime, command adapter, and package entry point
 - `src/transport/` - Session protocol transport interfaces and concrete transports such as in-process and stdio
@@ -447,4 +447,4 @@ Notes:
 
 ## Maintaining this file
 
-Keep AGENTS.md, README.md, and docs/ in sync with the codebase. After making code changes, reflect on whether documentation needs updates. When making changes that affect architecture, commands, configuration, protocols, or other documented behavior, update the relevant sections here, in README.md, and in docs/\*.md as needed (for example, docs/rpc.md for RPC mode changes). This includes updates to this file itself, README.md, docs/, or any other user-facing docs. Do not add documentation for previously undocumented features or behavior unless explicitly requested.
+Keep AGENTS.md, README.md, and docs/ in sync with the codebase. After making code changes, reflect on whether documentation needs updates. When making changes that affect architecture, commands, configuration, protocols, or other documented behavior, update the relevant sections here, in README.md, and in docs/\*.md as needed (for example, docs/session-protocol.md for protocol changes). This includes updates to this file itself, README.md, docs/, or any other user-facing docs. Do not add documentation for previously undocumented features or behavior unless explicitly requested.

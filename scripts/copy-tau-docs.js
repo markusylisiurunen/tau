@@ -11,7 +11,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const sourceDir = join(__dirname, "../docs/tau");
+const sourceDir = join(__dirname, "../docs");
 const targetDir = join(__dirname, "../dist/core/static/tau_docs");
 const manifestPath = join(sourceDir, "manifest.json");
 const maxDocumentBytes = 24 * 1024;

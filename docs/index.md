@@ -24,6 +24,12 @@ The intrinsic `tau_docs` tool reads one exact Markdown path at a time. It does n
 - [Client tools](client-tools.md) covers command-backed tools that execute on the owning client.
 - [Security](security.md) summarizes trust boundaries, secret handling, process execution, and remote access.
 
+## Build integrations
+
+- [Session protocol](session-protocol.md) explains transports, envelopes, observed state, delta application, errors, and client rules.
+- [Session protocol method reference](session-protocol-methods.md) defines the complete current request surface and result shapes.
+- [Node SDK](node-sdk.md) covers client choices, the public session facade, streamed state, client tools, cancellation, and exported types.
+
 ## Work with sessions and services
 
 - [Tools](tools.md) explains built-in tool availability, execution, cancellation, and code-mode tools.

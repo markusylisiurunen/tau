@@ -15,6 +15,9 @@ import {
   parseSessionProtocolRequestLine,
   projectSessionProtocolNoticePresentation,
   SESSION_PROTOCOL_ERROR_CODES,
+  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES,
+  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAILS,
+  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_SUBJECT_BYTES,
   SESSION_PROTOCOL_MAX_SUBAGENT_ASSISTANT_TEXT_BYTES,
   SESSION_PROTOCOL_MAX_SUBAGENT_NOTICE_CONTENT_BYTES,
   SESSION_PROTOCOL_MAX_SUBAGENT_SHORT_TEXT_BYTES,
@@ -1185,7 +1188,46 @@ describe("session_protocol", () => {
       validateSessionProtocolParams("session.clientTool.ack", {
         sessionId: "session-1",
         callId: "call-1",
-        presentation: { ...presentation, subject: "x".repeat(513) },
+        presentation: {
+          ...presentation,
+          subject: "x".repeat(SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_SUBJECT_BYTES + 1),
+        },
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidParams,
+      }),
+    });
+    expect(
+      validateSessionProtocolParams("session.clientTool.ack", {
+        sessionId: "session-1",
+        callId: "call-1",
+        presentation: {
+          ...presentation,
+          details: Array.from(
+            { length: SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAILS + 1 },
+            () => ({ text: "x", wrap: "word" }),
+          ),
+        },
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidParams,
+      }),
+    });
+    expect(
+      validateSessionProtocolParams("session.clientTool.ack", {
+        sessionId: "session-1",
+        callId: "call-1",
+        presentation: {
+          ...presentation,
+          details: Array.from({ length: 5 }, () => ({
+            text: "x".repeat(SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES / 4),
+            wrap: "word",
+          })),
+        },
       }),
     ).toEqual({
       ok: false,

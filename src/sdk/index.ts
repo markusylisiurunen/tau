@@ -79,6 +79,7 @@ export type {
   TauSdkClientOptions,
   TauSdkClientTool,
   TauSdkClientToolContext,
+  TauSdkClientToolDescribeContext,
   TauSdkClientToolExecutionEnvironment,
   TauSdkClientToolResult,
   TauSdkCreateSessionInput,

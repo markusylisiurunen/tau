@@ -12,14 +12,17 @@ function createToolCall(args = {}) {
   };
 }
 
-async function runTool(tool, toolCall, signal = new AbortController().signal) {
+async function runTool(tool, toolCall, signal = new AbortController().signal, emitActivity) {
   const activities = [];
   const outcome = await tool.execute(toolCall, {
     agentId: "test-agent",
     turnId: "test-turn",
     assistantMessageId: "test-assistant",
     signal,
-    emitActivity: async (activity) => activities.push(activity),
+    emitActivity: async (activity) => {
+      activities.push(activity);
+      await emitActivity?.(activity);
+    },
   });
   return {
     toolResult: { ...outcome, toolCallId: toolCall.id, toolName: toolCall.name },
@@ -158,6 +161,55 @@ describe("ClientToolBroker", () => {
     expect(result.uiEvent.presentation.metadata).toEqual([
       expect.stringMatching(/^(?:\d+ms|\d+(?:\.\d+)?s)$/),
     ]);
+  });
+
+  it("cancels prepared client work and preserves presentation when acknowledgement fails", async () => {
+    const broker = new ClientToolBroker();
+    const sendCancel = vi.fn();
+    let acknowledgement;
+    const registration = broker.registerClient({
+      tools: [
+        {
+          name: "local_picker",
+          description: "Pick a local item.",
+          parameters: { type: "object", properties: {}, additionalProperties: false },
+        },
+      ],
+      sendCall: (message) => {
+        acknowledgement = broker.ack(
+          message.sessionId,
+          message.callId,
+          buildTauClientToolPresentation({
+            toolName: "local_picker",
+            subject: "choice a",
+          }),
+        );
+      },
+      sendCancel,
+    });
+    registration.attachSession("session-1");
+
+    const definition = broker.getToolDefinitions("session-1")[0];
+    let activityCount = 0;
+    const result = await runTool(
+      definition,
+      createToolCall({ choice: "a" }),
+      new AbortController().signal,
+      async () => {
+        activityCount += 1;
+        if (activityCount === 1) throw new Error("presentation persistence failed");
+      },
+    );
+
+    await expect(acknowledgement).rejects.toThrow("presentation persistence failed");
+    expect(sendCancel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "session.clientTool.cancel",
+        reason: "host-failed",
+      }),
+    );
+    expect(result.toolResult.outcome).toBe("failed");
+    expect(result.uiEvent.presentation.subject).toBe("choice a");
   });
 
   it("returns clear errors when client tools become unavailable", async () => {

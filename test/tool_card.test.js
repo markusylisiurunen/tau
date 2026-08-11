@@ -5,6 +5,12 @@ import {
   TOOL_CARD_MAX_LINE_CHARS,
 } from "../dist/core/tools/presentation.js";
 import { createWriteToolDefinition } from "../dist/core/tools/write.js";
+import {
+  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES,
+  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAIL_BYTES,
+  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAILS,
+  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_SUBJECT_BYTES,
+} from "../dist/protocol/session_protocol.js";
 import { createUiTheme } from "../dist/tui/ui/theme/index.js";
 import { ToolCardComponent } from "../dist/tui/ui/tool_card.js";
 import { createTagTheme, renderText } from "./ui_helpers.js";
@@ -309,7 +315,7 @@ describe("tool cards", () => {
     expect(() =>
       parseToolRunPresentation({
         ...presentation,
-        subject: Array.from({ length: 9 }, () => "line").join("\n"),
+        subject: "x".repeat(SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_SUBJECT_BYTES + 1),
       }),
     ).toThrow();
     expect(() =>
@@ -324,5 +330,34 @@ describe("tool cards", () => {
         details: [{ text: "x".repeat(TOOL_CARD_MAX_LINE_CHARS + 1), wrap: "word" }],
       }).details[0].text,
     ).toHaveLength(TOOL_CARD_MAX_LINE_CHARS + 1);
+    expect(() =>
+      parseToolRunPresentation({
+        ...presentation,
+        details: [
+          {
+            text: "x".repeat(SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAIL_BYTES + 1),
+            wrap: "word",
+          },
+        ],
+      }),
+    ).toThrow();
+    expect(() =>
+      parseToolRunPresentation({
+        ...presentation,
+        details: Array.from(
+          { length: SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAILS + 1 },
+          () => ({ text: "x", wrap: "word" }),
+        ),
+      }),
+    ).toThrow();
+    expect(() =>
+      parseToolRunPresentation({
+        ...presentation,
+        details: Array.from({ length: 5 }, () => ({
+          text: "x".repeat(SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES / 4),
+          wrap: "word",
+        })),
+      }),
+    ).toThrow();
   });
 });

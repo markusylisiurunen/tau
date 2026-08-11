@@ -324,7 +324,7 @@ const client = await createTauSdkClient({
 
 The handler receives `sessionId`, owning `agentId`, `callId`, an `AbortSignal`, and an execution-environment facade. The handler itself runs on the client machine. `context.executionEnvironment.exec()` crosses the session boundary and runs in the session execution environment.
 
-The SDK calls `describe` with the arguments and execution context before acknowledgement. The callback returns a complete bounded presentation; it owns subject selection and semantic truncation. `buildTauClientToolPresentation` supplies canonical lifecycle labels, while `truncateTauClientToolSubject` provides configurable line, character, and head or middle truncation. The SDK validates and acknowledges that presentation before calling `execute`.
+The SDK calls `describe` with the arguments and a reduced context containing `sessionId`, `agentId`, `callId`, and `signal` before acknowledgement. This context deliberately has no execution-environment facade. The callback returns a complete bounded presentation; it owns subject selection and semantic truncation. `buildTauClientToolPresentation` supplies canonical lifecycle labels, while `truncateTauClientToolSubject` provides configurable line, character, and head or middle truncation. The SDK validates and acknowledges that presentation before calling `execute`.
 
 The SDK converts a returned string or `{ content }` to the wire result, reports thrown errors, and aborts handlers on host cancellation, client close, or terminal transport failure. `client.close()` waits for active handlers to settle.
 

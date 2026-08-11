@@ -8,9 +8,16 @@ import type {
 } from "@earendil-works/pi-ai";
 import { type ZodError, z } from "zod";
 
-export const SESSION_PROTOCOL_VERSION = 12 as const;
+export const SESSION_PROTOCOL_VERSION = 13 as const;
 export const SESSION_PROTOCOL_MAX_EXEC_CAPTURE_BYTES = 24 * 1024 * 1024;
 export const SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES = 16 * 1024 * 1024;
+export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES = 1024 * 1024;
+export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_LABEL_BYTES = 16 * 1024;
+export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_SUBJECT_BYTES = 256 * 1024;
+export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAILS = 1024;
+export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAIL_BYTES = 256 * 1024;
+export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_METADATA = 1024;
+export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_METADATA_VALUE_BYTES = 16 * 1024;
 export const SESSION_PROTOCOL_MAX_ATTRIBUTE_VALUE_CHARS = 1_024;
 export const SESSION_PROTOCOL_MAX_SUBAGENT_ACTIVITIES = 64;
 export const SESSION_PROTOCOL_MAX_SUBAGENT_SHORT_TEXT_BYTES = 512;
@@ -1314,7 +1321,7 @@ export type SessionProtocolClientToolCancelMessage = {
   type: "session.clientTool.cancel";
   sessionId: string;
   callId: string;
-  reason: "aborted" | "timeout" | "client-detached";
+  reason: "aborted" | "timeout" | "client-detached" | "host-failed";
 };
 
 export type SessionProtocolClientToolMessage =
@@ -1667,7 +1674,7 @@ const sessionProtocolClientToolCancelMessageSchema = z
     type: z.literal("session.clientTool.cancel"),
     sessionId: nonEmptyStringSchema,
     callId: nonEmptyStringSchema,
-    reason: z.enum(["aborted", "timeout", "client-detached"]),
+    reason: z.enum(["aborted", "timeout", "client-detached", "host-failed"]),
   })
   .strip();
 
@@ -1934,11 +1941,21 @@ const sessionProtocolEphemeralCloseParamsSchema = z
 const clientToolPresentationSingleLineSchema = z
   .string()
   .refine((value) => !value.includes("\n") && !value.includes("\r"), "must be one line");
-const clientToolPresentationBoundedLineSchema = clientToolPresentationSingleLineSchema.refine(
-  (value) => Array.from(value).length <= 512,
-  "must not exceed 512 characters",
+const clientToolPresentationLabelSchema = clientToolPresentationSingleLineSchema
+  .min(1)
+  .refine(
+    (value) => utf8ByteLength(value) <= SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_LABEL_BYTES,
+    `must not exceed ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_LABEL_BYTES} UTF-8 bytes`,
+  );
+const clientToolPresentationDetailSchema = clientToolPresentationSingleLineSchema.refine(
+  (value) => utf8ByteLength(value) <= SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAIL_BYTES,
+  `must not exceed ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAIL_BYTES} UTF-8 bytes`,
 );
-const clientToolPresentationLabelSchema = clientToolPresentationBoundedLineSchema.min(1);
+const clientToolPresentationMetadataSchema = clientToolPresentationSingleLineSchema.refine(
+  (value) =>
+    utf8ByteLength(value) <= SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_METADATA_VALUE_BYTES,
+  `must not exceed ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_METADATA_VALUE_BYTES} UTF-8 bytes`,
+);
 const sessionProtocolClientToolPresentationSchema: z.ZodType<SessionProtocolClientToolPresentation> =
   z
     .object({
@@ -1957,23 +1974,35 @@ const sessionProtocolClientToolPresentationSchema: z.ZodType<SessionProtocolClie
       subject: z
         .string()
         .min(1)
-        .refine((value) => {
-          const lines = value.split("\n");
-          return lines.length <= 8 && lines.every((line) => Array.from(line).length <= 512);
-        }, "must contain at most 8 lines of 512 characters"),
+        .refine((value) => !value.includes("\r"), "must not contain carriage returns")
+        .refine(
+          (value) =>
+            utf8ByteLength(value) <= SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_SUBJECT_BYTES,
+          `must not exceed ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_SUBJECT_BYTES} UTF-8 bytes`,
+        ),
       subjectWrap: z.enum(["word", "character"]),
-      details: z.array(
-        z
-          .object({
-            text: clientToolPresentationSingleLineSchema,
-            tone: z.enum(["added", "removed"]).optional(),
-            wrap: z.enum(["word", "character"]),
-          })
-          .strict(),
-      ),
-      metadata: z.array(clientToolPresentationBoundedLineSchema),
+      details: z
+        .array(
+          z
+            .object({
+              text: clientToolPresentationDetailSchema,
+              tone: z.enum(["added", "removed"]).optional(),
+              wrap: z.enum(["word", "character"]),
+            })
+            .strict(),
+        )
+        .max(SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAILS),
+      metadata: z
+        .array(clientToolPresentationMetadataSchema)
+        .max(SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_METADATA),
     })
-    .strict();
+    .strict()
+    .refine(
+      (value) =>
+        utf8ByteLength(JSON.stringify(value)) <=
+        SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES,
+      `must not exceed ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES} UTF-8 bytes`,
+    );
 
 const sessionProtocolClientToolAckParamsSchema = z
   .object({

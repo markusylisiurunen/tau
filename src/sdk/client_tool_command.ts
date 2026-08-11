@@ -2,6 +2,8 @@ import { createInterface } from "node:readline";
 import { StringDecoder } from "node:string_decoder";
 import { z } from "zod";
 import {
+  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_LABEL_BYTES,
+  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_SUBJECT_BYTES,
   SESSION_PROTOCOL_MAX_EXEC_CAPTURE_BYTES,
   SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES,
 } from "../protocol/session_protocol.js";
@@ -81,9 +83,11 @@ const execCancelSchema = z
 const commandPresentationLineSchema = z
   .string()
   .min(1)
+  .refine((value) => !value.includes("\n") && !value.includes("\r"), "must be one line")
   .refine(
-    (value) => !value.includes("\n") && !value.includes("\r") && Array.from(value).length <= 512,
-    "must be one bounded line",
+    (value) =>
+      Buffer.byteLength(value, "utf8") <= SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_LABEL_BYTES,
+    `must not exceed ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_LABEL_BYTES} UTF-8 bytes`,
   );
 const commandPresentationSchema = z
   .object({
@@ -91,10 +95,13 @@ const commandPresentationSchema = z
     subject: z
       .string()
       .min(1)
-      .refine((value) => {
-        const lines = value.split("\n");
-        return lines.length <= 8 && lines.every((line) => Array.from(line).length <= 512);
-      }, "must contain at most 8 lines of 512 characters"),
+      .refine((value) => !value.includes("\r"), "must not contain carriage returns")
+      .refine(
+        (value) =>
+          Buffer.byteLength(value, "utf8") <=
+          SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_SUBJECT_BYTES,
+        `must not exceed ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_SUBJECT_BYTES} UTF-8 bytes`,
+      ),
     subjectWrap: z.enum(["word", "character"]).optional(),
   })
   .strict();
@@ -327,6 +334,13 @@ export async function runTauClientToolCommand(
   const abort = (): void => controller.abort();
   process.once("SIGINT", abort);
   process.once("SIGTERM", abort);
+  const abortFailure = new Promise<never>((_resolve, reject) => {
+    controller.signal.addEventListener(
+      "abort",
+      () => reject(controller.signal.reason ?? new Error("client-tool command aborted")),
+      { once: true },
+    );
+  });
 
   const lines = createInterface({ input: process.stdin, crlfDelay: Number.POSITIVE_INFINITY });
   const iterator = lines[Symbol.asyncIterator]();
@@ -366,7 +380,7 @@ export async function runTauClientToolCommand(
   };
 
   try {
-    const first = await iterator.next();
+    const first = await Promise.race([iterator.next(), abortFailure]);
     if (first.done) {
       throw new Error("client-tool command received no invocation");
     }
@@ -484,14 +498,18 @@ export async function runTauClientToolCommand(
       },
     };
 
-    const presentation = await definition.describe?.(preparation.arguments);
+    const presentation = await Promise.race([
+      Promise.resolve(definition.describe?.(preparation.arguments)),
+      inputFailure,
+      abortFailure,
+    ]);
     readySent = true;
     await writeFrame({
       version: TAU_CLIENT_TOOL_COMMAND_PROTOCOL_VERSION,
       type: "ready",
       ...(presentation === undefined ? {} : { presentation }),
     });
-    await Promise.race([executionReady, inputFailure]);
+    await Promise.race([executionReady, inputFailure, abortFailure]);
 
     const handled = Promise.resolve(
       definition.execute(preparation.arguments, {
@@ -502,7 +520,7 @@ export async function runTauClientToolCommand(
         executionEnvironment,
       }),
     );
-    const result = await Promise.race([handled, inputFailure]);
+    const result = await Promise.race([handled, inputFailure, abortFailure]);
     const content = typeof result === "string" ? result : result.content;
     await writeFrame({
       version: TAU_CLIENT_TOOL_COMMAND_PROTOCOL_VERSION,

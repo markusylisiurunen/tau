@@ -345,6 +345,7 @@ The command protocol is intentionally bounded:
 - Captured stderr is limited to 1 MiB. Exceeding it terminates the command and fails the tool.
 - Execution-environment stdin is limited to 16 MiB decoded, and capture can be requested up to 24 MiB per execution.
 - At most eight execution requests may be unresolved concurrently.
+- A client-tool presentation is limited to 1 MiB in total. Its subject is limited to 256 KiB; labels and metadata values to 16 KiB each; detail values to 256 KiB each; and detail and metadata collections to 1,024 entries each. These are safety limits, not recommended UI sizes. Use the exported truncation helper to produce concise subjects.
 
 The configured `executionTimeoutMs` covers preparation and execution and defaults to 60 seconds. The host also requires the owning client to prepare and acknowledge a dispatched call promptly. Command executables emit their bounded presentation before acknowledgement, then wait for Tau to authorize execution.
 

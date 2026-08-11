@@ -99,11 +99,14 @@ export type TauSdkClientToolExecutionEnvironment = {
   exec(command: string, options?: TauSdkSessionExecOptions): Promise<TauSdkSessionExecResult>;
 };
 
-export type TauSdkClientToolContext = {
+export type TauSdkClientToolDescribeContext = {
   sessionId: string;
   agentId: string;
   callId: string;
   signal: AbortSignal;
+};
+
+export type TauSdkClientToolContext = TauSdkClientToolDescribeContext & {
   executionEnvironment: TauSdkClientToolExecutionEnvironment;
 };
 
@@ -113,7 +116,7 @@ export type TauSdkClientTool = {
   schema: SessionProtocolClientToolDefinition;
   describe: (
     args: unknown,
-    context: TauSdkClientToolContext,
+    context: TauSdkClientToolDescribeContext,
   ) => Promise<TauClientToolPresentation> | TauClientToolPresentation;
   execute: (
     args: unknown,

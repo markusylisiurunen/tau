@@ -31,6 +31,7 @@ export type BuildTauClientToolPresentationOptions = {
   operation?: string;
   subject: string;
   subjectWrap?: "word" | "character";
+  subjectTruncation?: TauClientToolSubjectTruncationOptions | false;
   details?: Array<{
     text: string;
     tone?: "added" | "removed";

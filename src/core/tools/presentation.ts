@@ -1,5 +1,14 @@
 import { z } from "zod";
 import {
+  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES,
+  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAIL_BYTES,
+  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAILS,
+  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_LABEL_BYTES,
+  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_METADATA,
+  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_METADATA_VALUE_BYTES,
+  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_SUBJECT_BYTES,
+} from "../../protocol/session_protocol.js";
+import {
   TOOL_NAME_BASH,
   TOOL_NAME_EDIT,
   TOOL_NAME_HISTORY,
@@ -71,17 +80,30 @@ function isSingleLine(text: string): boolean {
   return !text.includes("\n") && !text.includes("\r");
 }
 
-function isBoundedLine(text: string): boolean {
-  return isSingleLine(text) && Array.from(text).length <= TOOL_CARD_MAX_LINE_CHARS;
+function utf8ByteLength(text: string): number {
+  return Buffer.byteLength(text, "utf8");
 }
 
 const singleLineSchema = z.string().refine(isSingleLine, "must be one line");
-const boundedLineSchema = z.string().refine(isBoundedLine, "must be one bounded line");
-const boundedLabelSchema = boundedLineSchema.min(1);
+const boundedLabelSchema = singleLineSchema
+  .min(1)
+  .refine(
+    (value) => utf8ByteLength(value) <= SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_LABEL_BYTES,
+    `must not exceed ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_LABEL_BYTES} UTF-8 bytes`,
+  );
+const boundedDetailSchema = singleLineSchema.refine(
+  (value) => utf8ByteLength(value) <= SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAIL_BYTES,
+  `must not exceed ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAIL_BYTES} UTF-8 bytes`,
+);
+const boundedMetadataSchema = singleLineSchema.refine(
+  (value) =>
+    utf8ByteLength(value) <= SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_METADATA_VALUE_BYTES,
+  `must not exceed ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_METADATA_VALUE_BYTES} UTF-8 bytes`,
+);
 
 const toolCardLineSchema = z
   .object({
-    text: singleLineSchema,
+    text: boundedDetailSchema,
     tone: z.enum(["added", "removed"]).optional(),
     wrap: z.enum(["word", "character"]),
   })
@@ -104,15 +126,24 @@ const toolRunPresentationSchema: z.ZodType<ToolRunPresentation> = z
     subject: z
       .string()
       .min(1)
-      .refine((subject) => {
-        const lines = subject.split("\n");
-        return lines.length <= TOOL_CARD_SUBJECT_MAX_LINES && lines.every(isBoundedLine);
-      }, "must contain only bounded lines"),
+      .refine((value) => !value.includes("\r"), "must not contain carriage returns")
+      .refine(
+        (value) =>
+          utf8ByteLength(value) <= SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_SUBJECT_BYTES,
+        `must not exceed ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_SUBJECT_BYTES} UTF-8 bytes`,
+      ),
     subjectWrap: z.enum(["word", "character"]),
-    details: z.array(toolCardLineSchema),
-    metadata: z.array(boundedLineSchema),
+    details: z.array(toolCardLineSchema).max(SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAILS),
+    metadata: z
+      .array(boundedMetadataSchema)
+      .max(SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_METADATA),
   })
-  .strict();
+  .strict()
+  .refine(
+    (value) =>
+      utf8ByteLength(JSON.stringify(value)) <= SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES,
+    `must not exceed ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES} UTF-8 bytes`,
+  );
 
 const GENERIC_TOOL_RUN_ACTION_LABELS: ToolRunActionLabels = {
   preparing: "preparing",
@@ -263,7 +294,7 @@ function truncateLines(
       text: truncateLine(`…${omitted} more ${omitted === 1 ? "line" : "lines"}…`, maxLineChars),
       wrap: "word",
     },
-    ...bounded.slice(-tailCount),
+    ...(tailCount > 0 ? bounded.slice(-tailCount) : []),
   ];
 }
 
@@ -324,12 +355,17 @@ export function buildToolRunPresentation(args: {
   operation?: string;
   subject: string;
   subjectWrap?: ToolCardWrap;
+  subjectTruncation?: ToolCardSubjectTruncation | false;
   details?: ToolCardLineInput[];
   detailTruncation?: ToolCardDetailTruncation;
   metadata?: string[];
   actionOverrides?: Partial<ToolRunActionLabels>;
 }): ToolRunPresentation {
-  const boundedSubject = truncateToolRunSubject(args.subject);
+  const normalizedSubject = args.subject.replace(/\r\n?/g, "\n").replace(/\n+$/, "");
+  const boundedSubject =
+    args.subjectTruncation === false
+      ? normalizedSubject
+      : truncateToolRunSubject(normalizedSubject, args.subjectTruncation);
   const labels = { ...getToolRunActionLabels(args.toolName), ...args.actionOverrides };
   for (const status of Object.keys(labels) as ToolRunPresentationStatus[]) {
     labels[status] = normalizeLabel(labels[status]) || GENERIC_TOOL_RUN_ACTION_LABELS[status];

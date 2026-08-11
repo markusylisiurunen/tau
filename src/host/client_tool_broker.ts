@@ -123,6 +123,7 @@ export class ClientToolBroker {
     const parsedPresentation = parseToolRunPresentation(presentation);
     clearTimeout(pending.ackTimer);
     pending.acknowledged = true;
+    pending.presentation = parsedPresentation;
     try {
       await pending.emitActivity({
         type: "tool_call_started",
@@ -133,12 +134,13 @@ export class ClientToolBroker {
       if (pending.settled || this.pendingCalls.get(callId) !== pending) {
         return false;
       }
-      pending.presentation = parsedPresentation;
       return true;
     } catch (error) {
-      this.complete(
+      this.fail(
         callId,
-        createTextToolOutcome(error instanceof Error ? error.message : String(error), "failed"),
+        error instanceof Error ? error.message : String(error),
+        "host-failed",
+        "failed",
       );
       throw error;
     }

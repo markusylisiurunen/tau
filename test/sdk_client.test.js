@@ -353,6 +353,16 @@ describe("sdk_client", () => {
         strategy: "head",
       }),
     ).toBe("one\ntwo\n…2 m…");
+    expect(truncateTauClientToolSubject("one\ntwo\nthree\nfour", { maxLines: 1 })).toBe(
+      "…4 more lines…",
+    );
+    expect(
+      buildTauClientToolPresentation({
+        toolName: "custom",
+        subject: "one\ntwo\nthree\nfour",
+        subjectTruncation: false,
+      }).subject,
+    ).toBe("one\ntwo\nthree\nfour");
     expect(() => truncateTauClientToolSubject("subject", { maxLines: 9 })).toThrow(
       "subject maxLines must be between 1 and 8",
     );
@@ -856,6 +866,15 @@ describe("sdk_client", () => {
 
   it("advertises and executes client-provided tools", async () => {
     const transport = new FakeSessionProtocolTransport();
+    const describeTool = vi.fn((args, context) => {
+      expect(context).toMatchObject({
+        sessionId: "session-1",
+        agentId: "agent-1",
+        callId: "call-1",
+      });
+      expect(context).not.toHaveProperty("executionEnvironment");
+      return describeClientTool("local_picker", args.choice ?? "local_picker");
+    });
     const execute = vi.fn(async (args, context) => {
       expect(args).toEqual({ choice: "a" });
       expect(context).toMatchObject({
@@ -882,7 +901,7 @@ describe("sdk_client", () => {
             },
             executionTimeoutMs: 60_000,
           },
-          describe: (args) => describeClientTool("local_picker", args.choice ?? "local_picker"),
+          describe: describeTool,
           execute,
         },
       ],
@@ -924,6 +943,7 @@ describe("sdk_client", () => {
       (request) =>
         request.method === "session.clientTool.result" && request.params.callId === "call-1",
     );
+    expect(describeTool).toHaveBeenCalledTimes(1);
     expect(execute).toHaveBeenCalledTimes(1);
     expect(transport.requests).toEqual([
       {

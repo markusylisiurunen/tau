@@ -11,7 +11,11 @@ import {
   buildTauClientToolPresentation,
   type TauClientToolPresentation,
 } from "../../sdk/client_tool_presentation.js";
-import type { TauSdkClientTool, TauSdkClientToolContext } from "../../sdk/types.js";
+import type {
+  TauSdkClientTool,
+  TauSdkClientToolContext,
+  TauSdkClientToolDescribeContext,
+} from "../../sdk/types.js";
 import type { CommandClientToolConfig } from "../config/client_tools.js";
 import { type CoreDeps, createDefaultCoreDeps } from "../runtime/deps.js";
 import { DEFAULT_COMMAND_CAPTURE_BYTES } from "../tools/execution_backend.js";
@@ -58,7 +62,7 @@ export function createCommandClientTools(
           throw new Error(`Command client tool '${config.name}' was not prepared.`);
         }
         preparedCalls.delete(context.callId);
-        return await prepared.execute();
+        return await prepared.execute(context);
       },
     };
   });
@@ -66,7 +70,7 @@ export function createCommandClientTools(
 
 type PreparedCommandClientToolCall = {
   presentation: Promise<TauClientToolPresentation>;
-  execute(): Promise<{ content: string }>;
+  execute(context: TauSdkClientToolContext): Promise<{ content: string }>;
   settled: Promise<void>;
 };
 
@@ -85,7 +89,7 @@ function validateCommandClientToolArguments(config: CommandClientToolConfig, arg
 function prepareCommandClientToolCall(
   config: CommandClientToolConfig,
   args: unknown,
-  context: TauSdkClientToolContext,
+  context: TauSdkClientToolDescribeContext,
   deps: CommandClientToolDeps,
 ): PreparedCommandClientToolCall {
   const timeoutMs = config.executionTimeoutMs ?? DEFAULT_EXECUTION_TIMEOUT_MS;
@@ -102,6 +106,7 @@ function prepareCommandClientToolCall(
   let protocolError: Error | undefined;
   let writeQueue = Promise.resolve();
   let writeToCommand: ((frame: unknown) => Promise<void>) | undefined;
+  let executionContext: TauSdkClientToolContext | undefined;
   let resolvePresentation: (presentation: TauClientToolPresentation) => void = () => {};
   let rejectPresentation: (error: unknown) => void = () => {};
   const presentation = new Promise<TauClientToolPresentation>((resolve, reject) => {
@@ -133,6 +138,7 @@ function prepareCommandClientToolCall(
         buildTauClientToolPresentation({
           toolName: config.name,
           ...(frame.presentation ?? { subject: config.name }),
+          subjectTruncation: false,
         }),
       );
       return;
@@ -143,7 +149,7 @@ function prepareCommandClientToolCall(
       );
       return;
     }
-    if (!executeSent) {
+    if (!executeSent || !executionContext) {
       failProtocol(
         new Error(
           `Command client tool '${config.name}' wrote execution data before it was accepted.`,
@@ -178,7 +184,7 @@ function prepareCommandClientToolCall(
     seenRequestIds.add(frame.requestId);
     const executionController = new AbortController();
     activeExecutions.set(frame.requestId, executionController);
-    const task = executeCommandRequest(frame, context, executionController.signal)
+    const task = executeCommandRequest(frame, executionContext, executionController.signal)
       .then(
         (result) => createTauClientToolCommandExecResponse({ requestId: frame.requestId, result }),
         (error) =>
@@ -289,12 +295,13 @@ function prepareCommandClientToolCall(
 
   return {
     presentation,
-    execute: async () => {
+    execute: async (context) => {
       await presentation;
       signal.throwIfAborted();
       if (!writeToCommand) {
         throw new Error(`Command client tool '${config.name}' did not start.`);
       }
+      executionContext = context;
       executeSent = true;
       await writeToCommand(createTauClientToolCommandExecute());
       return { content: await processResult };

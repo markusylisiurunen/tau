@@ -314,6 +314,62 @@ describe("code-mode command adapter", () => {
     ]);
   });
 
+  it("stops when terminated during asynchronous command description", async () => {
+    const moduleUrl = pathToFileURL(resolve("dist/sdk/index.js")).href;
+    const script = [
+      `import { runTauClientToolCommand } from ${JSON.stringify(moduleUrl)};`,
+      "await runTauClientToolCommand({",
+      '  name: "wait",',
+      "  describe: async () => {",
+      '    process.stderr.write("describing\\n");',
+      "    await new Promise(() => {});",
+      "  },",
+      '  execute: () => "unreachable",',
+      "});",
+    ].join("\n");
+    const result = await runCommandAndTerminate(
+      script,
+      {
+        version: 4,
+        type: "prepare",
+        ...invocation,
+        toolName: "wait",
+        arguments: {},
+      },
+      "stderr",
+      "describing",
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.signal).toBeNull();
+  });
+
+  it("stops when terminated while awaiting execution authorization", async () => {
+    const moduleUrl = pathToFileURL(resolve("dist/sdk/index.js")).href;
+    const script = [
+      `import { runTauClientToolCommand } from ${JSON.stringify(moduleUrl)};`,
+      "await runTauClientToolCommand({",
+      '  name: "wait",',
+      '  execute: () => "unreachable",',
+      "});",
+    ].join("\n");
+    const result = await runCommandAndTerminate(
+      script,
+      {
+        version: 4,
+        type: "prepare",
+        ...invocation,
+        toolName: "wait",
+        arguments: {},
+      },
+      "stdout",
+      '"type":"ready"',
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.signal).toBeNull();
+  });
+
   it("aborts the handler when protocol input closes", () => {
     const moduleUrl = pathToFileURL(resolve("dist/sdk/index.js")).href;
     const script = [
@@ -348,6 +404,45 @@ describe("code-mode command adapter", () => {
     expect(result.stderr).toContain("client-tool command input closed during execution");
   });
 });
+
+function runCommandAndTerminate(script, request, streamName, marker) {
+  return new Promise((resolveResult, rejectResult) => {
+    const child = spawn(process.execPath, ["--input-type=module", "--eval", script], {
+      cwd: process.cwd(),
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    let terminated = false;
+    const timeout = setTimeout(() => {
+      child.kill("SIGKILL");
+      rejectResult(new Error(`command did not emit ${streamName} marker '${marker}'`));
+    }, 2000);
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    const maybeTerminate = () => {
+      const content = streamName === "stdout" ? stdout : stderr;
+      if (!terminated && content.includes(marker)) {
+        terminated = true;
+        child.kill("SIGTERM");
+      }
+    };
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+      maybeTerminate();
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+      maybeTerminate();
+    });
+    child.on("error", rejectResult);
+    child.on("close", (status, signal) => {
+      clearTimeout(timeout);
+      resolveResult({ status, signal, stdout, stderr });
+    });
+    child.stdin.write(`${JSON.stringify(request)}\n`);
+  });
+}
 
 function runCommandWithOpenStdin(script, request) {
   return new Promise((resolveResult, rejectResult) => {

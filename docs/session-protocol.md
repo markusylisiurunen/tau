@@ -18,7 +18,7 @@ The server sends `ready` as its first message:
 
 ```json
 {
-  "version": 12,
+  "version": 13,
   "type": "ready",
   "methods": ["initialize", "session.create", "session.list"]
 }
@@ -30,7 +30,7 @@ After `ready`, send `initialize` with non-empty client metadata:
 
 ```json
 {
-  "version": 12,
+  "version": 13,
   "type": "request",
   "id": "init-1",
   "method": "initialize",
@@ -50,7 +50,7 @@ Every request has the same envelope:
 
 ```json
 {
-  "version": 12,
+  "version": 13,
   "type": "request",
   "id": "req-42",
   "method": "session.snapshot",
@@ -64,7 +64,7 @@ Successful responses echo the request id:
 
 ```json
 {
-  "version": 12,
+  "version": 13,
   "type": "response",
   "id": "req-42",
   "ok": true,
@@ -124,7 +124,7 @@ Observed snapshot changes arrive as `session.delta`:
 
 ```json
 {
-  "version": 12,
+  "version": 13,
   "type": "session.delta",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "fromRevision": 8,
@@ -162,7 +162,7 @@ Not all observed state belongs in the recoverable snapshot. Each live channel ha
 
 ```json
 {
-  "version": 12,
+  "version": 13,
   "type": "session.pendingUserMessages",
   "sessionId": "...",
   "state": {
@@ -199,7 +199,7 @@ An initialized client that advertised a tool can receive:
 
 ```json
 {
-  "version": 12,
+  "version": 13,
   "type": "session.clientTool.call",
   "sessionId": "...",
   "agentId": "main",
@@ -213,7 +213,7 @@ An initialized client that advertised a tool can receive:
 
 Prepare a bounded canonical tool presentation and acknowledge promptly with `session.clientTool.ack`. Begin execution only after the acknowledgement returns `{ accepted: true }`, then send exactly one `session.clientTool.result` with either `{ ok: true, content }` or `{ ok: false, error }`. The result method also returns `{ accepted: boolean }`; `false` means the call is no longer waiting for that message.
 
-`session.clientTool.cancel` names the session and call with reason `aborted`, `timeout`, or `client-detached`. Abort local work and do not send a late result. The SDK implements this lifecycle automatically. Tool execution authority and the execution-environment facade are covered in [client tools](client-tools.md).
+`session.clientTool.cancel` names the session and call with reason `aborted`, `timeout`, `client-detached`, or `host-failed`. Abort local work and do not send a late result. The SDK implements this lifecycle automatically. Tool execution authority and the execution-environment facade are covered in [client tools](client-tools.md).
 
 ## Handle errors and terminal transport failure
 
@@ -221,7 +221,7 @@ Error responses use `ok: false`:
 
 ```json
 {
-  "version": 12,
+  "version": 13,
   "type": "response",
   "id": "req-42",
   "ok": false,

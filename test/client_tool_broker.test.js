@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { HOST_TOOL_NAMES } from "../src/core/tools/tool_names.ts";
 import { ClientToolBroker } from "../src/host/client_tool_broker.ts";
+import { buildTauClientToolPresentation } from "../src/sdk/client_tool_presentation.ts";
 
 function createToolCall(args = {}) {
   return {
@@ -22,6 +23,7 @@ async function runTool(tool, toolCall, signal = new AbortController().signal) {
   });
   return {
     toolResult: { ...outcome, toolCallId: toolCall.id, toolName: toolCall.name },
+    activities,
     uiEvent: activities.at(-1),
   };
 }
@@ -74,8 +76,18 @@ describe("ClientToolBroker", () => {
       ],
       sendCall: (message) => {
         expect(message.agentId).toBe("test-agent");
-        broker.ack(message.sessionId, message.callId);
-        broker.result(message.sessionId, message.callId, { ok: true, content });
+        void broker
+          .ack(
+            message.sessionId,
+            message.callId,
+            buildTauClientToolPresentation({
+              toolName: "local_picker",
+              subject: "choice a",
+            }),
+          )
+          .then(() => {
+            broker.result(message.sessionId, message.callId, { ok: true, content });
+          });
       },
       sendCancel,
     });
@@ -85,12 +97,17 @@ describe("ClientToolBroker", () => {
     const result = await runTool(definition, createToolCall({ choice: "a" }));
 
     expect(result.toolResult.content[0].text).toBe(content);
+    expect(result.activities[0]).toMatchObject({
+      type: "tool_call_started",
+      presentation: { subject: "choice a" },
+    });
     expect(result.uiEvent).toMatchObject({
       type: "tool_call_finished",
       toolCallId: "tool-call-1",
       toolName: "local_picker",
       status: "success",
       presentation: {
+        subject: "choice a",
         metadata: [expect.stringMatching(/^(?:\d+ms|\d+(?:\.\d+)?s)$/), "~40 tokens", "9 lines"],
       },
     });
@@ -117,8 +134,18 @@ describe("ClientToolBroker", () => {
         },
       ],
       sendCall: (message) => {
-        broker.ack(message.sessionId, message.callId);
-        broker.result(message.sessionId, message.callId, { ok: true, content: "" });
+        void broker
+          .ack(
+            message.sessionId,
+            message.callId,
+            buildTauClientToolPresentation({
+              toolName: "local_picker",
+              subject: "empty choice",
+            }),
+          )
+          .then(() => {
+            broker.result(message.sessionId, message.callId, { ok: true, content: "" });
+          });
       },
       sendCancel: vi.fn(),
     });

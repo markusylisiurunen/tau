@@ -9,11 +9,15 @@ import type {
   DiffToolConfig,
   ThemeDefinition,
 } from "../core/config/index.js";
-import { DIFF_REVIEW_TOOL } from "../core/diff_review/index.js";
+import { DIFF_REVIEW_TOOL, parseDiffReviewToolArgs } from "../core/diff_review/index.js";
 import type { CoreDeps } from "../core/runtime/deps.js";
 import { TOOL_NAME_PREFILL_INPUT } from "../core/tools/tool_names.js";
 import { formatZodError } from "../core/utils/zod.js";
 import type { SessionProtocolCreateParams } from "../protocol/session_protocol.js";
+import {
+  buildTauClientToolPresentation,
+  truncateTauClientToolSubject,
+} from "../sdk/client_tool_presentation.js";
 import { createTauSdkClientFromTransport } from "../sdk/session.js";
 import type { TauSdkClient, TauSdkClientTool, TauSdkSession } from "../sdk/types.js";
 import { WebSocketSessionProtocolTransport } from "../transport/websocket_session_transport.js";
@@ -72,6 +76,14 @@ export function createTuiClientTools(options: {
         ...DIFF_REVIEW_TOOL,
         executionTimeoutMs: 30 * 60 * 1000,
       },
+      describe: (args) => {
+        const parsed = parseDiffReviewToolArgs(args);
+        return buildTauClientToolPresentation({
+          toolName: DIFF_REVIEW_TOOL.name,
+          subject: truncateTauClientToolSubject(parsed.ok ? parsed.data.command : parsed.command),
+          subjectWrap: "character",
+        });
+      },
       execute: async (args, context) => {
         const controller = options.getController();
         if (!controller) {
@@ -99,6 +111,14 @@ export function createTuiClientTools(options: {
           },
           { additionalProperties: false },
         ),
+      },
+      describe: (args) => {
+        const parsed = prefillInputArgsSchema.safeParse(args);
+        const subject = parsed.success ? parsed.data.text : TOOL_NAME_PREFILL_INPUT;
+        return buildTauClientToolPresentation({
+          toolName: TOOL_NAME_PREFILL_INPUT,
+          subject: truncateTauClientToolSubject(subject),
+        });
       },
       execute: (args) => {
         const parsed = prefillInputArgsSchema.safeParse(args);

@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
 import type { Tool, ToolCall } from "@earendil-works/pi-ai";
 import type { ToolActivity } from "../core/tools/activity.js";
-import { buildToolRunPresentation, formatToolDurationMs } from "../core/tools/presentation.js";
+import {
+  buildToolRunPresentation,
+  formatToolDurationMs,
+  parseToolRunPresentation,
+  type ToolRunPresentation,
+} from "../core/tools/presentation.js";
 import {
   type AgentTool,
   createTextToolOutcome,
@@ -33,6 +38,11 @@ type ClientToolClient = {
   sendCancel: ClientToolCancelDispatch;
 };
 
+type ClientToolDispatchResult = {
+  outcome: ToolExecutionOutcome;
+  presentation: ToolRunPresentation;
+};
+
 type PendingClientToolCall = {
   sessionId: string;
   clientId: string;
@@ -41,8 +51,11 @@ type PendingClientToolCall = {
   executionTimer: NodeJS.Timeout;
   signal: AbortSignal;
   abortListener: () => void;
+  emitActivity: ToolExecutionContext["emitActivity"];
+  presentation: ToolRunPresentation;
+  acknowledged: boolean;
   settled: boolean;
-  resolve: (outcome: ToolExecutionOutcome) => void;
+  resolve: (result: ClientToolDispatchResult) => void;
 };
 
 export class ClientToolBroker {
@@ -97,14 +110,38 @@ export class ClientToolBroker {
     );
   }
 
-  ack(sessionId: string, callId: string): boolean {
+  async ack(
+    sessionId: string,
+    callId: string,
+    presentation: ToolRunPresentation,
+  ): Promise<boolean> {
     const pending = this.pendingCalls.get(callId);
-    if (!pending || pending.sessionId !== sessionId || pending.settled) {
+    if (!pending || pending.sessionId !== sessionId || pending.acknowledged || pending.settled) {
       return false;
     }
 
+    const parsedPresentation = parseToolRunPresentation(presentation);
     clearTimeout(pending.ackTimer);
-    return true;
+    pending.acknowledged = true;
+    try {
+      await pending.emitActivity({
+        type: "tool_call_started",
+        toolCallId: pending.toolCall.id,
+        toolName: pending.toolCall.name,
+        presentation: parsedPresentation,
+      });
+      if (pending.settled || this.pendingCalls.get(callId) !== pending) {
+        return false;
+      }
+      pending.presentation = parsedPresentation;
+      return true;
+    } catch (error) {
+      this.complete(
+        callId,
+        createTextToolOutcome(error instanceof Error ? error.message : String(error), "failed"),
+      );
+      throw error;
+    }
   }
 
   result(
@@ -132,15 +169,20 @@ export class ClientToolBroker {
     tool: SessionProtocolClientToolDefinition;
     toolCall: ToolCall;
     signal: AbortSignal;
-  }): Promise<ToolExecutionOutcome> {
+    emitActivity: ToolExecutionContext["emitActivity"];
+  }): Promise<ClientToolDispatchResult> {
     const client = this.clients.get(options.clientId);
     if (!client?.tools.has(options.tool.name) || !client.sessionIds.has(options.sessionId)) {
-      return Promise.resolve(
-        createTextToolOutcome(
+      return Promise.resolve({
+        outcome: createTextToolOutcome(
           `Client tool '${options.tool.name}' is unavailable because its owning client detached.`,
           "blocked",
         ),
-      );
+        presentation: buildToolRunPresentation({
+          toolName: options.tool.name,
+          subject: options.tool.name,
+        }),
+      });
     }
 
     const callId = randomUUID();
@@ -166,6 +208,12 @@ export class ClientToolBroker {
         }, executionTimeoutMs),
         signal: options.signal,
         abortListener: () => this.abort(callId),
+        emitActivity: options.emitActivity,
+        presentation: buildToolRunPresentation({
+          toolName: options.tool.name,
+          subject: options.tool.name,
+        }),
+        acknowledged: false,
         settled: false,
         resolve,
       };
@@ -282,13 +330,14 @@ export class ClientToolBroker {
     clearTimeout(pending.executionTimer);
     pending.signal.removeEventListener("abort", pending.abortListener);
     this.pendingCalls.delete(callId);
-    pending.resolve(result);
+    pending.resolve({ outcome: result, presentation: pending.presentation });
   }
 }
 
 function createClientToolFinishedUiEvent(
   toolCall: ToolCall,
   outcome: ToolExecutionOutcome,
+  presentation: ToolRunPresentation,
   durationMs: number,
 ): ToolActivity {
   const isError = outcome.outcome !== "succeeded";
@@ -298,6 +347,7 @@ function createClientToolFinishedUiEvent(
     toolName: toolCall.name,
     presentation: createClientToolPresentation(
       toolCall.name,
+      presentation,
       extractToolOutcomeText(outcome),
       durationMs,
     ),
@@ -305,7 +355,12 @@ function createClientToolFinishedUiEvent(
   };
 }
 
-function createClientToolPresentation(toolName: string, content: string, durationMs: number) {
+function createClientToolPresentation(
+  toolName: string,
+  presentation: ToolRunPresentation,
+  content: string,
+  durationMs: number,
+) {
   const trimmed = content.trimEnd();
   const lineCount = trimmed ? trimmed.split("\n").length : 0;
   const contentBytes = Buffer.byteLength(trimmed, "utf8");
@@ -315,15 +370,20 @@ function createClientToolPresentation(toolName: string, content: string, duratio
         .split("\n")
         .map((text) => ({ text }))
     : [];
-  return buildToolRunPresentation({
+  const outcomePresentation = buildToolRunPresentation({
     toolName,
-    subject: toolName,
+    subject: presentation.subject,
     details,
     metadata: [
       formatToolDurationMs(durationMs),
       contentBytes > 0 ? formatTokenEstimate(contentBytes) : undefined,
       formatLineCount(lineCount),
     ].filter((part): part is string => part !== undefined),
+  });
+  return parseToolRunPresentation({
+    ...presentation,
+    details: outcomePresentation.details,
+    metadata: outcomePresentation.metadata,
   });
 }
 
@@ -375,12 +435,18 @@ function createClientToolDefinition(
           tool,
           toolCall,
           signal,
+          emitActivity: context.emitActivity,
         });
         const durationMs = Math.max(0, Date.now() - startedAt);
         return {
-          content: toolResult.content,
-          outcome: toolResult.outcome,
-          uiEvent: createClientToolFinishedUiEvent(toolCall, toolResult, durationMs),
+          content: toolResult.outcome.content,
+          outcome: toolResult.outcome.outcome,
+          uiEvent: createClientToolFinishedUiEvent(
+            toolCall,
+            toolResult.outcome,
+            toolResult.presentation,
+            durationMs,
+          ),
         };
       });
     },

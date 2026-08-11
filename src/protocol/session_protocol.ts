@@ -239,8 +239,29 @@ export type SessionProtocolEphemeralSubmitParams = SessionProtocolSessionIdParam
 export type SessionProtocolEphemeralCloseParams = SessionProtocolSessionIdParams & {
   contextId: string;
 };
+export type SessionProtocolClientToolPresentation = {
+  actionByStatus: {
+    preparing: string;
+    queued: string;
+    running: string;
+    succeeded: string;
+    failed: string;
+    blocked: string;
+    cancelled: string;
+  };
+  operation?: string;
+  subject: string;
+  subjectWrap: "word" | "character";
+  details: Array<{
+    text: string;
+    tone?: "added" | "removed";
+    wrap: "word" | "character";
+  }>;
+  metadata: string[];
+};
 export type SessionProtocolClientToolAckParams = SessionProtocolSessionIdParams & {
   callId: string;
+  presentation: SessionProtocolClientToolPresentation;
 };
 export type SessionProtocolClientToolResultParams = SessionProtocolSessionIdParams & {
   callId: string;
@@ -1910,10 +1931,55 @@ const sessionProtocolEphemeralCloseParamsSchema = z
   })
   .strip();
 
+const clientToolPresentationSingleLineSchema = z
+  .string()
+  .refine((value) => !value.includes("\n") && !value.includes("\r"), "must be one line");
+const clientToolPresentationBoundedLineSchema = clientToolPresentationSingleLineSchema.refine(
+  (value) => Array.from(value).length <= 512,
+  "must not exceed 512 characters",
+);
+const clientToolPresentationLabelSchema = clientToolPresentationBoundedLineSchema.min(1);
+const sessionProtocolClientToolPresentationSchema: z.ZodType<SessionProtocolClientToolPresentation> =
+  z
+    .object({
+      actionByStatus: z
+        .object({
+          preparing: clientToolPresentationLabelSchema,
+          queued: clientToolPresentationLabelSchema,
+          running: clientToolPresentationLabelSchema,
+          succeeded: clientToolPresentationLabelSchema,
+          failed: clientToolPresentationLabelSchema,
+          blocked: clientToolPresentationLabelSchema,
+          cancelled: clientToolPresentationLabelSchema,
+        })
+        .strict(),
+      operation: clientToolPresentationLabelSchema.optional(),
+      subject: z
+        .string()
+        .min(1)
+        .refine((value) => {
+          const lines = value.split("\n");
+          return lines.length <= 8 && lines.every((line) => Array.from(line).length <= 512);
+        }, "must contain at most 8 lines of 512 characters"),
+      subjectWrap: z.enum(["word", "character"]),
+      details: z.array(
+        z
+          .object({
+            text: clientToolPresentationSingleLineSchema,
+            tone: z.enum(["added", "removed"]).optional(),
+            wrap: z.enum(["word", "character"]),
+          })
+          .strict(),
+      ),
+      metadata: z.array(clientToolPresentationBoundedLineSchema),
+    })
+    .strict();
+
 const sessionProtocolClientToolAckParamsSchema = z
   .object({
     sessionId: nonEmptyStringSchema,
     callId: nonEmptyStringSchema,
+    presentation: sessionProtocolClientToolPresentationSchema,
   })
   .strip();
 
@@ -5131,7 +5197,9 @@ function validateClientToolAckParams(
         ? "session.clientTool.ack params.sessionId must be a non-empty string"
         : hasIssue(parsed.error, ["callId"])
           ? "session.clientTool.ack params.callId must be a non-empty string"
-          : `session.clientTool.ack params are invalid: ${formatZodError(parsed.error)}`;
+          : hasIssue(parsed.error, ["presentation"])
+            ? `session.clientTool.ack params.presentation is invalid: ${formatZodError(parsed.error)}`
+            : `session.clientTool.ack params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 

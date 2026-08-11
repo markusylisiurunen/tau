@@ -4,6 +4,10 @@ import {
   type TauCodeModeDefinition,
   validateTauCodeModeDefinition,
 } from "../code_mode/runtime.js";
+import {
+  buildTauClientToolPresentation,
+  truncateTauClientToolSubject,
+} from "./client_tool_presentation.js";
 import type { TauSdkClientTool } from "./types.js";
 
 export type TauSdkCodeModeClientToolOptions = TauCodeModeDefinition & {
@@ -42,6 +46,13 @@ export function createTauCodeModeClientTool(
       },
       ...(options.timeoutMs === undefined ? {} : { executionTimeoutMs: options.timeoutMs }),
     },
+    describe: (args) =>
+      buildTauClientToolPresentation({
+        toolName: options.name,
+        operation: options.name,
+        subject: truncateTauClientToolSubject(parseCodeArguments(args)),
+        subjectWrap: "character",
+      }),
     execute: async (args, context) => {
       const code = parseCodeArguments(args);
       return await executeTauCodeMode({

@@ -1,5 +1,9 @@
 import { runTauClientToolCommand } from "../sdk/client_tool_command.js";
 import {
+  buildTauClientToolPresentation,
+  truncateTauClientToolSubject,
+} from "../sdk/client_tool_presentation.js";
+import {
   createTauCodeModeExecutionEnvironmentFiles,
   executeTauCodeMode,
   type TauCodeModeDefinition,
@@ -8,23 +12,33 @@ import {
 
 export async function runTauCodeModeCommand(definition: TauCodeModeDefinition): Promise<void> {
   validateTauCodeModeDefinition(definition);
-  await runTauClientToolCommand(async (args, context) => {
-    const code = parseCodeArguments(args);
-    return await executeTauCodeMode({
-      ...definition,
-      code,
-      signal: context.signal,
-      invocation: {
-        sessionId: context.sessionId,
-        agentId: context.agentId,
-        callId: context.callId,
-      },
-      executionEnvironment: context.executionEnvironment,
-      files: createTauCodeModeExecutionEnvironmentFiles(
-        context.agentId,
-        context.executionEnvironment,
-      ),
-    });
+  await runTauClientToolCommand({
+    name: definition.name,
+    describe: (args) =>
+      buildTauClientToolPresentation({
+        toolName: definition.name,
+        operation: definition.name,
+        subject: truncateTauClientToolSubject(parseCodeArguments(args)),
+        subjectWrap: "character",
+      }),
+    execute: async (args, context) => {
+      const code = parseCodeArguments(args);
+      return await executeTauCodeMode({
+        ...definition,
+        code,
+        signal: context.signal,
+        invocation: {
+          sessionId: context.sessionId,
+          agentId: context.agentId,
+          callId: context.callId,
+        },
+        executionEnvironment: context.executionEnvironment,
+        files: createTauCodeModeExecutionEnvironmentFiles(
+          context.agentId,
+          context.executionEnvironment,
+        ),
+      });
+    },
   });
 }
 

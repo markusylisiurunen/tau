@@ -117,21 +117,37 @@ Diff-tool launcher settings are separate from command client-tool definitions. T
 
 ## Implement a command tool with Tau's helper
 
-Command client tools use Tau's version 3 bidirectional NDJSON protocol over stdin and stdout. Use the exported helper instead of implementing framing manually:
+Command client tools use Tau's version 4 bidirectional NDJSON protocol over stdin and stdout. Use the exported helper instead of implementing framing manually:
 
 ```ts
-import { runTauClientToolCommand } from "@markusylisiurunen/tau/code-mode";
+import {
+  buildTauClientToolPresentation,
+  runTauClientToolCommand,
+  truncateTauClientToolSubject,
+} from "@markusylisiurunen/tau/code-mode";
 
-await runTauClientToolCommand(async (args, context) => {
-  const input = args as { title: string; message: string };
-  context.signal.throwIfAborted();
+await runTauClientToolCommand({
+  name: "notify_desktop",
+  describe(args) {
+    const input = args as { title: string; message: string };
+    return buildTauClientToolPresentation({
+      toolName: "notify_desktop",
+      subject: truncateTauClientToolSubject(input.title),
+    });
+  },
+  async execute(args, context) {
+    const input = args as { title: string; message: string };
+    context.signal.throwIfAborted();
 
-  await showNotification(input.title, input.message, context.signal);
-  return { content: "Notification displayed." };
+    await showNotification(input.title, input.message, context.signal);
+    return { content: "Notification displayed." };
+  },
 });
 ```
 
-`runTauClientToolCommand` reads the invocation, provides a standard context, handles execution-environment request and cancellation framing, and writes the final result. It also reacts to `SIGINT`, `SIGTERM`, and protocol input closure by aborting the handler.
+`describe` runs before acknowledgement and owns selection and semantic truncation of the subject. `buildTauClientToolPresentation` supplies canonical lifecycle labels and bounds the complete presentation. `truncateTauClientToolSubject` supports `maxLines`, `maxLineChars`, and `head` or `middle` truncation when the defaults are not appropriate. The client and host both validate the resulting bounded presentation, and the host preserves it through tool completion.
+
+`runTauClientToolCommand` reads the preparation, writes the presentation, waits until the host accepts the call, then provides the standard execution context and writes the final result. It handles execution-environment request and cancellation framing and reacts to `SIGINT`, `SIGTERM`, and protocol input closure by aborting the handler.
 
 Reserve stdout for the helper's protocol. Write diagnostics to stderr. Return either a string or `{ content: string }`; that text becomes the model-visible tool result.
 
@@ -196,11 +212,11 @@ The command protocol is intentionally bounded:
 - Execution-environment stdin is limited to 16 MiB decoded, and capture can be requested up to 24 MiB per execution.
 - At most eight execution requests may be unresolved concurrently.
 
-The configured `executionTimeoutMs` covers the whole command invocation and defaults to 60 seconds. The host also requires the owning client to acknowledge a dispatched call promptly. Standard Tau SDK clients handle acknowledgement before invoking the tool handler.
+The configured `executionTimeoutMs` covers preparation and execution and defaults to 60 seconds. The host also requires the owning client to prepare and acknowledge a dispatched call promptly. Command executables emit their bounded presentation before acknowledgement, then wait for Tau to authorize execution.
 
 Tau starts each configured command in a detached process group. Cancellation sends termination to the group and escalates to `SIGKILL` after a short grace period, even if the original group leader exits first. The helper aborts pending execution-environment requests and stops accepting work when stdin closes.
 
-A successful command must exit with status zero after producing one final version 3 result. Missing results, malformed framing, data after the result, reused execution request IDs, nonzero exit, timeout, cancellation, excessive output, and protocol-limit violations fail the call. Stderr is included in failure diagnostics but is not a successful result channel.
+A successful command must emit one version 4 ready frame, wait for the execute frame, and exit with status zero after producing one final version 4 result. Missing or duplicate readiness, execution data before authorization, missing results, malformed framing, data after the result, reused execution request IDs, nonzero exit, timeout, cancellation, excessive output, and protocol-limit violations fail the call. Stderr is included in failure diagnostics but is not a successful result channel.
 
 ## Disconnects, reconnects, and durability
 

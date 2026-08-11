@@ -173,6 +173,20 @@ describe("public code-mode runtime", () => {
         additionalProperties: false,
       },
     });
+    expect(
+      await tool.describe(
+        { code: 'console.log(await linear.issues.get("TAU-418"))' },
+        {
+          ...invocation,
+          signal: new AbortController().signal,
+          executionEnvironment: { exec: vi.fn() },
+        },
+      ),
+    ).toMatchObject({
+      operation: "linear",
+      subject: 'console.log(await linear.issues.get("TAU-418"))',
+      subjectWrap: "character",
+    });
     await expect(
       tool.execute(
         { code: 'console.log(await linear.issues.get("TAU-418"))' },
@@ -266,9 +280,10 @@ describe("code-mode command adapter", () => {
       "});",
     ].join("\n");
     const request = {
-      version: 3,
-      type: "invoke",
+      version: 4,
+      type: "prepare",
       ...invocation,
+      toolName: "linear",
       arguments: {
         code: 'console.log(await linear.echo("hello"))',
       },
@@ -277,28 +292,48 @@ describe("code-mode command adapter", () => {
 
     expect(result.status).toBe(0);
     expect(result.stderr).toBe("");
-    expect(JSON.parse(result.stdout)).toEqual({
-      version: 3,
-      type: "result",
-      content: JSON.stringify({ value: "hello", invocation }),
-    });
+    const frames = result.stdout
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(frames).toEqual([
+      {
+        version: 4,
+        type: "ready",
+        presentation: expect.objectContaining({
+          operation: "linear",
+          subject: 'console.log(await linear.echo("hello"))',
+          subjectWrap: "character",
+        }),
+      },
+      {
+        version: 4,
+        type: "result",
+        content: JSON.stringify({ value: "hello", invocation }),
+      },
+    ]);
   });
 
   it("aborts the handler when protocol input closes", () => {
     const moduleUrl = pathToFileURL(resolve("dist/sdk/index.js")).href;
     const script = [
-      `import { runTauClientToolCommand } from ${JSON.stringify(moduleUrl)};`,
-      "await runTauClientToolCommand(async (_args, context) => {",
-      "  await new Promise((_resolve, reject) => {",
-      '    context.signal.addEventListener("abort", () => reject(context.signal.reason), { once: true });',
-      "  });",
-      '  return "unreachable";',
+      `import { buildTauClientToolPresentation, runTauClientToolCommand } from ${JSON.stringify(moduleUrl)};`,
+      "await runTauClientToolCommand({",
+      '  name: "wait",',
+      '  describe: () => buildTauClientToolPresentation({ toolName: "wait", subject: "input" }),',
+      "  execute: async (_args, context) => {",
+      "    await new Promise((_resolve, reject) => {",
+      '      context.signal.addEventListener("abort", () => reject(context.signal.reason), { once: true });',
+      "    });",
+      '    return "unreachable";',
+      "  },",
       "});",
     ].join("\n");
     const request = {
-      version: 3,
-      type: "invoke",
+      version: 4,
+      type: "prepare",
       ...invocation,
+      toolName: "wait",
       arguments: {},
     };
     const result = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {
@@ -322,10 +357,20 @@ function runCommandWithOpenStdin(script, request) {
     });
     let stdout = "";
     let stderr = "";
+    let executeSent = false;
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
       stdout += chunk;
+      for (const line of stdout.split("\n")) {
+        if (!line.trim()) continue;
+        try {
+          if (!executeSent && JSON.parse(line).type === "ready") {
+            executeSent = true;
+            child.stdin.write(`${JSON.stringify({ version: 4, type: "execute" })}\n`);
+          }
+        } catch {}
+      }
     });
     child.stderr.on("data", (chunk) => {
       stderr += chunk;

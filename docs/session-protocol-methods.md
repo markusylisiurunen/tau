@@ -557,11 +557,28 @@ Acknowledges a `session.clientTool.call` before its deadline.
 params: {
   sessionId: string;
   callId: string;
+  presentation: {
+    actionByStatus: Record<
+      "preparing" | "queued" | "running" | "succeeded" | "failed" | "blocked" | "cancelled",
+      string
+    >;
+    operation?: string;
+    subject: string;
+    subjectWrap: "word" | "character";
+    details: Array<{
+      text: string;
+      tone?: "added" | "removed";
+      wrap: "word" | "character";
+    }>;
+    metadata: string[];
+  };
 }
 result: {
   accepted: boolean;
 }
 ```
+
+The presentation must already satisfy the canonical tool-card bounds. The host validates and records it without selecting or semantically truncating the subject. An accepted acknowledgement authorizes the client to begin execution.
 
 ### `session.clientTool.result`
 

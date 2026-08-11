@@ -5,11 +5,13 @@ import {
   SESSION_PROTOCOL_VERSION,
 } from "../dist/protocol/session_protocol.js";
 import {
+  buildTauClientToolPresentation,
   createTauSdkClientFromTransport,
   getTauSdkSessionTurnOutcome,
   getTauSdkSessionTurnRecord,
   TauSessionClientError,
   TauTransportError,
+  truncateTauClientToolSubject,
 } from "../dist/sdk/index.js";
 import {
   createProtocolBootstrap,
@@ -26,6 +28,10 @@ function createReadyMessage() {
 }
 
 const bootstrap = createProtocolBootstrap();
+
+function describeClientTool(toolName, subject = toolName) {
+  return buildTauClientToolPresentation({ toolName, subject });
+}
 
 const localCreateInput = {
   executionEnvironment: { kind: "local", cwd: "/repo" },
@@ -339,6 +345,18 @@ async function waitForFakeRequest(transport, predicate, timeoutMs = 2000) {
 }
 
 describe("sdk_client", () => {
+  it("exports bounded client tool subject truncation", () => {
+    expect(
+      truncateTauClientToolSubject("one\ntwo\nthree\nfour", {
+        maxLines: 3,
+        maxLineChars: 5,
+        strategy: "head",
+      }),
+    ).toBe("one\ntwo\n…2 m…");
+    expect(() => truncateTauClientToolSubject("subject", { maxLines: 9 })).toThrow(
+      "subject maxLines must be between 1 and 8",
+    );
+  });
   it("reads running and settled turns from the canonical snapshot ledger", () => {
     const running = { userHistoryEntryId: "running-turn", state: "running" };
     const outcome = { status: "completed", stopReason: "stop" };
@@ -864,6 +882,7 @@ describe("sdk_client", () => {
             },
             executionTimeoutMs: 60_000,
           },
+          describe: (args) => describeClientTool("local_picker", args.choice ?? "local_picker"),
           execute,
         },
       ],
@@ -909,7 +928,11 @@ describe("sdk_client", () => {
     expect(transport.requests).toEqual([
       {
         method: "session.clientTool.ack",
-        params: { sessionId: "session-1", callId: "call-1" },
+        params: {
+          sessionId: "session-1",
+          callId: "call-1",
+          presentation: describeClientTool("local_picker", "a"),
+        },
       },
       {
         method: "session.exec",
@@ -950,6 +973,7 @@ describe("sdk_client", () => {
             description: "Wait in the workspace.",
             parameters: { type: "object", properties: {}, additionalProperties: false },
           },
+          describe: () => describeClientTool("workspace_wait"),
           execute: (_args, context) => context.executionEnvironment.exec("sleep 60"),
         },
       ],
@@ -1007,6 +1031,7 @@ describe("sdk_client", () => {
             description: "Pick a local item.",
             parameters: { type: "object", properties: {}, additionalProperties: false },
           },
+          describe: () => describeClientTool("local_picker"),
           execute,
         },
       ],
@@ -1063,6 +1088,7 @@ describe("sdk_client", () => {
             description: "Pick a local item.",
             parameters: { type: "object", properties: {}, additionalProperties: false },
           },
+          describe: () => describeClientTool("local_picker"),
           execute,
         },
       ],
@@ -1118,6 +1144,7 @@ describe("sdk_client", () => {
             description: "Pick a local item.",
             parameters: { type: "object", properties: {}, additionalProperties: false },
           },
+          describe: () => describeClientTool("local_picker"),
           execute,
         },
       ],

@@ -88,7 +88,7 @@ describe("sdk npm pack types", () => {
         validFixturePath,
         [
           'import type { SessionProtocolFeedbackEvent, SessionProtocolFeedbackTone, SessionProtocolSnapshot, SessionProtocolTransport, TauSdkClient, TauSdkClientToolContext, TauSdkCreateSessionInput, TauSdkDelta, TauSdkInitializeParams, TauSdkRequestId, TauSdkSessionExecResult, TauSdkSessionSampleInput, TauSdkSessionSampleResult, TauSdkSessionSetReasoningResult, TauSdkSessionTurnOutcome, TauSdkSessionTurnRecord, TauSdkReadyMessage, TauSdkTransportClientOptions, TauSdkUserTextProjection } from "@markusylisiurunen/tau/sdk";',
-          'import { applySessionProtocolDelta, createTauSdkClient, createTauSdkClientFromTransport, createTauSdkWebSocketClient, getTauSdkSessionTurnOutcome, getTauSdkSessionTurnRecord, getTauUserDisplayText, getTauUserModelText, projectTauUserText, runTauClientToolCommand } from "@markusylisiurunen/tau/sdk";',
+          'import { applySessionProtocolDelta, buildTauClientToolPresentation, createTauSdkClient, createTauSdkClientFromTransport, createTauSdkWebSocketClient, getTauSdkSessionTurnOutcome, getTauSdkSessionTurnRecord, getTauUserDisplayText, getTauUserModelText, projectTauUserText, runTauClientToolCommand, truncateTauClientToolSubject } from "@markusylisiurunen/tau/sdk";',
           "",
           "const sdkDelta: TauSdkDelta = {",
           "  version: 12,",
@@ -122,7 +122,7 @@ describe("sdk npm pack types", () => {
           "declare const clientToolContext: TauSdkClientToolContext;",
           "void clientToolContext.agentId;",
           "void clientToolContext.executionEnvironment.exec('pwd');",
-          "void runTauClientToolCommand(async (_args, context) => (await context.executionEnvironment.exec('pwd')).output);",
+          "void runTauClientToolCommand({ name: 'fixture', describe: () => buildTauClientToolPresentation({ toolName: 'fixture', subject: truncateTauClientToolSubject('subject') }), execute: async (_args, context) => (await context.executionEnvironment.exec('pwd')).output });",
           "const sampleInput: TauSdkSessionSampleInput = { context: { systemPrompt: 'system', messages: [] }, options: {} };",
           "declare const sampleResult: TauSdkSessionSampleResult;",
           "declare const setReasoningResult: TauSdkSessionSetReasoningResult;",

@@ -279,6 +279,12 @@ If rendering `timeline.item`, accept only the active epoch and merge by its allo
 Pass `TauSdkClientTool` entries in `clientTools` when model-facing work must run in the integration process:
 
 ```ts
+import {
+  buildTauClientToolPresentation,
+  createTauSdkClient,
+  truncateTauClientToolSubject,
+} from "@markusylisiurunen/tau/sdk";
+
 const client = await createTauSdkClient({
   clientTools: [
     {
@@ -291,6 +297,15 @@ const client = await createTauSdkClient({
           additionalProperties: false,
         },
         executionTimeoutMs: 60_000,
+      },
+      describe: (args) => {
+        const input = args as { choice?: string };
+        return buildTauClientToolPresentation({
+          toolName: "local_picker",
+          subject: truncateTauClientToolSubject(
+            input.choice ?? "local workspace",
+          ),
+        });
       },
       execute: async (_args, context) => {
         context.signal.throwIfAborted();
@@ -309,7 +324,9 @@ const client = await createTauSdkClient({
 
 The handler receives `sessionId`, owning `agentId`, `callId`, an `AbortSignal`, and an execution-environment facade. The handler itself runs on the client machine. `context.executionEnvironment.exec()` crosses the session boundary and runs in the session execution environment.
 
-The SDK acknowledges delegated calls, converts a returned string or `{ content }` to the wire result, reports thrown errors, and aborts handlers on host cancellation, client close, or terminal transport failure. `client.close()` waits for active handlers to settle.
+The SDK calls `describe` with the arguments and execution context before acknowledgement. The callback returns a complete bounded presentation; it owns subject selection and semantic truncation. `buildTauClientToolPresentation` supplies canonical lifecycle labels, while `truncateTauClientToolSubject` provides configurable line, character, and head or middle truncation. The SDK validates and acknowledges that presentation before calling `execute`.
+
+The SDK converts a returned string or `{ content }` to the wire result, reports thrown errors, and aborts handlers on host cancellation, client close, or terminal transport failure. `client.close()` waits for active handlers to settle.
 
 Tool definitions are frozen for each assistant turn and remain independent of persona tool allowlists. Names cannot collide with host tools or another observing client's tools. See [client tools](client-tools.md) for authority, limits, command-backed tools, and disconnect behavior.
 

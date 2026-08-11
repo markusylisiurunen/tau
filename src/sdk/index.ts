@@ -57,8 +57,16 @@ export { createTauSdkClient, createTauSdkWebSocketClient } from "./client.js";
 export {
   runTauClientToolCommand,
   TAU_CLIENT_TOOL_COMMAND_PROTOCOL_VERSION,
+  type TauClientToolCommandDefinition,
   type TauClientToolCommandHandler,
 } from "./client_tool_command.js";
+export {
+  type BuildTauClientToolPresentationOptions,
+  buildTauClientToolPresentation,
+  type TauClientToolPresentation,
+  type TauClientToolSubjectTruncationOptions,
+  truncateTauClientToolSubject,
+} from "./client_tool_presentation.js";
 export {
   createTauCodeModeClientTool,
   type TauSdkCodeModeClientToolOptions,

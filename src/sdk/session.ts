@@ -21,6 +21,7 @@ import {
 import type {
   TauSdkClient,
   TauSdkClientTool,
+  TauSdkClientToolContext,
   TauSdkClientToolExecutionEnvironment,
   TauSdkDeltaListener,
   TauSdkEphemeralListener,
@@ -178,25 +179,30 @@ class TauSdkClientImpl implements TauSdkClient {
     message: SessionProtocolClientToolCallMessage,
     abortController: AbortController,
   ): Promise<void> {
-    const ack = await this.transport.request("session.clientTool.ack", {
+    const context: TauSdkClientToolContext = {
       sessionId: message.sessionId,
+      agentId: message.agentId,
       callId: message.callId,
-    });
-    if (!ack.accepted || abortController.signal.aborted) {
-      return;
-    }
+      signal: abortController.signal,
+      executionEnvironment: this.createClientToolExecutionEnvironment(
+        message.sessionId,
+        abortController.signal,
+      ),
+    };
 
     try {
-      const result = await tool.execute(message.arguments, {
+      const presentation = await tool.describe(message.arguments, context);
+      const ack = await this.transport.request("session.clientTool.ack", {
         sessionId: message.sessionId,
-        agentId: message.agentId,
         callId: message.callId,
-        signal: abortController.signal,
-        executionEnvironment: this.createClientToolExecutionEnvironment(
-          message.sessionId,
-          abortController.signal,
-        ),
+        presentation,
       });
+      if (!ack.accepted || abortController.signal.aborted) {
+        abortController.abort();
+        return;
+      }
+
+      const result = await tool.execute(message.arguments, context);
       if (abortController.signal.aborted) {
         return;
       }

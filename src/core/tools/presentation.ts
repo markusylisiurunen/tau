@@ -61,6 +61,12 @@ export const TOOL_CARD_DEFAULT_DETAILS_MAX_LINES = 7;
 export const TOOL_CARD_TRUNCATED_DETAILS_MAX_LINES = 33;
 export const TOOL_CARD_MAX_LINE_CHARS = 512;
 
+export type ToolCardSubjectTruncation = {
+  maxLines?: number;
+  maxLineChars?: number;
+  strategy?: "head" | "middle";
+};
+
 function isSingleLine(text: string): boolean {
   return !text.includes("\n") && !text.includes("\r");
 }
@@ -261,6 +267,37 @@ function truncateLines(
   ];
 }
 
+export function truncateToolRunSubject(
+  subject: string,
+  options: ToolCardSubjectTruncation = {},
+): string {
+  const maxLines = options.maxLines ?? TOOL_CARD_SUBJECT_MAX_LINES;
+  const maxLineChars = options.maxLineChars ?? TOOL_CARD_MAX_LINE_CHARS;
+  if (!Number.isInteger(maxLines) || maxLines < 1 || maxLines > TOOL_CARD_SUBJECT_MAX_LINES) {
+    throw new Error(`subject maxLines must be between 1 and ${TOOL_CARD_SUBJECT_MAX_LINES}`);
+  }
+  if (
+    !Number.isInteger(maxLineChars) ||
+    maxLineChars < 1 ||
+    maxLineChars > TOOL_CARD_MAX_LINE_CHARS
+  ) {
+    throw new Error(`subject maxLineChars must be between 1 and ${TOOL_CARD_MAX_LINE_CHARS}`);
+  }
+
+  return truncateLines(
+    subject
+      .replace(/\r\n?/g, "\n")
+      .replace(/\n+$/, "")
+      .split("\n")
+      .map((text) => ({ text, wrap: "word" })),
+    maxLines,
+    maxLineChars,
+    options.strategy,
+  )
+    .map((line) => line.text)
+    .join("\n");
+}
+
 export function parseToolRunPresentation(value: unknown): ToolRunPresentation {
   return toolRunPresentationSchema.parse(value);
 }
@@ -292,14 +329,7 @@ export function buildToolRunPresentation(args: {
   metadata?: string[];
   actionOverrides?: Partial<ToolRunActionLabels>;
 }): ToolRunPresentation {
-  const subjectLines = args.subject.replace(/\r\n?/g, "\n").replace(/\n+$/, "").split("\n");
-  const boundedSubject = truncateLines(
-    subjectLines.map((text) => ({ text, wrap: "word" })),
-    TOOL_CARD_SUBJECT_MAX_LINES,
-    TOOL_CARD_MAX_LINE_CHARS,
-  )
-    .map((line) => line.text)
-    .join("\n");
+  const boundedSubject = truncateToolRunSubject(args.subject);
   const labels = { ...getToolRunActionLabels(args.toolName), ...args.actionOverrides };
   for (const status of Object.keys(labels) as ToolRunPresentationStatus[]) {
     labels[status] = normalizeLabel(labels[status]) || GENERIC_TOOL_RUN_ACTION_LABELS[status];

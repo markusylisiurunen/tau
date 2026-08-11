@@ -1161,6 +1161,40 @@ describe("session_protocol", () => {
     });
   });
 
+  it("validates client tool acknowledgement presentations", () => {
+    const presentation = buildToolRunPresentation({
+      toolName: "local_picker",
+      subject: "choice a",
+    });
+    expect(
+      validateSessionProtocolParams("session.clientTool.ack", {
+        sessionId: "session-1",
+        callId: "call-1",
+        presentation,
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        sessionId: "session-1",
+        callId: "call-1",
+        presentation,
+      },
+    });
+
+    expect(
+      validateSessionProtocolParams("session.clientTool.ack", {
+        sessionId: "session-1",
+        callId: "call-1",
+        presentation: { ...presentation, subject: "x".repeat(513) },
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidParams,
+      }),
+    });
+  });
+
   it("constructs outbound requests through shared method params validation", () => {
     expect(
       createSessionProtocolRequest("req-out", "session.submit", {

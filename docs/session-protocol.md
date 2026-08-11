@@ -211,7 +211,7 @@ An initialized client that advertised a tool can receive:
 }
 ```
 
-Acknowledge promptly with `session.clientTool.ack`, then send exactly one `session.clientTool.result` with either `{ ok: true, content }` or `{ ok: false, error }`. The result methods return `{ accepted: boolean }`; `false` means the call is no longer waiting for that message.
+Prepare a bounded canonical tool presentation and acknowledge promptly with `session.clientTool.ack`. Begin execution only after the acknowledgement returns `{ accepted: true }`, then send exactly one `session.clientTool.result` with either `{ ok: true, content }` or `{ ok: false, error }`. The result method also returns `{ accepted: boolean }`; `false` means the call is no longer waiting for that message.
 
 `session.clientTool.cancel` names the session and call with reason `aborted`, `timeout`, or `client-detached`. Abort local work and do not send a late result. The SDK implements this lifecycle automatically. Tool execution authority and the execution-environment facade are covered in [client tools](client-tools.md).
 

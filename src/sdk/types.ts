@@ -41,6 +41,7 @@ import type {
   SessionProtocolUnobserveResult,
 } from "../protocol/session_protocol.js";
 import type { WebSocketSessionProtocolTransportOptions } from "../transport/index.js";
+import type { TauClientToolPresentation } from "./client_tool_presentation.js";
 
 export type TauSdkRequestId = SessionProtocolRequestId;
 export type TauSdkSessionProtocolMethod = SessionProtocolMethod;
@@ -110,6 +111,10 @@ export type TauSdkClientToolResult = string | { content: string };
 
 export type TauSdkClientTool = {
   schema: SessionProtocolClientToolDefinition;
+  describe: (
+    args: unknown,
+    context: TauSdkClientToolContext,
+  ) => Promise<TauClientToolPresentation> | TauClientToolPresentation;
   execute: (
     args: unknown,
     context: TauSdkClientToolContext,

@@ -43,6 +43,7 @@ import type {
   SessionProtocolAutocompletePathsParams,
   SessionProtocolAutocompletePathsResult,
   SessionProtocolChange,
+  SessionProtocolClientToolPresentation,
   SessionProtocolCompactParams,
   SessionProtocolCompactResult,
   SessionProtocolContentCatalogSnapshot,
@@ -181,8 +182,12 @@ export class LocalSessionHost implements TauSessionHost {
     return this.clientToolBroker.registerClient(options);
   }
 
-  acknowledgeClientToolCall(sessionId: string, callId: string): boolean {
-    return this.clientToolBroker.ack(sessionId, callId);
+  async acknowledgeClientToolCall(
+    sessionId: string,
+    callId: string,
+    presentation: SessionProtocolClientToolPresentation,
+  ): Promise<boolean> {
+    return await this.clientToolBroker.ack(sessionId, callId, presentation);
   }
 
   completeClientToolCall(

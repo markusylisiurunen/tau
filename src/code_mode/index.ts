@@ -1,8 +1,16 @@
 export {
   runTauClientToolCommand,
   TAU_CLIENT_TOOL_COMMAND_PROTOCOL_VERSION,
+  type TauClientToolCommandDefinition,
   type TauClientToolCommandHandler,
 } from "../sdk/client_tool_command.js";
+export {
+  type BuildTauClientToolPresentationOptions,
+  buildTauClientToolPresentation,
+  type TauClientToolPresentation,
+  type TauClientToolSubjectTruncationOptions,
+  truncateTauClientToolSubject,
+} from "../sdk/client_tool_presentation.js";
 export { runTauCodeModeCommand } from "./command.js";
 export type {
   TauCodeModeFileAdapter,

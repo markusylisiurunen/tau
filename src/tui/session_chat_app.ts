@@ -37,7 +37,6 @@ export type SessionChatAppOptions = {
   defaultDiffTool?: DiffToolConfig;
   deps?: CoreDeps;
   initialUserMessage?: string;
-  caffeinated?: boolean;
 };
 
 export type SessionChatTransportOptions = Omit<
@@ -230,7 +229,6 @@ export class SessionChatApp {
         config: options.config,
         defaultDiffTool: options.defaultDiffTool,
         deps: options.deps,
-        caffeinated: options.caffeinated,
         themeIds: (options.themes ?? []).map((theme) => theme.id),
         onExit: () => app.exit(),
       });

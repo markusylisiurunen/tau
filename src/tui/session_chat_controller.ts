@@ -101,13 +101,6 @@ import { runSpeechPlaybackTask } from "./speech_playback.js";
 import type { ChatMessageModel } from "./ui/chat_message_model.js";
 import type { ToolUiModel } from "./ui/tool_ui_model.js";
 
-type TurnCaffeinateSession = {
-  abortController: AbortController;
-  completion: Promise<unknown>;
-};
-
-const CAFFEINATE_COMMAND = "/usr/bin/caffeinate";
-
 export type SessionChatControllerOptions = {
   view: ChatView;
   session: TauSdkSession;
@@ -119,7 +112,6 @@ export type SessionChatControllerOptions = {
   defaultDiffTool?: DiffToolConfig;
   diffToolLauncher?: DiffReviewToolLauncher;
   deps?: CoreDeps;
-  caffeinated?: boolean;
   themeIds?: string[];
   onExit?: () => void;
 };
@@ -173,9 +165,6 @@ export class SessionChatController {
   private listenTransition?: Promise<void>;
   private isTranscribingListen = false;
   private speechActivityLabel?: string;
-  private readonly caffeinated: boolean;
-  private turnCaffeinate?: TurnCaffeinateSession;
-  private disableCaffeinateForSession = false;
   private speakTask?: {
     abortController: AbortController;
     completion: Promise<void>;
@@ -194,7 +183,6 @@ export class SessionChatController {
     this.diffToolLauncher = options.diffToolLauncher;
     this.deps = options.deps ?? createDefaultCoreDeps();
     this.themeIds = options.themeIds ?? [];
-    this.caffeinated = options.caffeinated ?? false;
     this.observedSessionRevision = options.snapshot.revision;
     this.commandRegistry = createCommandRegistry();
     this.commandHandlers = {
@@ -265,7 +253,6 @@ export class SessionChatController {
       this.speakTask.abortController.abort();
       await this.speakTask.completion;
     }
-    await this.stopTurnCaffeinate();
     this.stopTurnTimer();
     try {
       await this.session.unobserve();
@@ -673,51 +660,6 @@ export class SessionChatController {
     this.view.requestRender();
   }
 
-  private startTurnCaffeinate(): void {
-    if (!this.caffeinated || this.disableCaffeinateForSession || this.turnCaffeinate) {
-      return;
-    }
-
-    if (this.deps.env.platform() !== "darwin") {
-      this.disableCaffeinateForSession = true;
-      return;
-    }
-
-    const abortController = new AbortController();
-    const completion = this.deps.spawn(CAFFEINATE_COMMAND, ["-i"], {
-      detached: true,
-      killProcessGroup: true,
-      signal: abortController.signal,
-      stdio: ["ignore", "ignore", "ignore"],
-    });
-    completion.catch(() => {});
-    this.turnCaffeinate = { abortController, completion };
-  }
-
-  private async stopTurnCaffeinate(): Promise<void> {
-    const session = this.turnCaffeinate;
-    if (!session) {
-      return;
-    }
-
-    this.turnCaffeinate = undefined;
-    if (!session.abortController.signal.aborted) {
-      session.abortController.abort();
-    }
-
-    try {
-      await session.completion;
-    } catch (error) {
-      if (this.disableCaffeinateForSession) {
-        return;
-      }
-      this.disableCaffeinateForSession = true;
-      this.view.addTranscriptNotice("caffeinate unavailable", "default", [
-        (error as Error).message,
-      ]);
-    }
-  }
-
   private async runSessionTurn(
     task: () => Promise<TauSdkSessionSubmitResult | TauSdkSessionRetryResult>,
   ): Promise<void> {
@@ -729,7 +671,6 @@ export class SessionChatController {
     this.assistantInterruptRequested = false;
     this.submittedTurnInProgress = true;
     this.startTurnTimer();
-    this.startTurnCaffeinate();
     this.view.startWorkingIcon();
     this.refreshStatus();
 
@@ -741,12 +682,10 @@ export class SessionChatController {
         formatSessionError(error),
       ]);
       this.stopVisibleSessionTurn();
-      void this.stopTurnCaffeinate();
       await this.syncFromSessionSnapshot();
     } finally {
       this.submittedTurnInProgress = false;
       this.stopVisibleSessionTurn();
-      await this.stopTurnCaffeinate();
       this.refreshStatus();
     }
   }
@@ -1546,7 +1485,6 @@ export class SessionChatController {
       return;
     }
 
-    void this.stopTurnCaffeinate();
     this.pendingIdleNotification = true;
     this.sendPendingIdleNotification();
   }
@@ -1580,7 +1518,6 @@ export class SessionChatController {
     this.isStreaming = true;
     this.assistantInterruptRequested = false;
     this.startTurnTimer();
-    this.startTurnCaffeinate();
     this.view.startWorkingIcon();
     this.refreshStatus();
   }

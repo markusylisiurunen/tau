@@ -121,7 +121,6 @@ Command client tools use Tau's version 4 bidirectional NDJSON protocol over stdi
 
 ```ts
 import {
-  buildTauClientToolPresentation,
   runTauClientToolCommand,
   truncateTauClientToolSubject,
 } from "@markusylisiurunen/tau/code-mode";
@@ -130,10 +129,9 @@ await runTauClientToolCommand({
   name: "notify_desktop",
   describe(args) {
     const input = args as { title: string; message: string };
-    return buildTauClientToolPresentation({
-      toolName: "notify_desktop",
+    return {
       subject: truncateTauClientToolSubject(input.title),
-    });
+    };
   },
   async execute(args, context) {
     const input = args as { title: string; message: string };
@@ -145,11 +143,63 @@ await runTauClientToolCommand({
 });
 ```
 
-`describe` runs before acknowledgement and owns selection and semantic truncation of the subject. `buildTauClientToolPresentation` supplies canonical lifecycle labels and bounds the complete presentation. `truncateTauClientToolSubject` supports `maxLines`, `maxLineChars`, and `head` or `middle` truncation when the defaults are not appropriate. The client and host both validate the resulting bounded presentation, and the host preserves it through tool completion.
+`describe` runs before acknowledgement and owns selection and semantic truncation of the subject. It may return `subject`, optional `operation`, and optional `subjectWrap`. `truncateTauClientToolSubject` supports `maxLines`, `maxLineChars`, and `head` or `middle` truncation when the defaults are not appropriate. Tau supplies canonical lifecycle labels, validates the bounded presentation, and preserves it through tool completion.
 
 `runTauClientToolCommand` reads the preparation, writes the presentation, waits until the host accepts the call, then provides the standard execution context and writes the final result. It handles execution-environment request and cancellation framing and reacts to `SIGINT`, `SIGTERM`, and protocol input closure by aborting the handler.
 
 Reserve stdout for the helper's protocol. Write diagnostics to stderr. Return either a string or `{ content: string }`; that text becomes the model-visible tool result.
+
+### Implement a simple command tool in Bash
+
+A small command that needs only client-machine authority can implement the version 4 handshake directly. This example depends on `jq` for safe JSON parsing and encoding:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS= read -r prepare
+jq -e '
+  .version == 4 and
+  .type == "prepare" and
+  .toolName == "system_info"
+' >/dev/null <<<"$prepare"
+
+jq -cn '{
+  version: 4,
+  type: "ready",
+  presentation: {
+    subject: "local system"
+  }
+}'
+
+IFS= read -r execute
+jq -e '.version == 4 and .type == "execute"' >/dev/null <<<"$execute"
+
+content=$(uname -a)
+jq -cn --arg content "$content" '{
+  version: 4,
+  type: "result",
+  content: $content
+}'
+```
+
+Make the script executable and configure it as an argument-free command tool:
+
+```json
+{
+  "name": "system_info",
+  "defaultEnabled": true,
+  "description": "Report operating-system information from the client machine.",
+  "parameters": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "command": "./bin/tau-system-info"
+}
+```
+
+The `ready.presentation` object may contain `subject`, `operation`, and `subjectWrap`. Omit `presentation` entirely to use the tool name as the subject. The script must emit `ready` before reading the authorization-bearing `execute` frame. Direct shell implementations do not receive the helper's execution-environment facade; use the TypeScript helper when the tool needs target-environment execution requests, cancellation forwarding, or more involved protocol handling.
 
 The handler receives:
 

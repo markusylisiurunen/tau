@@ -7,7 +7,10 @@ import {
   createTauClientToolCommandPrepare,
   type TauClientToolCommandOutput,
 } from "../../sdk/client_tool_command.js";
-import type { TauClientToolPresentation } from "../../sdk/client_tool_presentation.js";
+import {
+  buildTauClientToolPresentation,
+  type TauClientToolPresentation,
+} from "../../sdk/client_tool_presentation.js";
 import type { TauSdkClientTool, TauSdkClientToolContext } from "../../sdk/types.js";
 import type { CommandClientToolConfig } from "../config/client_tools.js";
 import { type CoreDeps, createDefaultCoreDeps } from "../runtime/deps.js";
@@ -126,7 +129,12 @@ function prepareCommandClientToolCall(
         return;
       }
       ready = true;
-      resolvePresentation(frame.presentation);
+      resolvePresentation(
+        buildTauClientToolPresentation({
+          toolName: config.name,
+          ...(frame.presentation ?? { subject: config.name }),
+        }),
+      );
       return;
     }
     if (!ready) {

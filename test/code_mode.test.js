@@ -317,10 +317,10 @@ describe("code-mode command adapter", () => {
   it("aborts the handler when protocol input closes", () => {
     const moduleUrl = pathToFileURL(resolve("dist/sdk/index.js")).href;
     const script = [
-      `import { buildTauClientToolPresentation, runTauClientToolCommand } from ${JSON.stringify(moduleUrl)};`,
+      `import { runTauClientToolCommand } from ${JSON.stringify(moduleUrl)};`,
       "await runTauClientToolCommand({",
       '  name: "wait",',
-      '  describe: () => buildTauClientToolPresentation({ toolName: "wait", subject: "input" }),',
+      '  describe: () => ({ subject: "input" }),',
       "  execute: async (_args, context) => {",
       "    await new Promise((_resolve, reject) => {",
       '      context.signal.addEventListener("abort", () => reject(context.signal.reason), { once: true });',

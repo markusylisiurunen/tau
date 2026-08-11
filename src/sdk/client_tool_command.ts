@@ -1,12 +1,10 @@
 import { createInterface } from "node:readline";
 import { StringDecoder } from "node:string_decoder";
 import { z } from "zod";
-import { parseToolRunPresentation } from "../core/tools/presentation.js";
 import {
   SESSION_PROTOCOL_MAX_EXEC_CAPTURE_BYTES,
   SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES,
 } from "../protocol/session_protocol.js";
-import type { TauClientToolPresentation } from "./client_tool_presentation.js";
 import type {
   TauSdkClientToolContext,
   TauSdkClientToolResult,
@@ -80,11 +78,31 @@ const execCancelSchema = z
   })
   .strict();
 
+const commandPresentationLineSchema = z
+  .string()
+  .min(1)
+  .refine(
+    (value) => !value.includes("\n") && !value.includes("\r") && Array.from(value).length <= 512,
+    "must be one bounded line",
+  );
+const commandPresentationSchema = z
+  .object({
+    operation: commandPresentationLineSchema.optional(),
+    subject: z
+      .string()
+      .min(1)
+      .refine((value) => {
+        const lines = value.split("\n");
+        return lines.length <= 8 && lines.every((line) => Array.from(line).length <= 512);
+      }, "must contain at most 8 lines of 512 characters"),
+    subjectWrap: z.enum(["word", "character"]).optional(),
+  })
+  .strict();
 const readySchema = z
   .object({
     version: z.literal(TAU_CLIENT_TOOL_COMMAND_PROTOCOL_VERSION),
     type: z.literal("ready"),
-    presentation: z.unknown(),
+    presentation: commandPresentationSchema.optional(),
   })
   .strict();
 
@@ -170,10 +188,16 @@ export type TauClientToolCommandExecCancel = {
   requestId: string;
 };
 
+export type TauClientToolCommandPresentation = {
+  operation?: string;
+  subject: string;
+  subjectWrap?: "word" | "character";
+};
+
 export type TauClientToolCommandReady = {
   version: 4;
   type: "ready";
-  presentation: TauClientToolPresentation;
+  presentation?: TauClientToolCommandPresentation;
 };
 
 export type TauClientToolCommandResult = {
@@ -216,7 +240,9 @@ export type TauClientToolCommandHandler = (
 
 export type TauClientToolCommandDefinition = {
   name: string;
-  describe: (args: unknown) => Promise<TauClientToolPresentation> | TauClientToolPresentation;
+  describe?: (
+    args: unknown,
+  ) => Promise<TauClientToolCommandPresentation> | TauClientToolCommandPresentation;
   execute: TauClientToolCommandHandler;
 };
 
@@ -458,12 +484,12 @@ export async function runTauClientToolCommand(
       },
     };
 
-    const presentation = parseToolRunPresentation(await definition.describe(preparation.arguments));
+    const presentation = await definition.describe?.(preparation.arguments);
     readySent = true;
     await writeFrame({
       version: TAU_CLIENT_TOOL_COMMAND_PROTOCOL_VERSION,
       type: "ready",
-      presentation,
+      ...(presentation === undefined ? {} : { presentation }),
     });
     await Promise.race([executionReady, inputFailure]);
 
@@ -503,9 +529,6 @@ export function parseTauClientToolCommandOutput(value: unknown): TauClientToolCo
     .safeParse(value);
   if (!parsed.success) {
     throw new Error("command client tool returned an invalid version-4 protocol frame");
-  }
-  if (parsed.data.type === "ready") {
-    return { ...parsed.data, presentation: parseToolRunPresentation(parsed.data.presentation) };
   }
   return parsed.data;
 }

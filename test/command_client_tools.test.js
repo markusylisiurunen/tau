@@ -11,7 +11,6 @@ import {
   TAU_CLIENT_TOOL_COMMAND_MAX_PROTOCOL_FRAME_BYTES,
   TAU_CLIENT_TOOL_COMMAND_MAX_PROTOCOL_FRAMES,
 } from "../dist/sdk/client_tool_command.js";
-import { buildTauClientToolPresentation } from "../dist/sdk/index.js";
 import { createProtocolExecResult } from "./helpers/session_protocol_fixtures.js";
 
 const commandModuleUrl = pathToFileURL(resolve("dist/sdk/index.js")).href;
@@ -21,7 +20,7 @@ function readyFrame(subject = "notification") {
   return `${JSON.stringify({
     version: 4,
     type: "ready",
-    presentation: buildTauClientToolPresentation({ toolName: "notify", subject }),
+    presentation: { subject },
   })}\n`;
 }
 
@@ -123,10 +122,10 @@ function createContext(overrides = {}) {
 describe("command client tools", () => {
   it("exposes the execution environment through the command helper", async () => {
     const script = [
-      `import { buildTauClientToolPresentation, runTauClientToolCommand } from ${JSON.stringify(commandModuleUrl)};`,
+      `import { runTauClientToolCommand } from ${JSON.stringify(commandModuleUrl)};`,
       "await runTauClientToolCommand({",
       '  name: "notify",',
-      '  describe: () => buildTauClientToolPresentation({ toolName: "notify", subject: "notification" }),',
+      '  describe: () => ({ subject: "notification" }),',
       "  execute: async (args, context) => {",
       '    const result = await context.executionEnvironment.exec("printf workspace", {',
       '      args: ["first"],',
@@ -226,10 +225,10 @@ describe("command client tools", () => {
 
     try {
       const script = [
-        `import { buildTauClientToolPresentation, runTauClientToolCommand } from ${JSON.stringify(commandModuleUrl)};`,
+        `import { runTauClientToolCommand } from ${JSON.stringify(commandModuleUrl)};`,
         "await runTauClientToolCommand({",
         '  name: "notify",',
-        '  describe: () => buildTauClientToolPresentation({ toolName: "notify", subject: "notification" }),',
+        '  describe: () => ({ subject: "notification" }),',
         "  execute: () => ({",
         `    content: process.cwd() + "\\n" + process.env[${JSON.stringify(variableName)}],`,
         "  }),",
@@ -254,6 +253,45 @@ describe("command client tools", () => {
         process.env[variableName] = previousValue;
       }
     }
+  });
+
+  it("runs a direct Bash command protocol implementation", async () => {
+    const script = [
+      "IFS= read -r prepare",
+      `printf '%s\\n' '${JSON.stringify({
+        version: 4,
+        type: "ready",
+        presentation: { subject: "shell command" },
+      })}'`,
+      "IFS= read -r execute",
+      `printf '%s\\n' '${JSON.stringify({
+        version: 4,
+        type: "result",
+        content: "shell result",
+      })}'`,
+    ].join("\n");
+    const [tool] = createCommandClientTools([
+      createConfig({ command: "bash", args: ["--noprofile", "--norc", "-c", script] }),
+    ]);
+    const context = createContext();
+    const args = { message: "hello" };
+
+    await expect(tool.describe(args, context)).resolves.toMatchObject({
+      subject: "shell command",
+    });
+    await expect(tool.execute(args, context)).resolves.toEqual({ content: "shell result" });
+  });
+
+  it("uses the tool name when a command omits presentation", async () => {
+    const spawn = createInteractiveSpawn({
+      beforeExecute: `${JSON.stringify({ version: 4, type: "ready" })}\n`,
+    });
+    const [tool] = createCommandClientTools([createConfig()], createDeps(spawn));
+    const context = createContext();
+    const args = { message: "hello" };
+
+    await expect(tool.describe(args, context)).resolves.toMatchObject({ subject: "notify" });
+    await expect(tool.execute(args, context)).resolves.toEqual({ content: "done" });
   });
 
   it("starts a configured command with the versioned invocation", async () => {
@@ -361,10 +399,10 @@ describe("command client tools", () => {
 
   it("limits execution requests to eight active operations", async () => {
     const script = [
-      `import { buildTauClientToolPresentation, runTauClientToolCommand } from ${JSON.stringify(commandModuleUrl)};`,
+      `import { runTauClientToolCommand } from ${JSON.stringify(commandModuleUrl)};`,
       "await runTauClientToolCommand({",
       '  name: "notify",',
-      '  describe: () => buildTauClientToolPresentation({ toolName: "notify", subject: "notification" }),',
+      '  describe: () => ({ subject: "notification" }),',
       "  execute: async (_args, context) => {",
       "  await Promise.all(Array.from({ length: 9 }, (_, index) =>",
       '    context.executionEnvironment.exec("sleep", { args: [String(index)] }),',

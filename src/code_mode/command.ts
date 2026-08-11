@@ -1,8 +1,5 @@
 import { runTauClientToolCommand } from "../sdk/client_tool_command.js";
-import {
-  buildTauClientToolPresentation,
-  truncateTauClientToolSubject,
-} from "../sdk/client_tool_presentation.js";
+import { truncateTauClientToolSubject } from "../sdk/client_tool_presentation.js";
 import {
   createTauCodeModeExecutionEnvironmentFiles,
   executeTauCodeMode,
@@ -14,13 +11,11 @@ export async function runTauCodeModeCommand(definition: TauCodeModeDefinition): 
   validateTauCodeModeDefinition(definition);
   await runTauClientToolCommand({
     name: definition.name,
-    describe: (args) =>
-      buildTauClientToolPresentation({
-        toolName: definition.name,
-        operation: definition.name,
-        subject: truncateTauClientToolSubject(parseCodeArguments(args)),
-        subjectWrap: "character",
-      }),
+    describe: (args) => ({
+      operation: definition.name,
+      subject: truncateTauClientToolSubject(parseCodeArguments(args)),
+      subjectWrap: "character",
+    }),
     execute: async (args, context) => {
       const code = parseCodeArguments(args);
       return await executeTauCodeMode({

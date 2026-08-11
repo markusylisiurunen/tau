@@ -3,6 +3,7 @@ export {
   TAU_CLIENT_TOOL_COMMAND_PROTOCOL_VERSION,
   type TauClientToolCommandDefinition,
   type TauClientToolCommandHandler,
+  type TauClientToolCommandPresentation,
 } from "../sdk/client_tool_command.js";
 export {
   type BuildTauClientToolPresentationOptions,

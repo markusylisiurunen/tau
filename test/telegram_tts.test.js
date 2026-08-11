@@ -67,7 +67,14 @@ describe("telegram TTS", () => {
     expect(combinedWave.readUInt32LE(40)).toBe(8);
     expect(spawn).toHaveBeenCalledWith(
       "ffmpeg",
-      expect.arrayContaining(["-c:a", "libopus", "-application", "voip"]),
+      expect.arrayContaining([
+        "-filter:a",
+        "atempo=1.1",
+        "-c:a",
+        "libopus",
+        "-application",
+        "voip",
+      ]),
       expect.objectContaining({ detached: true, killProcessGroup: true }),
     );
   });

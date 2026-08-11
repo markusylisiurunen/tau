@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 const GEMINI_GENERATE_CONTENT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
+export const GEMINI_SPEECH_PLAYBACK_RATE = 1.1;
 const DEFAULT_GEMINI_SPEECH_REWRITE_MODEL = "gemini-3.6-flash";
 const DEFAULT_GEMINI_SPEECH_REWRITE_THINKING_LEVEL = "minimal";
 const DEFAULT_GEMINI_SPEECH_TTS_MODEL = "gemini-3.1-flash-tts-preview";
@@ -114,7 +115,6 @@ export async function* streamGeminiSpeechAudio(
       model: ttsModel,
       voiceName,
       spokenChunks,
-      deliveryMode: options.deliveryMode,
       fetchImpl,
       signal: abortController.signal,
       maxAttempts: options.maxTtsAttempts ?? DEFAULT_TTS_MAX_ATTEMPTS,
@@ -191,7 +191,6 @@ type SynthesizeSpeechAudioChunksArgs = {
   model: string;
   voiceName: string;
   spokenChunks: string[];
-  deliveryMode: GeminiSpeechDeliveryMode;
   fetchImpl: typeof fetch;
   signal?: AbortSignal;
   maxAttempts: number;
@@ -260,7 +259,6 @@ async function* synthesizeSpeechAudioChunksInOrder(
           model: args.model,
           voiceName: args.voiceName,
           spokenText: args.spokenChunks[index]!,
-          deliveryMode: args.deliveryMode,
           fetchImpl: args.fetchImpl,
           signal: args.signal,
           maxAttempts: args.maxAttempts,
@@ -309,7 +307,6 @@ type SynthesizeSpeechAudioChunkArgs = {
   model: string;
   voiceName: string;
   spokenText: string;
-  deliveryMode: GeminiSpeechDeliveryMode;
   fetchImpl: typeof fetch;
   signal?: AbortSignal;
   maxAttempts: number;
@@ -331,7 +328,7 @@ async function synthesizeSpeechAudioChunk(args: SynthesizeSpeechAudioChunkArgs):
             {
               parts: [
                 {
-                  text: buildSpeechSynthesisPrompt(args.spokenText, args.deliveryMode),
+                  text: buildSpeechSynthesisPrompt(args.spokenText),
                 },
               ],
             },
@@ -551,19 +548,14 @@ function calculateTtsMaxOutputTokens(spokenText: string): number {
   return Math.min(MAX_TTS_OUTPUT_TOKENS, Math.max(MIN_TTS_OUTPUT_TOKENS, roundedTokens));
 }
 
-function buildSpeechSynthesisPrompt(
-  spokenText: string,
-  deliveryMode: GeminiSpeechDeliveryMode,
-): string {
+function buildSpeechSynthesisPrompt(spokenText: string): string {
   return [
     "Synthesize speech audio for the labeled transcript below.",
     "Speak only the transcript. Do not speak the instructions or section labels.",
     "",
     "### DIRECTOR'S NOTES",
     "Style: Clear, natural, conversational.",
-    deliveryMode === "progressive"
-      ? "Pacing: Slightly slower than conversational, with deliberate enunciation. The audio will be sped up during playback."
-      : "Pacing: Natural conversational speed with clear enunciation.",
+    "Pacing: Brisk conversational speed. Keep it clear, confident, and energetic without sounding rushed.",
     "",
     "### TRANSCRIPT",
     spokenText,

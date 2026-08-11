@@ -119,6 +119,9 @@ describe("gemini speech", () => {
     );
     expect(ttsRequest.contents[0].parts[0].text).toContain("### TRANSCRIPT");
     expect(ttsRequest.contents[0].parts[0].text).toContain(
+      "Pacing: Brisk conversational speed. Keep it clear, confident, and energetic without sounding rushed.",
+    );
+    expect(ttsRequest.contents[0].parts[0].text).toContain(
       "Use src slash app dot t s, line 42, for the fix.",
     );
   });
@@ -261,7 +264,7 @@ describe("gemini speech", () => {
     expect(transcripts.join(" ")).toBe(testCase.rewrittenText);
     for (const request of ttsRequests) {
       expect(request.contents[0].parts[0].text).toContain(
-        "Pacing: Natural conversational speed with clear enunciation.",
+        "Pacing: Brisk conversational speed. Keep it clear, confident, and energetic without sounding rushed.",
       );
       expect(request.generationConfig.maxOutputTokens).toBeGreaterThanOrEqual(1024);
       expect(request.generationConfig.maxOutputTokens).toBeLessThanOrEqual(8192);

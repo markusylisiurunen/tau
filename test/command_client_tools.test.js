@@ -255,6 +255,38 @@ describe("command client tools", () => {
     }
   });
 
+  it("runs a direct JavaScript command protocol implementation", async () => {
+    const script = [
+      'import { createInterface } from "node:readline";',
+      "const lines = createInterface({ input: process.stdin, crlfDelay: Number.POSITIVE_INFINITY });",
+      "const input = lines[Symbol.asyncIterator]();",
+      "const readFrame = async () => JSON.parse((await input.next()).value);",
+      "const writeFrame = (frame) => process.stdout.write(JSON.stringify(frame) + '\\n');",
+      "const prepare = await readFrame();",
+      "if (prepare.version !== 4 || prepare.type !== 'prepare' || prepare.toolName !== 'system_info') throw new Error('invalid preparation');",
+      "writeFrame({ version: 4, type: 'ready', presentation: { subject: 'raw javascript' } });",
+      "const execute = await readFrame();",
+      "if (execute.version !== 4 || execute.type !== 'execute') throw new Error('invalid authorization');",
+      "writeFrame({ version: 4, type: 'result', content: process.platform });",
+      "lines.close();",
+    ].join("\n");
+    const [tool] = createCommandClientTools([
+      createConfig({
+        name: "system_info",
+        parameters: { type: "object", properties: {}, additionalProperties: false },
+        command: process.execPath,
+        args: ["--input-type=module", "--eval", script],
+      }),
+    ]);
+    const context = createContext();
+    const args = {};
+
+    await expect(tool.describe(args, context)).resolves.toMatchObject({
+      subject: "raw javascript",
+    });
+    await expect(tool.execute(args, context)).resolves.toEqual({ content: process.platform });
+  });
+
   it("runs a direct Bash command protocol implementation", async () => {
     const script = [
       "IFS= read -r prepare",

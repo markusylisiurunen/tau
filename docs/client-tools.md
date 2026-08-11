@@ -149,9 +149,68 @@ await runTauClientToolCommand({
 
 Reserve stdout for the helper's protocol. Write diagnostics to stderr. Return either a string or `{ content: string }`; that text becomes the model-visible tool result.
 
+### Implement the protocol directly in JavaScript
+
+A JavaScript command can implement the version 4 handshake using only Node.js built-ins, without importing Tau or the code-mode package:
+
+```js
+#!/usr/bin/env node
+
+import { arch, platform, release } from "node:os";
+import { createInterface } from "node:readline";
+
+const lines = createInterface({
+  input: process.stdin,
+  crlfDelay: Number.POSITIVE_INFINITY,
+});
+const input = lines[Symbol.asyncIterator]();
+
+async function readFrame() {
+  const next = await input.next();
+  if (next.done) throw new Error("Tau closed the command protocol");
+  return JSON.parse(next.value);
+}
+
+function writeFrame(frame) {
+  process.stdout.write(`${JSON.stringify(frame)}\n`);
+}
+
+const prepare = await readFrame();
+if (
+  prepare.version !== 4 ||
+  prepare.type !== "prepare" ||
+  prepare.toolName !== "system_info"
+) {
+  throw new Error("Invalid system_info preparation");
+}
+
+writeFrame({
+  version: 4,
+  type: "ready",
+  presentation: {
+    subject: "local system",
+  },
+});
+
+const execute = await readFrame();
+if (execute.version !== 4 || execute.type !== "execute") {
+  throw new Error("Invalid system_info authorization");
+}
+
+writeFrame({
+  version: 4,
+  type: "result",
+  content: `${platform()} ${release()} ${arch()}`,
+});
+
+lines.close();
+```
+
+Make the file executable with `chmod +x`. Diagnostics and uncaught errors go to stderr; stdout remains reserved for protocol frames.
+
 ### Implement a simple command tool in Bash
 
-A small command that needs only client-machine authority can implement the version 4 handshake directly. This example depends on `jq` for safe JSON parsing and encoding:
+A small command that needs only client-machine authority can also implement the handshake in Bash. This example depends on `jq` for safe JSON parsing and encoding:
 
 ```bash
 #!/usr/bin/env bash
@@ -183,7 +242,7 @@ jq -cn --arg content "$content" '{
 }'
 ```
 
-Make the script executable and configure it as an argument-free command tool:
+Configure either executable as an argument-free command tool:
 
 ```json
 {

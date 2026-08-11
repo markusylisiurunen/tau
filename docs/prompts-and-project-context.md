@@ -139,7 +139,7 @@ tau --no-agent-context-files
 
 This disables ancestor `AGENTS.md` injection, configured `agentContextFiles`, and the descendant paths-only scan. It does not disable personas, prompt templates, or [skills](skills.md).
 
-The option applies to local TUI sessions and to hosts started with `tau rpc` or `tau serve`. For the Node SDK, `noAgentContextFiles: true` provides the same host-level behavior. An attached client cannot retroactively change how an existing remote host session was created.
+The option applies to local TUI sessions and to hosts started with `tau serve`. For the Node SDK, `noAgentContextFiles: true` provides the same host-level behavior. An attached client cannot retroactively change how an existing remote host session was created.
 
 ## Alternate subagent working directories
 
@@ -176,6 +176,6 @@ For a new local TUI session, debug mode prints discovered content, loaded contex
 tau --debug --persona release-coder
 ```
 
-Add `--no-agent-context-files` to verify the context-free variant. Debug mode is TUI startup functionality and is not available with `tau rpc` or `tau serve`.
+Add `--no-agent-context-files` to verify the context-free variant. Debug mode is TUI startup functionality and is not available with `tau serve`.
 
 If expected context is missing, verify the execution-environment `cwd` and `home`, not just the attached client's current directory. Then check exact filenames, canonical path eligibility, configuration-level path bases, scan exclusions, and reload warnings. See [troubleshooting](troubleshooting.md) for broader diagnostics.

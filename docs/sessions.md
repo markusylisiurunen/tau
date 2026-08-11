@@ -48,7 +48,7 @@ Retry runs another assistant turn from the current session history. It does not 
 
 Retry is unavailable when there is no prior user turn. It is also unavailable for goal-controlled turns because a blocked goal has an explicit resume operation.
 
-Detaching is not the same as interrupting. Closing one observer of a long-running host leaves the hosted turn running. By contrast, a local TUI owns its in-process host, and a stdio attachment owns its `tau rpc` process; closing either causes that host to shut down and interrupt active work. See [remote sessions](remote-sessions.md).
+Detaching is not the same as interrupting. Closing one observer of a long-running host leaves the hosted turn running. By contrast, a local TUI owns its in-process host, so closing it causes that host to shut down and interrupt active work. See [remote sessions](remote-sessions.md).
 
 ## Change persona and reasoning safely
 
@@ -189,14 +189,14 @@ Filters can be combined:
 tau usage --since 2026-08-01 --provider openai-codex --group-by model
 ```
 
-There is no `--until`, `--session`, or `--agent` filter. For a remote session, run `tau usage` on the host under the same user as `tau serve` or `tau rpc`; running it on an attaching client reads that client user’s logs instead. The command is read-only, but the raw files still reveal timestamps, session identifiers, model choices, token volume, and cost activity. Prefer the filtered aggregate output over copying raw JSONL into a shared transcript, and treat Tau-recorded costs as operational estimates rather than a provider invoice.
+There is no `--until`, `--session`, or `--agent` filter. For a remote session, run `tau usage` on the host under the same user as `tau serve`; running it on an attaching client reads that client user’s logs instead. The command is read-only, but the raw files still reveal timestamps, session identifiers, model choices, token volume, and cost activity. Prefer the filtered aggregate output over copying raw JSONL into a shared transcript, and treat Tau-recorded costs as operational estimates rather than a provider invoice.
 
 ## What survives each boundary
 
 | Event | Durable session state | Pending input | Active turns and subagents | Client-local state |
 | --- | --- | --- | --- | --- |
 | Another client detaches from a live WebSocket host | Preserved | Preserved in host memory | Continue | Detached client tools, themes, drafts, and local tasks are lost |
-| Local TUI or stdio/RPC attachment exits | Persisted by owned-host shutdown | Cancelled | Interrupted and settled where possible | Lost |
+| Local TUI exits | Persisted by owned-host shutdown | Cancelled | Interrupted and settled where possible | Lost |
 | WebSocket host restarts | Recovered from storage | Lost | Returns idle; subagents are not restored | Each client reconnects separately |
 | TUI restarts while host stays live | Preserved | Preserved in host memory | Continue | Reloaded from the new client process |
 | `/new` | Old session remains stored | Not copied | New idle session | Same TUI process continues |
@@ -214,10 +214,11 @@ Use normal Tau operations rather than opening or editing session files.
 5. Run non-contextual environment checks with `!!`, for example `!!pwd` and `!!git status --short`.
 6. Submit a small read-only request before resuming destructive work.
 
-For a local stored session, a one-shot local RPC attachment exercises the same recovery path:
+For a local stored session, start a WebSocket host under the same user and attach from another terminal:
 
 ```sh
-tau attach --session 0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3 -- tau rpc
+tau serve
+tau attach --session 0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3 ws://127.0.0.1:8787
 ```
 
 If recovery fails, verify the host version, execution-environment resolver configuration, target availability, and credentials before assuming the stored session is damaged. [Remote sessions](remote-sessions.md) covers those checks.

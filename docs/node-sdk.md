@@ -1,6 +1,6 @@
 # Node SDK
 
-Tau's Node SDK provides a typed client for creating, observing, and controlling sessions without implementing the wire protocol directly. Use the in-process client when your application should own the host, the WebSocket client for a long-running `tau serve` host, or the transport adapter when another process owns the connection.
+Tau's Node SDK provides a typed client for creating, observing, and controlling sessions without implementing the wire protocol directly. Use the in-process client when your application should own the host, the WebSocket client for a long-running `tau serve` host, or the transport adapter with a custom connection implementation.
 
 The SDK uses the same public [session protocol](session-protocol.md) as the TUI. Session behavior is therefore consistent across local applications, remote integrations, and terminal clients.
 
@@ -74,23 +74,7 @@ WebSocket authentication grants full session access. Deployment and TLS guidance
 
 ### Supply a protocol transport
 
-`createTauSdkClientFromTransport(transport, options?)` builds the same client facade over any `SessionProtocolTransport`. Tau exports `StdioSessionProtocolTransport` for a spawned `tau rpc` process:
-
-```ts
-import { spawn } from "node:child_process";
-import {
-  StdioSessionProtocolTransport,
-  createTauSdkClientFromTransport,
-} from "@markusylisiurunen/tau/sdk";
-
-const child = spawn("tau", ["rpc"], {
-  stdio: ["pipe", "pipe", "pipe"],
-});
-const transport = new StdioSessionProtocolTransport(child);
-const client = await createTauSdkClientFromTransport(transport);
-```
-
-The stdio transport owns the supplied process connection and terminates it on close. Stdout must contain only protocol NDJSON; stderr is retained for bounded process diagnostics.
+`createTauSdkClientFromTransport(transport, options?)` builds the same client facade over any `SessionProtocolTransport`. This keeps the SDK facade independent of WebSocket and allows applications to supply another transport without changing session semantics.
 
 A custom transport implements:
 
@@ -361,7 +345,7 @@ The SDK also exports `executeTauCodeMode` for standalone execution. The separate
 
 Most turn and mutation methods do not accept an `AbortSignal`. Call `session.interrupt()` to cancel active host work. `session.exec()` is the exception: its optional signal targets only that execution.
 
-`session.unobserve()` retires one facade. `client.close()` retires the connection, rejects pending transport requests, aborts client-tool handlers, waits for them to settle, and then closes the transport. For the default in-process client it also persists sessions and shuts down the owned host. For WebSocket it leaves the remote host and sessions running. For stdio it closes the owned process connection.
+`session.unobserve()` retires one facade. `client.close()` retires the connection, rejects pending transport requests, aborts client-tool handlers, waits for them to settle, and then closes the transport. For the default in-process client it also persists sessions and shuts down the owned host. For WebSocket it leaves the remote host and sessions running.
 
 Always close clients in `finally`. Do not continue using a session facade after unobserve or any client after close.
 
@@ -371,7 +355,6 @@ All exported SDK and transport errors extend `TauSessionClientError`:
 
 - `TauSessionProtocolResponseError` means the host returned a protocol error. It exposes `code`, `message`, `requestId`, and optional `data`.
 - `TauTransportError` means connection setup, framing, version validation, timeout, closure, or another terminal transport operation failed.
-- `TauProcessError` extends `TauTransportError` for a stdio subprocess failure and includes `exitCode`, `signal`, and bounded `stderr`.
 
 Branch on a protocol error's `code`, not its message. A successful request can still return a failed, aborted, or blocked turn outcome, so inspect `result.turn.status` separately.
 
@@ -384,7 +367,7 @@ The SDK entry point exports the types needed at integration boundaries rather th
 - `TauSdkClient`, `TauSdkSession`, client option types, session summaries, and request and result aliases;
 - `TauSdkDelta`, `SessionProtocolSnapshot`, pending-message types, subagent-activity types, and ephemeral event types;
 - `TauSdkClientTool`, its execution context and environment facade, and code-mode definition and result types;
-- `SessionProtocolTransport`, listener types, WebSocket options, stdio process type, and transport errors.
+- `SessionProtocolTransport`, listener types, WebSocket options, and transport errors.
 
 It also exports `applySessionProtocolDelta`, `applySessionProtocolSubagentActivitiesMessage`, the turn-ledger helpers, and user-text projection helpers:
 

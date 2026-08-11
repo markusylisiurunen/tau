@@ -44,7 +44,6 @@ import { detectTerminalColors } from "./tui/terminal_appearance.js";
 const cwd = process.cwd();
 const configDeps = createDefaultConfigDeps();
 const argv = process.argv.slice(2);
-const isRpcSubcommand = argv[0] === "rpc";
 const isAttachSubcommand = argv[0] === "attach";
 const isServeSubcommand = argv[0] === "serve";
 const isDiffToolSubcommand = argv[0] === "diff-tool";
@@ -67,7 +66,7 @@ function registerTerminalExitCleanup(): void {
   });
 }
 
-if (!isRpcSubcommand && !isDiffToolSubcommand) {
+if (!isDiffToolSubcommand) {
   registerTerminalExitCleanup();
 }
 
@@ -109,15 +108,10 @@ type AttachCliOptions = {
   noClientTools: boolean;
 };
 
-type AttachTarget =
-  | {
-      transport: "stdio";
-      command: string[];
-    }
-  | {
-      transport: "websocket";
-      url: string;
-    };
+type AttachTarget = {
+  transport: "websocket";
+  url: string;
+};
 
 type ServeCliOptions = {
   help: boolean;
@@ -143,10 +137,6 @@ function parseAttachArgs(args: string[]): AttachCliOptions {
 
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i]!;
-    if (arg === "--") {
-      target = { transport: "stdio", command: args.slice(i + 1) };
-      break;
-    }
     if (arg === "--help" || arg === "-h") {
       help = true;
       continue;
@@ -230,10 +220,6 @@ function parseAttachArgs(args: string[]): AttachCliOptions {
 
   if (!help && !target) {
     throw new CliError("missing attach target");
-  }
-
-  if (target?.transport === "stdio" && target.command.length === 0) {
-    throw new CliError("missing attach command after --");
   }
 
   if (sessionId !== undefined && createNew) {
@@ -383,7 +369,6 @@ function printAttachHelp(): void {
       "",
       "usage:",
       "  tau attach [--session <id> | --new --cwd <path> [execution options]] [--auth-token <token>] ws://host:port",
-      "  tau attach [--session <id> | --new --cwd <path> [execution options]] -- <command> [args...]",
       "",
       "options:",
       "  --session <id>                 attach to an existing hosted session.",
@@ -406,7 +391,6 @@ function printAttachHelp(): void {
       "  tau attach --session 0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3 --auth-token $TAU_WS_AUTH_TOKEN ws://vps:8787",
       "",
       "without --session or --new, attach lists hosted sessions and prompts for a selection.",
-      "stdio commands and websocket servers both speak Tau's session protocol.",
     ].join("\n"),
   );
 }
@@ -576,38 +560,6 @@ async function createLocalSessionHost(options: {
       });
     },
   });
-}
-
-async function runRpcMode(options: { cli: CliOptions; config: Config }): Promise<void> {
-  const [sessionHost, { runRpcServer }] = await Promise.all([
-    createLocalSessionHost(options),
-    import("./core/modes/rpc_server.js"),
-  ]);
-
-  const abortController = new AbortController();
-  const requestShutdown = () => {
-    if (!abortController.signal.aborted) {
-      abortController.abort();
-    }
-  };
-
-  const onSigInt = () => requestShutdown();
-  const onSigTerm = () => requestShutdown();
-
-  process.on("SIGINT", onSigInt);
-  process.on("SIGTERM", onSigTerm);
-
-  try {
-    await runRpcServer({
-      host: sessionHost,
-      input: process.stdin,
-      output: process.stdout,
-      signal: abortController.signal,
-    });
-  } finally {
-    process.off("SIGINT", onSigInt);
-    process.off("SIGTERM", onSigTerm);
-  }
 }
 
 // Load built-in and user content
@@ -971,32 +923,18 @@ if (isAttachSubcommand) {
           input: buildAttachCreateInput(attach),
         } as const)
       : ({ mode: "select" } as const);
-  const app =
-    attach.target.transport === "stdio"
-      ? await SessionChatApp.connect({
-          transport: "stdio",
-          command: attach.target.command[0]!,
-          args: attach.target.command.slice(1),
-          sessionSelection,
-          terminalColors,
-          themeId: config.defaultTheme,
-          themes,
-          config,
-          defaultDiffTool,
-          clientToolsEnabled: !attach.noClientTools,
-        })
-      : await SessionChatApp.connect({
-          transport: "websocket",
-          url: attach.target.url,
-          authToken: attach.authToken ?? process.env.TAU_WS_AUTH_TOKEN,
-          sessionSelection,
-          terminalColors,
-          themeId: config.defaultTheme,
-          themes,
-          config,
-          defaultDiffTool,
-          clientToolsEnabled: !attach.noClientTools,
-        });
+  const app = await SessionChatApp.connect({
+    transport: "websocket",
+    url: attach.target.url,
+    authToken: attach.authToken ?? process.env.TAU_WS_AUTH_TOKEN,
+    sessionSelection,
+    terminalColors,
+    themeId: config.defaultTheme,
+    themes,
+    config,
+    defaultDiffTool,
+    clientToolsEnabled: !attach.noClientTools,
+  });
 
   let isShuttingDown = false;
   const shutdown = async (code = 0) => {
@@ -1042,13 +980,12 @@ if (isServeSubcommand) {
   }
 }
 
-const cliArgv = isRpcSubcommand ? argv.slice(1) : isServeSubcommand ? serve!.cliArgs : argv;
+const cliArgv = isServeSubcommand ? serve!.cliArgs : argv;
 
 let cli: CliOptions;
 try {
   cli = parseCliArgs(cliArgv);
   if (
-    !isRpcSubcommand &&
     !isServeSubcommand &&
     cli.personaId &&
     !personas.some((persona) => persona.id === cli.personaId)
@@ -1074,13 +1011,13 @@ if (cli.help) {
   process.exit(0);
 }
 
-if ((isRpcSubcommand || isServeSubcommand) && cli.debug) {
+if (isServeSubcommand && cli.debug) {
   // eslint-disable-next-line no-console
   console.error("--debug is only supported in TUI mode.");
   process.exit(1);
 }
 
-if ((isRpcSubcommand || isServeSubcommand) && cli.noClientTools) {
+if (isServeSubcommand && cli.noClientTools) {
   // eslint-disable-next-line no-console
   console.error("--no-client-tools is only supported in TUI mode.");
   process.exit(1);
@@ -1091,7 +1028,7 @@ let reasoningOverride: ReasoningEffort | undefined = cli.reasoningOverride;
 
 if (cli.personaId) {
   initialPersonaId = cli.personaId;
-} else if (!isRpcSubcommand && !isServeSubcommand && config.defaultPersona) {
+} else if (!isServeSubcommand && config.defaultPersona) {
   const parsedDefaultPersona = parsePersonaString(config.defaultPersona, personas);
   initialPersonaId = parsedDefaultPersona.personaId;
   if (
@@ -1203,17 +1140,6 @@ if (isServeSubcommand) {
   } finally {
     process.off("SIGINT", onSigInt);
     process.off("SIGTERM", onSigTerm);
-  }
-}
-
-if (isRpcSubcommand) {
-  try {
-    await runRpcMode({ cli, config });
-    process.exit(0);
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error((err as Error).message);
-    process.exit(1);
   }
 }
 

@@ -219,4 +219,4 @@ Restart the TUI instead after changing client-owned themes, the diff launcher, s
 - `/prompt:<id>` fills the editor but does not submit it.
 - `/diff` records returned feedback but does not automatically ask the assistant to act on it.
 - `/reload` does not reload client themes or client tools.
-- Exiting a WebSocket attachment does not delete or necessarily stop the hosted session. Exiting a local TUI or one-shot stdio attachment also shuts down its owned host, so active work is interrupted and persisted before recovery where possible.
+- Exiting a WebSocket attachment does not delete or necessarily stop the hosted session. Exiting a local TUI shuts down its owned host, so active work is interrupted and persisted before recovery where possible.

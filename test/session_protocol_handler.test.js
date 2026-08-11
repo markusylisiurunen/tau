@@ -1,13 +1,12 @@
-import { PassThrough } from "node:stream";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
-import { RpcServer, runRpcServer } from "../dist/core/modes/rpc_server.js";
 import { formatSteeringUserMessage } from "../dist/core/runtime/steering.js";
 import {
   EphemeralThreadBusyError,
   SessionExecBusyError,
   SessionRetryUnavailableError,
 } from "../dist/host/session_host.js";
+import { SessionProtocolHandler } from "../dist/host/session_protocol_handler.js";
 import {
   SESSION_PROTOCOL_ERROR_CODES,
   SESSION_PROTOCOL_VERSION,
@@ -123,13 +122,27 @@ function createResetDelta(sessionId, fromRevision, snapshot, reason = "configura
 }
 
 function request(id, method, params) {
-  return JSON.stringify({
+  return {
     version: SESSION_PROTOCOL_VERSION,
     type: "request",
     id,
     method,
     ...(params !== undefined ? { params } : {}),
-  });
+  };
+}
+
+class TestSessionProtocolConnection {
+  constructor(options) {
+    this.handler = new SessionProtocolHandler(options);
+  }
+
+  async handleRequest(protocolRequest) {
+    await this.handler.handleRequest(protocolRequest);
+  }
+
+  async close() {
+    await this.handler.close("shutdown-host");
+  }
 }
 
 function createHarness(options = {}) {
@@ -565,14 +578,14 @@ function createHarness(options = {}) {
     },
   };
 
-  const server = new RpcServer({
+  const connection = new TestSessionProtocolConnection({
     host,
-    send: (line) => lines.push(JSON.parse(line)),
+    send: (message) => lines.push(message),
   });
 
   return {
     lines,
-    server,
+    connection,
     host,
     hostShutdown,
     seededSession,
@@ -597,14 +610,6 @@ async function waitFor(predicate, timeoutMs = 2000) {
     }
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
-}
-
-function parseNdjson(text) {
-  return text
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0)
-    .map((line) => JSON.parse(line));
 }
 
 function deltaHasNotice(line, text) {
@@ -648,7 +653,7 @@ function snapshotHasUserText(snapshot, text) {
   );
 }
 
-describe("rpc_server", () => {
+describe("SessionProtocolHandler", () => {
   it("starts without creating an implicit session", async () => {
     const harness = createHarness({ precreate: false });
 
@@ -659,7 +664,7 @@ describe("rpc_server", () => {
     );
     expect(harness.lines[0]).not.toHaveProperty("sessionId");
 
-    await harness.server.handleLine(request("list", "session.list", {}));
+    await harness.connection.handleRequest(request("list", "session.list", {}));
     const list = harness.lines.find((line) => line.type === "response" && line.id === "list");
     expect(list.result).toEqual({ sessions: [] });
   });
@@ -671,7 +676,7 @@ describe("rpc_server", () => {
       },
     });
 
-    await harness.server.handleLine(
+    await harness.connection.handleRequest(
       request("ephemeral-busy", "session.ephemeral.submit", {
         sessionId: "session-1",
         contextId: "context-1",
@@ -704,7 +709,7 @@ describe("rpc_server", () => {
       releaseObserve = resolve;
     });
     const lines = [];
-    const server = new RpcServer({
+    const connection = new TestSessionProtocolConnection({
       host: {
         ...harness.host,
         async observeSession(sessionId) {
@@ -714,10 +719,10 @@ describe("rpc_server", () => {
         },
         shutdown: vi.fn(async () => {}),
       },
-      send: (line) => lines.push(JSON.parse(line)),
+      send: (message) => lines.push(message),
     });
 
-    const create = server.handleLine(
+    const create = connection.handleRequest(
       request("ephemeral-create", "session.ephemeral.create", {
         sessionId: "session-1",
         instructions: "review this",
@@ -726,7 +731,7 @@ describe("rpc_server", () => {
     );
     await observeStarted;
 
-    await server.close();
+    await connection.close();
     releaseObserve();
     await create;
 
@@ -736,7 +741,7 @@ describe("rpc_server", () => {
 
   it("creates, uses, and closes ephemeral contexts during an active main turn", async () => {
     const harness = createHarness();
-    const submit = harness.server.handleLine(
+    const submit = harness.connection.handleRequest(
       request("submit", "session.submit", {
         sessionId: "session-1",
         text: "keep the main turn active",
@@ -744,14 +749,14 @@ describe("rpc_server", () => {
     );
     await waitFor(() => harness.lines.some((line) => deltaHasNotice(line, "streaming")));
 
-    await harness.server.handleLine(
+    await harness.connection.handleRequest(
       request("ephemeral-create", "session.ephemeral.create", {
         sessionId: "session-1",
         instructions: "review this",
         tools: ["bash"],
       }),
     );
-    await harness.server.handleLine(
+    await harness.connection.handleRequest(
       request("ephemeral-submit", "session.ephemeral.submit", {
         sessionId: "session-1",
         contextId: "context-1",
@@ -759,7 +764,7 @@ describe("rpc_server", () => {
         message: "review",
       }),
     );
-    await harness.server.handleLine(
+    await harness.connection.handleRequest(
       request("ephemeral-close", "session.ephemeral.close", {
         sessionId: "session-1",
         contextId: "context-1",
@@ -787,7 +792,7 @@ describe("rpc_server", () => {
   it("creates additional sessions and routes requests by session id", async () => {
     const harness = createHarness();
 
-    await harness.server.handleLine(request("create", "session.create", localCreateParams));
+    await harness.connection.handleRequest(request("create", "session.create", localCreateParams));
     const created = harness.lines.find((line) => line.type === "response" && line.id === "create");
     expect(created).toEqual(
       expect.objectContaining({
@@ -796,7 +801,7 @@ describe("rpc_server", () => {
       }),
     );
 
-    await harness.server.handleLine(request("list", "session.list", {}));
+    await harness.connection.handleRequest(request("list", "session.list", {}));
     const list = harness.lines.find((line) => line.type === "response" && line.id === "list");
     expect(list.result).toEqual({
       sessions: [
@@ -805,7 +810,7 @@ describe("rpc_server", () => {
       ],
     });
 
-    await harness.server.handleLine(
+    await harness.connection.handleRequest(
       request("bash-created", "session.exec", {
         sessionId: "session-2",
         execId: "exec-created",
@@ -822,7 +827,7 @@ describe("rpc_server", () => {
       }),
     );
 
-    const submit = harness.server.handleLine(
+    const submit = harness.connection.handleRequest(
       request("submit-created", "session.submit", {
         sessionId: "session-2",
         text: "created session turn",
@@ -859,7 +864,7 @@ describe("rpc_server", () => {
     (await harness.host.observeSession("session-2")).releaseTurn();
     await submit;
 
-    await harness.server.handleLine(
+    await harness.connection.handleRequest(
       request("compact-created", "session.compact", {
         sessionId: "session-2",
         mode: "summary-and-last",
@@ -890,10 +895,10 @@ describe("rpc_server", () => {
       }),
     );
 
-    await harness.server.handleLine(
+    await harness.connection.handleRequest(
       request("detach-created", "session.unobserve", { sessionId: "session-2" }),
     );
-    await harness.server.handleLine(
+    await harness.connection.handleRequest(
       request("snapshot-created", "session.snapshot", { sessionId: "session-2" }),
     );
     const unobservedSnapshot = harness.lines.find(
@@ -924,14 +929,14 @@ describe("rpc_server", () => {
       },
     });
 
-    const steering = harness.server.handleLine(
+    const steering = harness.connection.handleRequest(
       request("steer-1", "session.steer", {
         sessionId: "session-1",
         text: "start from steering",
       }),
     );
     await recordStarted;
-    const overlapping = harness.server.handleLine(
+    const overlapping = harness.connection.handleRequest(
       request("submit-1", "session.submit", {
         sessionId: "session-1",
         text: "must remain uncommitted",
@@ -977,7 +982,7 @@ describe("rpc_server", () => {
       ],
     });
 
-    const firstSubmit = harness.server.handleLine(
+    const firstSubmit = harness.connection.handleRequest(
       request("submit-1", "session.submit", {
         sessionId: "session-1",
         text: "first turn",
@@ -987,7 +992,7 @@ describe("rpc_server", () => {
     harness.releaseTurn();
     await finalSnapshotStarted;
 
-    const steering = harness.server.handleLine(
+    const steering = harness.connection.handleRequest(
       request("steer-1", "session.steer", {
         sessionId: "session-1",
         text: "preserve steer mode",
@@ -1002,7 +1007,7 @@ describe("rpc_server", () => {
       harness.lines.findLast((line) => line.type === "session.pendingUserMessages").state.messages,
     ).toEqual([expect.objectContaining({ mode: "steer", text: "preserve steer mode" })]);
 
-    await harness.server.handleLine(
+    await harness.connection.handleRequest(
       request("cancel-1", "session.cancelPendingMessages", { sessionId: "session-1" }),
     );
     await steering;
@@ -1024,7 +1029,7 @@ describe("rpc_server", () => {
       },
     });
 
-    await harness.server.handleLine(
+    await harness.connection.handleRequest(
       request("retry-goal", "session.retry", { sessionId: "session-1" }),
     );
 
@@ -1039,14 +1044,14 @@ describe("rpc_server", () => {
 
   it("rejects goal clear without interrupting unrelated active work", async () => {
     const harness = createHarness();
-    const submit = harness.server.handleLine(
+    const submit = harness.connection.handleRequest(
       request("submit-1", "session.submit", {
         sessionId: "session-1",
         text: "ordinary work",
       }),
     );
     await waitFor(() => harness.seededSession.isTurnRunning);
-    const queued = harness.server.handleLine(
+    const queued = harness.connection.handleRequest(
       request("queue-1", "session.queue", {
         sessionId: "session-1",
         text: "keep queued",
@@ -1058,7 +1063,7 @@ describe("rpc_server", () => {
       ),
     );
 
-    await harness.server.handleLine(
+    await harness.connection.handleRequest(
       request("clear-goal", "session.clearGoal", { sessionId: "session-1" }),
     );
 
@@ -1071,7 +1076,7 @@ describe("rpc_server", () => {
       harness.lines.findLast((line) => line.type === "session.pendingUserMessages").state.messages,
     ).toEqual([expect.objectContaining({ mode: "queue", text: "keep queued" })]);
 
-    await harness.server.handleLine(
+    await harness.connection.handleRequest(
       request("cancel-queue", "session.cancelPendingMessages", { sessionId: "session-1" }),
     );
     await queued;
@@ -1082,7 +1087,7 @@ describe("rpc_server", () => {
   it("streams submit events, forwards subagent events, and rejects overlapping submit with busy", async () => {
     const harness = createHarness();
 
-    const firstSubmit = harness.server.handleLine(
+    const firstSubmit = harness.connection.handleRequest(
       request("submit-1", "session.submit", {
         sessionId: "session-1",
         text: "first turn",
@@ -1102,7 +1107,7 @@ describe("rpc_server", () => {
     );
     harness.emitSubagent({ type: "spawned", id: "agent-1", title: "research" });
 
-    await harness.server.handleLine(
+    await harness.connection.handleRequest(
       request("submit-2", "session.submit", {
         sessionId: "session-1",
         text: "second turn",
@@ -1177,13 +1182,13 @@ describe("rpc_server", () => {
   it("broadcasts session updates across handlers and stops after detach", async () => {
     const harness = createHarness();
     const observerLines = [];
-    const observer = new RpcServer({
+    const observer = new TestSessionProtocolConnection({
       host: harness.host,
-      send: (line) => observerLines.push(JSON.parse(line)),
+      send: (message) => observerLines.push(message),
     });
 
-    await observer.handleLine(request("attach", "session.observe", { sessionId: "session-1" }));
-    await harness.server.handleLine(
+    await observer.handleRequest(request("attach", "session.observe", { sessionId: "session-1" }));
+    await harness.connection.handleRequest(
       request("reasoning", "session.setReasoning", {
         sessionId: "session-1",
         reasoning: "high",
@@ -1208,7 +1213,9 @@ describe("rpc_server", () => {
       }),
     );
 
-    await observer.handleLine(request("detach", "session.unobserve", { sessionId: "session-1" }));
+    await observer.handleRequest(
+      request("detach", "session.unobserve", { sessionId: "session-1" }),
+    );
     expect(observerLines.find((line) => line.type === "response" && line.id === "detach")).toEqual(
       expect.objectContaining({
         ok: true,
@@ -1219,7 +1226,7 @@ describe("rpc_server", () => {
       (line) => line.type === "session.delta",
     ).length;
 
-    await harness.server.handleLine(
+    await harness.connection.handleRequest(
       request("reasoning-again", "session.setReasoning", {
         sessionId: "session-1",
         reasoning: "low",
@@ -1244,12 +1251,12 @@ describe("rpc_server", () => {
       ],
     });
     const observerLines = [];
-    const observer = new RpcServer({
+    const observer = new TestSessionProtocolConnection({
       host: harness.host,
-      send: (line) => observerLines.push(JSON.parse(line)),
+      send: (message) => observerLines.push(message),
     });
 
-    await observer.handleLine(request("attach", "session.observe", { sessionId: "session-1" }));
+    await observer.handleRequest(request("attach", "session.observe", { sessionId: "session-1" }));
 
     const responseIndex = observerLines.findIndex(
       (line) => line.type === "response" && line.id === "attach",
@@ -1289,14 +1296,18 @@ describe("rpc_server", () => {
       ],
     });
     const observerLines = [];
-    const observer = new RpcServer({
+    const observer = new TestSessionProtocolConnection({
       host: harness.host,
-      send: (line) => observerLines.push(JSON.parse(line)),
+      send: (message) => observerLines.push(message),
     });
 
-    await observer.handleLine(request("attach-1", "session.observe", { sessionId: "session-1" }));
+    await observer.handleRequest(
+      request("attach-1", "session.observe", { sessionId: "session-1" }),
+    );
     observerLines.splice(0);
-    await observer.handleLine(request("attach-2", "session.observe", { sessionId: "session-1" }));
+    await observer.handleRequest(
+      request("attach-2", "session.observe", { sessionId: "session-1" }),
+    );
 
     const responseIndex = observerLines.findIndex(
       (line) => line.type === "response" && line.id === "attach-2",
@@ -1320,12 +1331,12 @@ describe("rpc_server", () => {
       ],
     });
     const observerLines = [];
-    const observer = new RpcServer({
+    const observer = new TestSessionProtocolConnection({
       host: harness.host,
-      send: (line) => observerLines.push(JSON.parse(line)),
+      send: (message) => observerLines.push(message),
     });
 
-    await observer.handleLine(request("attach", "session.observe", { sessionId: "session-1" }));
+    await observer.handleRequest(request("attach", "session.observe", { sessionId: "session-1" }));
     expect(observerLines).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -1355,14 +1366,18 @@ describe("rpc_server", () => {
       ],
     });
     const observerLines = [];
-    const observer = new RpcServer({
+    const observer = new TestSessionProtocolConnection({
       host: harness.host,
-      send: (line) => observerLines.push(JSON.parse(line)),
+      send: (message) => observerLines.push(message),
     });
 
-    await observer.handleLine(request("attach-1", "session.observe", { sessionId: "session-1" }));
+    await observer.handleRequest(
+      request("attach-1", "session.observe", { sessionId: "session-1" }),
+    );
     observerLines.splice(0);
-    await observer.handleLine(request("attach-2", "session.observe", { sessionId: "session-1" }));
+    await observer.handleRequest(
+      request("attach-2", "session.observe", { sessionId: "session-1" }),
+    );
 
     expect(observerLines).toEqual(
       expect.arrayContaining([
@@ -1393,7 +1408,7 @@ describe("rpc_server", () => {
       },
     });
 
-    await harness.server.handleLine(
+    await harness.connection.handleRequest(
       request("submit", "session.submit", {
         sessionId: "session-1",
         text: "durable before model",
@@ -1418,7 +1433,7 @@ describe("rpc_server", () => {
   it("preserves event order across async snapshot commits", async () => {
     const harness = createHarness({ snapshotDelays: [50, 0] });
 
-    const submit = harness.server.handleLine(
+    const submit = harness.connection.handleRequest(
       request("submit", "session.submit", {
         sessionId: "session-1",
         text: "ordered events",
@@ -1448,7 +1463,7 @@ describe("rpc_server", () => {
       });
     const harness = createHarness({ afterTurnRelease: submitBlocker });
 
-    const submitPromise = harness.server.handleLine(
+    const submitPromise = harness.connection.handleRequest(
       request("submit", "session.submit", {
         sessionId: "session-1",
         text: "close while submit is still settling",
@@ -1456,7 +1471,7 @@ describe("rpc_server", () => {
     );
     await waitFor(() => harness.seededSession.canReleaseTurn());
 
-    const closePromise = harness.server.close();
+    const closePromise = harness.connection.close();
     await Promise.resolve();
 
     expect(harness.hostShutdown).not.toHaveBeenCalled();
@@ -1471,11 +1486,10 @@ describe("rpc_server", () => {
 
   it("does not emit protocol output after close", async () => {
     const harness = createHarness();
-    await harness.server.close();
+    await harness.connection.close();
     const lineCount = harness.lines.length;
 
-    await harness.server.handleLine("{bad-json");
-    await harness.server.handleLine(
+    await harness.connection.handleRequest(
       request("snapshot", "session.snapshot", { sessionId: "session-1" }),
     );
 
@@ -1501,7 +1515,7 @@ describe("rpc_server", () => {
       ],
     });
 
-    const submit = harness.server.handleLine(
+    const submit = harness.connection.handleRequest(
       request("submit", "session.submit", {
         sessionId: "session-1",
         text: "completed but still owned",
@@ -1513,7 +1527,7 @@ describe("rpc_server", () => {
     await finalSnapshotStarted;
 
     expect(harness.seededSession.isTurnRunning).toBe(false);
-    await harness.server.handleLine(
+    await harness.connection.handleRequest(
       request("rewind", "session.rewind", { sessionId: "session-1", historyEntryId }),
     );
 
@@ -1533,7 +1547,7 @@ describe("rpc_server", () => {
   it("interrupts a subagent run without interrupting an active foreground turn", async () => {
     const harness = createHarness();
 
-    const submit = harness.server.handleLine(
+    const submit = harness.connection.handleRequest(
       request("submit-1", "session.submit", {
         sessionId: "session-1",
         text: "keep this turn running",
@@ -1541,7 +1555,7 @@ describe("rpc_server", () => {
     );
     await waitFor(() => harness.seededSession.canReleaseTurn());
 
-    await harness.server.handleLine(
+    await harness.connection.handleRequest(
       request("interrupt-subagent-1", "session.interruptSubagent", {
         sessionId: "session-1",
         subagentId: "agent-1",
@@ -1561,7 +1575,7 @@ describe("rpc_server", () => {
   it("changes reasoning during an active turn without interrupting or rejecting queued submits", async () => {
     const harness = createHarness();
 
-    const firstSubmit = harness.server.handleLine(
+    const firstSubmit = harness.connection.handleRequest(
       request("submit-1", "session.submit", {
         sessionId: "session-1",
         text: "first turn",
@@ -1569,13 +1583,13 @@ describe("rpc_server", () => {
     );
     await waitFor(() => harness.seededSession.canReleaseTurn());
 
-    const queuedSubmit = harness.server.handleLine(
+    const queuedSubmit = harness.connection.handleRequest(
       request("queue-1", "session.queue", {
         sessionId: "session-1",
         text: "queued turn",
       }),
     );
-    await harness.server.handleLine(
+    await harness.connection.handleRequest(
       request("reasoning-1", "session.setReasoning", {
         sessionId: "session-1",
         reasoning: "high",
@@ -1626,7 +1640,7 @@ describe("rpc_server", () => {
   it("batches steering submits while a turn is running", async () => {
     const harness = createHarness();
 
-    const firstSubmit = harness.server.handleLine(
+    const firstSubmit = harness.connection.handleRequest(
       request("submit-1", "session.submit", {
         sessionId: "session-1",
         text: "first turn",
@@ -1634,13 +1648,13 @@ describe("rpc_server", () => {
     );
 
     await waitFor(() => harness.lines.some((line) => deltaHasNotice(line, "streaming")));
-    const steerOne = harness.server.handleLine(
+    const steerOne = harness.connection.handleRequest(
       request("steer-1", "session.steer", {
         sessionId: "session-1",
         text: "change direction",
       }),
     );
-    const steerTwo = harness.server.handleLine(
+    const steerTwo = harness.connection.handleRequest(
       request("steer-2", "session.steer", {
         sessionId: "session-1",
         text: "also check docs",
@@ -1674,7 +1688,7 @@ describe("rpc_server", () => {
     expect(harness.lines.some((line) => line.id === "steer-1" && line.type === "response")).toBe(
       false,
     );
-    await harness.server.handleLine(
+    await harness.connection.handleRequest(
       request("cancel-applied", "session.cancelPendingMessages", { sessionId: "session-1" }),
     );
     expect(harness.lines.find((line) => line.id === "cancel-applied")).toEqual(
@@ -1707,13 +1721,13 @@ describe("rpc_server", () => {
   it("publishes and cancels pending queue and steering state", async () => {
     const harness = createHarness();
     const observerLines = [];
-    const observer = new RpcServer({
+    const observer = new TestSessionProtocolConnection({
       host: harness.host,
-      send: (line) => observerLines.push(JSON.parse(line)),
+      send: (message) => observerLines.push(message),
     });
-    await observer.handleLine(request("attach", "session.observe", { sessionId: "session-1" }));
+    await observer.handleRequest(request("attach", "session.observe", { sessionId: "session-1" }));
 
-    const firstSubmit = harness.server.handleLine(
+    const firstSubmit = harness.connection.handleRequest(
       request("submit-1", "session.submit", {
         sessionId: "session-1",
         text: "first turn",
@@ -1721,13 +1735,13 @@ describe("rpc_server", () => {
     );
     await waitFor(() => harness.lines.some((line) => deltaHasNotice(line, "streaming")));
 
-    const queued = harness.server.handleLine(
+    const queued = harness.connection.handleRequest(
       request("queue-1", "session.queue", {
         sessionId: "session-1",
         text: "run tests",
       }),
     );
-    const steered = harness.server.handleLine(
+    const steered = harness.connection.handleRequest(
       request("steer-1", "session.steer", {
         sessionId: "session-1",
         text: "change direction",
@@ -1752,8 +1766,12 @@ describe("rpc_server", () => {
       ),
     );
 
-    await observer.handleLine(request("detach", "session.unobserve", { sessionId: "session-1" }));
-    await observer.handleLine(request("reattach", "session.observe", { sessionId: "session-1" }));
+    await observer.handleRequest(
+      request("detach", "session.unobserve", { sessionId: "session-1" }),
+    );
+    await observer.handleRequest(
+      request("reattach", "session.observe", { sessionId: "session-1" }),
+    );
     expect(
       observerLines.find((line) => line.id === "reattach" && line.type === "response").result
         .pendingUserMessages.messages,
@@ -1762,7 +1780,7 @@ describe("rpc_server", () => {
       expect.objectContaining({ mode: "queue", text: "run tests" }),
     ]);
 
-    await observer.handleLine(
+    await observer.handleRequest(
       request("cancel-1", "session.cancelPendingMessages", { sessionId: "session-1" }),
     );
     await Promise.all([queued, steered]);
@@ -1801,26 +1819,25 @@ describe("rpc_server", () => {
   it("isolates pending-message observer failures from shared session work", async () => {
     const harness = createHarness();
     let rejectPendingMessages = false;
-    const observer = new RpcServer({
+    const observer = new TestSessionProtocolConnection({
       host: harness.host,
-      send: (line) => {
-        const message = JSON.parse(line);
+      send: (message) => {
         if (rejectPendingMessages && message.type === "session.pendingUserMessages") {
           throw new Error("observer unavailable");
         }
       },
     });
-    await observer.handleLine(request("attach", "session.observe", { sessionId: "session-1" }));
+    await observer.handleRequest(request("attach", "session.observe", { sessionId: "session-1" }));
     rejectPendingMessages = true;
 
-    const firstSubmit = harness.server.handleLine(
+    const firstSubmit = harness.connection.handleRequest(
       request("submit-1", "session.submit", {
         sessionId: "session-1",
         text: "first turn",
       }),
     );
     await waitFor(() => harness.lines.some((line) => deltaHasNotice(line, "streaming")));
-    const queued = harness.server.handleLine(
+    const queued = harness.connection.handleRequest(
       request("queue-1", "session.queue", {
         sessionId: "session-1",
         text: "queued turn",
@@ -1832,7 +1849,7 @@ describe("rpc_server", () => {
       ),
     );
 
-    await harness.server.handleLine(
+    await harness.connection.handleRequest(
       request("cancel", "session.cancelPendingMessages", { sessionId: "session-1" }),
     );
     await queued;
@@ -1848,14 +1865,14 @@ describe("rpc_server", () => {
 
   it("starts recovered sessions without pending user messages", async () => {
     const harness = createHarness();
-    const firstSubmit = harness.server.handleLine(
+    const firstSubmit = harness.connection.handleRequest(
       request("submit-1", "session.submit", {
         sessionId: "session-1",
         text: "first turn",
       }),
     );
     await waitFor(() => harness.seededSession.isTurnRunning);
-    const queued = harness.server.handleLine(
+    const queued = harness.connection.handleRequest(
       request("queue-1", "session.queue", {
         sessionId: "session-1",
         text: "must not recover",
@@ -1869,18 +1886,20 @@ describe("rpc_server", () => {
 
     harness.recoverSession();
     const recoveredLines = [];
-    const recovered = new RpcServer({
+    const recovered = new TestSessionProtocolConnection({
       host: harness.host,
-      send: (line) => recoveredLines.push(JSON.parse(line)),
+      send: (message) => recoveredLines.push(message),
     });
-    await recovered.handleLine(request("recover", "session.observe", { sessionId: "session-1" }));
+    await recovered.handleRequest(
+      request("recover", "session.observe", { sessionId: "session-1" }),
+    );
 
     expect(
       recoveredLines.find((line) => line.id === "recover" && line.type === "response").result
         .pendingUserMessages,
     ).toEqual({ revision: 1, messages: [] });
 
-    await harness.server.handleLine(
+    await harness.connection.handleRequest(
       request("cancel", "session.cancelPendingMessages", { sessionId: "session-1" }),
     );
     await queued;
@@ -1895,7 +1914,7 @@ describe("rpc_server", () => {
       releaseUnwind = resolve;
     });
     const harness = createHarness({ afterTurnRelease: async () => await unwindGate });
-    const firstSubmit = harness.server.handleLine(
+    const firstSubmit = harness.connection.handleRequest(
       request("submit-1", "session.submit", {
         sessionId: "session-1",
         text: "first turn",
@@ -1903,10 +1922,10 @@ describe("rpc_server", () => {
     );
     await waitFor(() => harness.lines.some((line) => deltaHasNotice(line, "streaming")));
 
-    await harness.server.handleLine(
+    await harness.connection.handleRequest(
       request("interrupt-1", "session.interrupt", { sessionId: "session-1" }),
     );
-    await harness.server.handleLine(
+    await harness.connection.handleRequest(
       request("steer-1", "session.steer", {
         sessionId: "session-1",
         text: "too late",
@@ -1926,7 +1945,7 @@ describe("rpc_server", () => {
   it("drops pending steering submits when a turn is interrupted", async () => {
     const harness = createHarness();
 
-    const firstSubmit = harness.server.handleLine(
+    const firstSubmit = harness.connection.handleRequest(
       request("submit-1", "session.submit", {
         sessionId: "session-1",
         text: "first turn",
@@ -1934,7 +1953,7 @@ describe("rpc_server", () => {
     );
 
     await waitFor(() => harness.lines.some((line) => deltaHasNotice(line, "streaming")));
-    const steer = harness.server.handleLine(
+    const steer = harness.connection.handleRequest(
       request("steer-1", "session.steer", {
         sessionId: "session-1",
         text: "change direction",
@@ -1945,7 +1964,7 @@ describe("rpc_server", () => {
         (line) => line.type === "session.pendingUserMessages" && line.state.messages.length === 1,
       ),
     );
-    await harness.server.handleLine(
+    await harness.connection.handleRequest(
       request("interrupt", "session.interrupt", { sessionId: "session-1" }),
     );
     await Promise.all([firstSubmit, steer]);
@@ -1972,7 +1991,7 @@ describe("rpc_server", () => {
   it("broadcasts late subagent events during later submits", async () => {
     const harness = createHarness();
 
-    const firstSubmit = harness.server.handleLine(
+    const firstSubmit = harness.connection.handleRequest(
       request("submit-1", "session.submit", {
         sessionId: "session-1",
         text: "first turn",
@@ -1984,7 +2003,7 @@ describe("rpc_server", () => {
     harness.releaseTurn();
     await firstSubmit;
 
-    const secondSubmit = harness.server.handleLine(
+    const secondSubmit = harness.connection.handleRequest(
       request("submit-2", "session.submit", {
         sessionId: "session-1",
         text: "second turn",
@@ -2037,7 +2056,7 @@ describe("rpc_server", () => {
         }),
     });
 
-    const execution = harness.server.handleLine(
+    const execution = harness.connection.handleRequest(
       request("exec", "session.exec", {
         sessionId: "session-1",
         execId: "exec-1",
@@ -2046,7 +2065,7 @@ describe("rpc_server", () => {
     );
     await waitFor(() => execStarted);
 
-    await harness.server.handleLine(
+    await harness.connection.handleRequest(
       request("interrupt-exec", "session.interrupt", { sessionId: "session-1" }),
     );
     await execution;
@@ -2075,7 +2094,7 @@ describe("rpc_server", () => {
       },
     });
 
-    await harness.server.handleLine(
+    await harness.connection.handleRequest(
       request("exec", "session.exec", {
         sessionId: "session-1",
         execId: "shared-exec",
@@ -2105,14 +2124,14 @@ describe("rpc_server", () => {
         }),
     });
 
-    const first = harness.server.handleLine(
+    const first = harness.connection.handleRequest(
       request("exec-first", "session.exec", {
         sessionId: "session-1",
         execId: "exec-first",
         command: "first",
       }),
     );
-    const second = harness.server.handleLine(
+    const second = harness.connection.handleRequest(
       request("exec-second", "session.exec", {
         sessionId: "session-1",
         execId: "exec-second",
@@ -2121,7 +2140,7 @@ describe("rpc_server", () => {
     );
     await waitFor(() => releases.size === 2);
 
-    await harness.server.handleLine(
+    await harness.connection.handleRequest(
       request("cancel-first", "session.cancelExec", {
         sessionId: "session-1",
         execId: "exec-first",
@@ -2157,7 +2176,7 @@ describe("rpc_server", () => {
         }),
     });
 
-    const sample = harness.server.handleLine(
+    const sample = harness.connection.handleRequest(
       request("sample", "session.sample", {
         sessionId: "session-1",
         context: {
@@ -2175,7 +2194,7 @@ describe("rpc_server", () => {
     );
     await waitFor(() => sampleStarted);
 
-    await harness.server.handleLine(
+    await harness.connection.handleRequest(
       request("interrupt-sample", "session.interrupt", { sessionId: "session-1" }),
     );
     await sample;
@@ -2197,10 +2216,10 @@ describe("rpc_server", () => {
     );
   });
 
-  it("handles interrupt, snapshot, unsupported methods, and malformed lines", async () => {
+  it("handles interrupt and snapshot requests", async () => {
     const harness = createHarness();
 
-    const runningSubmit = harness.server.handleLine(
+    const runningSubmit = harness.connection.handleRequest(
       request("submit", "session.submit", {
         sessionId: "session-1",
         text: "interrupt me",
@@ -2208,30 +2227,23 @@ describe("rpc_server", () => {
     );
     await waitFor(() => harness.seededSession.canReleaseTurn());
 
-    await harness.server.handleLine(
+    await harness.connection.handleRequest(
       request("interrupt", "session.interrupt", { sessionId: "session-1" }),
     );
     await runningSubmit;
     expect(harness.seededSession.interruptActiveWork).toHaveBeenCalledOnce();
 
-    await harness.server.handleLine(request("list", "session.list", {}));
-    await harness.server.handleLine(
+    await harness.connection.handleRequest(request("list", "session.list", {}));
+    await harness.connection.handleRequest(
       request("attach", "session.observe", { sessionId: "session-1" }),
     );
-    await harness.server.handleLine(
+    await harness.connection.handleRequest(
       request("attach-missing", "session.observe", { sessionId: "missing-session" }),
     );
-    await harness.server.handleLine(
+    await harness.connection.handleRequest(
       request("snapshot", "session.snapshot", { sessionId: "session-1" }),
     );
-    await harness.server.handleLine(
-      request("unknown-1", "session.unknownCommand", { sessionId: "session-1" }),
-    );
-    await harness.server.handleLine(
-      request("unknown-2", "session.unrecognizedCommand", { sessionId: "session-1" }),
-    );
-    await harness.server.handleLine("{bad-json");
-    await harness.server.handleLine(
+    await harness.connection.handleRequest(
       request("after", "session.snapshot", { sessionId: "session-1" }),
     );
 
@@ -2299,40 +2311,6 @@ describe("rpc_server", () => {
       }),
     );
 
-    const unknown1 = harness.lines.find(
-      (line) => line.type === "response" && line.id === "unknown-1",
-    );
-    expect(unknown1).toEqual(
-      expect.objectContaining({
-        ok: false,
-        error: expect.objectContaining({
-          code: SESSION_PROTOCOL_ERROR_CODES.methodNotFound,
-        }),
-      }),
-    );
-
-    const unknown2 = harness.lines.find(
-      (line) => line.type === "response" && line.id === "unknown-2",
-    );
-    expect(unknown2).toEqual(
-      expect.objectContaining({
-        ok: false,
-        error: expect.objectContaining({
-          code: SESSION_PROTOCOL_ERROR_CODES.methodNotFound,
-        }),
-      }),
-    );
-
-    const malformed = harness.lines.find(
-      (line) =>
-        line.type === "response" && line.error?.code === SESSION_PROTOCOL_ERROR_CODES.parseError,
-    );
-    expect(malformed).toEqual(
-      expect.objectContaining({
-        ok: false,
-      }),
-    );
-
     const afterSnapshot = harness.lines.find(
       (line) => line.type === "response" && line.id === "after",
     );
@@ -2357,7 +2335,7 @@ describe("rpc_server", () => {
       runTurn: async () => ({ status: "completed", stopReason: "stop" }),
     });
 
-    const submitPromise = harness.server.handleLine(
+    const submitPromise = harness.connection.handleRequest(
       request("submit", "session.submit", {
         sessionId: "session-1",
         text: "commit me",
@@ -2387,7 +2365,7 @@ describe("rpc_server", () => {
   it("queues user messages behind an active turn without requesting a turn-boundary stop", async () => {
     const harness = createHarness();
 
-    const firstSubmit = harness.server.handleLine(
+    const firstSubmit = harness.connection.handleRequest(
       request("submit-1", "session.submit", {
         sessionId: "session-1",
         text: "first turn",
@@ -2395,7 +2373,7 @@ describe("rpc_server", () => {
     );
 
     await waitFor(() => harness.lines.some((line) => deltaHasNotice(line, "streaming")));
-    await harness.server.handleLine(
+    await harness.connection.handleRequest(
       request("queue-1", "session.queue", {
         sessionId: "session-1",
         text: "second turn",
@@ -2445,7 +2423,7 @@ describe("rpc_server", () => {
           releaseExecutions.set(command, () => resolve(createProtocolExecResult({ command })));
         }),
     });
-    const submit = harness.server.handleLine(
+    const submit = harness.connection.handleRequest(
       request("submit", "session.submit", {
         sessionId: "session-1",
         text: "keep the turn active",
@@ -2454,7 +2432,7 @@ describe("rpc_server", () => {
     await waitFor(() => harness.lines.some((line) => deltaHasNotice(line, "streaming")));
 
     const executions = ["first", "second"].map((command) =>
-      harness.server.handleLine(
+      harness.connection.handleRequest(
         request(`exec-${command}`, "session.exec", {
           sessionId: "session-1",
           execId: `exec-${command}`,
@@ -2463,7 +2441,7 @@ describe("rpc_server", () => {
       ),
     );
     await waitFor(() => releaseExecutions.size === 2);
-    await harness.server.handleLine(
+    await harness.connection.handleRequest(
       request("reasoning", "session.setReasoning", {
         sessionId: "session-1",
         reasoning: "high",
@@ -2497,7 +2475,7 @@ describe("rpc_server", () => {
       },
     });
 
-    const firstSubmit = harness.server.handleLine(
+    const firstSubmit = harness.connection.handleRequest(
       request("submit-1", "session.submit", {
         sessionId: "session-1",
         text: "first turn",
@@ -2505,7 +2483,7 @@ describe("rpc_server", () => {
     );
 
     await waitFor(() => harness.lines.some((line) => deltaHasNotice(line, "streaming")));
-    await harness.server.handleLine(
+    await harness.connection.handleRequest(
       request("queue-1", "session.queue", {
         sessionId: "session-1",
         text: "second turn",
@@ -2545,7 +2523,7 @@ describe("rpc_server", () => {
       },
     });
 
-    const firstSubmit = harness.server.handleLine(
+    const firstSubmit = harness.connection.handleRequest(
       request("submit-1", "session.submit", {
         sessionId: "session-1",
         text: "first turn",
@@ -2553,13 +2531,13 @@ describe("rpc_server", () => {
     );
     await waitFor(() => harness.lines.some((line) => deltaHasNotice(line, "streaming")));
     await Promise.all([
-      harness.server.handleLine(
+      harness.connection.handleRequest(
         request("queue-1", "session.queue", {
           sessionId: "session-1",
           text: "first queued turn",
         }),
       ),
-      harness.server.handleLine(
+      harness.connection.handleRequest(
         request("queue-2", "session.queue", {
           sessionId: "session-1",
           text: "second queued turn",
@@ -2592,60 +2570,5 @@ describe("rpc_server", () => {
     expect(
       harness.lines.findLast((line) => line.type === "session.pendingUserMessages").state.messages,
     ).toEqual([]);
-  });
-
-  it("runRpcServer processes lines concurrently and emits ndjson responses", async () => {
-    const harness = createHarness();
-    const input = new PassThrough();
-    const output = new PassThrough();
-
-    let outputText = "";
-    output.setEncoding("utf8");
-    output.on("data", (chunk) => {
-      outputText += chunk;
-    });
-
-    const runPromise = runRpcServer({
-      host: harness.host,
-      input,
-      output,
-    });
-
-    input.write(
-      `${request("submit-loop", "session.submit", { sessionId: "session-1", text: "hello" })}\n`,
-    );
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    input.write(`${request("interrupt-loop", "session.interrupt", { sessionId: "session-1" })}\n`);
-    input.end();
-
-    await runPromise;
-
-    const lines = parseNdjson(outputText);
-    const interrupt = lines.find(
-      (line) => line.type === "response" && line.id === "interrupt-loop",
-    );
-    expect(interrupt).toEqual(
-      expect.objectContaining({
-        ok: true,
-        result: {
-          interrupted: true,
-          isTurnRunning: true,
-        },
-      }),
-    );
-
-    const submit = lines.find((line) => line.type === "response" && line.id === "submit-loop");
-    expect(submit).toEqual(
-      expect.objectContaining({
-        ok: true,
-        result: expect.objectContaining({
-          turn: { status: "aborted", stopReason: "aborted" },
-        }),
-      }),
-    );
-
-    const submitEvent = lines.find((line) => line.type === "session.delta");
-    expect(submitEvent).toBeDefined();
-    await expect(harness.host.observeSession("session-1")).resolves.toBeUndefined();
   });
 });

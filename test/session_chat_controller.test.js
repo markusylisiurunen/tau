@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { rm, writeFile } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
@@ -956,7 +955,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
       configuredClientToolNames: ["notify"],
       themeIds: ["gold"],
     });
@@ -977,7 +976,7 @@ describe("SessionChatController", () => {
     expect(intro.body).not.toContain("prefill_input");
     expect(intro.body).not.toContain("~/repo/src/AGENTS.md");
     expect(intro.body).toContain("session id: session-1");
-    expect(intro.body).not.toContain("ssh host tau rpc");
+    expect(intro.body).not.toContain("ws://host");
     expect(view.status.footer.cwdLabel).toBe("remote · ~/repo");
     expect(view.status.footer.contextUsage).toBe("↑0 ↓0 r0 w0 · 0.0%/128k");
 
@@ -2012,7 +2011,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
       themeIds: ["gold"],
     });
 
@@ -2089,7 +2088,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -2139,7 +2138,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
       themeIds: ["gold"],
     });
 
@@ -2182,7 +2181,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
     });
 
     controller.start();
@@ -2206,7 +2205,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
       themeIds: ["gold"],
     });
 
@@ -2292,7 +2291,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -2334,7 +2333,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
     });
 
     controller.start();
@@ -2372,7 +2371,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
     });
 
     controller.start();
@@ -2394,7 +2393,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -2457,7 +2456,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -2488,7 +2487,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -2901,7 +2900,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -2969,7 +2968,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
       themeIds: ["gold"],
     });
 
@@ -3353,7 +3352,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
     });
 
     controller.start();
@@ -3503,7 +3502,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
     });
 
     controller.start();
@@ -3613,7 +3612,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
     });
 
     controller.start();
@@ -3724,7 +3723,7 @@ describe("SessionChatController", () => {
         view,
         session,
         snapshot: await session.snapshot(),
-        targetLabel: "ssh host tau rpc",
+        targetLabel: "ws://host",
       });
 
       controller.start();
@@ -3811,7 +3810,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
     });
 
     controller.start();
@@ -3962,7 +3961,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
     });
 
     controller.start();
@@ -3997,7 +3996,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
     });
 
     controller.start();
@@ -4046,7 +4045,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
     });
 
     controller.start();
@@ -4126,7 +4125,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -4185,7 +4184,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -4232,7 +4231,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -4432,7 +4431,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -4495,7 +4494,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -4519,7 +4518,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -4546,7 +4545,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
     });
     controller.start();
     const handlers = controller.getInputHandlers();
@@ -4572,7 +4571,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -4596,7 +4595,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -4614,7 +4613,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -4633,7 +4632,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -4656,7 +4655,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -4675,7 +4674,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -4713,7 +4712,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -4736,7 +4735,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -4756,7 +4755,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -4774,7 +4773,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -4796,7 +4795,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -4818,7 +4817,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -4839,7 +4838,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -4865,7 +4864,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
       defaultDiffTool: { command: "inline-diff-tool" },
       diffToolLauncher: launchInlineDiffTool,
     });
@@ -4910,7 +4909,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
       defaultDiffTool: { command: "inline-diff-tool" },
       diffToolLauncher: launchInlineDiffTool,
     });
@@ -4968,7 +4967,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
       defaultDiffTool: { command: "inline-diff-tool" },
       diffToolLauncher: launchInlineDiffTool,
     });
@@ -5020,7 +5019,7 @@ describe("SessionChatController", () => {
       session,
       snapshot: await session.snapshot(),
       createSession,
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
       defaultDiffTool: { command: "inline-diff-tool" },
       diffToolLauncher: launchInlineDiffTool,
     });
@@ -5151,43 +5150,26 @@ describe("SessionChatController", () => {
     expect(client.close).toHaveBeenCalledOnce();
   });
 
-  it("rejects configured tool collisions before spawning a stdio transport", async () => {
-    const markerPath = join(
-      tmpdir(),
-      `tau-client-tool-transport-marker-${process.pid}-${Date.now()}`,
-    );
-
-    try {
-      await expect(
-        SessionChatApp.connect({
-          transport: "stdio",
-          command: process.execPath,
-          args: [
-            "--input-type=module",
-            "--eval",
-            `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(markerPath)}, "spawned");`,
+  it("rejects configured tool collisions before connecting the transport", async () => {
+    await expect(
+      SessionChatApp.connect({
+        transport: "websocket",
+        url: "ws://127.0.0.1:1",
+        sessionSelection: { mode: "select" },
+        clientToolsEnabled: true,
+        config: {
+          clientTools: [
+            {
+              name: "prefill_input",
+              defaultEnabled: true,
+              description: "Replace a built-in tool.",
+              parameters: { type: "object", properties: {}, additionalProperties: false },
+              command: "replacement",
+            },
           ],
-          sessionSelection: { mode: "select" },
-          clientToolsEnabled: true,
-          config: {
-            clientTools: [
-              {
-                name: "prefill_input",
-                defaultEnabled: true,
-                description: "Replace a built-in tool.",
-                parameters: { type: "object", properties: {}, additionalProperties: false },
-                command: "replacement",
-              },
-            ],
-          },
-        }),
-      ).rejects.toThrow("duplicate TUI client tool 'prefill_input'");
-
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      expect(existsSync(markerPath)).toBe(false);
-    } finally {
-      await rm(markerPath, { force: true });
-    }
+        },
+      }),
+    ).rejects.toThrow("duplicate TUI client tool 'prefill_input'");
   });
 
   it("disables built-in and configured TUI client tools together", () => {
@@ -5214,7 +5196,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
       defaultDiffTool: { command: "inline-diff-tool" },
       diffToolLauncher: (args) => launchInlineDiffTool({ ...args, returnDelayMs: 100 }),
     });
@@ -5272,7 +5254,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
       deps: createMockDeps(spawn, "linux"),
       config: { apiKeys: { mistral: "mistral-key" } },
     });
@@ -5341,7 +5323,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
       deps: createMockDeps(spawn),
       config: { apiKeys: { mistral: "mistral-key" } },
     });
@@ -5433,7 +5415,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
       deps: createMockDeps(),
     });
     controller.start();
@@ -5500,7 +5482,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
       deps: createMockDeps(spawn),
       config: { apiKeys: { google: "gemini-key" } },
     });
@@ -5588,7 +5570,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
       themeIds: ["gold"],
     });
 
@@ -5637,7 +5619,7 @@ describe("SessionChatController", () => {
       session,
       snapshot: await session.snapshot(),
       createSession,
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
     });
     controller.start();
     const resetCountBeforeNew = view.resetToolUiSession.mock.calls.length;
@@ -5708,7 +5690,7 @@ describe("SessionChatController", () => {
       session,
       snapshot: await session.snapshot(),
       createSession: vi.fn(async () => nextSession),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -5796,7 +5778,7 @@ describe("SessionChatController", () => {
       session,
       snapshot: await session.snapshot(),
       createSession,
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -5833,7 +5815,7 @@ describe("SessionChatController", () => {
       session,
       snapshot: await session.snapshot(),
       createSession,
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -5904,7 +5886,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -5936,7 +5918,7 @@ describe("SessionChatController", () => {
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "ssh host tau rpc",
+      targetLabel: "ws://host",
     });
     controller.start();
 

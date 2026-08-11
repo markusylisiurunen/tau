@@ -22,7 +22,7 @@ Common cases are:
 | Telegram transcription | Telegram runner |
 | `tau tool pdf-unpack` | The process running that command |
 
-With local `tau`, these roles normally share one machine. With `tau attach`, setting a key only in the attached client's shell does not authenticate the remote host. Run `tau auth` on the host machine and set host-owned environment variables where `tau serve`, `tau rpc`, or the SDK host actually runs. See [ownership and scope](ownership-and-scope.md) for the full boundary.
+With local `tau`, these roles normally share one machine. With `tau attach`, setting a key only in the attached client's shell does not authenticate the remote host. Run `tau auth` on the host machine and set host-owned environment variables where `tau serve` or the SDK host actually runs. See [ownership and scope](ownership-and-scope.md) for the full boundary.
 
 ## Provider API keys
 

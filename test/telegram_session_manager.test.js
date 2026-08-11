@@ -50,7 +50,7 @@ function createClientHarness() {
   let eventListener;
 
   const session = {
-    id: "rpc-1",
+    id: "session-1",
     submit: submit,
     steer: vi.fn(async () => {
       return await submitDeferred.promise;
@@ -69,7 +69,7 @@ function createClientHarness() {
     })),
     snapshot: vi.fn(async () =>
       createProtocolSnapshot({
-        sessionId: "rpc-1",
+        sessionId: "session-1",
         revision: 1,
         executionEnvironment: { kind: "local", cwd: "/tmp/ws/demo", home: "/home/user" },
       }),
@@ -95,7 +95,7 @@ function createClientHarness() {
     sessions: {
       create: vi.fn(async () => session),
       observe: vi.fn(async () => session),
-      list: vi.fn(async () => [{ sessionId: "rpc-1", lifecycle: "idle" }]),
+      list: vi.fn(async () => [{ sessionId: "session-1", lifecycle: "idle" }]),
     },
     close: vi.fn(async () => {}),
   };
@@ -114,7 +114,7 @@ function createPatchDelta(changes, revision = 1, reason = "tool-run") {
   return {
     version: SESSION_PROTOCOL_VERSION,
     type: "session.delta",
-    sessionId: "rpc-1",
+    sessionId: "session-1",
     fromRevision: revision,
     toRevision: revision + 1,
     cause: { type: reason },
@@ -228,7 +228,7 @@ describe("telegram session manager", () => {
       expect.objectContaining({
         state: "waiting-input",
         workspacePath: "/tmp/ws/demo",
-        tauSessionId: "rpc-1",
+        tauSessionId: "session-1",
       }),
     );
     expect(clientHarness.client.sessions.create).toHaveBeenCalledWith(
@@ -246,7 +246,7 @@ describe("telegram session manager", () => {
     const clientHarness = createClientHarness();
     clientHarness.session.snapshot.mockResolvedValue(
       createProtocolSnapshot({
-        sessionId: "rpc-1",
+        sessionId: "session-1",
         revision: 1,
         executionEnvironment: { kind: "local", cwd: "/tmp/ws/demo", home: "/home/user" },
         timeline: [
@@ -998,7 +998,7 @@ describe("telegram session manager", () => {
 
       const storedState = JSON.parse(await readFile(persistencePath, "utf8"));
       expect(storedState.sessions).toEqual([
-        expect.objectContaining({ id: created.id, tauSessionId: "rpc-1" }),
+        expect.objectContaining({ id: created.id, tauSessionId: "session-1" }),
       ]);
 
       const recoveredClientHarness = createClientHarness();
@@ -1015,7 +1015,7 @@ describe("telegram session manager", () => {
       await recoveredManager.initialize();
 
       expect(recoveredManager.getSession(created.id)?.state).toBe("waiting-input");
-      expect(recoveredClientHarness.client.sessions.observe).toHaveBeenCalledWith("rpc-1");
+      expect(recoveredClientHarness.client.sessions.observe).toHaveBeenCalledWith("session-1");
     } finally {
       await recoveredManager?.close();
       await manager.close();
@@ -1077,7 +1077,7 @@ describe("telegram session manager", () => {
       const historyEntryId = options.historyEntryId;
       clientHarness.session.snapshot.mockResolvedValue(
         createProtocolSnapshot({
-          sessionId: "rpc-1",
+          sessionId: "session-1",
           revision: 3,
           executionEnvironment: { kind: "local", cwd: "/tmp/ws/demo", home: "/home/user" },
           turns: {
@@ -1110,7 +1110,7 @@ describe("telegram session manager", () => {
     const historyEntryId = clientHarness.session.submit.mock.calls[0][1].historyEntryId;
     clientHarness.session.snapshot.mockResolvedValue(
       createProtocolSnapshot({
-        sessionId: "rpc-1",
+        sessionId: "session-1",
         revision: 4,
         executionEnvironment: { kind: "local", cwd: "/tmp/ws/demo", home: "/home/user" },
         turns: {
@@ -1502,7 +1502,7 @@ describe("telegram session manager", () => {
             projectId: "me",
             createdAt: "2026-01-01T00:00:00.000Z",
             updatedAt: "2026-01-01T00:00:00.000Z",
-            tauSessionId: "rpc-1",
+            tauSessionId: "session-1",
           },
         ],
       })}\n`,
@@ -1512,7 +1512,7 @@ describe("telegram session manager", () => {
     const clientHarness = createClientHarness();
     clientHarness.session.snapshot.mockResolvedValue(
       createProtocolSnapshot({
-        sessionId: "rpc-1",
+        sessionId: "session-1",
         revision: 1,
         executionEnvironment: { kind: "local", cwd: directory, home: tempRoot },
       }),
@@ -1532,7 +1532,7 @@ describe("telegram session manager", () => {
 
       expect(createClient).toHaveBeenCalledWith({ cwd: directory });
       expect(prepareWorkspace).not.toHaveBeenCalled();
-      expect(clientHarness.client.sessions.observe).toHaveBeenCalledWith("rpc-1");
+      expect(clientHarness.client.sessions.observe).toHaveBeenCalledWith("session-1");
       expect(manager.getSession("active")).toEqual(
         expect.objectContaining({ workspacePath: directory, state: "waiting-input" }),
       );
@@ -1558,7 +1558,7 @@ describe("telegram session manager", () => {
             projectId: "me",
             createdAt: "2026-01-01T00:00:00.000Z",
             updatedAt: "2026-01-01T00:00:00.000Z",
-            tauSessionId: "rpc-1",
+            tauSessionId: "session-1",
           },
         ],
       })}\n`,
@@ -1568,7 +1568,7 @@ describe("telegram session manager", () => {
     const clientHarness = createClientHarness();
     clientHarness.session.snapshot.mockResolvedValue(
       createProtocolSnapshot({
-        sessionId: "rpc-1",
+        sessionId: "session-1",
         revision: 1,
         executionEnvironment: { kind: "local", cwd: persistedDirectory, home: tempRoot },
       }),
@@ -1585,7 +1585,7 @@ describe("telegram session manager", () => {
       await manager.initialize();
 
       expect(createClient).toHaveBeenCalledWith({ cwd: configuredDirectory });
-      expect(clientHarness.client.sessions.observe).toHaveBeenCalledWith("rpc-1");
+      expect(clientHarness.client.sessions.observe).toHaveBeenCalledWith("session-1");
       expect(manager.getSession("active")).toEqual(
         expect.objectContaining({
           workspacePath: configuredDirectory,
@@ -1834,7 +1834,7 @@ describe("telegram session manager", () => {
             id: created.id,
             projectId: "demo",
             state: "failed",
-            tauSessionId: "rpc-1",
+            tauSessionId: "session-1",
             error: diagnostic,
             activeTurnIds: [historyEntryId],
             pendingTurnNotifications: [],
@@ -1846,7 +1846,7 @@ describe("telegram session manager", () => {
         message: "telegram session submit failed",
         data: {
           sessionId: created.id,
-          tauSessionId: "rpc-1",
+          tauSessionId: "session-1",
           source: "user-message",
           cause: diagnostic,
         },
@@ -1874,7 +1874,7 @@ describe("telegram session manager", () => {
         expect.objectContaining({
           id: created.id,
           state: "waiting-input",
-          tauSessionId: "rpc-1",
+          tauSessionId: "session-1",
           error: undefined,
         }),
       );
@@ -1927,7 +1927,7 @@ describe("telegram session manager", () => {
           state: "waiting-input",
           createdAt: expect.any(String),
           updatedAt: expect.any(String),
-          tauSessionId: "rpc-1",
+          tauSessionId: "session-1",
           activeTurnIds: [],
           pendingTurnNotifications: [],
         },
@@ -1936,7 +1936,7 @@ describe("telegram session manager", () => {
 
       const recoveredClientHarness = createClientHarness();
       const recoveredSnapshot = createProtocolSnapshot({
-        sessionId: "rpc-1",
+        sessionId: "session-1",
         revision: 1,
         executionEnvironment: { kind: "local", cwd: workspacePath, home: tempRoot },
         historyEntries: [
@@ -1994,11 +1994,11 @@ describe("telegram session manager", () => {
         expect.objectContaining({
           state: "waiting-input",
           workspacePath,
-          tauSessionId: "rpc-1",
+          tauSessionId: "session-1",
           updatedAt: storedState.sessions[0].updatedAt,
         }),
       );
-      expect(recoveredClientHarness.client.sessions.observe).toHaveBeenCalledWith("rpc-1");
+      expect(recoveredClientHarness.client.sessions.observe).toHaveBeenCalledWith("session-1");
       expect(
         recoveredEvents.filter(
           (event) => event.type === "session-notice" || event.type === "session-progress",
@@ -2008,7 +2008,7 @@ describe("telegram session manager", () => {
       recoveredClientHarness.emitDelta({
         version: SESSION_PROTOCOL_VERSION,
         type: "session.delta",
-        sessionId: "rpc-1",
+        sessionId: "session-1",
         fromRevision: null,
         toRevision: 2,
         cause: { type: "assistant-message" },
@@ -2028,7 +2028,7 @@ describe("telegram session manager", () => {
         expect.objectContaining({ sessionId: created.id, projectId: "demo" }),
       );
       await expect(recoveredManager.getSessionSnapshot(created.id)).resolves.toEqual(
-        expect.objectContaining({ sessionId: "rpc-1" }),
+        expect.objectContaining({ sessionId: "session-1" }),
       );
       await recoveredManager.close();
     } finally {
@@ -2053,7 +2053,7 @@ describe("telegram session manager", () => {
             state: "failed",
             createdAt: "2026-01-01T00:00:00.000Z",
             updatedAt: "2026-01-01T00:01:00.000Z",
-            tauSessionId: "rpc-1",
+            tauSessionId: "session-1",
             error: "transport disconnected before the response",
             activeTurnIds: [historyEntryId],
           },
@@ -2065,7 +2065,7 @@ describe("telegram session manager", () => {
     const clientHarness = createClientHarness();
     clientHarness.session.snapshot.mockResolvedValue(
       createProtocolSnapshot({
-        sessionId: "rpc-1",
+        sessionId: "session-1",
         revision: 3,
         executionEnvironment: { kind: "local", cwd: workspacePath, home: tempRoot },
         turns: {
@@ -2150,7 +2150,7 @@ describe("telegram session manager", () => {
           projectId: "demo",
           createdAt: "2026-01-01T00:00:00.000Z",
           updatedAt: "2026-01-01T00:00:00.000Z",
-          tauSessionId: `rpc-${id}`,
+          tauSessionId: `session-${id}`,
         })),
       })}\n`,
       "utf8",
@@ -2204,7 +2204,7 @@ describe("telegram session manager", () => {
             ownerId: "telegram:bot:chat:42",
             createdAt: "2026-01-01T00:00:00.000Z",
             updatedAt: "2026-01-01T00:00:00.000Z",
-            tauSessionId: "rpc-1",
+            tauSessionId: "session-1",
           },
         ],
       })}\n`,
@@ -2234,7 +2234,7 @@ describe("telegram session manager", () => {
       expect(await readdir(workspaceRoot)).toEqual([]);
       expect(prepareWorkspace).not.toHaveBeenCalled();
       expect(clientHarness.session.exec).not.toHaveBeenCalled();
-      expect(clientHarness.client.sessions.observe).toHaveBeenCalledWith("rpc-1");
+      expect(clientHarness.client.sessions.observe).toHaveBeenCalledWith("session-1");
     } finally {
       await manager.close();
       await rm(tempRoot, { recursive: true, force: true });
@@ -2509,7 +2509,7 @@ describe("telegram session manager", () => {
     ]);
 
     const snapshot = createProtocolSnapshot({
-      sessionId: "rpc-1",
+      sessionId: "session-1",
       revision: 2,
       messages: [assistantMessage],
     });
@@ -2517,7 +2517,7 @@ describe("telegram session manager", () => {
     clientHarness.emitDelta({
       version: SESSION_PROTOCOL_VERSION,
       type: "session.delta",
-      sessionId: "rpc-1",
+      sessionId: "session-1",
       fromRevision: 1,
       toRevision: 2,
       cause: { type: "assistant-message" },
@@ -2527,7 +2527,7 @@ describe("telegram session manager", () => {
     clientHarness.emitDelta({
       version: SESSION_PROTOCOL_VERSION,
       type: "session.delta",
-      sessionId: "rpc-1",
+      sessionId: "session-1",
       fromRevision: 2,
       toRevision: 3,
       cause: { type: "assistant-message" },

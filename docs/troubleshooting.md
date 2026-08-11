@@ -189,8 +189,6 @@ Every Tau command uses a fresh non-interactive login Bash in the execution envir
 
 Use automation-safe command flags. Configure credentials before invocation, set Git and SSH up for noninteractive access, and avoid editors or tools that require terminal control. Shell aliases, variables, `cd`, and functions do not persist between calls, so pass `workingDirectory` or use a complete command each time.
 
-For stdio or SSH attachment, stdout from `tau rpc` is protocol-only. A login banner or wrapper message on stdout can look like malformed JSON, an unsupported message, or a timeout waiting for the ready message. Remove it or send diagnostics to stderr. Running the remote command directly can reveal startup diagnostics, but do not copy protocol output or secrets into reports.
-
 Local command sanitization removes inherited credential-shaped variable names. If a target command needs authentication, use the tool's own secure noninteractive credential mechanism rather than broad environment forwarding. Hosted targets use their own environment.
 
 ## WebSocket attachment is unauthorized or unsafe
@@ -219,15 +217,13 @@ Changing a resolver definition or credential requires a host restart. `/reload` 
 
 Without `--session` or `--new`, attach needs a TTY for its selector. In automation, pass one explicitly. Normal local startup `--persona` flags are not attach options; choose the host default for new sessions or switch the attached session with `/persona:<id>` while idle.
 
-If an SSH attach closes when the TUI exits, that is expected: the attachment owns its one-shot `tau rpc` host. Use `tau serve` when work must continue after disconnect. See [remote sessions](remote-sessions.md).
-
 ## A session is missing, interrupted, or will not recover
 
 A selector shows only sessions this host can load and restore. Confirm its machine, OS user, home, Tau version, resolver configuration, and target still match the creator. Another user's `~/.config/tau/sessions` is a different store. Restore missing bridge/API definitions, credentials, local directory, sandbox, or Sprite. Never edit session JSON to substitute a target or `cwd`.
 
 Recovery returns idle, aborts unfinished turns, cancels running maintenance, removes live subagents, and blocks an active goal. Review the last assistant and tools, then safely check `!!pwd` and `!!git status --short`. Resume a goal only after understanding the stop. Retry continues current history without rerunning completed tools automatically.
 
-A WebSocket client disconnect does not interrupt the long-running host; server shutdown does. Closing a local TUI or stdio attachment shuts down its owned host, so interrupted recovery is expected.
+A WebSocket client disconnect does not interrupt the long-running host; server shutdown does. Closing a local TUI shuts down its owned host, so interrupted recovery is expected.
 
 A newer storage version requires that Tau version or later. For invalid JSON, snapshot, or ID errors, preserve the file and exact error, stop competing hosts, and investigate normal recovery. Do not edit or delete it first. Newer Tau migrates supported older documents automatically.
 

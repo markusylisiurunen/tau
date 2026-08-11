@@ -1,4 +1,3 @@
-import { spawn as spawnProcess } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { Type } from "typebox";
 import { z } from "zod";
@@ -17,7 +16,6 @@ import { formatZodError } from "../core/utils/zod.js";
 import type { SessionProtocolCreateParams } from "../protocol/session_protocol.js";
 import { createTauSdkClientFromTransport } from "../sdk/session.js";
 import type { TauSdkClient, TauSdkClientTool, TauSdkSession } from "../sdk/types.js";
-import { StdioSessionProtocolTransport } from "../transport/stdio_session_transport.js";
 import { WebSocketSessionProtocolTransport } from "../transport/websocket_session_transport.js";
 import { TuiChatView } from "./chat_view.js";
 import { EXIT_DOUBLE_PRESS_WINDOW_MS, EXIT_TOAST_DURATION_MS } from "./constants.js";
@@ -44,18 +42,10 @@ export type SessionChatTransportOptions = Omit<
   "client" | "configuredClientToolNames" | "targetLabel"
 > & {
   clientToolsEnabled: boolean;
-} & (
-    | {
-        transport: "stdio";
-        command: string;
-        args: string[];
-      }
-    | {
-        transport: "websocket";
-        url: string;
-        authToken?: string;
-      }
-  );
+  transport: "websocket";
+  url: string;
+  authToken?: string;
+};
 
 const prefillInputArgsSchema = z
   .object({
@@ -177,17 +167,10 @@ export class SessionChatApp {
       commandTools: options.config?.clientTools,
       deps: options.deps,
     });
-    const transport =
-      options.transport === "stdio"
-        ? new StdioSessionProtocolTransport(
-            spawnProcess(options.command, options.args, {
-              stdio: "pipe",
-            }),
-          )
-        : new WebSocketSessionProtocolTransport({
-            url: options.url,
-            authToken: options.authToken,
-          });
+    const transport = new WebSocketSessionProtocolTransport({
+      url: options.url,
+      authToken: options.authToken,
+    });
     const client = await createTauSdkClientFromTransport(transport, {
       initialize: { client: { name: "tau-tui", version: "1" } },
       clientTools,
@@ -198,8 +181,7 @@ export class SessionChatApp {
       configuredClientToolNames: options.clientToolsEnabled
         ? (options.config?.clientTools ?? []).map((tool) => tool.name)
         : [],
-      targetLabel:
-        options.transport === "stdio" ? [options.command, ...options.args].join(" ") : options.url,
+      targetLabel: options.url,
     });
     controller = app.controller;
     return app;

@@ -41,7 +41,6 @@ export type {
   SessionProtocolEphemeralListener,
   SessionProtocolFailureListener,
   SessionProtocolPendingUserMessagesListener,
-  SessionProtocolSpawnedProcess,
   SessionProtocolSubagentActivitiesListener,
   SessionProtocolTransport,
   TauSessionProtocolError,
@@ -49,8 +48,6 @@ export type {
   WebSocketSessionProtocolTransportOptions,
 } from "../transport/index.js";
 export {
-  StdioSessionProtocolTransport,
-  TauProcessError,
   TauSessionClientError,
   TauSessionProtocolResponseError,
   TauTransportError,

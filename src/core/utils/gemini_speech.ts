@@ -9,8 +9,14 @@ const DEFAULT_TTS_SAMPLE_RATE_HZ = 24000;
 const DEFAULT_TTS_CHANNEL_COUNT = 1;
 const DEFAULT_TTS_BITS_PER_SAMPLE = 16;
 const DEFAULT_TTS_MAX_ATTEMPTS = 3;
-const DEFAULT_TTS_CONCURRENCY = 6;
-const MIN_SPEECH_CHUNK_CHARACTERS = 240;
+const PROGRESSIVE_TTS_CONCURRENCY = 6;
+const COMPLETE_TTS_CONCURRENCY = 3;
+const PROGRESSIVE_SPEECH_CHUNK_CHARACTERS = 500;
+const COMPLETE_SPEECH_CHUNK_CHARACTERS = 1000;
+const MIN_TTS_OUTPUT_TOKENS = 1024;
+const MAX_TTS_OUTPUT_TOKENS = 8192;
+const TTS_OUTPUT_TOKENS_PER_SPOKEN_UNIT = 24;
+const TTS_OUTPUT_TOKEN_STEP = 256;
 const RETRYABLE_TTS_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504]);
 
 const errorPayloadSchema = z.object({
@@ -24,6 +30,7 @@ const errorPayloadSchema = z.object({
 });
 
 export type GeminiSpeechStage = "rewriting" | "generating";
+export type GeminiSpeechDeliveryMode = "progressive" | "complete";
 
 export type GeminiSpeechChunkProgress = {
   ready: number;
@@ -33,6 +40,7 @@ export type GeminiSpeechChunkProgress = {
 export type GeminiSpeechOptions = {
   apiKey: string;
   sourceText: string;
+  deliveryMode: GeminiSpeechDeliveryMode;
   rewriteModel?: string;
   ttsModel?: string;
   voiceName?: string;
@@ -97,7 +105,7 @@ export async function* streamGeminiSpeechAudio(
       signal: abortController.signal,
     });
 
-    const spokenChunks = splitSpeechChunks(spokenText);
+    const spokenChunks = splitSpeechChunks(spokenText, options.deliveryMode);
     await options.onStageChange?.("generating");
     await options.onChunkProgress?.({ ready: 0, total: spokenChunks.length });
 
@@ -106,10 +114,14 @@ export async function* streamGeminiSpeechAudio(
       model: ttsModel,
       voiceName,
       spokenChunks,
+      deliveryMode: options.deliveryMode,
       fetchImpl,
       signal: abortController.signal,
       maxAttempts: options.maxTtsAttempts ?? DEFAULT_TTS_MAX_ATTEMPTS,
-      concurrency: DEFAULT_TTS_CONCURRENCY,
+      concurrency:
+        options.deliveryMode === "progressive"
+          ? PROGRESSIVE_TTS_CONCURRENCY
+          : COMPLETE_TTS_CONCURRENCY,
       onChunkProgress: options.onChunkProgress,
       abortOnFailure: () => abortController.abort(),
     })) {
@@ -179,6 +191,7 @@ type SynthesizeSpeechAudioChunksArgs = {
   model: string;
   voiceName: string;
   spokenChunks: string[];
+  deliveryMode: GeminiSpeechDeliveryMode;
   fetchImpl: typeof fetch;
   signal?: AbortSignal;
   maxAttempts: number;
@@ -247,6 +260,7 @@ async function* synthesizeSpeechAudioChunksInOrder(
           model: args.model,
           voiceName: args.voiceName,
           spokenText: args.spokenChunks[index]!,
+          deliveryMode: args.deliveryMode,
           fetchImpl: args.fetchImpl,
           signal: args.signal,
           maxAttempts: args.maxAttempts,
@@ -295,6 +309,7 @@ type SynthesizeSpeechAudioChunkArgs = {
   model: string;
   voiceName: string;
   spokenText: string;
+  deliveryMode: GeminiSpeechDeliveryMode;
   fetchImpl: typeof fetch;
   signal?: AbortSignal;
   maxAttempts: number;
@@ -316,14 +331,14 @@ async function synthesizeSpeechAudioChunk(args: SynthesizeSpeechAudioChunkArgs):
             {
               parts: [
                 {
-                  text: buildSpeechSynthesisPrompt(args.spokenText),
+                  text: buildSpeechSynthesisPrompt(args.spokenText, args.deliveryMode),
                 },
               ],
             },
           ],
           generationConfig: {
             responseModalities: ["AUDIO"],
-            temperature: 1,
+            maxOutputTokens: calculateTtsMaxOutputTokens(args.spokenText),
             speechConfig: {
               voiceConfig: {
                 prebuiltVoiceConfig: {
@@ -463,14 +478,17 @@ function buildSpeechRewritePrompt(sourceText: string): string {
     "Things that typically need rewriting: file paths, shell commands, code identifiers, markdown structure, XML-like tags, long option lists, and code-heavy formatting.",
     "Remove formatting. Convert headings, lists, tables, and code blocks into plain spoken prose. Do not preserve markdown bullets, heading markers, table rows, fences, or standalone labels.",
     "For file references, keep the filename and any line or range info that was actually present. Do not add location detail that was not in the original.",
-    "Say code identifiers and version strings as natural words (for example, handleToolUiEvent as 'handle tool UI event', v5.4 as 'version 5.4'). Keep numbers and units natural (for example, 8,192 tokens as 'about eight thousand tokens').",
+    "Preserve numbers exactly as written, including separators, decimals, units, versions, line numbers, and ranges.",
+    "Preserve established technical names, acronyms, initialisms, commands, program names, filenames, and extensions exactly as written. Do not spell their letters apart, expand them, or change their capitalization. Examples that must remain unchanged include 24, PCM, ffmpeg, npm, v5.4, and config.json.",
+    "Rewrite a code identifier only when its literal form would be difficult to follow aloud, and preserve its exact meaning.",
     "",
     "Examples of good rewrites:",
     '- `src/core/utils/gemini_speech.ts:372` → "gemini_speech.ts, line 372"',
     '- `src/tui/session_chat_controller.ts:1819-1855` → "session_chat_controller.ts, lines 1819 to 1855"',
     '- `src/core/session/compaction.ts` → "compaction.ts"',
     '- `/Users/markus/.config/tau/config.json` → "the tau config.json in your home directory"',
-    '- `rg --heading -n -t ts "ToolRunPresentation" src` → "ripgrep for ToolRunPresentation in TypeScript files under src"',
+    '- `rg --heading -n -t ts "ToolRunPresentation" src` → "the rg command searching TypeScript files for ToolRunPresentation under src"',
+    '- `24 kHz PCM with ffmpeg` → "24 kHz PCM with ffmpeg"',
     '- `<available-skills>` → "the available-skills tag"',
     "- A markdown bullet list of short items → a natural comma-separated list or short sentences",
     "",
@@ -483,57 +501,69 @@ function buildSpeechRewritePrompt(sourceText: string): string {
   ].join("\n");
 }
 
-function splitSpeechChunks(spokenText: string): string[] {
-  const paragraphs = spokenText
-    .split(/\n\s*\n/g)
-    .map((paragraph) => normalizeSpeechParagraph(paragraph))
-    .filter((paragraph) => paragraph.length > 0);
-
-  if (paragraphs.length === 0) {
-    return [spokenText.trim()];
-  }
-
+function splitSpeechChunks(spokenText: string, deliveryMode: GeminiSpeechDeliveryMode): string[] {
+  const normalizedText = spokenText.replace(/\s+/g, " ").trim();
+  const maxCharacters =
+    deliveryMode === "progressive"
+      ? PROGRESSIVE_SPEECH_CHUNK_CHARACTERS
+      : COMPLETE_SPEECH_CHUNK_CHARACTERS;
   const chunks: string[] = [];
-  let current = "";
+  let remaining = normalizedText;
 
-  for (const paragraph of paragraphs) {
-    if (!current) {
-      current = paragraph;
-      continue;
-    }
-
-    if (current.length < MIN_SPEECH_CHUNK_CHARACTERS) {
-      current = joinSpeechParagraphs(current, paragraph);
-      continue;
-    }
-
-    chunks.push(current);
-    current = paragraph;
+  while (remaining.length > maxCharacters) {
+    const boundary = findSpeechChunkBoundary(remaining, maxCharacters);
+    chunks.push(remaining.slice(0, boundary).trim());
+    remaining = remaining.slice(boundary).trim();
   }
 
-  if (current) {
-    chunks.push(current);
+  if (remaining) {
+    chunks.push(remaining);
   }
 
-  return chunks;
+  return chunks.length > 0 ? chunks : [spokenText.trim()];
 }
 
-function normalizeSpeechParagraph(paragraph: string): string {
-  return paragraph.replace(/\s+/g, " ").trim();
+function findSpeechChunkBoundary(text: string, maxCharacters: number): number {
+  const preferredMinimum = Math.floor(maxCharacters * 0.6);
+  let fallbackBoundary = -1;
+
+  for (let index = maxCharacters; index >= 1; index -= 1) {
+    if (!/\s/.test(text[index] ?? "")) {
+      continue;
+    }
+    if (fallbackBoundary === -1) {
+      fallbackBoundary = index;
+    }
+    if (index >= preferredMinimum && /[.!?;:。！？]/u.test(text[index - 1] ?? "")) {
+      return index;
+    }
+  }
+
+  return fallbackBoundary === -1 ? maxCharacters : fallbackBoundary;
 }
 
-function joinSpeechParagraphs(first: string, second: string): string {
-  return `${first}\n\n${second}`;
+function calculateTtsMaxOutputTokens(spokenText: string): number {
+  const wordCount = spokenText.split(/\s+/u).filter(Boolean).length;
+  const characterUnits = Math.ceil(Array.from(spokenText).length / 6);
+  const spokenUnits = Math.max(wordCount, characterUnits);
+  const estimatedTokens = spokenUnits * TTS_OUTPUT_TOKENS_PER_SPOKEN_UNIT;
+  const roundedTokens = Math.ceil(estimatedTokens / TTS_OUTPUT_TOKEN_STEP) * TTS_OUTPUT_TOKEN_STEP;
+  return Math.min(MAX_TTS_OUTPUT_TOKENS, Math.max(MIN_TTS_OUTPUT_TOKENS, roundedTokens));
 }
 
-function buildSpeechSynthesisPrompt(spokenText: string): string {
+function buildSpeechSynthesisPrompt(
+  spokenText: string,
+  deliveryMode: GeminiSpeechDeliveryMode,
+): string {
   return [
     "Synthesize speech audio for the labeled transcript below.",
     "Speak only the transcript. Do not speak the instructions or section labels.",
     "",
     "### DIRECTOR'S NOTES",
     "Style: Clear, natural, conversational.",
-    "Pacing: Slightly slower than conversational, with deliberate enunciation. The audio will be sped up during playback.",
+    deliveryMode === "progressive"
+      ? "Pacing: Slightly slower than conversational, with deliberate enunciation. The audio will be sped up during playback."
+      : "Pacing: Natural conversational speed with clear enunciation.",
     "",
     "### TRANSCRIPT",
     spokenText,

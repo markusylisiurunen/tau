@@ -60,6 +60,9 @@ describe("telegram TTS", () => {
     });
 
     expect(voice).toEqual(Buffer.from("OggS voice"));
+    expect(streamSpeechAudio).toHaveBeenCalledWith(
+      expect.objectContaining({ deliveryMode: "complete" }),
+    );
     expect(combinedWave.subarray(44)).toEqual(Buffer.from([1, 2, 3, 4, 5, 6, 7, 8]));
     expect(combinedWave.readUInt32LE(40)).toBe(8);
     expect(spawn).toHaveBeenCalledWith(

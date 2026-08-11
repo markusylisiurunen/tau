@@ -29,6 +29,7 @@ export async function generateTelegramVoice(
   for await (const chunk of streamSpeechAudio({
     apiKey: options.apiKey,
     sourceText: options.sourceText,
+    deliveryMode: "complete",
     fetchImpl: options.fetchImpl,
     signal: options.signal,
   })) {

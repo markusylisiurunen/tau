@@ -31,6 +31,7 @@ export async function runSpeechPlaybackTask(args: {
     for await (const chunk of streamGeminiSpeechAudio({
       apiKey: args.apiKey,
       sourceText: args.sourceText,
+      deliveryMode: "progressive",
       signal: args.signal,
       onStageChange: (stage) => {
         args.onActivityLabel(stage === "rewriting" ? "rewriting for speech" : "generating speech");

@@ -46,6 +46,7 @@ describe("gemini speech", () => {
     for await (const chunk of streamGeminiSpeechAudio({
       apiKey: "gemini-key",
       sourceText: "Use src/app.ts:42 for the fix.",
+      deliveryMode: "progressive",
       fetchImpl: fetchMock,
       onStageChange: (stage) => {
         stages.push(stage);
@@ -94,7 +95,13 @@ describe("gemini speech", () => {
       "Do not add location detail that was not in the original",
     );
     expect(rewriteRequest.contents[0].parts[0].text).toContain(
-      "Say code identifiers and version strings as natural words",
+      "Preserve numbers exactly as written",
+    );
+    expect(rewriteRequest.contents[0].parts[0].text).toContain(
+      "Preserve established technical names, acronyms, initialisms, commands, program names",
+    );
+    expect(rewriteRequest.contents[0].parts[0].text).toContain(
+      '`24 kHz PCM with ffmpeg` → "24 kHz PCM with ffmpeg"',
     );
     expect(rewriteRequest.contents[0].parts[0].text).toContain("Examples of good rewrites:");
     expect(rewriteRequest.contents[0].parts[0].text).toContain(
@@ -105,7 +112,8 @@ describe("gemini speech", () => {
 
     const ttsRequest = JSON.parse(fetchMock.mock.calls[1][1].body);
     expect(ttsRequest.generationConfig.responseModalities).toEqual(["AUDIO"]);
-    expect(ttsRequest.generationConfig.temperature).toBe(1);
+    expect(ttsRequest.generationConfig.temperature).toBeUndefined();
+    expect(ttsRequest.generationConfig.maxOutputTokens).toBe(1024);
     expect(ttsRequest.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName).toBe(
       "Despina",
     );
@@ -164,6 +172,7 @@ describe("gemini speech", () => {
     for await (const chunk of streamGeminiSpeechAudio({
       apiKey: "gemini-key",
       sourceText: "## Setup\n\n- First short point.\n- Second short point.",
+      deliveryMode: "progressive",
       fetchImpl: fetchMock,
       onChunkProgress: (progress) => {
         chunkProgress.push(progress);
@@ -180,7 +189,85 @@ describe("gemini speech", () => {
     ]);
 
     const ttsRequest = JSON.parse(fetchMock.mock.calls[1][1].body);
-    expect(ttsRequest.contents[0].parts[0].text).toContain(rewrittenText);
+    expect(ttsRequest.contents[0].parts[0].text).toContain(rewrittenText.replace(/\s+/g, " "));
+  });
+
+  it.each([
+    {
+      name: "short",
+      rewrittenText: "A short response stays in one complete-audio chunk.",
+      expectedChunks: 1,
+    },
+    {
+      name: "medium",
+      rewrittenText: Array.from(
+        { length: 14 },
+        (_, index) =>
+          `Sentence ${index + 1} explains a distinct implementation detail while keeping the transcript natural and complete.`,
+      ).join(" "),
+      expectedChunks: 2,
+    },
+    {
+      name: "long",
+      rewrittenText: Array.from(
+        { length: 30 },
+        (_, index) =>
+          `Sentence ${index + 1} explains a distinct implementation detail while keeping the transcript natural and complete.`,
+      ).join(" "),
+      expectedChunks: 4,
+    },
+  ])("bounds complete-audio chunks for $name responses", async (testCase) => {
+    let requestIndex = 0;
+    const fetchMock = vi.fn(async () => {
+      if (requestIndex++ === 0) {
+        return new Response(
+          JSON.stringify({
+            candidates: [{ content: { parts: [{ text: testCase.rewrittenText }] } }],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      return new Response(
+        JSON.stringify({
+          candidates: [
+            {
+              content: {
+                parts: [{ inlineData: { data: Buffer.from([1, 2]).toString("base64") } }],
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    });
+
+    const chunks = [];
+    for await (const chunk of streamGeminiSpeechAudio({
+      apiKey: "gemini-key",
+      sourceText: "Original response.",
+      deliveryMode: "complete",
+      fetchImpl: fetchMock,
+    })) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks).toHaveLength(testCase.expectedChunks);
+    const ttsRequests = fetchMock.mock.calls.slice(1).map(([, init]) => JSON.parse(init.body));
+    const transcripts = ttsRequests.map((request) =>
+      request.contents[0].parts[0].text.split("### TRANSCRIPT\n")[1].trim(),
+    );
+    expect(transcripts.every((transcript) => transcript.length <= 1000)).toBe(true);
+    expect(transcripts.join(" ")).toBe(testCase.rewrittenText);
+    for (const request of ttsRequests) {
+      expect(request.contents[0].parts[0].text).toContain(
+        "Pacing: Natural conversational speed with clear enunciation.",
+      );
+      expect(request.generationConfig.maxOutputTokens).toBeGreaterThanOrEqual(1024);
+      expect(request.generationConfig.maxOutputTokens).toBeLessThanOrEqual(8192);
+      expect(request.generationConfig.maxOutputTokens % 256).toBe(0);
+      expect(request.generationConfig.temperature).toBeUndefined();
+    }
   });
 
   it("retries transient TTS failures", async () => {
@@ -235,6 +322,7 @@ describe("gemini speech", () => {
     for await (const chunk of streamGeminiSpeechAudio({
       apiKey: "gemini-key",
       sourceText: "Original text.",
+      deliveryMode: "progressive",
       fetchImpl: fetchMock,
       maxTtsAttempts: 2,
     })) {

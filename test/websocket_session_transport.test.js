@@ -476,6 +476,94 @@ describe("WebSocketSessionProtocolTransport", () => {
     await transport.close();
   });
 
+  it("rejects malformed correlated responses without failing the transport", async () => {
+    const socket = createControllableSocket();
+    const transport = new WebSocketSessionProtocolTransport({
+      url: "ws://localhost:1",
+      webSocketFactory: () => socket,
+    });
+
+    const connect = transport.connect({ client: { name: "test", version: "1" } }, 500);
+    socket.emitOpen();
+    socket.emitMessage({
+      version: SESSION_PROTOCOL_VERSION,
+      type: "ready",
+      methods: ["initialize"],
+    });
+    await connect;
+
+    const malformedRequest = transport.request("session.list", {});
+    const malformedRequestId = socket.sent.at(-1).id;
+    socket.emitMessage({
+      version: SESSION_PROTOCOL_VERSION,
+      type: "response",
+      id: malformedRequestId,
+      ok: false,
+      error: {
+        code: "internal_error",
+      },
+    });
+
+    await expect(malformedRequest).rejects.toMatchObject({
+      name: "TauTransportError",
+      message: "received malformed session protocol response",
+    });
+
+    const validRequest = transport.request("session.list", {});
+    const validRequestId = socket.sent.at(-1).id;
+    socket.emitMessage({
+      version: SESSION_PROTOCOL_VERSION,
+      type: "response",
+      id: validRequestId,
+      ok: true,
+      result: { sessions: [] },
+    });
+    await expect(validRequest).resolves.toEqual({ sessions: [] });
+
+    await transport.close();
+  });
+
+  it("rejects successful responses with invalid method results", async () => {
+    const socket = createControllableSocket();
+    const transport = new WebSocketSessionProtocolTransport({
+      url: "ws://localhost:1",
+      webSocketFactory: () => socket,
+    });
+
+    const connect = transport.connect({ client: { name: "test", version: "1" } }, 500);
+    socket.emitOpen();
+    socket.emitMessage({
+      version: SESSION_PROTOCOL_VERSION,
+      type: "ready",
+      methods: ["initialize"],
+    });
+    await connect;
+
+    const snapshotRequest = transport.request("session.snapshot", { sessionId: "session-1" });
+    const snapshotRequestId = socket.sent.at(-1).id;
+    socket.emitMessage({
+      version: SESSION_PROTOCOL_VERSION,
+      type: "response",
+      id: snapshotRequestId,
+      ok: true,
+      result: {
+        sessionId: "session-1",
+        status: "idle",
+        executionEnvironment: { kind: "local", cwd: "/repo", home: "/home/user" },
+        historyEntries: [],
+      },
+    });
+
+    await expect(snapshotRequest).rejects.toMatchObject({
+      name: "TauTransportError",
+      message: expect.stringContaining(
+        "received invalid session protocol response result: session.snapshot result is invalid",
+      ),
+    });
+
+    await transport.close();
+  });
+
   it("fails websocket transport on responses for unknown request ids", async () => {
     const socket = createControllableSocket();
     const transport = new WebSocketSessionProtocolTransport({

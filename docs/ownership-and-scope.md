@@ -38,7 +38,6 @@ For repository and composite projects it prepares managed workspaces. A configur
 | --- | --- | --- | --- |
 | `tau` | Local TUI process | In-process on the same machine | Local `cwd` where Tau started |
 | `tau attach … ws://…` | Machine running `tau attach` | Machine running `tau serve` | Environment selected or restored by that host |
-| `tau attach … -- <command>` | Machine running `tau attach` | Machine running the protocol command, often reached through SSH | Environment selected or restored by that host |
 | `tau serve` | A separate protocol client | The server process | Local or configured hosted environment chosen by the client |
 | Default Node SDK client | SDK caller | In-process with the SDK caller | Usually a local environment supplied at session creation |
 | SDK over WebSocket | SDK caller | Remote server | Environment selected or restored by that host |

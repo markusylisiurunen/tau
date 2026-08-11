@@ -199,12 +199,37 @@ if (execute.version !== 4 || execute.type !== "execute") {
 
 writeFrame({
   version: 4,
+  type: "exec",
+  requestId: "git-status",
+  command: "git status --short",
+  options: {
+    maxCaptureBytes: 256 * 1024,
+  },
+});
+
+const response = await readFrame();
+if (
+  response.version !== 4 ||
+  response.type !== "exec.result" ||
+  response.requestId !== "git-status"
+) {
+  throw new Error("Invalid execution-environment response");
+}
+if (!response.ok) throw new Error(response.error);
+
+const localSystem = `${platform()} ${release()} ${arch()}`;
+const workspaceStatus =
+  response.result.output.trim() || "Working tree is clean.";
+writeFrame({
+  version: 4,
   type: "result",
-  content: `${platform()} ${release()} ${arch()}`,
+  content: `${localSystem}\n\n${workspaceStatus}`,
 });
 
 lines.close();
 ```
+
+The `exec` frame asks Tau to run `git status --short` in the session execution environment, which may be a different machine from the JavaScript process. Tau returns the matching `exec.result` on stdin. Request IDs are single-use, and the command must check both the ID and `ok` before consuming the result.
 
 Make the file executable with `chmod +x`. Diagnostics and uncaught errors go to stderr; stdout remains reserved for protocol frames.
 
@@ -258,7 +283,7 @@ Configure either executable as an argument-free command tool:
 }
 ```
 
-The `ready.presentation` object may contain `subject`, `operation`, and `subjectWrap`. Omit `presentation` entirely to use the tool name as the subject. The script must emit `ready` before reading the authorization-bearing `execute` frame. Direct shell implementations do not receive the helper's execution-environment facade; use the TypeScript helper when the tool needs target-environment execution requests, cancellation forwarding, or more involved protocol handling.
+The `ready.presentation` object may contain `subject`, `operation`, and `subjectWrap`. Omit `presentation` entirely to use the tool name as the subject. The script must emit `ready` before reading the authorization-bearing `execute` frame. Direct implementations can emit the same `exec` frames shown in the JavaScript example, but the TypeScript helper is preferable when the tool needs multiple target-environment requests, cancellation forwarding, or more involved protocol handling.
 
 The handler receives:
 

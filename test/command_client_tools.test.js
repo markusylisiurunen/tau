@@ -267,7 +267,10 @@ describe("command client tools", () => {
       "writeFrame({ version: 4, type: 'ready', presentation: { subject: 'raw javascript' } });",
       "const execute = await readFrame();",
       "if (execute.version !== 4 || execute.type !== 'execute') throw new Error('invalid authorization');",
-      "writeFrame({ version: 4, type: 'result', content: process.platform });",
+      "writeFrame({ version: 4, type: 'exec', requestId: 'status', command: 'git status --short', options: { maxCaptureBytes: 1024 } });",
+      "const response = await readFrame();",
+      "if (response.version !== 4 || response.type !== 'exec.result' || response.requestId !== 'status' || !response.ok) throw new Error('invalid execution response');",
+      "writeFrame({ version: 4, type: 'result', content: response.result.output });",
       "lines.close();",
     ].join("\n");
     const [tool] = createCommandClientTools([
@@ -284,7 +287,11 @@ describe("command client tools", () => {
     await expect(tool.describe(args, context)).resolves.toMatchObject({
       subject: "raw javascript",
     });
-    await expect(tool.execute(args, context)).resolves.toEqual({ content: process.platform });
+    await expect(tool.execute(args, context)).resolves.toEqual({ content: "workspace output" });
+    expect(context.executionEnvironment.exec).toHaveBeenCalledWith("git status --short", {
+      maxCaptureBytes: 1024,
+      signal: expect.any(AbortSignal),
+    });
   });
 
   it("runs a direct Bash command protocol implementation", async () => {

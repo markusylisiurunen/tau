@@ -58,7 +58,7 @@ Unknown object fields are stripped, so a misspelled field can have no effect wit
 | `maxSessions` | No | Positive integer cap on active sessions across the whole runner. |
 | `systemMessage` | No | Non-empty model-facing instruction prepended to every Telegram turn. |
 
-A relative top-level `workspaceRoot` resolves from the Telegram config file's directory. Tau persists runner session records at `<workspaceRoot>-sessions.json` and per-chat project preferences at `<workspaceRoot>-project-preferences.json`. These are runner-owned state files, not operator editing surfaces. Session snapshots remain in the normal host store under the runner user's Tau home.
+A relative top-level `workspaceRoot` resolves from the Telegram config file's directory. Tau persists runner session records at `<workspaceRoot>-sessions.json` and per-chat preferences at `<workspaceRoot>-project-preferences.json`. These are runner-owned state files, not operator editing surfaces. Session snapshots remain in the normal host store under the runner user's Tau home.
 
 `maxSessions` counts queued, preparing, running, and waiting sessions across all configured bots. Failed records do not consume the active cap, but they remain visible to their owning chat until replaced or closed.
 
@@ -83,7 +83,7 @@ Use both lists for a private bot. `allowedUserIds` controls who can trigger work
 
 A bot sees only `allowedProjectIds`. If that field is omitted, it sees every configured project. A sole allowed project is selected automatically; otherwise a chat needs `defaultProjectId` or an explicit `/use_<project>` preference before `/new`.
 
-Tau registers eight built-in commands plus one `/use_<projectId>` command per visible project. A bot may expose at most 92 projects under Telegram's 100-command limit.
+Tau registers ten built-in commands plus one `/use_<projectId>` command per visible project. A bot may expose at most 90 projects under Telegram's 100-command limit.
 
 ## Project IDs and common fields
 
@@ -236,8 +236,10 @@ The runner's speech-to-text provider is loaded from normal Tau config at runner 
 | `/effort_xhigh` | Selects xhigh reasoning for later independent turns. |
 | `/compact` | Runs summary-only manual compaction while the session is idle. |
 | `/interrupt` | Interrupts the active Tau turn. |
+| `/tts_on` | Enables a Gemini-generated voice note after each final assistant response. |
+| `/tts_off` | Disables voice responses. |
 
-Project preferences are scoped to one bot and chat and survive restarts. A changed preference does not switch the active session; `/status` reports the difference.
+Preferences are scoped to one bot and chat and survive restarts, projects, and sessions. A new project choice does not switch the active session; `/status` reports the difference.
 
 In groups, commands must explicitly mention the bot. Accepted forms include:
 
@@ -283,6 +285,8 @@ Mistral is the default provider. Configure credentials in the runner's normal Ta
 - Gemini: set `speechToText.provider` to `gemini`, then use `GEMINI_API_KEY`, falling back to `apiKeys.google`
 
 The environment variable wins for each speech provider. Audio without a usable key produces a user-facing error instead of entering a turn. See [credentials](credentials.md).
+
+`/tts_on` uses `gemini-3.1-flash-tts-preview`. It needs `GEMINI_API_KEY` or `apiKeys.google` plus runner-side `ffmpeg` for Ogg Opus encoding. Failures do not affect text delivery.
 
 ## Command client tools
 

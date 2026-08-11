@@ -25,6 +25,7 @@ import {
   type TelegramSessionManagerEvent,
   type TelegramSessionRecord,
 } from "./session_manager.js";
+import { type GenerateTelegramVoiceOptions, generateTelegramVoice } from "./tts.js";
 
 type TelegramChat = {
   id: number;
@@ -114,6 +115,7 @@ export type TelegramApi = {
   }): Promise<TelegramUpdate[]>;
   sendMessage(chatId: number, text: string, options: TelegramSendOptions): Promise<void>;
   sendRichMessage(chatId: number, markdown: string, options: TelegramSendOptions): Promise<void>;
+  sendVoice(chatId: number, voice: Buffer, options: TelegramSendOptions): Promise<void>;
   sendChatAction(chatId: number, action: string): Promise<void>;
   downloadFile(fileId: string): Promise<Buffer>;
   setCommands(commands: TelegramBotCommand[]): Promise<void>;
@@ -146,6 +148,7 @@ export type TelegramAdapterOptions = {
   projectPreferences: TelegramProjectPreferenceStore;
   api?: TelegramApi;
   fetchImpl?: typeof fetch;
+  generateVoice?: (options: GenerateTelegramVoiceOptions) => Promise<Buffer>;
   onLog?: (entry: TelegramLogEntry) => void;
 };
 
@@ -251,6 +254,7 @@ const CALLBACK_ACTION_PREFIX = "tau:action:";
 const MAX_TELEGRAM_ATTACHMENTS_PER_TURN = 10;
 const MAX_TELEGRAM_ATTACHMENT_FILE_BYTES = 20 * 1024 * 1024;
 const MAX_TELEGRAM_ATTACHMENT_TOTAL_BYTES = 50 * 1024 * 1024;
+const MAX_TELEGRAM_VOICE_BYTES = 50 * 1024 * 1024;
 const MAX_TELEGRAM_GROUP_PENDING_MESSAGES = 50;
 const TELEGRAM_ATTACHMENT_TEMP_DIR_PREFIX = "tau-telegram-attachments-";
 const TELEGRAM_REASONING_EFFORTS = [
@@ -947,6 +951,10 @@ class TelegramDeliveryError extends Error {
   }
 }
 
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
 function getErrorCode(error: unknown): string | undefined {
   if (typeof error !== "object" || error === null || !("code" in error)) {
     return undefined;
@@ -1014,6 +1022,13 @@ function asPermanentTelegramRequestError(error: unknown): TelegramRequestError {
   return new TelegramRequestError(message, { retryable: false, cause: error });
 }
 
+type TelegramUpload = {
+  field: string;
+  fileName: string;
+  mimeType: string;
+  data: Buffer;
+};
+
 function createTelegramApi(botToken: string): TelegramApi {
   const apiUrl = `https://api.telegram.org/bot${botToken}`;
 
@@ -1022,15 +1037,26 @@ function createTelegramApi(botToken: string): TelegramApi {
     payload: Record<string, unknown>,
     resultSchema: z.ZodType<Result>,
     signal?: AbortSignal,
+    upload?: TelegramUpload,
   ): Promise<Result> {
+    const body = upload ? new FormData() : JSON.stringify(payload);
+    if (body instanceof FormData && upload) {
+      for (const [key, value] of Object.entries(payload)) {
+        body.append(key, typeof value === "string" ? value : JSON.stringify(value));
+      }
+      body.append(
+        upload.field,
+        new Blob([Uint8Array.from(upload.data)], { type: upload.mimeType }),
+        upload.fileName,
+      );
+    }
+
     let response: Response;
     try {
       response = await fetch(`${apiUrl}/${method}`, {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-        },
-        body: JSON.stringify(payload),
+        ...(upload ? {} : { headers: { "content-type": "application/json" } }),
+        body,
         signal,
       });
     } catch (error) {
@@ -1161,6 +1187,14 @@ function createTelegramApi(botToken: string): TelegramApi {
         options.signal,
       );
     },
+    async sendVoice(chatId, voice, options) {
+      await callTelegramMethod("sendVoice", { chat_id: chatId }, z.unknown(), options.signal, {
+        field: "voice",
+        fileName: "response.ogg",
+        mimeType: "audio/ogg",
+        data: voice,
+      });
+    },
     async sendChatAction(chatId, action) {
       await callTelegramMethod(
         "sendChatAction",
@@ -1246,6 +1280,7 @@ class TelegramAdapterImpl {
   private readonly allowedProjectIds: string[];
   private readonly api: TelegramApi;
   private readonly fetchImpl?: typeof fetch;
+  private readonly generateVoice: (options: GenerateTelegramVoiceOptions) => Promise<Buffer>;
   private readonly onLog?: (entry: TelegramLogEntry) => void;
   private readonly commandDefinitions: TelegramCommandDefinition[];
   private readonly commandHandlers: Map<string, TelegramCommandHandler>;
@@ -1257,6 +1292,7 @@ class TelegramAdapterImpl {
   private readonly chatTypesByChat = new Map<number, string>();
   private readonly typingIntervalsBySessionChat = new Map<string, ReturnType<typeof setInterval>>();
   private readonly lastCommandBySession = new Map<string, string>();
+  private readonly finalAssistantTextBySession = new Map<string, string>();
   private readonly pendingAttachmentsBySession = new Map<string, TelegramPendingAttachment[]>();
   private readonly pendingGroupMessagesByChat = new Map<number, TelegramGroupPendingMessage[]>();
   private readonly pendingAttachmentTempDirBySession = new Map<string, string>();
@@ -1265,6 +1301,7 @@ class TelegramAdapterImpl {
   private readonly inFlightUpdateTasks = new Set<Promise<void>>();
   private readonly notificationQueueTailByChat = new Map<number, Promise<void>>();
   private readonly inFlightNotificationTasks = new Set<Promise<void>>();
+  private readonly inFlightTtsTasks = new Set<Promise<void>>();
 
   private readonly unsubscribeSessionEvents: () => void;
   private readonly loopPromise: Promise<void>;
@@ -1302,6 +1339,7 @@ class TelegramAdapterImpl {
     this.allowedProjectIds = Object.keys(options.projects);
     this.api = options.api;
     this.fetchImpl = options.fetchImpl;
+    this.generateVoice = options.generateVoice ?? generateTelegramVoice;
     this.onLog = options.onLog;
     this.commandDefinitions = this.createCommandDefinitions();
     this.commandHandlers = new Map();
@@ -1347,6 +1385,7 @@ class TelegramAdapterImpl {
     try {
       await this.loopPromise;
       await this.waitForInFlightUpdateTasks();
+      await Promise.allSettled(Array.from(this.inFlightTtsTasks));
       await Promise.allSettled(Array.from(this.inFlightNotificationTasks));
 
       for (const sessionId of Array.from(this.chatsBySession.keys())) {
@@ -1392,6 +1431,16 @@ class TelegramAdapterImpl {
         description: "interrupt active run",
         callbackAction: "interrupt",
         handler: async (chatId) => this.handleInterrupt(chatId),
+      },
+      {
+        command: "/tts_on",
+        description: "enable voice responses",
+        handler: async (chatId, args) => this.handleTtsPreference(chatId, true, args),
+      },
+      {
+        command: "/tts_off",
+        description: "disable voice responses",
+        handler: async (chatId, args) => this.handleTtsPreference(chatId, false, args),
       },
     ];
 
@@ -2252,6 +2301,32 @@ class TelegramAdapterImpl {
     }
   }
 
+  private async handleTtsPreference(
+    chatId: number,
+    enabled: boolean,
+    args: string[],
+  ): Promise<void> {
+    const command = enabled ? "/tts_on" : "/tts_off";
+    if (args.length > 0) {
+      await this.reply(chatId, `usage: ${command}`);
+      return;
+    }
+    if (enabled && !this.geminiApiKey) {
+      await this.reply(chatId, "set GEMINI_API_KEY or apiKeys.google to enable voice responses.");
+      return;
+    }
+
+    try {
+      await this.projectPreferences.setTtsEnabled(this.ownerIdForChat(chatId), enabled);
+      await this.reply(chatId, `voice responses ${enabled ? "enabled" : "disabled"}.`);
+    } catch (error) {
+      await this.reply(
+        chatId,
+        `failed to save voice response preference: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
   private async handleSetReasoning(
     chatId: number,
     reasoning: (typeof TELEGRAM_REASONING_EFFORTS)[number],
@@ -2935,6 +3010,7 @@ class TelegramAdapterImpl {
     }
 
     if (event.state === "running") {
+      this.finalAssistantTextBySession.delete(event.sessionId);
       this.startTypingIndicators(event.sessionId);
       if (this.isVerboseSession(event.sessionId)) {
         this.notifyLifecycle(event.sessionId, event.projectId, "started");
@@ -2943,6 +3019,7 @@ class TelegramAdapterImpl {
     }
 
     if (event.state === "failed") {
+      this.finalAssistantTextBySession.delete(event.sessionId);
       this.stopTypingIndicators(event.sessionId);
       this.notifyLifecycle(event.sessionId, event.projectId, "failed");
       return;
@@ -2960,6 +3037,11 @@ class TelegramAdapterImpl {
       this.stopTypingIndicators(event.sessionId);
       if (this.isVerboseSession(event.sessionId)) {
         this.notifyLifecycle(event.sessionId, event.projectId, "finished");
+      }
+      const finalAssistantText = this.finalAssistantTextBySession.get(event.sessionId);
+      this.finalAssistantTextBySession.delete(event.sessionId);
+      if (finalAssistantText) {
+        this.startTtsNotification(event.sessionId, finalAssistantText);
       }
     }
   }
@@ -3009,6 +3091,10 @@ class TelegramAdapterImpl {
       return;
     }
 
+    if (event.progress.final) {
+      this.finalAssistantTextBySession.set(event.sessionId, event.progress.text);
+    }
+
     this.notifySession(
       event.sessionId,
       isVerbose
@@ -3018,6 +3104,60 @@ class TelegramAdapterImpl {
         : event.progress.text,
       { rich: true, messageId: event.progress.messageId },
     );
+  }
+
+  private startTtsNotification(sessionId: string, sourceText: string): void {
+    const chatIds = this.chatsBySession.get(sessionId);
+    if (
+      !this.geminiApiKey ||
+      !chatIds ||
+      ![...chatIds].some((chatId) =>
+        this.projectPreferences.isTtsEnabled(this.ownerIdForChat(chatId)),
+      )
+    ) {
+      return;
+    }
+
+    const task = this.generateAndSendTtsNotification(sessionId, sourceText).finally(() => {
+      this.inFlightTtsTasks.delete(task);
+    });
+    this.inFlightTtsTasks.add(task);
+    void task;
+  }
+
+  private async generateAndSendTtsNotification(
+    sessionId: string,
+    sourceText: string,
+  ): Promise<void> {
+    try {
+      const voice = await this.generateVoice({
+        apiKey: this.geminiApiKey!,
+        sourceText,
+        fetchImpl: this.fetchImpl,
+        signal: this.abortController.signal,
+      });
+      if (voice.length > MAX_TELEGRAM_VOICE_BYTES) {
+        throw new Error("generated voice response exceeds Telegram's 50 MB limit");
+      }
+
+      const chatIds = this.chatsBySession.get(sessionId);
+      if (!chatIds) {
+        return;
+      }
+      await Promise.all(
+        [...chatIds]
+          .filter((chatId) => this.projectPreferences.isTtsEnabled(this.ownerIdForChat(chatId)))
+          .map(async (chatId) => await this.enqueueVoiceNotification(sessionId, chatId, voice)),
+      );
+    } catch (error) {
+      if (this.abortController.signal.aborted || isAbortError(error)) {
+        return;
+      }
+      this.log("error", "failed to generate Telegram voice response", {
+        sessionId,
+        cause: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   private notifyLifecycle(
@@ -3090,6 +3230,64 @@ class TelegramAdapterImpl {
             sessionId,
             chatId,
             ...(options.rich === true ? { messageId: options.messageId } : {}),
+            attempts: deliveryError.attempts,
+            cause: deliveryError.message,
+          },
+        );
+        return false;
+      });
+
+    const trackedTask = deliveryTask
+      .then(() => undefined)
+      .finally(() => {
+        this.inFlightNotificationTasks.delete(trackedTask);
+        if (this.notificationQueueTailByChat.get(chatId) === trackedTask) {
+          this.notificationQueueTailByChat.delete(chatId);
+        }
+      });
+
+    this.notificationQueueTailByChat.set(chatId, trackedTask);
+    this.inFlightNotificationTasks.add(trackedTask);
+    return deliveryTask;
+  }
+
+  private enqueueVoiceNotification(
+    sessionId: string,
+    chatId: number,
+    voice: Buffer,
+  ): Promise<boolean> {
+    const previousTask = this.notificationQueueTailByChat.get(chatId) ?? Promise.resolve();
+    const deliveryTask = previousTask
+      .then(async () => {
+        if (
+          this.abortController.signal.aborted ||
+          !this.projectPreferences.isTtsEnabled(this.ownerIdForChat(chatId))
+        ) {
+          return false;
+        }
+
+        const result = await this.sendWithRetry(
+          async (signal) => await this.api.sendVoice(chatId, voice, { signal }),
+        );
+        return result !== ABORTED;
+      })
+      .catch((error) => {
+        if (this.abortController.signal.aborted) {
+          return false;
+        }
+
+        const deliveryError =
+          error instanceof TelegramDeliveryError
+            ? error
+            : new TelegramDeliveryError(error, 1, false);
+        this.log(
+          "error",
+          deliveryError.retryable
+            ? "telegram voice response delivery retries exhausted"
+            : "failed to send Telegram voice response",
+          {
+            sessionId,
+            chatId,
             attempts: deliveryError.attempts,
             cause: deliveryError.message,
           },

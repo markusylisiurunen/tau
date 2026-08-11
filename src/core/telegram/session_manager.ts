@@ -70,6 +70,7 @@ export type TelegramSessionProgress =
       type: "assistant-message";
       messageId: string;
       text: string;
+      final: boolean;
     };
 
 export type TelegramSessionRecord = {
@@ -2103,6 +2104,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       type: "assistant-message",
       messageId: message.id,
       text,
+      final: message.message.stopReason === "stop" || message.message.stopReason === "length",
     });
   }
 

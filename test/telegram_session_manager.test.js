@@ -2493,6 +2493,14 @@ describe("telegram session manager", () => {
     await sendPromise;
 
     expect(assistantProgressTexts(events)).toEqual(["I’ll inspect that now.", "final answer"]);
+    expect(
+      events
+        .filter(
+          (event) =>
+            event.type === "session-progress" && event.progress.type === "assistant-message",
+        )
+        .map((event) => event.progress.final),
+    ).toEqual([false, true]);
   });
 
   it("emits committed assistant progress from assistant-message snapshot resets once", async () => {

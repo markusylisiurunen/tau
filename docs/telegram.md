@@ -286,7 +286,7 @@ Mistral is the default provider. Configure credentials in the runner's normal Ta
 
 The environment variable wins for each speech provider. Audio without a usable key produces a user-facing error instead of entering a turn. See [credentials](credentials.md).
 
-`/tts_on` uses `gemini-3.1-flash-tts-preview`. It needs `GEMINI_API_KEY` or `apiKeys.google` plus runner-side `ffmpeg` for Ogg Opus encoding. Failures do not affect text delivery.
+`/tts_on` uses `gemini-3.6-flash`, `gemini-3.1-flash-tts-preview`, Despina, the Google key, and runner `ffmpeg` with Opus. Source and rewritten text each allow 10,000 Unicode characters; audio allows 32 MiB. Rewrite and job timeouts are one and five minutes. Jobs are ephemeral. Failure sends `voice response failed. please try again.` without affecting text; details stay in logs.
 
 ## Command client tools
 
@@ -304,7 +304,7 @@ If a referenced repository workspace is missing, Tau reconstructs it from the ca
 
 If the connection is lost after Telegram submits a message, startup checks whether Tau accepted and completed it. Running work remains interruptible until it settles. A confirmed unaccepted message prompts the user to resend it; failed or blocked outcomes remain queued until delivery succeeds.
 
-Tau does not resend earlier assistant messages, notices, or unrelated old outcomes just because the runner restarted. New warning and error notices are delivered after recovery. A restart clears short-lived network retries, but notifications waiting to be delivered remain pending.
+Restart does not replay responses. It clears voice jobs and short-lived retries, but pending notifications remain.
 
 If a failed session still has unresolved submitted work, Tau can reconnect to determine the outcome. Other failed sessions remain visible with their original diagnostic until the owning chat replaces or closes them. Do not edit runner state files to force recovery.
 

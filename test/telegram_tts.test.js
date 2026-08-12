@@ -1,6 +1,8 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { generateTelegramVoice } from "../dist/core/telegram/tts.js";
+import { generateTelegramVoice, sweepStaleTelegramTtsTempDirs } from "../dist/core/telegram/tts.js";
 
 function createWaveAudio(pcm) {
   const header = Buffer.alloc(44);
@@ -21,27 +23,35 @@ function createWaveAudio(pcm) {
 }
 
 describe("telegram TTS", () => {
-  it("combines Gemini WAV chunks and encodes an Ogg Opus voice note", async () => {
+  it("removes stale Telegram TTS directories", async () => {
+    const staleDirectory = await mkdtemp(join(tmpdir(), "tau-telegram-tts-"));
+    await writeFile(join(staleDirectory, "speech.wav"), Buffer.from("assistant audio"));
+
+    await sweepStaleTelegramTtsTempDirs();
+
+    await expect(stat(staleDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("writes ordered Gemini WAV chunks and encodes one Ogg Opus voice note", async () => {
+    const waves = [
+      createWaveAudio(Buffer.from([1, 2, 3, 4])),
+      createWaveAudio(Buffer.from([5, 6, 7, 8])),
+    ];
     const streamSpeechAudio = vi.fn(async function* () {
-      yield {
-        index: 0,
-        total: 2,
-        audio: createWaveAudio(Buffer.from([1, 2, 3, 4])),
-        mimeType: "audio/wav",
-      };
-      yield {
-        index: 1,
-        total: 2,
-        audio: createWaveAudio(Buffer.from([5, 6, 7, 8])),
-        mimeType: "audio/wav",
-      };
+      for (const [index, audio] of waves.entries()) {
+        yield { index, total: waves.length, audio, mimeType: "audio/wav" };
+      }
     });
-    let combinedWave;
-    const spawn = vi.fn(async (_command, args) => {
-      const inputPath = args[args.indexOf("-i") + 1];
-      const outputPath = args.at(-1);
-      combinedWave = await readFile(inputPath);
-      await writeFile(outputPath, Buffer.from("OggS voice"));
+    let manifest;
+    let writtenWaves;
+    const spawn = vi.fn(async (_command, args, options) => {
+      manifest = await readFile(join(options.cwd, args[args.indexOf("-i") + 1]), "utf8");
+      writtenWaves = await Promise.all(
+        ["chunk-000.wav", "chunk-001.wav"].map(
+          async (name) => await readFile(join(options.cwd, name)),
+        ),
+      );
+      await writeFile(join(options.cwd, args.at(-1)), Buffer.from("OggS voice"));
       return {
         stdout: "",
         stderr: "",
@@ -63,11 +73,15 @@ describe("telegram TTS", () => {
     expect(streamSpeechAudio).toHaveBeenCalledWith(
       expect.objectContaining({ deliveryMode: "complete" }),
     );
-    expect(combinedWave.subarray(44)).toEqual(Buffer.from([1, 2, 3, 4, 5, 6, 7, 8]));
-    expect(combinedWave.readUInt32LE(40)).toBe(8);
+    expect(manifest).toBe("ffconcat version 1.0\nfile 'chunk-000.wav'\nfile 'chunk-001.wav'\n");
+    expect(writtenWaves).toEqual(waves);
     expect(spawn).toHaveBeenCalledWith(
       "ffmpeg",
       expect.arrayContaining([
+        "-f",
+        "concat",
+        "-safe",
+        "1",
         "-filter:a",
         "atempo=1.1",
         "-c:a",
@@ -75,7 +89,11 @@ describe("telegram TTS", () => {
         "-application",
         "voip",
       ]),
-      expect.objectContaining({ detached: true, killProcessGroup: true }),
+      expect.objectContaining({
+        cwd: expect.stringContaining("tau-telegram-tts-"),
+        detached: true,
+        killProcessGroup: true,
+      }),
     );
   });
 });

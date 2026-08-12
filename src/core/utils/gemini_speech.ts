@@ -10,14 +10,15 @@ const DEFAULT_TTS_SAMPLE_RATE_HZ = 24000;
 const DEFAULT_TTS_CHANNEL_COUNT = 1;
 const DEFAULT_TTS_BITS_PER_SAMPLE = 16;
 const DEFAULT_TTS_MAX_ATTEMPTS = 3;
+const SPEECH_REWRITE_TIMEOUT_MS = 60_000;
 const PROGRESSIVE_TTS_CONCURRENCY = 6;
 const COMPLETE_TTS_CONCURRENCY = 3;
 const PROGRESSIVE_SPEECH_CHUNK_CHARACTERS = 500;
 const COMPLETE_SPEECH_CHUNK_CHARACTERS = 1000;
-const MIN_TTS_OUTPUT_TOKENS = 1024;
-const MAX_TTS_OUTPUT_TOKENS = 8192;
-const TTS_OUTPUT_TOKENS_PER_SPOKEN_UNIT = 24;
-const TTS_OUTPUT_TOKEN_STEP = 256;
+const MAX_SPEECH_SOURCE_CHARACTERS = 10_000;
+const MAX_SPOKEN_TEXT_CHARACTERS = 10_000;
+const MAX_SPEECH_PCM_BYTES = 32 * 1024 * 1024;
+const TTS_MAX_OUTPUT_TOKENS = 8192;
 const RETRYABLE_TTS_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504]);
 
 const errorPayloadSchema = z.object({
@@ -76,12 +77,22 @@ class GeminiTtsResponseError extends Error {
   }
 }
 
+class GeminiTtsOutputLimitError extends Error {
+  constructor() {
+    super("Gemini TTS reached its output token limit");
+    this.name = "GeminiTtsOutputLimitError";
+  }
+}
+
 export async function* streamGeminiSpeechAudio(
   options: GeminiSpeechOptions,
 ): AsyncGenerator<GeminiSpeechAudioChunk> {
   const sourceText = options.sourceText.trim();
   if (!sourceText) {
     throw new Error("speech source text was empty");
+  }
+  if (exceedsUnicodeCharacterLimit(sourceText, MAX_SPEECH_SOURCE_CHARACTERS)) {
+    throw new Error("speech source text exceeds 10,000 characters");
   }
 
   const apiKey = options.apiKey.trim();
@@ -98,13 +109,30 @@ export async function* streamGeminiSpeechAudio(
 
   try {
     await options.onStageChange?.("rewriting");
-    const spokenText = await rewriteTextForSpeech({
-      apiKey,
-      model: rewriteModel,
-      sourceText,
-      fetchImpl,
-      signal: abortController.signal,
-    });
+    const rewriteController = createLinkedAbortController(abortController.signal);
+    const rewriteTimeout = setTimeout(() => rewriteController.abort(), SPEECH_REWRITE_TIMEOUT_MS);
+    rewriteTimeout.unref?.();
+    let spokenText: string;
+    try {
+      spokenText = await rewriteTextForSpeech({
+        apiKey,
+        model: rewriteModel,
+        sourceText,
+        fetchImpl,
+        signal: rewriteController.signal,
+      });
+    } catch (error) {
+      if (!abortController.signal.aborted && rewriteController.signal.aborted) {
+        throw new Error("speech rewrite timed out after 1 minute");
+      }
+      throw error;
+    } finally {
+      clearTimeout(rewriteTimeout);
+      rewriteController.dispose();
+    }
+    if (exceedsUnicodeCharacterLimit(spokenText, MAX_SPOKEN_TEXT_CHARACTERS)) {
+      throw new Error("rewritten speech text exceeds 10,000 characters");
+    }
 
     const spokenChunks = splitSpeechChunks(spokenText, options.deliveryMode);
     await options.onStageChange?.("generating");
@@ -216,6 +244,7 @@ async function* synthesizeSpeechAudioChunksInOrder(
   let nextIndex = 0;
   let nextYieldIndex = 0;
   let ready = 0;
+  let totalPcmBytes = 0;
   let failure: unknown;
   let notify: (() => void) | undefined;
 
@@ -254,7 +283,7 @@ async function* synthesizeSpeechAudioChunksInOrder(
       }
 
       try {
-        results[index] = await synthesizeSpeechAudioChunk({
+        const pcmAudio = await synthesizeSpeechAudioChunk({
           apiKey: args.apiKey,
           model: args.model,
           voiceName: args.voiceName,
@@ -263,6 +292,11 @@ async function* synthesizeSpeechAudioChunksInOrder(
           signal: args.signal,
           maxAttempts: args.maxAttempts,
         });
+        totalPcmBytes += pcmAudio.length;
+        if (totalPcmBytes > MAX_SPEECH_PCM_BYTES) {
+          throw new Error("generated speech audio exceeds the 32 MiB limit");
+        }
+        results[index] = pcmAudio;
         ready += 1;
         await args.onChunkProgress?.({ ready, total });
         wake();
@@ -284,6 +318,7 @@ async function* synthesizeSpeechAudioChunksInOrder(
     while (nextYieldIndex < total) {
       const nextResult = results[nextYieldIndex];
       if (nextResult) {
+        results[nextYieldIndex] = undefined;
         yield { index: nextYieldIndex, pcmAudio: nextResult };
         nextYieldIndex += 1;
         continue;
@@ -335,7 +370,7 @@ async function synthesizeSpeechAudioChunk(args: SynthesizeSpeechAudioChunkArgs):
           ],
           generationConfig: {
             responseModalities: ["AUDIO"],
-            maxOutputTokens: calculateTtsMaxOutputTokens(args.spokenText),
+            maxOutputTokens: TTS_MAX_OUTPUT_TOKENS,
             speechConfig: {
               voiceConfig: {
                 prebuiltVoiceConfig: {
@@ -347,6 +382,7 @@ async function synthesizeSpeechAudioChunk(args: SynthesizeSpeechAudioChunkArgs):
         },
       });
 
+      assertGeminiTtsDidNotReachOutputLimit(payload);
       const audioData = extractGeminiInlineAudioData(payload);
       if (!audioData) {
         throw new GeminiTtsResponseError("Gemini TTS response did not include audio data");
@@ -435,6 +471,20 @@ function extractGeminiText(payload: unknown): string {
   return "";
 }
 
+function assertGeminiTtsDidNotReachOutputLimit(payload: unknown): void {
+  if (!isObject(payload) || !Array.isArray(payload.candidates)) {
+    return;
+  }
+
+  if (
+    payload.candidates.some(
+      (candidate) => isObject(candidate) && candidate.finishReason === "MAX_TOKENS",
+    )
+  ) {
+    throw new GeminiTtsOutputLimitError();
+  }
+}
+
 function extractGeminiInlineAudioData(payload: unknown): string | undefined {
   if (!isObject(payload) || !Array.isArray(payload.candidates)) {
     return undefined;
@@ -498,54 +548,70 @@ function buildSpeechRewritePrompt(sourceText: string): string {
   ].join("\n");
 }
 
+function exceedsUnicodeCharacterLimit(text: string, limit: number): boolean {
+  let count = 0;
+  for (const _character of text) {
+    count += 1;
+    if (count > limit) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function splitSpeechChunks(spokenText: string, deliveryMode: GeminiSpeechDeliveryMode): string[] {
-  const normalizedText = spokenText.replace(/\s+/g, " ").trim();
+  const normalizedText = spokenText
+    .trim()
+    .split(/\n\s*\n/gu)
+    .map((paragraph) => paragraph.replace(/\s+/gu, " ").trim())
+    .filter(Boolean)
+    .join("\n\n");
   const maxCharacters =
     deliveryMode === "progressive"
       ? PROGRESSIVE_SPEECH_CHUNK_CHARACTERS
       : COMPLETE_SPEECH_CHUNK_CHARACTERS;
   const chunks: string[] = [];
-  let remaining = normalizedText;
+  let remaining = Array.from(normalizedText);
 
   while (remaining.length > maxCharacters) {
     const boundary = findSpeechChunkBoundary(remaining, maxCharacters);
-    chunks.push(remaining.slice(0, boundary).trim());
-    remaining = remaining.slice(boundary).trim();
+    chunks.push(remaining.slice(0, boundary).join("").trim());
+    remaining = Array.from(remaining.slice(boundary).join("").trim());
   }
 
-  if (remaining) {
-    chunks.push(remaining);
+  if (remaining.length > 0) {
+    chunks.push(remaining.join(""));
   }
 
   return chunks.length > 0 ? chunks : [spokenText.trim()];
 }
 
-function findSpeechChunkBoundary(text: string, maxCharacters: number): number {
+function findSpeechChunkBoundary(characters: string[], maxCharacters: number): number {
   const preferredMinimum = Math.floor(maxCharacters * 0.6);
-  let fallbackBoundary = -1;
 
-  for (let index = maxCharacters; index >= 1; index -= 1) {
-    if (!/\s/.test(text[index] ?? "")) {
-      continue;
-    }
-    if (fallbackBoundary === -1) {
-      fallbackBoundary = index;
-    }
-    if (index >= preferredMinimum && /[.!?;:。！？]/u.test(text[index - 1] ?? "")) {
+  for (let index = maxCharacters; index >= preferredMinimum; index -= 1) {
+    if (characters[index] === "\n" && characters[index + 1] === "\n") {
       return index;
     }
   }
 
-  return fallbackBoundary === -1 ? maxCharacters : fallbackBoundary;
+  for (let index = maxCharacters; index >= preferredMinimum; index -= 1) {
+    if (isSpeechSentenceBoundary(characters[index - 1] ?? "", characters[index] ?? "")) {
+      return index;
+    }
+  }
+
+  for (let index = maxCharacters; index >= 1; index -= 1) {
+    if (/\s/u.test(characters[index] ?? "")) {
+      return index;
+    }
+  }
+
+  return maxCharacters;
 }
 
-function calculateTtsMaxOutputTokens(spokenText: string): number {
-  const wordCount = spokenText.split(/\s+/u).filter(Boolean).length;
-  const characterUnits = Math.ceil(Array.from(spokenText).length / 6);
-  const spokenUnits = Math.max(wordCount, characterUnits);
-  const estimatedTokens = spokenUnits * TTS_OUTPUT_TOKENS_PER_SPOKEN_UNIT;
-  const roundedTokens = Math.ceil(estimatedTokens / TTS_OUTPUT_TOKEN_STEP) * TTS_OUTPUT_TOKEN_STEP;
-  return Math.min(MAX_TTS_OUTPUT_TOKENS, Math.max(MIN_TTS_OUTPUT_TOKENS, roundedTokens));
+function isSpeechSentenceBoundary(previous: string, next: string): boolean {
+  return /[。！？]/u.test(previous) || (/[.!?;:]/u.test(previous) && /\s/u.test(next));
 }
 
 function buildSpeechSynthesisPrompt(spokenText: string): string {
@@ -563,6 +629,10 @@ function buildSpeechSynthesisPrompt(spokenText: string): string {
 }
 
 function isRetryableTtsError(error: unknown): boolean {
+  if (error instanceof GeminiTtsOutputLimitError) {
+    return false;
+  }
+
   if (error instanceof GeminiTtsResponseError) {
     return true;
   }

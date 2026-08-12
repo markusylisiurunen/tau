@@ -19,7 +19,7 @@ Common cases are:
 | Nook host tool | Session host |
 | Cloudflare Sandbox bridge and Fly Sprite API | Session host startup |
 | `/listen` and `/speak` | TUI client |
-| Telegram transcription | Telegram runner |
+| Telegram transcription and voice responses | Telegram runner |
 | `tau tool pdf-unpack` | The process running that command |
 
 With local `tau`, these roles normally share one machine. With `tau attach`, setting a key only in the attached client's shell does not authenticate the remote host. Run `tau auth` on the host machine and set host-owned environment variables where `tau serve` or the SDK host actually runs. See [ownership and scope](ownership-and-scope.md) for the full boundary.

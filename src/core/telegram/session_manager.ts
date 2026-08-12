@@ -70,7 +70,6 @@ export type TelegramSessionProgress =
       type: "assistant-message";
       messageId: string;
       text: string;
-      final: boolean;
     };
 
 export type TelegramSessionRecord = {
@@ -341,6 +340,8 @@ type SessionEntry = {
   consumedFacetEventCounts: Map<string, number>;
   emittedAssistantMessageIds: Set<string>;
   emittedNoticeIds: Set<string>;
+  finalAssistantResponse?: { messageId: string; text: string };
+  turnSequenceUnsuccessful: boolean;
   activeTurnIds: Set<string>;
   settledTurnIds: Set<string>;
   pendingTurnNotifications: Map<string, PersistedTelegramTurnNotification>;
@@ -413,6 +414,14 @@ export type TelegramSessionManagerEvent =
       state: TelegramSessionState;
       timestamp: string;
       progress: TelegramSessionProgress;
+    }
+  | {
+      type: "session-response-completed";
+      sessionId: string;
+      projectId: string;
+      timestamp: string;
+      messageId: string;
+      text: string;
     }
   | TelegramSessionProvisionFailure;
 
@@ -599,6 +608,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       consumedFacetEventCounts: new Map(),
       emittedAssistantMessageIds: new Set(),
       emittedNoticeIds: new Set(),
+      turnSequenceUnsuccessful: false,
       activeTurnIds: new Set(),
       settledTurnIds: new Set(),
       pendingTurnNotifications: new Map(),
@@ -850,6 +860,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
         consumedFacetEventCounts: new Map(),
         emittedAssistantMessageIds: new Set(),
         emittedNoticeIds: new Set(),
+        turnSequenceUnsuccessful: false,
         activeTurnIds: new Set(activeTurnIds),
         settledTurnIds: new Set(),
         pendingTurnNotifications: new Map(
@@ -1263,6 +1274,10 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       throw new TelegramSessionManagerError("busy", "session is running");
     }
 
+    if (entry.record.state !== "running") {
+      entry.finalAssistantResponse = undefined;
+      entry.turnSequenceUnsuccessful = false;
+    }
     this.setState(entry, "running");
     this.log(entry, "info", mode === "steer" ? "steering message" : "submitting message", {
       source,
@@ -1377,6 +1392,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       .finally(() => {
         if (entry.activeSubmit === trackedSubmit) {
           entry.activeSubmit = undefined;
+          this.emitCompletedResponseIfReady(entry);
           if (
             !entry.cancelRequested &&
             entry.record.state === "running" &&
@@ -1443,6 +1459,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       .finally(() => {
         if (entry.activeSubmit === trackedTurns) {
           entry.activeSubmit = undefined;
+          this.emitCompletedResponseIfReady(entry);
           if (!entry.cancelRequested && entry.record.state === "running") {
             this.setState(entry, "waiting-input");
           }
@@ -1529,8 +1546,16 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       return false;
     }
     entry.turnChangeResolvers.get(historyEntryId)?.();
-    if (turn.outcome.status === "failed" || turn.outcome.status === "blocked") {
-      this.recordTurnFailure(entry, historyEntryId, turn.outcome);
+    if (turn.outcome.status === "completed") {
+      if (turn.outcome.stopReason === "stop" || turn.outcome.stopReason === "length") {
+        this.emitCompletedResponseIfReady(entry);
+      }
+    } else {
+      entry.turnSequenceUnsuccessful = true;
+      entry.finalAssistantResponse = undefined;
+      if (turn.outcome.status === "failed" || turn.outcome.status === "blocked") {
+        this.recordTurnFailure(entry, historyEntryId, turn.outcome);
+      }
     }
     if (
       entry.activeTurnIds.size === 0 &&
@@ -1560,6 +1585,8 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
   }
 
   private recordTurnRejection(entry: SessionEntry, historyEntryId: string): void {
+    entry.turnSequenceUnsuccessful = true;
+    entry.finalAssistantResponse = undefined;
     entry.activeTurnIds.delete(historyEntryId);
     entry.settledTurnIds.add(historyEntryId);
     entry.turnChangeResolvers.get(historyEntryId)?.();
@@ -2104,8 +2131,11 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       type: "assistant-message",
       messageId: message.id,
       text,
-      final: message.message.stopReason === "stop" || message.message.stopReason === "length",
     });
+    if (message.message.stopReason === "stop" || message.message.stopReason === "length") {
+      entry.finalAssistantResponse = { messageId: message.id, text };
+      this.emitCompletedResponseIfReady(entry);
+    }
   }
 
   private handleFacetProgress(entry: SessionEntry, facet: SessionProtocolFacet): void {
@@ -2149,6 +2179,28 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
           break;
       }
     }
+  }
+
+  private emitCompletedResponseIfReady(entry: SessionEntry): void {
+    if (
+      entry.activeSubmit ||
+      entry.activeTurnIds.size > 0 ||
+      entry.turnSequenceUnsuccessful ||
+      !entry.finalAssistantResponse
+    ) {
+      return;
+    }
+
+    const response = entry.finalAssistantResponse;
+    entry.finalAssistantResponse = undefined;
+    this.emit({
+      type: "session-response-completed",
+      sessionId: entry.record.id,
+      projectId: entry.record.projectId,
+      timestamp: this.now().toISOString(),
+      messageId: response.messageId,
+      text: response.text,
+    });
   }
 
   private emitProgress(entry: SessionEntry, progress: TelegramSessionProgress): void {

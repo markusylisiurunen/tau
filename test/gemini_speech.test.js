@@ -113,7 +113,7 @@ describe("gemini speech", () => {
     const ttsRequest = JSON.parse(fetchMock.mock.calls[1][1].body);
     expect(ttsRequest.generationConfig.responseModalities).toEqual(["AUDIO"]);
     expect(ttsRequest.generationConfig.temperature).toBeUndefined();
-    expect(ttsRequest.generationConfig.maxOutputTokens).toBe(1024);
+    expect(ttsRequest.generationConfig.maxOutputTokens).toBe(8192);
     expect(ttsRequest.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName).toBe(
       "Despina",
     );
@@ -192,7 +192,110 @@ describe("gemini speech", () => {
     ]);
 
     const ttsRequest = JSON.parse(fetchMock.mock.calls[1][1].body);
-    expect(ttsRequest.contents[0].parts[0].text).toContain(rewrittenText.replace(/\s+/g, " "));
+    expect(ttsRequest.contents[0].parts[0].text).toContain(rewrittenText);
+  });
+
+  it("prefers paragraph boundaries over later sentence endings", async () => {
+    const firstParagraph = `${"A".repeat(348)}.`;
+    const secondParagraph = `${"B".repeat(100)}. ${"C".repeat(100)}`;
+    const rewrittenText = `${firstParagraph}\n\n${secondParagraph}`;
+    let requestIndex = 0;
+    const fetchMock = vi.fn(async () => {
+      if (requestIndex++ === 0) {
+        return new Response(
+          JSON.stringify({
+            candidates: [{ content: { parts: [{ text: rewrittenText }] } }],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      return new Response(
+        JSON.stringify({
+          candidates: [
+            {
+              content: {
+                parts: [{ inlineData: { data: Buffer.from([1, 2]).toString("base64") } }],
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    });
+
+    for await (const _chunk of streamGeminiSpeechAudio({
+      apiKey: "gemini-key",
+      sourceText: "Original response.",
+      deliveryMode: "progressive",
+      fetchImpl: fetchMock,
+    })) {
+      void _chunk;
+    }
+
+    const transcripts = fetchMock.mock.calls
+      .slice(1)
+      .map(([, init]) =>
+        JSON.parse(init.body).contents[0].parts[0].text.split("### TRANSCRIPT\n")[1].trim(),
+      );
+    expect(transcripts).toEqual([firstParagraph, secondParagraph]);
+  });
+
+  it.each([
+    {
+      name: "no-space sentence punctuation",
+      rewrittenText: `${"語".repeat(449)}。${"文".repeat(100)}`,
+      expectedChunkLengths: [450, 100],
+    },
+    {
+      name: "supplementary Unicode characters",
+      rewrittenText: "😀".repeat(501),
+      expectedChunkLengths: [500, 1],
+    },
+  ])("uses Unicode-safe progressive chunk boundaries for $name", async (testCase) => {
+    let requestIndex = 0;
+    const fetchMock = vi.fn(async () => {
+      if (requestIndex++ === 0) {
+        return new Response(
+          JSON.stringify({
+            candidates: [{ content: { parts: [{ text: testCase.rewrittenText }] } }],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      return new Response(
+        JSON.stringify({
+          candidates: [
+            {
+              content: {
+                parts: [{ inlineData: { data: Buffer.from([1, 2]).toString("base64") } }],
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    });
+
+    for await (const _chunk of streamGeminiSpeechAudio({
+      apiKey: "gemini-key",
+      sourceText: "Original response.",
+      deliveryMode: "progressive",
+      fetchImpl: fetchMock,
+    })) {
+      void _chunk;
+    }
+
+    const transcripts = fetchMock.mock.calls
+      .slice(1)
+      .map(([, init]) =>
+        JSON.parse(init.body).contents[0].parts[0].text.split("### TRANSCRIPT\n")[1].trim(),
+      );
+    expect(transcripts.map((transcript) => Array.from(transcript).length)).toEqual(
+      testCase.expectedChunkLengths,
+    );
+    expect(transcripts.join("")).toBe(testCase.rewrittenText);
   });
 
   it.each([
@@ -266,11 +369,160 @@ describe("gemini speech", () => {
       expect(request.contents[0].parts[0].text).toContain(
         "Pacing: Brisk conversational speed. Keep it clear, confident, and energetic without sounding rushed.",
       );
-      expect(request.generationConfig.maxOutputTokens).toBeGreaterThanOrEqual(1024);
-      expect(request.generationConfig.maxOutputTokens).toBeLessThanOrEqual(8192);
-      expect(request.generationConfig.maxOutputTokens % 256).toBe(0);
+      expect(request.generationConfig.maxOutputTokens).toBe(8192);
       expect(request.generationConfig.temperature).toBeUndefined();
     }
+  });
+
+  it("aborts speech rewriting after one minute", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.fn(async (_url, init) => {
+        await new Promise((_, reject) => {
+          init.signal.addEventListener(
+            "abort",
+            () => {
+              const error = new Error("aborted");
+              error.name = "AbortError";
+              reject(error);
+            },
+            { once: true },
+          );
+        });
+      });
+      const nextChunk = streamGeminiSpeechAudio({
+        apiKey: "gemini-key",
+        sourceText: "Original text.",
+        deliveryMode: "progressive",
+        fetchImpl: fetchMock,
+      }).next();
+      const rejection = expect(nextChunk).rejects.toThrow(
+        "speech rewrite timed out after 1 minute",
+      );
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      await rejection;
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects oversized source and rewritten speech text", async () => {
+    const sourceFetch = vi.fn();
+    await expect(async () => {
+      for await (const _chunk of streamGeminiSpeechAudio({
+        apiKey: "gemini-key",
+        sourceText: "😀".repeat(10_001),
+        deliveryMode: "progressive",
+        fetchImpl: sourceFetch,
+      })) {
+        void _chunk;
+      }
+    }).rejects.toThrow("speech source text exceeds 10,000 characters");
+    expect(sourceFetch).not.toHaveBeenCalled();
+
+    const rewrittenFetch = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            candidates: [{ content: { parts: [{ text: "語".repeat(10_001) }] } }],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+    );
+    await expect(async () => {
+      for await (const _chunk of streamGeminiSpeechAudio({
+        apiKey: "gemini-key",
+        sourceText: "Original text.",
+        deliveryMode: "complete",
+        fetchImpl: rewrittenFetch,
+      })) {
+        void _chunk;
+      }
+    }).rejects.toThrow("rewritten speech text exceeds 10,000 characters");
+    expect(rewrittenFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects generated speech above the cumulative PCM limit", async () => {
+    const oversizedAudio = Buffer.alloc(32 * 1024 * 1024 + 1).toString("base64");
+    const ttsPayload = JSON.stringify({
+      candidates: [{ content: { parts: [{ inlineData: { data: oversizedAudio } }] } }],
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            candidates: [{ content: { parts: [{ text: "Spoken version." }] } }],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => ttsPayload,
+      });
+
+    await expect(async () => {
+      for await (const _chunk of streamGeminiSpeechAudio({
+        apiKey: "gemini-key",
+        sourceText: "Original text.",
+        deliveryMode: "complete",
+        fetchImpl: fetchMock,
+        maxTtsAttempts: 1,
+      })) {
+        void _chunk;
+      }
+    }).rejects.toThrow("generated speech audio exceeds the 32 MiB limit");
+  });
+
+  it("rejects audio truncated by the TTS output token limit", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            candidates: [{ content: { parts: [{ text: "Spoken version." }] } }],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            candidates: [
+              {
+                finishReason: "MAX_TOKENS",
+                content: {
+                  parts: [
+                    {
+                      inlineData: {
+                        data: Buffer.from([1, 2]).toString("base64"),
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+
+    await expect(async () => {
+      for await (const _chunk of streamGeminiSpeechAudio({
+        apiKey: "gemini-key",
+        sourceText: "Original text.",
+        deliveryMode: "progressive",
+        fetchImpl: fetchMock,
+        maxTtsAttempts: 3,
+      })) {
+        void _chunk;
+      }
+    }).rejects.toThrow("Gemini TTS reached its output token limit");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("retries transient TTS failures", async () => {

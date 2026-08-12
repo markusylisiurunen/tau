@@ -12,6 +12,7 @@ import {
   type TelegramSessionClientOptions,
   type TelegramSessionManager,
 } from "./session_manager.js";
+import { sweepStaleTelegramTtsTempDirs } from "./tts.js";
 
 export type TelegramRuntimeDependencies = {
   startTelegramAdapter: typeof startTelegramAdapter;
@@ -152,7 +153,11 @@ export async function startTelegramRuntime(
   const telegramAdapters: TelegramAdapterHandle[] = [];
 
   try {
-    await Promise.all([sessionManager.initialize(), projectPreferences.initialize()]);
+    await Promise.all([
+      sessionManager.initialize(),
+      projectPreferences.initialize(),
+      sweepStaleTelegramTtsTempDirs(),
+    ]);
 
     for (const [botId, botConfig] of Object.entries(options.config.bots)) {
       if (!botConfig.botToken) {

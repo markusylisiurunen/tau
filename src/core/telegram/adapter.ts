@@ -255,6 +255,7 @@ const MAX_TELEGRAM_ATTACHMENTS_PER_TURN = 10;
 const MAX_TELEGRAM_ATTACHMENT_FILE_BYTES = 20 * 1024 * 1024;
 const MAX_TELEGRAM_ATTACHMENT_TOTAL_BYTES = 50 * 1024 * 1024;
 const MAX_TELEGRAM_VOICE_BYTES = 50 * 1024 * 1024;
+const TELEGRAM_TTS_JOB_TIMEOUT_MS = 5 * 60_000;
 const MAX_TELEGRAM_GROUP_PENDING_MESSAGES = 50;
 const TELEGRAM_ATTACHMENT_TEMP_DIR_PREFIX = "tau-telegram-attachments-";
 const TELEGRAM_REASONING_EFFORTS = [
@@ -951,10 +952,6 @@ class TelegramDeliveryError extends Error {
   }
 }
 
-function isAbortError(error: unknown): boolean {
-  return error instanceof Error && error.name === "AbortError";
-}
-
 function getErrorCode(error: unknown): string | undefined {
   if (typeof error !== "object" || error === null || !("code" in error)) {
     return undefined;
@@ -1292,7 +1289,6 @@ class TelegramAdapterImpl {
   private readonly chatTypesByChat = new Map<number, string>();
   private readonly typingIntervalsBySessionChat = new Map<string, ReturnType<typeof setInterval>>();
   private readonly lastCommandBySession = new Map<string, string>();
-  private readonly finalAssistantTextBySession = new Map<string, string>();
   private readonly pendingAttachmentsBySession = new Map<string, TelegramPendingAttachment[]>();
   private readonly pendingGroupMessagesByChat = new Map<number, TelegramGroupPendingMessage[]>();
   private readonly pendingAttachmentTempDirBySession = new Map<string, string>();
@@ -1301,6 +1297,7 @@ class TelegramAdapterImpl {
   private readonly inFlightUpdateTasks = new Set<Promise<void>>();
   private readonly notificationQueueTailByChat = new Map<number, Promise<void>>();
   private readonly inFlightNotificationTasks = new Set<Promise<void>>();
+  private readonly ttsQueueTailBySession = new Map<string, Promise<void>>();
   private readonly inFlightTtsTasks = new Set<Promise<void>>();
 
   private readonly unsubscribeSessionEvents: () => void;
@@ -1386,6 +1383,7 @@ class TelegramAdapterImpl {
       await this.loopPromise;
       await this.waitForInFlightUpdateTasks();
       await Promise.allSettled(Array.from(this.inFlightTtsTasks));
+      this.ttsQueueTailBySession.clear();
       await Promise.allSettled(Array.from(this.inFlightNotificationTasks));
 
       for (const sessionId of Array.from(this.chatsBySession.keys())) {
@@ -2962,6 +2960,13 @@ class TelegramAdapterImpl {
       return;
     }
 
+    if (event.type === "session-response-completed") {
+      if (this.chatsBySession.has(event.sessionId)) {
+        this.startTtsNotification(event.sessionId, event.text);
+      }
+      return;
+    }
+
     if (event.type === "session-turn-failed" || event.type === "session-turn-rejected") {
       if (!this.chatsBySession.has(event.sessionId)) {
         return;
@@ -3010,7 +3015,6 @@ class TelegramAdapterImpl {
     }
 
     if (event.state === "running") {
-      this.finalAssistantTextBySession.delete(event.sessionId);
       this.startTypingIndicators(event.sessionId);
       if (this.isVerboseSession(event.sessionId)) {
         this.notifyLifecycle(event.sessionId, event.projectId, "started");
@@ -3019,7 +3023,6 @@ class TelegramAdapterImpl {
     }
 
     if (event.state === "failed") {
-      this.finalAssistantTextBySession.delete(event.sessionId);
       this.stopTypingIndicators(event.sessionId);
       this.notifyLifecycle(event.sessionId, event.projectId, "failed");
       return;
@@ -3037,11 +3040,6 @@ class TelegramAdapterImpl {
       this.stopTypingIndicators(event.sessionId);
       if (this.isVerboseSession(event.sessionId)) {
         this.notifyLifecycle(event.sessionId, event.projectId, "finished");
-      }
-      const finalAssistantText = this.finalAssistantTextBySession.get(event.sessionId);
-      this.finalAssistantTextBySession.delete(event.sessionId);
-      if (finalAssistantText) {
-        this.startTtsNotification(event.sessionId, finalAssistantText);
       }
     }
   }
@@ -3091,10 +3089,6 @@ class TelegramAdapterImpl {
       return;
     }
 
-    if (event.progress.final) {
-      this.finalAssistantTextBySession.set(event.sessionId, event.progress.text);
-    }
-
     this.notifySession(
       event.sessionId,
       isVerbose
@@ -3118,9 +3112,20 @@ class TelegramAdapterImpl {
       return;
     }
 
-    const task = this.generateAndSendTtsNotification(sessionId, sourceText).finally(() => {
-      this.inFlightTtsTasks.delete(task);
-    });
+    const previousTask = this.ttsQueueTailBySession.get(sessionId) ?? Promise.resolve();
+    const task = previousTask
+      .then(async () => {
+        if (!this.abortController.signal.aborted) {
+          await this.generateAndSendTtsNotification(sessionId, sourceText);
+        }
+      })
+      .finally(() => {
+        this.inFlightTtsTasks.delete(task);
+        if (this.ttsQueueTailBySession.get(sessionId) === task) {
+          this.ttsQueueTailBySession.delete(sessionId);
+        }
+      });
+    this.ttsQueueTailBySession.set(sessionId, task);
     this.inFlightTtsTasks.add(task);
     void task;
   }
@@ -3129,12 +3134,20 @@ class TelegramAdapterImpl {
     sessionId: string,
     sourceText: string,
   ): Promise<void> {
+    let timedOut = false;
+    const timeoutController = new AbortController();
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      timeoutController.abort();
+    }, TELEGRAM_TTS_JOB_TIMEOUT_MS);
+    timeout.unref?.();
+
     try {
       const voice = await this.generateVoice({
         apiKey: this.geminiApiKey!,
         sourceText,
         fetchImpl: this.fetchImpl,
-        signal: this.abortController.signal,
+        signal: AbortSignal.any([this.abortController.signal, timeoutController.signal]),
       });
       if (voice.length > MAX_TELEGRAM_VOICE_BYTES) {
         throw new Error("generated voice response exceeds Telegram's 50 MB limit");
@@ -3147,17 +3160,68 @@ class TelegramAdapterImpl {
       await Promise.all(
         [...chatIds]
           .filter((chatId) => this.projectPreferences.isTtsEnabled(this.ownerIdForChat(chatId)))
-          .map(async (chatId) => await this.enqueueVoiceNotification(sessionId, chatId, voice)),
+          .map(async (chatId) => {
+            const result = await this.enqueueVoiceNotification(
+              sessionId,
+              chatId,
+              voice,
+              timeoutController.signal,
+            );
+            if (result === "timed-out") {
+              this.log("error", "Telegram voice response job timed out", {
+                sessionId,
+                chatId,
+                cause: "voice response job timed out after 5 minutes",
+              });
+            }
+            if (result === "failed" || result === "timed-out") {
+              await this.enqueueTtsFailureNotification(sessionId, chatId);
+            }
+          }),
       );
     } catch (error) {
-      if (this.abortController.signal.aborted || isAbortError(error)) {
+      if (this.abortController.signal.aborted) {
         return;
       }
       this.log("error", "failed to generate Telegram voice response", {
         sessionId,
-        cause: error instanceof Error ? error.message : String(error),
+        cause: timedOut
+          ? "voice generation timed out after 5 minutes"
+          : error instanceof Error
+            ? error.message
+            : String(error),
       });
+      await this.notifyTtsFailure(sessionId);
+    } finally {
+      clearTimeout(timeout);
     }
+  }
+
+  private async notifyTtsFailure(sessionId: string): Promise<void> {
+    const chatIds = this.chatsBySession.get(sessionId);
+    if (!chatIds) {
+      return;
+    }
+    await Promise.all(
+      [...chatIds]
+        .filter((chatId) => this.projectPreferences.isTtsEnabled(this.ownerIdForChat(chatId)))
+        .map(async (chatId) => await this.enqueueTtsFailureNotification(sessionId, chatId)),
+    );
+  }
+
+  private async enqueueTtsFailureNotification(sessionId: string, chatId: number): Promise<void> {
+    if (
+      this.abortController.signal.aborted ||
+      !this.projectPreferences.isTtsEnabled(this.ownerIdForChat(chatId))
+    ) {
+      return;
+    }
+    await this.enqueueNotification(
+      sessionId,
+      chatId,
+      "voice response failed. please try again.",
+      {},
+    );
   }
 
   private notifyLifecycle(
@@ -3255,7 +3319,8 @@ class TelegramAdapterImpl {
     sessionId: string,
     chatId: number,
     voice: Buffer,
-  ): Promise<boolean> {
+    jobSignal: AbortSignal,
+  ): Promise<"sent" | "skipped" | "failed" | "timed-out"> {
     const previousTask = this.notificationQueueTailByChat.get(chatId) ?? Promise.resolve();
     const deliveryTask = previousTask
       .then(async () => {
@@ -3263,17 +3328,26 @@ class TelegramAdapterImpl {
           this.abortController.signal.aborted ||
           !this.projectPreferences.isTtsEnabled(this.ownerIdForChat(chatId))
         ) {
-          return false;
+          return "skipped" as const;
+        }
+        if (jobSignal.aborted) {
+          return "timed-out" as const;
         }
 
         const result = await this.sendWithRetry(
           async (signal) => await this.api.sendVoice(chatId, voice, { signal }),
+          jobSignal,
         );
-        return result !== ABORTED;
+        if (result === ABORTED) {
+          return jobSignal.aborted && !this.abortController.signal.aborted
+            ? ("timed-out" as const)
+            : ("skipped" as const);
+        }
+        return "sent" as const;
       })
       .catch((error) => {
         if (this.abortController.signal.aborted) {
-          return false;
+          return "skipped" as const;
         }
 
         const deliveryError =
@@ -3292,7 +3366,7 @@ class TelegramAdapterImpl {
             cause: deliveryError.message,
           },
         );
-        return false;
+        return "failed" as const;
       });
 
     const trackedTask = deliveryTask
@@ -3494,16 +3568,17 @@ class TelegramAdapterImpl {
 
   private async sendWithRetry(
     send: (signal: AbortSignal) => Promise<void>,
+    externalSignal?: AbortSignal,
   ): Promise<typeof ABORTED | undefined> {
     for (let attempt = 1; ; attempt += 1) {
       try {
-        const result = await this.runDeliveryAttempt(send);
+        const result = await this.runDeliveryAttempt(send, externalSignal);
         if (result === ABORTED) {
           return ABORTED;
         }
         return;
       } catch (error) {
-        if (this.abortController.signal.aborted) {
+        if (this.abortController.signal.aborted || externalSignal?.aborted) {
           return ABORTED;
         }
 
@@ -3513,8 +3588,8 @@ class TelegramAdapterImpl {
           throw new TelegramDeliveryError(error, attempt, retryable);
         }
 
-        await this.wait(Math.max(retryDelayMs, error.retryAfterMs ?? 0));
-        if (this.abortController.signal.aborted) {
+        await this.wait(Math.max(retryDelayMs, error.retryAfterMs ?? 0), externalSignal);
+        if (this.abortController.signal.aborted || externalSignal?.aborted) {
           return ABORTED;
         }
       }
@@ -3523,8 +3598,12 @@ class TelegramAdapterImpl {
 
   private async runDeliveryAttempt(
     send: (signal: AbortSignal) => Promise<void>,
+    externalSignal?: AbortSignal,
   ): Promise<typeof ABORTED | undefined> {
-    if (this.abortController.signal.aborted) {
+    const deliverySignal = externalSignal
+      ? AbortSignal.any([this.abortController.signal, externalSignal])
+      : this.abortController.signal;
+    if (deliverySignal.aborted) {
       return ABORTED;
     }
 
@@ -3535,7 +3614,7 @@ class TelegramAdapterImpl {
         resolve(ABORTED);
         attemptController.abort();
       };
-      this.abortController.signal.addEventListener("abort", abortListener, { once: true });
+      deliverySignal.addEventListener("abort", abortListener, { once: true });
     });
 
     let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -3564,7 +3643,7 @@ class TelegramAdapterImpl {
       clearTimeout(timeout);
     }
     if (abortListener) {
-      this.abortController.signal.removeEventListener("abort", abortListener);
+      deliverySignal.removeEventListener("abort", abortListener);
     }
 
     if (raceResult === ABORTED) {
@@ -3581,14 +3660,17 @@ class TelegramAdapterImpl {
     }
   }
 
-  private async wait(durationMs: number): Promise<void> {
-    if (durationMs <= 0 || this.abortController.signal.aborted) {
+  private async wait(durationMs: number, externalSignal?: AbortSignal): Promise<void> {
+    const waitSignal = externalSignal
+      ? AbortSignal.any([this.abortController.signal, externalSignal])
+      : this.abortController.signal;
+    if (durationMs <= 0 || waitSignal.aborted) {
       return;
     }
 
     await new Promise<void>((resolve) => {
       const timeout = setTimeout(() => {
-        this.abortController.signal.removeEventListener("abort", onAbort);
+        waitSignal.removeEventListener("abort", onAbort);
         resolve();
       }, durationMs);
       timeout.unref?.();
@@ -3598,7 +3680,7 @@ class TelegramAdapterImpl {
         resolve();
       };
 
-      this.abortController.signal.addEventListener("abort", onAbort, { once: true });
+      waitSignal.addEventListener("abort", onAbort, { once: true });
     });
   }
 }

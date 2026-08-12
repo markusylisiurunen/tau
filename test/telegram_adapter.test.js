@@ -6,11 +6,16 @@ import { TauSessionProtocolResponseError } from "../dist/transport/errors.js";
 
 async function startAdapter(options) {
   const preferences = new Map();
+  const ttsPreferences = new Map();
   const projectPreferences = options.projectPreferences ?? {
     initialize: vi.fn(async () => {}),
     get: vi.fn((ownerId) => preferences.get(ownerId)),
     set: vi.fn(async (ownerId, projectId) => {
       preferences.set(ownerId, projectId);
+    }),
+    isTtsEnabled: vi.fn((ownerId) => ttsPreferences.get(ownerId) ?? false),
+    setTtsEnabled: vi.fn(async (ownerId, enabled) => {
+      ttsPreferences.set(ownerId, enabled);
     }),
   };
   await projectPreferences.initialize();
@@ -62,6 +67,7 @@ function createApiHarness(updateBatches, options = {}) {
   const queue = [...updateBatches];
   const sendMessages = [];
   const sendRichMessages = [];
+  const sendVoices = [];
   const richMessageDrafts = [];
   const chatActions = [];
   const downloadFileCalls = [];
@@ -83,6 +89,9 @@ function createApiHarness(updateBatches, options = {}) {
     }),
     sendRichMessage: vi.fn(async (chatId, markdown, options) => {
       sendRichMessages.push({ chatId, markdown, options, sentAt: Date.now() });
+    }),
+    sendVoice: vi.fn(async (chatId, voice, options) => {
+      sendVoices.push({ chatId, voice, options, sentAt: Date.now() });
     }),
     sendRichMessageDraft: vi.fn(async (chatId, draftId, markdown) => {
       richMessageDrafts.push({ chatId, draftId, markdown, sentAt: Date.now() });
@@ -109,6 +118,7 @@ function createApiHarness(updateBatches, options = {}) {
     api,
     sendMessages,
     sendRichMessages,
+    sendVoices,
     richMessageDrafts,
     chatActions,
     downloadFileCalls,
@@ -380,12 +390,589 @@ describe("telegram adapter", () => {
         { command: "status", description: "show active session status" },
         { command: "compact", description: "compact session context" },
         { command: "interrupt", description: "interrupt active run" },
+        { command: "tts_on", description: "enable voice responses" },
+        { command: "tts_off", description: "disable voice responses" },
         { command: "effort_low", description: "set reasoning effort to low" },
         { command: "effort_medium", description: "set reasoning effort to medium" },
         { command: "effort_high", description: "set reasoning effort to high" },
         { command: "effort_xhigh", description: "set reasoning effort to xhigh" },
         { command: "use_demo", description: "use demo for new sessions" },
       ]);
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it("persists TTS enablement and sends the final response as a voice note", async () => {
+    const chatId = 13;
+    const ownerId = ownerIdForChat(chatId);
+    const ttsPreferences = new Map();
+    const projectPreferences = {
+      initialize: vi.fn(async () => {}),
+      get: vi.fn(() => undefined),
+      set: vi.fn(async () => {}),
+      isTtsEnabled: vi.fn((id) => ttsPreferences.get(id) ?? false),
+      setTtsEnabled: vi.fn(async (id, enabled) => {
+        ttsPreferences.set(id, enabled);
+      }),
+    };
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: {
+            chat: { id: chatId, type: "private" },
+            from: { id: 7 },
+            text: "/tts_on",
+          },
+        },
+      ],
+    ]);
+    const managerHarness = createSessionManagerHarness([
+      {
+        id: "s-tts",
+        projectId: "demo",
+        ownerId,
+        state: "running",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+      },
+    ]);
+    const generateVoice = vi.fn(async () => Buffer.from("ogg voice"));
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      sessionManager: managerHarness.manager,
+      projectPreferences,
+      api: apiHarness.api,
+      geminiApiKey: "gemini-key",
+      generateVoice,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() => apiHarness.sendMessages.length === 1);
+      expect(apiHarness.sendMessages[0].text).toBe("voice responses enabled.");
+      expect(projectPreferences.setTtsEnabled).toHaveBeenCalledWith(ownerId, true);
+
+      managerHarness.manager.emit({
+        type: "session-progress",
+        sessionId: "s-tts",
+        projectId: "demo",
+        state: "running",
+        timestamp: "2024-01-01T00:01:00.000Z",
+        progress: {
+          type: "assistant-message",
+          messageId: "assistant-intermediate",
+          text: "working on it",
+        },
+      });
+      managerHarness.manager.emit({
+        type: "session-progress",
+        sessionId: "s-tts",
+        projectId: "demo",
+        state: "running",
+        timestamp: "2024-01-01T00:02:00.000Z",
+        progress: {
+          type: "assistant-message",
+          messageId: "assistant-final",
+          text: "final answer",
+        },
+      });
+      managerHarness.manager.emit({
+        type: "session-response-completed",
+        sessionId: "s-tts",
+        projectId: "demo",
+        timestamp: "2024-01-01T00:02:30.000Z",
+        messageId: "assistant-final",
+        text: "final answer",
+      });
+      managerHarness.manager.emit({
+        type: "session-state-changed",
+        sessionId: "s-tts",
+        projectId: "demo",
+        previousState: "running",
+        state: "waiting-input",
+        updatedAt: "2024-01-01T00:03:00.000Z",
+      });
+
+      await waitFor(() => apiHarness.sendVoices.length === 1);
+      expect(generateVoice).toHaveBeenCalledWith({
+        apiKey: "gemini-key",
+        sourceText: "final answer",
+        fetchImpl: undefined,
+        signal: expect.any(AbortSignal),
+      });
+      expect(apiHarness.sendVoices[0]).toEqual(
+        expect.objectContaining({ chatId, voice: Buffer.from("ogg voice") }),
+      );
+      expect(apiHarness.sendRichMessages.map((message) => message.markdown)).toEqual([
+        "working on it",
+        "final answer",
+      ]);
+      expect(apiHarness.sendVoices[0].sentAt).toBeGreaterThanOrEqual(
+        apiHarness.sendRichMessages[1].sentAt,
+      );
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it("reports a persisted TTS opt-in when the Google credential is missing", async () => {
+    const chatId = 20;
+    const ownerId = ownerIdForChat(chatId);
+    const apiHarness = createApiHarness([]);
+    const managerHarness = createSessionManagerHarness([
+      {
+        id: "s-tts-missing-credential",
+        projectId: "demo",
+        ownerId,
+        state: "waiting-input",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+      },
+    ]);
+    const logs = [];
+    const generateVoice = vi.fn();
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      sessionManager: managerHarness.manager,
+      projectPreferences: {
+        initialize: vi.fn(async () => {}),
+        get: vi.fn(() => undefined),
+        set: vi.fn(async () => {}),
+        isTtsEnabled: vi.fn((id) => id === ownerId),
+        setTtsEnabled: vi.fn(async () => {}),
+      },
+      api: apiHarness.api,
+      generateVoice,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+      onLog: (entry) => logs.push(entry),
+    });
+
+    try {
+      managerHarness.manager.emit({
+        type: "session-response-completed",
+        sessionId: "s-tts-missing-credential",
+        projectId: "demo",
+        timestamp: "2024-01-01T00:01:00.000Z",
+        messageId: "assistant-final",
+        text: "final answer",
+      });
+
+      await waitFor(() => apiHarness.sendMessages.length === 1);
+      expect(apiHarness.sendMessages[0].text).toBe("voice response failed. please try again.");
+      expect(generateVoice).not.toHaveBeenCalled();
+      expect(logs).toContainEqual({
+        level: "error",
+        message: "failed to generate Telegram voice response",
+        data: {
+          sessionId: "s-tts-missing-credential",
+          cause: "missing Google credential for Telegram voice responses",
+        },
+      });
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it("serializes voice generation for responses from the same session", async () => {
+    const chatId = 15;
+    const ownerId = ownerIdForChat(chatId);
+    const apiHarness = createApiHarness([]);
+    const managerHarness = createSessionManagerHarness([
+      {
+        id: "s-tts-order",
+        projectId: "demo",
+        ownerId,
+        state: "waiting-input",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+      },
+    ]);
+    const firstVoice = deferred();
+    const generateVoice = vi
+      .fn()
+      .mockImplementationOnce(async () => await firstVoice.promise)
+      .mockResolvedValueOnce(Buffer.from("voice B"));
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      sessionManager: managerHarness.manager,
+      projectPreferences: {
+        initialize: vi.fn(async () => {}),
+        get: vi.fn(() => undefined),
+        set: vi.fn(async () => {}),
+        isTtsEnabled: vi.fn((id) => id === ownerId),
+        setTtsEnabled: vi.fn(async () => {}),
+      },
+      api: apiHarness.api,
+      geminiApiKey: "gemini-key",
+      generateVoice,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      managerHarness.manager.emit({
+        type: "session-response-completed",
+        sessionId: "s-tts-order",
+        projectId: "demo",
+        timestamp: "2024-01-01T00:01:00.000Z",
+        messageId: "assistant-a",
+        text: "response A",
+      });
+      managerHarness.manager.emit({
+        type: "session-response-completed",
+        sessionId: "s-tts-order",
+        projectId: "demo",
+        timestamp: "2024-01-01T00:02:00.000Z",
+        messageId: "assistant-b",
+        text: "response B",
+      });
+
+      await waitFor(() => generateVoice.mock.calls.length === 1);
+      expect(generateVoice.mock.calls[0][0].sourceText).toBe("response A");
+      firstVoice.resolve(Buffer.from("voice A"));
+      await waitFor(() => apiHarness.sendVoices.length === 2);
+
+      expect(generateVoice.mock.calls.map(([options]) => options.sourceText)).toEqual([
+        "response A",
+        "response B",
+      ]);
+      expect(apiHarness.sendVoices.map(({ voice }) => voice.toString())).toEqual([
+        "voice A",
+        "voice B",
+      ]);
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it("aborts a Telegram voice job after five minutes and continues the session queue", async () => {
+    vi.useFakeTimers();
+    const chatId = 16;
+    const ownerId = ownerIdForChat(chatId);
+    const apiHarness = createApiHarness([]);
+    const managerHarness = createSessionManagerHarness([
+      {
+        id: "s-tts-timeout",
+        projectId: "demo",
+        ownerId,
+        state: "waiting-input",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+      },
+    ]);
+    const logs = [];
+    const generateVoice = vi
+      .fn()
+      .mockImplementationOnce(
+        async ({ signal }) =>
+          await new Promise((_, reject) => {
+            signal.addEventListener(
+              "abort",
+              () => {
+                const error = new Error("aborted");
+                error.name = "AbortError";
+                reject(error);
+              },
+              { once: true },
+            );
+          }),
+      )
+      .mockResolvedValueOnce(Buffer.from("voice B"));
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      sessionManager: managerHarness.manager,
+      projectPreferences: {
+        initialize: vi.fn(async () => {}),
+        get: vi.fn(() => undefined),
+        set: vi.fn(async () => {}),
+        isTtsEnabled: vi.fn((id) => id === ownerId),
+        setTtsEnabled: vi.fn(async () => {}),
+      },
+      api: apiHarness.api,
+      geminiApiKey: "gemini-key",
+      generateVoice,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+      onLog: (entry) => logs.push(entry),
+    });
+
+    try {
+      for (const [messageId, text] of [
+        ["assistant-a", "response A"],
+        ["assistant-b", "response B"],
+      ]) {
+        managerHarness.manager.emit({
+          type: "session-response-completed",
+          sessionId: "s-tts-timeout",
+          projectId: "demo",
+          timestamp: "2024-01-01T00:01:00.000Z",
+          messageId,
+          text,
+        });
+      }
+
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(generateVoice.mock.calls.map(([options]) => options.sourceText)).toEqual([
+        "response A",
+        "response B",
+      ]);
+      expect(apiHarness.sendVoices.map(({ voice }) => voice.toString())).toEqual(["voice B"]);
+      expect(apiHarness.sendMessages.map(({ text }) => text)).toEqual([
+        "voice response failed. please try again.",
+      ]);
+      expect(logs).toContainEqual(
+        expect.objectContaining({
+          level: "error",
+          message: "failed to generate Telegram voice response",
+          data: expect.objectContaining({ cause: "voice generation timed out after 5 minutes" }),
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+      await adapter.close();
+    }
+  });
+
+  it("aborts voice delivery retries at the complete job deadline", async () => {
+    vi.useFakeTimers();
+    const chatId = 19;
+    const ownerId = ownerIdForChat(chatId);
+    const apiHarness = createApiHarness([]);
+    apiHarness.api.sendVoice.mockRejectedValue(
+      new TelegramRequestError("telegram rate limited voice", {
+        retryable: true,
+        retryAfterMs: 10 * 60_000,
+      }),
+    );
+    const managerHarness = createSessionManagerHarness([
+      {
+        id: "s-tts-upload-timeout",
+        projectId: "demo",
+        ownerId,
+        state: "waiting-input",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+      },
+    ]);
+    const logs = [];
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      sessionManager: managerHarness.manager,
+      projectPreferences: {
+        initialize: vi.fn(async () => {}),
+        get: vi.fn(() => undefined),
+        set: vi.fn(async () => {}),
+        isTtsEnabled: vi.fn((id) => id === ownerId),
+        setTtsEnabled: vi.fn(async () => {}),
+      },
+      api: apiHarness.api,
+      geminiApiKey: "gemini-key",
+      generateVoice: vi.fn(async () => Buffer.from("voice")),
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+      onLog: (entry) => logs.push(entry),
+    });
+
+    try {
+      managerHarness.manager.emit({
+        type: "session-response-completed",
+        sessionId: "s-tts-upload-timeout",
+        projectId: "demo",
+        timestamp: "2024-01-01T00:01:00.000Z",
+        messageId: "assistant-final",
+        text: "final answer",
+      });
+
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(apiHarness.api.sendVoice).toHaveBeenCalledTimes(1);
+      expect(apiHarness.sendMessages.map(({ text }) => text)).toEqual([
+        "voice response failed. please try again.",
+      ]);
+      expect(logs).toContainEqual({
+        level: "error",
+        message: "Telegram voice response job timed out",
+        data: {
+          sessionId: "s-tts-upload-timeout",
+          chatId,
+          cause: "voice response job timed out after 5 minutes",
+        },
+      });
+    } finally {
+      vi.useRealTimers();
+      await adapter.close();
+    }
+  });
+
+  it("notifies the user after voice delivery fails", async () => {
+    const chatId = 17;
+    const ownerId = ownerIdForChat(chatId);
+    const apiHarness = createApiHarness([]);
+    apiHarness.api.sendVoice.mockRejectedValue(
+      new TelegramRequestError("telegram rejected voice", { retryable: false }),
+    );
+    const managerHarness = createSessionManagerHarness([
+      {
+        id: "s-tts-delivery-failure",
+        projectId: "demo",
+        ownerId,
+        state: "waiting-input",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+      },
+    ]);
+    const logs = [];
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      sessionManager: managerHarness.manager,
+      projectPreferences: {
+        initialize: vi.fn(async () => {}),
+        get: vi.fn(() => undefined),
+        set: vi.fn(async () => {}),
+        isTtsEnabled: vi.fn((id) => id === ownerId),
+        setTtsEnabled: vi.fn(async () => {}),
+      },
+      api: apiHarness.api,
+      geminiApiKey: "gemini-key",
+      generateVoice: vi.fn(async () => Buffer.from("voice")),
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+      onLog: (entry) => logs.push(entry),
+    });
+
+    try {
+      managerHarness.manager.emit({
+        type: "session-response-completed",
+        sessionId: "s-tts-delivery-failure",
+        projectId: "demo",
+        timestamp: "2024-01-01T00:01:00.000Z",
+        messageId: "assistant-final",
+        text: "final answer",
+      });
+
+      await waitFor(() => apiHarness.sendMessages.length === 1);
+      expect(apiHarness.sendMessages[0].text).toBe("voice response failed. please try again.");
+      expect(logs).toContainEqual({
+        level: "error",
+        message: "failed to send Telegram voice response",
+        data: {
+          sessionId: "s-tts-delivery-failure",
+          chatId,
+          attempts: 1,
+          cause: "telegram rejected voice",
+        },
+      });
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it("does not report a voice failure after TTS is disabled before delivery", async () => {
+    const chatId = 18;
+    const ownerId = ownerIdForChat(chatId);
+    let enabled = true;
+    const apiHarness = createApiHarness([]);
+    const managerHarness = createSessionManagerHarness([
+      {
+        id: "s-tts-disabled",
+        projectId: "demo",
+        ownerId,
+        state: "waiting-input",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+      },
+    ]);
+    const voice = deferred();
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      sessionManager: managerHarness.manager,
+      projectPreferences: {
+        initialize: vi.fn(async () => {}),
+        get: vi.fn(() => undefined),
+        set: vi.fn(async () => {}),
+        isTtsEnabled: vi.fn((id) => id === ownerId && enabled),
+        setTtsEnabled: vi.fn(async () => {}),
+      },
+      api: apiHarness.api,
+      geminiApiKey: "gemini-key",
+      generateVoice: vi.fn(async () => await voice.promise),
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      managerHarness.manager.emit({
+        type: "session-response-completed",
+        sessionId: "s-tts-disabled",
+        projectId: "demo",
+        timestamp: "2024-01-01T00:01:00.000Z",
+        messageId: "assistant-final",
+        text: "final answer",
+      });
+      enabled = false;
+      voice.resolve(Buffer.from("voice"));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(apiHarness.sendVoices).toHaveLength(0);
+      expect(apiHarness.sendMessages).toHaveLength(0);
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it("disables persisted voice responses with /tts_off", async () => {
+    const chatId = 14;
+    const ownerId = ownerIdForChat(chatId);
+    const ttsPreferences = new Map([[ownerId, true]]);
+    const projectPreferences = {
+      initialize: vi.fn(async () => {}),
+      get: vi.fn(() => undefined),
+      set: vi.fn(async () => {}),
+      isTtsEnabled: vi.fn((id) => ttsPreferences.get(id) ?? false),
+      setTtsEnabled: vi.fn(async (id, enabled) => {
+        ttsPreferences.set(id, enabled);
+      }),
+    };
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: {
+            chat: { id: chatId, type: "private" },
+            from: { id: 7 },
+            text: "/tts_off",
+          },
+        },
+      ],
+    ]);
+    const managerHarness = createSessionManagerHarness();
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      sessionManager: managerHarness.manager,
+      projectPreferences,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() => apiHarness.sendMessages.length === 1);
+      expect(apiHarness.sendMessages[0].text).toBe("voice responses disabled.");
+      expect(projectPreferences.setTtsEnabled).toHaveBeenCalledWith(ownerId, false);
+      expect(projectPreferences.isTtsEnabled(ownerId)).toBe(false);
     } finally {
       await adapter.close();
     }
@@ -1847,7 +2434,7 @@ describe("telegram adapter", () => {
     try {
       await waitFor(() => apiHarness.sendMessages.length === 1);
       expect(apiHarness.sendMessages[0].text).toBe(
-        "unsupported command. supported commands: /new, /status, /compact, /interrupt, /effort_low, /effort_medium, /effort_high, /effort_xhigh, /use_demo",
+        "unsupported command. supported commands: /new, /status, /compact, /interrupt, /tts_on, /tts_off, /effort_low, /effort_medium, /effort_high, /effort_xhigh, /use_demo",
       );
       expect(managerHarness.manager.closeSession).not.toHaveBeenCalled();
     } finally {
@@ -2833,6 +3420,93 @@ describe("telegram adapter", () => {
       return handler({ call: count, init });
     });
   }
+
+  it("uploads generated voice notes with Telegram multipart form data", async () => {
+    const chatId = 991;
+    const ownerId = ownerIdForChat(chatId);
+    const managerHarness = createSessionManagerHarness([
+      {
+        id: "s-voice-upload",
+        projectId: "demo",
+        ownerId,
+        state: "running",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+      },
+    ]);
+    const sendVoiceCalls = [];
+    const telegramFetch = createTelegramFetchStub({
+      setMyCommands: async () => createJsonResponse({ ok: true, result: true }),
+      getUpdates: async () => pendingTelegramCall(),
+      sendRichMessage: async () => createJsonResponse({ ok: true, result: { message_id: 1 } }),
+      sendVoice: async ({ init }) => {
+        sendVoiceCalls.push(init);
+        return createJsonResponse({ ok: true, result: { message_id: 1 } });
+      },
+    });
+    vi.stubGlobal("fetch", telegramFetch);
+
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      sessionManager: managerHarness.manager,
+      projectPreferences: {
+        initialize: vi.fn(async () => {}),
+        get: vi.fn(() => undefined),
+        set: vi.fn(async () => {}),
+        isTtsEnabled: vi.fn((id) => id === ownerId),
+        setTtsEnabled: vi.fn(async () => {}),
+      },
+      geminiApiKey: "gemini-key",
+      generateVoice: vi.fn(async () => Buffer.from("OggS voice")),
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      managerHarness.manager.emit({
+        type: "session-progress",
+        sessionId: "s-voice-upload",
+        projectId: "demo",
+        state: "running",
+        timestamp: "2024-01-01T00:01:00.000Z",
+        progress: {
+          type: "assistant-message",
+          messageId: "assistant-final",
+          text: "final answer",
+        },
+      });
+      managerHarness.manager.emit({
+        type: "session-response-completed",
+        sessionId: "s-voice-upload",
+        projectId: "demo",
+        timestamp: "2024-01-01T00:01:30.000Z",
+        messageId: "assistant-final",
+        text: "final answer",
+      });
+      managerHarness.manager.emit({
+        type: "session-state-changed",
+        sessionId: "s-voice-upload",
+        projectId: "demo",
+        previousState: "running",
+        state: "waiting-input",
+        updatedAt: "2024-01-01T00:02:00.000Z",
+      });
+
+      await waitFor(() => sendVoiceCalls.length === 1);
+      const form = sendVoiceCalls[0].body;
+      expect(form).toBeInstanceOf(FormData);
+      expect(form.get("chat_id")).toBe(String(chatId));
+      const voice = form.get("voice");
+      expect(voice).toBeInstanceOf(File);
+      expect(voice.name).toBe("response.ogg");
+      expect(voice.type).toBe("audio/ogg");
+      expect(Buffer.from(await voice.arrayBuffer())).toEqual(Buffer.from("OggS voice"));
+    } finally {
+      await adapter.close();
+      vi.unstubAllGlobals();
+    }
+  });
 
   it.each([
     {

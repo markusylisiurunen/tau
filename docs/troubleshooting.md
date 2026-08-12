@@ -279,6 +279,8 @@ Distinguish download, materialization, format, and transcription errors. The rep
 
 Successful audio turns echo `transcribed: …` before submission. In groups, non-triggering audio can be buffered for later mentioned context. If that is inappropriate for the chat, narrow `allowedChatIds` or avoid enabling the group.
 
+Outgoing `/tts_on` voice responses always need `GEMINI_API_KEY` or `apiKeys.google`, even when incoming audio uses Mistral. They also require runner-side `ffmpeg` with Opus support. A generation or delivery failure sends `voice response failed. please try again.` while detailed diagnostics remain in runner logs. The original text response remains delivered.
+
 ## Telegram replies or notifications are delayed or missing
 
 Each outbound chunk has a deadline and retries retryable failures twice. Telegram `retry_after` is honored, and per-chat ordering holds later notifications. Large replies are split, so only a later chunk may have failed.

@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 const GEMINI_GENERATE_CONTENT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
+export const GEMINI_SPEECH_PLAYBACK_RATE = 1.1;
 const DEFAULT_GEMINI_SPEECH_REWRITE_MODEL = "gemini-3.6-flash";
 const DEFAULT_GEMINI_SPEECH_REWRITE_THINKING_LEVEL = "minimal";
 const DEFAULT_GEMINI_SPEECH_TTS_MODEL = "gemini-3.1-flash-tts-preview";
@@ -9,8 +10,15 @@ const DEFAULT_TTS_SAMPLE_RATE_HZ = 24000;
 const DEFAULT_TTS_CHANNEL_COUNT = 1;
 const DEFAULT_TTS_BITS_PER_SAMPLE = 16;
 const DEFAULT_TTS_MAX_ATTEMPTS = 3;
-const DEFAULT_TTS_CONCURRENCY = 6;
-const MIN_SPEECH_CHUNK_CHARACTERS = 240;
+const SPEECH_REWRITE_TIMEOUT_MS = 60_000;
+const PROGRESSIVE_TTS_CONCURRENCY = 6;
+const COMPLETE_TTS_CONCURRENCY = 3;
+const PROGRESSIVE_SPEECH_CHUNK_CHARACTERS = 500;
+const COMPLETE_SPEECH_CHUNK_CHARACTERS = 1000;
+const MAX_SPEECH_SOURCE_CHARACTERS = 10_000;
+const MAX_SPOKEN_TEXT_CHARACTERS = 10_000;
+const MAX_SPEECH_PCM_BYTES = 32 * 1024 * 1024;
+const TTS_MAX_OUTPUT_TOKENS = 8192;
 const RETRYABLE_TTS_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504]);
 
 const errorPayloadSchema = z.object({
@@ -24,6 +32,7 @@ const errorPayloadSchema = z.object({
 });
 
 export type GeminiSpeechStage = "rewriting" | "generating";
+export type GeminiSpeechDeliveryMode = "progressive" | "complete";
 
 export type GeminiSpeechChunkProgress = {
   ready: number;
@@ -33,6 +42,7 @@ export type GeminiSpeechChunkProgress = {
 export type GeminiSpeechOptions = {
   apiKey: string;
   sourceText: string;
+  deliveryMode: GeminiSpeechDeliveryMode;
   rewriteModel?: string;
   ttsModel?: string;
   voiceName?: string;
@@ -67,12 +77,22 @@ class GeminiTtsResponseError extends Error {
   }
 }
 
+class GeminiTtsOutputLimitError extends Error {
+  constructor() {
+    super("Gemini TTS reached its output token limit");
+    this.name = "GeminiTtsOutputLimitError";
+  }
+}
+
 export async function* streamGeminiSpeechAudio(
   options: GeminiSpeechOptions,
 ): AsyncGenerator<GeminiSpeechAudioChunk> {
   const sourceText = options.sourceText.trim();
   if (!sourceText) {
     throw new Error("speech source text was empty");
+  }
+  if (exceedsUnicodeCharacterLimit(sourceText, MAX_SPEECH_SOURCE_CHARACTERS)) {
+    throw new Error("speech source text exceeds 10,000 characters");
   }
 
   const apiKey = options.apiKey.trim();
@@ -89,15 +109,32 @@ export async function* streamGeminiSpeechAudio(
 
   try {
     await options.onStageChange?.("rewriting");
-    const spokenText = await rewriteTextForSpeech({
-      apiKey,
-      model: rewriteModel,
-      sourceText,
-      fetchImpl,
-      signal: abortController.signal,
-    });
+    const rewriteController = createLinkedAbortController(abortController.signal);
+    const rewriteTimeout = setTimeout(() => rewriteController.abort(), SPEECH_REWRITE_TIMEOUT_MS);
+    rewriteTimeout.unref?.();
+    let spokenText: string;
+    try {
+      spokenText = await rewriteTextForSpeech({
+        apiKey,
+        model: rewriteModel,
+        sourceText,
+        fetchImpl,
+        signal: rewriteController.signal,
+      });
+    } catch (error) {
+      if (!abortController.signal.aborted && rewriteController.signal.aborted) {
+        throw new Error("speech rewrite timed out after 1 minute");
+      }
+      throw error;
+    } finally {
+      clearTimeout(rewriteTimeout);
+      rewriteController.dispose();
+    }
+    if (exceedsUnicodeCharacterLimit(spokenText, MAX_SPOKEN_TEXT_CHARACTERS)) {
+      throw new Error("rewritten speech text exceeds 10,000 characters");
+    }
 
-    const spokenChunks = splitSpeechChunks(spokenText);
+    const spokenChunks = splitSpeechChunks(spokenText, options.deliveryMode);
     await options.onStageChange?.("generating");
     await options.onChunkProgress?.({ ready: 0, total: spokenChunks.length });
 
@@ -109,7 +146,10 @@ export async function* streamGeminiSpeechAudio(
       fetchImpl,
       signal: abortController.signal,
       maxAttempts: options.maxTtsAttempts ?? DEFAULT_TTS_MAX_ATTEMPTS,
-      concurrency: DEFAULT_TTS_CONCURRENCY,
+      concurrency:
+        options.deliveryMode === "progressive"
+          ? PROGRESSIVE_TTS_CONCURRENCY
+          : COMPLETE_TTS_CONCURRENCY,
       onChunkProgress: options.onChunkProgress,
       abortOnFailure: () => abortController.abort(),
     })) {
@@ -204,6 +244,7 @@ async function* synthesizeSpeechAudioChunksInOrder(
   let nextIndex = 0;
   let nextYieldIndex = 0;
   let ready = 0;
+  let totalPcmBytes = 0;
   let failure: unknown;
   let notify: (() => void) | undefined;
 
@@ -242,7 +283,7 @@ async function* synthesizeSpeechAudioChunksInOrder(
       }
 
       try {
-        results[index] = await synthesizeSpeechAudioChunk({
+        const pcmAudio = await synthesizeSpeechAudioChunk({
           apiKey: args.apiKey,
           model: args.model,
           voiceName: args.voiceName,
@@ -251,6 +292,11 @@ async function* synthesizeSpeechAudioChunksInOrder(
           signal: args.signal,
           maxAttempts: args.maxAttempts,
         });
+        totalPcmBytes += pcmAudio.length;
+        if (totalPcmBytes > MAX_SPEECH_PCM_BYTES) {
+          throw new Error("generated speech audio exceeds the 32 MiB limit");
+        }
+        results[index] = pcmAudio;
         ready += 1;
         await args.onChunkProgress?.({ ready, total });
         wake();
@@ -272,6 +318,7 @@ async function* synthesizeSpeechAudioChunksInOrder(
     while (nextYieldIndex < total) {
       const nextResult = results[nextYieldIndex];
       if (nextResult) {
+        results[nextYieldIndex] = undefined;
         yield { index: nextYieldIndex, pcmAudio: nextResult };
         nextYieldIndex += 1;
         continue;
@@ -323,7 +370,7 @@ async function synthesizeSpeechAudioChunk(args: SynthesizeSpeechAudioChunkArgs):
           ],
           generationConfig: {
             responseModalities: ["AUDIO"],
-            temperature: 1,
+            maxOutputTokens: TTS_MAX_OUTPUT_TOKENS,
             speechConfig: {
               voiceConfig: {
                 prebuiltVoiceConfig: {
@@ -335,6 +382,7 @@ async function synthesizeSpeechAudioChunk(args: SynthesizeSpeechAudioChunkArgs):
         },
       });
 
+      assertGeminiTtsDidNotReachOutputLimit(payload);
       const audioData = extractGeminiInlineAudioData(payload);
       if (!audioData) {
         throw new GeminiTtsResponseError("Gemini TTS response did not include audio data");
@@ -423,6 +471,20 @@ function extractGeminiText(payload: unknown): string {
   return "";
 }
 
+function assertGeminiTtsDidNotReachOutputLimit(payload: unknown): void {
+  if (!isObject(payload) || !Array.isArray(payload.candidates)) {
+    return;
+  }
+
+  if (
+    payload.candidates.some(
+      (candidate) => isObject(candidate) && candidate.finishReason === "MAX_TOKENS",
+    )
+  ) {
+    throw new GeminiTtsOutputLimitError();
+  }
+}
+
 function extractGeminiInlineAudioData(payload: unknown): string | undefined {
   if (!isObject(payload) || !Array.isArray(payload.candidates)) {
     return undefined;
@@ -463,14 +525,17 @@ function buildSpeechRewritePrompt(sourceText: string): string {
     "Things that typically need rewriting: file paths, shell commands, code identifiers, markdown structure, XML-like tags, long option lists, and code-heavy formatting.",
     "Remove formatting. Convert headings, lists, tables, and code blocks into plain spoken prose. Do not preserve markdown bullets, heading markers, table rows, fences, or standalone labels.",
     "For file references, keep the filename and any line or range info that was actually present. Do not add location detail that was not in the original.",
-    "Say code identifiers and version strings as natural words (for example, handleToolUiEvent as 'handle tool UI event', v5.4 as 'version 5.4'). Keep numbers and units natural (for example, 8,192 tokens as 'about eight thousand tokens').",
+    "Preserve numbers exactly as written, including separators, decimals, units, versions, line numbers, and ranges.",
+    "Preserve established technical names, acronyms, initialisms, commands, program names, filenames, and extensions exactly as written. Do not spell their letters apart, expand them, or change their capitalization. Examples that must remain unchanged include 24, PCM, ffmpeg, npm, v5.4, and config.json.",
+    "Rewrite a code identifier only when its literal form would be difficult to follow aloud, and preserve its exact meaning.",
     "",
     "Examples of good rewrites:",
     '- `src/core/utils/gemini_speech.ts:372` → "gemini_speech.ts, line 372"',
     '- `src/tui/session_chat_controller.ts:1819-1855` → "session_chat_controller.ts, lines 1819 to 1855"',
     '- `src/core/session/compaction.ts` → "compaction.ts"',
     '- `/Users/markus/.config/tau/config.json` → "the tau config.json in your home directory"',
-    '- `rg --heading -n -t ts "ToolRunPresentation" src` → "ripgrep for ToolRunPresentation in TypeScript files under src"',
+    '- `rg --heading -n -t ts "ToolRunPresentation" src` → "the rg command searching TypeScript files for ToolRunPresentation under src"',
+    '- `24 kHz PCM with ffmpeg` → "24 kHz PCM with ffmpeg"',
     '- `<available-skills>` → "the available-skills tag"',
     "- A markdown bullet list of short items → a natural comma-separated list or short sentences",
     "",
@@ -483,47 +548,70 @@ function buildSpeechRewritePrompt(sourceText: string): string {
   ].join("\n");
 }
 
-function splitSpeechChunks(spokenText: string): string[] {
-  const paragraphs = spokenText
-    .split(/\n\s*\n/g)
-    .map((paragraph) => normalizeSpeechParagraph(paragraph))
-    .filter((paragraph) => paragraph.length > 0);
-
-  if (paragraphs.length === 0) {
-    return [spokenText.trim()];
+function exceedsUnicodeCharacterLimit(text: string, limit: number): boolean {
+  let count = 0;
+  for (const _character of text) {
+    count += 1;
+    if (count > limit) {
+      return true;
+    }
   }
+  return false;
+}
 
+function splitSpeechChunks(spokenText: string, deliveryMode: GeminiSpeechDeliveryMode): string[] {
+  const normalizedText = spokenText
+    .trim()
+    .split(/\n\s*\n/gu)
+    .map((paragraph) => paragraph.replace(/\s+/gu, " ").trim())
+    .filter(Boolean)
+    .join("\n\n");
+  const maxCharacters =
+    deliveryMode === "progressive"
+      ? PROGRESSIVE_SPEECH_CHUNK_CHARACTERS
+      : COMPLETE_SPEECH_CHUNK_CHARACTERS;
   const chunks: string[] = [];
-  let current = "";
+  let remaining = Array.from(normalizedText);
 
-  for (const paragraph of paragraphs) {
-    if (!current) {
-      current = paragraph;
-      continue;
-    }
-
-    if (current.length < MIN_SPEECH_CHUNK_CHARACTERS) {
-      current = joinSpeechParagraphs(current, paragraph);
-      continue;
-    }
-
-    chunks.push(current);
-    current = paragraph;
+  while (remaining.length > maxCharacters) {
+    const boundary = findSpeechChunkBoundary(remaining, maxCharacters);
+    chunks.push(remaining.slice(0, boundary).join("").trim());
+    remaining = Array.from(remaining.slice(boundary).join("").trim());
   }
 
-  if (current) {
-    chunks.push(current);
+  if (remaining.length > 0) {
+    chunks.push(remaining.join(""));
   }
 
-  return chunks;
+  return chunks.length > 0 ? chunks : [spokenText.trim()];
 }
 
-function normalizeSpeechParagraph(paragraph: string): string {
-  return paragraph.replace(/\s+/g, " ").trim();
+function findSpeechChunkBoundary(characters: string[], maxCharacters: number): number {
+  const preferredMinimum = Math.floor(maxCharacters * 0.6);
+
+  for (let index = maxCharacters; index >= preferredMinimum; index -= 1) {
+    if (characters[index] === "\n" && characters[index + 1] === "\n") {
+      return index;
+    }
+  }
+
+  for (let index = maxCharacters; index >= preferredMinimum; index -= 1) {
+    if (isSpeechSentenceBoundary(characters[index - 1] ?? "", characters[index] ?? "")) {
+      return index;
+    }
+  }
+
+  for (let index = maxCharacters; index >= 1; index -= 1) {
+    if (/\s/u.test(characters[index] ?? "")) {
+      return index;
+    }
+  }
+
+  return maxCharacters;
 }
 
-function joinSpeechParagraphs(first: string, second: string): string {
-  return `${first}\n\n${second}`;
+function isSpeechSentenceBoundary(previous: string, next: string): boolean {
+  return /[。！？]/u.test(previous) || (/[.!?;:]/u.test(previous) && /\s/u.test(next));
 }
 
 function buildSpeechSynthesisPrompt(spokenText: string): string {
@@ -533,7 +621,7 @@ function buildSpeechSynthesisPrompt(spokenText: string): string {
     "",
     "### DIRECTOR'S NOTES",
     "Style: Clear, natural, conversational.",
-    "Pacing: Slightly slower than conversational, with deliberate enunciation. The audio will be sped up during playback.",
+    "Pacing: Brisk conversational speed. Keep it clear, confident, and energetic without sounding rushed.",
     "",
     "### TRANSCRIPT",
     spokenText,
@@ -541,6 +629,10 @@ function buildSpeechSynthesisPrompt(spokenText: string): string {
 }
 
 function isRetryableTtsError(error: unknown): boolean {
+  if (error instanceof GeminiTtsOutputLimitError) {
+    return false;
+  }
+
   if (error instanceof GeminiTtsResponseError) {
     return true;
   }

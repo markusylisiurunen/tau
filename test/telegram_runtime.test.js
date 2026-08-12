@@ -1,7 +1,11 @@
-import { rm } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
+import {
+  createTelegramProjectPreferenceStore,
+  resolveTelegramProjectPreferencesPath,
+} from "../dist/core/telegram/project_preferences.js";
 import { startTelegramRuntime } from "../dist/core/telegram/runtime.js";
 
 const workspaceRoot = join(tmpdir(), `tau-telegram-runtime-${process.pid}`);
@@ -147,7 +151,35 @@ describe("telegram runtime", () => {
     await runtime.close();
   });
 
-  it("persists project preferences across runtime restarts", async () => {
+  it("preserves version 1 project preferences when saving TTS settings", async () => {
+    const preferenceRoot = `${workspaceRoot}-migration`;
+    const preferencePath = resolveTelegramProjectPreferencesPath(preferenceRoot);
+    const ownerId = "telegram:bot-one:chat:42";
+    await writeFile(
+      preferencePath,
+      `${JSON.stringify({ version: 1, preferences: { [ownerId]: "beta" } })}\n`,
+      "utf8",
+    );
+
+    try {
+      const store = createTelegramProjectPreferenceStore(preferencePath);
+      await store.initialize();
+      expect(store.get(ownerId)).toBe("beta");
+      expect(store.isTtsEnabled(ownerId)).toBe(false);
+
+      await store.setTtsEnabled(ownerId, true);
+      expect(JSON.parse(await readFile(preferencePath, "utf8"))).toEqual({
+        version: 2,
+        preferences: {
+          [ownerId]: { projectId: "beta", ttsEnabled: true },
+        },
+      });
+    } finally {
+      await rm(preferencePath, { force: true });
+    }
+  });
+
+  it("persists project and TTS preferences across runtime restarts", async () => {
     const ownerId = "telegram:bot-one:chat:42";
     const config = createTelegramConfig({
       bots: { "bot-one": { botToken: "token-1" } },
@@ -165,6 +197,7 @@ describe("telegram runtime", () => {
     });
 
     await firstStore.set(ownerId, "beta");
+    await firstStore.setTtsEnabled(ownerId, true);
     await firstRuntime.close();
 
     const secondRuntime = await startTelegramRuntime({
@@ -173,6 +206,7 @@ describe("telegram runtime", () => {
       deps: {
         startTelegramAdapter: vi.fn(async (options) => {
           expect(options.projectPreferences.get(ownerId)).toBe("beta");
+          expect(options.projectPreferences.isTtsEnabled(ownerId)).toBe(true);
           return { close: vi.fn(async () => {}) };
         }),
       },

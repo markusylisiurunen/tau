@@ -41,7 +41,7 @@ Prompt templates are inserted into the editor for review rather than submitted a
 
 ## Keep secrets with the process that needs them
 
-Most model and service credentials belong to the host because the host performs model calls, web search, history replication, and host-tool Nook requests. TUI speech credentials and command client-tool credentials belong to the client. Telegram bot and transcription credentials belong to the Telegram runner. Hosted-environment bridge and API credentials belong to host startup.
+Most model and service credentials belong to the host because the host performs model calls, web search, history replication, and host-tool Nook requests. TUI speech credentials and command client-tool credentials belong to the client. Telegram bot, transcription, and voice-response credentials belong to the Telegram runner. Hosted-environment bridge and API credentials belong to host startup.
 
 In a remote attachment, a credential exported on the laptop does not authenticate the remote host. Conversely, putting a host credential into the execution target's shell environment unnecessarily exposes it to target processes. Follow [credentials](credentials.md) for exact resolution precedence.
 

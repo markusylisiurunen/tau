@@ -752,6 +752,136 @@ describe("telegram session manager", () => {
     await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
   });
 
+  it("does not complete an earlier assistant response when later steering fails", async () => {
+    const clientHarness = createClientHarness();
+    const firstSubmit = deferred();
+    const steeringSubmit = deferred();
+    clientHarness.session.submit = vi.fn(async (_text, options) =>
+      applyRequestedHistoryEntryId(await firstSubmit.promise, options),
+    );
+    clientHarness.session.steer = vi.fn(async () => await steeringSubmit.promise);
+    const manager = createDemoSessionManager(clientHarness);
+    const events = [];
+    manager.onEvent((event) => events.push(event));
+
+    const created = await manager.createSession({ projectId: "demo" });
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+
+    await manager.sendMessage(created.id, "start work");
+    await manager.sendMessage(created.id, "steer it", { mode: "steer" });
+    clientHarness.emitDelta(
+      createPatchDelta(
+        [
+          {
+            type: "message.append",
+            message: createAssistantProtocolMessage("assistant-stale", [
+              { type: "text", text: "earlier answer" },
+            ]),
+          },
+        ],
+        1,
+        "assistant-message",
+      ),
+    );
+
+    firstSubmit.resolve({
+      userHistoryEntryId: "history-first",
+      turn: { status: "completed", stopReason: "stop" },
+    });
+    steeringSubmit.resolve({
+      userHistoryEntryId: "history-steering",
+      turn: {
+        status: "failed",
+        stopReason: "error",
+        errorMessage: "OpenAI is unavailable",
+      },
+    });
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+
+    expect(assistantProgressTexts(events)).toEqual(["earlier answer"]);
+    expect(events.filter((event) => event.type === "session-response-completed")).toEqual([]);
+    expect(events.filter((event) => event.type === "session-turn-failed")).toHaveLength(1);
+  });
+
+  it("does not complete an earlier response when steering is rejected before acceptance", async () => {
+    const clientHarness = createClientHarness();
+    const firstSubmit = deferred();
+    const steeringSubmit = deferred();
+    clientHarness.session.submit = vi.fn(async (_text, options) =>
+      applyRequestedHistoryEntryId(await firstSubmit.promise, options),
+    );
+    clientHarness.session.steer = vi.fn(async () => await steeringSubmit.promise);
+    const manager = createDemoSessionManager(clientHarness);
+    const events = [];
+    manager.onEvent((event) => events.push(event));
+
+    const created = await manager.createSession({ projectId: "demo" });
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+
+    await manager.sendMessage(created.id, "start work");
+    await manager.sendMessage(created.id, "steer it", { mode: "steer" });
+    clientHarness.emitDelta(
+      createPatchDelta(
+        [
+          {
+            type: "message.append",
+            message: createAssistantProtocolMessage("assistant-stale", [
+              { type: "text", text: "earlier answer" },
+            ]),
+          },
+        ],
+        1,
+        "assistant-message",
+      ),
+    );
+
+    firstSubmit.resolve({
+      userHistoryEntryId: "history-first",
+      turn: { status: "completed", stopReason: "stop" },
+    });
+    steeringSubmit.reject(new Error("steering transport disconnected"));
+    await waitFor(() => manager.getSession(created.id)?.state === "failed");
+
+    expect(assistantProgressTexts(events)).toEqual(["earlier answer"]);
+    expect(events.filter((event) => event.type === "session-response-completed")).toEqual([]);
+  });
+
+  it("does not complete a response after the session is cancelled", async () => {
+    const clientHarness = createClientHarness();
+    const manager = createDemoSessionManager(clientHarness);
+    const events = [];
+    manager.onEvent((event) => events.push(event));
+
+    const created = await manager.createSession({ projectId: "demo" });
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+
+    await manager.sendMessage(created.id, "start work");
+    clientHarness.emitDelta(
+      createPatchDelta(
+        [
+          {
+            type: "message.append",
+            message: createAssistantProtocolMessage("assistant-cancelled", [
+              { type: "text", text: "answer before cancellation" },
+            ]),
+          },
+        ],
+        1,
+        "assistant-message",
+      ),
+    );
+
+    const close = manager.closeSession(created.id);
+    clientHarness.submitDeferred.resolve({
+      userHistoryEntryId: "history-cancelled",
+      turn: { status: "completed", stopReason: "stop" },
+    });
+    await close;
+
+    expect(assistantProgressTexts(events)).toEqual(["answer before cancellation"]);
+    expect(events.filter((event) => event.type === "session-response-completed")).toEqual([]);
+  });
+
   it("emits one failure event for a batched steering turn", async () => {
     const clientHarness = createClientHarness();
     const steeringTurn = deferred();
@@ -2422,7 +2552,7 @@ describe("telegram session manager", () => {
     manager.onEvent((event) => {
       events.push(event);
     });
-    const { sendPromise } = await startRunningSession(manager);
+    const { created, sendPromise } = await startRunningSession(manager);
 
     clientHarness.emitDelta(
       createPatchDelta(
@@ -2491,8 +2621,16 @@ describe("telegram session manager", () => {
       turn: { status: "completed", stopReason: "stop" },
     });
     await sendPromise;
+    await waitFor(() => events.some((event) => event.type === "session-response-completed"));
 
     expect(assistantProgressTexts(events)).toEqual(["I’ll inspect that now.", "final answer"]);
+    expect(events.filter((event) => event.type === "session-response-completed")).toEqual([
+      expect.objectContaining({
+        sessionId: created.id,
+        messageId: "assistant-2",
+        text: "final answer",
+      }),
+    ]);
   });
 
   it("emits committed assistant progress from assistant-message snapshot resets once", async () => {

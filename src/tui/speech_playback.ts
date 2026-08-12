@@ -1,9 +1,11 @@
 import { unlink, writeFile } from "node:fs/promises";
 import type { CoreDeps } from "../core/runtime/deps.js";
-import { streamGeminiSpeechAudio } from "../core/utils/gemini_speech.js";
+import {
+  GEMINI_SPEECH_PLAYBACK_RATE,
+  streamGeminiSpeechAudio,
+} from "../core/utils/gemini_speech.js";
 
 export const SPEAK_TEMP_FILE_TEMPLATE = "/tmp/tau-speak.XXXXXX";
-const SPEAK_PLAYBACK_RATE = 1.4;
 
 export async function runSpeechPlaybackTask(args: {
   deps: CoreDeps;
@@ -31,6 +33,7 @@ export async function runSpeechPlaybackTask(args: {
     for await (const chunk of streamGeminiSpeechAudio({
       apiKey: args.apiKey,
       sourceText: args.sourceText,
+      deliveryMode: "progressive",
       signal: args.signal,
       onStageChange: (stage) => {
         args.onActivityLabel(stage === "rewriting" ? "rewriting for speech" : "generating speech");
@@ -54,7 +57,7 @@ export async function runSpeechPlaybackTask(args: {
 
       const playback = await args.deps.spawn(
         "afplay",
-        ["-r", String(SPEAK_PLAYBACK_RATE), audioPath],
+        ["-r", String(GEMINI_SPEECH_PLAYBACK_RATE), audioPath],
         {
           detached: true,
           killProcessGroup: true,

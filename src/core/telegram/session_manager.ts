@@ -1354,6 +1354,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
             });
           }
         }
+        this.invalidateCompletedResponse(entry);
         if (!entry.cancelRequested) {
           const diagnostic = formatErrorDiagnostic(error);
           entry.record.error = diagnostic;
@@ -1551,8 +1552,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
         this.emitCompletedResponseIfReady(entry);
       }
     } else {
-      entry.turnSequenceUnsuccessful = true;
-      entry.finalAssistantResponse = undefined;
+      this.invalidateCompletedResponse(entry);
       if (turn.outcome.status === "failed" || turn.outcome.status === "blocked") {
         this.recordTurnFailure(entry, historyEntryId, turn.outcome);
       }
@@ -1585,8 +1585,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
   }
 
   private recordTurnRejection(entry: SessionEntry, historyEntryId: string): void {
-    entry.turnSequenceUnsuccessful = true;
-    entry.finalAssistantResponse = undefined;
+    this.invalidateCompletedResponse(entry);
     entry.activeTurnIds.delete(historyEntryId);
     entry.settledTurnIds.add(historyEntryId);
     entry.turnChangeResolvers.get(historyEntryId)?.();
@@ -1719,8 +1718,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
 
     for (const entry of entries) {
       if (this.isActiveState(entry.record.state)) {
-        entry.cancelRequested = true;
-        entry.abortController.abort();
+        this.requestCancellation(entry, "manager shutdown");
       }
       if (entry.record.state === "running") {
         this.setState(entry, "waiting-input");
@@ -1820,8 +1818,14 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
 
   private requestCancellation(entry: SessionEntry, message: string): void {
     entry.cancelRequested = true;
+    this.invalidateCompletedResponse(entry);
     entry.abortController.abort();
     this.log(entry, "info", message);
+  }
+
+  private invalidateCompletedResponse(entry: SessionEntry): void {
+    entry.turnSequenceUnsuccessful = true;
+    entry.finalAssistantResponse = undefined;
   }
 
   private async stopClient(entry: SessionEntry, reason: string): Promise<void> {
@@ -2185,6 +2189,8 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     if (
       entry.activeSubmit ||
       entry.activeTurnIds.size > 0 ||
+      entry.cancelRequested ||
+      entry.record.state === "failed" ||
       entry.turnSequenceUnsuccessful ||
       !entry.finalAssistantResponse
     ) {

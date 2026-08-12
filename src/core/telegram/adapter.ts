@@ -3103,7 +3103,6 @@ class TelegramAdapterImpl {
   private startTtsNotification(sessionId: string, sourceText: string): void {
     const chatIds = this.chatsBySession.get(sessionId);
     if (
-      !this.geminiApiKey ||
       !chatIds ||
       ![...chatIds].some((chatId) =>
         this.projectPreferences.isTtsEnabled(this.ownerIdForChat(chatId)),
@@ -3143,8 +3142,11 @@ class TelegramAdapterImpl {
     timeout.unref?.();
 
     try {
+      if (!this.geminiApiKey) {
+        throw new Error("missing Google credential for Telegram voice responses");
+      }
       const voice = await this.generateVoice({
-        apiKey: this.geminiApiKey!,
+        apiKey: this.geminiApiKey,
         sourceText,
         fetchImpl: this.fetchImpl,
         signal: AbortSignal.any([this.abortController.signal, timeoutController.signal]),

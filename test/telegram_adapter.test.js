@@ -519,6 +519,66 @@ describe("telegram adapter", () => {
     }
   });
 
+  it("reports a persisted TTS opt-in when the Google credential is missing", async () => {
+    const chatId = 20;
+    const ownerId = ownerIdForChat(chatId);
+    const apiHarness = createApiHarness([]);
+    const managerHarness = createSessionManagerHarness([
+      {
+        id: "s-tts-missing-credential",
+        projectId: "demo",
+        ownerId,
+        state: "waiting-input",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+      },
+    ]);
+    const logs = [];
+    const generateVoice = vi.fn();
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      sessionManager: managerHarness.manager,
+      projectPreferences: {
+        initialize: vi.fn(async () => {}),
+        get: vi.fn(() => undefined),
+        set: vi.fn(async () => {}),
+        isTtsEnabled: vi.fn((id) => id === ownerId),
+        setTtsEnabled: vi.fn(async () => {}),
+      },
+      api: apiHarness.api,
+      generateVoice,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+      onLog: (entry) => logs.push(entry),
+    });
+
+    try {
+      managerHarness.manager.emit({
+        type: "session-response-completed",
+        sessionId: "s-tts-missing-credential",
+        projectId: "demo",
+        timestamp: "2024-01-01T00:01:00.000Z",
+        messageId: "assistant-final",
+        text: "final answer",
+      });
+
+      await waitFor(() => apiHarness.sendMessages.length === 1);
+      expect(apiHarness.sendMessages[0].text).toBe("voice response failed. please try again.");
+      expect(generateVoice).not.toHaveBeenCalled();
+      expect(logs).toContainEqual({
+        level: "error",
+        message: "failed to generate Telegram voice response",
+        data: {
+          sessionId: "s-tts-missing-credential",
+          cause: "missing Google credential for Telegram voice responses",
+        },
+      });
+    } finally {
+      await adapter.close();
+    }
+  });
+
   it("serializes voice generation for responses from the same session", async () => {
     const chatId = 15;
     const ownerId = ownerIdForChat(chatId);

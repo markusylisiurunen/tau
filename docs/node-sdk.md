@@ -333,7 +333,7 @@ The handler receives `sessionId`, owning `agentId`, `callId`, an `AbortSignal`, 
 
 The execution result may independently include the same partial shape for the terminal card. Return a string or `{ content, presentation? }` for success, or `{ ok: false, error, presentation? }` for a structured failure. Omitted presentation fields use Tau's terminal defaults; empty detail or metadata arrays suppress those defaults. If `describe` throws, the SDK reports a preparation error without calling `execute`. If the client never returns a result because of cancellation, timeout, detach, or another failure, the host produces a complete fallback presentation.
 
-Tau preserves every explicit presentation field up to the protocol safety limits; it does not apply display truncation or normalize client text. `truncateTauClientToolText` provides optional caller-controlled line, character, and head or middle truncation for any presentation text. Its defaults match Tau's concise subject policy, but callers may select larger or smaller positive limits. The SDK aborts handlers on host cancellation, client close, or terminal transport failure. `client.close()` waits for active handlers to settle.
+Tau preserves every explicit presentation field up to the protocol safety limits; it does not apply display truncation or normalize client text. `truncateTauClientToolText` provides optional caller-controlled line, character, and head or middle truncation. Use its result directly for a subject. For a block of detail text, split the result on `\n` and map each line to one `details` entry; use `maxLines: 1` when assigning it directly to one detail or metadata entry. The helper shapes text but does not replace protocol validation. The SDK aborts handlers on host cancellation, client close, or terminal transport failure. `client.close()` waits for active handlers to settle.
 
 Tool definitions are frozen for each assistant turn and remain independent of persona tool allowlists. Names cannot collide with host tools or another observing client's tools. See [client tools](client-tools.md) for authority, limits, command-backed tools, and disconnect behavior.
 
@@ -361,7 +361,7 @@ const tickets = createTauCodeModeClientTool({
 });
 ```
 
-Pass `tickets` in `clientTools`. Generated code receives the declared API namespace, progressively disclosed `docs`, console output, live `Date` and `Math`, and agent-scoped scratch files when invoked as a client tool. API calls cross a bounded JSON bridge. The tool description remains explicit caller input; the builder is optional.
+Pass `tickets` in `clientTools`. Generated code receives the declared API namespace, progressively disclosed `docs`, console output, live `Date` and `Math`, and agent-scoped scratch files when invoked as a client tool. API calls cross a bounded JSON bridge. The submitted code appears, concisely truncated and character-wrapped, as the running and terminal tool-card subject. The tool description remains explicit caller input; the builder is optional.
 
 The SDK also exports `executeTauCodeMode` for standalone execution. The separate `@markusylisiurunen/tau/code-mode` entry point additionally exports file-capability types, `runTauClientToolCommand`, and `runTauCodeModeCommand` for command-backed tools. Use the helpers instead of implementing their framing manually.
 

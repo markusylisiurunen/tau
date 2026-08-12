@@ -573,7 +573,9 @@ result: {
 }
 ```
 
-The optional presentation is a partial running-state override. The host validates explicit fields only against the protocol safety limits and otherwise preserves them unchanged. It supplies canonical display-truncated defaults for omitted fields, owns the action and operation, and records the resolved presentation. Empty detail or metadata arrays suppress those default fields. An accepted acknowledgement authorizes the client to begin execution.
+The optional presentation is a partial running-state override. When present, `subject` must be non-empty and may contain line feeds but not carriage returns. Each detail text and metadata value is one line. Presentation objects are limited to 1 MiB; subjects and detail values to 256 KiB each; metadata values to 16 KiB each; and detail and metadata collections to 1,024 entries each.
+
+The host preserves explicit fields within those safety limits and supplies canonical display-truncated defaults for omitted fields. It owns the action and operation and records the resolved presentation. Empty detail or metadata arrays suppress those default fields. An accepted acknowledgement authorizes the client to begin execution.
 
 ### `session.clientTool.result`
 

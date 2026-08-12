@@ -150,11 +150,48 @@ await runTauClientToolCommand({
 
 `describe` is optional. When present, it runs before acknowledgement and may return a partial running presentation containing `subject`, `subjectWrap`, `details`, or `metadata`. The execution result may independently include the same partial shape for the terminal card. Tau supplies every omitted field, owns lifecycle actions and the operation derived from the registered tool name, and renders a complete fallback when execution ends without a result.
 
-Tau preserves every explicit presentation field up to the protocol safety limits; it does not apply display truncation or normalize client text. `truncateTauClientToolText` provides optional caller-controlled `maxLines`, `maxLineChars`, and `head` or `middle` truncation for subjects or any other presentation text. Its defaults match Tau's concise subject policy, but callers may select larger or smaller positive limits. Empty detail or metadata arrays explicitly suppress that phase's defaults.
+Tau preserves every explicit presentation field up to the protocol safety limits; it does not apply display truncation or normalize client text. `truncateTauClientToolText` provides optional caller-controlled `maxLines`, `maxLineChars`, and `head` or `middle` truncation. Its defaults match Tau's concise subject policy, but callers may select larger or smaller positive limits.
+
+For a subject, use the returned string directly. For a block of detail text, split the returned string on `\n` and map each line to one `details` entry:
+
+```ts
+const details = truncateTauClientToolText(output, {
+  maxLines: 7,
+  maxLineChars: 512,
+  strategy: "middle",
+})
+  .split("\n")
+  .map((text) => ({ text }));
+```
+
+Each detail or metadata entry is a single protocol line, so use `maxLines: 1` when assigning the helper's result directly to one entry. The helper shapes text for presentation; the protocol byte and collection limits still apply. Empty detail or metadata arrays explicitly suppress that phase's defaults.
 
 `runTauClientToolCommand` reads the preparation, writes readiness and any running presentation, waits until the host accepts the call, then provides the standard execution context and writes the final result. It handles execution-environment request and cancellation framing and reacts to `SIGINT`, `SIGTERM`, and protocol input closure by aborting the handler.
 
 Reserve stdout for the helper's protocol. Write diagnostics to stderr. Return a string or `{ content, presentation? }` for success. Return `{ ok: false, error, presentation? }` for a structured tool failure. Successful content and failure text become model-visible tool results.
+
+### Version 4 frame reference
+
+The shapes below use TypeScript notation. Serialize each frame as one exact JSON object followed by a newline; unknown fields are invalid.
+
+Tau starts the exchange by writing:
+
+- `{ version: 4, type: "prepare", sessionId, agentId, callId, toolName, arguments }` exactly once. The identity fields are non-empty strings and `arguments` is the validated model input.
+- `{ version: 4, type: "execute" }` after accepting the command's ready frame. This authorizes execution.
+
+The command writes:
+
+- `{ version: 4, type: "ready", presentation?: PresentationOverride }` exactly once after preparation.
+- `{ version: 4, type: "result", ok: true, content, presentation?: PresentationOverride }` or `{ version: 4, type: "result", ok: false, error, presentation?: PresentationOverride }` exactly once after authorization. `content` and `error` are strings.
+
+During authorized execution, the command may write `{ version: 4, type: "exec", requestId, command, options }`. The non-empty `command` string runs in the session execution environment. `options` is required and may contain `args: string[]`, `env: Record<string, string>`, base64-encoded string `stdinBase64`, string `cwd`, positive integer `timeoutMs`, and positive integer `maxCaptureBytes`.
+
+Tau answers with the same `requestId` and either:
+
+- `{ version: 4, type: "exec.result", requestId, ok: true, result: ExecResult }`
+- `{ version: 4, type: "exec.result", requestId, ok: false, error: string }`
+
+`ExecResult` contains string `output`, `stdout`, and `stderr`; nullable `exitCode` and `closeSignal`; and boolean `truncated`, `timedOut`, and `aborted`. A command may cancel one unresolved request with `{ version: 4, type: "exec.cancel", requestId }`. Request IDs must be non-empty strings and cannot be reused within a call.
 
 ### Implement the protocol directly in JavaScript
 
@@ -343,7 +380,7 @@ Tau exports two higher-level helpers for client tools that expose a bounded Java
 
 For an executable configured through `clientTools`, keep the exact parameters schema to one required `code` string with no additional properties, then call `runTauCodeModeCommand` in the executable. For SDK clients, pass the returned tool from `createTauCodeModeClientTool` in the client's `clientTools` array.
 
-Both helpers supply the invocation identities, cancellation signal, execution-environment facade, progressive `docs` value, bounded API bridge, and agent-scoped scratch files. The model-facing description remains explicit caller input. Use Tau's optional shared description builder only when its progressive-disclosure wording fits the tool; Tau does not silently rewrite a configured description.
+Both helpers supply the invocation identities, cancellation signal, execution-environment facade, progressive `docs` value, bounded API bridge, and agent-scoped scratch files. They use the submitted code, concisely truncated and character-wrapped, as the running and terminal tool-card subject. The model-facing description remains explicit caller input. Use Tau's optional shared description builder only when its progressive-disclosure wording fits the tool; Tau does not silently rewrite a configured description.
 
 The generic code-mode runtime is documented through its exported types and generated tool documentation. Do not layer another unbounded process or network channel behind it without making that authority clear in the tool description.
 

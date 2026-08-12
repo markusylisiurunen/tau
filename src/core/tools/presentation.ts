@@ -76,6 +76,12 @@ export type ToolCardSubjectTruncation = {
   strategy?: "head" | "middle";
 };
 
+export type ToolTextTruncation = {
+  maxLines: number;
+  maxLineChars: number;
+  strategy?: "head" | "middle";
+};
+
 function isSingleLine(text: string): boolean {
   return !text.includes("\n") && !text.includes("\r");
 }
@@ -298,6 +304,28 @@ function truncateLines(
   ];
 }
 
+export function truncateToolText(text: string, options: ToolTextTruncation): string {
+  if (!Number.isInteger(options.maxLines) || options.maxLines < 1) {
+    throw new Error("text maxLines must be a positive integer");
+  }
+  if (!Number.isInteger(options.maxLineChars) || options.maxLineChars < 1) {
+    throw new Error("text maxLineChars must be a positive integer");
+  }
+
+  return truncateLines(
+    text
+      .replace(/\r\n?/g, "\n")
+      .replace(/\n+$/, "")
+      .split("\n")
+      .map((line) => ({ text: line, wrap: "word" })),
+    options.maxLines,
+    options.maxLineChars,
+    options.strategy,
+  )
+    .map((line) => line.text)
+    .join("\n");
+}
+
 export function truncateToolRunSubject(
   subject: string,
   options: ToolCardSubjectTruncation = {},
@@ -315,18 +343,11 @@ export function truncateToolRunSubject(
     throw new Error(`subject maxLineChars must be between 1 and ${TOOL_CARD_MAX_LINE_CHARS}`);
   }
 
-  return truncateLines(
-    subject
-      .replace(/\r\n?/g, "\n")
-      .replace(/\n+$/, "")
-      .split("\n")
-      .map((text) => ({ text, wrap: "word" })),
+  return truncateToolText(subject, {
     maxLines,
     maxLineChars,
-    options.strategy,
-  )
-    .map((line) => line.text)
-    .join("\n");
+    strategy: options.strategy,
+  });
 }
 
 export function parseToolRunPresentation(value: unknown): ToolRunPresentation {

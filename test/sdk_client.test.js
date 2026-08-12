@@ -5,13 +5,12 @@ import {
   SESSION_PROTOCOL_VERSION,
 } from "../dist/protocol/session_protocol.js";
 import {
-  buildTauClientToolPresentation,
   createTauSdkClientFromTransport,
   getTauSdkSessionTurnOutcome,
   getTauSdkSessionTurnRecord,
   TauSessionClientError,
   TauTransportError,
-  truncateTauClientToolSubject,
+  truncateTauClientToolText,
 } from "../dist/sdk/index.js";
 import {
   createProtocolBootstrap,
@@ -30,7 +29,7 @@ function createReadyMessage() {
 const bootstrap = createProtocolBootstrap();
 
 function describeClientTool(toolName, subject = toolName) {
-  return buildTauClientToolPresentation({ toolName, subject });
+  return { subject };
 }
 
 const localCreateInput = {
@@ -345,26 +344,25 @@ async function waitForFakeRequest(transport, predicate, timeoutMs = 2000) {
 }
 
 describe("sdk_client", () => {
-  it("exports bounded client tool subject truncation", () => {
+  it("exports configurable client tool text truncation", () => {
     expect(
-      truncateTauClientToolSubject("one\ntwo\nthree\nfour", {
+      truncateTauClientToolText("one\ntwo\nthree\nfour", {
         maxLines: 3,
         maxLineChars: 5,
         strategy: "head",
       }),
     ).toBe("one\ntwo\n…2 m…");
-    expect(truncateTauClientToolSubject("one\ntwo\nthree\nfour", { maxLines: 1 })).toBe(
+    expect(truncateTauClientToolText("one\ntwo\nthree\nfour", { maxLines: 1 })).toBe(
       "…4 more lines…",
     );
     expect(
-      buildTauClientToolPresentation({
-        toolName: "custom",
-        subject: "one\ntwo\nthree\nfour",
-        subjectTruncation: false,
-      }).subject,
-    ).toBe("one\ntwo\nthree\nfour");
-    expect(() => truncateTauClientToolSubject("subject", { maxLines: 9 })).toThrow(
-      "subject maxLines must be between 1 and 8",
+      truncateTauClientToolText(Array.from({ length: 9 }, (_, index) => `${index}`).join("\n"), {
+        maxLines: 9,
+        maxLineChars: 1024,
+      }),
+    ).toBe("0\n1\n2\n3\n4\n5\n6\n7\n8");
+    expect(() => truncateTauClientToolText("text", { maxLines: 0 })).toThrow(
+      "text maxLines must be a positive integer",
     );
   });
   it("reads running and settled turns from the canonical snapshot ledger", () => {
@@ -886,7 +884,10 @@ describe("sdk_client", () => {
       const execution = await context.executionEnvironment.exec("printf workspace", {
         cwd: "/repo",
       });
-      return { content: `picked a from ${execution.output}` };
+      return {
+        content: `picked a from ${execution.output}`,
+        presentation: describeClientTool("local_picker", "picked a"),
+      };
     });
     const client = await createTauSdkClientFromTransport(transport, {
       clientTools: [
@@ -970,6 +971,62 @@ describe("sdk_client", () => {
           callId: "call-1",
           ok: true,
           content: "picked a from raw output",
+          presentation: describeClientTool("local_picker", "picked a"),
+        },
+      },
+    ]);
+
+    await client.close();
+  });
+
+  it("reports structured client tool failures with terminal presentation", async () => {
+    const transport = new FakeSessionProtocolTransport();
+    const client = await createTauSdkClientFromTransport(transport, {
+      clientTools: [
+        {
+          schema: {
+            name: "local_picker",
+            description: "Pick a local item.",
+            parameters: { type: "object", properties: {}, additionalProperties: false },
+          },
+          execute: () => ({
+            ok: false,
+            error: "nothing selected",
+            presentation: { details: [{ text: "No local choices", tone: "removed" }] },
+          }),
+        },
+      ],
+    });
+
+    transport.emitClientTool({
+      version: SESSION_PROTOCOL_VERSION,
+      type: "session.clientTool.call",
+      sessionId: "session-1",
+      agentId: "agent-1",
+      callId: "call-1",
+      toolName: "local_picker",
+      arguments: {},
+      ackDeadlineMs: 5000,
+      executionDeadlineMs: 60_000,
+    });
+
+    await waitForFakeRequest(
+      transport,
+      (request) => request.method === "session.clientTool.result",
+    );
+    expect(transport.requests).toEqual([
+      {
+        method: "session.clientTool.ack",
+        params: { sessionId: "session-1", callId: "call-1" },
+      },
+      {
+        method: "session.clientTool.result",
+        params: {
+          sessionId: "session-1",
+          callId: "call-1",
+          ok: false,
+          error: "nothing selected",
+          presentation: { details: [{ text: "No local choices", tone: "removed" }] },
         },
       },
     ]);
@@ -993,7 +1050,6 @@ describe("sdk_client", () => {
             description: "Wait in the workspace.",
             parameters: { type: "object", properties: {}, additionalProperties: false },
           },
-          describe: () => describeClientTool("workspace_wait"),
           execute: (_args, context) => context.executionEnvironment.exec("sleep 60"),
         },
       ],
@@ -1011,6 +1067,10 @@ describe("sdk_client", () => {
       executionDeadlineMs: 60_000,
     });
     await waitForFakeRequest(transport, (request) => request.method === "session.exec");
+    expect(transport.requests[0]).toEqual({
+      method: "session.clientTool.ack",
+      params: { sessionId: "session-1", callId: "call-1" },
+    });
     const execId = transport.requests.find((request) => request.method === "session.exec").params
       .execId;
 

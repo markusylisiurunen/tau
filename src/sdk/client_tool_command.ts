@@ -2,11 +2,16 @@ import { createInterface } from "node:readline";
 import { StringDecoder } from "node:string_decoder";
 import { z } from "zod";
 import {
-  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_LABEL_BYTES,
+  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES,
+  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAIL_BYTES,
+  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAILS,
+  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_METADATA,
+  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_METADATA_VALUE_BYTES,
   SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_SUBJECT_BYTES,
   SESSION_PROTOCOL_MAX_EXEC_CAPTURE_BYTES,
   SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES,
 } from "../protocol/session_protocol.js";
+import type { TauClientToolPresentation } from "./client_tool_presentation.js";
 import type {
   TauSdkClientToolContext,
   TauSdkClientToolResult,
@@ -80,18 +85,22 @@ const execCancelSchema = z
   })
   .strict();
 
-const commandPresentationLineSchema = z
+const commandPresentationSingleLineSchema = z
   .string()
-  .min(1)
-  .refine((value) => !value.includes("\n") && !value.includes("\r"), "must be one line")
-  .refine(
-    (value) =>
-      Buffer.byteLength(value, "utf8") <= SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_LABEL_BYTES,
-    `must not exceed ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_LABEL_BYTES} UTF-8 bytes`,
-  );
-const commandPresentationSchema = z
+  .refine((value) => !value.includes("\n") && !value.includes("\r"), "must be one line");
+const commandPresentationDetailSchema = commandPresentationSingleLineSchema.refine(
+  (value) =>
+    Buffer.byteLength(value, "utf8") <= SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAIL_BYTES,
+  `must not exceed ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAIL_BYTES} UTF-8 bytes`,
+);
+const commandPresentationMetadataSchema = commandPresentationSingleLineSchema.refine(
+  (value) =>
+    Buffer.byteLength(value, "utf8") <=
+    SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_METADATA_VALUE_BYTES,
+  `must not exceed ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_METADATA_VALUE_BYTES} UTF-8 bytes`,
+);
+const commandPresentationSchema: z.ZodType<TauClientToolCommandPresentation> = z
   .object({
-    operation: commandPresentationLineSchema.optional(),
     subject: z
       .string()
       .min(1)
@@ -101,10 +110,33 @@ const commandPresentationSchema = z
           Buffer.byteLength(value, "utf8") <=
           SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_SUBJECT_BYTES,
         `must not exceed ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_SUBJECT_BYTES} UTF-8 bytes`,
-      ),
+      )
+      .optional(),
     subjectWrap: z.enum(["word", "character"]).optional(),
+    details: z
+      .array(
+        z
+          .object({
+            text: commandPresentationDetailSchema,
+            tone: z.enum(["added", "removed"]).optional(),
+            wrap: z.enum(["word", "character"]).optional(),
+          })
+          .strict(),
+      )
+      .max(SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAILS)
+      .optional(),
+    metadata: z
+      .array(commandPresentationMetadataSchema)
+      .max(SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_METADATA)
+      .optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (value) =>
+      Buffer.byteLength(JSON.stringify(value), "utf8") <=
+      SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES,
+    `must not exceed ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES} UTF-8 bytes`,
+  );
 const readySchema = z
   .object({
     version: z.literal(TAU_CLIENT_TOOL_COMMAND_PROTOCOL_VERSION),
@@ -113,17 +145,34 @@ const readySchema = z
   })
   .strict();
 
-const resultSchema = z
-  .object({
-    version: z.literal(TAU_CLIENT_TOOL_COMMAND_PROTOCOL_VERSION),
-    type: z.literal("result"),
-    content: z
-      .string()
-      .refine(
-        (value) => Buffer.byteLength(value, "utf8") <= TAU_CLIENT_TOOL_COMMAND_MAX_RESULT_BYTES,
-      ),
-  })
-  .strict();
+const resultSchema = z.discriminatedUnion("ok", [
+  z
+    .object({
+      version: z.literal(TAU_CLIENT_TOOL_COMMAND_PROTOCOL_VERSION),
+      type: z.literal("result"),
+      ok: z.literal(true),
+      content: z
+        .string()
+        .refine(
+          (value) => Buffer.byteLength(value, "utf8") <= TAU_CLIENT_TOOL_COMMAND_MAX_RESULT_BYTES,
+        ),
+      presentation: commandPresentationSchema.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      version: z.literal(TAU_CLIENT_TOOL_COMMAND_PROTOCOL_VERSION),
+      type: z.literal("result"),
+      ok: z.literal(false),
+      error: z
+        .string()
+        .refine(
+          (value) => Buffer.byteLength(value, "utf8") <= TAU_CLIENT_TOOL_COMMAND_MAX_RESULT_BYTES,
+        ),
+      presentation: commandPresentationSchema.optional(),
+    })
+    .strict(),
+]);
 
 const execResultSchema = z
   .object({
@@ -195,11 +244,7 @@ export type TauClientToolCommandExecCancel = {
   requestId: string;
 };
 
-export type TauClientToolCommandPresentation = {
-  operation?: string;
-  subject: string;
-  subjectWrap?: "word" | "character";
-};
+export type TauClientToolCommandPresentation = TauClientToolPresentation;
 
 export type TauClientToolCommandReady = {
   version: 4;
@@ -207,11 +252,21 @@ export type TauClientToolCommandReady = {
   presentation?: TauClientToolCommandPresentation;
 };
 
-export type TauClientToolCommandResult = {
-  version: 4;
-  type: "result";
-  content: string;
-};
+export type TauClientToolCommandResult =
+  | {
+      version: 4;
+      type: "result";
+      ok: true;
+      content: string;
+      presentation?: TauClientToolCommandPresentation;
+    }
+  | {
+      version: 4;
+      type: "result";
+      ok: false;
+      error: string;
+      presentation?: TauClientToolCommandPresentation;
+    };
 
 export type TauClientToolCommandOutput =
   | TauClientToolCommandReady
@@ -249,7 +304,10 @@ export type TauClientToolCommandDefinition = {
   name: string;
   describe?: (
     args: unknown,
-  ) => Promise<TauClientToolCommandPresentation> | TauClientToolCommandPresentation;
+  ) =>
+    | Promise<TauClientToolCommandPresentation | undefined>
+    | TauClientToolCommandPresentation
+    | undefined;
   execute: TauClientToolCommandHandler;
 };
 
@@ -521,12 +579,25 @@ export async function runTauClientToolCommand(
       }),
     );
     const result = await Promise.race([handled, inputFailure, abortFailure]);
-    const content = typeof result === "string" ? result : result.content;
-    await writeFrame({
-      version: TAU_CLIENT_TOOL_COMMAND_PROTOCOL_VERSION,
-      type: "result",
-      content,
-    });
+    if (typeof result !== "string" && result.ok === false) {
+      await writeFrame({
+        version: TAU_CLIENT_TOOL_COMMAND_PROTOCOL_VERSION,
+        type: "result",
+        ok: false,
+        error: result.error,
+        ...(result.presentation === undefined ? {} : { presentation: result.presentation }),
+      });
+    } else {
+      const content = typeof result === "string" ? result : result.content;
+      const terminalPresentation = typeof result === "string" ? undefined : result.presentation;
+      await writeFrame({
+        version: TAU_CLIENT_TOOL_COMMAND_PROTOCOL_VERSION,
+        type: "result",
+        ok: true,
+        content,
+        ...(terminalPresentation === undefined ? {} : { presentation: terminalPresentation }),
+      });
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(`${message}\n`);
@@ -543,7 +614,7 @@ export async function runTauClientToolCommand(
 
 export function parseTauClientToolCommandOutput(value: unknown): TauClientToolCommandOutput {
   const parsed = z
-    .discriminatedUnion("type", [readySchema, execRequestSchema, execCancelSchema, resultSchema])
+    .union([readySchema, execRequestSchema, execCancelSchema, resultSchema])
     .safeParse(value);
   if (!parsed.success) {
     throw new Error("command client tool returned an invalid version-4 protocol frame");

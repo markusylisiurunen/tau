@@ -156,12 +156,14 @@ export type TauSessionHost = {
   acknowledgeClientToolCall?(
     sessionId: string,
     callId: string,
-    presentation: SessionProtocolClientToolPresentation,
+    presentation?: SessionProtocolClientToolPresentation,
   ): Promise<boolean>;
   completeClientToolCall?(
     sessionId: string,
     callId: string,
-    result: { ok: true; content: string } | { ok: false; error: string },
+    result:
+      | { ok: true; content: string; presentation?: SessionProtocolClientToolPresentation }
+      | { ok: false; error: string; presentation?: SessionProtocolClientToolPresentation },
   ): boolean;
   shutdown(): Promise<void>;
 };

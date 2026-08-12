@@ -247,28 +247,18 @@ export type SessionProtocolEphemeralCloseParams = SessionProtocolSessionIdParams
   contextId: string;
 };
 export type SessionProtocolClientToolPresentation = {
-  actionByStatus: {
-    preparing: string;
-    queued: string;
-    running: string;
-    succeeded: string;
-    failed: string;
-    blocked: string;
-    cancelled: string;
-  };
-  operation?: string;
-  subject: string;
-  subjectWrap: "word" | "character";
-  details: Array<{
+  subject?: string;
+  subjectWrap?: "word" | "character";
+  details?: Array<{
     text: string;
     tone?: "added" | "removed";
-    wrap: "word" | "character";
+    wrap?: "word" | "character";
   }>;
-  metadata: string[];
+  metadata?: string[];
 };
 export type SessionProtocolClientToolAckParams = SessionProtocolSessionIdParams & {
   callId: string;
-  presentation: SessionProtocolClientToolPresentation;
+  presentation?: SessionProtocolClientToolPresentation;
 };
 export type SessionProtocolClientToolResultParams = SessionProtocolSessionIdParams & {
   callId: string;
@@ -276,10 +266,12 @@ export type SessionProtocolClientToolResultParams = SessionProtocolSessionIdPara
     | {
         ok: true;
         content: string;
+        presentation?: SessionProtocolClientToolPresentation;
       }
     | {
         ok: false;
         error: string;
+        presentation?: SessionProtocolClientToolPresentation;
       }
   );
 
@@ -1941,12 +1933,6 @@ const sessionProtocolEphemeralCloseParamsSchema = z
 const clientToolPresentationSingleLineSchema = z
   .string()
   .refine((value) => !value.includes("\n") && !value.includes("\r"), "must be one line");
-const clientToolPresentationLabelSchema = clientToolPresentationSingleLineSchema
-  .min(1)
-  .refine(
-    (value) => utf8ByteLength(value) <= SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_LABEL_BYTES,
-    `must not exceed ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_LABEL_BYTES} UTF-8 bytes`,
-  );
 const clientToolPresentationDetailSchema = clientToolPresentationSingleLineSchema.refine(
   (value) => utf8ByteLength(value) <= SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAIL_BYTES,
   `must not exceed ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAIL_BYTES} UTF-8 bytes`,
@@ -1959,18 +1945,6 @@ const clientToolPresentationMetadataSchema = clientToolPresentationSingleLineSch
 const sessionProtocolClientToolPresentationSchema: z.ZodType<SessionProtocolClientToolPresentation> =
   z
     .object({
-      actionByStatus: z
-        .object({
-          preparing: clientToolPresentationLabelSchema,
-          queued: clientToolPresentationLabelSchema,
-          running: clientToolPresentationLabelSchema,
-          succeeded: clientToolPresentationLabelSchema,
-          failed: clientToolPresentationLabelSchema,
-          blocked: clientToolPresentationLabelSchema,
-          cancelled: clientToolPresentationLabelSchema,
-        })
-        .strict(),
-      operation: clientToolPresentationLabelSchema.optional(),
       subject: z
         .string()
         .min(1)
@@ -1979,22 +1953,25 @@ const sessionProtocolClientToolPresentationSchema: z.ZodType<SessionProtocolClie
           (value) =>
             utf8ByteLength(value) <= SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_SUBJECT_BYTES,
           `must not exceed ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_SUBJECT_BYTES} UTF-8 bytes`,
-        ),
-      subjectWrap: z.enum(["word", "character"]),
+        )
+        .optional(),
+      subjectWrap: z.enum(["word", "character"]).optional(),
       details: z
         .array(
           z
             .object({
               text: clientToolPresentationDetailSchema,
               tone: z.enum(["added", "removed"]).optional(),
-              wrap: z.enum(["word", "character"]),
+              wrap: z.enum(["word", "character"]).optional(),
             })
             .strict(),
         )
-        .max(SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAILS),
+        .max(SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAILS)
+        .optional(),
       metadata: z
         .array(clientToolPresentationMetadataSchema)
-        .max(SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_METADATA),
+        .max(SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_METADATA)
+        .optional(),
     })
     .strict()
     .refine(
@@ -2008,7 +1985,7 @@ const sessionProtocolClientToolAckParamsSchema = z
   .object({
     sessionId: nonEmptyStringSchema,
     callId: nonEmptyStringSchema,
-    presentation: sessionProtocolClientToolPresentationSchema,
+    presentation: sessionProtocolClientToolPresentationSchema.optional(),
   })
   .strip();
 
@@ -2019,6 +1996,7 @@ const sessionProtocolClientToolResultParamsSchema = z.discriminatedUnion("ok", [
       callId: nonEmptyStringSchema,
       ok: z.literal(true),
       content: z.string(),
+      presentation: sessionProtocolClientToolPresentationSchema.optional(),
     })
     .strip(),
   z
@@ -2027,6 +2005,7 @@ const sessionProtocolClientToolResultParamsSchema = z.discriminatedUnion("ok", [
       callId: nonEmptyStringSchema,
       ok: z.literal(false),
       error: z.string(),
+      presentation: sessionProtocolClientToolPresentationSchema.optional(),
     })
     .strip(),
 ]);

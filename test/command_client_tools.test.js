@@ -25,7 +25,7 @@ function readyFrame(subject = "notification") {
 }
 
 function resultFrame(content = "done") {
-  return `${JSON.stringify({ version: 4, type: "result", content })}\n`;
+  return `${JSON.stringify({ version: 4, type: "result", ok: true, content })}\n`;
 }
 
 function createSpawnResult(overrides = {}) {
@@ -131,7 +131,7 @@ describe("command client tools", () => {
       '      args: ["first"],',
       '      stdin: Buffer.from("input"),',
       "    });",
-      '    return { content: args.message + "\\n" + result.output };',
+      '    return { content: args.message + "\\n" + result.output, presentation: { metadata: ["workspace"] } };',
       "  },",
       "});",
     ].join("\n");
@@ -150,11 +150,43 @@ describe("command client tools", () => {
     expect(context.executionEnvironment.exec).not.toHaveBeenCalled();
     await expect(tool.execute(args, context)).resolves.toEqual({
       content: "hello\nworkspace output",
+      presentation: { metadata: ["workspace"] },
     });
     expect(context.executionEnvironment.exec).toHaveBeenCalledWith("printf workspace", {
       args: ["first"],
       stdin: Buffer.from("input"),
       signal: expect.any(AbortSignal),
+    });
+  });
+
+  it("returns structured command failures with terminal presentation", async () => {
+    const script = [
+      `import { runTauClientToolCommand } from ${JSON.stringify(commandModuleUrl)};`,
+      "await runTauClientToolCommand({",
+      '  name: "notify",',
+      "  execute: () => ({",
+      "    ok: false,",
+      '    error: "notifications disabled",',
+      '    presentation: { details: [{ text: "Desktop notifications are disabled", tone: "removed" }] },',
+      "  }),",
+      "});",
+    ].join("\n");
+    const [tool] = createCommandClientTools([
+      createConfig({
+        command: process.execPath,
+        args: ["--input-type=module", "--eval", script],
+      }),
+    ]);
+    const context = createContext();
+    const args = { message: "hello" };
+
+    await expect(tool.describe(args, context)).resolves.toBeUndefined();
+    await expect(tool.execute(args, context)).resolves.toEqual({
+      ok: false,
+      error: "notifications disabled",
+      presentation: {
+        details: [{ text: "Desktop notifications are disabled", tone: "removed" }],
+      },
     });
   });
 
@@ -270,7 +302,7 @@ describe("command client tools", () => {
       "writeFrame({ version: 4, type: 'exec', requestId: 'status', command: 'git status --short', options: { maxCaptureBytes: 1024 } });",
       "const response = await readFrame();",
       "if (response.version !== 4 || response.type !== 'exec.result' || response.requestId !== 'status' || !response.ok) throw new Error('invalid execution response');",
-      "writeFrame({ version: 4, type: 'result', content: response.result.output });",
+      "writeFrame({ version: 4, type: 'result', ok: true, content: response.result.output });",
       "lines.close();",
     ].join("\n");
     const [tool] = createCommandClientTools([
@@ -306,6 +338,7 @@ describe("command client tools", () => {
       `printf '%s\\n' '${JSON.stringify({
         version: 4,
         type: "result",
+        ok: true,
         content: "shell result",
       })}'`,
     ].join("\n");
@@ -329,7 +362,7 @@ describe("command client tools", () => {
     const context = createContext();
     const args = { message: "hello" };
 
-    await expect(tool.describe(args, context)).resolves.toMatchObject({ subject: "notify" });
+    await expect(tool.describe(args, context)).resolves.toBeUndefined();
     await expect(tool.execute(args, context)).resolves.toEqual({ content: "done" });
   });
 
@@ -474,7 +507,7 @@ describe("command client tools", () => {
   it("rejects invalid protocol output", async () => {
     const invalidJsonSpawn = createInteractiveSpawn({ beforeExecute: "done\n" });
     const invalidShapeSpawn = createInteractiveSpawn({
-      afterExecute: `${JSON.stringify({ version: 4, type: "result", content: "done", extra: true })}\n`,
+      afterExecute: `${JSON.stringify({ version: 4, type: "result", ok: true, content: "done", extra: true })}\n`,
     });
     const oversizedResultSpawn = createInteractiveSpawn({
       afterExecute: resultFrame("x".repeat(1024 * 1024 + 1)),

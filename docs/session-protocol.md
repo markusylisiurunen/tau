@@ -211,7 +211,9 @@ An initialized client that advertised a tool can receive:
 }
 ```
 
-Prepare a bounded canonical tool presentation and acknowledge promptly with `session.clientTool.ack`. Begin execution only after the acknowledgement returns `{ accepted: true }`, then send exactly one `session.clientTool.result` with either `{ ok: true, content }` or `{ ok: false, error }`. The result method also returns `{ accepted: boolean }`; `false` means the call is no longer waiting for that message.
+Acknowledge promptly with `session.clientTool.ack`, optionally including a bounded partial running presentation. Begin execution only after the acknowledgement returns `{ accepted: true }`, then send exactly one `session.clientTool.result` with either `{ ok: true, content }` or `{ ok: false, error }` and an optional independent terminal presentation. Both presentation objects may contain `subject`, `subjectWrap`, `details`, and `metadata`; the host owns action and operation and supplies every omitted field. Explicit fields are preserved unchanged after protocol safety validation, while generated defaults use Tau's canonical display truncation. Empty detail or metadata arrays suppress those defaults.
+
+A successful result is rejected until acknowledgement has completed. If preparation itself fails, send an error result before acknowledgement; the host records it as a preparation failure without authorizing execution. If no result arrives because of timeout, cancellation, detach, or another failure, the host renders a complete fallback terminal presentation. The result method returns `{ accepted: boolean }`; `false` means the message is invalid for the call's current state or the call is no longer waiting for it.
 
 `session.clientTool.cancel` names the session and call with reason `aborted`, `timeout`, `client-detached`, or `host-failed`. Abort local work and do not send a late result. The SDK implements this lifecycle automatically. Tool execution authority and the execution-environment facade are covered in [client tools](client-tools.md).
 

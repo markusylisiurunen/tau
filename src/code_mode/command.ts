@@ -1,5 +1,5 @@
 import { runTauClientToolCommand } from "../sdk/client_tool_command.js";
-import { truncateTauClientToolSubject } from "../sdk/client_tool_presentation.js";
+import { truncateTauClientToolText } from "../sdk/client_tool_presentation.js";
 import {
   createTauCodeModeExecutionEnvironmentFiles,
   executeTauCodeMode,
@@ -11,14 +11,10 @@ export async function runTauCodeModeCommand(definition: TauCodeModeDefinition): 
   validateTauCodeModeDefinition(definition);
   await runTauClientToolCommand({
     name: definition.name,
-    describe: (args) => ({
-      operation: definition.name,
-      subject: truncateTauClientToolSubject(parseCodeArguments(args)),
-      subjectWrap: "character",
-    }),
+    describe: (args) => createCodeModePresentation(parseCodeArguments(args)),
     execute: async (args, context) => {
       const code = parseCodeArguments(args);
-      return await executeTauCodeMode({
+      const result = await executeTauCodeMode({
         ...definition,
         code,
         signal: context.signal,
@@ -33,8 +29,16 @@ export async function runTauCodeModeCommand(definition: TauCodeModeDefinition): 
           context.executionEnvironment,
         ),
       });
+      return { ...result, presentation: createCodeModePresentation(code) };
     },
   });
+}
+
+function createCodeModePresentation(code: string) {
+  return {
+    subject: truncateTauClientToolText(code),
+    subjectWrap: "character" as const,
+  };
 }
 
 function parseCodeArguments(value: unknown): string {

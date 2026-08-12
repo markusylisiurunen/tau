@@ -1,68 +1,35 @@
-import { buildToolRunPresentation, truncateToolRunSubject } from "../core/tools/presentation.js";
-
-export type TauClientToolPresentationStatus =
-  | "preparing"
-  | "queued"
-  | "running"
-  | "succeeded"
-  | "failed"
-  | "blocked"
-  | "cancelled";
-
-export type TauClientToolPresentationActionLabels = Record<TauClientToolPresentationStatus, string>;
+import {
+  TOOL_CARD_MAX_LINE_CHARS,
+  TOOL_CARD_SUBJECT_MAX_LINES,
+  truncateToolText,
+} from "../core/tools/presentation.js";
 
 export type TauClientToolPresentationLine = {
   text: string;
   tone?: "added" | "removed";
-  wrap: "word" | "character";
+  wrap?: "word" | "character";
 };
 
 export type TauClientToolPresentation = {
-  actionByStatus: TauClientToolPresentationActionLabels;
-  operation?: string;
-  subject: string;
-  subjectWrap: "word" | "character";
-  details: TauClientToolPresentationLine[];
-  metadata: string[];
-};
-
-export type BuildTauClientToolPresentationOptions = {
-  toolName: string;
-  operation?: string;
-  subject: string;
+  subject?: string;
   subjectWrap?: "word" | "character";
-  subjectTruncation?: TauClientToolSubjectTruncationOptions | false;
-  details?: Array<{
-    text: string;
-    tone?: "added" | "removed";
-    wrap?: "word" | "character";
-  }>;
-  detailTruncation?:
-    | false
-    | {
-        maxLines: number;
-        maxLineChars: number;
-        strategy: "head" | "middle";
-      };
+  details?: TauClientToolPresentationLine[];
   metadata?: string[];
-  actionOverrides?: Partial<TauClientToolPresentationActionLabels>;
 };
 
-export type TauClientToolSubjectTruncationOptions = {
+export type TauClientToolTextTruncationOptions = {
   maxLines?: number;
   maxLineChars?: number;
   strategy?: "head" | "middle";
 };
 
-export function buildTauClientToolPresentation(
-  options: BuildTauClientToolPresentationOptions,
-): TauClientToolPresentation {
-  return buildToolRunPresentation(options);
-}
-
-export function truncateTauClientToolSubject(
-  subject: string,
-  options: TauClientToolSubjectTruncationOptions = {},
+export function truncateTauClientToolText(
+  text: string,
+  options: TauClientToolTextTruncationOptions = {},
 ): string {
-  return truncateToolRunSubject(subject, options);
+  return truncateToolText(text, {
+    maxLines: options.maxLines ?? TOOL_CARD_SUBJECT_MAX_LINES,
+    maxLineChars: options.maxLineChars ?? TOOL_CARD_MAX_LINE_CHARS,
+    strategy: options.strategy,
+  });
 }

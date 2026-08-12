@@ -6,11 +6,9 @@ export {
   type TauClientToolCommandPresentation,
 } from "../sdk/client_tool_command.js";
 export {
-  type BuildTauClientToolPresentationOptions,
-  buildTauClientToolPresentation,
   type TauClientToolPresentation,
-  type TauClientToolSubjectTruncationOptions,
-  truncateTauClientToolSubject,
+  type TauClientToolTextTruncationOptions,
+  truncateTauClientToolText,
 } from "../sdk/client_tool_presentation.js";
 export { runTauCodeModeCommand } from "./command.js";
 export type {

@@ -122,7 +122,7 @@ Command client tools use Tau's version 4 bidirectional NDJSON protocol over stdi
 ```ts
 import {
   runTauClientToolCommand,
-  truncateTauClientToolSubject,
+  truncateTauClientToolText,
 } from "@markusylisiurunen/tau/code-mode";
 
 await runTauClientToolCommand({
@@ -130,7 +130,7 @@ await runTauClientToolCommand({
   describe(args) {
     const input = args as { title: string; message: string };
     return {
-      subject: truncateTauClientToolSubject(input.title),
+      subject: truncateTauClientToolText(input.title),
     };
   },
   async execute(args, context) {
@@ -138,16 +138,23 @@ await runTauClientToolCommand({
     context.signal.throwIfAborted();
 
     await showNotification(input.title, input.message, context.signal);
-    return { content: "Notification displayed." };
+    return {
+      content: "Notification displayed.",
+      presentation: {
+        subject: truncateTauClientToolText(input.title),
+      },
+    };
   },
 });
 ```
 
-`describe` runs before acknowledgement and owns selection and semantic truncation of the subject. It may return `subject`, optional `operation`, and optional `subjectWrap`. `truncateTauClientToolSubject` supports `maxLines`, `maxLineChars`, and `head` or `middle` truncation when the defaults are not appropriate. Tau supplies canonical lifecycle labels, validates the bounded presentation, and preserves it through tool completion.
+`describe` is optional. When present, it runs before acknowledgement and may return a partial running presentation containing `subject`, `subjectWrap`, `details`, or `metadata`. The execution result may independently include the same partial shape for the terminal card. Tau supplies every omitted field, owns lifecycle actions and the operation derived from the registered tool name, and renders a complete fallback when execution ends without a result.
 
-`runTauClientToolCommand` reads the preparation, writes the presentation, waits until the host accepts the call, then provides the standard execution context and writes the final result. It handles execution-environment request and cancellation framing and reacts to `SIGINT`, `SIGTERM`, and protocol input closure by aborting the handler.
+Tau preserves every explicit presentation field up to the protocol safety limits; it does not apply display truncation or normalize client text. `truncateTauClientToolText` provides optional caller-controlled `maxLines`, `maxLineChars`, and `head` or `middle` truncation for subjects or any other presentation text. Its defaults match Tau's concise subject policy, but callers may select larger or smaller positive limits. Empty detail or metadata arrays explicitly suppress that phase's defaults.
 
-Reserve stdout for the helper's protocol. Write diagnostics to stderr. Return either a string or `{ content: string }`; that text becomes the model-visible tool result.
+`runTauClientToolCommand` reads the preparation, writes readiness and any running presentation, waits until the host accepts the call, then provides the standard execution context and writes the final result. It handles execution-environment request and cancellation framing and reacts to `SIGINT`, `SIGTERM`, and protocol input closure by aborting the handler.
+
+Reserve stdout for the helper's protocol. Write diagnostics to stderr. Return a string or `{ content, presentation? }` for success. Return `{ ok: false, error, presentation? }` for a structured tool failure. Successful content and failure text become model-visible tool results.
 
 ### Implement the protocol directly in JavaScript
 
@@ -223,7 +230,11 @@ const workspaceStatus =
 writeFrame({
   version: 4,
   type: "result",
+  ok: true,
   content: `${localSystem}\n\n${workspaceStatus}`,
+  presentation: {
+    subject: "local system",
+  },
 });
 
 lines.close();
@@ -263,6 +274,7 @@ content=$(uname -a)
 jq -cn --arg content "$content" '{
   version: 4,
   type: "result",
+  ok: true,
   content: $content
 }'
 ```
@@ -283,7 +295,7 @@ Configure either executable as an argument-free command tool:
 }
 ```
 
-The `ready.presentation` object may contain `subject`, `operation`, and `subjectWrap`. Omit `presentation` entirely to use the tool name as the subject. The script must emit `ready` before reading the authorization-bearing `execute` frame. Direct implementations can emit the same `exec` frames shown in the JavaScript example, but the TypeScript helper is preferable when the tool needs multiple target-environment requests, cancellation forwarding, or more involved protocol handling.
+Both `ready.presentation` and `result.presentation` are optional partial objects with `subject`, `subjectWrap`, `details`, and `metadata`. The ready value applies while the call runs; the result value applies only to its terminal state. Omit either object, or any field within it, to use Tau's default for that phase. Empty `details` or `metadata` arrays suppress the corresponding default field. The script must emit `ready` before reading the authorization-bearing `execute` frame. Direct implementations can emit the same `exec` frames shown in the JavaScript example, but the TypeScript helper is preferable when the tool needs multiple target-environment requests, cancellation forwarding, or more involved protocol handling.
 
 The handler receives:
 
@@ -345,13 +357,13 @@ The command protocol is intentionally bounded:
 - Captured stderr is limited to 1 MiB. Exceeding it terminates the command and fails the tool.
 - Execution-environment stdin is limited to 16 MiB decoded, and capture can be requested up to 24 MiB per execution.
 - At most eight execution requests may be unresolved concurrently.
-- A client-tool presentation is limited to 1 MiB in total. Its subject is limited to 256 KiB; labels and metadata values to 16 KiB each; detail values to 256 KiB each; and detail and metadata collections to 1,024 entries each. These are safety limits, not recommended UI sizes. Use the exported truncation helper to produce concise subjects.
+- Each client-tool presentation override is limited to 1 MiB in total. Its subject is limited to 256 KiB; metadata values to 16 KiB each; detail values to 256 KiB each; and detail and metadata collections to 1,024 entries each. These are safety limits, not recommended UI sizes. Tau preserves explicit values within those limits. Clients may use the exported helper when they want a concise preview.
 
-The configured `executionTimeoutMs` covers preparation and execution and defaults to 60 seconds. The host also requires the owning client to prepare and acknowledge a dispatched call promptly. Command executables emit their bounded presentation before acknowledgement, then wait for Tau to authorize execution.
+The configured `executionTimeoutMs` covers preparation and execution and defaults to 60 seconds. The host also requires the owning client to prepare and acknowledge a dispatched call promptly. Command executables emit readiness and any bounded running presentation before acknowledgement, then wait for Tau to authorize execution.
 
 Tau starts each configured command in a detached process group. Cancellation sends termination to the group and escalates to `SIGKILL` after a short grace period, even if the original group leader exits first. The helper aborts pending execution-environment requests and stops accepting work when stdin closes.
 
-A successful command must emit one version 4 ready frame, wait for the execute frame, and exit with status zero after producing one final version 4 result. Missing or duplicate readiness, execution data before authorization, missing results, malformed framing, data after the result, reused execution request IDs, nonzero exit, timeout, cancellation, excessive output, and protocol-limit violations fail the call. Stderr is included in failure diagnostics but is not a successful result channel.
+A successful protocol exchange must emit one version 4 ready frame, wait for the execute frame, emit one final version 4 result with `ok: true` or `ok: false`, and exit with status zero. An `ok: false` frame is a communicated tool failure; process and framing failures still use stderr and a nonzero exit. Missing or duplicate readiness, execution data before authorization, missing results, malformed framing, data after the result, reused execution request IDs, timeout, cancellation, excessive output, and protocol-limit violations fail the call.
 
 ## Disconnects, reconnects, and durability
 

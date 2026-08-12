@@ -110,14 +110,25 @@ export type TauSdkClientToolContext = TauSdkClientToolDescribeContext & {
   executionEnvironment: TauSdkClientToolExecutionEnvironment;
 };
 
-export type TauSdkClientToolResult = string | { content: string };
+export type TauSdkClientToolResult =
+  | string
+  | {
+      ok?: true;
+      content: string;
+      presentation?: TauClientToolPresentation;
+    }
+  | {
+      ok: false;
+      error: string;
+      presentation?: TauClientToolPresentation;
+    };
 
 export type TauSdkClientTool = {
   schema: SessionProtocolClientToolDefinition;
-  describe: (
+  describe?: (
     args: unknown,
     context: TauSdkClientToolDescribeContext,
-  ) => Promise<TauClientToolPresentation> | TauClientToolPresentation;
+  ) => Promise<TauClientToolPresentation | undefined> | TauClientToolPresentation | undefined;
   execute: (
     args: unknown,
     context: TauSdkClientToolContext,

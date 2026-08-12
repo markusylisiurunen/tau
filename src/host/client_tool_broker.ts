@@ -4,7 +4,6 @@ import type { ToolActivity } from "../core/tools/activity.js";
 import {
   buildToolRunPresentation,
   formatToolDurationMs,
-  parseToolRunPresentation,
   type ToolRunPresentation,
 } from "../core/tools/presentation.js";
 import {
@@ -20,6 +19,7 @@ import type {
   SessionProtocolClientToolCallMessage,
   SessionProtocolClientToolCancelMessage,
   SessionProtocolClientToolDefinition,
+  SessionProtocolClientToolPresentation,
 } from "../protocol/session_protocol.js";
 import { SESSION_PROTOCOL_VERSION } from "../protocol/session_protocol.js";
 
@@ -40,7 +40,7 @@ type ClientToolClient = {
 
 type ClientToolDispatchResult = {
   outcome: ToolExecutionOutcome;
-  presentation: ToolRunPresentation;
+  terminalPresentation?: SessionProtocolClientToolPresentation;
 };
 
 type PendingClientToolCall = {
@@ -52,8 +52,8 @@ type PendingClientToolCall = {
   signal: AbortSignal;
   abortListener: () => void;
   emitActivity: ToolExecutionContext["emitActivity"];
-  presentation: ToolRunPresentation;
   acknowledged: boolean;
+  authorized: boolean;
   settled: boolean;
   resolve: (result: ClientToolDispatchResult) => void;
 };
@@ -113,27 +113,34 @@ export class ClientToolBroker {
   async ack(
     sessionId: string,
     callId: string,
-    presentation: ToolRunPresentation,
+    presentation?: SessionProtocolClientToolPresentation,
   ): Promise<boolean> {
     const pending = this.pendingCalls.get(callId);
     if (!pending || pending.sessionId !== sessionId || pending.acknowledged || pending.settled) {
       return false;
     }
 
-    const parsedPresentation = parseToolRunPresentation(presentation);
+    const resolvedPresentation = resolveClientToolPresentation(
+      pending.toolCall.name,
+      buildToolRunPresentation({
+        toolName: pending.toolCall.name,
+        subject: pending.toolCall.name,
+      }),
+      presentation,
+    );
     clearTimeout(pending.ackTimer);
     pending.acknowledged = true;
-    pending.presentation = parsedPresentation;
     try {
       await pending.emitActivity({
         type: "tool_call_started",
         toolCallId: pending.toolCall.id,
         toolName: pending.toolCall.name,
-        presentation: parsedPresentation,
+        presentation: resolvedPresentation,
       });
       if (pending.settled || this.pendingCalls.get(callId) !== pending) {
         return false;
       }
+      pending.authorized = true;
       return true;
     } catch (error) {
       this.fail(
@@ -149,17 +156,28 @@ export class ClientToolBroker {
   result(
     sessionId: string,
     callId: string,
-    result: { ok: true; content: string } | { ok: false; error: string },
+    result:
+      | { ok: true; content: string; presentation?: SessionProtocolClientToolPresentation }
+      | { ok: false; error: string; presentation?: SessionProtocolClientToolPresentation },
   ): boolean {
     const pending = this.pendingCalls.get(callId);
-    if (!pending || pending.sessionId !== sessionId || pending.settled) {
+    if (
+      !pending ||
+      pending.sessionId !== sessionId ||
+      pending.settled ||
+      (result.ok && !pending.authorized)
+    ) {
       return false;
     }
 
     if (result.ok) {
-      this.complete(callId, createTextToolOutcome(result.content, "succeeded"));
+      this.complete(
+        callId,
+        createTextToolOutcome(result.content, "succeeded"),
+        result.presentation,
+      );
     } else {
-      this.complete(callId, createTextToolOutcome(result.error, "failed"));
+      this.complete(callId, createTextToolOutcome(result.error, "failed"), result.presentation);
     }
     return true;
   }
@@ -180,10 +198,6 @@ export class ClientToolBroker {
           `Client tool '${options.tool.name}' is unavailable because its owning client detached.`,
           "blocked",
         ),
-        presentation: buildToolRunPresentation({
-          toolName: options.tool.name,
-          subject: options.tool.name,
-        }),
       });
     }
 
@@ -211,11 +225,8 @@ export class ClientToolBroker {
         signal: options.signal,
         abortListener: () => this.abort(callId),
         emitActivity: options.emitActivity,
-        presentation: buildToolRunPresentation({
-          toolName: options.tool.name,
-          subject: options.tool.name,
-        }),
         acknowledged: false,
+        authorized: false,
         settled: false,
         resolve,
       };
@@ -321,7 +332,11 @@ export class ClientToolBroker {
     this.complete(callId, createTextToolOutcome(message, outcome));
   }
 
-  private complete(callId: string, result: ToolExecutionOutcome): void {
+  private complete(
+    callId: string,
+    result: ToolExecutionOutcome,
+    terminalPresentation?: SessionProtocolClientToolPresentation,
+  ): void {
     const pending = this.pendingCalls.get(callId);
     if (!pending || pending.settled) {
       return;
@@ -332,14 +347,17 @@ export class ClientToolBroker {
     clearTimeout(pending.executionTimer);
     pending.signal.removeEventListener("abort", pending.abortListener);
     this.pendingCalls.delete(callId);
-    pending.resolve({ outcome: result, presentation: pending.presentation });
+    pending.resolve({
+      outcome: result,
+      ...(terminalPresentation === undefined ? {} : { terminalPresentation }),
+    });
   }
 }
 
 function createClientToolFinishedUiEvent(
   toolCall: ToolCall,
   outcome: ToolExecutionOutcome,
-  presentation: ToolRunPresentation,
+  presentation: SessionProtocolClientToolPresentation | undefined,
   durationMs: number,
 ): ToolActivity {
   const isError = outcome.outcome !== "succeeded";
@@ -359,10 +377,10 @@ function createClientToolFinishedUiEvent(
 
 function createClientToolPresentation(
   toolName: string,
-  presentation: ToolRunPresentation,
+  presentation: SessionProtocolClientToolPresentation | undefined,
   content: string,
   durationMs: number,
-) {
+): ToolRunPresentation {
   const trimmed = content.trimEnd();
   const lineCount = trimmed ? trimmed.split("\n").length : 0;
   const contentBytes = Buffer.byteLength(trimmed, "utf8");
@@ -372,9 +390,9 @@ function createClientToolPresentation(
         .split("\n")
         .map((text) => ({ text }))
     : [];
-  const outcomePresentation = buildToolRunPresentation({
+  const defaultPresentation = buildToolRunPresentation({
     toolName,
-    subject: presentation.subject,
+    subject: toolName,
     details,
     metadata: [
       formatToolDurationMs(durationMs),
@@ -382,11 +400,33 @@ function createClientToolPresentation(
       formatLineCount(lineCount),
     ].filter((part): part is string => part !== undefined),
   });
-  return parseToolRunPresentation({
-    ...presentation,
-    details: outcomePresentation.details,
-    metadata: outcomePresentation.metadata,
+  return resolveClientToolPresentation(toolName, defaultPresentation, presentation);
+}
+
+function resolveClientToolPresentation(
+  toolName: string,
+  defaults: ToolRunPresentation,
+  presentation: SessionProtocolClientToolPresentation | undefined,
+): ToolRunPresentation {
+  const resolved = buildToolRunPresentation({
+    toolName,
+    ...(presentation?.subject === undefined ? {} : { operation: toolName }),
+    subject: defaults.subject,
+    subjectWrap: defaults.subjectWrap,
+    subjectTruncation: false,
+    details: defaults.details,
+    detailTruncation: false,
+    metadata: defaults.metadata,
   });
+  return {
+    ...resolved,
+    subject: presentation?.subject ?? resolved.subject,
+    subjectWrap: presentation?.subjectWrap ?? resolved.subjectWrap,
+    details:
+      presentation?.details?.map((line) => ({ ...line, wrap: line.wrap ?? "word" })) ??
+      resolved.details,
+    metadata: presentation?.metadata ?? resolved.metadata,
+  };
 }
 
 function extractToolOutcomeText(outcome: ToolExecutionOutcome): string {
@@ -446,7 +486,7 @@ function createClientToolDefinition(
           uiEvent: createClientToolFinishedUiEvent(
             toolCall,
             toolResult.outcome,
-            toolResult.presentation,
+            toolResult.terminalPresentation,
             durationMs,
           ),
         };

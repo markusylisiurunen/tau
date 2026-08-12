@@ -557,20 +557,15 @@ Acknowledges a `session.clientTool.call` before its deadline.
 params: {
   sessionId: string;
   callId: string;
-  presentation: {
-    actionByStatus: Record<
-      "preparing" | "queued" | "running" | "succeeded" | "failed" | "blocked" | "cancelled",
-      string
-    >;
-    operation?: string;
-    subject: string;
-    subjectWrap: "word" | "character";
-    details: Array<{
+  presentation?: {
+    subject?: string;
+    subjectWrap?: "word" | "character";
+    details?: Array<{
       text: string;
       tone?: "added" | "removed";
-      wrap: "word" | "character";
+      wrap?: "word" | "character";
     }>;
-    metadata: string[];
+    metadata?: string[];
   };
 }
 result: {
@@ -578,17 +573,44 @@ result: {
 }
 ```
 
-The presentation must already satisfy the canonical tool-card bounds. The host validates and records it without selecting or semantically truncating the subject. An accepted acknowledgement authorizes the client to begin execution.
+The optional presentation is a partial running-state override. The host validates explicit fields only against the protocol safety limits and otherwise preserves them unchanged. It supplies canonical display-truncated defaults for omitted fields, owns the action and operation, and records the resolved presentation. Empty detail or metadata arrays suppress those default fields. An accepted acknowledgement authorizes the client to begin execution.
 
 ### `session.clientTool.result`
 
-Completes an acknowledged call with model-visible content or an error.
+Completes a call with model-visible content or an error.
 
 ```ts
+type PresentationOverride = {
+  subject?: string;
+  subjectWrap?: "word" | "character";
+  details?: Array<{
+    text: string;
+    tone?: "added" | "removed";
+    wrap?: "word" | "character";
+  }>;
+  metadata?: string[];
+};
+
 params:
-  | { sessionId: string; callId: string; ok: true; content: string }
-  | { sessionId: string; callId: string; ok: false; error: string }
-result: { accepted: boolean }
+  | {
+      sessionId: string;
+      callId: string;
+      ok: true;
+      content: string;
+      presentation?: PresentationOverride;
+    }
+  | {
+      sessionId: string;
+      callId: string;
+      ok: false;
+      error: string;
+      presentation?: PresentationOverride;
+    };
+result: { accepted: boolean };
 ```
 
-`accepted: false` means the call was cancelled, timed out, detached, unknown, or already completed. Do not retry or send additional results for that call.
+The optional result presentation applies only to the reported terminal state and is resolved independently from the running presentation. The host preserves explicit fields unchanged after safety validation and supplies canonical display-truncated defaults for omitted fields. If no client result arrives, the host uses a complete fallback for timeout, cancellation, detach, or another terminal outcome.
+
+A successful result is accepted only after the host has accepted the acknowledgement. An error sent before acknowledgement records a preparation failure, such as an error from `describe`, without authorizing execution. An error sent afterward records an execution failure.
+
+`accepted: false` means the successful call was not yet authorized, or the call was cancelled, timed out, detached, unknown, or already completed. Do not retry or send additional results for that call.

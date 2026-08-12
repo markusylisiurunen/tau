@@ -14,10 +14,7 @@ import type { CoreDeps } from "../core/runtime/deps.js";
 import { TOOL_NAME_PREFILL_INPUT } from "../core/tools/tool_names.js";
 import { formatZodError } from "../core/utils/zod.js";
 import type { SessionProtocolCreateParams } from "../protocol/session_protocol.js";
-import {
-  buildTauClientToolPresentation,
-  truncateTauClientToolSubject,
-} from "../sdk/client_tool_presentation.js";
+import { truncateTauClientToolText } from "../sdk/client_tool_presentation.js";
 import { createTauSdkClientFromTransport } from "../sdk/session.js";
 import type { TauSdkClient, TauSdkClientTool, TauSdkSession } from "../sdk/types.js";
 import { WebSocketSessionProtocolTransport } from "../transport/websocket_session_transport.js";
@@ -60,6 +57,21 @@ const prefillInputArgsSchema = z
   })
   .strict();
 
+function createDiffReviewPresentation(args: unknown) {
+  const parsed = parseDiffReviewToolArgs(args);
+  return {
+    subject: truncateTauClientToolText(parsed.ok ? parsed.data.command : parsed.command),
+    subjectWrap: "character" as const,
+  };
+}
+
+function createPrefillInputPresentation(args: unknown) {
+  const parsed = prefillInputArgsSchema.safeParse(args);
+  return {
+    subject: truncateTauClientToolText(parsed.success ? parsed.data.text : TOOL_NAME_PREFILL_INPUT),
+  };
+}
+
 export function createTuiClientTools(options: {
   enabled: boolean;
   getController: () => SessionChatController | undefined;
@@ -76,20 +88,14 @@ export function createTuiClientTools(options: {
         ...DIFF_REVIEW_TOOL,
         executionTimeoutMs: 30 * 60 * 1000,
       },
-      describe: (args) => {
-        const parsed = parseDiffReviewToolArgs(args);
-        return buildTauClientToolPresentation({
-          toolName: DIFF_REVIEW_TOOL.name,
-          subject: truncateTauClientToolSubject(parsed.ok ? parsed.data.command : parsed.command),
-          subjectWrap: "character",
-        });
-      },
+      describe: (args) => createDiffReviewPresentation(args),
       execute: async (args, context) => {
         const controller = options.getController();
         if (!controller) {
           throw new Error("diff_review is unavailable because the TUI is not ready");
         }
-        return await controller.runClientDiffReview(args, context);
+        const content = await controller.runClientDiffReview(args, context);
+        return { content, presentation: createDiffReviewPresentation(args) };
       },
     },
     {
@@ -112,14 +118,7 @@ export function createTuiClientTools(options: {
           { additionalProperties: false },
         ),
       },
-      describe: (args) => {
-        const parsed = prefillInputArgsSchema.safeParse(args);
-        const subject = parsed.success ? parsed.data.text : TOOL_NAME_PREFILL_INPUT;
-        return buildTauClientToolPresentation({
-          toolName: TOOL_NAME_PREFILL_INPUT,
-          subject: truncateTauClientToolSubject(subject),
-        });
-      },
+      describe: (args) => createPrefillInputPresentation(args),
       execute: (args) => {
         const parsed = prefillInputArgsSchema.safeParse(args);
         if (!parsed.success) {
@@ -129,7 +128,10 @@ export function createTuiClientTools(options: {
         if (!controller) {
           throw new Error("prefill_input is unavailable because the TUI is not ready");
         }
-        return controller.prefillInput(parsed.data.text);
+        return {
+          content: controller.prefillInput(parsed.data.text),
+          presentation: createPrefillInputPresentation(args),
+        };
       },
     },
   ];

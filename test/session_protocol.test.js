@@ -1164,10 +1164,24 @@ describe("session_protocol", () => {
     });
   });
 
-  it("validates client tool acknowledgement presentations", () => {
-    const presentation = buildToolRunPresentation({
-      toolName: "local_picker",
+  it("validates optional client tool presentation overrides", () => {
+    const presentation = {
       subject: "choice a",
+      subjectWrap: "character",
+      details: [{ text: "preparing choice", wrap: "word" }],
+      metadata: ["local"],
+    };
+    expect(
+      validateSessionProtocolParams("session.clientTool.ack", {
+        sessionId: "session-1",
+        callId: "call-1",
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        sessionId: "session-1",
+        callId: "call-1",
+      },
     });
     expect(
       validateSessionProtocolParams("session.clientTool.ack", {
@@ -1181,6 +1195,24 @@ describe("session_protocol", () => {
         sessionId: "session-1",
         callId: "call-1",
         presentation,
+      },
+    });
+    expect(
+      validateSessionProtocolParams("session.clientTool.result", {
+        sessionId: "session-1",
+        callId: "call-1",
+        ok: true,
+        content: "picked",
+        presentation: { details: [], metadata: [] },
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        sessionId: "session-1",
+        callId: "call-1",
+        ok: true,
+        content: "picked",
+        presentation: { details: [], metadata: [] },
       },
     });
 

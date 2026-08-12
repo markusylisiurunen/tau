@@ -183,7 +183,6 @@ describe("public code-mode runtime", () => {
         },
       ),
     ).toMatchObject({
-      operation: "linear",
       subject: 'console.log(await linear.issues.get("TAU-418"))',
       subjectWrap: "character",
     });
@@ -200,6 +199,10 @@ describe("public code-mode runtime", () => {
       ),
     ).resolves.toEqual({
       content: JSON.stringify({ id: "TAU-418", invocation }),
+      presentation: {
+        subject: 'console.log(await linear.issues.get("TAU-418"))',
+        subjectWrap: "character",
+      },
     });
   });
 
@@ -228,7 +231,13 @@ describe("public code-mode runtime", () => {
           executionEnvironment,
         },
       ),
-    ).resolves.toEqual({ content: "clean" });
+    ).resolves.toEqual({
+      content: "clean",
+      presentation: {
+        subject: "console.log(await linear.workspace.status())",
+        subjectWrap: "character",
+      },
+    });
     expect(executionEnvironment.exec).toHaveBeenCalledWith("git status --short");
   });
 
@@ -301,7 +310,6 @@ describe("code-mode command adapter", () => {
         version: 4,
         type: "ready",
         presentation: expect.objectContaining({
-          operation: "linear",
           subject: 'console.log(await linear.echo("hello"))',
           subjectWrap: "character",
         }),
@@ -309,7 +317,12 @@ describe("code-mode command adapter", () => {
       {
         version: 4,
         type: "result",
+        ok: true,
         content: JSON.stringify({ value: "hello", invocation }),
+        presentation: {
+          subject: 'console.log(await linear.echo("hello"))',
+          subjectWrap: "character",
+        },
       },
     ]);
   });

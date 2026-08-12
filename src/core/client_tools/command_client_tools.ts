@@ -7,14 +7,12 @@ import {
   createTauClientToolCommandPrepare,
   type TauClientToolCommandOutput,
 } from "../../sdk/client_tool_command.js";
-import {
-  buildTauClientToolPresentation,
-  type TauClientToolPresentation,
-} from "../../sdk/client_tool_presentation.js";
+import type { TauClientToolPresentation } from "../../sdk/client_tool_presentation.js";
 import type {
   TauSdkClientTool,
   TauSdkClientToolContext,
   TauSdkClientToolDescribeContext,
+  TauSdkClientToolResult,
 } from "../../sdk/types.js";
 import type { CommandClientToolConfig } from "../config/client_tools.js";
 import { type CoreDeps, createDefaultCoreDeps } from "../runtime/deps.js";
@@ -69,8 +67,8 @@ export function createCommandClientTools(
 }
 
 type PreparedCommandClientToolCall = {
-  presentation: Promise<TauClientToolPresentation>;
-  execute(context: TauSdkClientToolContext): Promise<{ content: string }>;
+  presentation: Promise<TauClientToolPresentation | undefined>;
+  execute(context: TauSdkClientToolContext): Promise<TauSdkClientToolResult>;
   settled: Promise<void>;
 };
 
@@ -102,14 +100,14 @@ function prepareCommandClientToolCall(
   let observedStdout = false;
   let ready = false;
   let executeSent = false;
-  let finalContent: string | undefined;
+  let finalResult: Extract<TauClientToolCommandOutput, { type: "result" }> | undefined;
   let protocolError: Error | undefined;
   let writeQueue = Promise.resolve();
   let writeToCommand: ((frame: unknown) => Promise<void>) | undefined;
   let executionContext: TauSdkClientToolContext | undefined;
-  let resolvePresentation: (presentation: TauClientToolPresentation) => void = () => {};
+  let resolvePresentation: (presentation: TauClientToolPresentation | undefined) => void = () => {};
   let rejectPresentation: (error: unknown) => void = () => {};
-  const presentation = new Promise<TauClientToolPresentation>((resolve, reject) => {
+  const presentation = new Promise<TauClientToolPresentation | undefined>((resolve, reject) => {
     resolvePresentation = resolve;
     rejectPresentation = reject;
   });
@@ -122,7 +120,7 @@ function prepareCommandClientToolCall(
     protocolController.abort(error);
   };
   const handleFrame = (frame: TauClientToolCommandOutput): void => {
-    if (finalContent !== undefined) {
+    if (finalResult !== undefined) {
       failProtocol(new Error(`Command client tool '${config.name}' wrote data after its result.`));
       return;
     }
@@ -134,13 +132,7 @@ function prepareCommandClientToolCall(
         return;
       }
       ready = true;
-      resolvePresentation(
-        buildTauClientToolPresentation({
-          toolName: config.name,
-          ...(frame.presentation ?? { subject: config.name }),
-          subjectTruncation: false,
-        }),
-      );
+      resolvePresentation(frame.presentation);
       return;
     }
     if (!ready) {
@@ -158,7 +150,7 @@ function prepareCommandClientToolCall(
       return;
     }
     if (frame.type === "result") {
-      finalContent = frame.content;
+      finalResult = frame;
       return;
     }
     if (frame.type === "exec.cancel") {
@@ -285,11 +277,11 @@ function prepareCommandClientToolCall(
       if (!ready) {
         throw new Error(`Command client tool '${config.name}' returned no version-4 ready frame.`);
       }
-      if (finalContent === undefined) {
+      if (finalResult === undefined) {
         throw new Error(`Command client tool '${config.name}' returned no version-4 result frame.`);
       }
 
-      return finalContent;
+      return finalResult;
     });
   void processResult.catch((error) => rejectPresentation(error));
 
@@ -304,7 +296,17 @@ function prepareCommandClientToolCall(
       executionContext = context;
       executeSent = true;
       await writeToCommand(createTauClientToolCommandExecute());
-      return { content: await processResult };
+      const result = await processResult;
+      return result.ok
+        ? {
+            content: result.content,
+            ...(result.presentation === undefined ? {} : { presentation: result.presentation }),
+          }
+        : {
+            ok: false,
+            error: result.error,
+            ...(result.presentation === undefined ? {} : { presentation: result.presentation }),
+          };
     },
     settled: processResult.then(
       () => undefined,

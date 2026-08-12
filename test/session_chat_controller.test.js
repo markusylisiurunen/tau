@@ -5065,9 +5065,10 @@ describe("SessionChatController", () => {
     );
     expect(view.editorText).toBe("");
 
-    expect(prefillInput.execute({ text: "Name: \nDecision: " })).toBe(
-      "Prefilled the input editor. The user can review, edit, and submit it.",
-    );
+    expect(prefillInput.execute({ text: "Name: \nDecision: " })).toEqual({
+      content: "Prefilled the input editor. The user can review, edit, and submit it.",
+      presentation: { subject: "Name: \nDecision: " },
+    });
     expect(view.editorText).toBe("Name: \nDecision: ");
 
     expect(() => prefillInput.execute({ text: "replacement" })).toThrow(

@@ -188,11 +188,11 @@ class TauSdkClientImpl implements TauSdkClient {
     };
 
     try {
-      const presentation = await tool.describe(message.arguments, describeContext);
+      const presentation = await tool.describe?.(message.arguments, describeContext);
       const ack = await this.transport.request("session.clientTool.ack", {
         sessionId: message.sessionId,
         callId: message.callId,
-        presentation,
+        ...(presentation === undefined ? {} : { presentation }),
       });
       if (!ack.accepted || abortController.signal.aborted) {
         abortController.abort();
@@ -210,12 +210,24 @@ class TauSdkClientImpl implements TauSdkClient {
       if (abortController.signal.aborted) {
         return;
       }
+      if (typeof result !== "string" && result.ok === false) {
+        await this.transport.request("session.clientTool.result", {
+          sessionId: message.sessionId,
+          callId: message.callId,
+          ok: false,
+          error: result.error,
+          ...(result.presentation === undefined ? {} : { presentation: result.presentation }),
+        });
+        return;
+      }
       const content = typeof result === "string" ? result : result.content;
+      const terminalPresentation = typeof result === "string" ? undefined : result.presentation;
       await this.transport.request("session.clientTool.result", {
         sessionId: message.sessionId,
         callId: message.callId,
         ok: true,
         content,
+        ...(terminalPresentation === undefined ? {} : { presentation: terminalPresentation }),
       });
     } catch (error) {
       if (abortController.signal.aborted) {

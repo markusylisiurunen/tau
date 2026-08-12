@@ -415,8 +415,20 @@ export class SessionProtocolHandler {
     request: Extract<SessionProtocolRequestMessage, { method: "session.clientTool.result" }>,
   ): void {
     const result = request.params.ok
-      ? { ok: true as const, content: request.params.content }
-      : { ok: false as const, error: request.params.error };
+      ? {
+          ok: true as const,
+          content: request.params.content,
+          ...(request.params.presentation === undefined
+            ? {}
+            : { presentation: request.params.presentation }),
+        }
+      : {
+          ok: false as const,
+          error: request.params.error,
+          ...(request.params.presentation === undefined
+            ? {}
+            : { presentation: request.params.presentation }),
+        };
     const accepted =
       this.host.completeClientToolCall?.(request.params.sessionId, request.params.callId, result) ??
       false;

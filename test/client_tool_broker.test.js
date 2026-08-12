@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
+import { parseToolRunPresentation } from "../src/core/tools/presentation.ts";
 import { HOST_TOOL_NAMES } from "../src/core/tools/tool_names.ts";
 import { ClientToolBroker } from "../src/host/client_tool_broker.ts";
+import { SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES } from "../src/protocol/session_protocol.ts";
 
 function createToolCall(args = {}) {
   return {
@@ -235,6 +237,42 @@ describe("ClientToolBroker", () => {
 
     expect(result.activities[0].presentation).toMatchObject(expected);
     expect(result.uiEvent.presentation).toMatchObject(expected);
+  });
+
+  it("keeps a maximum-size valid override renderable after adding canonical fields", async () => {
+    const broker = new ClientToolBroker();
+    const presentation = {
+      details: Array.from({ length: 1024 }, () => ({ text: "d".repeat(1000) })),
+    };
+    expect(Buffer.byteLength(JSON.stringify(presentation), "utf8")).toBeLessThanOrEqual(
+      SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES,
+    );
+    const registration = broker.registerClient({
+      tools: [
+        {
+          name: "local_picker",
+          description: "Pick a local item.",
+          parameters: { type: "object", properties: {}, additionalProperties: false },
+        },
+      ],
+      sendCall: (message) => {
+        void broker.ack(message.sessionId, message.callId, presentation).then(() => {
+          broker.result(message.sessionId, message.callId, { ok: true, content: "result" });
+        });
+      },
+      sendCancel: vi.fn(),
+    });
+    registration.attachSession("session-1");
+
+    const definition = broker.getToolDefinitions("session-1")[0];
+    const result = await runTool(definition, createToolCall());
+    const resolved = result.activities[0].presentation;
+
+    expect(Buffer.byteLength(JSON.stringify(resolved), "utf8")).toBeGreaterThan(
+      SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES,
+    );
+    expect(() => parseToolRunPresentation(resolved)).not.toThrow();
+    expect(resolved.details).toHaveLength(1024);
   });
 
   it("rejects successful results until acknowledgement completes", async () => {

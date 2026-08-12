@@ -1216,6 +1216,30 @@ describe("session_protocol", () => {
       },
     });
 
+    const maximumDetailPresentation = {
+      details: Array.from(
+        { length: SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAILS },
+        () => ({ text: "x".repeat(1000) }),
+      ),
+    };
+    expect(
+      Buffer.byteLength(JSON.stringify(maximumDetailPresentation), "utf8"),
+    ).toBeLessThanOrEqual(SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES);
+    expect(
+      validateSessionProtocolParams("session.clientTool.ack", {
+        sessionId: "session-1",
+        callId: "call-1",
+        presentation: maximumDetailPresentation,
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        sessionId: "session-1",
+        callId: "call-1",
+        presentation: maximumDetailPresentation,
+      },
+    });
+
     expect(
       validateSessionProtocolParams("session.clientTool.ack", {
         sessionId: "session-1",

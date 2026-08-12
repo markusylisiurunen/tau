@@ -3,10 +3,10 @@ import {
   buildToolRunPresentation,
   parseToolRunPresentation,
   TOOL_CARD_MAX_LINE_CHARS,
+  TOOL_RUN_PRESENTATION_MAX_BYTES,
 } from "../dist/core/tools/presentation.js";
 import { createWriteToolDefinition } from "../dist/core/tools/write.js";
 import {
-  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES,
   SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAIL_BYTES,
   SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAILS,
   SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_SUBJECT_BYTES,
@@ -353,8 +353,8 @@ describe("tool cards", () => {
     expect(() =>
       parseToolRunPresentation({
         ...presentation,
-        details: Array.from({ length: 5 }, () => ({
-          text: "x".repeat(SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES / 4),
+        details: Array.from({ length: 9 }, () => ({
+          text: "x".repeat(TOOL_RUN_PRESENTATION_MAX_BYTES / 8),
           wrap: "word",
         })),
       }),

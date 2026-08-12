@@ -65,6 +65,8 @@ export type ToolRunPresentation = {
 };
 
 export const TOOL_UI_FACET_VERSION = 3;
+export const TOOL_RUN_PRESENTATION_MAX_BYTES =
+  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES * 2;
 export const TOOL_CARD_SUBJECT_MAX_LINES = 8;
 export const TOOL_CARD_DEFAULT_DETAILS_MAX_LINES = 7;
 export const TOOL_CARD_TRUNCATED_DETAILS_MAX_LINES = 33;
@@ -146,9 +148,8 @@ const toolRunPresentationSchema: z.ZodType<ToolRunPresentation> = z
   })
   .strict()
   .refine(
-    (value) =>
-      utf8ByteLength(JSON.stringify(value)) <= SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES,
-    `must not exceed ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES} UTF-8 bytes`,
+    (value) => utf8ByteLength(JSON.stringify(value)) <= TOOL_RUN_PRESENTATION_MAX_BYTES,
+    `must not exceed ${TOOL_RUN_PRESENTATION_MAX_BYTES} UTF-8 bytes`,
   );
 
 const GENERIC_TOOL_RUN_ACTION_LABELS: ToolRunActionLabels = {

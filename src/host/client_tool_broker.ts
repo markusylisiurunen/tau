@@ -4,6 +4,7 @@ import type { ToolActivity } from "../core/tools/activity.js";
 import {
   buildToolRunPresentation,
   formatToolDurationMs,
+  parseToolRunPresentation,
   type ToolRunPresentation,
 } from "../core/tools/presentation.js";
 import {
@@ -418,7 +419,7 @@ function resolveClientToolPresentation(
     detailTruncation: false,
     metadata: defaults.metadata,
   });
-  return {
+  return parseToolRunPresentation({
     ...resolved,
     subject: presentation?.subject ?? resolved.subject,
     subjectWrap: presentation?.subjectWrap ?? resolved.subjectWrap,
@@ -426,7 +427,7 @@ function resolveClientToolPresentation(
       presentation?.details?.map((line) => ({ ...line, wrap: line.wrap ?? "word" })) ??
       resolved.details,
     metadata: presentation?.metadata ?? resolved.metadata,
-  };
+  });
 }
 
 function extractToolOutcomeText(outcome: ToolExecutionOutcome): string {

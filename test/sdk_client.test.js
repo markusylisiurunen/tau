@@ -10,6 +10,7 @@ import {
   getTauSdkSessionTurnRecord,
   TauSessionClientError,
   TauTransportError,
+  truncateTauClientToolText,
 } from "../dist/sdk/index.js";
 import {
   createProtocolBootstrap,
@@ -26,6 +27,10 @@ function createReadyMessage() {
 }
 
 const bootstrap = createProtocolBootstrap();
+
+function describeClientTool(toolName, subject = toolName) {
+  return { subject };
+}
 
 const localCreateInput = {
   executionEnvironment: { kind: "local", cwd: "/repo" },
@@ -339,6 +344,27 @@ async function waitForFakeRequest(transport, predicate, timeoutMs = 2000) {
 }
 
 describe("sdk_client", () => {
+  it("exports configurable client tool text truncation", () => {
+    expect(
+      truncateTauClientToolText("one\ntwo\nthree\nfour", {
+        maxLines: 3,
+        maxLineChars: 5,
+        strategy: "head",
+      }),
+    ).toBe("one\ntwo\n…2 m…");
+    expect(truncateTauClientToolText("one\ntwo\nthree\nfour", { maxLines: 1 })).toBe(
+      "…4 more lines…",
+    );
+    expect(
+      truncateTauClientToolText(Array.from({ length: 9 }, (_, index) => `${index}`).join("\n"), {
+        maxLines: 9,
+        maxLineChars: 1024,
+      }),
+    ).toBe("0\n1\n2\n3\n4\n5\n6\n7\n8");
+    expect(() => truncateTauClientToolText("text", { maxLines: 0 })).toThrow(
+      "text maxLines must be a positive integer",
+    );
+  });
   it("reads running and settled turns from the canonical snapshot ledger", () => {
     const running = { userHistoryEntryId: "running-turn", state: "running" };
     const outcome = { status: "completed", stopReason: "stop" };
@@ -838,6 +864,15 @@ describe("sdk_client", () => {
 
   it("advertises and executes client-provided tools", async () => {
     const transport = new FakeSessionProtocolTransport();
+    const describeTool = vi.fn((args, context) => {
+      expect(context).toMatchObject({
+        sessionId: "session-1",
+        agentId: "agent-1",
+        callId: "call-1",
+      });
+      expect(context).not.toHaveProperty("executionEnvironment");
+      return describeClientTool("local_picker", args.choice ?? "local_picker");
+    });
     const execute = vi.fn(async (args, context) => {
       expect(args).toEqual({ choice: "a" });
       expect(context).toMatchObject({
@@ -849,7 +884,10 @@ describe("sdk_client", () => {
       const execution = await context.executionEnvironment.exec("printf workspace", {
         cwd: "/repo",
       });
-      return { content: `picked a from ${execution.output}` };
+      return {
+        content: `picked a from ${execution.output}`,
+        presentation: describeClientTool("local_picker", "picked a"),
+      };
     });
     const client = await createTauSdkClientFromTransport(transport, {
       clientTools: [
@@ -864,6 +902,7 @@ describe("sdk_client", () => {
             },
             executionTimeoutMs: 60_000,
           },
+          describe: describeTool,
           execute,
         },
       ],
@@ -905,11 +944,16 @@ describe("sdk_client", () => {
       (request) =>
         request.method === "session.clientTool.result" && request.params.callId === "call-1",
     );
+    expect(describeTool).toHaveBeenCalledTimes(1);
     expect(execute).toHaveBeenCalledTimes(1);
     expect(transport.requests).toEqual([
       {
         method: "session.clientTool.ack",
-        params: { sessionId: "session-1", callId: "call-1" },
+        params: {
+          sessionId: "session-1",
+          callId: "call-1",
+          presentation: describeClientTool("local_picker", "a"),
+        },
       },
       {
         method: "session.exec",
@@ -927,6 +971,62 @@ describe("sdk_client", () => {
           callId: "call-1",
           ok: true,
           content: "picked a from raw output",
+          presentation: describeClientTool("local_picker", "picked a"),
+        },
+      },
+    ]);
+
+    await client.close();
+  });
+
+  it("reports structured client tool failures with terminal presentation", async () => {
+    const transport = new FakeSessionProtocolTransport();
+    const client = await createTauSdkClientFromTransport(transport, {
+      clientTools: [
+        {
+          schema: {
+            name: "local_picker",
+            description: "Pick a local item.",
+            parameters: { type: "object", properties: {}, additionalProperties: false },
+          },
+          execute: () => ({
+            ok: false,
+            error: "nothing selected",
+            presentation: { details: [{ text: "No local choices", tone: "removed" }] },
+          }),
+        },
+      ],
+    });
+
+    transport.emitClientTool({
+      version: SESSION_PROTOCOL_VERSION,
+      type: "session.clientTool.call",
+      sessionId: "session-1",
+      agentId: "agent-1",
+      callId: "call-1",
+      toolName: "local_picker",
+      arguments: {},
+      ackDeadlineMs: 5000,
+      executionDeadlineMs: 60_000,
+    });
+
+    await waitForFakeRequest(
+      transport,
+      (request) => request.method === "session.clientTool.result",
+    );
+    expect(transport.requests).toEqual([
+      {
+        method: "session.clientTool.ack",
+        params: { sessionId: "session-1", callId: "call-1" },
+      },
+      {
+        method: "session.clientTool.result",
+        params: {
+          sessionId: "session-1",
+          callId: "call-1",
+          ok: false,
+          error: "nothing selected",
+          presentation: { details: [{ text: "No local choices", tone: "removed" }] },
         },
       },
     ]);
@@ -967,6 +1067,10 @@ describe("sdk_client", () => {
       executionDeadlineMs: 60_000,
     });
     await waitForFakeRequest(transport, (request) => request.method === "session.exec");
+    expect(transport.requests[0]).toEqual({
+      method: "session.clientTool.ack",
+      params: { sessionId: "session-1", callId: "call-1" },
+    });
     const execId = transport.requests.find((request) => request.method === "session.exec").params
       .execId;
 
@@ -1007,6 +1111,7 @@ describe("sdk_client", () => {
             description: "Pick a local item.",
             parameters: { type: "object", properties: {}, additionalProperties: false },
           },
+          describe: () => describeClientTool("local_picker"),
           execute,
         },
       ],
@@ -1063,6 +1168,7 @@ describe("sdk_client", () => {
             description: "Pick a local item.",
             parameters: { type: "object", properties: {}, additionalProperties: false },
           },
+          describe: () => describeClientTool("local_picker"),
           execute,
         },
       ],
@@ -1118,6 +1224,7 @@ describe("sdk_client", () => {
             description: "Pick a local item.",
             parameters: { type: "object", properties: {}, additionalProperties: false },
           },
+          describe: () => describeClientTool("local_picker"),
           execute,
         },
       ],

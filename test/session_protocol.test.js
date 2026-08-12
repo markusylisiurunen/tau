@@ -15,6 +15,9 @@ import {
   parseSessionProtocolRequestLine,
   projectSessionProtocolNoticePresentation,
   SESSION_PROTOCOL_ERROR_CODES,
+  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES,
+  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAILS,
+  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_SUBJECT_BYTES,
   SESSION_PROTOCOL_MAX_SUBAGENT_ASSISTANT_TEXT_BYTES,
   SESSION_PROTOCOL_MAX_SUBAGENT_NOTICE_CONTENT_BYTES,
   SESSION_PROTOCOL_MAX_SUBAGENT_SHORT_TEXT_BYTES,
@@ -1157,6 +1160,135 @@ describe("session_protocol", () => {
         code: SESSION_PROTOCOL_ERROR_CODES.invalidParams,
         message:
           "session.ephemeral.submit params.forkFromThreadId must be a non-empty string when provided",
+      }),
+    });
+  });
+
+  it("validates optional client tool presentation overrides", () => {
+    const presentation = {
+      subject: "choice a",
+      subjectWrap: "character",
+      details: [{ text: "preparing choice", wrap: "word" }],
+      metadata: ["local"],
+    };
+    expect(
+      validateSessionProtocolParams("session.clientTool.ack", {
+        sessionId: "session-1",
+        callId: "call-1",
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        sessionId: "session-1",
+        callId: "call-1",
+      },
+    });
+    expect(
+      validateSessionProtocolParams("session.clientTool.ack", {
+        sessionId: "session-1",
+        callId: "call-1",
+        presentation,
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        sessionId: "session-1",
+        callId: "call-1",
+        presentation,
+      },
+    });
+    expect(
+      validateSessionProtocolParams("session.clientTool.result", {
+        sessionId: "session-1",
+        callId: "call-1",
+        ok: true,
+        content: "picked",
+        presentation: { details: [], metadata: [] },
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        sessionId: "session-1",
+        callId: "call-1",
+        ok: true,
+        content: "picked",
+        presentation: { details: [], metadata: [] },
+      },
+    });
+
+    const maximumDetailPresentation = {
+      details: Array.from(
+        { length: SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAILS },
+        () => ({ text: "x".repeat(1000) }),
+      ),
+    };
+    expect(
+      Buffer.byteLength(JSON.stringify(maximumDetailPresentation), "utf8"),
+    ).toBeLessThanOrEqual(SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES);
+    expect(
+      validateSessionProtocolParams("session.clientTool.ack", {
+        sessionId: "session-1",
+        callId: "call-1",
+        presentation: maximumDetailPresentation,
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        sessionId: "session-1",
+        callId: "call-1",
+        presentation: maximumDetailPresentation,
+      },
+    });
+
+    expect(
+      validateSessionProtocolParams("session.clientTool.ack", {
+        sessionId: "session-1",
+        callId: "call-1",
+        presentation: {
+          ...presentation,
+          subject: "x".repeat(SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_SUBJECT_BYTES + 1),
+        },
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidParams,
+      }),
+    });
+    expect(
+      validateSessionProtocolParams("session.clientTool.ack", {
+        sessionId: "session-1",
+        callId: "call-1",
+        presentation: {
+          ...presentation,
+          details: Array.from(
+            { length: SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAILS + 1 },
+            () => ({ text: "x", wrap: "word" }),
+          ),
+        },
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidParams,
+      }),
+    });
+    expect(
+      validateSessionProtocolParams("session.clientTool.ack", {
+        sessionId: "session-1",
+        callId: "call-1",
+        presentation: {
+          ...presentation,
+          details: Array.from({ length: 5 }, () => ({
+            text: "x".repeat(SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES / 4),
+            wrap: "word",
+          })),
+        },
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidParams,
       }),
     });
   });

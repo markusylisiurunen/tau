@@ -173,6 +173,19 @@ describe("public code-mode runtime", () => {
         additionalProperties: false,
       },
     });
+    expect(
+      await tool.describe(
+        { code: 'console.log(await linear.issues.get("TAU-418"))' },
+        {
+          ...invocation,
+          signal: new AbortController().signal,
+          executionEnvironment: { exec: vi.fn() },
+        },
+      ),
+    ).toMatchObject({
+      subject: 'console.log(await linear.issues.get("TAU-418"))',
+      subjectWrap: "character",
+    });
     await expect(
       tool.execute(
         { code: 'console.log(await linear.issues.get("TAU-418"))' },
@@ -186,6 +199,10 @@ describe("public code-mode runtime", () => {
       ),
     ).resolves.toEqual({
       content: JSON.stringify({ id: "TAU-418", invocation }),
+      presentation: {
+        subject: 'console.log(await linear.issues.get("TAU-418"))',
+        subjectWrap: "character",
+      },
     });
   });
 
@@ -214,7 +231,13 @@ describe("public code-mode runtime", () => {
           executionEnvironment,
         },
       ),
-    ).resolves.toEqual({ content: "clean" });
+    ).resolves.toEqual({
+      content: "clean",
+      presentation: {
+        subject: "console.log(await linear.workspace.status())",
+        subjectWrap: "character",
+      },
+    });
     expect(executionEnvironment.exec).toHaveBeenCalledWith("git status --short");
   });
 
@@ -266,9 +289,10 @@ describe("code-mode command adapter", () => {
       "});",
     ].join("\n");
     const request = {
-      version: 3,
-      type: "invoke",
+      version: 4,
+      type: "prepare",
       ...invocation,
+      toolName: "linear",
       arguments: {
         code: 'console.log(await linear.echo("hello"))',
       },
@@ -277,28 +301,108 @@ describe("code-mode command adapter", () => {
 
     expect(result.status).toBe(0);
     expect(result.stderr).toBe("");
-    expect(JSON.parse(result.stdout)).toEqual({
-      version: 3,
-      type: "result",
-      content: JSON.stringify({ value: "hello", invocation }),
-    });
+    const frames = result.stdout
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(frames).toEqual([
+      {
+        version: 4,
+        type: "ready",
+        presentation: expect.objectContaining({
+          subject: 'console.log(await linear.echo("hello"))',
+          subjectWrap: "character",
+        }),
+      },
+      {
+        version: 4,
+        type: "result",
+        ok: true,
+        content: JSON.stringify({ value: "hello", invocation }),
+        presentation: {
+          subject: 'console.log(await linear.echo("hello"))',
+          subjectWrap: "character",
+        },
+      },
+    ]);
+  });
+
+  it("stops when terminated during asynchronous command description", async () => {
+    const moduleUrl = pathToFileURL(resolve("dist/sdk/index.js")).href;
+    const script = [
+      `import { runTauClientToolCommand } from ${JSON.stringify(moduleUrl)};`,
+      "await runTauClientToolCommand({",
+      '  name: "wait",',
+      "  describe: async () => {",
+      '    process.stderr.write("describing\\n");',
+      "    await new Promise(() => {});",
+      "  },",
+      '  execute: () => "unreachable",',
+      "});",
+    ].join("\n");
+    const result = await runCommandAndTerminate(
+      script,
+      {
+        version: 4,
+        type: "prepare",
+        ...invocation,
+        toolName: "wait",
+        arguments: {},
+      },
+      "stderr",
+      "describing",
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.signal).toBeNull();
+  });
+
+  it("stops when terminated while awaiting execution authorization", async () => {
+    const moduleUrl = pathToFileURL(resolve("dist/sdk/index.js")).href;
+    const script = [
+      `import { runTauClientToolCommand } from ${JSON.stringify(moduleUrl)};`,
+      "await runTauClientToolCommand({",
+      '  name: "wait",',
+      '  execute: () => "unreachable",',
+      "});",
+    ].join("\n");
+    const result = await runCommandAndTerminate(
+      script,
+      {
+        version: 4,
+        type: "prepare",
+        ...invocation,
+        toolName: "wait",
+        arguments: {},
+      },
+      "stdout",
+      '"type":"ready"',
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.signal).toBeNull();
   });
 
   it("aborts the handler when protocol input closes", () => {
     const moduleUrl = pathToFileURL(resolve("dist/sdk/index.js")).href;
     const script = [
       `import { runTauClientToolCommand } from ${JSON.stringify(moduleUrl)};`,
-      "await runTauClientToolCommand(async (_args, context) => {",
-      "  await new Promise((_resolve, reject) => {",
-      '    context.signal.addEventListener("abort", () => reject(context.signal.reason), { once: true });',
-      "  });",
-      '  return "unreachable";',
+      "await runTauClientToolCommand({",
+      '  name: "wait",',
+      '  describe: () => ({ subject: "input" }),',
+      "  execute: async (_args, context) => {",
+      "    await new Promise((_resolve, reject) => {",
+      '      context.signal.addEventListener("abort", () => reject(context.signal.reason), { once: true });',
+      "    });",
+      '    return "unreachable";',
+      "  },",
       "});",
     ].join("\n");
     const request = {
-      version: 3,
-      type: "invoke",
+      version: 4,
+      type: "prepare",
       ...invocation,
+      toolName: "wait",
       arguments: {},
     };
     const result = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {
@@ -314,6 +418,45 @@ describe("code-mode command adapter", () => {
   });
 });
 
+function runCommandAndTerminate(script, request, streamName, marker) {
+  return new Promise((resolveResult, rejectResult) => {
+    const child = spawn(process.execPath, ["--input-type=module", "--eval", script], {
+      cwd: process.cwd(),
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    let terminated = false;
+    const timeout = setTimeout(() => {
+      child.kill("SIGKILL");
+      rejectResult(new Error(`command did not emit ${streamName} marker '${marker}'`));
+    }, 2000);
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    const maybeTerminate = () => {
+      const content = streamName === "stdout" ? stdout : stderr;
+      if (!terminated && content.includes(marker)) {
+        terminated = true;
+        child.kill("SIGTERM");
+      }
+    };
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+      maybeTerminate();
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+      maybeTerminate();
+    });
+    child.on("error", rejectResult);
+    child.on("close", (status, signal) => {
+      clearTimeout(timeout);
+      resolveResult({ status, signal, stdout, stderr });
+    });
+    child.stdin.write(`${JSON.stringify(request)}\n`);
+  });
+}
+
 function runCommandWithOpenStdin(script, request) {
   return new Promise((resolveResult, rejectResult) => {
     const child = spawn(process.execPath, ["--eval", script], {
@@ -322,10 +465,20 @@ function runCommandWithOpenStdin(script, request) {
     });
     let stdout = "";
     let stderr = "";
+    let executeSent = false;
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
       stdout += chunk;
+      for (const line of stdout.split("\n")) {
+        if (!line.trim()) continue;
+        try {
+          if (!executeSent && JSON.parse(line).type === "ready") {
+            executeSent = true;
+            child.stdin.write(`${JSON.stringify({ version: 4, type: "execute" })}\n`);
+          }
+        } catch {}
+      }
     });
     child.stderr.on("data", (chunk) => {
       stderr += chunk;

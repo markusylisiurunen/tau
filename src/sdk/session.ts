@@ -21,6 +21,8 @@ import {
 import type {
   TauSdkClient,
   TauSdkClientTool,
+  TauSdkClientToolContext,
+  TauSdkClientToolDescribeContext,
   TauSdkClientToolExecutionEnvironment,
   TauSdkDeltaListener,
   TauSdkEphemeralListener,
@@ -178,34 +180,54 @@ class TauSdkClientImpl implements TauSdkClient {
     message: SessionProtocolClientToolCallMessage,
     abortController: AbortController,
   ): Promise<void> {
-    const ack = await this.transport.request("session.clientTool.ack", {
+    const describeContext: TauSdkClientToolDescribeContext = {
       sessionId: message.sessionId,
+      agentId: message.agentId,
       callId: message.callId,
-    });
-    if (!ack.accepted || abortController.signal.aborted) {
-      return;
-    }
+      signal: abortController.signal,
+    };
 
     try {
-      const result = await tool.execute(message.arguments, {
+      const presentation = await tool.describe?.(message.arguments, describeContext);
+      const ack = await this.transport.request("session.clientTool.ack", {
         sessionId: message.sessionId,
-        agentId: message.agentId,
         callId: message.callId,
-        signal: abortController.signal,
+        ...(presentation === undefined ? {} : { presentation }),
+      });
+      if (!ack.accepted || abortController.signal.aborted) {
+        abortController.abort();
+        return;
+      }
+
+      const context: TauSdkClientToolContext = {
+        ...describeContext,
         executionEnvironment: this.createClientToolExecutionEnvironment(
           message.sessionId,
           abortController.signal,
         ),
-      });
+      };
+      const result = await tool.execute(message.arguments, context);
       if (abortController.signal.aborted) {
         return;
       }
+      if (typeof result !== "string" && result.ok === false) {
+        await this.transport.request("session.clientTool.result", {
+          sessionId: message.sessionId,
+          callId: message.callId,
+          ok: false,
+          error: result.error,
+          ...(result.presentation === undefined ? {} : { presentation: result.presentation }),
+        });
+        return;
+      }
       const content = typeof result === "string" ? result : result.content;
+      const terminalPresentation = typeof result === "string" ? undefined : result.presentation;
       await this.transport.request("session.clientTool.result", {
         sessionId: message.sessionId,
         callId: message.callId,
         ok: true,
         content,
+        ...(terminalPresentation === undefined ? {} : { presentation: terminalPresentation }),
       });
     } catch (error) {
       if (abortController.signal.aborted) {

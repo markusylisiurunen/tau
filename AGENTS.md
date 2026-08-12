@@ -252,7 +252,7 @@ Do not commit unless the user explicitly asks. Never bypass hooks with `--no-ver
 - Branch names are lowercase, a few descriptive words, and contain no prefixes or issue references.
 - PR titles are concise and lowercase except for proper nouns. PR bodies are readable prose with required `## why` and `## what` sections, plus `## details` only when useful. Do not list routine verification commands. End with a closing keyword line when associated with an issue.
 
-Use `gh` for GitHub operations and omit `--repo`, which resolves from this repository. Read an issue and all comments with:
+Use `gh` for GitHub operations and omit `--repo`, which resolves from this repository. Do not query, poll, wait for, watch, or report remote CI status unless the user explicitly asks. When asked only to check CI status, use a single non-waiting query and report the current state; wait or watch only when the user specifically asks to wait. Read an issue and all comments with:
 
 ```sh
 gh issue view <id> --json closed,author,labels,title,body,comments

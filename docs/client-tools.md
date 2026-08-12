@@ -117,23 +117,222 @@ Diff-tool launcher settings are separate from command client-tool definitions. T
 
 ## Implement a command tool with Tau's helper
 
-Command client tools use Tau's version 3 bidirectional NDJSON protocol over stdin and stdout. Use the exported helper instead of implementing framing manually:
+Command client tools use Tau's version 4 bidirectional NDJSON protocol over stdin and stdout. Use the exported helper instead of implementing framing manually:
 
 ```ts
-import { runTauClientToolCommand } from "@markusylisiurunen/tau/code-mode";
+import {
+  runTauClientToolCommand,
+  truncateTauClientToolText,
+} from "@markusylisiurunen/tau/code-mode";
 
-await runTauClientToolCommand(async (args, context) => {
-  const input = args as { title: string; message: string };
-  context.signal.throwIfAborted();
+await runTauClientToolCommand({
+  name: "notify_desktop",
+  describe(args) {
+    const input = args as { title: string; message: string };
+    return {
+      subject: truncateTauClientToolText(input.title),
+    };
+  },
+  async execute(args, context) {
+    const input = args as { title: string; message: string };
+    context.signal.throwIfAborted();
 
-  await showNotification(input.title, input.message, context.signal);
-  return { content: "Notification displayed." };
+    await showNotification(input.title, input.message, context.signal);
+    return {
+      content: "Notification displayed.",
+      presentation: {
+        subject: truncateTauClientToolText(input.title),
+      },
+    };
+  },
 });
 ```
 
-`runTauClientToolCommand` reads the invocation, provides a standard context, handles execution-environment request and cancellation framing, and writes the final result. It also reacts to `SIGINT`, `SIGTERM`, and protocol input closure by aborting the handler.
+`describe` is optional. When present, it runs before acknowledgement and may return a partial running presentation containing `subject`, `subjectWrap`, `details`, or `metadata`. The execution result may independently include the same partial shape for the terminal card. Tau supplies every omitted field, owns lifecycle actions and the operation derived from the registered tool name, and renders a complete fallback when execution ends without a result.
 
-Reserve stdout for the helper's protocol. Write diagnostics to stderr. Return either a string or `{ content: string }`; that text becomes the model-visible tool result.
+Tau preserves every explicit presentation field up to the protocol safety limits; it does not apply display truncation or normalize client text. `truncateTauClientToolText` provides optional caller-controlled `maxLines`, `maxLineChars`, and `head` or `middle` truncation. Its defaults match Tau's concise subject policy, but callers may select larger or smaller positive limits.
+
+For a subject, use the returned string directly. For a block of detail text, split the returned string on `\n` and map each line to one `details` entry:
+
+```ts
+const details = truncateTauClientToolText(output, {
+  maxLines: 7,
+  maxLineChars: 512,
+  strategy: "middle",
+})
+  .split("\n")
+  .map((text) => ({ text }));
+```
+
+Each detail or metadata entry is a single protocol line, so use `maxLines: 1` when assigning the helper's result directly to one entry. The helper shapes text for presentation; the protocol byte and collection limits still apply. Empty detail or metadata arrays explicitly suppress that phase's defaults.
+
+`runTauClientToolCommand` reads the preparation, writes readiness and any running presentation, waits until the host accepts the call, then provides the standard execution context and writes the final result. It handles execution-environment request and cancellation framing and reacts to `SIGINT`, `SIGTERM`, and protocol input closure by aborting the handler.
+
+Reserve stdout for the helper's protocol. Write diagnostics to stderr. Return a string or `{ content, presentation? }` for success. Return `{ ok: false, error, presentation? }` for a structured tool failure. Successful content and failure text become model-visible tool results.
+
+### Version 4 frame reference
+
+The shapes below use TypeScript notation. Serialize each frame as one exact JSON object followed by a newline; unknown fields are invalid.
+
+Tau starts the exchange by writing:
+
+- `{ version: 4, type: "prepare", sessionId, agentId, callId, toolName, arguments }` exactly once. The identity fields are non-empty strings and `arguments` is the validated model input.
+- `{ version: 4, type: "execute" }` after accepting the command's ready frame. This authorizes execution.
+
+The command writes:
+
+- `{ version: 4, type: "ready", presentation?: PresentationOverride }` exactly once after preparation.
+- `{ version: 4, type: "result", ok: true, content, presentation?: PresentationOverride }` or `{ version: 4, type: "result", ok: false, error, presentation?: PresentationOverride }` exactly once after authorization. `content` and `error` are strings.
+
+During authorized execution, the command may write `{ version: 4, type: "exec", requestId, command, options }`. The non-empty `command` string runs in the session execution environment. `options` is required and may contain `args: string[]`, `env: Record<string, string>`, base64-encoded string `stdinBase64`, string `cwd`, positive integer `timeoutMs`, and positive integer `maxCaptureBytes`.
+
+Tau answers with the same `requestId` and either:
+
+- `{ version: 4, type: "exec.result", requestId, ok: true, result: ExecResult }`
+- `{ version: 4, type: "exec.result", requestId, ok: false, error: string }`
+
+`ExecResult` contains string `output`, `stdout`, and `stderr`; nullable `exitCode` and `closeSignal`; and boolean `truncated`, `timedOut`, and `aborted`. A command may cancel one unresolved request with `{ version: 4, type: "exec.cancel", requestId }`. Request IDs must be non-empty strings and cannot be reused within a call.
+
+### Implement the protocol directly in JavaScript
+
+A JavaScript command can implement the version 4 handshake using only Node.js built-ins, without importing Tau or the code-mode package:
+
+```js
+#!/usr/bin/env node
+
+import { arch, platform, release } from "node:os";
+import { createInterface } from "node:readline";
+
+const lines = createInterface({
+  input: process.stdin,
+  crlfDelay: Number.POSITIVE_INFINITY,
+});
+const input = lines[Symbol.asyncIterator]();
+
+async function readFrame() {
+  const next = await input.next();
+  if (next.done) throw new Error("Tau closed the command protocol");
+  return JSON.parse(next.value);
+}
+
+function writeFrame(frame) {
+  process.stdout.write(`${JSON.stringify(frame)}\n`);
+}
+
+const prepare = await readFrame();
+if (
+  prepare.version !== 4 ||
+  prepare.type !== "prepare" ||
+  prepare.toolName !== "system_info"
+) {
+  throw new Error("Invalid system_info preparation");
+}
+
+writeFrame({
+  version: 4,
+  type: "ready",
+  presentation: {
+    subject: "local system",
+  },
+});
+
+const execute = await readFrame();
+if (execute.version !== 4 || execute.type !== "execute") {
+  throw new Error("Invalid system_info authorization");
+}
+
+writeFrame({
+  version: 4,
+  type: "exec",
+  requestId: "git-status",
+  command: "git status --short",
+  options: {
+    maxCaptureBytes: 256 * 1024,
+  },
+});
+
+const response = await readFrame();
+if (
+  response.version !== 4 ||
+  response.type !== "exec.result" ||
+  response.requestId !== "git-status"
+) {
+  throw new Error("Invalid execution-environment response");
+}
+if (!response.ok) throw new Error(response.error);
+
+const localSystem = `${platform()} ${release()} ${arch()}`;
+const workspaceStatus =
+  response.result.output.trim() || "Working tree is clean.";
+writeFrame({
+  version: 4,
+  type: "result",
+  ok: true,
+  content: `${localSystem}\n\n${workspaceStatus}`,
+  presentation: {
+    subject: "local system",
+  },
+});
+
+lines.close();
+```
+
+The `exec` frame asks Tau to run `git status --short` in the session execution environment, which may be a different machine from the JavaScript process. Tau returns the matching `exec.result` on stdin. Request IDs are single-use, and the command must check both the ID and `ok` before consuming the result.
+
+Make the file executable with `chmod +x`. Diagnostics and uncaught errors go to stderr; stdout remains reserved for protocol frames.
+
+### Implement a simple command tool in Bash
+
+A small command that needs only client-machine authority can also implement the handshake in Bash. This example depends on `jq` for safe JSON parsing and encoding:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS= read -r prepare
+jq -e '
+  .version == 4 and
+  .type == "prepare" and
+  .toolName == "system_info"
+' >/dev/null <<<"$prepare"
+
+jq -cn '{
+  version: 4,
+  type: "ready",
+  presentation: {
+    subject: "local system"
+  }
+}'
+
+IFS= read -r execute
+jq -e '.version == 4 and .type == "execute"' >/dev/null <<<"$execute"
+
+content=$(uname -a)
+jq -cn --arg content "$content" '{
+  version: 4,
+  type: "result",
+  ok: true,
+  content: $content
+}'
+```
+
+Configure either executable as an argument-free command tool:
+
+```json
+{
+  "name": "system_info",
+  "defaultEnabled": true,
+  "description": "Report operating-system information from the client machine.",
+  "parameters": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "command": "./bin/tau-system-info"
+}
+```
+
+Both `ready.presentation` and `result.presentation` are optional partial objects with `subject`, `subjectWrap`, `details`, and `metadata`. The ready value applies while the call runs; the result value applies only to its terminal state. Omit either object, or any field within it, to use Tau's default for that phase. Empty `details` or `metadata` arrays suppress the corresponding default field. The script must emit `ready` before reading the authorization-bearing `execute` frame. Direct implementations can emit the same `exec` frames shown in the JavaScript example, but the TypeScript helper is preferable when the tool needs multiple target-environment requests, cancellation forwarding, or more involved protocol handling.
 
 The handler receives:
 
@@ -181,7 +380,7 @@ Tau exports two higher-level helpers for client tools that expose a bounded Java
 
 For an executable configured through `clientTools`, keep the exact parameters schema to one required `code` string with no additional properties, then call `runTauCodeModeCommand` in the executable. For SDK clients, pass the returned tool from `createTauCodeModeClientTool` in the client's `clientTools` array.
 
-Both helpers supply the invocation identities, cancellation signal, execution-environment facade, progressive `docs` value, bounded API bridge, and agent-scoped scratch files. The model-facing description remains explicit caller input. Use Tau's optional shared description builder only when its progressive-disclosure wording fits the tool; Tau does not silently rewrite a configured description.
+Both helpers supply the invocation identities, cancellation signal, execution-environment facade, progressive `docs` value, bounded API bridge, and agent-scoped scratch files. They use the submitted code, concisely truncated and character-wrapped, as the running and terminal tool-card subject. The model-facing description remains explicit caller input. Use Tau's optional shared description builder only when its progressive-disclosure wording fits the tool; Tau does not silently rewrite a configured description.
 
 The generic code-mode runtime is documented through its exported types and generated tool documentation. Do not layer another unbounded process or network channel behind it without making that authority clear in the tool description.
 
@@ -195,12 +394,13 @@ The command protocol is intentionally bounded:
 - Captured stderr is limited to 1 MiB. Exceeding it terminates the command and fails the tool.
 - Execution-environment stdin is limited to 16 MiB decoded, and capture can be requested up to 24 MiB per execution.
 - At most eight execution requests may be unresolved concurrently.
+- Each client-tool presentation override is limited to 1 MiB in total. Its subject is limited to 256 KiB; metadata values to 16 KiB each; detail values to 256 KiB each; and detail and metadata collections to 1,024 entries each. These are safety limits, not recommended UI sizes. Tau preserves explicit values within those limits. Clients may use the exported helper when they want a concise preview.
 
-The configured `executionTimeoutMs` covers the whole command invocation and defaults to 60 seconds. The host also requires the owning client to acknowledge a dispatched call promptly. Standard Tau SDK clients handle acknowledgement before invoking the tool handler.
+The configured `executionTimeoutMs` covers preparation and execution and defaults to 60 seconds. The host also requires the owning client to prepare and acknowledge a dispatched call promptly. Command executables emit readiness and any bounded running presentation before acknowledgement, then wait for Tau to authorize execution.
 
 Tau starts each configured command in a detached process group. Cancellation sends termination to the group and escalates to `SIGKILL` after a short grace period, even if the original group leader exits first. The helper aborts pending execution-environment requests and stops accepting work when stdin closes.
 
-A successful command must exit with status zero after producing one final version 3 result. Missing results, malformed framing, data after the result, reused execution request IDs, nonzero exit, timeout, cancellation, excessive output, and protocol-limit violations fail the call. Stderr is included in failure diagnostics but is not a successful result channel.
+A successful protocol exchange must emit one version 4 ready frame, wait for the execute frame, emit one final version 4 result with `ok: true` or `ok: false`, and exit with status zero. An `ok: false` frame is a communicated tool failure; process and framing failures still use stderr and a nonzero exit. Missing or duplicate readiness, execution data before authorization, missing results, malformed framing, data after the result, reused execution request IDs, timeout, cancellation, excessive output, and protocol-limit violations fail the call.
 
 ## Disconnects, reconnects, and durability
 

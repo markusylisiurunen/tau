@@ -2,9 +2,16 @@ import { createInterface } from "node:readline";
 import { StringDecoder } from "node:string_decoder";
 import { z } from "zod";
 import {
+  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES,
+  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAIL_BYTES,
+  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAILS,
+  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_METADATA,
+  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_METADATA_VALUE_BYTES,
+  SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_SUBJECT_BYTES,
   SESSION_PROTOCOL_MAX_EXEC_CAPTURE_BYTES,
   SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES,
 } from "../protocol/session_protocol.js";
+import type { TauClientToolPresentation } from "./client_tool_presentation.js";
 import type {
   TauSdkClientToolContext,
   TauSdkClientToolResult,
@@ -12,7 +19,7 @@ import type {
   TauSdkSessionExecResult,
 } from "./types.js";
 
-export const TAU_CLIENT_TOOL_COMMAND_PROTOCOL_VERSION = 3;
+export const TAU_CLIENT_TOOL_COMMAND_PROTOCOL_VERSION = 4;
 export const TAU_CLIENT_TOOL_COMMAND_MAX_RESULT_BYTES = 1024 * 1024;
 export const TAU_CLIENT_TOOL_COMMAND_MAX_PROTOCOL_FRAME_BYTES = 24 * 1024 * 1024;
 export const TAU_CLIENT_TOOL_COMMAND_MAX_PROTOCOL_BYTES = 192 * 1024 * 1024;
@@ -41,14 +48,22 @@ const execOptionsSchema = z
   })
   .strict();
 
-const invokeSchema = z
+const prepareSchema = z
   .object({
     version: z.literal(TAU_CLIENT_TOOL_COMMAND_PROTOCOL_VERSION),
-    type: z.literal("invoke"),
+    type: z.literal("prepare"),
     sessionId: z.string().min(1),
     agentId: z.string().min(1),
     callId: z.string().min(1),
+    toolName: z.string().min(1),
     arguments: z.unknown(),
+  })
+  .strict();
+
+const executeSchema = z
+  .object({
+    version: z.literal(TAU_CLIENT_TOOL_COMMAND_PROTOCOL_VERSION),
+    type: z.literal("execute"),
   })
   .strict();
 
@@ -70,17 +85,94 @@ const execCancelSchema = z
   })
   .strict();
 
-const resultSchema = z
+const commandPresentationSingleLineSchema = z
+  .string()
+  .refine((value) => !value.includes("\n") && !value.includes("\r"), "must be one line");
+const commandPresentationDetailSchema = commandPresentationSingleLineSchema.refine(
+  (value) =>
+    Buffer.byteLength(value, "utf8") <= SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAIL_BYTES,
+  `must not exceed ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAIL_BYTES} UTF-8 bytes`,
+);
+const commandPresentationMetadataSchema = commandPresentationSingleLineSchema.refine(
+  (value) =>
+    Buffer.byteLength(value, "utf8") <=
+    SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_METADATA_VALUE_BYTES,
+  `must not exceed ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_METADATA_VALUE_BYTES} UTF-8 bytes`,
+);
+const commandPresentationSchema: z.ZodType<TauClientToolCommandPresentation> = z
+  .object({
+    subject: z
+      .string()
+      .min(1)
+      .refine((value) => !value.includes("\r"), "must not contain carriage returns")
+      .refine(
+        (value) =>
+          Buffer.byteLength(value, "utf8") <=
+          SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_SUBJECT_BYTES,
+        `must not exceed ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_SUBJECT_BYTES} UTF-8 bytes`,
+      )
+      .optional(),
+    subjectWrap: z.enum(["word", "character"]).optional(),
+    details: z
+      .array(
+        z
+          .object({
+            text: commandPresentationDetailSchema,
+            tone: z.enum(["added", "removed"]).optional(),
+            wrap: z.enum(["word", "character"]).optional(),
+          })
+          .strict(),
+      )
+      .max(SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAILS)
+      .optional(),
+    metadata: z
+      .array(commandPresentationMetadataSchema)
+      .max(SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_METADATA)
+      .optional(),
+  })
+  .strict()
+  .refine(
+    (value) =>
+      Buffer.byteLength(JSON.stringify(value), "utf8") <=
+      SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES,
+    `must not exceed ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES} UTF-8 bytes`,
+  );
+const readySchema = z
   .object({
     version: z.literal(TAU_CLIENT_TOOL_COMMAND_PROTOCOL_VERSION),
-    type: z.literal("result"),
-    content: z
-      .string()
-      .refine(
-        (value) => Buffer.byteLength(value, "utf8") <= TAU_CLIENT_TOOL_COMMAND_MAX_RESULT_BYTES,
-      ),
+    type: z.literal("ready"),
+    presentation: commandPresentationSchema.optional(),
   })
   .strict();
+
+const resultSchema = z.discriminatedUnion("ok", [
+  z
+    .object({
+      version: z.literal(TAU_CLIENT_TOOL_COMMAND_PROTOCOL_VERSION),
+      type: z.literal("result"),
+      ok: z.literal(true),
+      content: z
+        .string()
+        .refine(
+          (value) => Buffer.byteLength(value, "utf8") <= TAU_CLIENT_TOOL_COMMAND_MAX_RESULT_BYTES,
+        ),
+      presentation: commandPresentationSchema.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      version: z.literal(TAU_CLIENT_TOOL_COMMAND_PROTOCOL_VERSION),
+      type: z.literal("result"),
+      ok: z.literal(false),
+      error: z
+        .string()
+        .refine(
+          (value) => Buffer.byteLength(value, "utf8") <= TAU_CLIENT_TOOL_COMMAND_MAX_RESULT_BYTES,
+        ),
+      presentation: commandPresentationSchema.optional(),
+    })
+    .strict(),
+]);
 
 const execResultSchema = z
   .object({
@@ -116,17 +208,23 @@ const execResponseSchema = z.discriminatedUnion("ok", [
     .strict(),
 ]);
 
-export type TauClientToolCommandInvoke = {
-  version: 3;
-  type: "invoke";
+export type TauClientToolCommandPrepare = {
+  version: 4;
+  type: "prepare";
   sessionId: string;
   agentId: string;
   callId: string;
+  toolName: string;
   arguments: unknown;
 };
 
+export type TauClientToolCommandExecute = {
+  version: 4;
+  type: "execute";
+};
+
 export type TauClientToolCommandExecRequest = {
-  version: 3;
+  version: 4;
   type: "exec";
   requestId: string;
   command: string;
@@ -141,32 +239,56 @@ export type TauClientToolCommandExecRequest = {
 };
 
 export type TauClientToolCommandExecCancel = {
-  version: 3;
+  version: 4;
   type: "exec.cancel";
   requestId: string;
 };
 
-export type TauClientToolCommandResult = {
-  version: 3;
-  type: "result";
-  content: string;
+export type TauClientToolCommandPresentation = TauClientToolPresentation;
+
+export type TauClientToolCommandReady = {
+  version: 4;
+  type: "ready";
+  presentation?: TauClientToolCommandPresentation;
 };
 
+export type TauClientToolCommandResult =
+  | {
+      version: 4;
+      type: "result";
+      ok: true;
+      content: string;
+      presentation?: TauClientToolCommandPresentation;
+    }
+  | {
+      version: 4;
+      type: "result";
+      ok: false;
+      error: string;
+      presentation?: TauClientToolCommandPresentation;
+    };
+
 export type TauClientToolCommandOutput =
+  | TauClientToolCommandReady
   | TauClientToolCommandExecRequest
   | TauClientToolCommandExecCancel
   | TauClientToolCommandResult;
 
+export type TauClientToolCommandInput =
+  | TauClientToolCommandPrepare
+  | TauClientToolCommandExecute
+  | TauClientToolCommandExecResponse;
+
 export type TauClientToolCommandExecResponse =
   | {
-      version: 3;
+      version: 4;
       type: "exec.result";
       requestId: string;
       ok: true;
       result: TauSdkSessionExecResult;
     }
   | {
-      version: 3;
+      version: 4;
       type: "exec.result";
       requestId: string;
       ok: false;
@@ -177,6 +299,17 @@ export type TauClientToolCommandHandler = (
   args: unknown,
   context: TauSdkClientToolContext,
 ) => Promise<TauSdkClientToolResult> | TauSdkClientToolResult;
+
+export type TauClientToolCommandDefinition = {
+  name: string;
+  describe?: (
+    args: unknown,
+  ) =>
+    | Promise<TauClientToolCommandPresentation | undefined>
+    | TauClientToolCommandPresentation
+    | undefined;
+  execute: TauClientToolCommandHandler;
+};
 
 export type TauClientToolCommandOutputEncoder = {
   encode(frame: TauClientToolCommandOutput): string;
@@ -252,11 +385,20 @@ export function createTauClientToolCommandOutputDecoder(): TauClientToolCommandO
   };
 }
 
-export async function runTauClientToolCommand(handler: TauClientToolCommandHandler): Promise<void> {
+export async function runTauClientToolCommand(
+  definition: TauClientToolCommandDefinition,
+): Promise<void> {
   const controller = new AbortController();
   const abort = (): void => controller.abort();
   process.once("SIGINT", abort);
   process.once("SIGTERM", abort);
+  const abortFailure = new Promise<never>((_resolve, reject) => {
+    controller.signal.addEventListener(
+      "abort",
+      () => reject(controller.signal.reason ?? new Error("client-tool command aborted")),
+      { once: true },
+    );
+  });
 
   const lines = createInterface({ input: process.stdin, crlfDelay: Number.POSITIVE_INFINITY });
   const iterator = lines[Symbol.asyncIterator]();
@@ -296,12 +438,23 @@ export async function runTauClientToolCommand(handler: TauClientToolCommandHandl
   };
 
   try {
-    const first = await iterator.next();
+    const first = await Promise.race([iterator.next(), abortFailure]);
     if (first.done) {
       throw new Error("client-tool command received no invocation");
     }
-    const invocation = parseInvokeFrame(first.value);
+    const preparation = parsePrepareFrame(first.value);
+    if (preparation.toolName !== definition.name) {
+      throw new Error(
+        `client-tool command expected tool '${definition.name}' but received '${preparation.toolName}'`,
+      );
+    }
 
+    let startExecution: () => void = () => {};
+    const executionReady = new Promise<void>((resolve) => {
+      startExecution = resolve;
+    });
+    let readySent = false;
+    let executionStarted = false;
     let rejectInput: (error: unknown) => void = () => {};
     const inputFailure = new Promise<never>((_resolve, reject) => {
       rejectInput = reject;
@@ -319,15 +472,27 @@ export async function runTauClientToolCommand(handler: TauClientToolCommandHandl
             rejectInput(error);
             return;
           }
-          const response = parseExecResponseFrame(next.value);
-          const request = pending.get(response.requestId);
+          const frame = parseCommandInputFrame(next.value);
+          if (frame.type === "execute") {
+            if (!readySent) {
+              throw new Error("client-tool command received execute before its ready frame");
+            }
+            if (executionStarted) {
+              throw new Error("client-tool command received more than one execute frame");
+            }
+            executionStarted = true;
+            startExecution();
+            continue;
+          }
+
+          const request = pending.get(frame.requestId);
           if (!request) continue;
-          pending.delete(response.requestId);
+          pending.delete(frame.requestId);
           request.signal.removeEventListener("abort", request.onAbort);
-          if (response.ok) {
-            request.resolve(response.result);
+          if (frame.ok) {
+            request.resolve(frame.result);
           } else {
-            request.reject(new Error(response.error));
+            request.reject(new Error(frame.error));
           }
         }
       } catch (error) {
@@ -391,22 +556,48 @@ export async function runTauClientToolCommand(handler: TauClientToolCommandHandl
       },
     };
 
+    const presentation = await Promise.race([
+      Promise.resolve(definition.describe?.(preparation.arguments)),
+      inputFailure,
+      abortFailure,
+    ]);
+    readySent = true;
+    await writeFrame({
+      version: TAU_CLIENT_TOOL_COMMAND_PROTOCOL_VERSION,
+      type: "ready",
+      ...(presentation === undefined ? {} : { presentation }),
+    });
+    await Promise.race([executionReady, inputFailure, abortFailure]);
+
     const handled = Promise.resolve(
-      handler(invocation.arguments, {
-        sessionId: invocation.sessionId,
-        agentId: invocation.agentId,
-        callId: invocation.callId,
+      definition.execute(preparation.arguments, {
+        sessionId: preparation.sessionId,
+        agentId: preparation.agentId,
+        callId: preparation.callId,
         signal: controller.signal,
         executionEnvironment,
       }),
     );
-    const result = await Promise.race([handled, inputFailure]);
-    const content = typeof result === "string" ? result : result.content;
-    await writeFrame({
-      version: TAU_CLIENT_TOOL_COMMAND_PROTOCOL_VERSION,
-      type: "result",
-      content,
-    });
+    const result = await Promise.race([handled, inputFailure, abortFailure]);
+    if (typeof result !== "string" && result.ok === false) {
+      await writeFrame({
+        version: TAU_CLIENT_TOOL_COMMAND_PROTOCOL_VERSION,
+        type: "result",
+        ok: false,
+        error: result.error,
+        ...(result.presentation === undefined ? {} : { presentation: result.presentation }),
+      });
+    } else {
+      const content = typeof result === "string" ? result : result.content;
+      const terminalPresentation = typeof result === "string" ? undefined : result.presentation;
+      await writeFrame({
+        version: TAU_CLIENT_TOOL_COMMAND_PROTOCOL_VERSION,
+        type: "result",
+        ok: true,
+        content,
+        ...(terminalPresentation === undefined ? {} : { presentation: terminalPresentation }),
+      });
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(`${message}\n`);
@@ -423,10 +614,10 @@ export async function runTauClientToolCommand(handler: TauClientToolCommandHandl
 
 export function parseTauClientToolCommandOutput(value: unknown): TauClientToolCommandOutput {
   const parsed = z
-    .discriminatedUnion("type", [execRequestSchema, execCancelSchema, resultSchema])
+    .union([readySchema, execRequestSchema, execCancelSchema, resultSchema])
     .safeParse(value);
   if (!parsed.success) {
-    throw new Error("command client tool returned an invalid version-3 protocol frame");
+    throw new Error("command client tool returned an invalid version-4 protocol frame");
   }
   return parsed.data;
 }
@@ -448,16 +639,24 @@ export function serializeTauClientToolCommandOutput(frame: TauClientToolCommandO
   return `${line}\n`;
 }
 
-export function createTauClientToolCommandInvoke(options: {
+export function createTauClientToolCommandPrepare(options: {
   sessionId: string;
   agentId: string;
   callId: string;
+  toolName: string;
   arguments: unknown;
-}): TauClientToolCommandInvoke {
+}): TauClientToolCommandPrepare {
   return {
     version: TAU_CLIENT_TOOL_COMMAND_PROTOCOL_VERSION,
-    type: "invoke",
+    type: "prepare",
     ...options,
+  };
+}
+
+export function createTauClientToolCommandExecute(): TauClientToolCommandExecute {
+  return {
+    version: TAU_CLIENT_TOOL_COMMAND_PROTOCOL_VERSION,
+    type: "execute",
   };
 }
 
@@ -537,18 +736,20 @@ function decodedBase64ByteLength(value: string): number {
   return (value.length / 4) * 3 - padding;
 }
 
-function parseInvokeFrame(line: string): TauClientToolCommandInvoke {
-  const parsed = invokeSchema.safeParse(parseJsonLine(line));
+function parsePrepareFrame(line: string): TauClientToolCommandPrepare {
+  const parsed = prepareSchema.safeParse(parseJsonLine(line));
   if (!parsed.success) {
-    throw new Error("client-tool command received an invalid version-3 invocation");
+    throw new Error("client-tool command received an invalid version-4 preparation");
   }
   return parsed.data;
 }
 
-function parseExecResponseFrame(line: string): TauClientToolCommandExecResponse {
-  const parsed = execResponseSchema.safeParse(parseJsonLine(line));
+function parseCommandInputFrame(
+  line: string,
+): TauClientToolCommandExecute | TauClientToolCommandExecResponse {
+  const parsed = z.union([executeSchema, execResponseSchema]).safeParse(parseJsonLine(line));
   if (!parsed.success) {
-    throw new Error("client-tool command received an invalid execution response");
+    throw new Error("client-tool command received an invalid input frame");
   }
   return parsed.data;
 }

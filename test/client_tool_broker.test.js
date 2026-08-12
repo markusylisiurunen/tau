@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
+import { parseToolRunPresentation } from "../src/core/tools/presentation.ts";
 import { HOST_TOOL_NAMES } from "../src/core/tools/tool_names.ts";
 import { ClientToolBroker } from "../src/host/client_tool_broker.ts";
+import { SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES } from "../src/protocol/session_protocol.ts";
 
 function createToolCall(args = {}) {
   return {
@@ -11,17 +13,21 @@ function createToolCall(args = {}) {
   };
 }
 
-async function runTool(tool, toolCall, signal = new AbortController().signal) {
+async function runTool(tool, toolCall, signal = new AbortController().signal, emitActivity) {
   const activities = [];
   const outcome = await tool.execute(toolCall, {
     agentId: "test-agent",
     turnId: "test-turn",
     assistantMessageId: "test-assistant",
     signal,
-    emitActivity: async (activity) => activities.push(activity),
+    emitActivity: async (activity) => {
+      activities.push(activity);
+      await emitActivity?.(activity);
+    },
   });
   return {
     toolResult: { ...outcome, toolCallId: toolCall.id, toolName: toolCall.name },
+    activities,
     uiEvent: activities.at(-1),
   };
 }
@@ -74,8 +80,13 @@ describe("ClientToolBroker", () => {
       ],
       sendCall: (message) => {
         expect(message.agentId).toBe("test-agent");
-        broker.ack(message.sessionId, message.callId);
-        broker.result(message.sessionId, message.callId, { ok: true, content });
+        void broker.ack(message.sessionId, message.callId, { subject: "choice a" }).then(() => {
+          broker.result(message.sessionId, message.callId, {
+            ok: true,
+            content,
+            presentation: { subject: "choice a" },
+          });
+        });
       },
       sendCancel,
     });
@@ -85,12 +96,23 @@ describe("ClientToolBroker", () => {
     const result = await runTool(definition, createToolCall({ choice: "a" }));
 
     expect(result.toolResult.content[0].text).toBe(content);
+    expect(result.activities[0]).toMatchObject({
+      type: "tool_call_started",
+      presentation: {
+        operation: "local_picker",
+        subject: "choice a",
+        actionByStatus: { running: "running", succeeded: "completed" },
+      },
+    });
     expect(result.uiEvent).toMatchObject({
       type: "tool_call_finished",
       toolCallId: "tool-call-1",
       toolName: "local_picker",
       status: "success",
       presentation: {
+        operation: "local_picker",
+        subject: "choice a",
+        actionByStatus: { running: "running", succeeded: "completed" },
         metadata: [expect.stringMatching(/^(?:\d+ms|\d+(?:\.\d+)?s)$/), "~40 tokens", "9 lines"],
       },
     });
@@ -117,8 +139,9 @@ describe("ClientToolBroker", () => {
         },
       ],
       sendCall: (message) => {
-        broker.ack(message.sessionId, message.callId);
-        broker.result(message.sessionId, message.callId, { ok: true, content: "" });
+        void broker.ack(message.sessionId, message.callId, { subject: "empty choice" }).then(() => {
+          broker.result(message.sessionId, message.callId, { ok: true, content: "" });
+        });
       },
       sendCancel: vi.fn(),
     });
@@ -131,6 +154,262 @@ describe("ClientToolBroker", () => {
     expect(result.uiEvent.presentation.metadata).toEqual([
       expect.stringMatching(/^(?:\d+ms|\d+(?:\.\d+)?s)$/),
     ]);
+  });
+
+  it("lets terminal presentation suppress generated details and metadata", async () => {
+    const broker = new ClientToolBroker();
+    const registration = broker.registerClient({
+      tools: [
+        {
+          name: "local_picker",
+          description: "Pick a local item.",
+          parameters: { type: "object", properties: {}, additionalProperties: false },
+        },
+      ],
+      sendCall: (message) => {
+        void broker.ack(message.sessionId, message.callId).then(() => {
+          broker.result(message.sessionId, message.callId, {
+            ok: true,
+            content: "hidden result",
+            presentation: { subject: "local_picker", details: [], metadata: [] },
+          });
+        });
+      },
+      sendCancel: vi.fn(),
+    });
+    registration.attachSession("session-1");
+
+    const definition = broker.getToolDefinitions("session-1")[0];
+    const result = await runTool(definition, createToolCall());
+
+    expect(result.activities[0].presentation).toMatchObject({
+      subject: "local_picker",
+      details: [],
+      metadata: [],
+    });
+    expect(result.uiEvent.presentation).toMatchObject({
+      operation: "local_picker",
+      subject: "local_picker",
+      details: [],
+      metadata: [],
+    });
+  });
+
+  it("preserves explicit presentation up to protocol safety limits", async () => {
+    const broker = new ClientToolBroker();
+    const subject = Array.from({ length: 9 }, (_, index) => `${index}:${"s".repeat(600)}`).join(
+      "\n",
+    );
+    const details = Array.from({ length: 9 }, (_, index) => ({
+      text: `${index}:${"d".repeat(600)}`,
+    }));
+    const metadata = [`  ${"m".repeat(600)}  `];
+    const presentation = { subject, details, metadata };
+    const registration = broker.registerClient({
+      tools: [
+        {
+          name: "local_picker",
+          description: "Pick a local item.",
+          parameters: { type: "object", properties: {}, additionalProperties: false },
+        },
+      ],
+      sendCall: (message) => {
+        void broker.ack(message.sessionId, message.callId, presentation).then(() => {
+          broker.result(message.sessionId, message.callId, {
+            ok: true,
+            content: "result",
+            presentation,
+          });
+        });
+      },
+      sendCancel: vi.fn(),
+    });
+    registration.attachSession("session-1");
+
+    const definition = broker.getToolDefinitions("session-1")[0];
+    const result = await runTool(definition, createToolCall());
+    const expected = {
+      operation: "local_picker",
+      subject,
+      details: details.map((line) => ({ ...line, wrap: "word" })),
+      metadata,
+    };
+
+    expect(result.activities[0].presentation).toMatchObject(expected);
+    expect(result.uiEvent.presentation).toMatchObject(expected);
+  });
+
+  it("keeps a maximum-size valid override renderable after adding canonical fields", async () => {
+    const broker = new ClientToolBroker();
+    const presentation = {
+      details: Array.from({ length: 1024 }, () => ({ text: "d".repeat(1000) })),
+    };
+    expect(Buffer.byteLength(JSON.stringify(presentation), "utf8")).toBeLessThanOrEqual(
+      SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES,
+    );
+    const registration = broker.registerClient({
+      tools: [
+        {
+          name: "local_picker",
+          description: "Pick a local item.",
+          parameters: { type: "object", properties: {}, additionalProperties: false },
+        },
+      ],
+      sendCall: (message) => {
+        void broker.ack(message.sessionId, message.callId, presentation).then(() => {
+          broker.result(message.sessionId, message.callId, { ok: true, content: "result" });
+        });
+      },
+      sendCancel: vi.fn(),
+    });
+    registration.attachSession("session-1");
+
+    const definition = broker.getToolDefinitions("session-1")[0];
+    const result = await runTool(definition, createToolCall());
+    const resolved = result.activities[0].presentation;
+
+    expect(Buffer.byteLength(JSON.stringify(resolved), "utf8")).toBeGreaterThan(
+      SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES,
+    );
+    expect(() => parseToolRunPresentation(resolved)).not.toThrow();
+    expect(resolved.details).toHaveLength(1024);
+  });
+
+  it("rejects successful results until acknowledgement completes", async () => {
+    const broker = new ClientToolBroker();
+    let acknowledgement;
+    let callMessage;
+    let releaseActivity = () => {};
+    const activityGate = new Promise((resolve) => {
+      releaseActivity = resolve;
+    });
+    const registration = broker.registerClient({
+      tools: [
+        {
+          name: "local_picker",
+          description: "Pick a local item.",
+          parameters: { type: "object", properties: {}, additionalProperties: false },
+        },
+      ],
+      sendCall: (message) => {
+        callMessage = message;
+        acknowledgement = broker.ack(message.sessionId, message.callId, {
+          subject: "choice a",
+        });
+      },
+      sendCancel: vi.fn(),
+    });
+    registration.attachSession("session-1");
+
+    const definition = broker.getToolDefinitions("session-1")[0];
+    const execution = runTool(
+      definition,
+      createToolCall({ choice: "a" }),
+      new AbortController().signal,
+      async (activity) => {
+        if (activity.type === "tool_call_started") await activityGate;
+      },
+    );
+    await vi.waitFor(() => expect(acknowledgement).toBeDefined());
+
+    expect(
+      broker.result(callMessage.sessionId, callMessage.callId, {
+        ok: true,
+        content: "too early",
+      }),
+    ).toBe(false);
+
+    releaseActivity();
+    await expect(acknowledgement).resolves.toBe(true);
+    expect(
+      broker.result(callMessage.sessionId, callMessage.callId, {
+        ok: true,
+        content: "accepted",
+      }),
+    ).toBe(true);
+
+    const result = await execution;
+    expect(result.toolResult.outcome).toBe("succeeded");
+    expect(result.toolResult.content[0].text).toBe("accepted");
+    expect(result.activities.map((activity) => activity.type)).toEqual([
+      "tool_call_started",
+      "tool_call_finished",
+    ]);
+  });
+
+  it("accepts preparation failures before acknowledgement", async () => {
+    const broker = new ClientToolBroker();
+    let accepted;
+    const registration = broker.registerClient({
+      tools: [
+        {
+          name: "local_picker",
+          description: "Pick a local item.",
+          parameters: { type: "object", properties: {}, additionalProperties: false },
+        },
+      ],
+      sendCall: (message) => {
+        accepted = broker.result(message.sessionId, message.callId, {
+          ok: false,
+          error: "description failed",
+        });
+      },
+      sendCancel: vi.fn(),
+    });
+    registration.attachSession("session-1");
+
+    const definition = broker.getToolDefinitions("session-1")[0];
+    const result = await runTool(definition, createToolCall({ choice: "a" }));
+
+    expect(accepted).toBe(true);
+    expect(result.toolResult.outcome).toBe("failed");
+    expect(result.toolResult.content[0].text).toBe("description failed");
+    expect(result.activities.map((activity) => activity.type)).toEqual(["tool_call_finished"]);
+    expect(result.uiEvent.presentation.subject).toBe("local_picker");
+  });
+
+  it("cancels prepared client work and uses fallback presentation when acknowledgement fails", async () => {
+    const broker = new ClientToolBroker();
+    const sendCancel = vi.fn();
+    let acknowledgement;
+    const registration = broker.registerClient({
+      tools: [
+        {
+          name: "local_picker",
+          description: "Pick a local item.",
+          parameters: { type: "object", properties: {}, additionalProperties: false },
+        },
+      ],
+      sendCall: (message) => {
+        acknowledgement = broker.ack(message.sessionId, message.callId, {
+          subject: "choice a",
+        });
+      },
+      sendCancel,
+    });
+    registration.attachSession("session-1");
+
+    const definition = broker.getToolDefinitions("session-1")[0];
+    let activityCount = 0;
+    const result = await runTool(
+      definition,
+      createToolCall({ choice: "a" }),
+      new AbortController().signal,
+      async () => {
+        activityCount += 1;
+        if (activityCount === 1) throw new Error("presentation persistence failed");
+      },
+    );
+
+    await expect(acknowledgement).rejects.toThrow("presentation persistence failed");
+    expect(sendCancel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "session.clientTool.cancel",
+        reason: "host-failed",
+      }),
+    );
+    expect(result.toolResult.outcome).toBe("failed");
+    expect(result.uiEvent.presentation.subject).toBe("local_picker");
   });
 
   it("returns clear errors when client tools become unavailable", async () => {

@@ -41,6 +41,7 @@ import type {
   SessionProtocolUnobserveResult,
 } from "../protocol/session_protocol.js";
 import type { WebSocketSessionProtocolTransportOptions } from "../transport/index.js";
+import type { TauClientToolPresentation } from "./client_tool_presentation.js";
 
 export type TauSdkRequestId = SessionProtocolRequestId;
 export type TauSdkSessionProtocolMethod = SessionProtocolMethod;
@@ -98,18 +99,36 @@ export type TauSdkClientToolExecutionEnvironment = {
   exec(command: string, options?: TauSdkSessionExecOptions): Promise<TauSdkSessionExecResult>;
 };
 
-export type TauSdkClientToolContext = {
+export type TauSdkClientToolDescribeContext = {
   sessionId: string;
   agentId: string;
   callId: string;
   signal: AbortSignal;
+};
+
+export type TauSdkClientToolContext = TauSdkClientToolDescribeContext & {
   executionEnvironment: TauSdkClientToolExecutionEnvironment;
 };
 
-export type TauSdkClientToolResult = string | { content: string };
+export type TauSdkClientToolResult =
+  | string
+  | {
+      ok?: true;
+      content: string;
+      presentation?: TauClientToolPresentation;
+    }
+  | {
+      ok: false;
+      error: string;
+      presentation?: TauClientToolPresentation;
+    };
 
 export type TauSdkClientTool = {
   schema: SessionProtocolClientToolDefinition;
+  describe?: (
+    args: unknown,
+    context: TauSdkClientToolDescribeContext,
+  ) => Promise<TauClientToolPresentation | undefined> | TauClientToolPresentation | undefined;
   execute: (
     args: unknown,
     context: TauSdkClientToolContext,

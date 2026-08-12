@@ -304,7 +304,7 @@ export class SessionProtocolHandler {
           await this.handleEphemeralClose(request);
           return;
         case "session.clientTool.ack":
-          this.handleClientToolAck(request);
+          await this.handleClientToolAck(request);
           return;
         case "session.clientTool.result":
           this.handleClientToolResult(request);
@@ -397,12 +397,15 @@ export class SessionProtocolHandler {
     });
   }
 
-  private handleClientToolAck(
+  private async handleClientToolAck(
     request: Extract<SessionProtocolRequestMessage, { method: "session.clientTool.ack" }>,
-  ): void {
+  ): Promise<void> {
     const accepted =
-      this.host.acknowledgeClientToolCall?.(request.params.sessionId, request.params.callId) ??
-      false;
+      (await this.host.acknowledgeClientToolCall?.(
+        request.params.sessionId,
+        request.params.callId,
+        request.params.presentation,
+      )) ?? false;
     this.sendMessage(
       createSessionProtocolSuccessResponse(request.id, "session.clientTool.ack", { accepted }),
     );
@@ -412,8 +415,20 @@ export class SessionProtocolHandler {
     request: Extract<SessionProtocolRequestMessage, { method: "session.clientTool.result" }>,
   ): void {
     const result = request.params.ok
-      ? { ok: true as const, content: request.params.content }
-      : { ok: false as const, error: request.params.error };
+      ? {
+          ok: true as const,
+          content: request.params.content,
+          ...(request.params.presentation === undefined
+            ? {}
+            : { presentation: request.params.presentation }),
+        }
+      : {
+          ok: false as const,
+          error: request.params.error,
+          ...(request.params.presentation === undefined
+            ? {}
+            : { presentation: request.params.presentation }),
+        };
     const accepted =
       this.host.completeClientToolCall?.(request.params.sessionId, request.params.callId, result) ??
       false;

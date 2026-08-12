@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { PassThrough } from "node:stream";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { createCommandClientTools } from "../dist/core/client_tools/command_client_tools.js";
@@ -15,13 +16,21 @@ import { createProtocolExecResult } from "./helpers/session_protocol_fixtures.js
 const commandModuleUrl = pathToFileURL(resolve("dist/sdk/index.js")).href;
 const codeModeModuleUrl = pathToFileURL(resolve("dist/code_mode/index.js")).href;
 
+function readyFrame(subject = "notification") {
+  return `${JSON.stringify({
+    version: 4,
+    type: "ready",
+    presentation: { subject },
+  })}\n`;
+}
+
 function resultFrame(content = "done") {
-  return `${JSON.stringify({ version: 3, type: "result", content })}\n`;
+  return `${JSON.stringify({ version: 4, type: "result", ok: true, content })}\n`;
 }
 
 function createSpawnResult(overrides = {}) {
   return {
-    stdout: resultFrame(),
+    stdout: "",
     stderr: "",
     exitCode: 0,
     captureLimitExceeded: false,
@@ -30,6 +39,44 @@ function createSpawnResult(overrides = {}) {
     closeSignal: null,
     ...overrides,
   };
+}
+
+function createInteractiveSpawn(options = {}) {
+  const {
+    beforeExecute = readyFrame(),
+    afterExecute = resultFrame(),
+    result: resultOverrides = {},
+  } = options;
+  return vi.fn(async (_command, _args, spawnOptions) => {
+    const stdin = new PassThrough();
+    const stdout = new PassThrough();
+    let settle;
+    const execution = new Promise((resolve) => {
+      settle = resolve;
+    });
+    let input = "";
+    stdin.on("data", (chunk) => {
+      input += chunk.toString();
+      for (const line of input.split("\n")) {
+        if (!line.trim()) continue;
+        try {
+          if (JSON.parse(line).type === "execute") {
+            settle("execute");
+          }
+        } catch {}
+      }
+    });
+    spawnOptions.signal.addEventListener("abort", () => settle("aborted"), { once: true });
+    spawnOptions.onSpawn({ stdin, stdout });
+    if (beforeExecute) stdout.write(beforeExecute);
+    const outcome = await execution;
+    if (outcome === "execute" && afterExecute) stdout.write(afterExecute);
+    stdout.end();
+    return createSpawnResult({
+      aborted: outcome === "aborted",
+      ...resultOverrides,
+    });
+  });
 }
 
 function createDeps(spawn) {
@@ -54,6 +101,11 @@ function createConfig(overrides = {}) {
   };
 }
 
+async function executeClientTool(tool, args, context) {
+  await tool.describe(args, context);
+  return await tool.execute(args, context);
+}
+
 function createContext(overrides = {}) {
   return {
     sessionId: "session-1",
@@ -71,12 +123,16 @@ describe("command client tools", () => {
   it("exposes the execution environment through the command helper", async () => {
     const script = [
       `import { runTauClientToolCommand } from ${JSON.stringify(commandModuleUrl)};`,
-      "await runTauClientToolCommand(async (args, context) => {",
-      '  const result = await context.executionEnvironment.exec("printf workspace", {',
-      '    args: ["first"],',
-      '    stdin: Buffer.from("input"),',
-      "  });",
-      '  return { content: args.message + "\\n" + result.output };',
+      "await runTauClientToolCommand({",
+      '  name: "notify",',
+      '  describe: () => ({ subject: "notification" }),',
+      "  execute: async (args, context) => {",
+      '    const result = await context.executionEnvironment.exec("printf workspace", {',
+      '      args: ["first"],',
+      '      stdin: Buffer.from("input"),',
+      "    });",
+      '    return { content: args.message + "\\n" + result.output, presentation: { metadata: ["workspace"] } };',
+      "  },",
       "});",
     ].join("\n");
     const [tool] = createCommandClientTools([
@@ -86,14 +142,51 @@ describe("command client tools", () => {
       }),
     ]);
     const context = createContext();
+    const args = { message: "hello" };
 
-    await expect(tool.execute({ message: "hello" }, context)).resolves.toEqual({
+    await expect(tool.describe(args, context)).resolves.toMatchObject({
+      subject: "notification",
+    });
+    expect(context.executionEnvironment.exec).not.toHaveBeenCalled();
+    await expect(tool.execute(args, context)).resolves.toEqual({
       content: "hello\nworkspace output",
+      presentation: { metadata: ["workspace"] },
     });
     expect(context.executionEnvironment.exec).toHaveBeenCalledWith("printf workspace", {
       args: ["first"],
       stdin: Buffer.from("input"),
       signal: expect.any(AbortSignal),
+    });
+  });
+
+  it("returns structured command failures with terminal presentation", async () => {
+    const script = [
+      `import { runTauClientToolCommand } from ${JSON.stringify(commandModuleUrl)};`,
+      "await runTauClientToolCommand({",
+      '  name: "notify",',
+      "  execute: () => ({",
+      "    ok: false,",
+      '    error: "notifications disabled",',
+      '    presentation: { details: [{ text: "Desktop notifications are disabled", tone: "removed" }] },',
+      "  }),",
+      "});",
+    ].join("\n");
+    const [tool] = createCommandClientTools([
+      createConfig({
+        command: process.execPath,
+        args: ["--input-type=module", "--eval", script],
+      }),
+    ]);
+    const context = createContext();
+    const args = { message: "hello" };
+
+    await expect(tool.describe(args, context)).resolves.toBeUndefined();
+    await expect(tool.execute(args, context)).resolves.toEqual({
+      ok: false,
+      error: "notifications disabled",
+      presentation: {
+        details: [{ text: "Desktop notifications are disabled", tone: "removed" }],
+      },
     });
   });
 
@@ -129,7 +222,8 @@ describe("command client tools", () => {
     const root = join(tmpdir(), `tau-code-mode-files-${scope}`);
 
     try {
-      const result = await tool.execute(
+      const result = await executeClientTool(
+        tool,
         {
           code: [
             'const first = await files.write("first.txt", "x".repeat(900 * 1024));',
@@ -164,9 +258,13 @@ describe("command client tools", () => {
     try {
       const script = [
         `import { runTauClientToolCommand } from ${JSON.stringify(commandModuleUrl)};`,
-        "await runTauClientToolCommand(() => ({",
-        `  content: process.cwd() + "\\n" + process.env[${JSON.stringify(variableName)}],`,
-        "}));",
+        "await runTauClientToolCommand({",
+        '  name: "notify",',
+        '  describe: () => ({ subject: "notification" }),',
+        "  execute: () => ({",
+        `    content: process.cwd() + "\\n" + process.env[${JSON.stringify(variableName)}],`,
+        "  }),",
+        "});",
       ].join("\n");
       const [tool] = createCommandClientTools([
         createConfig({
@@ -175,9 +273,11 @@ describe("command client tools", () => {
         }),
       ]);
 
-      await expect(tool.execute({ message: "hello" }, createContext())).resolves.toEqual({
-        content: `${process.cwd()}\ninherited`,
-      });
+      await expect(executeClientTool(tool, { message: "hello" }, createContext())).resolves.toEqual(
+        {
+          content: `${process.cwd()}\ninherited`,
+        },
+      );
     } finally {
       if (previousValue === undefined) {
         delete process.env[variableName];
@@ -187,12 +287,91 @@ describe("command client tools", () => {
     }
   });
 
+  it("runs a direct JavaScript command protocol implementation", async () => {
+    const script = [
+      'import { createInterface } from "node:readline";',
+      "const lines = createInterface({ input: process.stdin, crlfDelay: Number.POSITIVE_INFINITY });",
+      "const input = lines[Symbol.asyncIterator]();",
+      "const readFrame = async () => JSON.parse((await input.next()).value);",
+      "const writeFrame = (frame) => process.stdout.write(JSON.stringify(frame) + '\\n');",
+      "const prepare = await readFrame();",
+      "if (prepare.version !== 4 || prepare.type !== 'prepare' || prepare.toolName !== 'system_info') throw new Error('invalid preparation');",
+      "writeFrame({ version: 4, type: 'ready', presentation: { subject: 'raw javascript' } });",
+      "const execute = await readFrame();",
+      "if (execute.version !== 4 || execute.type !== 'execute') throw new Error('invalid authorization');",
+      "writeFrame({ version: 4, type: 'exec', requestId: 'status', command: 'git status --short', options: { maxCaptureBytes: 1024 } });",
+      "const response = await readFrame();",
+      "if (response.version !== 4 || response.type !== 'exec.result' || response.requestId !== 'status' || !response.ok) throw new Error('invalid execution response');",
+      "writeFrame({ version: 4, type: 'result', ok: true, content: response.result.output });",
+      "lines.close();",
+    ].join("\n");
+    const [tool] = createCommandClientTools([
+      createConfig({
+        name: "system_info",
+        parameters: { type: "object", properties: {}, additionalProperties: false },
+        command: process.execPath,
+        args: ["--input-type=module", "--eval", script],
+      }),
+    ]);
+    const context = createContext();
+    const args = {};
+
+    await expect(tool.describe(args, context)).resolves.toMatchObject({
+      subject: "raw javascript",
+    });
+    await expect(tool.execute(args, context)).resolves.toEqual({ content: "workspace output" });
+    expect(context.executionEnvironment.exec).toHaveBeenCalledWith("git status --short", {
+      maxCaptureBytes: 1024,
+      signal: expect.any(AbortSignal),
+    });
+  });
+
+  it("runs a direct Bash command protocol implementation", async () => {
+    const script = [
+      "IFS= read -r prepare",
+      `printf '%s\\n' '${JSON.stringify({
+        version: 4,
+        type: "ready",
+        presentation: { subject: "shell command" },
+      })}'`,
+      "IFS= read -r execute",
+      `printf '%s\\n' '${JSON.stringify({
+        version: 4,
+        type: "result",
+        ok: true,
+        content: "shell result",
+      })}'`,
+    ].join("\n");
+    const [tool] = createCommandClientTools([
+      createConfig({ command: "bash", args: ["--noprofile", "--norc", "-c", script] }),
+    ]);
+    const context = createContext();
+    const args = { message: "hello" };
+
+    await expect(tool.describe(args, context)).resolves.toMatchObject({
+      subject: "shell command",
+    });
+    await expect(tool.execute(args, context)).resolves.toEqual({ content: "shell result" });
+  });
+
+  it("uses the tool name when a command omits presentation", async () => {
+    const spawn = createInteractiveSpawn({
+      beforeExecute: `${JSON.stringify({ version: 4, type: "ready" })}\n`,
+    });
+    const [tool] = createCommandClientTools([createConfig()], createDeps(spawn));
+    const context = createContext();
+    const args = { message: "hello" };
+
+    await expect(tool.describe(args, context)).resolves.toBeUndefined();
+    await expect(tool.execute(args, context)).resolves.toEqual({ content: "done" });
+  });
+
   it("starts a configured command with the versioned invocation", async () => {
-    const spawn = vi.fn(async () => createSpawnResult({ stderr: "diagnostic\n" }));
+    const spawn = createInteractiveSpawn({ result: { stderr: "diagnostic\n" } });
     const [tool] = createCommandClientTools([createConfig()], createDeps(spawn));
     const context = createContext();
 
-    await expect(tool.execute({ message: "hello" }, context)).resolves.toEqual({
+    await expect(executeClientTool(tool, { message: "hello" }, context)).resolves.toEqual({
       content: "done",
     });
     expect(tool.schema).toEqual({
@@ -215,11 +394,12 @@ describe("command client tools", () => {
         stdio: ["pipe", "pipe", "pipe"],
         keepStdinOpen: true,
         input: `${JSON.stringify({
-          version: 3,
-          type: "invoke",
+          version: 4,
+          type: "prepare",
           sessionId: "session-1",
           agentId: "agent-1",
           callId: "call-1",
+          toolName: "notify",
           arguments: { message: "hello" },
         })}\n`,
         onSpawn: expect.any(Function),
@@ -233,45 +413,40 @@ describe("command client tools", () => {
     const spawn = vi.fn(async () => createSpawnResult());
     const [tool] = createCommandClientTools([createConfig()], createDeps(spawn));
 
-    await expect(tool.execute({ message: 42 }, createContext())).rejects.toThrow(
+    await expect(executeClientTool(tool, { message: 42 }, createContext())).rejects.toThrow(
       "Invalid arguments for command client tool 'notify': /message must be string.",
     );
     expect(spawn).not.toHaveBeenCalled();
   });
 
   it("reports command failures using stderr", async () => {
-    const spawn = vi.fn(async () =>
-      createSpawnResult({
-        stdout: "",
-        stderr: "notifications unavailable\n",
-        exitCode: 2,
-      }),
-    );
+    const spawn = createInteractiveSpawn({
+      afterExecute: "",
+      result: { stderr: "notifications unavailable\n", exitCode: 2 },
+    });
     const [tool] = createCommandClientTools([createConfig()], createDeps(spawn));
 
-    await expect(tool.execute({ message: "hello" }, createContext())).rejects.toThrow(
+    await expect(executeClientTool(tool, { message: "hello" }, createContext())).rejects.toThrow(
       "Command client tool 'notify' failed with exit code 2: notifications unavailable",
     );
   });
 
-  it("requires a version-3 result frame", async () => {
-    const spawn = vi.fn(async () => createSpawnResult({ stdout: "" }));
+  it("requires a version-4 result frame", async () => {
+    const spawn = createInteractiveSpawn({ afterExecute: "" });
     const [tool] = createCommandClientTools([createConfig()], createDeps(spawn));
 
-    await expect(tool.execute({ message: "hello" }, createContext())).rejects.toThrow(
-      "returned no version-3 result frame",
+    await expect(executeClientTool(tool, { message: "hello" }, createContext())).rejects.toThrow(
+      "returned no version-4 result frame",
     );
   });
 
   it("bounds incomplete protocol frames independently of stderr capture", async () => {
-    const spawn = vi.fn(async () =>
-      createSpawnResult({
-        stdout: "x".repeat(TAU_CLIENT_TOOL_COMMAND_MAX_PROTOCOL_FRAME_BYTES + 1),
-      }),
-    );
+    const spawn = createInteractiveSpawn({
+      beforeExecute: "x".repeat(TAU_CLIENT_TOOL_COMMAND_MAX_PROTOCOL_FRAME_BYTES + 1),
+    });
     const [tool] = createCommandClientTools([createConfig()], createDeps(spawn));
 
-    await expect(tool.execute({ message: "hello" }, createContext())).rejects.toThrow(
+    await expect(executeClientTool(tool, { message: "hello" }, createContext())).rejects.toThrow(
       `exceeded the ${TAU_CLIENT_TOOL_COMMAND_MAX_PROTOCOL_FRAME_BYTES}-byte protocol frame limit`,
     );
   });
@@ -281,15 +456,15 @@ describe("command client tools", () => {
       { length: TAU_CLIENT_TOOL_COMMAND_MAX_PROTOCOL_FRAMES + 1 },
       (_, index) =>
         JSON.stringify({
-          version: 3,
+          version: 4,
           type: "exec.cancel",
           requestId: String(index),
         }),
     ).join("\n");
-    const spawn = vi.fn(async () => createSpawnResult({ stdout }));
+    const spawn = createInteractiveSpawn({ afterExecute: stdout });
     const [tool] = createCommandClientTools([createConfig()], createDeps(spawn));
 
-    await expect(tool.execute({ message: "hello" }, createContext())).rejects.toThrow(
+    await expect(executeClientTool(tool, { message: "hello" }, createContext())).rejects.toThrow(
       `exceeded the ${TAU_CLIENT_TOOL_COMMAND_MAX_PROTOCOL_FRAMES}-frame protocol limit`,
     );
   });
@@ -297,11 +472,15 @@ describe("command client tools", () => {
   it("limits execution requests to eight active operations", async () => {
     const script = [
       `import { runTauClientToolCommand } from ${JSON.stringify(commandModuleUrl)};`,
-      "await runTauClientToolCommand(async (_args, context) => {",
+      "await runTauClientToolCommand({",
+      '  name: "notify",',
+      '  describe: () => ({ subject: "notification" }),',
+      "  execute: async (_args, context) => {",
       "  await Promise.all(Array.from({ length: 9 }, (_, index) =>",
       '    context.executionEnvironment.exec("sleep", { args: [String(index)] }),',
       "  ));",
-      '  return "done";',
+      '    return "done";',
+      "  },",
       "});",
     ].join("\n");
     const [tool] = createCommandClientTools([
@@ -320,21 +499,19 @@ describe("command client tools", () => {
     };
 
     await expect(
-      tool.execute({ message: "hello" }, createContext({ executionEnvironment })),
+      executeClientTool(tool, { message: "hello" }, createContext({ executionEnvironment })),
     ).rejects.toThrow("exceeded the 8-execution concurrency limit");
     expect(executionEnvironment.exec).toHaveBeenCalledTimes(8);
   });
 
   it("rejects invalid protocol output", async () => {
-    const invalidJsonSpawn = vi.fn(async () => createSpawnResult({ stdout: "done\n" }));
-    const invalidShapeSpawn = vi.fn(async () =>
-      createSpawnResult({
-        stdout: `${JSON.stringify({ version: 3, type: "result", content: "done", extra: true })}\n`,
-      }),
-    );
-    const oversizedResultSpawn = vi.fn(async () =>
-      createSpawnResult({ stdout: resultFrame("x".repeat(1024 * 1024 + 1)) }),
-    );
+    const invalidJsonSpawn = createInteractiveSpawn({ beforeExecute: "done\n" });
+    const invalidShapeSpawn = createInteractiveSpawn({
+      afterExecute: `${JSON.stringify({ version: 4, type: "result", ok: true, content: "done", extra: true })}\n`,
+    });
+    const oversizedResultSpawn = createInteractiveSpawn({
+      afterExecute: resultFrame("x".repeat(1024 * 1024 + 1)),
+    });
 
     const [invalidJsonTool] = createCommandClientTools(
       [createConfig()],
@@ -349,30 +526,34 @@ describe("command client tools", () => {
       createDeps(oversizedResultSpawn),
     );
 
-    await expect(invalidJsonTool.execute({ message: "hello" }, createContext())).rejects.toThrow(
-      "invalid JSON protocol framing",
-    );
-    await expect(invalidShapeTool.execute({ message: "hello" }, createContext())).rejects.toThrow(
-      "invalid version-3 protocol frame",
-    );
     await expect(
-      oversizedResultTool.execute({ message: "hello" }, createContext()),
-    ).rejects.toThrow("invalid version-3 protocol frame");
+      executeClientTool(invalidJsonTool, { message: "hello" }, createContext()),
+    ).rejects.toThrow("invalid JSON protocol framing");
+    await expect(
+      executeClientTool(invalidShapeTool, { message: "hello" }, createContext()),
+    ).rejects.toThrow("invalid version-4 protocol frame");
+    await expect(
+      executeClientTool(oversizedResultTool, { message: "hello" }, createContext()),
+    ).rejects.toThrow("invalid version-4 protocol frame");
   });
 
   it("reports timeout and stderr-limit termination", async () => {
-    const timeoutSpawn = vi.fn(async () => createSpawnResult({ timedOut: true, exitCode: null }));
-    const limitSpawn = vi.fn(async () =>
-      createSpawnResult({ captureLimitExceeded: true, exitCode: null }),
-    );
+    const timeoutSpawn = createInteractiveSpawn({
+      afterExecute: "",
+      result: { timedOut: true, exitCode: null },
+    });
+    const limitSpawn = createInteractiveSpawn({
+      afterExecute: "",
+      result: { captureLimitExceeded: true, exitCode: null },
+    });
     const [timeoutTool] = createCommandClientTools([createConfig()], createDeps(timeoutSpawn));
     const [limitTool] = createCommandClientTools([createConfig()], createDeps(limitSpawn));
 
-    await expect(timeoutTool.execute({ message: "hello" }, createContext())).rejects.toThrow(
-      "timed out after 5000ms",
-    );
-    await expect(limitTool.execute({ message: "hello" }, createContext())).rejects.toThrow(
-      "exceeded the 1048576-byte stderr limit",
-    );
+    await expect(
+      executeClientTool(timeoutTool, { message: "hello" }, createContext()),
+    ).rejects.toThrow("timed out after 5000ms");
+    await expect(
+      executeClientTool(limitTool, { message: "hello" }, createContext()),
+    ).rejects.toThrow("exceeded the 1048576-byte stderr limit");
   });
 });

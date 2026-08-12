@@ -8,9 +8,16 @@ import type {
 } from "@earendil-works/pi-ai";
 import { type ZodError, z } from "zod";
 
-export const SESSION_PROTOCOL_VERSION = 12 as const;
+export const SESSION_PROTOCOL_VERSION = 13 as const;
 export const SESSION_PROTOCOL_MAX_EXEC_CAPTURE_BYTES = 24 * 1024 * 1024;
 export const SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES = 16 * 1024 * 1024;
+export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES = 1024 * 1024;
+export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_LABEL_BYTES = 16 * 1024;
+export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_SUBJECT_BYTES = 256 * 1024;
+export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAILS = 1024;
+export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAIL_BYTES = 256 * 1024;
+export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_METADATA = 1024;
+export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_METADATA_VALUE_BYTES = 16 * 1024;
 export const SESSION_PROTOCOL_MAX_ATTRIBUTE_VALUE_CHARS = 1_024;
 export const SESSION_PROTOCOL_MAX_SUBAGENT_ACTIVITIES = 64;
 export const SESSION_PROTOCOL_MAX_SUBAGENT_SHORT_TEXT_BYTES = 512;
@@ -239,8 +246,19 @@ export type SessionProtocolEphemeralSubmitParams = SessionProtocolSessionIdParam
 export type SessionProtocolEphemeralCloseParams = SessionProtocolSessionIdParams & {
   contextId: string;
 };
+export type SessionProtocolClientToolPresentation = {
+  subject?: string;
+  subjectWrap?: "word" | "character";
+  details?: Array<{
+    text: string;
+    tone?: "added" | "removed";
+    wrap?: "word" | "character";
+  }>;
+  metadata?: string[];
+};
 export type SessionProtocolClientToolAckParams = SessionProtocolSessionIdParams & {
   callId: string;
+  presentation?: SessionProtocolClientToolPresentation;
 };
 export type SessionProtocolClientToolResultParams = SessionProtocolSessionIdParams & {
   callId: string;
@@ -248,10 +266,12 @@ export type SessionProtocolClientToolResultParams = SessionProtocolSessionIdPara
     | {
         ok: true;
         content: string;
+        presentation?: SessionProtocolClientToolPresentation;
       }
     | {
         ok: false;
         error: string;
+        presentation?: SessionProtocolClientToolPresentation;
       }
   );
 
@@ -1293,7 +1313,7 @@ export type SessionProtocolClientToolCancelMessage = {
   type: "session.clientTool.cancel";
   sessionId: string;
   callId: string;
-  reason: "aborted" | "timeout" | "client-detached";
+  reason: "aborted" | "timeout" | "client-detached" | "host-failed";
 };
 
 export type SessionProtocolClientToolMessage =
@@ -1646,7 +1666,7 @@ const sessionProtocolClientToolCancelMessageSchema = z
     type: z.literal("session.clientTool.cancel"),
     sessionId: nonEmptyStringSchema,
     callId: nonEmptyStringSchema,
-    reason: z.enum(["aborted", "timeout", "client-detached"]),
+    reason: z.enum(["aborted", "timeout", "client-detached", "host-failed"]),
   })
   .strip();
 
@@ -1910,10 +1930,62 @@ const sessionProtocolEphemeralCloseParamsSchema = z
   })
   .strip();
 
+const clientToolPresentationSingleLineSchema = z
+  .string()
+  .refine((value) => !value.includes("\n") && !value.includes("\r"), "must be one line");
+const clientToolPresentationDetailSchema = clientToolPresentationSingleLineSchema.refine(
+  (value) => utf8ByteLength(value) <= SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAIL_BYTES,
+  `must not exceed ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAIL_BYTES} UTF-8 bytes`,
+);
+const clientToolPresentationMetadataSchema = clientToolPresentationSingleLineSchema.refine(
+  (value) =>
+    utf8ByteLength(value) <= SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_METADATA_VALUE_BYTES,
+  `must not exceed ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_METADATA_VALUE_BYTES} UTF-8 bytes`,
+);
+const sessionProtocolClientToolPresentationSchema: z.ZodType<SessionProtocolClientToolPresentation> =
+  z
+    .object({
+      subject: z
+        .string()
+        .min(1)
+        .refine((value) => !value.includes("\r"), "must not contain carriage returns")
+        .refine(
+          (value) =>
+            utf8ByteLength(value) <= SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_SUBJECT_BYTES,
+          `must not exceed ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_SUBJECT_BYTES} UTF-8 bytes`,
+        )
+        .optional(),
+      subjectWrap: z.enum(["word", "character"]).optional(),
+      details: z
+        .array(
+          z
+            .object({
+              text: clientToolPresentationDetailSchema,
+              tone: z.enum(["added", "removed"]).optional(),
+              wrap: z.enum(["word", "character"]).optional(),
+            })
+            .strict(),
+        )
+        .max(SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAILS)
+        .optional(),
+      metadata: z
+        .array(clientToolPresentationMetadataSchema)
+        .max(SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_METADATA)
+        .optional(),
+    })
+    .strict()
+    .refine(
+      (value) =>
+        utf8ByteLength(JSON.stringify(value)) <=
+        SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES,
+      `must not exceed ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES} UTF-8 bytes`,
+    );
+
 const sessionProtocolClientToolAckParamsSchema = z
   .object({
     sessionId: nonEmptyStringSchema,
     callId: nonEmptyStringSchema,
+    presentation: sessionProtocolClientToolPresentationSchema.optional(),
   })
   .strip();
 
@@ -1924,6 +1996,7 @@ const sessionProtocolClientToolResultParamsSchema = z.discriminatedUnion("ok", [
       callId: nonEmptyStringSchema,
       ok: z.literal(true),
       content: z.string(),
+      presentation: sessionProtocolClientToolPresentationSchema.optional(),
     })
     .strip(),
   z
@@ -1932,6 +2005,7 @@ const sessionProtocolClientToolResultParamsSchema = z.discriminatedUnion("ok", [
       callId: nonEmptyStringSchema,
       ok: z.literal(false),
       error: z.string(),
+      presentation: sessionProtocolClientToolPresentationSchema.optional(),
     })
     .strip(),
 ]);
@@ -5131,7 +5205,9 @@ function validateClientToolAckParams(
         ? "session.clientTool.ack params.sessionId must be a non-empty string"
         : hasIssue(parsed.error, ["callId"])
           ? "session.clientTool.ack params.callId must be a non-empty string"
-          : `session.clientTool.ack params are invalid: ${formatZodError(parsed.error)}`;
+          : hasIssue(parsed.error, ["presentation"])
+            ? `session.clientTool.ack params.presentation is invalid: ${formatZodError(parsed.error)}`
+            : `session.clientTool.ack params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 

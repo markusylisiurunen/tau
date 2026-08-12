@@ -1,6 +1,6 @@
 # Session protocol method reference
 
-This page defines every request method in protocol version 12. It is the compact wire reference for clients that already understand connection, observation, and delta application from the [session protocol](session-protocol.md).
+This page defines every request method in protocol version 13. It is the compact wire reference for clients that already understand connection, observation, and delta application from the [session protocol](session-protocol.md).
 
 Every request uses `{ version, type: "request", id, method, params }`. Every successful response uses `{ version, type: "response", id, ok: true, result }`. `params` is required even when empty, and unknown object fields are stripped.
 
@@ -47,7 +47,7 @@ params: {
 }
 
 result: {
-  protocolVersion: 12;
+  protocolVersion: 13;
   methods: string[];
   alreadyInitialized: boolean;
 }
@@ -557,21 +557,62 @@ Acknowledges a `session.clientTool.call` before its deadline.
 params: {
   sessionId: string;
   callId: string;
+  presentation?: {
+    subject?: string;
+    subjectWrap?: "word" | "character";
+    details?: Array<{
+      text: string;
+      tone?: "added" | "removed";
+      wrap?: "word" | "character";
+    }>;
+    metadata?: string[];
+  };
 }
 result: {
   accepted: boolean;
 }
 ```
 
+The optional presentation is a partial running-state override. When present, `subject` must be non-empty and may contain line feeds but not carriage returns. Each detail text and metadata value is one line. Presentation objects are limited to 1 MiB; subjects and detail values to 256 KiB each; metadata values to 16 KiB each; and detail and metadata collections to 1,024 entries each.
+
+The host preserves explicit fields within those safety limits and supplies canonical display-truncated defaults for omitted fields. It owns the action and operation and records the resolved presentation. Empty detail or metadata arrays suppress those default fields. An accepted acknowledgement authorizes the client to begin execution.
+
 ### `session.clientTool.result`
 
-Completes an acknowledged call with model-visible content or an error.
+Completes a call with model-visible content or an error.
 
 ```ts
+type PresentationOverride = {
+  subject?: string;
+  subjectWrap?: "word" | "character";
+  details?: Array<{
+    text: string;
+    tone?: "added" | "removed";
+    wrap?: "word" | "character";
+  }>;
+  metadata?: string[];
+};
+
 params:
-  | { sessionId: string; callId: string; ok: true; content: string }
-  | { sessionId: string; callId: string; ok: false; error: string }
-result: { accepted: boolean }
+  | {
+      sessionId: string;
+      callId: string;
+      ok: true;
+      content: string;
+      presentation?: PresentationOverride;
+    }
+  | {
+      sessionId: string;
+      callId: string;
+      ok: false;
+      error: string;
+      presentation?: PresentationOverride;
+    };
+result: { accepted: boolean };
 ```
 
-`accepted: false` means the call was cancelled, timed out, detached, unknown, or already completed. Do not retry or send additional results for that call.
+The optional result presentation applies only to the reported terminal state and is resolved independently from the running presentation. The host preserves explicit fields unchanged after safety validation and supplies canonical display-truncated defaults for omitted fields. If no client result arrives, the host uses a complete fallback for timeout, cancellation, detach, or another terminal outcome.
+
+A successful result is accepted only after the host has accepted the acknowledgement. An error sent before acknowledgement records a preparation failure, such as an error from `describe`, without authorizing execution. An error sent afterward records an execution failure.
+
+`accepted: false` means the successful call was not yet authorized, or the call was cancelled, timed out, detached, unknown, or already completed. Do not retry or send additional results for that call.

@@ -5554,7 +5554,7 @@ describe("SessionChatController", () => {
     expect(spawn).toHaveBeenNthCalledWith(
       2,
       "afplay",
-      ["-r", "1.1", mktempPath],
+      ["-r", "1.15", mktempPath],
       expect.objectContaining({
         detached: true,
         killProcessGroup: true,

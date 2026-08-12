@@ -83,7 +83,7 @@ describe("telegram TTS", () => {
         "-safe",
         "1",
         "-filter:a",
-        "atempo=1.1",
+        "atempo=1.15",
         "-c:a",
         "libopus",
         "-application",

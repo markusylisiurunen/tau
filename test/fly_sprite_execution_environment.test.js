@@ -138,7 +138,7 @@ describe("Fly Sprite execution environment", () => {
     const sprite = createFakeSprite((request) => {
       requests.push(request);
       expect(request.method).toBe("exec");
-      return executionResult({ output: `${request.command}\n` });
+      return executionResult({ output: `${request.command.split("\n").at(-1)}\n` });
     });
     const backend = createFlySpriteToolExecutionBackend({
       sprite,
@@ -155,9 +155,13 @@ describe("Fly Sprite execution environment", () => {
     expect(sprite.calls).toHaveLength(1);
     expect(sprite.calls[0].command).toBe("node");
     expect(sprite.calls[0].options).toEqual({ cwd: "/home/sprite/repo" });
-    expect(requests.map((request) => request.command)).toEqual(["echo hello", "pwd"]);
+    expect(requests.map((request) => request.command)).toEqual([
+      expect.stringMatching(/\necho hello$/),
+      expect.stringMatching(/\npwd$/),
+    ]);
     expect(requests[0].env).toEqual({
       NO_COLOR: "1",
+      FORCE_COLOR: "0",
       TERM: "dumb",
       PAGER: "cat",
       GIT_TERMINAL_PROMPT: "0",

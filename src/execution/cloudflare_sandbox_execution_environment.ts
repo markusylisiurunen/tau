@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { dirname } from "node:path/posix";
 import {
+  applyBashCommand,
   applyBashEnvironment,
   applyCommandEnvironment,
   type BashExecutionResult,
@@ -316,7 +317,7 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
   };
 
   const runBash: ToolExecutionBackend["runBash"] = (command, runOptions = {}) =>
-    runCommand(["bash", "-lc", command, ...(runOptions.args ?? [])], {
+    runCommand(["bash", "-lc", applyBashCommand(command), ...(runOptions.args ?? [])], {
       ...runOptions,
       env: applyBashEnvironment(runOptions.env),
     });

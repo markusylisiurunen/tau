@@ -29,7 +29,18 @@ describe("LocalExecutionEnvironment", () => {
     const home = await mkdtemp(join(tmpdir(), "tau-local-bash-home-"));
     const repo = join(home, "repo");
     await mkdir(repo);
-    await writeFile(join(home, ".bash_profile"), "export TAU_LOGIN_PROFILE=loaded\n", "utf8");
+    await writeFile(
+      join(home, ".bash_profile"),
+      [
+        "export TAU_LOGIN_PROFILE=loaded",
+        "export NO_COLOR=0",
+        "export FORCE_COLOR=1",
+        "export TERM=xterm-256color",
+        "export PAGER=less",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
     const bashEnv = join(home, "bash-env");
     await writeFile(bashEnv, "export TAU_BASH_ENV=loaded\n", "utf8");
     const environment = new LocalExecutionEnvironment({
@@ -43,12 +54,17 @@ describe("LocalExecutionEnvironment", () => {
       const result = await environment
         .getToolExecutionBackend()
         .runBash(
-          'values=(one two); printf "%s|%s|%s|%s" "$TAU_LOGIN_PROFILE" "$TAU_BASH_ENV" "$HOME" "$PWD"',
+          'values=(one two); printf "%s|%s|%s|%s|%s|%s|%s|%s" "$TAU_LOGIN_PROFILE" "$TAU_BASH_ENV" "$HOME" "$PWD" "$NO_COLOR" "$FORCE_COLOR" "$TERM" "$PAGER"',
           { env: { HOME: "/tmp/overridden-home" } },
         );
 
-      expect(result.stdout).toBe(`loaded|loaded|${home}|${await realpath(repo)}`);
+      expect(result.stdout).toBe(`loaded|loaded|${home}|${await realpath(repo)}|1|0|dumb|cat`);
       expect(result.exitCode).toBe(0);
+
+      const explicitColor = await environment
+        .getToolExecutionBackend()
+        .runBash("FORCE_COLOR=1 node -e 'process.stdout.write(process.env.FORCE_COLOR)'");
+      expect(explicitColor.stdout).toBe("1");
     } finally {
       await rm(home, { recursive: true, force: true });
     }
@@ -110,13 +126,19 @@ describe("LocalExecutionEnvironment", () => {
       cwd: "subdir",
       timeoutMs: 1234,
       signal,
-      env: { VALUE: "set", NO_COLOR: "0", TERM: "xterm-256color", PAGER: "less" },
+      env: {
+        VALUE: "set",
+        NO_COLOR: "0",
+        FORCE_COLOR: "1",
+        TERM: "xterm-256color",
+        PAGER: "less",
+      },
     });
 
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatchObject({
       command: "bash",
-      args: ["-lc", "echo $VALUE"],
+      args: ["-lc", expect.stringMatching(/\necho \$VALUE$/)],
       options: {
         cwd: "/repo/subdir",
         detached: true,
@@ -129,6 +151,7 @@ describe("LocalExecutionEnvironment", () => {
     expect(calls[0].options.env).toMatchObject({
       VALUE: "set",
       NO_COLOR: "1",
+      FORCE_COLOR: "0",
       TERM: "dumb",
       PAGER: "cat",
       GIT_TERMINAL_PROMPT: "0",

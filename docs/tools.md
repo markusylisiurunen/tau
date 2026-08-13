@@ -91,7 +91,7 @@ Tau starts Bash with `-lc` and the execution environment's `HOME`. A login shell
 
 There is no TTY and assistant `bash` calls have no stdin. Commands that prompt, open an interactive editor, or require terminal control will hang until timeout or fail. Use non-interactive flags and pass a `workingDirectory` rather than relying on a previous `cd`.
 
-Tau sets `NO_COLOR=1`, `TERM=dumb`, and `PAGER=cat` for predictable non-interactive command output. It also forces Git into non-interactive mode: terminal prompts and askpass interaction are disabled, editors are replaced, pagers are disabled, and SSH uses batch mode. These fixed values override inherited and execution-environment values. Authentication therefore needs to be available non-interactively.
+Tau sets `NO_COLOR=1`, `FORCE_COLOR=0`, `TERM=dumb`, and `PAGER=cat` for predictable non-interactive command output. It also forces Git into non-interactive mode: terminal prompts and askpass interaction are disabled, editors are replaced, pagers are disabled, and SSH uses batch mode. These fixed values override inherited and execution-environment values after login startup. A command can still assign its own environment explicitly. Authentication therefore needs to be available non-interactively.
 
 The default timeout is 60 seconds. Tau captures at most 1 MiB of merged stdout and stderr, preserving the tail when raw capture overflows. The default model-facing result limit is roughly 8,192 estimated tokens. When output exceeds it, Tau returns a roughly 2,048-token middle preview and a gating notice. The command has already run and its side effects have already happened.
 

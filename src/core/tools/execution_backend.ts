@@ -67,6 +67,7 @@ export type ListDirResult = {
 
 export const BASH_ENVIRONMENT_OVERRIDES = {
   NO_COLOR: "1",
+  FORCE_COLOR: "0",
   TERM: "dumb",
   PAGER: "cat",
   GIT_TERMINAL_PROMPT: "0",
@@ -76,6 +77,14 @@ export const BASH_ENVIRONMENT_OVERRIDES = {
   GIT_ASKPASS: "true",
   GIT_SSH_COMMAND: "ssh -o BatchMode=yes",
 } as const;
+
+const BASH_ENVIRONMENT_EXPORTS = Object.entries(BASH_ENVIRONMENT_OVERRIDES)
+  .map(([key, value]) => `export ${key}='${value.replaceAll("'", "'\\''")}'`)
+  .join("\n");
+
+export function applyBashCommand(command: string): string {
+  return `${BASH_ENVIRONMENT_EXPORTS}\n${command}`;
+}
 
 export function applyCommandEnvironment(
   argv: string[],
@@ -130,21 +139,25 @@ export function createLocalToolExecutionBackend(
       options.timeoutMs > 0
         ? options.timeoutMs
         : undefined;
-    const result = await spawnCapture("bash", ["-lc", command, ...(options.args ?? [])], {
-      stdio: options.stdin === undefined ? ["ignore", "pipe", "pipe"] : ["pipe", "pipe", "pipe"],
-      env: resolveEnvironment(applyBashEnvironment(options.env)),
-      detached: true,
-      killProcessGroup: true,
-      cwd: resolveCwd(options.cwd),
-      signal: options.signal,
-      timeoutMs: effectiveTimeoutMs,
-      maxCaptureBytes: options.maxCaptureBytes ?? DEFAULT_COMMAND_CAPTURE_BYTES,
-      maxCaptureMode: "ignore",
-      maxCaptureStrategy: "tail",
-      captureOutput: "combined-and-split",
-      killGraceMs: COMMAND_KILL_GRACE_MS,
-      ...(options.stdin !== undefined ? { input: options.stdin } : {}),
-    });
+    const result = await spawnCapture(
+      "bash",
+      ["-lc", applyBashCommand(command), ...(options.args ?? [])],
+      {
+        stdio: options.stdin === undefined ? ["ignore", "pipe", "pipe"] : ["pipe", "pipe", "pipe"],
+        env: resolveEnvironment(applyBashEnvironment(options.env)),
+        detached: true,
+        killProcessGroup: true,
+        cwd: resolveCwd(options.cwd),
+        signal: options.signal,
+        timeoutMs: effectiveTimeoutMs,
+        maxCaptureBytes: options.maxCaptureBytes ?? DEFAULT_COMMAND_CAPTURE_BYTES,
+        maxCaptureMode: "ignore",
+        maxCaptureStrategy: "tail",
+        captureOutput: "combined-and-split",
+        killGraceMs: COMMAND_KILL_GRACE_MS,
+        ...(options.stdin !== undefined ? { input: options.stdin } : {}),
+      },
+    );
 
     let output = result.output ?? "";
     const stdout = result.stdout;

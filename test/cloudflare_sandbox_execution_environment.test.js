@@ -125,6 +125,7 @@ describe("Cloudflare Sandbox execution environment", () => {
         "env",
         "HOME=/home/sandbox",
         "NO_COLOR=1",
+        "FORCE_COLOR=0",
         "TERM=dumb",
         "PAGER=cat",
         "GIT_TERMINAL_PROMPT=0",
@@ -135,7 +136,7 @@ describe("Cloudflare Sandbox execution environment", () => {
         "GIT_SSH_COMMAND=ssh -o BatchMode=yes",
         "bash",
         "-lc",
-        "echo hello",
+        expect.stringMatching(/\necho hello$/),
         "arg-zero",
         "arg-one",
       ],
@@ -215,6 +216,7 @@ describe("Cloudflare Sandbox execution environment", () => {
     expect(command.argv).toEqual([
       "env",
       "NO_COLOR=1",
+      "FORCE_COLOR=0",
       "TERM=dumb",
       "PAGER=cat",
       "GIT_TERMINAL_PROMPT=0",
@@ -229,7 +231,7 @@ describe("Cloudflare Sandbox execution environment", () => {
       stdinPath,
       "bash",
       "-lc",
-      "cat",
+      expect.stringMatching(/\ncat$/),
     ]);
     expect(JSON.parse(execRequests[1].init.body).argv).toEqual(["rm", "-f", "--", stdinPath]);
   });
@@ -553,6 +555,7 @@ describe("Cloudflare Sandbox execution environment", () => {
       [
         "env",
         "NO_COLOR=1",
+        "FORCE_COLOR=0",
         "TERM=dumb",
         "PAGER=cat",
         "GIT_TERMINAL_PROMPT=0",
@@ -563,11 +566,12 @@ describe("Cloudflare Sandbox execution environment", () => {
         "GIT_SSH_COMMAND=ssh -o BatchMode=yes",
         "bash",
         "-lc",
-        "one",
+        expect.stringMatching(/\none$/),
       ],
       [
         "env",
         "NO_COLOR=1",
+        "FORCE_COLOR=0",
         "TERM=dumb",
         "PAGER=cat",
         "GIT_TERMINAL_PROMPT=0",
@@ -578,7 +582,7 @@ describe("Cloudflare Sandbox execution environment", () => {
         "GIT_SSH_COMMAND=ssh -o BatchMode=yes",
         "bash",
         "-lc",
-        'exec "$0" "$@"',
+        expect.stringMatching(/\nexec "\$0" "\$@"$/),
         "node",
         "-e",
         "process.stdout.write(process.argv[1])",

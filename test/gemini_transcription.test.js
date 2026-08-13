@@ -41,7 +41,7 @@ describe("gemini transcription", () => {
     expect(transcript).toBe("ship the fix");
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0][0]).toContain(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent",
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent",
     );
     expect(fetchMock.mock.calls[0][1].headers["x-goog-api-key"]).toBe("gemini-key");
 

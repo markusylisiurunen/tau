@@ -286,7 +286,7 @@ Mistral is the default provider. Configure credentials in the runner's normal Ta
 
 The environment variable wins for each speech provider. Audio without a usable key produces a user-facing error instead of entering a turn. See [credentials](credentials.md).
 
-`/tts_on` uses `gemini-3.6-flash`, `gemini-3.1-flash-tts-preview`, Despina, the Google key, and runner `ffmpeg` with Opus. Source and rewritten text each allow 10,000 Unicode characters; audio allows 32 MiB. Rewrite and job timeouts are one and five minutes. Jobs are ephemeral. Failure sends `voice response failed. please try again.` without affecting text; details stay in logs.
+`/tts_on` uses `gemini-3.7-flash`, `gemini-3.1-flash-tts-preview`, Despina, the Google key, and runner `ffmpeg` with Opus. Source and rewritten text each allow 10,000 Unicode characters; audio allows 32 MiB. Rewrite and job timeouts are one and five minutes. Jobs are ephemeral. Failure sends `voice response failed. please try again.` without affecting text; details stay in logs.
 
 ## Command client tools
 

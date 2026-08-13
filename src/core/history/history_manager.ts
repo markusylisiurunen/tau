@@ -1,5 +1,5 @@
 import { LocalHistoryStore } from "./local_history_store.js";
-import { RemoteHistoryClient } from "./remote_history_client.js";
+import { RemoteHistoryClient, RemoteHistoryError } from "./remote_history_client.js";
 import type {
   HistoryEntry,
   HistoryQuery,
@@ -10,8 +10,15 @@ import type {
 } from "./types.js";
 
 const REPLICATION_BATCH_SIZE = 10;
+const REPLICATION_LANE_BATCH_SIZE = 10;
 const REPLICATION_BATCH_BYTES = 6 * 1024 * 1024;
 const REPLICATION_TIMEOUT_MS = 15_000;
+const PERMANENT_REPLICATION_ERROR_CODES = new Set([
+  "immutable_conflict",
+  "invalid_request",
+  "not_found",
+  "request_too_large",
+]);
 
 export class HistoryManager {
   private readonly replicationRuns = new Map<string, Promise<void>>();
@@ -151,7 +158,9 @@ export class HistoryManager {
       }
     });
     this.replicationRuns.set(target.endpoint, run);
-    void run.catch(() => undefined);
+    void run.catch((error) => {
+      reportReplicationFailure({ endpoint: target.endpoint, error });
+    });
   }
 
   private async replicate(endpoint: string): Promise<void> {
@@ -161,14 +170,50 @@ export class HistoryManager {
     while (true) {
       const local = this.local;
       if (!local) return;
-      const pending = local.listPendingOperations(endpoint, REPLICATION_BATCH_SIZE);
-      if (pending.length === 0) return;
-      const batch = boundedReplicationBatch(pending);
-      await client.applyOperations(
-        batch.map((item) => item.operation),
-        AbortSignal.timeout(REPLICATION_TIMEOUT_MS),
+      const lanes = local.listPendingOperationLanes(
+        endpoint,
+        REPLICATION_LANE_BATCH_SIZE,
+        REPLICATION_BATCH_SIZE,
       );
-      local.acknowledgeOperations(batch.map((item) => item.rowId));
+      if (lanes.length === 0) return;
+      for (const pending of lanes) {
+        const batch = boundedReplicationBatch(pending);
+        const first = batch[0]?.operation;
+        if (!first) continue;
+        try {
+          await client.applyOperations(
+            batch.map((item) => item.operation),
+            AbortSignal.timeout(REPLICATION_TIMEOUT_MS),
+          );
+        } catch (error) {
+          if (isPermanentReplicationFailure(error)) {
+            local.quarantineReplicationSession({
+              endpoint,
+              sessionId: first.sessionId,
+              operationId: first.id,
+              code: error.code,
+              message: error.message,
+              failedAt: Date.now(),
+            });
+            reportReplicationFailure({
+              endpoint,
+              sessionId: first.sessionId,
+              operationId: first.id,
+              error,
+              quarantined: true,
+            });
+            continue;
+          }
+          reportReplicationFailure({
+            endpoint,
+            sessionId: first.sessionId,
+            operationId: first.id,
+            error,
+          });
+          return;
+        }
+        local.acknowledgeOperations(batch.map((item) => item.rowId));
+      }
     }
   }
 }
@@ -177,6 +222,43 @@ function formatFailureReason(error: unknown): string {
   if (error instanceof Error && error.message.trim()) return error.message.trim();
   const text = String(error).trim();
   return text || "unknown failure";
+}
+
+function isPermanentReplicationFailure(error: unknown): error is RemoteHistoryError & {
+  code: string;
+} {
+  return (
+    error instanceof RemoteHistoryError &&
+    error.status >= 400 &&
+    error.status < 500 &&
+    error.code !== undefined &&
+    PERMANENT_REPLICATION_ERROR_CODES.has(error.code)
+  );
+}
+
+function reportReplicationFailure(input: {
+  endpoint: string;
+  sessionId?: string;
+  operationId?: string;
+  error: unknown;
+  quarantined?: boolean;
+}): void {
+  const error = input.error;
+  console.error(
+    JSON.stringify({
+      event: "history_replication_failed",
+      endpoint: input.endpoint,
+      ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+      ...(input.operationId ? { operationId: input.operationId } : {}),
+      ...(input.quarantined ? { quarantined: true } : {}),
+      error: {
+        ...(error instanceof RemoteHistoryError
+          ? { status: error.status, ...(error.code ? { code: error.code } : {}) }
+          : {}),
+        message: formatFailureReason(error),
+      },
+    }),
+  );
 }
 
 function boundedReplicationBatch<T extends { operation: unknown }>(pending: T[]): T[] {

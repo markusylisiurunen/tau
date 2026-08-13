@@ -4,9 +4,13 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it, vi } from "vitest";
 import { resolveHistoryRemoteTarget } from "../dist/core/history/config.js";
+import { HistoryManager } from "../dist/core/history/history_manager.js";
 import { LocalHistoryStore } from "../dist/core/history/local_history_store.js";
 import { HISTORY_INITIAL_MIGRATION_SQL } from "../dist/core/history/migrations.js";
-import { RemoteHistoryClient } from "../dist/core/history/remote_history_client.js";
+import {
+  RemoteHistoryClient,
+  RemoteHistoryError,
+} from "../dist/core/history/remote_history_client.js";
 import { setupHistoryService } from "../dist/core/history/setup.js";
 import {
   assistantHistoryEntries,
@@ -585,6 +589,148 @@ describe("session history", () => {
     }
   });
 
+  it("backfills session lanes for existing replication outboxes", () => {
+    const root = mkdtempSync(join(tmpdir(), "tau-history-lanes-"));
+    const path = join(root, "history.sqlite");
+    const sqlite = new DatabaseSync(path);
+    try {
+      sqlite.exec(`
+        CREATE TABLE history_outbox (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          endpoint TEXT NOT NULL,
+          payload_json TEXT NOT NULL
+        );
+      `);
+      sqlite.prepare("INSERT INTO history_outbox (endpoint, payload_json) VALUES (?, ?)").run(
+        "https://history.example.com",
+        JSON.stringify({
+          id: "create-existing",
+          sessionId: "existing",
+          type: "create",
+          session: { sessionId: "existing", attributes: {}, createdAt: 1 },
+        }),
+      );
+    } finally {
+      sqlite.close();
+    }
+
+    const store = new LocalHistoryStore(path);
+    try {
+      expect(store.listPendingOperationLanes("https://history.example.com", 10, 10)).toMatchObject([
+        [{ operation: { id: "create-existing", sessionId: "existing" } }],
+      ]);
+    } finally {
+      store.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("isolates permanent replication failures to one session lane", async () => {
+    const store = new LocalHistoryStore(":memory:");
+    const history = new HistoryManager(store);
+    const remote = { endpoint: "https://history.example.com", apiKey: "secret" };
+    const requests = [];
+    const fetchMock = vi.fn(async (_url, init) => {
+      const operations = JSON.parse(init.body).operations;
+      requests.push(operations);
+      expect(new Set(operations.map((operation) => operation.sessionId)).size).toBe(1);
+      if (operations[0].sessionId === "conflicting") {
+        return Response.json(
+          {
+            error: {
+              code: "immutable_conflict",
+              message: "session 'conflicting' has conflicting immutable data",
+            },
+          },
+          { status: 409 },
+        );
+      }
+      return Response.json({ applied: operations.length });
+    });
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      history.registerSession(
+        { sessionId: "conflicting", attributes: { source: "test" }, createdAt: 1 },
+        remote,
+      );
+      history.append(
+        "conflicting",
+        [createTextEntry("conflicting-entry", "user", "conflicting", 2)],
+        remote,
+      );
+      history.registerSession(
+        { sessionId: "healthy", attributes: { source: "test" }, createdAt: 3 },
+        remote,
+      );
+      history.append("healthy", [createTextEntry("healthy-entry", "user", "healthy", 4)], remote);
+
+      await history.flush();
+
+      expect(requests.some((operations) => operations[0].sessionId === "healthy")).toBe(true);
+      expect(
+        store.listPendingOperations(remote.endpoint, 20).map((item) => item.operation.sessionId),
+      ).toEqual(["conflicting", "conflicting"]);
+      expect(store.listReplicationFailures(remote.endpoint)).toMatchObject([
+        {
+          sessionId: "conflicting",
+          operationId: expect.any(String),
+          code: "immutable_conflict",
+          message: "session 'conflicting' has conflicting immutable data",
+        },
+      ]);
+      expect(JSON.parse(errorLog.mock.calls[0][0])).toMatchObject({
+        event: "history_replication_failed",
+        endpoint: remote.endpoint,
+        sessionId: "conflicting",
+        quarantined: true,
+        error: { status: 409, code: "immutable_conflict" },
+      });
+    } finally {
+      await history.flush();
+      history.close();
+      vi.unstubAllGlobals();
+      errorLog.mockRestore();
+    }
+  });
+
+  it("keeps endpoint failures retryable without quarantining a session", async () => {
+    const store = new LocalHistoryStore(":memory:");
+    const history = new HistoryManager(store);
+    const remote = { endpoint: "https://history.example.com", apiKey: "secret" };
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json(
+          { error: { code: "internal_error", message: "Internal server error" } },
+          { status: 503 },
+        ),
+      ),
+    );
+
+    try {
+      history.registerSession(
+        { sessionId: "retryable", attributes: { source: "test" }, createdAt: 1 },
+        remote,
+      );
+      await history.flush();
+
+      expect(store.listPendingOperations(remote.endpoint, 10)).toHaveLength(1);
+      expect(store.listReplicationFailures(remote.endpoint)).toEqual([]);
+      expect(JSON.parse(errorLog.mock.calls[0][0])).toMatchObject({
+        event: "history_replication_failed",
+        sessionId: "retryable",
+        error: { status: 503, code: "internal_error" },
+      });
+    } finally {
+      history.close();
+      vi.unstubAllGlobals();
+      errorLog.mockRestore();
+    }
+  });
+
   it("keeps full local entries while bounding remote replication by entry and operation bytes", async () => {
     const store = new LocalHistoryStore(":memory:");
     const remote = { endpoint: "https://history.example.com", apiKey: "secret" };
@@ -657,6 +803,40 @@ describe("session history", () => {
     } finally {
       store.close();
     }
+  });
+
+  it("preserves structured errors returned by the remote history service", async () => {
+    const client = new RemoteHistoryClient(
+      { endpoint: "https://history.example.com", apiKey: "secret" },
+      async () =>
+        Response.json(
+          {
+            error: {
+              code: "immutable_conflict",
+              message: "session metadata conflicts",
+            },
+          },
+          { status: 409 },
+        ),
+    );
+
+    const error = await client
+      .applyOperations([
+        {
+          id: "create-conflict",
+          sessionId: "conflict",
+          type: "create",
+          session: { sessionId: "conflict", attributes: {}, createdAt: 1 },
+        },
+      ])
+      .catch((caught) => caught);
+
+    expect(error).toBeInstanceOf(RemoteHistoryError);
+    expect(error).toMatchObject({
+      status: 409,
+      code: "immutable_conflict",
+      message: "session metadata conflicts",
+    });
   });
 
   it("paginates remote reads by payload bytes and requested entry count", () => {

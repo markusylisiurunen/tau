@@ -132,7 +132,7 @@ Recovery discards supervised agents and agent-owned presentation because child p
 
 Effective system instructions are the first committed message. Snapshot user text is raw recoverable Tau session text. Strip Tau metadata before model calls and display, and hide leading exact `<system>...</system>\n` blocks only in user-message display projection. Do not apply user projection to assistant, tool-result, or protocol system messages.
 
-Searchable history is a separate flat transcript of committed user entries, assistant text, and completed tools. Rewind truncates it; compaction does not. Remote replication proceeds asynchronously from the durable local outbox. History is not sufficient to recover session state. See `docs/sessions.md`, `docs/history.md`, and tests under `test/history.test.js` and `test/local_session_host.test.js`.
+Searchable history is a separate flat transcript of committed user entries, assistant text, and completed tools. Rewind truncates it; compaction does not. Remote replication proceeds asynchronously from the durable local outbox, preserves per-session order, and quarantines permanent failures by session so one poisoned lane cannot block unrelated histories. History is not sufficient to recover session state. See `docs/sessions.md`, `docs/history.md`, and tests under `test/history.test.js` and `test/local_session_host.test.js`.
 
 Themes are client-local and never belong in a snapshot. Prompt catalogs contain metadata only; prompt bodies resolve lazily through the execution environment. Path autocomplete is also lazy and must not become persisted session state.
 

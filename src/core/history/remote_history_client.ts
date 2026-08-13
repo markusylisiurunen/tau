@@ -12,6 +12,17 @@ import type {
 
 const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 
+export class RemoteHistoryError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string | undefined,
+    message: string,
+  ) {
+    super(message);
+    this.name = "RemoteHistoryError";
+  }
+}
+
 const digestSchema = z
   .object({
     title: z.string(),
@@ -129,17 +140,23 @@ export class RemoteHistoryClient implements HistoryQuery {
       throw new Error("History service returned a non-JSON response");
     }
     if (!response.ok) {
-      const message =
+      const remoteError =
         typeof value === "object" &&
         value !== null &&
         "error" in value &&
         typeof value.error === "object" &&
-        value.error !== null &&
-        "message" in value.error &&
-        typeof value.error.message === "string"
-          ? value.error.message
+        value.error !== null
+          ? value.error
+          : undefined;
+      const code =
+        remoteError && "code" in remoteError && typeof remoteError.code === "string"
+          ? remoteError.code
+          : undefined;
+      const message =
+        remoteError && "message" in remoteError && typeof remoteError.message === "string"
+          ? remoteError.message
           : `History service request failed with HTTP ${response.status}`;
-      throw new Error(message);
+      throw new RemoteHistoryError(response.status, code, message);
     }
     return value;
   }

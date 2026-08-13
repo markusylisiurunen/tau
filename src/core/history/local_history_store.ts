@@ -24,9 +24,18 @@ const MAX_SEARCH_SNIPPETS = 3;
 type SqlValue = string | number | null;
 type SqlRow = Record<string, SqlValue>;
 
-type PendingReplicationOperation = {
+export type PendingReplicationOperation = {
   rowId: number;
   operation: HistoryReplicationOperation;
+};
+
+export type HistoryReplicationFailure = {
+  endpoint: string;
+  sessionId: string;
+  operationId: string;
+  code: string;
+  message: string;
+  failedAt: number;
 };
 
 export function getDefaultHistoryDatabasePath(homeDir?: string): string {
@@ -310,6 +319,78 @@ export class LocalHistoryStore {
       .run(...rowIds);
   }
 
+  listPendingOperationLanes(
+    endpoint: string,
+    laneLimit: number,
+    operationLimit: number,
+  ): PendingReplicationOperation[][] {
+    const lanes = this.database
+      .prepare(
+        `SELECT o.session_id
+         FROM history_outbox o
+         WHERE o.endpoint = ?
+           AND NOT EXISTS (
+             SELECT 1 FROM history_replication_failures f
+             WHERE f.endpoint = o.endpoint AND f.session_id = o.session_id
+           )
+         GROUP BY o.session_id
+         ORDER BY MIN(o.id)
+         LIMIT ?`,
+      )
+      .all(endpoint, laneLimit) as SqlRow[];
+    const selectOperations = this.database.prepare(
+      "SELECT id, payload_json FROM history_outbox WHERE endpoint = ? AND session_id = ? ORDER BY id LIMIT ?",
+    );
+    return lanes.map((lane) =>
+      (selectOperations.all(endpoint, String(lane.session_id), operationLimit) as SqlRow[]).map(
+        (row) => ({
+          rowId: Number(row.id),
+          operation: JSON.parse(String(row.payload_json)) as HistoryReplicationOperation,
+        }),
+      ),
+    );
+  }
+
+  quarantineReplicationSession(failure: HistoryReplicationFailure): void {
+    this.database
+      .prepare(
+        `INSERT INTO history_replication_failures
+           (endpoint, session_id, operation_id, code, message, failed_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(endpoint, session_id) DO UPDATE SET
+           operation_id = excluded.operation_id,
+           code = excluded.code,
+           message = excluded.message,
+           failed_at = excluded.failed_at`,
+      )
+      .run(
+        failure.endpoint,
+        failure.sessionId,
+        failure.operationId,
+        failure.code,
+        failure.message,
+        failure.failedAt,
+      );
+  }
+
+  listReplicationFailures(endpoint: string): HistoryReplicationFailure[] {
+    return (
+      this.database
+        .prepare(
+          `SELECT endpoint, session_id, operation_id, code, message, failed_at
+           FROM history_replication_failures WHERE endpoint = ? ORDER BY failed_at, session_id`,
+        )
+        .all(endpoint) as SqlRow[]
+    ).map((row) => ({
+      endpoint: String(row.endpoint),
+      sessionId: String(row.session_id),
+      operationId: String(row.operation_id),
+      code: String(row.code),
+      message: String(row.message),
+      failedAt: Number(row.failed_at),
+    }));
+  }
+
   private initialize(): void {
     this.database.exec(`
       PRAGMA journal_mode = WAL;
@@ -364,10 +445,42 @@ export class LocalHistoryStore {
       CREATE TABLE IF NOT EXISTS history_outbox (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         endpoint TEXT NOT NULL,
+        session_id TEXT NOT NULL,
         payload_json TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS history_outbox_target ON history_outbox(endpoint, id);
+      CREATE TABLE IF NOT EXISTS history_replication_failures (
+        endpoint TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        operation_id TEXT NOT NULL,
+        code TEXT NOT NULL,
+        message TEXT NOT NULL,
+        failed_at INTEGER NOT NULL,
+        PRIMARY KEY (endpoint, session_id)
+      );
     `);
+    const outboxColumns = new Set(
+      (this.database.prepare("PRAGMA table_info(history_outbox)").all() as SqlRow[]).map((row) =>
+        String(row.name),
+      ),
+    );
+    if (!outboxColumns.has("session_id")) {
+      this.transaction(() => {
+        this.database.exec("ALTER TABLE history_outbox ADD COLUMN session_id TEXT");
+        this.database.exec(
+          "UPDATE history_outbox SET session_id = json_extract(payload_json, '$.sessionId')",
+        );
+      });
+    }
+    const missingSessionId = this.database
+      .prepare("SELECT 1 AS found FROM history_outbox WHERE session_id IS NULL LIMIT 1")
+      .get();
+    if (missingSessionId) {
+      throw new Error("history outbox contains an operation without a session ID");
+    }
+    this.database.exec(
+      "CREATE INDEX IF NOT EXISTS history_outbox_lanes ON history_outbox(endpoint, session_id, id)",
+    );
   }
 
   private requireSession(sessionId: string): void {
@@ -379,8 +492,8 @@ export class LocalHistoryStore {
 
   private enqueue(endpoint: string, operation: HistoryReplicationOperation): void {
     this.database
-      .prepare("INSERT INTO history_outbox (endpoint, payload_json) VALUES (?, ?)")
-      .run(endpoint, JSON.stringify(operation));
+      .prepare("INSERT INTO history_outbox (endpoint, session_id, payload_json) VALUES (?, ?, ?)")
+      .run(endpoint, operation.sessionId, JSON.stringify(operation));
   }
 
   private transaction<T>(handler: () => T): T {

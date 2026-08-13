@@ -839,6 +839,39 @@ describe("session history", () => {
     });
   });
 
+  it("bounds structured remote error fields by UTF-8 bytes", async () => {
+    const client = new RemoteHistoryClient(
+      { endpoint: "https://history.example.com", apiKey: "secret" },
+      async () =>
+        Response.json(
+          {
+            error: {
+              code: "é".repeat(100),
+              message: "🙂".repeat(2000),
+            },
+          },
+          { status: 400 },
+        ),
+    );
+
+    const error = await client
+      .applyOperations([
+        {
+          id: "create-invalid",
+          sessionId: "invalid",
+          type: "create",
+          session: { sessionId: "invalid", attributes: {}, createdAt: 1 },
+        },
+      ])
+      .catch((caught) => caught);
+
+    expect(error).toBeInstanceOf(RemoteHistoryError);
+    expect(Buffer.byteLength(error.code, "utf8")).toBe(128);
+    expect(Buffer.byteLength(error.message, "utf8")).toBe(4096);
+    expect(error.code).toBe("é".repeat(64));
+    expect(error.message).toBe("🙂".repeat(1024));
+  });
+
   it("paginates remote reads by payload bytes and requested entry count", () => {
     expect(
       selectHistoryReadPage(

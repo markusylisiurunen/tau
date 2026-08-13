@@ -335,6 +335,39 @@ describe("config paths", () => {
     }
   });
 
+  it("rejects credentials in remote history endpoints", () => {
+    const fx = setupFixture();
+
+    try {
+      const repo = join(fx.home, "repo");
+      const configPath = join(fx.home, ".config", "tau", "config.json");
+      mkdirSync(repo, { recursive: true });
+      mkdirSync(join(fx.home, ".config", "tau"), { recursive: true });
+      writeFileSync(
+        configPath,
+        JSON.stringify({
+          history: {
+            endpoint: "https://user:secret@history.example.com",
+            apiKey: "history-key",
+          },
+        }),
+      );
+
+      const deps = createConfigDeps({ cwd: repo, home: fx.home, env: {} });
+      const levels = resolveConfigLevels(deps, { cwd: repo });
+      const modelResolver = loadModelResolver({ deps, levels });
+      const result = loadConfigWithDiagnostics(deps, { levels, modelResolver });
+
+      expect(result.config.history).toBeUndefined();
+      expect(result.errors).toEqual([
+        `${configPath}: history.endpoint must be an HTTP(S) URL without credentials, a query, or a hash.`,
+      ]);
+      expect(result.errors.join("\n")).not.toContain("secret");
+    } finally {
+      fx.cleanup();
+    }
+  });
+
   it("merges api keys for arbitrary providers", () => {
     const fx = setupFixture();
 

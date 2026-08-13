@@ -99,7 +99,7 @@ Remote history is accepted only in the host's eligible global Tau config, normal
 }
 ```
 
-`endpoint` must be an HTTP or HTTPS URL without a query or hash. Tau removes trailing slashes. The API key resolves on the host in this order:
+`endpoint` must be an HTTP or HTTPS URL without credentials, a query, or a hash. Tau removes trailing slashes. The API key resolves on the host in this order:
 
 1. `TAU_HISTORY_API_KEY`
 2. the host environment variable named by `history.apiKeyEnv`

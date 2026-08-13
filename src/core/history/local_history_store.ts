@@ -466,6 +466,12 @@ export class LocalHistoryStore {
     );
     if (!outboxColumns.has("session_id")) {
       this.transaction(() => {
+        const lockedOutboxColumns = new Set(
+          (this.database.prepare("PRAGMA table_info(history_outbox)").all() as SqlRow[]).map(
+            (row) => String(row.name),
+          ),
+        );
+        if (lockedOutboxColumns.has("session_id")) return;
         this.database.exec("ALTER TABLE history_outbox ADD COLUMN session_id TEXT");
         this.database.exec(
           "UPDATE history_outbox SET session_id = json_extract(payload_json, '$.sessionId')",

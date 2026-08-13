@@ -756,13 +756,21 @@ function parseHistoryConfig(
   let endpoint: string;
   try {
     const url = new URL(parsed.data.endpoint);
-    if ((url.protocol !== "https:" && url.protocol !== "http:") || url.search || url.hash) {
+    if (
+      (url.protocol !== "https:" && url.protocol !== "http:") ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash
+    ) {
       throw new Error();
     }
     endpoint = url.toString().replace(/\/+$/, "");
   } catch {
     return {
-      errors: [`${sourceLabel}: history.endpoint must be an HTTP(S) URL without a query or hash.`],
+      errors: [
+        `${sourceLabel}: history.endpoint must be an HTTP(S) URL without credentials, a query, or a hash.`,
+      ],
     };
   }
 

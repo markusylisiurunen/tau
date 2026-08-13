@@ -11,6 +11,8 @@ import type {
 } from "./types.js";
 
 const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
+const MAX_ERROR_CODE_BYTES = 128;
+const MAX_ERROR_MESSAGE_BYTES = 4096;
 
 export class RemoteHistoryError extends Error {
   constructor(
@@ -150,16 +152,29 @@ export class RemoteHistoryClient implements HistoryQuery {
           : undefined;
       const code =
         remoteError && "code" in remoteError && typeof remoteError.code === "string"
-          ? remoteError.code
+          ? boundUtf8(remoteError.code, MAX_ERROR_CODE_BYTES)
           : undefined;
       const message =
         remoteError && "message" in remoteError && typeof remoteError.message === "string"
-          ? remoteError.message
+          ? boundUtf8(remoteError.message, MAX_ERROR_MESSAGE_BYTES)
           : `History service request failed with HTTP ${response.status}`;
       throw new RemoteHistoryError(response.status, code, message);
     }
     return value;
   }
+}
+
+function boundUtf8(value: string, maxBytes: number): string {
+  if (Buffer.byteLength(value, "utf8") <= maxBytes) return value;
+  let result = "";
+  let bytes = 0;
+  for (const character of value) {
+    const characterBytes = Buffer.byteLength(character, "utf8");
+    if (bytes + characterBytes > maxBytes) break;
+    result += character;
+    bytes += characterBytes;
+  }
+  return result;
 }
 
 async function readBoundedResponse(response: Response): Promise<string> {

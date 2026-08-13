@@ -1,6 +1,7 @@
 import { StringDecoder } from "node:string_decoder";
 import { type Sprite, SpritesClient } from "@fly/sprites";
 import {
+  applyBashCommand,
   applyBashEnvironment,
   type BashExecutionResult,
   DEFAULT_COMMAND_CAPTURE_BYTES,
@@ -136,7 +137,7 @@ export function createFlySpriteToolExecutionBackend(options: {
     await worker.request(
       "exec",
       {
-        command,
+        command: applyBashCommand(command),
         args: runOptions.args,
         stdinBase64: runOptions.stdin?.toString("base64"),
         cwd: runOptions.cwd ?? options.cwd,

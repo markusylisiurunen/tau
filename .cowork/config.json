@@ -1,0 +1,6 @@
+{
+  "workflows": {
+    "issue-plan": { "reasoning": "medium" },
+    "pull-request-explain": { "reasoning": "medium" }
+  }
+}

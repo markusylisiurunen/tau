@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { transcribeGeminiAudio } from "../dist/core/utils/gemini_transcription.js";
 
 describe("gemini transcription", () => {
-  it("transcribes audio with minimal thinking", async () => {
+  it("transcribes audio with low thinking", async () => {
     const fetchMock = vi.fn(
       async () =>
         new Response(
@@ -88,6 +88,6 @@ describe("gemini transcription", () => {
       },
       required: ["transcription"],
     });
-    expect(request.generationConfig.thinkingConfig.thinkingLevel).toBe("minimal");
+    expect(request.generationConfig.thinkingConfig.thinkingLevel).toBe("low");
   });
 });

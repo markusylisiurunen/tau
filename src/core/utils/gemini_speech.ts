@@ -3,7 +3,7 @@ import { z } from "zod";
 const GEMINI_GENERATE_CONTENT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 export const GEMINI_SPEECH_PLAYBACK_RATE = 1.15;
 const DEFAULT_GEMINI_SPEECH_REWRITE_MODEL = "gemini-3.7-flash";
-const DEFAULT_GEMINI_SPEECH_REWRITE_THINKING_LEVEL = "minimal";
+const DEFAULT_GEMINI_SPEECH_REWRITE_THINKING_LEVEL = "low";
 const DEFAULT_GEMINI_SPEECH_TTS_MODEL = "gemini-3.1-flash-tts-preview";
 const DEFAULT_GEMINI_TTS_VOICE_NAME = "Despina";
 const DEFAULT_TTS_SAMPLE_RATE_HZ = 24000;

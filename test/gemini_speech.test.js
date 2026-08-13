@@ -108,7 +108,7 @@ describe("gemini speech", () => {
       'gemini_speech.ts:372` → "gemini_speech.ts, line 372"',
     );
     expect(rewriteRequest.contents[0].parts[0].text).toContain('compaction.ts` → "compaction.ts"');
-    expect(rewriteRequest.generationConfig.thinkingConfig.thinkingLevel).toBe("minimal");
+    expect(rewriteRequest.generationConfig.thinkingConfig.thinkingLevel).toBe("low");
 
     const ttsRequest = JSON.parse(fetchMock.mock.calls[1][1].body);
     expect(ttsRequest.generationConfig.responseModalities).toEqual(["AUDIO"]);

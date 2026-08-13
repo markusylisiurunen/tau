@@ -3,7 +3,7 @@ import { formatSpeechToTextContext, type SpeechToTextContext } from "./speech_to
 
 const GEMINI_GENERATE_CONTENT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 const DEFAULT_GEMINI_TRANSCRIPTION_MODEL = "gemini-3.7-flash";
-const DEFAULT_GEMINI_TRANSCRIPTION_THINKING_LEVEL = "minimal";
+const DEFAULT_GEMINI_TRANSCRIPTION_THINKING_LEVEL = "low";
 const DEFAULT_GEMINI_AUDIO_MIME_TYPE = "audio/wav";
 
 const errorPayloadSchema = z.object({

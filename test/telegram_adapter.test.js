@@ -2306,7 +2306,7 @@ describe("telegram adapter", () => {
       const request = JSON.parse(geminiFetch.mock.calls[0][1].body);
       expect(request.generationConfig.responseMimeType).toBe("application/json");
       expect(request.generationConfig.responseSchema.required).toEqual(["transcription"]);
-      expect(request.generationConfig.thinkingConfig.thinkingLevel).toBe("minimal");
+      expect(request.generationConfig.thinkingConfig.thinkingLevel).toBe("low");
       expect(request.contents[0].parts[1].inlineData.mimeType).toBe("audio/ogg");
     } finally {
       await adapter.close();

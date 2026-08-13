@@ -157,6 +157,9 @@ describe("Fly Sprite execution environment", () => {
     expect(sprite.calls[0].options).toEqual({ cwd: "/home/sprite/repo" });
     expect(requests.map((request) => request.command)).toEqual(["echo hello", "pwd"]);
     expect(requests[0].env).toEqual({
+      NO_COLOR: "1",
+      TERM: "dumb",
+      PAGER: "cat",
       GIT_TERMINAL_PROMPT: "0",
       GIT_EDITOR: "true",
       GIT_SEQUENCE_EDITOR: "true",

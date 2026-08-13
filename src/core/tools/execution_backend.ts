@@ -65,7 +65,10 @@ export type ListDirResult = {
   entries: ListDirEntry[];
 };
 
-export const NONINTERACTIVE_GIT_ENV = {
+export const BASH_ENVIRONMENT_OVERRIDES = {
+  NO_COLOR: "1",
+  TERM: "dumb",
+  PAGER: "cat",
   GIT_TERMINAL_PROMPT: "0",
   GIT_EDITOR: "true",
   GIT_SEQUENCE_EDITOR: "true",
@@ -87,7 +90,7 @@ export function applyCommandEnvironment(
 export function applyBashEnvironment(
   env: Record<string, string> | undefined,
 ): Record<string, string> {
-  return { ...env, ...NONINTERACTIVE_GIT_ENV };
+  return { ...env, ...BASH_ENVIRONMENT_OVERRIDES };
 }
 
 export interface ToolExecutionBackend {

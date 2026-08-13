@@ -110,7 +110,7 @@ describe("LocalExecutionEnvironment", () => {
       cwd: "subdir",
       timeoutMs: 1234,
       signal,
-      env: { VALUE: "set" },
+      env: { VALUE: "set", NO_COLOR: "0", TERM: "xterm-256color", PAGER: "less" },
     });
 
     expect(calls).toHaveLength(1);
@@ -126,7 +126,13 @@ describe("LocalExecutionEnvironment", () => {
         stdio: ["ignore", "pipe", "pipe"],
       },
     });
-    expect(calls[0].options.env).toMatchObject({ VALUE: "set", GIT_TERMINAL_PROMPT: "0" });
+    expect(calls[0].options.env).toMatchObject({
+      VALUE: "set",
+      NO_COLOR: "1",
+      TERM: "dumb",
+      PAGER: "cat",
+      GIT_TERMINAL_PROMPT: "0",
+    });
   });
 
   it("scopes explicit environment variables without filtering sensitive names", async () => {

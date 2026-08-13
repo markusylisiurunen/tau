@@ -222,7 +222,7 @@ A global-only remote history target:
 
 | Nested field | Type | Required | Contract |
 | --- | --- | --- | --- |
-| `endpoint` | Non-empty string | Yes | HTTP(S) URL with no query or fragment |
+| `endpoint` | Non-empty string | Yes | HTTP(S) URL with no credentials, query, or fragment |
 | `apiKey` | Non-empty string | No | Inline service API key |
 | `apiKeyEnv` | Non-empty string | No | Host environment variable containing the key |
 

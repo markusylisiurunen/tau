@@ -99,7 +99,7 @@ Remote history is accepted only in the host's eligible global Tau config, normal
 }
 ```
 
-`endpoint` must be an HTTP or HTTPS URL without a query or hash. Tau removes trailing slashes. The API key resolves on the host in this order:
+`endpoint` must be an HTTP or HTTPS URL without credentials, a query, or a hash. Tau removes trailing slashes. The API key resolves on the host in this order:
 
 1. `TAU_HISTORY_API_KEY`
 2. the host environment variable named by `history.apiKeyEnv`
@@ -118,7 +118,9 @@ Remote replication is local-first:
 3. The host sends pending operations to the configured endpoint asynchronously.
 4. Successful acknowledgements remove those operations from the outbox.
 
-A service outage does not block session execution or local transcript capture. Pending operations remain durable and are retried when replication is scheduled again, including after host restart or later history activity. The remote service applies operations idempotently and in order.
+A service outage does not block session execution or local transcript capture. Pending operations remain durable and are retried when replication is scheduled again, including after host restart or later history activity. The remote service applies operations idempotently. Tau preserves operation order within each session while processing separate session lanes independently.
+
+A permanent operation-domain rejection, such as conflicting immutable session metadata, quarantines only that session's replication lane. Its pending operations and diagnostic remain in local SQLite, later operations for that session stay blocked, and unrelated sessions continue replicating. Transient transport, authentication, rate-limit, and service failures do not quarantine a lane; they leave endpoint replication pending for a later retry. Both kinds of failure produce a structured `history_replication_failed` host log without exposing the API key.
 
 Local entries retain their complete captured payloads. For remote replication, an entry larger than 1 MiB keeps its identity and metadata but middle-truncates oversized content, arguments, or results with an explicit marker. Remote history is therefore useful for retrieval, but the host's local entry can contain details that the shared copy intentionally omits.
 
@@ -144,7 +146,7 @@ Cloudflare operational failures are visible through normal Worker logs, Cron Eve
 
 **The history tool returns a service error while the session still works.** Remote queries and asynchronous replication can fail independently of session execution. Check endpoint reachability and Worker logs without printing the bearer key. Local capture should continue unless the session also contains a `history unavailable` warning.
 
-**A session does not appear in remote search.** Confirm that the host was restarted with the global remote config, that the session was opened while that target was active, and that later history activity has had a chance to flush the durable outbox. Do not assume remote digests are immediate.
+**A session does not appear in remote search.** Confirm that the host was restarted with the global remote config, that the session was opened while that target was active, and that later history activity has had a chance to flush the durable outbox. Check host logs for `history_replication_failed`; a quarantined failure affects only the named session, while an unquarantined endpoint failure remains retryable. Do not assume remote digests are immediate.
 
 **Local history became unavailable.** Check host-side filesystem access, free space, and ownership for `~/.config/tau`. Restarting is required to reopen a manager disabled by an earlier local failure.
 

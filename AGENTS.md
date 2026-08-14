@@ -234,6 +234,13 @@ npm ci
 (cd src/diff_tool/app && npm ci)
 ```
 
+When upgrading dependencies:
+
+- Check both `package.json` files and update their lockfiles. Include compatible transitive lockfile updates and review `npm audit`; do not override versions owned by an upstream package.
+- Keep `@types/node` on Tau's supported installed Node LTS major rather than blindly taking the newest major.
+- For `pi-ai` or `pi-tui`, review the release changelog and exported API changes in the refreshed `references/repos/pi` checkout, then verify Tau's imports and behavior.
+- For `ses`, verify code mode and its sandbox assets. Also update version-coupled configuration such as the Biome schema and `allowScripts` package keys when applicable.
+
 Run verification in this order:
 
 ```sh

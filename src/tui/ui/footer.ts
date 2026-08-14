@@ -174,14 +174,14 @@ export class FooterComponent implements Component {
     const activityStyle = this.working || isCompleting ? palette.brandAccent : palette.textDim;
     const icon = activityStyle(iconChar);
     const iconWidth = visibleWidth(iconChar);
-    const availableWidth = Math.max(0, width - iconWidth - 3);
-    const goalStatus = this.working && this.status?.pursuingGoal ? "pursuing goal" : "";
-    const rawText = goalStatus || this.buildStatusLine(availableWidth);
-    const style = goalStatus ? activityStyle : palette.textDim;
-    const text = truncateFromEndByWidth(rawText, availableWidth);
+    const goalStatus = this.working && this.status?.pursuingGoal ? "goal" : "";
+    const goalPrefix = goalStatus ? `${activityStyle(goalStatus)} ${palette.textDim("·")} ` : "";
+    const goalPrefixWidth = goalStatus ? visibleWidth(goalStatus) + 3 : 0;
+    const availableWidth = Math.max(0, width - iconWidth - goalPrefixWidth - 3);
+    const text = truncateFromEndByWidth(this.buildStatusLine(availableWidth), availableWidth);
     const padding = " ".repeat(Math.max(0, availableWidth - visibleWidth(text)));
 
-    return [` ${icon} ${style(text)}${padding} `];
+    return [` ${icon} ${goalPrefix}${palette.textDim(text)}${padding} `];
   }
 
   private syncAnimation(): void {

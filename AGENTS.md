@@ -56,6 +56,8 @@ Treat the client, host, and execution environment as separate logical machines e
 - The execution environment is the agent's machine. It owns every agent-visible path, `cwd`, home, repository, project configuration and content, `AGENTS.md`, skills, model overlays, platform, Node version, `PATH`, filesystem operation, and command.
 - The Telegram runner owns Telegram polling, routing, attachments, prepared workspaces, outbound messages, and runner-specific persisted state. It is a client of local in-process sessions.
 
+Temporary storage follows the same ownership boundary. Client, host, and runner code derives process-local temporary paths from `node:os` `tmpdir()` instead of hard-coding `/tmp`. Target-owned temporary paths come from target capabilities or a documented adapter contract, never from the caller's local temporary directory.
+
 Outside narrow pre-creation metadata obtained by a client from an environment it directly manages, client and host filesystem APIs must not inspect execution-environment paths. Session creation attributes are complete, authoritative client input. The host and stores do not infer or normalize them. All agent-visible access must cross `ExecutionEnvironment` and `ToolExecutionBackend`, even for a local session. Physical co-location must not create a second runtime path.
 
 The boundary contracts are in `src/execution/execution_environment.ts` and `src/core/tools/execution_backend.ts`. Host integration is in `src/host/`, and ownership behavior is covered by `test/local_execution_environment.test.js`, hosted-environment tests, and `test/local_session_host.test.js`.

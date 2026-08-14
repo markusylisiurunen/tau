@@ -285,7 +285,7 @@ OpenAI is the default. Select another provider with `speechToText.provider`. Run
 - Gemini: `GEMINI_API_KEY`, then `apiKeys.google`
 - OpenAI: `OPENAI_API_KEY`, then `apiKeys.openai`
 
-OpenAI uses `gpt-live-transcribe` and runner-side `ffmpeg`. Missing keys reject the audio. See [credentials](credentials.md).
+OpenAI normalizes downloaded audio with runner-side `ffmpeg` and uploads it to `gpt-transcribe`. Missing keys reject the audio. See [credentials](credentials.md).
 
 `/tts_on` uses `gemini-3.7-flash`, `gemini-3.1-flash-tts-preview`, Despina, the Google key, and runner `ffmpeg` with Opus. Source and rewritten text each allow 10,000 Unicode characters; audio allows 32 MiB. Rewrite and job timeouts are one and five minutes. Jobs are ephemeral. Failure sends `voice response failed. please try again.` without affecting text; details stay in logs.
 

@@ -1,5 +1,7 @@
 import type { ChildProcess } from "node:child_process";
 import { readFile, unlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   type Config,
   getGoogleApiKey,
@@ -12,12 +14,12 @@ import type { SpawnCaptureResult } from "../core/utils/spawn_capture.js";
 import {
   createSpeechToTextTranscription,
   type SpeechToTextDependencies,
-  type SpeechToTextProgress,
   type SpeechToTextTranscription,
 } from "../core/utils/speech_to_text.js";
 import type { SpeechToTextContext } from "../core/utils/speech_to_text_context.js";
 
-export const LISTEN_TEMP_FILE_TEMPLATE = "/tmp/tau-listen.XXXXXX";
+export const LISTEN_TEMP_FILE_TEMPLATE = join(tmpdir(), "tau-listen.XXXXXX");
+export const LISTEN_CAPTURE_START_TIMEOUT_MS = 15_000;
 export const LISTEN_RECORDING_MIN_BYTES = 1024;
 export const LISTEN_RECORDING_MAX_DURATION_MS = 5 * 60 * 1000;
 
@@ -185,8 +187,8 @@ export function getSpeechToTextApiKeyErrorMessage(config: Config, action: string
 export function createListenTranscription(args: {
   config: Config;
   deps: CoreDeps;
+  mode: "streaming" | "file";
   context?: SpeechToTextContext;
-  onProgress?: (progress: SpeechToTextProgress) => void;
   speechToTextDeps?: SpeechToTextDependencies;
 }): SpeechToTextTranscription {
   const provider = getSpeechToTextProvider(args.config);
@@ -197,9 +199,9 @@ export function createListenTranscription(args: {
 
   return createSpeechToTextTranscription({
     provider,
+    mode: args.mode,
     apiKey,
     context: args.context,
-    onProgress: args.onProgress,
     deps: {
       ...args.speechToTextDeps,
       spawnImpl: args.speechToTextDeps?.spawnImpl ?? args.deps.spawn,

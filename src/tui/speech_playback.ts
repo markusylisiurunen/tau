@@ -1,11 +1,13 @@
 import { unlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { CoreDeps } from "../core/runtime/deps.js";
 import {
   GEMINI_SPEECH_PLAYBACK_RATE,
   streamGeminiSpeechAudio,
 } from "../core/utils/gemini_speech.js";
 
-export const SPEAK_TEMP_FILE_TEMPLATE = "/tmp/tau-speak.XXXXXX";
+export const SPEAK_TEMP_FILE_TEMPLATE = join(tmpdir(), "tau-speak.XXXXXX");
 
 export async function runSpeechPlaybackTask(args: {
   deps: CoreDeps;

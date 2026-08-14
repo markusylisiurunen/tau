@@ -4,11 +4,10 @@ import { transcribeMistralAudio } from "./mistral_transcription.js";
 import {
   type OpenAITranscriptionWebSocketFactory,
   startOpenAITranscription,
+  transcribeOpenAIAudio,
 } from "./openai_transcription.js";
 import type { spawnWithCapture } from "./spawn_capture.js";
 import type { SpeechToTextContext } from "./speech_to_text_context.js";
-
-export type SpeechToTextProgress = "retrying" | "trying-fallback";
 
 export type SpeechToTextDependencies = {
   fetchImpl?: typeof fetch;
@@ -18,9 +17,9 @@ export type SpeechToTextDependencies = {
 
 export type SpeechToTextTranscriptionOptions = {
   provider: SpeechToTextProvider;
+  mode: "streaming" | "file";
   apiKey: string;
   context?: SpeechToTextContext;
-  onProgress?: (progress: SpeechToTextProgress) => void;
   deps?: SpeechToTextDependencies;
 };
 
@@ -31,17 +30,9 @@ export type SpeechToTextRecording = {
   language?: string;
 };
 
-export type SpeechToTextResult = {
-  text: string;
-  usedFallback: boolean;
-};
-
 export type SpeechToTextTranscription = {
   appendAudio(audio: Buffer): void;
-  finish(
-    recording: SpeechToTextRecording,
-    options?: { signal?: AbortSignal },
-  ): Promise<SpeechToTextResult>;
+  finish(recording: SpeechToTextRecording, options?: { signal?: AbortSignal }): Promise<string>;
   abort(): void;
 };
 
@@ -50,70 +41,78 @@ export function createSpeechToTextTranscription(
 ): SpeechToTextTranscription {
   switch (options.provider) {
     case "gemini":
-      return createBatchTranscription(async (recording) => {
+      return createBatchTranscription(async (recording, signal) => {
         return await transcribeGeminiAudio({
           apiKey: options.apiKey,
           audio: recording.audio,
           mimeType: recording.mimeType,
           context: options.context,
+          signal,
           fetchImpl: options.deps?.fetchImpl,
-          onProgress: options.onProgress,
         });
       });
     case "mistral":
-      return createBatchTranscription(async (recording) => {
-        return {
-          text: await transcribeMistralAudio({
-            apiKey: options.apiKey,
-            audio: recording.audio,
-            mimeType: recording.mimeType,
-            fileName: recording.fileName,
-            language: recording.language,
-            fetchImpl: options.deps?.fetchImpl,
-          }),
-          usedFallback: false,
-        };
+      return createBatchTranscription(async (recording, signal) => {
+        return await transcribeMistralAudio({
+          apiKey: options.apiKey,
+          audio: recording.audio,
+          mimeType: recording.mimeType,
+          fileName: recording.fileName,
+          language: recording.language,
+          signal,
+          fetchImpl: options.deps?.fetchImpl,
+        });
       });
     case "openai": {
-      const transcription = startOpenAITranscription({
-        apiKey: options.apiKey,
-        context: options.context,
-        webSocketFactory: options.deps?.webSocketFactory,
-      });
+      if (options.mode === "streaming") {
+        const transcription = startOpenAITranscription({
+          apiKey: options.apiKey,
+          context: options.context,
+          webSocketFactory: options.deps?.webSocketFactory,
+        });
+        return {
+          appendAudio: (audio) => transcription.appendAudio(audio),
+          finish: async (_recording, finishOptions) =>
+            await transcription.finish({ signal: finishOptions?.signal }),
+          abort: () => transcription.abort(),
+        };
+      }
+
+      const abortController = new AbortController();
       return {
-        appendAudio: (audio) => transcription.appendAudio(audio),
-        finish: async (recording, finishOptions) => ({
-          text: await transcription.finish({
+        appendAudio: () => {},
+        finish: async (recording, finishOptions) =>
+          await transcribeOpenAIAudio({
+            apiKey: options.apiKey,
             audio: recording.audio,
-            signal: finishOptions?.signal,
+            context: options.context,
+            signal: finishOptions?.signal
+              ? AbortSignal.any([abortController.signal, finishOptions.signal])
+              : abortController.signal,
+            fetchImpl: options.deps?.fetchImpl,
             spawnImpl: options.deps?.spawnImpl,
           }),
-          usedFallback: false,
-        }),
-        abort: () => transcription.abort(),
+        abort: () => abortController.abort(new Error("OpenAI transcription was aborted")),
       };
     }
   }
 }
 
 function createBatchTranscription(
-  transcribe: (recording: SpeechToTextRecording) => Promise<SpeechToTextResult>,
+  transcribe: (recording: SpeechToTextRecording, signal: AbortSignal) => Promise<string>,
 ): SpeechToTextTranscription {
-  let aborted = false;
+  const abortController = new AbortController();
   return {
     appendAudio: () => {},
-    finish: async (recording) => {
-      if (aborted) {
-        throw new Error("speech transcription was aborted");
-      }
-      const result = await transcribe(recording);
-      if (aborted) {
-        throw new Error("speech transcription was aborted");
-      }
+    finish: async (recording, finishOptions) => {
+      const signal = finishOptions?.signal
+        ? AbortSignal.any([abortController.signal, finishOptions.signal])
+        : abortController.signal;
+      signal.throwIfAborted();
+      const result = await transcribe(recording, signal);
+      signal.throwIfAborted();
       return result;
     },
-    abort: () => {
-      aborted = true;
-    },
+    abort: () => abortController.abort(new Error("speech transcription was aborted")),
   };
 }

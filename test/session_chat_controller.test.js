@@ -23,6 +23,7 @@ import { TauSessionProtocolResponseError } from "../dist/transport/errors.js";
 import { formatDiffReviewUserMessage } from "../dist/tui/chat_controller/diff_review_user_message.js";
 import { formatRewindCandidateAge } from "../dist/tui/chat_controller/history_labels.js";
 import { copyTextToClipboard } from "../dist/tui/clipboard.js";
+import { LISTEN_CAPTURE_START_TIMEOUT_MS } from "../dist/tui/listen_capture.js";
 import { createTuiClientTools, SessionChatApp } from "../dist/tui/session_chat_app.js";
 import { SessionChatController } from "../dist/tui/session_chat_controller.js";
 import {
@@ -5363,7 +5364,7 @@ describe("SessionChatController", () => {
       }),
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(spawn).toHaveBeenNthCalledWith(1, "mktemp", ["/tmp/tau-listen.XXXXXX"]);
+    expect(spawn).toHaveBeenNthCalledWith(1, "mktemp", [join(tmpdir(), "tau-listen.XXXXXX")]);
     expect(spawn).toHaveBeenNthCalledWith(
       2,
       "ffmpeg",
@@ -5487,34 +5488,28 @@ describe("SessionChatController", () => {
     );
   });
 
-  it("shows Gemini retry and fallback progress while transcribing voice input", async () => {
-    const audioPath = join(tmpdir(), `tau-session-listen-fallback-${Date.now()}.wav`);
+  it("retries retained OpenAI audio through file transcription", async () => {
+    const audioPath = join(tmpdir(), `tau-session-listen-openai-retry-${Date.now()}.wav`);
     await writeFile(audioPath, Buffer.alloc(2048, 1));
-    const unavailable = () =>
-      new Response(JSON.stringify({ error: { message: "model unavailable" } }), {
-        status: 503,
-        headers: { "Retry-After": "0" },
-      });
-    vi.stubGlobal(
-      "fetch",
-      vi
-        .fn()
-        .mockResolvedValueOnce(unavailable())
-        .mockResolvedValueOnce(unavailable())
-        .mockResolvedValueOnce(
-          new Response(
-            JSON.stringify({
-              candidates: [
-                {
-                  content: {
-                    parts: [{ text: JSON.stringify({ transcription: "fallback transcript" }) }],
-                  },
-                },
-              ],
-            }),
-          ),
-        ),
+    const spawnImpl = vi.fn(async (_command, _args, options) => {
+      const stdout = new EventEmitter();
+      options.onSpawn({ stdout });
+      stdout.emit("data", Buffer.from([1, 2, 3, 4]));
+      return {
+        stdout: "",
+        stderr: "",
+        output: undefined,
+        exitCode: 0,
+        captureLimitExceeded: false,
+        timedOut: false,
+        aborted: false,
+        closeSignal: null,
+      };
+    });
+    const fetchImpl = vi.fn(
+      async () => new Response(JSON.stringify({ text: "retried file transcript" })),
     );
+    const webSocketFactory = vi.fn();
     const session = new FakeSession();
     const view = new FakeView();
     const controller = new SessionChatController({
@@ -5523,42 +5518,24 @@ describe("SessionChatController", () => {
       snapshot: await session.snapshot(),
       targetLabel: "in-process",
       deps: createMockDeps(),
-      config: {
-        speechToText: { provider: "gemini" },
-        apiKeys: { google: "gemini-key" },
-      },
+      config: { apiKeys: { openai: "openai-key" } },
+      speechToTextDeps: { fetchImpl, spawnImpl, webSocketFactory },
     });
-    controller.listenRecording = {
-      audioPath,
-      stopRequested: false,
-      abortController: new AbortController(),
-      completion: Promise.resolve(),
-    };
+    controller.retainedListenAudioPath = audioPath;
 
     try {
-      await controller.stopListenCapture();
+      await controller.onUserInput("/listen retry");
+      await expect(readFile(audioPath)).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
-      vi.unstubAllGlobals();
       await rm(audioPath, { force: true });
     }
 
-    expect(view.editorText).toBe("fallback transcript");
-    expect(
-      view.statusUpdates.flatMap((status) =>
-        status.footer.type === "activity" ? [status.footer.label] : [],
-      ),
-    ).toEqual(
-      expect.arrayContaining([
-        "transcribing voice input",
-        "retrying voice transcription",
-        "trying fallback transcription model",
-      ]),
+    expect(view.editorText).toBe("retried file transcript");
+    expect(webSocketFactory).not.toHaveBeenCalled();
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "https://api.openai.com/v1/audio/transcriptions",
+      expect.objectContaining({ body: expect.any(FormData) }),
     );
-    expect(view.footerNotices).toContainEqual({
-      text: "transcribed with fallback model",
-      tone: "default",
-      durationMs: 3000,
-    });
   });
 
   it("retains failed voice input and retries it into the editor", async () => {
@@ -5813,6 +5790,149 @@ describe("SessionChatController", () => {
     });
   });
 
+  it("times out stalled recording startup without deleting retained voice input", async () => {
+    const retainedPath = join(tmpdir(), `tau-session-listen-timeout-retained-${Date.now()}.wav`);
+    const nextPath = join(tmpdir(), `tau-session-listen-timeout-next-${Date.now()}.wav`);
+    await writeFile(retainedPath, Buffer.alloc(2048, 1));
+    const spawn = vi.fn(async (command, _args, options = {}) => {
+      if (command === "mktemp") {
+        return {
+          stdout: `${nextPath}\n`,
+          stderr: "",
+          output: undefined,
+          exitCode: 0,
+          captureLimitExceeded: false,
+          timedOut: false,
+          aborted: false,
+          closeSignal: null,
+        };
+      }
+      if (command === "ffmpeg") {
+        options.onSpawn({ stdout: new EventEmitter() });
+        return await new Promise((resolve) => {
+          options.signal.addEventListener("abort", () => {
+            resolve({
+              stdout: "",
+              stderr: "",
+              output: undefined,
+              exitCode: null,
+              captureLimitExceeded: false,
+              timedOut: false,
+              aborted: true,
+              closeSignal: "SIGTERM",
+            });
+          });
+        });
+      }
+      throw new Error(`unexpected command: ${command}`);
+    });
+    const session = new FakeSession();
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "in-process",
+      deps: createMockDeps(spawn),
+      config: {
+        speechToText: { provider: "mistral" },
+        apiKeys: { mistral: "mistral-key" },
+      },
+    });
+    controller.retainedListenAudioPath = retainedPath;
+
+    vi.useFakeTimers();
+    try {
+      const start = controller.onUserInput("/listen");
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(LISTEN_CAPTURE_START_TIMEOUT_MS);
+      await start;
+      await expect(readFile(retainedPath)).resolves.toHaveLength(2048);
+    } finally {
+      vi.useRealTimers();
+      await rm(retainedPath, { force: true });
+      await rm(nextPath, { force: true });
+    }
+
+    expect(controller.retainedListenAudioPath).toBe(retainedPath);
+    expect(view.transcriptNotices.at(-1)).toEqual({
+      text: "failed to start recording",
+      tone: "error",
+      content: ["timed out waiting for microphone audio"],
+    });
+  });
+
+  it("cancels stalled recording startup during shutdown", async () => {
+    const retainedPath = join(tmpdir(), `tau-session-listen-cancel-retained-${Date.now()}.wav`);
+    const nextPath = join(tmpdir(), `tau-session-listen-cancel-next-${Date.now()}.wav`);
+    await writeFile(retainedPath, Buffer.alloc(2048, 1));
+    let captureSignal;
+    const spawn = vi.fn(async (command, _args, options = {}) => {
+      if (command === "mktemp") {
+        return {
+          stdout: `${nextPath}\n`,
+          stderr: "",
+          output: undefined,
+          exitCode: 0,
+          captureLimitExceeded: false,
+          timedOut: false,
+          aborted: false,
+          closeSignal: null,
+        };
+      }
+      if (command === "ffmpeg") {
+        captureSignal = options.signal;
+        options.onSpawn({ stdout: new EventEmitter() });
+        return await new Promise((resolve) => {
+          options.signal.addEventListener("abort", () => {
+            resolve({
+              stdout: "",
+              stderr: "",
+              output: undefined,
+              exitCode: null,
+              captureLimitExceeded: false,
+              timedOut: false,
+              aborted: true,
+              closeSignal: "SIGTERM",
+            });
+          });
+        });
+      }
+      throw new Error(`unexpected command: ${command}`);
+    });
+    const session = new FakeSession();
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "in-process",
+      deps: createMockDeps(spawn),
+      config: {
+        speechToText: { provider: "mistral" },
+        apiKeys: { mistral: "mistral-key" },
+      },
+    });
+    controller.retainedListenAudioPath = retainedPath;
+
+    try {
+      const start = controller.onUserInput("/listen");
+      await waitUntil(() => captureSignal !== undefined);
+      await controller.dispose();
+      await start;
+      await expect(readFile(retainedPath)).resolves.toHaveLength(2048);
+    } finally {
+      await rm(retainedPath, { force: true });
+      await rm(nextPath, { force: true });
+    }
+
+    expect(captureSignal.aborted).toBe(true);
+    expect(controller.retainedListenAudioPath).toBe(retainedPath);
+    expect(view.transcriptNotices).not.toContainEqual(
+      expect.objectContaining({ text: "failed to start recording" }),
+    );
+  });
+
   it("keeps retained voice input on shutdown", async () => {
     const audioPath = join(tmpdir(), `tau-session-listen-shutdown-${Date.now()}.wav`);
     await writeFile(audioPath, Buffer.alloc(2048, 1));
@@ -5975,7 +6095,7 @@ describe("SessionChatController", () => {
       ]),
     );
     expect(view.status.footer.type).toBe("regular");
-    expect(spawn).toHaveBeenNthCalledWith(1, "mktemp", ["/tmp/tau-speak.XXXXXX"]);
+    expect(spawn).toHaveBeenNthCalledWith(1, "mktemp", [join(tmpdir(), "tau-speak.XXXXXX")]);
     expect(spawn).toHaveBeenNthCalledWith(
       2,
       "afplay",

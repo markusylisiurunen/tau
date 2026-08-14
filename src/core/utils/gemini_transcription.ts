@@ -2,51 +2,14 @@ import { z } from "zod";
 import { formatSpeechToTextContext, type SpeechToTextContext } from "./speech_to_text_context.js";
 
 const GEMINI_GENERATE_CONTENT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
-const PRIMARY_GEMINI_TRANSCRIPTION_MODEL = "gemini-3.7-flash";
-const PRIMARY_GEMINI_TRANSCRIPTION_THINKING_LEVEL = "low";
-const FALLBACK_GEMINI_TRANSCRIPTION_MODEL = "gemini-3.6-flash";
-const FALLBACK_GEMINI_TRANSCRIPTION_THINKING_LEVEL = "minimal";
+const GEMINI_TRANSCRIPTION_MODEL = "gemini-3.7-flash";
+const GEMINI_TRANSCRIPTION_THINKING_LEVEL = "low";
 const DEFAULT_GEMINI_AUDIO_MIME_TYPE = "audio/wav";
-const MAX_RETRY_DELAY_MS = 5_000;
-
-const RETRYABLE_GEMINI_ERROR_STATUSES = new Set([
-  "DEADLINE_EXCEEDED",
-  "INTERNAL",
-  "NOT_FOUND",
-  "RESOURCE_EXHAUSTED",
-  "UNAVAILABLE",
-]);
-
-const GEMINI_TRANSCRIPTION_ATTEMPTS = [
-  {
-    model: PRIMARY_GEMINI_TRANSCRIPTION_MODEL,
-    thinkingLevel: PRIMARY_GEMINI_TRANSCRIPTION_THINKING_LEVEL,
-    progress: undefined,
-    delayMs: 0,
-    usedFallback: false,
-  },
-  {
-    model: PRIMARY_GEMINI_TRANSCRIPTION_MODEL,
-    thinkingLevel: PRIMARY_GEMINI_TRANSCRIPTION_THINKING_LEVEL,
-    progress: "retrying" as const,
-    delayMs: 250,
-    usedFallback: false,
-  },
-  {
-    model: FALLBACK_GEMINI_TRANSCRIPTION_MODEL,
-    thinkingLevel: FALLBACK_GEMINI_TRANSCRIPTION_THINKING_LEVEL,
-    progress: "trying-fallback" as const,
-    delayMs: 500,
-    usedFallback: true,
-  },
-];
 
 const errorPayloadSchema = z.object({
   error: z
     .object({
       message: z.string().trim().min(1).optional(),
-      status: z.string().trim().min(1).optional(),
-      code: z.number().int().optional(),
     })
     .optional(),
 });
@@ -75,138 +38,66 @@ const transcriptionResultSchema = z.object({
   transcription: z.string().trim().min(1),
 });
 
-export type GeminiTranscriptionProgress = "retrying" | "trying-fallback";
-
-export type GeminiTranscriptionResult = {
-  text: string;
-  usedFallback: boolean;
-};
-
 export type GeminiTranscriptionOptions = {
   apiKey: string;
   audio: Buffer;
   mimeType?: string;
   context?: SpeechToTextContext;
+  signal?: AbortSignal;
   fetchImpl?: typeof fetch;
-  onProgress?: (progress: GeminiTranscriptionProgress) => void;
 };
 
-class GeminiTranscriptionAttemptError extends Error {
-  constructor(
-    message: string,
-    readonly retryable: boolean,
-    readonly retryAfterMs = 0,
-  ) {
-    super(message);
-  }
-}
-
-export async function transcribeGeminiAudio(
-  options: GeminiTranscriptionOptions,
-): Promise<GeminiTranscriptionResult> {
+export async function transcribeGeminiAudio(options: GeminiTranscriptionOptions): Promise<string> {
   const apiKey = options.apiKey.trim();
   if (!apiKey) {
     throw new Error("missing Gemini API key");
   }
 
   const fetchFn = options.fetchImpl ?? fetch;
-  let retryAfterMs = 0;
-
-  for (const [index, attempt] of GEMINI_TRANSCRIPTION_ATTEMPTS.entries()) {
-    if (attempt.progress) {
-      options.onProgress?.(attempt.progress);
-      await waitForRetry(Math.max(attempt.delayMs, retryAfterMs));
-    }
-
-    try {
-      const text = await requestGeminiTranscription({
-        apiKey,
-        audio: options.audio,
-        mimeType: options.mimeType ?? DEFAULT_GEMINI_AUDIO_MIME_TYPE,
-        context: options.context,
-        fetchFn,
-        model: attempt.model,
-        thinkingLevel: attempt.thinkingLevel,
-      });
-      return { text, usedFallback: attempt.usedFallback };
-    } catch (error) {
-      if (
-        !(error instanceof GeminiTranscriptionAttemptError) ||
-        !error.retryable ||
-        index === GEMINI_TRANSCRIPTION_ATTEMPTS.length - 1
-      ) {
-        throw error;
-      }
-      retryAfterMs = error.retryAfterMs;
-    }
-  }
-
-  throw new Error("Gemini transcription attempts exhausted");
-}
-
-async function requestGeminiTranscription(args: {
-  apiKey: string;
-  audio: Buffer;
-  mimeType: string;
-  context?: SpeechToTextContext;
-  fetchFn: typeof fetch;
-  model: string;
-  thinkingLevel: string;
-}): Promise<string> {
-  let response: Response;
-  try {
-    response = await args.fetchFn(
-      `${GEMINI_GENERATE_CONTENT_BASE_URL}/${encodeURIComponent(args.model)}:generateContent`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-goog-api-key": args.apiKey,
+  const response = await fetchFn(
+    `${GEMINI_GENERATE_CONTENT_BASE_URL}/${GEMINI_TRANSCRIPTION_MODEL}:generateContent`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": apiKey,
+      },
+      signal: options.signal,
+      body: JSON.stringify({
+        systemInstruction: {
+          parts: [
+            {
+              text: buildTranscriptionSystemInstruction(),
+            },
+          ],
         },
-        body: JSON.stringify({
-          systemInstruction: {
+        contents: [
+          {
             parts: [
               {
-                text: buildTranscriptionSystemInstruction(),
+                text: buildTranscriptionPrompt(options.context),
+              },
+              {
+                inlineData: {
+                  mimeType: options.mimeType ?? DEFAULT_GEMINI_AUDIO_MIME_TYPE,
+                  data: options.audio.toString("base64"),
+                },
               },
             ],
           },
-          contents: [
-            {
-              parts: [
-                {
-                  text: buildTranscriptionPrompt(args.context),
-                },
-                {
-                  inlineData: {
-                    mimeType: args.mimeType,
-                    data: args.audio.toString("base64"),
-                  },
-                },
-              ],
-            },
-          ],
-          generationConfig: {
-            responseMimeType: "application/json",
-            responseSchema: GEMINI_TRANSCRIPTION_RESPONSE_SCHEMA,
-            thinkingConfig: {
-              thinkingLevel: args.thinkingLevel,
-            },
+        ],
+        generationConfig: {
+          responseMimeType: "application/json",
+          responseSchema: GEMINI_TRANSCRIPTION_RESPONSE_SCHEMA,
+          thinkingConfig: {
+            thinkingLevel: GEMINI_TRANSCRIPTION_THINKING_LEVEL,
           },
-        }),
-      },
-    );
-  } catch (error) {
-    throw new GeminiTranscriptionAttemptError((error as Error).message, true);
-  }
+        },
+      }),
+    },
+  );
 
-  let responseText: string;
-  try {
-    responseText = await response.text();
-  } catch (error) {
-    throw new GeminiTranscriptionAttemptError((error as Error).message, true);
-  }
-
+  const responseText = await response.text();
   let payload: unknown;
   try {
     payload = responseText ? (JSON.parse(responseText) as unknown) : undefined;
@@ -217,46 +108,16 @@ async function requestGeminiTranscription(args: {
   if (!response.ok) {
     const parsed = errorPayloadSchema.safeParse(payload);
     const fallbackMessage = responseText.trim() || `HTTP ${response.status}`;
-    const errorStatus = parsed.success ? parsed.data.error?.status : undefined;
-    throw new GeminiTranscriptionAttemptError(
+    throw new Error(
       parsed.success ? (parsed.data.error?.message ?? fallbackMessage) : fallbackMessage,
-      isRetryableGeminiError(response.status, errorStatus),
-      parseRetryAfterMs(response.headers.get("retry-after")),
     );
   }
 
   const text = extractGeminiText(payload);
   if (!text) {
-    throw new GeminiTranscriptionAttemptError("transcription result was empty or malformed", true);
+    throw new Error("transcription result was empty or malformed");
   }
   return text;
-}
-
-function isRetryableGeminiError(status: number, errorStatus: string | undefined): boolean {
-  return (
-    status === 408 ||
-    status === 429 ||
-    status >= 500 ||
-    (errorStatus !== undefined && RETRYABLE_GEMINI_ERROR_STATUSES.has(errorStatus))
-  );
-}
-
-function parseRetryAfterMs(value: string | null): number {
-  if (!value) return 0;
-
-  const seconds = Number(value);
-  if (Number.isFinite(seconds)) {
-    return Math.min(Math.max(0, seconds * 1_000), MAX_RETRY_DELAY_MS);
-  }
-
-  const dateMs = Date.parse(value);
-  if (!Number.isFinite(dateMs)) return 0;
-  return Math.min(Math.max(0, dateMs - Date.now()), MAX_RETRY_DELAY_MS);
-}
-
-async function waitForRetry(delayMs: number): Promise<void> {
-  if (delayMs <= 0) return;
-  await new Promise((resolve) => setTimeout(resolve, delayMs));
 }
 
 function buildTranscriptionSystemInstruction(): string {

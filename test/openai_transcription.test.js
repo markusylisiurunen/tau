@@ -7,7 +7,6 @@ import {
 
 class FakeOpenAISocket extends EventEmitter {
   sent = [];
-  bufferedAmount = 0;
   closed = false;
   terminated = false;
 
@@ -81,7 +80,7 @@ function successfulSpawnResult() {
 describe("OpenAI transcription", () => {
   it("streams live PCM and returns only the completed transcript", async () => {
     const harness = createWebSocketHarness("final transcript");
-    const transcription = await startOpenAITranscription({
+    const transcription = startOpenAITranscription({
       apiKey: "openai-key",
       context: {
         messages: [{ role: "assistant", text: "The repository is called Tau." }],
@@ -124,8 +123,7 @@ describe("OpenAI transcription", () => {
     expect(harness.socket.closed).toBe(true);
   });
 
-  it("decodes completed audio to PCM before replaying it through a realtime session", async () => {
-    const harness = createWebSocketHarness("telegram transcript");
+  it("uploads completed audio through OpenAI file transcription", async () => {
     const audio = Buffer.from("encoded audio");
     const pcm = Buffer.from([5, 6, 7, 8]);
     const spawnImpl = vi.fn(async (_command, _args, options) => {
@@ -134,61 +132,53 @@ describe("OpenAI transcription", () => {
       stdout.emit("data", pcm);
       return successfulSpawnResult();
     });
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ text: "file transcript", languages: [{ code: "en" }] })),
+    );
 
     const transcript = await transcribeOpenAIAudio({
       apiKey: "openai-key",
       audio,
-      webSocketFactory: harness.factory,
+      context: {
+        messages: [{ role: "user", text: "We are discussing Tau." }],
+      },
+      fetchImpl,
       spawnImpl,
     });
 
-    expect(transcript).toBe("telegram transcript");
+    expect(transcript).toBe("file transcript");
     expect(spawnImpl).toHaveBeenCalledWith(
       "ffmpeg",
-      expect.arrayContaining(["-i", "pipe:0", "-ar", "24000", "-f", "s16le", "pipe:1"]),
+      expect.arrayContaining(["-i", "pipe:0", "-ar", "16000", "-f", "s16le", "pipe:1"]),
       expect.objectContaining({
         input: audio,
         captureOutput: "stderr",
         stdio: ["pipe", "pipe", "pipe"],
       }),
     );
-    expect(harness.socket.sent).toContainEqual({
-      type: "input_audio_buffer.append",
-      audio: pcm.toString("base64"),
-    });
-  });
-
-  it("cancels audio decoding when the realtime session fails", async () => {
-    const harness = createWebSocketHarness();
-    let decoderSignal;
-    const spawnImpl = vi.fn(async (_command, _args, options) => {
-      decoderSignal = options.signal;
-      options.onSpawn({ stdout: new EventEmitter() });
-      return await new Promise((resolve) => {
-        options.signal.addEventListener("abort", () => {
-          resolve({ ...successfulSpawnResult(), aborted: true });
-        });
-      });
-    });
-
-    const transcription = transcribeOpenAIAudio({
-      apiKey: "openai-key",
-      audio: Buffer.from("encoded audio"),
-      webSocketFactory: harness.factory,
-      spawnImpl,
-    });
-    await vi.waitFor(() => expect(spawnImpl).toHaveBeenCalledOnce());
-
-    harness.socket.emit("error", new Error("connection lost"));
-
-    await expect(transcription).rejects.toThrow(
-      "OpenAI transcription connection failed: connection lost",
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "https://api.openai.com/v1/audio/transcriptions",
+      expect.objectContaining({
+        method: "POST",
+        headers: { Authorization: "Bearer openai-key" },
+        body: expect.any(FormData),
+      }),
     );
-    expect(decoderSignal.aborted).toBe(true);
+    const form = fetchImpl.mock.calls[0][1].body;
+    expect(form.get("model")).toBe("gpt-transcribe");
+    expect(form.get("prompt")).toContain("We are discussing Tau.");
+    const file = form.get("file");
+    expect(file.name).toBe("speech.wav");
+    expect(file.type).toBe("audio/wav");
+    const wav = Buffer.from(await file.arrayBuffer());
+    expect(wav.subarray(0, 4).toString("ascii")).toBe("RIFF");
+    expect(wav.subarray(8, 12).toString("ascii")).toBe("WAVE");
+    expect(wav.readUInt32LE(24)).toBe(16_000);
+    expect(wav.subarray(44)).toEqual(pcm);
   });
 
-  it("cancels audio decoding when the owner aborts", async () => {
-    const harness = createWebSocketHarness();
+  it("cancels completed-audio decoding when the owner aborts", async () => {
     const abortController = new AbortController();
     let decoderSignal;
     const spawnImpl = vi.fn(async (_command, _args, options) => {
@@ -205,80 +195,27 @@ describe("OpenAI transcription", () => {
       apiKey: "openai-key",
       audio: Buffer.from("encoded audio"),
       signal: abortController.signal,
-      webSocketFactory: harness.factory,
+      fetchImpl: vi.fn(),
       spawnImpl,
     });
     await vi.waitFor(() => expect(spawnImpl).toHaveBeenCalledOnce());
 
-    abortController.abort();
+    abortController.abort(new Error("owner stopped"));
 
-    await expect(transcription).rejects.toThrow("OpenAI transcription was aborted");
+    await expect(transcription).rejects.toThrow("owner stopped");
     expect(decoderSignal.aborted).toBe(true);
   });
 
-  it("backpressures decoded audio while the websocket send buffer is full", async () => {
-    const harness = createWebSocketHarness("backpressured transcript");
-    let resolveAudioSend;
-    harness.socket.send = function send(data, callback) {
-      const event = JSON.parse(data);
-      this.sent.push(event);
-      if (event.type === "session.update") {
-        callback?.();
-        queueMicrotask(() => this.emit("message", JSON.stringify({ type: "session.updated" })));
-        return;
-      }
-      if (event.type === "input_audio_buffer.append") {
-        this.bufferedAmount = 2 * 1024 * 1024;
-        resolveAudioSend = callback;
-        return;
-      }
-      callback?.();
-      if (event.type === "input_audio_buffer.commit") {
-        queueMicrotask(() =>
-          this.emit(
-            "message",
-            JSON.stringify({
-              type: "conversation.item.input_audio_transcription.completed",
-              transcript: this.transcript,
-            }),
-          ),
-        );
-      }
-    };
-    const pause = vi.fn();
-    const resume = vi.fn();
-    const spawnImpl = vi.fn(async (_command, _args, options) => {
-      const stdout = Object.assign(new EventEmitter(), { pause, resume });
-      options.onSpawn({ stdout });
-      stdout.emit("data", Buffer.from([1, 2, 3, 4]));
-      expect(pause).toHaveBeenCalledOnce();
-      harness.socket.bufferedAmount = 0;
-      resolveAudioSend();
-      await vi.waitFor(() => expect(resume).toHaveBeenCalledOnce());
-      return successfulSpawnResult();
-    });
-
-    await expect(
-      transcribeOpenAIAudio({
-        apiKey: "openai-key",
-        audio: Buffer.from("encoded audio"),
-        webSocketFactory: harness.factory,
-        spawnImpl,
-      }),
-    ).resolves.toBe("backpressured transcript");
-  });
-
   it("rejects decoded audio longer than five minutes", async () => {
-    const harness = createWebSocketHarness();
     const spawnImpl = vi.fn(async (_command, _args, options) => {
-      const stdout = Object.assign(new EventEmitter(), { pause: vi.fn(), resume: vi.fn() });
+      const stdout = new EventEmitter();
       options.onSpawn({ stdout });
       const completion = new Promise((resolve) => {
         options.signal.addEventListener("abort", () => {
           resolve({ ...successfulSpawnResult(), aborted: true });
         });
       });
-      stdout.emit("data", Buffer.alloc(24_000 * 2 * 300 + 1));
+      stdout.emit("data", Buffer.alloc(16_000 * 2 * 300 + 1));
       return await completion;
     });
 
@@ -286,13 +223,53 @@ describe("OpenAI transcription", () => {
       transcribeOpenAIAudio({
         apiKey: "openai-key",
         audio: Buffer.from("encoded audio"),
-        webSocketFactory: harness.factory,
+        fetchImpl: vi.fn(),
         spawnImpl,
       }),
     ).rejects.toThrow("audio exceeds the five-minute OpenAI transcription limit");
   });
 
-  it("rejects an empty completed transcript", async () => {
+  it("reports OpenAI file transcription errors", async () => {
+    const spawnImpl = vi.fn(async (_command, _args, options) => {
+      const stdout = new EventEmitter();
+      options.onSpawn({ stdout });
+      stdout.emit("data", Buffer.from([1, 2]));
+      return successfulSpawnResult();
+    });
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ error: { message: "invalid audio" } }), { status: 400 }),
+    );
+
+    await expect(
+      transcribeOpenAIAudio({
+        apiKey: "openai-key",
+        audio: Buffer.from("encoded audio"),
+        fetchImpl,
+        spawnImpl,
+      }),
+    ).rejects.toThrow("invalid audio");
+  });
+
+  it("rejects an empty file transcript", async () => {
+    const spawnImpl = vi.fn(async (_command, _args, options) => {
+      const stdout = new EventEmitter();
+      options.onSpawn({ stdout });
+      stdout.emit("data", Buffer.from([1, 2]));
+      return successfulSpawnResult();
+    });
+
+    await expect(
+      transcribeOpenAIAudio({
+        apiKey: "openai-key",
+        audio: Buffer.from("encoded audio"),
+        fetchImpl: vi.fn(async () => new Response(JSON.stringify({ text: "" }))),
+        spawnImpl,
+      }),
+    ).rejects.toThrow("transcription result was empty or malformed");
+  });
+
+  it("rejects an empty completed realtime transcript", async () => {
     const socket = new FakeOpenAISocket();
     socket.send = function send(data, callback) {
       const event = JSON.parse(data);
@@ -317,7 +294,7 @@ describe("OpenAI transcription", () => {
       queueMicrotask(() => socket.open());
       return socket;
     };
-    const transcription = await startOpenAITranscription({
+    const transcription = startOpenAITranscription({
       apiKey: "openai-key",
       webSocketFactory: factory,
     });

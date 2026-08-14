@@ -2719,6 +2719,7 @@ class TelegramAdapterImpl {
       const audio = await this.api.downloadFile(message.fileId);
       const transcription = createSpeechToTextTranscription({
         provider: this.speechToTextProvider,
+        mode: "file",
         apiKey,
         context: await this.resolveSpeechToTextContext(chatId),
         deps: {
@@ -2727,7 +2728,7 @@ class TelegramAdapterImpl {
         },
       });
       try {
-        const result = await transcription.finish(
+        transcript = await transcription.finish(
           {
             audio,
             fileName: message.fileName,
@@ -2735,7 +2736,6 @@ class TelegramAdapterImpl {
           },
           { signal: this.abortController.signal },
         );
-        transcript = result.text;
       } finally {
         transcription.abort();
       }

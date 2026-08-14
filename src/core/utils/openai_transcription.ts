@@ -7,17 +7,18 @@ import { formatSpeechToTextContext, type SpeechToTextContext } from "./speech_to
 import { truncateForTokens } from "./truncate.js";
 
 const OPENAI_REALTIME_TRANSCRIPTION_URL = "wss://api.openai.com/v1/realtime?intent=transcription";
-const OPENAI_TRANSCRIPTION_MODEL = "gpt-live-transcribe";
-const OPENAI_TRANSCRIPTION_SAMPLE_RATE = 24_000;
+const OPENAI_FILE_TRANSCRIPTION_URL = "https://api.openai.com/v1/audio/transcriptions";
+const OPENAI_STREAMING_TRANSCRIPTION_MODEL = "gpt-live-transcribe";
+const OPENAI_FILE_TRANSCRIPTION_MODEL = "gpt-transcribe";
+const OPENAI_STREAMING_SAMPLE_RATE = 24_000;
+const OPENAI_FILE_SAMPLE_RATE = 16_000;
 const OPENAI_TRANSCRIPTION_CONNECT_TIMEOUT_MS = 15_000;
 const OPENAI_TRANSCRIPTION_COMPLETION_TIMEOUT_MS = 30_000;
-const OPENAI_TRANSCRIPTION_CONTEXT_TOKENS = 900;
+const OPENAI_TRANSCRIPTION_CONTEXT_TOKENS = 1_024;
 const OPENAI_TRANSCRIPTION_FFMPEG_TIMEOUT_MS = 5 * 60 * 1_000;
 const OPENAI_TRANSCRIPTION_FFMPEG_OUTPUT_LIMIT_BYTES = 20_000;
 const OPENAI_TRANSCRIPTION_MAX_PCM_BYTES =
-  OPENAI_TRANSCRIPTION_SAMPLE_RATE * 2 * (OPENAI_TRANSCRIPTION_FFMPEG_TIMEOUT_MS / 1_000);
-const OPENAI_TRANSCRIPTION_BACKPRESSURE_HIGH_BYTES = 1024 * 1024;
-const OPENAI_TRANSCRIPTION_BACKPRESSURE_LOW_BYTES = 256 * 1024;
+  OPENAI_FILE_SAMPLE_RATE * 2 * (OPENAI_TRANSCRIPTION_FFMPEG_TIMEOUT_MS / 1_000);
 
 const eventSchema = z.object({ type: z.string() }).passthrough();
 const errorEventSchema = z.object({
@@ -32,9 +33,12 @@ const transcriptionCompletedEventSchema = z.object({
   type: z.literal("conversation.item.input_audio_transcription.completed"),
   transcript: z.string().trim().min(1),
 });
+const fileErrorSchema = z.object({
+  error: z.object({ message: z.string().trim().min(1) }),
+});
+const fileSuccessSchema = z.object({ text: z.string().trim().min(1) });
 
 export type OpenAITranscriptionWebSocket = {
-  readonly bufferedAmount?: number;
   on(event: "open", listener: () => void): unknown;
   on(event: "message", listener: (data: unknown) => void): unknown;
   on(event: "error", listener: (error: Error) => void): unknown;
@@ -51,11 +55,7 @@ export type OpenAITranscriptionWebSocketFactory = (
 
 export type OpenAIStreamingTranscription = {
   appendAudio(audio: Buffer): void;
-  finish(options?: {
-    audio?: Buffer;
-    signal?: AbortSignal;
-    spawnImpl?: typeof spawnWithCapture;
-  }): Promise<string>;
+  finish(options?: { signal?: AbortSignal }): Promise<string>;
   abort(): void;
 };
 
@@ -65,23 +65,23 @@ export type StartOpenAITranscriptionOptions = {
   webSocketFactory?: OpenAITranscriptionWebSocketFactory;
 };
 
-export type TranscribeOpenAIAudioOptions = StartOpenAITranscriptionOptions & {
+export type TranscribeOpenAIAudioOptions = {
+  apiKey: string;
   audio: Buffer;
+  context?: SpeechToTextContext;
   signal?: AbortSignal;
+  fetchImpl?: typeof fetch;
   spawnImpl?: typeof spawnWithCapture;
 };
 
 class OpenAIStreamingTranscriptionImpl implements OpenAIStreamingTranscription {
   private readonly socket: OpenAITranscriptionWebSocket;
-  private readonly abortController = new AbortController();
-  private readonly audioDrainWaiters = new Set<() => void>();
   private ready = false;
   private aborted = false;
   private failure?: Error;
   private completedTranscript?: string;
   private hasAudio = false;
   private pendingAudio: Buffer[] = [];
-  private pendingAudioBytes = 0;
   private readyTimeout?: ReturnType<typeof setTimeout>;
   private completionTimeout?: ReturnType<typeof setTimeout>;
   private resolveReady?: () => void;
@@ -120,10 +120,10 @@ class OpenAIStreamingTranscriptionImpl implements OpenAIStreamingTranscription {
             input: {
               format: {
                 type: "audio/pcm",
-                rate: OPENAI_TRANSCRIPTION_SAMPLE_RATE,
+                rate: OPENAI_STREAMING_SAMPLE_RATE,
               },
               transcription: {
-                model: OPENAI_TRANSCRIPTION_MODEL,
+                model: OPENAI_STREAMING_TRANSCRIPTION_MODEL,
                 prompt: buildOpenAITranscriptionPrompt(options.context),
                 delay: "medium",
               },
@@ -155,16 +155,13 @@ class OpenAIStreamingTranscriptionImpl implements OpenAIStreamingTranscription {
     this.hasAudio = true;
     if (!this.ready) {
       this.pendingAudio.push(audio);
-      this.pendingAudioBytes += audio.length;
       return;
     }
 
     this.sendAudio(audio);
   }
 
-  async finish(
-    options: { audio?: Buffer; signal?: AbortSignal; spawnImpl?: typeof spawnWithCapture } = {},
-  ): Promise<string> {
+  async finish(options: { signal?: AbortSignal } = {}): Promise<string> {
     const abortListener = () => this.abort();
     if (options.signal?.aborted) {
       abortListener();
@@ -177,24 +174,7 @@ class OpenAIStreamingTranscriptionImpl implements OpenAIStreamingTranscription {
       if (this.failure) throw this.failure;
       if (this.aborted) throw new Error("OpenAI transcription was aborted");
       if (this.completedTranscript) return this.completedTranscript;
-
-      if (!this.hasAudio && options.audio) {
-        try {
-          await decodeAndStreamOpenAIAudio({
-            audio: options.audio,
-            signal: this.abortController.signal,
-            transcription: this,
-            spawnImpl: options.spawnImpl,
-          });
-        } catch (error) {
-          const failure = error instanceof Error ? error : new Error(String(error));
-          this.fail(failure);
-          throw failure;
-        }
-      }
-
-      if (this.failure) throw this.failure;
-      if (this.aborted) throw new Error("OpenAI transcription was aborted");
+      if (!this.hasAudio) throw new Error("OpenAI transcription received no audio");
 
       const completion = new Promise<string>((resolve, reject) => {
         this.resolveCompletion = resolve;
@@ -216,13 +196,10 @@ class OpenAIStreamingTranscriptionImpl implements OpenAIStreamingTranscription {
     if (this.aborted || this.completedTranscript) return;
     const error = new Error("OpenAI transcription was aborted");
     this.aborted = true;
-    this.abortController.abort(error);
     this.pendingAudio = [];
-    this.pendingAudioBytes = 0;
     this.clearTimers();
     this.rejectReady?.(error);
     this.rejectCompletion?.(error);
-    this.resolveAudioDrainWaiters();
     this.clearWaiters();
     this.socket.close();
   }
@@ -248,11 +225,9 @@ class OpenAIStreamingTranscriptionImpl implements OpenAIStreamingTranscription {
       this.readyTimeout = undefined;
       const pendingAudio = this.pendingAudio;
       this.pendingAudio = [];
-      this.pendingAudioBytes = 0;
       for (const audio of pendingAudio) {
         this.sendAudio(audio);
       }
-      this.resolveAudioDrainWaitersIfReady();
       if (this.failure) return;
       this.resolveReady?.();
       this.resolveReady = undefined;
@@ -310,9 +285,7 @@ class OpenAIStreamingTranscriptionImpl implements OpenAIStreamingTranscription {
       this.socket.send(JSON.stringify(event), (error) => {
         if (error) {
           this.fail(new Error(`failed to send OpenAI transcription audio: ${error.message}`));
-          return;
         }
-        this.resolveAudioDrainWaitersIfReady();
       });
     } catch (error) {
       this.fail(
@@ -321,50 +294,15 @@ class OpenAIStreamingTranscriptionImpl implements OpenAIStreamingTranscription {
     }
   }
 
-  isAudioBackpressured(): boolean {
-    return (
-      this.pendingAudioBytes > OPENAI_TRANSCRIPTION_BACKPRESSURE_HIGH_BYTES ||
-      (this.socket.bufferedAmount ?? 0) > OPENAI_TRANSCRIPTION_BACKPRESSURE_HIGH_BYTES
-    );
-  }
-
-  waitForAudioDrain(): Promise<void> {
-    if (!this.isAudioBackpressured() || this.failure || this.aborted) {
-      return Promise.resolve();
-    }
-
-    return new Promise((resolve) => this.audioDrainWaiters.add(resolve));
-  }
-
   private fail(error: Error): void {
     if (this.failure || this.aborted || this.completedTranscript) return;
     this.failure = error;
-    this.abortController.abort(error);
     this.pendingAudio = [];
-    this.pendingAudioBytes = 0;
     this.clearTimers();
     this.rejectReady?.(error);
     this.rejectCompletion?.(error);
-    this.resolveAudioDrainWaiters();
     this.clearWaiters();
     this.socket.terminate();
-  }
-
-  private resolveAudioDrainWaitersIfReady(): void {
-    if (
-      this.pendingAudioBytes > OPENAI_TRANSCRIPTION_BACKPRESSURE_LOW_BYTES ||
-      (this.socket.bufferedAmount ?? 0) > OPENAI_TRANSCRIPTION_BACKPRESSURE_LOW_BYTES
-    ) {
-      return;
-    }
-    this.resolveAudioDrainWaiters();
-  }
-
-  private resolveAudioDrainWaiters(): void {
-    for (const resolve of this.audioDrainWaiters) {
-      resolve();
-    }
-    this.audioDrainWaiters.clear();
   }
 
   private clearTimers(): void {
@@ -391,28 +329,61 @@ export function startOpenAITranscription(
 export async function transcribeOpenAIAudio(
   options: TranscribeOpenAIAudioOptions,
 ): Promise<string> {
-  const transcription = startOpenAITranscription(options);
-  try {
-    return await transcription.finish({
-      audio: options.audio,
-      signal: options.signal,
-      spawnImpl: options.spawnImpl,
-    });
-  } catch (error) {
-    transcription.abort();
-    throw error;
+  const apiKey = options.apiKey.trim();
+  if (!apiKey) {
+    throw new Error("missing OpenAI API key");
   }
+
+  const wav = await decodeOpenAIAudio({
+    audio: options.audio,
+    signal: options.signal,
+    spawnImpl: options.spawnImpl,
+  });
+  const formData = new FormData();
+  formData.append("model", OPENAI_FILE_TRANSCRIPTION_MODEL);
+  formData.append("file", new Blob([Uint8Array.from(wav)], { type: "audio/wav" }), "speech.wav");
+  formData.append("prompt", buildOpenAITranscriptionPrompt(options.context));
+
+  const fetchFn = options.fetchImpl ?? fetch;
+  const response = await fetchFn(OPENAI_FILE_TRANSCRIPTION_URL, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}` },
+    body: formData,
+    signal: options.signal,
+  });
+  const responseText = await response.text();
+  let payload: unknown;
+  try {
+    payload = responseText ? (JSON.parse(responseText) as unknown) : undefined;
+  } catch {
+    payload = undefined;
+  }
+
+  if (!response.ok) {
+    const parsed = fileErrorSchema.safeParse(payload);
+    throw new Error(
+      parsed.success ? parsed.data.error.message : responseText.trim() || `HTTP ${response.status}`,
+    );
+  }
+
+  const parsed = fileSuccessSchema.safeParse(payload);
+  if (!parsed.success) {
+    throw new Error("transcription result was empty or malformed");
+  }
+  return parsed.data.text;
 }
 
-async function decodeAndStreamOpenAIAudio(args: {
+async function decodeOpenAIAudio(args: {
   audio: Buffer;
-  signal: AbortSignal;
-  transcription: OpenAIStreamingTranscriptionImpl;
+  signal?: AbortSignal;
   spawnImpl?: typeof spawnWithCapture;
-}): Promise<void> {
+}): Promise<Buffer> {
   const spawnImpl = args.spawnImpl ?? spawnWithCapture;
   const decoderAbortController = new AbortController();
-  const signal = AbortSignal.any([args.signal, decoderAbortController.signal]);
+  const signal = args.signal
+    ? AbortSignal.any([args.signal, decoderAbortController.signal])
+    : decoderAbortController.signal;
+  const chunks: Buffer[] = [];
   let decodedBytes = 0;
   let decodeFailure: Error | undefined;
   let result: SpawnCaptureResult;
@@ -430,7 +401,7 @@ async function decodeAndStreamOpenAIAudio(args: {
         "-ac",
         "1",
         "-ar",
-        String(OPENAI_TRANSCRIPTION_SAMPLE_RATE),
+        String(OPENAI_FILE_SAMPLE_RATE),
         "-c:a",
         "pcm_s16le",
         "-f",
@@ -445,8 +416,7 @@ async function decodeAndStreamOpenAIAudio(args: {
         captureOutput: "stderr",
         stdio: ["pipe", "pipe", "pipe"],
         onSpawn: (child: ChildProcess) => {
-          const output = child.stdout;
-          output?.on("data", (chunk: Buffer) => {
+          child.stdout?.on("data", (chunk: Buffer) => {
             if (decodeFailure || signal.aborted) return;
             decodedBytes += chunk.length;
             if (decodedBytes > OPENAI_TRANSCRIPTION_MAX_PCM_BYTES) {
@@ -454,16 +424,7 @@ async function decodeAndStreamOpenAIAudio(args: {
               decoderAbortController.abort(decodeFailure);
               return;
             }
-
-            args.transcription.appendAudio(chunk);
-            if (!args.transcription.isAudioBackpressured()) return;
-
-            output.pause();
-            void args.transcription.waitForAudioDrain().then(() => {
-              if (!signal.aborted) {
-                output.resume();
-              }
-            });
+            chunks.push(Buffer.from(chunk));
           });
         },
       },
@@ -494,6 +455,29 @@ async function decodeAndStreamOpenAIAudio(args: {
         : `ffmpeg exited with code ${result.exitCode ?? "unknown"}`,
     );
   }
+  if (decodedBytes === 0) {
+    throw new Error("audio contained no decodable speech data");
+  }
+
+  return createPcmWav(Buffer.concat(chunks, decodedBytes));
+}
+
+function createPcmWav(pcm: Buffer): Buffer {
+  const header = Buffer.alloc(44);
+  header.write("RIFF", 0, "ascii");
+  header.writeUInt32LE(36 + pcm.length, 4);
+  header.write("WAVE", 8, "ascii");
+  header.write("fmt ", 12, "ascii");
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(1, 22);
+  header.writeUInt32LE(OPENAI_FILE_SAMPLE_RATE, 24);
+  header.writeUInt32LE(OPENAI_FILE_SAMPLE_RATE * 2, 28);
+  header.writeUInt16LE(2, 32);
+  header.writeUInt16LE(16, 34);
+  header.write("data", 36, "ascii");
+  header.writeUInt32LE(pcm.length, 40);
+  return Buffer.concat([header, pcm]);
 }
 
 function buildOpenAITranscriptionPrompt(context: SpeechToTextContext | undefined): string {

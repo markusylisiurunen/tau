@@ -16,6 +16,7 @@ export type MistralTranscriptionOptions = {
   language?: string;
   mimeType?: string;
   fileName?: string;
+  signal?: AbortSignal;
   fetchImpl?: typeof fetch;
 };
 
@@ -42,6 +43,7 @@ export async function transcribeMistralAudio(
       Authorization: `Bearer ${options.apiKey}`,
     },
     body: formData,
+    signal: options.signal,
   });
 
   const responseText = await response.text();

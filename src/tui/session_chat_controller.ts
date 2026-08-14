@@ -89,6 +89,7 @@ import {
   deleteListenTempFile,
   getSpeechToTextApiKey,
   getSpeechToTextApiKeyErrorMessage,
+  LISTEN_CAPTURE_START_TIMEOUT_MS,
   LISTEN_RECORDING_MAX_DURATION_MS,
   LISTEN_RECORDING_MIN_BYTES,
   type ListenRecording,
@@ -118,6 +119,8 @@ export type SessionChatControllerOptions = {
   themeIds?: string[];
   onExit?: () => void;
 };
+
+const LISTEN_CAPTURE_START_CANCELLED = Symbol("listen capture start cancelled");
 
 export class SessionChatController {
   private readonly view: ChatView;
@@ -168,6 +171,7 @@ export class SessionChatController {
   private listenRecording?: ListenRecording;
   private retainedListenAudioPath?: string;
   private listenTransition?: Promise<void>;
+  private listenStartupAbortController?: AbortController;
   private activeListenTranscription?: ListenRecording["transcription"];
   private listenActivityLabel?: string;
   private speechActivityLabel?: string;
@@ -249,6 +253,7 @@ export class SessionChatController {
     this.ephemeralUnsubscribe?.();
     this.pendingUserMessagesUnsubscribe?.();
     this.subagentActivitiesUnsubscribe?.();
+    this.listenStartupAbortController?.abort(LISTEN_CAPTURE_START_CANCELLED);
     this.activeListenTranscription?.abort();
     if (this.listenTransition) {
       await this.listenTransition;
@@ -704,6 +709,12 @@ export class SessionChatController {
       return;
     }
 
+    if (this.listenStartupAbortController) {
+      this.listenStartupAbortController.abort(LISTEN_CAPTURE_START_CANCELLED);
+      this.view.showFooterNotice("interrupted", "default");
+      return;
+    }
+
     if (this.listenRecording) {
       void this.runListenTransition(() => this.stopListenCapture());
       return;
@@ -751,7 +762,12 @@ export class SessionChatController {
 
   private async toggleListenCapture(): Promise<void> {
     if (this.listenTransition) {
-      this.view.showFooterNotice("speech recording state change already in progress", "default");
+      if (this.listenStartupAbortController) {
+        this.listenStartupAbortController.abort(LISTEN_CAPTURE_START_CANCELLED);
+        this.view.showFooterNotice("cancelled speech recording startup", "default");
+      } else {
+        this.view.showFooterNotice("speech recording state change already in progress", "default");
+      }
       return;
     }
 
@@ -820,8 +836,9 @@ export class SessionChatController {
     let completion: ListenRecording["completion"] | undefined;
     try {
       audioPath = await createListenTempFilePath(this.deps);
-      transcription = this.createSpeechTranscription();
+      transcription = this.createSpeechTranscription("streaming");
       abortController = new AbortController();
+      this.listenStartupAbortController = abortController;
       const capture = startListenAudioCapture({
         deps: this.deps,
         audioPath,
@@ -829,7 +846,13 @@ export class SessionChatController {
         onAudioChunk: (audio) => transcription?.appendAudio(audio),
       });
       completion = capture.completion;
-      await capture.started;
+      await this.waitForListenCaptureStart(capture.started, abortController);
+      if (abortController.signal.aborted) {
+        throw abortController.signal.reason;
+      }
+      if (this.listenStartupAbortController === abortController) {
+        this.listenStartupAbortController = undefined;
+      }
 
       if (retainedAudioPath) {
         try {
@@ -866,13 +889,44 @@ export class SessionChatController {
       this.refreshStatus();
       void this.watchListenRecording(recording);
     } catch (err) {
+      const cancelled = abortController?.signal.reason === LISTEN_CAPTURE_START_CANCELLED;
       abortController?.abort();
       transcription?.abort();
       await completion?.catch(() => undefined);
       if (audioPath) {
         await cleanupListenTempFile(audioPath);
       }
-      this.view.addTranscriptNotice("failed to start recording", "error", [(err as Error).message]);
+      if (!cancelled) {
+        this.view.addTranscriptNotice("failed to start recording", "error", [
+          (err as Error).message,
+        ]);
+      }
+    } finally {
+      if (this.listenStartupAbortController === abortController) {
+        this.listenStartupAbortController = undefined;
+      }
+    }
+  }
+
+  private async waitForListenCaptureStart(
+    started: Promise<void>,
+    abortController: AbortController,
+  ): Promise<void> {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        started,
+        new Promise<never>((_resolve, reject) => {
+          timeout = setTimeout(() => {
+            const error = new Error("timed out waiting for microphone audio");
+            abortController.abort(error);
+            reject(error);
+          }, LISTEN_CAPTURE_START_TIMEOUT_MS);
+          timeout.unref?.();
+        }),
+      ]);
+    } finally {
+      if (timeout) clearTimeout(timeout);
     }
   }
 
@@ -939,18 +993,12 @@ export class SessionChatController {
     }
   }
 
-  private createSpeechTranscription(): ListenRecording["transcription"] {
+  private createSpeechTranscription(mode: "streaming" | "file"): ListenRecording["transcription"] {
     return createListenTranscription({
       config: this.config,
       deps: this.deps,
+      mode,
       context: collectSpeechToTextContext(this.snapshot),
-      onProgress: (progress) => {
-        this.listenActivityLabel =
-          progress === "retrying"
-            ? "retrying voice transcription"
-            : "trying fallback transcription model";
-        this.refreshStatus();
-      },
       speechToTextDeps: this.speechToTextDeps,
     });
   }
@@ -988,18 +1036,15 @@ export class SessionChatController {
     this.listenActivityLabel = "transcribing voice input";
     this.refreshStatus();
     try {
-      activeTranscription ??= this.createSpeechTranscription();
+      activeTranscription ??= this.createSpeechTranscription("file");
       this.activeListenTranscription = activeTranscription;
-      const result = await activeTranscription.finish({
+      const text = await activeTranscription.finish({
         audio,
         mimeType: "audio/wav",
         fileName: "speech.wav",
         language: "en",
       });
-      this.view.insertEditorTextAtCursor(result.text);
-      if (result.usedFallback) {
-        this.view.showFooterNotice("transcribed with fallback model", "default");
-      }
+      this.view.insertEditorTextAtCursor(text);
       this.retainedListenAudioPath = undefined;
       try {
         await deleteListenTempFile(audioPath);

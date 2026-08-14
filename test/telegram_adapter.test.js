@@ -2316,7 +2316,7 @@ describe("telegram adapter", () => {
     }
   });
 
-  it("transcribes Telegram audio with OpenAI realtime transcription by default", async () => {
+  it("transcribes Telegram audio with OpenAI file transcription by default", async () => {
     const apiHarness = createApiHarness([
       [
         {
@@ -2344,33 +2344,6 @@ describe("telegram adapter", () => {
       ],
       { defaultOwnerId: ownerIdForChat(212) },
     );
-    const socket = new EventEmitter();
-    const socketEvents = [];
-    socket.send = vi.fn((data, callback) => {
-      const event = JSON.parse(data);
-      socketEvents.push(event);
-      callback?.();
-      if (event.type === "session.update") {
-        queueMicrotask(() => socket.emit("message", JSON.stringify({ type: "session.updated" })));
-      }
-      if (event.type === "input_audio_buffer.commit") {
-        queueMicrotask(() =>
-          socket.emit(
-            "message",
-            JSON.stringify({
-              type: "conversation.item.input_audio_transcription.completed",
-              transcript: "use realtime transcription",
-            }),
-          ),
-        );
-      }
-    });
-    socket.close = vi.fn();
-    socket.terminate = vi.fn();
-    const webSocketFactory = vi.fn(() => {
-      queueMicrotask(() => socket.emit("open"));
-      return socket;
-    });
     const spawnImpl = vi.fn(async (_command, _args, options) => {
       const stdout = new EventEmitter();
       options.onSpawn({ stdout });
@@ -2386,13 +2359,17 @@ describe("telegram adapter", () => {
         closeSignal: null,
       };
     });
+    const openaiFetch = vi.fn(async () =>
+      createJsonResponse({ text: "use file transcription", languages: [{ code: "en" }] }),
+    );
     const adapter = await startAdapter({
       botToken: "token",
       projects: { demo: { repo: "git@example.com:demo.git" } },
       openaiApiKey: "openai-key",
-      speechToTextDeps: { webSocketFactory, spawnImpl },
+      speechToTextDeps: { spawnImpl },
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
+      fetchImpl: openaiFetch,
       pollIntervalMs: 1,
       requestTimeoutSeconds: 1,
     });
@@ -2401,19 +2378,25 @@ describe("telegram adapter", () => {
       await waitFor(() => managerHarness.manager.sendMessage.mock.calls.length === 1);
       expect(managerHarness.manager.sendMessage).toHaveBeenCalledWith(
         "s23",
-        "use realtime transcription",
+        "use file transcription",
         { mode: "auto" },
       );
-      expect(socketEvents.map((event) => event.type)).toEqual([
-        "session.update",
-        "input_audio_buffer.append",
-        "input_audio_buffer.commit",
-      ]);
       expect(spawnImpl).toHaveBeenCalledWith(
         "ffmpeg",
-        expect.arrayContaining(["-i", "pipe:0", "-ar", "24000", "pipe:1"]),
+        expect.arrayContaining(["-i", "pipe:0", "-ar", "16000", "pipe:1"]),
         expect.objectContaining({ input: Buffer.from("telegram audio payload") }),
       );
+      expect(openaiFetch).toHaveBeenCalledWith(
+        "https://api.openai.com/v1/audio/transcriptions",
+        expect.objectContaining({
+          method: "POST",
+          headers: { Authorization: "Bearer openai-key" },
+          body: expect.any(FormData),
+        }),
+      );
+      const form = openaiFetch.mock.calls[0][1].body;
+      expect(form.get("model")).toBe("gpt-transcribe");
+      expect(form.get("file").type).toBe("audio/wav");
     } finally {
       await adapter.close();
     }

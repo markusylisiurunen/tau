@@ -7,6 +7,7 @@ import {
 
 class FakeOpenAISocket extends EventEmitter {
   sent = [];
+  bufferedAmount = 0;
   closed = false;
   terminated = false;
 
@@ -155,6 +156,140 @@ describe("OpenAI transcription", () => {
       type: "input_audio_buffer.append",
       audio: pcm.toString("base64"),
     });
+  });
+
+  it("cancels audio decoding when the realtime session fails", async () => {
+    const harness = createWebSocketHarness();
+    let decoderSignal;
+    const spawnImpl = vi.fn(async (_command, _args, options) => {
+      decoderSignal = options.signal;
+      options.onSpawn({ stdout: new EventEmitter() });
+      return await new Promise((resolve) => {
+        options.signal.addEventListener("abort", () => {
+          resolve({ ...successfulSpawnResult(), aborted: true });
+        });
+      });
+    });
+
+    const transcription = transcribeOpenAIAudio({
+      apiKey: "openai-key",
+      audio: Buffer.from("encoded audio"),
+      webSocketFactory: harness.factory,
+      spawnImpl,
+    });
+    await vi.waitFor(() => expect(spawnImpl).toHaveBeenCalledOnce());
+
+    harness.socket.emit("error", new Error("connection lost"));
+
+    await expect(transcription).rejects.toThrow(
+      "OpenAI transcription connection failed: connection lost",
+    );
+    expect(decoderSignal.aborted).toBe(true);
+  });
+
+  it("cancels audio decoding when the owner aborts", async () => {
+    const harness = createWebSocketHarness();
+    const abortController = new AbortController();
+    let decoderSignal;
+    const spawnImpl = vi.fn(async (_command, _args, options) => {
+      decoderSignal = options.signal;
+      options.onSpawn({ stdout: new EventEmitter() });
+      return await new Promise((resolve) => {
+        options.signal.addEventListener("abort", () => {
+          resolve({ ...successfulSpawnResult(), aborted: true });
+        });
+      });
+    });
+
+    const transcription = transcribeOpenAIAudio({
+      apiKey: "openai-key",
+      audio: Buffer.from("encoded audio"),
+      signal: abortController.signal,
+      webSocketFactory: harness.factory,
+      spawnImpl,
+    });
+    await vi.waitFor(() => expect(spawnImpl).toHaveBeenCalledOnce());
+
+    abortController.abort();
+
+    await expect(transcription).rejects.toThrow("OpenAI transcription was aborted");
+    expect(decoderSignal.aborted).toBe(true);
+  });
+
+  it("backpressures decoded audio while the websocket send buffer is full", async () => {
+    const harness = createWebSocketHarness("backpressured transcript");
+    let resolveAudioSend;
+    harness.socket.send = function send(data, callback) {
+      const event = JSON.parse(data);
+      this.sent.push(event);
+      if (event.type === "session.update") {
+        callback?.();
+        queueMicrotask(() => this.emit("message", JSON.stringify({ type: "session.updated" })));
+        return;
+      }
+      if (event.type === "input_audio_buffer.append") {
+        this.bufferedAmount = 2 * 1024 * 1024;
+        resolveAudioSend = callback;
+        return;
+      }
+      callback?.();
+      if (event.type === "input_audio_buffer.commit") {
+        queueMicrotask(() =>
+          this.emit(
+            "message",
+            JSON.stringify({
+              type: "conversation.item.input_audio_transcription.completed",
+              transcript: this.transcript,
+            }),
+          ),
+        );
+      }
+    };
+    const pause = vi.fn();
+    const resume = vi.fn();
+    const spawnImpl = vi.fn(async (_command, _args, options) => {
+      const stdout = Object.assign(new EventEmitter(), { pause, resume });
+      options.onSpawn({ stdout });
+      stdout.emit("data", Buffer.from([1, 2, 3, 4]));
+      expect(pause).toHaveBeenCalledOnce();
+      harness.socket.bufferedAmount = 0;
+      resolveAudioSend();
+      await vi.waitFor(() => expect(resume).toHaveBeenCalledOnce());
+      return successfulSpawnResult();
+    });
+
+    await expect(
+      transcribeOpenAIAudio({
+        apiKey: "openai-key",
+        audio: Buffer.from("encoded audio"),
+        webSocketFactory: harness.factory,
+        spawnImpl,
+      }),
+    ).resolves.toBe("backpressured transcript");
+  });
+
+  it("rejects decoded audio longer than five minutes", async () => {
+    const harness = createWebSocketHarness();
+    const spawnImpl = vi.fn(async (_command, _args, options) => {
+      const stdout = Object.assign(new EventEmitter(), { pause: vi.fn(), resume: vi.fn() });
+      options.onSpawn({ stdout });
+      const completion = new Promise((resolve) => {
+        options.signal.addEventListener("abort", () => {
+          resolve({ ...successfulSpawnResult(), aborted: true });
+        });
+      });
+      stdout.emit("data", Buffer.alloc(24_000 * 2 * 300 + 1));
+      return await completion;
+    });
+
+    await expect(
+      transcribeOpenAIAudio({
+        apiKey: "openai-key",
+        audio: Buffer.from("encoded audio"),
+        webSocketFactory: harness.factory,
+        spawnImpl,
+      }),
+    ).rejects.toThrow("audio exceeds the five-minute OpenAI transcription limit");
   });
 
   it("rejects an empty completed transcript", async () => {

@@ -5258,7 +5258,7 @@ describe("SessionChatController", () => {
       snapshot: await session.snapshot(),
       targetLabel: "ws://host",
       deps: createMockDeps(spawn, "linux"),
-      config: { apiKeys: { mistral: "mistral-key" } },
+      config: { apiKeys: { openai: "openai-key" } },
     });
     controller.start();
 
@@ -5296,6 +5296,9 @@ describe("SessionChatController", () => {
       }
 
       if (cmd === "ffmpeg") {
+        const stdout = new EventEmitter();
+        options.onSpawn({ stdout });
+        queueMicrotask(() => stdout.emit("data", Buffer.from([1, 2, 3, 4])));
         return await new Promise((resolve) => {
           options.signal.addEventListener("abort", () => {
             resolve({
@@ -5327,7 +5330,10 @@ describe("SessionChatController", () => {
       snapshot: await session.snapshot(),
       targetLabel: "ws://host",
       deps: createMockDeps(spawn),
-      config: { apiKeys: { mistral: "mistral-key" } },
+      config: {
+        speechToText: { provider: "mistral" },
+        apiKeys: { mistral: "mistral-key" },
+      },
     });
 
     try {
@@ -5415,9 +5421,9 @@ describe("SessionChatController", () => {
       if (command === "ffmpeg") {
         const stdout = new EventEmitter();
         options.onSpawn({ stdout });
+        queueMicrotask(() => stdout.emit("data", pcm));
         return await new Promise((resolve) => {
           options.signal.addEventListener("abort", () => {
-            stdout.emit("data", pcm);
             resolve({
               stdout: "",
               stderr: "",
@@ -5441,10 +5447,7 @@ describe("SessionChatController", () => {
       snapshot: await session.snapshot(),
       targetLabel: "in-process",
       deps: createMockDeps(spawn),
-      config: {
-        speechToText: { provider: "openai" },
-        apiKeys: { openai: "openai-key" },
-      },
+      config: { apiKeys: { openai: "openai-key" } },
       speechToTextDeps: { webSocketFactory },
     });
 
@@ -5575,7 +5578,10 @@ describe("SessionChatController", () => {
       snapshot: await session.snapshot(),
       targetLabel: "in-process",
       deps: createMockDeps(),
-      config: { apiKeys: { mistral: "mistral-key" } },
+      config: {
+        speechToText: { provider: "mistral" },
+        apiKeys: { mistral: "mistral-key" },
+      },
     });
     controller.listenRecording = {
       audioPath,
@@ -5623,7 +5629,10 @@ describe("SessionChatController", () => {
       snapshot: await session.snapshot(),
       targetLabel: "in-process",
       deps: createMockDeps(),
-      config: { apiKeys: { mistral: "mistral-key" } },
+      config: {
+        speechToText: { provider: "mistral" },
+        apiKeys: { mistral: "mistral-key" },
+      },
     });
     controller.listenRecording = {
       audioPath,
@@ -5697,6 +5706,9 @@ describe("SessionChatController", () => {
         };
       }
       if (command === "ffmpeg") {
+        const stdout = new EventEmitter();
+        options.onSpawn({ stdout });
+        queueMicrotask(() => stdout.emit("data", Buffer.from([1, 2, 3, 4])));
         return await new Promise((resolve) => {
           options.signal.addEventListener("abort", () => {
             resolve({
@@ -5721,7 +5733,10 @@ describe("SessionChatController", () => {
       snapshot: await session.snapshot(),
       targetLabel: "in-process",
       deps: createMockDeps(spawn),
-      config: { apiKeys: { mistral: "mistral-key" } },
+      config: {
+        speechToText: { provider: "mistral" },
+        apiKeys: { mistral: "mistral-key" },
+      },
     });
     controller.retainedListenAudioPath = retainedPath;
 
@@ -5734,6 +5749,68 @@ describe("SessionChatController", () => {
       await rm(retainedPath, { force: true });
       await rm(nextPath, { force: true });
     }
+  });
+
+  it("keeps retained voice input when replacement capture fails to start", async () => {
+    const retainedPath = join(tmpdir(), `tau-session-listen-preserved-${Date.now()}.wav`);
+    const nextPath = join(tmpdir(), `tau-session-listen-failed-${Date.now()}.wav`);
+    await writeFile(retainedPath, Buffer.alloc(2048, 1));
+    const spawn = vi.fn(async (command) => {
+      if (command === "mktemp") {
+        return {
+          stdout: `${nextPath}\n`,
+          stderr: "",
+          output: undefined,
+          exitCode: 0,
+          captureLimitExceeded: false,
+          timedOut: false,
+          aborted: false,
+          closeSignal: null,
+        };
+      }
+      if (command === "ffmpeg") {
+        return {
+          stdout: "",
+          stderr: "audio device unavailable",
+          output: undefined,
+          exitCode: 1,
+          captureLimitExceeded: false,
+          timedOut: false,
+          aborted: false,
+          closeSignal: null,
+        };
+      }
+      throw new Error(`unexpected command: ${command}`);
+    });
+    const session = new FakeSession();
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "in-process",
+      deps: createMockDeps(spawn),
+      config: {
+        speechToText: { provider: "mistral" },
+        apiKeys: { mistral: "mistral-key" },
+      },
+    });
+    controller.retainedListenAudioPath = retainedPath;
+
+    try {
+      await controller.onUserInput("/listen");
+      await expect(readFile(retainedPath)).resolves.toHaveLength(2048);
+    } finally {
+      await rm(retainedPath, { force: true });
+      await rm(nextPath, { force: true });
+    }
+
+    expect(controller.retainedListenAudioPath).toBe(retainedPath);
+    expect(view.transcriptNotices.at(-1)).toEqual({
+      text: "failed to start recording",
+      tone: "error",
+      content: ["ffmpeg failed to start recording: audio device unavailable"],
+    });
   });
 
   it("keeps retained voice input on shutdown", async () => {

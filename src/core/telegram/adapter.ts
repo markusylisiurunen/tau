@@ -1333,7 +1333,7 @@ class TelegramAdapterImpl {
     this.botUsername = options.botUsername;
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     this.requestTimeoutSeconds = options.requestTimeoutSeconds ?? DEFAULT_REQUEST_TIMEOUT_SECONDS;
-    this.speechToTextProvider = options.speechToTextProvider ?? "mistral";
+    this.speechToTextProvider = options.speechToTextProvider ?? "openai";
     this.geminiApiKey = options.geminiApiKey?.trim() || undefined;
     this.mistralApiKey = options.mistralApiKey?.trim() || undefined;
     this.openaiApiKey = options.openaiApiKey?.trim() || undefined;
@@ -2727,11 +2727,14 @@ class TelegramAdapterImpl {
         },
       });
       try {
-        const result = await transcription.finish({
-          audio,
-          fileName: message.fileName,
-          mimeType: message.mimeType,
-        });
+        const result = await transcription.finish(
+          {
+            audio,
+            fileName: message.fileName,
+            mimeType: message.mimeType,
+          },
+          { signal: this.abortController.signal },
+        );
         transcript = result.text;
       } finally {
         transcription.abort();

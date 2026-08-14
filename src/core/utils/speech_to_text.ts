@@ -38,7 +38,10 @@ export type SpeechToTextResult = {
 
 export type SpeechToTextTranscription = {
   appendAudio(audio: Buffer): void;
-  finish(recording: SpeechToTextRecording): Promise<SpeechToTextResult>;
+  finish(
+    recording: SpeechToTextRecording,
+    options?: { signal?: AbortSignal },
+  ): Promise<SpeechToTextResult>;
   abort(): void;
 };
 
@@ -79,9 +82,10 @@ export function createSpeechToTextTranscription(
       });
       return {
         appendAudio: (audio) => transcription.appendAudio(audio),
-        finish: async (recording) => ({
+        finish: async (recording, finishOptions) => ({
           text: await transcription.finish({
             audio: recording.audio,
+            signal: finishOptions?.signal,
             spawnImpl: options.deps?.spawnImpl,
           }),
           usedFallback: false,

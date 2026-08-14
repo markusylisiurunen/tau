@@ -49,7 +49,7 @@ export function startListenAudioCapture(args: {
   audioPath: string;
   signal: AbortSignal;
   onAudioChunk: (audio: Buffer) => void;
-}): Promise<SpawnCaptureResult> {
+}): { completion: Promise<SpawnCaptureResult>; started: Promise<void> } {
   const inputArgs = [
     "-hide_banner",
     "-loglevel",
@@ -88,17 +88,48 @@ export function startListenAudioCapture(args: {
     "pipe:1",
   ];
 
-  return args.deps.spawn("ffmpeg", [...inputArgs, ...waveOutputArgs, ...streamOutputArgs], {
-    detached: true,
-    killProcessGroup: true,
-    signal: args.signal,
-    captureOutput: "stderr",
-    maxCaptureBytes: 20_000,
-    stdio: ["ignore", "pipe", "pipe"],
-    onSpawn: (child: ChildProcess) => {
-      child.stdout?.on("data", (chunk: Buffer) => args.onAudioChunk(chunk));
+  const {
+    promise: started,
+    resolve: resolveStarted,
+    reject: rejectStarted,
+  } = Promise.withResolvers<void>();
+  let receivedAudio = false;
+  const completion = args.deps.spawn(
+    "ffmpeg",
+    [...inputArgs, ...waveOutputArgs, ...streamOutputArgs],
+    {
+      detached: true,
+      killProcessGroup: true,
+      signal: args.signal,
+      captureOutput: "stderr",
+      maxCaptureBytes: 20_000,
+      stdio: ["ignore", "pipe", "pipe"],
+      onSpawn: (child: ChildProcess) => {
+        child.stdout?.on("data", (chunk: Buffer) => {
+          if (!receivedAudio) {
+            receivedAudio = true;
+            resolveStarted();
+          }
+          args.onAudioChunk(chunk);
+        });
+      },
     },
-  });
+  );
+  void completion.then(
+    (result) => {
+      if (receivedAudio) return;
+      const detail = result.stderr.trim();
+      rejectStarted(
+        new Error(
+          detail
+            ? `ffmpeg failed to start recording: ${detail}`
+            : "ffmpeg exited before recording audio",
+        ),
+      );
+    },
+    (error) => rejectStarted(error),
+  );
+  return { completion, started };
 }
 
 export async function readListenAudio(path: string): Promise<Buffer> {
@@ -124,7 +155,7 @@ export async function cleanupListenTempFile(path: string): Promise<void> {
 }
 
 export function getSpeechToTextProvider(config: Config): SpeechToTextProvider {
-  return config.speechToText?.provider ?? "mistral";
+  return config.speechToText?.provider ?? "openai";
 }
 
 export function getSpeechToTextApiKey(config: Config, deps: CoreDeps): string | undefined {

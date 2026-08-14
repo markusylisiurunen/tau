@@ -1705,6 +1705,7 @@ describe("telegram adapter", () => {
       botToken: "token",
       projects: { demo: { repo: "git@example.com:demo.git" } },
       allowedChatIds: [groupChatId],
+      speechToTextProvider: "mistral",
       mistralApiKey: "mistral-key",
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
@@ -2207,6 +2208,7 @@ describe("telegram adapter", () => {
     const adapter = await startAdapter({
       botToken: "token",
       projects: { demo: { repo: "git@example.com:demo.git" } },
+      speechToTextProvider: "mistral",
       mistralApiKey: "mistral-key",
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
@@ -2314,7 +2316,7 @@ describe("telegram adapter", () => {
     }
   });
 
-  it("transcribes Telegram audio with OpenAI realtime transcription when configured", async () => {
+  it("transcribes Telegram audio with OpenAI realtime transcription by default", async () => {
     const apiHarness = createApiHarness([
       [
         {
@@ -2387,7 +2389,6 @@ describe("telegram adapter", () => {
     const adapter = await startAdapter({
       botToken: "token",
       projects: { demo: { repo: "git@example.com:demo.git" } },
-      speechToTextProvider: "openai",
       openaiApiKey: "openai-key",
       speechToTextDeps: { webSocketFactory, spawnImpl },
       sessionManager: managerHarness.manager,

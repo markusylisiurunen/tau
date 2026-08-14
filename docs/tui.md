@@ -195,7 +195,7 @@ The TUI also advertises diff review as a client tool unless `--no-client-tools` 
 
 `/listen` and Ctrl+Y are currently macOS-only. Recording uses local `ffmpeg` with the AVFoundation audio input and stops when Ctrl+Y is pressed again, when Escape is pressed, or after five minutes. The transcript is inserted at the cursor for review and is not submitted automatically.
 
-If transcription fails, Tau retains the local WAV and reports its path. Run `/listen retry` to transcribe the same audio again with the current provider and conversation context, or `/listen discard` to delete it. Starting another recording also deletes the retained file. Tau keeps at most one failed recording, and exiting leaves that file at the reported path for manual recovery. Gemini transcription retries a transient failure once on Gemini 3.7 Flash, then uses Gemini 3.6 Flash as a final fallback. OpenAI transcription streams audio to `gpt-live-transcribe` while recording, waits for the final transcript before updating the editor, and replays a retained WAV through a fresh realtime session on retry. Permanent request failures stop immediately.
+If transcription fails, Tau retains the local WAV and reports its path. Run `/listen retry` to transcribe the same audio again with the current provider and conversation context, or `/listen discard` to delete it. A replacement recording deletes the retained file only after the new capture starts producing audio. Tau keeps at most one failed recording, and exiting leaves that file at the reported path for manual recovery. Gemini transcription retries a transient failure once on Gemini 3.7 Flash, then uses Gemini 3.6 Flash as a final fallback. OpenAI transcription streams audio to `gpt-live-transcribe` while recording, waits for the final transcript before updating the editor, and replays a retained WAV through a fresh realtime session on retry. Permanent request failures stop immediately.
 
 Install `ffmpeg` and configure a speech-to-text provider:
 
@@ -203,7 +203,7 @@ Install `ffmpeg` and configure a speech-to-text provider:
 brew install ffmpeg
 ```
 
-Mistral is the default and needs `MISTRAL_API_KEY` or `apiKeys.mistral`. Set `speechToText.provider` to `gemini` to use `GEMINI_API_KEY` or `apiKeys.google`, or to `openai` to use `OPENAI_API_KEY` or `apiKeys.openai`. These settings and credentials are read by the TUI process, including during remote attachment.
+OpenAI is the default and needs `OPENAI_API_KEY` or `apiKeys.openai`. Set `speechToText.provider` to `gemini` to use `GEMINI_API_KEY` or `apiKeys.google`, or to `mistral` to use `MISTRAL_API_KEY` or `apiKeys.mistral`. These settings and credentials are read by the TUI process, including during remote attachment.
 
 `/speak` is also macOS-only. It rewrites the last assistant response for speech, generates audio with Gemini, and plays it through the local `afplay` command. It requires `GEMINI_API_KEY` or `apiKeys.google`, runs only while the session is idle, and can be stopped with Escape. Speech source and rewritten text are limited to 10,000 Unicode characters, and generation stops after 32 MiB of raw audio.
 

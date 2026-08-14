@@ -15,7 +15,7 @@ These are defaults built into this Tau version, not a dump of the effective conf
 | Built-in personas | Enabled |
 | Built-in themes | Enabled |
 | Automatic compaction | `{ "enabled": true, "reserveTokens": 16384, "keepRecentTokens": 20000 }` |
-| Speech-to-text provider when unset | `mistral` |
+| Speech-to-text provider when unset | `openai` |
 | Built-in diff tool code theme | `github-dark-dimmed` |
 | Command client tool timeout when unset | `60000` ms |
 
@@ -191,7 +191,7 @@ An object with one required field when present:
 }
 ```
 
-When the object is absent, `/listen` and Telegram transcription use `mistral`. The TUI consumes this setting for client-local recording; the Telegram runner consumes it for Telegram audio. Restart the owning process after changing it.
+When the object is absent, `/listen` and Telegram transcription use `openai`. The TUI consumes this setting for client-local recording; the Telegram runner consumes it for Telegram audio. Restart the owning process after changing it.
 
 ### `nook`
 

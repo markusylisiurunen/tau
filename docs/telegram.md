@@ -279,7 +279,7 @@ The local execution environment can access these runner temporary paths. Pending
 
 Telegram `voice` and `audio` messages are downloaded and transcribed. Direct DM turns and bot-triggering group turns echo the transcript to the chat before submission so the sender can verify it.
 
-Mistral is the default. Select another provider with `speechToText.provider`. Runner credentials are:
+OpenAI is the default. Select another provider with `speechToText.provider`. Runner credentials are:
 
 - Mistral: `MISTRAL_API_KEY`, then `apiKeys.mistral`
 - Gemini: `GEMINI_API_KEY`, then `apiKeys.google`

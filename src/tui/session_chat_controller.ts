@@ -168,6 +168,7 @@ export class SessionChatController {
   private listenRecording?: ListenRecording;
   private retainedListenAudioPath?: string;
   private listenTransition?: Promise<void>;
+  private activeListenTranscription?: ListenRecording["transcription"];
   private listenActivityLabel?: string;
   private speechActivityLabel?: string;
   private speakTask?: {
@@ -248,6 +249,7 @@ export class SessionChatController {
     this.ephemeralUnsubscribe?.();
     this.pendingUserMessagesUnsubscribe?.();
     this.subagentActivitiesUnsubscribe?.();
+    this.activeListenTranscription?.abort();
     if (this.listenTransition) {
       await this.listenTransition;
     }
@@ -812,31 +814,41 @@ export class SessionChatController {
     }
 
     const retainedAudioPath = this.retainedListenAudioPath;
-    if (retainedAudioPath) {
-      try {
-        await deleteListenTempFile(retainedAudioPath);
-        this.retainedListenAudioPath = undefined;
-      } catch (error) {
-        this.view.addTranscriptNotice("failed to replace retained recording", "error", [
-          (error as Error).message,
-          `recording retained at ${retainedAudioPath}`,
-        ]);
-        return;
-      }
-    }
-
     let audioPath: string | undefined;
     let transcription: ListenRecording["transcription"] | undefined;
+    let abortController: AbortController | undefined;
+    let completion: ListenRecording["completion"] | undefined;
     try {
       audioPath = await createListenTempFilePath(this.deps);
       transcription = this.createSpeechTranscription();
-      const abortController = new AbortController();
-      const completion = startListenAudioCapture({
+      abortController = new AbortController();
+      const capture = startListenAudioCapture({
         deps: this.deps,
         audioPath,
         signal: abortController.signal,
         onAudioChunk: (audio) => transcription?.appendAudio(audio),
       });
+      completion = capture.completion;
+      await capture.started;
+
+      if (retainedAudioPath) {
+        try {
+          await deleteListenTempFile(retainedAudioPath);
+          if (this.retainedListenAudioPath === retainedAudioPath) {
+            this.retainedListenAudioPath = undefined;
+          }
+        } catch (error) {
+          abortController.abort();
+          transcription.abort();
+          await completion.catch(() => undefined);
+          await cleanupListenTempFile(audioPath);
+          this.view.addTranscriptNotice("failed to replace retained recording", "error", [
+            (error as Error).message,
+            `recording retained at ${retainedAudioPath}`,
+          ]);
+          return;
+        }
+      }
 
       const recording: ListenRecording = {
         audioPath,
@@ -854,7 +866,9 @@ export class SessionChatController {
       this.refreshStatus();
       void this.watchListenRecording(recording);
     } catch (err) {
+      abortController?.abort();
       transcription?.abort();
+      await completion?.catch(() => undefined);
       if (audioPath) {
         await cleanupListenTempFile(audioPath);
       }
@@ -975,6 +989,7 @@ export class SessionChatController {
     this.refreshStatus();
     try {
       activeTranscription ??= this.createSpeechTranscription();
+      this.activeListenTranscription = activeTranscription;
       const result = await activeTranscription.finish({
         audio,
         mimeType: "audio/wav",
@@ -1003,6 +1018,9 @@ export class SessionChatController {
       ]);
     } finally {
       activeTranscription?.abort();
+      if (this.activeListenTranscription === activeTranscription) {
+        this.activeListenTranscription = undefined;
+      }
       this.listenActivityLabel = undefined;
       this.refreshStatus();
     }

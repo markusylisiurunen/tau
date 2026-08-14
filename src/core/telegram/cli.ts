@@ -110,7 +110,7 @@ export async function runTelegramCommand(
   const cwd = options.cwd ?? process.cwd();
   const env = options.env ?? process.env;
   const config = options.config ?? loadConfig(cwd, createDefaultConfigDeps());
-  const speechToTextProvider = config.speechToText?.provider ?? "mistral";
+  const speechToTextProvider = config.speechToText?.provider ?? "openai";
   const geminiApiKey = getGoogleApiKey(config, env);
   const mistralApiKey = getMistralApiKey(config, env);
   const openaiApiKey = getOpenAIApiKey(config, env);

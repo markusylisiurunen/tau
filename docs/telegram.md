@@ -279,12 +279,13 @@ The local execution environment can access these runner temporary paths. Pending
 
 Telegram `voice` and `audio` messages are downloaded and transcribed. Direct DM turns and bot-triggering group turns echo the transcript to the chat before submission so the sender can verify it.
 
-Mistral is the default provider. Configure credentials in the runner's normal Tau config or environment:
+Mistral is the default. Select another provider with `speechToText.provider`. Runner credentials are:
 
 - Mistral: `MISTRAL_API_KEY`, then `apiKeys.mistral`
-- Gemini: set `speechToText.provider` to `gemini`, then use `GEMINI_API_KEY`, falling back to `apiKeys.google`
+- Gemini: `GEMINI_API_KEY`, then `apiKeys.google`
+- OpenAI: `OPENAI_API_KEY`, then `apiKeys.openai`
 
-The environment variable wins for each speech provider. Audio without a usable key produces a user-facing error instead of entering a turn. See [credentials](credentials.md).
+OpenAI uses `gpt-live-transcribe` and runner-side `ffmpeg`. Missing keys reject the audio. See [credentials](credentials.md).
 
 `/tts_on` uses `gemini-3.7-flash`, `gemini-3.1-flash-tts-preview`, Despina, the Google key, and runner `ffmpeg` with Opus. Source and rewritten text each allow 10,000 Unicode characters; audio allows 32 MiB. Rewrite and job timeouts are one and five minutes. Jobs are ephemeral. Failure sends `voice response failed. please try again.` without affecting text; details stay in logs.
 

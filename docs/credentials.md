@@ -63,10 +63,11 @@ Several Tau features share provider credentials but intentionally prefer a fixed
 | Exa web search and fetch | `EXA_API_KEY`, then `apiKeys.exa` |
 | Google speech, Gemini speech-to-text, Telegram Gemini transcription, and Telegram voice responses | `GEMINI_API_KEY`, then `apiKeys.google` |
 | Mistral speech-to-text, Telegram Mistral transcription, and PDF OCR | `MISTRAL_API_KEY`, then `apiKeys.mistral` |
+| OpenAI speech-to-text and Telegram OpenAI transcription | `OPENAI_API_KEY`, then `apiKeys.openai` |
 
-The Google and Mistral rows describe feature-specific helpers. Model calls follow the general model-authentication order instead, where the configured provider key wins over ambient environment authentication.
+The Google, Mistral, and OpenAI rows describe feature-specific helpers. Model calls follow the general model-authentication order instead, where the configured provider key wins over ambient environment authentication.
 
-`web.discover` does not require Exa. `web.search` and `web.fetch` do. `/speak` and Telegram `/tts_on` voice responses use Google. `/listen` and incoming Telegram audio use the configured `speechToText.provider`, which is `mistral` unless configuration selects `gemini`. PDF OCR through `tau tool pdf-unpack` uses Mistral.
+`web.discover` does not require Exa. `web.search` and `web.fetch` do. `/speak` and Telegram `/tts_on` voice responses use Google. `/listen` and incoming Telegram audio use the configured `speechToText.provider`, which is `mistral` unless configuration selects `gemini` or `openai`. PDF OCR through `tau tool pdf-unpack` uses Mistral.
 
 Set these variables on the process that owns the feature. For example, a remote TUI's `/speak` reads the attached client's `GEMINI_API_KEY`, while a Google model selected by the session reads credentials at the host.
 

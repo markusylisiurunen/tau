@@ -171,7 +171,7 @@ The map accepts arbitrary non-empty provider names and string values. Values are
 
 For model requests, credential precedence is an explicit request override, configured `apiKeys.<provider>`, then the provider runtime's ambient authentication. This means `apiKeys.openai` wins over `OPENAI_API_KEY` for model calls. The `openai-codex` provider uses managed OAuth separately and does not use `apiKeys.openai`.
 
-Feature-specific helpers use different precedence: `EXA_API_KEY`, `GEMINI_API_KEY`, and `MISTRAL_API_KEY` take precedence over `apiKeys.exa`, `apiKeys.google`, and `apiKeys.mistral` for the features that consume those helpers. See [credentials](credentials.md) for the exact feature matrix.
+Feature-specific helpers use different precedence: `EXA_API_KEY`, `GEMINI_API_KEY`, `MISTRAL_API_KEY`, and `OPENAI_API_KEY` take precedence over their matching `apiKeys` entries for the features that consume those helpers. See [credentials](credentials.md) for the exact feature matrix.
 
 Credentials are consumed where the model or feature runs. In an attached session that is usually the host, not the TUI client. Avoid committing project API keys. See [credentials](credentials.md).
 
@@ -179,9 +179,9 @@ Credentials are consumed where the model or feature runs. In an attached session
 
 An object with one required field when present:
 
-| Nested field | Type   | Values                |
-| ------------ | ------ | --------------------- |
-| `provider`   | String | `mistral` or `gemini` |
+| Nested field | Type   | Values                           |
+| ------------ | ------ | -------------------------------- |
+| `provider`   | String | `mistral`, `gemini`, or `openai` |
 
 ```json
 {

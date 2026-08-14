@@ -273,7 +273,7 @@ Recovery needs the same `workspaceRoot`, project definitions, host home, and Tau
 
 ## Telegram audio or attachment processing fails
 
-Telegram audio transcription uses the runner's `speechToText.provider`, which defaults to Mistral. Mistral needs `MISTRAL_API_KEY` or `apiKeys.mistral`; Gemini needs `GEMINI_API_KEY` or `apiKeys.google`. Set the credential for the runner process and restart it after changing the environment or provider.
+Telegram audio transcription uses the runner's `speechToText.provider`, which defaults to Mistral. Mistral needs `MISTRAL_API_KEY` or `apiKeys.mistral`; Gemini needs `GEMINI_API_KEY` or `apiKeys.google`; OpenAI needs `OPENAI_API_KEY` or `apiKeys.openai` and runner-side `ffmpeg`. Set the credential for the runner process and restart it after changing the environment or provider.
 
 Distinguish download, materialization, format, and transcription errors. The reply or runner log states which stage failed. Confirm Telegram can deliver the file to the bot, the attachment type is supported, the runner can write its temporary directory, and the selected provider accepts the media type. Do not log media bytes or transcripts merely to prove they exist.
 

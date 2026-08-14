@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { describe, expect, it, vi } from "vitest";
@@ -2308,6 +2309,110 @@ describe("telegram adapter", () => {
       expect(request.generationConfig.responseSchema.required).toEqual(["transcription"]);
       expect(request.generationConfig.thinkingConfig.thinkingLevel).toBe("low");
       expect(request.contents[0].parts[1].inlineData.mimeType).toBe("audio/ogg");
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it("transcribes Telegram audio with OpenAI realtime transcription when configured", async () => {
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: {
+            chat: { id: 212, type: "private" },
+            from: { id: 7 },
+            voice: {
+              file_id: "voice-789",
+              mime_type: "audio/ogg",
+            },
+          },
+        },
+      ],
+    ]);
+    const managerHarness = createSessionManagerHarness(
+      [
+        {
+          id: "s23",
+          projectId: "demo",
+          state: "waiting-input",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+      ],
+      { defaultOwnerId: ownerIdForChat(212) },
+    );
+    const socket = new EventEmitter();
+    const socketEvents = [];
+    socket.send = vi.fn((data, callback) => {
+      const event = JSON.parse(data);
+      socketEvents.push(event);
+      callback?.();
+      if (event.type === "session.update") {
+        queueMicrotask(() => socket.emit("message", JSON.stringify({ type: "session.updated" })));
+      }
+      if (event.type === "input_audio_buffer.commit") {
+        queueMicrotask(() =>
+          socket.emit(
+            "message",
+            JSON.stringify({
+              type: "conversation.item.input_audio_transcription.completed",
+              transcript: "use realtime transcription",
+            }),
+          ),
+        );
+      }
+    });
+    socket.close = vi.fn();
+    socket.terminate = vi.fn();
+    const webSocketFactory = vi.fn(() => {
+      queueMicrotask(() => socket.emit("open"));
+      return socket;
+    });
+    const spawnImpl = vi.fn(async (_command, _args, options) => {
+      const stdout = new EventEmitter();
+      options.onSpawn({ stdout });
+      stdout.emit("data", Buffer.from([1, 2, 3, 4]));
+      return {
+        stdout: "",
+        stderr: "",
+        output: undefined,
+        exitCode: 0,
+        captureLimitExceeded: false,
+        timedOut: false,
+        aborted: false,
+        closeSignal: null,
+      };
+    });
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      speechToTextProvider: "openai",
+      openaiApiKey: "openai-key",
+      speechToTextDeps: { webSocketFactory, spawnImpl },
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() => managerHarness.manager.sendMessage.mock.calls.length === 1);
+      expect(managerHarness.manager.sendMessage).toHaveBeenCalledWith(
+        "s23",
+        "use realtime transcription",
+        { mode: "auto" },
+      );
+      expect(socketEvents.map((event) => event.type)).toEqual([
+        "session.update",
+        "input_audio_buffer.append",
+        "input_audio_buffer.commit",
+      ]);
+      expect(spawnImpl).toHaveBeenCalledWith(
+        "ffmpeg",
+        expect.arrayContaining(["-i", "pipe:0", "-ar", "24000", "pipe:1"]),
+        expect.objectContaining({ input: Buffer.from("telegram audio payload") }),
+      );
     } finally {
       await adapter.close();
     }

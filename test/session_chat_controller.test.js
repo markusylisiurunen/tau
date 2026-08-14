@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
@@ -5368,6 +5369,119 @@ describe("SessionChatController", () => {
       }),
     );
     expect(session.submit).not.toHaveBeenCalled();
+  });
+
+  it("streams OpenAI transcription while recording and inserts only the final transcript", async () => {
+    const audioPath = join(tmpdir(), `tau-session-listen-openai-${Date.now()}.wav`);
+    const socket = new EventEmitter();
+    const socketEvents = [];
+    socket.send = vi.fn((data, callback) => {
+      const event = JSON.parse(data);
+      socketEvents.push(event);
+      callback?.();
+      if (event.type === "session.update") {
+        queueMicrotask(() => socket.emit("message", JSON.stringify({ type: "session.updated" })));
+      }
+      if (event.type === "input_audio_buffer.commit") {
+        queueMicrotask(() =>
+          socket.emit(
+            "message",
+            JSON.stringify({
+              type: "conversation.item.input_audio_transcription.completed",
+              transcript: "live transcript",
+            }),
+          ),
+        );
+      }
+    });
+    socket.close = vi.fn();
+    socket.terminate = vi.fn();
+    const webSocketFactory = vi.fn(() => {
+      queueMicrotask(() => socket.emit("open"));
+      return socket;
+    });
+    const pcm = Buffer.from([1, 2, 3, 4]);
+    const spawn = vi.fn(async (command, _args, options = {}) => {
+      if (command === "mktemp") {
+        return {
+          stdout: `${audioPath}\n`,
+          stderr: "",
+          output: undefined,
+          exitCode: 0,
+          captureLimitExceeded: false,
+          timedOut: false,
+          aborted: false,
+          closeSignal: null,
+        };
+      }
+      if (command === "ffmpeg") {
+        const stdout = new EventEmitter();
+        options.onSpawn({ stdout });
+        return await new Promise((resolve) => {
+          options.signal.addEventListener("abort", () => {
+            stdout.emit("data", pcm);
+            resolve({
+              stdout: "",
+              stderr: "",
+              output: undefined,
+              exitCode: 0,
+              captureLimitExceeded: false,
+              timedOut: false,
+              aborted: true,
+              closeSignal: null,
+            });
+          });
+        });
+      }
+      throw new Error(`unexpected command: ${command}`);
+    });
+    const session = new FakeSession();
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "in-process",
+      deps: createMockDeps(spawn),
+      config: {
+        speechToText: { provider: "openai" },
+        apiKeys: { openai: "openai-key" },
+      },
+      speechToTextDeps: { webSocketFactory },
+    });
+
+    try {
+      controller.start();
+      await controller.onUserInput("/listen");
+      expect(view.status.editor.mode).toBe("recording");
+      await writeFile(audioPath, Buffer.alloc(2048, 1));
+
+      controller.getInputHandlers().onCtrlY();
+      for (let i = 0; i < 50 && view.editorText !== "live transcript"; i += 1) {
+        await flush();
+        await waitMs(1);
+      }
+    } finally {
+      await controller.dispose();
+      await rm(audioPath, { force: true });
+    }
+
+    expect(view.editorText).toBe("live transcript");
+    expect(socketEvents.map((event) => event.type)).toEqual([
+      "session.update",
+      "input_audio_buffer.append",
+      "input_audio_buffer.commit",
+    ]);
+    expect(socketEvents[1].audio).toBe(pcm.toString("base64"));
+    expect(spawn).toHaveBeenNthCalledWith(
+      2,
+      "ffmpeg",
+      expect.arrayContaining(["-ar", "24000", "-f", "s16le", "pipe:1"]),
+      expect.objectContaining({
+        captureOutput: "stderr",
+        stdio: ["ignore", "pipe", "pipe"],
+      }),
+    );
   });
 
   it("shows Gemini retry and fallback progress while transcribing voice input", async () => {

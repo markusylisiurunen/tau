@@ -34,6 +34,7 @@ export {
   getHistoryApiKey,
   getMistralApiKey,
   getNookAccessClientSecret,
+  getOpenAIApiKey,
   loadConfig,
   normalizeAutoCompactConfig,
 } from "./schema.js";

@@ -1,6 +1,11 @@
 import { createDefaultConfigDeps } from "../config/deps.js";
 import type { Config } from "../config/schema.js";
-import { getGoogleApiKey, getMistralApiKey, loadConfig } from "../config/schema.js";
+import {
+  getGoogleApiKey,
+  getMistralApiKey,
+  getOpenAIApiKey,
+  loadConfig,
+} from "../config/schema.js";
 import { loadTelegramConfig, TelegramConfigError } from "./config.js";
 import { startTelegramRuntime, TelegramRuntimeError } from "./runtime.js";
 import type { TelegramSessionClient, TelegramSessionClientOptions } from "./session_manager.js";
@@ -108,6 +113,7 @@ export async function runTelegramCommand(
   const speechToTextProvider = config.speechToText?.provider ?? "mistral";
   const geminiApiKey = getGoogleApiKey(config, env);
   const mistralApiKey = getMistralApiKey(config, env);
+  const openaiApiKey = getOpenAIApiKey(config, env);
 
   const createSessionClient = options.createSessionClient;
   if (!createSessionClient) {
@@ -132,6 +138,7 @@ export async function runTelegramCommand(
         speechToTextProvider,
         geminiApiKey,
         mistralApiKey,
+        openaiApiKey,
         createSessionClient,
         onLog: stdout,
       });

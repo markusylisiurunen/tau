@@ -52,7 +52,7 @@ export type BuiltInDiffToolConfig = {
   codeTheme?: string;
 };
 
-export type SpeechToTextProvider = "mistral" | "gemini";
+export type SpeechToTextProvider = "mistral" | "gemini" | "openai";
 
 export type SpeechToTextConfig = {
   provider: SpeechToTextProvider;
@@ -225,7 +225,7 @@ const ApiKeyProviderSchema = z.string();
 const ApiKeysSchema = z.object({}).catchall(z.unknown());
 const SpeechToTextConfigSchema = z
   .object({
-    provider: z.enum(["mistral", "gemini"]),
+    provider: z.enum(["mistral", "gemini", "openai"]),
   })
   .strip();
 const CloudflareSandboxBridgeSchema = z
@@ -636,7 +636,7 @@ function parseSpeechToTextConfig(
   if (!parsed.success) {
     if (parsed.error.issues.some((issue) => issue.path[0] === "provider")) {
       return {
-        errors: [`${sourceLabel}: speechToText.provider must be 'mistral' or 'gemini'.`],
+        errors: [`${sourceLabel}: speechToText.provider must be 'mistral', 'gemini', or 'openai'.`],
       };
     }
     return { errors: [`${sourceLabel}: 'speechToText' must be an object.`] };
@@ -1249,6 +1249,16 @@ export function getGoogleApiKey(config: Config, env?: NodeJS.ProcessEnv): string
   }
 
   const configKey = config.apiKeys?.google?.trim();
+  return configKey || undefined;
+}
+
+export function getOpenAIApiKey(config: Config, env?: NodeJS.ProcessEnv): string | undefined {
+  const envKey = getTrimmedEnvValue("OPENAI_API_KEY", env);
+  if (envKey) {
+    return envKey;
+  }
+
+  const configKey = config.apiKeys?.openai?.trim();
   return configKey || undefined;
 }
 

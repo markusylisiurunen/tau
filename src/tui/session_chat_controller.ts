@@ -28,6 +28,7 @@ import { TOOL_NAME_BASH } from "../core/tools/tool_names.js";
 import { REASONING_LEVELS, type ReasoningEffort } from "../core/types.js";
 import { formatAdaptiveNumber, formatCwd, formatTokenWindow } from "../core/utils/format.js";
 import { extractAssistantText } from "../core/utils/messages.js";
+import type { SpeechToTextDependencies } from "../core/utils/speech_to_text.js";
 import { collectSpeechToTextContext } from "../core/utils/speech_to_text_context.js";
 import { hasAutoCompactionContinuationMetadata } from "../core/utils/user_metadata.js";
 import { APP_VERSION } from "../core/version.js";
@@ -92,6 +93,7 @@ import {
   type ListenRecording,
   readListenAudio,
   startListenAudioCapture,
+  startListenStreamingTranscription,
   transcribeListenAudio,
 } from "./listen_capture.js";
 import {
@@ -113,6 +115,7 @@ export type SessionChatControllerOptions = {
   defaultDiffTool?: DiffToolConfig;
   diffToolLauncher?: DiffReviewToolLauncher;
   deps?: CoreDeps;
+  speechToTextDeps?: SpeechToTextDependencies;
   themeIds?: string[];
   onExit?: () => void;
 };
@@ -127,6 +130,7 @@ export class SessionChatController {
   private readonly defaultDiffTool?: DiffToolConfig;
   private readonly diffToolLauncher?: DiffReviewToolLauncher;
   private readonly deps: CoreDeps;
+  private readonly speechToTextDeps?: SpeechToTextDependencies;
   private readonly themeIds: string[];
   private readonly commandRegistry: CommandRegistry<CommandDispatchContext>;
   private readonly commandHandlers: CommandDispatchContext;
@@ -184,6 +188,7 @@ export class SessionChatController {
     this.defaultDiffTool = options.defaultDiffTool;
     this.diffToolLauncher = options.diffToolLauncher;
     this.deps = options.deps ?? createDefaultCoreDeps();
+    this.speechToTextDeps = options.speechToTextDeps;
     this.themeIds = options.themeIds ?? [];
     this.observedSessionRevision = options.snapshot.revision;
     this.commandRegistry = createCommandRegistry();
@@ -822,13 +827,23 @@ export class SessionChatController {
     }
 
     let audioPath: string | undefined;
+    let streamingTranscription: ListenRecording["streamingTranscription"];
     try {
       audioPath = await createListenTempFilePath(this.deps);
+      streamingTranscription = await startListenStreamingTranscription({
+        config: this.config,
+        deps: this.deps,
+        context: collectSpeechToTextContext(this.snapshot),
+        speechToTextDeps: this.speechToTextDeps,
+      });
       const abortController = new AbortController();
       const completion = startListenAudioCapture({
         deps: this.deps,
         audioPath,
         signal: abortController.signal,
+        onAudioChunk: streamingTranscription
+          ? (audio) => streamingTranscription?.appendAudio(audio)
+          : undefined,
       });
 
       const recording: ListenRecording = {
@@ -836,6 +851,7 @@ export class SessionChatController {
         stopRequested: false,
         abortController,
         completion,
+        ...(streamingTranscription ? { streamingTranscription } : {}),
       };
       recording.maxDurationTimeout = setTimeout(() => {
         if (this.listenRecording !== recording || this.listenTransition) return;
@@ -846,6 +862,7 @@ export class SessionChatController {
       this.refreshStatus();
       void this.watchListenRecording(recording);
     } catch (err) {
+      streamingTranscription?.abort();
       if (audioPath) {
         await cleanupListenTempFile(audioPath);
       }
@@ -868,12 +885,13 @@ export class SessionChatController {
     try {
       await recording.completion;
     } catch (err) {
+      recording.streamingTranscription?.abort();
       this.view.addTranscriptNotice("failed to record audio", "error", [(err as Error).message]);
       await cleanupListenTempFile(recording.audioPath);
       return;
     }
 
-    await this.transcribeListenAudioFile(recording.audioPath);
+    await this.transcribeListenAudioFile(recording.audioPath, recording.streamingTranscription);
   }
 
   private async retryRetainedListenAudio(): Promise<void> {
@@ -915,11 +933,15 @@ export class SessionChatController {
     }
   }
 
-  private async transcribeListenAudioFile(audioPath: string): Promise<void> {
+  private async transcribeListenAudioFile(
+    audioPath: string,
+    streamingTranscription?: ListenRecording["streamingTranscription"],
+  ): Promise<void> {
     let audio: Buffer;
     try {
       audio = await readListenAudio(audioPath);
     } catch (error) {
+      streamingTranscription?.abort();
       this.view.addTranscriptNotice("failed to read speech recording", "error", [
         (error as Error).message,
       ]);
@@ -931,6 +953,7 @@ export class SessionChatController {
     }
 
     if (audio.byteLength < LISTEN_RECORDING_MIN_BYTES) {
+      streamingTranscription?.abort();
       this.view.showFooterNotice("recording too short, try again", "default");
       if (this.retainedListenAudioPath === audioPath) {
         this.retainedListenAudioPath = undefined;
@@ -942,19 +965,22 @@ export class SessionChatController {
     this.listenActivityLabel = "transcribing voice input";
     this.refreshStatus();
     try {
-      const result = await transcribeListenAudio({
-        config: this.config,
-        deps: this.deps,
-        audio,
-        context: collectSpeechToTextContext(this.snapshot),
-        onProgress: (progress) => {
-          this.listenActivityLabel =
-            progress === "retrying"
-              ? "retrying voice transcription"
-              : "trying fallback transcription model";
-          this.refreshStatus();
-        },
-      });
+      const result = streamingTranscription
+        ? { text: await streamingTranscription.finish(), usedFallback: false }
+        : await transcribeListenAudio({
+            config: this.config,
+            deps: this.deps,
+            audio,
+            context: collectSpeechToTextContext(this.snapshot),
+            onProgress: (progress) => {
+              this.listenActivityLabel =
+                progress === "retrying"
+                  ? "retrying voice transcription"
+                  : "trying fallback transcription model";
+              this.refreshStatus();
+            },
+            speechToTextDeps: this.speechToTextDeps,
+          });
       this.view.insertEditorTextAtCursor(result.text);
       if (result.usedFallback) {
         this.view.showFooterNotice("transcribed with fallback model", "default");
@@ -992,6 +1018,7 @@ export class SessionChatController {
     this.refreshStatus();
 
     recording.abortController.abort();
+    recording.streamingTranscription?.abort();
     try {
       await recording.completion;
     } catch {
@@ -1007,6 +1034,7 @@ export class SessionChatController {
       if (this.listenRecording !== recording || recording.stopRequested) return;
 
       this.listenRecording = undefined;
+      recording.streamingTranscription?.abort();
       this.view.setEditorInputEnabled(true);
       this.refreshStatus();
       const detail =
@@ -1022,6 +1050,7 @@ export class SessionChatController {
       if (this.listenRecording !== recording || recording.stopRequested) return;
 
       this.listenRecording = undefined;
+      recording.streamingTranscription?.abort();
       this.view.setEditorInputEnabled(true);
       this.refreshStatus();
       const error = err as NodeJS.ErrnoException;

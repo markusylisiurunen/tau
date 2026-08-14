@@ -10,12 +10,10 @@ import {
 import type { CoreDeps } from "../core/runtime/deps.js";
 import type { SpawnCaptureResult } from "../core/utils/spawn_capture.js";
 import {
+  createSpeechToTextTranscription,
   type SpeechToTextDependencies,
   type SpeechToTextProgress,
-  type SpeechToTextResult,
-  type StreamingSpeechToText,
-  startStreamingSpeechToText,
-  transcribeAudio,
+  type SpeechToTextTranscription,
 } from "../core/utils/speech_to_text.js";
 import type { SpeechToTextContext } from "../core/utils/speech_to_text_context.js";
 
@@ -28,7 +26,7 @@ export type ListenRecording = {
   stopRequested: boolean;
   abortController: AbortController;
   completion: Promise<SpawnCaptureResult>;
-  streamingTranscription?: StreamingSpeechToText;
+  transcription: SpeechToTextTranscription;
   maxDurationTimeout?: ReturnType<typeof setTimeout>;
 };
 
@@ -50,7 +48,7 @@ export function startListenAudioCapture(args: {
   deps: CoreDeps;
   audioPath: string;
   signal: AbortSignal;
-  onAudioChunk?: (audio: Buffer) => void;
+  onAudioChunk: (audio: Buffer) => void;
 }): Promise<SpawnCaptureResult> {
   const inputArgs = [
     "-hide_banner",
@@ -68,7 +66,7 @@ export function startListenAudioCapture(args: {
     "-ac",
     "1",
     "-ar",
-    args.onAudioChunk ? "24000" : "16000",
+    "16000",
     "-c:a",
     "pcm_s16le",
     "-f",
@@ -76,24 +74,30 @@ export function startListenAudioCapture(args: {
     "-y",
     args.audioPath,
   ];
-  const streamOutputArgs = args.onAudioChunk
-    ? ["-map", "0:a", "-ac", "1", "-ar", "24000", "-c:a", "pcm_s16le", "-f", "s16le", "pipe:1"]
-    : [];
+  const streamOutputArgs = [
+    "-map",
+    "0:a",
+    "-ac",
+    "1",
+    "-ar",
+    "24000",
+    "-c:a",
+    "pcm_s16le",
+    "-f",
+    "s16le",
+    "pipe:1",
+  ];
 
   return args.deps.spawn("ffmpeg", [...inputArgs, ...waveOutputArgs, ...streamOutputArgs], {
     detached: true,
     killProcessGroup: true,
     signal: args.signal,
-    ...(args.onAudioChunk
-      ? {
-          captureOutput: "stderr" as const,
-          maxCaptureBytes: 20_000,
-          stdio: ["ignore", "pipe", "pipe"] as ["ignore", "pipe", "pipe"],
-          onSpawn: (child: ChildProcess) => {
-            child.stdout?.on("data", (chunk: Buffer) => args.onAudioChunk?.(chunk));
-          },
-        }
-      : { stdio: ["ignore", "ignore", "ignore"] as ["ignore", "ignore", "ignore"] }),
+    captureOutput: "stderr",
+    maxCaptureBytes: 20_000,
+    stdio: ["ignore", "pipe", "pipe"],
+    onSpawn: (child: ChildProcess) => {
+      child.stdout?.on("data", (chunk: Buffer) => args.onAudioChunk(chunk));
+    },
   });
 }
 
@@ -147,50 +151,27 @@ export function getSpeechToTextApiKeyErrorMessage(config: Config, action: string
   }
 }
 
-export async function startListenStreamingTranscription(args: {
+export function createListenTranscription(args: {
   config: Config;
   deps: CoreDeps;
-  context?: SpeechToTextContext;
-  speechToTextDeps?: SpeechToTextDependencies;
-}): Promise<StreamingSpeechToText | undefined> {
-  const provider = getSpeechToTextProvider(args.config);
-  const apiKey = getSpeechToTextApiKey(args.config, args.deps);
-  if (!apiKey) {
-    throw new Error(getSpeechToTextApiKeyErrorMessage(args.config, "transcribe speech"));
-  }
-
-  return await startStreamingSpeechToText({
-    provider,
-    apiKey,
-    context: args.context,
-    webSocketFactory: args.speechToTextDeps?.webSocketFactory,
-  });
-}
-
-export async function transcribeListenAudio(args: {
-  config: Config;
-  deps: CoreDeps;
-  audio: Buffer;
   context?: SpeechToTextContext;
   onProgress?: (progress: SpeechToTextProgress) => void;
   speechToTextDeps?: SpeechToTextDependencies;
-}): Promise<SpeechToTextResult> {
+}): SpeechToTextTranscription {
   const provider = getSpeechToTextProvider(args.config);
   const apiKey = getSpeechToTextApiKey(args.config, args.deps);
   if (!apiKey) {
     throw new Error(getSpeechToTextApiKeyErrorMessage(args.config, "transcribe speech"));
   }
 
-  return await transcribeAudio({
+  return createSpeechToTextTranscription({
     provider,
     apiKey,
-    audio: args.audio,
-    mimeType: "audio/wav",
-    fileName: "speech.wav",
-    language: "en",
     context: args.context,
     onProgress: args.onProgress,
-    webSocketFactory: args.speechToTextDeps?.webSocketFactory,
-    spawnImpl: args.speechToTextDeps?.spawnImpl ?? args.deps.spawn,
+    deps: {
+      ...args.speechToTextDeps,
+      spawnImpl: args.speechToTextDeps?.spawnImpl ?? args.deps.spawn,
+    },
   });
 }

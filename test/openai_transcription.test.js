@@ -105,7 +105,7 @@ describe("OpenAI transcription", () => {
             format: { type: "audio/pcm", rate: 24000 },
             transcription: {
               model: "gpt-live-transcribe",
-              delay: "low",
+              delay: "medium",
               prompt: expect.stringContaining("The repository is called Tau."),
             },
             turn_detection: null,

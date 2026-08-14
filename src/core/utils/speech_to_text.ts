@@ -1,90 +1,115 @@
 import type { SpeechToTextProvider } from "../config/schema.js";
-import { type GeminiTranscriptionProgress, transcribeGeminiAudio } from "./gemini_transcription.js";
+import { transcribeGeminiAudio } from "./gemini_transcription.js";
 import { transcribeMistralAudio } from "./mistral_transcription.js";
 import {
-  type OpenAIStreamingTranscription,
   type OpenAITranscriptionWebSocketFactory,
   startOpenAITranscription,
-  transcribeOpenAIAudio,
 } from "./openai_transcription.js";
 import type { spawnWithCapture } from "./spawn_capture.js";
 import type { SpeechToTextContext } from "./speech_to_text_context.js";
 
-export type SpeechToTextProgress = GeminiTranscriptionProgress;
+export type SpeechToTextProgress = "retrying" | "trying-fallback";
 
 export type SpeechToTextDependencies = {
+  fetchImpl?: typeof fetch;
   webSocketFactory?: OpenAITranscriptionWebSocketFactory;
   spawnImpl?: typeof spawnWithCapture;
 };
 
-export type SpeechToTextOptions = SpeechToTextDependencies & {
+export type SpeechToTextTranscriptionOptions = {
   provider: SpeechToTextProvider;
   apiKey: string;
+  context?: SpeechToTextContext;
+  onProgress?: (progress: SpeechToTextProgress) => void;
+  deps?: SpeechToTextDependencies;
+};
+
+export type SpeechToTextRecording = {
   audio: Buffer;
   mimeType?: string;
   fileName?: string;
   language?: string;
-  context?: SpeechToTextContext;
-  fetchImpl?: typeof fetch;
-  onProgress?: (progress: SpeechToTextProgress) => void;
 };
-
-export type StreamingSpeechToTextOptions = Pick<
-  SpeechToTextOptions,
-  "provider" | "apiKey" | "context" | "webSocketFactory"
->;
-
-export type StreamingSpeechToText = OpenAIStreamingTranscription;
 
 export type SpeechToTextResult = {
   text: string;
   usedFallback: boolean;
 };
 
-export async function startStreamingSpeechToText(
-  options: StreamingSpeechToTextOptions,
-): Promise<StreamingSpeechToText | undefined> {
-  if (options.provider !== "openai") return undefined;
-  return await startOpenAITranscription({
-    apiKey: options.apiKey,
-    context: options.context,
-    webSocketFactory: options.webSocketFactory,
-  });
-}
+export type SpeechToTextTranscription = {
+  appendAudio(audio: Buffer): void;
+  finish(recording: SpeechToTextRecording): Promise<SpeechToTextResult>;
+  abort(): void;
+};
 
-export async function transcribeAudio(options: SpeechToTextOptions): Promise<SpeechToTextResult> {
+export function createSpeechToTextTranscription(
+  options: SpeechToTextTranscriptionOptions,
+): SpeechToTextTranscription {
   switch (options.provider) {
     case "gemini":
-      return await transcribeGeminiAudio({
-        apiKey: options.apiKey,
-        audio: options.audio,
-        mimeType: options.mimeType,
-        context: options.context,
-        fetchImpl: options.fetchImpl,
-        onProgress: options.onProgress,
+      return createBatchTranscription(async (recording) => {
+        return await transcribeGeminiAudio({
+          apiKey: options.apiKey,
+          audio: recording.audio,
+          mimeType: recording.mimeType,
+          context: options.context,
+          fetchImpl: options.deps?.fetchImpl,
+          onProgress: options.onProgress,
+        });
       });
     case "mistral":
+      return createBatchTranscription(async (recording) => {
+        return {
+          text: await transcribeMistralAudio({
+            apiKey: options.apiKey,
+            audio: recording.audio,
+            mimeType: recording.mimeType,
+            fileName: recording.fileName,
+            language: recording.language,
+            fetchImpl: options.deps?.fetchImpl,
+          }),
+          usedFallback: false,
+        };
+      });
+    case "openai": {
+      const transcription = startOpenAITranscription({
+        apiKey: options.apiKey,
+        context: options.context,
+        webSocketFactory: options.deps?.webSocketFactory,
+      });
       return {
-        text: await transcribeMistralAudio({
-          apiKey: options.apiKey,
-          audio: options.audio,
-          mimeType: options.mimeType,
-          fileName: options.fileName,
-          language: options.language,
-          fetchImpl: options.fetchImpl,
+        appendAudio: (audio) => transcription.appendAudio(audio),
+        finish: async (recording) => ({
+          text: await transcription.finish({
+            audio: recording.audio,
+            spawnImpl: options.deps?.spawnImpl,
+          }),
+          usedFallback: false,
         }),
-        usedFallback: false,
+        abort: () => transcription.abort(),
       };
-    case "openai":
-      return {
-        text: await transcribeOpenAIAudio({
-          apiKey: options.apiKey,
-          audio: options.audio,
-          context: options.context,
-          webSocketFactory: options.webSocketFactory,
-          spawnImpl: options.spawnImpl,
-        }),
-        usedFallback: false,
-      };
+    }
   }
+}
+
+function createBatchTranscription(
+  transcribe: (recording: SpeechToTextRecording) => Promise<SpeechToTextResult>,
+): SpeechToTextTranscription {
+  let aborted = false;
+  return {
+    appendAudio: () => {},
+    finish: async (recording) => {
+      if (aborted) {
+        throw new Error("speech transcription was aborted");
+      }
+      const result = await transcribe(recording);
+      if (aborted) {
+        throw new Error("speech transcription was aborted");
+      }
+      return result;
+    },
+    abort: () => {
+      aborted = true;
+    },
+  };
 }

@@ -5361,11 +5361,12 @@ describe("SessionChatController", () => {
     expect(spawn).toHaveBeenNthCalledWith(
       2,
       "ffmpeg",
-      expect.arrayContaining(["-f", "avfoundation", "-i", ":0"]),
+      expect.arrayContaining(["-f", "avfoundation", "-i", ":0", "-f", "s16le", "pipe:1"]),
       expect.objectContaining({
         detached: true,
         killProcessGroup: true,
-        stdio: ["ignore", "ignore", "ignore"],
+        captureOutput: "stderr",
+        stdio: ["ignore", "pipe", "pipe"],
       }),
     );
     expect(session.submit).not.toHaveBeenCalled();
@@ -5396,10 +5397,7 @@ describe("SessionChatController", () => {
     });
     socket.close = vi.fn();
     socket.terminate = vi.fn();
-    const webSocketFactory = vi.fn(() => {
-      queueMicrotask(() => socket.emit("open"));
-      return socket;
-    });
+    const webSocketFactory = vi.fn(() => socket);
     const pcm = Buffer.from([1, 2, 3, 4]);
     const spawn = vi.fn(async (command, _args, options = {}) => {
       if (command === "mktemp") {
@@ -5454,9 +5452,11 @@ describe("SessionChatController", () => {
       controller.start();
       await controller.onUserInput("/listen");
       expect(view.status.editor.mode).toBe("recording");
+      expect(socketEvents).toEqual([]);
       await writeFile(audioPath, Buffer.alloc(2048, 1));
 
       controller.getInputHandlers().onCtrlY();
+      socket.emit("open");
       for (let i = 0; i < 50 && view.editorText !== "live transcript"; i += 1) {
         await flush();
         await waitMs(1);

@@ -10,7 +10,10 @@ import type {
 import { TauSessionProtocolResponseError } from "../../transport/errors.js";
 import type { SpeechToTextProvider, TelegramProjectConfig } from "../config/schema.js";
 import { formatAdaptiveNumber, formatTokenWindow } from "../utils/format.js";
-import { type SpeechToTextDependencies, transcribeAudio } from "../utils/speech_to_text.js";
+import {
+  createSpeechToTextTranscription,
+  type SpeechToTextDependencies,
+} from "../utils/speech_to_text.js";
 import {
   collectSpeechToTextContext,
   type SpeechToTextContext,
@@ -2714,17 +2717,25 @@ class TelegramAdapterImpl {
     let transcript: string;
     try {
       const audio = await this.api.downloadFile(message.fileId);
-      const result = await transcribeAudio({
+      const transcription = createSpeechToTextTranscription({
         provider: this.speechToTextProvider,
         apiKey,
-        audio,
-        fileName: message.fileName,
-        mimeType: message.mimeType,
         context: await this.resolveSpeechToTextContext(chatId),
-        fetchImpl: this.fetchImpl,
-        ...this.speechToTextDeps,
+        deps: {
+          ...this.speechToTextDeps,
+          fetchImpl: this.fetchImpl,
+        },
       });
-      transcript = result.text;
+      try {
+        const result = await transcription.finish({
+          audio,
+          fileName: message.fileName,
+          mimeType: message.mimeType,
+        });
+        transcript = result.text;
+      } finally {
+        transcription.abort();
+      }
     } catch (error) {
       const errorMessage = `audio transcription failed: ${this.formatManagerError(error)}`;
       if (!options.silent) {

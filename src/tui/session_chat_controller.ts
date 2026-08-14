@@ -85,6 +85,7 @@ import { DOUBLE_PRESS_WINDOW_MS } from "./constants.js";
 import {
   cleanupListenTempFile,
   createListenTempFilePath,
+  createListenTranscription,
   deleteListenTempFile,
   getSpeechToTextApiKey,
   getSpeechToTextApiKeyErrorMessage,
@@ -93,8 +94,6 @@ import {
   type ListenRecording,
   readListenAudio,
   startListenAudioCapture,
-  startListenStreamingTranscription,
-  transcribeListenAudio,
 } from "./listen_capture.js";
 import {
   createSdkDiffSnapshotDeps,
@@ -827,23 +826,16 @@ export class SessionChatController {
     }
 
     let audioPath: string | undefined;
-    let streamingTranscription: ListenRecording["streamingTranscription"];
+    let transcription: ListenRecording["transcription"] | undefined;
     try {
       audioPath = await createListenTempFilePath(this.deps);
-      streamingTranscription = await startListenStreamingTranscription({
-        config: this.config,
-        deps: this.deps,
-        context: collectSpeechToTextContext(this.snapshot),
-        speechToTextDeps: this.speechToTextDeps,
-      });
+      transcription = this.createSpeechTranscription();
       const abortController = new AbortController();
       const completion = startListenAudioCapture({
         deps: this.deps,
         audioPath,
         signal: abortController.signal,
-        onAudioChunk: streamingTranscription
-          ? (audio) => streamingTranscription?.appendAudio(audio)
-          : undefined,
+        onAudioChunk: (audio) => transcription?.appendAudio(audio),
       });
 
       const recording: ListenRecording = {
@@ -851,7 +843,7 @@ export class SessionChatController {
         stopRequested: false,
         abortController,
         completion,
-        ...(streamingTranscription ? { streamingTranscription } : {}),
+        transcription,
       };
       recording.maxDurationTimeout = setTimeout(() => {
         if (this.listenRecording !== recording || this.listenTransition) return;
@@ -862,7 +854,7 @@ export class SessionChatController {
       this.refreshStatus();
       void this.watchListenRecording(recording);
     } catch (err) {
-      streamingTranscription?.abort();
+      transcription?.abort();
       if (audioPath) {
         await cleanupListenTempFile(audioPath);
       }
@@ -885,13 +877,13 @@ export class SessionChatController {
     try {
       await recording.completion;
     } catch (err) {
-      recording.streamingTranscription?.abort();
+      recording.transcription.abort();
       this.view.addTranscriptNotice("failed to record audio", "error", [(err as Error).message]);
       await cleanupListenTempFile(recording.audioPath);
       return;
     }
 
-    await this.transcribeListenAudioFile(recording.audioPath, recording.streamingTranscription);
+    await this.transcribeListenAudioFile(recording.audioPath, recording.transcription);
   }
 
   private async retryRetainedListenAudio(): Promise<void> {
@@ -933,15 +925,31 @@ export class SessionChatController {
     }
   }
 
+  private createSpeechTranscription(): ListenRecording["transcription"] {
+    return createListenTranscription({
+      config: this.config,
+      deps: this.deps,
+      context: collectSpeechToTextContext(this.snapshot),
+      onProgress: (progress) => {
+        this.listenActivityLabel =
+          progress === "retrying"
+            ? "retrying voice transcription"
+            : "trying fallback transcription model";
+        this.refreshStatus();
+      },
+      speechToTextDeps: this.speechToTextDeps,
+    });
+  }
+
   private async transcribeListenAudioFile(
     audioPath: string,
-    streamingTranscription?: ListenRecording["streamingTranscription"],
+    transcription?: ListenRecording["transcription"],
   ): Promise<void> {
     let audio: Buffer;
     try {
       audio = await readListenAudio(audioPath);
     } catch (error) {
-      streamingTranscription?.abort();
+      transcription?.abort();
       this.view.addTranscriptNotice("failed to read speech recording", "error", [
         (error as Error).message,
       ]);
@@ -953,7 +961,7 @@ export class SessionChatController {
     }
 
     if (audio.byteLength < LISTEN_RECORDING_MIN_BYTES) {
-      streamingTranscription?.abort();
+      transcription?.abort();
       this.view.showFooterNotice("recording too short, try again", "default");
       if (this.retainedListenAudioPath === audioPath) {
         this.retainedListenAudioPath = undefined;
@@ -962,25 +970,17 @@ export class SessionChatController {
       return;
     }
 
+    let activeTranscription = transcription;
     this.listenActivityLabel = "transcribing voice input";
     this.refreshStatus();
     try {
-      const result = streamingTranscription
-        ? { text: await streamingTranscription.finish(), usedFallback: false }
-        : await transcribeListenAudio({
-            config: this.config,
-            deps: this.deps,
-            audio,
-            context: collectSpeechToTextContext(this.snapshot),
-            onProgress: (progress) => {
-              this.listenActivityLabel =
-                progress === "retrying"
-                  ? "retrying voice transcription"
-                  : "trying fallback transcription model";
-              this.refreshStatus();
-            },
-            speechToTextDeps: this.speechToTextDeps,
-          });
+      activeTranscription ??= this.createSpeechTranscription();
+      const result = await activeTranscription.finish({
+        audio,
+        mimeType: "audio/wav",
+        fileName: "speech.wav",
+        language: "en",
+      });
       this.view.insertEditorTextAtCursor(result.text);
       if (result.usedFallback) {
         this.view.showFooterNotice("transcribed with fallback model", "default");
@@ -1002,6 +1002,7 @@ export class SessionChatController {
         "run /listen retry to try again, or /listen discard to delete it",
       ]);
     } finally {
+      activeTranscription?.abort();
       this.listenActivityLabel = undefined;
       this.refreshStatus();
     }
@@ -1018,7 +1019,7 @@ export class SessionChatController {
     this.refreshStatus();
 
     recording.abortController.abort();
-    recording.streamingTranscription?.abort();
+    recording.transcription.abort();
     try {
       await recording.completion;
     } catch {
@@ -1034,7 +1035,7 @@ export class SessionChatController {
       if (this.listenRecording !== recording || recording.stopRequested) return;
 
       this.listenRecording = undefined;
-      recording.streamingTranscription?.abort();
+      recording.transcription.abort();
       this.view.setEditorInputEnabled(true);
       this.refreshStatus();
       const detail =
@@ -1050,7 +1051,7 @@ export class SessionChatController {
       if (this.listenRecording !== recording || recording.stopRequested) return;
 
       this.listenRecording = undefined;
-      recording.streamingTranscription?.abort();
+      recording.transcription.abort();
       this.view.setEditorInputEnabled(true);
       this.refreshStatus();
       const error = err as NodeJS.ErrnoException;

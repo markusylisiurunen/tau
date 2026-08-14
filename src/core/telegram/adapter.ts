@@ -10,7 +10,10 @@ import type {
 import { TauSessionProtocolResponseError } from "../../transport/errors.js";
 import type { SpeechToTextProvider, TelegramProjectConfig } from "../config/schema.js";
 import { formatAdaptiveNumber, formatTokenWindow } from "../utils/format.js";
-import { transcribeAudio } from "../utils/speech_to_text.js";
+import {
+  createSpeechToTextTranscription,
+  type SpeechToTextDependencies,
+} from "../utils/speech_to_text.js";
 import {
   collectSpeechToTextContext,
   type SpeechToTextContext,
@@ -144,6 +147,8 @@ export type TelegramAdapterOptions = {
   speechToTextProvider?: SpeechToTextProvider;
   geminiApiKey?: string;
   mistralApiKey?: string;
+  openaiApiKey?: string;
+  speechToTextDeps?: SpeechToTextDependencies;
   sessionManager: TelegramSessionManager;
   projectPreferences: TelegramProjectPreferenceStore;
   api?: TelegramApi;
@@ -1270,6 +1275,8 @@ class TelegramAdapterImpl {
   private readonly speechToTextProvider: SpeechToTextProvider;
   private readonly geminiApiKey?: string;
   private readonly mistralApiKey?: string;
+  private readonly openaiApiKey?: string;
+  private readonly speechToTextDeps?: SpeechToTextDependencies;
   private readonly sessionManager: TelegramSessionManager;
   private readonly projectPreferences: TelegramProjectPreferenceStore;
   private readonly enforceChatOwnership: boolean;
@@ -1326,9 +1333,11 @@ class TelegramAdapterImpl {
     this.botUsername = options.botUsername;
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     this.requestTimeoutSeconds = options.requestTimeoutSeconds ?? DEFAULT_REQUEST_TIMEOUT_SECONDS;
-    this.speechToTextProvider = options.speechToTextProvider ?? "mistral";
+    this.speechToTextProvider = options.speechToTextProvider ?? "openai";
     this.geminiApiKey = options.geminiApiKey?.trim() || undefined;
     this.mistralApiKey = options.mistralApiKey?.trim() || undefined;
+    this.openaiApiKey = options.openaiApiKey?.trim() || undefined;
+    this.speechToTextDeps = options.speechToTextDeps;
     this.sessionManager = options.sessionManager;
     this.projectPreferences = options.projectPreferences;
     this.enforceChatOwnership = true;
@@ -2670,13 +2679,25 @@ class TelegramAdapterImpl {
   }
 
   private getSpeechToTextApiKey(): string | undefined {
-    return this.speechToTextProvider === "gemini" ? this.geminiApiKey : this.mistralApiKey;
+    switch (this.speechToTextProvider) {
+      case "gemini":
+        return this.geminiApiKey;
+      case "mistral":
+        return this.mistralApiKey;
+      case "openai":
+        return this.openaiApiKey;
+    }
   }
 
   private getSpeechToTextApiKeyErrorMessage(action: string): string {
-    return this.speechToTextProvider === "gemini"
-      ? `set GEMINI_API_KEY or apiKeys.google to ${action}`
-      : `set MISTRAL_API_KEY or apiKeys.mistral to ${action}`;
+    switch (this.speechToTextProvider) {
+      case "gemini":
+        return `set GEMINI_API_KEY or apiKeys.google to ${action}`;
+      case "mistral":
+        return `set MISTRAL_API_KEY or apiKeys.mistral to ${action}`;
+      case "openai":
+        return `set OPENAI_API_KEY or apiKeys.openai to ${action}`;
+    }
   }
 
   private async transcribeTelegramAudio(
@@ -2693,34 +2714,37 @@ class TelegramAdapterImpl {
       return { error };
     }
 
-    let transcript = "";
+    let transcript: string;
     try {
       const audio = await this.api.downloadFile(message.fileId);
-      transcript = (
-        await transcribeAudio({
-          provider: this.speechToTextProvider,
-          apiKey,
-          audio,
-          fileName: message.fileName,
-          mimeType: message.mimeType,
-          context: await this.resolveSpeechToTextContext(chatId),
+      const transcription = createSpeechToTextTranscription({
+        provider: this.speechToTextProvider,
+        mode: "file",
+        apiKey,
+        context: await this.resolveSpeechToTextContext(chatId),
+        deps: {
+          ...this.speechToTextDeps,
           fetchImpl: this.fetchImpl,
-        })
-      ).trim();
+        },
+      });
+      try {
+        transcript = await transcription.finish(
+          {
+            audio,
+            fileName: message.fileName,
+            mimeType: message.mimeType,
+          },
+          { signal: this.abortController.signal },
+        );
+      } finally {
+        transcription.abort();
+      }
     } catch (error) {
       const errorMessage = `audio transcription failed: ${this.formatManagerError(error)}`;
       if (!options.silent) {
         await this.reply(chatId, errorMessage);
       }
       return { error: errorMessage };
-    }
-
-    if (!transcript) {
-      const error = "audio transcription failed: transcription result was empty";
-      if (!options.silent) {
-        await this.reply(chatId, error);
-      }
-      return { error };
     }
 
     return { transcript };

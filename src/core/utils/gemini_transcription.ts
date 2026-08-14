@@ -2,16 +2,14 @@ import { z } from "zod";
 import { formatSpeechToTextContext, type SpeechToTextContext } from "./speech_to_text_context.js";
 
 const GEMINI_GENERATE_CONTENT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
-const DEFAULT_GEMINI_TRANSCRIPTION_MODEL = "gemini-3.7-flash";
-const DEFAULT_GEMINI_TRANSCRIPTION_THINKING_LEVEL = "low";
+const GEMINI_TRANSCRIPTION_MODEL = "gemini-3.7-flash";
+const GEMINI_TRANSCRIPTION_THINKING_LEVEL = "low";
 const DEFAULT_GEMINI_AUDIO_MIME_TYPE = "audio/wav";
 
 const errorPayloadSchema = z.object({
   error: z
     .object({
       message: z.string().trim().min(1).optional(),
-      status: z.string().trim().min(1).optional(),
-      code: z.number().int().optional(),
     })
     .optional(),
 });
@@ -37,15 +35,15 @@ const apiResponseSchema = z.object({
     .optional(),
 });
 const transcriptionResultSchema = z.object({
-  transcription: z.string(),
+  transcription: z.string().trim().min(1),
 });
 
 export type GeminiTranscriptionOptions = {
   apiKey: string;
   audio: Buffer;
-  model?: string;
   mimeType?: string;
   context?: SpeechToTextContext;
+  signal?: AbortSignal;
   fetchImpl?: typeof fetch;
 };
 
@@ -56,15 +54,15 @@ export async function transcribeGeminiAudio(options: GeminiTranscriptionOptions)
   }
 
   const fetchFn = options.fetchImpl ?? fetch;
-  const model = options.model ?? DEFAULT_GEMINI_TRANSCRIPTION_MODEL;
   const response = await fetchFn(
-    `${GEMINI_GENERATE_CONTENT_BASE_URL}/${encodeURIComponent(model)}:generateContent`,
+    `${GEMINI_GENERATE_CONTENT_BASE_URL}/${GEMINI_TRANSCRIPTION_MODEL}:generateContent`,
     {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "x-goog-api-key": apiKey,
       },
+      signal: options.signal,
       body: JSON.stringify({
         systemInstruction: {
           parts: [
@@ -92,7 +90,7 @@ export async function transcribeGeminiAudio(options: GeminiTranscriptionOptions)
           responseMimeType: "application/json",
           responseSchema: GEMINI_TRANSCRIPTION_RESPONSE_SCHEMA,
           thinkingConfig: {
-            thinkingLevel: DEFAULT_GEMINI_TRANSCRIPTION_THINKING_LEVEL,
+            thinkingLevel: GEMINI_TRANSCRIPTION_THINKING_LEVEL,
           },
         },
       }),
@@ -115,7 +113,11 @@ export async function transcribeGeminiAudio(options: GeminiTranscriptionOptions)
     );
   }
 
-  return extractGeminiText(payload).trim();
+  const text = extractGeminiText(payload);
+  if (!text) {
+    throw new Error("transcription result was empty or malformed");
+  }
+  return text;
 }
 
 function buildTranscriptionSystemInstruction(): string {
@@ -150,10 +152,10 @@ function buildTranscriptionPrompt(context: SpeechToTextContext | undefined): str
     .join("\n");
 }
 
-function extractGeminiText(payload: unknown): string {
+function extractGeminiText(payload: unknown): string | undefined {
   const parsed = apiResponseSchema.safeParse(payload);
   if (!parsed.success) {
-    return "";
+    return undefined;
   }
 
   const responseText = (parsed.data.candidates?.[0]?.content.parts ?? [])
@@ -167,13 +169,9 @@ function extractGeminiText(payload: unknown): string {
   try {
     transcriptionPayload = responseText ? (JSON.parse(responseText) as unknown) : undefined;
   } catch {
-    return "";
+    return undefined;
   }
 
   const transcription = transcriptionResultSchema.safeParse(transcriptionPayload);
-  if (!transcription.success) {
-    return "";
-  }
-
-  return transcription.data.transcription;
+  return transcription.success ? transcription.data.transcription : undefined;
 }

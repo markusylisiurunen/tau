@@ -23,6 +23,7 @@ export type StartTelegramRuntimeOptions = {
   speechToTextProvider?: SpeechToTextProvider;
   geminiApiKey?: string;
   mistralApiKey?: string;
+  openaiApiKey?: string;
   createSessionClient: (options: TelegramSessionClientOptions) => Promise<TelegramSessionClient>;
   onLog?: (line: string) => void;
   deps?: Partial<TelegramRuntimeDependencies>;
@@ -187,6 +188,7 @@ export async function startTelegramRuntime(
         speechToTextProvider: options.speechToTextProvider,
         geminiApiKey: options.geminiApiKey,
         mistralApiKey: options.mistralApiKey,
+        openaiApiKey: options.openaiApiKey,
         sessionManager,
         projectPreferences,
         onLog: (entry) => {

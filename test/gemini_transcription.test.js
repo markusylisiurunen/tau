@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { transcribeGeminiAudio } from "../dist/core/utils/gemini_transcription.js";
 
 describe("gemini transcription", () => {
-  it("transcribes audio with low thinking", async () => {
+  it("transcribes audio with Gemini 3.7 Flash and low thinking", async () => {
     const fetchMock = vi.fn(
       async () =>
         new Response(
@@ -89,5 +89,36 @@ describe("gemini transcription", () => {
       required: ["transcription"],
     });
     expect(request.generationConfig.thinkingConfig.thinkingLevel).toBe("low");
+  });
+
+  it("rejects malformed successful responses without retrying", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ candidates: [] })));
+
+    await expect(
+      transcribeGeminiAudio({
+        apiKey: "gemini-key",
+        audio: Buffer.from("audio payload"),
+        fetchImpl: fetchMock,
+      }),
+    ).rejects.toThrow("transcription result was empty or malformed");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports provider failures without retrying", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ error: { message: "service unavailable" } }), {
+          status: 503,
+        }),
+    );
+
+    await expect(
+      transcribeGeminiAudio({
+        apiKey: "gemini-key",
+        audio: Buffer.from("audio payload"),
+        fetchImpl: fetchMock,
+      }),
+    ).rejects.toThrow("service unavailable");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

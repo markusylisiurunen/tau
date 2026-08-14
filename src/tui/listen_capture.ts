@@ -1,16 +1,25 @@
+import type { ChildProcess } from "node:child_process";
 import { readFile, unlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   type Config,
   getGoogleApiKey,
   getMistralApiKey,
+  getOpenAIApiKey,
   type SpeechToTextProvider,
 } from "../core/config/index.js";
 import type { CoreDeps } from "../core/runtime/deps.js";
 import type { SpawnCaptureResult } from "../core/utils/spawn_capture.js";
-import { transcribeAudio } from "../core/utils/speech_to_text.js";
+import {
+  createSpeechToTextTranscription,
+  type SpeechToTextDependencies,
+  type SpeechToTextTranscription,
+} from "../core/utils/speech_to_text.js";
 import type { SpeechToTextContext } from "../core/utils/speech_to_text_context.js";
 
-export const LISTEN_TEMP_FILE_TEMPLATE = "/tmp/tau-listen.XXXXXX";
+export const LISTEN_TEMP_FILE_TEMPLATE = join(tmpdir(), "tau-listen.XXXXXX");
+export const LISTEN_CAPTURE_START_TIMEOUT_MS = 15_000;
 export const LISTEN_RECORDING_MIN_BYTES = 1024;
 export const LISTEN_RECORDING_MAX_DURATION_MS = 5 * 60 * 1000;
 
@@ -19,6 +28,7 @@ export type ListenRecording = {
   stopRequested: boolean;
   abortController: AbortController;
   completion: Promise<SpawnCaptureResult>;
+  transcription: SpeechToTextTranscription;
   maxDurationTimeout?: ReturnType<typeof setTimeout>;
 };
 
@@ -40,87 +50,161 @@ export function startListenAudioCapture(args: {
   deps: CoreDeps;
   audioPath: string;
   signal: AbortSignal;
-}): Promise<SpawnCaptureResult> {
-  return args.deps.spawn(
+  onAudioChunk: (audio: Buffer) => void;
+}): { completion: Promise<SpawnCaptureResult>; started: Promise<void> } {
+  const inputArgs = [
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-nostdin",
+    "-f",
+    "avfoundation",
+    "-i",
+    ":0",
+  ];
+  const waveOutputArgs = [
+    "-map",
+    "0:a",
+    "-ac",
+    "1",
+    "-ar",
+    "16000",
+    "-c:a",
+    "pcm_s16le",
+    "-f",
+    "wav",
+    "-y",
+    args.audioPath,
+  ];
+  const streamOutputArgs = [
+    "-map",
+    "0:a",
+    "-ac",
+    "1",
+    "-ar",
+    "24000",
+    "-c:a",
+    "pcm_s16le",
+    "-f",
+    "s16le",
+    "pipe:1",
+  ];
+
+  const {
+    promise: started,
+    resolve: resolveStarted,
+    reject: rejectStarted,
+  } = Promise.withResolvers<void>();
+  let receivedAudio = false;
+  const completion = args.deps.spawn(
     "ffmpeg",
-    [
-      "-hide_banner",
-      "-loglevel",
-      "error",
-      "-nostdin",
-      "-f",
-      "avfoundation",
-      "-i",
-      ":0",
-      "-ac",
-      "1",
-      "-ar",
-      "16000",
-      "-c:a",
-      "pcm_s16le",
-      "-f",
-      "wav",
-      "-y",
-      args.audioPath,
-    ],
+    [...inputArgs, ...waveOutputArgs, ...streamOutputArgs],
     {
       detached: true,
       killProcessGroup: true,
       signal: args.signal,
-      stdio: ["ignore", "ignore", "ignore"],
+      captureOutput: "stderr",
+      maxCaptureBytes: 20_000,
+      stdio: ["ignore", "pipe", "pipe"],
+      onSpawn: (child: ChildProcess) => {
+        child.stdout?.on("data", (chunk: Buffer) => {
+          if (!receivedAudio) {
+            receivedAudio = true;
+            resolveStarted();
+          }
+          args.onAudioChunk(chunk);
+        });
+      },
     },
   );
+  void completion.then(
+    (result) => {
+      if (receivedAudio) return;
+      const detail = result.stderr.trim();
+      rejectStarted(
+        new Error(
+          detail
+            ? `ffmpeg failed to start recording: ${detail}`
+            : "ffmpeg exited before recording audio",
+        ),
+      );
+    },
+    (error) => rejectStarted(error),
+  );
+  return { completion, started };
 }
 
 export async function readListenAudio(path: string): Promise<Buffer> {
   return await readFile(path);
 }
 
-export async function cleanupListenTempFile(path: string): Promise<void> {
+export async function deleteListenTempFile(path: string): Promise<void> {
   try {
     await unlink(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+  }
+}
+
+export async function cleanupListenTempFile(path: string): Promise<void> {
+  try {
+    await deleteListenTempFile(path);
   } catch {
     // best-effort cleanup
   }
 }
 
 export function getSpeechToTextProvider(config: Config): SpeechToTextProvider {
-  return config.speechToText?.provider ?? "mistral";
+  return config.speechToText?.provider ?? "openai";
 }
 
 export function getSpeechToTextApiKey(config: Config, deps: CoreDeps): string | undefined {
   const provider = getSpeechToTextProvider(config);
-  return provider === "gemini"
-    ? getGoogleApiKey(config, deps.env.env())
-    : getMistralApiKey(config, deps.env.env());
+  switch (provider) {
+    case "gemini":
+      return getGoogleApiKey(config, deps.env.env());
+    case "mistral":
+      return getMistralApiKey(config, deps.env.env());
+    case "openai":
+      return getOpenAIApiKey(config, deps.env.env());
+  }
 }
 
 export function getSpeechToTextApiKeyErrorMessage(config: Config, action: string): string {
   const provider = getSpeechToTextProvider(config);
-  return provider === "gemini"
-    ? `set GEMINI_API_KEY or apiKeys.google to ${action}`
-    : `set MISTRAL_API_KEY or apiKeys.mistral to ${action}`;
+  switch (provider) {
+    case "gemini":
+      return `set GEMINI_API_KEY or apiKeys.google to ${action}`;
+    case "mistral":
+      return `set MISTRAL_API_KEY or apiKeys.mistral to ${action}`;
+    case "openai":
+      return `set OPENAI_API_KEY or apiKeys.openai to ${action}`;
+  }
 }
 
-export async function transcribeListenAudio(args: {
+export function createListenTranscription(args: {
   config: Config;
   deps: CoreDeps;
-  audio: Buffer;
+  mode: "streaming" | "file";
   context?: SpeechToTextContext;
-}): Promise<string> {
+  speechToTextDeps?: SpeechToTextDependencies;
+}): SpeechToTextTranscription {
   const provider = getSpeechToTextProvider(args.config);
   const apiKey = getSpeechToTextApiKey(args.config, args.deps);
   if (!apiKey) {
     throw new Error(getSpeechToTextApiKeyErrorMessage(args.config, "transcribe speech"));
   }
 
-  return await transcribeAudio({
+  return createSpeechToTextTranscription({
     provider,
+    mode: args.mode,
     apiKey,
-    audio: args.audio,
-    mimeType: "audio/wav",
-    fileName: "speech.wav",
-    language: "en",
     context: args.context,
+    deps: {
+      ...args.speechToTextDeps,
+      spawnImpl: args.speechToTextDeps?.spawnImpl ?? args.deps.spawn,
+    },
   });
 }

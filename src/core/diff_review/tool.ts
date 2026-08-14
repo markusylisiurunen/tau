@@ -20,7 +20,7 @@ const DIFF_REVIEW_ARGS_DESCRIPTION = [
 ].join(" ");
 
 const DIFF_REVIEW_PATCH_FILES_DESCRIPTION =
-  "Patch files to review when source is 'patch_files'. Required for patch_files. Files may be absolute or relative to the current working directory. Each file must contain git unified diff sections with diff --git headers. Use this for selected hunks or custom review scopes. Patch files may be generated in any way as long as they adhere to that format, for example with git commands, by running code that emits a patch, or by manually editing a temporary patch file. One common approach is starting from `git diff main...HEAD -- src/foo.ts > /tmp/foo.patch` and editing it down to the hunks that should be reviewed. Multiple patch files are allowed, for example [`/tmp/parser.patch`, `/tmp/tests.patch`].";
+  "Patch files to review when source is 'patch_files'. Required for patch_files. Files may be absolute or relative to the current working directory. Each file must contain git unified diff sections with diff --git headers. Use this for selected hunks or custom review scopes. Patch files may be generated in any way as long as they adhere to that format, for example with git commands, by running code that emits a patch, or by manually editing a temporary patch file. One common approach is using `mktemp` to create a patch file in the platform temporary directory, writing selected `git diff` output to it, and passing the reported path. Multiple patch files are allowed.";
 
 const DIFF_REVIEW_LABEL_DESCRIPTION =
   "Optional human-readable label for patch-file reviews, for example 'selected hunks from src/foo.ts'.";

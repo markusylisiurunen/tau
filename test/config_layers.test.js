@@ -14,6 +14,7 @@ import { describe, expect, it } from "vitest";
 import { resolveConfigLevels } from "../dist/core/config/paths.js";
 import {
   getApiKeyForProvider,
+  getOpenAIApiKey,
   loadConfig,
   loadConfigWithDiagnostics,
 } from "../dist/core/config/schema.js";
@@ -179,6 +180,7 @@ describe("config paths", () => {
         JSON.stringify({
           defaultPersona: "custom-persona",
           agentContextFiles: ["AGENTS.md"],
+          speechToText: { provider: "openai" },
         }),
       );
 
@@ -209,7 +211,7 @@ describe("config paths", () => {
       expect(config.subagents).toEqual({
         defaultLaunchModels: ["openai/gpt-5.4:high"],
       });
-      expect(config.speechToText).toEqual({ provider: "gemini" });
+      expect(config.speechToText).toEqual({ provider: "openai" });
       expect(config.history).toEqual({
         endpoint: "https://history.example.com",
         apiKeyEnv: "HISTORY_KEY",
@@ -416,6 +418,18 @@ describe("config paths", () => {
     } finally {
       fx.cleanup();
     }
+  });
+
+  it("prefers OPENAI_API_KEY for OpenAI speech transcription", () => {
+    expect(
+      getOpenAIApiKey(
+        { apiKeys: { openai: "configured-openai-key" } },
+        { OPENAI_API_KEY: "environment-openai-key" },
+      ),
+    ).toBe("environment-openai-key");
+    expect(getOpenAIApiKey({ apiKeys: { openai: "configured-openai-key" } }, {})).toBe(
+      "configured-openai-key",
+    );
   });
 
   it("rejects modelSystemNotices for unknown model ids", () => {

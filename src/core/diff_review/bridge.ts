@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync, rmSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface, type Interface } from "node:readline";
 import type { DiffToolConfig } from "../config/index.js";
@@ -196,7 +197,7 @@ export class DiffReviewBridge {
     this.submitThreadMessage = options.submitThreadMessage;
     this.deps = options.deps ?? createDefaultCoreDeps();
     this.toolLauncher = options.toolLauncher ?? launchDiffToolProcess;
-    this.socketPath = join("/tmp", `tau-diff-${randomBytes(8).toString("hex")}.sock`);
+    this.socketPath = join(tmpdir(), `tau-diff-${randomBytes(8).toString("hex")}.sock`);
     this.authToken = randomBytes(24).toString("hex");
     this.completionPromise = new Promise<DiffReviewResult>((resolve) => {
       this.completionResolver = resolve;

@@ -91,7 +91,7 @@ Then use Shift+Tab to select an allowed reasoning level. Newly added personas do
 | `/compact-all [guidance]` | Replace model context with a generated summary. |
 | `/compact-keep-last [guidance]` | Generate a summary that also includes the previous last assistant response when available. |
 | `/reload` | Reload session-owned configuration and content from the execution environment. |
-| `/listen` | Record speech and insert its transcript into the editor on macOS. |
+| `/listen [retry/discard]` | Record speech, retry a retained failed recording, or discard it on macOS. |
 | `/speak` | Read the last assistant response aloud on macOS. |
 | `/copy-text` | Copy the last assistant response as plain text. |
 | `/copy-code` | Copy code blocks from the last assistant response. |
@@ -194,6 +194,8 @@ The TUI also advertises diff review as a client tool unless `--no-client-tools` 
 ## Use speech
 
 `/listen` and Ctrl+Y are currently macOS-only. Recording uses local `ffmpeg` with the AVFoundation audio input and stops when Ctrl+Y is pressed again, when Escape is pressed, or after five minutes. The transcript is inserted at the cursor for review and is not submitted automatically.
+
+If transcription fails, Tau retains the local WAV and reports its path. Run `/listen retry` to transcribe the same audio again with the current provider and conversation context, or `/listen discard` to delete it. Starting another recording also deletes the retained file. Tau keeps at most one failed recording, and exiting leaves that file at the reported path for manual recovery. Gemini transcription retries a transient failure once on Gemini 3.7 Flash, then uses Gemini 3.6 Flash as a final fallback. Permanent request failures stop immediately.
 
 Install `ffmpeg` and configure a speech-to-text provider:
 

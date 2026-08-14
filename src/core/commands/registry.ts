@@ -15,7 +15,7 @@ export type Command = (
   | { type: "compactSummaryOnly" }
   | { type: "compactSummaryAndLast" }
   | { type: "reload" }
-  | { type: "listen" }
+  | { type: "listen"; action: "record" | "retry" | "discard" }
   | { type: "speak" }
   | { type: "persona"; id: string }
   | { type: "prompt"; id: string }
@@ -55,7 +55,7 @@ export interface CommandDispatchContext {
   compactSummaryOnly: (extra?: string) => Promise<void>;
   compactSummaryAndLast: (extra?: string) => Promise<void>;
   reload: () => Promise<void>;
-  listen: () => Promise<void> | void;
+  listen: (action: "record" | "retry" | "discard") => Promise<void> | void;
   speak: () => Promise<void> | void;
   persona: (id: string) => void;
   prompt: (id: string) => void;
@@ -322,17 +322,21 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
 
   registry.register({
     id: "listen",
-    usage: "/listen",
-    description: "start voice recording and transcription",
-    autocompleteDescription: "record and transcribe voice input",
+    usage: "/listen [retry|discard]",
+    description: "record, retry, or discard voice input",
+    autocompleteDescription: "record or recover voice input",
     argument: "none",
     allowDuringStreaming: true,
     parse: (raw) => {
       const { command, extra } = splitCommandInput(raw);
       if (command !== "/listen") return null;
-      return { type: "listen", extra };
+      if (!extra) return { type: "listen", action: "record" };
+      if (extra === "retry" || extra === "discard") {
+        return { type: "listen", action: extra };
+      }
+      return null;
     },
-    run: (ctx) => ctx.listen(),
+    run: (ctx, command) => ctx.listen(command.action),
   });
 
   registry.register({

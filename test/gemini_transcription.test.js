@@ -38,7 +38,7 @@ describe("gemini transcription", () => {
       },
     });
 
-    expect(transcript).toBe("ship the fix");
+    expect(transcript).toEqual({ text: "ship the fix", usedFallback: false });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0][0]).toContain(
       "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent",
@@ -89,5 +89,118 @@ describe("gemini transcription", () => {
       required: ["transcription"],
     });
     expect(request.generationConfig.thinkingConfig.thinkingLevel).toBe("low");
+  });
+
+  it("retries a transient failure on the primary model", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { message: "service unavailable" } }), {
+          status: 503,
+          headers: { "Retry-After": "0" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            candidates: [
+              {
+                content: {
+                  parts: [{ text: JSON.stringify({ transcription: "recovered transcript" }) }],
+                },
+              },
+            ],
+          }),
+        ),
+      );
+    const onProgress = vi.fn();
+
+    const result = await transcribeGeminiAudio({
+      apiKey: "gemini-key",
+      audio: Buffer.from("audio payload"),
+      fetchImpl: fetchMock,
+      onProgress,
+    });
+
+    expect(result).toEqual({ text: "recovered transcript", usedFallback: false });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      expect.stringContaining("gemini-3.7-flash"),
+      expect.stringContaining("gemini-3.7-flash"),
+    ]);
+    expect(onProgress).toHaveBeenCalledWith("retrying");
+  });
+
+  it("uses Gemini 3.6 with minimal thinking after primary attempts fail", async () => {
+    const unavailable = () =>
+      new Response(
+        JSON.stringify({ error: { message: "model unavailable", status: "UNAVAILABLE" } }),
+        { status: 503, headers: { "Retry-After": "0" } },
+      );
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(unavailable())
+      .mockResolvedValueOnce(unavailable())
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            candidates: [
+              {
+                content: {
+                  parts: [{ text: JSON.stringify({ transcription: "fallback transcript" }) }],
+                },
+              },
+            ],
+          }),
+        ),
+      );
+    const onProgress = vi.fn();
+
+    const result = await transcribeGeminiAudio({
+      apiKey: "gemini-key",
+      audio: Buffer.from("audio payload"),
+      fetchImpl: fetchMock,
+      onProgress,
+    });
+
+    expect(result).toEqual({ text: "fallback transcript", usedFallback: true });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock.mock.calls[2][0]).toContain("gemini-3.6-flash");
+    const fallbackRequest = JSON.parse(fetchMock.mock.calls[2][1].body);
+    expect(fallbackRequest.generationConfig.thinkingConfig.thinkingLevel).toBe("minimal");
+    expect(onProgress.mock.calls.map(([progress]) => progress)).toEqual([
+      "retrying",
+      "trying-fallback",
+    ]);
+  });
+
+  it("advances through the fallback chain for malformed successful responses", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ candidates: [] })));
+
+    await expect(
+      transcribeGeminiAudio({
+        apiKey: "gemini-key",
+        audio: Buffer.from("audio payload"),
+        fetchImpl: fetchMock,
+      }),
+    ).rejects.toThrow("transcription result was empty or malformed");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock.mock.calls[2][0]).toContain("gemini-3.6-flash");
+  });
+
+  it("does not retry permanent request failures", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ error: { message: "invalid API key" } }), { status: 401 }),
+    );
+
+    await expect(
+      transcribeGeminiAudio({
+        apiKey: "gemini-key",
+        audio: Buffer.from("audio payload"),
+        fetchImpl: fetchMock,
+      }),
+    ).rejects.toThrow("invalid API key");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

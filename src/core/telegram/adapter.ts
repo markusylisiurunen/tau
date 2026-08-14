@@ -2693,34 +2693,25 @@ class TelegramAdapterImpl {
       return { error };
     }
 
-    let transcript = "";
+    let transcript: string;
     try {
       const audio = await this.api.downloadFile(message.fileId);
-      transcript = (
-        await transcribeAudio({
-          provider: this.speechToTextProvider,
-          apiKey,
-          audio,
-          fileName: message.fileName,
-          mimeType: message.mimeType,
-          context: await this.resolveSpeechToTextContext(chatId),
-          fetchImpl: this.fetchImpl,
-        })
-      ).trim();
+      const result = await transcribeAudio({
+        provider: this.speechToTextProvider,
+        apiKey,
+        audio,
+        fileName: message.fileName,
+        mimeType: message.mimeType,
+        context: await this.resolveSpeechToTextContext(chatId),
+        fetchImpl: this.fetchImpl,
+      });
+      transcript = result.text;
     } catch (error) {
       const errorMessage = `audio transcription failed: ${this.formatManagerError(error)}`;
       if (!options.silent) {
         await this.reply(chatId, errorMessage);
       }
       return { error: errorMessage };
-    }
-
-    if (!transcript) {
-      const error = "audio transcription failed: transcription result was empty";
-      if (!options.silent) {
-        await this.reply(chatId, error);
-      }
-      return { error };
     }
 
     return { transcript };

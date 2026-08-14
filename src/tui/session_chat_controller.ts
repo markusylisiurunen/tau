@@ -84,6 +84,7 @@ import { DOUBLE_PRESS_WINDOW_MS } from "./constants.js";
 import {
   cleanupListenTempFile,
   createListenTempFilePath,
+  deleteListenTempFile,
   getSpeechToTextApiKey,
   getSpeechToTextApiKeyErrorMessage,
   LISTEN_RECORDING_MAX_DURATION_MS,
@@ -162,8 +163,9 @@ export class SessionChatController {
   private turnTimer?: ReturnType<typeof setInterval>;
   private lastEmptySubmitAt?: number;
   private listenRecording?: ListenRecording;
+  private retainedListenAudioPath?: string;
   private listenTransition?: Promise<void>;
-  private isTranscribingListen = false;
+  private listenActivityLabel?: string;
   private speechActivityLabel?: string;
   private speakTask?: {
     abortController: AbortController;
@@ -197,7 +199,7 @@ export class SessionChatController {
       compactSummaryOnly: (extra) => this.compactSession("summary-only", extra),
       compactSummaryAndLast: (extra) => this.compactSession("summary-and-last", extra),
       reload: () => this.reloadContent(),
-      listen: () => this.startListenCaptureFromCommand(),
+      listen: (action) => this.handleListenCommand(action),
       speak: () => this.speakLastAssistantMessage(),
       persona: (id) => this.setPersona(id),
       prompt: (id) => this.insertPrompt(id),
@@ -727,6 +729,20 @@ export class SessionChatController {
     }
   }
 
+  private async handleListenCommand(action: "record" | "retry" | "discard"): Promise<void> {
+    switch (action) {
+      case "record":
+        await this.startListenCaptureFromCommand();
+        return;
+      case "retry":
+        await this.retryRetainedListenAudio();
+        return;
+      case "discard":
+        await this.discardRetainedListenAudio();
+        return;
+    }
+  }
+
   private async toggleListenCapture(): Promise<void> {
     if (this.listenTransition) {
       this.view.showFooterNotice("speech recording state change already in progress", "default");
@@ -752,7 +768,7 @@ export class SessionChatController {
       return;
     }
 
-    if (this.isTranscribingListen) {
+    if (this.listenActivityLabel) {
       this.view.showFooterNotice("speech transcription already in progress", "default");
       return;
     }
@@ -789,6 +805,20 @@ export class SessionChatController {
         getSpeechToTextApiKeyErrorMessage(this.config, "use /listen"),
       ]);
       return;
+    }
+
+    const retainedAudioPath = this.retainedListenAudioPath;
+    if (retainedAudioPath) {
+      try {
+        await deleteListenTempFile(retainedAudioPath);
+        this.retainedListenAudioPath = undefined;
+      } catch (error) {
+        this.view.addTranscriptNotice("failed to replace retained recording", "error", [
+          (error as Error).message,
+          `recording retained at ${retainedAudioPath}`,
+        ]);
+        return;
+      }
     }
 
     let audioPath: string | undefined;
@@ -843,35 +873,111 @@ export class SessionChatController {
       return;
     }
 
-    this.isTranscribingListen = true;
+    await this.transcribeListenAudioFile(recording.audioPath);
+  }
+
+  private async retryRetainedListenAudio(): Promise<void> {
+    if (this.listenRecording || this.listenTransition || this.listenActivityLabel) {
+      this.view.showFooterNotice("speech recording state change already in progress", "default");
+      return;
+    }
+
+    const audioPath = this.retainedListenAudioPath;
+    if (!audioPath) {
+      this.view.showFooterNotice("no failed speech recording to retry", "default");
+      return;
+    }
+
+    await this.runListenTransition(() => this.transcribeListenAudioFile(audioPath));
+  }
+
+  private async discardRetainedListenAudio(): Promise<void> {
+    if (this.listenRecording || this.listenTransition || this.listenActivityLabel) {
+      this.view.showFooterNotice("speech recording state change already in progress", "default");
+      return;
+    }
+
+    const audioPath = this.retainedListenAudioPath;
+    if (!audioPath) {
+      this.view.showFooterNotice("no failed speech recording to discard", "default");
+      return;
+    }
+
+    try {
+      await deleteListenTempFile(audioPath);
+      this.retainedListenAudioPath = undefined;
+      this.view.showFooterNotice("discarded retained speech recording", "default");
+    } catch (error) {
+      this.view.addTranscriptNotice("failed to discard speech recording", "error", [
+        (error as Error).message,
+        `recording retained at ${audioPath}`,
+      ]);
+    }
+  }
+
+  private async transcribeListenAudioFile(audioPath: string): Promise<void> {
+    let audio: Buffer;
+    try {
+      audio = await readListenAudio(audioPath);
+    } catch (error) {
+      this.view.addTranscriptNotice("failed to read speech recording", "error", [
+        (error as Error).message,
+      ]);
+      if (this.retainedListenAudioPath === audioPath) {
+        this.retainedListenAudioPath = undefined;
+      }
+      await cleanupListenTempFile(audioPath);
+      return;
+    }
+
+    if (audio.byteLength < LISTEN_RECORDING_MIN_BYTES) {
+      this.view.showFooterNotice("recording too short, try again", "default");
+      if (this.retainedListenAudioPath === audioPath) {
+        this.retainedListenAudioPath = undefined;
+      }
+      await cleanupListenTempFile(audioPath);
+      return;
+    }
+
+    this.listenActivityLabel = "transcribing voice input";
     this.refreshStatus();
     try {
-      const audio = await readListenAudio(recording.audioPath);
-      if (audio.byteLength < LISTEN_RECORDING_MIN_BYTES) {
-        this.view.showFooterNotice("recording too short, try again", "default");
-        return;
-      }
-
-      const transcript = await transcribeListenAudio({
+      const result = await transcribeListenAudio({
         config: this.config,
         deps: this.deps,
         audio,
         context: collectSpeechToTextContext(this.snapshot),
+        onProgress: (progress) => {
+          this.listenActivityLabel =
+            progress === "retrying"
+              ? "retrying voice transcription"
+              : "trying fallback transcription model";
+          this.refreshStatus();
+        },
       });
-      const text = transcript.trim();
-      if (!text) {
-        return;
+      this.view.insertEditorTextAtCursor(result.text);
+      if (result.usedFallback) {
+        this.view.showFooterNotice("transcribed with fallback model", "default");
       }
-
-      this.view.insertEditorTextAtCursor(text);
-    } catch (err) {
+      this.retainedListenAudioPath = undefined;
+      try {
+        await deleteListenTempFile(audioPath);
+      } catch (error) {
+        this.view.addTranscriptNotice("failed to delete speech recording", "error", [
+          (error as Error).message,
+          `recording remains at ${audioPath}; delete it manually`,
+        ]);
+      }
+    } catch (error) {
+      this.retainedListenAudioPath = audioPath;
       this.view.addTranscriptNotice("failed to transcribe speech", "error", [
-        (err as Error).message,
+        (error as Error).message,
+        `recording retained at ${audioPath}`,
+        "run /listen retry to try again, or /listen discard to delete it",
       ]);
     } finally {
-      this.isTranscribingListen = false;
+      this.listenActivityLabel = undefined;
       this.refreshStatus();
-      await cleanupListenTempFile(recording.audioPath);
     }
   }
 
@@ -1951,8 +2057,8 @@ export class SessionChatController {
     if (this.manualCompactionInProgress || this.hasRunningCompactionOperation(this.snapshot)) {
       return "compacting context";
     }
-    if (this.isTranscribingListen) {
-      return "transcribing voice input";
+    if (this.listenActivityLabel) {
+      return this.listenActivityLabel;
     }
     return this.diffReviewService.getActivityLabel(this.speechActivityLabel);
   }
@@ -2158,7 +2264,7 @@ export class SessionChatController {
       !this.isSessionOperationActive() &&
       !this.listenRecording &&
       !this.listenTransition &&
-      !this.isTranscribingListen &&
+      !this.listenActivityLabel &&
       !this.speakTask
     );
   }

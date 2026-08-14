@@ -7,7 +7,7 @@ const DEFAULT_MISTRAL_AUDIO_MIME_TYPE = "audio/wav";
 const DEFAULT_MISTRAL_AUDIO_FILE_NAME = "speech.wav";
 
 const errorSchema = z.object({ message: z.string() });
-const successSchema = z.object({ text: z.string() });
+const successSchema = z.object({ text: z.string().trim().min(1) });
 
 export type MistralTranscriptionOptions = {
   apiKey: string;
@@ -60,5 +60,8 @@ export async function transcribeMistralAudio(
   }
 
   const parsed = successSchema.safeParse(payload);
-  return parsed.success ? parsed.data.text : "";
+  if (!parsed.success) {
+    throw new Error("transcription result was empty or malformed");
+  }
+  return parsed.data.text;
 }

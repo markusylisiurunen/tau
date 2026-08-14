@@ -7,7 +7,11 @@ import {
 } from "../core/config/index.js";
 import type { CoreDeps } from "../core/runtime/deps.js";
 import type { SpawnCaptureResult } from "../core/utils/spawn_capture.js";
-import { transcribeAudio } from "../core/utils/speech_to_text.js";
+import {
+  type SpeechToTextProgress,
+  type SpeechToTextResult,
+  transcribeAudio,
+} from "../core/utils/speech_to_text.js";
 import type { SpeechToTextContext } from "../core/utils/speech_to_text_context.js";
 
 export const LISTEN_TEMP_FILE_TEMPLATE = "/tmp/tau-listen.XXXXXX";
@@ -76,9 +80,19 @@ export async function readListenAudio(path: string): Promise<Buffer> {
   return await readFile(path);
 }
 
-export async function cleanupListenTempFile(path: string): Promise<void> {
+export async function deleteListenTempFile(path: string): Promise<void> {
   try {
     await unlink(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+  }
+}
+
+export async function cleanupListenTempFile(path: string): Promise<void> {
+  try {
+    await deleteListenTempFile(path);
   } catch {
     // best-effort cleanup
   }
@@ -107,7 +121,8 @@ export async function transcribeListenAudio(args: {
   deps: CoreDeps;
   audio: Buffer;
   context?: SpeechToTextContext;
-}): Promise<string> {
+  onProgress?: (progress: SpeechToTextProgress) => void;
+}): Promise<SpeechToTextResult> {
   const provider = getSpeechToTextProvider(args.config);
   const apiKey = getSpeechToTextApiKey(args.config, args.deps);
   if (!apiKey) {
@@ -122,5 +137,6 @@ export async function transcribeListenAudio(args: {
     fileName: "speech.wav",
     language: "en",
     context: args.context,
+    onProgress: args.onProgress,
   });
 }

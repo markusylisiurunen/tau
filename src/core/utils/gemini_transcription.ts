@@ -2,9 +2,44 @@ import { z } from "zod";
 import { formatSpeechToTextContext, type SpeechToTextContext } from "./speech_to_text_context.js";
 
 const GEMINI_GENERATE_CONTENT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
-const DEFAULT_GEMINI_TRANSCRIPTION_MODEL = "gemini-3.7-flash";
-const DEFAULT_GEMINI_TRANSCRIPTION_THINKING_LEVEL = "low";
+const PRIMARY_GEMINI_TRANSCRIPTION_MODEL = "gemini-3.7-flash";
+const PRIMARY_GEMINI_TRANSCRIPTION_THINKING_LEVEL = "low";
+const FALLBACK_GEMINI_TRANSCRIPTION_MODEL = "gemini-3.6-flash";
+const FALLBACK_GEMINI_TRANSCRIPTION_THINKING_LEVEL = "minimal";
 const DEFAULT_GEMINI_AUDIO_MIME_TYPE = "audio/wav";
+const MAX_RETRY_DELAY_MS = 5_000;
+
+const RETRYABLE_GEMINI_ERROR_STATUSES = new Set([
+  "DEADLINE_EXCEEDED",
+  "INTERNAL",
+  "NOT_FOUND",
+  "RESOURCE_EXHAUSTED",
+  "UNAVAILABLE",
+]);
+
+const GEMINI_TRANSCRIPTION_ATTEMPTS = [
+  {
+    model: PRIMARY_GEMINI_TRANSCRIPTION_MODEL,
+    thinkingLevel: PRIMARY_GEMINI_TRANSCRIPTION_THINKING_LEVEL,
+    progress: undefined,
+    delayMs: 0,
+    usedFallback: false,
+  },
+  {
+    model: PRIMARY_GEMINI_TRANSCRIPTION_MODEL,
+    thinkingLevel: PRIMARY_GEMINI_TRANSCRIPTION_THINKING_LEVEL,
+    progress: "retrying" as const,
+    delayMs: 250,
+    usedFallback: false,
+  },
+  {
+    model: FALLBACK_GEMINI_TRANSCRIPTION_MODEL,
+    thinkingLevel: FALLBACK_GEMINI_TRANSCRIPTION_THINKING_LEVEL,
+    progress: "trying-fallback" as const,
+    delayMs: 500,
+    usedFallback: true,
+  },
+];
 
 const errorPayloadSchema = z.object({
   error: z
@@ -37,69 +72,141 @@ const apiResponseSchema = z.object({
     .optional(),
 });
 const transcriptionResultSchema = z.object({
-  transcription: z.string(),
+  transcription: z.string().trim().min(1),
 });
+
+export type GeminiTranscriptionProgress = "retrying" | "trying-fallback";
+
+export type GeminiTranscriptionResult = {
+  text: string;
+  usedFallback: boolean;
+};
 
 export type GeminiTranscriptionOptions = {
   apiKey: string;
   audio: Buffer;
-  model?: string;
   mimeType?: string;
   context?: SpeechToTextContext;
   fetchImpl?: typeof fetch;
+  onProgress?: (progress: GeminiTranscriptionProgress) => void;
 };
 
-export async function transcribeGeminiAudio(options: GeminiTranscriptionOptions): Promise<string> {
+class GeminiTranscriptionAttemptError extends Error {
+  constructor(
+    message: string,
+    readonly retryable: boolean,
+    readonly retryAfterMs = 0,
+  ) {
+    super(message);
+  }
+}
+
+export async function transcribeGeminiAudio(
+  options: GeminiTranscriptionOptions,
+): Promise<GeminiTranscriptionResult> {
   const apiKey = options.apiKey.trim();
   if (!apiKey) {
     throw new Error("missing Gemini API key");
   }
 
   const fetchFn = options.fetchImpl ?? fetch;
-  const model = options.model ?? DEFAULT_GEMINI_TRANSCRIPTION_MODEL;
-  const response = await fetchFn(
-    `${GEMINI_GENERATE_CONTENT_BASE_URL}/${encodeURIComponent(model)}:generateContent`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-goog-api-key": apiKey,
-      },
-      body: JSON.stringify({
-        systemInstruction: {
-          parts: [
-            {
-              text: buildTranscriptionSystemInstruction(),
-            },
-          ],
+  let retryAfterMs = 0;
+
+  for (const [index, attempt] of GEMINI_TRANSCRIPTION_ATTEMPTS.entries()) {
+    if (attempt.progress) {
+      options.onProgress?.(attempt.progress);
+      await waitForRetry(Math.max(attempt.delayMs, retryAfterMs));
+    }
+
+    try {
+      const text = await requestGeminiTranscription({
+        apiKey,
+        audio: options.audio,
+        mimeType: options.mimeType ?? DEFAULT_GEMINI_AUDIO_MIME_TYPE,
+        context: options.context,
+        fetchFn,
+        model: attempt.model,
+        thinkingLevel: attempt.thinkingLevel,
+      });
+      return { text, usedFallback: attempt.usedFallback };
+    } catch (error) {
+      if (
+        !(error instanceof GeminiTranscriptionAttemptError) ||
+        !error.retryable ||
+        index === GEMINI_TRANSCRIPTION_ATTEMPTS.length - 1
+      ) {
+        throw error;
+      }
+      retryAfterMs = error.retryAfterMs;
+    }
+  }
+
+  throw new Error("Gemini transcription attempts exhausted");
+}
+
+async function requestGeminiTranscription(args: {
+  apiKey: string;
+  audio: Buffer;
+  mimeType: string;
+  context?: SpeechToTextContext;
+  fetchFn: typeof fetch;
+  model: string;
+  thinkingLevel: string;
+}): Promise<string> {
+  let response: Response;
+  try {
+    response = await args.fetchFn(
+      `${GEMINI_GENERATE_CONTENT_BASE_URL}/${encodeURIComponent(args.model)}:generateContent`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": args.apiKey,
         },
-        contents: [
-          {
+        body: JSON.stringify({
+          systemInstruction: {
             parts: [
               {
-                text: buildTranscriptionPrompt(options.context),
-              },
-              {
-                inlineData: {
-                  mimeType: options.mimeType ?? DEFAULT_GEMINI_AUDIO_MIME_TYPE,
-                  data: options.audio.toString("base64"),
-                },
+                text: buildTranscriptionSystemInstruction(),
               },
             ],
           },
-        ],
-        generationConfig: {
-          responseMimeType: "application/json",
-          responseSchema: GEMINI_TRANSCRIPTION_RESPONSE_SCHEMA,
-          thinkingConfig: {
-            thinkingLevel: DEFAULT_GEMINI_TRANSCRIPTION_THINKING_LEVEL,
+          contents: [
+            {
+              parts: [
+                {
+                  text: buildTranscriptionPrompt(args.context),
+                },
+                {
+                  inlineData: {
+                    mimeType: args.mimeType,
+                    data: args.audio.toString("base64"),
+                  },
+                },
+              ],
+            },
+          ],
+          generationConfig: {
+            responseMimeType: "application/json",
+            responseSchema: GEMINI_TRANSCRIPTION_RESPONSE_SCHEMA,
+            thinkingConfig: {
+              thinkingLevel: args.thinkingLevel,
+            },
           },
-        },
-      }),
-    },
-  );
+        }),
+      },
+    );
+  } catch (error) {
+    throw new GeminiTranscriptionAttemptError((error as Error).message, true);
+  }
 
-  const responseText = await response.text();
+  let responseText: string;
+  try {
+    responseText = await response.text();
+  } catch (error) {
+    throw new GeminiTranscriptionAttemptError((error as Error).message, true);
+  }
+
   let payload: unknown;
   try {
     payload = responseText ? (JSON.parse(responseText) as unknown) : undefined;
@@ -110,12 +217,46 @@ export async function transcribeGeminiAudio(options: GeminiTranscriptionOptions)
   if (!response.ok) {
     const parsed = errorPayloadSchema.safeParse(payload);
     const fallbackMessage = responseText.trim() || `HTTP ${response.status}`;
-    throw new Error(
+    const errorStatus = parsed.success ? parsed.data.error?.status : undefined;
+    throw new GeminiTranscriptionAttemptError(
       parsed.success ? (parsed.data.error?.message ?? fallbackMessage) : fallbackMessage,
+      isRetryableGeminiError(response.status, errorStatus),
+      parseRetryAfterMs(response.headers.get("retry-after")),
     );
   }
 
-  return extractGeminiText(payload).trim();
+  const text = extractGeminiText(payload);
+  if (!text) {
+    throw new GeminiTranscriptionAttemptError("transcription result was empty or malformed", true);
+  }
+  return text;
+}
+
+function isRetryableGeminiError(status: number, errorStatus: string | undefined): boolean {
+  return (
+    status === 408 ||
+    status === 429 ||
+    status >= 500 ||
+    (errorStatus !== undefined && RETRYABLE_GEMINI_ERROR_STATUSES.has(errorStatus))
+  );
+}
+
+function parseRetryAfterMs(value: string | null): number {
+  if (!value) return 0;
+
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) {
+    return Math.min(Math.max(0, seconds * 1_000), MAX_RETRY_DELAY_MS);
+  }
+
+  const dateMs = Date.parse(value);
+  if (!Number.isFinite(dateMs)) return 0;
+  return Math.min(Math.max(0, dateMs - Date.now()), MAX_RETRY_DELAY_MS);
+}
+
+async function waitForRetry(delayMs: number): Promise<void> {
+  if (delayMs <= 0) return;
+  await new Promise((resolve) => setTimeout(resolve, delayMs));
 }
 
 function buildTranscriptionSystemInstruction(): string {
@@ -150,10 +291,10 @@ function buildTranscriptionPrompt(context: SpeechToTextContext | undefined): str
     .join("\n");
 }
 
-function extractGeminiText(payload: unknown): string {
+function extractGeminiText(payload: unknown): string | undefined {
   const parsed = apiResponseSchema.safeParse(payload);
   if (!parsed.success) {
-    return "";
+    return undefined;
   }
 
   const responseText = (parsed.data.candidates?.[0]?.content.parts ?? [])
@@ -167,13 +308,9 @@ function extractGeminiText(payload: unknown): string {
   try {
     transcriptionPayload = responseText ? (JSON.parse(responseText) as unknown) : undefined;
   } catch {
-    return "";
+    return undefined;
   }
 
   const transcription = transcriptionResultSchema.safeParse(transcriptionPayload);
-  if (!transcription.success) {
-    return "";
-  }
-
-  return transcription.data.transcription;
+  return transcription.success ? transcription.data.transcription : undefined;
 }

@@ -626,15 +626,14 @@ test("FooterComponent animates active goal work and settles after completion", (
 
   try {
     const idleLine = renderLines(footer, 120)[0];
-    expect(idleLine).not.toContain("pursuing goal");
+    expect(idleLine).not.toContain("goal");
     expect(idleLine).toContain("<textDim>24s · ~/Code/tau-one · ctx 10/100 · $0.01</textDim>");
 
     footer.startWorkingIcon();
     const activeLine = renderLines(footer, 120)[0];
     expect(activeLine).toContain(
-      "<brandAccent>⠋</brandAccent> <brandAccent>pursuing goal</brandAccent>",
+      "<brandAccent>⠋</brandAccent> <brandAccent>goal</brandAccent> <textDim>·</textDim> <textDim>24s · ~/Code/tau-one · ctx 10/100 · $0.01</textDim>",
     );
-    expect(activeLine).not.toContain("tau-one");
 
     footer.stop();
     expect(renderLines(footer, 120)[0]).toContain("<brandAccent>●</brandAccent>");

@@ -2172,6 +2172,88 @@ describe("telegram adapter", () => {
     }
   });
 
+  it("accepts 32 attachments totaling 100 MiB per turn", async () => {
+    const maxFileSize = 20 * 1024 * 1024;
+    const finalFileSize = maxFileSize - 27;
+    const attachmentUpdates = Array.from({ length: 33 }, (_, index) => {
+      const fileSize = index < 27 ? 1 : index < 31 ? maxFileSize : finalFileSize;
+      return {
+        update_id: index + 2,
+        message: {
+          chat: { id: 206, type: "private" },
+          from: { id: 7 },
+          document: {
+            file_id: `doc-${index + 1}`,
+            file_name: `document-${index + 1}.txt`,
+            mime_type: "text/plain",
+            file_size: fileSize,
+          },
+        },
+      };
+    });
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: {
+            chat: { id: 206, type: "private" },
+            from: { id: 7 },
+            text: "/new",
+          },
+        },
+        ...attachmentUpdates,
+        {
+          update_id: 35,
+          message: {
+            chat: { id: 206, type: "private" },
+            from: { id: 7 },
+            text: "review these files",
+          },
+        },
+      ],
+    ]);
+    const maxFilePayload = Buffer.alloc(maxFileSize);
+
+    apiHarness.api.downloadFile.mockImplementation(async (fileId) => {
+      apiHarness.downloadFileCalls.push(fileId);
+      const index = Number(fileId.slice("doc-".length));
+      if (index <= 27) {
+        return Buffer.from("x");
+      }
+      if (index <= 31) {
+        return maxFilePayload;
+      }
+      return maxFilePayload.subarray(0, finalFileSize);
+    });
+
+    const managerHarness = createSessionManagerHarness();
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      defaultProjectId: "demo",
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() => managerHarness.manager.sendMessage.mock.calls.length === 1);
+
+      const message = managerHarness.manager.sendMessage.mock.calls[0][1];
+      expect(message.match(/^- path: /gm)).toHaveLength(32);
+      expect(apiHarness.downloadFileCalls).toHaveLength(32);
+      expect(apiHarness.sendMessages).toContainEqual(
+        expect.objectContaining({
+          chatId: 206,
+          text: "skipped attachment 'document-33.txt': exceeds attachment limit (32 files per turn)",
+        }),
+      );
+    } finally {
+      await adapter.close();
+    }
+  });
+
   it("transcribes voice messages and sends the transcript to the active session", async () => {
     const apiHarness = createApiHarness([
       [

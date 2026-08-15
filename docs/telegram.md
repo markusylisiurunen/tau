@@ -269,9 +269,9 @@ Telegram accepts photos and documents identified as images, PDF, `.txt`, `.md`, 
 
 Limits are:
 
-- at most 10 attachments per turn
+- at most 32 attachments per turn
 - at most 20 MiB per file
-- at most 50 MiB total per turn
+- at most 100 MiB total per turn
 
 An attachment-only DM queues files for the next text or voice/audio turn; it does not run the agent by itself. Unsupported, oversized, or failed downloads are skipped with a warning. Treat every attachment as untrusted input even though its path is local.
 

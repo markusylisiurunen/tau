@@ -646,6 +646,7 @@ async function* parseGeminiSse(body: ReadableStream<Uint8Array>): AsyncGenerator
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffered = "";
+  let completed = false;
 
   try {
     while (true) {
@@ -668,10 +669,14 @@ async function* parseGeminiSse(body: ReadableStream<Uint8Array>): AsyncGenerator
         if (payload !== undefined) {
           yield payload;
         }
+        completed = true;
         return;
       }
     }
   } finally {
+    if (!completed) {
+      await reader.cancel().catch(() => {});
+    }
     reader.releaseLock();
   }
 }
@@ -847,7 +852,8 @@ function splitSpeechSegments(spokenText: string): string[] {
   }
 
   const totalWeight = cumulativeWeights.at(-1)!;
-  const segmentCount = Math.max(1, Math.ceil(totalWeight / MAX_SPEECH_SEGMENT_WEIGHT));
+  const minimumSegmentCounts = minimumSpeechSegmentCounts(cumulativeWeights);
+  const segmentCount = minimumSegmentCounts[0]!;
   if (segmentCount === 1) {
     return [normalizedText];
   }
@@ -857,23 +863,16 @@ function splitSpeechSegments(spokenText: string): string[] {
     const previousBoundary = boundaries.at(-1)!;
     const previousWeight = cumulativeWeights[previousBoundary]!;
     const remainingSegments = segmentCount - segment;
-    const minimumWeight = Math.max(
-      previousWeight + 1,
-      totalWeight - remainingSegments * MAX_SPEECH_SEGMENT_WEIGHT,
-    );
-    const maximumWeight = Math.min(
-      previousWeight + MAX_SPEECH_SEGMENT_WEIGHT,
-      totalWeight - remainingSegments,
-    );
     const idealWeight = (totalWeight * segment) / segmentCount;
     const maximumBoundary = characters.length - remainingSegments;
     const candidates = Array.from(
       { length: maximumBoundary - previousBoundary },
       (_, offset) => previousBoundary + offset + 1,
-    ).filter((index) => {
-      const weight = cumulativeWeights[index]!;
-      return weight >= minimumWeight && weight <= maximumWeight;
-    });
+    ).filter(
+      (index) =>
+        cumulativeWeights[index]! - previousWeight <= MAX_SPEECH_SEGMENT_WEIGHT &&
+        minimumSegmentCounts[index]! <= remainingSegments,
+    );
     const naturalCandidates = candidates.filter((index) =>
       isNaturalSpeechBoundary(characters, index),
     );
@@ -898,6 +897,18 @@ function speechCharacterWeight(character: string): number {
   return /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(character)
     ? 3
     : 1;
+}
+
+function minimumSpeechSegmentCounts(cumulativeWeights: number[]): number[] {
+  const counts = new Array<number>(cumulativeWeights.length).fill(0);
+  let boundary = cumulativeWeights.length - 1;
+  for (let index = cumulativeWeights.length - 2; index >= 0; index -= 1) {
+    while (cumulativeWeights[boundary]! - cumulativeWeights[index]! > MAX_SPEECH_SEGMENT_WEIGHT) {
+      boundary -= 1;
+    }
+    counts[index] = counts[boundary]! + 1;
+  }
+  return counts;
 }
 
 function isNaturalSpeechBoundary(characters: string[], index: number): boolean {

@@ -26,6 +26,7 @@ import { copyTextToClipboard } from "../dist/tui/clipboard.js";
 import { LISTEN_CAPTURE_START_TIMEOUT_MS } from "../dist/tui/listen_capture.js";
 import { createTuiClientTools, SessionChatApp } from "../dist/tui/session_chat_app.js";
 import { SessionChatController } from "../dist/tui/session_chat_controller.js";
+import { runSpeechPlaybackTask } from "../dist/tui/speech_playback.js";
 import {
   createProtocolBootstrap,
   createProtocolExecResult,
@@ -6127,6 +6128,174 @@ describe("SessionChatController", () => {
     expect(writtenAudio).toEqual([Buffer.from([1, 2]), Buffer.from([3, 4])]);
     expect(stdin.end).toHaveBeenCalledOnce();
     expect(session.submit).not.toHaveBeenCalled();
+  });
+
+  it("waits for ffplay shutdown when speech is cancelled before a write", async () => {
+    const abortController = new AbortController();
+    const stdin = new EventEmitter();
+    stdin.destroyed = false;
+    stdin.writableEnded = false;
+    stdin.write = vi.fn();
+    let releasePlayback;
+    const spawn = vi.fn((_command, _args, options) => {
+      options.onSpawn?.({ stdin });
+      return new Promise((resolve) => {
+        options.signal.addEventListener(
+          "abort",
+          () => {
+            releasePlayback = () =>
+              resolve({
+                stdout: "",
+                stderr: "",
+                output: undefined,
+                exitCode: null,
+                captureLimitExceeded: false,
+                timedOut: false,
+                aborted: true,
+                closeSignal: "SIGTERM",
+              });
+          },
+          { once: true },
+        );
+      });
+    });
+    const encoder = new TextEncoder();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            candidates: [{ content: { parts: [{ text: "Spoken version." }] } }],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          new ReadableStream({
+            pull(controller) {
+              controller.enqueue(
+                encoder.encode(
+                  `data: ${JSON.stringify({
+                    candidates: [
+                      {
+                        finishReason: "STOP",
+                        content: {
+                          parts: [
+                            {
+                              inlineData: {
+                                data: Buffer.from([1, 2]).toString("base64"),
+                              },
+                            },
+                          ],
+                        },
+                      },
+                    ],
+                  })}\n\n`,
+                ),
+              );
+              abortController.abort();
+              controller.close();
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "text/event-stream" } },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const playback = runSpeechPlaybackTask({
+        deps: createMockDeps(spawn),
+        apiKey: "gemini-key",
+        sourceText: "Original response.",
+        signal: abortController.signal,
+        onActivityLabel: vi.fn(),
+      });
+      let settled = false;
+      void playback.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+
+      await vi.waitFor(() => expect(releasePlayback).toBeTypeOf("function"));
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      releasePlayback();
+      await playback;
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    expect(stdin.write).not.toHaveBeenCalled();
+  });
+
+  it("reports ffplay diagnostics when its stdin closes early", async () => {
+    const stdin = new EventEmitter();
+    stdin.destroyed = false;
+    stdin.writableEnded = false;
+    stdin.write = vi.fn((_audio, callback) => {
+      const error = new Error("write EPIPE");
+      error.code = "EPIPE";
+      callback(error);
+      return false;
+    });
+    const spawn = vi.fn(async (_command, _args, options) => {
+      options.onSpawn?.({ stdin });
+      return {
+        stdout: "",
+        stderr: "audio open failed",
+        output: undefined,
+        exitCode: 0,
+        captureLimitExceeded: false,
+        timedOut: false,
+        aborted: false,
+        closeSignal: null,
+      };
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            candidates: [{ content: { parts: [{ text: "Spoken version." }] } }],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          `data: ${JSON.stringify({
+            candidates: [
+              {
+                finishReason: "STOP",
+                content: {
+                  parts: [{ inlineData: { data: Buffer.from([1, 2]).toString("base64") } }],
+                },
+              },
+            ],
+          })}\n\n`,
+          { status: 200, headers: { "Content-Type": "text/event-stream" } },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      await expect(
+        runSpeechPlaybackTask({
+          deps: createMockDeps(spawn),
+          apiKey: "gemini-key",
+          sourceText: "Original response.",
+          signal: new AbortController().signal,
+          onActivityLabel: vi.fn(),
+        }),
+      ).rejects.toThrow("ffplay failed: audio open failed");
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("exposes session catalog data for autocomplete", async () => {

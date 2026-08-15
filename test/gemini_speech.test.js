@@ -371,6 +371,62 @@ describe("gemini speech", () => {
     expect(transcripts).toEqual([firstSentence, secondSentence]);
   });
 
+  it("uses feasible boundaries when weighted cuts cannot reach the aggregate capacity", async () => {
+    const rewrittenText = "これは音声です。".repeat(1020);
+    let requestIndex = 0;
+    const fetchMock = vi.fn(async () => {
+      if (requestIndex++ === 0) {
+        return new Response(
+          JSON.stringify({
+            candidates: [{ content: { parts: [{ text: rewrittenText }] } }],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      return new Response(
+        JSON.stringify({
+          candidates: [
+            {
+              content: {
+                parts: [{ inlineData: { data: Buffer.from([1, 2]).toString("base64") } }],
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    });
+
+    for await (const _chunk of generateGeminiSpeechAudio({
+      apiKey: "gemini-key",
+      sourceText: "Original response.",
+      fetchImpl: fetchMock,
+    })) {
+      void _chunk;
+    }
+
+    const transcripts = fetchMock.mock.calls
+      .slice(1)
+      .map(([, init]) =>
+        JSON.parse(init.body).contents[0].parts[0].text.split("### TRANSCRIPT\n")[1].trim(),
+      );
+    const speechWeight = (text) =>
+      Array.from(text).reduce(
+        (total, character) =>
+          total +
+          (/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(
+            character,
+          )
+            ? 3
+            : 1),
+        0,
+      );
+    expect(transcripts).toHaveLength(12);
+    expect(transcripts.join("")).toBe(rewrittenText);
+    expect(transcripts.every((transcript) => speechWeight(transcript) <= 2040)).toBe(true);
+  });
+
   it("streams incremental PCM and validates the terminal response", async () => {
     const fetchMock = vi
       .fn()
@@ -481,6 +537,47 @@ describe("gemini speech", () => {
     }
 
     expect(chunks.map((chunk) => chunk.audio)).toEqual([Buffer.from([1, 2])]);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("cancels a failed SSE body before retrying", async () => {
+    const cancel = vi.fn();
+    const encoder = new TextEncoder();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            candidates: [{ content: { parts: [{ text: "Spoken version." }] } }],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(encoder.encode("data: {\n\n"));
+            },
+            cancel,
+          }),
+          { status: 200, headers: { "Content-Type": "text/event-stream" } },
+        ),
+      )
+      .mockResolvedValueOnce(createSseResponse([createStreamingAudioPayload([1, 2], "STOP")]));
+    const chunks = [];
+
+    for await (const chunk of streamGeminiSpeechPcm({
+      apiKey: "gemini-key",
+      sourceText: "Original response.",
+      fetchImpl: fetchMock,
+      maxTtsAttempts: 2,
+    })) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks.map((chunk) => chunk.audio)).toEqual([Buffer.from([1, 2])]);
+    expect(cancel).toHaveBeenCalledOnce();
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 

@@ -85,10 +85,6 @@ export async function runSpeechPlaybackTask(args: {
         refreshSpeechProgress();
       },
     })) {
-      if (args.signal.aborted) {
-        return;
-      }
-
       playbackStarted = true;
       totalSegments = chunk.total;
       refreshSpeechProgress();
@@ -117,6 +113,9 @@ export async function runSpeechPlaybackTask(args: {
       ("error" in outcome && isMissingExecutableError(outcome.error))
     ) {
       throw new Error("ffplay not found. Install ffmpeg to use /speak.");
+    }
+    if ("result" in outcome && !outcome.result.aborted) {
+      throw playbackFailure(outcome.result);
     }
     throw error;
   } finally {

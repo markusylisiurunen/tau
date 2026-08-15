@@ -199,10 +199,11 @@ describe("custom personas", () => {
 
       expect(personas.find((persona) => persona.id === "gemini-3.1-pro-chat")).toBeUndefined();
       expect(personas.find((persona) => persona.id === "gemini-3-flash-chat")).toBeUndefined();
-      expect(personas.find((persona) => persona.id === "gemini-3.6-flash-chat")?.model.id).toBe(
-        "gemini-3.6-flash",
+      expect(personas.find((persona) => persona.id === "gemini-3.6-flash-chat")).toBeUndefined();
+      expect(personas.find((persona) => persona.id === "gemini-3.7-flash-chat")?.model.id).toBe(
+        "gemini-3.7-flash",
       );
-      expect(personas.find((persona) => persona.id === "gemini-3.6-flash-coder")).toBeUndefined();
+      expect(personas.find((persona) => persona.id === "gemini-3.7-flash-coder")).toBeUndefined();
     } finally {
       fx.cleanup();
     }

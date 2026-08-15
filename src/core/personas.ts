@@ -212,10 +212,10 @@ type PersonaSpec = {
 
 const PERSONA_SPECS: PersonaSpec[] = [
   {
-    id: "gemini-3.6-flash",
-    description: "Gemini 3.6 Flash",
+    id: "gemini-3.7-flash",
+    description: "Gemini 3.7 Flash",
     provider: "google",
-    modelId: "gemini-3.6-flash",
+    modelId: "gemini-3.7-flash",
     allowedReasoningLevels: ["low", "medium", "high"],
     settings: { reasoning: "medium" },
     skills: "*",

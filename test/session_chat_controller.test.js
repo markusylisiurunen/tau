@@ -5982,22 +5982,22 @@ describe("SessionChatController", () => {
     expect(session.submit).not.toHaveBeenCalled();
   });
 
-  it("speaks the last session assistant message using local playback", async () => {
-    const mktempPath = join(tmpdir(), `tau-session-speak-test-${Date.now()}.wav`);
-    const spawn = vi.fn(async (cmd) => {
-      if (cmd === "mktemp") {
-        return {
-          stdout: `${mktempPath}\n`,
-          stderr: "",
-          output: undefined,
-          exitCode: 0,
-          captureLimitExceeded: false,
-          timedOut: false,
-          aborted: false,
-          closeSignal: null,
-        };
-      }
-
+  it("streams the last session assistant message through local playback", async () => {
+    const writtenAudio = [];
+    const stdin = new EventEmitter();
+    stdin.destroyed = false;
+    stdin.writableEnded = false;
+    stdin.write = vi.fn((audio, callback) => {
+      writtenAudio.push(Buffer.from(audio));
+      callback();
+      return true;
+    });
+    stdin.end = vi.fn((callback) => {
+      stdin.writableEnded = true;
+      callback();
+    });
+    const spawn = vi.fn(async (_cmd, _args, options) => {
+      options.onSpawn?.({ stdin });
       return {
         stdout: "",
         stderr: "",
@@ -6032,6 +6032,29 @@ describe("SessionChatController", () => {
       deps: createMockDeps(spawn),
       config: { apiKeys: { google: "gemini-key" } },
     });
+    const streamingBody = [
+      {
+        candidates: [
+          {
+            content: {
+              parts: [{ inlineData: { data: Buffer.from([1, 2]).toString("base64") } }],
+            },
+          },
+        ],
+      },
+      {
+        candidates: [
+          {
+            finishReason: "STOP",
+            content: {
+              parts: [{ inlineData: { data: Buffer.from([3, 4]).toString("base64") } }],
+            },
+          },
+        ],
+      },
+    ]
+      .map((payload) => `data: ${JSON.stringify(payload)}\n\n`)
+      .join("");
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
@@ -6053,24 +6076,10 @@ describe("SessionChatController", () => {
         ),
       )
       .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            candidates: [
-              {
-                content: {
-                  parts: [
-                    {
-                      inlineData: {
-                        data: Buffer.from([1, 2, 3, 4]).toString("base64"),
-                      },
-                    },
-                  ],
-                },
-              },
-            ],
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        ),
+        new Response(streamingBody, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        }),
       );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -6079,7 +6088,6 @@ describe("SessionChatController", () => {
       await controller.speakLastAssistantMessage();
     } finally {
       vi.unstubAllGlobals();
-      await rm(mktempPath, { force: true });
     }
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -6089,23 +6097,35 @@ describe("SessionChatController", () => {
     expect(speechHints).toEqual(
       expect.arrayContaining([
         "rewriting for speech",
-        "generating speech chunks (0 out of 1 ready)",
-        "generating speech chunks (1 out of 1 ready)",
-        "playing speech (0/1 played, 1/1 ready)",
+        "generating speech segments (0 out of 1 ready)",
+        "playing speech (0/1 generated)",
+        "playing speech (1/1 generated)",
       ]),
     );
     expect(view.status.footer.type).toBe("regular");
-    expect(spawn).toHaveBeenNthCalledWith(1, "mktemp", [join(tmpdir(), "tau-speak.XXXXXX")]);
-    expect(spawn).toHaveBeenNthCalledWith(
-      2,
-      "afplay",
-      ["-r", "1.15", mktempPath],
+    expect(spawn).toHaveBeenCalledOnce();
+    expect(spawn).toHaveBeenCalledWith(
+      "ffplay",
+      expect.arrayContaining([
+        "-f",
+        "s16le",
+        "-ar",
+        "24000",
+        "-ac",
+        "1",
+        "-af",
+        "atempo=1.15",
+        "pipe:0",
+      ]),
       expect.objectContaining({
         detached: true,
         killProcessGroup: true,
-        stdio: ["ignore", "ignore", "ignore"],
+        stdio: ["pipe", "ignore", "pipe"],
+        onSpawn: expect.any(Function),
       }),
     );
+    expect(writtenAudio).toEqual([Buffer.from([1, 2]), Buffer.from([3, 4])]);
+    expect(stdin.end).toHaveBeenCalledOnce();
     expect(session.submit).not.toHaveBeenCalled();
   });
 

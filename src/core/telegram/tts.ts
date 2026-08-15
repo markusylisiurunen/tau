@@ -1,7 +1,7 @@
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { GEMINI_SPEECH_PLAYBACK_RATE, streamGeminiSpeechAudio } from "../utils/gemini_speech.js";
+import { GEMINI_SPEECH_PLAYBACK_RATE, generateGeminiSpeechAudio } from "../utils/gemini_speech.js";
 import { spawnWithCapture } from "../utils/spawn_capture.js";
 
 const TELEGRAM_TTS_TEMP_DIR_PREFIX = "tau-telegram-tts-";
@@ -33,7 +33,7 @@ export type GenerateTelegramVoiceOptions = {
   fetchImpl?: typeof fetch;
   signal?: AbortSignal;
   deps?: {
-    streamSpeechAudio?: typeof streamGeminiSpeechAudio;
+    generateSpeechAudio?: typeof generateGeminiSpeechAudio;
     spawn?: typeof spawnWithCapture;
   };
 };
@@ -41,7 +41,7 @@ export type GenerateTelegramVoiceOptions = {
 export async function generateTelegramVoice(
   options: GenerateTelegramVoiceOptions,
 ): Promise<Buffer> {
-  const streamSpeechAudio = options.deps?.streamSpeechAudio ?? streamGeminiSpeechAudio;
+  const generateSpeechAudio = options.deps?.generateSpeechAudio ?? generateGeminiSpeechAudio;
   const spawn = options.deps?.spawn ?? spawnWithCapture;
   const temporaryDirectory = await mkdtemp(join(tmpdir(), TELEGRAM_TTS_TEMP_DIR_PREFIX));
   const manifestPath = join(temporaryDirectory, "speech.ffconcat");
@@ -51,10 +51,9 @@ export async function generateTelegramVoice(
     const chunkNames: string[] = [];
     let waveFormat: Buffer | undefined;
 
-    for await (const chunk of streamSpeechAudio({
+    for await (const chunk of generateSpeechAudio({
       apiKey: options.apiKey,
       sourceText: options.sourceText,
-      deliveryMode: "complete",
       fetchImpl: options.fetchImpl,
       signal: options.signal,
     })) {

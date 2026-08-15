@@ -6033,12 +6033,14 @@ describe("SessionChatController", () => {
       deps: createMockDeps(spawn),
       config: { apiKeys: { google: "gemini-key" } },
     });
+    const firstAudio = Buffer.alloc(12_000, 1);
+    const secondAudio = Buffer.alloc(12_000, 2);
     const streamingBody = [
       {
         candidates: [
           {
             content: {
-              parts: [{ inlineData: { data: Buffer.from([1, 2]).toString("base64") } }],
+              parts: [{ inlineData: { data: firstAudio.toString("base64") } }],
             },
           },
         ],
@@ -6048,7 +6050,7 @@ describe("SessionChatController", () => {
           {
             finishReason: "STOP",
             content: {
-              parts: [{ inlineData: { data: Buffer.from([3, 4]).toString("base64") } }],
+              parts: [{ inlineData: { data: secondAudio.toString("base64") } }],
             },
           },
         ],
@@ -6096,12 +6098,7 @@ describe("SessionChatController", () => {
       .map((status) => (status.footer.type === "activity" ? status.footer.label : undefined))
       .filter((hint) => hint !== undefined);
     expect(speechHints).toEqual(
-      expect.arrayContaining([
-        "rewriting for speech",
-        "generating speech segments (0 out of 1 ready)",
-        "playing speech (0/1 generated)",
-        "playing speech (1/1 generated)",
-      ]),
+      expect.arrayContaining(["rewriting for speech", "preparing speech", "playing speech"]),
     );
     expect(view.status.footer.type).toBe("regular");
     expect(spawn).toHaveBeenCalledOnce();
@@ -6112,8 +6109,8 @@ describe("SessionChatController", () => {
         "s16le",
         "-ar",
         "24000",
-        "-ac",
-        "1",
+        "-ch_layout",
+        "mono",
         "-af",
         "atempo=1.15",
         "pipe:0",
@@ -6125,7 +6122,7 @@ describe("SessionChatController", () => {
         onSpawn: expect.any(Function),
       }),
     );
-    expect(writtenAudio).toEqual([Buffer.from([1, 2]), Buffer.from([3, 4])]);
+    expect(writtenAudio).toEqual([firstAudio, secondAudio]);
     expect(stdin.end).toHaveBeenCalledOnce();
     expect(session.submit).not.toHaveBeenCalled();
   });
@@ -6137,29 +6134,30 @@ describe("SessionChatController", () => {
     stdin.writableEnded = false;
     stdin.write = vi.fn();
     let releasePlayback;
-    const spawn = vi.fn((_command, _args, options) => {
-      options.onSpawn?.({ stdin });
-      return new Promise((resolve) => {
-        options.signal.addEventListener(
-          "abort",
-          () => {
-            releasePlayback = () =>
-              resolve({
-                stdout: "",
-                stderr: "",
-                output: undefined,
-                exitCode: null,
-                captureLimitExceeded: false,
-                timedOut: false,
-                aborted: true,
-                closeSignal: "SIGTERM",
-              });
-          },
-          { once: true },
-        );
-      });
-    });
-    const encoder = new TextEncoder();
+    const spawn = vi.fn(
+      (_command, _args, options) =>
+        new Promise((resolve) => {
+          options.signal.addEventListener(
+            "abort",
+            () => {
+              releasePlayback = () =>
+                resolve({
+                  stdout: "",
+                  stderr: "",
+                  output: undefined,
+                  exitCode: null,
+                  captureLimitExceeded: false,
+                  timedOut: false,
+                  aborted: true,
+                  closeSignal: "SIGTERM",
+                });
+            },
+            { once: true },
+          );
+          options.onSpawn?.({ stdin });
+          abortController.abort();
+        }),
+    );
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
@@ -6172,32 +6170,22 @@ describe("SessionChatController", () => {
       )
       .mockResolvedValueOnce(
         new Response(
-          new ReadableStream({
-            pull(controller) {
-              controller.enqueue(
-                encoder.encode(
-                  `data: ${JSON.stringify({
-                    candidates: [
-                      {
-                        finishReason: "STOP",
-                        content: {
-                          parts: [
-                            {
-                              inlineData: {
-                                data: Buffer.from([1, 2]).toString("base64"),
-                              },
-                            },
-                          ],
-                        },
+          `data: ${JSON.stringify({
+            candidates: [
+              {
+                finishReason: "STOP",
+                content: {
+                  parts: [
+                    {
+                      inlineData: {
+                        data: Buffer.alloc(24_000, 1).toString("base64"),
                       },
-                    ],
-                  })}\n\n`,
-                ),
-              );
-              abortController.abort();
-              controller.close();
-            },
-          }),
+                    },
+                  ],
+                },
+              },
+            ],
+          })}\n\n`,
           { status: 200, headers: { "Content-Type": "text/event-stream" } },
         ),
       );

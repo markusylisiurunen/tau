@@ -2,11 +2,23 @@ import type { ChildProcess } from "node:child_process";
 import type { Writable } from "node:stream";
 import type { CoreDeps } from "../core/runtime/deps.js";
 import {
+  GEMINI_SPEECH_BITS_PER_SAMPLE,
   GEMINI_SPEECH_CHANNEL_COUNT,
   GEMINI_SPEECH_PLAYBACK_RATE,
   GEMINI_SPEECH_SAMPLE_RATE_HZ,
   streamGeminiSpeechPcm,
 } from "../core/utils/gemini_speech.js";
+import type { SpawnCaptureResult } from "../core/utils/spawn_capture.js";
+
+const SPEECH_PLAYBACK_START_BUFFER_MS = 500;
+const SPEECH_PLAYBACK_START_BUFFER_BYTES = Math.ceil(
+  GEMINI_SPEECH_SAMPLE_RATE_HZ *
+    GEMINI_SPEECH_CHANNEL_COUNT *
+    (GEMINI_SPEECH_BITS_PER_SAMPLE / 8) *
+    (SPEECH_PLAYBACK_START_BUFFER_MS / 1000),
+);
+
+type PlaybackOutcome = { result: SpawnCaptureResult } | { error: unknown };
 
 export async function runSpeechPlaybackTask(args: {
   deps: CoreDeps;
@@ -16,83 +28,95 @@ export async function runSpeechPlaybackTask(args: {
   onActivityLabel: (hint: string) => void;
 }): Promise<void> {
   const abortController = createLinkedAbortController(args.signal);
+  const bufferedAudio: Buffer[] = [];
+  let bufferedAudioBytes = 0;
+  let playback: Promise<PlaybackOutcome> | undefined;
   let playbackInput: Writable | null = null;
-  let readySegments = 0;
-  let totalSegments = 0;
-  let playbackStarted = false;
 
-  const refreshSpeechProgress = (): void => {
-    if (totalSegments <= 0) return;
-    args.onActivityLabel(
-      playbackStarted
-        ? formatSpeechPlaybackProgressMessage(readySegments, totalSegments)
-        : formatSpeechGenerationProgressMessage(readySegments, totalSegments),
-    );
-  };
+  const startPlayback = async (): Promise<Writable> => {
+    if (!playback) {
+      playback = args.deps
+        .spawn(
+          "ffplay",
+          [
+            "-nodisp",
+            "-autoexit",
+            "-loglevel",
+            "error",
+            "-f",
+            "s16le",
+            "-ar",
+            String(GEMINI_SPEECH_SAMPLE_RATE_HZ),
+            "-ch_layout",
+            "mono",
+            "-af",
+            `atempo=${GEMINI_SPEECH_PLAYBACK_RATE}`,
+            "pipe:0",
+          ],
+          {
+            detached: true,
+            killProcessGroup: true,
+            signal: abortController.signal,
+            stdio: ["pipe", "ignore", "pipe"],
+            captureOutput: "stderr",
+            maxCaptureBytes: 20_000,
+            onSpawn: (child: ChildProcess) => {
+              playbackInput = child.stdin;
+              playbackInput?.on("error", () => {});
+            },
+          },
+        )
+        .then(
+          (result) => ({ result }),
+          (error: unknown) => ({ error }),
+        );
+    }
 
-  const playback = args.deps
-    .spawn(
-      "ffplay",
-      [
-        "-nodisp",
-        "-autoexit",
-        "-loglevel",
-        "error",
-        "-f",
-        "s16le",
-        "-ar",
-        String(GEMINI_SPEECH_SAMPLE_RATE_HZ),
-        "-ac",
-        String(GEMINI_SPEECH_CHANNEL_COUNT),
-        "-af",
-        `atempo=${GEMINI_SPEECH_PLAYBACK_RATE}`,
-        "pipe:0",
-      ],
-      {
-        detached: true,
-        killProcessGroup: true,
-        signal: abortController.signal,
-        stdio: ["pipe", "ignore", "pipe"],
-        captureOutput: "stderr",
-        maxCaptureBytes: 20_000,
-        onSpawn: (child: ChildProcess) => {
-          playbackInput = child.stdin;
-          playbackInput?.on("error", () => {});
-        },
-      },
-    )
-    .then(
-      (result) => ({ result }),
-      (error: unknown) => ({ error }),
-    );
-
-  try {
     if (!playbackInput) {
       const outcome = await playback;
       throw "error" in outcome ? outcome.error : playbackFailure(outcome.result);
     }
 
+    args.onActivityLabel("playing speech");
+    return playbackInput;
+  };
+
+  const flushBufferedAudio = async (): Promise<void> => {
+    const input = await startPlayback();
+    for (const audio of bufferedAudio) {
+      await writePlaybackAudio(input, audio, abortController.signal);
+    }
+    bufferedAudio.length = 0;
+    bufferedAudioBytes = 0;
+  };
+
+  try {
     for await (const chunk of streamGeminiSpeechPcm({
       apiKey: args.apiKey,
       sourceText: args.sourceText,
       signal: abortController.signal,
       onStageChange: (stage) => {
-        args.onActivityLabel(stage === "rewriting" ? "rewriting for speech" : "generating speech");
-      },
-      onSegmentProgress: ({ ready, total }) => {
-        readySegments = ready;
-        totalSegments = total;
-        refreshSpeechProgress();
+        args.onActivityLabel(stage === "rewriting" ? "rewriting for speech" : "preparing speech");
       },
     })) {
-      playbackStarted = true;
-      totalSegments = chunk.total;
-      refreshSpeechProgress();
-      await writePlaybackAudio(playbackInput, chunk.audio, abortController.signal);
+      if (!playback) {
+        bufferedAudio.push(chunk.audio);
+        bufferedAudioBytes += chunk.audio.length;
+        if (bufferedAudioBytes < SPEECH_PLAYBACK_START_BUFFER_BYTES) {
+          continue;
+        }
+        await flushBufferedAudio();
+        continue;
+      }
+
+      await writePlaybackAudio(playbackInput!, chunk.audio, abortController.signal);
     }
 
-    await endPlayback(playbackInput);
-    const outcome = await playback;
+    if (!playback) {
+      await flushBufferedAudio();
+    }
+    await endPlayback(playbackInput!);
+    const outcome = await playback!;
     if ("error" in outcome) {
       throw outcome.error;
     }
@@ -104,17 +128,17 @@ export async function runSpeechPlaybackTask(args: {
     }
   } catch (error) {
     abortController.abort();
-    const outcome = await playback;
+    const outcome = playback ? await playback : undefined;
     if (args.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
       return;
     }
     if (
       isMissingExecutableError(error) ||
-      ("error" in outcome && isMissingExecutableError(outcome.error))
+      (outcome && "error" in outcome && isMissingExecutableError(outcome.error))
     ) {
       throw new Error("ffplay not found. Install ffmpeg to use /speak.");
     }
-    if ("result" in outcome && !outcome.result.aborted) {
+    if (outcome && "result" in outcome && !outcome.result.aborted) {
       throw playbackFailure(outcome.result);
     }
     throw error;
@@ -167,14 +191,6 @@ function playbackFailure(result: {
     return new Error(`ffplay terminated by signal ${result.closeSignal}`);
   }
   return new Error("ffplay exited");
-}
-
-function formatSpeechGenerationProgressMessage(ready: number, total: number): string {
-  return `generating speech segments (${ready} out of ${total} ready)`;
-}
-
-function formatSpeechPlaybackProgressMessage(ready: number, total: number): string {
-  return `playing speech (${ready}/${total} generated)`;
 }
 
 function isMissingExecutableError(error: unknown): boolean {

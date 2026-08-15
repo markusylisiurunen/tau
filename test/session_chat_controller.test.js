@@ -5985,6 +5985,7 @@ describe("SessionChatController", () => {
 
   it("streams the last session assistant message through local playback", async () => {
     const writtenAudio = [];
+    const player = deferred();
     const stdin = new EventEmitter();
     stdin.destroyed = false;
     stdin.writableEnded = false;
@@ -5996,10 +5997,7 @@ describe("SessionChatController", () => {
     stdin.end = vi.fn((callback) => {
       stdin.writableEnded = true;
       callback();
-    });
-    const spawn = vi.fn(async (_cmd, _args, options) => {
-      options.onSpawn?.({ stdin });
-      return {
+      player.resolve({
         stdout: "",
         stderr: "",
         output: undefined,
@@ -6008,7 +6006,11 @@ describe("SessionChatController", () => {
         timedOut: false,
         aborted: false,
         closeSignal: null,
-      };
+      });
+    });
+    const spawn = vi.fn((_cmd, _args, options) => {
+      options.onSpawn?.({ stdin });
+      return player.promise;
     });
     const session = new FakeSession(
       createSnapshot([
@@ -6122,7 +6124,7 @@ describe("SessionChatController", () => {
         onSpawn: expect.any(Function),
       }),
     );
-    expect(writtenAudio).toEqual([firstAudio, secondAudio]);
+    expect(writtenAudio).toEqual([Buffer.concat([firstAudio, secondAudio])]);
     expect(stdin.end).toHaveBeenCalledOnce();
     expect(session.submit).not.toHaveBeenCalled();
   });
@@ -6219,6 +6221,101 @@ describe("SessionChatController", () => {
     }
 
     expect(stdin.write).not.toHaveBeenCalled();
+  });
+
+  it("aborts speech generation when ffplay exits early", async () => {
+    const stdin = new EventEmitter();
+    stdin.destroyed = false;
+    stdin.writableEnded = false;
+    stdin.write = vi.fn((_audio, callback) => {
+      callback();
+      return true;
+    });
+    const player = deferred();
+    const spawn = vi.fn((_command, _args, options) => {
+      options.onSpawn?.({ stdin });
+      return player.promise;
+    });
+    const streamAborted = vi.fn();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            candidates: [{ content: { parts: [{ text: "Spoken version." }] } }],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockImplementationOnce(async (_url, init) => {
+        const encoder = new TextEncoder();
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                encoder.encode(
+                  `data: ${JSON.stringify({
+                    candidates: [
+                      {
+                        content: {
+                          parts: [
+                            {
+                              inlineData: {
+                                data: Buffer.alloc(24_000, 1).toString("base64"),
+                              },
+                            },
+                          ],
+                        },
+                      },
+                    ],
+                  })}\n\n`,
+                ),
+              );
+              init.signal.addEventListener(
+                "abort",
+                () => {
+                  streamAborted();
+                  const error = new Error("aborted");
+                  error.name = "AbortError";
+                  controller.error(error);
+                },
+                { once: true },
+              );
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "text/event-stream" } },
+        );
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const playback = runSpeechPlaybackTask({
+        deps: createMockDeps(spawn),
+        apiKey: "gemini-key",
+        sourceText: "Original response.",
+        signal: new AbortController().signal,
+        onActivityLabel: vi.fn(),
+      });
+      const rejection = expect(playback).rejects.toThrow("ffplay failed: audio sink closed");
+
+      await vi.waitFor(() => expect(stdin.write).toHaveBeenCalledOnce());
+      player.resolve({
+        stdout: "",
+        stderr: "audio sink closed",
+        output: undefined,
+        exitCode: 1,
+        captureLimitExceeded: false,
+        timedOut: false,
+        aborted: false,
+        closeSignal: null,
+      });
+
+      await rejection;
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    expect(streamAborted).toHaveBeenCalledOnce();
   });
 
   it("reports ffplay diagnostics when its stdin closes early", async () => {

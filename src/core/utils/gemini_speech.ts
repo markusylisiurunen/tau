@@ -52,6 +52,10 @@ export type GeminiSpeechOptions = {
   onSegmentProgress?: (progress: GeminiSpeechSegmentProgress) => void | Promise<void>;
 };
 
+export type GeminiSpeechPcmOptions = GeminiSpeechOptions & {
+  initialBufferBytes?: number;
+};
+
 export type GeminiSpeechAudioChunk = {
   index: number;
   total: number;
@@ -137,7 +141,7 @@ export async function* generateGeminiSpeechAudio(
 }
 
 export async function* streamGeminiSpeechPcm(
-  options: GeminiSpeechOptions,
+  options: GeminiSpeechPcmOptions,
 ): AsyncGenerator<GeminiSpeechPcmChunk> {
   const abortController = createLinkedAbortController(options.signal);
   let completed = false;
@@ -168,6 +172,7 @@ export async function* streamGeminiSpeechPcm(
       ...prepared,
       spokenText: prepared.spokenSegments[0]!,
       signal: abortController.signal,
+      initialBufferBytes: Math.max(0, Math.trunc(options.initialBufferBytes ?? 0)),
     });
     const firstIterator = firstStream[Symbol.asyncIterator]();
     let nextAudio = firstIterator.next();
@@ -463,17 +468,34 @@ async function synthesizeSpeechAudioSegment(
 type StreamSpeechSegmentArgs = SynthesizeSpeechAudioSegmentArgs;
 
 async function* streamSpeechSegmentWithRetries(
-  args: StreamSpeechSegmentArgs,
+  args: StreamSpeechSegmentArgs & { initialBufferBytes: number },
 ): AsyncGenerator<Buffer> {
   const maxAttempts = Math.max(1, Math.trunc(args.maxAttempts));
   let lastError: unknown;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const bufferedAudio: Buffer[] = [];
+    let bufferedAudioBytes = 0;
     let emittedAudio = false;
     try {
       for await (const audio of requestGeminiSpeechStream(args)) {
+        if (!emittedAudio && bufferedAudioBytes < args.initialBufferBytes) {
+          bufferedAudio.push(audio);
+          bufferedAudioBytes += audio.length;
+          if (bufferedAudioBytes < args.initialBufferBytes) {
+            continue;
+          }
+          emittedAudio = true;
+          yield Buffer.concat(bufferedAudio);
+          continue;
+        }
+
         emittedAudio = true;
         yield audio;
+      }
+      if (bufferedAudio.length > 0 && !emittedAudio) {
+        emittedAudio = true;
+        yield Buffer.concat(bufferedAudio);
       }
       return;
     } catch (error) {

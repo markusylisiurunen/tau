@@ -28,10 +28,10 @@ export async function runSpeechPlaybackTask(args: {
   onActivityLabel: (hint: string) => void;
 }): Promise<void> {
   const abortController = createLinkedAbortController(args.signal);
-  const bufferedAudio: Buffer[] = [];
-  let bufferedAudioBytes = 0;
   let playback: Promise<PlaybackOutcome> | undefined;
   let playbackInput: Writable | null = null;
+  let playbackEnding = false;
+  let earlyPlaybackOutcome: PlaybackOutcome | undefined;
 
   const startPlayback = async (): Promise<Writable> => {
     if (!playback) {
@@ -70,6 +70,12 @@ export async function runSpeechPlaybackTask(args: {
           (result) => ({ result }),
           (error: unknown) => ({ error }),
         );
+      void playback.then((outcome) => {
+        if (!playbackEnding && !abortController.signal.aborted) {
+          earlyPlaybackOutcome = outcome;
+          abortController.abort();
+        }
+      });
     }
 
     if (!playbackInput) {
@@ -81,40 +87,21 @@ export async function runSpeechPlaybackTask(args: {
     return playbackInput;
   };
 
-  const flushBufferedAudio = async (): Promise<void> => {
-    const input = await startPlayback();
-    for (const audio of bufferedAudio) {
-      await writePlaybackAudio(input, audio, abortController.signal);
-    }
-    bufferedAudio.length = 0;
-    bufferedAudioBytes = 0;
-  };
-
   try {
     for await (const chunk of streamGeminiSpeechPcm({
       apiKey: args.apiKey,
       sourceText: args.sourceText,
       signal: abortController.signal,
+      initialBufferBytes: SPEECH_PLAYBACK_START_BUFFER_BYTES,
       onStageChange: (stage) => {
         args.onActivityLabel(stage === "rewriting" ? "rewriting for speech" : "preparing speech");
       },
     })) {
-      if (!playback) {
-        bufferedAudio.push(chunk.audio);
-        bufferedAudioBytes += chunk.audio.length;
-        if (bufferedAudioBytes < SPEECH_PLAYBACK_START_BUFFER_BYTES) {
-          continue;
-        }
-        await flushBufferedAudio();
-        continue;
-      }
-
-      await writePlaybackAudio(playbackInput!, chunk.audio, abortController.signal);
+      const input = await startPlayback();
+      await writePlaybackAudio(input, chunk.audio, abortController.signal);
     }
 
-    if (!playback) {
-      await flushBufferedAudio();
-    }
+    playbackEnding = true;
     await endPlayback(playbackInput!);
     const outcome = await playback!;
     if ("error" in outcome) {
@@ -128,7 +115,16 @@ export async function runSpeechPlaybackTask(args: {
     }
   } catch (error) {
     abortController.abort();
-    const outcome = playback ? await playback : undefined;
+    const outcome = earlyPlaybackOutcome ?? (playback ? await playback : undefined);
+    if (earlyPlaybackOutcome) {
+      if ("error" in earlyPlaybackOutcome) {
+        if (isMissingExecutableError(earlyPlaybackOutcome.error)) {
+          throw new Error("ffplay not found. Install ffmpeg to use /speak.");
+        }
+        throw earlyPlaybackOutcome.error;
+      }
+      throw playbackFailure(earlyPlaybackOutcome.result);
+    }
     if (args.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
       return;
     }

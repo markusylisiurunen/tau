@@ -540,6 +540,45 @@ describe("gemini speech", () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
+  it("retries while initial stream audio remains buffered", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            candidates: [{ content: { parts: [{ text: "Spoken version." }] } }],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        createSseResponse([
+          createStreamingAudioPayload([9, 9]),
+          { candidates: [{ finishReason: "OTHER" }] },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        createSseResponse([
+          createStreamingAudioPayload([1, 2]),
+          createStreamingAudioPayload([3, 4], "STOP"),
+        ]),
+      );
+    const chunks = [];
+
+    for await (const chunk of streamGeminiSpeechPcm({
+      apiKey: "gemini-key",
+      sourceText: "Original response.",
+      fetchImpl: fetchMock,
+      maxTtsAttempts: 2,
+      initialBufferBytes: 4,
+    })) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks.map((chunk) => chunk.audio)).toEqual([Buffer.from([1, 2, 3, 4])]);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
   it("cancels a failed SSE body before retrying", async () => {
     const cancel = vi.fn();
     const encoder = new TextEncoder();

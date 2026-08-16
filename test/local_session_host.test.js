@@ -115,9 +115,7 @@ function createHost(store, options = {}) {
     executionEnvironmentResolver,
     includeAgentContext: false,
     environment: createEnvironment(options.now),
-    ...(options.getRemoteModelCatalog
-      ? { getRemoteModelCatalog: options.getRemoteModelCatalog }
-      : {}),
+    getRemoteModelCatalog: options.getRemoteModelCatalog ?? (() => new Map()),
     ...(options.recordUsage ? { recordUsage: options.recordUsage } : {}),
     ...(options.resolveSessionBootstrap
       ? { resolveSessionBootstrap: options.resolveSessionBootstrap }
@@ -4614,9 +4612,10 @@ describe("LocalSessionHost", () => {
         canRestore: () => true,
         restore: async () => restoredEnvironment,
       },
-      resolveSessionBootstrap: async ({ executionEnvironment }) => {
+      resolveSessionBootstrap: async ({ executionEnvironment, remoteCatalog }) => {
         const runtimeConfig = await executionEnvironment.resolveRuntimeConfig(
           executionEnvironment.snapshot().cwd,
+          { remoteCatalog },
         );
         return {
           persona: runtimeConfig.personas[0],

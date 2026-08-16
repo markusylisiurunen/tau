@@ -118,7 +118,7 @@ export async function loadRuntimeConfigFromToolBackend(options: {
   backend: ToolExecutionBackend;
   cwd: string;
   home: string;
-  remoteCatalog?: RemoteModelCatalogSnapshot;
+  remoteCatalog: RemoteModelCatalogSnapshot;
 }): Promise<RuntimeConfigResult> {
   const result = await options.backend.runNodeScript(
     COLLECT_RUNTIME_CONFIG_SCRIPT,

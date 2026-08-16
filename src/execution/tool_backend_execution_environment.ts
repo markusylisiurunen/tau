@@ -47,7 +47,7 @@ export class ToolBackendExecutionEnvironment<TSnapshot extends BackendExecutionS
 
   async resolveRuntimeConfig(
     cwd: string,
-    options: { remoteCatalog?: RemoteModelCatalogSnapshot } = {},
+    options: { remoteCatalog: RemoteModelCatalogSnapshot },
   ): Promise<RuntimeConfigResult> {
     return await loadRuntimeConfigFromToolBackend({
       backend: this.backend,

@@ -20,55 +20,25 @@ import { TauTransportError } from "../transport/index.js";
 import { createTauSdkClientFromTransport, resolveTauSdkInitializeParams } from "./session.js";
 import type { TauSdkClient, TauSdkClientOptions } from "./types.js";
 
-type OwnedRemoteModelCatalogRefresh = {
-  controller: AbortController;
-  promise: Promise<unknown>;
-};
-
-type InProcessSdkHost = {
-  host: LocalSessionHost;
-  ownedRemoteModelCatalogRefresh?: OwnedRemoteModelCatalogRefresh;
-};
-
 export async function createTauSdkClientWithHostConfig(
   options: TauSdkClientOptions,
   config: Config,
   runtimeOptions: { remoteModelCatalog?: RemoteModelCatalog } = {},
 ): Promise<TauSdkClient> {
   resolveTauSdkInitializeParams(options.initialize, options.clientTools);
-  const created = await createInProcessSdkHost(options, config, runtimeOptions);
+  const host = await createInProcessSdkHost(options, config, runtimeOptions);
   const transport = new InProcessSessionProtocolTransport({
-    host: created.host,
+    host,
     closeMode: "shutdown-host",
   });
-  const client = await createTauSdkClientFromTransport(transport, options);
-  return created.ownedRemoteModelCatalogRefresh
-    ? bindOwnedRemoteModelCatalogRefresh(client, created.ownedRemoteModelCatalogRefresh)
-    : client;
-}
-
-function bindOwnedRemoteModelCatalogRefresh(
-  client: TauSdkClient,
-  refresh: OwnedRemoteModelCatalogRefresh,
-): TauSdkClient {
-  const closeClient = client.close.bind(client);
-  let closePromise: Promise<void> | undefined;
-  client.close = () => {
-    closePromise ??= (async () => {
-      refresh.controller.abort();
-      const [closeResult] = await Promise.allSettled([closeClient(), refresh.promise]);
-      if (closeResult.status === "rejected") throw closeResult.reason;
-    })();
-    return closePromise;
-  };
-  return client;
+  return await createTauSdkClientFromTransport(transport, options);
 }
 
 async function createInProcessSdkHost(
   options: TauSdkClientOptions,
   config: Config,
   runtimeOptions: { remoteModelCatalog?: RemoteModelCatalog },
-): Promise<InProcessSdkHost> {
+): Promise<LocalSessionHost> {
   const deps = createDefaultCoreDeps();
   const home = deps.env.home() || process.env.HOME || homedir();
   const ownsRemoteModelCatalog = runtimeOptions.remoteModelCatalog === undefined;
@@ -102,10 +72,26 @@ async function createInProcessSdkHost(
   }
   const executionEnvironmentResolver = new CompositeExecutionEnvironmentResolver(resolvers);
 
+  let onShutdown: (() => Promise<void>) | undefined;
+  if (
+    ownsRemoteModelCatalog &&
+    options.refreshModelCatalog !== false &&
+    process.env.TAU_OFFLINE === undefined
+  ) {
+    const controller = new AbortController();
+    const refresh = remoteModelCatalog.refresh({ signal: controller.signal });
+    void refresh.catch(() => {});
+    onShutdown = async () => {
+      controller.abort();
+      await refresh.catch(() => {});
+    };
+  }
+
   const host = new LocalSessionHost({
     store: new FileSessionStore({ directory: getDefaultSessionStoreDirectory(home) }),
     history: HistoryManager.open(getDefaultHistoryDatabasePath(home)),
     historyRemote: resolveHistoryRemoteTarget(config),
+    ...(onShutdown ? { onShutdown } : {}),
     executionEnvironmentResolver,
     includeAgentContext: !options.noAgentContextFiles,
     getRemoteModelCatalog: () => remoteModelCatalog.snapshot(),
@@ -144,18 +130,7 @@ async function createInProcessSdkHost(
       };
     },
   });
-  if (
-    !ownsRemoteModelCatalog ||
-    options.refreshModelCatalog === false ||
-    process.env.TAU_OFFLINE !== undefined
-  ) {
-    return { host };
-  }
-
-  const controller = new AbortController();
-  const promise = remoteModelCatalog.refresh({ signal: controller.signal });
-  void promise.catch(() => {});
-  return { host, ownedRemoteModelCatalogRefresh: { controller, promise } };
+  return host;
 }
 
 function selectSdkPersona(

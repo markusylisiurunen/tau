@@ -77,9 +77,11 @@ describe("execution environment subagent prompt resolver", () => {
       })),
       resolveRuntimeContext,
     };
+    const remoteCatalog = new Map();
     const resolvePrompts = createExecutionEnvironmentSubagentPromptResolver({
       sessionId: "session-1",
       executionEnvironment,
+      getRemoteModelCatalog: () => remoteCatalog,
       includeAgentContext: true,
       sessionStartedAt: Date.parse("2026-01-01T00:00:00.000Z"),
     });
@@ -89,7 +91,9 @@ describe("execution environment subagent prompt resolver", () => {
       persona: sourcePersona,
     });
 
-    expect(executionEnvironment.resolveRuntimeConfig).toHaveBeenCalledWith("/workspace/repo");
+    expect(executionEnvironment.resolveRuntimeConfig).toHaveBeenCalledWith("/workspace/repo", {
+      remoteCatalog,
+    });
     expect(resolveRuntimeContext).toHaveBeenCalledWith({
       cwd: "/workspace/repo",
       persona: sourcePersona,
@@ -125,6 +129,7 @@ describe("execution environment subagent prompt resolver", () => {
     const resolvePrompts = createExecutionEnvironmentSubagentPromptResolver({
       sessionId: "session-1",
       executionEnvironment,
+      getRemoteModelCatalog: () => new Map(),
       includeAgentContext: true,
       sessionStartedAt: 0,
     });

@@ -1,9 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   chmodSync,
-  closeSync,
   mkdirSync,
-  openSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -31,42 +29,46 @@ const PRIVATE_DIRECTORY_MODE = 0o700;
 const PRIVATE_FILE_MODE = 0o600;
 const activeRefreshesByPath = new Map<string, ActiveRemoteCatalogRefresh>();
 
-const CostRatesSchema = z.object({
-  input: z.number().finite(),
-  output: z.number().finite(),
-  cacheRead: z.number().finite(),
-  cacheWrite: z.number().finite(),
-});
+const CostRatesSchema = z
+  .object({
+    input: z.number().finite(),
+    output: z.number().finite(),
+    cacheRead: z.number().finite(),
+    cacheWrite: z.number().finite(),
+  })
+  .passthrough();
 
-const ModelSchema = z.object({
-  id: z.string().min(1),
-  name: z.string().min(1),
-  api: z.string().min(1),
-  provider: z.string().min(1),
-  baseUrl: z.string(),
-  reasoning: z.boolean(),
-  thinkingLevelMap: z.record(z.string(), z.string().nullable()).optional(),
-  input: z.array(z.enum(["text", "image"])),
-  cost: CostRatesSchema.extend({
-    tiers: z
-      .array(
-        CostRatesSchema.extend({
-          inputTokensAbove: z.number().int().nonnegative(),
-        }),
-      )
-      .optional(),
-  }),
-  contextWindow: z.number().int().positive(),
-  maxTokens: z.number().int().positive(),
-  samplingParams: z.record(z.string(), z.unknown()).optional(),
-  headers: z.record(z.string(), z.string()).optional(),
-  compat: z.unknown().optional(),
-});
+const ModelSchema = z
+  .object({
+    id: z.string().min(1),
+    name: z.string().min(1),
+    api: z.string().min(1),
+    provider: z.string().min(1),
+    baseUrl: z.string(),
+    reasoning: z.boolean(),
+    thinkingLevelMap: z.record(z.string(), z.string().nullable()).optional(),
+    input: z.array(z.enum(["text", "image"])),
+    cost: CostRatesSchema.extend({
+      tiers: z
+        .array(
+          CostRatesSchema.extend({
+            inputTokensAbove: z.number().int().nonnegative(),
+          }),
+        )
+        .optional(),
+    }),
+    contextWindow: z.number().int().positive(),
+    maxTokens: z.number().int().positive(),
+    samplingParams: z.record(z.string(), z.unknown()).optional(),
+    headers: z.record(z.string(), z.string()).optional(),
+    compat: z.unknown().optional(),
+  })
+  .passthrough();
 
 const StoredProviderSchema = z.object({
   models: z.array(ModelSchema),
   checkedAt: z.number().nonnegative(),
-  lastModified: z.number().nonnegative().optional(),
+  lastModified: z.number().nonnegative(),
   etag: z.string().optional(),
 });
 
@@ -75,6 +77,7 @@ const StoreSchema = z.object({
   providers: z.record(z.string(), StoredProviderSchema),
 });
 
+type StoredModel = z.infer<typeof ModelSchema>;
 type StoredProvider = z.infer<typeof StoredProviderSchema>;
 type StoreDocument = z.infer<typeof StoreSchema>;
 
@@ -129,15 +132,24 @@ function emptyDocument(): StoreDocument {
 }
 
 function parseStoreDocument(raw: string): StoreDocument {
-  const parsed = StoreSchema.safeParse(JSON.parse(raw) as unknown);
+  let value: unknown;
+  try {
+    value = JSON.parse(raw) as unknown;
+  } catch {
+    return emptyDocument();
+  }
+  const parsed = StoreSchema.safeParse(value);
   return parsed.success ? parsed.data : emptyDocument();
 }
 
 function readStoreDocument(path: string): StoreDocument {
   try {
     return parseStoreDocument(readFileSync(path, "utf8"));
-  } catch {
-    return emptyDocument();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return emptyDocument();
+    }
+    throw error;
   }
 }
 
@@ -146,13 +158,6 @@ async function acquireLock(path: string): Promise<() => void> {
   while (true) {
     try {
       mkdirSync(path, { mode: PRIVATE_DIRECTORY_MODE });
-      const ownerPath = join(path, "owner");
-      const descriptor = openSync(ownerPath, "wx", PRIVATE_FILE_MODE);
-      try {
-        writeFileSync(descriptor, `${process.pid}\n`, "utf8");
-      } finally {
-        closeSync(descriptor);
-      }
       return () => rmSync(path, { recursive: true, force: true });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
@@ -221,8 +226,7 @@ class FileRemoteModelCatalogStore {
         if (!hasSameProviderRevision(current, update.expected)) {
           const incomingIsNewer =
             update.type === "replace" &&
-            current?.lastModified !== undefined &&
-            update.entry.lastModified !== undefined &&
+            current !== undefined &&
             update.entry.lastModified > current.lastModified;
           if (!incomingIsNewer) {
             skippedProviders.add(update.provider);
@@ -243,39 +247,33 @@ class FileRemoteModelCatalogStore {
   }
 }
 
-function parseProviderCatalog(provider: string, value: unknown): Model<Api>[] {
+function parseProviderCatalog(provider: string, value: unknown): StoredModel[] {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`invalid model catalog for provider '${provider}'`);
   }
 
-  const models: Model<Api>[] = [];
+  const models: StoredModel[] = [];
   for (const [key, entry] of Object.entries(value)) {
     const parsed = ModelSchema.safeParse(entry);
     if (!parsed.success || parsed.data.id !== key || parsed.data.provider !== provider) {
       throw new Error(`invalid model catalog entry '${provider}/${key}'`);
     }
-    models.push(parsed.data as Model<Api>);
+    models.push(parsed.data);
   }
   return models;
 }
 
 function activeModels(
   entry: StoredProvider | undefined,
-  builtinGeneratedAt: number | undefined,
+  builtinGeneratedAt: number,
 ): readonly Model<Api>[] {
-  if (!entry) return [];
-  if (
-    builtinGeneratedAt !== undefined &&
-    (entry.lastModified === undefined || entry.lastModified <= builtinGeneratedAt)
-  ) {
-    return [];
-  }
+  if (!entry || entry.lastModified <= builtinGeneratedAt) return [];
   return entry.models as unknown as readonly Model<Api>[];
 }
 
 function createSnapshot(
   document: StoreDocument,
-  builtinGeneratedAt: number | undefined,
+  builtinGeneratedAt: number,
 ): RemoteModelCatalogSnapshot {
   const snapshot = new Map<string, readonly Model<Api>[]>();
   for (const [provider, entry] of Object.entries(document.providers)) {
@@ -333,7 +331,7 @@ export class RemoteModelCatalog {
   private readonly fetch: typeof fetch;
   private readonly now: () => number;
   private readonly providerIds: readonly string[];
-  private readonly builtinGeneratedAt: number | undefined;
+  private readonly builtinGeneratedAt: number;
   private readonly baseUrl: string;
   private readonly requestTimeoutMs: number;
   private readonly refreshIntervalMs: number;
@@ -344,7 +342,11 @@ export class RemoteModelCatalog {
     this.fetch = options.fetch ?? fetch;
     this.now = options.now ?? Date.now;
     this.providerIds = options.providerIds ?? getDefaultProviderIds();
-    this.builtinGeneratedAt = options.builtinGeneratedAt ?? getBuiltinModelDataGeneratedAt();
+    const builtinGeneratedAt = options.builtinGeneratedAt ?? getBuiltinModelDataGeneratedAt();
+    if (builtinGeneratedAt === undefined) {
+      throw new Error("pi-ai built-in model catalog is missing its generation timestamp");
+    }
+    this.builtinGeneratedAt = builtinGeneratedAt;
     this.baseUrl = options.baseUrl ?? "https://pi.dev";
     this.requestTimeoutMs = options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
     this.refreshIntervalMs = options.refreshIntervalMs ?? REFRESH_INTERVAL_MS;
@@ -481,14 +483,16 @@ export class RemoteModelCatalog {
           throw new Error(`model catalog request failed with status ${response.status}`);
         }
         const refreshed = parseProviderCatalog(provider, await response.json());
-        const parsedLastModified = Date.parse(response.headers.get("last-modified") ?? "");
+        const lastModified = Date.parse(response.headers.get("last-modified") ?? "");
+        if (Number.isNaN(lastModified) || lastModified < 0) {
+          throw new Error("model catalog response is missing a valid Last-Modified header");
+        }
+        const etag = response.headers.get("etag");
         const nextEntry: StoredProvider = {
           models: refreshed,
           checkedAt,
-          lastModified: Number.isNaN(parsedLastModified) ? 0 : parsedLastModified,
-          ...(response.headers.get("etag")
-            ? { etag: response.headers.get("etag") ?? undefined }
-            : {}),
+          lastModified,
+          ...(etag ? { etag } : {}),
         };
         results.set(provider, { status: "updated", modelCount: refreshed.length });
         return { type: "replace" as const, provider, expected: entry, entry: nextEntry };

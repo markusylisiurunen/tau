@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -81,6 +81,70 @@ describe("remote model catalog", () => {
     }
   });
 
+  it("rejects responses without a valid modification timestamp", async () => {
+    const home = mkdtempSync(join(tmpdir(), "tau-remote-model-catalog-"));
+    const path = join(home, "models-store.json");
+    try {
+      const catalog = new RemoteModelCatalog({
+        path,
+        providerIds: ["openai"],
+        builtinGeneratedAt: 0,
+        fetch: vi.fn(
+          async () =>
+            new Response(JSON.stringify({ model: model("openai", "model") }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            }),
+        ),
+      });
+
+      const result = await catalog.refresh({ force: true });
+
+      expect(result.providers.get("openai")).toMatchObject({
+        status: "failed",
+        error: { message: "model catalog response is missing a valid Last-Modified header" },
+      });
+      expect(result.snapshot.size).toBe(0);
+      expect(existsSync(path)).toBe(false);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("discards malformed stored catalogs", () => {
+    const home = mkdtempSync(join(tmpdir(), "tau-remote-model-catalog-"));
+    const path = join(home, "models-store.json");
+    try {
+      writeFileSync(path, "not json", "utf8");
+      const catalog = new RemoteModelCatalog({
+        path,
+        providerIds: ["openai"],
+        builtinGeneratedAt: 0,
+      });
+
+      expect(catalog.snapshot().size).toBe(0);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("surfaces cache read failures", () => {
+    const home = mkdtempSync(join(tmpdir(), "tau-remote-model-catalog-"));
+    const path = join(home, "models-store.json");
+    try {
+      mkdirSync(path);
+      const catalog = new RemoteModelCatalog({
+        path,
+        providerIds: ["openai"],
+        builtinGeneratedAt: 0,
+      });
+
+      expect(() => catalog.snapshot()).toThrow();
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("accepts Pi catalog endpoint and sentinel pricing values", async () => {
     const home = mkdtempSync(join(tmpdir(), "tau-remote-model-catalog-"));
     try {
@@ -91,7 +155,9 @@ describe("remote model catalog", () => {
         fetch: vi.fn(async (url) => {
           const provider = new URL(url).pathname.split("/").at(-1);
           return provider === "azure-openai-responses"
-            ? catalogResponse(provider, "gpt-4", { modelOverrides: { baseUrl: "" } })
+            ? catalogResponse(provider, "gpt-4", {
+                modelOverrides: { baseUrl: "", futureMetadata: { supported: true } },
+              })
             : catalogResponse(provider, "openrouter/auto", {
                 modelOverrides: {
                   cost: {
@@ -109,7 +175,10 @@ describe("remote model catalog", () => {
 
       expect(result.providers.get("azure-openai-responses")?.status).toBe("updated");
       expect(result.providers.get("openrouter")?.status).toBe("updated");
-      expect(result.snapshot.get("azure-openai-responses")?.[0].baseUrl).toBe("");
+      expect(catalog.snapshot().get("azure-openai-responses")?.[0]).toMatchObject({
+        baseUrl: "",
+        futureMetadata: { supported: true },
+      });
       expect(result.snapshot.get("openrouter")?.[0].cost.input).toBe(-1000000);
     } finally {
       rmSync(home, { recursive: true, force: true });

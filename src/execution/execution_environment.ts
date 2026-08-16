@@ -23,7 +23,7 @@ export type ExecutionRuntimeContext = {
 export interface ExecutionEnvironment {
   resolveRuntimeConfig(
     cwd: string,
-    options?: { remoteCatalog?: RemoteModelCatalogSnapshot },
+    options: { remoteCatalog: RemoteModelCatalogSnapshot },
   ): Promise<RuntimeConfigResult>;
   resolveRuntimeContext(
     options: ResolveExecutionRuntimeContextOptions,

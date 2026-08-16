@@ -300,7 +300,7 @@ describe("LocalExecutionEnvironment", () => {
         cwd: repo,
         home: storedHome,
       });
-      const runtime = await environment.resolveRuntimeConfig(repo);
+      const runtime = await environment.resolveRuntimeConfig(repo, { remoteCatalog: new Map() });
 
       expect(runtime.bootstrap.levels[0].levelRoot).toBe(storedHome);
       expect(runtime.prompts.find((prompt) => prompt.id === "large")?.template).toBe(largePrompt);

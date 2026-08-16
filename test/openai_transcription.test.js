@@ -196,6 +196,7 @@ describe("OpenAI transcription", () => {
             transcription: {
               model: "gpt-live-transcribe",
               delay: "medium",
+              languages: ["en", "fi"],
               keywords: [
                 "Tau",
                 "SessionProtocolSnapshot",
@@ -241,6 +242,7 @@ describe("OpenAI transcription", () => {
       model: "gpt-live-transcribe",
       prompt:
         "The speaker is dictating a message for insertion into an AI coding assistant chat input.",
+      languages: ["en", "fi"],
       delay: "medium",
     });
   });

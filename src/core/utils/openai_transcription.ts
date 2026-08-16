@@ -16,7 +16,7 @@ const OPENAI_STREAMING_SAMPLE_RATE = 24_000;
 const OPENAI_FILE_SAMPLE_RATE = 16_000;
 const OPENAI_TRANSCRIPTION_CONNECT_TIMEOUT_MS = 15_000;
 const OPENAI_TRANSCRIPTION_COMPLETION_TIMEOUT_MS = 30_000;
-const OPENAI_TRANSCRIPTION_KEYWORD_TIMEOUT_MS = 5_000;
+const OPENAI_TRANSCRIPTION_KEYWORD_TIMEOUT_MS = 15_000;
 const OPENAI_TRANSCRIPTION_CONTEXT_TOKENS = 1_024;
 const OPENAI_TRANSCRIPTION_MAX_KEYWORDS = 100;
 const OPENAI_TRANSCRIPTION_MAX_KEYWORD_CHARACTERS = 100;
@@ -261,6 +261,7 @@ class OpenAIStreamingTranscriptionImpl implements OpenAIStreamingTranscription {
               model: OPENAI_STREAMING_TRANSCRIPTION_MODEL,
               prompt: OPENAI_REALTIME_TRANSCRIPTION_PROMPT,
               ...(keywords.length > 0 ? { keywords } : {}),
+              languages: ["en", "fi"],
               delay: "medium",
             },
             turn_detection: null,

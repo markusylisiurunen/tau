@@ -176,6 +176,39 @@ describe("model catalog", () => {
     expect(applyTauModelOverrides(model)).toBe(model);
   });
 
+  it("uses remote pi models as the base catalog", () => {
+    const bundled = resolveModel("openai", "gpt-5.4");
+    const remote = {
+      ...bundled,
+      name: "Remote GPT-5.4",
+      contextWindow: 654321,
+      maxTokens: 12345,
+    };
+    const deps = {
+      fs: {
+        readFile: () => "",
+        exists: () => false,
+        listDir: () => [],
+        stat: () => {
+          throw new Error("missing");
+        },
+      },
+      env: { getEnv: () => ({}), cwd: () => "/repo", home: () => "/home/user" },
+    };
+
+    const resolver = loadModelResolver({
+      deps,
+      levels: [],
+      remoteCatalog: new Map([["openai", [remote]]]),
+    });
+
+    expect(resolver.resolveModel("openai", "gpt-5.4")).toMatchObject({
+      name: "Remote GPT-5.4",
+      contextWindow: 654321,
+      maxTokens: 12345,
+    });
+  });
+
   it("returns no models for unknown providers", () => {
     expect(listModels("missing-provider")).toEqual([]);
     expect(resolveModel("missing-provider", "missing-model")).toBeUndefined();

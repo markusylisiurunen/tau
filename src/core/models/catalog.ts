@@ -3,6 +3,7 @@ import { getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/pro
 import { z } from "zod";
 import type { ConfigDeps } from "../config/deps.js";
 import type { ConfigLevel } from "../config/paths.js";
+import type { RemoteModelCatalogSnapshot } from "./remote_catalog.js";
 import {
   TAU_PROVIDER_EXTENSIONS,
   type TauProviderApiKeyResolverArgs,
@@ -150,7 +151,7 @@ function registerModel(args: {
   providerModels.set(args.model.id, args.model);
 }
 
-function createCatalogState(): CatalogState {
+function createCatalogState(remoteCatalog?: RemoteModelCatalogSnapshot): CatalogState {
   registerExtensionApiProvidersOnce();
 
   const providers = new Map<string, Map<string, Model<Api>>>();
@@ -163,6 +164,14 @@ function createCatalogState(): CatalogState {
         model: applyTauModelOverrides(model),
         source: "pi-ai",
       });
+    }
+  }
+
+  for (const [provider, models] of remoteCatalog ?? []) {
+    const providerModels = providers.get(provider);
+    if (!providerModels) continue;
+    for (const model of models) {
+      providerModels.set(model.id, applyTauModelOverrides(structuredClone(model)));
     }
   }
 
@@ -413,11 +422,14 @@ function loadModelsFile(
 export function loadModelResolver(options: {
   deps: ConfigDeps;
   levels: ConfigLevel[];
+  remoteCatalog?: RemoteModelCatalogSnapshot;
 }): LoadedModelResolver {
   const deps = options.deps;
   const levels = options.levels;
 
-  const state = getCatalogState();
+  const state = options.remoteCatalog
+    ? createCatalogState(options.remoteCatalog)
+    : getCatalogState();
   const knownProviders = new Set(state.providers.keys());
   const modelsByKey = new Map<string, Model<Api>>();
   const providerTemplates = new Map<string, Model<Api>>();

@@ -1,4 +1,5 @@
 import type { RuntimeConfigResult } from "../core/config/index.js";
+import type { RemoteModelCatalogSnapshot } from "../core/models/remote_catalog.js";
 import type { RuntimePromptBootstrap } from "../core/runtime/runtime_bootstrap.js";
 import type { ToolExecutionBackend } from "../core/tools/execution_backend.js";
 import type { Persona, Skill } from "../core/types.js";
@@ -20,7 +21,10 @@ export type ExecutionRuntimeContext = {
 };
 
 export interface ExecutionEnvironment {
-  resolveRuntimeConfig(cwd: string): Promise<RuntimeConfigResult>;
+  resolveRuntimeConfig(
+    cwd: string,
+    options?: { remoteCatalog?: RemoteModelCatalogSnapshot },
+  ): Promise<RuntimeConfigResult>;
   resolveRuntimeContext(
     options: ResolveExecutionRuntimeContextOptions,
   ): Promise<ExecutionRuntimeContext>;

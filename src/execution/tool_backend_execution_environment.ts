@@ -1,5 +1,6 @@
 import type { RuntimeConfigResult } from "../core/config/index.js";
 import { loadRuntimeConfigFromToolBackend } from "../core/config/runtime_config_snapshot.js";
+import type { RemoteModelCatalogSnapshot } from "../core/models/remote_catalog.js";
 import {
   type RuntimePromptBootstrap,
   resolveRuntimePromptBootstrap,
@@ -44,11 +45,15 @@ export class ToolBackendExecutionEnvironment<TSnapshot extends BackendExecutionS
     });
   }
 
-  async resolveRuntimeConfig(cwd: string): Promise<RuntimeConfigResult> {
+  async resolveRuntimeConfig(
+    cwd: string,
+    options: { remoteCatalog?: RemoteModelCatalogSnapshot } = {},
+  ): Promise<RuntimeConfigResult> {
     return await loadRuntimeConfigFromToolBackend({
       backend: this.backend,
       cwd,
       home: this.home,
+      remoteCatalog: options.remoteCatalog,
     });
   }
 

@@ -1,4 +1,5 @@
 import { type LoadedModelResolver, loadModelResolver } from "../models/catalog.js";
+import type { RemoteModelCatalogSnapshot } from "../models/remote_catalog.js";
 import { parsePersonaReference } from "../persona_reference.js";
 import type { PromptTemplate } from "../prompts.js";
 import {
@@ -34,9 +35,13 @@ export interface RuntimeConfigResult {
   warnings: string[];
 }
 
-export function loadRuntimeBootstrap(cwd: string, deps: ConfigDeps): RuntimeBootstrap {
+export function loadRuntimeBootstrap(
+  cwd: string,
+  deps: ConfigDeps,
+  options: { remoteCatalog?: RemoteModelCatalogSnapshot } = {},
+): RuntimeBootstrap {
   const levels = resolveConfigLevels(deps, { cwd });
-  const modelResolver = loadModelResolver({ deps, levels });
+  const modelResolver = loadModelResolver({ deps, levels, remoteCatalog: options.remoteCatalog });
   const configResult = loadConfigWithDiagnostics(deps, {
     levels,
     modelResolver,
@@ -197,8 +202,9 @@ function parsePromptTemplateCandidates(output: string): PromptTemplateCandidate[
 export async function loadRuntimeConfig(
   cwd: string,
   deps: ConfigDeps,
+  options: { remoteCatalog?: RemoteModelCatalogSnapshot } = {},
 ): Promise<RuntimeConfigResult> {
-  const bootstrap = loadRuntimeBootstrap(cwd, deps);
+  const bootstrap = loadRuntimeBootstrap(cwd, deps, options);
   const content = await loadAllContent(bootstrap.config, {
     deps,
     levels: bootstrap.levels,

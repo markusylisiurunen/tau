@@ -115,6 +115,9 @@ function createHost(store, options = {}) {
     executionEnvironmentResolver,
     includeAgentContext: false,
     environment: createEnvironment(options.now),
+    ...(options.getRemoteModelCatalog
+      ? { getRemoteModelCatalog: options.getRemoteModelCatalog }
+      : {}),
     ...(options.recordUsage ? { recordUsage: options.recordUsage } : {}),
     ...(options.resolveSessionBootstrap
       ? { resolveSessionBootstrap: options.resolveSessionBootstrap }
@@ -4028,6 +4031,38 @@ describe("LocalSessionHost", () => {
       text: "reload prompt",
     });
     expect(resolveRuntimeConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it("adopts remote model catalog updates only on reload", async () => {
+    const store = new MemorySessionStore();
+    const initialCatalog = new Map([["openai", [{ id: "initial" }]]]);
+    const refreshedCatalog = new Map([["openai", [{ id: "refreshed" }]]]);
+    let currentCatalog = initialCatalog;
+    const executionEnvironment = createTestExecutionEnvironment();
+    executionEnvironment.resolveRuntimeConfig = vi.fn(async () => ({
+      bootstrap: { modelResolver: { resolveModel } },
+      config: {},
+      personas: [personas[0]],
+      prompts: [],
+      skills: [],
+      themes: [],
+      warnings: [],
+    }));
+    const host = createHostForEnvironment(store, executionEnvironment, {
+      getRemoteModelCatalog: () => currentCatalog,
+    });
+    const session = await host.createSession(localCreateInput);
+
+    currentCatalog = refreshedCatalog;
+    await session.setPersona(personas[0].id);
+    await session.reload();
+
+    expect(executionEnvironment.resolveRuntimeConfig.mock.calls[0][1]).toEqual({
+      remoteCatalog: initialCatalog,
+    });
+    expect(executionEnvironment.resolveRuntimeConfig.mock.calls[1][1]).toEqual({
+      remoteCatalog: refreshedCatalog,
+    });
   });
 
   it("keeps execution-environment context in hosted ephemeral system prompts", async () => {

@@ -12,6 +12,7 @@ import {
 } from "../core/history/transcript.js";
 import type { HistoryRemoteTarget } from "../core/history/types.js";
 import type { ModelResolver } from "../core/models/catalog.js";
+import type { RemoteModelCatalogSnapshot } from "../core/models/remote_catalog.js";
 import type { PromptTemplate } from "../core/prompts.js";
 import { ChatRuntime, type ChatRuntimeEnvironment } from "../core/runtime/chat_runtime.js";
 import type { CoreDeps } from "../core/runtime/deps.js";
@@ -125,12 +126,14 @@ export type LocalSessionResolvedBootstrap = {
 
 export type LocalSessionBootstrapResolver = (args: {
   executionEnvironment: ExecutionEnvironment;
+  remoteCatalog: RemoteModelCatalogSnapshot;
 }) => Promise<LocalSessionResolvedBootstrap>;
 
 export type LocalSessionHostSessionOptions = {
   executionEnvironmentResolver: ExecutionEnvironmentResolver;
   includeAgentContext: boolean;
   environment: ChatRuntimeEnvironment;
+  getRemoteModelCatalog?: () => RemoteModelCatalogSnapshot;
   recordUsage?: UsageRecorder;
   deps?: CoreDeps;
 } & (
@@ -275,7 +278,8 @@ export class LocalSessionHost implements TauSessionHost {
     createParams?: SessionProtocolCreateParams,
     forceNextSnapshotRevision = false,
   ): Promise<LocalHostedSessionHandle> {
-    const bootstrap = await this.resolveNewSessionBootstrap(executionEnvironment);
+    const remoteCatalog = this.sessionOptions.getRemoteModelCatalog?.() ?? new Map();
+    const bootstrap = await this.resolveNewSessionBootstrap(executionEnvironment, remoteCatalog);
     if (committedSnapshot) {
       this.applySnapshotSettingsToBootstrap(bootstrap, committedSnapshot);
     } else if (createParams) {
@@ -294,6 +298,7 @@ export class LocalSessionHost implements TauSessionHost {
       runtimeContext,
       bootstrap,
       catalog,
+      remoteCatalog,
       committedSnapshot,
       createParams,
       forceNextSnapshotRevision,
@@ -305,6 +310,7 @@ export class LocalSessionHost implements TauSessionHost {
     runtimeContext: Awaited<ReturnType<ExecutionEnvironment["resolveRuntimeContext"]>>,
     bootstrap: LocalSessionResolvedBootstrap,
     catalog: SessionProtocolContentCatalogSnapshot,
+    remoteCatalog: RemoteModelCatalogSnapshot,
     committedSnapshot?: SessionProtocolSnapshot,
     createParams?: SessionProtocolCreateParams,
     forceNextSnapshotRevision = false,
@@ -351,6 +357,8 @@ export class LocalSessionHost implements TauSessionHost {
       runtimeContext.promptBootstrap,
       catalog,
       bootstrap,
+      remoteCatalog,
+      this.sessionOptions.getRemoteModelCatalog ?? (() => remoteCatalog),
       this.sessionOptions.includeAgentContext,
       executionEnvironment,
       this.store,
@@ -378,13 +386,14 @@ export class LocalSessionHost implements TauSessionHost {
 
   private async resolveNewSessionBootstrap(
     executionEnvironment: ExecutionEnvironment,
+    remoteCatalog: RemoteModelCatalogSnapshot,
   ): Promise<LocalSessionResolvedBootstrap> {
     const resolver = this.sessionOptions.resolveSessionBootstrap;
     if (!resolver) {
       return this.defaultSessionBootstrap();
     }
 
-    const bootstrap = await resolver({ executionEnvironment });
+    const bootstrap = await resolver({ executionEnvironment, remoteCatalog });
     return cloneResolvedBootstrap(bootstrap);
   }
 
@@ -693,6 +702,8 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     readonly promptBootstrap: RuntimePromptBootstrap,
     private catalog: SessionProtocolContentCatalogSnapshot,
     private bootstrap: LocalSessionResolvedBootstrap,
+    private remoteCatalog: RemoteModelCatalogSnapshot,
+    private readonly getRemoteModelCatalog: () => RemoteModelCatalogSnapshot,
     private readonly includeAgentContext: boolean,
     private readonly executionEnvironment: ExecutionEnvironment,
     private readonly store: SessionStore,
@@ -1254,6 +1265,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     this.assertActive();
     const runtimeConfig = await this.executionEnvironment.resolveRuntimeConfig(
       this.executionEnvironment.snapshot().cwd,
+      { remoteCatalog: this.remoteCatalog },
     );
     const personas = runtimeConfig.personas.map((persona) =>
       this.normalizeReloadedPersona(persona),
@@ -1299,8 +1311,10 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
   async reload(): Promise<SessionProtocolReloadResult> {
     this.assertActive();
+    const remoteCatalog = this.getRemoteModelCatalog();
     const runtimeConfig = await this.executionEnvironment.resolveRuntimeConfig(
       this.executionEnvironment.snapshot().cwd,
+      { remoteCatalog },
     );
     if (runtimeConfig.personas.length === 0) {
       throw new Error("reload failed: no personas available");
@@ -1330,6 +1344,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       this.runtime.setPersona(nextPersona, {
         skillsBlock: runtimeContext.promptBootstrap.promptContext.skillsBlock,
       });
+      this.remoteCatalog = remoteCatalog;
       this.bootstrap = {
         persona: clonePersona(nextPersona),
         discoveredSkills: structuredClone(runtimeConfig.skills),

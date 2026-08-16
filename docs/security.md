@@ -39,6 +39,10 @@ Project configuration cannot define a command client-tool executable. It can onl
 
 Prompt templates are inserted into the editor for review rather than submitted automatically. Leading `<system>` blocks, persona prompts, model notices, and committed session messages are model-facing and may become durable session content. Do not place secrets in instructions, prompts, or model notices.
 
+## Trust remote model metadata as routing configuration
+
+A model-owning Tau host refreshes compatible provider catalogs from `pi.dev` and caches them in `~/.config/tau/models-store.json`. This is a trusted software-update channel, not informational discovery: a remote model record can replace its API adapter, endpoint, headers, compatibility behavior, limits, and pricing before execution-environment `models.json` overlays are applied. Compromise or misconfiguration of that service could redirect provider requests and credentials. Set `TAU_OFFLINE` to disable automatic catalog requests, and use a reviewed `models.json` overlay when a provider must stay on a fixed endpoint.
+
 ## Keep secrets with the process that needs them
 
 Most model and service credentials belong to the host because the host performs model calls, web search, history replication, and host-tool Nook requests. TUI speech credentials and command client-tool credentials belong to the client. Telegram bot, transcription, and voice-response credentials belong to the Telegram runner. Hosted-environment bridge and API credentials belong to host startup.
@@ -174,6 +178,7 @@ Unknown configuration fields are stripped, so syntactically valid JSON can still
 Tau's durable files are implementation-owned recovery state, not configuration surfaces. Do not directly edit or casually delete:
 
 - `~/.config/tau/auth.json`;
+- `~/.config/tau/models-store.json`;
 - files under `~/.config/tau/sessions`;
 - `~/.config/tau/history.sqlite` and its SQLite side files;
 - Telegram runner session and project-preference state;

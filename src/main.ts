@@ -22,6 +22,10 @@ import { loadConfig } from "./core/config/schema.js";
 import { resolveHistoryRemoteTarget } from "./core/history/config.js";
 import { HistoryManager } from "./core/history/history_manager.js";
 import { getDefaultHistoryDatabasePath } from "./core/history/local_history_store.js";
+import {
+  getDefaultModelCatalogStorePath,
+  RemoteModelCatalog,
+} from "./core/models/remote_catalog.js";
 import { getStartupPlatformError } from "./core/platform_support.js";
 import type { PromptTemplate } from "./core/prompts.js";
 import { createDefaultCoreDeps } from "./core/runtime/deps.js";
@@ -43,6 +47,10 @@ import { detectTerminalColors } from "./tui/terminal_appearance.js";
 
 const cwd = process.cwd();
 const configDeps = createDefaultConfigDeps();
+const hostHome = configDeps.env.home();
+const remoteModelCatalog = new RemoteModelCatalog({
+  path: getDefaultModelCatalogStorePath(hostHome),
+});
 const argv = process.argv.slice(2);
 const isAttachSubcommand = argv[0] === "attach";
 const isServeSubcommand = argv[0] === "serve";
@@ -546,13 +554,16 @@ async function createLocalSessionHost(options: {
     historyRemote: resolveHistoryRemoteTarget(options.config),
     executionEnvironmentResolver: new CompositeExecutionEnvironmentResolver(resolvers),
     includeAgentContext: !options.cli.noAgentContextFiles,
+    getRemoteModelCatalog: () => remoteModelCatalog.snapshot(),
     environment: {
       now: () => deps.clock.now(),
     },
     deps,
-    resolveSessionBootstrap: async ({ executionEnvironment }) => {
+    resolveSessionBootstrap: async ({ executionEnvironment, remoteCatalog }) => {
       const snapshot = executionEnvironment.snapshot();
-      const runtime = await executionEnvironment.resolveRuntimeConfig(snapshot.cwd);
+      const runtime = await executionEnvironment.resolveRuntimeConfig(snapshot.cwd, {
+        remoteCatalog,
+      });
       return await resolveHostedSessionBootstrap({
         cli: options.cli,
         runtime,
@@ -692,6 +703,30 @@ if (argv[0] === "install") {
       process.exit(1);
     }
     throw err;
+  }
+}
+
+if (argv[0] === "models") {
+  const { ModelsCliError, printModelsHelp, runModelsCommand } = await import(
+    "./core/models/cli.js"
+  );
+  try {
+    await runModelsCommand(argv.slice(1), { home: hostHome, catalog: remoteModelCatalog });
+    process.exit(0);
+  } catch (err) {
+    if (err instanceof ModelsCliError) {
+      // eslint-disable-next-line no-console
+      console.error(err.message);
+      if (argv[1] !== "refresh") {
+        // eslint-disable-next-line no-console
+        console.error("");
+        printModelsHelp();
+      }
+      process.exit(1);
+    }
+    // eslint-disable-next-line no-console
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
   }
 }
 
@@ -839,7 +874,9 @@ if (isDiffToolSubcommand) {
 }
 
 try {
-  const runtime = await loadRuntimeConfig(cwd, configDeps);
+  const runtime = await loadRuntimeConfig(cwd, configDeps, {
+    remoteCatalog: remoteModelCatalog.snapshot(),
+  });
   runtimeBootstrap = runtime.bootstrap;
   config = runtime.config;
   personas = runtime.personas;
@@ -861,7 +898,9 @@ try {
   // eslint-disable-next-line no-console
   console.error(`failed to load user content: ${(err as Error).message}`);
 
-  runtimeBootstrap = loadRuntimeBootstrap(cwd, configDeps);
+  runtimeBootstrap = loadRuntimeBootstrap(cwd, configDeps, {
+    remoteCatalog: remoteModelCatalog.snapshot(),
+  });
   config = runtimeBootstrap.config;
 
   const { virtualBundle } = runtimeBootstrap;
@@ -1104,6 +1143,9 @@ if (cli.debug) {
 }
 
 if (isServeSubcommand) {
+  if (process.env.TAU_OFFLINE === undefined) {
+    void remoteModelCatalog.refresh().catch(() => {});
+  }
   const [sessionHost, { runWebSocketSessionServer }] = await Promise.all([
     createLocalSessionHost({ cli, config }),
     import("./core/modes/websocket_server.js"),
@@ -1176,6 +1218,7 @@ const sessionClient = await createTauSdkClientWithHostConfig(
     clientTools,
   },
   config,
+  { remoteModelCatalog },
 );
 const app = await SessionChatApp.open({
   client: sessionClient,

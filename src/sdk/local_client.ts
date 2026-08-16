@@ -4,6 +4,10 @@ import type { Config } from "../core/config/schema.js";
 import { resolveHistoryRemoteTarget } from "../core/history/config.js";
 import { HistoryManager } from "../core/history/history_manager.js";
 import { getDefaultHistoryDatabasePath } from "../core/history/local_history_store.js";
+import {
+  getDefaultModelCatalogStorePath,
+  RemoteModelCatalog,
+} from "../core/models/remote_catalog.js";
 import { createDefaultCoreDeps } from "../core/runtime/deps.js";
 import { createLocalToolExecutionBackend } from "../core/tools/execution_backend.js";
 import type { Persona } from "../core/types.js";
@@ -19,9 +23,10 @@ import type { TauSdkClient, TauSdkClientOptions } from "./types.js";
 export async function createTauSdkClientWithHostConfig(
   options: TauSdkClientOptions,
   config: Config,
+  runtimeOptions: { remoteModelCatalog?: RemoteModelCatalog } = {},
 ): Promise<TauSdkClient> {
   resolveTauSdkInitializeParams(options.initialize, options.clientTools);
-  const host = await createInProcessSdkHost(options, config);
+  const host = await createInProcessSdkHost(options, config, runtimeOptions);
   const transport = new InProcessSessionProtocolTransport({ host, closeMode: "shutdown-host" });
   return createTauSdkClientFromTransport(transport, options);
 }
@@ -29,9 +34,16 @@ export async function createTauSdkClientWithHostConfig(
 async function createInProcessSdkHost(
   options: TauSdkClientOptions,
   config: Config,
+  runtimeOptions: { remoteModelCatalog?: RemoteModelCatalog },
 ): Promise<LocalSessionHost> {
   const deps = createDefaultCoreDeps();
   const home = deps.env.home() || process.env.HOME || homedir();
+  const remoteModelCatalog =
+    runtimeOptions.remoteModelCatalog ??
+    new RemoteModelCatalog({ path: getDefaultModelCatalogStorePath(home) });
+  if (process.env.TAU_OFFLINE === undefined) {
+    void remoteModelCatalog.refresh().catch(() => {});
+  }
 
   const toolBackend = createLocalToolExecutionBackend();
   const localResolver = new LocalExecutionEnvironmentResolver({
@@ -65,13 +77,16 @@ async function createInProcessSdkHost(
     historyRemote: resolveHistoryRemoteTarget(config),
     executionEnvironmentResolver,
     includeAgentContext: !options.noAgentContextFiles,
+    getRemoteModelCatalog: () => remoteModelCatalog.snapshot(),
     environment: {
       now: () => deps.clock.now(),
     },
     deps,
-    resolveSessionBootstrap: async ({ executionEnvironment }) => {
+    resolveSessionBootstrap: async ({ executionEnvironment, remoteCatalog }) => {
       const snapshot = executionEnvironment.snapshot();
-      const envRuntime = await executionEnvironment.resolveRuntimeConfig(snapshot.cwd);
+      const envRuntime = await executionEnvironment.resolveRuntimeConfig(snapshot.cwd, {
+        remoteCatalog,
+      });
       if (envRuntime.personas.length === 0) {
         throw new Error(
           `no personas available for execution environment cwd '${snapshot.cwd}'. add a custom persona or enable built-ins.`,

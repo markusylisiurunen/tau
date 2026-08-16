@@ -6,15 +6,16 @@ const DEFAULT_GEMINI_SPEECH_REWRITE_MODEL = "gemini-3.7-flash";
 const DEFAULT_GEMINI_SPEECH_REWRITE_THINKING_LEVEL = "low";
 const DEFAULT_GEMINI_SPEECH_TTS_MODEL = "gemini-3.1-flash-tts-preview";
 const DEFAULT_GEMINI_TTS_VOICE_NAME = "Despina";
-const DEFAULT_TTS_SAMPLE_RATE_HZ = 24000;
-const DEFAULT_TTS_CHANNEL_COUNT = 1;
-const DEFAULT_TTS_BITS_PER_SAMPLE = 16;
+export const GEMINI_SPEECH_SAMPLE_RATE_HZ = 24000;
+export const GEMINI_SPEECH_CHANNEL_COUNT = 1;
+export const GEMINI_SPEECH_BITS_PER_SAMPLE = 16;
 const DEFAULT_TTS_MAX_ATTEMPTS = 3;
 const SPEECH_REWRITE_TIMEOUT_MS = 60_000;
-const PROGRESSIVE_TTS_CONCURRENCY = 6;
 const COMPLETE_TTS_CONCURRENCY = 3;
-const PROGRESSIVE_SPEECH_CHUNK_CHARACTERS = 500;
-const COMPLETE_SPEECH_CHUNK_CHARACTERS = 1000;
+const MAX_SPEECH_SEGMENT_SECONDS = 120;
+const ESTIMATED_SPEECH_CHARACTERS_PER_SECOND = 17;
+const MAX_SPEECH_SEGMENT_WEIGHT =
+  MAX_SPEECH_SEGMENT_SECONDS * ESTIMATED_SPEECH_CHARACTERS_PER_SECOND;
 const MAX_SPEECH_SOURCE_CHARACTERS = 10_000;
 const MAX_SPOKEN_TEXT_CHARACTERS = 10_000;
 const MAX_SPEECH_PCM_BYTES = 32 * 1024 * 1024;
@@ -32,9 +33,8 @@ const errorPayloadSchema = z.object({
 });
 
 export type GeminiSpeechStage = "rewriting" | "generating";
-export type GeminiSpeechDeliveryMode = "progressive" | "complete";
 
-export type GeminiSpeechChunkProgress = {
+export type GeminiSpeechSegmentProgress = {
   ready: number;
   total: number;
 };
@@ -42,7 +42,6 @@ export type GeminiSpeechChunkProgress = {
 export type GeminiSpeechOptions = {
   apiKey: string;
   sourceText: string;
-  deliveryMode: GeminiSpeechDeliveryMode;
   rewriteModel?: string;
   ttsModel?: string;
   voiceName?: string;
@@ -50,7 +49,11 @@ export type GeminiSpeechOptions = {
   signal?: AbortSignal;
   maxTtsAttempts?: number;
   onStageChange?: (stage: GeminiSpeechStage) => void | Promise<void>;
-  onChunkProgress?: (progress: GeminiSpeechChunkProgress) => void | Promise<void>;
+  onSegmentProgress?: (progress: GeminiSpeechSegmentProgress) => void | Promise<void>;
+};
+
+export type GeminiSpeechPcmOptions = GeminiSpeechOptions & {
+  initialBufferBytes?: number;
 };
 
 export type GeminiSpeechAudioChunk = {
@@ -58,6 +61,12 @@ export type GeminiSpeechAudioChunk = {
   total: number;
   audio: Buffer;
   mimeType: "audio/wav";
+};
+
+export type GeminiSpeechPcmChunk = {
+  index: number;
+  total: number;
+  audio: Buffer;
 };
 
 class GeminiApiError extends Error {
@@ -84,9 +93,132 @@ class GeminiTtsOutputLimitError extends Error {
   }
 }
 
-export async function* streamGeminiSpeechAudio(
+type PreparedGeminiSpeech = {
+  apiKey: string;
+  model: string;
+  voiceName: string;
+  spokenSegments: string[];
+  fetchImpl: typeof fetch;
+  maxAttempts: number;
+};
+
+export async function* generateGeminiSpeechAudio(
   options: GeminiSpeechOptions,
 ): AsyncGenerator<GeminiSpeechAudioChunk> {
+  const abortController = createLinkedAbortController(options.signal);
+  let completed = false;
+
+  try {
+    const prepared = await prepareGeminiSpeech(options, abortController.signal);
+
+    for await (const chunk of synthesizeSpeechAudioSegmentsInOrder({
+      ...prepared,
+      signal: abortController.signal,
+      concurrency: COMPLETE_TTS_CONCURRENCY,
+      onSegmentProgress: options.onSegmentProgress,
+      abortOnFailure: () => abortController.abort(),
+    })) {
+      yield {
+        index: chunk.index,
+        total: prepared.spokenSegments.length,
+        audio: encodeWaveFile({
+          pcmAudio: chunk.pcmAudio,
+          sampleRateHz: GEMINI_SPEECH_SAMPLE_RATE_HZ,
+          channelCount: GEMINI_SPEECH_CHANNEL_COUNT,
+          bitsPerSample: GEMINI_SPEECH_BITS_PER_SAMPLE,
+        }),
+        mimeType: "audio/wav",
+      };
+    }
+
+    completed = true;
+  } finally {
+    if (!completed) {
+      abortController.abort();
+    }
+    abortController.dispose();
+  }
+}
+
+export async function* streamGeminiSpeechPcm(
+  options: GeminiSpeechPcmOptions,
+): AsyncGenerator<GeminiSpeechPcmChunk> {
+  const abortController = createLinkedAbortController(options.signal);
+  let completed = false;
+  let totalPcmBytes = 0;
+
+  try {
+    const prepared = await prepareGeminiSpeech(options, abortController.signal);
+    const total = prepared.spokenSegments.length;
+    const accountAudio = (audio: Buffer): void => {
+      totalPcmBytes += audio.length;
+      if (totalPcmBytes > MAX_SPEECH_PCM_BYTES) {
+        throw new Error("generated speech audio exceeds the 32 MiB limit");
+      }
+    };
+    const prefetch = (index: number): Promise<PrefetchedSpeechSegment> =>
+      collectStreamingSpeechSegment({
+        ...prepared,
+        spokenText: prepared.spokenSegments[index]!,
+        signal: abortController.signal,
+        accountAudio,
+      }).then(
+        (audio) => ({ audio }),
+        (error: unknown) => ({ error }),
+      );
+
+    let ready = 0;
+    const firstStream = streamSpeechSegmentWithRetries({
+      ...prepared,
+      spokenText: prepared.spokenSegments[0]!,
+      signal: abortController.signal,
+      initialBufferBytes: Math.max(0, Math.trunc(options.initialBufferBytes ?? 0)),
+    });
+    const firstIterator = firstStream[Symbol.asyncIterator]();
+    let nextAudio = firstIterator.next();
+    let prefetched = total > 1 ? prefetch(1) : undefined;
+
+    while (true) {
+      const next = await nextAudio;
+      if (next.done) {
+        break;
+      }
+      accountAudio(next.value);
+      yield { index: 0, total, audio: next.value };
+      nextAudio = firstIterator.next();
+    }
+    ready += 1;
+    await options.onSegmentProgress?.({ ready, total });
+
+    for (let index = 1; index < total; index += 1) {
+      const outcome = await prefetched!;
+      if ("error" in outcome) {
+        throw outcome.error instanceof Error
+          ? outcome.error
+          : new Error("Gemini TTS request failed");
+      }
+
+      prefetched = index + 1 < total ? prefetch(index + 1) : undefined;
+      yield { index, total, audio: outcome.audio };
+      ready += 1;
+      await options.onSegmentProgress?.({ ready, total });
+    }
+
+    completed = true;
+  } finally {
+    if (!completed) {
+      abortController.abort();
+    }
+    abortController.dispose();
+  }
+}
+
+type PrefetchedSpeechSegment = { audio: Buffer } | { error: unknown };
+
+async function prepareGeminiSpeech(
+  options: GeminiSpeechOptions,
+  signal: AbortSignal,
+): Promise<PreparedGeminiSpeech> {
   const sourceText = options.sourceText.trim();
   if (!sourceText) {
     throw new Error("speech source text was empty");
@@ -101,78 +233,45 @@ export async function* streamGeminiSpeechAudio(
   }
 
   const fetchImpl = options.fetchImpl ?? fetch;
-  const rewriteModel = options.rewriteModel ?? DEFAULT_GEMINI_SPEECH_REWRITE_MODEL;
-  const ttsModel = options.ttsModel ?? DEFAULT_GEMINI_SPEECH_TTS_MODEL;
-  const voiceName = options.voiceName ?? DEFAULT_GEMINI_TTS_VOICE_NAME;
-  const abortController = createLinkedAbortController(options.signal);
-  let completed = false;
-
+  await options.onStageChange?.("rewriting");
+  const rewriteController = createLinkedAbortController(signal);
+  const rewriteTimeout = setTimeout(() => rewriteController.abort(), SPEECH_REWRITE_TIMEOUT_MS);
+  rewriteTimeout.unref?.();
+  let spokenText: string;
   try {
-    await options.onStageChange?.("rewriting");
-    const rewriteController = createLinkedAbortController(abortController.signal);
-    const rewriteTimeout = setTimeout(() => rewriteController.abort(), SPEECH_REWRITE_TIMEOUT_MS);
-    rewriteTimeout.unref?.();
-    let spokenText: string;
-    try {
-      spokenText = await rewriteTextForSpeech({
-        apiKey,
-        model: rewriteModel,
-        sourceText,
-        fetchImpl,
-        signal: rewriteController.signal,
-      });
-    } catch (error) {
-      if (!abortController.signal.aborted && rewriteController.signal.aborted) {
-        throw new Error("speech rewrite timed out after 1 minute");
-      }
-      throw error;
-    } finally {
-      clearTimeout(rewriteTimeout);
-      rewriteController.dispose();
-    }
-    if (exceedsUnicodeCharacterLimit(spokenText, MAX_SPOKEN_TEXT_CHARACTERS)) {
-      throw new Error("rewritten speech text exceeds 10,000 characters");
-    }
-
-    const spokenChunks = splitSpeechChunks(spokenText, options.deliveryMode);
-    await options.onStageChange?.("generating");
-    await options.onChunkProgress?.({ ready: 0, total: spokenChunks.length });
-
-    for await (const chunk of synthesizeSpeechAudioChunksInOrder({
+    spokenText = await rewriteTextForSpeech({
       apiKey,
-      model: ttsModel,
-      voiceName,
-      spokenChunks,
+      model: options.rewriteModel ?? DEFAULT_GEMINI_SPEECH_REWRITE_MODEL,
+      sourceText,
       fetchImpl,
-      signal: abortController.signal,
-      maxAttempts: options.maxTtsAttempts ?? DEFAULT_TTS_MAX_ATTEMPTS,
-      concurrency:
-        options.deliveryMode === "progressive"
-          ? PROGRESSIVE_TTS_CONCURRENCY
-          : COMPLETE_TTS_CONCURRENCY,
-      onChunkProgress: options.onChunkProgress,
-      abortOnFailure: () => abortController.abort(),
-    })) {
-      yield {
-        index: chunk.index,
-        total: spokenChunks.length,
-        audio: encodeWaveFile({
-          pcmAudio: chunk.pcmAudio,
-          sampleRateHz: DEFAULT_TTS_SAMPLE_RATE_HZ,
-          channelCount: DEFAULT_TTS_CHANNEL_COUNT,
-          bitsPerSample: DEFAULT_TTS_BITS_PER_SAMPLE,
-        }),
-        mimeType: "audio/wav",
-      };
+      signal: rewriteController.signal,
+    });
+  } catch (error) {
+    if (!signal.aborted && rewriteController.signal.aborted) {
+      throw new Error("speech rewrite timed out after 1 minute");
     }
-
-    completed = true;
+    throw error;
   } finally {
-    if (!completed) {
-      abortController.abort();
-    }
-    abortController.dispose();
+    clearTimeout(rewriteTimeout);
+    rewriteController.dispose();
   }
+
+  if (exceedsUnicodeCharacterLimit(spokenText, MAX_SPOKEN_TEXT_CHARACTERS)) {
+    throw new Error("rewritten speech text exceeds 10,000 characters");
+  }
+
+  const spokenSegments = splitSpeechSegments(spokenText);
+  await options.onStageChange?.("generating");
+  await options.onSegmentProgress?.({ ready: 0, total: spokenSegments.length });
+
+  return {
+    apiKey,
+    model: options.ttsModel ?? DEFAULT_GEMINI_SPEECH_TTS_MODEL,
+    voiceName: options.voiceName ?? DEFAULT_GEMINI_TTS_VOICE_NAME,
+    spokenSegments,
+    fetchImpl,
+    maxAttempts: options.maxTtsAttempts ?? DEFAULT_TTS_MAX_ATTEMPTS,
+  };
 }
 
 type RewriteTextForSpeechArgs = {
@@ -214,31 +313,25 @@ async function rewriteTextForSpeech(args: RewriteTextForSpeechArgs): Promise<str
   return rewrittenText;
 }
 
-type SynthesizeSpeechAudioChunksArgs = {
-  apiKey: string;
-  model: string;
-  voiceName: string;
-  spokenChunks: string[];
-  fetchImpl: typeof fetch;
+type SynthesizeSpeechAudioSegmentsArgs = PreparedGeminiSpeech & {
   signal?: AbortSignal;
-  maxAttempts: number;
   concurrency: number;
-  onChunkProgress?: (progress: GeminiSpeechChunkProgress) => void | Promise<void>;
+  onSegmentProgress?: (progress: GeminiSpeechSegmentProgress) => void | Promise<void>;
 };
 
-type SynthesizedSpeechAudioChunk = {
+type SynthesizedSpeechAudioSegment = {
   index: number;
   pcmAudio: Buffer;
 };
 
-type SynthesizeSpeechAudioChunksInOrderArgs = SynthesizeSpeechAudioChunksArgs & {
+type SynthesizeSpeechAudioSegmentsInOrderArgs = SynthesizeSpeechAudioSegmentsArgs & {
   abortOnFailure?: () => void;
 };
 
-async function* synthesizeSpeechAudioChunksInOrder(
-  args: SynthesizeSpeechAudioChunksInOrderArgs,
-): AsyncGenerator<SynthesizedSpeechAudioChunk> {
-  const total = args.spokenChunks.length;
+async function* synthesizeSpeechAudioSegmentsInOrder(
+  args: SynthesizeSpeechAudioSegmentsInOrderArgs,
+): AsyncGenerator<SynthesizedSpeechAudioSegment> {
+  const total = args.spokenSegments.length;
   const results = new Array<Buffer | undefined>(total);
   const concurrency = Math.max(1, Math.trunc(args.concurrency));
   let nextIndex = 0;
@@ -283,14 +376,9 @@ async function* synthesizeSpeechAudioChunksInOrder(
       }
 
       try {
-        const pcmAudio = await synthesizeSpeechAudioChunk({
-          apiKey: args.apiKey,
-          model: args.model,
-          voiceName: args.voiceName,
-          spokenText: args.spokenChunks[index]!,
-          fetchImpl: args.fetchImpl,
-          signal: args.signal,
-          maxAttempts: args.maxAttempts,
+        const pcmAudio = await synthesizeSpeechAudioSegment({
+          ...args,
+          spokenText: args.spokenSegments[index]!,
         });
         totalPcmBytes += pcmAudio.length;
         if (totalPcmBytes > MAX_SPEECH_PCM_BYTES) {
@@ -298,11 +386,11 @@ async function* synthesizeSpeechAudioChunksInOrder(
         }
         results[index] = pcmAudio;
         ready += 1;
-        await args.onChunkProgress?.({ ready, total });
+        await args.onSegmentProgress?.({ ready, total });
         wake();
-      } catch (err) {
+      } catch (error) {
         if (failure === undefined) {
-          failure = err;
+          failure = error;
         }
         args.abortOnFailure?.();
         wake();
@@ -337,52 +425,28 @@ async function* synthesizeSpeechAudioChunksInOrder(
   }
 }
 
-type SynthesizeSpeechAudioChunkArgs = {
-  apiKey: string;
-  model: string;
-  voiceName: string;
+type SynthesizeSpeechAudioSegmentArgs = Omit<PreparedGeminiSpeech, "spokenSegments"> & {
   spokenText: string;
-  fetchImpl: typeof fetch;
   signal?: AbortSignal;
-  maxAttempts: number;
 };
 
-async function synthesizeSpeechAudioChunk(args: SynthesizeSpeechAudioChunkArgs): Promise<Buffer> {
+async function synthesizeSpeechAudioSegment(
+  args: SynthesizeSpeechAudioSegmentArgs,
+): Promise<Buffer> {
   const maxAttempts = Math.max(1, Math.trunc(args.maxAttempts));
   let lastError: unknown;
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
       const payload = await requestGeminiGenerateContent({
         apiKey: args.apiKey,
         model: args.model,
         fetchImpl: args.fetchImpl,
         signal: args.signal,
-        body: {
-          contents: [
-            {
-              parts: [
-                {
-                  text: buildSpeechSynthesisPrompt(args.spokenText),
-                },
-              ],
-            },
-          ],
-          generationConfig: {
-            responseModalities: ["AUDIO"],
-            maxOutputTokens: TTS_MAX_OUTPUT_TOKENS,
-            speechConfig: {
-              voiceConfig: {
-                prebuiltVoiceConfig: {
-                  voiceName: args.voiceName,
-                },
-              },
-            },
-          },
-        },
+        body: buildSpeechSynthesisRequest(args.spokenText, args.voiceName),
       });
 
-      assertGeminiTtsDidNotReachOutputLimit(payload);
+      assertGeminiTtsCompleted(payload);
       const audioData = extractGeminiInlineAudioData(payload);
       if (!audioData) {
         throw new GeminiTtsResponseError("Gemini TTS response did not include audio data");
@@ -401,6 +465,149 @@ async function synthesizeSpeechAudioChunk(args: SynthesizeSpeechAudioChunkArgs):
   throw lastError instanceof Error ? lastError : new Error("Gemini TTS request failed");
 }
 
+type StreamSpeechSegmentArgs = SynthesizeSpeechAudioSegmentArgs;
+
+async function* streamSpeechSegmentWithRetries(
+  args: StreamSpeechSegmentArgs & { initialBufferBytes: number },
+): AsyncGenerator<Buffer> {
+  const maxAttempts = Math.max(1, Math.trunc(args.maxAttempts));
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const bufferedAudio: Buffer[] = [];
+    let bufferedAudioBytes = 0;
+    let emittedAudio = false;
+    try {
+      for await (const audio of requestGeminiSpeechStream(args)) {
+        if (!emittedAudio && bufferedAudioBytes < args.initialBufferBytes) {
+          bufferedAudio.push(audio);
+          bufferedAudioBytes += audio.length;
+          if (bufferedAudioBytes < args.initialBufferBytes) {
+            continue;
+          }
+          emittedAudio = true;
+          yield Buffer.concat(bufferedAudio);
+          continue;
+        }
+
+        emittedAudio = true;
+        yield audio;
+      }
+      if (bufferedAudio.length > 0 && !emittedAudio) {
+        emittedAudio = true;
+        yield Buffer.concat(bufferedAudio);
+      }
+      return;
+    } catch (error) {
+      lastError = error;
+      if (
+        emittedAudio ||
+        args.signal?.aborted ||
+        !isRetryableTtsError(error) ||
+        attempt >= maxAttempts
+      ) {
+        throw error;
+      }
+      await waitForRetryDelay(attempt, args.signal);
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("Gemini TTS request failed");
+}
+
+async function collectStreamingSpeechSegment(
+  args: StreamSpeechSegmentArgs & { accountAudio: (audio: Buffer) => void },
+): Promise<Buffer> {
+  const maxAttempts = Math.max(1, Math.trunc(args.maxAttempts));
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const chunks: Buffer[] = [];
+    try {
+      for await (const audio of requestGeminiSpeechStream(args)) {
+        chunks.push(audio);
+      }
+    } catch (error) {
+      lastError = error;
+      if (args.signal?.aborted || !isRetryableTtsError(error) || attempt >= maxAttempts) {
+        throw error;
+      }
+      await waitForRetryDelay(attempt, args.signal);
+      continue;
+    }
+
+    const audio = Buffer.concat(chunks);
+    args.accountAudio(audio);
+    return audio;
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("Gemini TTS request failed");
+}
+
+async function* requestGeminiSpeechStream(args: StreamSpeechSegmentArgs): AsyncGenerator<Buffer> {
+  const response = await requestGeminiResponse({
+    apiKey: args.apiKey,
+    model: args.model,
+    method: "streamGenerateContent?alt=sse",
+    fetchImpl: args.fetchImpl,
+    signal: args.signal,
+    body: buildSpeechSynthesisRequest(args.spokenText, args.voiceName),
+  });
+  if (!response.body) {
+    throw new GeminiTtsResponseError("Gemini TTS streaming response did not include a body");
+  }
+
+  let receivedAudio = false;
+  let completed = false;
+  for await (const payload of parseGeminiSse(response.body)) {
+    const finishReason = getGeminiFinishReason(payload);
+    if (finishReason) {
+      assertGeminiTtsFinishReason(finishReason);
+      completed = finishReason === "STOP";
+    }
+
+    for (const audioData of extractGeminiInlineAudioDataParts(payload)) {
+      receivedAudio = true;
+      yield Buffer.from(audioData, "base64");
+    }
+  }
+
+  if (!receivedAudio) {
+    throw new GeminiTtsResponseError("Gemini TTS response did not include audio data");
+  }
+  if (!completed) {
+    throw new GeminiTtsResponseError("Gemini TTS stream ended without a stop response");
+  }
+}
+
+function buildSpeechSynthesisRequest(
+  spokenText: string,
+  voiceName: string,
+): Record<string, unknown> {
+  return {
+    contents: [
+      {
+        parts: [
+          {
+            text: buildSpeechSynthesisPrompt(spokenText),
+          },
+        ],
+      },
+    ],
+    generationConfig: {
+      responseModalities: ["AUDIO"],
+      maxOutputTokens: TTS_MAX_OUTPUT_TOKENS,
+      speechConfig: {
+        voiceConfig: {
+          prebuiltVoiceConfig: {
+            voiceName,
+          },
+        },
+      },
+    },
+  };
+}
+
 type RequestGeminiGenerateContentArgs = {
   apiKey: string;
   model: string;
@@ -409,11 +616,25 @@ type RequestGeminiGenerateContentArgs = {
   signal?: AbortSignal;
 };
 
+type RequestGeminiResponseArgs = RequestGeminiGenerateContentArgs & {
+  method: string;
+};
+
 async function requestGeminiGenerateContent(
   args: RequestGeminiGenerateContentArgs,
 ): Promise<unknown> {
+  const response = await requestGeminiResponse({ ...args, method: "generateContent" });
+  const responseText = await response.text();
+  try {
+    return responseText ? (JSON.parse(responseText) as unknown) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function requestGeminiResponse(args: RequestGeminiResponseArgs): Promise<Response> {
   const response = await args.fetchImpl(
-    `${GEMINI_GENERATE_CONTENT_BASE_URL}/${encodeURIComponent(args.model)}:generateContent`,
+    `${GEMINI_GENERATE_CONTENT_BASE_URL}/${encodeURIComponent(args.model)}:${args.method}`,
     {
       method: "POST",
       headers: {
@@ -424,6 +645,9 @@ async function requestGeminiGenerateContent(
       signal: args.signal,
     },
   );
+  if (response.ok) {
+    return response;
+  }
 
   const responseText = await response.text();
   let payload: unknown;
@@ -432,17 +656,74 @@ async function requestGeminiGenerateContent(
   } catch {
     payload = undefined;
   }
+  const parsed = errorPayloadSchema.safeParse(payload);
+  const fallbackMessage = responseText.trim() || `HTTP ${response.status}`;
+  const message = parsed.success
+    ? (parsed.data.error?.message ?? fallbackMessage)
+    : fallbackMessage;
+  throw new GeminiApiError(message, response.status);
+}
 
-  if (!response.ok) {
-    const parsed = errorPayloadSchema.safeParse(payload);
-    const fallbackMessage = responseText.trim() || `HTTP ${response.status}`;
-    const message = parsed.success
-      ? (parsed.data.error?.message ?? fallbackMessage)
-      : fallbackMessage;
-    throw new GeminiApiError(message, response.status);
+async function* parseGeminiSse(body: ReadableStream<Uint8Array>): AsyncGenerator<unknown> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffered = "";
+  let completed = false;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      buffered += decoder.decode(value, { stream: !done });
+
+      let boundary = findSseEventBoundary(buffered);
+      while (boundary) {
+        const event = buffered.slice(0, boundary.index);
+        buffered = buffered.slice(boundary.index + boundary.length);
+        const payload = parseSseEvent(event);
+        if (payload !== undefined) {
+          yield payload;
+        }
+        boundary = findSseEventBoundary(buffered);
+      }
+
+      if (done) {
+        const payload = parseSseEvent(buffered);
+        if (payload !== undefined) {
+          yield payload;
+        }
+        completed = true;
+        return;
+      }
+    }
+  } finally {
+    if (!completed) {
+      await reader.cancel().catch(() => {});
+    }
+    reader.releaseLock();
+  }
+}
+
+function findSseEventBoundary(text: string): { index: number; length: number } | undefined {
+  const match = /\r?\n\r?\n/u.exec(text);
+  return match ? { index: match.index, length: match[0].length } : undefined;
+}
+
+function parseSseEvent(event: string): unknown {
+  const data = event
+    .split(/\r?\n/u)
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trimStart())
+    .join("\n")
+    .trim();
+  if (!data || data === "[DONE]") {
+    return undefined;
   }
 
-  return payload;
+  try {
+    return JSON.parse(data) as unknown;
+  } catch {
+    throw new GeminiTtsResponseError("Gemini TTS returned malformed streaming data");
+  }
 }
 
 function extractGeminiText(payload: unknown): string {
@@ -471,25 +752,45 @@ function extractGeminiText(payload: unknown): string {
   return "";
 }
 
-function assertGeminiTtsDidNotReachOutputLimit(payload: unknown): void {
-  if (!isObject(payload) || !Array.isArray(payload.candidates)) {
-    return;
-  }
-
-  if (
-    payload.candidates.some(
-      (candidate) => isObject(candidate) && candidate.finishReason === "MAX_TOKENS",
-    )
-  ) {
-    throw new GeminiTtsOutputLimitError();
+function assertGeminiTtsCompleted(payload: unknown): void {
+  const finishReason = getGeminiFinishReason(payload);
+  if (finishReason) {
+    assertGeminiTtsFinishReason(finishReason);
   }
 }
 
-function extractGeminiInlineAudioData(payload: unknown): string | undefined {
+function assertGeminiTtsFinishReason(finishReason: string): void {
+  if (finishReason === "MAX_TOKENS") {
+    throw new GeminiTtsOutputLimitError();
+  }
+  if (finishReason !== "STOP") {
+    throw new GeminiTtsResponseError(`Gemini TTS stopped with finish reason '${finishReason}'`);
+  }
+}
+
+function getGeminiFinishReason(payload: unknown): string | undefined {
   if (!isObject(payload) || !Array.isArray(payload.candidates)) {
     return undefined;
   }
 
+  for (const candidate of payload.candidates) {
+    if (isObject(candidate) && typeof candidate.finishReason === "string") {
+      return candidate.finishReason;
+    }
+  }
+  return undefined;
+}
+
+function extractGeminiInlineAudioData(payload: unknown): string | undefined {
+  return extractGeminiInlineAudioDataParts(payload)[0];
+}
+
+function extractGeminiInlineAudioDataParts(payload: unknown): string[] {
+  if (!isObject(payload) || !Array.isArray(payload.candidates)) {
+    return [];
+  }
+
+  const audioData: string[] = [];
   for (const candidate of payload.candidates) {
     if (
       !isObject(candidate) ||
@@ -509,12 +810,12 @@ function extractGeminiInlineAudioData(payload: unknown): string | undefined {
       }
       const data = part.inlineData.data.trim();
       if (data) {
-        return data;
+        audioData.push(data);
       }
     }
   }
 
-  return undefined;
+  return audioData;
 }
 
 function buildSpeechRewritePrompt(sourceText: string): string {
@@ -559,55 +860,119 @@ function exceedsUnicodeCharacterLimit(text: string, limit: number): boolean {
   return false;
 }
 
-function splitSpeechChunks(spokenText: string, deliveryMode: GeminiSpeechDeliveryMode): string[] {
+function splitSpeechSegments(spokenText: string): string[] {
   const normalizedText = spokenText
     .trim()
     .split(/\n\s*\n/gu)
     .map((paragraph) => paragraph.replace(/\s+/gu, " ").trim())
     .filter(Boolean)
     .join("\n\n");
-  const maxCharacters =
-    deliveryMode === "progressive"
-      ? PROGRESSIVE_SPEECH_CHUNK_CHARACTERS
-      : COMPLETE_SPEECH_CHUNK_CHARACTERS;
-  const chunks: string[] = [];
-  let remaining = Array.from(normalizedText);
-
-  while (remaining.length > maxCharacters) {
-    const boundary = findSpeechChunkBoundary(remaining, maxCharacters);
-    chunks.push(remaining.slice(0, boundary).join("").trim());
-    remaining = Array.from(remaining.slice(boundary).join("").trim());
+  const characters = Array.from(normalizedText);
+  const cumulativeWeights = [0];
+  for (const character of characters) {
+    cumulativeWeights.push(cumulativeWeights.at(-1)! + speechCharacterWeight(character));
   }
 
-  if (remaining.length > 0) {
-    chunks.push(remaining.join(""));
+  const totalWeight = cumulativeWeights.at(-1)!;
+  const minimumSegmentCounts = minimumSpeechSegmentCounts(cumulativeWeights);
+  const segmentCount = minimumSegmentCounts[0]!;
+  if (segmentCount === 1) {
+    return [normalizedText];
   }
 
-  return chunks.length > 0 ? chunks : [spokenText.trim()];
+  const boundaries = [0];
+  for (let segment = 1; segment < segmentCount; segment += 1) {
+    const previousBoundary = boundaries.at(-1)!;
+    const previousWeight = cumulativeWeights[previousBoundary]!;
+    const remainingSegments = segmentCount - segment;
+    const idealWeight = (totalWeight * segment) / segmentCount;
+    const maximumBoundary = characters.length - remainingSegments;
+    const candidates = Array.from(
+      { length: maximumBoundary - previousBoundary },
+      (_, offset) => previousBoundary + offset + 1,
+    ).filter(
+      (index) =>
+        cumulativeWeights[index]! - previousWeight <= MAX_SPEECH_SEGMENT_WEIGHT &&
+        minimumSegmentCounts[index]! <= remainingSegments,
+    );
+    const naturalCandidates = candidates.filter((index) =>
+      isNaturalSpeechBoundary(characters, index),
+    );
+    const wordCandidates = candidates.filter((index) => /\s/u.test(characters[index] ?? ""));
+    boundaries.push(
+      selectSpeechBoundary(
+        naturalCandidates,
+        wordCandidates.length > 0 ? wordCandidates : candidates,
+        cumulativeWeights,
+        idealWeight,
+      ),
+    );
+  }
+  boundaries.push(characters.length);
+
+  return boundaries
+    .slice(1)
+    .map((boundary, index) => characters.slice(boundaries[index], boundary).join("").trim());
 }
 
-function findSpeechChunkBoundary(characters: string[], maxCharacters: number): number {
-  const preferredMinimum = Math.floor(maxCharacters * 0.6);
+function speechCharacterWeight(character: string): number {
+  return /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(character)
+    ? 3
+    : 1;
+}
 
-  for (let index = maxCharacters; index >= preferredMinimum; index -= 1) {
-    if (characters[index] === "\n" && characters[index + 1] === "\n") {
-      return index;
+function minimumSpeechSegmentCounts(cumulativeWeights: number[]): number[] {
+  const counts = new Array<number>(cumulativeWeights.length).fill(0);
+  let boundary = cumulativeWeights.length - 1;
+  for (let index = cumulativeWeights.length - 2; index >= 0; index -= 1) {
+    while (cumulativeWeights[boundary]! - cumulativeWeights[index]! > MAX_SPEECH_SEGMENT_WEIGHT) {
+      boundary -= 1;
     }
+    counts[index] = counts[boundary]! + 1;
+  }
+  return counts;
+}
+
+function isNaturalSpeechBoundary(characters: string[], index: number): boolean {
+  const previous = characters[index - 1] ?? "";
+  const next = characters[index] ?? "";
+  return (previous === "\n" && next === "\n") || isSpeechSentenceBoundary(previous, next);
+}
+
+function selectSpeechBoundary(
+  naturalCandidates: number[],
+  fallbackCandidates: number[],
+  cumulativeWeights: number[],
+  idealWeight: number,
+): number {
+  const fallback = closestSpeechBoundary(fallbackCandidates, cumulativeWeights, idealWeight);
+  if (naturalCandidates.length === 0) {
+    return fallback;
   }
 
-  for (let index = maxCharacters; index >= preferredMinimum; index -= 1) {
-    if (isSpeechSentenceBoundary(characters[index - 1] ?? "", characters[index] ?? "")) {
-      return index;
+  const natural = closestSpeechBoundary(naturalCandidates, cumulativeWeights, idealWeight);
+  const naturalDistance = Math.abs(cumulativeWeights[natural]! - idealWeight);
+  const fallbackDistance = Math.abs(cumulativeWeights[fallback]! - idealWeight);
+  return naturalDistance <= fallbackDistance + MAX_SPEECH_SEGMENT_WEIGHT * 0.05
+    ? natural
+    : fallback;
+}
+
+function closestSpeechBoundary(
+  candidates: number[],
+  cumulativeWeights: number[],
+  idealWeight: number,
+): number {
+  let closest = candidates[0]!;
+  let closestDistance = Math.abs(cumulativeWeights[closest]! - idealWeight);
+  for (const candidate of candidates.slice(1)) {
+    const distance = Math.abs(cumulativeWeights[candidate]! - idealWeight);
+    if (distance < closestDistance) {
+      closest = candidate;
+      closestDistance = distance;
     }
   }
-
-  for (let index = maxCharacters; index >= 1; index -= 1) {
-    if (/\s/u.test(characters[index] ?? "")) {
-      return index;
-    }
-  }
-
-  return maxCharacters;
+  return closest;
 }
 
 function isSpeechSentenceBoundary(previous: string, next: string): boolean {

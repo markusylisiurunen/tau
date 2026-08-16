@@ -205,7 +205,7 @@ brew install ffmpeg
 
 OpenAI is the default and needs `OPENAI_API_KEY` or `apiKeys.openai`. Set `speechToText.provider` to `gemini` to use `GEMINI_API_KEY` or `apiKeys.google`, or to `mistral` to use `MISTRAL_API_KEY` or `apiKeys.mistral`. These settings and credentials are read by the TUI process, including during remote attachment.
 
-`/speak` is also macOS-only. It rewrites the last assistant response for speech, generates audio with Gemini, and plays it through the local `afplay` command. It requires `GEMINI_API_KEY` or `apiKeys.google`, runs only while the session is idle, and can be stopped with Escape. Speech source and rewritten text are limited to 10,000 Unicode characters, and generation stops after 32 MiB of raw audio.
+`/speak` is also macOS-only. It rewrites the last assistant response for speech, streams audio from Gemini, and plays it through the local `ffplay` command included with `ffmpeg`. It requires `GEMINI_API_KEY` or `apiKeys.google`, runs only while the session is idle, and can be stopped with Escape. Longer responses are divided into balanced segments targeting at most two minutes of generated speech each. Speech source and rewritten text are limited to 10,000 Unicode characters, and generation stops after 32 MiB of raw audio.
 
 ## Reload the right component
 

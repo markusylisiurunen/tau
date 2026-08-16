@@ -37,7 +37,7 @@ describe("telegram TTS", () => {
       createWaveAudio(Buffer.from([1, 2, 3, 4])),
       createWaveAudio(Buffer.from([5, 6, 7, 8])),
     ];
-    const streamSpeechAudio = vi.fn(async function* () {
+    const generateSpeechAudio = vi.fn(async function* () {
       for (const [index, audio] of waves.entries()) {
         yield { index, total: waves.length, audio, mimeType: "audio/wav" };
       }
@@ -66,12 +66,12 @@ describe("telegram TTS", () => {
     const voice = await generateTelegramVoice({
       apiKey: "gemini-key",
       sourceText: "final answer",
-      deps: { streamSpeechAudio, spawn },
+      deps: { generateSpeechAudio, spawn },
     });
 
     expect(voice).toEqual(Buffer.from("OggS voice"));
-    expect(streamSpeechAudio).toHaveBeenCalledWith(
-      expect.objectContaining({ deliveryMode: "complete" }),
+    expect(generateSpeechAudio).toHaveBeenCalledWith(
+      expect.objectContaining({ apiKey: "gemini-key", sourceText: "final answer" }),
     );
     expect(manifest).toBe("ffconcat version 1.0\nfile 'chunk-000.wav'\nfile 'chunk-001.wav'\n");
     expect(writtenWaves).toEqual(waves);

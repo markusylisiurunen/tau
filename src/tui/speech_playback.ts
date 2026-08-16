@@ -1,13 +1,24 @@
-import { unlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import type { ChildProcess } from "node:child_process";
+import type { Writable } from "node:stream";
 import type { CoreDeps } from "../core/runtime/deps.js";
 import {
+  GEMINI_SPEECH_BITS_PER_SAMPLE,
+  GEMINI_SPEECH_CHANNEL_COUNT,
   GEMINI_SPEECH_PLAYBACK_RATE,
-  streamGeminiSpeechAudio,
+  GEMINI_SPEECH_SAMPLE_RATE_HZ,
+  streamGeminiSpeechPcm,
 } from "../core/utils/gemini_speech.js";
+import type { SpawnCaptureResult } from "../core/utils/spawn_capture.js";
 
-export const SPEAK_TEMP_FILE_TEMPLATE = join(tmpdir(), "tau-speak.XXXXXX");
+const SPEECH_PLAYBACK_START_BUFFER_MS = 500;
+const SPEECH_PLAYBACK_START_BUFFER_BYTES = Math.ceil(
+  GEMINI_SPEECH_SAMPLE_RATE_HZ *
+    GEMINI_SPEECH_CHANNEL_COUNT *
+    (GEMINI_SPEECH_BITS_PER_SAMPLE / 8) *
+    (SPEECH_PLAYBACK_START_BUFFER_MS / 1000),
+);
+
+type PlaybackOutcome = { result: SpawnCaptureResult } | { error: unknown };
 
 export async function runSpeechPlaybackTask(args: {
   deps: CoreDeps;
@@ -16,119 +27,200 @@ export async function runSpeechPlaybackTask(args: {
   signal: AbortSignal;
   onActivityLabel: (hint: string) => void;
 }): Promise<void> {
-  let audioPath: string | undefined;
-  let readyChunks = 0;
-  let totalChunks = 0;
-  let playedChunks = 0;
-  let playbackStarted = false;
+  const abortController = createLinkedAbortController(args.signal);
+  let playback: Promise<PlaybackOutcome> | undefined;
+  let playbackInput: Writable | null = null;
+  let playbackEnding = false;
+  let earlyPlaybackOutcome: PlaybackOutcome | undefined;
 
-  const refreshSpeechProgress = (): void => {
-    if (totalChunks <= 0) return;
-    args.onActivityLabel(
-      playbackStarted
-        ? formatSpeechPlaybackProgressMessage(playedChunks, readyChunks, totalChunks)
-        : formatSpeechChunkProgressMessage(readyChunks, totalChunks),
-    );
+  const startPlayback = async (): Promise<Writable> => {
+    if (!playback) {
+      playback = args.deps
+        .spawn(
+          "ffplay",
+          [
+            "-nodisp",
+            "-autoexit",
+            "-loglevel",
+            "error",
+            "-f",
+            "s16le",
+            "-ar",
+            String(GEMINI_SPEECH_SAMPLE_RATE_HZ),
+            "-ch_layout",
+            "mono",
+            "-af",
+            `atempo=${GEMINI_SPEECH_PLAYBACK_RATE}`,
+            "pipe:0",
+          ],
+          {
+            detached: true,
+            killProcessGroup: true,
+            signal: abortController.signal,
+            stdio: ["pipe", "ignore", "pipe"],
+            captureOutput: "stderr",
+            maxCaptureBytes: 20_000,
+            onSpawn: (child: ChildProcess) => {
+              playbackInput = child.stdin;
+              playbackInput?.on("error", () => {});
+            },
+          },
+        )
+        .then(
+          (result) => ({ result }),
+          (error: unknown) => ({ error }),
+        );
+      void playback.then((outcome) => {
+        if (!playbackEnding && !abortController.signal.aborted) {
+          earlyPlaybackOutcome = outcome;
+          abortController.abort();
+        }
+      });
+    }
+
+    if (!playbackInput) {
+      const outcome = await playback;
+      throw "error" in outcome ? outcome.error : playbackFailure(outcome.result);
+    }
+
+    args.onActivityLabel("playing speech");
+    return playbackInput;
   };
 
   try {
-    for await (const chunk of streamGeminiSpeechAudio({
+    for await (const chunk of streamGeminiSpeechPcm({
       apiKey: args.apiKey,
       sourceText: args.sourceText,
-      deliveryMode: "progressive",
-      signal: args.signal,
+      signal: abortController.signal,
+      initialBufferBytes: SPEECH_PLAYBACK_START_BUFFER_BYTES,
       onStageChange: (stage) => {
-        args.onActivityLabel(stage === "rewriting" ? "rewriting for speech" : "generating speech");
-      },
-      onChunkProgress: ({ ready, total }) => {
-        readyChunks = ready;
-        totalChunks = total;
-        refreshSpeechProgress();
+        args.onActivityLabel(stage === "rewriting" ? "rewriting for speech" : "preparing speech");
       },
     })) {
-      if (args.signal.aborted) {
-        return;
-      }
-
-      playbackStarted = true;
-      totalChunks = chunk.total;
-      refreshSpeechProgress();
-
-      audioPath = await createTempFilePath(args.deps, SPEAK_TEMP_FILE_TEMPLATE);
-      await writeFile(audioPath, chunk.audio);
-
-      const playback = await args.deps.spawn(
-        "afplay",
-        ["-r", String(GEMINI_SPEECH_PLAYBACK_RATE), audioPath],
-        {
-          detached: true,
-          killProcessGroup: true,
-          signal: args.signal,
-          stdio: ["ignore", "ignore", "ignore"],
-        },
-      );
-      await cleanupTempFile(audioPath);
-      audioPath = undefined;
-
-      if (args.signal.aborted || playback.aborted) {
-        return;
-      }
-      if (playback.exitCode !== 0) {
-        const detail =
-          playback.exitCode !== null
-            ? `afplay exited with code ${playback.exitCode}`
-            : playback.closeSignal
-              ? `afplay terminated by signal ${playback.closeSignal}`
-              : "afplay exited";
-        throw new Error(detail);
-      }
-
-      playedChunks = chunk.index + 1;
-      refreshSpeechProgress();
+      const input = await startPlayback();
+      await writePlaybackAudio(input, chunk.audio, abortController.signal);
     }
-  } catch (err) {
-    if (args.signal.aborted) {
+
+    playbackEnding = true;
+    await endPlayback(playbackInput!);
+    const outcome = await playback!;
+    if ("error" in outcome) {
+      throw outcome.error;
+    }
+    if (args.signal.aborted || outcome.result.aborted) {
       return;
     }
-    const error = err as NodeJS.ErrnoException;
-    if (error.name === "AbortError") {
+    if (outcome.result.exitCode !== 0) {
+      throw playbackFailure(outcome.result);
+    }
+  } catch (error) {
+    abortController.abort();
+    const outcome = earlyPlaybackOutcome ?? (playback ? await playback : undefined);
+    if (earlyPlaybackOutcome) {
+      if ("error" in earlyPlaybackOutcome) {
+        if (isMissingExecutableError(earlyPlaybackOutcome.error)) {
+          throw new Error("ffplay not found. Install ffmpeg to use /speak.");
+        }
+        throw earlyPlaybackOutcome.error;
+      }
+      throw playbackFailure(earlyPlaybackOutcome.result);
+    }
+    if (args.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
       return;
     }
-    if (error.code === "ENOENT") {
-      throw new Error("afplay not found.");
+    if (
+      isMissingExecutableError(error) ||
+      (outcome && "error" in outcome && isMissingExecutableError(outcome.error))
+    ) {
+      throw new Error("ffplay not found. Install ffmpeg to use /speak.");
     }
-    throw err;
+    if (outcome && "result" in outcome && !outcome.result.aborted) {
+      throw playbackFailure(outcome.result);
+    }
+    throw error;
   } finally {
-    if (audioPath) {
-      await cleanupTempFile(audioPath);
-    }
+    abortController.abort();
+    abortController.dispose();
   }
 }
 
-async function createTempFilePath(deps: CoreDeps, template: string): Promise<string> {
-  const result = await deps.spawn("mktemp", [template]);
-  if (result.exitCode !== 0) {
-    throw new Error(result.stderr || result.stdout || "mktemp failed");
+async function writePlaybackAudio(
+  input: Writable,
+  audio: Buffer,
+  signal: AbortSignal,
+): Promise<void> {
+  if (signal.aborted) {
+    throw abortError();
   }
-  const path = result.stdout.trim();
-  if (!path) {
-    throw new Error("mktemp returned an empty path");
-  }
-  return path;
+
+  await new Promise<void>((resolve, reject) => {
+    input.write(audio, (error) => {
+      if (error) {
+        reject(error);
+      } else {
+        resolve();
+      }
+    });
+  });
 }
 
-async function cleanupTempFile(path: string): Promise<void> {
-  try {
-    await unlink(path);
-  } catch {
-    // best-effort cleanup
+async function endPlayback(input: Writable): Promise<void> {
+  if (input.destroyed || input.writableEnded) {
+    return;
   }
+  await new Promise<void>((resolve) => input.end(resolve));
 }
 
-function formatSpeechChunkProgressMessage(ready: number, total: number): string {
-  return `generating speech chunks (${ready} out of ${total} ready)`;
+function playbackFailure(result: {
+  stderr: string;
+  exitCode: number | null;
+  closeSignal: NodeJS.Signals | null;
+}): Error {
+  const detail = result.stderr.trim();
+  if (detail) {
+    return new Error(`ffplay failed: ${detail}`);
+  }
+  if (result.exitCode !== null) {
+    return new Error(`ffplay exited with code ${result.exitCode}`);
+  }
+  if (result.closeSignal) {
+    return new Error(`ffplay terminated by signal ${result.closeSignal}`);
+  }
+  return new Error("ffplay exited");
 }
 
-function formatSpeechPlaybackProgressMessage(played: number, ready: number, total: number): string {
-  return `playing speech (${played}/${total} played, ${ready}/${total} ready)`;
+function isMissingExecutableError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as NodeJS.ErrnoException).code === "ENOENT"
+  );
+}
+
+function createLinkedAbortController(parent: AbortSignal): {
+  signal: AbortSignal;
+  abort: () => void;
+  dispose: () => void;
+} {
+  const controller = new AbortController();
+  const onAbort = () => controller.abort(parent.reason);
+
+  if (parent.aborted) {
+    onAbort();
+  } else {
+    parent.addEventListener("abort", onAbort, { once: true });
+  }
+
+  return {
+    signal: controller.signal,
+    abort: () => controller.abort(),
+    dispose: () => parent.removeEventListener("abort", onAbort),
+  };
+}
+
+function abortError(): Error {
+  const error = new Error("Speech playback was aborted");
+  error.name = "AbortError";
+  return error;
 }

@@ -26,6 +26,7 @@ import { copyTextToClipboard } from "../dist/tui/clipboard.js";
 import { LISTEN_CAPTURE_START_TIMEOUT_MS } from "../dist/tui/listen_capture.js";
 import { createTuiClientTools, SessionChatApp } from "../dist/tui/session_chat_app.js";
 import { SessionChatController } from "../dist/tui/session_chat_controller.js";
+import { runSpeechPlaybackTask } from "../dist/tui/speech_playback.js";
 import {
   createProtocolBootstrap,
   createProtocolExecResult,
@@ -5982,23 +5983,21 @@ describe("SessionChatController", () => {
     expect(session.submit).not.toHaveBeenCalled();
   });
 
-  it("speaks the last session assistant message using local playback", async () => {
-    const mktempPath = join(tmpdir(), `tau-session-speak-test-${Date.now()}.wav`);
-    const spawn = vi.fn(async (cmd) => {
-      if (cmd === "mktemp") {
-        return {
-          stdout: `${mktempPath}\n`,
-          stderr: "",
-          output: undefined,
-          exitCode: 0,
-          captureLimitExceeded: false,
-          timedOut: false,
-          aborted: false,
-          closeSignal: null,
-        };
-      }
-
-      return {
+  it("streams the last session assistant message through local playback", async () => {
+    const writtenAudio = [];
+    const player = deferred();
+    const stdin = new EventEmitter();
+    stdin.destroyed = false;
+    stdin.writableEnded = false;
+    stdin.write = vi.fn((audio, callback) => {
+      writtenAudio.push(Buffer.from(audio));
+      callback();
+      return true;
+    });
+    stdin.end = vi.fn((callback) => {
+      stdin.writableEnded = true;
+      callback();
+      player.resolve({
         stdout: "",
         stderr: "",
         output: undefined,
@@ -6007,7 +6006,11 @@ describe("SessionChatController", () => {
         timedOut: false,
         aborted: false,
         closeSignal: null,
-      };
+      });
+    });
+    const spawn = vi.fn((_cmd, _args, options) => {
+      options.onSpawn?.({ stdin });
+      return player.promise;
     });
     const session = new FakeSession(
       createSnapshot([
@@ -6032,6 +6035,31 @@ describe("SessionChatController", () => {
       deps: createMockDeps(spawn),
       config: { apiKeys: { google: "gemini-key" } },
     });
+    const firstAudio = Buffer.alloc(12_000, 1);
+    const secondAudio = Buffer.alloc(12_000, 2);
+    const streamingBody = [
+      {
+        candidates: [
+          {
+            content: {
+              parts: [{ inlineData: { data: firstAudio.toString("base64") } }],
+            },
+          },
+        ],
+      },
+      {
+        candidates: [
+          {
+            finishReason: "STOP",
+            content: {
+              parts: [{ inlineData: { data: secondAudio.toString("base64") } }],
+            },
+          },
+        ],
+      },
+    ]
+      .map((payload) => `data: ${JSON.stringify(payload)}\n\n`)
+      .join("");
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
@@ -6053,24 +6081,10 @@ describe("SessionChatController", () => {
         ),
       )
       .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            candidates: [
-              {
-                content: {
-                  parts: [
-                    {
-                      inlineData: {
-                        data: Buffer.from([1, 2, 3, 4]).toString("base64"),
-                      },
-                    },
-                  ],
-                },
-              },
-            ],
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        ),
+        new Response(streamingBody, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        }),
       );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -6079,7 +6093,6 @@ describe("SessionChatController", () => {
       await controller.speakLastAssistantMessage();
     } finally {
       vi.unstubAllGlobals();
-      await rm(mktempPath, { force: true });
     }
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -6087,26 +6100,287 @@ describe("SessionChatController", () => {
       .map((status) => (status.footer.type === "activity" ? status.footer.label : undefined))
       .filter((hint) => hint !== undefined);
     expect(speechHints).toEqual(
-      expect.arrayContaining([
-        "rewriting for speech",
-        "generating speech chunks (0 out of 1 ready)",
-        "generating speech chunks (1 out of 1 ready)",
-        "playing speech (0/1 played, 1/1 ready)",
-      ]),
+      expect.arrayContaining(["rewriting for speech", "preparing speech", "playing speech"]),
     );
     expect(view.status.footer.type).toBe("regular");
-    expect(spawn).toHaveBeenNthCalledWith(1, "mktemp", [join(tmpdir(), "tau-speak.XXXXXX")]);
-    expect(spawn).toHaveBeenNthCalledWith(
-      2,
-      "afplay",
-      ["-r", "1.15", mktempPath],
+    expect(spawn).toHaveBeenCalledOnce();
+    expect(spawn).toHaveBeenCalledWith(
+      "ffplay",
+      expect.arrayContaining([
+        "-f",
+        "s16le",
+        "-ar",
+        "24000",
+        "-ch_layout",
+        "mono",
+        "-af",
+        "atempo=1.15",
+        "pipe:0",
+      ]),
       expect.objectContaining({
         detached: true,
         killProcessGroup: true,
-        stdio: ["ignore", "ignore", "ignore"],
+        stdio: ["pipe", "ignore", "pipe"],
+        onSpawn: expect.any(Function),
       }),
     );
+    expect(writtenAudio).toEqual([Buffer.concat([firstAudio, secondAudio])]);
+    expect(stdin.end).toHaveBeenCalledOnce();
     expect(session.submit).not.toHaveBeenCalled();
+  });
+
+  it("waits for ffplay shutdown when speech is cancelled before a write", async () => {
+    const abortController = new AbortController();
+    const stdin = new EventEmitter();
+    stdin.destroyed = false;
+    stdin.writableEnded = false;
+    stdin.write = vi.fn();
+    let releasePlayback;
+    const spawn = vi.fn(
+      (_command, _args, options) =>
+        new Promise((resolve) => {
+          options.signal.addEventListener(
+            "abort",
+            () => {
+              releasePlayback = () =>
+                resolve({
+                  stdout: "",
+                  stderr: "",
+                  output: undefined,
+                  exitCode: null,
+                  captureLimitExceeded: false,
+                  timedOut: false,
+                  aborted: true,
+                  closeSignal: "SIGTERM",
+                });
+            },
+            { once: true },
+          );
+          options.onSpawn?.({ stdin });
+          abortController.abort();
+        }),
+    );
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            candidates: [{ content: { parts: [{ text: "Spoken version." }] } }],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          `data: ${JSON.stringify({
+            candidates: [
+              {
+                finishReason: "STOP",
+                content: {
+                  parts: [
+                    {
+                      inlineData: {
+                        data: Buffer.alloc(24_000, 1).toString("base64"),
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          })}\n\n`,
+          { status: 200, headers: { "Content-Type": "text/event-stream" } },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const playback = runSpeechPlaybackTask({
+        deps: createMockDeps(spawn),
+        apiKey: "gemini-key",
+        sourceText: "Original response.",
+        signal: abortController.signal,
+        onActivityLabel: vi.fn(),
+      });
+      let settled = false;
+      void playback.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+
+      await vi.waitFor(() => expect(releasePlayback).toBeTypeOf("function"));
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      releasePlayback();
+      await playback;
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    expect(stdin.write).not.toHaveBeenCalled();
+  });
+
+  it("aborts speech generation when ffplay exits early", async () => {
+    const stdin = new EventEmitter();
+    stdin.destroyed = false;
+    stdin.writableEnded = false;
+    stdin.write = vi.fn((_audio, callback) => {
+      callback();
+      return true;
+    });
+    const player = deferred();
+    const spawn = vi.fn((_command, _args, options) => {
+      options.onSpawn?.({ stdin });
+      return player.promise;
+    });
+    const streamAborted = vi.fn();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            candidates: [{ content: { parts: [{ text: "Spoken version." }] } }],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockImplementationOnce(async (_url, init) => {
+        const encoder = new TextEncoder();
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                encoder.encode(
+                  `data: ${JSON.stringify({
+                    candidates: [
+                      {
+                        content: {
+                          parts: [
+                            {
+                              inlineData: {
+                                data: Buffer.alloc(24_000, 1).toString("base64"),
+                              },
+                            },
+                          ],
+                        },
+                      },
+                    ],
+                  })}\n\n`,
+                ),
+              );
+              init.signal.addEventListener(
+                "abort",
+                () => {
+                  streamAborted();
+                  const error = new Error("aborted");
+                  error.name = "AbortError";
+                  controller.error(error);
+                },
+                { once: true },
+              );
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "text/event-stream" } },
+        );
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const playback = runSpeechPlaybackTask({
+        deps: createMockDeps(spawn),
+        apiKey: "gemini-key",
+        sourceText: "Original response.",
+        signal: new AbortController().signal,
+        onActivityLabel: vi.fn(),
+      });
+      const rejection = expect(playback).rejects.toThrow("ffplay failed: audio sink closed");
+
+      await vi.waitFor(() => expect(stdin.write).toHaveBeenCalledOnce());
+      player.resolve({
+        stdout: "",
+        stderr: "audio sink closed",
+        output: undefined,
+        exitCode: 1,
+        captureLimitExceeded: false,
+        timedOut: false,
+        aborted: false,
+        closeSignal: null,
+      });
+
+      await rejection;
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    expect(streamAborted).toHaveBeenCalledOnce();
+  });
+
+  it("reports ffplay diagnostics when its stdin closes early", async () => {
+    const stdin = new EventEmitter();
+    stdin.destroyed = false;
+    stdin.writableEnded = false;
+    stdin.write = vi.fn((_audio, callback) => {
+      const error = new Error("write EPIPE");
+      error.code = "EPIPE";
+      callback(error);
+      return false;
+    });
+    const spawn = vi.fn(async (_command, _args, options) => {
+      options.onSpawn?.({ stdin });
+      return {
+        stdout: "",
+        stderr: "audio open failed",
+        output: undefined,
+        exitCode: 0,
+        captureLimitExceeded: false,
+        timedOut: false,
+        aborted: false,
+        closeSignal: null,
+      };
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            candidates: [{ content: { parts: [{ text: "Spoken version." }] } }],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          `data: ${JSON.stringify({
+            candidates: [
+              {
+                finishReason: "STOP",
+                content: {
+                  parts: [{ inlineData: { data: Buffer.from([1, 2]).toString("base64") } }],
+                },
+              },
+            ],
+          })}\n\n`,
+          { status: 200, headers: { "Content-Type": "text/event-stream" } },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      await expect(
+        runSpeechPlaybackTask({
+          deps: createMockDeps(spawn),
+          apiKey: "gemini-key",
+          sourceText: "Original response.",
+          signal: new AbortController().signal,
+          onActivityLabel: vi.fn(),
+        }),
+      ).rejects.toThrow("ffplay failed: audio open failed");
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("exposes session catalog data for autocomplete", async () => {

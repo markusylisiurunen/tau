@@ -68,6 +68,7 @@ export function createSpeechToTextTranscription(
         const transcription = startOpenAITranscription({
           apiKey: options.apiKey,
           context: options.context,
+          fetchImpl: options.deps?.fetchImpl,
           webSocketFactory: options.deps?.webSocketFactory,
         });
         return {

@@ -226,18 +226,21 @@ describe("OpenAI transcription", () => {
 
   it("continues realtime transcription when keyword extraction fails", async () => {
     const harness = createWebSocketHarness();
+    const keywordResponse = new Response("unavailable", { status: 503 });
+    const cancelResponse = vi.spyOn(keywordResponse.body, "cancel");
     const transcription = startOpenAITranscription({
       apiKey: "openai-key",
       context: {
         messages: [{ role: "assistant", text: "The repository is called Tau." }],
       },
-      fetchImpl: vi.fn(async () => new Response("unavailable", { status: 503 })),
+      fetchImpl: vi.fn(async () => keywordResponse),
       webSocketFactory: harness.factory,
     });
 
     transcription.appendAudio(Buffer.from([1, 2]));
     await expect(transcription.finish()).resolves.toBe("streamed transcript");
 
+    expect(cancelResponse).toHaveBeenCalledOnce();
     expect(harness.socket.sent[0].session.audio.input.transcription).toEqual({
       model: "gpt-live-transcribe",
       prompt:

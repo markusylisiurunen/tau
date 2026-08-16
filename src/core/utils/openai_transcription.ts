@@ -578,7 +578,10 @@ async function prepareOpenAITranscriptionKeywords(args: {
         text: OPENAI_TRANSCRIPTION_KEYWORD_TEXT_CONFIG,
       }),
     });
-    if (!response.ok) return [];
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => {});
+      return [];
+    }
 
     const responseText = await response.text();
     const payload = responseText ? (JSON.parse(responseText) as unknown) : undefined;

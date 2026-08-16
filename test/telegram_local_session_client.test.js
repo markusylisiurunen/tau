@@ -45,6 +45,7 @@ describe("local Telegram session client", () => {
     const createSdkClient = vi.fn(async () => client);
     const buildCommandClientTools = vi.fn(createCommandClientTools);
     const hostConfig = { history: { endpoint: "https://history.example.com" } };
+    const remoteModelCatalog = { snapshot: vi.fn(() => new Map()) };
 
     try {
       mkdirSync(globalConfigDirectory, { recursive: true });
@@ -82,6 +83,7 @@ describe("local Telegram session client", () => {
           client: { cwd, persona: "gpt-5.6-sol-coder", noAgentContextFiles: true },
           hostConfig,
           configDeps,
+          remoteModelCatalog,
           deps: {
             createCommandClientTools: buildCommandClientTools,
             createSdkClient,
@@ -109,6 +111,11 @@ describe("local Telegram session client", () => {
         "deploy",
       ]);
       expect(createSdkClient.mock.calls[1][1]).toBe(hostConfig);
+      expect(createSdkClient.mock.calls.map((call) => call[2])).toEqual([
+        { remoteModelCatalog },
+        { remoteModelCatalog },
+        { remoteModelCatalog },
+      ]);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -30,6 +30,24 @@ function catalogResponse(provider, id, options = {}) {
       etag: options.etag ?? '"catalog-v1"',
     },
   });
+}
+
+function writeCatalogStore(path, provider, id, options) {
+  writeFileSync(
+    path,
+    JSON.stringify({
+      version: 1,
+      providers: {
+        [provider]: {
+          models: [model(provider, id)],
+          checkedAt: options.checkedAt,
+          lastModified: Date.parse(options.lastModified),
+          etag: options.etag,
+        },
+      },
+    }),
+    "utf8",
+  );
 }
 
 describe("remote model catalog", () => {
@@ -135,6 +153,91 @@ describe("remote model catalog", () => {
     }
   });
 
+  it("does not let delayed concurrent responses replace newer stored shards", async () => {
+    const home = mkdtempSync(join(tmpdir(), "tau-remote-model-catalog-"));
+    const path = join(home, "models-store.json");
+    let markRevalidationStarted;
+    let resolveRevalidation;
+    let markReplacementStarted;
+    let resolveReplacement;
+    const revalidationStarted = new Promise((resolve) => {
+      markRevalidationStarted = resolve;
+    });
+    const revalidationResponse = new Promise((resolve) => {
+      resolveRevalidation = resolve;
+    });
+    const replacementStarted = new Promise((resolve) => {
+      markReplacementStarted = resolve;
+    });
+    const replacementResponse = new Promise((resolve) => {
+      resolveReplacement = resolve;
+    });
+    try {
+      writeCatalogStore(path, "openai", "initial", {
+        checkedAt: 1,
+        lastModified: "Thu, 01 Jan 2026 00:00:00 GMT",
+        etag: '"initial"',
+      });
+      const catalog = new RemoteModelCatalog({
+        path,
+        providerIds: ["openai"],
+        builtinGeneratedAt: 0,
+        fetch: vi
+          .fn()
+          .mockImplementationOnce(async () => {
+            markRevalidationStarted();
+            return await revalidationResponse;
+          })
+          .mockImplementationOnce(async () => {
+            markReplacementStarted();
+            return await replacementResponse;
+          }),
+      });
+
+      const revalidation = catalog.refresh({ force: true });
+      await revalidationStarted;
+      writeCatalogStore(path, "openai", "concurrent-newer", {
+        checkedAt: 2,
+        lastModified: "Sun, 01 Mar 2026 00:00:00 GMT",
+        etag: '"concurrent-newer"',
+      });
+      resolveRevalidation(new Response(null, { status: 304 }));
+
+      const revalidationResult = await revalidation;
+      expect(revalidationResult.providers.get("openai")).toEqual({
+        status: "unchanged",
+        modelCount: 1,
+      });
+      expect(revalidationResult.snapshot.get("openai")?.[0].id).toBe("concurrent-newer");
+
+      const replacement = catalog.refresh({ force: true });
+      await replacementStarted;
+      writeCatalogStore(path, "openai", "concurrent-newest", {
+        checkedAt: 3,
+        lastModified: "Fri, 01 May 2026 00:00:00 GMT",
+        etag: '"concurrent-newest"',
+      });
+      resolveReplacement(
+        catalogResponse("openai", "stale-response", {
+          lastModified: "Wed, 01 Apr 2026 00:00:00 GMT",
+          etag: '"stale-response"',
+        }),
+      );
+
+      const replacementResult = await replacement;
+      expect(replacementResult.providers.get("openai")).toEqual({
+        status: "unchanged",
+        modelCount: 1,
+      });
+      expect(replacementResult.snapshot.get("openai")?.[0].id).toBe("concurrent-newest");
+      expect(JSON.parse(readFileSync(path, "utf8")).providers.openai.etag).toBe(
+        '"concurrent-newest"',
+      );
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("times out one provider without cancelling successful providers", async () => {
     const home = mkdtempSync(join(tmpdir(), "tau-remote-model-catalog-"));
     try {
@@ -189,6 +292,53 @@ describe("remote model catalog", () => {
 
       await expect(firstRefresh).resolves.toEqual(await secondRefresh);
       expect(fetchMock).toHaveBeenCalledOnce();
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("cancels a shared refresh only after its final consumer aborts", async () => {
+    const home = mkdtempSync(join(tmpdir(), "tau-remote-model-catalog-"));
+    const firstController = new AbortController();
+    const secondController = new AbortController();
+    let markRequestStarted;
+    let requestSignal;
+    const requestStarted = new Promise((resolve) => {
+      markRequestStarted = resolve;
+    });
+    try {
+      const options = {
+        path: join(home, "models-store.json"),
+        providerIds: ["openai"],
+        builtinGeneratedAt: 0,
+      };
+      const first = new RemoteModelCatalog({
+        ...options,
+        fetch: vi.fn(
+          async (_url, request) =>
+            await new Promise((_resolve, reject) => {
+              requestSignal = request.signal;
+              markRequestStarted();
+              request.signal.addEventListener("abort", () => reject(request.signal.reason), {
+                once: true,
+              });
+            }),
+        ),
+      });
+      const second = new RemoteModelCatalog(options);
+
+      const firstRefresh = first.refresh({ force: true, signal: firstController.signal });
+      await requestStarted;
+      const secondRefresh = second.refresh({ force: true, signal: secondController.signal });
+      firstController.abort(new Error("first closed"));
+
+      await expect(firstRefresh).rejects.toThrow("first closed");
+      expect(requestSignal.aborted).toBe(false);
+
+      secondController.abort(new Error("second closed"));
+
+      await expect(secondRefresh).rejects.toThrow("second closed");
+      expect(requestSignal.aborted).toBe(true);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

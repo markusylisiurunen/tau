@@ -29,7 +29,7 @@ const LOCK_RETRY_MS = 20;
 const LOCK_STALE_MS = 60_000;
 const PRIVATE_DIRECTORY_MODE = 0o700;
 const PRIVATE_FILE_MODE = 0o600;
-const activeRefreshesByPath = new Map<string, Promise<RemoteCatalogRefreshResult>>();
+const activeRefreshesByPath = new Map<string, ActiveRemoteCatalogRefresh>();
 
 const CostRatesSchema = z.object({
   input: z.number().finite(),
@@ -91,9 +91,29 @@ export type RemoteCatalogRefreshResult = {
   snapshot: RemoteModelCatalogSnapshot;
 };
 
-type ProviderUpdate = {
-  provider: string;
-  entry: StoredProvider;
+type ActiveRemoteCatalogRefresh = {
+  controller: AbortController;
+  consumers: Set<symbol>;
+  promise: Promise<RemoteCatalogRefreshResult>;
+};
+
+type ProviderUpdate =
+  | {
+      type: "revalidate";
+      provider: string;
+      expected: StoredProvider;
+      checkedAt: number;
+    }
+  | {
+      type: "replace";
+      provider: string;
+      expected: StoredProvider | undefined;
+      entry: StoredProvider;
+    };
+
+type StoreApplyResult = {
+  document: StoreDocument;
+  skippedProviders: ReadonlySet<string>;
 };
 
 export function getDefaultModelCatalogStorePath(home: string): string {
@@ -168,6 +188,17 @@ function saveStoreDocument(path: string, document: StoreDocument): void {
   }
 }
 
+function hasSameProviderRevision(
+  current: StoredProvider | undefined,
+  expected: StoredProvider | undefined,
+): boolean {
+  return (
+    current?.checkedAt === expected?.checkedAt &&
+    current?.lastModified === expected?.lastModified &&
+    current?.etag === expected?.etag
+  );
+}
+
 class FileRemoteModelCatalogStore {
   constructor(private readonly path: string) {}
 
@@ -175,17 +206,37 @@ class FileRemoteModelCatalogStore {
     return readStoreDocument(this.path);
   }
 
-  async apply(updates: readonly ProviderUpdate[]): Promise<StoreDocument> {
-    if (updates.length === 0) return this.read();
+  async apply(updates: readonly ProviderUpdate[]): Promise<StoreApplyResult> {
+    if (updates.length === 0) {
+      return { document: this.read(), skippedProviders: new Set() };
+    }
     mkdirSync(dirname(this.path), { recursive: true, mode: PRIVATE_DIRECTORY_MODE });
     const release = await acquireLock(`${this.path}.lock`);
     try {
       const document = this.read();
+      const skippedProviders = new Set<string>();
+      let changed = false;
       for (const update of updates) {
-        document.providers[update.provider] = structuredClone(update.entry);
+        const current = document.providers[update.provider];
+        if (!hasSameProviderRevision(current, update.expected)) {
+          const incomingIsNewer =
+            update.type === "replace" &&
+            current?.lastModified !== undefined &&
+            update.entry.lastModified !== undefined &&
+            update.entry.lastModified > current.lastModified;
+          if (!incomingIsNewer) {
+            skippedProviders.add(update.provider);
+            continue;
+          }
+        }
+        document.providers[update.provider] =
+          update.type === "replace"
+            ? structuredClone(update.entry)
+            : { ...structuredClone(current!), checkedAt: update.checkedAt };
+        changed = true;
       }
-      saveStoreDocument(this.path, document);
-      return document;
+      if (changed) saveStoreDocument(this.path, document);
+      return { document, skippedProviders };
     } finally {
       release();
     }
@@ -306,15 +357,84 @@ export class RemoteModelCatalog {
   refresh(
     options: { force?: boolean; signal?: AbortSignal } = {},
   ): Promise<RemoteCatalogRefreshResult> {
-    const active = activeRefreshesByPath.get(this.path);
-    if (active) return active;
-    const operation = this.runRefresh(options).finally(() => {
-      if (activeRefreshesByPath.get(this.path) === operation) {
-        activeRefreshesByPath.delete(this.path);
+    let active = activeRefreshesByPath.get(this.path);
+    if (!active) {
+      const controller = new AbortController();
+      let created: ActiveRemoteCatalogRefresh;
+      const promise = this.runRefresh({ force: options.force, signal: controller.signal }).finally(
+        () => {
+          if (activeRefreshesByPath.get(this.path) === created) {
+            activeRefreshesByPath.delete(this.path);
+          }
+        },
+      );
+      created = { controller, consumers: new Set(), promise };
+      activeRefreshesByPath.set(this.path, created);
+      active = created;
+    }
+    return this.observeRefresh(active, options.signal);
+  }
+
+  private observeRefresh(
+    active: ActiveRemoteCatalogRefresh,
+    signal: AbortSignal | undefined,
+  ): Promise<RemoteCatalogRefreshResult> {
+    const consumer = Symbol();
+    active.consumers.add(consumer);
+    let released = false;
+    const release = (): boolean => {
+      if (released) return false;
+      released = true;
+      active.consumers.delete(consumer);
+      if (
+        active.consumers.size === 0 &&
+        activeRefreshesByPath.get(this.path) === active &&
+        !active.controller.signal.aborted
+      ) {
+        active.controller.abort();
+        return true;
       }
+      return false;
+    };
+
+    if (!signal) {
+      return active.promise.finally(() => {
+        release();
+      });
+    }
+
+    return new Promise((resolve, reject) => {
+      const rejectAfterRelease = () => {
+        const abortedOperation = release();
+        const rejectWithReason = () => reject(signal.reason);
+        if (abortedOperation) {
+          void active.promise.then(rejectWithReason, rejectWithReason);
+        } else {
+          rejectWithReason();
+        }
+      };
+      if (signal.aborted) {
+        rejectAfterRelease();
+        return;
+      }
+
+      const onAbort = () => rejectAfterRelease();
+      signal.addEventListener("abort", onAbort, { once: true });
+      void active.promise.then(
+        (result) => {
+          if (released) return;
+          signal.removeEventListener("abort", onAbort);
+          release();
+          resolve(result);
+        },
+        (error) => {
+          if (released) return;
+          signal.removeEventListener("abort", onAbort);
+          release();
+          reject(error);
+        },
+      );
     });
-    activeRefreshesByPath.set(this.path, operation);
-    return operation;
   }
 
   private async runRefresh(options: {
@@ -355,7 +475,7 @@ export class RemoteModelCatalog {
         const checkedAt = this.now();
         if (response.status === 304 && entry) {
           results.set(provider, { status: "unchanged", modelCount: models.length });
-          return { provider, entry: { ...entry, checkedAt } };
+          return { type: "revalidate" as const, provider, expected: entry, checkedAt };
         }
         if (!response.ok) {
           throw new Error(`model catalog request failed with status ${response.status}`);
@@ -371,19 +491,23 @@ export class RemoteModelCatalog {
             : {}),
         };
         results.set(provider, { status: "updated", modelCount: refreshed.length });
-        return { provider, entry: nextEntry };
+        return { type: "replace" as const, provider, expected: entry, entry: nextEntry };
       } catch (error) {
         results.set(provider, { status: "failed", error: formatError(error) });
         return undefined;
       }
     });
 
-    const document = await this.store.apply(
+    const applied = await this.store.apply(
       updates.filter((update): update is ProviderUpdate => update !== undefined),
     );
+    for (const provider of applied.skippedProviders) {
+      const models = activeModels(applied.document.providers[provider], this.builtinGeneratedAt);
+      results.set(provider, { status: "unchanged", modelCount: models.length });
+    }
     return {
       providers: results,
-      snapshot: createSnapshot(document, this.builtinGeneratedAt),
+      snapshot: createSnapshot(applied.document, this.builtinGeneratedAt),
     };
   }
 }

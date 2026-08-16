@@ -51,6 +51,13 @@ const hostHome = configDeps.env.home();
 const remoteModelCatalog = new RemoteModelCatalog({
   path: getDefaultModelCatalogStorePath(hostHome),
 });
+
+function refreshRemoteModelCatalogAtStartup(): void {
+  if (process.env.TAU_OFFLINE === undefined) {
+    void remoteModelCatalog.refresh().catch(() => {});
+  }
+}
+
 const argv = process.argv.slice(2);
 const isAttachSubcommand = argv[0] === "attach";
 const isServeSubcommand = argv[0] === "serve";
@@ -782,7 +789,11 @@ if (argv[0] === "telegram") {
   } = await import("./core/telegram/index.js");
   try {
     const telegramConfig = loadConfig(cwd, configDeps);
-    await runTelegramCommand(argv.slice(1), {
+    const telegramArgs = argv.slice(1);
+    if (!telegramArgs.some((arg) => arg === "--help" || arg === "-h")) {
+      refreshRemoteModelCatalogAtStartup();
+    }
+    await runTelegramCommand(telegramArgs, {
       cwd,
       env: process.env,
       config: telegramConfig,
@@ -791,6 +802,7 @@ if (argv[0] === "telegram") {
           client: options,
           hostConfig: telegramConfig,
           configDeps,
+          remoteModelCatalog,
         }),
     });
     process.exit(0);
@@ -1143,9 +1155,7 @@ if (cli.debug) {
 }
 
 if (isServeSubcommand) {
-  if (process.env.TAU_OFFLINE === undefined) {
-    void remoteModelCatalog.refresh().catch(() => {});
-  }
+  refreshRemoteModelCatalogAtStartup();
   const [sessionHost, { runWebSocketSessionServer }] = await Promise.all([
     createLocalSessionHost({ cli, config }),
     import("./core/modes/websocket_server.js"),
@@ -1208,6 +1218,7 @@ const clientTools = createTuiClientTools({
   getController: () => sessionChatApp?.getController(),
   commandTools: config.clientTools,
 });
+refreshRemoteModelCatalogAtStartup();
 const sessionClient = await createTauSdkClientWithHostConfig(
   {
     cwd,

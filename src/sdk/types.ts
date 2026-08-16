@@ -146,6 +146,7 @@ export type TauSdkClientOptions = TauSdkTransportClientOptions & {
   persona?: string;
   reasoning?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
   noAgentContextFiles?: boolean;
+  refreshModelCatalog?: boolean;
 };
 
 export type TauSdkWebSocketClientOptions = TauSdkTransportClientOptions &

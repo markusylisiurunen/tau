@@ -2,7 +2,8 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createTauSdkClient } from "@markusylisiurunen/tau/sdk";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { createTauSdkClientWithHostConfig } from "../dist/sdk/local_client.js";
 
 const localCreateInput = {
   executionEnvironment: { kind: "local", cwd: process.cwd() },
@@ -50,6 +51,83 @@ describe("sdk client integration", () => {
       }
     });
   }, 20_000);
+
+  it("leaves an injected remote catalog under caller refresh ownership", async () => {
+    await withTempHome(async (home) => {
+      const remoteModelCatalog = {
+        refresh: vi.fn(async () => ({ providers: new Map(), snapshot: new Map() })),
+        snapshot: vi.fn(() => new Map()),
+      };
+      const client = await createTauSdkClientWithHostConfig(
+        { cwd: home },
+        {},
+        { remoteModelCatalog },
+      );
+
+      try {
+        expect(remoteModelCatalog.refresh).not.toHaveBeenCalled();
+      } finally {
+        await client.close();
+      }
+    });
+  });
+
+  it("can disable its automatic remote catalog refresh", async () => {
+    await withTempHome(async (home) => {
+      const previousOffline = process.env.TAU_OFFLINE;
+      delete process.env.TAU_OFFLINE;
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+
+      try {
+        const client = await createTauSdkClient({ cwd: home, refreshModelCatalog: false });
+        await client.close();
+        expect(fetchMock).not.toHaveBeenCalled();
+      } finally {
+        vi.unstubAllGlobals();
+        if (previousOffline === undefined) delete process.env.TAU_OFFLINE;
+        else process.env.TAU_OFFLINE = previousOffline;
+      }
+    });
+  });
+
+  it("cancels and awaits its owned remote catalog refresh on close", async () => {
+    await withTempHome(async (home) => {
+      const previousOffline = process.env.TAU_OFFLINE;
+      delete process.env.TAU_OFFLINE;
+      let markRequestStarted;
+      let abortObserved = false;
+      const requestStarted = new Promise((resolve) => {
+        markRequestStarted = resolve;
+      });
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(
+          async (_url, request) =>
+            await new Promise((_resolve, reject) => {
+              markRequestStarted();
+              const onAbort = () => {
+                abortObserved = true;
+                reject(request.signal.reason);
+              };
+              if (request.signal.aborted) onAbort();
+              else request.signal.addEventListener("abort", onAbort, { once: true });
+            }),
+        ),
+      );
+
+      try {
+        const client = await createTauSdkClient({ cwd: home });
+        await requestStarted;
+        await client.close();
+        expect(abortObserved).toBe(true);
+      } finally {
+        vi.unstubAllGlobals();
+        if (previousOffline === undefined) delete process.env.TAU_OFFLINE;
+        else process.env.TAU_OFFLINE = previousOffline;
+      }
+    });
+  });
 
   it("persists sessions across in-process client restarts", async () => {
     await withTempHome(async (home) => {

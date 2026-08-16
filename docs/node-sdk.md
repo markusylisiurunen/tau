@@ -42,6 +42,7 @@ type TauSdkClientOptions = {
   persona?: string;
   reasoning?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
   noAgentContextFiles?: boolean;
+  refreshModelCatalog?: boolean;
   connectTimeoutMs?: number;
   initialize?: { client: { name: string; version: string } };
   clientTools?: TauSdkClientTool[];
@@ -50,7 +51,9 @@ type TauSdkClientOptions = {
 
 `persona`, `reasoning`, and `noAgentContextFiles` configure sessions created by this owned host. `connectTimeoutMs` defaults to 5,000 ms. Default initialization metadata is `{ client: { name: "tau-sdk", version: "1" } }`.
 
-Closing this client also shuts down its host after persisting live sessions.
+By default, creating an in-process client starts one asynchronous model-catalog freshness check against `pi.dev`. The host restores `~/.config/tau/models-store.json` first, does not refresh on a recurring timer, and keeps each session on its captured catalog until `session.reload()`. Set `refreshModelCatalog: false` to disable this client's automatic check, or set `TAU_OFFLINE` to disable automatic checks process-wide. Both controls preserve an existing cache and do not prevent an explicit `tau models refresh`. See [models](models.md) for precedence and [security](security.md) for the trust boundary.
+
+Closing this client shuts down its host after persisting live sessions. It also cancels and awaits a client-owned catalog refresh; a refresh shared with another in-process client continues until its final owner closes.
 
 ### Connect to `tau serve`
 

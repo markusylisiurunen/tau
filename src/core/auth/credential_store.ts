@@ -6,7 +6,6 @@ import type {
 } from "@earendil-works/pi-ai";
 import type { Config } from "../config/schema.js";
 import { getApiKeyForProvider } from "../config/schema.js";
-import { resolveProviderApiKey } from "../models/catalog.js";
 import type { AuthStorage } from "./auth_storage.js";
 import { decodeJwtPayload } from "./jwt.js";
 import { OpenAICodexAdapter } from "./providers/openai_codex.js";
@@ -186,14 +185,7 @@ export class TauCredentialStore implements CredentialStore {
   }
 
   private readConfiguredCredential(providerId: string): Credential | undefined {
-    const config = this.options.getConfig();
-    const env = this.options.env ?? process.env;
-    const extensionApiKey = resolveProviderApiKey({
-      provider: providerId,
-      apiKeys: config.apiKeys,
-      env,
-    });
-    const key = extensionApiKey ?? getApiKeyForProvider(config, providerId);
+    const key = getApiKeyForProvider(this.options.getConfig(), providerId);
     return key ? { type: "api_key", key } : undefined;
   }
 }

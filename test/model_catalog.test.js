@@ -18,7 +18,6 @@ import {
   loadModelResolver,
   resolveModel,
 } from "../dist/core/models/catalog.js";
-import { mergeTauProviderExtensionModels } from "../dist/core/models/tau_extensions.js";
 import { applyTauModelOverrides } from "../dist/core/models/tau_model_overrides.js";
 
 describe("model catalog", () => {
@@ -34,43 +33,6 @@ describe("model catalog", () => {
     expect(model).toBeTruthy();
     expect(model.provider).toBe("openai");
     expect(model.id).toBe("gpt-5.4");
-  });
-
-  it("merges Tau model extensions without replacing pi-ai models", () => {
-    const piModel = {
-      id: "future-model",
-      name: "Pi Future Model",
-      api: "openai-responses",
-      provider: "openai",
-      baseUrl: "https://api.openai.com/v1",
-      reasoning: true,
-      input: ["text", "image"],
-      cost: { input: 99, output: 99, cacheRead: 99, cacheWrite: 99 },
-      contextWindow: 999,
-      maxTokens: 999,
-    };
-    const tauModel = {
-      id: "tau-only-model",
-      name: "Tau Only Model",
-      api: "openai-responses",
-      provider: "openai",
-      baseUrl: "https://api.openai.com/v1",
-      reasoning: true,
-      input: ["text"],
-      cost: { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 0 },
-      contextWindow: 123000,
-      maxTokens: 4000,
-    };
-    const staleTauModel = { ...tauModel, id: "future-model", name: "Stale Tau Future Model" };
-
-    const merged = mergeTauProviderExtensionModels(
-      "openai",
-      [piModel],
-      [{ id: "openai", models: [staleTauModel, tauModel] }],
-    );
-
-    expect(merged.find((model) => model.id === "future-model")).toBe(piModel);
-    expect(merged.find((model) => model.id === "tau-only-model")).toBe(tauModel);
   });
 
   it("loads GPT-5.6 models from pi-ai", () => {
@@ -174,6 +136,39 @@ describe("model catalog", () => {
     };
 
     expect(applyTauModelOverrides(model)).toBe(model);
+  });
+
+  it("uses remote pi models as the base catalog", () => {
+    const bundled = resolveModel("openai", "gpt-5.4");
+    const remote = {
+      ...bundled,
+      name: "Remote GPT-5.4",
+      contextWindow: 654321,
+      maxTokens: 12345,
+    };
+    const deps = {
+      fs: {
+        readFile: () => "",
+        exists: () => false,
+        listDir: () => [],
+        stat: () => {
+          throw new Error("missing");
+        },
+      },
+      env: { getEnv: () => ({}), cwd: () => "/repo", home: () => "/home/user" },
+    };
+
+    const resolver = loadModelResolver({
+      deps,
+      levels: [],
+      remoteCatalog: new Map([["openai", [remote]]]),
+    });
+
+    expect(resolver.resolveModel("openai", "gpt-5.4")).toMatchObject({
+      name: "Remote GPT-5.4",
+      contextWindow: 654321,
+      maxTokens: 12345,
+    });
   });
 
   it("returns no models for unknown providers", () => {

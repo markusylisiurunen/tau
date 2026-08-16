@@ -1,3 +1,4 @@
+import type { RemoteModelCatalogSnapshot } from "../core/models/remote_catalog.js";
 import { composeSessionPrompts } from "../core/runtime/session_prompt_composer.js";
 import type { ResolveSubagentPrompts } from "../core/tools/spawn_agent.js";
 import type { ExecutionEnvironment } from "../execution/execution_environment.js";
@@ -5,11 +6,14 @@ import type { ExecutionEnvironment } from "../execution/execution_environment.js
 export function createExecutionEnvironmentSubagentPromptResolver(options: {
   sessionId: string;
   executionEnvironment: ExecutionEnvironment;
+  getRemoteModelCatalog: () => RemoteModelCatalogSnapshot;
   includeAgentContext: boolean;
   sessionStartedAt: number;
 }): ResolveSubagentPrompts {
   return async ({ cwd, persona }) => {
-    const { config, skills } = await options.executionEnvironment.resolveRuntimeConfig(cwd);
+    const { config, skills } = await options.executionEnvironment.resolveRuntimeConfig(cwd, {
+      remoteCatalog: options.getRemoteModelCatalog(),
+    });
     const runtimeContext = await options.executionEnvironment.resolveRuntimeContext({
       cwd,
       persona,

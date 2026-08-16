@@ -2,15 +2,25 @@
 
 A model definition tells Tau how to call a provider model and how to reason about its capabilities, limits, and cost. A persona selects one provider and model, while credentials authorize the resulting request. Keeping those layers separate makes it possible to update model metadata without rewriting persona behavior.
 
-Tau ships a versioned catalog and lets the execution environment overlay it with `models.json`. The effective catalog for a session therefore depends on both the installed Tau version and the session working directory.
+Tau ships a versioned catalog, refreshes compatible model metadata from `pi.dev`, and lets the execution environment overlay it with `models.json`. The effective catalog for a session therefore depends on the installed Tau version, the host's cached remote catalog, and the session working directory.
 
 ## Providers, models, and personas
 
 A **provider** owns authentication and one or more request APIs. A **model** is addressed by a provider ID and an exact model ID, such as `openai/gpt-5.6-sol`. A [persona](personas.md) binds that pair to a system prompt, settings, tools, skills, and subagents.
 
-The bundled catalog comes from Tau's model runtime and Tau-owned extensions. It supplies known provider IDs, bundled model IDs, request API names, endpoints, capability flags, token limits, and pricing. Bundled does not mean currently usable: a provider may still lack credentials, an account may not expose a model, or a configured endpoint may reject it. See [credentials](credentials.md).
+The bundled catalog comes from Tau's model runtime. It supplies known provider IDs, bundled model IDs, request API names, endpoints, capability flags, token limits, and pricing. Bundled does not mean currently usable: a provider may still lack credentials, an account may not expose a model, or a configured endpoint may reject it. See [credentials](credentials.md).
 
 Tau applies `models.json` overlays before resolving built-in or custom personas. A bundled persona therefore uses overridden metadata when its provider and model are patched.
+
+## Remote catalog
+
+A model-owning Tau host restores provider catalogs from `~/.config/tau/models-store.json` during startup, then checks `pi.dev` asynchronously when the cache is older than four hours. This is a startup freshness check, not a recurring timer. Set `TAU_OFFLINE` to skip the automatic network check.
+
+Tau requests one catalog shard for every provider included in its installed `pi-ai` version. Each request has a 15-second timeout and is independent: successful shards are cached even when another provider fails, while failed providers retain their previous valid shard or fall back to bundled metadata. Run `tau models refresh` on the host to bypass the freshness window and force a best-effort refresh. The command exits nonzero if any provider fails after preserving successful updates.
+
+Remote data replaces complete matching `pi-ai` model records and may add model IDs. Execution-environment `models.json` remains the highest-precedence layer. Tau identifies the installed `pi-ai` version to `pi.dev` so the service can select compatible records. Cached data older than the catalog bundled into `pi-ai` is ignored.
+
+A session captures the available remote catalog when it is created. A background refresh does not change that session. Run `/reload` to adopt the latest host cache; ordinary persona switching keeps the session's captured catalog.
 
 ## Where `models.json` is loaded
 

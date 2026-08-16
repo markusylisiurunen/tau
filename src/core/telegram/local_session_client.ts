@@ -2,6 +2,7 @@ import { createTauSdkClientWithHostConfig } from "../../sdk/local_client.js";
 import { createCommandClientTools } from "../client_tools/command_client_tools.js";
 import type { ConfigDeps } from "../config/deps.js";
 import { type Config, loadConfig } from "../config/schema.js";
+import type { RemoteModelCatalog } from "../models/remote_catalog.js";
 import type { TelegramSessionClient, TelegramSessionClientOptions } from "./session_manager.js";
 
 type LocalTelegramSessionClientDependencies = {
@@ -20,6 +21,7 @@ export async function createLocalTelegramSessionClient(options: {
   client: TelegramSessionClientOptions;
   hostConfig: Config;
   configDeps: ConfigDeps;
+  remoteModelCatalog: RemoteModelCatalog;
   deps?: Partial<LocalTelegramSessionClientDependencies>;
 }): Promise<TelegramSessionClient> {
   const deps = { ...defaultDependencies, ...options.deps };
@@ -33,5 +35,6 @@ export async function createLocalTelegramSessionClient(options: {
       clientTools,
     },
     options.hostConfig,
+    { remoteModelCatalog: options.remoteModelCatalog },
   );
 }

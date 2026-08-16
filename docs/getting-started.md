@@ -30,7 +30,11 @@ command -v tau
 npm list -g @markusylisiurunen/tau --depth=0
 ```
 
-The built-in documentation is packaged with Tau. Upgrading the package upgrades the documentation read by `tau_docs` on that host.
+The built-in documentation is packaged with Tau. Upgrading the package upgrades the documentation read by `tau_docs` on that host. Tau also refreshes compatible model metadata asynchronously when a model-owning host starts. To force that refresh without upgrading Tau, run:
+
+```sh
+tau models refresh
+```
 
 ## Set up a provider
 

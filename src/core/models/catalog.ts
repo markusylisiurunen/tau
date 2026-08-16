@@ -3,18 +3,11 @@ import { getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/pro
 import { z } from "zod";
 import type { ConfigDeps } from "../config/deps.js";
 import type { ConfigLevel } from "../config/paths.js";
-import {
-  TAU_PROVIDER_EXTENSIONS,
-  type TauProviderApiKeyResolverArgs,
-  validateTauProviderExtensionModel,
-} from "./tau_extensions.js";
+import type { RemoteModelCatalogSnapshot } from "./remote_catalog.js";
 import { applyTauModelOverrides } from "./tau_model_overrides.js";
-
-type ApiKeyResolver = (args: TauProviderApiKeyResolverArgs) => string | undefined;
 
 type CatalogState = {
   providers: Map<string, Map<string, Model<Api>>>;
-  apiKeyResolvers: Map<string, ApiKeyResolver>;
 };
 
 type ModelPatch = {
@@ -101,18 +94,6 @@ type ParsedModel = z.infer<typeof ModelSchema>;
 type ParsedProvider = z.infer<typeof ProviderSchema>;
 
 let catalogState: CatalogState | undefined;
-let extensionApiProvidersRegistered = false;
-
-function registerExtensionApiProvidersOnce(): void {
-  if (extensionApiProvidersRegistered) {
-    return;
-  }
-
-  for (const extension of TAU_PROVIDER_EXTENSIONS) {
-    extension.registerApiProviders?.();
-  }
-  extensionApiProvidersRegistered = true;
-}
 
 function ensureProviderModels(
   providers: Map<string, Map<string, Model<Api>>>,
@@ -133,15 +114,10 @@ function registerModel(args: {
   provider: string;
   model: Model<Api>;
   source: string;
-  onDuplicate?: "error" | "skip";
 }): void {
   const providerModels = ensureProviderModels(args.providers, args.provider);
   const existing = providerModels.get(args.model.id);
   if (existing) {
-    if (args.onDuplicate === "skip") {
-      return;
-    }
-
     throw new Error(
       `duplicate model registration for '${args.provider}:${args.model.id}' from ${args.source}`,
     );
@@ -150,9 +126,7 @@ function registerModel(args: {
   providerModels.set(args.model.id, args.model);
 }
 
-function createCatalogState(): CatalogState {
-  registerExtensionApiProvidersOnce();
-
+function createCatalogState(remoteCatalog?: RemoteModelCatalogSnapshot): CatalogState {
   const providers = new Map<string, Map<string, Model<Api>>>();
 
   for (const provider of getBuiltinProviders()) {
@@ -166,33 +140,15 @@ function createCatalogState(): CatalogState {
     }
   }
 
-  const apiKeyResolvers = new Map<string, ApiKeyResolver>();
-
-  for (const extension of TAU_PROVIDER_EXTENSIONS) {
-    if (extension.resolveApiKey) {
-      if (apiKeyResolvers.has(extension.id)) {
-        throw new Error(`duplicate api key resolver registration for provider '${extension.id}'`);
-      }
-      apiKeyResolvers.set(extension.id, extension.resolveApiKey);
-    }
-
-    validateTauProviderExtensionModel(extension);
-
-    for (const model of extension.models) {
-      registerModel({
-        providers,
-        provider: extension.id,
-        model,
-        source: `tau extension '${extension.id}'`,
-        onDuplicate: "skip",
-      });
+  for (const [provider, models] of remoteCatalog ?? []) {
+    const providerModels = providers.get(provider);
+    if (!providerModels) continue;
+    for (const model of models) {
+      providerModels.set(model.id, applyTauModelOverrides(structuredClone(model)));
     }
   }
 
-  return {
-    providers,
-    apiKeyResolvers,
-  };
+  return { providers };
 }
 
 function getCatalogState(): CatalogState {
@@ -413,11 +369,14 @@ function loadModelsFile(
 export function loadModelResolver(options: {
   deps: ConfigDeps;
   levels: ConfigLevel[];
+  remoteCatalog?: RemoteModelCatalogSnapshot;
 }): LoadedModelResolver {
   const deps = options.deps;
   const levels = options.levels;
 
-  const state = getCatalogState();
+  const state = options.remoteCatalog
+    ? createCatalogState(options.remoteCatalog)
+    : getCatalogState();
   const knownProviders = new Set(state.providers.keys());
   const modelsByKey = new Map<string, Model<Api>>();
   const providerTemplates = new Map<string, Model<Api>>();
@@ -564,13 +523,4 @@ export function resolveModelOrThrow(provider: string, modelId: string): Model<Ap
   }
 
   return model;
-}
-
-export function resolveProviderApiKey(args: TauProviderApiKeyResolverArgs): string | undefined {
-  const resolver = getCatalogState().apiKeyResolvers.get(args.provider);
-  if (!resolver) {
-    return undefined;
-  }
-
-  return resolver(args);
 }

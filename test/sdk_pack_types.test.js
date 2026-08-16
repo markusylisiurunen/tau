@@ -144,7 +144,7 @@ describe("sdk npm pack types", () => {
           "client.subscribeEphemeral((message) => { void message.sessionId; });",
           "transport.onFailure((error) => { void error.message; });",
           "void client.sessions.observe('session-1').then((session) => session.sample(sampleInput));",
-          "void createTauSdkClient({ cwd: '/repo' });",
+          "void createTauSdkClient({ cwd: '/repo', refreshModelCatalog: false });",
           "void createTauSdkClientFromTransport(transport, transportOptions);",
           'void createTauSdkWebSocketClient({ url: "ws://localhost:8787", authToken: "secret" });',
 

@@ -60,6 +60,8 @@ Temporary storage follows the same ownership boundary. Client, host, and runner 
 
 Outside narrow pre-creation metadata obtained by a client from an environment it directly manages, client and host filesystem APIs must not inspect execution-environment paths. Session creation attributes are complete, authoritative client input. The host and stores do not infer or normalize them. All agent-visible access must cross `ExecutionEnvironment` and `ToolExecutionBackend`, even for a local session. Physical co-location must not create a second runtime path.
 
+Remote Pi model catalogs and their cache are host-owned. The host may pass an immutable catalog snapshot into host-side runtime configuration resolution after target files have been collected, but execution environments and tool backends must not read the host cache. Execution-environment `models.json` remains the final model metadata overlay. A live session captures one remote catalog generation until explicit reload; startup refresh is asynchronous and never a recurring timer.
+
 The boundary contracts are in `src/execution/execution_environment.ts` and `src/core/tools/execution_backend.ts`. Host integration is in `src/host/`, and ownership behavior is covered by `test/local_execution_environment.test.js`, hosted-environment tests, and `test/local_session_host.test.js`.
 
 ### Generic adapters and Tau logic

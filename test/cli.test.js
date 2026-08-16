@@ -156,6 +156,18 @@ describe("cli", () => {
     expect(result.stdout).toContain("tau telegram --config-file <path>");
   });
 
+  it("prints models help", () => {
+    const mainPath = resolve(process.cwd(), "dist/main.js");
+    const result = spawnSync(process.execPath, [mainPath, "models", "--help"], {
+      encoding: "utf8",
+      env: process.env,
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("tau models refresh");
+    expect(result.stderr).toBe("");
+  });
+
   it("prints pdf-unpack help", () => {
     const mainPath = resolve(process.cwd(), "dist/main.js");
     const result = spawnSync(process.execPath, [mainPath, "tool", "pdf-unpack", "--help"], {

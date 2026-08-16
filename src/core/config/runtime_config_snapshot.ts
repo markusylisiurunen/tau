@@ -1,5 +1,6 @@
 import type { Stats } from "node:fs";
 import { dirname } from "node:path";
+import type { RemoteModelCatalogSnapshot } from "../models/remote_catalog.js";
 import {
   type BashExecutionResult,
   MAX_COMMAND_CAPTURE_BYTES,
@@ -117,6 +118,7 @@ export async function loadRuntimeConfigFromToolBackend(options: {
   backend: ToolExecutionBackend;
   cwd: string;
   home: string;
+  remoteCatalog: RemoteModelCatalogSnapshot;
 }): Promise<RuntimeConfigResult> {
   const result = await options.backend.runNodeScript(
     COLLECT_RUNTIME_CONFIG_SCRIPT,
@@ -138,6 +140,7 @@ export async function loadRuntimeConfigFromToolBackend(options: {
       home: options.home,
       snapshot,
     }),
+    { remoteCatalog: options.remoteCatalog },
   );
 }
 

@@ -32,10 +32,10 @@ const PRIVATE_FILE_MODE = 0o600;
 const activeRefreshesByPath = new Map<string, Promise<RemoteCatalogRefreshResult>>();
 
 const CostRatesSchema = z.object({
-  input: z.number().nonnegative(),
-  output: z.number().nonnegative(),
-  cacheRead: z.number().nonnegative(),
-  cacheWrite: z.number().nonnegative(),
+  input: z.number().finite(),
+  output: z.number().finite(),
+  cacheRead: z.number().finite(),
+  cacheWrite: z.number().finite(),
 });
 
 const ModelSchema = z.object({
@@ -43,7 +43,7 @@ const ModelSchema = z.object({
   name: z.string().min(1),
   api: z.string().min(1),
   provider: z.string().min(1),
-  baseUrl: z.string().min(1),
+  baseUrl: z.string(),
   reasoning: z.boolean(),
   thinkingLevelMap: z.record(z.string(), z.string().nullable()).optional(),
   input: z.array(z.enum(["text", "image"])),

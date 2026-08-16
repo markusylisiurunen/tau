@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { RemoteModelCatalog } from "../dist/core/models/remote_catalog.js";
 import { PI_AI_VERSION } from "../dist/core/version.js";
 
-function model(provider, id) {
+function model(provider, id, overrides = {}) {
   return {
     id,
     name: id,
@@ -17,11 +17,12 @@ function model(provider, id) {
     cost: { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 0 },
     contextWindow: 100000,
     maxTokens: 10000,
+    ...overrides,
   };
 }
 
 function catalogResponse(provider, id, options = {}) {
-  return new Response(JSON.stringify({ [id]: model(provider, id) }), {
+  return new Response(JSON.stringify({ [id]: model(provider, id, options.modelOverrides) }), {
     status: 200,
     headers: {
       "content-type": "application/json",
@@ -57,6 +58,41 @@ describe("remote model catalog", () => {
       expect(result.snapshot.get("openai")?.map((entry) => entry.id)).toEqual(["remote-openai"]);
       expect(result.snapshot.has("anthropic")).toBe(false);
       expect(JSON.parse(readFileSync(path, "utf8")).providers.openai.models).toHaveLength(1);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts Pi catalog endpoint and sentinel pricing values", async () => {
+    const home = mkdtempSync(join(tmpdir(), "tau-remote-model-catalog-"));
+    try {
+      const catalog = new RemoteModelCatalog({
+        path: join(home, "models-store.json"),
+        providerIds: ["azure-openai-responses", "openrouter"],
+        builtinGeneratedAt: 0,
+        fetch: vi.fn(async (url) => {
+          const provider = new URL(url).pathname.split("/").at(-1);
+          return provider === "azure-openai-responses"
+            ? catalogResponse(provider, "gpt-4", { modelOverrides: { baseUrl: "" } })
+            : catalogResponse(provider, "openrouter/auto", {
+                modelOverrides: {
+                  cost: {
+                    input: -1000000,
+                    output: -1000000,
+                    cacheRead: 0,
+                    cacheWrite: 0,
+                  },
+                },
+              });
+        }),
+      });
+
+      const result = await catalog.refresh({ force: true });
+
+      expect(result.providers.get("azure-openai-responses")?.status).toBe("updated");
+      expect(result.providers.get("openrouter")?.status).toBe("updated");
+      expect(result.snapshot.get("azure-openai-responses")?.[0].baseUrl).toBe("");
+      expect(result.snapshot.get("openrouter")?.[0].cost.input).toBe(-1000000);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

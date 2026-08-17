@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
 import type { Message } from "@earendil-works/pi-ai";
+import { assertNever } from "./never.js";
 
 // this is not accurate, but it's a good-enough estimate. OpenAI suggests 4 bytes per token as a
 // cheap heuristic, but in practice it seems to be slightly too low. we use 6 bytes per token, which
@@ -24,9 +25,17 @@ export function estimateMessageTokens(message: Message): number {
     typeof message.content === "string"
       ? message.content
       : message.content.map((block) => {
-          if (block.type !== "image") return block;
-          imageCount += 1;
-          return { ...block, data: "" };
+          switch (block.type) {
+            case "text":
+            case "thinking":
+            case "toolCall":
+              return block;
+            case "image":
+              imageCount += 1;
+              return { ...block, data: "" };
+            default:
+              return assertNever(block);
+          }
         });
   const bytes = Buffer.byteLength(JSON.stringify({ ...message, content }), "utf8");
   return Math.max(1, bytesToTokens(bytes) + imageCount * IMAGE_TOKEN_ESTIMATE);

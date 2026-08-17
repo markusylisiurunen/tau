@@ -483,7 +483,11 @@ export async function applyOperation(database: D1Database, operation: Operation)
     await database.batch(statements);
     return true;
   } catch (error) {
-    if (await operationExists(database, operation.id)) return false;
+    try {
+      if (await operationExists(database, operation.id)) return false;
+    } catch {
+      // Preserve the batch failure when reconciliation is unavailable.
+    }
     throw error;
   }
 }

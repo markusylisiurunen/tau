@@ -98,6 +98,7 @@ function createD1Harness(options = {}) {
         },
         first: vi.fn(async () => {
           if (query.includes("FROM operations")) {
+            if (options.operationError) throw options.operationError;
             return options.operationExists ? { found: 1 } : null;
           }
           if (query.includes("SELECT attributes_json")) return options.sessionRecord ?? null;
@@ -1088,10 +1089,14 @@ describe("session history", () => {
     ).toHaveLength(2);
   });
 
-  it("preserves storage failures when the operation was not applied", async () => {
-    const harness = createD1Harness();
+  it("preserves storage failures when reconciliation is unavailable", async () => {
+    const state = {};
+    const harness = createD1Harness(state);
     const failure = new Error("storage unavailable");
-    harness.database.batch.mockRejectedValue(failure);
+    harness.database.batch.mockImplementation(async () => {
+      state.operationError = new Error("reconciliation unavailable");
+      throw failure;
+    });
 
     await expect(
       applyOperation(harness.database, {

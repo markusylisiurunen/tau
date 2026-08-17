@@ -1074,6 +1074,27 @@ describe("compaction context message", () => {
     expect(cut).toEqual({ startIndex: 2, cutType: "turn-boundary" });
   });
 
+  it("does not let encoded image size distort the retained turn boundary", () => {
+    const entries = historyEntries([
+      userMessage(`old ${"x".repeat(9_000)}`),
+      assistantMessage("old answer"),
+      userMessage("current request"),
+      assistantMessage("image tool call"),
+      {
+        role: "toolResult",
+        toolCallId: "image-call",
+        toolName: "view_image",
+        content: [{ type: "image", data: "a".repeat(2 * 1024 * 1024), mimeType: "image/png" }],
+        isError: false,
+        timestamp: 0,
+      },
+    ]);
+
+    const cut = selectAutoCompactionCut(entries, { startIndex: 0, keepRecentTokens: 6_000 });
+
+    expect(cut).toEqual({ startIndex: 2, cutType: "turn-boundary" });
+  });
+
   it("splits only inside the oversized latest turn at assistant boundaries", () => {
     const entries = historyEntries([
       userMessage("latest request"),

@@ -1,4 +1,3 @@
-import { Buffer } from "node:buffer";
 import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import type {
@@ -44,7 +43,7 @@ import { buildCompactionUserMessage } from "../utils/compact.js";
 import { extractAssistantText } from "../utils/messages.js";
 import { prependModelNotice } from "../utils/model_notices.js";
 import type { TauStreamOptions } from "../utils/streaming_settings.js";
-import { bytesToTokens } from "../utils/token.js";
+import { estimateMessageTokens } from "../utils/token.js";
 import {
   formatTauUserText,
   getAutoCompactionMetadataFromMessage,
@@ -1366,8 +1365,7 @@ export class AgentRuntime {
       ) {
         return total;
       }
-      const contentBytes = Buffer.byteLength(JSON.stringify(message.content), "utf8");
-      return total + Math.max(1, bytesToTokens(contentBytes));
+      return total + estimateMessageTokens(message);
     }, checkpoint.tokens);
   }
 

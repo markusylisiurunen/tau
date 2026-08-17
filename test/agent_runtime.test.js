@@ -681,6 +681,75 @@ describe("AgentRuntime", () => {
     },
   );
 
+  it.each([
+    ["below", 1_000, false],
+    ["above", 6_000, true],
+  ])(
+    "handles a multi-megabyte image estimate %s the compaction threshold",
+    async (_position, checkpointTokens, shouldCompact) => {
+      const model = { ...personas[0].model, contextWindow: 11_000 };
+      const persona = createPersona({ model });
+      const call = fauxToolCall("image_tool", {}, { id: "image-call" });
+      const { runtime, events } = createRuntime({
+        persona,
+        config: {
+          autoCompact: { enabled: true, reserveTokens: 1_000, keepRecentTokens: 5_500 },
+        },
+        tools: [
+          createTool("image_tool", async () => ({
+            content: [{ type: "image", data: "a".repeat(2 * 1024 * 1024), mimeType: "image/png" }],
+            outcome: "succeeded",
+          })),
+        ],
+      });
+      const toolMessage = createAssistant(persona, [call], {
+        stopReason: "toolUse",
+        usage: {
+          input: checkpointTokens,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: checkpointTokens,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+      });
+      const finalText = shouldCompact ? "continued after compaction" : "image inspected";
+      const streams = [
+        createStream([], createAssistant(persona, "old response")),
+        createToolStream(toolMessage),
+      ];
+      if (shouldCompact) {
+        streams.push(
+          createStream(
+            [],
+            createAssistant(
+              persona,
+              "summary\n\n<preserved-user-message-ids>\n[]\n</preserved-user-message-ids>",
+            ),
+          ),
+        );
+      }
+      streams.push(createStream([], createAssistant(persona, finalText)));
+      const streamModel = setStreams(runtime, streams);
+
+      await runtime.submit(`old request ${"x".repeat(6_000)}`);
+      const result = await runtime.submit("inspect image");
+
+      expect(result.finalMessage.content[0].text).toBe(finalText);
+      expect(events.some((event) => event.type === "compaction_start")).toBe(shouldCompact);
+      if (shouldCompact) {
+        expect(events).toContainEqual(
+          expect.objectContaining({
+            type: "compaction_end",
+            reason: "threshold",
+            outcome: "compacted",
+          }),
+        );
+      }
+      expect(streamModel).toHaveBeenCalledTimes(shouldCompact ? 4 : 3);
+    },
+  );
+
   it("blocks a turn when required automatic compaction fails after input commit", async () => {
     const model = { ...personas[0].model, contextWindow: 100 };
     const persona = createPersona({ model });

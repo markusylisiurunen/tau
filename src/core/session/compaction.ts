@@ -6,7 +6,7 @@ import {
   truncateToolRecoveryResults,
 } from "../utils/compact.js";
 import { extractAssistantText } from "../utils/messages.js";
-import { bytesToTokens } from "../utils/token.js";
+import { bytesToTokens, estimateMessageTokens } from "../utils/token.js";
 import { truncateForTokens } from "../utils/truncate.js";
 import {
   formatTauUserText,
@@ -810,10 +810,6 @@ function estimateEntriesTokens(entries: readonly CompactionHistoryEntry[]): numb
         : total + estimateMessageTokens(entry.message),
     0,
   );
-}
-
-function estimateMessageTokens(message: Message): number {
-  return Math.max(1, bytesToTokens(Buffer.byteLength(JSON.stringify(message), "utf8")));
 }
 
 function extractLastAssistantMessage(history: readonly Message[]): string | undefined {

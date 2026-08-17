@@ -1053,6 +1053,60 @@ describe("session history", () => {
     }
   });
 
+  it("treats an operation committed by a concurrent request as already applied", async () => {
+    const state = { operationExists: false };
+    const harness = createD1Harness(state);
+    harness.database.batch.mockImplementation(async () => {
+      state.operationExists = true;
+      throw new Error("UNIQUE constraint failed: operations.operation_id");
+    });
+
+    const response = await callHistoryWorker(
+      "/v1/operations",
+      {
+        operations: [
+          {
+            id: "create-concurrent",
+            sessionId: "session-1",
+            type: "create",
+            session: {
+              sessionId: "session-1",
+              attributes: { source: "test" },
+              createdAt: 100,
+            },
+          },
+        ],
+      },
+      harness,
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ applied: 0 });
+    expect(harness.database.batch).toHaveBeenCalledOnce();
+    expect(
+      harness.prepared.filter((statement) => statement.query.includes("FROM operations")),
+    ).toHaveLength(2);
+  });
+
+  it("preserves storage failures when the operation was not applied", async () => {
+    const harness = createD1Harness();
+    const failure = new Error("storage unavailable");
+    harness.database.batch.mockRejectedValue(failure);
+
+    await expect(
+      applyOperation(harness.database, {
+        id: "create-failed",
+        sessionId: "session-1",
+        type: "create",
+        session: {
+          sessionId: "session-1",
+          attributes: { source: "test" },
+          createdAt: 100,
+        },
+      }),
+    ).rejects.toBe(failure);
+  });
+
   it("commits every remote replication operation through one D1 batch", async () => {
     const operations = [
       {

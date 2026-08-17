@@ -343,11 +343,7 @@ function authorize(request: Request, env: Env): boolean {
 }
 
 export async function applyOperation(database: D1Database, operation: Operation): Promise<boolean> {
-  const existing = await database
-    .prepare("SELECT 1 AS found FROM operations WHERE operation_id = ?")
-    .bind(operation.id)
-    .first();
-  if (existing) return false;
+  if (await operationExists(database, operation.id)) return false;
 
   const statements: D1PreparedStatement[] = [];
   const appliedAt = Date.now();
@@ -483,8 +479,21 @@ export async function applyOperation(database: D1Database, operation: Operation)
       .prepare("INSERT INTO operations (operation_id, session_id, applied_at) VALUES (?, ?, ?)")
       .bind(operation.id, operation.sessionId, appliedAt),
   );
-  await database.batch(statements);
-  return true;
+  try {
+    await database.batch(statements);
+    return true;
+  } catch (error) {
+    if (await operationExists(database, operation.id)) return false;
+    throw error;
+  }
+}
+
+async function operationExists(database: D1Database, operationId: string): Promise<boolean> {
+  const existing = await database
+    .prepare("SELECT 1 AS found FROM operations WHERE operation_id = ?")
+    .bind(operationId)
+    .first();
+  return Boolean(existing);
 }
 
 async function search(database: D1Database, raw: unknown): Promise<unknown> {

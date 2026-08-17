@@ -274,6 +274,10 @@ export class SessionChatController {
     }
   }
 
+  showHistoryReplicationDelayed(): void {
+    this.view.showFooterNotice("history replication delayed", "default");
+  }
+
   getInputHandlers(): ChatViewInputHandlers {
     return {
       onCtrlT: () => this.toggleThinkingVisibility(),

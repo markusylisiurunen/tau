@@ -20,25 +20,53 @@ const PERMANENT_REPLICATION_ERROR_CODES = new Set([
   "request_too_large",
 ]);
 
+export type HistoryReplicationFailureDiagnostic = {
+  event: "history_replication_failed";
+  endpoint: string;
+  sessionId?: string;
+  operationId?: string;
+  quarantined?: true;
+  error: {
+    status?: number;
+    code?: string;
+    message: string;
+  };
+};
+
+export type HistoryManagerOptions = {
+  failureReason?: string;
+  reportReplicationFailure?: (diagnostic: HistoryReplicationFailureDiagnostic) => void;
+};
+
 export class HistoryManager {
   private readonly replicationRuns = new Map<string, Promise<void>>();
   private readonly targets = new Map<string, HistoryRemoteTarget>();
+  private readonly reportReplicationFailure: NonNullable<
+    HistoryManagerOptions["reportReplicationFailure"]
+  >;
   private local: LocalHistoryStore | undefined;
   private failureReason: string | undefined;
 
-  constructor(local: LocalHistoryStore | undefined, failureReason?: string) {
-    if (!local && !failureReason) {
+  constructor(local: LocalHistoryStore | undefined, options: HistoryManagerOptions = {}) {
+    if (!local && !options.failureReason) {
       throw new Error("history manager requires a local store or failure reason");
     }
     this.local = local;
-    this.failureReason = failureReason;
+    this.failureReason = options.failureReason;
+    this.reportReplicationFailure = options.reportReplicationFailure ?? (() => {});
   }
 
-  static open(path: string): HistoryManager {
+  static open(
+    path: string,
+    options: Omit<HistoryManagerOptions, "failureReason"> = {},
+  ): HistoryManager {
     try {
-      return new HistoryManager(new LocalHistoryStore(path));
+      return new HistoryManager(new LocalHistoryStore(path), options);
     } catch (error) {
-      return new HistoryManager(undefined, formatFailureReason(error));
+      return new HistoryManager(undefined, {
+        ...options,
+        failureReason: formatFailureReason(error),
+      });
     }
   }
 
@@ -159,7 +187,7 @@ export class HistoryManager {
     });
     this.replicationRuns.set(target.endpoint, run);
     void run.catch((error) => {
-      reportReplicationFailure({ endpoint: target.endpoint, error });
+      this.emitReplicationFailure({ endpoint: target.endpoint, error });
     });
   }
 
@@ -195,7 +223,7 @@ export class HistoryManager {
               message: error.message,
               failedAt: Date.now(),
             });
-            reportReplicationFailure({
+            this.emitReplicationFailure({
               endpoint,
               sessionId: first.sessionId,
               operationId: first.id,
@@ -204,7 +232,7 @@ export class HistoryManager {
             });
             continue;
           }
-          reportReplicationFailure({
+          this.emitReplicationFailure({
             endpoint,
             sessionId: first.sessionId,
             operationId: first.id,
@@ -214,6 +242,33 @@ export class HistoryManager {
         }
         local.acknowledgeOperations(batch.map((item) => item.rowId));
       }
+    }
+  }
+
+  private emitReplicationFailure(input: {
+    endpoint: string;
+    sessionId?: string;
+    operationId?: string;
+    error: unknown;
+    quarantined?: boolean;
+  }): void {
+    const error = input.error;
+    try {
+      this.reportReplicationFailure({
+        event: "history_replication_failed",
+        endpoint: input.endpoint,
+        ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+        ...(input.operationId ? { operationId: input.operationId } : {}),
+        ...(input.quarantined ? { quarantined: true } : {}),
+        error: {
+          ...(error instanceof RemoteHistoryError
+            ? { status: error.status, ...(error.code ? { code: error.code } : {}) }
+            : {}),
+          message: formatFailureReason(error),
+        },
+      });
+    } catch {
+      // History diagnostics must not affect replication.
     }
   }
 }
@@ -233,31 +288,6 @@ function isPermanentReplicationFailure(error: unknown): error is RemoteHistoryEr
     error.status < 500 &&
     error.code !== undefined &&
     PERMANENT_REPLICATION_ERROR_CODES.has(error.code)
-  );
-}
-
-function reportReplicationFailure(input: {
-  endpoint: string;
-  sessionId?: string;
-  operationId?: string;
-  error: unknown;
-  quarantined?: boolean;
-}): void {
-  const error = input.error;
-  console.error(
-    JSON.stringify({
-      event: "history_replication_failed",
-      endpoint: input.endpoint,
-      ...(input.sessionId ? { sessionId: input.sessionId } : {}),
-      ...(input.operationId ? { operationId: input.operationId } : {}),
-      ...(input.quarantined ? { quarantined: true } : {}),
-      error: {
-        ...(error instanceof RemoteHistoryError
-          ? { status: error.status, ...(error.code ? { code: error.code } : {}) }
-          : {}),
-        message: formatFailureReason(error),
-      },
-    }),
   );
 }
 

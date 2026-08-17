@@ -628,7 +628,8 @@ describe("session history", () => {
 
   it("isolates permanent replication failures to one session lane", async () => {
     const store = new LocalHistoryStore(":memory:");
-    const history = new HistoryManager(store);
+    const reportReplicationFailure = vi.fn();
+    const history = new HistoryManager(store, { reportReplicationFailure });
     const remote = { endpoint: "https://history.example.com", apiKey: "secret" };
     const requests = [];
     const fetchMock = vi.fn(async (_url, init) => {
@@ -648,7 +649,6 @@ describe("session history", () => {
       }
       return Response.json({ applied: operations.length });
     });
-    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
     vi.stubGlobal("fetch", fetchMock);
 
     try {
@@ -681,26 +681,29 @@ describe("session history", () => {
           message: "session 'conflicting' has conflicting immutable data",
         },
       ]);
-      expect(JSON.parse(errorLog.mock.calls[0][0])).toMatchObject({
-        event: "history_replication_failed",
-        endpoint: remote.endpoint,
-        sessionId: "conflicting",
-        quarantined: true,
-        error: { status: 409, code: "immutable_conflict" },
-      });
+      expect(reportReplicationFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          event: "history_replication_failed",
+          endpoint: remote.endpoint,
+          sessionId: "conflicting",
+          quarantined: true,
+          error: expect.objectContaining({ status: 409, code: "immutable_conflict" }),
+        }),
+      );
     } finally {
       await history.flush();
       history.close();
       vi.unstubAllGlobals();
-      errorLog.mockRestore();
     }
   });
 
-  it("keeps endpoint failures retryable without quarantining a session", async () => {
+  it("keeps endpoint and diagnostic reporter failures retryable", async () => {
     const store = new LocalHistoryStore(":memory:");
-    const history = new HistoryManager(store);
+    const reportReplicationFailure = vi.fn(() => {
+      throw new Error("diagnostic reporter failed");
+    });
+    const history = new HistoryManager(store, { reportReplicationFailure });
     const remote = { endpoint: "https://history.example.com", apiKey: "secret" };
-    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
@@ -720,15 +723,16 @@ describe("session history", () => {
 
       expect(store.listPendingOperations(remote.endpoint, 10)).toHaveLength(1);
       expect(store.listReplicationFailures(remote.endpoint)).toEqual([]);
-      expect(JSON.parse(errorLog.mock.calls[0][0])).toMatchObject({
-        event: "history_replication_failed",
-        sessionId: "retryable",
-        error: { status: 503, code: "internal_error" },
-      });
+      expect(reportReplicationFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          event: "history_replication_failed",
+          sessionId: "retryable",
+          error: expect.objectContaining({ status: 503, code: "internal_error" }),
+        }),
+      );
     } finally {
       history.close();
       vi.unstubAllGlobals();
-      errorLog.mockRestore();
     }
   });
 

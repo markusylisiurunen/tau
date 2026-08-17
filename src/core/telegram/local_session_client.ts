@@ -1,4 +1,5 @@
 import { createTauSdkClientWithHostConfig } from "../../sdk/local_client.js";
+import type { TauSdkHostDiagnostic } from "../../sdk/types.js";
 import { createCommandClientTools } from "../client_tools/command_client_tools.js";
 import type { ConfigDeps } from "../config/deps.js";
 import { type Config, loadConfig } from "../config/schema.js";
@@ -22,6 +23,7 @@ export async function createLocalTelegramSessionClient(options: {
   hostConfig: Config;
   configDeps: ConfigDeps;
   remoteModelCatalog: RemoteModelCatalog;
+  reportDiagnostic?: (diagnostic: TauSdkHostDiagnostic) => void;
   deps?: Partial<LocalTelegramSessionClientDependencies>;
 }): Promise<TelegramSessionClient> {
   const deps = { ...defaultDependencies, ...options.deps };
@@ -33,6 +35,7 @@ export async function createLocalTelegramSessionClient(options: {
       ...options.client,
       initialize: { client: { name: "tau-telegram", version: "1" } },
       clientTools,
+      ...(options.reportDiagnostic ? { onDiagnostic: options.reportDiagnostic } : {}),
     },
     options.hostConfig,
     { remoteModelCatalog: options.remoteModelCatalog },

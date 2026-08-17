@@ -89,7 +89,9 @@ async function createInProcessSdkHost(
 
   const host = new LocalSessionHost({
     store: new FileSessionStore({ directory: getDefaultSessionStoreDirectory(home) }),
-    history: HistoryManager.open(getDefaultHistoryDatabasePath(home)),
+    history: HistoryManager.open(getDefaultHistoryDatabasePath(home), {
+      reportReplicationFailure: options.onDiagnostic,
+    }),
     historyRemote: resolveHistoryRemoteTarget(config),
     ...(onShutdown ? { onShutdown } : {}),
     executionEnvironmentResolver,

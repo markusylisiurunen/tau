@@ -89,6 +89,7 @@ export type {
   TauSdkEphemeralCreateResult,
   TauSdkEphemeralListener,
   TauSdkEphemeralSubmitResult,
+  TauSdkHostDiagnostic,
   TauSdkInitializeParams,
   TauSdkPendingUserMessagesListener,
   TauSdkPendingUserMessagesMessage,

@@ -5203,7 +5203,7 @@ describe("LocalSessionHost", () => {
     });
     await store.commitSessionSnapshot(storedSnapshot);
     const host = createHost(store, {
-      history: new HistoryManager(undefined, "history unavailable"),
+      history: new HistoryManager(undefined, { failureReason: "history unavailable" }),
     });
 
     const recoveredSession = await host.observeSession("stored-draft");

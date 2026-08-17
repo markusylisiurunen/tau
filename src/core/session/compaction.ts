@@ -580,12 +580,12 @@ export function prepareAutoCompaction(
   };
 }
 
-const AUTO_COMPACTION_ARCHIVE_REFERENCE_GUIDANCE = `After compaction, the continuing assistant will receive paths to temporary text and JSON transcripts of the pre-compaction context. Conversation records above that show a history entry id can be recovered from those transcripts by id. The continuing assistant can search the numbered text transcripts first, then inspect the corresponding JSON record when it needs the full archived content.
+const AUTO_COMPACTION_ARCHIVE_REFERENCE_GUIDANCE = `After compaction, the continuing assistant will receive exact paths to temporary text and JSON transcripts of the pre-compaction context. Conversation records above that show an archive entry id can be recovered from those files by id. The continuing assistant can search the numbered text transcripts first, then inspect the corresponding JSON record when it needs the full archived content.
 
-Keep the summary independently useful. State continuity-critical goals, constraints, decisions, current state, blockers, and next steps directly. When exact or bulky details would be wasteful to reproduce, you may mention the relevant history entry id in ordinary prose so the continuing assistant can retrieve it. This is useful for long tool output, diagnostic logs, exact errors, payloads, and large code excerpts. Use such references sparingly and only for ids shown in the conversation.
+Keep the summary independently useful. State continuity-critical goals, constraints, decisions, current state, blockers, and next steps directly. When exact or bulky details would be wasteful to reproduce, you may mention the relevant id as an auto-compaction archive entry id so the continuing assistant knows to use the supplied files, not the separate history tool. This is useful for long tool output, diagnostic logs, exact errors, payloads, and large code excerpts. Use such references sparingly and only for ids shown in the conversation.
 
-Good pattern: "The key failure is a missing RuntimeConfig field; the complete compiler output is in history entry 'HISTORY_ENTRY_ID'."
-Bad pattern: "See history entry 'HISTORY_ENTRY_ID' for what happened."`;
+Good pattern: "The key failure is a missing RuntimeConfig field; the complete compiler output is in auto-compaction archive entry 'ARCHIVE_ENTRY_ID'."
+Bad pattern: "See archive entry 'ARCHIVE_ENTRY_ID' for what happened."`;
 
 export function buildAutoCompactionPrompt(preparation: AutoCompactionPreparation): string {
   const retainedContextGuidance =
@@ -627,15 +627,15 @@ export function buildAutoCompactionContinuationMessage(args: {
 
   if (args.archive) {
     lines.push(
-      "The summary and retained context should normally be sufficient. If a specific missing detail is needed, temporary pre-compaction snapshots are available as numbered pairs in one directory:",
+      "The summary and retained context should normally be sufficient. Tau also created temporary pre-compaction archive files:",
+      `- archive guide: ${args.archive.documentationPath}`,
       `- this compaction's text transcript: ${args.archive.textPath}`,
       `- this compaction's full JSON: ${args.archive.jsonPath}`,
-      "Earlier numbered pairs in the same directory contain older pre-compaction snapshots, so include them in targeted searches when the detail may predate this compaction.",
-      "When the compaction summary mentions a history entry id, search the numbered text transcripts for that id first, then inspect the corresponding JSON record if the text transcript is truncated or incomplete.",
-      "When retained output is marked as truncated, search the text transcript by tool name and distinctive surrounding text, then inspect the paired JSON record for the complete output.",
-      "Prefer narrow searches and bounded reads of the text transcripts; their tool results are middle-truncated. The JSON files retain untruncated archived content and may be very large.",
-      "When available, delegating a precise archive lookup to a low-effort subagent can preserve this context more efficiently than reading large sections directly.",
-      "These files are temporary and may no longer exist.",
+      "Before continuing, ensure the archive guide's full contents are present in the current model context. If they are not already visible in full, read the guide now with an execution-environment file tool. This is required even when no archive lookup is currently planned.",
+      "For details removed from this session by automatic compaction, prefer these execution-environment files over the separate history tool, whose collection may be stale, remotely replicated, truncated, or unavailable.",
+      "Keep archive retrieval bounded: use a known entry id or distinctive evidence directly; when no clear key exists, a concise chronological overview followed by targeted drill-down is one useful optional pattern. Avoid blind guessed-term searches and complete transcript dumps.",
+      "Earlier numbered pairs may hold details predating this compaction. Text transcripts are searchable but truncate large tool results; matching JSON records retain full archived content and may be large.",
+      "Follow the guide for schemas, lifecycle details, and adaptable examples. These files are temporary and may no longer exist.",
     );
   }
 

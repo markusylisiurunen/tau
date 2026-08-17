@@ -14,6 +14,102 @@ import { truncateForTokens } from "../utils/truncate.js";
 const ARCHIVE_TEXT_TOOL_RESULT_MAX_TOKENS = 256;
 const ARCHIVE_WRITE_TIMEOUT_MS = 30_000;
 
+const AUTO_COMPACTION_ARCHIVE_DOCUMENTATION = [
+  "# Tau automatic compaction archives",
+  "",
+  "This directory contains temporary snapshots of model-visible context immediately before Tau automatic compaction. It is an agent recovery aid, not a durable backup.",
+  "",
+  "The compaction continuation requires this guide's full contents to be present in model context before work continues, even when no archive lookup is planned.",
+  "",
+  "## Files",
+  "",
+  "- `NNNNNN.txt` is a searchable transcript projection. User and assistant content is retained, while large tool results are middle-truncated.",
+  "- `NNNNNN.json` is the matching structured snapshot. It retains full archived content, including tool results, but excludes assistant thinking.",
+  "- Each numbered pair belongs to one compaction. A later pair contains the context visible at that time, which may include an earlier compaction summary instead of every older record. Inspect earlier pairs when necessary.",
+  "",
+  "The directory and files are private to the execution-environment user. Cleanup of the execution environment or its temporary directory may remove them.",
+  "",
+  "## JSON shape",
+  "",
+  "```json",
+  "{",
+  '  "version": 1,',
+  '  "agentId": "agent-id",',
+  '  "sequence": 1,',
+  '  "createdAt": 1750000000000,',
+  '  "messages": [',
+  "    {",
+  '      "historyEntryId": "entry-id",',
+  '      "role": "user",',
+  '      "timestamp": 1750000000000,',
+  '      "content": [{ "type": "text", "text": "..." }]',
+  "    },",
+  "    {",
+  '      "historyEntryId": "entry-id",',
+  '      "role": "assistant",',
+  '      "timestamp": 1750000000001,',
+  '      "content": [',
+  '        { "type": "text", "text": "..." },',
+  '        { "type": "toolCall", "id": "call-id", "name": "bash", "arguments": {} }',
+  "      ]",
+  "    },",
+  "    {",
+  '      "historyEntryId": "entry-id",',
+  '      "role": "toolResult",',
+  '      "timestamp": 1750000000002,',
+  '      "toolCallId": "call-id",',
+  '      "toolName": "bash",',
+  '      "isError": false,',
+  '      "content": [{ "type": "text", "text": "..." }]',
+  "    }",
+  "  ]",
+  "}",
+  "```",
+  "",
+  "Content can also contain image records with `type`, `mimeType`, and base64 `data`. Text transcripts omit image data. History entry ids are the stable link between a JSON record and its text marker.",
+  "",
+  "## Lookup patterns",
+  "",
+  "Choose a bounded strategy appropriate to the missing detail. Do not dump a complete JSON snapshot when a focused projection or read is sufficient.",
+  "",
+  "When an exact archive entry id is known:",
+  "",
+  "```sh",
+  "rg -n --fixed-strings 'entry-id' 000001.txt",
+  "sed -n '120,180p' 000001.txt",
+  "```",
+  "",
+  "When there is no clear key, a concise chronological overview can reveal where to drill down. The following is only an example; adapt or skip it based on the task:",
+  "",
+  "```sh",
+  "node - 000001.json <<'NODE'",
+  'const fs = require("node:fs");',
+  'const archive = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));',
+  "const flatten = (content) => content.map((part) =>",
+  '  part.type === "text" ? part.text : part.type === "toolCall"',
+  '    ? "[tool call " + part.name + "] " + JSON.stringify(part.arguments)',
+  '    : "[image " + part.mimeType + "]"',
+  ').join(" ").replace(/\\s+/g, " ").trim();',
+  "const excerpt = (text, max = 256) => {",
+  "  const chars = [...text];",
+  "  if (chars.length <= max) return text;",
+  '  const marker = " ... ";',
+  "  const kept = max - marker.length;",
+  "  const head = Math.ceil(kept / 2);",
+  '  return chars.slice(0, head).join("") + marker + chars.slice(-(kept - head)).join("");',
+  "};",
+  "for (const message of archive.messages) {",
+  '  const label = message.role === "assistant" ? "agent" : message.role === "toolResult"',
+  '    ? "tool " + message.toolName : "user";',
+  '  console.log("[" + label + " id=" + JSON.stringify("..." + message.historyEntryId.slice(-8)) + "] " + excerpt(flatten(message.content)));',
+  "}",
+  "NODE",
+  "```",
+  "",
+  "Use promising ids or distinctive evidence from such a projection to inspect bounded text regions or matching JSON records. Prefer these files over Tau's separate `history` tool for current-session pre-compaction recovery; a configured remote history collection may lag or truncate replicated payloads.",
+  "",
+].join("\n");
+
 const WRITE_AUTO_COMPACTION_ARCHIVE_SCRIPT = `
 const fs = require("node:fs");
 const os = require("node:os");
@@ -70,9 +166,11 @@ const sequence = latestSequence + 1;
 const basename = String(sequence).padStart(6, "0");
 const textPath = path.join(directory, basename + ".txt");
 const jsonPath = path.join(directory, basename + ".json");
+const documentationPath = path.join(directory, "README.md");
 const suffix = ".tmp-" + randomUUID();
 const textTemporaryPath = textPath + suffix;
 const jsonTemporaryPath = jsonPath + suffix;
+const documentationTemporaryPath = documentationPath + suffix;
 const record = {
   version: 1,
   agentId: payload.agentId,
@@ -94,6 +192,11 @@ const text = [
 ].join("\\n");
 
 try {
+  fs.writeFileSync(documentationTemporaryPath, payload.documentation, {
+    encoding: "utf8",
+    flag: "wx",
+    mode: 0o600,
+  });
   fs.writeFileSync(jsonTemporaryPath, JSON.stringify(record, null, 2) + "\\n", {
     encoding: "utf8",
     flag: "wx",
@@ -104,11 +207,14 @@ try {
     flag: "wx",
     mode: 0o600,
   });
+  fs.renameSync(documentationTemporaryPath, documentationPath);
   fs.renameSync(jsonTemporaryPath, jsonPath);
   fs.renameSync(textTemporaryPath, textPath);
+  fs.chmodSync(documentationPath, 0o600);
   fs.chmodSync(jsonPath, 0o600);
   fs.chmodSync(textPath, 0o600);
 } catch (error) {
+  fs.rmSync(documentationTemporaryPath, { force: true });
   fs.rmSync(jsonTemporaryPath, { force: true });
   fs.rmSync(textTemporaryPath, { force: true });
   fs.rmSync(jsonPath, { force: true });
@@ -116,7 +222,7 @@ try {
   throw error;
 }
 
-process.stdout.write(JSON.stringify({ textPath, jsonPath }));
+process.stdout.write(JSON.stringify({ textPath, jsonPath, documentationPath }));
 `.trim();
 
 type ArchiveTextContent = Pick<TextContent, "type" | "text">;
@@ -155,6 +261,7 @@ type AutoCompactionArchiveHistoryEntry = {
 export type AutoCompactionArchivePaths = {
   textPath: string;
   jsonPath: string;
+  documentationPath: string;
 };
 
 export type AutoCompactionArchiveRequest = {
@@ -182,6 +289,7 @@ export function createAutoCompactionArchiver(
           createdAt: request.createdAt,
           messages,
           textTranscript: formatArchiveText(messages),
+          documentation: AUTO_COMPACTION_ARCHIVE_DOCUMENTATION,
         }),
       ),
     });
@@ -313,14 +421,16 @@ function parseArchivePaths(output: string): AutoCompactionArchivePaths {
   if (!value || typeof value !== "object") {
     throw new Error("auto-compaction archive writer returned an invalid result");
   }
-  const { textPath, jsonPath } = value as Record<string, unknown>;
+  const { textPath, jsonPath, documentationPath } = value as Record<string, unknown>;
   if (
     typeof textPath !== "string" ||
     !textPath.endsWith(".txt") ||
     typeof jsonPath !== "string" ||
-    !jsonPath.endsWith(".json")
+    !jsonPath.endsWith(".json") ||
+    typeof documentationPath !== "string" ||
+    !documentationPath.endsWith("README.md")
   ) {
     throw new Error("auto-compaction archive writer returned invalid paths");
   }
-  return { textPath, jsonPath };
+  return { textPath, jsonPath, documentationPath };
 }

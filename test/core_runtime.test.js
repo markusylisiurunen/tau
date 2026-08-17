@@ -720,9 +720,11 @@ describe("automatic compaction archive", () => {
       roots.push(dirname(first.textPath));
       const record = JSON.parse(readFileSync(first.jsonPath, "utf8"));
       const text = readFileSync(first.textPath, "utf8");
+      const documentation = readFileSync(first.documentationPath, "utf8");
 
       expect(first.textPath).toMatch(/000001\.txt$/);
       expect(first.jsonPath).toMatch(/000001\.json$/);
+      expect(first.documentationPath).toBe(join(dirname(first.textPath), "README.md"));
       expect(record).toMatchObject({
         version: 1,
         agentId,
@@ -748,12 +750,22 @@ describe("automatic compaction archive", () => {
       expect(text).toContain("tokens truncated");
       expect(text).not.toContain(longOutput);
       expect(text).not.toContain("private reasoning must not be archived");
+      expect(documentation).toContain("# Tau automatic compaction archives");
+      expect(documentation).toContain(
+        "requires this guide's full contents to be present in model context",
+      );
+      expect(documentation).toContain("## JSON shape");
+      expect(documentation).toContain('"role": "toolResult"');
+      expect(documentation).toContain("only an example; adapt or skip it based on the task");
+      expect(documentation).toContain("Prefer these files over Tau's separate `history` tool");
       expect(statSync(dirname(first.textPath)).mode & 0o777).toBe(0o700);
+      expect(statSync(first.documentationPath).mode & 0o777).toBe(0o600);
       expect(statSync(first.textPath).mode & 0o777).toBe(0o600);
       expect(statSync(first.jsonPath).mode & 0o777).toBe(0o600);
 
       const second = await archive(request);
       expect(second.textPath).toBe(first.textPath.replace("000001.txt", "000002.txt"));
+      expect(second.documentationPath).toBe(first.documentationPath);
 
       const fork = await archive({ ...request, agentId: `agent-${randomUUID()}` });
       roots.push(dirname(fork.textPath));
@@ -1226,7 +1238,9 @@ describe("compaction context message", () => {
 
     expect(prompt).toContain('Add a "## Current Turn Handoff" section');
     expect(prompt).toContain("what the first retained message is continuing");
-    expect(prompt).toContain("Conversation records above that show a history entry id");
+    expect(prompt).toContain("Conversation records above that show an archive entry id");
+    expect(prompt).toContain("auto-compaction archive entry id");
+    expect(prompt).toContain("use the supplied files, not the separate history tool");
     expect(prompt).toContain(
       "tool-recovery payloads in the retained context may be middle-truncated",
     );

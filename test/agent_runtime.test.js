@@ -125,6 +125,7 @@ function createRuntime(options = {}) {
       (async () => ({
         textPath: "/tmp/tau-auto-compaction-test/000001.txt",
         jsonPath: "/tmp/tau-auto-compaction-test/000001.json",
+        documentationPath: "/tmp/tau-auto-compaction-test/README.md",
       })),
     ...(options.getCompactionContinuationSystemMessages
       ? {
@@ -233,6 +234,7 @@ describe("AgentRuntime", () => {
       archiveAutoCompaction: async () => ({
         textPath: "/tmp/tau-auto-compaction-test/000001.txt",
         jsonPath: "/tmp/tau-auto-compaction-test/000001.json",
+        documentationPath: "/tmp/tau-auto-compaction-test/README.md",
       }),
       state: {
         agentId: "agent-1",
@@ -847,6 +849,7 @@ describe("AgentRuntime", () => {
     const archiveAutoCompaction = vi.fn(async () => ({
       textPath: "/tmp/tau-auto-compaction-agent/000004.txt",
       jsonPath: "/tmp/tau-auto-compaction-agent/000004.json",
+      documentationPath: "/tmp/tau-auto-compaction-agent/README.md",
     }));
     const { runtime } = createRuntime({
       persona,
@@ -901,10 +904,24 @@ describe("AgentRuntime", () => {
     expect(JSON.stringify(continuationMessages.at(-1))).toContain(activeSubagentContext);
     expect(continuationContext).toContain("/tmp/tau-auto-compaction-agent/000004.txt");
     expect(continuationContext).toContain("/tmp/tau-auto-compaction-agent/000004.json");
-    expect(continuationContext).toContain("Earlier numbered pairs in the same directory");
-    expect(continuationContext).toContain("summary mentions a history entry id");
-    expect(continuationContext).toContain("retained output is marked as truncated");
-    expect(continuationContext).toContain("low-effort subagent");
+    expect(continuationContext).toContain("/tmp/tau-auto-compaction-agent/README.md");
+    expect(continuationContext).toContain("Before continuing");
+    expect(continuationContext).toContain("full contents are present in the current model context");
+    expect(continuationContext).toContain("read the guide now");
+    expect(continuationContext).toContain(
+      "required even when no archive lookup is currently planned",
+    );
+    expect(continuationContext).toContain(
+      "prefer these execution-environment files over the separate history tool",
+    );
+    expect(continuationContext).toContain("Keep archive retrieval bounded");
+    expect(continuationContext).toContain("concise chronological overview");
+    expect(continuationContext).toContain("Avoid blind guessed-term searches");
+    expect(continuationContext).toContain("Earlier numbered pairs may hold details");
+    expect(continuationContext).toContain("matching JSON records retain full archived content");
+    expect(continuationContext).toContain(
+      "Follow the guide for schemas, lifecycle details, and adaptable examples",
+    );
   });
 
   it("continues automatic compaction without archive guidance when archiving fails", async () => {

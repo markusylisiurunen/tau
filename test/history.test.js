@@ -17,7 +17,7 @@ import {
   toolHistoryEntry,
   userHistoryEntry,
 } from "../dist/core/history/transcript.js";
-import { createHistoryToolDefinition } from "../dist/core/tools/history.js";
+import { createHistoryToolDefinition, HISTORY_TOOL } from "../dist/core/tools/history.js";
 import historyWorker, {
   applyOperation,
   boundedSnippet,
@@ -1986,6 +1986,28 @@ describe("session history", () => {
     await expect(client.read({ sessionId: "session-1", limit: 10 })).rejects.toThrow(
       "History service returned invalid transcript data",
     );
+  });
+
+  it("documents bounded overview and drill-down retrieval", async () => {
+    expect(HISTORY_TOOL.description).toContain(
+      "use those execution-environment files instead of this tool",
+    );
+    expect(HISTORY_TOOL.description).toContain("may lag when remotely replicated");
+    expect(HISTORY_TOOL.description).toContain(
+      "consider deriving a bounded chronological overview",
+    );
+
+    const tool = createHistoryToolDefinition(createBackend(), {
+      search: vi.fn(),
+      read: vi.fn(),
+    });
+    const result = await runTool(tool, "console.log(docs)");
+    const text = toolText(result);
+    expect(text).toContain("project one bounded page without printing complete payloads");
+    expect(text).toContain('ref="...');
+    expect(text).toContain("reference.slice(-8)");
+    expect(text).toContain("scan transcript pages in code and print only matching entries");
+    expect(text).toContain("The second example reuses");
   });
 
   it("executes bounded search through the code-mode tool", async () => {

@@ -141,12 +141,26 @@ export type TauSdkTransportClientOptions = {
   clientTools?: TauSdkClientTool[];
 };
 
+export type TauSdkHostDiagnostic = {
+  event: "history_replication_failed";
+  endpoint: string;
+  sessionId?: string;
+  operationId?: string;
+  quarantined?: true;
+  error: {
+    status?: number;
+    code?: string;
+    message: string;
+  };
+};
+
 export type TauSdkClientOptions = TauSdkTransportClientOptions & {
   cwd?: string;
   persona?: string;
   reasoning?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
   noAgentContextFiles?: boolean;
   refreshModelCatalog?: boolean;
+  onDiagnostic?: (diagnostic: TauSdkHostDiagnostic) => void;
 };
 
 export type TauSdkWebSocketClientOptions = TauSdkTransportClientOptions &

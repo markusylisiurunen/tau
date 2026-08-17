@@ -43,6 +43,7 @@ type TauSdkClientOptions = {
   reasoning?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
   noAgentContextFiles?: boolean;
   refreshModelCatalog?: boolean;
+  onDiagnostic?: (diagnostic: TauSdkHostDiagnostic) => void;
   connectTimeoutMs?: number;
   initialize?: { client: { name: string; version: string } };
   clientTools?: TauSdkClientTool[];
@@ -50,6 +51,8 @@ type TauSdkClientOptions = {
 ```
 
 `persona`, `reasoning`, and `noAgentContextFiles` configure sessions created by this owned host. `connectTimeoutMs` defaults to 5,000 ms. Default initialization metadata is `{ client: { name: "tau-sdk", version: "1" } }`.
+
+The in-process host does not write asynchronous diagnostics to stdout or stderr. Set `onDiagnostic` to receive structured host diagnostics such as retryable history replication failures and route them through the embedding application's logging or presentation owner.
 
 By default, creating an in-process client starts one asynchronous model-catalog freshness check against `pi.dev`. The host restores `~/.config/tau/models-store.json` first, does not refresh on a recurring timer, and keeps each session on its captured catalog until `session.reload()`. Set `refreshModelCatalog: false` to disable this client's automatic check, or set `TAU_OFFLINE` to disable automatic checks process-wide. Both controls preserve an existing cache and do not prevent an explicit `tau models refresh`. See [models](models.md) for precedence and [security](security.md) for the trust boundary.
 

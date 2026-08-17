@@ -20,7 +20,10 @@ import { loadRuntimeBootstrap, loadRuntimeConfig } from "./core/config/runtime.j
 import type { Config } from "./core/config/schema.js";
 import { loadConfig } from "./core/config/schema.js";
 import { resolveHistoryRemoteTarget } from "./core/history/config.js";
-import { HistoryManager } from "./core/history/history_manager.js";
+import {
+  HistoryManager,
+  type HistoryReplicationFailureDiagnostic,
+} from "./core/history/history_manager.js";
 import { getDefaultHistoryDatabasePath } from "./core/history/local_history_store.js";
 import {
   getDefaultModelCatalogStorePath,
@@ -56,6 +59,10 @@ function refreshRemoteModelCatalogAtStartup(): void {
   if (process.env.TAU_OFFLINE === undefined) {
     void remoteModelCatalog.refresh().catch(() => {});
   }
+}
+
+function reportHostDiagnostic(diagnostic: HistoryReplicationFailureDiagnostic): void {
+  process.stderr.write(`${JSON.stringify(diagnostic)}\n`);
 }
 
 const argv = process.argv.slice(2);
@@ -557,7 +564,9 @@ async function createLocalSessionHost(options: {
 
   return new LocalSessionHost({
     store: new FileSessionStore({ directory: getDefaultSessionStoreDirectory(home) }),
-    history: HistoryManager.open(getDefaultHistoryDatabasePath(home)),
+    history: HistoryManager.open(getDefaultHistoryDatabasePath(home), {
+      reportReplicationFailure: reportHostDiagnostic,
+    }),
     historyRemote: resolveHistoryRemoteTarget(options.config),
     executionEnvironmentResolver: new CompositeExecutionEnvironmentResolver(resolvers),
     includeAgentContext: !options.cli.noAgentContextFiles,
@@ -803,6 +812,7 @@ if (argv[0] === "telegram") {
           hostConfig: telegramConfig,
           configDeps,
           remoteModelCatalog,
+          reportDiagnostic: reportHostDiagnostic,
         }),
     });
     process.exit(0);
@@ -1213,6 +1223,7 @@ const defaultDiffTool = createBuiltInDiffToolConfig({
 });
 
 let sessionChatApp: SessionChatApp | undefined;
+let historyReplicationDelayed = false;
 const clientTools = createTuiClientTools({
   enabled: !cli.noClientTools,
   getController: () => sessionChatApp?.getController(),
@@ -1227,6 +1238,14 @@ const sessionClient = await createTauSdkClientWithHostConfig(
     noAgentContextFiles: cli.noAgentContextFiles,
     initialize: { client: { name: "tau-tui", version: "1" } },
     clientTools,
+    onDiagnostic: () => {
+      const controller = sessionChatApp?.getController();
+      if (controller) {
+        controller.showHistoryReplicationDelayed();
+      } else {
+        historyReplicationDelayed = true;
+      }
+    },
   },
   config,
   { remoteModelCatalog },
@@ -1254,6 +1273,10 @@ const app = await SessionChatApp.open({
   defaultDiffTool,
 });
 sessionChatApp = app;
+if (historyReplicationDelayed) {
+  historyReplicationDelayed = false;
+  app.getController().showHistoryReplicationDelayed();
+}
 
 let isShuttingDown = false;
 const shutdown = async (code = 0) => {

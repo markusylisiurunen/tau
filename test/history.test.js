@@ -98,6 +98,7 @@ function createD1Harness(options = {}) {
         },
         first: vi.fn(async () => {
           if (query.includes("FROM operations")) {
+            if (options.operationError) throw options.operationError;
             return options.operationExists ? { found: 1 } : null;
           }
           if (query.includes("SELECT attributes_json")) return options.sessionRecord ?? null;
@@ -627,7 +628,8 @@ describe("session history", () => {
 
   it("isolates permanent replication failures to one session lane", async () => {
     const store = new LocalHistoryStore(":memory:");
-    const history = new HistoryManager(store);
+    const reportReplicationFailure = vi.fn();
+    const history = new HistoryManager(store, { reportReplicationFailure });
     const remote = { endpoint: "https://history.example.com", apiKey: "secret" };
     const requests = [];
     const fetchMock = vi.fn(async (_url, init) => {
@@ -647,7 +649,6 @@ describe("session history", () => {
       }
       return Response.json({ applied: operations.length });
     });
-    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
     vi.stubGlobal("fetch", fetchMock);
 
     try {
@@ -680,26 +681,29 @@ describe("session history", () => {
           message: "session 'conflicting' has conflicting immutable data",
         },
       ]);
-      expect(JSON.parse(errorLog.mock.calls[0][0])).toMatchObject({
-        event: "history_replication_failed",
-        endpoint: remote.endpoint,
-        sessionId: "conflicting",
-        quarantined: true,
-        error: { status: 409, code: "immutable_conflict" },
-      });
+      expect(reportReplicationFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          event: "history_replication_failed",
+          endpoint: remote.endpoint,
+          sessionId: "conflicting",
+          quarantined: true,
+          error: expect.objectContaining({ status: 409, code: "immutable_conflict" }),
+        }),
+      );
     } finally {
       await history.flush();
       history.close();
       vi.unstubAllGlobals();
-      errorLog.mockRestore();
     }
   });
 
-  it("keeps endpoint failures retryable without quarantining a session", async () => {
+  it("keeps endpoint and diagnostic reporter failures retryable", async () => {
     const store = new LocalHistoryStore(":memory:");
-    const history = new HistoryManager(store);
+    const reportReplicationFailure = vi.fn(() => {
+      throw new Error("diagnostic reporter failed");
+    });
+    const history = new HistoryManager(store, { reportReplicationFailure });
     const remote = { endpoint: "https://history.example.com", apiKey: "secret" };
-    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
@@ -719,15 +723,16 @@ describe("session history", () => {
 
       expect(store.listPendingOperations(remote.endpoint, 10)).toHaveLength(1);
       expect(store.listReplicationFailures(remote.endpoint)).toEqual([]);
-      expect(JSON.parse(errorLog.mock.calls[0][0])).toMatchObject({
-        event: "history_replication_failed",
-        sessionId: "retryable",
-        error: { status: 503, code: "internal_error" },
-      });
+      expect(reportReplicationFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          event: "history_replication_failed",
+          sessionId: "retryable",
+          error: expect.objectContaining({ status: 503, code: "internal_error" }),
+        }),
+      );
     } finally {
       history.close();
       vi.unstubAllGlobals();
-      errorLog.mockRestore();
     }
   });
 
@@ -1051,6 +1056,64 @@ describe("session history", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it("treats an operation committed by a concurrent request as already applied", async () => {
+    const state = { operationExists: false };
+    const harness = createD1Harness(state);
+    harness.database.batch.mockImplementation(async () => {
+      state.operationExists = true;
+      throw new Error("UNIQUE constraint failed: operations.operation_id");
+    });
+
+    const response = await callHistoryWorker(
+      "/v1/operations",
+      {
+        operations: [
+          {
+            id: "create-concurrent",
+            sessionId: "session-1",
+            type: "create",
+            session: {
+              sessionId: "session-1",
+              attributes: { source: "test" },
+              createdAt: 100,
+            },
+          },
+        ],
+      },
+      harness,
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ applied: 0 });
+    expect(harness.database.batch).toHaveBeenCalledOnce();
+    expect(
+      harness.prepared.filter((statement) => statement.query.includes("FROM operations")),
+    ).toHaveLength(2);
+  });
+
+  it("preserves storage failures when reconciliation is unavailable", async () => {
+    const state = {};
+    const harness = createD1Harness(state);
+    const failure = new Error("storage unavailable");
+    harness.database.batch.mockImplementation(async () => {
+      state.operationError = new Error("reconciliation unavailable");
+      throw failure;
+    });
+
+    await expect(
+      applyOperation(harness.database, {
+        id: "create-failed",
+        sessionId: "session-1",
+        type: "create",
+        session: {
+          sessionId: "session-1",
+          attributes: { source: "test" },
+          createdAt: 100,
+        },
+      }),
+    ).rejects.toBe(failure);
   });
 
   it("commits every remote replication operation through one D1 batch", async () => {

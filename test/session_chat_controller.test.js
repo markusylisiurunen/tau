@@ -909,6 +909,25 @@ describe("formatRewindCandidateAge", () => {
 });
 
 describe("SessionChatController", () => {
+  it("shows delayed history replication through the footer", async () => {
+    const session = new FakeSession();
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "in-process",
+    });
+
+    controller.showHistoryReplicationDelayed();
+
+    expect(view.footerNotices).toContainEqual({
+      text: "history replication delayed",
+      tone: "default",
+      durationMs: 3000,
+    });
+  });
+
   it("renders the main-style startup intro and compact remote cwd label", async () => {
     const systemPrompt = [
       "system prompt",

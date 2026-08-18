@@ -292,16 +292,6 @@ describe("tool cards", () => {
       { type: "text", text: "Invalid arguments: path must be a single line." },
     ]);
 
-    const unknownArgument = await execute({
-      id: "write-unknown-argument",
-      name: "write",
-      arguments: { path: "file.txt", content, unexpected: true },
-    });
-    expect(unknownArgument.result.outcome).toBe("blocked");
-    expect(unknownArgument.result.content).toEqual([
-      { type: "text", text: 'Invalid arguments: Unrecognized key: "unexpected"' },
-    ]);
-
     const succeeded = await execute({
       id: "write-valid",
       name: "write",

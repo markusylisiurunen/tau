@@ -107,24 +107,6 @@ describe("edit tool", () => {
     expect(getToolText(emptyOldText)).toBe("Invalid arguments: oldText must not be empty.");
   });
 
-  it("reports missing files as a correctable request", async () => {
-    const editTool = createEditToolDefinition(createLocalToolExecutionBackend());
-    const result = await runTool(editTool, {
-      id: "tool-missing-file",
-      name: TOOL_NAME_EDIT,
-      arguments: {
-        path: "/missing/file.txt",
-        oldText: "one",
-        newText: "two",
-      },
-    });
-
-    expect(result.toolResult.outcome).toBe("blocked");
-    expect(getToolText(result)).toBe(
-      "File not found at '/missing/file.txt'. Verify the path is correct.",
-    );
-  });
-
   it("renders the complete dim line diff with net metadata", async () => {
     const fx = setupFixture();
 

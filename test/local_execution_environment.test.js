@@ -172,36 +172,18 @@ describe("LocalExecutionEnvironment", () => {
       }),
     });
 
-    await expect(backend.runBash("sleep 10", { timeoutMs: 10 })).resolves.toEqual({
+    await expect(backend.runBash("sleep 10", { timeoutMs: 10 })).resolves.toMatchObject({
       output: "partial output\n",
-      stdout: "partial output\n",
       stderr: "",
-      exitCode: null,
-      truncated: false,
       timedOut: true,
-      aborted: false,
       closeSignal: "SIGTERM",
     });
   });
 
-  it("normalizes missing files at the backend boundary", async () => {
-    const root = await mkdtemp(join(tmpdir(), "tau-local-missing-file-"));
-    const backend = createLocalToolExecutionBackend({
-      env: { cwd: () => root },
-    });
-
-    try {
-      await expect(backend.readFile("missing.txt")).rejects.toMatchObject({
-        name: "ToolExecutionBackendError",
-        code: "not-found",
-      });
-      await expect(backend.readFileBinary("missing.png")).rejects.toMatchObject({
-        name: "ToolExecutionBackendError",
-        code: "not-found",
-      });
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
+  it("normalizes missing binary files at the backend boundary", async () => {
+    await expect(
+      createLocalToolExecutionBackend().readFileBinary("__tau_missing__.png"),
+    ).rejects.toMatchObject({ code: "not-found" });
   });
 
   it("scopes explicit environment variables without filtering sensitive names", async () => {

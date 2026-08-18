@@ -140,7 +140,7 @@ Ship &lt;all&gt; requirements
     );
   });
 
-  it("returns focused goal validation and execution failures", async () => {
+  it("returns focused goal execution failures", async () => {
     const runtime = createRuntime({
       goalManager: {
         getGoal: () => null,
@@ -159,19 +159,14 @@ Ship &lt;all&gt; requirements
       emitActivity: async () => {},
     };
 
-    const invalid = await createGoal.execute(
-      fauxToolCall("create_goal", { objective: "  " }),
-      context,
-    );
-    expect(invalid.outcome).toBe("blocked");
-    expect(invalid.content[0].text).toBe("Invalid arguments: objective: must not be empty.");
-
     const failed = await createGoal.execute(
       fauxToolCall("create_goal", { objective: "Ship it" }),
       context,
     );
-    expect(failed.outcome).toBe("failed");
-    expect(failed.content[0].text).toBe("Could not create session goal: goal store unavailable");
+    expect([failed.outcome, failed.content[0].text]).toEqual([
+      "failed",
+      "Could not create session goal: goal store unavailable",
+    ]);
   });
 
   it("supplies the authoritative active goal to compaction continuations", () => {

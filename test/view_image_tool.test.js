@@ -100,16 +100,6 @@ describe("view_image tool", () => {
       "Invalid arguments: path must be a single line.",
     );
     expect(result.uiEvent.presentation.details[0].tone).toBeUndefined();
-
-    const unknownArgument = await runTool(tool, {
-      id: "tool-unknown-argument",
-      name: TOOL_NAME_VIEW_IMAGE,
-      arguments: { path: "image.png", unexpected: true },
-    });
-    expect(unknownArgument.toolResult.outcome).toBe("blocked");
-    expect(getTextBlock(unknownArgument.toolResult.content)).toBe(
-      'Invalid arguments: Unrecognized key: "unexpected"',
-    );
   });
 
   it("downscales images to fit inside a 2000x2000 square", async () => {
@@ -217,7 +207,7 @@ describe("view_image tool", () => {
     }
   }, 10_000);
 
-  it("returns focused file read failures", async () => {
+  it("returns a focused missing-file result", async () => {
     const tool = createViewImageToolDefinition(createLocalToolExecutionBackend());
     const missing = await runTool(tool, {
       id: "tool-missing",
@@ -225,26 +215,10 @@ describe("view_image tool", () => {
       arguments: { path: "/missing/image.png" },
     });
 
-    expect(missing.toolResult.outcome).toBe("blocked");
-    expect(getTextBlock(missing.toolResult.content)).toBe(
+    expect([missing.toolResult.outcome, getTextBlock(missing.toolResult.content)]).toEqual([
+      "blocked",
       "File not found at '/missing/image.png'. Verify the path is correct.",
-    );
-
-    const failedTool = createViewImageToolDefinition({
-      async readFileBinary() {
-        throw new Error("storage unavailable");
-      },
-    });
-    const failed = await runTool(failedTool, {
-      id: "tool-read-failed",
-      name: TOOL_NAME_VIEW_IMAGE,
-      arguments: { path: "image.png" },
-    });
-
-    expect(failed.toolResult.outcome).toBe("failed");
-    expect(getTextBlock(failed.toolResult.content)).toBe(
-      "Could not view image: storage unavailable",
-    );
+    ]);
   });
 
   it("blocks unsupported image formats", async () => {

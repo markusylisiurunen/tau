@@ -214,12 +214,8 @@ export function createLocalToolExecutionBackend(
 
     async readFile(path) {
       const resolvedPath = resolvePath(path);
-      try {
-        const content = readFileSync(resolvedPath, "utf-8");
-        return { path: resolvedPath, content };
-      } catch (error) {
-        throw normalizeToolExecutionBackendError(error);
-      }
+      const content = readFileSync(resolvedPath, "utf-8");
+      return { path: resolvedPath, content };
     },
 
     async readFileBinary(path, options = {}) {

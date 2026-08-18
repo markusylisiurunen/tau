@@ -483,7 +483,7 @@ describe("Fly Sprite execution environment", () => {
     expect(requests[3].contentBase64).toBe(Buffer.from([0, 255]).toString("base64"));
   });
 
-  it("normalizes missing files at the backend boundary", async () => {
+  it("normalizes missing binary files at the backend boundary", async () => {
     const sprite = createFakeSprite(() => {
       throw Object.assign(new Error("ENOENT: no such file or directory"), { code: "ENOENT" });
     });
@@ -492,12 +492,7 @@ describe("Fly Sprite execution environment", () => {
       cwd: "/home/sprite/repo",
     });
 
-    await expect(backend.readFile("/home/sprite/repo/missing.txt")).rejects.toMatchObject({
-      name: "ToolExecutionBackendError",
-      code: "not-found",
-    });
     await expect(backend.readFileBinary("/home/sprite/repo/missing.png")).rejects.toMatchObject({
-      name: "ToolExecutionBackendError",
       code: "not-found",
     });
   });

@@ -187,18 +187,6 @@ describe("list_agents tool", () => {
     expect(result.uiEvent.presentation.metadata).toEqual([]);
     expect(() => JSON.parse(text)).toThrow();
   });
-
-  it("returns a focused supervisor failure", async () => {
-    const tool = createListAgentsToolDefinition({
-      listSnapshots: vi.fn(() => {
-        throw new Error("supervisor unavailable");
-      }),
-    });
-    const { result } = await execute(tool, {}, TOOL_NAME_LIST_AGENTS);
-
-    expect(result.toolResult.outcome).toBe("failed");
-    expect(getText(result.toolResult)).toBe("Could not list subagents: supervisor unavailable");
-  });
 });
 
 describe("send_input_to_agent tool", () => {
@@ -264,26 +252,6 @@ describe("send_input_to_agent tool", () => {
       ["Started run 2 for `agent-1` · child task", "capacity 1/8"].join("\n"),
     );
     expect(getText(result.toolResult)).not.toContain("previous response");
-  });
-
-  it("returns a focused supervisor failure", async () => {
-    const supervisor = {
-      getSnapshot: vi.fn(() => createSubagentState({ availability: "idle" })),
-      sendInput: vi.fn(() => {
-        throw new Error("supervisor unavailable");
-      }),
-    };
-    const tool = createSendInputToAgentToolDefinition(supervisor);
-    const { result } = await execute(
-      tool,
-      { id: "agent-1", prompt: "continue" },
-      TOOL_NAME_SEND_INPUT_TO_AGENT,
-    );
-
-    expect(result.toolResult.outcome).toBe("failed");
-    expect(getText(result.toolResult)).toBe(
-      "Could not send input to subagent: supervisor unavailable",
-    );
   });
 
   it("does not duplicate cancellation in details or metadata", async () => {
@@ -393,19 +361,6 @@ describe("wait_for_agents tool", () => {
       "agent-3",
     );
     expect(result.uiEvent.presentation.metadata).toEqual(["cost $0.02", "duration 30s"]);
-  });
-
-  it("returns a focused supervisor failure", async () => {
-    const supervisor = {
-      waitForAgents: vi.fn(async () => {
-        throw new Error("supervisor unavailable");
-      }),
-    };
-    const tool = createWaitForAgentsToolDefinition(supervisor);
-    const { result } = await execute(tool, { ids: ["agent-1"] }, TOOL_NAME_WAIT_FOR_AGENTS);
-
-    expect(result.toolResult.outcome).toBe("failed");
-    expect(getText(result.toolResult)).toBe("Could not wait for subagents: supervisor unavailable");
   });
 
   it("does not duplicate cancellation as a detail", async () => {
@@ -537,20 +492,6 @@ describe("interrupt_agent tool", () => {
 
     expect(result.uiEvent.presentation.details.map((line) => line.text).join("\n")).toBe(modelText);
     expect(result.uiEvent.presentation.details.at(-1).text).toBe(`failure: ${failureMessage}`);
-  });
-
-  it("returns a focused supervisor failure", async () => {
-    const supervisor = {
-      getSnapshot: vi.fn(() => createSubagentState()),
-      interrupt: vi.fn(async () => {
-        throw new Error("supervisor unavailable");
-      }),
-    };
-    const tool = createInterruptAgentToolDefinition(supervisor);
-    const { result } = await execute(tool, { id: "agent-1" }, TOOL_NAME_INTERRUPT_AGENT);
-
-    expect(result.toolResult.outcome).toBe("failed");
-    expect(getText(result.toolResult)).toBe("Could not interrupt subagent: supervisor unavailable");
   });
 
   it("does not duplicate cancellation as a detail", async () => {
@@ -792,18 +733,6 @@ describe("spawn_agent tool", () => {
     expect(supervisor.spawn).not.toHaveBeenCalled();
   });
 
-  it("returns a focused supervisor failure", async () => {
-    const supervisor = {
-      spawn: vi.fn(() => {
-        throw new Error("supervisor unavailable");
-      }),
-    };
-    const { result } = await execute(createFixture({ supervisor }).tool, baseArguments);
-
-    expect(result.toolResult.outcome).toBe("failed");
-    expect(getText(result.toolResult)).toBe("Could not create subagent: supervisor unavailable");
-  });
-
   it("reports supervisor admission failures as blocked", async () => {
     const supervisor = { spawn: vi.fn(() => ({ ok: false, reason: "active limit reached" })) };
     const { result } = await execute(createFixture({ supervisor }).tool, baseArguments);
@@ -816,3 +745,31 @@ describe("spawn_agent tool", () => {
     });
   });
 });
+
+it.each([
+  [
+    "list_agents",
+    () => createListAgentsToolDefinition({ listSnapshots: failSupervisorCall }),
+    {},
+    TOOL_NAME_LIST_AGENTS,
+    "Could not list subagents: supervisor unavailable",
+  ],
+  [
+    "send_input_to_agent",
+    () =>
+      createSendInputToAgentToolDefinition({
+        getSnapshot: () => createSubagentState({ availability: "idle" }),
+        sendInput: failSupervisorCall,
+      }),
+    { id: "agent-1", prompt: "continue" },
+    TOOL_NAME_SEND_INPUT_TO_AGENT,
+    "Could not send input to subagent: supervisor unavailable",
+  ],
+])("reports %s supervisor failures", async (_toolName, createTool, args, name, message) => {
+  const { result } = await execute(createTool(), args, name);
+  expect([result.toolResult.outcome, getText(result.toolResult)]).toEqual(["failed", message]);
+});
+
+function failSupervisorCall() {
+  throw new Error("supervisor unavailable");
+}

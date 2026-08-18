@@ -163,15 +163,11 @@ export function createFlySpriteToolExecutionBackend(options: {
     runNodeScript,
 
     async readFile(path) {
-      try {
-        const result = await worker.request("readFile", {
-          path,
-          timeoutMs: HELPER_COMMAND_TIMEOUT_MS,
-        });
-        return { path, content: result.content };
-      } catch (error) {
-        throw normalizeToolExecutionBackendError(error);
-      }
+      const result = await worker.request("readFile", {
+        path,
+        timeoutMs: HELPER_COMMAND_TIMEOUT_MS,
+      });
+      return { path, content: result.content };
     },
 
     async readFileBinary(path, readOptions = {}) {

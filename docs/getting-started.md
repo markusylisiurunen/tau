@@ -6,14 +6,13 @@ Tau is a terminal chat client that gives model-backed agents tools for working i
 
 Tau supports macOS and Linux. Windows is not supported.
 
-The published package requires Node.js 24 or newer. Check the active runtime before installing:
+The published package requires Node.js 24 or newer. Tau runs commands through fresh non-interactive login Bash processes, so verify that environment from the account that will run Tau before installing:
 
 ```sh
-node --version
-npm --version
+bash -lc 'command -v node && node --version && command -v npm && npm --version'
 ```
 
-Tau runs commands through fresh non-interactive login Bash processes, so the login shell must make Node and other expected executables available on `PATH` without prompting, requiring a TTY, or printing startup output.
+The command should resolve both executables and finish without prompts, terminal errors, or unrelated startup output. Use the same check for other executables you expect the agent to use.
 
 ## Install or upgrade Tau
 

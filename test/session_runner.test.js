@@ -788,6 +788,9 @@ describe("session execution backend plumbing", () => {
           stderr: "",
           exitCode: 0,
           truncated: false,
+          timedOut: false,
+          aborted: false,
+          closeSignal: null,
         };
       },
     };
@@ -836,6 +839,9 @@ describe("session execution backend plumbing", () => {
           stderr: "",
           exitCode: 2,
           truncated: false,
+          timedOut: false,
+          aborted: false,
+          closeSignal: null,
         };
       },
     };
@@ -852,6 +858,42 @@ describe("session execution backend plumbing", () => {
     expect(addUserText).toHaveBeenCalledWith(
       "Bash command output:\n$ false\n(no output)\n(exit 2)",
     );
+  });
+
+  it("formats direct Bash termination from structured execution state", async () => {
+    const addUserText = vi.fn(async () => "history-1");
+    const backend = {
+      async runBash() {
+        return {
+          output: "partial output\n",
+          stdout: "partial output\n",
+          stderr: "",
+          exitCode: null,
+          truncated: false,
+          timedOut: true,
+          aborted: false,
+          closeSignal: "SIGTERM",
+        };
+      },
+    };
+
+    const result = await runDirectBashCommand({
+      command: "sleep 60",
+      backend,
+      workingDirectory: "/repo",
+      actionLabel: "ran",
+      addToContext: true,
+      addUserText,
+    });
+
+    expect(addUserText).toHaveBeenCalledWith(
+      `Bash command output:\n$ sleep 60\npartial output\n\n[Command timed out after ${BASH_DEFAULT_TIMEOUT_MS}ms.]`,
+    );
+    expect(result.presentation.details).toEqual([
+      { text: "partial output", wrap: "character" },
+      { text: `[Command timed out after ${BASH_DEFAULT_TIMEOUT_MS}ms.]`, wrap: "word" },
+    ]);
+    expect(result.presentation.metadata).not.toContain("exit ?");
   });
 });
 

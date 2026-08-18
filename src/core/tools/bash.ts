@@ -219,33 +219,22 @@ export async function prepareBashOutput(
   };
 }
 
-function getBashTermination(args: {
+export function getBashTerminationNotice(args: {
   aborted: boolean;
   timedOut: boolean;
   closeSignal: string | null;
   timeoutMs: number;
-}): { backendNote: string; resultText: string } | undefined {
+}): string | undefined {
   if (args.timedOut) {
-    return {
-      backendNote: `(tau) timed out after ${args.timeoutMs}ms`,
-      resultText: `Command timed out after ${args.timeoutMs}ms.`,
-    };
+    return `Command timed out after ${args.timeoutMs}ms.`;
   }
   if (args.aborted) {
-    return { backendNote: "(tau) aborted", resultText: "Command was cancelled." };
+    return "Command was cancelled.";
   }
   if (args.closeSignal) {
-    return {
-      backendNote: `(tau) terminated by signal ${args.closeSignal}`,
-      resultText: `Command was terminated by signal ${args.closeSignal}.`,
-    };
+    return `Command was terminated by signal ${args.closeSignal}.`;
   }
   return undefined;
-}
-
-function stripBashTerminationNote(output: string, note: string): string {
-  const trimmedOutput = output.trimEnd();
-  return trimmedOutput.endsWith(note) ? trimmedOutput.slice(0, -note.length).trimEnd() : output;
 }
 
 function appendBashNotice(output: string, notice: string): string {
@@ -293,17 +282,21 @@ export function formatBashUserMessageText(args: {
   command: string;
   truncationInfo: BashTruncationInfo;
   exitCode: number | null;
+  terminationNotice?: string;
 }): string {
-  const { command, truncationInfo, exitCode } = args;
+  const { command, truncationInfo, exitCode, terminationNotice } = args;
   const { model, captureTruncated, fullOutputPath } = truncationInfo;
 
-  const outputForContext = model.content.trimEnd() || "(no output)";
+  const outputForContext = model.content.trimEnd() || (terminationNotice ? "" : "(no output)");
   const truncNote =
     model.truncated || captureTruncated
       ? `\n\n[Output truncated for context: ${model.outputLines} lines / ${formatBytes(model.outputBytes)} shown of ${model.totalLines} lines / ${formatBytes(model.totalBytes)} (full output estimate: ~${bytesToTokens(model.totalBytes)} tokens).${formatBashOutputFileHint({ path: fullOutputPath })}]`
       : "";
-  const exitNote = exitCode !== null && exitCode !== 0 ? `\n(exit ${exitCode})` : "";
-  const bashContextText = `$ ${command}\n${outputForContext}${truncNote}${exitNote}`;
+  const resultText = `${outputForContext}${truncNote}`;
+  const resultWithStatus = terminationNotice
+    ? appendBashNotice(resultText, terminationNotice)
+    : `${resultText}${exitCode !== null && exitCode !== 0 ? `\n(exit ${exitCode})` : ""}`;
+  const bashContextText = `$ ${command}\n${resultWithStatus}`;
   return `Bash command output:\n${bashContextText}`;
 }
 
@@ -316,6 +309,7 @@ export function buildBashPresentation(args: {
   durationMs: number;
   workingDirectory?: string;
   includeExitCode?: boolean;
+  terminationNotice?: string;
   actionLabel?: string;
   detailTruncation?: Exclude<ToolCardDetailTruncation, false>;
 }): ToolRunPresentation {
@@ -326,6 +320,9 @@ export function buildBashPresentation(args: {
   const details: ToolCardLine[] = detailText
     ? detailText.split("\n").map((text) => ({ text, wrap: "character" }))
     : [];
+  if (args.terminationNotice) {
+    details.push({ text: `[${args.terminationNotice}]`, wrap: "word" });
+  }
 
   const outputLines = model.outputLines;
   const outputBytes = model.outputBytes;
@@ -547,7 +544,7 @@ export function createBashToolDefinition(backend: ToolExecutionBackend, cwd: str
               cwd: effectiveWorkingDirectory,
             });
             const durationMs = Math.max(0, Date.now() - startedAt);
-            const termination = getBashTermination({
+            const terminationNotice = getBashTerminationNotice({
               aborted,
               timedOut,
               closeSignal,
@@ -560,19 +557,19 @@ export function createBashToolDefinition(backend: ToolExecutionBackend, cwd: str
               hasMaxOutputTokens,
             });
             const truncationInfo = await prepareBashOutput(
-              termination ? stripBashTerminationNote(output, termination.backendNote) : output,
+              output,
               captureTruncated,
               outputPolicy,
               backend,
             );
             const resultText = formatBashToolResultText({
               truncationInfo,
-              exitCode: termination ? null : exitCode,
+              exitCode: terminationNotice ? null : exitCode,
             });
-            const toolText = termination
-              ? appendBashNotice(resultText, termination.resultText)
+            const toolText = terminationNotice
+              ? appendBashNotice(resultText, terminationNotice)
               : resultText;
-            const isError = termination !== undefined || exitCode === null || exitCode !== 0;
+            const isError = terminationNotice !== undefined || exitCode === null || exitCode !== 0;
             const presentation = buildBashPresentation({
               toolName: TOOL_NAME_BASH,
               subject: command,
@@ -580,7 +577,8 @@ export function createBashToolDefinition(backend: ToolExecutionBackend, cwd: str
               exitCode,
               durationMs,
               workingDirectory: effectiveWorkingDirectory,
-              includeExitCode: !termination,
+              includeExitCode: !terminationNotice,
+              terminationNotice,
             });
 
             const outcome = createTextToolOutcome(

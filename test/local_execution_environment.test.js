@@ -158,6 +158,52 @@ describe("LocalExecutionEnvironment", () => {
     });
   });
 
+  it("keeps termination state separate from captured output", async () => {
+    const backend = createLocalToolExecutionBackend({
+      spawn: async () => ({
+        stdout: "partial output\n",
+        stderr: "",
+        output: "partial output\n",
+        exitCode: null,
+        captureLimitExceeded: false,
+        timedOut: true,
+        aborted: false,
+        closeSignal: "SIGTERM",
+      }),
+    });
+
+    await expect(backend.runBash("sleep 10", { timeoutMs: 10 })).resolves.toEqual({
+      output: "partial output\n",
+      stdout: "partial output\n",
+      stderr: "",
+      exitCode: null,
+      truncated: false,
+      timedOut: true,
+      aborted: false,
+      closeSignal: "SIGTERM",
+    });
+  });
+
+  it("normalizes missing files at the backend boundary", async () => {
+    const root = await mkdtemp(join(tmpdir(), "tau-local-missing-file-"));
+    const backend = createLocalToolExecutionBackend({
+      env: { cwd: () => root },
+    });
+
+    try {
+      await expect(backend.readFile("missing.txt")).rejects.toMatchObject({
+        name: "ToolExecutionBackendError",
+        code: "not-found",
+      });
+      await expect(backend.readFileBinary("missing.png")).rejects.toMatchObject({
+        name: "ToolExecutionBackendError",
+        code: "not-found",
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("scopes explicit environment variables without filtering sensitive names", async () => {
     const cwd = process.cwd();
     const environment = new LocalExecutionEnvironment({

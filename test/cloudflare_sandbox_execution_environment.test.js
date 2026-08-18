@@ -332,6 +332,28 @@ describe("Cloudflare Sandbox execution environment", () => {
     expect(cancelled).toBe(true);
   });
 
+  it("normalizes missing files at the backend boundary", async () => {
+    const client = new CloudflareSandboxBridgeClient({
+      bridgeId: "default",
+      baseUrl: "https://bridge.example",
+      fetch: async () => jsonResponse({ error: "file not found" }, { status: 404 }),
+    });
+    const backend = createCloudflareSandboxToolExecutionBackend({
+      client,
+      sandboxId: "sandbox-1",
+      cwd: "/workspace/repo",
+    });
+
+    await expect(backend.readFile("/workspace/repo/missing.txt")).rejects.toMatchObject({
+      name: "ToolExecutionBackendError",
+      code: "not-found",
+    });
+    await expect(backend.readFileBinary("/workspace/repo/missing.png")).rejects.toMatchObject({
+      name: "ToolExecutionBackendError",
+      code: "not-found",
+    });
+  });
+
   it("serializes bridge exec calls that share a command session", async () => {
     const encoder = new TextEncoder();
     const requests = [];
@@ -651,9 +673,11 @@ describe("Cloudflare Sandbox execution environment", () => {
     });
 
     await expect(backend.runBash("pwd", { timeoutMs: 10 })).resolves.toMatchObject({
+      output: "",
+      stdout: "",
+      stderr: "",
       timedOut: true,
       exitCode: null,
-      stderr: expect.stringContaining("timed out after 10ms"),
     });
   });
 

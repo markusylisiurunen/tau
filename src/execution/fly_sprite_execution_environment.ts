@@ -6,6 +6,7 @@ import {
   type BashExecutionResult,
   DEFAULT_COMMAND_CAPTURE_BYTES,
   type ListDirEntry,
+  normalizeToolExecutionBackendError,
   type ToolExecutionBackend,
 } from "../core/tools/execution_backend.js";
 import type {
@@ -162,23 +163,31 @@ export function createFlySpriteToolExecutionBackend(options: {
     runNodeScript,
 
     async readFile(path) {
-      const result = await worker.request("readFile", {
-        path,
-        timeoutMs: HELPER_COMMAND_TIMEOUT_MS,
-      });
-      return { path, content: result.content };
+      try {
+        const result = await worker.request("readFile", {
+          path,
+          timeoutMs: HELPER_COMMAND_TIMEOUT_MS,
+        });
+        return { path, content: result.content };
+      } catch (error) {
+        throw normalizeToolExecutionBackendError(error);
+      }
     },
 
     async readFileBinary(path, readOptions = {}) {
-      const result = await worker.request("readFileBinary", {
-        path,
-        timeoutMs: HELPER_COMMAND_TIMEOUT_MS,
-        maxBytes: readOptions.maxBytes,
-      });
-      const content = Buffer.from(result.contentBase64, "base64");
-      const bytes = result.bytes;
-      assertFileWithinMaxBytes(bytes, readOptions.maxBytes);
-      return { path, content, bytes };
+      try {
+        const result = await worker.request("readFileBinary", {
+          path,
+          timeoutMs: HELPER_COMMAND_TIMEOUT_MS,
+          maxBytes: readOptions.maxBytes,
+        });
+        const content = Buffer.from(result.contentBase64, "base64");
+        const bytes = result.bytes;
+        assertFileWithinMaxBytes(bytes, readOptions.maxBytes);
+        return { path, content, bytes };
+      } catch (error) {
+        throw normalizeToolExecutionBackendError(error);
+      }
     },
 
     async writeFile(path, content) {
@@ -284,7 +293,10 @@ type FlySpriteWorkerResponse =
   | {
       id: number;
       ok: false;
-      error: string;
+      error: {
+        message: string;
+        code?: string;
+      };
     };
 
 type FlySpritePendingRequest = {
@@ -492,7 +504,11 @@ class FlySpriteWorker {
       return;
     }
 
-    pending.reject(new Error(message.error));
+    const error = new Error(message.error.message);
+    if (message.error.code) {
+      Object.assign(error, { code: message.error.code });
+    }
+    pending.reject(error);
   }
 
   private sendCancel(targetId: number): void {
@@ -685,9 +701,9 @@ async function handleLine(line) {
       return;
     }
 
-    fail(request.id, "unknown worker method");
+    fail(request.id, new Error("unknown worker method"));
   } catch (err) {
-    fail(request.id, err instanceof Error ? err.message : String(err));
+    fail(request.id, err);
   }
 }
 
@@ -766,18 +782,9 @@ function runCommand(id, command, args, options) {
       settled = true;
       cleanup();
       markStopped();
-      let output = Buffer.concat(chunks).toString("utf-8");
-      let stdout = Buffer.concat(stdoutChunks).toString("utf-8");
-      let stderr = Buffer.concat(stderrChunks).toString("utf-8");
-      const note = timedOut
-        ? "\\n(tau) timed out after " + options.timeoutMs + "ms\\n"
-        : aborted
-          ? "\\n(tau) aborted\\n"
-          : "";
-      if (note && !output.includes(note.trim())) {
-        output += note;
-        stderr += note;
-      }
+      const output = Buffer.concat(chunks).toString("utf-8");
+      const stdout = Buffer.concat(stdoutChunks).toString("utf-8");
+      const stderr = Buffer.concat(stderrChunks).toString("utf-8");
       resolve({
         output,
         stdout,
@@ -828,6 +835,10 @@ function respond(id, result) {
 }
 
 function fail(id, error) {
-  console.log(JSON.stringify({ id, ok: false, error }));
+  const message = error instanceof Error ? error.message : String(error);
+  const code = error && typeof error === "object" && typeof error.code === "string"
+    ? error.code
+    : undefined;
+  console.log(JSON.stringify({ id, ok: false, error: { message, ...(code ? { code } : {}) } }));
 }
 `;

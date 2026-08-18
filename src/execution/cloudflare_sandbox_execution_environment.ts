@@ -8,6 +8,7 @@ import {
   DEFAULT_COMMAND_CAPTURE_BYTES,
   type ListDirEntry,
   type ToolExecutionBackend,
+  ToolExecutionBackendError,
 } from "../core/tools/execution_backend.js";
 import type {
   SessionProtocolCloudflareSandboxExecutionEnvironmentInput,
@@ -292,13 +293,10 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
         scheduleCommandSessionReset(cwd);
       }
       if (timeoutSignal?.aborted) {
-        return terminatedExecutionResult(
-          `(tau) timed out after ${runOptions.timeoutMs}ms`,
-          "timeout",
-        );
+        return terminatedExecutionResult("timeout");
       }
       if (runOptions.signal?.aborted || disposeAbortController.signal.aborted) {
-        return terminatedExecutionResult("(tau) aborted", "abort");
+        return terminatedExecutionResult("abort");
       }
       throw error;
     } finally {
@@ -587,19 +585,20 @@ export class CloudflareSandboxBridgeClient {
     } catch {
       detail = await response.text().catch(() => "");
     }
-    return new Error(
-      `Cloudflare Sandbox bridge '${this.bridgeId}' request failed (${response.status})${
-        detail ? `: ${detail}` : ""
-      }`,
-    );
+    const message = `Cloudflare Sandbox bridge '${this.bridgeId}' request failed (${response.status})${
+      detail ? `: ${detail}` : ""
+    }`;
+    return response.status === 404
+      ? new ToolExecutionBackendError("not-found", message)
+      : new Error(message);
   }
 }
 
-function terminatedExecutionResult(note: string, reason: "timeout" | "abort"): BashExecutionResult {
+function terminatedExecutionResult(reason: "timeout" | "abort"): BashExecutionResult {
   return {
-    output: `${note}\n`,
+    output: "",
     stdout: "",
-    stderr: `${note}\n`,
+    stderr: "",
     exitCode: null,
     truncated: false,
     timedOut: reason === "timeout",

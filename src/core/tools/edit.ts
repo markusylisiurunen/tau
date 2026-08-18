@@ -4,7 +4,7 @@ import { z } from "zod";
 import { buildLineDiff } from "../utils/line_diff.js";
 import { formatZodError } from "../utils/zod.js";
 import type { ToolActivity } from "./activity.js";
-import type { ToolExecutionBackend } from "./execution_backend.js";
+import { isToolExecutionBackendError, type ToolExecutionBackend } from "./execution_backend.js";
 import { buildToolRunPresentation, type ToolCardLine } from "./presentation.js";
 import {
   type AgentTool,
@@ -173,7 +173,7 @@ export function createEditToolDefinition(backend: ToolExecutionBackend): AgentTo
           content = result.content;
         } catch (e) {
           const errorMessage = e instanceof Error ? e.message : String(e);
-          if ((e as NodeJS.ErrnoException).code === "ENOENT") {
+          if (isToolExecutionBackendError(e, "not-found")) {
             return blocked(`File not found at '${path}'. Verify the path is correct.`);
           }
           return blocked(`Could not read file: ${errorMessage}`, "failed");

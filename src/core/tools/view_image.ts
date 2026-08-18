@@ -4,7 +4,7 @@ import { z } from "zod";
 import { formatBytes } from "../utils/truncate.js";
 import { formatZodError } from "../utils/zod.js";
 import type { ToolActivity } from "./activity.js";
-import type { ToolExecutionBackend } from "./execution_backend.js";
+import { isToolExecutionBackendError, type ToolExecutionBackend } from "./execution_backend.js";
 import { buildToolRunPresentation } from "./presentation.js";
 import {
   type AgentTool,
@@ -317,7 +317,7 @@ export function createViewImageToolDefinition(backend: ToolExecutionBackend): Ag
           return { content: outcome.content, outcome: outcome.outcome, uiEvent };
         } catch (e) {
           const errorMessage = e instanceof Error ? e.message : String(e);
-          if ((e as NodeJS.ErrnoException).code === "ENOENT") {
+          if (isToolExecutionBackendError(e, "not-found")) {
             return blocked(`File not found at '${path}'. Verify the path is correct.`);
           }
           return blocked(`Could not view image: ${errorMessage}`, "failed");

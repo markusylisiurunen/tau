@@ -108,9 +108,9 @@ describe("bash output policy", () => {
       ...backend,
       async runBash() {
         return {
-          output: "partial output\n(tau) aborted\n",
+          output: "partial output\n",
           stdout: "partial output\n",
-          stderr: "(tau) aborted\n",
+          stderr: "",
           exitCode: null,
           truncated: false,
           timedOut: false,
@@ -132,6 +132,7 @@ describe("bash output policy", () => {
     ]);
     expect(result.uiEvent.presentation.details).toEqual([
       { text: "partial output", wrap: "character" },
+      { text: "[Command was cancelled.]", wrap: "word" },
     ]);
     expect(result.uiEvent.presentation.metadata).not.toContain("exit ?");
   });
@@ -141,9 +142,9 @@ describe("bash output policy", () => {
       ...backend,
       async runBash() {
         return {
-          output: "partial output\n(tau) timed out after 1500ms\n",
+          output: "partial output\n",
           stdout: "partial output\n",
-          stderr: "(tau) timed out after 1500ms\n",
+          stderr: "",
           exitCode: null,
           truncated: false,
           timedOut: true,
@@ -165,6 +166,7 @@ describe("bash output policy", () => {
     ]);
     expect(result.uiEvent.presentation.details).toEqual([
       { text: "partial output", wrap: "character" },
+      { text: "[Command timed out after 1500ms.]", wrap: "word" },
     ]);
     expect(result.uiEvent.presentation.metadata).not.toContain("exit ?");
   });
@@ -174,9 +176,9 @@ describe("bash output policy", () => {
       ...backend,
       async runBash() {
         return {
-          output: "partial output\n(tau) terminated by signal SIGKILL\n",
+          output: "partial output\n",
           stdout: "partial output\n",
-          stderr: "(tau) terminated by signal SIGKILL\n",
+          stderr: "",
           exitCode: null,
           truncated: false,
           timedOut: false,
@@ -198,6 +200,7 @@ describe("bash output policy", () => {
     ]);
     expect(result.uiEvent.presentation.details).toEqual([
       { text: "partial output", wrap: "character" },
+      { text: "[Command was terminated by signal SIGKILL.]", wrap: "word" },
     ]);
     expect(result.uiEvent.presentation.metadata).not.toContain("exit ?");
   });

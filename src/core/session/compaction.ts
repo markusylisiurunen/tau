@@ -580,12 +580,12 @@ export function prepareAutoCompaction(
   };
 }
 
-const AUTO_COMPACTION_ARCHIVE_REFERENCE_GUIDANCE = `After compaction, the continuing assistant will receive paths to temporary text and JSON transcripts of the pre-compaction context. Conversation records above that show a history entry id can be recovered from those transcripts by id. The continuing assistant can search the numbered text transcripts first, then inspect the corresponding JSON record when it needs the full archived content.
+const AUTO_COMPACTION_ARCHIVE_REFERENCE_GUIDANCE = `When best-effort archiving succeeds, the continuing assistant receives exact paths to a temporary text transcript and JSON snapshot of the pre-compaction context. Conversation records above that show an archive entry id can be recovered directly from the matching JSON file. When no entry id is available, the files also support discovery from distinctive evidence.
 
-Keep the summary independently useful. State continuity-critical goals, constraints, decisions, current state, blockers, and next steps directly. When exact or bulky details would be wasteful to reproduce, you may mention the relevant history entry id in ordinary prose so the continuing assistant can retrieve it. This is useful for long tool output, diagnostic logs, exact errors, payloads, and large code excerpts. Use such references sparingly and only for ids shown in the conversation.
+Keep the summary independently useful. State continuity-critical goals, constraints, decisions, current state, blockers, and next steps directly. When exact or bulky details would be wasteful to reproduce, you may mention the relevant id as an auto-compaction archive entry id so the continuing assistant knows to use the supplied files, not the separate history tool. This is useful for long tool output, diagnostic logs, exact errors, payloads, and large code excerpts. Use such references sparingly and only for ids shown in the conversation.
 
-Good pattern: "The key failure is a missing RuntimeConfig field; the complete compiler output is in history entry 'HISTORY_ENTRY_ID'."
-Bad pattern: "See history entry 'HISTORY_ENTRY_ID' for what happened."`;
+Good pattern: "The key failure is a missing RuntimeConfig field; the complete compiler output is in auto-compaction archive entry 'ARCHIVE_ENTRY_ID'."
+Bad pattern: "See archive entry 'ARCHIVE_ENTRY_ID' for what happened."`;
 
 export function buildAutoCompactionPrompt(preparation: AutoCompactionPreparation): string {
   const retainedContextGuidance =
@@ -599,7 +599,7 @@ export function buildAutoCompactionPrompt(preparation: AutoCompactionPreparation
 Place the section wherever it makes the handoff clearest. Preserve earlier session context elsewhere in the summary without duplicating the retained suffix.`
       : "The retained context will include recent messages. Ensure the summary complements that retained context without duplicating unnecessary detail.";
   const boundedRetainedContextGuidance =
-    "Individual textual tool results and tool-recovery payloads in the retained context may be middle-truncated above the retention limit. Do not describe the retained context as exact or verbatim. The continuing assistant can recover omitted output through a targeted search of the pre-compaction archive when needed.";
+    "Individual textual tool results and tool-recovery payloads in the retained context may be middle-truncated above the retention limit. Do not describe the retained context as exact or verbatim. When the pre-compaction archive is available, the continuing assistant can recover omitted output through a targeted lookup.";
 
   return buildSessionCompactionPrompt({
     preparation,
@@ -627,15 +627,13 @@ export function buildAutoCompactionContinuationMessage(args: {
 
   if (args.archive) {
     lines.push(
-      "The summary and retained context should normally be sufficient. If a specific missing detail is needed, temporary pre-compaction snapshots are available as numbered pairs in one directory:",
+      "The summary and retained context should normally be sufficient. Temporary pre-compaction archive files are also available:",
+      `- archive guide: ${args.archive.documentationPath}`,
       `- this compaction's text transcript: ${args.archive.textPath}`,
       `- this compaction's full JSON: ${args.archive.jsonPath}`,
-      "Earlier numbered pairs in the same directory contain older pre-compaction snapshots, so include them in targeted searches when the detail may predate this compaction.",
-      "When the compaction summary mentions a history entry id, search the numbered text transcripts for that id first, then inspect the corresponding JSON record if the text transcript is truncated or incomplete.",
-      "When retained output is marked as truncated, search the text transcript by tool name and distinctive surrounding text, then inspect the paired JSON record for the complete output.",
-      "Prefer narrow searches and bounded reads of the text transcripts; their tool results are middle-truncated. The JSON files retain untruncated archived content and may be very large.",
-      "When available, delegating a precise archive lookup to a low-effort subagent can preserve this context more efficiently than reading large sections directly.",
-      "These files are temporary and may no longer exist.",
+      "Before continuing, ensure the archive guide's full contents are present in the current model context. If they are not already visible in full, read the guide now with an execution-environment file tool. This is required even when no archive lookup is currently planned.",
+      "For details removed from this session by automatic compaction, use these execution-environment files rather than the separate history tool, whose collection may be stale, remotely replicated, truncated, or unavailable.",
+      "The guide describes the archive format and adaptable, bounded lookup examples, including how to inspect earlier numbered pairs when needed.",
     );
   }
 

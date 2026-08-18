@@ -53,11 +53,13 @@ Because composite values are comma-delimited, a substring repository filter can 
 
 ## Agent access is explicit and read-only
 
-An eligible persona can expose the read-only `history` code-mode tool. It can search and read the configured history collection across repositories and execution environments. This is broad visibility, so Tau instructs agents to invoke it only when the user or another active instruction directly asks to reference, search, or read historical transcripts. It should not be used speculatively because earlier work might be relevant.
+An eligible persona can expose the read-only `history` code-mode tool. It searches and reads the configured history collection across repositories and execution environments. Because that collection has broad visibility, the tool description limits use to requests or active instructions that directly call for historical transcripts rather than speculative retrieval of possibly relevant earlier work.
 
-The tool owns its progressively disclosed API documentation. On the first history call for a task, the agent must print and read `docs`, then use the documented API in a later call. This page does not duplicate those signatures or response limits.
+Automatic compaction archives serve a different purpose. They capture the current session’s pre-compaction model context in the execution environment, while `history` queries a separate host-owned transcript collection that may be stale, truncated, unavailable, or remotely replicated. Compaction continuation guidance therefore directs recovery of removed current-session details to the supplied archive paths. History transcript entry ids are unrelated to archive lookup.
 
-Historical attributes, snippets, digests, entries, tool arguments, and tool results are untrusted data. An agent should use them as evidence, never follow instructions found inside them, and print only the minimum historical material needed for the current request. Custom personas and subagents can include or exclude `history` through their tool configuration; see [tools](tools.md), [personas](personas.md), and [subagents](subagents.md).
+The tool progressively discloses its API documentation: its first call for a task prints `docs`, and a later call uses the documented API. This page does not duplicate those signatures or response limits. The documentation covers bounded chronological projections and targeted inspection for cases where a historical session is known but the relevant entry is not, avoiding repeated guessed searches and complete payload dumps.
+
+Historical attributes, snippets, digests, entries, tool arguments, and tool results are untrusted data. The tool guidance treats them as evidence rather than instructions and limits output to material needed for the current request. Custom personas and subagents can include or exclude `history` through their tool configuration; see [tools](tools.md), [personas](personas.md), and [subagents](subagents.md).
 
 Without remote history configuration, the tool searches this host's local SQLite collection. With a remote target configured, queries go to that service rather than merging remote and local results. A remote query outage can therefore fail even while local capture continues successfully.
 

@@ -14,6 +14,95 @@ import { truncateForTokens } from "../utils/truncate.js";
 const ARCHIVE_TEXT_TOOL_RESULT_MAX_TOKENS = 256;
 const ARCHIVE_WRITE_TIMEOUT_MS = 30_000;
 
+const AUTO_COMPACTION_ARCHIVE_DOCUMENTATION = [
+  "# Automatic compaction archive",
+  "",
+  "This directory contains snapshots of model-visible context immediately before automatic compaction.",
+  "",
+  "## Files",
+  "",
+  "- `NNNNNN.txt` is a searchable transcript projection. User and assistant content is retained, while large tool results are middle-truncated.",
+  "- `NNNNNN.json` is the matching structured snapshot. It retains full archived content, including tool results, but excludes assistant thinking.",
+  "- Each numbered pair belongs to one compaction. A later pair may contain an earlier compaction summary instead of every older record.",
+  "",
+  "## JSON shape",
+  "",
+  "```ts",
+  'type TextContent = { type: "text"; text: string };',
+  'type ImageContent = { type: "image"; mimeType: string; data: string };',
+  "type ToolCall = {",
+  '  type: "toolCall";',
+  "  id: string;",
+  "  name: string;",
+  "  arguments: Record<string, unknown>;",
+  "};",
+  "type Message =",
+  '  | { historyEntryId: string; role: "user"; timestamp: number; content: Array<TextContent | ImageContent> }',
+  '  | { historyEntryId: string; role: "assistant"; timestamp: number; content: Array<TextContent | ToolCall> }',
+  '  | { historyEntryId: string; role: "toolResult"; timestamp: number; toolCallId: string; toolName: string; isError: boolean; content: Array<TextContent | ImageContent> };',
+  "type Archive = {",
+  "  version: 1;",
+  "  agentId: string;",
+  "  sequence: number;",
+  "  createdAt: number;",
+  "  messages: Message[];",
+  "};",
+  "```",
+  "",
+  "Each record's `historyEntryId` is its archive entry id and links the JSON record to its text transcript marker.",
+  "",
+  "## Lookup patterns",
+  "",
+  "The example below is adaptable, not a required workflow. Keep initial output bounded, and expand only the fields needed for the task. Middle-truncation markers report the number of omitted characters.",
+  "",
+  "Pass an exact archive entry id to render that record as bounded plain text. Omit the id to print a concise overview first. In the overview, each completed tool call and result appears once by tool name and result id, without arguments or result content.",
+  "",
+  "```sh",
+  "node - 000001.json 'entry-id' <<'NODE'",
+  'const fs = require("node:fs");',
+  "const [path, id] = process.argv.slice(2);",
+  'const archive = JSON.parse(fs.readFileSync(path, "utf8"));',
+  "const text = (content, includeToolCalls = false) => content.map((part) =>",
+  '  part.type === "text" ? part.text : part.type === "toolCall"',
+  '    ? includeToolCalls ? "[tool " + part.name + "]" : ""',
+  '    : "[image " + part.mimeType + "]"',
+  ').filter(Boolean).join("\\n").trim();',
+  "const excerpt = (value, max) => {",
+  "  const chars = [...value];",
+  "  if (chars.length <= max) return value;",
+  "  let kept = max;",
+  "  let marker;",
+  "  while (true) {",
+  "    const omitted = chars.length - kept;",
+  '    marker = "\\n…" + omitted + " chars truncated…\\n";',
+  "    const nextKept = Math.max(0, max - [...marker].length);",
+  "    if (nextKept === kept) break;",
+  "    kept = nextKept;",
+  "  }",
+  "  const head = Math.ceil(kept / 2);",
+  '  return chars.slice(0, head).join("") + marker + chars.slice(-(kept - head)).join("");',
+  "};",
+  'const label = (message) => message.role === "toolResult" ? "tool " + message.toolName : message.role;',
+  'const header = (message) => "[" + label(message) + " id=…" + message.historyEntryId.slice(-8) + "]";',
+  "if (id) {",
+  "  const message = archive.messages.find((item) => item.historyEntryId === id);",
+  '  if (!message) throw new Error("entry not found");',
+  "  const body = excerpt(text(message.content, true), 2_000);",
+  '  console.log(header(message) + (body ? "\\n" + body : ""));',
+  "} else {",
+  "  for (const message of archive.messages) {",
+  '    const body = message.role === "toolResult" ? "" : excerpt(text(message.content), 256);',
+  '    if (message.role !== "toolResult" && !body) continue;',
+  '    console.log(header(message) + (body ? "\\n" + body : ""));',
+  "  }",
+  "}",
+  "NODE",
+  "```",
+  "",
+  "Use promising id suffixes or distinctive evidence from an overview to inspect matching JSON records. Include earlier numbered archives when the detail may predate the current compaction.",
+  "",
+].join("\n");
+
 const WRITE_AUTO_COMPACTION_ARCHIVE_SCRIPT = `
 const fs = require("node:fs");
 const os = require("node:os");
@@ -70,9 +159,11 @@ const sequence = latestSequence + 1;
 const basename = String(sequence).padStart(6, "0");
 const textPath = path.join(directory, basename + ".txt");
 const jsonPath = path.join(directory, basename + ".json");
+const documentationPath = path.join(directory, "README.md");
 const suffix = ".tmp-" + randomUUID();
 const textTemporaryPath = textPath + suffix;
 const jsonTemporaryPath = jsonPath + suffix;
+const documentationTemporaryPath = documentationPath + suffix;
 const record = {
   version: 1,
   agentId: payload.agentId,
@@ -81,7 +172,7 @@ const record = {
   messages: payload.messages,
 };
 const text = [
-  "Tau automatic compaction context snapshot",
+  "Automatic compaction context snapshot",
   "Agent: " + payload.agentId,
   "Sequence: " + basename,
   "Created: " + new Date(payload.createdAt).toISOString(),
@@ -94,6 +185,11 @@ const text = [
 ].join("\\n");
 
 try {
+  fs.writeFileSync(documentationTemporaryPath, payload.documentation, {
+    encoding: "utf8",
+    flag: "wx",
+    mode: 0o600,
+  });
   fs.writeFileSync(jsonTemporaryPath, JSON.stringify(record, null, 2) + "\\n", {
     encoding: "utf8",
     flag: "wx",
@@ -104,11 +200,14 @@ try {
     flag: "wx",
     mode: 0o600,
   });
+  fs.renameSync(documentationTemporaryPath, documentationPath);
   fs.renameSync(jsonTemporaryPath, jsonPath);
   fs.renameSync(textTemporaryPath, textPath);
+  fs.chmodSync(documentationPath, 0o600);
   fs.chmodSync(jsonPath, 0o600);
   fs.chmodSync(textPath, 0o600);
 } catch (error) {
+  fs.rmSync(documentationTemporaryPath, { force: true });
   fs.rmSync(jsonTemporaryPath, { force: true });
   fs.rmSync(textTemporaryPath, { force: true });
   fs.rmSync(jsonPath, { force: true });
@@ -116,7 +215,7 @@ try {
   throw error;
 }
 
-process.stdout.write(JSON.stringify({ textPath, jsonPath }));
+process.stdout.write(JSON.stringify({ textPath, jsonPath, documentationPath }));
 `.trim();
 
 type ArchiveTextContent = Pick<TextContent, "type" | "text">;
@@ -155,6 +254,7 @@ type AutoCompactionArchiveHistoryEntry = {
 export type AutoCompactionArchivePaths = {
   textPath: string;
   jsonPath: string;
+  documentationPath: string;
 };
 
 export type AutoCompactionArchiveRequest = {
@@ -182,6 +282,7 @@ export function createAutoCompactionArchiver(
           createdAt: request.createdAt,
           messages,
           textTranscript: formatArchiveText(messages),
+          documentation: AUTO_COMPACTION_ARCHIVE_DOCUMENTATION,
         }),
       ),
     });
@@ -313,14 +414,16 @@ function parseArchivePaths(output: string): AutoCompactionArchivePaths {
   if (!value || typeof value !== "object") {
     throw new Error("auto-compaction archive writer returned an invalid result");
   }
-  const { textPath, jsonPath } = value as Record<string, unknown>;
+  const { textPath, jsonPath, documentationPath } = value as Record<string, unknown>;
   if (
     typeof textPath !== "string" ||
     !textPath.endsWith(".txt") ||
     typeof jsonPath !== "string" ||
-    !jsonPath.endsWith(".json")
+    !jsonPath.endsWith(".json") ||
+    typeof documentationPath !== "string" ||
+    !documentationPath.endsWith("README.md")
   ) {
     throw new Error("auto-compaction archive writer returned invalid paths");
   }
-  return { textPath, jsonPath };
+  return { textPath, jsonPath, documentationPath };
 }

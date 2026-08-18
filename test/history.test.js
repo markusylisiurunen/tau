@@ -17,7 +17,7 @@ import {
   toolHistoryEntry,
   userHistoryEntry,
 } from "../dist/core/history/transcript.js";
-import { createHistoryToolDefinition } from "../dist/core/tools/history.js";
+import { createHistoryToolDefinition, HISTORY_TOOL } from "../dist/core/tools/history.js";
 import historyWorker, {
   applyOperation,
   boundedSnippet,
@@ -1986,6 +1986,36 @@ describe("session history", () => {
     await expect(client.read({ sessionId: "session-1", limit: 10 })).rejects.toThrow(
       "History service returned invalid transcript data",
     );
+  });
+
+  it("documents bounded overview and drill-down retrieval", async () => {
+    expect(HISTORY_TOOL.description).not.toContain("automatic-compaction");
+    expect(HISTORY_TOOL.description).toContain("a bounded chronological overview is one way");
+
+    const tool = createHistoryToolDefinition(createBackend(), {
+      search: vi.fn(),
+      read: vi.fn(),
+    });
+    const result = await runTool(tool, "console.log(docs)");
+    const text = toolText(result);
+    expect(text).toContain("examples, not a required workflow or output format");
+    expect(text).toContain("Adapt, combine, or replace them");
+    expect(text).toContain("project one bounded page without printing complete payloads");
+    expect(text).toContain("id=…");
+    expect(text).toContain("reference.slice(-8)");
+    expect(text).toContain("chars truncated…");
+    expect(text).toContain("max - [...marker].length");
+    expect(text).toContain("appears once as its tool entry");
+    expect(text).toContain('entry.type === "tool" ? entry.id : (entry.sourceIds[0] ?? entry.id)');
+    expect(text).toContain('if (entry.type !== "tool" && !detail) continue');
+    expect(text).toContain("detail ? `\\n");
+    expect(text).toContain('const label = entry.type === "tool"');
+    expect(text).toContain("entry.name");
+    expect(text).toContain('entry.type === "tool" ? "" : excerpt(entry.content, 256)');
+    expect(text).toContain('entry.type === "tool" ? entry.result : entry.content');
+    expect(text).toContain("excerpt(detail, 2_000)");
+    expect(text).toContain("scan transcript pages in code and print only matching entries");
+    expect(text).toContain("remains bounded even after an entry is selected");
   });
 
   it("executes bounded search through the code-mode tool", async () => {

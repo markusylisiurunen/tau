@@ -109,7 +109,11 @@ Automatic compaction runs before a model subturn when fresh provider usage plus 
 
 The summary model may copy important original user messages verbatim into the summary. Recent retained messages stay available to the model, although unusually large textual tool and recovery results may be truncated in retained context. Tau records the compaction as a new active context segment.
 
-Before replacing context, Tau makes a best-effort archive in the execution environment’s temporary directory. Each automatic compaction adds a numbered `.txt` and `.json` pair under a directory isolated by agent id. The text file is convenient for bounded search and truncates large tool results; the JSON pair retains the archived content without those tool-result truncations, excluding assistant thinking. The continuation message gives the agent the exact paths when archiving succeeds.
+Before replacing context, Tau makes a best-effort archive in the execution environment’s temporary directory. Each automatic compaction adds a numbered `.txt` and `.json` pair under a directory isolated by agent id. The text file supports bounded search and truncates large tool results; the JSON file retains the archived content without those tool-result truncations, excluding assistant thinking. A private `README.md` in the same directory describes the formats and adaptable lookup examples. The continuation message includes all three exact paths when archiving succeeds.
+
+These files recover details removed from the current session’s model context. The `history` tool instead queries a separate host-owned transcript collection, which may be remotely replicated, stale, truncated, or unavailable, and its transcript entry ids do not identify archive records. The continuation message identifies the execution-environment archive as the recovery source for compacted context.
+
+The continuation also requires the archive guide to be present in model context before work resumes, even when no immediate lookup is planned. Its retrieval guidance favors bounded access by known entry id or distinctive evidence, with a concise chronological overview as an optional discovery step. Earlier numbered pairs can contain details that predate the current compaction. Tau does not generate or require a fixed overview projection.
 
 These archives are temporary recovery aids, not backups. Archive failure does not block compaction, and execution-environment cleanup may remove them.
 

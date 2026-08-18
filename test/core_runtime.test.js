@@ -720,9 +720,11 @@ describe("automatic compaction archive", () => {
       roots.push(dirname(first.textPath));
       const record = JSON.parse(readFileSync(first.jsonPath, "utf8"));
       const text = readFileSync(first.textPath, "utf8");
+      const documentation = readFileSync(first.documentationPath, "utf8");
 
       expect(first.textPath).toMatch(/000001\.txt$/);
       expect(first.jsonPath).toMatch(/000001\.json$/);
+      expect(first.documentationPath).toBe(join(dirname(first.textPath), "README.md"));
       expect(record).toMatchObject({
         version: 1,
         agentId,
@@ -748,12 +750,63 @@ describe("automatic compaction archive", () => {
       expect(text).toContain("tokens truncated");
       expect(text).not.toContain(longOutput);
       expect(text).not.toContain("private reasoning must not be archived");
+      expect(text).toContain("Automatic compaction context snapshot");
+      expect(documentation).toContain("# Automatic compaction archive");
+      expect(documentation).not.toContain("Tau");
+      expect(documentation).toContain("## JSON shape");
+      expect(documentation).toContain("type Archive = {");
+      expect(documentation).toContain('role: "toolResult"');
+      expect(documentation).toContain("adaptable, not a required workflow");
+      expect(documentation).toContain("Pass an exact archive entry id");
+      expect(documentation).toContain("Omit the id to print a concise overview first");
+      expect(documentation).toContain("item.historyEntryId === id");
+      expect(documentation).not.toContain("JSON.stringify(message");
+      expect(documentation).toContain("excerpt(text(message.content, true), 2_000)");
+      expect(documentation).toContain("chars truncated…");
+      expect(documentation).toContain("max - [...marker].length");
+      expect(documentation).toContain(').filter(Boolean).join("\\n").trim()');
+      expect(documentation).toContain('includeToolCalls ? "[tool " + part.name + "]" : ""');
+      expect(documentation).toContain("appears once by tool name and result id");
+      expect(documentation).toContain('if (message.role !== "toolResult" && !body) continue');
+      expect(documentation).toContain('" id=…" + message.historyEntryId.slice(-8)');
+
+      const exampleScript = documentation.match(/<<'NODE'\n([\s\S]+?)\nNODE/)?.[1];
+      expect(exampleScript).toBeTypeOf("string");
+      const overview = spawnSync(process.execPath, ["-", first.jsonPath], {
+        input: exampleScript,
+        encoding: "utf8",
+      });
+      expect(overview.status).toBe(0);
+      expect(overview.stdout).toBe(
+        [
+          "[user id=…user-1]",
+          "inspect the repository",
+          "[tool bash id=…tool-1]",
+          "[user id=…ned-user]",
+          "this retained tail must also be archived",
+          "",
+        ].join("\n"),
+      );
+      expect(overview.stdout).not.toContain("rg -n TODO src");
+      expect(overview.stdout).not.toContain(longOutput);
+
+      const exact = spawnSync(process.execPath, ["-", first.jsonPath, "tool-1"], {
+        input: exampleScript,
+        encoding: "utf8",
+      });
+      expect(exact.status).toBe(0);
+      expect(exact.stdout).toContain("[tool bash id=…tool-1]\nstart ");
+      expect(exact.stdout).toContain(" chars truncated…");
+      expect(exact.stdout).toContain(" end\n");
+      expect(exact.stdout).not.toContain(longOutput);
       expect(statSync(dirname(first.textPath)).mode & 0o777).toBe(0o700);
+      expect(statSync(first.documentationPath).mode & 0o777).toBe(0o600);
       expect(statSync(first.textPath).mode & 0o777).toBe(0o600);
       expect(statSync(first.jsonPath).mode & 0o777).toBe(0o600);
 
       const second = await archive(request);
       expect(second.textPath).toBe(first.textPath.replace("000001.txt", "000002.txt"));
+      expect(second.documentationPath).toBe(first.documentationPath);
 
       const fork = await archive({ ...request, agentId: `agent-${randomUUID()}` });
       roots.push(dirname(fork.textPath));
@@ -1226,7 +1279,11 @@ describe("compaction context message", () => {
 
     expect(prompt).toContain('Add a "## Current Turn Handoff" section');
     expect(prompt).toContain("what the first retained message is continuing");
-    expect(prompt).toContain("Conversation records above that show a history entry id");
+    expect(prompt).toContain("When best-effort archiving succeeds");
+    expect(prompt).toContain("Conversation records above that show an archive entry id");
+    expect(prompt).toContain("When the pre-compaction archive is available");
+    expect(prompt).toContain("auto-compaction archive entry id");
+    expect(prompt).toContain("use the supplied files, not the separate history tool");
     expect(prompt).toContain(
       "tool-recovery payloads in the retained context may be middle-truncated",
     );

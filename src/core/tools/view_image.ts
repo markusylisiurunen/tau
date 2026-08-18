@@ -46,13 +46,7 @@ export const VIEW_IMAGE_TOOL: Tool = {
   ),
 };
 
-const viewImageArgsSchema = z.object({
-  path: z
-    .string()
-    .trim()
-    .min(1)
-    .refine((path) => !/[\r\n]/.test(path), "Path must be a single line."),
-});
+const viewImageArgsSchema = z.object({ path: z.string() }).strict();
 
 function parseViewImageArgs(
   raw: unknown,
@@ -61,7 +55,14 @@ function parseViewImageArgs(
   if (!parsed.success) {
     return { ok: false, error: formatZodError(parsed.error) };
   }
-  return { ok: true, data: parsed.data };
+  const path = parsed.data.path.trim();
+  if (!path) {
+    return { ok: false, error: "path must not be empty." };
+  }
+  if (/[\r\n]/.test(path)) {
+    return { ok: false, error: "path must be a single line." };
+  }
+  return { ok: true, data: { path } };
 }
 
 function getViewImageSubject(raw: unknown): string {
@@ -293,7 +294,7 @@ export function createViewImageToolDefinition(backend: ToolExecutionBackend): Ag
 
           const encodedImage = await prepareImageForModel(content, mimeType, sharp);
           const data = encodedImage.content.toString("base64");
-          const resultText = `Viewed ${resolvedPath} (${encodedImage.mimeType})`;
+          const resultText = `Successfully viewed ${resolvedPath}.`;
           const outcome: ToolExecutionOutcome = {
             content: [
               { type: "text", text: resultText },
@@ -316,7 +317,10 @@ export function createViewImageToolDefinition(backend: ToolExecutionBackend): Ag
           return { content: outcome.content, outcome: outcome.outcome, uiEvent };
         } catch (e) {
           const errorMessage = e instanceof Error ? e.message : String(e);
-          return blocked(`Tool view_image failed: ${errorMessage}`, "failed");
+          if ((e as NodeJS.ErrnoException).code === "ENOENT") {
+            return blocked(`File not found at '${path}'. Verify the path is correct.`);
+          }
+          return blocked(`Could not view image: ${errorMessage}`, "failed");
         }
       });
     },

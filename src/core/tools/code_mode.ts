@@ -94,11 +94,11 @@ function getCodeModeTerminationNote(
   timeoutMs: number | undefined,
 ): string | undefined {
   if (runtime.status === "timed-out") {
-    return `(tau) timed out${timeoutMs === undefined ? "" : ` after ${timeoutMs}ms`}`;
+    return `Program timed out${timeoutMs === undefined ? "" : ` after ${timeoutMs}ms`}.`;
   }
-  if (runtime.status === "cancelled") return "(tau) aborted";
+  if (runtime.status === "cancelled") return "Program was cancelled.";
   if (runtime.execution.closeSignal) {
-    return `(tau) terminated by signal ${runtime.execution.closeSignal}`;
+    return `Program was terminated by signal ${runtime.execution.closeSignal}.`;
   }
   return undefined;
 }
@@ -193,7 +193,9 @@ export function createCodeModeToolDefinition<TArgs>(
               ? {
                   ...outputPresentation,
                   details: outputPresentation.details.map((line) =>
-                    line.text === terminationNote ? { ...line, wrap: "word" as const } : line,
+                    line.text === terminationNote || line.text === `[${terminationNote}]`
+                      ? { ...line, wrap: "word" as const }
+                      : line,
                   ),
                 }
               : outputPresentation;
@@ -207,7 +209,8 @@ export function createCodeModeToolDefinition<TArgs>(
             };
             return { content: outcome.content, outcome: outcome.outcome, uiEvent };
           } catch (error) {
-            return blocked(error instanceof Error ? error.message : String(error), "failed");
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            return blocked(`Could not execute program: ${errorMessage}`, "failed");
           }
         },
         {

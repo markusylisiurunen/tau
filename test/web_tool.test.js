@@ -490,6 +490,18 @@ describe("Exa web code-mode tool", () => {
     expect(deps.createExaClient).not.toHaveBeenCalled();
   });
 
+  it("separates failed-program status from program output", async () => {
+    const backend = createBackend();
+    const tool = createWebTool(backend, createDeps({}));
+    const { result } = await runTool(tool, { code: 'throw new Error("program failure")' });
+    const text = getToolText(result);
+
+    expect(result.toolResult.outcome).toBe("failed");
+    expect(text).toContain("program failure");
+    expect(text).toMatch(/\n\n\[Program failed with exit code 1\.\]$/);
+    expect(text).not.toContain("\n(exit 1)");
+  });
+
   it("forwards cancellation to a running sandbox", async () => {
     const backend = createBackend();
     const tool = createWebTool(backend, createDeps({}));
@@ -499,9 +511,9 @@ describe("Exa web code-mode tool", () => {
 
     const { result } = await run;
     expect(result.toolResult.outcome).toBe("cancelled");
-    expect(getToolText(result)).toContain("(tau) aborted");
+    expect(getToolText(result)).toBe("Program was cancelled.");
     expect(result.uiEvent.presentation.details).toContainEqual({
-      text: "(tau) aborted",
+      text: "Program was cancelled.",
       wrap: "word",
     });
   });
@@ -539,7 +551,7 @@ describe("Exa web code-mode tool", () => {
 
     expect(providerSettled).toBe(true);
     expect(client.search.mock.calls[0][2].aborted).toBe(true);
-    expect(getToolText(result)).toContain("(tau) aborted");
+    expect(getToolText(result)).toBe("Program was cancelled.");
   });
 
   it("cancels provider requests and reports sandbox timeouts explicitly", async () => {
@@ -562,13 +574,15 @@ describe("Exa web code-mode tool", () => {
     const backend = createBackend();
     const deps = { ...createDeps(client), timeoutMs: 1_000 };
     const tool = createWebTool(backend, deps);
-    const { result } = await runTool(tool, { code: "await web.search('tau')" });
+    const { result } = await runTool(tool, {
+      code: "console.log('partial output'); await web.search('tau')",
+    });
 
     expect(providerSettled).toBe(true);
     expect(result.toolResult.outcome).toBe("cancelled");
-    expect(getToolText(result)).toContain("(tau) timed out after 1000ms");
+    expect(getToolText(result)).toBe("partial output\n\n[Program timed out after 1000ms.]");
     expect(result.uiEvent.presentation.details).toContainEqual({
-      text: "(tau) timed out after 1000ms",
+      text: "[Program timed out after 1000ms.]",
       wrap: "word",
     });
   });

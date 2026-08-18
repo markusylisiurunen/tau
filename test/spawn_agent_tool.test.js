@@ -187,6 +187,18 @@ describe("list_agents tool", () => {
     expect(result.uiEvent.presentation.metadata).toEqual([]);
     expect(() => JSON.parse(text)).toThrow();
   });
+
+  it("returns a focused supervisor failure", async () => {
+    const tool = createListAgentsToolDefinition({
+      listSnapshots: vi.fn(() => {
+        throw new Error("supervisor unavailable");
+      }),
+    });
+    const { result } = await execute(tool, {}, TOOL_NAME_LIST_AGENTS);
+
+    expect(result.toolResult.outcome).toBe("failed");
+    expect(getText(result.toolResult)).toBe("Could not list subagents: supervisor unavailable");
+  });
 });
 
 describe("send_input_to_agent tool", () => {
@@ -233,6 +245,9 @@ describe("send_input_to_agent tool", () => {
       TOOL_NAME_SEND_INPUT_TO_AGENT,
     );
     expect(invalid.result.toolResult.outcome).toBe("blocked");
+    expect(getText(invalid.result.toolResult)).toBe(
+      "Invalid arguments: id: must be a single line.",
+    );
 
     const { result } = await execute(
       tool,
@@ -249,6 +264,26 @@ describe("send_input_to_agent tool", () => {
       ["Started run 2 for `agent-1` · child task", "capacity 1/8"].join("\n"),
     );
     expect(getText(result.toolResult)).not.toContain("previous response");
+  });
+
+  it("returns a focused supervisor failure", async () => {
+    const supervisor = {
+      getSnapshot: vi.fn(() => createSubagentState({ availability: "idle" })),
+      sendInput: vi.fn(() => {
+        throw new Error("supervisor unavailable");
+      }),
+    };
+    const tool = createSendInputToAgentToolDefinition(supervisor);
+    const { result } = await execute(
+      tool,
+      { id: "agent-1", prompt: "continue" },
+      TOOL_NAME_SEND_INPUT_TO_AGENT,
+    );
+
+    expect(result.toolResult.outcome).toBe("failed");
+    expect(getText(result.toolResult)).toBe(
+      "Could not send input to subagent: supervisor unavailable",
+    );
   });
 
   it("does not duplicate cancellation in details or metadata", async () => {
@@ -268,6 +303,7 @@ describe("send_input_to_agent tool", () => {
     );
 
     expect(result.toolResult.outcome).toBe("cancelled");
+    expect(getText(result.toolResult)).toBe("Sending input to the subagent was cancelled.");
     expect(result.uiEvent.presentation.details).toEqual([]);
     expect(result.uiEvent.presentation.metadata).toEqual([]);
   });
@@ -326,6 +362,9 @@ describe("wait_for_agents tool", () => {
 
     const invalid = await execute(tool, { ids: ["agent-1\nagent-2"] }, TOOL_NAME_WAIT_FOR_AGENTS);
     expect(invalid.result.toolResult.outcome).toBe("blocked");
+    expect(getText(invalid.result.toolResult)).toBe(
+      "Invalid arguments: ids.0: must be a single line.",
+    );
 
     const { result } = await execute(
       tool,
@@ -356,6 +395,19 @@ describe("wait_for_agents tool", () => {
     expect(result.uiEvent.presentation.metadata).toEqual(["cost $0.02", "duration 30s"]);
   });
 
+  it("returns a focused supervisor failure", async () => {
+    const supervisor = {
+      waitForAgents: vi.fn(async () => {
+        throw new Error("supervisor unavailable");
+      }),
+    };
+    const tool = createWaitForAgentsToolDefinition(supervisor);
+    const { result } = await execute(tool, { ids: ["agent-1"] }, TOOL_NAME_WAIT_FOR_AGENTS);
+
+    expect(result.toolResult.outcome).toBe("failed");
+    expect(getText(result.toolResult)).toBe("Could not wait for subagents: supervisor unavailable");
+  });
+
   it("does not duplicate cancellation as a detail", async () => {
     const supervisor = {
       waitForAgents: vi.fn(async () => {
@@ -375,6 +427,7 @@ describe("wait_for_agents tool", () => {
     );
 
     expect(result.toolResult.outcome).toBe("cancelled");
+    expect(getText(result.toolResult)).toBe("Waiting for subagents was cancelled.");
     expect(result.uiEvent.presentation.details).toEqual([]);
   });
 });
@@ -403,6 +456,9 @@ describe("interrupt_agent tool", () => {
 
     const invalid = await execute(tool, { id: "agent-1\nagent-2" }, TOOL_NAME_INTERRUPT_AGENT);
     expect(invalid.result.toolResult.outcome).toBe("blocked");
+    expect(getText(invalid.result.toolResult)).toBe(
+      "Invalid arguments: id: must be a single line.",
+    );
 
     const { result } = await execute(tool, { id: "agent-1" }, TOOL_NAME_INTERRUPT_AGENT);
 
@@ -483,6 +539,20 @@ describe("interrupt_agent tool", () => {
     expect(result.uiEvent.presentation.details.at(-1).text).toBe(`failure: ${failureMessage}`);
   });
 
+  it("returns a focused supervisor failure", async () => {
+    const supervisor = {
+      getSnapshot: vi.fn(() => createSubagentState()),
+      interrupt: vi.fn(async () => {
+        throw new Error("supervisor unavailable");
+      }),
+    };
+    const tool = createInterruptAgentToolDefinition(supervisor);
+    const { result } = await execute(tool, { id: "agent-1" }, TOOL_NAME_INTERRUPT_AGENT);
+
+    expect(result.toolResult.outcome).toBe("failed");
+    expect(getText(result.toolResult)).toBe("Could not interrupt subagent: supervisor unavailable");
+  });
+
   it("does not duplicate cancellation as a detail", async () => {
     const supervisor = {
       getSnapshot: vi.fn(() => createSubagentState()),
@@ -502,6 +572,7 @@ describe("interrupt_agent tool", () => {
     );
 
     expect(result.toolResult.outcome).toBe("cancelled");
+    expect(getText(result.toolResult)).toBe("Subagent interruption was cancelled.");
     expect(result.uiEvent.presentation.details).toEqual([]);
   });
 });
@@ -518,14 +589,18 @@ describe("spawn_agent tool", () => {
       workingDirectory: "one\ntwo",
     });
     expect(invalidDirectory.result.toolResult.outcome).toBe("blocked");
-    expect(invalidDirectory.result.uiEvent.presentation.details[0].text).toContain("single line");
+    expect(getText(invalidDirectory.result.toolResult)).toBe(
+      "Invalid arguments: workingDirectory: must be a single line.",
+    );
 
     const invalidTitle = await execute(tool, {
       ...baseArguments,
       title: "one\ntwo",
     });
     expect(invalidTitle.result.toolResult.outcome).toBe("blocked");
-    expect(invalidTitle.result.uiEvent.presentation.details[0].text).toContain("single line");
+    expect(getText(invalidTitle.result.toolResult)).toBe(
+      "Invalid arguments: title: must be a single line.",
+    );
   });
 
   it("binds dependencies before execution and admits an allowed launch model", async () => {
@@ -589,6 +664,7 @@ describe("spawn_agent tool", () => {
     const { result } = await execute(tool, baseArguments, TOOL_NAME_SPAWN_AGENT, controller.signal);
 
     expect(result.toolResult.outcome).toBe("cancelled");
+    expect(getText(result.toolResult)).toBe("Subagent creation was cancelled.");
     expect(result.uiEvent.presentation.details).toEqual([]);
     expect(result.uiEvent.presentation.metadata).not.toContain("Aborted.");
   });
@@ -709,9 +785,23 @@ describe("spawn_agent tool", () => {
       workingDirectory: "/tmp/project",
     });
 
-    expect(result.toolResult.outcome).toBe("blocked");
-    expect(getText(result.toolResult)).toContain("target context failed");
+    expect(result.toolResult.outcome).toBe("failed");
+    expect(getText(result.toolResult)).toBe(
+      "Could not build the subagent prompt for workingDirectory '/tmp/project': target context failed",
+    );
     expect(supervisor.spawn).not.toHaveBeenCalled();
+  });
+
+  it("returns a focused supervisor failure", async () => {
+    const supervisor = {
+      spawn: vi.fn(() => {
+        throw new Error("supervisor unavailable");
+      }),
+    };
+    const { result } = await execute(createFixture({ supervisor }).tool, baseArguments);
+
+    expect(result.toolResult.outcome).toBe("failed");
+    expect(getText(result.toolResult)).toBe("Could not create subagent: supervisor unavailable");
   });
 
   it("reports supervisor admission failures as blocked", async () => {

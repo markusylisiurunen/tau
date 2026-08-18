@@ -2,7 +2,6 @@ import type { Tool, ToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { z } from "zod";
 import { formatTokenEstimate } from "../utils/token.js";
-import { formatBytes } from "../utils/truncate.js";
 import { formatZodError } from "../utils/zod.js";
 import type { ToolActivity } from "./activity.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
@@ -44,14 +43,12 @@ export const WRITE_TOOL: Tool = {
   ),
 };
 
-const writeArgsSchema = z.object({
-  path: z
-    .string()
-    .trim()
-    .min(1)
-    .refine((path) => !/[\r\n]/.test(path), "Path must be a single line."),
-  content: z.string(),
-});
+const writeArgsSchema = z
+  .object({
+    path: z.string(),
+    content: z.string(),
+  })
+  .strict();
 
 function parseWriteArgs(
   raw: unknown,
@@ -60,7 +57,14 @@ function parseWriteArgs(
   if (!parsed.success) {
     return { ok: false, error: formatZodError(parsed.error) };
   }
-  return { ok: true, data: parsed.data };
+  const path = parsed.data.path.trim();
+  if (!path) {
+    return { ok: false, error: "path must not be empty." };
+  }
+  if (/[\r\n]/.test(path)) {
+    return { ok: false, error: "path must be a single line." };
+  }
+  return { ok: true, data: { ...parsed.data, path } };
 }
 
 function getWriteSubject(raw: unknown): string {
@@ -136,7 +140,7 @@ export function createWriteToolDefinition(backend: ToolExecutionBackend): AgentT
 
         try {
           const { bytes, lines } = await backend.writeFile(path, content);
-          const resultText = `Successfully wrote ${formatBytes(bytes)} (${lines} lines) to ${path}`;
+          const resultText = `Successfully wrote ${path}.`;
 
           const outcome = createTextToolOutcome(resultText, "succeeded");
           const uiEvent: ToolActivity = {
@@ -153,7 +157,7 @@ export function createWriteToolDefinition(backend: ToolExecutionBackend): AgentT
           return { content: outcome.content, outcome: outcome.outcome, uiEvent };
         } catch (e) {
           const errorMessage = e instanceof Error ? e.message : String(e);
-          return blocked(`Write failed: ${errorMessage}`, "failed");
+          return blocked(`Could not write file: ${errorMessage}`, "failed");
         }
       });
     },

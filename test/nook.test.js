@@ -1287,6 +1287,6 @@ describe("nook code-mode tool", () => {
     expect(requestSettled).toBe(true);
     expect(createClient.mock.calls[0][0].signal.aborted).toBe(true);
     expect(result.toolResult.outcome).toBe("cancelled");
-    expect(getToolText(result)).toContain("(tau) aborted");
+    expect(getToolText(result)).toBe("Program was cancelled.");
   });
 });

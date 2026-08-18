@@ -472,16 +472,17 @@ function appendTerminationNote(
   execution: TauCodeModeExecutionCapture,
   timeoutMs: number,
 ): string {
-  let note: string | undefined;
+  let notice: string | undefined;
   if (execution.timedOut) {
-    note = `(tau) timed out after ${timeoutMs}ms`;
+    notice = `Program timed out after ${timeoutMs}ms.`;
   } else if (execution.aborted) {
-    note = "(tau) aborted";
+    notice = "Program was cancelled.";
   } else if (execution.closeSignal) {
-    note = `(tau) terminated by signal ${execution.closeSignal}`;
+    notice = `Program was terminated by signal ${execution.closeSignal}.`;
   }
-  if (!note) return output;
-  return `${output}${output && !output.endsWith("\n") ? "\n" : ""}${note}\n`;
+  if (!notice) return output;
+  if (!output) return `${notice}\n`;
+  return `${output}${output.endsWith("\n") ? "\n" : "\n\n"}[${notice}]\n`;
 }
 
 function formatResultContent(args: {
@@ -494,8 +495,11 @@ function formatResultContent(args: {
   const output = projection.content.trimEnd();
   if (!output && status === "succeeded") {
     return persistedPath
-      ? `Program produced no output\n\n[Output saved to ${persistedPath}.]`
-      : "Program produced no output";
+      ? `Program produced no output.\n\n[Output saved to ${persistedPath}.]`
+      : "Program produced no output.";
+  }
+  if (!output && status === "failed" && execution.exitCode !== null && execution.exitCode !== 0) {
+    return `Program failed with exit code ${execution.exitCode} and produced no output.`;
   }
 
   const truncationNote =
@@ -504,9 +508,8 @@ function formatResultContent(args: {
       : persistedPath
         ? `\n\n[Output saved to ${persistedPath}.]`
         : "";
-  const exitNote =
-    status === "failed" && execution.exitCode !== null && execution.exitCode !== 0
-      ? `\n(exit ${execution.exitCode})`
-      : "";
-  return `${output || "(no output)"}${truncationNote}${exitNote}`;
+  const resultText = `${output || "Program failed without producing output."}${truncationNote}`;
+  return status === "failed" && execution.exitCode !== null && execution.exitCode !== 0
+    ? `${resultText.trimEnd()}\n\n[Program failed with exit code ${execution.exitCode}.]`
+    : resultText;
 }

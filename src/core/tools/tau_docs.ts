@@ -140,7 +140,7 @@ export function createTauDocsToolDefinition(): AgentTool {
           return { content: outcome.content, outcome: outcome.outcome, uiEvent };
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          return blocked(`Failed to read Tau documentation: ${message}`, "failed");
+          return blocked(`Could not read Tau documentation: ${message}`, "failed");
         }
       });
     },

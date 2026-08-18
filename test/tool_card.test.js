@@ -264,6 +264,7 @@ describe("tool cards", () => {
     const bytes = Buffer.byteLength(content, "utf8");
     const tool = createWriteToolDefinition({
       async writeFile(path, writtenContent) {
+        if (path === "failed.txt") throw new Error("disk is full");
         return { path, bytes: Buffer.byteLength(writtenContent, "utf8"), lines: 17 };
       },
     });
@@ -287,7 +288,19 @@ describe("tool cards", () => {
       arguments: { path: "one\ntwo", content },
     });
     expect(invalid.result.outcome).toBe("blocked");
-    expect(invalid.uiEvent.presentation.details[0].text).toContain("single line");
+    expect(invalid.result.content).toEqual([
+      { type: "text", text: "Invalid arguments: path must be a single line." },
+    ]);
+
+    const unknownArgument = await execute({
+      id: "write-unknown-argument",
+      name: "write",
+      arguments: { path: "file.txt", content, unexpected: true },
+    });
+    expect(unknownArgument.result.outcome).toBe("blocked");
+    expect(unknownArgument.result.content).toEqual([
+      { type: "text", text: 'Invalid arguments: Unrecognized key: "unexpected"' },
+    ]);
 
     const succeeded = await execute({
       id: "write-valid",
@@ -295,6 +308,9 @@ describe("tool cards", () => {
       arguments: { path: "file.txt", content },
     });
     expect(succeeded.result.outcome).toBe("succeeded");
+    expect(succeeded.result.content).toEqual([
+      { type: "text", text: "Successfully wrote file.txt." },
+    ]);
     expect(succeeded.uiEvent.presentation.details.map((line) => line.text)).toEqual([
       ...Array.from({ length: 15 }, (_, index) => `line ${index + 1}`),
       "…2 more lines…",
@@ -306,6 +322,16 @@ describe("tool cards", () => {
     expect(succeeded.uiEvent.presentation.metadata).toEqual([
       `~${Math.floor(bytes / 6)} tokens`,
       "17 lines",
+    ]);
+
+    const failed = await execute({
+      id: "write-failed",
+      name: "write",
+      arguments: { path: "failed.txt", content },
+    });
+    expect(failed.result.outcome).toBe("failed");
+    expect(failed.result.content).toEqual([
+      { type: "text", text: "Could not write file: disk is full" },
     ]);
   });
 

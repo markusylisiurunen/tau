@@ -43,8 +43,11 @@ export function createListAgentsToolDefinition(supervisor: AgentSupervisor): Age
       toolCall: ToolCall,
       context: ToolExecutionContext,
     ): Promise<ToolExecutionOutcome> {
-      const blocked = (reason: string): ToolImplementationOutcome => {
-        const outcome = createTextToolOutcome(reason, "blocked");
+      const blocked = (
+        reason: string,
+        semanticOutcome: ToolExecutionOutcome["outcome"] = "blocked",
+      ): ToolImplementationOutcome => {
+        const outcome = createTextToolOutcome(reason, semanticOutcome);
         const uiEvent: ToolActivity = {
           type: "tool_call_blocked",
           toolCallId: toolCall.id,
@@ -67,24 +70,29 @@ export function createListAgentsToolDefinition(supervisor: AgentSupervisor): Age
       return executeTool(
         context,
         (): ToolImplementationOutcome => {
-          const states = supervisor.listSnapshots();
-          const capacity = supervisor.getCapacity();
-          const resultText = formatListAgentsResult(states, capacity);
-          const outcome = createTextToolOutcome(resultText, "succeeded");
-          const presentation = buildSubagentPresentation({
-            toolName: TOOL_NAME_LIST_AGENTS,
-            subject: "subagents",
-            output: resultText,
-            detailTruncation: false,
-          });
-          const uiEvent: ToolActivity = {
-            type: "tool_call_finished",
-            toolCallId: toolCall.id,
-            toolName: TOOL_NAME_LIST_AGENTS,
-            presentation,
-            status: "success",
-          };
-          return { content: outcome.content, outcome: outcome.outcome, uiEvent };
+          try {
+            const states = supervisor.listSnapshots();
+            const capacity = supervisor.getCapacity();
+            const resultText = formatListAgentsResult(states, capacity);
+            const outcome = createTextToolOutcome(resultText, "succeeded");
+            const presentation = buildSubagentPresentation({
+              toolName: TOOL_NAME_LIST_AGENTS,
+              subject: "subagents",
+              output: resultText,
+              detailTruncation: false,
+            });
+            const uiEvent: ToolActivity = {
+              type: "tool_call_finished",
+              toolCallId: toolCall.id,
+              toolName: TOOL_NAME_LIST_AGENTS,
+              presentation,
+              status: "success",
+            };
+            return { content: outcome.content, outcome: outcome.outcome, uiEvent };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            return blocked(`Could not list subagents: ${errorMessage}`, "failed");
+          }
         },
         {
           type: "tool_call_started",

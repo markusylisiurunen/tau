@@ -44,17 +44,19 @@ export const WAIT_FOR_AGENTS_TOOL: Tool = {
   ),
 };
 
-const waitArgsSchema = z.object({
-  ids: z
-    .array(
-      z
-        .string()
-        .trim()
-        .min(1)
-        .refine((id) => !/[\r\n]/.test(id), "Subagent ID must be a single line."),
-    )
-    .min(1),
-});
+const waitArgsSchema = z
+  .object({
+    ids: z
+      .array(
+        z
+          .string()
+          .trim()
+          .min(1, "must not be empty.")
+          .refine((id) => !/[\r\n]/.test(id), "must be a single line."),
+      )
+      .min(1, "must contain at least one subagent ID."),
+  })
+  .strict();
 
 function getWaitDurationMs(states: SubagentStateSnapshot[]): number | undefined {
   const durations = states.flatMap((state) =>
@@ -181,8 +183,10 @@ export function createWaitForAgentsToolDefinition(supervisor: AgentSupervisor): 
             const outcome = createTextToolOutcome(resultText, "succeeded");
             return { content: outcome.content, outcome: outcome.outcome, uiEvent };
           } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            const reason = message.trim() || "The wait_for_agents request failed.";
+            const errorMessage = (error instanceof Error ? error.message : String(error)).trim();
+            const reason = signal.aborted
+              ? "Waiting for subagents was cancelled."
+              : `Could not wait for subagents: ${errorMessage || "unknown error"}`;
             const presentation = signal.aborted
               ? buildToolRunPresentation({
                   toolName: TOOL_NAME_WAIT_FOR_AGENTS,

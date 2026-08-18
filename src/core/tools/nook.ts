@@ -53,7 +53,7 @@ export const NOOK_TOOL: Tool = {
 
 const nookArgsSchema = z
   .object({
-    code: z.string().trim().min(1),
+    code: z.string().trim().min(1, "must not be empty."),
   })
   .strict();
 

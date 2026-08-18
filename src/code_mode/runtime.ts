@@ -160,10 +160,10 @@ export function buildTauCodeModeToolDescription({
   if (!trimmedDescription) throw new Error("code-mode tool description must not be empty");
   return [
     trimmedDescription,
-    "Before using the API, check whether this tool's documentation is already visible in the conversation context.",
-    "If it is not, make one documentation-only call that does nothing except print docs with console.log(docs).",
+    "When this tool is useful, first check whether its documentation is already visible in the conversation context.",
+    "If it is not, your first call must be a documentation-only program that does nothing except print docs with console.log(docs).",
     `Read the returned documentation before writing a later tool call that uses ${name}.`,
-    "Do not reload the documentation while it remains visible in context, and do not guess API signatures.",
+    "Once the documentation is visible, use the API normally without reloading it, and do not guess API signatures.",
   ].join(" ");
 }
 

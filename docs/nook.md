@@ -211,10 +211,10 @@ The tool is host-owned. It performs authenticated Nook HTTP outside generated co
 
 The tool has two separate documentation stages:
 
-1. Before using the management API, the built-in `docs` must be visible in the conversation context. If they are not, one documentation-only call prints and reads them. Do not reload them while they remain visible.
-2. Before authoring or modifying a Nook app, a separate documentation-only call retrieves and prints `nook.skill()`. The agent reads that deployment-provided guide before writing files in later calls.
+1. The management stage requires the built-in `docs` to be visible before API use. When they are absent, the first call only prints them; after the agent reads that result, later calls use the management API normally. Already-visible documentation is reused rather than reloaded.
+2. The app-authoring stage requires a separate documentation-only call that retrieves and prints `nook.skill()`. The agent reads that deployment-provided guide before writing files in later calls.
 
-Do not combine skill retrieval with management operations, and do not guess either API from this page. The deployed skill owns browser SDK and app-authoring behavior so it stays version-matched to that Nook deployment. General tool eligibility and code-mode behavior are covered in [tools](tools.md).
+Skill retrieval and management operations remain separate calls, and this page does not specify either API. The deployed skill owns browser SDK and app-authoring behavior so it stays version-matched to that Nook deployment. General tool eligibility and code-mode behavior are covered in [tools](tools.md).
 
 ## Verify a deployment
 

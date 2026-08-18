@@ -231,7 +231,7 @@ A newer storage version requires that Tau version or later. For invalid JSON, sn
 
 History is host-owned and independent of session snapshots. Its default database is in the host home, and a failure warns without stopping the session. Check the host user and home, permissions, free space, Node version, and unexpected competing processes. Restart the host after correction. Do not open, edit, replace, or delete SQLite files as an initial repair.
 
-The active persona must select `history`. Before using its API, load the tool documentation once if it is not already visible in the conversation context. If the tool is missing, fix the persona and reload. Use it only when the user or another active instruction directly requests historical transcripts.
+The `history` tool appears only when the active persona selects it. Its agent-facing description requires one documentation-only call when the API documentation is not already visible, then reuses the visible documentation for later calls. If the tool is missing, fix the persona and reload. The tool is intended only for requests or active instructions that directly call for historical transcripts.
 
 With remote History configured, queries use the remote collection while local SQLite remains the durable first write and outbox. Replication is asynchronous. An empty result can mean the wrong host/home, filters, endpoint, deployment credential, network path, or pending replication. Restart the host after changing the global target or environment, then run one narrow query.
 

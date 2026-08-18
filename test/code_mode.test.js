@@ -275,7 +275,7 @@ describe("public code-mode runtime", () => {
         description: "Search Linear issues.",
       }),
     ).toBe(
-      "Search Linear issues. Before using the API, check whether this tool's documentation is already visible in the conversation context. If it is not, make one documentation-only call that does nothing except print docs with console.log(docs). Read the returned documentation before writing a later tool call that uses linear. Do not reload the documentation while it remains visible in context, and do not guess API signatures.",
+      "Search Linear issues. When this tool is useful, first check whether its documentation is already visible in the conversation context. If it is not, your first call must be a documentation-only program that does nothing except print docs with console.log(docs). Read the returned documentation before writing a later tool call that uses linear. Once the documentation is visible, use the API normally without reloading it, and do not guess API signatures.",
     );
   });
 

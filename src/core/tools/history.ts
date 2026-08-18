@@ -22,7 +22,7 @@ const HISTORY_DESCRIPTION = buildCodeModeToolDescription({
   introduction: [
     "Run a one-shot JavaScript program to search and read durable transcripts from the configured history collection.",
     "Use this tool only when the user or other active instructions directly ask you to reference, search, or read historical transcripts; do not invoke it merely because prior sessions might be relevant.",
-    "When reading a known historical session without a clear lookup key, consider deriving a bounded chronological overview before guessing search terms or printing complete entry payloads, then drill into the most relevant entries.",
+    "For a known historical session without a clear lookup key, a bounded chronological overview is one way to identify entries worth inspecting in detail.",
     "The tool is read-only and has global visibility across repositories and execution environments.",
   ],
 });

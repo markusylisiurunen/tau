@@ -912,16 +912,12 @@ describe("AgentRuntime", () => {
       "required even when no archive lookup is currently planned",
     );
     expect(continuationContext).toContain(
-      "prefer these execution-environment files over the separate history tool",
+      "use these execution-environment files rather than the separate history tool",
     );
-    expect(continuationContext).toContain("Keep archive retrieval bounded");
-    expect(continuationContext).toContain("concise chronological overview");
-    expect(continuationContext).toContain("Avoid blind guessed-term searches");
-    expect(continuationContext).toContain("Earlier numbered pairs may hold details");
-    expect(continuationContext).toContain("matching JSON records retain full archived content");
     expect(continuationContext).toContain(
-      "Follow the guide for the archive format and adaptable lookup examples",
+      "adaptable, bounded lookup examples, including how to inspect earlier numbered pairs",
     );
+    expect(continuationContext).not.toContain("Avoid blind guessed-term searches");
   });
 
   it("continues automatic compaction without archive guidance when archiving fails", async () => {

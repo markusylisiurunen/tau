@@ -580,7 +580,7 @@ export function prepareAutoCompaction(
   };
 }
 
-const AUTO_COMPACTION_ARCHIVE_REFERENCE_GUIDANCE = `After compaction, the continuing assistant will receive exact paths to temporary text and JSON transcripts of the pre-compaction context. Conversation records above that show an archive entry id can be recovered from those files by id. The continuing assistant can search the numbered text transcripts first, then inspect the corresponding JSON record when it needs the full archived content.
+const AUTO_COMPACTION_ARCHIVE_REFERENCE_GUIDANCE = `When best-effort archiving succeeds, the continuing assistant receives exact paths to a temporary text transcript and JSON snapshot of the pre-compaction context. Conversation records above that show an archive entry id can be recovered directly from the matching JSON file. When no entry id is available, the files also support discovery from distinctive evidence.
 
 Keep the summary independently useful. State continuity-critical goals, constraints, decisions, current state, blockers, and next steps directly. When exact or bulky details would be wasteful to reproduce, you may mention the relevant id as an auto-compaction archive entry id so the continuing assistant knows to use the supplied files, not the separate history tool. This is useful for long tool output, diagnostic logs, exact errors, payloads, and large code excerpts. Use such references sparingly and only for ids shown in the conversation.
 
@@ -599,7 +599,7 @@ export function buildAutoCompactionPrompt(preparation: AutoCompactionPreparation
 Place the section wherever it makes the handoff clearest. Preserve earlier session context elsewhere in the summary without duplicating the retained suffix.`
       : "The retained context will include recent messages. Ensure the summary complements that retained context without duplicating unnecessary detail.";
   const boundedRetainedContextGuidance =
-    "Individual textual tool results and tool-recovery payloads in the retained context may be middle-truncated above the retention limit. Do not describe the retained context as exact or verbatim. The continuing assistant can recover omitted output through a targeted search of the pre-compaction archive when needed.";
+    "Individual textual tool results and tool-recovery payloads in the retained context may be middle-truncated above the retention limit. Do not describe the retained context as exact or verbatim. When the pre-compaction archive is available, the continuing assistant can recover omitted output through a targeted lookup.";
 
   return buildSessionCompactionPrompt({
     preparation,
@@ -632,10 +632,8 @@ export function buildAutoCompactionContinuationMessage(args: {
       `- this compaction's text transcript: ${args.archive.textPath}`,
       `- this compaction's full JSON: ${args.archive.jsonPath}`,
       "Before continuing, ensure the archive guide's full contents are present in the current model context. If they are not already visible in full, read the guide now with an execution-environment file tool. This is required even when no archive lookup is currently planned.",
-      "For details removed from this session by automatic compaction, prefer these execution-environment files over the separate history tool, whose collection may be stale, remotely replicated, truncated, or unavailable.",
-      "Keep archive retrieval bounded: use a known entry id or distinctive evidence directly; when no clear key exists, a concise chronological overview followed by targeted drill-down is one useful optional pattern. Avoid blind guessed-term searches and complete transcript dumps.",
-      "Earlier numbered pairs may hold details predating this compaction. Text transcripts are searchable but truncate large tool results; matching JSON records retain full archived content and may be large.",
-      "Follow the guide for the archive format and adaptable lookup examples.",
+      "For details removed from this session by automatic compaction, use these execution-environment files rather than the separate history tool, whose collection may be stale, remotely replicated, truncated, or unavailable.",
+      "The guide describes the archive format and adaptable, bounded lookup examples, including how to inspect earlier numbered pairs when needed.",
     );
   }
 

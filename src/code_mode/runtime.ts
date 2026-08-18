@@ -160,9 +160,10 @@ export function buildTauCodeModeToolDescription({
   if (!trimmedDescription) throw new Error("code-mode tool description must not be empty");
   return [
     trimmedDescription,
-    "When this tool is useful, your first call must be a documentation-only program that does nothing except print docs with console.log(docs).",
+    "When this tool is useful, first check whether its documentation is already visible in the conversation context.",
+    "If it is not, your first call must be a documentation-only program that does nothing except print docs with console.log(docs).",
     `Read the returned documentation before writing a later tool call that uses ${name}.`,
-    "Do not guess API signatures.",
+    "Once the documentation is visible, use the API normally without reloading it, and do not guess API signatures.",
   ].join(" ");
 }
 
@@ -427,6 +428,7 @@ function buildRuntimeDocumentation(
     "## API boundary",
     "",
     `Arguments and results cross a JSON serialization boundary with a ${formatBytes(CODE_MODE_MAX_BRIDGE_PAYLOAD_BYTES)} limit per request or response.`,
+    "Undefined object properties are omitted from API arguments. Undefined arguments and array entries remain invalid.",
     `A program may make at most ${CODE_MODE_MAX_BRIDGE_REQUESTS} API calls, with at most ${CODE_MODE_MAX_CONCURRENT_BRIDGE_REQUESTS} unresolved calls concurrently. Exceeding any bridge limit fails the program.`,
     `The program must finish within ${formatDuration(timeoutMs)}.`,
     ...(hasFiles

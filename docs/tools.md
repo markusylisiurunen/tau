@@ -141,15 +141,15 @@ The command uploads the PDF to Mistral and attempts to delete the remote upload 
 
 `web`, `history`, and `nook` each run a one-shot JavaScript program in Tau's restricted code-mode runtime. They intentionally disclose their exact API at use time rather than embedding signatures in this page.
 
-The first useful call must only print the tool's documentation:
+Tau exposes each service tool with agent-facing guidance that requires its documentation to be visible before API use. When the documentation is absent, the first useful call is a documentation-only program:
 
 ```js
 console.log(docs);
 ```
 
-Read that result before making a later call that uses the documented API. Do not guess signatures or copy signatures from another code-mode tool. Program return values are ignored; print only the information needed for the task.
+After reading that result, the agent uses the documented API in later calls. While the documentation remains visible, it is reused rather than reloaded. The guidance prohibits guessed signatures and signatures copied from another code-mode tool. Program return values are ignored; only console output is returned.
 
-Code-mode programs have no direct process, environment, credential, import, timer, network, or `fetch` access. They can call only the named API and use agent-scoped scratch files exposed by the runtime. Calls default to a 60-second deadline, allow at most 128 API requests with no more than eight unresolved at once, and limit each serialized request or response to 1 MiB. Console output is middle-truncated above roughly 8,192 estimated tokens.
+Code-mode programs have no direct process, environment, credential, import, timer, network, or `fetch` access. They can call only the named API and use agent-scoped scratch files exposed by the runtime. Calls default to a 60-second deadline, allow at most 128 API requests with no more than eight unresolved at once, and limit each serialized request or response to 1 MiB. Undefined object properties are omitted from API arguments; undefined arguments and array entries are invalid. Console output is middle-truncated above roughly 8,192 estimated tokens.
 
 Scratch files are real UTF-8 files in an execution-environment temporary directory shared by code-mode tools for the same agent. Writes are limited to 128 regular files and 64 MiB total. Scratch state is not stored in the session snapshot. The progressively disclosed documentation gives the exact file API.
 
@@ -169,7 +169,7 @@ The effective history query may be machine-local or backed by a configured remot
 
 `nook` manages the configured Nook static mini-app platform. It is available only to a main-session persona that lists `nook` and only when Nook is configured. Subagents cannot receive it.
 
-Use it when the user asks to inspect or manage Nook, publish a static artifact or mini-app, or work with Nook KV. After the initial `docs` call, app-authoring work requires a second separate documentation-only call that prints the Nook authoring skill. Read that guide before creating or modifying app files. Nook setup and platform behavior are covered in [Nook](nook.md).
+The tool is intended for explicit requests to inspect or manage Nook, publish a static artifact or mini-app, or work with Nook KV. Once the built-in documentation is visible, app-authoring work requires a second separate documentation-only call that prints the Nook authoring skill. The agent reads that guide before creating or modifying app files. Nook setup and platform behavior are covered in [Nook](nook.md).
 
 ## Subagent tool eligibility
 

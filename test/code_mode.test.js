@@ -42,6 +42,32 @@ describe("public code-mode runtime", () => {
     });
   });
 
+  it("omits undefined object properties from API arguments", async () => {
+    const inspect = vi.fn(async ([value]) => value);
+    const result = await executeTauCodeMode({
+      ...createDefinition({ api: { inspect } }),
+      code: [
+        "const options = { limit: 100, cursor: undefined, nested: { keep: true, omit: undefined } };",
+        "console.log(await linear.inspect(options));",
+      ].join("\n"),
+    });
+
+    expect(JSON.parse(result.content)).toEqual({ limit: 100, nested: { keep: true } });
+    expect(inspect).toHaveBeenCalledWith(
+      [{ limit: 100, nested: { keep: true } }],
+      expect.any(Object),
+    );
+  });
+
+  it("rejects undefined API arguments instead of converting them to null", async () => {
+    await expect(
+      executeTauCodeMode({
+        ...createDefinition({ api: { inspect: async () => null } }),
+        code: "await linear.inspect(undefined)",
+      }),
+    ).rejects.toThrow("Code-mode API arguments must be JSON-serializable values");
+  });
+
   it("prepends canonical runtime documentation", async () => {
     const result = await executeTauCodeMode({
       ...createDefinition(),
@@ -52,6 +78,7 @@ describe("public code-mode runtime", () => {
     expect(result.content).toContain("at most 128 API calls");
     expect(result.content).toContain("at most 8 unresolved calls concurrently");
     expect(result.content).toContain("a 1.0 MB limit per request or response");
+    expect(result.content).toContain("Undefined object properties are omitted");
     expect(result.content).not.toContain("`files`");
     expect(result.content).toContain("# Linear API");
   });
@@ -248,7 +275,7 @@ describe("public code-mode runtime", () => {
         description: "Search Linear issues.",
       }),
     ).toBe(
-      "Search Linear issues. When this tool is useful, your first call must be a documentation-only program that does nothing except print docs with console.log(docs). Read the returned documentation before writing a later tool call that uses linear. Do not guess API signatures.",
+      "Search Linear issues. When this tool is useful, first check whether its documentation is already visible in the conversation context. If it is not, your first call must be a documentation-only program that does nothing except print docs with console.log(docs). Read the returned documentation before writing a later tool call that uses linear. Once the documentation is visible, use the API normally without reloading it, and do not guess API signatures.",
     );
   });
 

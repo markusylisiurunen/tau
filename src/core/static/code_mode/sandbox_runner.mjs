@@ -142,7 +142,8 @@ compartment.evaluate(String.raw`
   });
 
   function serializeArguments(args) {
-    return JSON.stringify(args, (_key, value) => {
+    return JSON.stringify(args, function (_key, value) {
+      if (value === undefined && !Array.isArray(this)) return undefined;
       if (
         value === undefined ||
         typeof value === "function" ||

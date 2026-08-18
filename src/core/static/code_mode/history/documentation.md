@@ -137,24 +137,21 @@ const text = (value) => {
   if (value && typeof value === "object") return JSON.stringify(value);
   return "";
 };
-const middle = (value, max = 256) => {
+const excerpt = (value, max = 256) => {
   const chars = [...text(value).replace(/\s+/g, " ").trim()];
   if (chars.length <= max) return chars.join("");
-  const marker = " ... ";
+  const marker = " … ";
   const kept = max - marker.length;
   const head = Math.ceil(kept / 2);
   return chars.slice(0, head).join("") + marker + chars.slice(-(kept - head)).join("");
 };
-const render = (entry) =>
-  entry.type === "tool"
-    ? `${text(entry.arguments)} ${text(entry.result)}`
-    : text(entry.content);
 
 const page = await history.read({ sessionId, limit: 100 });
 for (const entry of page.entries) {
-  const label = entry.type === "tool" ? `tool ${entry.name} ${entry.outcome}` : entry.type;
+  const label = entry.type === "tool" ? `tool ${entry.name}` : entry.type;
   const reference = entry.sourceIds[0] ?? entry.id;
-  console.log(`[${label} ref="...${reference.slice(-8)}"] ${middle(render(entry))}`);
+  const content = entry.type === "tool" ? entry.result : entry.content;
+  console.log(`[${label} id=…${reference.slice(-8)}] ${excerpt(content)}`);
 }
 if (page.nextCursor) console.log(`more entries: continue with cursor ${page.nextCursor}`);
 ```
@@ -180,7 +177,11 @@ do {
 
     for (const suffix of matches) found.add(suffix);
     const label = entry.type === "tool" ? `tool ${entry.name} ${entry.outcome}` : entry.type;
-    console.log(`[${label} id=${entry.id}] ${middle(render(entry), 4000)}`);
+    const detail =
+      entry.type === "tool"
+        ? { arguments: entry.arguments, result: entry.result }
+        : entry.content;
+    console.log(`[${label} id=${entry.id}] ${excerpt(detail, 4000)}`);
   }
   cursor = page.nextCursor;
 } while (cursor);
@@ -189,4 +190,4 @@ const missing = wantedSuffixes.filter((suffix) => !found.has(suffix));
 if (missing.length > 0) console.log(`unmatched refs: ${missing.join(", ")}`);
 ```
 
-The second example reuses the `text`, `middle`, and `render` helpers from the first. Adapt it to select only the fields needed, especially for large tool arguments or results.
+The second example reuses the `text` and `excerpt` helpers from the first. Adapt it to select only the fields needed, especially for large tool arguments or results.

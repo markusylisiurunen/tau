@@ -627,7 +627,7 @@ export function buildAutoCompactionContinuationMessage(args: {
 
   if (args.archive) {
     lines.push(
-      "The summary and retained context should normally be sufficient. Tau also created temporary pre-compaction archive files:",
+      "The summary and retained context should normally be sufficient. Temporary pre-compaction archive files are also available:",
       `- archive guide: ${args.archive.documentationPath}`,
       `- this compaction's text transcript: ${args.archive.textPath}`,
       `- this compaction's full JSON: ${args.archive.jsonPath}`,
@@ -635,7 +635,7 @@ export function buildAutoCompactionContinuationMessage(args: {
       "For details removed from this session by automatic compaction, prefer these execution-environment files over the separate history tool, whose collection may be stale, remotely replicated, truncated, or unavailable.",
       "Keep archive retrieval bounded: use a known entry id or distinctive evidence directly; when no clear key exists, a concise chronological overview followed by targeted drill-down is one useful optional pattern. Avoid blind guessed-term searches and complete transcript dumps.",
       "Earlier numbered pairs may hold details predating this compaction. Text transcripts are searchable but truncate large tool results; matching JSON records retain full archived content and may be large.",
-      "Follow the guide for schemas, lifecycle details, and adaptable examples. These files are temporary and may no longer exist.",
+      "Follow the guide for the archive format and adaptable lookup examples.",
     );
   }
 

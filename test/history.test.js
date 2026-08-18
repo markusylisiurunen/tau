@@ -1989,10 +1989,7 @@ describe("session history", () => {
   });
 
   it("documents bounded overview and drill-down retrieval", async () => {
-    expect(HISTORY_TOOL.description).toContain(
-      "use those execution-environment files instead of this tool",
-    );
-    expect(HISTORY_TOOL.description).toContain("may lag when remotely replicated");
+    expect(HISTORY_TOOL.description).not.toContain("automatic-compaction");
     expect(HISTORY_TOOL.description).toContain(
       "consider deriving a bounded chronological overview",
     );
@@ -2004,8 +2001,12 @@ describe("session history", () => {
     const result = await runTool(tool, "console.log(docs)");
     const text = toolText(result);
     expect(text).toContain("project one bounded page without printing complete payloads");
-    expect(text).toContain('ref="...');
+    expect(text).toContain("id=…");
     expect(text).toContain("reference.slice(-8)");
+    expect(text).toContain('const marker = " … ";');
+    expect(text).toContain('const label = entry.type === "tool"');
+    expect(text).toContain("entry.name");
+    expect(text).toContain('entry.type === "tool" ? entry.result : entry.content');
     expect(text).toContain("scan transcript pages in code and print only matching entries");
     expect(text).toContain("The second example reuses");
   });

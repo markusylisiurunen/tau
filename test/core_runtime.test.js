@@ -750,14 +750,17 @@ describe("automatic compaction archive", () => {
       expect(text).toContain("tokens truncated");
       expect(text).not.toContain(longOutput);
       expect(text).not.toContain("private reasoning must not be archived");
-      expect(documentation).toContain("# Tau automatic compaction archives");
-      expect(documentation).toContain(
-        "requires this guide's full contents to be present in model context",
-      );
+      expect(text).toContain("Automatic compaction context snapshot");
+      expect(documentation).toContain("# Automatic compaction archive");
+      expect(documentation).not.toContain("Tau");
       expect(documentation).toContain("## JSON shape");
-      expect(documentation).toContain('"role": "toolResult"');
-      expect(documentation).toContain("only an example; adapt or skip it based on the task");
-      expect(documentation).toContain("Prefer these files over Tau's separate `history` tool");
+      expect(documentation).toContain("type Archive = {");
+      expect(documentation).toContain('role: "toolResult"');
+      expect(documentation).toContain("select its JSON record directly");
+      expect(documentation).toContain("item.historyEntryId === id");
+      expect(documentation).toContain('const marker = " … ";');
+      expect(documentation).toContain('"[tool " + part.name + "]"');
+      expect(documentation).toContain('" id=…" + message.historyEntryId.slice(-8)');
       expect(statSync(dirname(first.textPath)).mode & 0o777).toBe(0o700);
       expect(statSync(first.documentationPath).mode & 0o777).toBe(0o600);
       expect(statSync(first.textPath).mode & 0o777).toBe(0o600);

@@ -920,7 +920,7 @@ describe("AgentRuntime", () => {
     expect(continuationContext).toContain("Earlier numbered pairs may hold details");
     expect(continuationContext).toContain("matching JSON records retain full archived content");
     expect(continuationContext).toContain(
-      "Follow the guide for schemas, lifecycle details, and adaptable examples",
+      "Follow the guide for the archive format and adaptable lookup examples",
     );
   });
 

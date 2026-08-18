@@ -11,6 +11,7 @@ import {
   type TruncationResult,
   truncateForTokens,
 } from "../utils/truncate.js";
+import { formatZodError } from "../utils/zod.js";
 import type { ToolActivity } from "./activity.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import {
@@ -218,8 +219,27 @@ export async function prepareBashOutput(
   };
 }
 
-function stripBashAbortNote(output: string): string {
-  return output.replace(/(?:\n?\(tau\) aborted)+\s*$/, "");
+export function getBashTerminationNotice(args: {
+  aborted: boolean;
+  timedOut: boolean;
+  closeSignal: string | null;
+  timeoutMs: number;
+}): string | undefined {
+  if (args.timedOut) {
+    return `Command timed out after ${args.timeoutMs}ms.`;
+  }
+  if (args.aborted) {
+    return "Command was cancelled.";
+  }
+  if (args.closeSignal) {
+    return `Command was terminated by signal ${args.closeSignal}.`;
+  }
+  return undefined;
+}
+
+function appendBashNotice(output: string, notice: string): string {
+  const trimmedOutput = output.trimEnd();
+  return trimmedOutput ? `${trimmedOutput}\n\n[${notice}]` : notice;
 }
 
 export function formatBashToolResultText(args: {
@@ -234,12 +254,17 @@ export function formatBashToolResultText(args: {
     const preview = model.content;
     const totalTokenEstimate = bytesToTokens(model.totalBytes);
     const gateNote = `\n\n[Output gated: This command already ran and any side effects have persisted. Full output estimate: ~${totalTokenEstimate} tokens.${formatBashOutputFileHint({ path: fullOutputPath })} If you need more output from this truncated result, either read the saved file or re-run with maxOutputTokens set to ${BASH_MODEL_DEFAULT_MAX_TOKENS}-${BASH_MODEL_MAX_AUTONOMOUS_TOKENS}. Only exceed ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS} when the user explicitly requests more output, up to ${BASH_MAX_OUTPUT_TOKENS}. User requests are checked by the system, so do not exceed ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS} autonomously.]`;
-    const exitNote = exitCode !== null && exitCode !== 0 ? `\n(exit ${exitCode})` : "";
-    return `${preview}${gateNote}${exitNote}`;
+    const resultText = `${preview}${gateNote}`;
+    return exitCode !== null && exitCode !== 0
+      ? appendBashNotice(resultText, `Command failed with exit code ${exitCode}.`)
+      : resultText;
   }
 
   if (hasNoOutput && exitCode === 0) {
     return "Command produced no output (exit 0)";
+  }
+  if (hasNoOutput && exitCode !== null) {
+    return `Command failed with exit code ${exitCode} and produced no output.`;
   }
 
   const outputForContext = model.content;
@@ -247,25 +272,31 @@ export function formatBashToolResultText(args: {
     model.truncated || captureTruncated
       ? `\n\n[Output truncated for context: ${model.outputLines} lines / ${formatBytes(model.outputBytes)} shown of ${model.totalLines} lines / ${formatBytes(model.totalBytes)} (full output estimate: ~${bytesToTokens(model.totalBytes)} tokens).${formatBashOutputFileHint({ path: fullOutputPath })}]`
       : "";
-  const exitNote = exitCode !== null && exitCode !== 0 ? `\n(exit ${exitCode})` : "";
-  return `${outputForContext}${truncNote}${exitNote}`;
+  const resultText = `${outputForContext}${truncNote}`;
+  return exitCode !== null && exitCode !== 0
+    ? appendBashNotice(resultText, `Command failed with exit code ${exitCode}.`)
+    : resultText;
 }
 
 export function formatBashUserMessageText(args: {
   command: string;
   truncationInfo: BashTruncationInfo;
   exitCode: number | null;
+  terminationNotice?: string;
 }): string {
-  const { command, truncationInfo, exitCode } = args;
+  const { command, truncationInfo, exitCode, terminationNotice } = args;
   const { model, captureTruncated, fullOutputPath } = truncationInfo;
 
-  const outputForContext = model.content.trimEnd() || "(no output)";
+  const outputForContext = model.content.trimEnd() || (terminationNotice ? "" : "(no output)");
   const truncNote =
     model.truncated || captureTruncated
       ? `\n\n[Output truncated for context: ${model.outputLines} lines / ${formatBytes(model.outputBytes)} shown of ${model.totalLines} lines / ${formatBytes(model.totalBytes)} (full output estimate: ~${bytesToTokens(model.totalBytes)} tokens).${formatBashOutputFileHint({ path: fullOutputPath })}]`
       : "";
-  const exitNote = exitCode !== null && exitCode !== 0 ? `\n(exit ${exitCode})` : "";
-  const bashContextText = `$ ${command}\n${outputForContext}${truncNote}${exitNote}`;
+  const resultText = `${outputForContext}${truncNote}`;
+  const resultWithStatus = terminationNotice
+    ? appendBashNotice(resultText, terminationNotice)
+    : `${resultText}${exitCode !== null && exitCode !== 0 ? `\n(exit ${exitCode})` : ""}`;
+  const bashContextText = `$ ${command}\n${resultWithStatus}`;
   return `Bash command output:\n${bashContextText}`;
 }
 
@@ -278,6 +309,7 @@ export function buildBashPresentation(args: {
   durationMs: number;
   workingDirectory?: string;
   includeExitCode?: boolean;
+  terminationNotice?: string;
   actionLabel?: string;
   detailTruncation?: Exclude<ToolCardDetailTruncation, false>;
 }): ToolRunPresentation {
@@ -288,6 +320,9 @@ export function buildBashPresentation(args: {
   const details: ToolCardLine[] = detailText
     ? detailText.split("\n").map((text) => ({ text, wrap: "character" }))
     : [];
+  if (args.terminationNotice) {
+    details.push({ text: `[${args.terminationNotice}]`, wrap: "word" });
+  }
 
   const outputLines = model.outputLines;
   const outputBytes = model.outputBytes;
@@ -340,15 +375,10 @@ function resolveBashWorkingDirectory(args: {
 
 const bashArgsSchema = z
   .object({
-    command: z.string().trim().min(1),
-    workingDirectory: z
-      .string()
-      .trim()
-      .min(1)
-      .refine((path) => !/[\r\n]/.test(path), "Working directory must be a single line.")
-      .optional(),
-    timeout: z.number().positive().optional(),
-    maxOutputTokens: z.number().int().positive().optional(),
+    command: z.string(),
+    workingDirectory: z.string().optional(),
+    timeout: z.number().optional(),
+    maxOutputTokens: z.number().int().optional(),
   })
   .strict();
 
@@ -377,7 +407,44 @@ function parseBashArgs(raw: unknown):
   if (!parsed.success) {
     return {
       ok: false,
-      error: parsed.error.issues.map((issue) => issue.message).join("; "),
+      error: formatZodError(parsed.error),
+      commandForDisplay,
+    };
+  }
+
+  const command = parsed.data.command.trim();
+  if (!command) {
+    return { ok: false, error: "command must not be empty.", commandForDisplay };
+  }
+
+  const workingDirectory = parsed.data.workingDirectory?.trim();
+  if (parsed.data.workingDirectory !== undefined && !workingDirectory) {
+    return { ok: false, error: "workingDirectory must not be empty.", commandForDisplay };
+  }
+  if (workingDirectory && /[\r\n]/.test(workingDirectory)) {
+    return {
+      ok: false,
+      error: "workingDirectory must be a single line.",
+      commandForDisplay,
+    };
+  }
+  if (parsed.data.timeout !== undefined && parsed.data.timeout <= 0) {
+    return { ok: false, error: "timeout must be greater than 0.", commandForDisplay };
+  }
+  if (parsed.data.maxOutputTokens !== undefined && parsed.data.maxOutputTokens <= 0) {
+    return {
+      ok: false,
+      error: "maxOutputTokens must be greater than 0.",
+      commandForDisplay,
+    };
+  }
+  if (
+    parsed.data.maxOutputTokens !== undefined &&
+    parsed.data.maxOutputTokens > BASH_MAX_OUTPUT_TOKENS
+  ) {
+    return {
+      ok: false,
+      error: `maxOutputTokens must not exceed ${BASH_MAX_OUTPUT_TOKENS}.`,
       commandForDisplay,
     };
   }
@@ -385,12 +452,12 @@ function parseBashArgs(raw: unknown):
   return {
     ok: true,
     data: {
-      command: parsed.data.command,
-      workingDirectory: parsed.data.workingDirectory,
+      command,
+      workingDirectory,
       timeout: parsed.data.timeout,
       maxOutputTokens: clampOutputTokens(parsed.data.maxOutputTokens),
       hasMaxOutputTokens,
-      commandForDisplay: parsed.data.command,
+      commandForDisplay: command,
     },
   };
 }
@@ -432,8 +499,11 @@ export function createBashToolDefinition(backend: ToolExecutionBackend, cwd: str
         workingDirectory: parsedArgs.ok ? parsedArgs.data.workingDirectory : undefined,
       });
 
-      const blocked = (reason: string): ToolImplementationOutcome => {
-        const outcome = createTextToolOutcome(reason, "blocked");
+      const blocked = (
+        reason: string,
+        semanticOutcome: ToolExecutionOutcome["outcome"] = "blocked",
+      ): ToolImplementationOutcome => {
+        const outcome = createTextToolOutcome(reason, semanticOutcome);
         const uiEvent: ToolActivity = {
           type: "bash_blocked",
           toolCallId: toolCall.id,
@@ -460,18 +530,26 @@ export function createBashToolDefinition(backend: ToolExecutionBackend, cwd: str
         async () => {
           try {
             const startedAt = Date.now();
+            const effectiveTimeoutMs = timeout ?? BASH_DEFAULT_TIMEOUT_MS;
             const {
               output,
               exitCode,
               truncated: captureTruncated,
               aborted,
               timedOut,
+              closeSignal,
             } = await backend.runBash(command, {
               signal,
-              timeoutMs: timeout ?? BASH_DEFAULT_TIMEOUT_MS,
+              timeoutMs: effectiveTimeoutMs,
               cwd: effectiveWorkingDirectory,
             });
             const durationMs = Math.max(0, Date.now() - startedAt);
+            const terminationNotice = getBashTerminationNotice({
+              aborted,
+              timedOut,
+              closeSignal,
+              timeoutMs: effectiveTimeoutMs,
+            });
 
             const outputPolicy = getBashOutputPolicy({
               mode: "model",
@@ -479,16 +557,19 @@ export function createBashToolDefinition(backend: ToolExecutionBackend, cwd: str
               hasMaxOutputTokens,
             });
             const truncationInfo = await prepareBashOutput(
-              aborted ? stripBashAbortNote(output) : output,
+              output,
               captureTruncated,
               outputPolicy,
               backend,
             );
-            const resultText = formatBashToolResultText({ truncationInfo, exitCode });
-            const toolText = aborted
-              ? [resultText.trimEnd(), "Command was cancelled."].filter(Boolean).join("\n\n")
+            const resultText = formatBashToolResultText({
+              truncationInfo,
+              exitCode: terminationNotice ? null : exitCode,
+            });
+            const toolText = terminationNotice
+              ? appendBashNotice(resultText, terminationNotice)
               : resultText;
-            const isError = exitCode === null || exitCode !== 0;
+            const isError = terminationNotice !== undefined || exitCode === null || exitCode !== 0;
             const presentation = buildBashPresentation({
               toolName: TOOL_NAME_BASH,
               subject: command,
@@ -496,7 +577,8 @@ export function createBashToolDefinition(backend: ToolExecutionBackend, cwd: str
               exitCode,
               durationMs,
               workingDirectory: effectiveWorkingDirectory,
-              includeExitCode: !aborted && !timedOut,
+              includeExitCode: !terminationNotice,
+              terminationNotice,
             });
 
             const outcome = createTextToolOutcome(
@@ -512,21 +594,8 @@ export function createBashToolDefinition(backend: ToolExecutionBackend, cwd: str
             };
             return { content: outcome.content, outcome: outcome.outcome, uiEvent };
           } catch (e) {
-            const msg = `Bash tool execution failed: ${e instanceof Error ? e.message : String(e)}`;
-            const outcome = createTextToolOutcome(msg, "failed");
-            const uiEvent: ToolActivity = {
-              type: "bash_blocked",
-              command: commandForDisplay,
-              presentation: buildToolRunPresentation({
-                toolName: TOOL_NAME_BASH,
-                subject: commandForDisplay,
-                details: [{ text: msg }],
-                metadata: [formatCwd(effectiveWorkingDirectory)],
-              }),
-              reason: msg,
-              toolCallId: toolCall.id,
-            };
-            return { content: outcome.content, outcome: outcome.outcome, uiEvent };
+            const errorMessage = e instanceof Error ? e.message : String(e);
+            return blocked(`Could not execute command: ${errorMessage}`, "failed");
           }
         },
         {

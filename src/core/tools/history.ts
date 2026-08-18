@@ -40,7 +40,9 @@ export const HISTORY_TOOL: Tool = {
   ),
 };
 
-const historyArgsSchema = z.object({ code: z.string().trim().min(1) }).strict();
+const historyArgsSchema = z
+  .object({ code: z.string().trim().min(1, "must not be empty.") })
+  .strict();
 type HistoryArgs = z.infer<typeof historyArgsSchema>;
 
 const attributeFilterSchema = z.union([

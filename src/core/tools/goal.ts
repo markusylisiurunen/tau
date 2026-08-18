@@ -60,7 +60,15 @@ const UPDATE_GOAL_TOOL: Tool = {
 };
 
 const emptyArgsSchema = z.object({}).strict();
-const createArgsSchema = z.object({ objective: z.string().trim().min(1) }).strict();
+const createArgsSchema = z
+  .object({ objective: z.string().trim().min(1, "must not be empty.") })
+  .strict();
+const GOAL_FAILURE_ACTIONS: Record<string, string> = {
+  [TOOL_NAME_GET_GOAL]: "read session goal",
+  [TOOL_NAME_CREATE_GOAL]: "create session goal",
+  [TOOL_NAME_UPDATE_GOAL]: "update session goal",
+};
+
 const GOAL_ACTION_LABELS: Record<string, ToolRunActionLabels> = {
   [TOOL_NAME_GET_GOAL]: {
     preparing: "preparing check",
@@ -93,15 +101,15 @@ const GOAL_ACTION_LABELS: Record<string, ToolRunActionLabels> = {
 
 const updateArgsSchema = z
   .object({
-    objective: z.string().trim().min(1).optional(),
+    objective: z.string().trim().min(1, "must not be empty.").optional(),
     status: z.enum(["complete", "blocked"]).optional(),
   })
   .strict()
   .refine((args) => args.objective !== undefined || args.status !== undefined, {
-    message: "objective or status is required",
+    message: "objective or status is required.",
   })
   .refine((args) => !(args.objective !== undefined && args.status === "complete"), {
-    message: "objective cannot be combined with complete",
+    message: "objective cannot be combined with complete.",
   });
 
 export function createGoalToolDefinitions(manager: GoalManager): AgentTool[] {
@@ -150,8 +158,9 @@ function createGoalTool<T>(
   ) => string | GoalToolExecutionResult | Promise<string | GoalToolExecutionResult>,
 ): AgentTool {
   const actionOverrides = GOAL_ACTION_LABELS[schema.name];
-  if (!actionOverrides) {
-    throw new Error(`missing goal action labels for '${schema.name}'`);
+  const failureAction = GOAL_FAILURE_ACTIONS[schema.name];
+  if (!actionOverrides || !failureAction) {
+    throw new Error(`missing goal presentation configuration for '${schema.name}'`);
   }
   return {
     schema,
@@ -202,7 +211,8 @@ function createGoalTool<T>(
               ? finish(result, "succeeded")
               : finish(result.text, "succeeded", result.presentation);
           } catch (error) {
-            return finish(error instanceof Error ? error.message : String(error), "blocked");
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            return finish(`Could not ${failureAction}: ${errorMessage}`, "failed");
           }
         },
         {

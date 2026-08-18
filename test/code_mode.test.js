@@ -154,7 +154,7 @@ describe("public code-mode runtime", () => {
     await handlerStarted;
     controller.abort();
 
-    await expect(run).rejects.toThrow("(tau) aborted");
+    await expect(run).rejects.toThrow("Program was cancelled.");
   });
 
   it("passes SDK descriptions through unchanged", async () => {

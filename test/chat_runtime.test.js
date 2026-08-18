@@ -140,6 +140,35 @@ Ship &lt;all&gt; requirements
     );
   });
 
+  it("returns focused goal execution failures", async () => {
+    const runtime = createRuntime({
+      goalManager: {
+        getGoal: () => null,
+        createGoal: async () => {
+          throw new Error("goal store unavailable");
+        },
+        updateGoal: async () => null,
+      },
+    });
+    const createGoal = runtime.agent.spec.tools.get("create_goal");
+    const context = {
+      agentId: "agent-1",
+      turnId: "turn-1",
+      assistantMessageId: "assistant-1",
+      signal: new AbortController().signal,
+      emitActivity: async () => {},
+    };
+
+    const failed = await createGoal.execute(
+      fauxToolCall("create_goal", { objective: "Ship it" }),
+      context,
+    );
+    expect([failed.outcome, failed.content[0].text]).toEqual([
+      "failed",
+      "Could not create session goal: goal store unavailable",
+    ]);
+  });
+
   it("supplies the authoritative active goal to compaction continuations", () => {
     const runtime = createRuntime({
       goalManager: {

@@ -39,13 +39,15 @@ export const INTERRUPT_AGENT_TOOL: Tool = {
   ),
 };
 
-const interruptArgsSchema = z.object({
-  id: z
-    .string()
-    .trim()
-    .min(1)
-    .refine((id) => !/[\r\n]/.test(id), "Subagent ID must be a single line."),
-});
+const interruptArgsSchema = z
+  .object({
+    id: z
+      .string()
+      .trim()
+      .min(1, "must not be empty.")
+      .refine((id) => !/[\r\n]/.test(id), "must be a single line."),
+  })
+  .strict();
 
 function getInterruptAgentSubject(raw: unknown): string {
   const parsedArgs = parseToolArgs(interruptArgsSchema, raw);
@@ -99,12 +101,12 @@ export function createInterruptAgentToolDefinition(supervisor: AgentSupervisor):
           try {
             const current = supervisor.getSnapshot(id);
             if (!current) {
-              return blocked(`Unknown subagent ID: ${id}`);
+              return blocked(`Unknown subagent ID '${id}'.`);
             }
             const wasRunning = current.availability === "running";
             const state = await supervisor.interrupt(id, signal);
             if (!state) {
-              return blocked(`Unknown subagent ID: ${id}`);
+              return blocked(`Unknown subagent ID '${id}'.`);
             }
 
             const resultText = formatInterruptAgentResult(
@@ -133,8 +135,10 @@ export function createInterruptAgentToolDefinition(supervisor: AgentSupervisor):
             const outcome = createTextToolOutcome(resultText, "succeeded");
             return { content: outcome.content, outcome: outcome.outcome, uiEvent };
           } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            const reason = message.trim() || "The interrupt_agent request failed.";
+            const errorMessage = (error instanceof Error ? error.message : String(error)).trim();
+            const reason = signal.aborted
+              ? "Subagent interruption was cancelled."
+              : `Could not interrupt subagent: ${errorMessage || "unknown error"}`;
             const presentation = signal.aborted
               ? buildToolRunPresentation({
                   toolName: TOOL_NAME_INTERRUPT_AGENT,

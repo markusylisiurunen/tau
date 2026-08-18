@@ -86,19 +86,19 @@ export const SPAWN_AGENT_TOOL: Tool = {
 
 const spawnArgsSchema = z
   .object({
-    name: z.string().trim().min(1),
+    name: z.string().trim().min(1, "must not be empty."),
     title: z
       .string()
       .trim()
-      .min(1)
-      .refine((title) => !/[\r\n]/.test(title), "Title must be a single line."),
-    prompt: z.string().trim().min(1),
-    model: z.string().trim().min(1).optional(),
+      .min(1, "must not be empty.")
+      .refine((title) => !/[\r\n]/.test(title), "must be a single line."),
+    prompt: z.string().trim().min(1, "must not be empty."),
+    model: z.string().trim().min(1, "must not be empty.").optional(),
     workingDirectory: z
       .string()
       .trim()
-      .min(1)
-      .refine((path) => !/[\r\n]/.test(path), "Working directory must be a single line.")
+      .min(1, "must not be empty.")
+      .refine((path) => !/[\r\n]/.test(path), "must be a single line.")
       .optional(),
   })
   .strict();
@@ -164,8 +164,12 @@ export function createSpawnAgentToolDefinition(options: {
         getSpawnAgentWorkingDirectory(toolCall.arguments, options.cwd),
       );
 
-      const blocked = (reason: string, details?: { title?: string }) => {
-        const outcome = createTextToolOutcome(reason, "blocked");
+      const blocked = (
+        reason: string,
+        details?: { title?: string },
+        semanticOutcome: ToolExecutionOutcome["outcome"] = "blocked",
+      ) => {
+        const outcome = createTextToolOutcome(reason, semanticOutcome);
         const uiEvent: ToolActivity = {
           type: "tool_call_blocked",
           toolCallId: toolCall.id,
@@ -255,12 +259,12 @@ export function createSpawnAgentToolDefinition(options: {
         try {
           effectiveSubagentPrompts = await options.resolveSubagentPrompts({ cwd, persona });
         } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
           return executeTool(context, () =>
             blocked(
-              `Failed to build the subagent prompt for workingDirectory '${cwd}': ${(error as Error).message}`,
-              {
-                title,
-              },
+              `Could not build the subagent prompt for workingDirectory '${cwd}': ${errorMessage}`,
+              { title },
+              "failed",
             ),
           );
         }
@@ -296,7 +300,7 @@ export function createSpawnAgentToolDefinition(options: {
         context,
         async (): Promise<ToolImplementationOutcome> => {
           if (signal?.aborted) {
-            const reason = "Aborted.";
+            const reason = "Subagent creation was cancelled.";
             const outcome = createTextToolOutcome(reason, "cancelled");
             const presentation = buildToolRunPresentation({
               toolName: TOOL_NAME_SPAWN_AGENT,
@@ -313,16 +317,22 @@ export function createSpawnAgentToolDefinition(options: {
             return { content: outcome.content, outcome: outcome.outcome, uiEvent };
           }
 
-          const spawnResult = supervisor.spawn({
-            runtimeConfig,
-            prompt,
-            title,
-            originHistoryEntryId: context.assistantMessageId,
-            config: options.config,
-            backend,
-            history: options.history,
-            personaId: persona.id,
-          });
+          let spawnResult: ReturnType<AgentSupervisor["spawn"]>;
+          try {
+            spawnResult = supervisor.spawn({
+              runtimeConfig,
+              prompt,
+              title,
+              originHistoryEntryId: context.assistantMessageId,
+              config: options.config,
+              backend,
+              history: options.history,
+              personaId: persona.id,
+            });
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            return blocked(`Could not create subagent: ${errorMessage}`, { title }, "failed");
+          }
 
           if (!spawnResult.ok) {
             const outcome = createTextToolOutcome(spawnResult.reason, "blocked");

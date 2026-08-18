@@ -46,14 +46,16 @@ export const SEND_INPUT_TO_AGENT_TOOL: Tool = {
   ),
 };
 
-const sendInputArgsSchema = z.object({
-  id: z
-    .string()
-    .trim()
-    .min(1)
-    .refine((id) => !/[\r\n]/.test(id), "Subagent ID must be a single line."),
-  prompt: z.string().trim().min(1),
-});
+const sendInputArgsSchema = z
+  .object({
+    id: z
+      .string()
+      .trim()
+      .min(1, "must not be empty.")
+      .refine((id) => !/[\r\n]/.test(id), "must be a single line."),
+    prompt: z.string().trim().min(1, "must not be empty."),
+  })
+  .strict();
 
 function resolveSnapshotTarget(snapshot: SubagentStateSnapshot) {
   return { name: snapshot.name, title: snapshot.title };
@@ -65,7 +67,11 @@ function getSendInputSubject(raw: unknown, supervisor: AgentSupervisor): string 
     return "(invalid arguments)";
   }
   const { id } = parsedArgs.data;
-  return supervisor.getSnapshot(id)?.title ?? id;
+  try {
+    return supervisor.getSnapshot(id)?.title ?? id;
+  } catch {
+    return id;
+  }
 }
 
 export function createSendInputToAgentToolDefinition(supervisor: AgentSupervisor): AgentTool {
@@ -89,8 +95,12 @@ export function createSendInputToAgentToolDefinition(supervisor: AgentSupervisor
       let prompt = "";
       const subject = getSendInputSubject(toolCall.arguments, supervisor);
 
-      const blocked = (reason: string, details?: { title?: string }) => {
-        const outcome = createTextToolOutcome(reason, "blocked");
+      const blocked = (
+        reason: string,
+        details?: { title?: string },
+        semanticOutcome: ToolExecutionOutcome["outcome"] = "blocked",
+      ) => {
+        const outcome = createTextToolOutcome(reason, semanticOutcome);
         const uiEvent: ToolActivity = {
           type: "tool_call_blocked",
           toolCallId: toolCall.id,
@@ -116,9 +126,17 @@ export function createSendInputToAgentToolDefinition(supervisor: AgentSupervisor
 
       ({ id, prompt } = parsedArgs.data);
 
-      const snapshot = supervisor.getSnapshot(id);
+      let snapshot: SubagentStateSnapshot | undefined;
+      try {
+        snapshot = supervisor.getSnapshot(id);
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return executeTool(context, () =>
+          blocked(`Could not inspect subagent: ${errorMessage}`, { title: id }, "failed"),
+        );
+      }
       if (!snapshot) {
-        return executeTool(context, () => blocked(`Unknown subagent ID: ${id}`, { title: id }));
+        return executeTool(context, () => blocked(`Unknown subagent ID '${id}'.`, { title: id }));
       }
 
       const target = resolveSnapshotTarget(snapshot);
@@ -127,7 +145,7 @@ export function createSendInputToAgentToolDefinition(supervisor: AgentSupervisor
         context,
         async (): Promise<ToolImplementationOutcome> => {
           if (signal?.aborted) {
-            const reason = "Aborted.";
+            const reason = "Sending input to the subagent was cancelled.";
             const outcome = createTextToolOutcome(reason, "cancelled");
             const presentation = buildToolRunPresentation({
               toolName: TOOL_NAME_SEND_INPUT_TO_AGENT,
@@ -143,7 +161,17 @@ export function createSendInputToAgentToolDefinition(supervisor: AgentSupervisor
             return { content: outcome.content, outcome: outcome.outcome, uiEvent };
           }
 
-          const sendResult = supervisor.sendInput({ id, prompt });
+          let sendResult: ReturnType<AgentSupervisor["sendInput"]>;
+          try {
+            sendResult = supervisor.sendInput({ id, prompt });
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            return blocked(
+              `Could not send input to subagent: ${errorMessage}`,
+              { title: target.title },
+              "failed",
+            );
+          }
 
           if (!sendResult.ok) {
             const outcome = createTextToolOutcome(sendResult.reason, "blocked");

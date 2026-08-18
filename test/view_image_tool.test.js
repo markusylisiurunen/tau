@@ -96,7 +96,9 @@ describe("view_image tool", () => {
       arguments: { path: "one\ntwo" },
     });
     expect(result.toolResult.outcome).toBe("blocked");
-    expect(result.uiEvent.presentation.details[0].text).toContain("single line");
+    expect(getTextBlock(result.toolResult.content)).toBe(
+      "Invalid arguments: path must be a single line.",
+    );
     expect(result.uiEvent.presentation.details[0].tone).toBeUndefined();
   });
 
@@ -121,7 +123,7 @@ describe("view_image tool", () => {
       }
 
       expect(result.uiEvent.presentation.metadata).toEqual(["image/png", "2000×1500"]);
-      expect(getTextBlock(result.toolResult.content)).toBe(`Viewed ${filePath} (image/png)`);
+      expect(getTextBlock(result.toolResult.content)).toBe(`Successfully viewed ${filePath}.`);
 
       const imageBlock = getImageBlock(result.toolResult.content);
       const outputBuffer = Buffer.from(imageBlock.data, "base64");
@@ -199,13 +201,25 @@ describe("view_image tool", () => {
       expect(Math.max(outputMetadata.width ?? 0, outputMetadata.height ?? 0)).toBeLessThanOrEqual(
         2000,
       );
-      expect(getTextBlock(result.toolResult.content)).toBe(
-        `Viewed ${filePath} (${imageBlock.mimeType})`,
-      );
+      expect(getTextBlock(result.toolResult.content)).toBe(`Successfully viewed ${filePath}.`);
     } finally {
       fx.cleanup();
     }
   }, 10_000);
+
+  it("returns a focused missing-file result", async () => {
+    const tool = createViewImageToolDefinition(createLocalToolExecutionBackend());
+    const missing = await runTool(tool, {
+      id: "tool-missing",
+      name: TOOL_NAME_VIEW_IMAGE,
+      arguments: { path: "/missing/image.png" },
+    });
+
+    expect([missing.toolResult.outcome, getTextBlock(missing.toolResult.content)]).toEqual([
+      "blocked",
+      "File not found at '/missing/image.png'. Verify the path is correct.",
+    ]);
+  });
 
   it("blocks unsupported image formats", async () => {
     const fx = setupFixture();

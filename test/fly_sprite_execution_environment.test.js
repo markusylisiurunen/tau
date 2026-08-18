@@ -65,10 +65,13 @@ class FakeSpriteCommand extends EventEmitter {
       try {
         this.respond(request.id, handler(request));
       } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        const code =
+          err && typeof err === "object" && typeof err.code === "string" ? err.code : null;
         this.writeMessage({
           id: request.id,
           ok: false,
-          error: err instanceof Error ? err.message : String(err),
+          error: { message, ...(code ? { code } : {}) },
         });
       }
     }
@@ -380,9 +383,9 @@ describe("Fly Sprite execution environment", () => {
       requests.push(request);
       if (request.method === "exec") {
         return executionResult({
-          output: "(tau) aborted\n",
+          output: "",
           stdout: "",
-          stderr: "(tau) aborted\n",
+          stderr: "",
           exitCode: null,
           aborted: true,
         });
@@ -401,9 +404,9 @@ describe("Fly Sprite execution environment", () => {
 
     await expect(backend.runBash("sleep 10", { signal: controller.signal })).resolves.toEqual(
       executionResult({
-        output: "(tau) aborted\n",
+        output: "",
         stdout: "",
-        stderr: "(tau) aborted\n",
+        stderr: "",
         exitCode: null,
         aborted: true,
       }),
@@ -480,6 +483,20 @@ describe("Fly Sprite execution environment", () => {
     expect(requests[3].contentBase64).toBe(Buffer.from([0, 255]).toString("base64"));
   });
 
+  it("normalizes missing binary files at the backend boundary", async () => {
+    const sprite = createFakeSprite(() => {
+      throw Object.assign(new Error("ENOENT: no such file or directory"), { code: "ENOENT" });
+    });
+    const backend = createFlySpriteToolExecutionBackend({
+      sprite,
+      cwd: "/home/sprite/repo",
+    });
+
+    await expect(backend.readFileBinary("/home/sprite/repo/missing.png")).rejects.toMatchObject({
+      code: "not-found",
+    });
+  });
+
   it("escalates cancellation when a Sprite command ignores SIGTERM", async () => {
     const sprite = {
       spawn(command, args, options) {
@@ -500,7 +517,9 @@ describe("Fly Sprite execution environment", () => {
       const result = await execution;
       const pid = Number(result.stdout.trim().split("\n")[0]);
 
-      expect(result.stderr).toContain("(tau) aborted");
+      expect(result.stderr).toBe("");
+      expect(result.output).toBe(result.stdout);
+      expect(result.aborted).toBe(true);
       expect(() => process.kill(pid, 0)).toThrow();
     } finally {
       await backend.dispose();

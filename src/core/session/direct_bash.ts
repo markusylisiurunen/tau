@@ -3,6 +3,7 @@ import {
   buildBashPresentation,
   formatBashUserMessageText,
   getBashOutputPolicy,
+  getBashTerminationNotice,
   prepareBashOutput,
 } from "../tools/bash.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
@@ -35,11 +36,20 @@ export async function runDirectBashCommand(
     output,
     exitCode,
     truncated: captureTruncated,
+    aborted,
+    timedOut,
+    closeSignal,
   } = await options.backend.runBash(options.command, {
     signal: options.signal,
     timeoutMs: BASH_DEFAULT_TIMEOUT_MS,
   });
   const durationMs = Math.max(0, now() - startedAt);
+  const terminationNotice = getBashTerminationNotice({
+    aborted,
+    timedOut,
+    closeSignal,
+    timeoutMs: BASH_DEFAULT_TIMEOUT_MS,
+  });
   const truncationInfo = await prepareBashOutput(
     output,
     captureTruncated,
@@ -49,7 +59,8 @@ export async function runDirectBashCommand(
   const userMessageText = formatBashUserMessageText({
     command: options.command,
     truncationInfo,
-    exitCode,
+    exitCode: terminationNotice ? null : exitCode,
+    terminationNotice,
   });
   const presentation = buildBashPresentation({
     toolName: TOOL_NAME_BASH,
@@ -58,6 +69,8 @@ export async function runDirectBashCommand(
     exitCode,
     durationMs,
     workingDirectory: options.workingDirectory,
+    includeExitCode: !terminationNotice,
+    terminationNotice,
     actionLabel: options.actionLabel,
     detailTruncation: {
       maxLines: 33,

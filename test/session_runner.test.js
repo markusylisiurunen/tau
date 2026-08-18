@@ -782,12 +782,27 @@ describe("session execution backend plumbing", () => {
     const backend = {
       async runBash(command, options = {}) {
         received.push({ command, options });
+        if (command === "sleep 60") {
+          return {
+            output: "partial output\n",
+            stdout: "partial output\n",
+            stderr: "",
+            exitCode: null,
+            truncated: false,
+            timedOut: true,
+            aborted: false,
+            closeSignal: "SIGTERM",
+          };
+        }
         return {
           output: "hello\n",
           stdout: "hello\n",
           stderr: "",
           exitCode: 0,
           truncated: false,
+          timedOut: false,
+          aborted: false,
+          closeSignal: null,
         };
       },
     };
@@ -824,6 +839,23 @@ describe("session execution backend plumbing", () => {
     });
 
     expect(addUserText).toHaveBeenCalledTimes(1);
+
+    const terminated = await runDirectBashCommand({
+      command: "sleep 60",
+      backend,
+      workingDirectory: "/repo",
+      actionLabel: "ran",
+      addToContext: true,
+      addUserText,
+    });
+    expect(addUserText).toHaveBeenLastCalledWith(
+      `Bash command output:\n$ sleep 60\npartial output\n\n[Command timed out after ${BASH_DEFAULT_TIMEOUT_MS}ms.]`,
+    );
+    expect(terminated.presentation.details.at(-1)).toEqual({
+      text: `[Command timed out after ${BASH_DEFAULT_TIMEOUT_MS}ms.]`,
+      wrap: "word",
+    });
+    expect(terminated.presentation.metadata).not.toContain("exit ?");
   });
 
   it("records nonzero direct bash exit status in session history", async () => {
@@ -836,6 +868,9 @@ describe("session execution backend plumbing", () => {
           stderr: "",
           exitCode: 2,
           truncated: false,
+          timedOut: false,
+          aborted: false,
+          closeSignal: null,
         };
       },
     };

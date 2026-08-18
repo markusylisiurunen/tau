@@ -15,6 +15,9 @@ const backend = {
       stdout: "command output\n",
       exitCode: 0,
       truncated: false,
+      timedOut: false,
+      aborted: false,
+      closeSignal: null,
     };
   },
   async runNodeScript() {
@@ -50,6 +53,23 @@ async function runTool(tool, toolCall, signal = new AbortController().signal) {
   };
 }
 
+function bashOutput(content) {
+  const bytes = Buffer.byteLength(content);
+  const lines = content ? content.split("\n").length - Number(content.endsWith("\n")) : 0;
+  return {
+    output: content,
+    model: {
+      content,
+      truncated: false,
+      totalLines: lines,
+      outputLines: lines,
+      totalBytes: bytes,
+      outputBytes: bytes,
+    },
+    captureTruncated: false,
+  };
+}
+
 describe("bash output policy", () => {
   it("rejects unknown execution arguments", async () => {
     const tool = createBashToolDefinition(backend, "/project");
@@ -65,6 +85,9 @@ describe("bash output policy", () => {
     );
 
     expect(result.toolResult.outcome).toBe("blocked");
+    expect(result.toolResult.content).toEqual([
+      { type: "text", text: 'Invalid arguments: Unrecognized key: "unexpected"' },
+    ]);
 
     const invalidPath = await runTool(tool, {
       id: "bash-invalid-cwd",
@@ -72,40 +95,83 @@ describe("bash output policy", () => {
       arguments: { command: "pwd", workingDirectory: "one\ntwo" },
     });
     expect(invalidPath.toolResult.outcome).toBe("blocked");
-    expect(invalidPath.uiEvent.presentation.details[0].text).toContain("single line");
+    expect(invalidPath.toolResult.content).toEqual([
+      { type: "text", text: "Invalid arguments: workingDirectory must be a single line." },
+    ]);
   });
 
-  it("reports cancellation semantically without exposing the backend abort marker", async () => {
-    const cancelledBackend = {
+  it.each([
+    ["cancellation", { aborted: true }, {}, "cancelled", "Command was cancelled."],
+    [
+      "timeout",
+      { timedOut: true, closeSignal: "SIGTERM" },
+      { timeout: 1500 },
+      "cancelled",
+      "Command timed out after 1500ms.",
+    ],
+    [
+      "signal termination",
+      { closeSignal: "SIGKILL" },
+      {},
+      "failed",
+      "Command was terminated by signal SIGKILL.",
+    ],
+  ])(
+    "reports %s from structured termination state",
+    async (_name, execution, args, outcome, notice) => {
+      const tool = createBashToolDefinition(
+        {
+          ...backend,
+          async runBash() {
+            return {
+              output: "partial output\n",
+              stdout: "partial output\n",
+              stderr: "",
+              exitCode: null,
+              truncated: false,
+              timedOut: false,
+              aborted: false,
+              closeSignal: null,
+              ...execution,
+            };
+          },
+        },
+        "/project",
+      );
+      const result = await runTool(tool, {
+        id: "bash-terminated",
+        name: "bash",
+        arguments: { command: "worker", ...args },
+      });
+
+      expect(result.toolResult.outcome).toBe(outcome);
+      expect(result.toolResult.content[0].text).toBe(`partial output\n\n[${notice}]`);
+      expect(result.uiEvent.presentation.details).toEqual([
+        { text: "partial output", wrap: "character" },
+        { text: `[${notice}]`, wrap: "word" },
+      ]);
+      expect(result.uiEvent.presentation.metadata).not.toContain("exit ?");
+    },
+  );
+
+  it("returns a focused failure when the command cannot be executed", async () => {
+    const failedBackend = {
       ...backend,
       async runBash() {
-        return {
-          output: "partial output\n(tau) aborted\n",
-          stdout: "partial output\n",
-          stderr: "(tau) aborted\n",
-          exitCode: null,
-          truncated: false,
-          timedOut: false,
-          aborted: true,
-          closeSignal: null,
-        };
+        throw new Error("spawn bash ENOENT");
       },
     };
-    const tool = createBashToolDefinition(cancelledBackend, "/project");
+    const tool = createBashToolDefinition(failedBackend, "/project");
     const result = await runTool(tool, {
-      id: "bash-cancelled",
+      id: "bash-execution-failed",
       name: "bash",
-      arguments: { command: "sleep 3" },
+      arguments: { command: "pwd" },
     });
 
-    expect(result.toolResult.outcome).toBe("cancelled");
-    expect(result.toolResult.content).toEqual([
-      { type: "text", text: "partial output\n\nCommand was cancelled." },
+    expect([result.toolResult.outcome, result.toolResult.content[0].text]).toEqual([
+      "failed",
+      "Could not execute command: spawn bash ENOENT",
     ]);
-    expect(result.uiEvent.presentation.details).toEqual([
-      { text: "partial output", wrap: "character" },
-    ]);
-    expect(result.uiEvent.presentation.metadata).not.toContain("exit ?");
   });
 
   it("shows the effective working directory throughout the tool lifecycle", async () => {
@@ -180,41 +246,21 @@ describe("bash output policy", () => {
     expect(truncationInfo.model.truncated).toBe(false);
   });
 
-  it("returns a default message for empty successful output", () => {
-    const toolText = formatBashToolResultText({
-      truncationInfo: {
-        output: "",
-        model: {
-          content: "",
-          truncated: false,
-          totalLines: 0,
-          outputLines: 0,
-          totalBytes: 0,
-          outputBytes: 0,
-        },
-        captureTruncated: false,
-      },
-      exitCode: 0,
-    });
-
-    expect(toolText).toBe("Command produced no output (exit 0)");
+  it.each([
+    ["", 0, "Command produced no output (exit 0)"],
+    ["", 2, "Command failed with exit code 2 and produced no output."],
+    ["permission denied\n", 126, "permission denied\n\n[Command failed with exit code 126.]"],
+  ])("formats command exit results", (output, exitCode, expected) => {
+    expect(formatBashToolResultText({ truncationInfo: bashOutput(output), exitCode })).toBe(
+      expected,
+    );
   });
 
   it("marks terminal output for character wrapping", () => {
     const presentation = buildBashPresentation({
       toolName: "bash",
       subject: "echo test",
-      truncationInfo: {
-        output: "alpha beta",
-        model: {
-          truncated: false,
-          totalLines: 1,
-          outputLines: 1,
-          totalBytes: 10,
-          outputBytes: 10,
-        },
-        captureTruncated: false,
-      },
+      truncationInfo: bashOutput("alpha beta"),
       exitCode: 0,
       durationMs: 0,
     });
@@ -226,17 +272,7 @@ describe("bash output policy", () => {
     const presentation = buildBashPresentation({
       toolName: "bash",
       subject: "echo test",
-      truncationInfo: {
-        output: "",
-        model: {
-          truncated: false,
-          totalLines: 0,
-          outputLines: 0,
-          totalBytes: 0,
-          outputBytes: 0,
-        },
-        captureTruncated: false,
-      },
+      truncationInfo: bashOutput(""),
       exitCode: 0,
       durationMs: 12,
     });
@@ -248,17 +284,7 @@ describe("bash output policy", () => {
     const presentation = buildBashPresentation({
       toolName: "bash",
       subject: "echo test",
-      truncationInfo: {
-        output: "",
-        model: {
-          truncated: false,
-          totalLines: 0,
-          outputLines: 0,
-          totalBytes: 0,
-          outputBytes: 0,
-        },
-        captureTruncated: false,
-      },
+      truncationInfo: bashOutput(""),
       exitCode: 0,
       workingDirectory: "/tmp/tau",
       durationMs: 12,

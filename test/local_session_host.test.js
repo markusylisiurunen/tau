@@ -1769,11 +1769,14 @@ describe("LocalSessionHost", () => {
             "abort",
             () =>
               resolve({
-                output: "(tau) aborted",
+                output: "",
                 stdout: "",
-                stderr: "(tau) aborted",
-                exitCode: 1,
+                stderr: "",
+                exitCode: null,
                 truncated: false,
+                timedOut: false,
+                aborted: true,
+                closeSignal: null,
               }),
             { once: true },
           );

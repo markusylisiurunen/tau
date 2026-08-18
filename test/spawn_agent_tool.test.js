@@ -233,6 +233,9 @@ describe("send_input_to_agent tool", () => {
       TOOL_NAME_SEND_INPUT_TO_AGENT,
     );
     expect(invalid.result.toolResult.outcome).toBe("blocked");
+    expect(getText(invalid.result.toolResult)).toBe(
+      "Invalid arguments: id: must be a single line.",
+    );
 
     const { result } = await execute(
       tool,
@@ -268,6 +271,7 @@ describe("send_input_to_agent tool", () => {
     );
 
     expect(result.toolResult.outcome).toBe("cancelled");
+    expect(getText(result.toolResult)).toBe("Sending input to the subagent was cancelled.");
     expect(result.uiEvent.presentation.details).toEqual([]);
     expect(result.uiEvent.presentation.metadata).toEqual([]);
   });
@@ -326,6 +330,9 @@ describe("wait_for_agents tool", () => {
 
     const invalid = await execute(tool, { ids: ["agent-1\nagent-2"] }, TOOL_NAME_WAIT_FOR_AGENTS);
     expect(invalid.result.toolResult.outcome).toBe("blocked");
+    expect(getText(invalid.result.toolResult)).toBe(
+      "Invalid arguments: ids.0: must be a single line.",
+    );
 
     const { result } = await execute(
       tool,
@@ -375,6 +382,7 @@ describe("wait_for_agents tool", () => {
     );
 
     expect(result.toolResult.outcome).toBe("cancelled");
+    expect(getText(result.toolResult)).toBe("Waiting for subagents was cancelled.");
     expect(result.uiEvent.presentation.details).toEqual([]);
   });
 });
@@ -403,6 +411,9 @@ describe("interrupt_agent tool", () => {
 
     const invalid = await execute(tool, { id: "agent-1\nagent-2" }, TOOL_NAME_INTERRUPT_AGENT);
     expect(invalid.result.toolResult.outcome).toBe("blocked");
+    expect(getText(invalid.result.toolResult)).toBe(
+      "Invalid arguments: id: must be a single line.",
+    );
 
     const { result } = await execute(tool, { id: "agent-1" }, TOOL_NAME_INTERRUPT_AGENT);
 
@@ -502,6 +513,7 @@ describe("interrupt_agent tool", () => {
     );
 
     expect(result.toolResult.outcome).toBe("cancelled");
+    expect(getText(result.toolResult)).toBe("Subagent interruption was cancelled.");
     expect(result.uiEvent.presentation.details).toEqual([]);
   });
 });
@@ -518,14 +530,18 @@ describe("spawn_agent tool", () => {
       workingDirectory: "one\ntwo",
     });
     expect(invalidDirectory.result.toolResult.outcome).toBe("blocked");
-    expect(invalidDirectory.result.uiEvent.presentation.details[0].text).toContain("single line");
+    expect(getText(invalidDirectory.result.toolResult)).toBe(
+      "Invalid arguments: workingDirectory: must be a single line.",
+    );
 
     const invalidTitle = await execute(tool, {
       ...baseArguments,
       title: "one\ntwo",
     });
     expect(invalidTitle.result.toolResult.outcome).toBe("blocked");
-    expect(invalidTitle.result.uiEvent.presentation.details[0].text).toContain("single line");
+    expect(getText(invalidTitle.result.toolResult)).toBe(
+      "Invalid arguments: title: must be a single line.",
+    );
   });
 
   it("binds dependencies before execution and admits an allowed launch model", async () => {
@@ -589,6 +605,7 @@ describe("spawn_agent tool", () => {
     const { result } = await execute(tool, baseArguments, TOOL_NAME_SPAWN_AGENT, controller.signal);
 
     expect(result.toolResult.outcome).toBe("cancelled");
+    expect(getText(result.toolResult)).toBe("Subagent creation was cancelled.");
     expect(result.uiEvent.presentation.details).toEqual([]);
     expect(result.uiEvent.presentation.metadata).not.toContain("Aborted.");
   });
@@ -709,8 +726,10 @@ describe("spawn_agent tool", () => {
       workingDirectory: "/tmp/project",
     });
 
-    expect(result.toolResult.outcome).toBe("blocked");
-    expect(getText(result.toolResult)).toContain("target context failed");
+    expect(result.toolResult.outcome).toBe("failed");
+    expect(getText(result.toolResult)).toBe(
+      "Could not build the subagent prompt for workingDirectory '/tmp/project': target context failed",
+    );
     expect(supervisor.spawn).not.toHaveBeenCalled();
   });
 
@@ -726,3 +745,31 @@ describe("spawn_agent tool", () => {
     });
   });
 });
+
+it.each([
+  [
+    "list_agents",
+    () => createListAgentsToolDefinition({ listSnapshots: failSupervisorCall }),
+    {},
+    TOOL_NAME_LIST_AGENTS,
+    "Could not list subagents: supervisor unavailable",
+  ],
+  [
+    "send_input_to_agent",
+    () =>
+      createSendInputToAgentToolDefinition({
+        getSnapshot: () => createSubagentState({ availability: "idle" }),
+        sendInput: failSupervisorCall,
+      }),
+    { id: "agent-1", prompt: "continue" },
+    TOOL_NAME_SEND_INPUT_TO_AGENT,
+    "Could not send input to subagent: supervisor unavailable",
+  ],
+])("reports %s supervisor failures", async (_toolName, createTool, args, name, message) => {
+  const { result } = await execute(createTool(), args, name);
+  expect([result.toolResult.outcome, getText(result.toolResult)]).toEqual(["failed", message]);
+});
+
+function failSupervisorCall() {
+  throw new Error("supervisor unavailable");
+}

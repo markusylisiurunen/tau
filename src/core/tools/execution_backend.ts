@@ -65,6 +65,35 @@ export type ListDirResult = {
   entries: ListDirEntry[];
 };
 
+export class ToolExecutionBackendError extends Error {
+  constructor(
+    readonly code: "not-found",
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = "ToolExecutionBackendError";
+  }
+}
+
+export function isToolExecutionBackendError(
+  error: unknown,
+  code: ToolExecutionBackendError["code"],
+): error is ToolExecutionBackendError {
+  return error instanceof ToolExecutionBackendError && error.code === code;
+}
+
+export function normalizeToolExecutionBackendError(error: unknown): unknown {
+  if (error instanceof ToolExecutionBackendError) {
+    return error;
+  }
+  if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
+    const message = error instanceof Error ? error.message : String(error);
+    return new ToolExecutionBackendError("not-found", message, { cause: error });
+  }
+  return error;
+}
+
 export const BASH_ENVIRONMENT_OVERRIDES = {
   NO_COLOR: "1",
   FORCE_COLOR: "0",
@@ -159,29 +188,10 @@ export function createLocalToolExecutionBackend(
       },
     );
 
-    let output = result.output ?? "";
-    const stdout = result.stdout;
-    let stderr = result.stderr;
-    let terminationNote: string | undefined;
-    if (result.timedOut && effectiveTimeoutMs !== undefined) {
-      terminationNote = `(tau) timed out after ${effectiveTimeoutMs}ms`;
-    } else if (result.aborted) {
-      terminationNote = "(tau) aborted";
-    } else if (result.closeSignal) {
-      terminationNote = `(tau) terminated by signal ${result.closeSignal}`;
-    }
-
-    const note = terminationNote?.trim();
-    if (note && !output.includes(note)) {
-      const noteText = `${output && !output.endsWith("\n") ? "\n" : ""}${note}\n`;
-      output += noteText;
-      stderr += noteText;
-    }
-
     return {
-      output,
-      stdout,
-      stderr,
+      output: result.output ?? "",
+      stdout: result.stdout,
+      stderr: result.stderr,
       exitCode: result.exitCode,
       truncated: result.captureLimitExceeded,
       timedOut: result.timedOut,
@@ -210,19 +220,23 @@ export function createLocalToolExecutionBackend(
 
     async readFileBinary(path, options = {}) {
       const resolvedPath = resolvePath(path);
-      const stats = statSync(resolvedPath);
-      if (!stats.isFile()) {
-        throw new Error("path is not a file.");
+      try {
+        const stats = statSync(resolvedPath);
+        if (!stats.isFile()) {
+          throw new Error("path is not a file.");
+        }
+        const bytes = stats.size;
+        const maxBytes = options.maxBytes;
+        if (maxBytes !== undefined && bytes > maxBytes) {
+          throw new Error(
+            `file exceeds maximum size of ${formatBytes(maxBytes)} (got ${formatBytes(bytes)}).`,
+          );
+        }
+        const content = readFileSync(resolvedPath);
+        return { path: resolvedPath, content, bytes };
+      } catch (error) {
+        throw normalizeToolExecutionBackendError(error);
       }
-      const bytes = stats.size;
-      const maxBytes = options.maxBytes;
-      if (maxBytes !== undefined && bytes > maxBytes) {
-        throw new Error(
-          `file exceeds maximum size of ${formatBytes(maxBytes)} (got ${formatBytes(bytes)}).`,
-        );
-      }
-      const content = readFileSync(resolvedPath);
-      return { path: resolvedPath, content, bytes };
     },
 
     async writeFile(path, content) {

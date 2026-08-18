@@ -158,6 +158,34 @@ describe("LocalExecutionEnvironment", () => {
     });
   });
 
+  it("keeps termination state separate from captured output", async () => {
+    const backend = createLocalToolExecutionBackend({
+      spawn: async () => ({
+        stdout: "partial output\n",
+        stderr: "",
+        output: "partial output\n",
+        exitCode: null,
+        captureLimitExceeded: false,
+        timedOut: true,
+        aborted: false,
+        closeSignal: "SIGTERM",
+      }),
+    });
+
+    await expect(backend.runBash("sleep 10", { timeoutMs: 10 })).resolves.toMatchObject({
+      output: "partial output\n",
+      stderr: "",
+      timedOut: true,
+      closeSignal: "SIGTERM",
+    });
+  });
+
+  it("normalizes missing binary files at the backend boundary", async () => {
+    await expect(
+      createLocalToolExecutionBackend().readFileBinary("__tau_missing__.png"),
+    ).rejects.toMatchObject({ code: "not-found" });
+  });
+
   it("scopes explicit environment variables without filtering sensitive names", async () => {
     const cwd = process.cwd();
     const environment = new LocalExecutionEnvironment({

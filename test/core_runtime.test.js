@@ -987,6 +987,30 @@ describe("compaction context message", () => {
     });
   });
 
+  it("ignores unknown selected preserved user message ids", () => {
+    const parsed = parseCompactionSummaryResponse({
+      response: compactionSummary("## Goal\nContinue", ["unknown", "valid"]),
+      userMessageCandidates: [{ id: "valid", text: "keep this standing constraint" }],
+    });
+
+    expect(parsed).toEqual({
+      summary: "## Goal\nContinue",
+      preservedUserMessages: [{ id: "valid", text: "keep this standing constraint" }],
+    });
+  });
+
+  it("accepts an all-unknown preserved user message selection", () => {
+    const parsed = parseCompactionSummaryResponse({
+      response: compactionSummary("## Goal\nContinue", ["unknown"]),
+      userMessageCandidates: [{ id: "valid", text: "keep this standing constraint" }],
+    });
+
+    expect(parsed).toEqual({
+      summary: "## Goal\nContinue",
+      preservedUserMessages: [],
+    });
+  });
+
   it("middle-truncates selected preserved user messages by size", () => {
     const first = `first start ${"a".repeat(60000)} first end`;
     const second = `second start ${"b".repeat(120000)} second end`;

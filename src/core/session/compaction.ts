@@ -289,17 +289,18 @@ export function parseCompactionSummaryResponse(args: {
     args.userMessageCandidates.map((message) => [message.id, message] as const),
   );
   const seenIds = new Set<string>();
-  const selectedCandidates = selectedIds.map((id) => {
+  const selectedCandidates: PreservedUserMessage[] = [];
+  for (const id of selectedIds) {
+    const candidate = candidatesById.get(id);
+    if (!candidate) {
+      continue;
+    }
     if (seenIds.has(id)) {
       throw new Error(`compaction summary selected duplicate preserved user message id '${id}'`);
     }
-    const candidate = candidatesById.get(id);
-    if (!candidate) {
-      throw new Error(`compaction summary selected unknown preserved user message id '${id}'`);
-    }
     seenIds.add(id);
-    return candidate;
-  });
+    selectedCandidates.push(candidate);
+  }
 
   return {
     summary,

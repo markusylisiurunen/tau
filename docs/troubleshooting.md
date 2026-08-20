@@ -267,7 +267,7 @@ Repository projects need runner-side `gh`, Git, network access, and noninteracti
 
 Persistent-directory projects require the configured directory to exist and intentionally share it across sessions. Recovery rejects a stored `cwd` that differs from current configuration. Restore the mapping or create a new session in the new directory, rather than editing state.
 
-Tau reconstructs missing managed workspaces. New and reconstructed repositories may run executable `.tau/scripts/provision` asynchronously after the session is available; preserved workspaces skip it. Failure notifies chats but leaves the session usable. Fix the script or dependencies, then run it manually only when its contract allows, or create a fresh session to provision again.
+Tau reconstructs missing managed workspaces. A preserved repository or composite workspace is reused as-is: recovery does not reprovision it or rewrite generated composite metadata from the current Telegram project configuration. New and reconstructed repositories may run executable `.tau/scripts/provision` asynchronously after the session is available. Failure notifies chats but leaves the session usable. Fix the script or dependencies, then run it manually only when its contract allows, or create a fresh session to provision again.
 
 Recovery needs the same `workspaceRoot`, project definitions, host home, and Tau sessions. Inspect runner logs and `/status`. Do not edit runner state, project preferences, snapshots, or managed workspaces to force a match.
 

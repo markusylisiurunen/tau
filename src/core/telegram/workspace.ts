@@ -610,39 +610,6 @@ async function prepareRepositoryWorkspace(options: {
   return projectCwd;
 }
 
-async function pathIsFile(path: string): Promise<boolean> {
-  const stats = await stat(path).catch((error) => {
-    if (getErrorCode(error) === "ENOENT") {
-      return undefined;
-    }
-    throw error;
-  });
-  return stats?.isFile() ?? false;
-}
-
-async function collectMemberAgentContextFiles(options: {
-  workspacePath: string;
-  memberProjectId: string;
-  project: TelegramRepositoryProjectConfig;
-}): Promise<string[]> {
-  const memberPath = join(options.workspacePath, options.memberProjectId);
-  const candidates = [join(memberPath, "AGENTS.md")];
-  let currentPath = memberPath;
-
-  for (const segment of options.project.workingDirectory?.split(/[\\/]/).filter(Boolean) ?? []) {
-    currentPath = join(currentPath, segment);
-    candidates.push(join(currentPath, "AGENTS.md"));
-  }
-
-  const contextFiles: string[] = [];
-  for (const candidate of candidates) {
-    if (await pathIsFile(candidate)) {
-      contextFiles.push(relative(options.workspacePath, candidate));
-    }
-  }
-  return contextFiles;
-}
-
 function formatCompositeAgentsFile(options: {
   project: Extract<TelegramProjectConfig, { projectIds: string[] }>;
   projects: Record<string, TelegramProjectConfig>;
@@ -673,7 +640,7 @@ function formatCompositeAgentsFile(options: {
 
   lines.push(
     "",
-    "Each child directory is an independent Git repository. Instructions from AGENTS.md files inside each repository apply to work in that repository's subtree.",
+    "Each child directory is an independent Git repository. When asked to work in one or more repositories, read each relevant repository's root AGENTS.md file, if present, before making changes.",
   );
 
   if (options.project.instructions) {
@@ -688,27 +655,13 @@ async function writeCompositeWorkspaceFiles(options: {
   project: Extract<TelegramProjectConfig, { projectIds: string[] }>;
   projects: Record<string, TelegramProjectConfig>;
 }): Promise<void> {
-  const agentContextFiles: string[] = [];
-  for (const memberProjectId of options.project.projectIds) {
-    const memberProject = options.projects[memberProjectId];
-    if (!memberProject || !isRepositoryProject(memberProject)) {
-      throw new Error(`composite project references invalid member '${memberProjectId}'`);
-    }
-    agentContextFiles.push(
-      ...(await collectMemberAgentContextFiles({
-        workspacePath: options.workspacePath,
-        memberProjectId,
-        project: memberProject,
-      })),
-    );
-  }
-
+  const config = options.project.subagents ? { subagents: options.project.subagents } : {};
   await mkdir(join(options.workspacePath, ".tau"), { recursive: true });
   await Promise.all([
     writeFile(join(options.workspacePath, "AGENTS.md"), formatCompositeAgentsFile(options), "utf8"),
     writeFile(
       join(options.workspacePath, ".tau", "config.json"),
-      `${JSON.stringify({ agentContextFiles }, null, 2)}\n`,
+      `${JSON.stringify(config, null, 2)}\n`,
       "utf8",
     ),
   ]);

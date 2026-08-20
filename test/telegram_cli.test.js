@@ -126,6 +126,9 @@ describe("telegram cli", () => {
           projectIds: ["tau", "cowork"],
           persona: "gpt-5.6-sol-coder:high",
           instructions: "Keep changes coordinated.",
+          subagents: {
+            defaultLaunchModels: ["openai/gpt-5.6-sol:high"],
+          },
         },
       },
     });
@@ -134,7 +137,24 @@ describe("telegram cli", () => {
       projectIds: ["tau", "cowork"],
       persona: "gpt-5.6-sol-coder:high",
       instructions: "Keep changes coordinated.",
+      subagents: {
+        defaultLaunchModels: ["openai/gpt-5.6-sol:high"],
+      },
     });
+  });
+
+  it("rejects subagent launch models on repository projects", () => {
+    const { path } = writeConfig({
+      bots: { ops: { botToken: "token" } },
+      projects: {
+        me: {
+          repo: "owner/repo",
+          subagents: { defaultLaunchModels: ["openai/gpt-5.6-sol:high"] },
+        },
+      },
+    });
+
+    expect(() => loadTelegramConfig(path)).toThrow("projects.me does not support subagents");
   });
 
   it("rejects project ids that cannot be Telegram command suffixes", () => {

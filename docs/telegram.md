@@ -140,7 +140,7 @@ Tau keeps a persistent bare cache at:
 
 The first preparation uses `gh repo clone <owner/repo> <cache> -- --bare`. Later preparations fetch and prune the cache, then create the session workspace with a shared local clone. If the repository configured for the same project ID changes, Tau discards and recreates that cache.
 
-Caches are not session workspaces. Tau does not commit, push, or preserve uncommitted changes automatically. Managed workspaces survive a normal restart, but `/new` removes the active session's workspace.
+Caches are shared preparation inputs, not session workspaces.
 
 ## Persistent-directory projects
 
@@ -167,7 +167,7 @@ Persistent-directory sessions omit the conventional history `repository` attribu
 
 ## Composite projects
 
-A composite project creates one generated root with multiple repository projects as children:
+A composite project creates a root containing multiple repositories:
 
 ```json
 {
@@ -177,41 +177,42 @@ A composite project creates one generated root with multiple repository projects
     "platform": {
       "projectIds": ["web", "api"],
       "persona": "gpt-5.6-sol-coder:high",
-      "instructions": "Keep shared contracts synchronized."
+      "instructions": "Keep shared contracts synchronized.",
+      "subagents": {
+        "defaultLaunchModels": ["openai/gpt-5.6-sol:high"]
+      }
     }
   }
 }
 ```
 
-`projectIds` must contain at least two unique repository project IDs. A composite cannot contain persistent-directory projects or another composite. Member order is retained for workspace context and the comma-delimited history `repository` attribute.
+`projectIds` requires at least two unique repository projects; directories and composites are invalid members. Order controls workspace context and history `repository`.
 
-Tau creates each member under `<composite-root>/<member-project-id>`, using that member's repository cache, ref, and working directory. The session `cwd` is the generated composite root. Tau writes a root `AGENTS.md` describing the members and optional `instructions`, plus a root `.tau/config.json` that adds discovered member `AGENTS.md` files along the configured working-directory paths.
+Members live at `<composite-root>/<member-project-id>` and use each repository's cache, ref, and working directory. The root is the session `cwd`. At creation, Tau writes a root `AGENTS.md` listing the members and optional `instructions`, plus root `.tau/config.json` containing `subagents` or `{}`. These are workspace files, not synchronized mirrors of Telegram configuration, and are not regenerated when a preserved session reconnects.
 
-The parent composite session remains authoritative for the persona, subagent definition, model catalog, runtime config, settings, and tools. Child `.tau/config.json` files are not merged into the main composite session. A subagent launched in a member directory rebuilds only target-dependent prompt context there: environment and repository metadata, applicable `AGENTS.md` and target `agentContextFiles`, and target-discovered skills filtered by the parent persona.
+`subagents.defaultLaunchModels` sets the built-in `default` launch override allowlist. Runtime config resolves and enforces entries. See [subagents](subagents.md) for model syntax and custom policy.
+
+The composite owns the parent persona, subagents, model catalog, config, settings, and tools. Child `.tau/config.json` files are not merged. A subagent in a member directory rebuilds only target context: environment and repository metadata, applicable `AGENTS.md` and `agentContextFiles`, and skills filtered by the parent persona.
 
 Composite preparation is all-or-nothing. If one member cannot be prepared, Tau removes the generated composite workspace. The composite's optional `workspaceRoot` controls the generated root; member repository caches continue to use each member's configured root or the top-level default.
 
+## Managed workspace lifecycle
+
+Repository and composite projects follow the same lifecycle. Tau prepares one workspace per session, then the session continues working there. A normal runner restart reconnects without fetching or checking out repositories, rerunning provision hooks, or rewriting generated files. Workspace-preparation changes in Telegram configuration affect later preparations, not a preserved workspace.
+
+If the expected workspace is missing, recovery reconstructs it from the caches and current project configuration. `/new` and session close remove a managed workspace; normal shutdown preserves it. Tau does not commit, push, or save uncommitted changes elsewhere.
+
 ## Managed workspace safety
 
-**Important:** runner startup removes entries under configured managed workspace roots when they are not referenced by persisted sessions. Dedicate these roots to Tau Telegram workspaces. Do not point `workspaceRoot` at a home directory, repository collection, or any directory containing unrelated files.
+**Important:** startup removes entries under managed workspace roots that no persisted session references. Dedicate these roots to Tau; never use a home directory, repository collection, or unrelated tree.
 
-Tau preserves managed workspaces referenced by active or failed persisted records and always preserves configured persistent directories. It also preserves repository caches, which live beside the workspace root under the `-repo-cache` suffix rather than inside the pruned root.
-
-`/new` closes the chat's current active session before creating its replacement. For repository and composite projects, closing interrupts work and recursively removes that session's managed workspace. Uncommitted changes are lost unless the agent or operator saved them elsewhere. For persistent-directory projects, the shared directory remains untouched.
+Tau preserves referenced managed workspaces, configured persistent directories, and repository caches. `/new` closes the active session before replacing it. Closing a repository or composite session interrupts work and removes its workspace; persistent directories remain untouched.
 
 ## Provision hooks
 
-A repository may provide an optional setup script at its repository root:
+A repository may provide `.tau/scripts/provision` at its root. It must be a regular executable file, not a symlink, and start with a shebang. Tau runs it through `session.exec` from the configured working directory after the session becomes available, without blocking chat input.
 
-```text
-.tau/scripts/provision
-```
-
-Tau runs it through `session.exec` with the project's configured working directory as `cwd`. The path must be a regular executable file, not a symlink, and must begin with a shebang. A missing hook is a successful no-op.
-
-Provisioning starts after the session becomes available and does not block chat input. A failure is reported to linked chats, but the session remains usable. Composite sessions run each member hook in member order and continue after a member failure. Persistent-directory projects are never provisioned.
-
-A newly created workspace runs its hook. A preserved workspace skips it during normal restart recovery. If recovery must reconstruct a missing repository or composite workspace from cache, the reconstructed repositories run provisioning again. Keep hooks repeatable and non-interactive.
+New and reconstructed workspaces run their hooks; preserved workspaces and persistent-directory projects do not. Composite sessions run member hooks in order and continue after failures. A failure is reported to linked chats but leaves the session usable. Keep hooks repeatable and non-interactive.
 
 ## Normal Tau configuration inside workspaces
 
@@ -299,9 +300,7 @@ Tool selection occurs when the session client is created or reconnected. `/reloa
 
 ## Persistence and restart behavior
 
-Normal shutdown interrupts live work, waits for active work to settle, disconnects sessions, and preserves repository and composite workspaces rather than deleting them. Sessions that finished creation reconnect on restart and retain their conversation. A session interrupted while its workspace or Tau session was still being prepared starts preparation again.
-
-If a referenced repository workspace is missing, Tau reconstructs it from the cache and reconnects the same session. A persistent-directory workspace is never reconstructed; its configured directory must still exist at the original path.
+Normal shutdown interrupts live work, waits for it to settle, and disconnects sessions. Finished sessions reconnect with their conversation on restart. A session interrupted during workspace or Tau session creation starts preparation again. A persistent-directory workspace is never reconstructed and must remain at its original path.
 
 If the connection is lost after Telegram submits a message, startup checks whether Tau accepted and completed it. Running work remains interruptible until it settles. A confirmed unaccepted message prompts the user to resend it; failed or blocked outcomes remain queued until delivery succeeds.
 

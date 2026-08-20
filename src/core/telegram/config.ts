@@ -121,6 +121,16 @@ function createCompositeProjectSchema(configDir: string) {
       projectIds: stringListSchema.min(2, "must contain at least two project ids."),
       persona: z.string(),
       instructions: nonEmptyStringSchema.optional(),
+      subagents: z
+        .object({
+          defaultLaunchModels: z
+            .array(z.string(), {
+              message: "must be an array of strings.",
+            })
+            .optional(),
+        })
+        .strip()
+        .optional(),
     })
     .strip();
 }
@@ -298,9 +308,17 @@ function parseProject(
   }
 
   const incompatibleFields = hasRepo
-    ? ["directory", "projectIds", "instructions"]
+    ? ["directory", "projectIds", "instructions", "subagents"]
     : hasDirectory
-      ? ["repo", "ref", "workingDirectory", "workspaceRoot", "projectIds", "instructions"]
+      ? [
+          "repo",
+          "ref",
+          "workingDirectory",
+          "workspaceRoot",
+          "projectIds",
+          "instructions",
+          "subagents",
+        ]
       : ["repo", "directory", "ref", "workingDirectory", "noAgentContextFiles"];
   const configuredIncompatibleFields = incompatibleFields.filter((field) =>
     Object.hasOwn(rawObject.data, field),

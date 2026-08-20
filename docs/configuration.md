@@ -191,7 +191,7 @@ For `tau serve`, make the changes on the host machine and restart the server. Re
 
 Some settings are choices rather than live mutations. `defaultPersona` and startup persona flags select a new session. Execution-environment kind, identity, `cwd`, and home are fixed when the session is created or recovered.
 
-The Telegram runner loads its speech provider and separate runner config at startup. Restart it for speech, project, routing, or workspace-preparation changes. Command client tools are selected when a Telegram session client is created, so configuration changes apply to new sessions; restarting the runner also rebuilds clients while recovering its sessions. Existing sessions retain their recorded execution environment unless the documented recovery behavior reconstructs a managed workspace.
+The Telegram runner loads its speech provider and separate runner config at startup. Restart it for speech, project, routing, or workspace-preparation changes. Workspace-preparation changes apply when a managed workspace is created or reconstructed; restarting does not retrofit a preserved workspace. Command client tools are selected when a Telegram session client is created, so configuration changes apply to new sessions; restarting the runner also rebuilds clients while recovering its sessions. Existing sessions retain their recorded execution environment unless the documented recovery behavior reconstructs a managed workspace.
 
 ## Common precedence mistakes
 

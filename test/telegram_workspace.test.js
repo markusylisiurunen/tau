@@ -228,11 +228,8 @@ describe("telegram workspace", () => {
           const cachePath = commandArgs[2];
           const memberPath = commandArgs[3];
           await mkdir(memberPath, { recursive: true });
-          await writeFile(join(memberPath, "AGENTS.md"), "member instructions");
           if (cachePath.endsWith("cowork.git")) {
             await mkdir(join(memberPath, "packages", "core"), { recursive: true });
-            await writeFile(join(memberPath, "packages", "AGENTS.md"), "package instructions");
-            await writeFile(join(memberPath, "packages", "core", "AGENTS.md"), "core instructions");
           }
           return { exitCode: 0, output: "cloned from cache" };
         }
@@ -282,21 +279,42 @@ describe("telegram workspace", () => {
 
     expect(
       JSON.parse(await readFile(join(result.workspacePath, ".tau", "config.json"), "utf8")),
-    ).toEqual({
-      agentContextFiles: [
-        "tau/AGENTS.md",
-        "cowork/AGENTS.md",
-        "cowork/packages/AGENTS.md",
-        "cowork/packages/core/AGENTS.md",
-      ],
-    });
+    ).toEqual({});
     const agents = await readFile(join(result.workspacePath, "AGENTS.md"), "utf8");
     expect(agents).toContain("This workspace contains multiple independent Git repositories:");
     expect(agents).not.toContain("Telegram");
     expect(agents).toContain("`tau/`: repository `owner/tau`");
     expect(agents).toContain("`cowork/`: repository `owner/cowork`, ref `main`");
+    expect(agents).toContain(
+      "When asked to work in one or more repositories, read each relevant repository's root AGENTS.md file, if present, before making changes.",
+    );
     expect(agents).toContain("Coordinate changes across both repositories.");
     expect(agents).not.toContain("report verification");
+
+    const configuredProject = {
+      ...projects.platform,
+      subagents: {
+        defaultLaunchModels: ["openai/gpt-5.6-sol:high", "anthropic/claude-haiku-4-5:low"],
+      },
+    };
+    const configuredResult = await prepareWorkspace({
+      sessionId: "def67890",
+      projectId: "platform",
+      project: configuredProject,
+      projects: { ...projects, platform: configuredProject },
+      workspaceRoot,
+      defaultWorkspaceRoot: workspaceRoot,
+    });
+
+    expect(
+      JSON.parse(
+        await readFile(join(configuredResult.workspacePath, ".tau", "config.json"), "utf8"),
+      ),
+    ).toEqual({
+      subagents: {
+        defaultLaunchModels: ["openai/gpt-5.6-sol:high", "anthropic/claude-haiku-4-5:low"],
+      },
+    });
   });
 
   it("removes a composite workspace when member preparation fails", async () => {

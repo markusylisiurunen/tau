@@ -152,6 +152,9 @@ export type TelegramCompositeProjectConfig = TelegramManagedProjectBaseConfig & 
   projectIds: string[];
   persona: string;
   instructions?: string;
+  subagents?: {
+    defaultLaunchModels?: string[];
+  };
 };
 
 export type TelegramProjectConfig =

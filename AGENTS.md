@@ -56,6 +56,8 @@ Treat the client, host, and execution environment as separate logical machines e
 - The execution environment is the agent's machine. It owns every agent-visible path, `cwd`, home, repository, project configuration and content, `AGENTS.md`, skills, model overlays, platform, Node version, `PATH`, filesystem operation, and command.
 - The Telegram runner owns Telegram polling, routing, attachments, prepared workspaces, outbound messages, and runner-specific persisted state. It is a client of local in-process sessions.
 
+Repository and composite managed workspaces are prepared once per Telegram session. Normal runner recovery reconnects through the preserved workspace without rerunning preparation or provisioning and without rewriting generated composite metadata. Reconstruct the workspace only when it is missing. Telegram project configuration changes apply to future workspace preparations, not preserved workspaces.
+
 Temporary storage follows the same ownership boundary. Client, host, and runner code derives process-local temporary paths from `node:os` `tmpdir()` instead of hard-coding `/tmp`. Target-owned temporary paths come from target capabilities or a documented adapter contract, never from the caller's local temporary directory.
 
 Outside narrow pre-creation metadata obtained by a client from an environment it directly manages, client and host filesystem APIs must not inspect execution-environment paths. Session creation attributes are complete, authoritative client input. The host and stores do not infer or normalize them. All agent-visible access must cross `ExecutionEnvironment` and `ToolExecutionBackend`, even for a local session. Physical co-location must not create a second runtime path.

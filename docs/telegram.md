@@ -167,7 +167,7 @@ Persistent-directory sessions omit the conventional history `repository` attribu
 
 ## Composite projects
 
-A composite project creates one generated root with multiple repository projects as children:
+A composite project creates a root containing multiple repositories:
 
 ```json
 {
@@ -177,17 +177,22 @@ A composite project creates one generated root with multiple repository projects
     "platform": {
       "projectIds": ["web", "api"],
       "persona": "gpt-5.6-sol-coder:high",
-      "instructions": "Keep shared contracts synchronized."
+      "instructions": "Keep shared contracts synchronized.",
+      "subagents": {
+        "defaultLaunchModels": ["openai/gpt-5.6-sol:high"]
+      }
     }
   }
 }
 ```
 
-`projectIds` must contain at least two unique repository project IDs. A composite cannot contain persistent-directory projects or another composite. Member order is retained for workspace context and the comma-delimited history `repository` attribute.
+`projectIds` requires at least two unique repository projects; directories and composites are invalid members. Order controls workspace context and history `repository`.
 
-Tau creates each member under `<composite-root>/<member-project-id>`, using that member's repository cache, ref, and working directory. The session `cwd` is the generated composite root. Tau writes a root `AGENTS.md` describing the members and optional `instructions`, plus a root `.tau/config.json` that adds discovered member `AGENTS.md` files along the configured working-directory paths.
+Members live at `<composite-root>/<member-project-id>` and use each repository's cache, ref, and working directory. The root is the session `cwd`. Its generated `AGENTS.md` lists members and optional `instructions`, and requires reading relevant member root instructions before work.
 
-The parent composite session remains authoritative for the persona, subagent definition, model catalog, runtime config, settings, and tools. Child `.tau/config.json` files are not merged into the main composite session. A subagent launched in a member directory rebuilds only target-dependent prompt context there: environment and repository metadata, applicable `AGENTS.md` and target `agentContextFiles`, and target-discovered skills filtered by the parent persona.
+`subagents.defaultLaunchModels` sets the built-in `default` launch override allowlist. Tau writes it to root `.tau/config.json`; without `subagents`, the file is `{}`. Runtime config resolves and enforces entries. See [subagents](subagents.md) for model syntax and custom policy.
+
+The composite owns the parent persona, subagents, model catalog, config, settings, and tools. Child `.tau/config.json` files are not merged. A subagent in a member directory rebuilds only target context: environment and repository metadata, applicable `AGENTS.md` and `agentContextFiles`, and skills filtered by the parent persona.
 
 Composite preparation is all-or-nothing. If one member cannot be prepared, Tau removes the generated composite workspace. The composite's optional `workspaceRoot` controls the generated root; member repository caches continue to use each member's configured root or the top-level default.
 

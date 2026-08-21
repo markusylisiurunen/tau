@@ -115,15 +115,16 @@ export async function startTauSdkDiffReview(
     const client = new DiffReviewProtocolClient(
       parseDiffToolLaunchEnvironment(bridge.launchEnvironment),
     );
+    const onSubmit = options.onSubmit;
     server = new DiffToolHttpServer({
       client,
       ...(options.host !== undefined ? { host: options.host } : {}),
       ...(options.port !== undefined ? { port: options.port } : {}),
       ...(options.storage ? { storage: options.storage } : {}),
-      ...(options.onSubmit
+      ...(onSubmit
         ? {
             onSubmit: async (submission) => {
-              await options.onSubmit?.({
+              await onSubmit({
                 review: submission.review,
                 diffCommand: submission.context.diffCommand,
                 reviewedFiles: submission.files.map((file) => file.path),

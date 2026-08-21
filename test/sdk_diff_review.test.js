@@ -86,7 +86,7 @@ describe("SDK diff review", () => {
     });
 
     try {
-      const bootstrapResponse = await fetch(`${review.url}/api/bootstrap`);
+      const bootstrapResponse = await fetch(`${review.url}api/bootstrap`);
       expect(bootstrapResponse.ok).toBe(true);
       await expect(bootstrapResponse.json()).resolves.toMatchObject({
         context: {
@@ -98,7 +98,7 @@ describe("SDK diff review", () => {
         files: [{ path: "example.ts", status: "modified" }],
       });
 
-      const diffResponse = await fetch(`${review.url}/api/diff`);
+      const diffResponse = await fetch(`${review.url}api/diff`);
       expect(diffResponse.ok).toBe(true);
       await expect(diffResponse.json()).resolves.toMatchObject({
         scope: "session",
@@ -137,7 +137,7 @@ describe("SDK diff review", () => {
       onSubmit,
     });
 
-    const createdThread = await fetch(`${review.url}/api/thread`, {
+    const createdThread = await fetch(`${review.url}api/thread`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -148,7 +148,7 @@ describe("SDK diff review", () => {
     expect(createdThread.ok).toBe(true);
     expect(storedDocument.state.threads).toHaveLength(1);
 
-    const submitted = await fetch(`${review.url}/api/review`, {
+    const submitted = await fetch(`${review.url}api/review`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ message: "Address the unresolved feedback." }),

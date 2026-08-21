@@ -51,6 +51,12 @@ export class DiffToolReviewStateStore {
     };
   }
 
+  clone(): DiffToolReviewStateStore {
+    const clone = new DiffToolReviewStateStore();
+    clone.replaceState(this.state);
+    return clone;
+  }
+
   replaceState(state: DiffToolReviewState): void {
     this.state.diffStyle = state.diffStyle;
     this.state.overflowMode = state.overflowMode;
@@ -62,14 +68,26 @@ export class DiffToolReviewStateStore {
     this.state.brief = cloneBrief(state.brief);
   }
 
-  replaceStatePreservingLoading(state: DiffToolReviewState): void {
-    const threadLoading = new Map(this.state.threads.map((thread) => [thread.id, thread.loading]));
-    const briefLoading = this.state.brief.loading;
+  replaceStatePreservingConcurrentLoading(
+    state: DiffToolReviewState,
+    previousState: DiffToolReviewState,
+  ): void {
+    const currentThreadLoading = new Map(
+      this.state.threads.map((thread) => [thread.id, thread.loading]),
+    );
+    const previousThreadLoading = new Map(
+      previousState.threads.map((thread) => [thread.id, thread.loading]),
+    );
+    const currentBriefLoading = this.state.brief.loading;
     this.replaceState(state);
     for (const thread of this.state.threads) {
-      thread.loading = threadLoading.get(thread.id) ?? thread.loading;
+      if (thread.loading === previousThreadLoading.get(thread.id)) {
+        thread.loading = currentThreadLoading.get(thread.id) ?? thread.loading;
+      }
     }
-    this.state.brief.loading = briefLoading;
+    if (this.state.brief.loading === previousState.brief.loading) {
+      this.state.brief.loading = currentBriefLoading;
+    }
   }
 
   updateState(patch: DiffToolStatePatch): void {

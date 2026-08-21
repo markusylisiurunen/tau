@@ -204,7 +204,7 @@ describe("built-in diff tool", () => {
       const started = await server.start();
       expect(bridge.getUiState().diffToolUiText).toBe(started.url);
 
-      const bootstrap = await fetchJson(`${started.url}/api/bootstrap`);
+      const bootstrap = await fetchJson(`${started.url}api/bootstrap`);
       expect(bootstrap.context).toEqual({
         sessionId: bridge.sessionId,
         repoRoot: "/repo",
@@ -230,20 +230,20 @@ describe("built-in diff tool", () => {
         },
       });
 
-      const wholeDiff = await fetchJson(`${started.url}/api/diff`);
+      const wholeDiff = await fetchJson(`${started.url}api/diff`);
       expect(wholeDiff).toEqual({
         scope: "session",
         patch: createSnapshot().patch,
       });
 
-      const fileDiff = await fetchJson(`${started.url}/api/diff?path=src%2Fa.ts`);
+      const fileDiff = await fetchJson(`${started.url}api/diff?path=src%2Fa.ts`);
       expect(fileDiff).toEqual({
         scope: "file",
         path: "src/a.ts",
         patch: createSnapshot().getFilePatch("src/a.ts"),
       });
 
-      const updatedState = await fetchJson(`${started.url}/api/state`, {
+      const updatedState = await fetchJson(`${started.url}api/state`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -260,7 +260,7 @@ describe("built-in diff tool", () => {
         diffStyle: "stacked",
       });
 
-      const createdThread = await fetchJson(`${started.url}/api/thread`, {
+      const createdThread = await fetchJson(`${started.url}api/thread`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -288,7 +288,7 @@ describe("built-in diff tool", () => {
         loading: false,
       });
 
-      const repliedThread = await fetchJson(`${started.url}/api/thread/reply`, {
+      const repliedThread = await fetchJson(`${started.url}api/thread/reply`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -301,7 +301,7 @@ describe("built-in diff tool", () => {
         { role: "user", text: "Any risks?" },
       ]);
 
-      const askedThread = await fetchJson(`${started.url}/api/thread-message`, {
+      const askedThread = await fetchJson(`${started.url}api/thread-message`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ id: thread.id }),
@@ -336,7 +336,7 @@ describe("built-in diff tool", () => {
         ),
       ]);
 
-      const createdDetachedThread = await fetchJson(`${started.url}/api/thread`, {
+      const createdDetachedThread = await fetchJson(`${started.url}api/thread`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -352,7 +352,7 @@ describe("built-in diff tool", () => {
         loading: false,
       });
 
-      const askedDetachedThread = await fetchJson(`${started.url}/api/thread-message`, {
+      const askedDetachedThread = await fetchJson(`${started.url}api/thread-message`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ id: detachedThread.id }),
@@ -433,10 +433,10 @@ describe("built-in diff tool", () => {
         ],
       });
 
-      const refreshedBootstrap = await fetchJson(`${started.url}/api/bootstrap`);
+      const refreshedBootstrap = await fetchJson(`${started.url}api/bootstrap`);
       expect(refreshedBootstrap.state).toEqual(askedDetachedThread.state);
 
-      const reviewResult = await fetchJson(`${started.url}/api/review`, {
+      const reviewResult = await fetchJson(`${started.url}api/review`, {
         method: "POST",
         headers: { "content-type": "application/json" },
       });
@@ -514,7 +514,7 @@ describe("built-in diff tool", () => {
     let threadId;
     try {
       const started = await firstServer.start();
-      const created = await fetchJson(`${started.url}/api/thread`, {
+      const created = await fetchJson(`${started.url}api/thread`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -529,7 +529,7 @@ describe("built-in diff tool", () => {
         }),
       });
       threadId = created.threadId;
-      await fetchJson(`${started.url}/api/thread-message`, {
+      await fetchJson(`${started.url}api/thread-message`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ id: threadId }),
@@ -553,7 +553,7 @@ describe("built-in diff tool", () => {
 
     try {
       const started = await secondServer.start();
-      const bootstrap = await fetchJson(`${started.url}/api/bootstrap`);
+      const bootstrap = await fetchJson(`${started.url}api/bootstrap`);
       expect(bootstrap.state.threads[0]).toMatchObject({
         id: threadId,
         loading: false,
@@ -564,12 +564,12 @@ describe("built-in diff tool", () => {
       });
       expect(bootstrap.state.threads[0]).not.toHaveProperty("threadId");
 
-      await fetchJson(`${started.url}/api/thread/reply`, {
+      await fetchJson(`${started.url}api/thread/reply`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ id: threadId, text: "What about retries?" }),
       });
-      await fetchJson(`${started.url}/api/thread-message`, {
+      await fetchJson(`${started.url}api/thread-message`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ id: threadId }),
@@ -608,14 +608,14 @@ describe("built-in diff tool", () => {
 
     try {
       const started = await server.start();
-      const firstSubmission = fetch(`${started.url}/api/review`, {
+      const firstSubmission = fetch(`${started.url}api/review`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ message: "Please address this." }),
       });
       await submitStarted;
 
-      const duplicate = await fetch(`${started.url}/api/review`, {
+      const duplicate = await fetch(`${started.url}api/review`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ message: "Duplicate" }),
@@ -654,7 +654,7 @@ describe("built-in diff tool", () => {
 
     try {
       const started = await server.start();
-      const failed = await fetch(`${started.url}/api/review`, {
+      const failed = await fetch(`${started.url}api/review`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({}),
@@ -662,7 +662,7 @@ describe("built-in diff tool", () => {
       expect(failed.status).toBe(500);
       await expect(failed.json()).resolves.toEqual({ error: "database unavailable" });
 
-      const accepted = await fetch(`${started.url}/api/review`, {
+      const accepted = await fetch(`${started.url}api/review`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({}),
@@ -690,7 +690,7 @@ describe("built-in diff tool", () => {
 
     try {
       const started = await server.start();
-      const failed = await fetch(`${started.url}/api/state`, {
+      const failed = await fetch(`${started.url}api/state`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ sidebarOpen: true }),
@@ -698,10 +698,10 @@ describe("built-in diff tool", () => {
       expect(failed.status).toBe(500);
       await expect(failed.json()).resolves.toEqual({ error: "storage unavailable" });
 
-      const bootstrap = await fetchJson(`${started.url}/api/bootstrap`);
+      const bootstrap = await fetchJson(`${started.url}api/bootstrap`);
       expect(bootstrap.state.sidebarOpen).toBe(false);
 
-      const recovered = await fetchJson(`${started.url}/api/state`, {
+      const recovered = await fetchJson(`${started.url}api/state`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ sidebarOpen: true }),
@@ -741,26 +741,26 @@ describe("built-in diff tool", () => {
 
     try {
       const started = await server.start();
-      const created = await fetchJson(`${started.url}/api/thread`, {
+      const created = await fetchJson(`${started.url}api/thread`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ anchor: { kind: "detached" }, body: "Question" }),
       });
-      const pendingReply = fetch(`${started.url}/api/thread-message`, {
+      const pendingReply = fetch(`${started.url}api/thread-message`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ id: created.threadId }),
       });
       await commentStarted;
 
-      const failedMutation = await fetch(`${started.url}/api/state`, {
+      const failedMutation = await fetch(`${started.url}api/state`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ sidebarOpen: true }),
       });
       expect(failedMutation.status).toBe(500);
 
-      const duplicateReply = await fetch(`${started.url}/api/thread-message`, {
+      const duplicateReply = await fetch(`${started.url}api/thread-message`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ id: created.threadId }),
@@ -775,7 +775,7 @@ describe("built-in diff tool", () => {
     }
   });
 
-  it("returns only the state committed by each queued persistence mutation", async () => {
+  it("publishes only committed state from queued persistence mutations", async () => {
     let saveCount = 0;
     let releaseFirstMutation;
     const firstMutationReleased = new Promise((resolve) => {
@@ -812,13 +812,16 @@ describe("built-in diff tool", () => {
 
     try {
       const started = await server.start();
-      const firstMutation = fetch(`${started.url}/api/state`, {
+      const firstMutation = fetch(`${started.url}api/state`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ sidebarOpen: true }),
       });
       await firstMutationStarted;
-      const secondMutation = fetch(`${started.url}/api/state`, {
+      const pendingBootstrap = await fetchJson(`${started.url}api/bootstrap`);
+      expect(pendingBootstrap.state.sidebarOpen).toBe(false);
+
+      const secondMutation = fetch(`${started.url}api/state`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ diffStyle: "stacked" }),
@@ -834,7 +837,7 @@ describe("built-in diff tool", () => {
 
       releaseSecondMutation();
       expect((await secondMutation).status).toBe(500);
-      const bootstrap = await fetchJson(`${started.url}/api/bootstrap`);
+      const bootstrap = await fetchJson(`${started.url}api/bootstrap`);
       expect(bootstrap.state).toMatchObject({ sidebarOpen: true, diffStyle: "split" });
     } finally {
       releaseFirstMutation?.();
@@ -867,37 +870,37 @@ describe("built-in diff tool", () => {
 
     try {
       const started = await server.start();
-      const created = await fetchJson(`${started.url}/api/thread`, {
+      const created = await fetchJson(`${started.url}api/thread`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ anchor: { kind: "detached" }, body: "Question" }),
       });
-      const blockingMutation = fetch(`${started.url}/api/state`, {
+      const blockingMutation = fetch(`${started.url}api/state`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ sidebarOpen: true }),
       });
       await blockingMutationStarted;
 
-      const deleted = fetch(`${started.url}/api/thread/delete`, {
+      const deleted = fetch(`${started.url}api/thread/delete`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ id: created.threadId }),
       });
       await new Promise((resolve) => setTimeout(resolve, 10));
-      const replied = fetch(`${started.url}/api/thread/reply`, {
+      const replied = fetch(`${started.url}api/thread/reply`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ id: created.threadId, text: "Follow-up" }),
       });
       await new Promise((resolve) => setTimeout(resolve, 10));
-      const resolved = fetch(`${started.url}/api/thread/resolve`, {
+      const resolved = fetch(`${started.url}api/thread/resolve`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ id: created.threadId, resolved: true }),
       });
       await new Promise((resolve) => setTimeout(resolve, 10));
-      const collapsed = fetch(`${started.url}/api/thread/collapse`, {
+      const collapsed = fetch(`${started.url}api/thread/collapse`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ id: created.threadId, collapsed: true }),
@@ -915,7 +918,7 @@ describe("built-in diff tool", () => {
     }
   });
 
-  it("rejects stored state from a different diff snapshot", async () => {
+  it("rejects invalid or mismatched stored state", async () => {
     let storedDocument;
     const storage = {
       load: vi.fn(async () => storedDocument),
@@ -926,6 +929,15 @@ describe("built-in diff tool", () => {
     const firstServer = new DiffToolHttpServer({ client: createClientStub(), storage });
     await firstServer.start();
     await firstServer.close();
+
+    const invalidServer = new DiffToolHttpServer({
+      client: createClientStub(),
+      storage: {
+        load: vi.fn(async () => ({ ...storedDocument, unexpected: true })),
+        save: vi.fn(async () => {}),
+      },
+    });
+    await expect(invalidServer.start()).rejects.toThrow("stored diff review state is invalid");
 
     const changedClient = createClientStub({
       getDiff: vi.fn(async () => ({ scope: "session", patch: "changed diff" })),
@@ -956,7 +968,7 @@ describe("built-in diff tool", () => {
       const started = await server.start();
       await new Promise((resolve) => setTimeout(resolve, 0));
 
-      const result = await fetchJson(`${started.url}/api/brief/generate`, {
+      const result = await fetchJson(`${started.url}api/brief/generate`, {
         method: "POST",
         headers: { "content-type": "application/json" },
       });
@@ -1020,7 +1032,7 @@ describe("built-in diff tool", () => {
       await bootstrapStarted;
 
       const diff = await Promise.race([
-        fetchJson(`${started.url}/api/diff`),
+        fetchJson(`${started.url}api/diff`),
         new Promise((resolve) => setTimeout(() => resolve("timeout"), 50)),
       ]);
       expect(diff).not.toBe("timeout");
@@ -1122,7 +1134,7 @@ describe("built-in diff tool", () => {
       const started = await server.start();
       await bootstrapStarted;
 
-      const briefRequest = fetch(`${started.url}/api/brief/generate`, {
+      const briefRequest = fetch(`${started.url}api/brief/generate`, {
         method: "POST",
         headers: { "content-type": "application/json" },
       });
@@ -1157,7 +1169,7 @@ describe("built-in diff tool", () => {
     try {
       const started = await server.start();
 
-      const result = await fetchJson(`${started.url}/api/review`, {
+      const result = await fetchJson(`${started.url}api/review`, {
         method: "POST",
         headers: { "content-type": "application/json" },
       });
@@ -1165,7 +1177,7 @@ describe("built-in diff tool", () => {
       expect(client.returnReview).toHaveBeenCalledTimes(1);
       expect(client.close).not.toHaveBeenCalled();
 
-      const bootstrap = await fetchJson(`${started.url}/api/bootstrap`);
+      const bootstrap = await fetchJson(`${started.url}api/bootstrap`);
       expect(bootstrap.context.sessionId).toBe("session-1");
 
       await client.emitSessionClose();
@@ -1183,7 +1195,7 @@ describe("built-in diff tool", () => {
     try {
       const started = await server.start();
 
-      const result = await fetchJson(`${started.url}/api/cancel`, {
+      const result = await fetchJson(`${started.url}api/cancel`, {
         method: "POST",
         headers: { "content-type": "application/json" },
       });
@@ -1191,7 +1203,7 @@ describe("built-in diff tool", () => {
       expect(client.cancelSession).toHaveBeenCalledTimes(1);
       expect(client.close).not.toHaveBeenCalled();
 
-      const bootstrap = await fetchJson(`${started.url}/api/bootstrap`);
+      const bootstrap = await fetchJson(`${started.url}api/bootstrap`);
       expect(bootstrap.context.sessionId).toBe("session-1");
 
       await client.emitSessionClose();
@@ -1213,7 +1225,7 @@ describe("built-in diff tool", () => {
       expect(client.cancelSession).toHaveBeenCalledTimes(1);
       expect(client.close).not.toHaveBeenCalled();
 
-      const bootstrap = await fetchJson(`${started.url}/api/bootstrap`);
+      const bootstrap = await fetchJson(`${started.url}api/bootstrap`);
       expect(bootstrap.context.sessionId).toBe("session-1");
 
       await client.emitSessionClose();

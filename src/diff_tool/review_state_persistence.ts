@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
+import type { DiffReviewFile, DiffReviewSessionContextResult } from "../core/diff_review/index.js";
 import type { DiffToolReviewState } from "./shared_types.js";
 import { DIFF_TOOL_CODE_THEMES } from "./shared_types.js";
 
@@ -25,8 +27,8 @@ const lineAnchorSchema = z
     lineNumber: z.number().int().nonnegative(),
     side: z.enum(["additions", "deletions"]),
   })
-  .strip();
-const detachedAnchorSchema = z.object({ kind: z.literal("detached") }).strip();
+  .strict();
+const detachedAnchorSchema = z.object({ kind: z.literal("detached") }).strict();
 const persistedThreadSchema = z
   .object({
     id: idSchema,
@@ -38,13 +40,17 @@ const persistedThreadSchema = z
             role: z.enum(["user", "assistant"]),
             text: textSchema,
           })
-          .strip(),
+          .strict(),
       )
+      .min(1)
       .max(MAX_MESSAGES_PER_THREAD),
     resolved: z.boolean(),
     collapsed: z.boolean(),
   })
-  .strip();
+  .strict()
+  .refine((thread) => thread.messages[0]?.role === "user", {
+    message: "thread must start with a user message",
+  });
 const persistedStateSchema = z
   .object({
     diffStyle: z.enum(["stacked", "split"]),
@@ -53,19 +59,43 @@ const persistedStateSchema = z
     sidebarOpen: z.boolean(),
     collapsedFileIds: z.array(idSchema).max(MAX_FILE_IDS),
     viewedFileIds: z.array(idSchema).max(MAX_FILE_IDS),
-    threads: z.array(persistedThreadSchema).max(MAX_THREADS),
-    brief: z.object({ content: textSchema }).strip(),
+    threads: z
+      .array(persistedThreadSchema)
+      .max(MAX_THREADS)
+      .refine((threads) => new Set(threads.map((thread) => thread.id)).size === threads.length, {
+        message: "thread ids must be unique",
+      }),
+    brief: z.object({ content: textSchema }).strict(),
   })
-  .strip();
+  .strict();
 const persistedDocumentSchema = z
   .object({
     version: z.literal(DIFF_TOOL_REVIEW_STATE_VERSION),
     scopeFingerprint: z.string().regex(/^[0-9a-f]{64}$/),
     state: persistedStateSchema,
   })
-  .strip();
+  .strict();
 
 type PersistedDocument = z.infer<typeof persistedDocumentSchema>;
+
+export function createDiffReviewScopeFingerprint(
+  context: DiffReviewSessionContextResult,
+  files: readonly DiffReviewFile[],
+  patch: string,
+): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        repoRoot: context.repoRoot,
+        cwd: context.cwd,
+        diffArgs: context.diffArgs,
+        diffCommand: context.diffCommand,
+        files,
+        patch,
+      }),
+    )
+    .digest("hex");
+}
 
 export function createDiffToolPersistedReviewStateDocument(
   scopeFingerprint: string,
@@ -135,15 +165,18 @@ export function parseDiffToolPersistedReviewStateDocument(
 }
 
 function assertDocumentSize(document: unknown): void {
-  let serialized: string;
+  let serialized: string | undefined;
   try {
     serialized = JSON.stringify(document);
   } catch (error) {
     throw new Error(
-      `stored diff review state is not JSON serializable: ${error instanceof Error ? error.message : String(error)}`,
+      `diff review state document is not JSON serializable: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
+  if (serialized === undefined) {
+    throw new Error("diff review state document is not JSON serializable");
+  }
   if (Buffer.byteLength(serialized, "utf8") > MAX_PERSISTED_REVIEW_STATE_BYTES) {
-    throw new Error(`stored diff review state exceeds ${MAX_PERSISTED_REVIEW_STATE_BYTES} bytes`);
+    throw new Error(`diff review state document exceeds ${MAX_PERSISTED_REVIEW_STATE_BYTES} bytes`);
   }
 }

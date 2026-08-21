@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, join, normalize, resolve } from "node:path";
@@ -12,6 +11,7 @@ import {
 } from "./review_prompts.js";
 import { DiffToolReviewStateStore } from "./review_state.js";
 import {
+  createDiffReviewScopeFingerprint,
   createDiffToolPersistedReviewStateDocument,
   type DiffToolReviewStateStorage,
   parseDiffToolPersistedReviewStateDocument,
@@ -59,6 +59,11 @@ export type StartedDiffToolHttpServer = {
   url: string;
 };
 
+type ReviewStatePersistence = {
+  storage: DiffToolReviewStateStorage;
+  scopeFingerprint: string;
+};
+
 const JSON_BODY_LIMIT_BYTES = 1024 * 1024;
 
 const CONTENT_TYPE_BY_EXT: Record<string, string> = {
@@ -88,7 +93,7 @@ export class DiffToolHttpServer {
   private readonly onSubmit?: (submission: DiffToolReviewSubmission) => Promise<void>;
   private context?: DiffReviewSessionContextResult;
   private files: DiffReviewFile[] = [];
-  private scopeFingerprint?: string;
+  private persistence?: ReviewStatePersistence;
   private stateMutationQueue: Promise<void> = Promise.resolve();
   private submissionState: "active" | "submitting" | "submitted" = "active";
   private bootstrapThreadPromise?: Promise<string>;
@@ -136,12 +141,12 @@ export class DiffToolHttpServer {
       this.files = (await this.client.listFiles()).files;
       if (this.storage) {
         const diff = await this.client.getDiff();
-        this.scopeFingerprint = createDiffReviewScopeFingerprint(
-          this.context,
-          this.files,
-          diff.patch,
-        );
-        await this.restoreReviewState();
+        const persistence = {
+          storage: this.storage,
+          scopeFingerprint: createDiffReviewScopeFingerprint(this.context, this.files, diff.patch),
+        };
+        await this.restoreReviewState(persistence);
+        this.persistence = persistence;
       }
 
       if (this.closed || this.sessionClosing) {
@@ -204,57 +209,49 @@ export class DiffToolHttpServer {
     }
   }
 
-  private async restoreReviewState(): Promise<void> {
-    if (!this.storage) return;
-    const scopeFingerprint = this.requireScopeFingerprint();
-    const document = await this.storage.load();
+  private async restoreReviewState(persistence: ReviewStatePersistence): Promise<void> {
+    const document = await persistence.storage.load();
     if (document !== undefined) {
       this.reviewState.replaceState(
-        parseDiffToolPersistedReviewStateDocument(document, scopeFingerprint),
+        parseDiffToolPersistedReviewStateDocument(document, persistence.scopeFingerprint),
       );
       return;
     }
-    await this.persistReviewState();
+    await this.persistReviewState(this.reviewState.getState(), persistence);
   }
 
-  private async persistReviewState(): Promise<void> {
-    if (!this.storage) return;
-    await this.storage.save(
-      createDiffToolPersistedReviewStateDocument(
-        this.requireScopeFingerprint(),
-        this.reviewState.getState(),
-      ),
+  private async persistReviewState(
+    state: DiffToolReviewState,
+    persistence = this.persistence,
+  ): Promise<void> {
+    if (!persistence) return;
+    await persistence.storage.save(
+      createDiffToolPersistedReviewStateDocument(persistence.scopeFingerprint, state),
     );
   }
 
   private async mutateReviewState<T>(
-    mutation: () => T,
+    mutation: (state: DiffToolReviewStateStore) => T,
+    isApplied: (result: T) => boolean = () => true,
   ): Promise<{ result: T; state: DiffToolReviewState }> {
-    const previousMutation = this.stateMutationQueue;
-    let releaseMutation = (): void => undefined;
-    this.stateMutationQueue = new Promise<void>((resolve) => {
-      releaseMutation = resolve;
-    });
-    await previousMutation;
+    const operation = this.stateMutationQueue.then(async () => {
+      const previousState = this.reviewState.getState();
+      const draft = this.reviewState.clone();
+      const result = mutation(draft);
+      if (!isApplied(result)) {
+        return { result, state: previousState };
+      }
 
-    const previousState = this.reviewState.getState();
-    try {
-      const result = mutation();
-      await this.persistReviewState();
+      const nextState = draft.getState();
+      await this.persistReviewState(nextState);
+      this.reviewState.replaceStatePreservingConcurrentLoading(nextState, previousState);
       return { result, state: this.reviewState.getState() };
-    } catch (error) {
-      this.reviewState.replaceStatePreservingLoading(previousState);
-      throw error;
-    } finally {
-      releaseMutation();
-    }
-  }
-
-  private requireScopeFingerprint(): string {
-    if (!this.scopeFingerprint) {
-      throw new Error("diff review scope fingerprint is unavailable");
-    }
-    return this.scopeFingerprint;
+    });
+    this.stateMutationQueue = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return await operation;
   }
 
   private async listen(): Promise<void> {
@@ -342,9 +339,7 @@ export class DiffToolHttpServer {
 
   private async handleRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const method = request.method ?? "GET";
-    const rawUrl = request.url ?? "/";
-    const normalizedUrl = rawUrl.startsWith("//") ? `/${rawUrl.replace(/^\/+/, "")}` : rawUrl;
-    const requestUrl = new URL(normalizedUrl, `http://${request.headers.host ?? this.host}`);
+    const requestUrl = new URL(request.url ?? "/", `http://${request.headers.host ?? this.host}`);
 
     if (this.sessionClosing && requestUrl.pathname.startsWith("/api/")) {
       this.sendJson(response, 409, { error: "diff review session is closing" });
@@ -374,7 +369,7 @@ export class DiffToolHttpServer {
 
     if (method === "POST" && requestUrl.pathname === "/api/state") {
       const payload = parseStatePatch(await this.readJsonBody(request));
-      const { state } = await this.mutateReviewState(() => this.reviewState.updateState(payload));
+      const { state } = await this.mutateReviewState((draft) => draft.updateState(payload));
       this.sendJson(response, 200, { state });
       return;
     }
@@ -386,8 +381,8 @@ export class DiffToolHttpServer {
         return;
       }
 
-      const { result: threadId, state } = await this.mutateReviewState(() =>
-        this.reviewState.createThread(payload),
+      const { result: threadId, state } = await this.mutateReviewState((draft) =>
+        draft.createThread(payload),
       );
       this.sendJson(response, 200, {
         state,
@@ -405,8 +400,9 @@ export class DiffToolHttpServer {
         return;
       }
 
-      const { result: added, state } = await this.mutateReviewState(() =>
-        this.reviewState.addReply(id, text),
+      const { result: added, state } = await this.mutateReviewState(
+        (draft) => draft.addReply(id, text),
+        (result) => result,
       );
       if (!added) {
         this.sendJson(response, 404, { error: "thread not found" });
@@ -419,8 +415,9 @@ export class DiffToolHttpServer {
     if (method === "POST" && requestUrl.pathname === "/api/thread/delete") {
       const payload = await this.readJsonBody(request);
       const id = typeof payload.id === "string" ? payload.id.trim() : "";
-      const { result: removed, state } = await this.mutateReviewState(() =>
-        this.reviewState.deleteThread(id),
+      const { result: removed, state } = await this.mutateReviewState(
+        (draft) => draft.deleteThread(id),
+        (result) => result,
       );
       if (!removed) {
         this.sendJson(response, 404, { error: "thread not found" });
@@ -438,12 +435,15 @@ export class DiffToolHttpServer {
         typeof payload.messageIndex === "number" && Number.isInteger(payload.messageIndex)
           ? payload.messageIndex
           : -1;
-      const { result, state } = await this.mutateReviewState(() => {
-        if (!this.reviewState.findThread(id)) return "thread-not-found" as const;
-        return this.reviewState.deleteThreadMessage(id, messageIndex)
-          ? ("removed" as const)
-          : ("message-not-found" as const);
-      });
+      const { result, state } = await this.mutateReviewState(
+        (draft) => {
+          if (!draft.findThread(id)) return "thread-not-found" as const;
+          return draft.deleteThreadMessage(id, messageIndex)
+            ? ("removed" as const)
+            : ("message-not-found" as const);
+        },
+        (result) => result === "removed",
+      );
       if (result === "thread-not-found") {
         this.sendJson(response, 404, { error: "thread not found" });
         return;
@@ -466,8 +466,9 @@ export class DiffToolHttpServer {
       }
 
       const resolved = payload.resolved;
-      const { result: updated, state } = await this.mutateReviewState(() =>
-        this.reviewState.setThreadResolved(id, resolved),
+      const { result: updated, state } = await this.mutateReviewState(
+        (draft) => draft.setThreadResolved(id, resolved),
+        (result) => result,
       );
       if (!updated) {
         this.sendJson(response, 404, { error: "thread not found" });
@@ -486,8 +487,9 @@ export class DiffToolHttpServer {
       }
 
       const collapsed = payload.collapsed;
-      const { result: updated, state } = await this.mutateReviewState(() =>
-        this.reviewState.setThreadCollapsed(id, collapsed),
+      const { result: updated, state } = await this.mutateReviewState(
+        (draft) => draft.setThreadCollapsed(id, collapsed),
+        (result) => result,
       );
       if (!updated) {
         this.sendJson(response, 404, { error: "thread not found" });
@@ -526,8 +528,9 @@ export class DiffToolHttpServer {
                 message: buildDiffReviewCommentThreadPrompt(message),
               },
         );
-        const { result: applied, state } = await this.mutateReviewState(() =>
-          this.reviewState.applyThreadResponse(id, result),
+        const { result: applied, state } = await this.mutateReviewState(
+          (draft) => draft.applyThreadResponse(id, result),
+          (result) => result,
         );
         if (!applied) {
           this.sendJson(response, 404, { error: "thread not found" });
@@ -554,9 +557,7 @@ export class DiffToolHttpServer {
           forkFromThreadId: await this.getBootstrapThreadId(),
           message: buildDiffReviewBriefPrompt(),
         });
-        const { state } = await this.mutateReviewState(() =>
-          this.reviewState.applyBriefResult(result),
-        );
+        const { state } = await this.mutateReviewState((draft) => draft.applyBriefResult(result));
         this.sendJson(response, 200, { state });
       } catch (error) {
         this.reviewState.setBriefLoading(false);
@@ -695,25 +696,6 @@ export class DiffToolHttpServer {
 
 function formatHttpUrlHost(host: string): string {
   return host.includes(":") ? `[${host}]` : host;
-}
-
-function createDiffReviewScopeFingerprint(
-  context: DiffReviewSessionContextResult,
-  files: DiffReviewFile[],
-  patch: string,
-): string {
-  return createHash("sha256")
-    .update(
-      JSON.stringify({
-        repoRoot: context.repoRoot,
-        cwd: context.cwd,
-        diffArgs: context.diffArgs,
-        diffCommand: context.diffCommand,
-        files,
-        patch,
-      }),
-    )
-    .digest("hex");
 }
 
 function parseReviewPayload(payload: Record<string, unknown>): { message?: string } {

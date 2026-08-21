@@ -2356,6 +2356,31 @@ describe("LocalSessionHost", () => {
     await host.shutdown();
   });
 
+  it("invalidates the session when rewind persistence fails after runtime mutation", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const hostedSession = await host.createSession(localCreateInput);
+    const historyEntryId = await hostedSession.session.commitUserText("rewind me");
+    const persisted = await hostedSession.snapshot();
+    const commitSessionSnapshot = vi.spyOn(store, "commitSessionSnapshot");
+
+    commitSessionSnapshot.mockRejectedValueOnce(new Error("rewind persistence failed"));
+    await expect(hostedSession.rewindToHistoryEntryId(historyEntryId)).rejects.toThrow(
+      "rewind persistence failed",
+    );
+
+    expect(hostedSession.runtime.rawHistoryEntries).toEqual([]);
+    await expect(hostedSession.snapshot()).rejects.toThrow(
+      "session state is inconsistent after a failed mutation",
+    );
+    await expect(hostedSession.record({ text: "must not persist" })).rejects.toThrow(
+      "session state is inconsistent after a failed mutation",
+    );
+    await expect(store.loadSession(hostedSession.sessionId)).resolves.toEqual(persisted);
+    await hostedSession.dispose();
+    await host.shutdown();
+  });
+
   it("truncates timeline notices after the rewound message", async () => {
     const host = createHost(new MemorySessionStore());
     const hostedSession = await host.createSession(localCreateInput);
@@ -3737,6 +3762,27 @@ describe("LocalSessionHost", () => {
     );
     expect(hostedSession.subagentActivities()).toEqual(activityState);
     expect(activityMessages).toEqual([]);
+  });
+
+  it("invalidates the session when configuration persistence fails after runtime mutation", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const hostedSession = await host.createSession(localCreateInput);
+    const persisted = await hostedSession.snapshot();
+    const commitSessionSnapshot = vi.spyOn(store, "commitSessionSnapshot");
+
+    commitSessionSnapshot.mockRejectedValueOnce(new Error("configuration persistence failed"));
+    await expect(hostedSession.setReasoning("high")).rejects.toThrow(
+      "configuration persistence failed",
+    );
+
+    expect(hostedSession.runtime.persona.settings.reasoning).toBe("high");
+    await expect(hostedSession.snapshot()).rejects.toThrow(
+      "session state is inconsistent after a failed mutation",
+    );
+    await expect(store.loadSession(hostedSession.sessionId)).resolves.toEqual(persisted);
+    await hostedSession.dispose();
+    await host.shutdown();
   });
 
   it("does not let a reasoning write replace streamed state at the same revision", async () => {

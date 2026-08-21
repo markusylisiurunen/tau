@@ -655,6 +655,43 @@ describe("LocalSessionHost", () => {
     await host.shutdown();
   });
 
+  it("does not rebuild a snapshot from a user message awaiting event projection", async () => {
+    const store = new BlockingCommitStore();
+    const host = createHost(store);
+    const session = await host.createSession(localCreateInput);
+
+    const gate = store.blockNextCommit();
+    const settings = session.setReasoning("high");
+    await gate.started;
+
+    const concurrentSnapshot = session.snapshot();
+    const acceptance = session.acceptTurn({
+      text: "queue after the previous turn",
+      historyEntryId: "queued-turn",
+    });
+
+    gate.release();
+    await settings;
+
+    await expect(concurrentSnapshot).resolves.toMatchObject({
+      messages: [expect.objectContaining({ id: "system" })],
+      turns: {},
+    });
+    await expect(acceptance).resolves.toMatchObject({
+      userHistoryEntryId: "queued-turn",
+      snapshot: {
+        messages: expect.arrayContaining([expect.objectContaining({ id: "queued-turn" })]),
+        turns: {
+          "queued-turn": {
+            userHistoryEntryId: "queued-turn",
+            state: "running",
+          },
+        },
+      },
+    });
+    await host.shutdown();
+  });
+
   it.each([
     {
       label: "failed",
@@ -1057,7 +1094,7 @@ describe("LocalSessionHost", () => {
     await expect(hostedSession.snapshot()).resolves.toEqual(
       expect.objectContaining({
         sessionId: hostedSession.session.sessionId,
-        revision: 1,
+        revision: 2,
         lifecycle: "idle",
         settings: expectedSettings(),
         bootstrap: {
@@ -1093,18 +1130,18 @@ describe("LocalSessionHost", () => {
       }),
     );
     await expect(hostedSession.snapshot()).resolves.toEqual(
-      expect.objectContaining({ revision: 1 }),
+      expect.objectContaining({ revision: 2 }),
     );
     await hostedSession.session.commitUserText("next");
     await expect(hostedSession.snapshot()).resolves.toEqual(
-      expect.objectContaining({ revision: 2 }),
+      expect.objectContaining({ revision: 3 }),
     );
 
     const returnedSnapshot = await hostedSession.snapshot();
     returnedSnapshot.messages[1].message.content[0].text = "mutated outside";
     await expect(hostedSession.snapshot()).resolves.toEqual(
       expect.objectContaining({
-        revision: 2,
+        revision: 3,
         messages: expect.arrayContaining([
           expect.objectContaining({
             id: "system",
@@ -3032,10 +3069,10 @@ describe("LocalSessionHost", () => {
     await hostedSession.session.commitUserText("hello");
 
     await expect(hostedSession.snapshot()).resolves.toEqual(
-      expect.objectContaining({ revision: 1 }),
+      expect.objectContaining({ revision: 2 }),
     );
     await expect(hostedSession.snapshot()).resolves.toEqual(
-      expect.objectContaining({ revision: 1 }),
+      expect.objectContaining({ revision: 2 }),
     );
     await expect(host.observeSession(hostedSession.session.sessionId)).resolves.toBe(hostedSession);
     await expect(host.listSessions()).resolves.toEqual([
@@ -3045,7 +3082,7 @@ describe("LocalSessionHost", () => {
 
     await hostedSession.session.commitUserText("next");
     await expect(hostedSession.snapshot()).resolves.toEqual(
-      expect.objectContaining({ revision: 2 }),
+      expect.objectContaining({ revision: 3 }),
     );
     expect(store.commitSessionSnapshot).toHaveBeenCalledTimes(2);
   });
@@ -3235,13 +3272,13 @@ describe("LocalSessionHost", () => {
     await expect(
       Promise.all([hostedSession.snapshot(), hostedSession.snapshot(), hostedSession.snapshot()]),
     ).resolves.toEqual([
-      expect.objectContaining({ revision: 1 }),
-      expect.objectContaining({ revision: 1 }),
-      expect.objectContaining({ revision: 1 }),
+      expect.objectContaining({ revision: 2 }),
+      expect.objectContaining({ revision: 2 }),
+      expect.objectContaining({ revision: 2 }),
     ]);
 
     await expect(store.loadSession(hostedSession.session.sessionId)).resolves.toEqual(
-      expect.objectContaining({ revision: 1 }),
+      expect.objectContaining({ revision: 2 }),
     );
   });
 

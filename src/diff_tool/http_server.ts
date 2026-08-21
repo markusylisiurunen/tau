@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, join, normalize, resolve } from "node:path";
@@ -10,6 +11,11 @@ import {
   buildDiffReviewCommentThreadPrompt,
 } from "./review_prompts.js";
 import { DiffToolReviewStateStore } from "./review_state.js";
+import {
+  createDiffToolPersistedReviewStateDocument,
+  type DiffToolReviewStateStorage,
+  parseDiffToolPersistedReviewStateDocument,
+} from "./review_state_persistence.js";
 import type {
   DiffToolBootstrapPayload,
   DiffToolCodeTheme,
@@ -33,11 +39,19 @@ export type {
   DiffToolThreadMessage,
 } from "./shared_types.js";
 
+export type DiffToolReviewSubmission = {
+  review: string;
+  context: DiffReviewSessionContextResult;
+  files: DiffReviewFile[];
+};
+
 export type StartDiffToolHttpServerOptions = {
   client: DiffReviewProtocolClient;
   codeTheme?: DiffToolCodeTheme;
   host?: string;
   port?: number;
+  storage?: DiffToolReviewStateStorage;
+  onSubmit?: (submission: DiffToolReviewSubmission) => Promise<void>;
 };
 
 export type StartedDiffToolHttpServer = {
@@ -69,8 +83,13 @@ export class DiffToolHttpServer {
   private readonly removeSessionCloseListener: () => void;
   private readonly staticDir: string;
   private readonly reviewState: DiffToolReviewStateStore;
+  private readonly storage?: DiffToolReviewStateStorage;
+  private readonly onSubmit?: (submission: DiffToolReviewSubmission) => Promise<void>;
   private context?: DiffReviewSessionContextResult;
   private files: DiffReviewFile[] = [];
+  private scopeFingerprint?: string;
+  private stateMutationQueue: Promise<void> = Promise.resolve();
+  private submissionState: "active" | "submitting" | "submitted" = "active";
   private bootstrapThreadPromise?: Promise<string>;
   private httpServerClosePromise?: Promise<void>;
   private sessionClosing = false;
@@ -94,6 +113,8 @@ export class DiffToolHttpServer {
     });
     this.host = options.host ?? "127.0.0.1";
     this.port = options.port ?? 0;
+    this.storage = options.storage;
+    this.onSubmit = options.onSubmit;
     this.staticDir = resolveStaticDir();
     this.removeClientCloseListener = this.client.onClose(() => {
       if (this.closed) {
@@ -112,6 +133,15 @@ export class DiffToolHttpServer {
       await this.client.connect();
       this.context = await this.client.getContext();
       this.files = (await this.client.listFiles()).files;
+      if (this.storage) {
+        const diff = await this.client.getDiff();
+        this.scopeFingerprint = createDiffReviewScopeFingerprint(
+          this.context,
+          this.files,
+          diff.patch,
+        );
+        await this.restoreReviewState();
+      }
 
       await this.listen();
       const address = this.server.address();
@@ -168,6 +198,57 @@ export class DiffToolHttpServer {
     } catch {
       await this.close();
     }
+  }
+
+  private async restoreReviewState(): Promise<void> {
+    if (!this.storage) return;
+    const scopeFingerprint = this.requireScopeFingerprint();
+    const document = await this.storage.load();
+    if (document !== undefined) {
+      this.reviewState.replaceState(
+        parseDiffToolPersistedReviewStateDocument(document, scopeFingerprint),
+      );
+      return;
+    }
+    await this.persistReviewState();
+  }
+
+  private async persistReviewState(): Promise<void> {
+    if (!this.storage) return;
+    await this.storage.save(
+      createDiffToolPersistedReviewStateDocument(
+        this.requireScopeFingerprint(),
+        this.reviewState.getState(),
+      ),
+    );
+  }
+
+  private async mutateReviewState<T>(mutation: () => T): Promise<T> {
+    const previousMutation = this.stateMutationQueue;
+    let releaseMutation = (): void => undefined;
+    this.stateMutationQueue = new Promise<void>((resolve) => {
+      releaseMutation = resolve;
+    });
+    await previousMutation;
+
+    const previousState = this.reviewState.getState();
+    try {
+      const result = mutation();
+      await this.persistReviewState();
+      return result;
+    } catch (error) {
+      this.reviewState.replaceState(previousState);
+      throw error;
+    } finally {
+      releaseMutation();
+    }
+  }
+
+  private requireScopeFingerprint(): string {
+    if (!this.scopeFingerprint) {
+      throw new Error("diff review scope fingerprint is unavailable");
+    }
+    return this.scopeFingerprint;
   }
 
   private async listen(): Promise<void> {
@@ -278,7 +359,7 @@ export class DiffToolHttpServer {
 
     if (method === "POST" && requestUrl.pathname === "/api/state") {
       const payload = parseStatePatch(await this.readJsonBody(request));
-      this.reviewState.updateState(payload);
+      await this.mutateReviewState(() => this.reviewState.updateState(payload));
       this.sendJson(response, 200, { state: this.reviewState.getState() });
       return;
     }
@@ -290,7 +371,7 @@ export class DiffToolHttpServer {
         return;
       }
 
-      const threadId = this.reviewState.createThread(payload);
+      const threadId = await this.mutateReviewState(() => this.reviewState.createThread(payload));
       this.sendJson(response, 200, {
         state: this.reviewState.getState(),
         threadId,
@@ -311,7 +392,7 @@ export class DiffToolHttpServer {
         return;
       }
 
-      this.reviewState.addReply(id, text);
+      await this.mutateReviewState(() => this.reviewState.addReply(id, text));
       this.sendJson(response, 200, { state: this.reviewState.getState() });
       return;
     }
@@ -319,7 +400,7 @@ export class DiffToolHttpServer {
     if (method === "POST" && requestUrl.pathname === "/api/thread/delete") {
       const payload = await this.readJsonBody(request);
       const id = typeof payload.id === "string" ? payload.id.trim() : "";
-      const removed = this.reviewState.deleteThread(id);
+      const removed = await this.mutateReviewState(() => this.reviewState.deleteThread(id));
       if (!removed) {
         this.sendJson(response, 404, { error: "thread not found" });
         return;
@@ -341,7 +422,9 @@ export class DiffToolHttpServer {
         return;
       }
 
-      const removed = this.reviewState.deleteThreadMessage(id, messageIndex);
+      const removed = await this.mutateReviewState(() =>
+        this.reviewState.deleteThreadMessage(id, messageIndex),
+      );
       if (!removed) {
         this.sendJson(response, 400, { error: "message not found" });
         return;
@@ -363,7 +446,8 @@ export class DiffToolHttpServer {
         return;
       }
 
-      this.reviewState.setThreadResolved(id, payload.resolved);
+      const resolved = payload.resolved;
+      await this.mutateReviewState(() => this.reviewState.setThreadResolved(id, resolved));
       this.sendJson(response, 200, { state: this.reviewState.getState() });
       return;
     }
@@ -380,7 +464,8 @@ export class DiffToolHttpServer {
         return;
       }
 
-      this.reviewState.setThreadCollapsed(id, payload.collapsed);
+      const collapsed = payload.collapsed;
+      await this.mutateReviewState(() => this.reviewState.setThreadCollapsed(id, collapsed));
       this.sendJson(response, 200, { state: this.reviewState.getState() });
       return;
     }
@@ -391,6 +476,10 @@ export class DiffToolHttpServer {
       const thread = this.reviewState.findThread(id);
       if (!thread) {
         this.sendJson(response, 404, { error: "thread not found" });
+        return;
+      }
+      if (thread.loading) {
+        this.sendJson(response, 409, { error: "thread message already in progress" });
         return;
       }
 
@@ -410,7 +499,7 @@ export class DiffToolHttpServer {
                 message: buildDiffReviewCommentThreadPrompt(message),
               },
         );
-        this.reviewState.applyThreadResponse(id, result);
+        await this.mutateReviewState(() => this.reviewState.applyThreadResponse(id, result));
         this.sendJson(response, 200, { state: this.reviewState.getState() });
       } catch (error) {
         this.reviewState.setThreadLoading(id, false);
@@ -432,7 +521,7 @@ export class DiffToolHttpServer {
           forkFromThreadId: await this.getBootstrapThreadId(),
           message: buildDiffReviewBriefPrompt(),
         });
-        this.reviewState.applyBriefResult(result);
+        await this.mutateReviewState(() => this.reviewState.applyBriefResult(result));
         this.sendJson(response, 200, { state: this.reviewState.getState() });
       } catch (error) {
         this.reviewState.setBriefLoading(false);
@@ -443,9 +532,32 @@ export class DiffToolHttpServer {
 
     if (method === "POST" && requestUrl.pathname === "/api/review") {
       const payload = parseReviewPayload(await this.readJsonBody(request));
-      const result = await this.client.returnReview({
-        review: this.reviewState.buildReviewText(payload.message),
-      });
+      if (this.submissionState !== "active") {
+        this.sendJson(response, 409, { error: "diff review has already been submitted" });
+        return;
+      }
+
+      this.submissionState = "submitting";
+      const review = this.reviewState.buildReviewText(payload.message);
+      const context = this.context;
+      if (!context) {
+        this.submissionState = "active";
+        throw new Error("diff tool session context is unavailable");
+      }
+
+      try {
+        await this.onSubmit?.({
+          review,
+          context: { ...context, diffArgs: [...context.diffArgs] },
+          files: this.files.map((file) => ({ ...file })),
+        });
+      } catch (error) {
+        this.submissionState = "active";
+        throw error;
+      }
+
+      this.submissionState = "submitted";
+      const result = await this.client.returnReview({ review });
       this.sendJson(response, 200, result);
       return;
     }
@@ -544,6 +656,25 @@ export class DiffToolHttpServer {
     });
     response.end(JSON.stringify(payload));
   }
+}
+
+function createDiffReviewScopeFingerprint(
+  context: DiffReviewSessionContextResult,
+  files: DiffReviewFile[],
+  patch: string,
+): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        repoRoot: context.repoRoot,
+        cwd: context.cwd,
+        diffArgs: context.diffArgs,
+        diffCommand: context.diffCommand,
+        files,
+        patch,
+      }),
+    )
+    .digest("hex");
 }
 
 function parseReviewPayload(payload: Record<string, unknown>): { message?: string } {

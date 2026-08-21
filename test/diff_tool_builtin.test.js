@@ -131,6 +131,7 @@ function createClientStub(overrides = {}) {
       diffCommand: "current working tree",
     })),
     listFiles: vi.fn(async () => ({ files: [] })),
+    getDiff: vi.fn(async () => ({ scope: "session", patch: "" })),
     setUiText: vi.fn(async () => ({ status: "updated" })),
     submitThreadMessage: vi.fn(async () => ({
       threadId: "bootstrap-thread",
@@ -453,6 +454,252 @@ describe("built-in diff tool", () => {
       await server.close();
       await bridge.close();
     }
+  });
+
+  it("persists review state and rehydrates follow-up agent context", async () => {
+    let storedDocument;
+    const storage = {
+      load: vi.fn(async () => storedDocument),
+      save: vi.fn(async (document) => {
+        storedDocument = structuredClone(document);
+      }),
+    };
+    const firstClient = createClientStub({
+      getContext: vi.fn(async () => ({
+        sessionId: "session-1",
+        repoRoot: "/repo",
+        cwd: "/repo",
+        diffArgs: ["main...HEAD"],
+        diffCommand: "git diff main...HEAD",
+      })),
+      getDiff: vi.fn(async () => ({ scope: "session", patch: "diff contents" })),
+      submitThreadMessage: vi.fn(async ({ forkFromThreadId, message }) => ({
+        threadId: forkFromThreadId ? "first-comment-thread" : "first-bootstrap-thread",
+        response: forkFromThreadId ? `first reply: ${message}` : "bootstrap",
+      })),
+    });
+    const firstServer = new DiffToolHttpServer({ client: firstClient, storage });
+
+    let threadId;
+    try {
+      const started = await firstServer.start();
+      const created = await fetchJson(`${started.url}/api/thread`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          anchor: {
+            kind: "line",
+            fileId: "src/a.ts::0",
+            filePath: "src/a.ts",
+            lineNumber: 4,
+            side: "additions",
+          },
+          body: "Why is this safe?",
+        }),
+      });
+      threadId = created.threadId;
+      await fetchJson(`${started.url}/api/thread-message`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: threadId }),
+      });
+    } finally {
+      await firstServer.close();
+    }
+
+    expect(storedDocument.state.threads[0]).not.toHaveProperty("threadId");
+    expect(storedDocument.state.threads[0]).not.toHaveProperty("loading");
+
+    const secondClient = createClientStub({
+      getContext: firstClient.getContext,
+      getDiff: firstClient.getDiff,
+      submitThreadMessage: vi.fn(async ({ forkFromThreadId, message }) => ({
+        threadId: forkFromThreadId ? "restored-comment-thread" : "second-bootstrap-thread",
+        response: forkFromThreadId ? `restored reply: ${message}` : "bootstrap",
+      })),
+    });
+    const secondServer = new DiffToolHttpServer({ client: secondClient, storage });
+
+    try {
+      const started = await secondServer.start();
+      const bootstrap = await fetchJson(`${started.url}/api/bootstrap`);
+      expect(bootstrap.state.threads[0]).toMatchObject({
+        id: threadId,
+        loading: false,
+        messages: [
+          { role: "user", text: "Why is this safe?" },
+          { role: "assistant", text: expect.stringContaining("first reply") },
+        ],
+      });
+      expect(bootstrap.state.threads[0]).not.toHaveProperty("threadId");
+
+      await fetchJson(`${started.url}/api/thread/reply`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: threadId, text: "What about retries?" }),
+      });
+      await fetchJson(`${started.url}/api/thread-message`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: threadId }),
+      });
+
+      const restoredCall = secondClient.submitThreadMessage.mock.calls
+        .map(([options]) => options)
+        .find((options) => options.forkFromThreadId);
+      expect(restoredCall).toMatchObject({
+        forkFromThreadId: "second-bootstrap-thread",
+        message: expect.stringContaining("Continue this restored review conversation."),
+      });
+      expect(restoredCall.message).toContain("Why is this safe?");
+      expect(restoredCall.message).toContain("first reply");
+      expect(restoredCall.message).toContain("What about retries?");
+    } finally {
+      await secondServer.close();
+    }
+  });
+
+  it("accepts at most one concurrent review submission", async () => {
+    let markSubmitStarted;
+    const submitStarted = new Promise((resolve) => {
+      markSubmitStarted = resolve;
+    });
+    let acceptSubmit;
+    const submitAccepted = new Promise((resolve) => {
+      acceptSubmit = resolve;
+    });
+    const onSubmit = vi.fn(async () => {
+      markSubmitStarted();
+      await submitAccepted;
+    });
+    const client = createClientStub();
+    const server = new DiffToolHttpServer({ client, onSubmit });
+
+    try {
+      const started = await server.start();
+      const firstSubmission = fetch(`${started.url}/api/review`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ message: "Please address this." }),
+      });
+      await submitStarted;
+
+      const duplicate = await fetch(`${started.url}/api/review`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ message: "Duplicate" }),
+      });
+      expect(duplicate.status).toBe(409);
+      await expect(duplicate.json()).resolves.toEqual({
+        error: "diff review has already been submitted",
+      });
+
+      acceptSubmit();
+      const accepted = await firstSubmission;
+      expect(accepted.ok).toBe(true);
+      expect(onSubmit).toHaveBeenCalledTimes(1);
+      expect(onSubmit).toHaveBeenCalledWith({
+        review: "Please address this.",
+        context: expect.objectContaining({ sessionId: "session-1" }),
+        files: [],
+      });
+      expect(client.returnReview).toHaveBeenCalledTimes(1);
+      expect(onSubmit.mock.invocationCallOrder[0]).toBeLessThan(
+        client.returnReview.mock.invocationCallOrder[0],
+      );
+    } finally {
+      acceptSubmit?.();
+      await server.close();
+    }
+  });
+
+  it("allows submission retry when durable acceptance fails", async () => {
+    const onSubmit = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("database unavailable"))
+      .mockResolvedValueOnce(undefined);
+    const client = createClientStub();
+    const server = new DiffToolHttpServer({ client, onSubmit });
+
+    try {
+      const started = await server.start();
+      const failed = await fetch(`${started.url}/api/review`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      expect(failed.status).toBe(500);
+      await expect(failed.json()).resolves.toEqual({ error: "database unavailable" });
+
+      const accepted = await fetch(`${started.url}/api/review`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      expect(accepted.ok).toBe(true);
+      expect(onSubmit).toHaveBeenCalledTimes(2);
+      expect(client.returnReview).toHaveBeenCalledTimes(1);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("rolls back review mutations when persistence fails", async () => {
+    let saveCount = 0;
+    const storage = {
+      load: vi.fn(async () => undefined),
+      save: vi.fn(async () => {
+        saveCount += 1;
+        if (saveCount === 2) {
+          throw new Error("storage unavailable");
+        }
+      }),
+    };
+    const server = new DiffToolHttpServer({ client: createClientStub(), storage });
+
+    try {
+      const started = await server.start();
+      const failed = await fetch(`${started.url}/api/state`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sidebarOpen: true }),
+      });
+      expect(failed.status).toBe(500);
+      await expect(failed.json()).resolves.toEqual({ error: "storage unavailable" });
+
+      const bootstrap = await fetchJson(`${started.url}/api/bootstrap`);
+      expect(bootstrap.state.sidebarOpen).toBe(false);
+
+      const recovered = await fetchJson(`${started.url}/api/state`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sidebarOpen: true }),
+      });
+      expect(recovered.state.sidebarOpen).toBe(true);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("rejects stored state from a different diff snapshot", async () => {
+    let storedDocument;
+    const storage = {
+      load: vi.fn(async () => storedDocument),
+      save: vi.fn(async (document) => {
+        storedDocument = structuredClone(document);
+      }),
+    };
+    const firstServer = new DiffToolHttpServer({ client: createClientStub(), storage });
+    await firstServer.start();
+    await firstServer.close();
+
+    const changedClient = createClientStub({
+      getDiff: vi.fn(async () => ({ scope: "session", patch: "changed diff" })),
+    });
+    const changedServer = new DiffToolHttpServer({ client: changedClient, storage });
+    await expect(changedServer.start()).rejects.toThrow(
+      "stored diff review state belongs to a different diff snapshot",
+    );
   });
 
   it("retries bootstrap after a transient failure", async () => {

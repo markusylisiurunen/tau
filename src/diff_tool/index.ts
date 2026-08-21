@@ -8,6 +8,7 @@ export type {
   DiffToolLineSide,
   DiffToolLineThreadAnchor,
   DiffToolReviewState,
+  DiffToolReviewSubmission,
   DiffToolStatePatch,
   DiffToolStateResponse,
   DiffToolThreadAnchor,

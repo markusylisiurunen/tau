@@ -51,6 +51,17 @@ export class DiffToolReviewStateStore {
     };
   }
 
+  replaceState(state: DiffToolReviewState): void {
+    this.state.diffStyle = state.diffStyle;
+    this.state.overflowMode = state.overflowMode;
+    this.state.codeTheme = state.codeTheme;
+    this.state.sidebarOpen = state.sidebarOpen;
+    this.state.collapsedFileIds = [...state.collapsedFileIds];
+    this.state.viewedFileIds = [...state.viewedFileIds];
+    this.state.threads = state.threads.map(cloneThread);
+    this.state.brief = cloneBrief(state.brief);
+  }
+
   updateState(patch: DiffToolStatePatch): void {
     if (patch.diffStyle === "split" || patch.diffStyle === "stacked") {
       this.state.diffStyle = patch.diffStyle;
@@ -218,11 +229,23 @@ export class DiffToolReviewStateStore {
       return "";
     }
 
+    if (thread.threadId) {
+      return userText;
+    }
+
     const locationPrefix =
-      thread.threadId || thread.anchor.kind !== "line"
-        ? ""
-        : `[${thread.anchor.filePath}:${thread.anchor.lineNumber} (${thread.anchor.side === "additions" ? "new" : "old"})]\n\n`;
-    return `${locationPrefix}${userText}`;
+      thread.anchor.kind === "line"
+        ? `[${thread.anchor.filePath}:${thread.anchor.lineNumber} (${thread.anchor.side === "additions" ? "new" : "old"})]\n\n`
+        : "";
+    const hasAssistantMessage = thread.messages.some((message) => message.role === "assistant");
+    if (!hasAssistantMessage) {
+      return `${locationPrefix}${userText}`;
+    }
+
+    const transcript = thread.messages
+      .map((message) => `**${message.role === "assistant" ? "agent" : "user"}**\n\n${message.text}`)
+      .join("\n\n");
+    return `${locationPrefix}Continue this restored review conversation. Its previous transcript is included below.\n\n${transcript}`;
   }
 
   buildReviewText(submissionMessage?: string): string {

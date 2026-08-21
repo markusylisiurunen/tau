@@ -22,6 +22,7 @@ import type {
   DiffToolCreateThreadPayload,
   DiffToolCreateThreadResponse,
   DiffToolGetDiffResult,
+  DiffToolReviewState,
   DiffToolStatePatch,
 } from "./shared_types.js";
 import { DIFF_TOOL_CODE_THEMES } from "./shared_types.js";
@@ -143,13 +144,16 @@ export class DiffToolHttpServer {
         await this.restoreReviewState();
       }
 
+      if (this.closed || this.sessionClosing) {
+        throw new Error("diff tool session closed during startup");
+      }
       await this.listen();
       const address = this.server.address();
       if (!address || typeof address === "string") {
         throw new Error("failed to start diff tool http server");
       }
 
-      const url = `http://${this.host}:${String(address.port)}`;
+      const url = `http://${formatHttpUrlHost(this.host)}:${String(address.port)}/`;
       await this.client.setUiText({ text: url });
       void this.startBootstrapThread().catch(() => {});
 
@@ -223,7 +227,9 @@ export class DiffToolHttpServer {
     );
   }
 
-  private async mutateReviewState<T>(mutation: () => T): Promise<T> {
+  private async mutateReviewState<T>(
+    mutation: () => T,
+  ): Promise<{ result: T; state: DiffToolReviewState }> {
     const previousMutation = this.stateMutationQueue;
     let releaseMutation = (): void => undefined;
     this.stateMutationQueue = new Promise<void>((resolve) => {
@@ -235,9 +241,9 @@ export class DiffToolHttpServer {
     try {
       const result = mutation();
       await this.persistReviewState();
-      return result;
+      return { result, state: this.reviewState.getState() };
     } catch (error) {
-      this.reviewState.replaceState(previousState);
+      this.reviewState.replaceStatePreservingLoading(previousState);
       throw error;
     } finally {
       releaseMutation();
@@ -259,6 +265,13 @@ export class DiffToolHttpServer {
       };
       const onListening = () => {
         this.server.off("error", onError);
+        if (this.closed || this.sessionClosing) {
+          void this.closeHttpServer().then(
+            () => reject(new Error("diff tool session closed during startup")),
+            reject,
+          );
+          return;
+        }
         resolve();
       };
 
@@ -329,7 +342,9 @@ export class DiffToolHttpServer {
 
   private async handleRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const method = request.method ?? "GET";
-    const requestUrl = new URL(request.url ?? "/", `http://${request.headers.host ?? this.host}`);
+    const rawUrl = request.url ?? "/";
+    const normalizedUrl = rawUrl.startsWith("//") ? `/${rawUrl.replace(/^\/+/, "")}` : rawUrl;
+    const requestUrl = new URL(normalizedUrl, `http://${request.headers.host ?? this.host}`);
 
     if (this.sessionClosing && requestUrl.pathname.startsWith("/api/")) {
       this.sendJson(response, 409, { error: "diff review session is closing" });
@@ -359,8 +374,8 @@ export class DiffToolHttpServer {
 
     if (method === "POST" && requestUrl.pathname === "/api/state") {
       const payload = parseStatePatch(await this.readJsonBody(request));
-      await this.mutateReviewState(() => this.reviewState.updateState(payload));
-      this.sendJson(response, 200, { state: this.reviewState.getState() });
+      const { state } = await this.mutateReviewState(() => this.reviewState.updateState(payload));
+      this.sendJson(response, 200, { state });
       return;
     }
 
@@ -371,9 +386,11 @@ export class DiffToolHttpServer {
         return;
       }
 
-      const threadId = await this.mutateReviewState(() => this.reviewState.createThread(payload));
+      const { result: threadId, state } = await this.mutateReviewState(() =>
+        this.reviewState.createThread(payload),
+      );
       this.sendJson(response, 200, {
-        state: this.reviewState.getState(),
+        state,
         threadId,
       } satisfies DiffToolCreateThreadResponse);
       return;
@@ -383,30 +400,34 @@ export class DiffToolHttpServer {
       const payload = await this.readJsonBody(request);
       const id = typeof payload.id === "string" ? payload.id.trim() : "";
       const text = typeof payload.text === "string" ? payload.text.trim() : "";
-      if (!this.reviewState.findThread(id)) {
-        this.sendJson(response, 404, { error: "thread not found" });
-        return;
-      }
       if (!text) {
         this.sendJson(response, 400, { error: "reply text is required" });
         return;
       }
 
-      await this.mutateReviewState(() => this.reviewState.addReply(id, text));
-      this.sendJson(response, 200, { state: this.reviewState.getState() });
+      const { result: added, state } = await this.mutateReviewState(() =>
+        this.reviewState.addReply(id, text),
+      );
+      if (!added) {
+        this.sendJson(response, 404, { error: "thread not found" });
+        return;
+      }
+      this.sendJson(response, 200, { state });
       return;
     }
 
     if (method === "POST" && requestUrl.pathname === "/api/thread/delete") {
       const payload = await this.readJsonBody(request);
       const id = typeof payload.id === "string" ? payload.id.trim() : "";
-      const removed = await this.mutateReviewState(() => this.reviewState.deleteThread(id));
+      const { result: removed, state } = await this.mutateReviewState(() =>
+        this.reviewState.deleteThread(id),
+      );
       if (!removed) {
         this.sendJson(response, 404, { error: "thread not found" });
         return;
       }
 
-      this.sendJson(response, 200, { state: this.reviewState.getState() });
+      this.sendJson(response, 200, { state });
       return;
     }
 
@@ -417,56 +438,62 @@ export class DiffToolHttpServer {
         typeof payload.messageIndex === "number" && Number.isInteger(payload.messageIndex)
           ? payload.messageIndex
           : -1;
-      if (!this.reviewState.findThread(id)) {
+      const { result, state } = await this.mutateReviewState(() => {
+        if (!this.reviewState.findThread(id)) return "thread-not-found" as const;
+        return this.reviewState.deleteThreadMessage(id, messageIndex)
+          ? ("removed" as const)
+          : ("message-not-found" as const);
+      });
+      if (result === "thread-not-found") {
         this.sendJson(response, 404, { error: "thread not found" });
         return;
       }
-
-      const removed = await this.mutateReviewState(() =>
-        this.reviewState.deleteThreadMessage(id, messageIndex),
-      );
-      if (!removed) {
+      if (result === "message-not-found") {
         this.sendJson(response, 400, { error: "message not found" });
         return;
       }
 
-      this.sendJson(response, 200, { state: this.reviewState.getState() });
+      this.sendJson(response, 200, { state });
       return;
     }
 
     if (method === "POST" && requestUrl.pathname === "/api/thread/resolve") {
       const payload = await this.readJsonBody(request);
       const id = typeof payload.id === "string" ? payload.id.trim() : "";
-      if (!this.reviewState.findThread(id)) {
-        this.sendJson(response, 404, { error: "thread not found" });
-        return;
-      }
       if (typeof payload.resolved !== "boolean") {
         this.sendJson(response, 400, { error: "resolved flag is required" });
         return;
       }
 
       const resolved = payload.resolved;
-      await this.mutateReviewState(() => this.reviewState.setThreadResolved(id, resolved));
-      this.sendJson(response, 200, { state: this.reviewState.getState() });
+      const { result: updated, state } = await this.mutateReviewState(() =>
+        this.reviewState.setThreadResolved(id, resolved),
+      );
+      if (!updated) {
+        this.sendJson(response, 404, { error: "thread not found" });
+        return;
+      }
+      this.sendJson(response, 200, { state });
       return;
     }
 
     if (method === "POST" && requestUrl.pathname === "/api/thread/collapse") {
       const payload = await this.readJsonBody(request);
       const id = typeof payload.id === "string" ? payload.id.trim() : "";
-      if (!this.reviewState.findThread(id)) {
-        this.sendJson(response, 404, { error: "thread not found" });
-        return;
-      }
       if (typeof payload.collapsed !== "boolean") {
         this.sendJson(response, 400, { error: "collapsed flag is required" });
         return;
       }
 
       const collapsed = payload.collapsed;
-      await this.mutateReviewState(() => this.reviewState.setThreadCollapsed(id, collapsed));
-      this.sendJson(response, 200, { state: this.reviewState.getState() });
+      const { result: updated, state } = await this.mutateReviewState(() =>
+        this.reviewState.setThreadCollapsed(id, collapsed),
+      );
+      if (!updated) {
+        this.sendJson(response, 404, { error: "thread not found" });
+        return;
+      }
+      this.sendJson(response, 200, { state });
       return;
     }
 
@@ -499,8 +526,14 @@ export class DiffToolHttpServer {
                 message: buildDiffReviewCommentThreadPrompt(message),
               },
         );
-        await this.mutateReviewState(() => this.reviewState.applyThreadResponse(id, result));
-        this.sendJson(response, 200, { state: this.reviewState.getState() });
+        const { result: applied, state } = await this.mutateReviewState(() =>
+          this.reviewState.applyThreadResponse(id, result),
+        );
+        if (!applied) {
+          this.sendJson(response, 404, { error: "thread not found" });
+          return;
+        }
+        this.sendJson(response, 200, { state });
       } catch (error) {
         this.reviewState.setThreadLoading(id, false);
         throw error;
@@ -521,8 +554,10 @@ export class DiffToolHttpServer {
           forkFromThreadId: await this.getBootstrapThreadId(),
           message: buildDiffReviewBriefPrompt(),
         });
-        await this.mutateReviewState(() => this.reviewState.applyBriefResult(result));
-        this.sendJson(response, 200, { state: this.reviewState.getState() });
+        const { state } = await this.mutateReviewState(() =>
+          this.reviewState.applyBriefResult(result),
+        );
+        this.sendJson(response, 200, { state });
       } catch (error) {
         this.reviewState.setBriefLoading(false);
         throw error;
@@ -656,6 +691,10 @@ export class DiffToolHttpServer {
     });
     response.end(JSON.stringify(payload));
   }
+}
+
+function formatHttpUrlHost(host: string): string {
+  return host.includes(":") ? `[${host}]` : host;
 }
 
 function createDiffReviewScopeFingerprint(

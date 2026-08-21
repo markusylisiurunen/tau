@@ -456,6 +456,37 @@ describe("built-in diff tool", () => {
     }
   });
 
+  it("serves assets relative to a slash-terminated mount URL", async () => {
+    const server = new DiffToolHttpServer({ client: createClientStub() });
+
+    try {
+      const started = await server.start();
+      expect(started.url.endsWith("/")).toBe(true);
+
+      const html = await (await fetch(started.url)).text();
+      const assetPaths = [...html.matchAll(/(?:src|href)="(\.\/[^"]+)"/g)].map((match) => match[1]);
+      expect(assetPaths).toHaveLength(2);
+
+      const mountedUrl = new URL("https://example.test/reviews/review-1/");
+      for (const assetPath of assetPaths) {
+        expect(new URL(assetPath, mountedUrl).pathname).toMatch(/^\/reviews\/review-1\/assets\//);
+      }
+
+      const cssPath = assetPaths.find((path) => path.endsWith(".css"));
+      const cssUrl = new URL(cssPath, started.url);
+      const css = await (await fetch(cssUrl)).text();
+      expect(css).not.toMatch(/url\(\//);
+      const fontPath = css.match(/url\((\.\.\/fonts\/[^)]+)/)?.[1];
+      expect(fontPath).toBeDefined();
+      expect(new URL(fontPath, new URL(cssPath, mountedUrl)).pathname).toMatch(
+        /^\/reviews\/review-1\/fonts\//,
+      );
+      expect((await fetch(new URL(fontPath, cssUrl))).ok).toBe(true);
+    } finally {
+      await server.close();
+    }
+  });
+
   it("persists review state and rehydrates follow-up agent context", async () => {
     let storedDocument;
     const storage = {
@@ -677,6 +708,209 @@ describe("built-in diff tool", () => {
       });
       expect(recovered.state.sidebarOpen).toBe(true);
     } finally {
+      await server.close();
+    }
+  });
+
+  it("preserves in-flight loading state when a concurrent persistence write fails", async () => {
+    let saveCount = 0;
+    const storage = {
+      load: vi.fn(async () => undefined),
+      save: vi.fn(async () => {
+        saveCount += 1;
+        if (saveCount === 3) throw new Error("storage unavailable");
+      }),
+    };
+    let markCommentStarted;
+    const commentStarted = new Promise((resolve) => {
+      markCommentStarted = resolve;
+    });
+    let finishComment;
+    const commentFinished = new Promise((resolve) => {
+      finishComment = resolve;
+    });
+    const client = createClientStub({
+      submitThreadMessage: vi.fn(async ({ forkFromThreadId }) => {
+        if (!forkFromThreadId) return { threadId: "bootstrap-thread", response: "bootstrap" };
+        markCommentStarted();
+        await commentFinished;
+        return { threadId: "comment-thread", response: "reply" };
+      }),
+    });
+    const server = new DiffToolHttpServer({ client, storage });
+
+    try {
+      const started = await server.start();
+      const created = await fetchJson(`${started.url}/api/thread`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ anchor: { kind: "detached" }, body: "Question" }),
+      });
+      const pendingReply = fetch(`${started.url}/api/thread-message`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: created.threadId }),
+      });
+      await commentStarted;
+
+      const failedMutation = await fetch(`${started.url}/api/state`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sidebarOpen: true }),
+      });
+      expect(failedMutation.status).toBe(500);
+
+      const duplicateReply = await fetch(`${started.url}/api/thread-message`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: created.threadId }),
+      });
+      expect(duplicateReply.status).toBe(409);
+
+      finishComment();
+      expect((await pendingReply).ok).toBe(true);
+    } finally {
+      finishComment?.();
+      await server.close();
+    }
+  });
+
+  it("returns only the state committed by each queued persistence mutation", async () => {
+    let saveCount = 0;
+    let releaseFirstMutation;
+    const firstMutationReleased = new Promise((resolve) => {
+      releaseFirstMutation = resolve;
+    });
+    let markFirstMutationStarted;
+    const firstMutationStarted = new Promise((resolve) => {
+      markFirstMutationStarted = resolve;
+    });
+    let releaseSecondMutation;
+    const secondMutationReleased = new Promise((resolve) => {
+      releaseSecondMutation = resolve;
+    });
+    let markSecondMutationStarted;
+    const secondMutationStarted = new Promise((resolve) => {
+      markSecondMutationStarted = resolve;
+    });
+    const storage = {
+      load: vi.fn(async () => undefined),
+      save: vi.fn(async () => {
+        saveCount += 1;
+        if (saveCount === 2) {
+          markFirstMutationStarted();
+          await firstMutationReleased;
+        }
+        if (saveCount === 3) {
+          markSecondMutationStarted();
+          await secondMutationReleased;
+          throw new Error("storage unavailable");
+        }
+      }),
+    };
+    const server = new DiffToolHttpServer({ client: createClientStub(), storage });
+
+    try {
+      const started = await server.start();
+      const firstMutation = fetch(`${started.url}/api/state`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sidebarOpen: true }),
+      });
+      await firstMutationStarted;
+      const secondMutation = fetch(`${started.url}/api/state`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ diffStyle: "stacked" }),
+      });
+
+      releaseFirstMutation();
+      await secondMutationStarted;
+      const firstResponse = await firstMutation;
+      expect(firstResponse.ok).toBe(true);
+      await expect(firstResponse.json()).resolves.toMatchObject({
+        state: { sidebarOpen: true, diffStyle: "split" },
+      });
+
+      releaseSecondMutation();
+      expect((await secondMutation).status).toBe(500);
+      const bootstrap = await fetchJson(`${started.url}/api/bootstrap`);
+      expect(bootstrap.state).toMatchObject({ sidebarOpen: true, diffStyle: "split" });
+    } finally {
+      releaseFirstMutation?.();
+      releaseSecondMutation?.();
+      await server.close();
+    }
+  });
+
+  it("validates queued thread mutations after earlier mutations commit", async () => {
+    let saveCount = 0;
+    let releaseBlockingMutation;
+    const blockingMutationReleased = new Promise((resolve) => {
+      releaseBlockingMutation = resolve;
+    });
+    let markBlockingMutationStarted;
+    const blockingMutationStarted = new Promise((resolve) => {
+      markBlockingMutationStarted = resolve;
+    });
+    const storage = {
+      load: vi.fn(async () => undefined),
+      save: vi.fn(async () => {
+        saveCount += 1;
+        if (saveCount === 3) {
+          markBlockingMutationStarted();
+          await blockingMutationReleased;
+        }
+      }),
+    };
+    const server = new DiffToolHttpServer({ client: createClientStub(), storage });
+
+    try {
+      const started = await server.start();
+      const created = await fetchJson(`${started.url}/api/thread`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ anchor: { kind: "detached" }, body: "Question" }),
+      });
+      const blockingMutation = fetch(`${started.url}/api/state`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sidebarOpen: true }),
+      });
+      await blockingMutationStarted;
+
+      const deleted = fetch(`${started.url}/api/thread/delete`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: created.threadId }),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      const replied = fetch(`${started.url}/api/thread/reply`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: created.threadId, text: "Follow-up" }),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      const resolved = fetch(`${started.url}/api/thread/resolve`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: created.threadId, resolved: true }),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      const collapsed = fetch(`${started.url}/api/thread/collapse`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: created.threadId, collapsed: true }),
+      });
+
+      releaseBlockingMutation();
+      expect((await blockingMutation).ok).toBe(true);
+      expect((await deleted).ok).toBe(true);
+      expect((await replied).status).toBe(404);
+      expect((await resolved).status).toBe(404);
+      expect((await collapsed).status).toBe(404);
+    } finally {
+      releaseBlockingMutation?.();
       await server.close();
     }
   });
@@ -1003,6 +1237,48 @@ describe("built-in diff tool", () => {
     expect(client.cancelSession).toHaveBeenCalledTimes(1);
     expect(client.close).toHaveBeenCalledTimes(1);
     await server.waitUntilClosed();
+  });
+
+  it("does not bind after the protocol closes during persisted-state restoration", async () => {
+    let releaseLoad;
+    const loadReleased = new Promise((resolve) => {
+      releaseLoad = resolve;
+    });
+    let markLoadStarted;
+    const loadStarted = new Promise((resolve) => {
+      markLoadStarted = resolve;
+    });
+    const client = createClientStub();
+    const storage = {
+      load: vi.fn(async () => {
+        markLoadStarted();
+        await loadReleased;
+        return undefined;
+      }),
+      save: vi.fn(async () => {}),
+    };
+    const server = new DiffToolHttpServer({ client, storage });
+    const start = server.start();
+    await loadStarted;
+
+    client.emitClose();
+    await server.waitUntilClosed();
+    releaseLoad();
+
+    await expect(start).rejects.toThrow("diff tool session closed during startup");
+    expect(client.setUiText).not.toHaveBeenCalled();
+  });
+
+  it("formats an IPv6 listener as a valid URL", async () => {
+    const server = new DiffToolHttpServer({ client: createClientStub(), host: "::1" });
+
+    try {
+      const started = await server.start();
+      expect(started.url).toMatch(/^http:\/\/\[::1\]:\d+\/$/);
+      expect((await fetch(new URL("api/bootstrap", started.url))).ok).toBe(true);
+    } finally {
+      await server.close();
+    }
   });
 
   it("closes the protocol client when startup fails after the protocol connection is open", async () => {

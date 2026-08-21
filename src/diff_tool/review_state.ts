@@ -62,6 +62,16 @@ export class DiffToolReviewStateStore {
     this.state.brief = cloneBrief(state.brief);
   }
 
+  replaceStatePreservingLoading(state: DiffToolReviewState): void {
+    const threadLoading = new Map(this.state.threads.map((thread) => [thread.id, thread.loading]));
+    const briefLoading = this.state.brief.loading;
+    this.replaceState(state);
+    for (const thread of this.state.threads) {
+      thread.loading = threadLoading.get(thread.id) ?? thread.loading;
+    }
+    this.state.brief.loading = briefLoading;
+  }
+
   updateState(patch: DiffToolStatePatch): void {
     if (patch.diffStyle === "split" || patch.diffStyle === "stacked") {
       this.state.diffStyle = patch.diffStyle;

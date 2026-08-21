@@ -261,9 +261,7 @@ export class LocalSessionHost implements TauSessionHost {
           ? { usageCheckpoint: { ...recovered.snapshot.agentState.usageCheckpoint } }
           : {}),
       });
-      if (recovered.changed || agentRecovery.recoveredToolResults.length > 0) {
-        await hostedSession.persistRecoveredAgentState(agentRecovery);
-      }
+      await hostedSession.reconcileRecoveredState(agentRecovery);
       return hostedSession;
     } catch (error) {
       if (hostedSession) {
@@ -670,7 +668,7 @@ function normalizeDeltaCause(cause: LocalDeltaCause): SessionProtocolDeltaCause 
 
 class LocalHostedSessionHandle implements LocalHostedSession {
   readonly session: ChatRuntime;
-  private committedSnapshot?: SessionProtocolSnapshot;
+  private committedSnapshot: SessionProtocolSnapshot;
   private persistedSnapshot?: SessionProtocolSnapshot;
   private draftAssistantMessage?: SessionProtocolMessage;
   private readonly messageStates = new Map<string, SessionProtocolMessage["state"]>();
@@ -712,6 +710,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   private goal: SessionProtocolGoal | null;
   private pendingGoalCommit?: SessionProtocolGoal;
   private forceNextSnapshotRevision: boolean;
+  private projectionFailure?: Error;
   private disposed = false;
 
   constructor(
@@ -734,15 +733,15 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     private readonly removeFromHost: (session: LocalHostedSessionHandle) => void = () => {},
   ) {
     this.session = runtime;
-    this.committedSnapshot = committedSnapshot
-      ? cloneSessionProtocolSnapshot(committedSnapshot)
-      : undefined;
     this.persistedSnapshot = committedSnapshot
       ? cloneSessionProtocolSnapshot(committedSnapshot)
       : undefined;
     this.goal = structuredClone(committedSnapshot?.goal ?? null);
     this.forceNextSnapshotRevision = forceNextSnapshotRevision;
     this.restoreProtocolState(committedSnapshot);
+    this.committedSnapshot = committedSnapshot
+      ? cloneSessionProtocolSnapshot(committedSnapshot)
+      : { ...this.buildSnapshotDraft(), revision: 1 };
   }
 
   getRemoteModelCatalog(): RemoteModelCatalogSnapshot {
@@ -1257,14 +1256,12 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
   async setReasoning(reasoning: ReasoningEffort): Promise<SessionProtocolSettingsUpdateResult> {
     this.assertActive();
-    return await this.enqueueMutation(async () => {
-      const fromRevision = this.committedSnapshot?.revision;
+    return await this.enqueueConfigurationMutation(async () => {
+      const fromRevision = this.committedSnapshot.revision;
       this.runtime.setReasoning(reasoning);
       this.bootstrap.persona.settings.reasoning = reasoning;
       const snapshot = await this.commitSnapshot();
-      if (fromRevision === undefined) {
-        this.emitSnapshotReset("configuration", snapshot);
-      } else if (snapshot.revision !== fromRevision) {
+      if (snapshot.revision !== fromRevision) {
         this.emitDelta(
           createSessionProtocolDeltaMessage({
             sessionId: snapshot.sessionId,
@@ -1306,7 +1303,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       includeAgentContext: this.includeAgentContext,
       agentContextFiles: runtimeConfig.config.agentContextFiles ?? [],
     });
-    return await this.enqueueMutation(async () => {
+    return await this.enqueueConfigurationMutation(async () => {
       this.runtime.setRuntimeConfig(
         runtimeConfig.config,
         runtimeConfig.bootstrap.modelResolver.resolveModel,
@@ -1356,7 +1353,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       agentContextFiles: runtimeConfig.config.agentContextFiles ?? [],
     });
 
-    return await this.enqueueMutation(async () => {
+    return await this.enqueueConfigurationMutation(async () => {
       this.runtime.setRuntimeConfig(
         runtimeConfig.config,
         runtimeConfig.bootstrap.modelResolver.resolveModel,
@@ -1453,20 +1450,22 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   async compact(
     options: Omit<SessionProtocolCompactParams, "sessionId">,
   ): Promise<SessionProtocolCompactResult> {
-    return await this.runMaintenance(async (signal) => {
-      const result = await this.session.compact({
-        mode: options.mode === "summary-only" ? "only-summary" : "with-last-assistant",
-        ...(options.guidance !== undefined ? { guidance: options.guidance } : {}),
-        signal,
-      });
+    return await this.runAgentStateMutation(() =>
+      this.runMaintenance(async (signal) => {
+        const result = await this.session.compact({
+          mode: options.mode === "summary-only" ? "only-summary" : "with-last-assistant",
+          ...(options.guidance !== undefined ? { guidance: options.guidance } : {}),
+          signal,
+        });
 
-      signal.throwIfAborted();
-      return {
-        snapshot: await this.snapshot(),
-        compactionMessage: result.compactionMessage,
-        includedLastAssistant: result.includedLastAssistant,
-      };
-    });
+        signal.throwIfAborted();
+        return {
+          snapshot: await this.snapshot(),
+          compactionMessage: result.compactionMessage,
+          includedLastAssistant: result.includedLastAssistant,
+        };
+      }),
+    );
   }
 
   private async runMaintenance<T>(operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
@@ -1525,15 +1524,17 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     ) {
       throw new Error("rewind failed");
     }
-    const result = await this.session.rewindToHistoryEntryId(historyEntryId);
-    if (!result) {
-      throw new Error("rewind failed");
-    }
+    return await this.runAgentStateMutation(async () => {
+      const result = await this.session.rewindToHistoryEntryId(historyEntryId);
+      if (!result) {
+        throw new Error("rewind failed");
+      }
 
-    return {
-      snapshot: await this.snapshot(),
-      ...result,
-    };
+      return {
+        snapshot: await this.snapshot(),
+        ...result,
+      };
+    });
   }
 
   async interruptSubagent(subagentId: string): Promise<SessionProtocolInterruptSubagentResult> {
@@ -1599,14 +1600,10 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
   async snapshot(): Promise<SessionProtocolSnapshot> {
     this.assertActive();
-    return await this.enqueueMutation(async () =>
-      this.runtime.isTurnRunning && this.committedSnapshot
-        ? await this.commitProjectedSnapshot()
-        : await this.commitSnapshot(),
-    );
+    return await this.enqueueMutation(() => this.commitProjectedSnapshot());
   }
 
-  async persistRecoveredAgentState(recovery: AgentStateRecovery): Promise<void> {
+  async reconcileRecoveredState(recovery: AgentStateRecovery): Promise<void> {
     this.assertActive();
     await this.enqueueMutation(async () => {
       const recoveredTools: Array<{
@@ -1849,7 +1846,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       if (options.removeMissingAgents) {
         this.removeMissingSubagentActivities();
       }
-      return cloneSessionProtocolSnapshot(this.committedSnapshot ?? snapshot);
+      return cloneSessionProtocolSnapshot(this.committedSnapshot);
     }
 
     await this.store.commitSessionSnapshot(snapshot, {
@@ -1865,11 +1862,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
   private async commitProjectedSnapshot(): Promise<SessionProtocolSnapshot> {
     this.assertNotDisposed();
-    const current = this.committedSnapshot;
-    if (!current) {
-      return await this.commitSnapshot();
-    }
-    const snapshot = cloneSessionProtocolSnapshot(current);
+    const snapshot = cloneSessionProtocolSnapshot(this.committedSnapshot);
     if (this.persistedSnapshot && isDeepStrictEqual(this.persistedSnapshot, snapshot)) {
       return snapshot;
     }
@@ -1887,10 +1880,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   ): Promise<SessionProtocolDeltaMessage> {
     this.assertNotDisposed();
     const current = this.committedSnapshot;
-    if (!current) {
-      throw new Error("cannot persist a session patch without a committed snapshot");
-    }
-
     const delta = createSessionProtocolDeltaMessage({
       sessionId: current.sessionId,
       fromRevision: current.revision,
@@ -2176,17 +2165,37 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     }
   }
 
+  private async enqueueConfigurationMutation<T>(mutation: () => Promise<T>): Promise<T> {
+    try {
+      return await this.enqueueMutation(mutation);
+    } catch (error) {
+      this.invalidateProjection(error);
+      throw error;
+    }
+  }
+
+  private async runAgentStateMutation<T>(mutation: () => Promise<T>): Promise<T> {
+    const runtimeState = this.runtime.snapshot();
+    try {
+      return await mutation();
+    } catch (error) {
+      if (!isDeepStrictEqual(this.runtime.snapshot(), runtimeState)) {
+        this.invalidateProjection(error);
+      }
+      throw error;
+    }
+  }
+
   private enqueueMutation<T>(mutation: () => Promise<T> | T): Promise<T> {
     const result = this.mutationQueue
       .catch(() => undefined)
       .then(async () => {
+        this.assertProjectionValid();
         try {
           return await mutation();
         } catch (error) {
-          if (this.committedSnapshot) {
-            this.goal = structuredClone(this.committedSnapshot.goal);
-            this.restoreProtocolState(this.committedSnapshot);
-          }
+          this.goal = structuredClone(this.committedSnapshot.goal);
+          this.restoreProtocolState(this.committedSnapshot);
           throw error;
         }
       });
@@ -2197,25 +2206,35 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     return result;
   }
 
+  private invalidateProjection(error: unknown): void {
+    this.projectionFailure ??= new Error("session state is inconsistent after a failed mutation", {
+      cause: error,
+    });
+  }
+
+  private assertProjectionValid(): void {
+    if (this.projectionFailure) {
+      throw this.projectionFailure;
+    }
+  }
+
   private assertActive(): void {
     if (this.disposing || this.disposed) {
       throw new Error(`session is shut down: ${this.sessionId}`);
     }
+    this.assertProjectionValid();
   }
 
   private assertNotDisposed(): void {
     if (this.disposed) {
       throw new Error(`session is shut down: ${this.sessionId}`);
     }
+    this.assertProjectionValid();
   }
 
   private nextSnapshotRevision(
     next: Omit<SessionProtocolSnapshot, "revision">,
   ): SessionProtocolSnapshot["revision"] {
-    if (!this.committedSnapshot) {
-      return 1;
-    }
-
     if (this.forceNextSnapshotRevision) {
       this.forceNextSnapshotRevision = false;
       return this.committedSnapshot.revision + 1;
@@ -2272,7 +2291,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     resultHistoryEntryId: string,
     result: Extract<AgentEvent, { type: "tool_result" }>["message"],
   ): Promise<void> {
-    const callMessage = this.committedSnapshot?.messages.find(
+    const callMessage = this.committedSnapshot.messages.find(
       (message) => message.id === tool.call.messageId,
     );
     const call =
@@ -2566,7 +2585,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
               message: event.message,
             },
           },
-          ...(this.committedSnapshot?.lifecycle !== lifecycle
+          ...(this.committedSnapshot.lifecycle !== lifecycle
             ? [{ type: "lifecycle.set" as const, lifecycle }]
             : []),
           ...toolChanges,
@@ -2993,17 +3012,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     if (changes.length === 0) {
       return;
     }
-    if (!this.committedSnapshot) {
-      if (options.persist === false) {
-        const snapshot = { ...this.buildSnapshotDraft(), revision: 1 };
-        this.committedSnapshot = snapshot;
-        this.emitSnapshotReset(cause, snapshot);
-        return;
-      }
-      const snapshot = await this.commitSnapshot();
-      this.emitSnapshotReset(cause, snapshot);
-      return;
-    }
     if (options.persist !== false) {
       this.emitDelta(await this.commitSnapshotPatch(cause, changes));
       return;
@@ -3037,7 +3045,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
   }
 
   private async emitSnapshotResetIfChanged(cause: LocalDeltaCause): Promise<void> {
-    const previousRevision = this.committedSnapshot?.revision;
+    const previousRevision = this.committedSnapshot.revision;
     const snapshot = await this.commitSnapshot();
     if (snapshot.revision !== previousRevision) {
       this.emitSnapshotReset(cause, snapshot);
@@ -3116,7 +3124,9 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     }
 
     const interruptedMessage = createInterruptedAssistantMessage(draft, this.runtime.persona.model);
-    await this.session.commitInterruptedAssistant(interruptedMessage, draft.id);
+    await this.runAgentStateMutation(() =>
+      this.session.commitInterruptedAssistant(interruptedMessage, draft.id),
+    );
   }
 
   private async cleanupFailedTurn(

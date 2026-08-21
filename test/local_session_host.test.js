@@ -655,6 +655,43 @@ describe("LocalSessionHost", () => {
     await host.shutdown();
   });
 
+  it("does not rebuild a snapshot from a user message awaiting event projection", async () => {
+    const store = new BlockingCommitStore();
+    const host = createHost(store);
+    const session = await host.createSession(localCreateInput);
+
+    const gate = store.blockNextCommit();
+    const settings = session.setReasoning("high");
+    await gate.started;
+
+    const concurrentSnapshot = session.snapshot();
+    const acceptance = session.acceptTurn({
+      text: "queue after the previous turn",
+      historyEntryId: "queued-turn",
+    });
+
+    gate.release();
+    await settings;
+
+    await expect(concurrentSnapshot).resolves.toMatchObject({
+      messages: [expect.objectContaining({ id: "system" })],
+      turns: {},
+    });
+    await expect(acceptance).resolves.toMatchObject({
+      userHistoryEntryId: "queued-turn",
+      snapshot: {
+        messages: expect.arrayContaining([expect.objectContaining({ id: "queued-turn" })]),
+        turns: {
+          "queued-turn": {
+            userHistoryEntryId: "queued-turn",
+            state: "running",
+          },
+        },
+      },
+    });
+    await host.shutdown();
+  });
+
   it.each([
     {
       label: "failed",
@@ -1057,7 +1094,7 @@ describe("LocalSessionHost", () => {
     await expect(hostedSession.snapshot()).resolves.toEqual(
       expect.objectContaining({
         sessionId: hostedSession.session.sessionId,
-        revision: 1,
+        revision: 2,
         lifecycle: "idle",
         settings: expectedSettings(),
         bootstrap: {
@@ -1093,18 +1130,18 @@ describe("LocalSessionHost", () => {
       }),
     );
     await expect(hostedSession.snapshot()).resolves.toEqual(
-      expect.objectContaining({ revision: 1 }),
+      expect.objectContaining({ revision: 2 }),
     );
     await hostedSession.session.commitUserText("next");
     await expect(hostedSession.snapshot()).resolves.toEqual(
-      expect.objectContaining({ revision: 2 }),
+      expect.objectContaining({ revision: 3 }),
     );
 
     const returnedSnapshot = await hostedSession.snapshot();
     returnedSnapshot.messages[1].message.content[0].text = "mutated outside";
     await expect(hostedSession.snapshot()).resolves.toEqual(
       expect.objectContaining({
-        revision: 2,
+        revision: 3,
         messages: expect.arrayContaining([
           expect.objectContaining({
             id: "system",
@@ -2319,6 +2356,31 @@ describe("LocalSessionHost", () => {
     await host.shutdown();
   });
 
+  it("invalidates the session when rewind persistence fails after runtime mutation", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const hostedSession = await host.createSession(localCreateInput);
+    const historyEntryId = await hostedSession.session.commitUserText("rewind me");
+    const persisted = await hostedSession.snapshot();
+    const commitSessionSnapshot = vi.spyOn(store, "commitSessionSnapshot");
+
+    commitSessionSnapshot.mockRejectedValueOnce(new Error("rewind persistence failed"));
+    await expect(hostedSession.rewindToHistoryEntryId(historyEntryId)).rejects.toThrow(
+      "rewind persistence failed",
+    );
+
+    expect(hostedSession.runtime.rawHistoryEntries).toEqual([]);
+    await expect(hostedSession.snapshot()).rejects.toThrow(
+      "session state is inconsistent after a failed mutation",
+    );
+    await expect(hostedSession.record({ text: "must not persist" })).rejects.toThrow(
+      "session state is inconsistent after a failed mutation",
+    );
+    await expect(store.loadSession(hostedSession.sessionId)).resolves.toEqual(persisted);
+    await hostedSession.dispose();
+    await host.shutdown();
+  });
+
   it("truncates timeline notices after the rewound message", async () => {
     const host = createHost(new MemorySessionStore());
     const hostedSession = await host.createSession(localCreateInput);
@@ -3032,10 +3094,10 @@ describe("LocalSessionHost", () => {
     await hostedSession.session.commitUserText("hello");
 
     await expect(hostedSession.snapshot()).resolves.toEqual(
-      expect.objectContaining({ revision: 1 }),
+      expect.objectContaining({ revision: 2 }),
     );
     await expect(hostedSession.snapshot()).resolves.toEqual(
-      expect.objectContaining({ revision: 1 }),
+      expect.objectContaining({ revision: 2 }),
     );
     await expect(host.observeSession(hostedSession.session.sessionId)).resolves.toBe(hostedSession);
     await expect(host.listSessions()).resolves.toEqual([
@@ -3045,7 +3107,7 @@ describe("LocalSessionHost", () => {
 
     await hostedSession.session.commitUserText("next");
     await expect(hostedSession.snapshot()).resolves.toEqual(
-      expect.objectContaining({ revision: 2 }),
+      expect.objectContaining({ revision: 3 }),
     );
     expect(store.commitSessionSnapshot).toHaveBeenCalledTimes(2);
   });
@@ -3235,13 +3297,13 @@ describe("LocalSessionHost", () => {
     await expect(
       Promise.all([hostedSession.snapshot(), hostedSession.snapshot(), hostedSession.snapshot()]),
     ).resolves.toEqual([
-      expect.objectContaining({ revision: 1 }),
-      expect.objectContaining({ revision: 1 }),
-      expect.objectContaining({ revision: 1 }),
+      expect.objectContaining({ revision: 2 }),
+      expect.objectContaining({ revision: 2 }),
+      expect.objectContaining({ revision: 2 }),
     ]);
 
     await expect(store.loadSession(hostedSession.session.sessionId)).resolves.toEqual(
-      expect.objectContaining({ revision: 1 }),
+      expect.objectContaining({ revision: 2 }),
     );
   });
 
@@ -3700,6 +3762,27 @@ describe("LocalSessionHost", () => {
     );
     expect(hostedSession.subagentActivities()).toEqual(activityState);
     expect(activityMessages).toEqual([]);
+  });
+
+  it("invalidates the session when configuration persistence fails after runtime mutation", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const hostedSession = await host.createSession(localCreateInput);
+    const persisted = await hostedSession.snapshot();
+    const commitSessionSnapshot = vi.spyOn(store, "commitSessionSnapshot");
+
+    commitSessionSnapshot.mockRejectedValueOnce(new Error("configuration persistence failed"));
+    await expect(hostedSession.setReasoning("high")).rejects.toThrow(
+      "configuration persistence failed",
+    );
+
+    expect(hostedSession.runtime.persona.settings.reasoning).toBe("high");
+    await expect(hostedSession.snapshot()).rejects.toThrow(
+      "session state is inconsistent after a failed mutation",
+    );
+    await expect(store.loadSession(hostedSession.sessionId)).resolves.toEqual(persisted);
+    await hostedSession.dispose();
+    await host.shutdown();
   });
 
   it("does not let a reasoning write replace streamed state at the same revision", async () => {

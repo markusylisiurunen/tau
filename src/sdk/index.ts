@@ -70,6 +70,15 @@ export {
   createTauCodeModeClientTool,
   type TauSdkCodeModeClientToolOptions,
 } from "./code_mode.js";
+export {
+  type StartedTauSdkDiffReview,
+  type StartTauSdkDiffReviewOptions,
+  startTauSdkDiffReview,
+  type TauSdkDiffReviewResult,
+  type TauSdkDiffReviewSource,
+  type TauSdkDiffReviewStorage,
+  type TauSdkDiffReviewSubmission,
+} from "./diff_review.js";
 export { createTauSdkClientFromTransport } from "./session.js";
 export type {
   TauSdkAutocompletePathsResult,

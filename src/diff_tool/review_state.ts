@@ -51,6 +51,45 @@ export class DiffToolReviewStateStore {
     };
   }
 
+  clone(): DiffToolReviewStateStore {
+    const clone = new DiffToolReviewStateStore();
+    clone.replaceState(this.state);
+    return clone;
+  }
+
+  replaceState(state: DiffToolReviewState): void {
+    this.state.diffStyle = state.diffStyle;
+    this.state.overflowMode = state.overflowMode;
+    this.state.codeTheme = state.codeTheme;
+    this.state.sidebarOpen = state.sidebarOpen;
+    this.state.collapsedFileIds = [...state.collapsedFileIds];
+    this.state.viewedFileIds = [...state.viewedFileIds];
+    this.state.threads = state.threads.map(cloneThread);
+    this.state.brief = cloneBrief(state.brief);
+  }
+
+  replaceStatePreservingConcurrentLoading(
+    state: DiffToolReviewState,
+    previousState: DiffToolReviewState,
+  ): void {
+    const currentThreadLoading = new Map(
+      this.state.threads.map((thread) => [thread.id, thread.loading]),
+    );
+    const previousThreadLoading = new Map(
+      previousState.threads.map((thread) => [thread.id, thread.loading]),
+    );
+    const currentBriefLoading = this.state.brief.loading;
+    this.replaceState(state);
+    for (const thread of this.state.threads) {
+      if (thread.loading === previousThreadLoading.get(thread.id)) {
+        thread.loading = currentThreadLoading.get(thread.id) ?? thread.loading;
+      }
+    }
+    if (this.state.brief.loading === previousState.brief.loading) {
+      this.state.brief.loading = currentBriefLoading;
+    }
+  }
+
   updateState(patch: DiffToolStatePatch): void {
     if (patch.diffStyle === "split" || patch.diffStyle === "stacked") {
       this.state.diffStyle = patch.diffStyle;
@@ -218,11 +257,23 @@ export class DiffToolReviewStateStore {
       return "";
     }
 
+    if (thread.threadId) {
+      return userText;
+    }
+
     const locationPrefix =
-      thread.threadId || thread.anchor.kind !== "line"
-        ? ""
-        : `[${thread.anchor.filePath}:${thread.anchor.lineNumber} (${thread.anchor.side === "additions" ? "new" : "old"})]\n\n`;
-    return `${locationPrefix}${userText}`;
+      thread.anchor.kind === "line"
+        ? `[${thread.anchor.filePath}:${thread.anchor.lineNumber} (${thread.anchor.side === "additions" ? "new" : "old"})]\n\n`
+        : "";
+    const hasAssistantMessage = thread.messages.some((message) => message.role === "assistant");
+    if (!hasAssistantMessage) {
+      return `${locationPrefix}${userText}`;
+    }
+
+    const transcript = thread.messages
+      .map((message) => `**${message.role === "assistant" ? "agent" : "user"}**\n\n${message.text}`)
+      .join("\n\n");
+    return `${locationPrefix}Continue this restored review conversation. Its previous transcript is included below.\n\n${transcript}`;
   }
 
   buildReviewText(submissionMessage?: string): string {

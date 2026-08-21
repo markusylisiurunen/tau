@@ -13,7 +13,7 @@ import type {
 } from "./types.js";
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, {
+  const response = await fetch(new URL(path, document.baseURI), {
     headers: { "content-type": "application/json", ...options.headers },
     ...options,
   });
@@ -44,20 +44,20 @@ async function parseJsonResponse(response: Response): Promise<unknown> {
 }
 
 export async function fetchBootstrap(): Promise<BootstrapPayload> {
-  return request<BootstrapPayload>("/api/bootstrap");
+  return request<BootstrapPayload>("api/bootstrap");
 }
 
 export async function fetchDiff(
   path?: string,
 ): Promise<DiffReviewGetDiffResult> {
   const suffix = path ? `?path=${encodeURIComponent(path)}` : "";
-  return request<DiffReviewGetDiffResult>(`/api/diff${suffix}`);
+  return request<DiffReviewGetDiffResult>(`api/diff${suffix}`);
 }
 
 export async function updateReviewState(
   payload: ReviewStatePatch,
 ): Promise<StateResponse> {
-  return request<StateResponse>("/api/state", {
+  return request<StateResponse>("api/state", {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -66,7 +66,7 @@ export async function updateReviewState(
 export async function createThread(
   payload: CreateThreadPayload,
 ): Promise<CreateThreadResponse> {
-  return request<CreateThreadResponse>("/api/thread", {
+  return request<CreateThreadResponse>("api/thread", {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -75,14 +75,14 @@ export async function createThread(
 export async function replyToThread(
   payload: ThreadReplyPayload,
 ): Promise<StateResponse> {
-  return request<StateResponse>("/api/thread/reply", {
+  return request<StateResponse>("api/thread/reply", {
     method: "POST",
     body: JSON.stringify(payload),
   });
 }
 
 export async function requestThreadMessage(id: string): Promise<StateResponse> {
-  return request<StateResponse>("/api/thread-message", {
+  return request<StateResponse>("api/thread-message", {
     method: "POST",
     body: JSON.stringify({ id }),
   });
@@ -91,7 +91,7 @@ export async function requestThreadMessage(id: string): Promise<StateResponse> {
 export async function deleteThreadMessage(
   payload: DeleteThreadMessagePayload,
 ): Promise<StateResponse> {
-  return request<StateResponse>("/api/thread-message/delete", {
+  return request<StateResponse>("api/thread-message/delete", {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -100,7 +100,7 @@ export async function deleteThreadMessage(
 export async function resolveThread(
   payload: ResolveThreadPayload,
 ): Promise<StateResponse> {
-  return request<StateResponse>("/api/thread/resolve", {
+  return request<StateResponse>("api/thread/resolve", {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -109,14 +109,14 @@ export async function resolveThread(
 export async function collapseThread(
   payload: CollapseThreadPayload,
 ): Promise<StateResponse> {
-  return request<StateResponse>("/api/thread/collapse", {
+  return request<StateResponse>("api/thread/collapse", {
     method: "POST",
     body: JSON.stringify(payload),
   });
 }
 
 export async function generateBrief(): Promise<GenerateBriefResponse> {
-  return request<GenerateBriefResponse>("/api/brief/generate", {
+  return request<GenerateBriefResponse>("api/brief/generate", {
     method: "POST",
   });
 }
@@ -124,12 +124,12 @@ export async function generateBrief(): Promise<GenerateBriefResponse> {
 export async function returnReview(
   message: string,
 ): Promise<{ status: string }> {
-  return request<{ status: string }>("/api/review", {
+  return request<{ status: string }>("api/review", {
     method: "POST",
     body: JSON.stringify({ message }),
   });
 }
 
 export async function cancelReview(): Promise<{ status: string }> {
-  return request<{ status: string }>("/api/cancel", { method: "POST" });
+  return request<{ status: string }>("api/cancel", { method: "POST" });
 }

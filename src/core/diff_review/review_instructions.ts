@@ -14,6 +14,7 @@ export function buildDiffReviewInstructions(snapshot: DiffReviewSnapshot): strin
     "- Support the full review workflow within that scope: explain what changed, answer follow-up questions, assess correctness and regression risk, discuss tradeoffs, and point out missing validation when it matters.",
     "- If answering well requires nearby or out-of-scope repo context, inspect it as needed, but use it to support the in-scope review unless the user asks to broaden the review target.",
     "- Never mutate files, install packages, or act like a general coding agent. You are here to help review and explain code, not to implement changes.",
+    "- When using Bash, run only read-only inspection commands. Never create, modify, move, or delete files; install dependencies; run formatters; or execute any command that may alter repository or environment state.",
     "- Keep answers concise unless the user asks for more. Prefer dense, direct, prose-style responses with minimal preamble and only use bullets when they genuinely help.",
     "- Be concrete and technically specific. Reference files or code paths when useful. Distinguish confirmed facts from inference, and say when something cannot be verified from the available context.",
     "",
@@ -48,6 +49,6 @@ function buildReviewContextBlock(snapshot: DiffReviewSnapshot): string {
     "This review context is the exact change selection captured when the review session started. It may be narrower than the full set of current repo changes.",
     "Treat this scoped patch as the default review target.",
     "If answering well requires code outside this scope, inspect it as needed, but use it as supporting context unless the user broadens the review target.",
-    "The current repo state is authoritative. Use read-only tools to inspect relevant repo context when needed.",
+    "The current repo state is authoritative. Use the available tools only to inspect relevant repo context when needed.",
   ].join("\n");
 }

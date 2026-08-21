@@ -280,6 +280,12 @@ For a custom accumulator, use `applySessionProtocolSubagentActivitiesMessage`. T
 
 If rendering `timeline.item`, accept only the active epoch and merge by its allocated sequence. Compaction and rewind causes determine which client-local ephemeral items remain valid. The [session protocol](session-protocol.md) gives the application rules.
 
+## Host a browser diff review
+
+`startTauSdkDiffReview()` starts the built-in browser review UI for an observed session without requiring the TUI or opening a browser. It supports client-owned reverse proxying, durable review-state storage, restored conversation context, and an awaited one-shot submission callback.
+
+See [SDK browser diff review](sdk-diff-review.md) for its startup, persistence, submission, and lifecycle contracts.
+
 ## Provide client tools
 
 Pass `TauSdkClientTool` entries in `clientTools` when model-facing work must run in the integration process:

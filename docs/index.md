@@ -29,6 +29,7 @@ The intrinsic `tau_docs` tool reads one exact Markdown path at a time. It does n
 - [Session protocol](session-protocol.md) explains transports, envelopes, observed state, delta application, errors, and client rules.
 - [Session protocol method reference](session-protocol-methods.md) defines the complete current request surface and result shapes.
 - [Node SDK](node-sdk.md) covers client choices, the public session facade, streamed state, client tools, cancellation, and exported types.
+- [SDK browser diff review](sdk-diff-review.md) covers hosting the built-in review UI, durable state, one-shot submission, and lifecycle ownership.
 
 ## Work with sessions and services
 

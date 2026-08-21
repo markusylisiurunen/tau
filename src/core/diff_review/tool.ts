@@ -8,7 +8,7 @@ import { type DiffReviewSnapshotSource, formatDiffReviewScope } from "./snapshot
 const DIFF_REVIEW_DESCRIPTION = [
   "Launch an interactive diff review tool for the user and wait for the user to return review feedback.",
   "Use this tool only when the user explicitly asks you to open, run, or start a diff review.",
-  "Do not use it for ordinary diff inspection; use read-only shell/file tools for that instead.",
+  "Do not use it for ordinary diff inspection; use shell/file tools only for inspection instead.",
 ].join(" ");
 
 const DIFF_REVIEW_SOURCE_DESCRIPTION =

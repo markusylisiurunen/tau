@@ -1427,6 +1427,7 @@ export class SessionProtocolHandler {
     const result = await state.session.createEphemeralContext({
       instructions: request.params.instructions,
       tools: request.params.tools,
+      ...(request.params.reasoning !== undefined ? { reasoning: request.params.reasoning } : {}),
     });
     this.sendMessage(
       createSessionProtocolSuccessResponse(request.id, "session.ephemeral.create", result),
@@ -1450,6 +1451,7 @@ export class SessionProtocolHandler {
           ? { forkFromThreadId: request.params.forkFromThreadId }
           : {}),
         message: request.params.message,
+        ...(request.params.reasoning !== undefined ? { reasoning: request.params.reasoning } : {}),
       });
       this.sendMessage(
         createSessionProtocolSuccessResponse(request.id, "session.ephemeral.submit", result),

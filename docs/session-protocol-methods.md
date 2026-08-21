@@ -504,13 +504,14 @@ params: {
   sessionId: string;
   instructions: string;
   tools: Array<"bash" | "write" | "edit" | "view_image" | "web">;
+  reasoning?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 }
 result: {
   contextId: string;
 }
 ```
 
-The context uses the hosted session's persona and execution environment plus the supplied instructions and exact tool set. It is not recoverable after host restart.
+The context uses the hosted session's persona and execution environment plus the supplied instructions and exact tool set. `reasoning` sets the initial effort for new threads. When omitted, the context captures the parent session agent's current effective effort. Later parent setting changes do not affect the context. It is not recoverable after host restart.
 
 ### `session.ephemeral.submit`
 
@@ -523,11 +524,12 @@ params: {
   threadId: string;
   forkFromThreadId?: string;
   message: string;
+  reasoning?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 }
 result: { threadId: string; response: string }
 ```
 
-`forkFromThreadId` creates a new thread from an idle thread in the same context. Overlapping submissions to the same thread return `busy`; independent threads can run concurrently.
+`reasoning` updates the target thread before running the submitted message and remains active for later submissions. When omitted, the thread retains its current effort. `forkFromThreadId` creates a new thread from an idle thread in the same context, including its current reasoning effort; a submit-time `reasoning` value overrides only the new fork. Overlapping submissions to the same thread return `busy`; independent threads can run concurrently.
 
 ### `session.ephemeral.close`
 

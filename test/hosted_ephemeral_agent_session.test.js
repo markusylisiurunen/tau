@@ -47,7 +47,11 @@ function createFailingStream(partialText, error) {
   };
 }
 
-function createSession(recordUsage = vi.fn(), config = { autoCompact: { enabled: false } }) {
+function createSession(
+  recordUsage = vi.fn(),
+  config = { autoCompact: { enabled: false } },
+  reasoning = "medium",
+) {
   const backend = createLocalToolExecutionBackend();
   const executionEnvironment = {
     snapshot: () => ({ kind: "local", cwd: "/repo", home: "/home/user" }),
@@ -82,6 +86,7 @@ function createSession(recordUsage = vi.fn(), config = { autoCompact: { enabled:
       executionEnvironment,
       instructions: "review the diff",
       tools: [],
+      reasoning,
       emitUpdate,
       recordUsage,
     }),
@@ -90,9 +95,14 @@ function createSession(recordUsage = vi.fn(), config = { autoCompact: { enabled:
 
 describe("HostedEphemeralAgentSession", () => {
   it("continues and forks thread state", async () => {
-    const { session, recordUsage, emitUpdate } = createSession();
+    const { session, recordUsage, emitUpdate } = createSession(
+      vi.fn(),
+      { autoCompact: { enabled: false } },
+      "low",
+    );
     const source = await session.getOrCreateThread("source");
     expect(source.runtime).toBeInstanceOf(AgentRuntime);
+    expect(source.runtime.spec.attribution.reasoningEffort).toBe("low");
     const sourceResponses = [createAssistant("first"), createAssistant("continued")];
     source.runtime.spec.model.stream = vi.fn(() => createStream(sourceResponses.shift()));
 
@@ -101,8 +111,10 @@ describe("HostedEphemeralAgentSession", () => {
         contextId: "ephemeral-1",
         threadId: "source",
         message: "first request",
+        reasoning: "high",
       }),
     ).resolves.toEqual({ threadId: "source", response: "first" });
+    expect(source.runtime.spec.attribution.reasoningEffort).toBe("high");
     await expect(
       session.submitThreadMessage({
         contextId: "ephemeral-1",
@@ -110,8 +122,23 @@ describe("HostedEphemeralAgentSession", () => {
         message: "continue",
       }),
     ).resolves.toEqual({ threadId: "source", response: "continued" });
+    expect(source.runtime.spec.attribution.reasoningEffort).toBe("high");
 
-    const fork = await session.getOrCreateThread("fork", "source");
+    const inheritedFork = await session.getOrCreateThread("inherited-fork", "source");
+    expect(inheritedFork.runtime.spec.attribution.reasoningEffort).toBe("high");
+
+    source.runtime.spec.model.stream = vi.fn(() => createStream(createAssistant("forked")));
+    await expect(
+      session.submitThreadMessage({
+        contextId: "ephemeral-1",
+        threadId: "fork",
+        forkFromThreadId: "source",
+        message: "alternate path",
+        reasoning: "minimal",
+      }),
+    ).resolves.toEqual({ threadId: "fork", response: "forked" });
+
+    const fork = await session.getOrCreateThread("fork");
     expect(emitUpdate).toHaveBeenCalledWith(
       "fork",
       expect.objectContaining({
@@ -121,20 +148,21 @@ describe("HostedEphemeralAgentSession", () => {
     );
     expect(fork.runtime).toBeInstanceOf(AgentRuntime);
     expect(fork.runtime.agentIdValue).not.toBe(source.runtime.agentIdValue);
-    expect(fork.runtime.rawHistory).toEqual(source.runtime.rawHistory);
-    fork.runtime.spec.model.stream = vi.fn(() => createStream(createAssistant("forked")));
-    await expect(
-      session.submitThreadMessage({
-        contextId: "ephemeral-1",
-        threadId: "fork",
-        message: "alternate path",
-      }),
-    ).resolves.toEqual({ threadId: "fork", response: "forked" });
+    expect(fork.runtime.rawHistory.slice(0, source.runtime.rawHistory.length)).toEqual(
+      source.runtime.rawHistory,
+    );
+    expect(fork.runtime.spec.attribution.reasoningEffort).toBe("minimal");
+    expect(source.runtime.spec.attribution.reasoningEffort).toBe("high");
 
     expect(recordUsage).toHaveBeenCalledTimes(3);
     for (const [entry] of recordUsage.mock.calls) {
       expect(entry.agent).toEqual({ type: "ephemeral" });
     }
+    expect(recordUsage.mock.calls.map(([entry]) => entry.reasoningEffort)).toEqual([
+      "high",
+      "high",
+      "minimal",
+    ]);
   });
 
   it("rejects a partial provider failure", async () => {

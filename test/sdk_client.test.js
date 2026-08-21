@@ -116,6 +116,12 @@ class FakeSessionProtocolTransport {
           };
         case "session.resolvePrompt":
           return { promptId: params.promptId, text: `prompt body for ${params.promptId}` };
+        case "session.ephemeral.create":
+          return { contextId: "ephemeral-1" };
+        case "session.ephemeral.submit":
+          return { threadId: params.threadId, response: "reviewed" };
+        case "session.ephemeral.close":
+          return { closed: true };
         case "session.reload":
           return {
             snapshot: {
@@ -676,6 +682,44 @@ describe("sdk_client", () => {
     expect(transport.requests.at(-1)).toEqual({
       method: "session.interruptSubagent",
       params: { sessionId: "session-1", subagentId: "subagent-1" },
+    });
+
+    await expect(
+      readySession.createEphemeralContext({
+        instructions: "review this",
+        tools: ["bash"],
+        reasoning: "high",
+      }),
+    ).resolves.toEqual({ contextId: "ephemeral-1" });
+    expect(transport.requests.at(-1)).toEqual({
+      method: "session.ephemeral.create",
+      params: {
+        sessionId: "session-1",
+        instructions: "review this",
+        tools: ["bash"],
+        reasoning: "high",
+      },
+    });
+
+    await expect(
+      readySession.submitEphemeralThread({
+        contextId: "ephemeral-1",
+        threadId: "fork-1",
+        forkFromThreadId: "source-1",
+        message: "review this",
+        reasoning: "minimal",
+      }),
+    ).resolves.toEqual({ threadId: "fork-1", response: "reviewed" });
+    expect(transport.requests.at(-1)).toEqual({
+      method: "session.ephemeral.submit",
+      params: {
+        sessionId: "session-1",
+        contextId: "ephemeral-1",
+        threadId: "fork-1",
+        forkFromThreadId: "source-1",
+        message: "review this",
+        reasoning: "minimal",
+      },
     });
 
     const unobservedSession = await client.sessions.observe("session-1");

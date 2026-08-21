@@ -1558,6 +1558,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
       executionEnvironment: this.executionEnvironment,
       instructions: options.instructions,
       tools: options.tools,
+      reasoning: options.reasoning ?? this.runtime.agent.spec.attribution.reasoningEffort,
       recordUsage: this.recordUsage,
       emitUpdate: (threadId, update) => {
         this.emitEphemeral(

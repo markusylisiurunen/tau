@@ -740,7 +740,13 @@ describe("SessionProtocolHandler", () => {
   });
 
   it("creates, uses, and closes ephemeral contexts during an active main turn", async () => {
-    const harness = createHarness();
+    const submissions = [];
+    const harness = createHarness({
+      submitEphemeralThread: async (options) => {
+        submissions.push(options);
+        return { threadId: options.threadId, response: "done" };
+      },
+    });
     const submit = harness.connection.handleRequest(
       request("submit", "session.submit", {
         sessionId: "session-1",
@@ -754,6 +760,7 @@ describe("SessionProtocolHandler", () => {
         sessionId: "session-1",
         instructions: "review this",
         tools: ["bash"],
+        reasoning: "high",
       }),
     );
     await harness.connection.handleRequest(
@@ -762,6 +769,7 @@ describe("SessionProtocolHandler", () => {
         contextId: "context-1",
         threadId: "thread-1",
         message: "review",
+        reasoning: "low",
       }),
     );
     await harness.connection.handleRequest(
@@ -772,6 +780,19 @@ describe("SessionProtocolHandler", () => {
     );
 
     expect(harness.seededSession.isTurnRunning).toBe(true);
+    expect(harness.seededSession.createEphemeralContext).toHaveBeenCalledWith({
+      instructions: "review this",
+      tools: ["bash"],
+      reasoning: "high",
+    });
+    expect(submissions).toEqual([
+      {
+        contextId: "context-1",
+        threadId: "thread-1",
+        message: "review",
+        reasoning: "low",
+      },
+    ]);
     expect(harness.lines.find((line) => line.id === "ephemeral-create")).toEqual(
       expect.objectContaining({ ok: true, result: { contextId: "context-1" } }),
     );

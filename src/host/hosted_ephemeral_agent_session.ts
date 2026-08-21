@@ -14,7 +14,7 @@ import { composeSessionPrompts } from "../core/runtime/session_prompt_composer.j
 import { createAutoCompactionArchiver } from "../core/session/auto_compaction_archive.js";
 import type { SubagentToolName } from "../core/subagents/types.js";
 import { ToolCatalog } from "../core/tools/catalog.js";
-import type { Persona, Skill } from "../core/types.js";
+import type { Persona, ReasoningEffort, Skill } from "../core/types.js";
 import {
   appendUsageLogEntry,
   getUsageCostTotal,
@@ -67,6 +67,7 @@ export type HostedEphemeralAgentSessionOptions = {
   executionEnvironment: ExecutionEnvironment;
   instructions: string;
   tools: SubagentToolName[];
+  reasoning: ReasoningEffort;
   emitUpdate: (
     threadId: string,
     update: SessionProtocolEphemeralAgentThreadUpdateEvent["update"],
@@ -104,6 +105,7 @@ export class HostedEphemeralAgentSession {
     this.activeThreadIds.add(options.threadId);
     try {
       const thread = await this.getOrCreateThread(options.threadId, options.forkFromThreadId);
+      if (options.reasoning !== undefined) thread.setReasoning(options.reasoning);
       return { threadId: options.threadId, response: await thread.submitMessage(options.message) };
     } finally {
       this.activeThreadIds.delete(options.threadId);
@@ -162,6 +164,7 @@ export class HostedEphemeralAgentSession {
       persona: this.options.persona,
       systemPrompt: [composition.baseSystemPrompt, this.options.instructions].join("\n\n"),
       config: this.options.config,
+      reasoning: this.options.reasoning,
       deps,
       backend: this.options.executionEnvironment.getToolExecutionBackend(),
       tools: this.options.tools,
@@ -182,6 +185,7 @@ type EphemeralAgentThreadOptions = {
   persona: Persona;
   systemPrompt: string;
   config: Config;
+  reasoning: ReasoningEffort;
   deps: ReturnType<typeof createDefaultCoreDeps>;
   backend: ReturnType<ExecutionEnvironment["getToolExecutionBackend"]>;
   tools: SubagentToolName[];
@@ -204,7 +208,12 @@ class EphemeralAgentThread {
       options.forkFrom?.spec ??
       createAgentSpec({
         ...resolveAgentModel(
-          createEphemeralPersona(options.persona, options.systemPrompt, options.tools),
+          createEphemeralPersona(
+            options.persona,
+            options.systemPrompt,
+            options.tools,
+            options.reasoning,
+          ),
           options.config,
           { includeModelNotice: false, deps: options.deps },
         ),
@@ -242,6 +251,15 @@ class EphemeralAgentThread {
     if (options.forkFrom) {
       this.onUpdate?.({ costTotal: this.costTotal, usage: { ...this.usage } });
     }
+  }
+
+  setReasoning(reasoning: ReasoningEffort): void {
+    const spec = this.runtime.spec;
+    this.runtime.updateSpec({
+      ...spec,
+      attribution: { ...spec.attribution, reasoningEffort: reasoning },
+      streamOptions: { ...spec.streamOptions, reasoning },
+    });
   }
 
   async submitMessage(message: string): Promise<string> {
@@ -337,6 +355,7 @@ function createEphemeralPersona(
   persona: Persona,
   systemPrompt: string,
   tools: SubagentToolName[],
+  reasoning: ReasoningEffort,
 ): Persona {
   return {
     ...structuredClone(persona),
@@ -344,6 +363,7 @@ function createEphemeralPersona(
     label: `${persona.label} ephemeral`,
     description: "Ephemeral assistant",
     systemPrompt,
+    settings: { ...persona.settings, reasoning },
     subagents: undefined,
     tools,
   };

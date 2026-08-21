@@ -19,6 +19,7 @@ import type {
   SessionProtocolPendingUserMessagesState,
   SessionProtocolQueueResult,
   SessionProtocolReadyMessage,
+  SessionProtocolReasoningEffort,
   SessionProtocolRecordResult,
   SessionProtocolReloadResult,
   SessionProtocolRequestId,
@@ -81,6 +82,7 @@ export type TauSdkSessionSampleResult = SessionProtocolSampleResult;
 export type TauSdkSessionInterruptSubagentResult = SessionProtocolInterruptSubagentResult;
 export type TauSdkSessionUnobserveResult = SessionProtocolUnobserveResult;
 export type TauSdkEphemeralAgentTool = SessionProtocolEphemeralAgentTool;
+export type TauSdkReasoningEffort = SessionProtocolReasoningEffort;
 export type TauSdkEphemeralCreateResult = SessionProtocolEphemeralCreateResult;
 export type TauSdkEphemeralSubmitResult = SessionProtocolEphemeralSubmitResult;
 export type TauSdkEphemeralCloseResult = SessionProtocolEphemeralCloseResult;
@@ -202,9 +204,7 @@ export type TauSdkSession = {
   startGoal(objective: string): Promise<TauSdkSessionStartGoalResult>;
   resumeGoal(): Promise<TauSdkSessionResumeGoalResult>;
   clearGoal(): Promise<TauSdkSessionClearGoalResult>;
-  setReasoning(
-    reasoning: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max",
-  ): Promise<TauSdkSessionSetReasoningResult>;
+  setReasoning(reasoning: TauSdkReasoningEffort): Promise<TauSdkSessionSetReasoningResult>;
   setPersona(personaId: string): Promise<TauSdkSessionSetPersonaResult>;
   resolvePrompt(promptId: string): Promise<TauSdkResolvePromptResult>;
   autocompletePaths(options: {
@@ -221,12 +221,14 @@ export type TauSdkSession = {
   createEphemeralContext(options: {
     instructions: string;
     tools: TauSdkEphemeralAgentTool[];
+    reasoning?: TauSdkReasoningEffort;
   }): Promise<TauSdkEphemeralCreateResult>;
   submitEphemeralThread(options: {
     contextId: string;
     threadId: string;
     forkFromThreadId?: string;
     message: string;
+    reasoning?: TauSdkReasoningEffort;
   }): Promise<TauSdkEphemeralSubmitResult>;
   closeEphemeralContext(contextId: string): Promise<TauSdkEphemeralCloseResult>;
   unobserve(): Promise<TauSdkSessionUnobserveResult>;

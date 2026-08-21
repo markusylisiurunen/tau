@@ -104,6 +104,7 @@ export type {
   TauSdkPendingUserMessagesMessage,
   TauSdkPendingUserMessagesState,
   TauSdkReadyMessage,
+  TauSdkReasoningEffort,
   TauSdkRequestId,
   TauSdkResolvePromptResult,
   TauSdkSession,

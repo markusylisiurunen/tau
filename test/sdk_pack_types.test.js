@@ -87,7 +87,7 @@ describe("sdk npm pack types", () => {
       writeFileSync(
         validFixturePath,
         [
-          'import type { SessionProtocolFeedbackEvent, SessionProtocolFeedbackTone, SessionProtocolSnapshot, SessionProtocolTransport, TauSdkClient, TauSdkClientToolContext, TauSdkClientToolDescribeContext, TauSdkCreateSessionInput, TauSdkDelta, TauSdkInitializeParams, TauSdkRequestId, TauSdkSessionExecResult, TauSdkSessionSampleInput, TauSdkSessionSampleResult, TauSdkSessionSetReasoningResult, TauSdkSessionTurnOutcome, TauSdkSessionTurnRecord, TauSdkReadyMessage, TauSdkTransportClientOptions, TauSdkUserTextProjection } from "@markusylisiurunen/tau/sdk";',
+          'import type { SessionProtocolFeedbackEvent, SessionProtocolFeedbackTone, SessionProtocolSnapshot, SessionProtocolTransport, TauSdkClient, TauSdkClientToolContext, TauSdkClientToolDescribeContext, TauSdkCreateSessionInput, TauSdkDelta, TauSdkInitializeParams, TauSdkReasoningEffort, TauSdkRequestId, TauSdkSessionExecResult, TauSdkSessionSampleInput, TauSdkSessionSampleResult, TauSdkSessionSetReasoningResult, TauSdkSessionTurnOutcome, TauSdkSessionTurnRecord, TauSdkReadyMessage, TauSdkTransportClientOptions, TauSdkUserTextProjection } from "@markusylisiurunen/tau/sdk";',
           'import { applySessionProtocolDelta, createTauSdkClient, createTauSdkClientFromTransport, createTauSdkWebSocketClient, getTauSdkSessionTurnOutcome, getTauSdkSessionTurnRecord, getTauUserDisplayText, getTauUserModelText, projectTauUserText, runTauClientToolCommand, truncateTauClientToolText } from "@markusylisiurunen/tau/sdk";',
           "",
           "const sdkDelta: TauSdkDelta = {",
@@ -116,6 +116,7 @@ describe("sdk npm pack types", () => {
           "const createInput: TauSdkCreateSessionInput = { executionEnvironment: { kind: 'local', cwd: '/repo' }, attributes: { source: 'fixture' } };",
           "const initializeParams: TauSdkInitializeParams = { client: { name: 'fixture', version: '1' } };",
           "const requestId: TauSdkRequestId = 'req-1';",
+          "const reasoning: TauSdkReasoningEffort = 'high';",
           "const feedbackTone: SessionProtocolFeedbackTone = 'default';",
           "const feedbackEvent: SessionProtocolFeedbackEvent = { type: 'feedback.notice', title: 'retrying', tone: feedbackTone, presentation: 'footer', durationMs: 3000 };",
           "declare const execResult: TauSdkSessionExecResult;",
@@ -143,6 +144,8 @@ describe("sdk npm pack types", () => {
           "client.subscribe((delta) => { void delta.sessionId; });",
           "client.subscribeEphemeral((message) => { void message.sessionId; });",
           "transport.onFailure((error) => { void error.message; });",
+          "void client.sessions.observe('session-1').then((session) => session.createEphemeralContext({ instructions: 'review', tools: ['bash'], reasoning }));",
+          "void client.sessions.observe('session-1').then((session) => session.submitEphemeralThread({ contextId: 'context-1', threadId: 'thread-1', message: 'review', reasoning }));",
           "void client.sessions.observe('session-1').then((session) => session.sample(sampleInput));",
           "void createTauSdkClient({ cwd: '/repo', refreshModelCatalog: false });",
           "void createTauSdkClientFromTransport(transport, transportOptions);",
@@ -151,6 +154,7 @@ describe("sdk npm pack types", () => {
           "void createInput;",
           "void initializeParams;",
           "void requestId;",
+          "void reasoning;",
           "void feedbackEvent;",
           "void execResult;",
           "void sampleInput;",

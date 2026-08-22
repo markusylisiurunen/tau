@@ -1,0 +1,66 @@
+.top-bar {
+  --top-bar-gap: 8px;
+  align-items: center;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  font-size: var(--font-size-ui);
+  grid-column: 1 / -1;
+  grid-row: 1;
+  height: var(--bar-height);
+  justify-content: space-between;
+  max-width: 100vw;
+  overflow: hidden;
+  padding: 0 var(--content-padding-x);
+  position: relative;
+  width: 100%;
+  z-index: 20;
+}
+
+.top-bar-left,
+.top-bar-right {
+  align-items: center;
+  display: flex;
+  gap: var(--top-bar-gap);
+  min-width: 0;
+}
+
+.top-bar-left {
+  flex: 1 1 0;
+  overflow: hidden;
+}
+
+.top-bar-right {
+  flex: 0 0 auto;
+}
+
+.top-bar-viewed {
+  align-items: center;
+  color: var(--text-muted);
+  display: inline-flex;
+  font-size: var(--font-size-sm);
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.top-bar-viewed-ring {
+  align-items: center;
+  border-radius: var(--radius-full);
+  display: inline-flex;
+  flex: 0 0 18px;
+  height: 18px;
+  justify-content: center;
+  width: 18px;
+}
+
+.top-bar-viewed-ring-inner {
+  background: var(--bg);
+  border-radius: var(--radius-full);
+  display: block;
+  height: 12px;
+  width: 12px;
+}
+
+.top-bar-viewed-text {
+  color: var(--text-muted);
+}

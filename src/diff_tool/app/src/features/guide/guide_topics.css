@@ -1,0 +1,18 @@
+.guide-topic-cloud {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--guide-space-xs);
+}
+
+.guide-topic-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--guide-space-md);
+}
+
+.guide-topic-heading h3 {
+  color: var(--text);
+  font-size: 27px;
+  font-weight: 600;
+  line-height: 1.2;
+}

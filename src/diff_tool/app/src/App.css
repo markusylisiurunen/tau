@@ -1,190 +1,36 @@
-@font-face {
-  font-family: "JetBrains Mono";
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-  src: url("/fonts/JetBrainsMono-Regular.woff2") format("woff2");
-}
-
-@font-face {
-  font-family: "JetBrains Mono";
-  font-weight: 500;
-  font-style: normal;
-  font-display: swap;
-  src: url("/fonts/JetBrainsMono-Medium.woff2") format("woff2");
-}
-
-@font-face {
-  font-family: "JetBrains Mono";
-  font-weight: 600;
-  font-style: normal;
-  font-display: swap;
-  src: url("/fonts/JetBrainsMono-SemiBold.woff2") format("woff2");
-}
-
-@font-face {
-  font-family: "JetBrains Mono";
-  font-weight: 700;
-  font-style: normal;
-  font-display: swap;
-  src: url("/fonts/JetBrainsMono-Bold.woff2") format("woff2");
-}
-
-@font-face {
-  font-family: "JetBrains Mono";
-  font-weight: 400;
-  font-style: italic;
-  font-display: swap;
-  src: url("/fonts/JetBrainsMono-Italic.woff2") format("woff2");
-}
-
-:root {
-  color-scheme: dark;
-  --bg: hsl(0 0% 6.8%);
-  --surface: hsl(0 0% 7.2%);
-  --surface-hover: hsl(0 0% 9.2%);
-  --file-header-bg: color-mix(in srgb, var(--bg) 97%, var(--text));
-  --file-header-bg-hover: color-mix(in srgb, var(--bg) 95%, var(--text));
-  --border: hsl(0 0% 12%);
-  --border-focus: hsl(0 0% 20%);
-  --text: hsl(0 0% 74%);
-  --text-muted: hsl(0 0% 40%);
-  --accent-add: hsl(142 70% 62%);
-  --accent-del: hsl(0 91% 68%);
-  --accent-change: hsl(262 90% 76%);
-  --accent-del-muted: hsl(0 91% 71% / 0.72);
-  --accent-del-subtle: hsl(0 91% 71% / 0.08);
-  --accent-del-subtle-hover: hsl(0 91% 71% / 0.14);
-  --accent-primary: hsl(0 0% 88%);
-  --text-inverse: hsl(0 0% 3.6%);
-  --accent-primary-hover: hsl(0 0% 94%);
-  --thread-border-muted: hsl(0 0% 84% / 0.15);
-  --thread-border-strong: hsl(0 0% 84% / 0.16);
-  --thread-border-subtle: hsl(0 0% 84% / 0.08);
-  --thread-surface-subtle: hsl(0 0% 100% / 0.02);
-  --thread-agent-surface: color-mix(in srgb, var(--accent-add) 4%, transparent);
-  --sidebar-status-add: color-mix(
-    in srgb,
-    var(--accent-add) 55%,
-    var(--text-muted)
-  );
-  --sidebar-status-del: color-mix(
-    in srgb,
-    var(--accent-del) 45%,
-    var(--text-muted)
-  );
-  --sidebar-status-change: color-mix(
-    in srgb,
-    var(--accent-change) 45%,
-    var(--text-muted)
-  );
-  --dialog-backdrop: color-mix(in srgb, black 80%, transparent);
-  --popover-shadow: color-mix(in srgb, black 45%, transparent);
-  --button-split-border: color-mix(
-    in srgb,
-    var(--text-inverse) 18%,
-    transparent
-  );
-  --code-inline-bg: color-mix(in srgb, var(--accent-add) 7%, transparent);
-  --code-inline-text: color-mix(in srgb, var(--accent-add) 82%, var(--text));
-  --bar-height: 48px;
-  --sidebar-width: 300px;
-  --content-padding-x: 12px;
-  --file-gap: 12px;
-  --font-size-ui: 1rem;
-  --font-size-lg: 1.071429rem;
-  --font-size-sm: 0.928571rem;
-  --font-size-xs: 0.857143rem;
-  --font-size-code: 0.928571rem;
-  --font-weight-ui: 400;
-  --font-weight-code: 400;
-  --letter-spacing-ui: 0;
-  --letter-spacing-code: 0;
-  --font-family-ui: system-ui, sans-serif;
-  --font-family-code: "JetBrains Mono", monospace;
-  --line-height-ui: 1.5;
-  --diffs-font-family: var(--font-family-code);
-  --diffs-line-height: 1.75;
-  font-family: var(--font-family-ui);
-  font-size: 14px;
-  font-weight: var(--font-weight-ui);
-  letter-spacing: var(--letter-spacing-ui);
-  line-height: var(--line-height-ui);
-}
-
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
-  margin: 0;
-}
-
-body {
-  background: var(--bg);
-  color: var(--text);
-  min-height: 100vh;
-}
-
-button,
-input,
-textarea {
-  color: inherit;
-  font: inherit;
-}
-
 .app {
-  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 0 minmax(0, 1fr);
+  grid-template-rows: var(--bar-height) minmax(0, 1fr);
+  height: 100%;
+  overflow: hidden;
+}
+
+.app.diff-mode {
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
 }
 
 .content {
-  min-height: calc(100vh - var(--bar-height));
+  grid-column: 2;
+  grid-row: 2;
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
   padding: var(--content-padding-x);
 }
 
-.app.sidebar-open .content {
-  margin-left: var(--sidebar-width);
-}
-
-.submit-popover {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  box-shadow: 0 18px 48px var(--popover-shadow);
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 12px;
-  position: fixed;
-  width: min(420px, calc(100vw - 24px));
-  z-index: 35;
-}
-
-.submit-popover-input {
-  min-height: calc(1.5em * 5 + 0.75rem * 2);
-  resize: vertical;
-}
-
-.submit-popover-actions {
-  align-items: center;
-  display: flex;
-  gap: 6px;
-  justify-content: flex-end;
+.content.guide-content {
+  --font-size-base: 15px;
+  --font-size-ui: var(--font-size-base);
+  --font-size-lg: calc(var(--font-size-base) * 15 / 14);
+  --font-size-sm: calc(var(--font-size-base) * 13 / 14);
+  --font-size-xs: calc(var(--font-size-base) * 12 / 14);
+  --font-size-code: calc(var(--font-size-base) * 13 / 14);
+  font-size: var(--font-size-base);
+  padding: 0;
 }
 
 .empty {
   color: var(--text-muted);
   padding: 32px 16px;
-}
-
-.diff-stats {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.stat-add {
-  color: var(--accent-add);
-}
-
-.stat-del {
-  color: var(--accent-del);
 }

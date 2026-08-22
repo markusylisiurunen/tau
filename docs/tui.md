@@ -187,6 +187,8 @@ A `diffTool` entry in the attaching client’s configuration replaces the launch
 }
 ```
 
+The built-in tool opens in Guide mode and starts preparing reviewer orientation, focused topics, and likely questions as soon as its shared review context is ready. Reviewers can comment on that guide, ask for another topic or question, or switch to Diff mode for file and line-level review threads. Guide comments and unresolved diff threads are included in the returned review.
+
 The session host supplies ephemeral review agents, while the local tool owns its browser or interface process. Returned review feedback is recorded as a user entry in the session so it remains available, but Tau does not automatically start an assistant turn after the tool closes. Submit a follow-up message when the review should drive more work.
 
 The TUI also advertises diff review as a client tool unless `--no-client-tools` is set. Manual `/diff` remains a TUI command even when model-facing client tools are disabled. See [client tools](client-tools.md) for attachment and multiple-client implications.

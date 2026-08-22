@@ -1,0 +1,76 @@
+.guide,
+.guide-empty {
+  --guide-space-xs: 4px;
+  --guide-space-sm: 8px;
+  --guide-space-md: 12px;
+  --guide-space-lg: 24px;
+  --guide-space-section: calc(2 * var(--guide-space-lg));
+}
+
+.guide {
+  display: flex;
+  flex-direction: column;
+  gap: var(--guide-space-section);
+  margin: 0 auto;
+  max-width: 720px;
+  padding-block: calc(2 * var(--guide-space-lg)) calc(4 * var(--guide-space-lg));
+  padding-inline: var(--content-padding-x);
+}
+
+.guide-empty {
+  align-items: center;
+  color: color-mix(in oklch, var(--text) 84%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: var(--guide-space-sm);
+  max-width: 480px;
+  padding: var(--guide-space-lg);
+  text-align: center;
+}
+
+.guide-empty h1 {
+  color: var(--text);
+  font-size: 27px;
+  font-weight: 600;
+}
+
+.guide-empty p {
+  line-height: 1.5;
+}
+
+.guide-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--guide-space-md);
+}
+
+.guide-section-heading {
+  align-items: center;
+  display: flex;
+  gap: var(--guide-space-md);
+  justify-content: space-between;
+}
+
+.guide-section-title {
+  color: var(--text);
+  font-size: 27px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.guide-loading {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.markdown-content-guide {
+  --markdown-heading-weight: 600;
+  --markdown-prose-color: color-mix(in oklch, var(--text) 84%, transparent);
+  font-size: var(--font-size-ui);
+  line-height: 1.5;
+}
+
+.markdown-content-guide pre {
+  background: var(--surface) !important;
+  border-color: var(--border-surface);
+}

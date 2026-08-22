@@ -1,0 +1,13 @@
+.diff-stats {
+  align-items: center;
+  display: inline-flex;
+  gap: 4px;
+}
+
+.stat-add {
+  color: var(--accent-add);
+}
+
+.stat-del {
+  color: var(--accent-del);
+}

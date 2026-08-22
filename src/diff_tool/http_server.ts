@@ -6,8 +6,11 @@ import type { DiffReviewFile, DiffReviewSessionContextResult } from "../core/dif
 import type { DiffReviewProtocolClient } from "./protocol_client.js";
 import {
   buildDiffReviewBootstrapPrompt,
-  buildDiffReviewBriefPrompt,
   buildDiffReviewCommentThreadPrompt,
+  buildDiffReviewGuideOperationPrompt,
+  buildDiffReviewGuidePrompt,
+  parseDiffReviewGuideOperationResponse,
+  parseDiffReviewGuideResponse,
 } from "./review_prompts.js";
 import { DiffToolReviewStateStore } from "./review_state.js";
 import {
@@ -22,10 +25,16 @@ import type {
   DiffToolCreateThreadPayload,
   DiffToolCreateThreadResponse,
   DiffToolGetDiffResult,
+  DiffToolGuideCommentPayload,
+  DiffToolGuideOperation,
   DiffToolReviewState,
   DiffToolStatePatch,
 } from "./shared_types.js";
-import { DIFF_TOOL_CODE_THEMES } from "./shared_types.js";
+import {
+  DIFF_TOOL_CODE_THEMES,
+  DIFF_TOOL_GUIDE_QUESTION_LIMIT,
+  DIFF_TOOL_GUIDE_TOPIC_LIMIT,
+} from "./shared_types.js";
 
 export type {
   DiffToolBootstrapPayload,
@@ -97,6 +106,7 @@ export class DiffToolHttpServer {
   private stateMutationQueue: Promise<void> = Promise.resolve();
   private submissionState: "active" | "submitting" | "submitted" = "active";
   private bootstrapThreadPromise?: Promise<string>;
+  private guideGenerationPromise?: Promise<DiffToolReviewState>;
   private httpServerClosePromise?: Promise<void>;
   private sessionClosing = false;
   private server = createServer((request, response) => {
@@ -161,6 +171,7 @@ export class DiffToolHttpServer {
       const url = `http://${formatHttpUrlHost(this.host)}:${String(address.port)}/`;
       await this.client.setUiText({ text: url });
       void this.startBootstrapThread().catch(() => {});
+      void this.startGuideGeneration().catch(() => {});
 
       return {
         url,
@@ -335,6 +346,47 @@ export class DiffToolHttpServer {
 
   private async getBootstrapThreadId(): Promise<string> {
     return await this.startBootstrapThread();
+  }
+
+  private startGuideGeneration(): Promise<DiffToolReviewState> {
+    if (this.guideGenerationPromise) {
+      return this.guideGenerationPromise;
+    }
+
+    const currentState = this.reviewState.getState();
+    if (currentState.guide.orientation.trim()) {
+      return Promise.resolve(currentState);
+    }
+    if (this.closed) {
+      return Promise.reject(new Error("diff tool http server is closed"));
+    }
+
+    this.reviewState.setGuideLoading(true);
+    const promise = this.generateGuide()
+      .catch((error) => {
+        this.reviewState.setGuideLoading(false);
+        throw error;
+      })
+      .finally(() => {
+        if (this.guideGenerationPromise === promise) {
+          this.guideGenerationPromise = undefined;
+        }
+      });
+    this.guideGenerationPromise = promise;
+    void promise.catch(() => {});
+    return promise;
+  }
+
+  private async generateGuide(): Promise<DiffToolReviewState> {
+    const result = await this.client.submitThreadMessage({
+      forkFromThreadId: await this.getBootstrapThreadId(),
+      message: buildDiffReviewGuidePrompt(),
+    });
+    const guide = parseDiffReviewGuideResponse(result.response);
+    const { state } = await this.mutateReviewState((draft) =>
+      draft.applyGuideResult(result, guide),
+    );
+    return state;
   }
 
   private async handleRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -544,25 +596,88 @@ export class DiffToolHttpServer {
       return;
     }
 
-    if (method === "POST" && requestUrl.pathname === "/api/brief/generate") {
+    if (method === "POST" && requestUrl.pathname === "/api/guide/generate") {
+      const state = await this.startGuideGeneration();
+      this.sendJson(response, 200, { state });
+      return;
+    }
+
+    if (method === "POST" && requestUrl.pathname === "/api/guide/operate") {
+      const operation = parseGuideOperation(await this.readJsonBody(request));
+      if (!operation) {
+        this.sendJson(response, 400, { error: "invalid guide operation" });
+        return;
+      }
       const currentState = this.reviewState.getState();
-      if (currentState.brief.loading) {
-        this.sendJson(response, 409, { error: "brief generation already in progress" });
+      if (currentState.guide.loading) {
+        this.sendJson(response, 409, { error: "guide update already in progress" });
+        return;
+      }
+      if (
+        operation.kind === "topic.add" &&
+        currentState.guide.topics.length >= DIFF_TOOL_GUIDE_TOPIC_LIMIT
+      ) {
+        this.sendJson(response, 409, { error: "guide topic limit reached" });
+        return;
+      }
+      if (
+        operation.kind === "question.ask" &&
+        currentState.guide.questions.length >= DIFF_TOOL_GUIDE_QUESTION_LIMIT
+      ) {
+        this.sendJson(response, 409, { error: "guide question limit reached" });
+        return;
+      }
+      if (
+        operation.kind === "topic.revise" &&
+        !currentState.guide.topics.some((topic) => topic.id === operation.topicId)
+      ) {
+        this.sendJson(response, 404, { error: "guide topic not found" });
         return;
       }
 
-      this.reviewState.startBriefGeneration();
+      this.reviewState.setGuideLoading(true);
       try {
-        const result = await this.client.submitThreadMessage({
-          forkFromThreadId: await this.getBootstrapThreadId(),
-          message: buildDiffReviewBriefPrompt(),
-        });
-        const { state } = await this.mutateReviewState((draft) => draft.applyBriefResult(result));
+        const message = buildDiffReviewGuideOperationPrompt(operation, currentState.guide);
+        const result = await this.client.submitThreadMessage(
+          currentState.guide.threadId
+            ? { threadId: currentState.guide.threadId, message }
+            : {
+                forkFromThreadId: await this.getBootstrapThreadId(),
+                message,
+              },
+        );
+        const content = parseDiffReviewGuideOperationResponse(operation, result.response);
+        const { result: applied, state } = await this.mutateReviewState(
+          (draft) => draft.applyGuideOperationResult(result, operation, content),
+          (applied) => applied,
+        );
+        if (!applied) {
+          this.sendJson(response, 409, { error: "guide changed while it was being updated" });
+          return;
+        }
         this.sendJson(response, 200, { state });
       } catch (error) {
-        this.reviewState.setBriefLoading(false);
+        this.reviewState.setGuideLoading(false);
         throw error;
       }
+      return;
+    }
+
+    if (method === "POST" && requestUrl.pathname === "/api/guide/comment") {
+      const payload = parseGuideCommentPayload(await this.readJsonBody(request));
+      if (!payload) {
+        this.sendJson(response, 400, { error: "invalid guide comment" });
+        return;
+      }
+      const currentState = this.reviewState.getState();
+      if (!guideCommentTargetExists(currentState, payload.target)) {
+        this.sendJson(response, 404, { error: "guide comment target not found" });
+        return;
+      }
+      const { state } = await this.mutateReviewState((draft) =>
+        draft.saveGuideComment(payload.target, payload.body),
+      );
+      this.sendJson(response, 200, { state });
       return;
     }
 
@@ -704,6 +819,67 @@ function parseReviewPayload(payload: Record<string, unknown>): { message?: strin
     : {};
 }
 
+function parseGuideOperation(payload: Record<string, unknown>): DiffToolGuideOperation | undefined {
+  switch (payload.kind) {
+    case "topic.add": {
+      const request = typeof payload.request === "string" ? payload.request.trim() : "";
+      return request ? { kind: payload.kind, request } : undefined;
+    }
+    case "topic.revise": {
+      const topicId = typeof payload.topicId === "string" ? payload.topicId.trim() : "";
+      const request = typeof payload.request === "string" ? payload.request.trim() : "";
+      return topicId && request ? { kind: payload.kind, topicId, request } : undefined;
+    }
+    case "question.ask": {
+      const question = typeof payload.question === "string" ? payload.question.trim() : "";
+      return question ? { kind: payload.kind, question } : undefined;
+    }
+    default:
+      return undefined;
+  }
+}
+
+function parseGuideCommentPayload(
+  payload: Record<string, unknown>,
+): DiffToolGuideCommentPayload | undefined {
+  const body = typeof payload.body === "string" ? payload.body.trim() : "";
+  const target =
+    payload.target && typeof payload.target === "object" && !Array.isArray(payload.target)
+      ? (payload.target as Record<string, unknown>)
+      : undefined;
+  if (!body || !target) {
+    return undefined;
+  }
+  if (target.kind === "orientation") {
+    return { body, target: { kind: "orientation" } };
+  }
+  if (target.kind === "topic" && typeof target.topicId === "string" && target.topicId.trim()) {
+    return { body, target: { kind: "topic", topicId: target.topicId.trim() } };
+  }
+  if (
+    target.kind === "question" &&
+    typeof target.questionId === "string" &&
+    target.questionId.trim()
+  ) {
+    return { body, target: { kind: "question", questionId: target.questionId.trim() } };
+  }
+  return undefined;
+}
+
+function guideCommentTargetExists(
+  state: DiffToolReviewState,
+  target: DiffToolGuideCommentPayload["target"],
+): boolean {
+  switch (target.kind) {
+    case "orientation":
+      return Boolean(state.guide.orientation);
+    case "topic":
+      return state.guide.topics.some((topic) => topic.id === target.topicId);
+    case "question":
+      return state.guide.questions.some((question) => question.id === target.questionId);
+  }
+}
+
 const codeThemes = new Set<NonNullable<DiffToolStatePatch["codeTheme"]>>(DIFF_TOOL_CODE_THEMES);
 
 function parseStatePatch(payload: Record<string, unknown>): DiffToolStatePatch {
@@ -718,7 +894,6 @@ function parseStatePatch(payload: Record<string, unknown>): DiffToolStatePatch {
     codeThemes.has(payload.codeTheme as NonNullable<DiffToolStatePatch["codeTheme"]>)
       ? { codeTheme: payload.codeTheme as NonNullable<DiffToolStatePatch["codeTheme"]> }
       : {}),
-    ...(typeof payload.sidebarOpen === "boolean" ? { sidebarOpen: payload.sidebarOpen } : {}),
     ...(Array.isArray(payload.collapsedFileIds)
       ? {
           collapsedFileIds: payload.collapsedFileIds.flatMap((value) =>

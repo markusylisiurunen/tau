@@ -1,0 +1,151 @@
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  grid-column: 1;
+  grid-row: 2;
+  min-height: 0;
+  overflow-y: auto;
+  padding-block: var(--content-padding-x);
+  padding-inline: var(--content-padding-x);
+  width: var(--sidebar-width);
+}
+
+.sidebar-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sidebar-section-header {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.sidebar-section-title {
+  color: var(--text);
+  font-size: var(--font-size-ui);
+  font-weight: 500;
+}
+
+.sidebar-conversations,
+.sidebar-file-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-file-list {
+  font-family: var(--font-family-code);
+  line-height: 1;
+}
+
+.sidebar-empty {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.sidebar-thread-row {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.sidebar-thread-kind {
+  color: currentColor;
+  flex: 0 0 auto;
+  opacity: 0.5;
+}
+
+.sidebar-thread-name {
+  color: currentColor;
+  display: block;
+  flex: 1 1 auto;
+  font-size: var(--font-size-ui);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-thread-status-dot {
+  background: var(--text-muted);
+  border-radius: var(--radius-full);
+  flex: 0 0 6px;
+  height: 6px;
+  width: 6px;
+}
+
+.sidebar-thread-status-dot.active {
+  background: var(--accent-interactive);
+}
+
+.sidebar-file-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-file-group + .sidebar-file-group {
+  margin-top: 4px;
+}
+
+.sidebar-file-directory {
+  align-items: center;
+  color: var(--text-muted);
+  display: flex;
+  font-family: var(--font-family-code);
+  font-size: var(--font-size-sm);
+  height: 28px;
+  line-height: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-row {
+  align-items: center;
+  display: flex;
+  flex: 1 1 auto;
+  gap: 8px;
+  height: 100%;
+  justify-content: space-between;
+}
+
+.sidebar-file-status {
+  color: var(--text-muted);
+  flex: 0 0 auto;
+}
+
+.sidebar-file-status.added {
+  color: var(--sidebar-status-add);
+}
+
+.sidebar-file-status.deleted {
+  color: var(--sidebar-status-del);
+}
+
+.sidebar-file-status.modified,
+.sidebar-file-status.renamed,
+.sidebar-file-status.copied,
+.sidebar-file-status.type-changed,
+.sidebar-file-status.unmerged {
+  color: var(--sidebar-status-change);
+}
+
+.sidebar-file-name {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-stats {
+  display: flex;
+  flex-shrink: 0;
+  gap: 4px;
+}

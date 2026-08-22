@@ -1,0 +1,76 @@
+.file-section {
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-surface);
+  overflow: hidden;
+  scroll-margin-top: var(--file-gap);
+}
+
+.file-section + .file-section {
+  margin-top: var(--file-gap);
+}
+
+.file-header {
+  align-items: center;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border-surface);
+  display: flex;
+  height: 36px;
+  justify-content: space-between;
+  padding: 0 var(--content-padding-x);
+  position: sticky;
+  top: calc(-1 * var(--content-padding-x));
+  z-index: 10;
+}
+
+.file-section.collapsed .file-header {
+  border-bottom: none;
+}
+
+.file-body {
+  background: var(--surface);
+}
+
+.file-path {
+  color: var(--text);
+  font-size: var(--font-size-ui);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-thread-count {
+  align-items: center;
+  color: var(--text-muted);
+  display: inline-flex;
+  flex-shrink: 0;
+  font-size: var(--font-size-xs);
+  gap: 4px;
+  margin-left: 6px;
+}
+
+.file-meta {
+  align-items: center;
+  display: flex;
+  flex-shrink: 0;
+  font-size: var(--font-size-ui);
+  gap: 16px;
+}
+
+.viewed-checkbox {
+  font-size: var(--font-size-xs);
+}
+
+.diff-view {
+  display: block;
+  font-size: var(--font-size-code);
+  font-weight: var(--font-weight-code);
+  letter-spacing: var(--letter-spacing-code);
+  width: 100%;
+}
+
+.diff-placeholder {
+  color: var(--text-muted);
+  font-size: var(--font-size-ui);
+  padding: 1rem var(--content-padding-x);
+}

@@ -105,7 +105,11 @@ describe("SDK diff review", () => {
         patch: expect.stringContaining("+export const value = 2;"),
       });
 
-      await vi.waitFor(() => expect(submitEphemeralThread).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() => expect(submitEphemeralThread).toHaveBeenCalledTimes(2));
+      expect(submitEphemeralThread).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({ forkFromThreadId: expect.any(String) }),
+      );
     } finally {
       await review.close();
     }

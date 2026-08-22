@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseDiff } from "../src/diff_tool/app/src/parse_diff.ts";
+import { parseDiff } from "../src/diff_tool/app/src/features/diff/parse_diff.ts";
 
 describe("diff tool parseDiff", () => {
   it("counts only changed lines and preserves cache-backed ids", () => {

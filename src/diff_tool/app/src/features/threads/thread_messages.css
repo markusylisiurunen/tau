@@ -1,0 +1,25 @@
+.thread-message + .thread-message {
+  border-top: 1px solid var(--border);
+}
+
+.thread-message-assistant {
+  background: var(--thread-agent-bg);
+}
+
+.thread-message-header {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-start;
+}
+
+.thread-message-role {
+  color: var(--text);
+  display: inline-block;
+  font-weight: 600;
+}
+
+.thread-message-thinking {
+  color: var(--text-muted);
+  display: block;
+}

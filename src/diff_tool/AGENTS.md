@@ -8,7 +8,7 @@ Keep `src/diff_tool/` as an isolated island. Diff-tool-specific prompts, HTTP ha
 
 - `index.ts` — entry point (`runBuiltInDiffToolCommand`): parses launch env vars, connects the protocol client, starts the HTTP server, opens a browser, waits for close
 - `protocol_client.ts` — TCP/NDJSON client that talks to Tau's diff review protocol server over a Unix socket. Supports concurrent in-flight requests over one initialized connection, plus the server-initiated `session.close` shutdown handshake. Methods: `getContext`, `listFiles`, `getDiff`, `submitThreadMessage`, `returnReview`, `cancelSession`, `setUiText`
-- `http_server.ts` — local HTTP server that serves the React app's static build and exposes a REST API (`/api/bootstrap`, `/api/diff`, `/api/state`, `/api/thread`, `/api/thread/reply`, `/api/thread/delete`, `/api/thread/resolve`, `/api/thread/collapse`, `/api/thread-message`, `/api/thread-message/delete`, `/api/brief/generate`, `/api/review`, `/api/cancel`). Starts an internal bootstrap review thread eagerly so later brief/comment threads can fork from warmed-up context, optionally persists review state through a client-owned opaque storage adapter, and shuts down in response to Tau's `session.close` request before the protocol client disconnects.
+- `http_server.ts` — local HTTP server that serves the React app's static build and exposes the review REST API. It starts an internal bootstrap review thread eagerly, generates the reviewer guide from that context, forks later guide and comment work from the prepared threads, optionally persists review state through a client-owned opaque storage adapter, and shuts down in response to Tau's `session.close` request before the protocol client disconnects.
 - `review_state_persistence.ts` — validates and versions persisted review documents, fingerprints their captured diff scope, and separates durable review transcripts from runtime-only ephemeral agent state.
 - `launcher.ts` — creates a `DiffToolConfig` pointing at `node <cli> diff-tool`
 - `browser.ts` — opens the URL via `open` (macOS) or `xdg-open` (Linux)
@@ -30,7 +30,9 @@ The HTTP server (`http_server.ts`) serves these endpoints, which the React app c
 | POST | `/api/thread/collapse` | Collapse or expand a local review thread |
 | POST | `/api/thread-message` | Send the pending thread messages to the review agent and store the reply |
 | POST | `/api/thread-message/delete` | Delete one user or agent message from a local review thread |
-| POST | `/api/brief/generate` | Ask the review agent for a diff-wide reviewer brief |
+| POST | `/api/guide/generate` | Start or join generation of the reviewer guide |
+| POST | `/api/guide/operate` | Add or revise a guide topic, or ask a reviewer question |
+| POST | `/api/guide/comment` | Save the review comment for one guide target |
 | POST | `/api/review` | Send an optional `{ message }` and return the composed review text to Tau |
 | POST | `/api/cancel` | Cancel the review session |
 
@@ -40,12 +42,14 @@ Non-API GET requests serve static files from `app/dist/`.
 
 Vite + React TypeScript single-page app. Has its own `package.json`, `tsconfig.json`, and `node_modules/`.
 
-Key files:
-- `src/main.tsx` — React root mount
-- `src/App.tsx` — main component (all UI state and layout)
-- `src/App.css` — styles (dark theme, three-column grid)
+Key areas:
+- `src/main.tsx` — React root mount and global style imports
+- `src/App.tsx` — top-level composition for the shared session, Guide mode, Diff mode, and thread dialog
+- `src/features/` — feature-owned components, hooks, and styles for diff, guide, review, and thread behavior
+- `src/ui/` — shared controls and content renderers
+- `src/styles/` — global normalization, tokens, and text-input styling
 - `src/api.ts` — fetch wrappers for each API endpoint
-- `src/types.ts` — TypeScript types mirroring the HTTP API response shapes (intentionally duplicated from the server types since this is a separate build pipeline)
+- `src/types.ts` — app aliases for the narrow contracts exported by `shared_types.ts`
 
 ### Install and build
 
@@ -85,7 +89,7 @@ The Vite dev server proxies `/api` requests to the mock server. Open the URL Vit
 - A realistic multi-file unified diff patch
 - Review draft state patching
 - Working thread creation, replies, resolve/collapse/delete mutations, and agent message exchange (returns mock responses)
-- Reviewer brief generation
+- Reviewer guide generation, topic updates, questions, and guide comments
 - Review submission and cancellation (logs to stdout)
 
 Customize the mock data by editing the constants at the top of `dev-server.js`. The `PORT` environment variable controls the listen port (default: `9100`).

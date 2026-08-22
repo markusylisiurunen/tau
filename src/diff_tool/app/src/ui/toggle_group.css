@@ -1,0 +1,20 @@
+.toggle-group {
+  align-items: center;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  display: inline-flex;
+  gap: 1px;
+  height: 32px;
+  overflow: hidden;
+  padding-inline: 1px;
+}
+
+.toggle-group .button {
+  border-radius: calc(var(--radius-md) - 2px);
+  height: 28px;
+  padding-inline: 6px;
+}
+
+.toggle-group .button:not(.button-active):not(:hover) {
+  background: transparent;
+}

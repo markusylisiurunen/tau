@@ -1,3 +1,8 @@
+import { z } from "zod";
+import type { DiffToolGuideOperationResult } from "./review_state.js";
+import type { DiffToolGuide, DiffToolGuideOperation } from "./shared_types.js";
+import { DIFF_TOOL_GUIDE_QUESTION_LIMIT, DIFF_TOOL_GUIDE_TOPIC_LIMIT } from "./shared_types.js";
+
 function wrapForkSystemPrompt(lines: string[]): string {
   return ["<system>", ...lines, "</system>", ""].join("\n");
 }
@@ -18,32 +23,27 @@ const REVIEW_BOOTSTRAP_PROMPT = [
   "Optimize for dense, specific context that will help with later diff-review requests in this conversation.",
 ].join("\n");
 
-const REVIEW_BRIEF_PROMPT = [
-  "Use the initial diff context as a starting point, inspect the live repo state, then write a reviewer brief.",
+const REVIEW_GUIDE_PROMPT = [
+  "Use the initial diff context as a starting point, inspect the live repo state, then create a change guide for a technically competent reviewer who has no background knowledge of this specific change set.",
   "",
-  "The brief orients a technically competent reviewer before they start reading code. A good brief compresses review time without compressing judgment: the reviewer should finish reading it with an architectural mental model of the change, a sense of where risk lives, and a short list of things to consciously verify.",
+  "The orientation should establish the relevant context, the problem or limitation, why the change exists, and a brief overview of the chosen approach. It may be several short paragraphs, but should stop before becoming a detailed implementation walkthrough.",
   "",
-  "Use exactly these headings:",
+  "Choose a natural set of topics for this specific change. Each topic should explain one useful concern, subsystem, behavior, design decision, or perspective. Topics are not a fixed outline. Give each topic a distinct one-to-three-word button label, a clear heading, and a Markdown body containing the complete explanation. Use realistic examples, request shapes, state transitions, or before-and-after sketches when they communicate better than prose.",
   "",
-  "## Summary",
-  "## Behavior changes",
-  "## Verify",
+  "Generate questions that a thoughtful reviewer would naturally ask while reading this change. Focus on incomplete mental models, design rationale, assumptions, failure behavior, compatibility, concurrency, security, and meaningful alternatives. Avoid generic checklist questions. Answer each question directly from the current code and context.",
   "",
-  "**Summary** builds the big-picture mental model. Not what each file does, but the architectural shape of the change: what design decisions were made, how components interact differently now, which areas carry risk, and what can be safely skimmed. When the diff spans multiple concerns, group by concern. The reader should feel oriented before they touch any code.",
+  "Return only JSON with this exact outer shape:",
+  '{"orientation":"markdown","topics":[{"label":"short text","heading":"text","body":"markdown"}],"questions":[{"question":"text","answer":"markdown"}]}',
   "",
-  "**Behavior changes** translates code into runtime consequences. Reviewers are good at reading syntax but unreliable at inferring behavioral impact across a large diff. Bridge that gap. Show before/after sketches or pseudo-code when that communicates faster than prose. Focus on contract shifts, failure modes, defaults, ordering, and side effects.",
-  "",
-  "**Verify** surfaces the questions worth stopping for. Not obvious issues, but assumptions that may be intentional yet deserve conscious confirmation: scope boundaries, compatibility expectations, failure semantics, rollout risk. Phrase as direct questions.",
-  "",
-  "Keep the brief readable in under a minute. Mix prose, bullets, and code naturally. Be dense and specific. Do not pad thin sections or restate every file. The reviewer will read the code, so the brief should complement the diff rather than re-explain what is already clear from reading it. Focus on what code alone does not communicate well: intent, architectural reasoning, non-obvious consequences, and cross-cutting concerns.",
+  "The number, ordering, and explanatory form of topics and questions should fit the change. Do not wrap the JSON in a code fence.",
 ].join("\n");
 
-const REVIEW_BRIEF_FORK_SYSTEM_PROMPT = wrapForkSystemPrompt([
-  "From now on in this conversation, your job is to write a reviewer brief for a human reviewer.",
+const REVIEW_GUIDE_FORK_SYSTEM_PROMPT = wrapForkSystemPrompt([
+  "From now on in this conversation, your job is to maintain a change guide for a human reviewer.",
   "Treat the earlier conversation as background context only.",
   "Do not mention the earlier conversation, hidden setup, or how you were prepared for this task.",
-  "Focus on the current brief-writing request. If the code or diff suggests something different from the earlier conversation, trust the code and diff.",
-  "Do not drift into a review conversation or produce issue findings unless the request asks for that.",
+  "Trust the current code and diff when they differ from earlier context.",
+  "Return only raw JSON in the schema requested by each message.",
 ]);
 
 const COMMENT_THREAD_FORK_SYSTEM_PROMPT = wrapForkSystemPrompt([
@@ -56,12 +56,120 @@ const COMMENT_THREAD_FORK_SYSTEM_PROMPT = wrapForkSystemPrompt([
   "If the code or diff suggests something different from the earlier conversation, trust the code and diff.",
 ]);
 
+const topicSchema = z
+  .object({
+    label: z.string().min(1).max(32),
+    heading: z.string().min(1),
+    body: z.string().min(1),
+  })
+  .strict();
+const questionSchema = z
+  .object({
+    question: z.string().min(1),
+    answer: z.string().min(1),
+  })
+  .strict();
+const guideResponseSchema = z
+  .object({
+    orientation: z.string().min(1),
+    topics: z.array(topicSchema).max(DIFF_TOOL_GUIDE_TOPIC_LIMIT),
+    questions: z.array(questionSchema).max(DIFF_TOOL_GUIDE_QUESTION_LIMIT),
+  })
+  .strict();
+
+export type DiffReviewGuideResponse = z.infer<typeof guideResponseSchema>;
+
 export function buildDiffReviewBootstrapPrompt(): string {
   return REVIEW_BOOTSTRAP_PROMPT;
 }
 
-export function buildDiffReviewBriefPrompt(): string {
-  return `${REVIEW_BRIEF_FORK_SYSTEM_PROMPT}${REVIEW_BRIEF_PROMPT}`;
+export function buildDiffReviewGuidePrompt(): string {
+  return `${REVIEW_GUIDE_FORK_SYSTEM_PROMPT}${REVIEW_GUIDE_PROMPT}`;
+}
+
+export function buildDiffReviewGuideOperationPrompt(
+  operation: DiffToolGuideOperation,
+  currentGuide: DiffToolGuide,
+): string {
+  const context = [
+    "Use this current guide as context:",
+    "",
+    JSON.stringify({
+      orientation: currentGuide.orientation,
+      topics: currentGuide.topics,
+      questions: currentGuide.questions,
+    }),
+    "",
+  ];
+
+  switch (operation.kind) {
+    case "topic.add":
+      return [
+        ...context,
+        `Create one new topic explaining this request: ${operation.request}`,
+        'Return only JSON shaped as {"topic":{"label":"one to three words","heading":"text","body":"markdown"}}.',
+      ].join("\n");
+    case "topic.revise": {
+      const topic = currentGuide.topics.find((entry) => entry.id === operation.topicId);
+      return [
+        ...context,
+        `Revise this topic: ${JSON.stringify(topic)}`,
+        `Revision request: ${operation.request}`,
+        "Return the complete revised topic, preserving useful content that the request does not supersede.",
+        'Return only JSON shaped as {"topic":{"label":"one to three words","heading":"text","body":"markdown"}}.',
+      ].join("\n");
+    }
+    case "question.ask":
+      return [
+        ...context,
+        `Answer this reviewer question: ${operation.question}`,
+        'Return only JSON shaped as {"question":{"question":"text","answer":"markdown"}}.',
+      ].join("\n");
+  }
+}
+
+export function parseDiffReviewGuideResponse(response: string): DiffReviewGuideResponse {
+  return parseGuideAgentResponse(response, guideResponseSchema, "guide");
+}
+
+export function parseDiffReviewGuideOperationResponse(
+  operation: DiffToolGuideOperation,
+  response: string,
+): DiffToolGuideOperationResult {
+  switch (operation.kind) {
+    case "topic.add":
+    case "topic.revise": {
+      const content = parseGuideAgentResponse(
+        response,
+        z.object({ topic: topicSchema }).strict(),
+        "guide topic",
+      );
+      return { kind: operation.kind, topic: content.topic };
+    }
+    case "question.ask": {
+      const content = parseGuideAgentResponse(
+        response,
+        z.object({ question: questionSchema }).strict(),
+        "guide question",
+      );
+      return { kind: operation.kind, question: content.question };
+    }
+  }
+}
+
+function parseGuideAgentResponse<T>(response: string, schema: z.ZodType<T>, label: string): T {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(response);
+  } catch {
+    throw new Error(`${label} agent returned invalid JSON`);
+  }
+
+  const result = schema.safeParse(parsed);
+  if (!result.success) {
+    throw new Error(`${label} agent returned invalid content: ${z.prettifyError(result.error)}`);
+  }
+  return result.data;
 }
 
 export function buildDiffReviewCommentThreadPrompt(message: string): string {

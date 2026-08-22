@@ -1,0 +1,56 @@
+.switch {
+  align-items: center;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  font-size: var(--font-size-ui);
+  gap: 4px;
+  height: 32px;
+  position: relative;
+  white-space: nowrap;
+}
+
+.switch:has(.switch-input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+.switch-input {
+  inset: 0;
+  opacity: 0;
+  position: absolute;
+}
+
+.switch-track {
+  align-items: center;
+  background: color-mix(in srgb, var(--text-muted) 16%, var(--bg));
+  border-radius: var(--radius-full);
+  display: inline-flex;
+  height: 16px;
+  padding: 1px;
+  width: 26px;
+}
+
+.switch-thumb {
+  background: var(--text-muted);
+  border-radius: var(--radius-full);
+  display: block;
+  height: 14px;
+  transition: transform 90ms ease-out;
+  width: 14px;
+}
+
+.switch-input:checked + .switch-track {
+  background: var(--accent-interactive);
+  border-color: var(--accent-interactive);
+}
+
+.switch-input:checked + .switch-track .switch-thumb {
+  background: var(--text-inverse);
+  transform: translateX(10px);
+}
+
+.switch-input:focus-visible + .switch-track {
+  outline: 1px solid var(--accent-interactive);
+  outline-offset: 2px;
+}

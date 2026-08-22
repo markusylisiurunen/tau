@@ -397,6 +397,7 @@ describe("HostedEphemeralAgentSession", () => {
       executionEnvironment: createTestExecutionEnvironment(),
       instructions: "review",
       tools: [],
+      reasoning: "medium",
       emitUpdate: vi.fn(),
     });
     session.createThread = vi.fn(async () => {
@@ -4162,6 +4163,7 @@ describe("LocalSessionHost", () => {
     };
     const host = createHostForEnvironment(store, executionEnvironment);
     const session = await host.createSession(localCreateInput);
+    await session.setReasoning("high");
     const { contextId } = await session.createEphemeralContext({
       instructions: "review instructions",
       tools: ["bash"],
@@ -4171,6 +4173,7 @@ describe("LocalSessionHost", () => {
     const thread = await hostedContext.createThread("thread-1");
     const systemPrompt = thread.runtime.spec.systemPrompt;
 
+    expect(thread.runtime.spec.attribution.reasoningEffort).toBe("high");
     expect(systemPrompt).toContain("target AGENTS instructions");
     expect(systemPrompt).toContain("target skill");
     expect(systemPrompt).toContain("- Current working directory: `/repo`");

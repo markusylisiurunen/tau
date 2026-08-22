@@ -5,6 +5,7 @@ import type {
   SessionProtocolCreateParams,
   SessionProtocolEphemeralAgentTool,
   SessionProtocolInitializeParams,
+  SessionProtocolReasoningEffort,
   SessionProtocolResultByMethod,
   SessionProtocolSampleParams,
 } from "../protocol/session_protocol.js";
@@ -511,12 +512,14 @@ class TauSdkClientImpl implements TauSdkClient {
     options: {
       instructions: string;
       tools: SessionProtocolEphemeralAgentTool[];
+      reasoning?: SessionProtocolReasoningEffort;
     },
   ): Promise<SessionProtocolResultByMethod["session.ephemeral.create"]> {
     return this.transport.request("session.ephemeral.create", {
       sessionId,
       instructions: options.instructions,
       tools: options.tools,
+      ...(options.reasoning !== undefined ? { reasoning: options.reasoning } : {}),
     });
   }
 
@@ -527,6 +530,7 @@ class TauSdkClientImpl implements TauSdkClient {
       threadId: string;
       forkFromThreadId?: string;
       message: string;
+      reasoning?: SessionProtocolReasoningEffort;
     },
   ): Promise<SessionProtocolResultByMethod["session.ephemeral.submit"]> {
     return this.transport.request("session.ephemeral.submit", {
@@ -537,6 +541,7 @@ class TauSdkClientImpl implements TauSdkClient {
         ? { forkFromThreadId: options.forkFromThreadId }
         : {}),
       message: options.message,
+      ...(options.reasoning !== undefined ? { reasoning: options.reasoning } : {}),
     });
   }
 
@@ -803,7 +808,7 @@ class TauSdkSessionImpl implements TauSdkSession {
   }
 
   async setReasoning(
-    reasoning: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max",
+    reasoning: SessionProtocolReasoningEffort,
   ): Promise<SessionProtocolResultByMethod["session.setReasoning"]> {
     const snapshot = await this.client.sendSetReasoning(this.activeSessionId(), reasoning);
     this.discardBufferedDeltasThrough(snapshot.revision);
@@ -863,6 +868,7 @@ class TauSdkSessionImpl implements TauSdkSession {
   async createEphemeralContext(options: {
     instructions: string;
     tools: SessionProtocolEphemeralAgentTool[];
+    reasoning?: SessionProtocolReasoningEffort;
   }): Promise<SessionProtocolResultByMethod["session.ephemeral.create"]> {
     return await this.client.sendEphemeralCreate(this.activeSessionId(), options);
   }
@@ -872,6 +878,7 @@ class TauSdkSessionImpl implements TauSdkSession {
     threadId: string;
     forkFromThreadId?: string;
     message: string;
+    reasoning?: SessionProtocolReasoningEffort;
   }): Promise<SessionProtocolResultByMethod["session.ephemeral.submit"]> {
     return await this.client.sendEphemeralSubmit(this.activeSessionId(), options);
   }

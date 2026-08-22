@@ -203,6 +203,8 @@ Each subscription returns an unsubscribe function.
 
 `submit`, `queue`, and `record` accept `{ historyEntryId?: string }`. When omitted, Tau generates the user history id. Use `getTauSdkSessionTurnRecord(snapshot, id)` to distinguish unknown, running, and settled accepted turns, or `getTauSdkSessionTurnOutcome(snapshot, id)` when only a settled outcome matters.
 
+`createEphemeralContext` and `submitEphemeralThread` accept an optional `reasoning` effort. A context inherits the parent session agent's current effort when creation omits it. A submission override becomes that thread's current effort before its turn; forks inherit the source thread's effort before applying an override.
+
 ### Execute a command
 
 `exec` generates a unique wire-level execution id and supports exact positional arguments, environment overrides other than `HOME`, binary stdin, a command `cwd`, timeout, capture limit, and cancellation signal:

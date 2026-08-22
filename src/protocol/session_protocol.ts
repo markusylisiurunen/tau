@@ -236,12 +236,14 @@ export type SessionProtocolEphemeralAgentTool = "bash" | "write" | "edit" | "vie
 export type SessionProtocolEphemeralCreateParams = SessionProtocolSessionIdParams & {
   instructions: string;
   tools: SessionProtocolEphemeralAgentTool[];
+  reasoning?: SessionProtocolReasoningEffort;
 };
 export type SessionProtocolEphemeralSubmitParams = SessionProtocolSessionIdParams & {
   contextId: string;
   threadId: string;
   forkFromThreadId?: string;
   message: string;
+  reasoning?: SessionProtocolReasoningEffort;
 };
 export type SessionProtocolEphemeralCloseParams = SessionProtocolSessionIdParams & {
   contextId: string;
@@ -1910,6 +1912,7 @@ const sessionProtocolEphemeralCreateParamsSchema = z
     sessionId: nonEmptyStringSchema,
     instructions: nonEmptyStringSchema,
     tools: z.array(sessionProtocolEphemeralAgentToolSchema),
+    reasoning: sessionProtocolReasoningEffortSchema.optional(),
   })
   .strip();
 
@@ -1920,6 +1923,7 @@ const sessionProtocolEphemeralSubmitParamsSchema = z
     threadId: nonEmptyStringSchema,
     forkFromThreadId: nonEmptyStringSchema.optional(),
     message: nonEmptyStringSchema,
+    reasoning: sessionProtocolReasoningEffortSchema.optional(),
   })
   .strip();
 
@@ -5134,7 +5138,9 @@ function validateEphemeralCreateParams(
           ? "session.ephemeral.create params.instructions must be a non-empty string"
           : hasIssue(parsed.error, ["tools"])
             ? "session.ephemeral.create params.tools are invalid"
-            : `session.ephemeral.create params are invalid: ${formatZodError(parsed.error)}`;
+            : hasIssue(parsed.error, ["reasoning"])
+              ? "session.ephemeral.create params.reasoning must be one of none, minimal, low, medium, high, xhigh, or max when provided"
+              : `session.ephemeral.create params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 
@@ -5158,7 +5164,9 @@ function validateEphemeralSubmitParams(
               ? "session.ephemeral.submit params.forkFromThreadId must be a non-empty string when provided"
               : hasIssue(parsed.error, ["message"])
                 ? "session.ephemeral.submit params.message must be a non-empty string"
-                : `session.ephemeral.submit params are invalid: ${formatZodError(parsed.error)}`;
+                : hasIssue(parsed.error, ["reasoning"])
+                  ? "session.ephemeral.submit params.reasoning must be one of none, minimal, low, medium, high, xhigh, or max when provided"
+                  : `session.ephemeral.submit params are invalid: ${formatZodError(parsed.error)}`;
     return invalidParams(message);
   }
 
@@ -5172,6 +5180,7 @@ function validateEphemeralSubmitParams(
         ? { forkFromThreadId: parsed.data.forkFromThreadId }
         : {}),
       message: parsed.data.message,
+      ...(parsed.data.reasoning !== undefined ? { reasoning: parsed.data.reasoning } : {}),
     },
   };
 }

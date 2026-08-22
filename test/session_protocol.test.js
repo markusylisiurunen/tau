@@ -308,6 +308,7 @@ describe("session_protocol", () => {
           sessionId: "session-1",
           instructions: "review this",
           tools: ["bash", "view_image"],
+          reasoning: "high",
         },
       }),
     );
@@ -322,6 +323,7 @@ describe("session_protocol", () => {
           sessionId: "session-1",
           instructions: "review this",
           tools: ["bash", "view_image"],
+          reasoning: "high",
         },
       },
     });
@@ -338,6 +340,7 @@ describe("session_protocol", () => {
           threadId: "thread-1",
           forkFromThreadId: "thread-0",
           message: "review this",
+          reasoning: "minimal",
         },
       }),
     );
@@ -354,6 +357,7 @@ describe("session_protocol", () => {
           threadId: "thread-1",
           forkFromThreadId: "thread-0",
           message: "review this",
+          reasoning: "minimal",
         },
       },
     });
@@ -1086,6 +1090,7 @@ describe("session_protocol", () => {
         sessionId: "session-1",
         instructions: "review this",
         tools: ["bash", "view_image"],
+        reasoning: "xhigh",
       }),
     ).toEqual({
       ok: true,
@@ -1093,6 +1098,7 @@ describe("session_protocol", () => {
         sessionId: "session-1",
         instructions: "review this",
         tools: ["bash", "view_image"],
+        reasoning: "xhigh",
       },
     });
     expect(
@@ -1101,6 +1107,7 @@ describe("session_protocol", () => {
         contextId: "ephemeral-1",
         threadId: "thread-1",
         message: "review this",
+        reasoning: "low",
       }),
     ).toEqual({
       ok: true,
@@ -1109,6 +1116,7 @@ describe("session_protocol", () => {
         contextId: "ephemeral-1",
         threadId: "thread-1",
         message: "review this",
+        reasoning: "low",
       },
     });
     expect(
@@ -1147,6 +1155,22 @@ describe("session_protocol", () => {
     });
 
     expect(
+      validateSessionProtocolParams("session.ephemeral.create", {
+        sessionId: "session-1",
+        instructions: "review this",
+        tools: [],
+        reasoning: "extreme",
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidParams,
+        message:
+          "session.ephemeral.create params.reasoning must be one of none, minimal, low, medium, high, xhigh, or max when provided",
+      }),
+    });
+
+    expect(
       validateSessionProtocolParams("session.ephemeral.submit", {
         sessionId: "session-1",
         contextId: "ephemeral-1",
@@ -1160,6 +1184,23 @@ describe("session_protocol", () => {
         code: SESSION_PROTOCOL_ERROR_CODES.invalidParams,
         message:
           "session.ephemeral.submit params.forkFromThreadId must be a non-empty string when provided",
+      }),
+    });
+
+    expect(
+      validateSessionProtocolParams("session.ephemeral.submit", {
+        sessionId: "session-1",
+        contextId: "ephemeral-1",
+        threadId: "thread-1",
+        message: "review this",
+        reasoning: "extreme",
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        code: SESSION_PROTOCOL_ERROR_CODES.invalidParams,
+        message:
+          "session.ephemeral.submit params.reasoning must be one of none, minimal, low, medium, high, xhigh, or max when provided",
       }),
     });
   });

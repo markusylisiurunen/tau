@@ -8,29 +8,41 @@ function wrapForkSystemPrompt(lines: string[]): string {
 }
 
 const REVIEW_BOOTSTRAP_PROMPT = [
-  "Use the initial diff context as a starting point, then inspect the live repo state and build private working context for later review conversations in this same diff-review session.",
+  "Use the initial diff context as a starting point, then inspect the complete selected change and relevant live repo context. Build private working context for later review conversations in this same diff-review session.",
   "",
   "The current repo state is authoritative. Use bash as needed to inspect relevant files and commands.",
   "",
-  "Reply with a compact working-memory summary covering:",
-  "- the architectural shape of the change",
-  "- the highest-risk behavior changes",
-  "- files or areas that deserve extra scrutiny",
-  "- any assumptions worth verifying in follow-up review threads",
+  "Reply with a compact change model covering only what is materially relevant:",
+  "- the problem or limitation, intended outcome, and approximate scope",
+  "- before-and-after behavior, including important unchanged behavior or non-goals",
+  "- the central flow, changed contracts or identities, and ownership boundaries",
+  "- relevant state, lifecycle, recovery, concurrency, or model-facing prompt behavior",
+  "- important design choices, tradeoffs, verified risks, and assumptions",
+  "- a few precise code or test anchors that establish the model or deserve scrutiny",
   "",
   "This response is private working context, not reviewer-facing output.",
   "Do not write findings, recommendations, or polished review prose.",
-  "Optimize for dense, specific context that will help with later diff-review requests in this conversation.",
+  "Optimize for dense, specific context that will help later requests explain behavior and design without narrating the implementation.",
 ].join("\n");
 
 const REVIEW_GUIDE_PROMPT = [
-  "Use the initial diff context as a starting point, inspect the live repo state, then create a change guide for a technically competent reviewer who has no background knowledge of this specific change set.",
+  "Use the initial diff context as a starting point, inspect the complete selected change and relevant live repo context, then create a change guide for a technically competent reviewer with no prior knowledge of this change. Make it concise but complete.",
   "",
-  "The orientation should establish the relevant context, the problem or limitation, why the change exists, and a brief overview of the chosen approach. It may be several short paragraphs, but should stop before becoming a detailed implementation walkthrough.",
+  "The goal is to reduce review effort. After reading the full guide, the reviewer should understand the change at every level that materially affects behavior or design, while still relying on the diff for function-level implementation detail.",
   "",
-  "Choose a natural set of topics for this specific change. Each topic should explain one useful concern, subsystem, behavior, design decision, or perspective. Topics are not a fixed outline. Give each topic a distinct one-to-three-word button label, a clear heading, and a Markdown body containing the complete explanation. Use realistic examples, request shapes, state transitions, or before-and-after sketches when they communicate better than prose.",
+  "Start with an orientation that explains the established problem or limitation, the intended outcome, the broad approach, and the approximate scope. Mention important unchanged behavior or non-goals when they prevent a likely misunderstanding. Keep this to a few short paragraphs and stop before the detailed walkthrough.",
   "",
-  "Generate questions that a thoughtful reviewer would naturally ask while reading this change. Focus on incomplete mental models, design rationale, assumptions, failure behavior, compatibility, concurrency, security, and meaningful alternatives. Avoid generic checklist questions. Answer each question directly from the current code and context.",
+  "Choose a small, natural set of topics for this specific change. Select only dimensions that materially improve understanding, such as user or consumer behavior, contracts and protocols, architecture and ownership, model-facing prompts, state and lifecycle, tradeoffs and non-goals, or concrete risks. This is a menu of possibilities, not a required outline.",
+  "",
+  "Order topics by explanatory dependency: establish behavior before the contracts, ownership, lifecycle, or implementation choices that produce it. Each topic should cover one coherent concern without repeating the orientation or another topic. Explain the relevant before-and-after behavior, flow or contract, owner, supported rationale, and practical consequence. Include failure, compatibility, recovery, or validation details only when they change how the design should be understood or reviewed.",
+  "",
+  "Give every topic a distinct, specific one-to-three-word button label, a clear heading, and a Markdown body containing the complete explanation. Define repo-specific terminology at first use. Prefer one small concrete artifact, such as a realistic request shape, state transition, policy distinction, data-flow sketch, before-and-after example, or behaviorally important prompt excerpt, when it communicates faster than prose. Use paths and symbols sparingly as evidence anchors, never as a file or function walkthrough.",
+  "",
+  "Generate a small set of likely reviewer questions as a skimmable second pass. Use them for material rationale, boundaries, edge behavior, alternatives, accepted limitations, or remaining uncertainty that would otherwise interrupt the main narrative. Make each question understandable on its own and answer it directly. Do not duplicate the topics, ask for approval, or produce a generic review checklist.",
+  "",
+  "This guide explains the change; it is not an approval verdict or an issue list. Mention a risk only when it is established by the current code or necessary to understand a real tradeoff. Distinguish evidence from inference, use precise lifecycle and ownership terms, and say when motivation or behavior cannot be established from the available context.",
+  "",
+  "Keep the guide conceptually complete, not implementation-exhaustive. Remove anything that does not improve the reviewer's ability to predict behavior, understand a boundary or decision, or focus their inspection of the diff. Do not enumerate touched files, routine tests, or obvious implementation mechanics.",
   "",
   "Return only JSON with this exact outer shape:",
   '{"orientation":"markdown","topics":[{"label":"short text","heading":"text","body":"markdown"}],"questions":[{"question":"text","answer":"markdown"}]}',
@@ -39,10 +51,12 @@ const REVIEW_GUIDE_PROMPT = [
 ].join("\n");
 
 const REVIEW_GUIDE_FORK_SYSTEM_PROMPT = wrapForkSystemPrompt([
-  "From now on in this conversation, your job is to maintain a change guide for a human reviewer.",
+  "From now on in this conversation, your job is to maintain a concise change guide for a human reviewer.",
+  "The guide should reduce review effort by explaining materially relevant behavior, contracts, ownership, lifecycle, model-facing behavior, decisions, and risks without narrating functions or files.",
   "Treat the earlier conversation as background context only.",
   "Do not mention the earlier conversation, hidden setup, or how you were prepared for this task.",
   "Trust the current code and diff when they differ from earlier context.",
+  "Distinguish established facts from inference and do not invent design rationale.",
   "Return only raw JSON in the schema requested by each message.",
 ]);
 
@@ -104,27 +118,29 @@ export function buildDiffReviewGuideOperationPrompt(
 
   switch (operation.kind) {
     case "topic.add":
-      return [
+      return `${REVIEW_GUIDE_FORK_SYSTEM_PROMPT}${[
         ...context,
         `Create one new topic explaining this request: ${operation.request}`,
+        "Match the guide's level and style, inspect the repo again when needed, and avoid repeating existing content. Do not rewrite unrelated parts of the guide.",
         'Return only JSON shaped as {"topic":{"label":"one to three words","heading":"text","body":"markdown"}}.',
-      ].join("\n");
+      ].join("\n")}`;
     case "topic.revise": {
       const topic = currentGuide.topics.find((entry) => entry.id === operation.topicId);
-      return [
+      return `${REVIEW_GUIDE_FORK_SYSTEM_PROMPT}${[
         ...context,
         `Revise this topic: ${JSON.stringify(topic)}`,
         `Revision request: ${operation.request}`,
-        "Return the complete revised topic, preserving useful content that the request does not supersede.",
+        "Return the complete revised topic. Preserve useful content that the request does not supersede, remove content that no longer helps, and do not rewrite unrelated parts of the guide.",
         'Return only JSON shaped as {"topic":{"label":"one to three words","heading":"text","body":"markdown"}}.',
-      ].join("\n");
+      ].join("\n")}`;
     }
     case "question.ask":
-      return [
+      return `${REVIEW_GUIDE_FORK_SYSTEM_PROMPT}${[
         ...context,
         `Answer this reviewer question: ${operation.question}`,
+        "Copy the reviewer's question exactly into the question field. Answer it directly at the requested depth, using the current code as evidence, without repeating unrelated guide content.",
         'Return only JSON shaped as {"question":{"question":"text","answer":"markdown"}}.',
-      ].join("\n");
+      ].join("\n")}`;
   }
 }
 

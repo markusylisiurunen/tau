@@ -790,10 +790,16 @@ describe("built-in diff tool", () => {
           },
         ],
       });
-      expect(secondClient.submitThreadMessage).toHaveBeenCalledWith({
+      const restoredGuideCall = secondClient.submitThreadMessage.mock.calls
+        .map(([options]) => options)
+        .find((options) => options.message.includes("Create one new topic"));
+      expect(restoredGuideCall).toMatchObject({
         forkFromThreadId: "second-bootstrap-thread",
         message: expect.stringContaining('"orientation":"Review orientation"'),
       });
+      expect(restoredGuideCall.message).toMatch(
+        /^<system>\nFrom now on in this conversation, your job is to maintain a concise change guide/,
+      );
 
       await fetchJson(`${started.url}api/thread/reply`, {
         method: "POST",

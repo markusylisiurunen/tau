@@ -1,5 +1,4 @@
 import { FileDiff, MessagesSquare } from "lucide-react";
-import { Button } from "../../ui/button.js";
 import type { CommentThread } from "./comments.js";
 import type { DiffFile } from "./parse_diff.js";
 import { DiffStats } from "./diff_stats.js";
@@ -37,7 +36,13 @@ export function Sidebar({
       <section className="sidebar-section">
         <div className="sidebar-section-header">
           <h2 className="sidebar-section-title">Threads</h2>
-          <Button onClick={onCreateDetachedThread}>new thread</Button>
+          <button
+            type="button"
+            className="sidebar-action"
+            onClick={onCreateDetachedThread}
+          >
+            new thread
+          </button>
         </div>
         <div className="sidebar-conversations">
           {threads.length === 0 ? (
@@ -51,30 +56,29 @@ export function Sidebar({
               const threadKind =
                 thread.anchor.kind === "line" ? "diff comment" : "thread";
 
+              const selected = selectedThreadId === thread.id;
+
               return (
-                <Button
+                <button
                   key={thread.id}
-                  variant="ghost"
-                  active={selectedThreadId === thread.id}
-                  muted={thread.resolved}
-                  fullWidth
+                  type="button"
+                  className={`sidebar-thread-item${selected ? " selected" : ""}${thread.resolved ? " resolved" : ""}`}
+                  aria-current={selected || undefined}
                   onClick={() => onOpenThread(thread)}
                   title={name}
                 >
-                  <span className="sidebar-thread-row">
-                    <ThreadIcon
-                      className="sidebar-thread-kind"
-                      size={13}
-                      aria-label={threadKind}
-                    />
-                    <span className="sidebar-thread-name">{name}</span>
-                    <span
-                      className={`sidebar-thread-status-dot ${status}`}
-                      aria-label={status}
-                      title={status}
-                    />
-                  </span>
-                </Button>
+                  <ThreadIcon
+                    className="sidebar-thread-kind"
+                    size={13}
+                    aria-label={threadKind}
+                  />
+                  <span className="sidebar-thread-name">{name}</span>
+                  <span
+                    className={`sidebar-thread-status-dot ${status}`}
+                    aria-label={status}
+                    title={status}
+                  />
+                </button>
               );
             })
           )}
@@ -92,31 +96,28 @@ export function Sidebar({
             >
               <SidebarDirectoryLabel directory={group.directory} />
               {group.files.map((file) => (
-                <Button
+                <button
                   key={file.id}
-                  variant="ghost"
-                  muted={viewed[file.id]}
-                  fullWidth
+                  type="button"
+                  className={`sidebar-file-item${viewed[file.id] ? " viewed" : ""}`}
                   onClick={() => onJumpToFile(file.id)}
                   title={file.displayPath}
                 >
-                  <span className="sidebar-row">
-                    <span
-                      className={`sidebar-file-status ${file.status}`}
-                      aria-label={file.status}
-                    >
-                      {formatFileStatus(file.status)}
-                    </span>
-                    <span className="sidebar-file-name">
-                      {formatFileName(file)}
-                    </span>
-                    <DiffStats
-                      additions={file.additions}
-                      deletions={file.deletions}
-                      className="sidebar-stats"
-                    />
+                  <span
+                    className={`sidebar-file-status ${file.status}`}
+                    aria-label={file.status}
+                  >
+                    {formatFileStatus(file.status)}
                   </span>
-                </Button>
+                  <span className="sidebar-file-name">
+                    {formatFileName(file)}
+                  </span>
+                  <DiffStats
+                    additions={file.additions}
+                    deletions={file.deletions}
+                    className="sidebar-stats"
+                  />
+                </button>
               ))}
             </div>
           ))}

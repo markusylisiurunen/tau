@@ -1,7 +1,6 @@
 .switch {
   align-items: center;
   color: var(--text-muted);
-  cursor: pointer;
   display: inline-flex;
   font-size: var(--font-size-ui);
   gap: 4px;

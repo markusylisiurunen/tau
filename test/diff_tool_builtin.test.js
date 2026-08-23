@@ -13,13 +13,14 @@ import { buildDiffReviewCommentThreadPrompt } from "../src/diff_tool/review_prom
 
 function createSubmitThreadMessage(createThread) {
   const threads = new Map();
-  return async ({ threadId, forkFromThreadId, message }) => {
+  return async ({ threadId, forkFromThreadId, message, reasoning }) => {
     let thread = threads.get(threadId);
     if (!thread) {
       const forkSource = forkFromThreadId ? threads.get(forkFromThreadId) : undefined;
       thread = createThread({
         threadId,
         ...(forkSource ? { forkFrom: forkSource.createForkSource() } : {}),
+        ...(reasoning !== undefined ? { reasoning } : {}),
       });
       threads.set(threadId, thread);
     }
@@ -204,8 +205,8 @@ describe("built-in diff tool", () => {
       snapshot: createSnapshot(),
       persona: personas[0],
       config: {},
-      createThread: ({ threadId, forkFrom }) => {
-        createdThreads.push({ threadId, forkFrom });
+      createThread: ({ threadId, forkFrom, reasoning }) => {
+        createdThreads.push({ threadId, forkFrom, reasoning });
         return createThreadSession({
           async submitMessage(message) {
             const messages = threadMessages.get(threadId) ?? [];
@@ -426,18 +427,24 @@ describe("built-in diff tool", () => {
       expect(detachedThreadMessages[0]).toContain('"question":"What can fail?"');
 
       expect(createdThreads).toHaveLength(4);
-      expect(createdThreads[0].forkFrom).toBeUndefined();
+      expect(createdThreads[0]).toMatchObject({
+        forkFrom: undefined,
+        reasoning: undefined,
+      });
       expect(createdThreads[1]).toEqual({
         threadId: bootstrap.state.guide.threadId,
         forkFrom: expect.any(Object),
+        reasoning: "medium",
       });
       expect(createdThreads[2]).toEqual({
         threadId: askedThread.state.threads[0].threadId,
         forkFrom: expect.any(Object),
+        reasoning: "medium",
       });
       expect(createdThreads[3]).toEqual({
         threadId: askedDetachedThread.state.threads[1].threadId,
         forkFrom: expect.any(Object),
+        reasoning: "medium",
       });
       expect(bridge.getUiState()).toEqual({
         diffToolUiText: started.url,
@@ -817,6 +824,7 @@ describe("built-in diff tool", () => {
       expect(restoredGuideCall).toMatchObject({
         forkFromThreadId: "second-bootstrap-thread",
         message: expect.stringContaining('"orientation":"Review orientation"'),
+        reasoning: "medium",
       });
       expect(restoredGuideCall.message).toMatch(
         /^<system>\nFrom now on in this conversation, your job is to maintain a concise change guide/,
@@ -839,6 +847,7 @@ describe("built-in diff tool", () => {
       expect(restoredCall).toMatchObject({
         forkFromThreadId: "second-bootstrap-thread",
         message: expect.stringContaining("Continue this restored review conversation."),
+        reasoning: "medium",
       });
       expect(restoredCall.message).toContain("Why is this safe?");
       expect(restoredCall.message).toContain("first reply");
@@ -1349,6 +1358,7 @@ describe("built-in diff tool", () => {
       expect(client.submitThreadMessage).toHaveBeenNthCalledWith(3, {
         forkFromThreadId: "bootstrap-thread",
         message: expect.any(String),
+        reasoning: "medium",
       });
     } finally {
       await server.close();

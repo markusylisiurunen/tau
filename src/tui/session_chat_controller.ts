@@ -2401,6 +2401,7 @@ export class SessionChatController {
           threadId: options.threadId,
           ...(options.forkFromThreadId ? { forkFromThreadId: options.forkFromThreadId } : {}),
           message: options.message,
+          ...(options.reasoning !== undefined ? { reasoning: options.reasoning } : {}),
         }),
       deps: this.deps,
       ...(this.diffToolLauncher ? { toolLauncher: this.diffToolLauncher } : {}),

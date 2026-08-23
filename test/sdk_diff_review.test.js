@@ -28,6 +28,7 @@ function createRepository() {
 
 function createSession(cwd) {
   const closeEphemeralContext = vi.fn(async () => ({ closed: true }));
+  const createEphemeralContext = vi.fn(async () => ({ contextId: "context-1" }));
   const submitEphemeralThread = vi.fn(async ({ threadId, message }) => ({
     threadId,
     response: `reply: ${message}`,
@@ -62,9 +63,7 @@ function createSession(cwd) {
           closeSignal: result.signal,
         };
       },
-      async createEphemeralContext() {
-        return { contextId: "context-1" };
-      },
+      createEphemeralContext,
       submitEphemeralThread,
       closeEphemeralContext,
       onEphemeral() {
@@ -72,6 +71,7 @@ function createSession(cwd) {
       },
     },
     closeEphemeralContext,
+    createEphemeralContext,
     submitEphemeralThread,
   };
 }
@@ -79,7 +79,8 @@ function createSession(cwd) {
 describe("SDK diff review", () => {
   it("starts the built-in browser UI without a TUI or browser launch", async () => {
     const cwd = createRepository();
-    const { session, closeEphemeralContext, submitEphemeralThread } = createSession(cwd);
+    const { session, closeEphemeralContext, createEphemeralContext, submitEphemeralThread } =
+      createSession(cwd);
     const review = await startTauSdkDiffReview({
       session,
       source: { kind: "git_diff", diffArgs: ["HEAD"] },
@@ -106,9 +107,16 @@ describe("SDK diff review", () => {
       });
 
       await vi.waitFor(() => expect(submitEphemeralThread).toHaveBeenCalledTimes(2));
+      expect(createEphemeralContext).toHaveBeenCalledWith(
+        expect.not.objectContaining({ reasoning: expect.anything() }),
+      );
+      expect(submitEphemeralThread.mock.calls[0][0]).not.toHaveProperty("reasoning");
       expect(submitEphemeralThread).toHaveBeenNthCalledWith(
         2,
-        expect.objectContaining({ forkFromThreadId: expect.any(String) }),
+        expect.objectContaining({
+          forkFromThreadId: expect.any(String),
+          reasoning: "medium",
+        }),
       );
     } finally {
       await review.close();

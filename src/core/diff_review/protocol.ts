@@ -1,7 +1,8 @@
 import { z } from "zod";
+import { type ReasoningEffort, ReasoningEffortSchema } from "../types.js";
 import type { DiffReviewFile } from "./snapshot.js";
 
-export const DIFF_REVIEW_PROTOCOL_VERSION = 1 as const;
+export const DIFF_REVIEW_PROTOCOL_VERSION = 2 as const;
 
 export const DIFF_REVIEW_CLIENT_METHODS = [
   "initialize",
@@ -57,6 +58,7 @@ export type DiffReviewThreadSubmitMessageParams = {
   threadId?: string;
   forkFromThreadId?: string;
   message: string;
+  reasoning?: ReasoningEffort;
 };
 export type DiffReviewSessionReturnReviewParams = {
   review: string;
@@ -269,6 +271,7 @@ const threadSubmitMessageParamsSchema = z
     threadId: z.string().trim().min(1).optional(),
     forkFromThreadId: z.string().trim().min(1).optional(),
     message: z.string().trim().min(1),
+    reasoning: ReasoningEffortSchema.optional(),
   })
   .strip()
   .superRefine((value, context) => {
@@ -552,7 +555,7 @@ function formatParamsError(method: DiffReviewMethod, _error: z.ZodError): string
     case "session.set_ui_text":
       return "session.set_ui_text.text must be a string";
     case "thread.submit_message":
-      return "thread.submit_message requires a non-empty message, optional threadId, and optional forkFromThreadId when creating a new thread";
+      return "thread.submit_message requires a non-empty message, optional threadId, optional forkFromThreadId when creating a new thread, and optional valid reasoning effort";
     case "session.return_review":
       return "session.return_review.review must be a non-empty string";
   }

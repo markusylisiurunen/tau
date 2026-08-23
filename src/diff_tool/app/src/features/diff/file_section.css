@@ -32,7 +32,6 @@
 }
 
 .file-toggle {
-  cursor: pointer;
   flex: 1 1 auto;
   gap: 4px;
   justify-content: flex-start;

@@ -74,6 +74,7 @@ type ReviewStatePersistence = {
 };
 
 const JSON_BODY_LIMIT_BYTES = 1024 * 1024;
+const DIFF_REVIEW_FORK_REASONING = "medium" as const;
 
 const CONTENT_TYPE_BY_EXT: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -381,6 +382,7 @@ export class DiffToolHttpServer {
     const result = await this.client.submitThreadMessage({
       forkFromThreadId: await this.getBootstrapThreadId(),
       message: buildDiffReviewGuidePrompt(),
+      reasoning: DIFF_REVIEW_FORK_REASONING,
     });
     const guide = parseDiffReviewGuideResponse(result.response);
     const { state } = await this.mutateReviewState((draft) =>
@@ -585,6 +587,7 @@ export class DiffToolHttpServer {
             : {
                 forkFromThreadId: await this.getBootstrapThreadId(),
                 message: buildDiffReviewCommentThreadPrompt(message, guideSnapshot),
+                reasoning: DIFF_REVIEW_FORK_REASONING,
               },
         );
         const { result: applied, state } = await this.mutateReviewState(
@@ -651,6 +654,7 @@ export class DiffToolHttpServer {
             : {
                 forkFromThreadId: await this.getBootstrapThreadId(),
                 message,
+                reasoning: DIFF_REVIEW_FORK_REASONING,
               },
         );
         const content = parseDiffReviewGuideOperationResponse(operation, result.response);

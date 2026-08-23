@@ -93,6 +93,7 @@ export async function startTauSdkDiffReview(
           ? { forkFromThreadId: submitOptions.forkFromThreadId }
           : {}),
         message: submitOptions.message,
+        ...(submitOptions.reasoning !== undefined ? { reasoning: submitOptions.reasoning } : {}),
       }),
   });
   const unsubscribeEphemeral = options.session.onEphemeral((message) => {

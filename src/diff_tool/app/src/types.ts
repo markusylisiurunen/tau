@@ -1,12 +1,18 @@
 import {
   DEFAULT_DIFF_TOOL_CODE_THEME,
-  DIFF_TOOL_CODE_THEMES,
+  guideCommentTargetKey,
 } from "../../shared_types.js";
 import type {
   DiffReviewFile,
   DiffToolBootstrapPayload,
-  DiffToolBrief,
   DiffToolCommentThread,
+  DiffToolGuide,
+  DiffToolGuideComment,
+  DiffToolGuideCommentPayload,
+  DiffToolGuideCommentTarget,
+  DiffToolGuideOperation,
+  DiffToolGuideQuestion,
+  DiffToolGuideTopic,
   DiffToolCreateThreadPayload,
   DiffToolCreateThreadResponse,
   DiffToolDeleteThreadMessagePayload,
@@ -22,12 +28,17 @@ import type {
   DiffToolThreadReplyPayload,
 } from "../../shared_types.js";
 
-export { DEFAULT_DIFF_TOOL_CODE_THEME, DIFF_TOOL_CODE_THEMES };
+export { DEFAULT_DIFF_TOOL_CODE_THEME, guideCommentTargetKey };
 
 export type {
   DiffReviewFile,
-  DiffToolBrief,
   DiffToolCommentThread,
+  DiffToolGuide,
+  DiffToolGuideComment,
+  DiffToolGuideCommentTarget,
+  DiffToolGuideOperation,
+  DiffToolGuideQuestion,
+  DiffToolGuideTopic,
   DiffToolDetachedThreadAnchor,
   DiffToolLineThreadAnchor,
   DiffToolReviewState,
@@ -43,6 +54,7 @@ export type CreateThreadPayload = DiffToolCreateThreadPayload;
 export type CreateThreadResponse = DiffToolCreateThreadResponse;
 export type ThreadReplyPayload = DiffToolThreadReplyPayload;
 export type DeleteThreadMessagePayload = DiffToolDeleteThreadMessagePayload;
+export type GuideCommentPayload = DiffToolGuideCommentPayload;
 export type LineSide = DiffToolLineSide;
 export type DiffStyle = DiffToolReviewState["diffStyle"];
 export type OverflowMode = DiffToolReviewState["overflowMode"];
@@ -56,8 +68,4 @@ export type ResolveThreadPayload = {
 export type CollapseThreadPayload = {
   id: string;
   collapsed: boolean;
-};
-
-export type GenerateBriefResponse = {
-  state: DiffToolReviewState;
 };

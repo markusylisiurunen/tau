@@ -89,9 +89,50 @@ export type DiffToolCommentThread = {
   collapsed: boolean;
 };
 
-export type DiffToolBrief = {
+export const DIFF_TOOL_GUIDE_TOPIC_LIMIT = 24;
+export const DIFF_TOOL_GUIDE_QUESTION_LIMIT = 32;
+
+export type DiffToolGuideTopic = {
+  id: string;
+  label: string;
+  heading: string;
+  body: string;
+};
+
+export type DiffToolGuideQuestion = {
+  id: string;
+  question: string;
+  answer: string;
+  source: "generated" | "user";
+};
+
+export type DiffToolGuideCommentTarget =
+  | { kind: "orientation" }
+  | { kind: "topic"; topicId: string }
+  | { kind: "question"; questionId: string };
+
+export type DiffToolGuideComment = {
+  target: DiffToolGuideCommentTarget;
+  body: string;
+};
+
+export function guideCommentTargetKey(target: DiffToolGuideCommentTarget): string {
+  switch (target.kind) {
+    case "orientation":
+      return "orientation";
+    case "topic":
+      return `topic:${target.topicId}`;
+    case "question":
+      return `question:${target.questionId}`;
+  }
+}
+
+export type DiffToolGuide = {
   threadId?: string;
-  content: string;
+  orientation: string;
+  topics: DiffToolGuideTopic[];
+  questions: DiffToolGuideQuestion[];
+  comments: DiffToolGuideComment[];
   loading: boolean;
 };
 
@@ -99,20 +140,35 @@ export type DiffToolReviewState = {
   diffStyle: "stacked" | "split";
   overflowMode: "wrap" | "scroll";
   codeTheme: DiffToolCodeTheme;
-  sidebarOpen: boolean;
   collapsedFileIds: string[];
   viewedFileIds: string[];
   threads: DiffToolCommentThread[];
-  brief: DiffToolBrief;
+  guide: DiffToolGuide;
 };
 
 export type DiffToolStatePatch = {
   diffStyle?: DiffToolReviewState["diffStyle"];
   overflowMode?: DiffToolReviewState["overflowMode"];
   codeTheme?: DiffToolReviewState["codeTheme"];
-  sidebarOpen?: boolean;
   collapsedFileIds?: string[];
   viewedFileIds?: string[];
+};
+
+export type DiffToolGuideOperation =
+  | { kind: "topic.add"; request: string }
+  | { kind: "topic.revise"; topicId: string; request: string }
+  | { kind: "question.ask"; question: string };
+
+export type DiffToolGuideOperationResult =
+  | { kind: "topic.add" | "topic.revise"; topic: Omit<DiffToolGuideTopic, "id"> }
+  | {
+      kind: "question.ask";
+      question: Omit<DiffToolGuideQuestion, "id" | "source">;
+    };
+
+export type DiffToolGuideCommentPayload = {
+  target: DiffToolGuideCommentTarget;
+  body: string;
 };
 
 export type DiffToolBootstrapPayload = {

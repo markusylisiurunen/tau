@@ -8,6 +8,7 @@ import { createInterface, type Interface } from "node:readline";
 import type { DiffToolConfig } from "../config/index.js";
 import type { CoreDeps } from "../runtime/deps.js";
 import { createDefaultCoreDeps } from "../runtime/deps.js";
+import type { ReasoningEffort } from "../types.js";
 import type {
   DiffReviewMessage,
   DiffReviewMethod,
@@ -50,6 +51,7 @@ export type DiffReviewSubmitThreadMessageOptions = {
   threadId: string;
   forkFromThreadId?: string;
   message: string;
+  reasoning?: ReasoningEffort;
 };
 
 export type DiffReviewSubmitThreadMessageResult = {
@@ -536,6 +538,7 @@ export class DiffReviewBridge {
         threadId: acquired.threadId,
         ...(acquired.forkFromThreadId ? { forkFromThreadId: acquired.forkFromThreadId } : {}),
         message: request.params.message,
+        ...(request.params.reasoning !== undefined ? { reasoning: request.params.reasoning } : {}),
       });
       if (this.completedResult || connection.socket.destroyed) {
         return;

@@ -1,0 +1,170 @@
+@font-face {
+  font-family: "JetBrains Mono";
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  src: url("/fonts/JetBrainsMono-Regular.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+  src: url("/fonts/JetBrainsMono-Medium.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+  src: url("/fonts/JetBrainsMono-SemiBold.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+  src: url("/fonts/JetBrainsMono-Bold.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+  src: url("/fonts/JetBrainsMono-Italic.woff2") format("woff2");
+}
+
+:root {
+  color-scheme: dark;
+  --bg: oklch(19% 0 0);
+  --surface: oklch(22.4% 0 0);
+  --border: oklch(100% 0 0 / 0.08);
+  --border-surface: oklch(100% 0 0 / 0.04);
+  --text: oklch(86% 0 0);
+  --text-muted: oklch(56% 0 0);
+  --accent-add: oklch(76% 0.19 152);
+  --accent-del: oklch(76% 0.19 34);
+  --accent-change: oklch(76% 0.19 300);
+  --accent-interactive: oklch(72% 0.28 255);
+  --diffs-annotation-bg-override: var(--surface);
+  --diffs-bg-separator-override: var(--surface);
+  --diffs-bg-context-override: var(--surface);
+  --diffs-bg-context-gutter-override: var(--surface);
+  --diffs-addition-color-override: var(--accent-add);
+  --diffs-deletion-color-override: var(--accent-del);
+  --diffs-modified-color-override: var(--accent-change);
+  --diffs-bg-addition-override: color-mix(
+    in oklch,
+    var(--accent-add) 50%,
+    transparent
+  );
+  --diffs-bg-deletion-override: color-mix(
+    in oklch,
+    var(--accent-del) 50%,
+    transparent
+  );
+  --diffs-bg-addition-emphasis-override: color-mix(
+    in oklch,
+    var(--accent-add) 20%,
+    transparent
+  );
+  --diffs-bg-deletion-emphasis-override: color-mix(
+    in oklch,
+    var(--accent-del) 20%,
+    transparent
+  );
+  --diffs-fg-number-addition-override: var(--accent-add);
+  --diffs-fg-number-deletion-override: var(--accent-del);
+  --diffs-bg-addition-number-override: var(--diffs-bg-addition-override);
+  --diffs-bg-deletion-number-override: var(--diffs-bg-deletion-override);
+  --accent-del-muted: color-mix(in oklch, var(--accent-del) 72%, transparent);
+  --accent-del-subtle: color-mix(in oklch, var(--accent-del) 8%, transparent);
+  --accent-del-subtle-hover: color-mix(
+    in oklch,
+    var(--accent-del) 14%,
+    transparent
+  );
+  --accent-primary: oklch(96% 0 0);
+  --text-inverse: oklch(12% 0 0);
+  --accent-primary-hover: oklch(84% 0 0);
+  --thread-agent-bg: color-mix(
+    in oklch,
+    var(--accent-interactive) 4%,
+    transparent
+  );
+  --sidebar-status-add: color-mix(in oklch, var(--accent-add) 72%, transparent);
+  --sidebar-status-del: color-mix(in oklch, var(--accent-del) 72%, transparent);
+  --sidebar-status-change: color-mix(
+    in oklch,
+    var(--accent-change) 72%,
+    transparent
+  );
+  --code-inline-bg: color-mix(
+    in oklch,
+    var(--accent-interactive) 6%,
+    transparent
+  );
+  --code-inline-text: color-mix(
+    in oklch,
+    var(--accent-interactive) 92%,
+    var(--text)
+  );
+  --bar-height: 48px;
+  --sidebar-width: 320px;
+  --content-padding-x: 12px;
+  --file-gap: 12px;
+  --radius-sm: 4px;
+  --radius-md: 5px;
+  --radius-lg: 10px;
+  --radius-full: 999px;
+  --font-size-base: 14px;
+  --font-size-ui: var(--font-size-base);
+  --font-size-lg: calc(var(--font-size-base) * 15 / 14);
+  --font-size-sm: calc(var(--font-size-base) * 13 / 14);
+  --font-size-xs: calc(var(--font-size-base) * 12 / 14);
+  --font-size-code: calc(var(--font-size-base) * 13 / 14);
+  --font-weight-ui: 400;
+  --font-weight-code: 400;
+  --letter-spacing-ui: 0;
+  --letter-spacing-code: 0;
+  --font-family-ui: system-ui, sans-serif;
+  --font-family-code: "JetBrains Mono", monospace;
+  --line-height-ui: 1.5;
+  --diffs-font-family: var(--font-family-code);
+  --diffs-line-height: 1.7;
+  font-family: var(--font-family-ui);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-ui);
+  letter-spacing: var(--letter-spacing-ui);
+  line-height: var(--line-height-ui);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+}
+
+button,
+input,
+textarea {
+  color: inherit;
+  font: inherit;
+}

@@ -1,6 +1,6 @@
 # SDK browser diff review
 
-`startTauSdkDiffReview()` starts Tau's built-in browser review UI for an observed SDK session without requiring the TUI or opening a browser. It captures the selected diff through the session execution environment, creates the same review-scoped ephemeral agent context used by `/diff`, eagerly warms its shared bootstrap thread, and binds an HTTP server on loopback by default.
+`startTauSdkDiffReview()` starts Tau's built-in browser review UI for an observed SDK session without requiring the TUI or opening a browser. It captures the selected diff through the session execution environment, creates the same review-scoped ephemeral agent context used by `/diff`, eagerly prepares shared review context and the reviewer guide, and binds an HTTP server on loopback by default.
 
 ```ts
 import { startTauSdkDiffReview } from "@markusylisiurunen/tau/sdk";
@@ -35,7 +35,7 @@ Always call `close()` when the review is no longer available. This cancels the r
 
 ## Durable review state
 
-Review annotations, transcripts, brief content, and UI preferences are in memory by default. Supply a client-owned `storage` adapter to preserve them:
+Review annotations, transcripts, guide content and comments, and UI preferences are in memory by default. Supply a client-owned `storage` adapter to preserve them:
 
 ```ts
 const review = await startTauSdkDiffReview({

@@ -1,0 +1,15 @@
+.text-input-area {
+  background: var(--bg);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  color: var(--text);
+  display: block;
+  font: inherit;
+  padding: 8px;
+  width: 100%;
+}
+
+.text-input-area:focus {
+  border-color: var(--accent-interactive);
+  outline: none;
+}

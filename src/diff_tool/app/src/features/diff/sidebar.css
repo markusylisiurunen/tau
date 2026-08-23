@@ -1,0 +1,101 @@
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  grid-column: 1;
+  grid-row: 2;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--content-padding-x);
+  width: var(--sidebar-width);
+}
+
+.sidebar-file-list,
+.sidebar-file-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-file-list {
+  font-family: var(--font-family-code);
+  line-height: 1;
+}
+
+.sidebar-file-directory {
+  align-items: center;
+  color: color-mix(in oklch, var(--text-muted) 50%, transparent);
+  display: flex;
+  font-size: var(--font-size-sm);
+  height: 28px;
+  line-height: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-file-item {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  display: flex;
+  gap: 4px;
+  height: 28px;
+  margin-inline: -8px;
+  min-width: 0;
+  padding: 0 8px;
+  text-align: left;
+}
+
+.sidebar-file-item:hover {
+  background: color-mix(in oklch, var(--text) 4%, transparent);
+  border-radius: var(--radius-md);
+}
+
+.sidebar-file-item:focus-visible {
+  outline: 1px solid var(--accent-interactive);
+  outline-offset: -1px;
+}
+
+.sidebar-file-item.viewed {
+  color: var(--text-muted);
+}
+
+.sidebar-file-item.viewed .sidebar-file-status,
+.sidebar-file-item.viewed .stat-add,
+.sidebar-file-item.viewed .stat-del {
+  opacity: 0.5;
+}
+
+.sidebar-file-status {
+  color: var(--text-muted);
+  flex: 0 0 auto;
+}
+
+.sidebar-file-status.added {
+  color: var(--sidebar-status-add);
+}
+
+.sidebar-file-status.deleted {
+  color: var(--sidebar-status-del);
+}
+
+.sidebar-file-status.modified,
+.sidebar-file-status.renamed,
+.sidebar-file-status.copied,
+.sidebar-file-status.type-changed,
+.sidebar-file-status.unmerged {
+  color: var(--sidebar-status-change);
+}
+
+.sidebar-file-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-stats {
+  flex-shrink: 0;
+}

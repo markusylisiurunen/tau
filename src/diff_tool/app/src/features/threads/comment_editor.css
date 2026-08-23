@@ -1,0 +1,30 @@
+.comment-editor {
+  margin: 6px 10px 8px;
+  padding: 8px 10px 8px 12px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  border-left-width: 2px;
+  background: var(--bg);
+  box-sizing: border-box;
+  font-size: var(--font-size-ui);
+  max-width: 800px;
+}
+
+.comment-input {
+  min-height: 56px;
+  font-size: var(--font-size-ui);
+  resize: vertical;
+}
+
+.comment-actions {
+  align-items: center;
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+
+.comment-actions .checkbox-btn {
+  font-size: var(--font-size-ui);
+  margin-inline-end: auto;
+}

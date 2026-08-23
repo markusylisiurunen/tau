@@ -5,7 +5,8 @@ import type {
   CreateThreadResponse,
   DeleteThreadMessagePayload,
   DiffReviewGetDiffResult,
-  GenerateBriefResponse,
+  GuideCommentPayload,
+  DiffToolGuideOperation,
   ResolveThreadPayload,
   ReviewStatePatch,
   StateResponse,
@@ -115,19 +116,32 @@ export async function collapseThread(
   });
 }
 
-export async function generateBrief(): Promise<GenerateBriefResponse> {
-  return request<GenerateBriefResponse>("api/brief/generate", {
+export async function generateGuide(): Promise<StateResponse> {
+  return request<StateResponse>("api/guide/generate", {
     method: "POST",
   });
 }
 
-export async function returnReview(
-  message: string,
-): Promise<{ status: string }> {
-  return request<{ status: string }>("api/review", {
+export async function operateGuide(
+  operation: DiffToolGuideOperation,
+): Promise<StateResponse> {
+  return request<StateResponse>("api/guide/operate", {
     method: "POST",
-    body: JSON.stringify({ message }),
+    body: JSON.stringify(operation),
   });
+}
+
+export async function saveGuideComment(
+  payload: GuideCommentPayload,
+): Promise<StateResponse> {
+  return request<StateResponse>("api/guide/comment", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function returnReview(): Promise<{ status: string }> {
+  return request<{ status: string }>("api/review", { method: "POST" });
 }
 
 export async function cancelReview(): Promise<{ status: string }> {

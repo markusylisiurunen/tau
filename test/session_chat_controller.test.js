@@ -809,10 +809,13 @@ async function launchInlineDiffTool({ env, uiText = "http://127.0.0.1:4321", ret
     let stage = "initialize";
     let submitted = false;
     let connected = false;
+    const protocolVersion = Number(env.TAU_DIFF_PROTOCOL_VERSION);
 
     const request = (method, params) => {
       const id = String(nextId++);
-      socket.write(`${JSON.stringify({ version: 1, type: "request", id, method, params })}\n`);
+      socket.write(
+        `${JSON.stringify({ version: protocolVersion, type: "request", id, method, params })}\n`,
+      );
     };
 
     socket.once("connect", () => {
@@ -837,7 +840,7 @@ async function launchInlineDiffTool({ env, uiText = "http://127.0.0.1:4321", ret
         if (message.type === "request" && message.method === "session.close") {
           socket.write(
             `${JSON.stringify({
-              version: 1,
+              version: protocolVersion,
               type: "response",
               id: message.id,
               ok: true,

@@ -320,15 +320,17 @@ const codeThemes = new Set([
 ]);
 
 const state = {
-  diffStyle: "split",
+  diffStyle: "stacked",
   overflowMode: "wrap",
   codeTheme: "github-dark-dimmed",
-  sidebarOpen: false,
   collapsedFileIds: [],
   viewedFileIds: ["dev-session-001-0-0"],
   threads: mockThreads,
-  brief: {
-    content: "",
+  guide: {
+    orientation: "",
+    topics: [],
+    questions: [],
+    comments: [],
     loading: false,
   },
 };
@@ -356,6 +358,35 @@ function sendJson(res, status, data) {
     "cache-control": "no-store",
   });
   res.end(JSON.stringify(data));
+}
+
+function getGuideCommentContext(target) {
+  if (target.kind === "orientation") {
+    return {
+      location: "guide · orientation",
+      heading: "Orientation",
+      content: state.guide.orientation,
+    };
+  }
+  if (target.kind === "topic") {
+    const topic = state.guide.topics.find(
+      (entry) => entry.id === target.topicId,
+    );
+    return {
+      location: `guide topic · ${topic?.heading ?? "removed topic"}`,
+      heading: topic?.heading ?? "Removed topic",
+      content: topic?.body ?? "(guide block removed)",
+    };
+  }
+
+  const question = state.guide.questions.find(
+    (entry) => entry.id === target.questionId,
+  );
+  return {
+    location: `guide question · ${question?.question ?? "removed question"}`,
+    heading: question?.question ?? "Removed question",
+    content: question?.answer ?? "(guide block removed)",
+  };
 }
 
 const server = createServer(async (req, res) => {
@@ -397,9 +428,6 @@ const server = createServer(async (req, res) => {
       }
       if (codeThemes.has(body.codeTheme)) {
         state.codeTheme = body.codeTheme;
-      }
-      if (typeof body.sidebarOpen === "boolean") {
-        state.sidebarOpen = body.sidebarOpen;
       }
       if (Array.isArray(body.collapsedFileIds)) {
         state.collapsedFileIds = body.collapsedFileIds.filter(
@@ -577,46 +605,153 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    if (req.method === "POST" && url.pathname === "/api/brief/generate") {
-      state.brief.loading = true;
-      state.brief = {
-        threadId: `brief-${randomUUID().slice(0, 8)}`,
+    if (req.method === "POST" && url.pathname === "/api/guide/generate") {
+      state.guide.loading = true;
+      state.guide = {
+        threadId: `guide-${randomUUID().slice(0, 8)}`,
         loading: false,
-        content: [
-          "## Summary",
+        orientation: [
+          "This change replaces cookie-backed server sessions with signed JWT bearer tokens. Previously, login created an in-memory session and sent its identifier in a cookie; every authenticated request then depended on both that cookie and the server process that created it.",
           "",
-          "Replaces cookie-based sessions with JWT bearer tokens. The change touches login, request middleware, types, and removes the in-memory session store entirely. Risk is in the auth contract shift and deployment assumptions, not the route rename (safe to skim).",
+          "The existing design makes horizontal scaling and stateless deployments difficult, and a process restart invalidates every active session. The new approach moves authentication state into a short-lived signed token returned by the login endpoint and supplied through the `Authorization` header.",
           "",
-          "## Behavior changes",
-          "",
-          "Login now returns a token instead of setting a cookie:",
-          "",
-          "```",
-          "// before: res.cookie('sid', sessionId)",
-          "// after:",
-          "return { token: jwt.sign(payload, secret), expiresIn: 3600 }",
-          "```",
-          "",
-          "Requests without `Authorization: Bearer <token>` now fail with 401. Previously a valid `sessionId` cookie was enough, so this is a client-facing contract break.",
-          "",
-          "Deleting `session.ts` also removes server-side revocation. Tokens are now valid until expiry — there is no way to force-logout a user.",
-          "",
-          "## Verify",
-          "",
-          "- Existing cookie clients will break — intentional for this release?",
-          "- Secret rotation and forced revocation are out of scope — confirmed?",
-          "- Auth failures return a bare 401 with no logging — acceptable?",
-          "- Are malformed/expired token paths tested end-to-end?",
+          "The implementation updates the login contract, replaces session middleware with token verification, carries the authenticated identity through request types, and removes the in-memory session store. The main tradeoff is that issued tokens remain valid until expiry because there is no longer server-side session revocation.",
         ].join("\n"),
+        topics: [
+          {
+            id: randomUUID(),
+            label: "Auth flow",
+            heading: "The new authentication flow",
+            body: [
+              "Login now returns a token directly:",
+              "",
+              "```json",
+              '{ "token": "eyJ…", "expiresIn": 3600 }',
+              "```",
+              "",
+              "Clients attach it to subsequent requests as `Authorization: Bearer <token>`. Middleware verifies the signature and expiration, then places the decoded user identity on the request context.",
+            ].join("\n"),
+          },
+          {
+            id: randomUUID(),
+            label: "Stateless sessions",
+            heading: "What removing server sessions changes",
+            body: "Authentication no longer depends on process-local memory, so restarts and multiple server instances do not invalidate or partition active sessions. The tradeoff is that logout only removes the token from the client; a copied token remains usable until it expires.",
+          },
+          {
+            id: randomUUID(),
+            label: "Client contract",
+            heading: "Client-facing contract changes",
+            body: "Existing clients must read the token from the login response and stop relying on the session cookie. Requests without a valid bearer token now receive `401 Unauthorized`, including clients that still send a previously valid `sessionId` cookie.",
+          },
+        ],
+        comments: [],
+        questions: [
+          {
+            id: randomUUID(),
+            question:
+              "How can a compromised token be revoked before it expires?",
+            answer:
+              "It cannot be revoked with the current implementation. The design relies on short expiration times and leaves denylisting or signing-key rotation out of scope.",
+            source: "generated",
+          },
+          {
+            id: randomUUID(),
+            question: "What happens to clients that still use session cookies?",
+            answer:
+              "They will receive authentication failures after deployment. This is a deliberate contract break unless a compatibility layer is added outside this change.",
+            source: "generated",
+          },
+          {
+            id: randomUUID(),
+            question:
+              "Are malformed, expired, and incorrectly signed tokens distinguishable?",
+            answer:
+              "No. Middleware maps all verification failures to the same `401` response so callers cannot infer verification details.",
+            source: "generated",
+          },
+        ],
       };
       sendJson(res, 200, { state });
       return;
     }
 
-    if (req.method === "POST" && url.pathname === "/api/review") {
+    if (req.method === "POST" && url.pathname === "/api/guide/operate") {
       const body = await readBody(req);
-      const message =
-        typeof body.message === "string" ? body.message.trim() : "";
+      if (body.kind === "question.ask" && typeof body.question === "string") {
+        state.guide.questions.push({
+          id: randomUUID(),
+          question: body.question,
+          answer:
+            "This is a mock answer generated for the requested reviewer question.",
+          source: "user",
+        });
+      } else if (
+        body.kind === "topic.add" &&
+        typeof body.request === "string"
+      ) {
+        state.guide.topics.push({
+          id: randomUUID(),
+          label: "Requested topic",
+          heading: body.request,
+          body: "This is mock topic content. The real guide agent would inspect the change and write a focused explanation here.",
+        });
+      } else if (
+        body.kind === "topic.revise" &&
+        typeof body.topicId === "string"
+      ) {
+        const topic = state.guide.topics.find(
+          (entry) => entry.id === body.topicId,
+        );
+        if (!topic) {
+          sendJson(res, 404, { error: "guide topic not found" });
+          return;
+        }
+        topic.body += `\n\n_Mock revision request: ${body.request}_`;
+      } else {
+        sendJson(res, 400, { error: "invalid guide operation" });
+        return;
+      }
+      sendJson(res, 200, { state });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/guide/comment") {
+      const body = await readBody(req);
+      const comment = typeof body.body === "string" ? body.body.trim() : "";
+      if (!comment || !body.target || typeof body.target !== "object") {
+        sendJson(res, 400, { error: "invalid guide comment" });
+        return;
+      }
+      const existing = state.guide.comments.find((entry) => {
+        if (entry.target.kind !== body.target.kind) {
+          return false;
+        }
+        switch (entry.target.kind) {
+          case "orientation":
+            return true;
+          case "topic":
+            return entry.target.topicId === body.target.topicId;
+          case "question":
+            return entry.target.questionId === body.target.questionId;
+          default:
+            return false;
+        }
+      });
+      if (existing) {
+        existing.body = comment;
+      } else {
+        state.guide.comments.push({
+          target: body.target,
+          body: comment,
+        });
+      }
+      sendJson(res, 200, { state });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/review") {
+      await readBody(req);
       const unresolvedThreads = state.threads.filter(
         (thread) => !thread.resolved,
       );
@@ -637,8 +772,21 @@ const server = createServer(async (req, res) => {
             })
             .join("\n\n---\n\n")
         : "";
+      const guideReview = state.guide.comments
+        .map((comment, index) => {
+          const context = getGuideCommentContext(comment.target);
+          return [
+            `## guide comment ${index + 1}`,
+            `\`${context.location}\``,
+            `### ${context.heading}`,
+            context.content,
+            "**review comment**",
+            comment.body,
+          ].join("\n\n");
+        })
+        .join("\n\n---\n\n");
       const review =
-        [message, threadReview].filter(Boolean).join("\n\n---\n\n") ||
+        [guideReview, threadReview].filter(Boolean).join("\n\n---\n\n") ||
         "(no comments)";
       console.log(`\nreview returned:\n${review}\n`);
       sendJson(res, 200, { status: "returned" });

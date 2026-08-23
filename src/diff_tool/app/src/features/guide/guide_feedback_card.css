@@ -1,0 +1,37 @@
+.guide-feedback-actions {
+  display: flex;
+  gap: var(--guide-space-xs);
+  margin-block-start: var(--guide-space-xs);
+}
+
+.guide-feedback-card {
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-surface);
+  display: flex;
+  flex-direction: column;
+  margin-block-start: var(--guide-space-xs);
+}
+
+.guide-feedback-card-heading {
+  border-block-end: 1px solid var(--border-surface);
+  padding: var(--guide-space-sm);
+}
+
+.guide-feedback-form {
+  display: flex;
+  flex-direction: column;
+  padding: var(--guide-space-sm);
+}
+
+.guide-feedback-input {
+  min-height: 92px;
+  resize: vertical;
+}
+
+.guide-feedback-footer {
+  display: flex;
+  gap: var(--guide-space-xs);
+  justify-content: flex-end;
+  margin-block-start: var(--guide-space-sm);
+}

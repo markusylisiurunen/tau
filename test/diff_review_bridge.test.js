@@ -49,13 +49,14 @@ function createThreadSession(overrides = {}, contextWindow = 200_000) {
 
 function createSubmitThreadMessage(createThread) {
   const threads = new Map();
-  return async ({ threadId, forkFromThreadId, message }) => {
+  return async ({ threadId, forkFromThreadId, message, reasoning }) => {
     let thread = threads.get(threadId);
     if (!thread) {
       const forkSource = forkFromThreadId ? threads.get(forkFromThreadId) : undefined;
       thread = createThread({
         threadId,
         ...(forkSource ? { forkFrom: forkSource.createForkSource() } : {}),
+        ...(reasoning !== undefined ? { reasoning } : {}),
       });
       threads.set(threadId, thread);
     }
@@ -463,8 +464,8 @@ describe("diff review bridge", () => {
       snapshot: createSnapshot(),
       persona: personas[0],
       config: {},
-      createThread: ({ threadId, forkFrom }) => {
-        createdThreads.push({ threadId, forkFrom });
+      createThread: ({ threadId, forkFrom, reasoning }) => {
+        createdThreads.push({ threadId, forkFrom, reasoning });
         return createThreadSession({
           async submitMessage(message) {
             return `${forkFrom ? "fork" : "root"} ${threadId}: ${message}`;
@@ -500,6 +501,7 @@ describe("diff review bridge", () => {
       const forked = await client.send("forked", "thread.submit_message", {
         forkFromThreadId: bootstrap.result.threadId,
         message: "review this file",
+        reasoning: "medium",
       });
       expect(forked.result).toEqual({
         threadId: expect.stringMatching(/^[0-9a-f-]{36}$/),
@@ -509,6 +511,7 @@ describe("diff review bridge", () => {
       expect(createdThreads[1]).toEqual({
         threadId: forked.result.threadId,
         forkFrom: expect.any(Object),
+        reasoning: "medium",
       });
       expect(bridge.getUiState().reviewAgents).toEqual([
         {

@@ -1,0 +1,147 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createThread, replyToThread } from "../../api.js";
+import type { DiffToolReviewState } from "../../types.js";
+import type { ReviewSession } from "../review/use_review_session.js";
+import type { ThreadActions } from "./use_thread_actions.js";
+import { isDetachedThread } from "./thread_state.js";
+
+type DetachedThreadDraftKind = "comment" | "conversation";
+
+type DetachedThreadView =
+  | { mode: "history" }
+  | { mode: "new"; kind: DetachedThreadDraftKind }
+  | { mode: "thread"; threadId: string };
+
+type DetachedThreadOptions = Pick<ReviewSession, "applyReviewState"> & {
+  reviewState: DiffToolReviewState;
+  requestThreadAgentReply: ThreadActions["requestThreadAgentReply"];
+};
+
+export function useDetachedThreads({
+  reviewState,
+  requestThreadAgentReply,
+  applyReviewState,
+}: DetachedThreadOptions) {
+  const [body, setBody] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [view, setView] = useState<DetachedThreadView>({
+    mode: "new",
+    kind: "conversation",
+  });
+  const selectionVersionRef = useRef(0);
+  const submittingRef = useRef(false);
+
+  const threads = useMemo(
+    () => reviewState.threads.filter(isDetachedThread).reverse(),
+    [reviewState.threads],
+  );
+  const selectedThread = useMemo(() => {
+    if (view.mode !== "thread") {
+      return null;
+    }
+
+    return threads.find((thread) => thread.id === view.threadId) ?? null;
+  }, [threads, view]);
+
+  const openDraft = useCallback((kind: DetachedThreadDraftKind) => {
+    selectionVersionRef.current += 1;
+    setBody("");
+    setView({ mode: "new", kind });
+  }, []);
+
+  const openThread = useCallback((threadId: string) => {
+    selectionVersionRef.current += 1;
+    setBody("");
+    setView({ mode: "thread", threadId });
+  }, []);
+
+  const showHistory = useCallback(() => {
+    selectionVersionRef.current += 1;
+    setBody("");
+    setView({ mode: "history" });
+  }, []);
+
+  useEffect(() => {
+    if (view.mode === "thread" && !selectedThread) {
+      showHistory();
+    }
+  }, [selectedThread, showHistory, view]);
+
+  const resetDraftIfCurrent = useCallback((selectionVersion: number) => {
+    if (selectionVersionRef.current !== selectionVersion) {
+      return false;
+    }
+
+    setBody("");
+    return true;
+  }, []);
+
+  const submit = useCallback(async () => {
+    const trimmedBody = body.trim();
+    if (
+      !trimmedBody ||
+      submittingRef.current ||
+      view.mode === "history" ||
+      (view.mode === "thread" &&
+        (!selectedThread || selectedThread.loading || selectedThread.resolved))
+    ) {
+      return;
+    }
+
+    const selectionVersion = selectionVersionRef.current;
+    const requestAgent = view.mode === "thread" || view.kind === "conversation";
+    let threadId: string;
+    submittingRef.current = true;
+    setSubmitting(true);
+
+    try {
+      if (view.mode === "thread") {
+        threadId = view.threadId;
+        const result = await replyToThread({ id: threadId, text: trimmedBody });
+        applyReviewState(result.state);
+        resetDraftIfCurrent(selectionVersion);
+      } else {
+        const result = await createThread({
+          body: trimmedBody,
+          anchor: { kind: "detached" },
+        });
+        threadId = result.threadId;
+        applyReviewState(result.state);
+
+        if (resetDraftIfCurrent(selectionVersion)) {
+          setView({ mode: "thread", threadId });
+        }
+      }
+    } catch {
+      return;
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
+    }
+
+    if (requestAgent) {
+      await requestThreadAgentReply(threadId);
+    }
+  }, [
+    applyReviewState,
+    body,
+    requestThreadAgentReply,
+    resetDraftIfCurrent,
+    selectedThread,
+    view,
+  ]);
+
+  return {
+    body,
+    setBody,
+    submitting,
+    threads,
+    selectedThread,
+    view: view.mode,
+    draftKind: view.mode === "new" ? view.kind : "conversation",
+    openDraft,
+    openThread,
+    showHistory,
+    submit,
+  };
+}

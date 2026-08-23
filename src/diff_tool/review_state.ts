@@ -1,33 +1,49 @@
 import { randomUUID } from "node:crypto";
 import type {
-  DiffToolBrief,
   DiffToolCommentThread,
   DiffToolCreateThreadPayload,
+  DiffToolGuide,
+  DiffToolGuideCommentTarget,
+  DiffToolGuideOperation,
+  DiffToolGuideOperationResult,
   DiffToolReviewState,
   DiffToolStatePatch,
   DiffToolThreadAnchor,
 } from "./shared_types.js";
-import { DEFAULT_DIFF_TOOL_CODE_THEME, DIFF_TOOL_CODE_THEMES } from "./shared_types.js";
+import {
+  DEFAULT_DIFF_TOOL_CODE_THEME,
+  DIFF_TOOL_GUIDE_QUESTION_LIMIT,
+  DIFF_TOOL_GUIDE_TOPIC_LIMIT,
+  guideCommentTargetKey,
+} from "./shared_types.js";
 
-const emptyBrief: DiffToolBrief = {
-  content: "",
+const emptyGuide: DiffToolGuide = {
+  orientation: "",
+  topics: [],
+  questions: [],
+  comments: [],
   loading: false,
 };
 
-const codeThemes = new Set<DiffToolReviewState["codeTheme"]>(DIFF_TOOL_CODE_THEMES);
+type GuideTopicInput = Omit<DiffToolGuide["topics"][number], "id">;
+type GuideQuestionInput = Omit<DiffToolGuide["questions"][number], "id" | "source">;
+type GuideInput = {
+  orientation: string;
+  topics: GuideTopicInput[];
+  questions: GuideQuestionInput[];
+};
 
 function createInitialState(options: {
   codeTheme?: DiffToolReviewState["codeTheme"];
 }): DiffToolReviewState {
   return {
-    diffStyle: "split",
+    diffStyle: "stacked",
     overflowMode: "wrap",
     codeTheme: options.codeTheme ?? DEFAULT_DIFF_TOOL_CODE_THEME,
-    sidebarOpen: false,
     collapsedFileIds: [],
     viewedFileIds: [],
     threads: [],
-    brief: { ...emptyBrief },
+    guide: cloneGuide(emptyGuide),
   };
 }
 
@@ -43,11 +59,10 @@ export class DiffToolReviewStateStore {
       diffStyle: this.state.diffStyle,
       overflowMode: this.state.overflowMode,
       codeTheme: this.state.codeTheme,
-      sidebarOpen: this.state.sidebarOpen,
       collapsedFileIds: [...this.state.collapsedFileIds],
       viewedFileIds: [...this.state.viewedFileIds],
       threads: this.state.threads.map(cloneThread),
-      brief: cloneBrief(this.state.brief),
+      guide: cloneGuide(this.state.guide),
     };
   }
 
@@ -61,11 +76,10 @@ export class DiffToolReviewStateStore {
     this.state.diffStyle = state.diffStyle;
     this.state.overflowMode = state.overflowMode;
     this.state.codeTheme = state.codeTheme;
-    this.state.sidebarOpen = state.sidebarOpen;
     this.state.collapsedFileIds = [...state.collapsedFileIds];
     this.state.viewedFileIds = [...state.viewedFileIds];
     this.state.threads = state.threads.map(cloneThread);
-    this.state.brief = cloneBrief(state.brief);
+    this.state.guide = cloneGuide(state.guide);
   }
 
   replaceStatePreservingConcurrentLoading(
@@ -78,45 +92,33 @@ export class DiffToolReviewStateStore {
     const previousThreadLoading = new Map(
       previousState.threads.map((thread) => [thread.id, thread.loading]),
     );
-    const currentBriefLoading = this.state.brief.loading;
+    const currentGuideLoading = this.state.guide.loading;
     this.replaceState(state);
     for (const thread of this.state.threads) {
       if (thread.loading === previousThreadLoading.get(thread.id)) {
         thread.loading = currentThreadLoading.get(thread.id) ?? thread.loading;
       }
     }
-    if (this.state.brief.loading === previousState.brief.loading) {
-      this.state.brief.loading = currentBriefLoading;
+    if (this.state.guide.loading === previousState.guide.loading) {
+      this.state.guide.loading = currentGuideLoading;
     }
   }
 
   updateState(patch: DiffToolStatePatch): void {
-    if (patch.diffStyle === "split" || patch.diffStyle === "stacked") {
+    if (patch.diffStyle) {
       this.state.diffStyle = patch.diffStyle;
     }
-
-    if (patch.overflowMode === "wrap" || patch.overflowMode === "scroll") {
+    if (patch.overflowMode) {
       this.state.overflowMode = patch.overflowMode;
     }
-
-    if (patch.codeTheme && codeThemes.has(patch.codeTheme)) {
+    if (patch.codeTheme) {
       this.state.codeTheme = patch.codeTheme;
     }
-
-    if (typeof patch.sidebarOpen === "boolean") {
-      this.state.sidebarOpen = patch.sidebarOpen;
+    if (patch.collapsedFileIds) {
+      this.state.collapsedFileIds = [...patch.collapsedFileIds];
     }
-
-    if (Array.isArray(patch.collapsedFileIds)) {
-      this.state.collapsedFileIds = patch.collapsedFileIds.filter(
-        (value): value is string => typeof value === "string" && value.trim().length > 0,
-      );
-    }
-
-    if (Array.isArray(patch.viewedFileIds)) {
-      this.state.viewedFileIds = patch.viewedFileIds.filter(
-        (value): value is string => typeof value === "string" && value.trim().length > 0,
-      );
+    if (patch.viewedFileIds) {
+      this.state.viewedFileIds = [...patch.viewedFileIds];
     }
   }
 
@@ -211,27 +213,108 @@ export class DiffToolReviewStateStore {
     return true;
   }
 
-  startBriefGeneration(): void {
-    this.state.brief = {
-      content: this.state.brief.content,
-      loading: true,
-    };
+  setGuideLoading(loading: boolean): void {
+    this.state.guide.loading = loading;
   }
 
-  applyBriefResult(result: { threadId: string; response: string }): void {
-    this.state.brief = {
+  applyGuideResult(result: { threadId: string }, content: GuideInput): void {
+    this.state.guide = {
       threadId: result.threadId,
-      content: result.response,
+      orientation: content.orientation,
+      topics: content.topics.map((topic) => ({ id: randomUUID(), ...topic })),
+      questions: content.questions.map((question) => ({
+        id: randomUUID(),
+        ...question,
+        source: "generated",
+      })),
+      comments: this.state.guide.comments,
       loading: false,
     };
   }
 
-  setBriefLoading(loading: boolean): void {
-    this.state.brief = {
-      ...(this.state.brief.threadId ? { threadId: this.state.brief.threadId } : {}),
-      content: this.state.brief.content,
-      loading,
-    };
+  applyGuideOperationResults(
+    result: { threadId: string },
+    operations: DiffToolGuideOperation[],
+    contents: DiffToolGuideOperationResult[],
+  ): boolean {
+    if (operations.length !== contents.length) {
+      return false;
+    }
+
+    const topicCount =
+      this.state.guide.topics.length +
+      operations.filter((operation) => operation.kind === "topic.add").length;
+    const questionCount =
+      this.state.guide.questions.length +
+      operations.filter((operation) => operation.kind === "question.ask").length;
+    if (
+      topicCount > DIFF_TOOL_GUIDE_TOPIC_LIMIT ||
+      questionCount > DIFF_TOOL_GUIDE_QUESTION_LIMIT
+    ) {
+      return false;
+    }
+
+    for (const [index, operation] of operations.entries()) {
+      const content = contents[index];
+      if (!content || operation.kind !== content.kind) {
+        return false;
+      }
+      if (
+        operation.kind === "topic.revise" &&
+        !this.state.guide.topics.some((topic) => topic.id === operation.topicId)
+      ) {
+        return false;
+      }
+    }
+
+    for (const [index, operation] of operations.entries()) {
+      const content = contents[index];
+      if (!content) {
+        return false;
+      }
+      switch (content.kind) {
+        case "topic.add":
+          this.state.guide.topics.push({ id: randomUUID(), ...content.topic });
+          break;
+        case "topic.revise": {
+          const topic = this.state.guide.topics.find(
+            (entry) => operation.kind === "topic.revise" && entry.id === operation.topicId,
+          );
+          if (!topic) {
+            return false;
+          }
+          Object.assign(topic, content.topic);
+          break;
+        }
+        case "question.ask":
+          this.state.guide.questions.push({
+            id: randomUUID(),
+            ...content.question,
+            source: "user",
+          });
+          break;
+      }
+    }
+
+    this.state.guide.threadId = result.threadId;
+    this.state.guide.loading = false;
+    return true;
+  }
+
+  saveGuideComment(target: DiffToolGuideCommentTarget, body: string): void {
+    const targetKey = guideCommentTargetKey(target);
+    const existing = this.state.guide.comments.find(
+      (comment) => guideCommentTargetKey(comment.target) === targetKey,
+    );
+    if (existing) {
+      existing.body = body;
+      return;
+    }
+
+    this.state.guide.comments.push({
+      target: { ...target },
+      body,
+    });
   }
 
   applyThreadResponse(id: string, result: { threadId: string; response: string }): boolean {
@@ -276,43 +359,59 @@ export class DiffToolReviewStateStore {
     return `${locationPrefix}Continue this restored review conversation. Its previous transcript is included below.\n\n${transcript}`;
   }
 
-  buildReviewText(submissionMessage?: string): string {
-    const trimmedSubmissionMessage = submissionMessage?.trim();
+  buildReviewText(): string {
     const unresolvedThreads = this.state.threads.filter((thread) => !thread.resolved);
-    if (unresolvedThreads.length === 0) {
-      return trimmedSubmissionMessage || "(no comments)";
+    const guideComments = this.state.guide.comments;
+    if (unresolvedThreads.length === 0 && guideComments.length === 0) {
+      return "(no comments)";
     }
 
-    const guidance = [
-      "The notes below include thread transcripts from the review. In those transcripts:",
-      "",
-      "- **user** is a comment written by the reviewer",
-      "- **agent** is a generated reply within that review thread",
-      "",
-      "Treat thread dialogue as supporting review context, not automatically as a final conclusion.",
-    ].join("\n");
+    const sections: string[] = [];
+    if (guideComments.length > 0) {
+      sections.push(
+        guideComments
+          .map((comment, index) => {
+            const context = formatGuideCommentContext(this.state.guide, comment.target);
+            return [
+              `## guide comment ${index + 1}`,
+              `\`${context.location}\``,
+              `### ${context.heading}`,
+              context.content,
+              "**review comment**",
+              comment.body,
+            ].join("\n\n");
+          })
+          .join("\n\n---\n\n"),
+      );
+    }
+    if (unresolvedThreads.length > 0) {
+      const guidance = [
+        "The notes below include thread transcripts from the review. In those transcripts:",
+        "",
+        "- **user** is a comment written by the reviewer",
+        "- **agent** is a generated reply within that review thread",
+        "",
+        "Treat thread dialogue as supporting review context, not automatically as a final conclusion.",
+      ].join("\n");
+      const threads = unresolvedThreads
+        .map((thread, index) => {
+          const location =
+            thread.anchor.kind === "line"
+              ? `${thread.anchor.filePath}:${thread.anchor.lineNumber} (${thread.anchor.side === "additions" ? "new" : "old"})`
+              : "general discussion";
+          const body = thread.messages
+            .map(
+              (message) =>
+                `**${message.role === "assistant" ? "agent" : "user"}**\n\n${message.text}`,
+            )
+            .join("\n\n");
+          return `## thread ${index + 1}\n\n\`${location}\`\n\n${body}`;
+        })
+        .join("\n\n---\n\n");
+      sections.push(`${guidance}\n\n---\n\n${threads}`);
+    }
 
-    const threads = unresolvedThreads
-      .map((thread, index) => {
-        const location =
-          thread.anchor.kind === "line"
-            ? `${thread.anchor.filePath}:${thread.anchor.lineNumber} (${thread.anchor.side === "additions" ? "new" : "old"})`
-            : "general discussion";
-        const body = thread.messages
-          .map(
-            (message) =>
-              `**${message.role === "assistant" ? "agent" : "user"}**\n\n${message.text}`,
-          )
-          .join("\n\n");
-        return `## thread ${index + 1}\n\n\`${location}\`\n\n${body}`;
-      })
-      .join("\n\n---\n\n");
-
-    const message = trimmedSubmissionMessage
-      ? `## submission message\n\n${trimmedSubmissionMessage}\n\n---\n\n`
-      : "";
-
-    return `${guidance}\n\n---\n\n${message}${threads}`;
+    return sections.join("\n\n---\n\n");
   }
 
   private findThreadInternal(id: string): DiffToolCommentThread | undefined {
@@ -320,11 +419,47 @@ export class DiffToolReviewStateStore {
   }
 }
 
-function cloneBrief(brief: DiffToolBrief): DiffToolBrief {
+function formatGuideCommentContext(
+  guide: DiffToolGuide,
+  target: DiffToolGuideCommentTarget,
+): { location: string; heading: string; content: string } {
+  switch (target.kind) {
+    case "orientation":
+      return {
+        location: "guide · orientation",
+        heading: "Orientation",
+        content: guide.orientation,
+      };
+    case "topic": {
+      const topic = guide.topics.find((entry) => entry.id === target.topicId)!;
+      return {
+        location: `guide topic · ${topic.heading}`,
+        heading: topic.heading,
+        content: topic.body,
+      };
+    }
+    case "question": {
+      const question = guide.questions.find((entry) => entry.id === target.questionId)!;
+      return {
+        location: `guide question · ${question.question}`,
+        heading: question.question,
+        content: question.answer,
+      };
+    }
+  }
+}
+
+function cloneGuide(guide: DiffToolGuide): DiffToolGuide {
   return {
-    ...(brief.threadId ? { threadId: brief.threadId } : {}),
-    content: brief.content,
-    loading: brief.loading,
+    ...(guide.threadId ? { threadId: guide.threadId } : {}),
+    orientation: guide.orientation,
+    topics: guide.topics.map((topic) => ({ ...topic })),
+    questions: guide.questions.map((question) => ({ ...question })),
+    comments: guide.comments.map((comment) => ({
+      ...comment,
+      target: { ...comment.target },
+    })),
+    loading: guide.loading,
   };
 }
 

@@ -10,7 +10,6 @@ import { GuideFeedbackCard } from "./guide_feedback_card.js";
 type GuideTopicContentProps = {
   topic: DiffToolGuideTopic;
   comments: DiffToolGuideComment[];
-  loading: boolean;
   onOperate: (operation: DiffToolGuideOperation) => void;
   onComment: (target: DiffToolGuideCommentTarget, body: string) => void;
 };
@@ -18,7 +17,6 @@ type GuideTopicContentProps = {
 export function GuideTopicContent({
   topic,
   comments,
-  loading,
   onOperate,
   onComment,
 }: GuideTopicContentProps) {
@@ -31,7 +29,6 @@ export function GuideTopicContent({
       <GuideFeedbackCard
         comments={comments}
         target={{ kind: "topic", topicId: topic.id }}
-        loading={loading}
         requestChanges={{
           placeholder: "Describe the changes you want…",
           submitLabel: "Request changes",

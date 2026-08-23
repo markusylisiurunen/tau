@@ -426,6 +426,20 @@ describe("built-in diff tool", () => {
       expect(detachedThreadMessages[0]).toContain('"heading":"Request flow"');
       expect(detachedThreadMessages[0]).toContain('"question":"What can fail?"');
 
+      const globalComment = await fetchJson(`${started.url}api/thread`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          anchor: { kind: "detached" },
+          body: "This needs a migration note.",
+        }),
+      });
+      expect(globalComment.state.threads[2]).toMatchObject({
+        anchor: { kind: "detached" },
+        messages: [{ role: "user", text: "This needs a migration note." }],
+      });
+      expect(globalComment.state.threads[2]).not.toHaveProperty("threadId");
+
       expect(createdThreads).toHaveLength(4);
       expect(createdThreads[0]).toMatchObject({
         forkFrom: undefined,
@@ -505,7 +519,7 @@ describe("built-in diff tool", () => {
       });
 
       const refreshedBootstrap = await fetchJson(`${started.url}api/bootstrap`);
-      expect(refreshedBootstrap.state).toEqual(askedDetachedThread.state);
+      expect(refreshedBootstrap.state).toEqual(globalComment.state);
 
       const reviewResult = await fetchJson(`${started.url}api/review`, {
         method: "POST",
@@ -518,7 +532,8 @@ describe("built-in diff tool", () => {
           "The notes below include thread transcripts from the review. In those transcripts:\n\n- **user** is a comment written by the reviewer\n- **agent** is a generated reply within that review thread\n\nTreat thread dialogue as supporting review context, not automatically as a final conclusion.\n\n---\n\n## thread 1\n\n`src/a.ts:1 (new)`\n\n**user**\n\nWhat changed?\n\n**user**\n\nAny risks?\n\n**agent**\n\n" +
           askedThread.state.threads[0].messages[2].text +
           "\n\n---\n\n## thread 2\n\n`general discussion`\n\n**user**\n\nAnything else worth checking?\n\n**agent**\n\n" +
-          askedDetachedThread.state.threads[1].messages[1].text,
+          askedDetachedThread.state.threads[1].messages[1].text +
+          "\n\n---\n\n## thread 3\n\n`general discussion`\n\n**user**\n\nThis needs a migration note.",
       });
       await server.waitUntilClosed();
     } finally {
@@ -652,7 +667,8 @@ describe("built-in diff tool", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ kind: "question.ask", question: "Can requests be retried?" }),
       });
-      expect(asked.state.guide.questions.at(-1)).toMatchObject({
+      const askedQuestion = asked.state.guide.questions.at(-1);
+      expect(askedQuestion).toMatchObject({
         question: "Can requests be retried?",
         answer: "Yes, when the caller preserves the request identifier.",
         source: "user",
@@ -675,15 +691,37 @@ describe("built-in diff tool", () => {
           body: "Clarify the rollout",
         },
       ]);
-
-      await fetchJson(`${started.url}api/review`, {
+      await fetchJson(`${started.url}api/guide/comment`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ message: "Overall note" }),
+        body: JSON.stringify({
+          target: { kind: "topic", topicId: addedTopic.id },
+          body: "Check the ordering claim",
+        }),
+      });
+      await fetchJson(`${started.url}api/guide/comment`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          target: { kind: "question", questionId: askedQuestion.id },
+          body: "Document this limitation",
+        }),
+      });
+
+      await fetchJson(`${started.url}api/review`, { method: "POST" });
+      expect(client.returnReview).toHaveBeenCalledWith({
+        review: expect.stringContaining(
+          "## guide comment 1\n\n`guide · orientation`\n\n### Orientation\n\nReview orientation\n\n**review comment**\n\nClarify the rollout",
+        ),
       });
       expect(client.returnReview).toHaveBeenCalledWith({
         review: expect.stringContaining(
-          "## submission message\n\nOverall note\n\n---\n\n## guide comment 1\n\n`guide · orientation`\n\nClarify the rollout",
+          "`guide topic · Safe retry behavior`\n\n### Safe retry behavior\n\nRetries preserve both identity and ordering.\n\n**review comment**\n\nCheck the ordering claim",
+        ),
+      });
+      expect(client.returnReview).toHaveBeenCalledWith({
+        review: expect.stringContaining(
+          "`guide question · Can requests be retried?`\n\n### Can requests be retried?\n\nYes, when the caller preserves the request identifier.\n\n**review comment**\n\nDocument this limitation",
         ),
       });
       expect(client.submitThreadMessage).toHaveBeenLastCalledWith({
@@ -691,6 +729,105 @@ describe("built-in diff tool", () => {
         message: expect.stringContaining("Can requests be retried?"),
       });
     } finally {
+      await server.close();
+    }
+  });
+
+  it("queues guide operations and combines requests waiting behind an active update", async () => {
+    let markFirstUpdateStarted;
+    const firstUpdateStarted = new Promise((resolve) => {
+      markFirstUpdateStarted = resolve;
+    });
+    let finishFirstUpdate;
+    const firstUpdateFinished = new Promise((resolve) => {
+      finishFirstUpdate = resolve;
+    });
+    const client = createClientStub({
+      submitThreadMessage: vi.fn(async ({ threadId, forkFromThreadId, message }) => {
+        if (!threadId && !forkFromThreadId) {
+          return { threadId: "bootstrap-thread", response: "bootstrap" };
+        }
+        if (message.includes("create a change guide")) {
+          return { threadId: "guide-thread", response: createGuideAgentResponse() };
+        }
+        if (message.includes("Answer this reviewer question: First queued request?")) {
+          markFirstUpdateStarted();
+          await firstUpdateFinished;
+          return {
+            threadId: "guide-thread",
+            response: JSON.stringify({
+              question: {
+                question: "First queued request?",
+                answer: "First answer.",
+              },
+            }),
+          };
+        }
+        if (message.includes("Apply these 2 queued reviewer requests in order")) {
+          return {
+            threadId: "guide-thread",
+            response: JSON.stringify({
+              results: [
+                {
+                  question: {
+                    question: "Second queued request?",
+                    answer: "Second answer.",
+                  },
+                },
+                {
+                  question: {
+                    question: "Third queued request?",
+                    answer: "Third answer.",
+                  },
+                },
+              ],
+            }),
+          };
+        }
+        throw new Error(`unexpected guide prompt: ${message}`);
+      }),
+    });
+    const server = new DiffToolHttpServer({ client });
+
+    try {
+      const started = await server.start();
+      await fetchJson(`${started.url}api/guide/generate`, { method: "POST" });
+
+      const first = fetchJson(`${started.url}api/guide/operate`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ kind: "question.ask", question: "First queued request?" }),
+      });
+      await firstUpdateStarted;
+      const second = fetchJson(`${started.url}api/guide/operate`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ kind: "question.ask", question: "Second queued request?" }),
+      });
+      const third = fetchJson(`${started.url}api/guide/operate`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ kind: "question.ask", question: "Third queued request?" }),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      finishFirstUpdate();
+      await first;
+      const [secondResult, thirdResult] = await Promise.all([second, third]);
+      expect(secondResult.state.guide.questions.slice(-2)).toMatchObject([
+        { question: "Second queued request?", answer: "Second answer." },
+        { question: "Third queued request?", answer: "Third answer." },
+      ]);
+      expect(thirdResult.state).toEqual(secondResult.state);
+
+      const updateCalls = client.submitThreadMessage.mock.calls
+        .map(([options]) => options)
+        .filter((options) => options.threadId === "guide-thread");
+      expect(updateCalls).toHaveLength(2);
+      expect(updateCalls[1].message).toContain('"question":"Second queued request?"');
+      expect(updateCalls[1].message).toContain('"question":"Third queued request?"');
+    } finally {
+      finishFirstUpdate?.();
       await server.close();
     }
   });
@@ -877,15 +1014,11 @@ describe("built-in diff tool", () => {
       const started = await server.start();
       const firstSubmission = fetch(`${started.url}api/review`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ message: "Please address this." }),
       });
       await submitStarted;
 
       const duplicate = await fetch(`${started.url}api/review`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ message: "Duplicate" }),
       });
       expect(duplicate.status).toBe(409);
       await expect(duplicate.json()).resolves.toEqual({
@@ -897,7 +1030,7 @@ describe("built-in diff tool", () => {
       expect(accepted.ok).toBe(true);
       expect(onSubmit).toHaveBeenCalledTimes(1);
       expect(onSubmit).toHaveBeenCalledWith({
-        review: "Please address this.",
+        review: "(no comments)",
         context: expect.objectContaining({ sessionId: "session-1" }),
         files: [],
       });

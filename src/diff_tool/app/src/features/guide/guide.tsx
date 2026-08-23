@@ -51,14 +51,12 @@ export function Guide({ guide, onGenerate, onOperate, onComment }: GuideProps) {
       <GuideTopics
         topics={guide.topics}
         comments={guide.comments}
-        loading={guide.loading}
         onOperate={onOperate}
         onComment={onComment}
       />
       <GuideQuestions
         questions={guide.questions}
         comments={guide.comments}
-        loading={guide.loading}
         onOperate={onOperate}
         onComment={onComment}
       />

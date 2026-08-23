@@ -19,7 +19,6 @@ type ChangeRequest = {
 type GuideFeedbackCardProps = {
   target: DiffToolGuideCommentTarget;
   comments: DiffToolGuideComment[];
-  loading: boolean;
   requestChanges?: ChangeRequest;
   onComment: (target: DiffToolGuideCommentTarget, body: string) => void;
 };
@@ -30,7 +29,6 @@ type GuideFeedbackFormCardProps = {
   placeholder: string;
   submitLabel: string;
   value?: string;
-  loading: boolean;
   onValueChange?: (value: string) => void;
   onClose: () => void;
   onSubmit: (value: string) => void;
@@ -39,7 +37,6 @@ type GuideFeedbackFormCardProps = {
 export function GuideFeedbackCard({
   target,
   comments,
-  loading,
   requestChanges,
   onComment,
 }: GuideFeedbackCardProps) {
@@ -97,7 +94,6 @@ export function GuideFeedbackCard({
         heading={heading}
         placeholder={requestChanges.placeholder}
         submitLabel={requestChanges.submitLabel}
-        loading={loading}
         onClose={() => setMode(null)}
         onSubmit={(request) => {
           requestChanges.onSubmit(request);
@@ -114,7 +110,6 @@ export function GuideFeedbackCard({
       placeholder="Write your review comment…"
       submitLabel="Save comment"
       value={commentDraft}
-      loading={loading}
       onValueChange={setCommentDraft}
       onClose={() => setMode(null)}
       onSubmit={(body) => {
@@ -131,7 +126,6 @@ export function GuideFeedbackFormCard({
   placeholder,
   submitLabel,
   value,
-  loading,
   onValueChange,
   onClose,
   onSubmit,
@@ -150,7 +144,6 @@ export function GuideFeedbackFormCard({
         cancelLabel="Close"
         value={value}
         autoFocus
-        disabled={loading}
         onValueChange={onValueChange}
         onCancel={onClose}
         onSubmit={onSubmit}

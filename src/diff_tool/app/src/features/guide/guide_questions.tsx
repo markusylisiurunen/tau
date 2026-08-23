@@ -17,7 +17,6 @@ import "./guide_questions.css";
 type GuideQuestionsProps = {
   questions: DiffToolGuideQuestion[];
   comments: DiffToolGuideComment[];
-  loading: boolean;
   onOperate: (operation: DiffToolGuideOperation) => void;
   onComment: (target: DiffToolGuideCommentTarget, body: string) => void;
 };
@@ -25,7 +24,6 @@ type GuideQuestionsProps = {
 export function GuideQuestions({
   questions,
   comments,
-  loading,
   onOperate,
   onComment,
 }: GuideQuestionsProps) {
@@ -56,7 +54,6 @@ export function GuideQuestions({
                   <GuideFeedbackCard
                     comments={comments}
                     target={{ kind: "question", questionId: question.id }}
-                    loading={loading}
                     onComment={onComment}
                   />
                 </div>
@@ -71,7 +68,6 @@ export function GuideQuestions({
           label="Ask a question"
           placeholder="Write the question you want answered…"
           submitLabel="Ask"
-          loading={loading}
           onClose={() => setRequestOpen(false)}
           onSubmit={(question) => {
             onOperate({ kind: "question.ask", question });
@@ -80,11 +76,7 @@ export function GuideQuestions({
         />
       ) : (
         <div className="guide-question-actions">
-          <Button
-            variant="ghost"
-            disabled={loading}
-            onClick={() => setRequestOpen(true)}
-          >
+          <Button variant="ghost" onClick={() => setRequestOpen(true)}>
             Ask a question
           </Button>
         </div>

@@ -360,6 +360,35 @@ function sendJson(res, status, data) {
   res.end(JSON.stringify(data));
 }
 
+function getGuideCommentContext(target) {
+  if (target.kind === "orientation") {
+    return {
+      location: "guide · orientation",
+      heading: "Orientation",
+      content: state.guide.orientation,
+    };
+  }
+  if (target.kind === "topic") {
+    const topic = state.guide.topics.find(
+      (entry) => entry.id === target.topicId,
+    );
+    return {
+      location: `guide topic · ${topic?.heading ?? "removed topic"}`,
+      heading: topic?.heading ?? "Removed topic",
+      content: topic?.body ?? "(guide block removed)",
+    };
+  }
+
+  const question = state.guide.questions.find(
+    (entry) => entry.id === target.questionId,
+  );
+  return {
+    location: `guide question · ${question?.question ?? "removed question"}`,
+    heading: question?.question ?? "Removed question",
+    content: question?.answer ?? "(guide block removed)",
+  };
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
 
@@ -723,9 +752,7 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && url.pathname === "/api/review") {
-      const body = await readBody(req);
-      const message =
-        typeof body.message === "string" ? body.message.trim() : "";
+      await readBody(req);
       const unresolvedThreads = state.threads.filter(
         (thread) => !thread.resolved,
       );
@@ -747,15 +774,21 @@ const server = createServer(async (req, res) => {
             .join("\n\n---\n\n")
         : "";
       const guideReview = state.guide.comments
-        .map(
-          (comment, index) =>
-            `## guide comment ${index + 1}\n\n\`guide · ${comment.target.kind}\`\n\n${comment.body}`,
-        )
+        .map((comment, index) => {
+          const context = getGuideCommentContext(comment.target);
+          return [
+            `## guide comment ${index + 1}`,
+            `\`${context.location}\``,
+            `### ${context.heading}`,
+            context.content,
+            "**review comment**",
+            comment.body,
+          ].join("\n\n");
+        })
         .join("\n\n---\n\n");
       const review =
-        [message, guideReview, threadReview]
-          .filter(Boolean)
-          .join("\n\n---\n\n") || "(no comments)";
+        [guideReview, threadReview].filter(Boolean).join("\n\n---\n\n") ||
+        "(no comments)";
       console.log(`\nreview returned:\n${review}\n`);
       sendJson(res, 200, { status: "returned" });
       return;

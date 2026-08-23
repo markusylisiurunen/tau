@@ -162,12 +162,10 @@ describe("SDK diff review", () => {
 
     const submitted = await fetch(`${review.url}api/review`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ message: "Address the unresolved feedback." }),
     });
     expect(submitted.ok).toBe(true);
     expect(onSubmit).toHaveBeenCalledWith({
-      review: expect.stringContaining("Address the unresolved feedback."),
+      review: expect.stringContaining("Please simplify this."),
       diffCommand: "git diff HEAD",
       reviewedFiles: ["example.ts"],
     });

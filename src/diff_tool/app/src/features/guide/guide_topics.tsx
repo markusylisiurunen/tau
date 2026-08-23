@@ -13,7 +13,6 @@ import "./guide_topics.css";
 type GuideTopicsProps = {
   topics: DiffToolGuideTopic[];
   comments: DiffToolGuideComment[];
-  loading: boolean;
   onOperate: (operation: DiffToolGuideOperation) => void;
   onComment: (target: DiffToolGuideCommentTarget, body: string) => void;
 };
@@ -21,7 +20,6 @@ type GuideTopicsProps = {
 export function GuideTopics({
   topics,
   comments,
-  loading,
   onOperate,
   onComment,
 }: GuideTopicsProps) {
@@ -70,7 +68,6 @@ export function GuideTopics({
           muted={!requestOpen}
           pill
           aria-pressed={requestOpen}
-          disabled={loading}
           onClick={() => setRequestOpen(true)}
         >
           Ask about…
@@ -82,7 +79,6 @@ export function GuideTopics({
           label="Ask about a topic"
           placeholder="Describe the topic you want explained…"
           submitLabel="Ask"
-          loading={loading}
           onClose={() => setRequestOpen(false)}
           onSubmit={(request) => {
             requestedTopicCountRef.current = topics.length;
@@ -96,7 +92,6 @@ export function GuideTopics({
             key={selectedTopic.id}
             topic={selectedTopic}
             comments={comments}
-            loading={loading}
             onOperate={onOperate}
             onComment={onComment}
           />

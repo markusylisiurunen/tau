@@ -12,7 +12,7 @@ export function useReviewSubmission({ setStatus }: ReviewSubmissionOptions) {
     setFinished(true);
     setStatus("Returning review…");
     try {
-      await returnReview("");
+      await returnReview();
       setStatus("Review returned. You can close this tab.");
     } catch (error) {
       setFinished(false);

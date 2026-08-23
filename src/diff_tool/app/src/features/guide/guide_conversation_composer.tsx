@@ -4,6 +4,7 @@ import type { CommentThread } from "../diff/comments.js";
 type GuideConversationComposerProps = {
   thread: CommentThread | null;
   body: string;
+  draftKind: "comment" | "conversation";
   disabled: boolean;
   onBodyChange: (body: string) => void;
   onSubmit: () => void;
@@ -14,6 +15,7 @@ const maxVisibleRows = 5;
 export function GuideConversationComposer({
   thread,
   body,
+  draftKind,
   disabled,
   onBodyChange,
   onSubmit,
@@ -49,6 +51,11 @@ export function GuideConversationComposer({
     );
   }
 
+  const inputLabel =
+    !thread && draftKind === "comment"
+      ? "Write a global review comment"
+      : "Ask anything";
+
   return (
     <div className="guide-conversation-composer">
       <textarea
@@ -58,8 +65,8 @@ export function GuideConversationComposer({
         rows={1}
         autoFocus
         disabled={disabled}
-        placeholder="Ask anything…"
-        aria-label="Ask anything"
+        placeholder={`${inputLabel}…`}
+        aria-label={inputLabel}
         onChange={(event) => onBodyChange(event.target.value)}
         onKeyDown={(event) => {
           if (

@@ -140,13 +140,8 @@ export async function saveGuideComment(
   });
 }
 
-export async function returnReview(
-  message: string,
-): Promise<{ status: string }> {
-  return request<{ status: string }>("api/review", {
-    method: "POST",
-    body: JSON.stringify({ message }),
-  });
+export async function returnReview(): Promise<{ status: string }> {
+  return request<{ status: string }>("api/review", { method: "POST" });
 }
 
 export async function cancelReview(): Promise<{ status: string }> {

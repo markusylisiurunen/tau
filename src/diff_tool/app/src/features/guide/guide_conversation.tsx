@@ -7,6 +7,7 @@ import "./guide_conversation.css";
 type GuideConversationProps = {
   thread: CommentThread | null;
   body: string;
+  draftKind: "comment" | "conversation";
   submitting: boolean;
   onBodyChange: (body: string) => void;
   onSubmit: () => void;
@@ -15,6 +16,7 @@ type GuideConversationProps = {
 export function GuideConversation({
   thread,
   body,
+  draftKind,
   submitting,
   onBodyChange,
   onSubmit,
@@ -42,17 +44,30 @@ export function GuideConversation({
           <GuideConversationMessages thread={thread} />
         ) : (
           <div className="guide-conversation-empty">
-            <h2>What would you like to know?</h2>
-            <p>
-              Ask about the intent, tradeoffs, or any part of the change you
-              want to understand better.
-            </p>
+            {draftKind === "comment" ? (
+              <>
+                <h2>Add a global review comment</h2>
+                <p>
+                  Leave feedback that does not belong to a specific diff line or
+                  guide block.
+                </p>
+              </>
+            ) : (
+              <>
+                <h2>What would you like to know?</h2>
+                <p>
+                  Ask about the intent, tradeoffs, or any part of the change you
+                  want to understand better.
+                </p>
+              </>
+            )}
           </div>
         )}
       </div>
       <GuideConversationComposer
         thread={thread}
         body={body}
+        draftKind={draftKind}
         disabled={submitting || Boolean(thread?.loading)}
         onBodyChange={onBodyChange}
         onSubmit={onSubmit}

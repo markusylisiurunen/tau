@@ -110,16 +110,7 @@ export function buildDiffReviewGuideOperationPrompt(
   operation: DiffToolGuideOperation,
   currentGuide: DiffToolGuide,
 ): string {
-  const context = [
-    "Use this current guide as context:",
-    "",
-    JSON.stringify({
-      orientation: currentGuide.orientation,
-      topics: currentGuide.topics,
-      questions: currentGuide.questions,
-    }),
-    "",
-  ];
+  const context = buildGuideOperationContext(currentGuide);
 
   switch (operation.kind) {
     case "topic.add":
@@ -149,11 +140,56 @@ export function buildDiffReviewGuideOperationPrompt(
   }
 }
 
+export function buildDiffReviewGuideOperationsPrompt(
+  operations: DiffToolGuideOperation[],
+  currentGuide: DiffToolGuide,
+): string {
+  if (operations.length === 1 && operations[0]) {
+    return buildDiffReviewGuideOperationPrompt(operations[0], currentGuide);
+  }
+
+  return `${REVIEW_GUIDE_FORK_SYSTEM_PROMPT}${[
+    ...buildGuideOperationContext(currentGuide),
+    `Apply these ${operations.length} queued reviewer requests in order:`,
+    "",
+    JSON.stringify(operations),
+    "",
+    "For topic.add, create one new topic. For topic.revise, return the complete revised topic. For question.ask, copy the reviewer's question exactly and answer it directly. Inspect the repo again when needed, preserve useful unaffected content, and do not rewrite unrelated parts of the guide.",
+    'Return one result per request in the same order. Each topic result must be shaped as {"topic":{"label":"one to three words","heading":"text","body":"markdown"}}. Each question result must be shaped as {"question":{"question":"text","answer":"markdown"}}.',
+    'Return only JSON shaped as {"results":[...]} with no code fence.',
+  ].join("\n")}`;
+}
+
 export function parseDiffReviewGuideResponse(response: string): DiffReviewGuideResponse {
   return parseGuideAgentResponse(response, guideResponseSchema, "guide");
 }
 
 export function parseDiffReviewGuideOperationResponse(
+  operation: DiffToolGuideOperation,
+  response: string,
+): DiffToolGuideOperationResult {
+  return parseGuideOperationContent(operation, response);
+}
+
+export function parseDiffReviewGuideOperationsResponse(
+  operations: DiffToolGuideOperation[],
+  response: string,
+): DiffToolGuideOperationResult[] {
+  if (operations.length === 1 && operations[0]) {
+    return [parseDiffReviewGuideOperationResponse(operations[0], response)];
+  }
+
+  const content = parseGuideAgentResponse(
+    response,
+    z.object({ results: z.array(z.unknown()).length(operations.length) }).strict(),
+    "queued guide operations",
+  );
+  return operations.map((operation, index) =>
+    parseGuideOperationContent(operation, JSON.stringify(content.results[index])),
+  );
+}
+
+function parseGuideOperationContent(
   operation: DiffToolGuideOperation,
   response: string,
 ): DiffToolGuideOperationResult {
@@ -176,6 +212,19 @@ export function parseDiffReviewGuideOperationResponse(
       return { kind: operation.kind, question: content.question };
     }
   }
+}
+
+function buildGuideOperationContext(currentGuide: DiffToolGuide): string[] {
+  return [
+    "Use this current guide as context:",
+    "",
+    JSON.stringify({
+      orientation: currentGuide.orientation,
+      topics: currentGuide.topics,
+      questions: currentGuide.questions,
+    }),
+    "",
+  ];
 }
 
 function parseGuideAgentResponse<T>(response: string, schema: z.ZodType<T>, label: string): T {

@@ -6,8 +6,12 @@ import type { ReviewSession } from "../review/use_review_session.js";
 import { isDetachedThread } from "./thread_state.js";
 import type { ThreadActions } from "./use_thread_actions.js";
 
+type DetachedThreadDraftKind = "comment" | "conversation";
+
 type DetachedThreadView =
-  { mode: "history" } | { mode: "new" } | { mode: "thread"; threadId: string };
+  | { mode: "history" }
+  | { mode: "new"; kind: DetachedThreadDraftKind }
+  | { mode: "thread"; threadId: string };
 
 type DetachedThreadOptions = Pick<
   ReviewSession,
@@ -25,7 +29,10 @@ export function useDetachedThreads({
 }: DetachedThreadOptions) {
   const [body, setBody] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [view, setView] = useState<DetachedThreadView>({ mode: "new" });
+  const [view, setView] = useState<DetachedThreadView>({
+    mode: "new",
+    kind: "conversation",
+  });
   const selectionVersionRef = useRef(0);
   const submittingRef = useRef(false);
 
@@ -41,10 +48,10 @@ export function useDetachedThreads({
     return threads.find((thread) => thread.id === view.threadId) ?? null;
   }, [threads, view]);
 
-  const openDraft = useCallback(() => {
+  const openDraft = useCallback((kind: DetachedThreadDraftKind) => {
     selectionVersionRef.current += 1;
     setBody("");
-    setView({ mode: "new" });
+    setView({ mode: "new", kind });
   }, []);
 
   const openThread = useCallback((threadId: string) => {
@@ -87,6 +94,7 @@ export function useDetachedThreads({
     }
 
     const selectionVersion = selectionVersionRef.current;
+    const requestAgent = view.mode === "thread" || view.kind === "conversation";
     let threadId: string;
     submittingRef.current = true;
     setSubmitting(true);
@@ -118,7 +126,9 @@ export function useDetachedThreads({
       setSubmitting(false);
     }
 
-    await requestThreadAgentReply(threadId);
+    if (requestAgent) {
+      await requestThreadAgentReply(threadId);
+    }
   }, [
     applyReviewState,
     body,
@@ -136,6 +146,7 @@ export function useDetachedThreads({
     threads,
     selectedThread,
     view: view.mode,
+    draftKind: view.mode === "new" ? view.kind : "conversation",
     openDraft,
     openThread,
     showHistory,

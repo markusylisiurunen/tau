@@ -1,4 +1,10 @@
-import { EyeOff, History, MessageSquare, Plus } from "lucide-react";
+import {
+  EyeOff,
+  History,
+  MessageSquare,
+  MessageSquarePlus,
+  Plus,
+} from "lucide-react";
 import { Button } from "../../ui/button.js";
 import type { CommentThread } from "../diff/comments.js";
 import type { ReviewThreads } from "../threads/use_review_threads.js";
@@ -44,11 +50,28 @@ export function GuideConversations({ conversations }: GuideConversationsProps) {
           <Button
             variant="ghost"
             iconOnly
-            active={view === "new"}
-            aria-label="New conversation"
-            aria-pressed={view === "new"}
-            title="New conversation"
-            onClick={conversations.openNew}
+            active={view === "new" && conversations.draftKind === "comment"}
+            aria-label="Add global comment"
+            aria-pressed={
+              view === "new" && conversations.draftKind === "comment"
+            }
+            title="Add global comment"
+            onClick={conversations.openComment}
+          >
+            <MessageSquarePlus size={16} />
+          </Button>
+          <Button
+            variant="ghost"
+            iconOnly
+            active={
+              view === "new" && conversations.draftKind === "conversation"
+            }
+            aria-label="New agent conversation"
+            aria-pressed={
+              view === "new" && conversations.draftKind === "conversation"
+            }
+            title="New agent conversation"
+            onClick={conversations.openConversation}
           >
             <Plus size={16} />
           </Button>
@@ -96,6 +119,7 @@ export function GuideConversations({ conversations }: GuideConversationsProps) {
           key={selected?.id ?? "new"}
           thread={selected}
           body={conversations.body}
+          draftKind={conversations.draftKind}
           submitting={conversations.submitting}
           onBodyChange={conversations.setBody}
           onSubmit={conversations.submit}

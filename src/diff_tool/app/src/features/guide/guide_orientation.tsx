@@ -30,7 +30,6 @@ export function GuideOrientation({
       <GuideFeedbackCard
         comments={comments}
         target={{ kind: "orientation" }}
-        loading={loading}
         onComment={onComment}
       />
     </section>

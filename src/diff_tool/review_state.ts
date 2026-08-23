@@ -245,45 +245,68 @@ export class DiffToolReviewStateStore {
     };
   }
 
-  applyGuideOperationResult(
+  applyGuideOperationResults(
     result: { threadId: string },
-    operation: DiffToolGuideOperation,
-    content: DiffToolGuideOperationResult,
+    operations: DiffToolGuideOperation[],
+    contents: DiffToolGuideOperationResult[],
   ): boolean {
-    switch (content.kind) {
-      case "topic.add":
-        if (
-          operation.kind !== content.kind ||
-          this.state.guide.topics.length >= DIFF_TOOL_GUIDE_TOPIC_LIMIT
-        ) {
-          return false;
-        }
-        this.state.guide.topics.push({ id: randomUUID(), ...content.topic });
-        break;
-      case "topic.revise": {
-        if (operation.kind !== content.kind) {
-          return false;
-        }
-        const topic = this.state.guide.topics.find((entry) => entry.id === operation.topicId);
-        if (!topic) {
-          return false;
-        }
-        Object.assign(topic, content.topic);
-        break;
+    if (operations.length !== contents.length) {
+      return false;
+    }
+
+    const topicCount =
+      this.state.guide.topics.length +
+      operations.filter((operation) => operation.kind === "topic.add").length;
+    const questionCount =
+      this.state.guide.questions.length +
+      operations.filter((operation) => operation.kind === "question.ask").length;
+    if (
+      topicCount > DIFF_TOOL_GUIDE_TOPIC_LIMIT ||
+      questionCount > DIFF_TOOL_GUIDE_QUESTION_LIMIT
+    ) {
+      return false;
+    }
+
+    for (const [index, operation] of operations.entries()) {
+      const content = contents[index];
+      if (!content || operation.kind !== content.kind) {
+        return false;
       }
-      case "question.ask":
-        if (
-          operation.kind !== content.kind ||
-          this.state.guide.questions.length >= DIFF_TOOL_GUIDE_QUESTION_LIMIT
-        ) {
-          return false;
+      if (
+        operation.kind === "topic.revise" &&
+        !this.state.guide.topics.some((topic) => topic.id === operation.topicId)
+      ) {
+        return false;
+      }
+    }
+
+    for (const [index, operation] of operations.entries()) {
+      const content = contents[index];
+      if (!content) {
+        return false;
+      }
+      switch (content.kind) {
+        case "topic.add":
+          this.state.guide.topics.push({ id: randomUUID(), ...content.topic });
+          break;
+        case "topic.revise": {
+          const topic = this.state.guide.topics.find(
+            (entry) => operation.kind === "topic.revise" && entry.id === operation.topicId,
+          );
+          if (!topic) {
+            return false;
+          }
+          Object.assign(topic, content.topic);
+          break;
         }
-        this.state.guide.questions.push({
-          id: randomUUID(),
-          ...content.question,
-          source: "user",
-        });
-        break;
+        case "question.ask":
+          this.state.guide.questions.push({
+            id: randomUUID(),
+            ...content.question,
+            source: "user",
+          });
+          break;
+      }
     }
 
     this.state.guide.threadId = result.threadId;
@@ -349,24 +372,27 @@ export class DiffToolReviewStateStore {
     return `${locationPrefix}Continue this restored review conversation. Its previous transcript is included below.\n\n${transcript}`;
   }
 
-  buildReviewText(submissionMessage?: string): string {
-    const trimmedSubmissionMessage = submissionMessage?.trim();
+  buildReviewText(): string {
     const unresolvedThreads = this.state.threads.filter((thread) => !thread.resolved);
-    const guideComments = this.state.guide.comments;
+    const guideComments = this.state.guide.comments.filter((comment) => comment.body.trim());
     if (unresolvedThreads.length === 0 && guideComments.length === 0) {
-      return trimmedSubmissionMessage || "(no comments)";
+      return "(no comments)";
     }
 
     const sections: string[] = [];
-    if (trimmedSubmissionMessage) {
-      sections.push(`## submission message\n\n${trimmedSubmissionMessage}`);
-    }
     if (guideComments.length > 0) {
       sections.push(
         guideComments
           .map((comment, index) => {
-            const location = formatGuideCommentTarget(this.state.guide, comment.target);
-            return `## guide comment ${index + 1}\n\n\`${location}\`\n\n${comment.body}`;
+            const context = formatGuideCommentContext(this.state.guide, comment.target);
+            return [
+              `## guide comment ${index + 1}`,
+              `\`${context.location}\``,
+              `### ${context.heading}`,
+              context.content,
+              "**review comment**",
+              comment.body,
+            ].join("\n\n");
           })
           .join("\n\n---\n\n"),
       );
@@ -424,17 +450,33 @@ function guideCommentTargetsEqual(
   }
 }
 
-function formatGuideCommentTarget(
+function formatGuideCommentContext(
   guide: DiffToolGuide,
   target: DiffToolGuideCommentTarget,
-): string {
+): { location: string; heading: string; content: string } {
   switch (target.kind) {
     case "orientation":
-      return "guide · orientation";
-    case "topic":
-      return `guide topic · ${guide.topics.find((topic) => topic.id === target.topicId)?.heading ?? "removed topic"}`;
-    case "question":
-      return `guide question · ${guide.questions.find((question) => question.id === target.questionId)?.question ?? "removed question"}`;
+      return {
+        location: "guide · orientation",
+        heading: "Orientation",
+        content: guide.orientation,
+      };
+    case "topic": {
+      const topic = guide.topics.find((entry) => entry.id === target.topicId);
+      return {
+        location: `guide topic · ${topic?.heading ?? "removed topic"}`,
+        heading: topic?.heading ?? "Removed topic",
+        content: topic?.body ?? "(guide block removed)",
+      };
+    }
+    case "question": {
+      const question = guide.questions.find((entry) => entry.id === target.questionId);
+      return {
+        location: `guide question · ${question?.question ?? "removed question"}`,
+        heading: question?.question ?? "Removed question",
+        content: question?.answer ?? "(guide block removed)",
+      };
+    }
   }
 }
 

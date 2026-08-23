@@ -7,9 +7,9 @@ import type { DiffReviewProtocolClient } from "./protocol_client.js";
 import {
   buildDiffReviewBootstrapPrompt,
   buildDiffReviewCommentThreadPrompt,
-  buildDiffReviewGuideOperationPrompt,
+  buildDiffReviewGuideOperationsPrompt,
   buildDiffReviewGuidePrompt,
-  parseDiffReviewGuideOperationResponse,
+  parseDiffReviewGuideOperationsResponse,
   parseDiffReviewGuideResponse,
 } from "./review_prompts.js";
 import { DiffToolReviewStateStore } from "./review_state.js";
@@ -73,6 +73,17 @@ type ReviewStatePersistence = {
   scopeFingerprint: string;
 };
 
+type GuideOperationResult = {
+  applied: boolean;
+  state: DiffToolReviewState;
+};
+
+type QueuedGuideOperation = {
+  operation: DiffToolGuideOperation;
+  resolve: (result: GuideOperationResult) => void;
+  reject: (error: unknown) => void;
+};
+
 const JSON_BODY_LIMIT_BYTES = 1024 * 1024;
 const DIFF_REVIEW_FORK_REASONING = "medium" as const;
 
@@ -108,6 +119,8 @@ export class DiffToolHttpServer {
   private submissionState: "active" | "submitting" | "submitted" = "active";
   private bootstrapThreadPromise?: Promise<string>;
   private guideGenerationPromise?: Promise<DiffToolReviewState>;
+  private guideOperationQueue: QueuedGuideOperation[] = [];
+  private guideOperationRunning = false;
   private httpServerClosePromise?: Promise<void>;
   private sessionClosing = false;
   private server = createServer((request, response) => {
@@ -391,6 +404,79 @@ export class DiffToolHttpServer {
     return state;
   }
 
+  private enqueueGuideOperation(operation: DiffToolGuideOperation): Promise<GuideOperationResult> {
+    this.reviewState.setGuideLoading(true);
+    const queued = new Promise<GuideOperationResult>((resolve, reject) => {
+      this.guideOperationQueue.push({ operation, resolve, reject });
+    });
+    void this.drainGuideOperationQueue();
+    return queued;
+  }
+
+  private async drainGuideOperationQueue(): Promise<void> {
+    if (this.guideOperationRunning) {
+      return;
+    }
+
+    this.guideOperationRunning = true;
+    try {
+      if (this.guideGenerationPromise) {
+        await this.guideGenerationPromise;
+      }
+      while (this.guideOperationQueue.length > 0) {
+        const queued = this.guideOperationQueue.splice(0);
+        try {
+          const result = await this.runGuideOperations(queued.map((entry) => entry.operation));
+          for (const entry of queued) {
+            entry.resolve(result);
+          }
+        } catch (error) {
+          this.reviewState.setGuideLoading(false);
+          for (const entry of queued) {
+            entry.reject(error);
+          }
+        }
+      }
+    } catch (error) {
+      this.reviewState.setGuideLoading(false);
+      for (const entry of this.guideOperationQueue.splice(0)) {
+        entry.reject(error);
+      }
+    } finally {
+      this.guideOperationRunning = false;
+      if (this.guideOperationQueue.length > 0) {
+        void this.drainGuideOperationQueue();
+      }
+    }
+  }
+
+  private async runGuideOperations(
+    operations: DiffToolGuideOperation[],
+  ): Promise<GuideOperationResult> {
+    const currentGuide = this.reviewState.getState().guide;
+    this.reviewState.setGuideLoading(true);
+    const message = buildDiffReviewGuideOperationsPrompt(operations, currentGuide);
+    const result = await this.client.submitThreadMessage(
+      currentGuide.threadId
+        ? { threadId: currentGuide.threadId, message }
+        : {
+            forkFromThreadId: await this.getBootstrapThreadId(),
+            message,
+            reasoning: DIFF_REVIEW_FORK_REASONING,
+          },
+    );
+    const contents = parseDiffReviewGuideOperationsResponse(operations, result.response);
+    const { result: applied, state } = await this.mutateReviewState(
+      (draft) => draft.applyGuideOperationResults(result, operations, contents),
+      (value) => value,
+    );
+    if (!applied) {
+      this.reviewState.setGuideLoading(false);
+      return { applied, state: this.reviewState.getState() };
+    }
+    return { applied, state };
+  }
+
   private async handleRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const method = request.method ?? "GET";
     const requestUrl = new URL(request.url ?? "/", `http://${request.headers.host ?? this.host}`);
@@ -619,10 +705,6 @@ export class DiffToolHttpServer {
         return;
       }
       const currentState = this.reviewState.getState();
-      if (currentState.guide.loading) {
-        this.sendJson(response, 409, { error: "guide update already in progress" });
-        return;
-      }
       if (
         operation.kind === "topic.add" &&
         currentState.guide.topics.length >= DIFF_TOOL_GUIDE_TOPIC_LIMIT
@@ -645,32 +727,12 @@ export class DiffToolHttpServer {
         return;
       }
 
-      this.reviewState.setGuideLoading(true);
-      try {
-        const message = buildDiffReviewGuideOperationPrompt(operation, currentState.guide);
-        const result = await this.client.submitThreadMessage(
-          currentState.guide.threadId
-            ? { threadId: currentState.guide.threadId, message }
-            : {
-                forkFromThreadId: await this.getBootstrapThreadId(),
-                message,
-                reasoning: DIFF_REVIEW_FORK_REASONING,
-              },
-        );
-        const content = parseDiffReviewGuideOperationResponse(operation, result.response);
-        const { result: applied, state } = await this.mutateReviewState(
-          (draft) => draft.applyGuideOperationResult(result, operation, content),
-          (applied) => applied,
-        );
-        if (!applied) {
-          this.sendJson(response, 409, { error: "guide changed while it was being updated" });
-          return;
-        }
-        this.sendJson(response, 200, { state });
-      } catch (error) {
-        this.reviewState.setGuideLoading(false);
-        throw error;
+      const { applied, state } = await this.enqueueGuideOperation(operation);
+      if (!applied) {
+        this.sendJson(response, 409, { error: "guide changed while it was being updated" });
+        return;
       }
+      this.sendJson(response, 200, { state });
       return;
     }
 
@@ -693,14 +755,14 @@ export class DiffToolHttpServer {
     }
 
     if (method === "POST" && requestUrl.pathname === "/api/review") {
-      const payload = parseReviewPayload(await this.readJsonBody(request));
+      await this.readJsonBody(request);
       if (this.submissionState !== "active") {
         this.sendJson(response, 409, { error: "diff review has already been submitted" });
         return;
       }
 
       this.submissionState = "submitting";
-      const review = this.reviewState.buildReviewText(payload.message);
+      const review = this.reviewState.buildReviewText();
       const context = this.context;
       if (!context) {
         this.submissionState = "active";
@@ -822,12 +884,6 @@ export class DiffToolHttpServer {
 
 function formatHttpUrlHost(host: string): string {
   return host.includes(":") ? `[${host}]` : host;
-}
-
-function parseReviewPayload(payload: Record<string, unknown>): { message?: string } {
-  return typeof payload.message === "string" && payload.message.trim()
-    ? { message: payload.message }
-    : {};
 }
 
 function parseGuideOperation(payload: Record<string, unknown>): DiffToolGuideOperation | undefined {

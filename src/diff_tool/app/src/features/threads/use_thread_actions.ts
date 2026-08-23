@@ -1,5 +1,4 @@
 import { useCallback } from "react";
-import { getErrorMessage } from "../../lib/errors.js";
 import {
   collapseThread,
   deleteThreadMessage,
@@ -11,14 +10,13 @@ import type { ReviewSession } from "../review/use_review_session.js";
 
 type ThreadActionOptions = Pick<
   ReviewSession,
-  "applyReviewState" | "syncReviewState" | "setThreadLoading" | "setStatus"
+  "applyReviewState" | "syncReviewState" | "setThreadLoading"
 >;
 
 export function useThreadActions({
   applyReviewState,
   syncReviewState,
   setThreadLoading,
-  setStatus,
 }: ThreadActionOptions) {
   const requestThreadAgentReply = useCallback(
     async (threadId: string) => {
@@ -26,12 +24,11 @@ export function useThreadActions({
       try {
         const result = await requestThreadMessage(threadId);
         applyReviewState(result.state);
-      } catch (error) {
+      } catch {
         setThreadLoading(threadId, false);
-        setStatus(getErrorMessage(error));
       }
     },
-    [applyReviewState, setStatus, setThreadLoading],
+    [applyReviewState, setThreadLoading],
   );
 
   const addReply = useCallback(
@@ -46,22 +43,19 @@ export function useThreadActions({
           const result = await replyToThread({ id: threadId, text });
           applyReviewState(result.state);
           await requestThreadAgentReply(threadId);
-        } catch (error) {
-          setStatus(getErrorMessage(error));
-        }
+        } catch {}
       };
 
       void reply();
     },
-    [applyReviewState, requestThreadAgentReply, setStatus, syncReviewState],
+    [applyReviewState, requestThreadAgentReply, syncReviewState],
   );
 
   const requestAgent = useCallback(
     (threadId: string) => {
-      setStatus("");
       void requestThreadAgentReply(threadId);
     },
-    [requestThreadAgentReply, setStatus],
+    [requestThreadAgentReply],
   );
 
   const toggleResolved = useCallback(

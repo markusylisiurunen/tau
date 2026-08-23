@@ -1,17 +1,13 @@
 import { useCallback, useMemo, useState } from "react";
-import { getErrorMessage } from "../../lib/errors.js";
 import { createThread } from "../../api.js";
-import { buildThreadsByFileId, resolveDraftFilePath } from "./thread_state.js";
-import type { ReviewSession } from "../review/use_review_session.js";
 import type { DiffToolReviewState } from "../../types.js";
 import type { CommentDraft, LineAnnotation } from "../diff/comments.js";
 import type { DiffFile } from "../diff/parse_diff.js";
+import type { ReviewSession } from "../review/use_review_session.js";
 import type { ThreadActions } from "./use_thread_actions.js";
+import { buildThreadsByFileId, resolveDraftFilePath } from "./thread_state.js";
 
-type InlineThreadOptions = Pick<
-  ReviewSession,
-  "applyReviewState" | "setStatus"
-> & {
+type InlineThreadOptions = Pick<ReviewSession, "applyReviewState"> & {
   files: DiffFile[];
   reviewState: DiffToolReviewState;
   requestThreadAgentReply: ThreadActions["requestThreadAgentReply"];
@@ -22,7 +18,6 @@ export function useInlineThreads({
   reviewState,
   requestThreadAgentReply,
   applyReviewState,
-  setStatus,
 }: InlineThreadOptions) {
   const [draft, setDraft] = useState<CommentDraft | null>(null);
 
@@ -89,14 +84,12 @@ export function useInlineThreads({
           if (shouldRequestAgent) {
             await requestThreadAgentReply(result.threadId);
           }
-        } catch (error) {
-          setStatus(getErrorMessage(error));
-        }
+        } catch {}
       };
 
       void save();
     },
-    [applyReviewState, draft, files, requestThreadAgentReply, setStatus],
+    [applyReviewState, draft, files, requestThreadAgentReply],
   );
 
   const cancelDraft = useCallback(() => setDraft(null), []);

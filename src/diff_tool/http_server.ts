@@ -756,6 +756,7 @@ export class DiffToolHttpServer {
 
     if (method === "POST" && requestUrl.pathname === "/api/review") {
       await this.readJsonBody(request);
+      await this.stateMutationQueue;
       if (this.submissionState !== "active") {
         this.sendJson(response, 409, { error: "diff review has already been submitted" });
         return;

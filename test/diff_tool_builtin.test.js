@@ -610,10 +610,7 @@ describe("built-in diff tool", () => {
           return {
             threadId: "guide-thread",
             response: JSON.stringify({
-              question: {
-                question: "Can requests be retried?",
-                answer: "Yes, when the caller preserves the request identifier.",
-              },
+              answer: "Yes, when the caller preserves the request identifier.",
             }),
           };
         }
@@ -755,32 +752,20 @@ describe("built-in diff tool", () => {
           await firstUpdateFinished;
           return {
             threadId: "guide-thread",
-            response: JSON.stringify({
-              question: {
-                question: "First queued request?",
-                answer: "First answer.",
-              },
-            }),
+            response: JSON.stringify({ answer: "First answer." }),
           };
         }
         if (message.includes("Apply these 2 queued reviewer requests in order")) {
+          const secondIndex = message.indexOf('"question":"Second queued request?"');
+          const thirdIndex = message.indexOf('"question":"Third queued request?"');
+          const answers =
+            secondIndex < thirdIndex
+              ? ["Second answer.", "Third answer."]
+              : ["Third answer.", "Second answer."];
           return {
             threadId: "guide-thread",
             response: JSON.stringify({
-              results: [
-                {
-                  question: {
-                    question: "Second queued request?",
-                    answer: "Second answer.",
-                  },
-                },
-                {
-                  question: {
-                    question: "Third queued request?",
-                    answer: "Third answer.",
-                  },
-                },
-              ],
+              results: answers.map((answer) => ({ answer })),
             }),
           };
         }
@@ -814,10 +799,15 @@ describe("built-in diff tool", () => {
       finishFirstUpdate();
       await first;
       const [secondResult, thirdResult] = await Promise.all([second, third]);
-      expect(secondResult.state.guide.questions.slice(-2)).toMatchObject([
-        { question: "Second queued request?", answer: "Second answer." },
-        { question: "Third queued request?", answer: "Third answer." },
-      ]);
+      const queuedAnswers = Object.fromEntries(
+        secondResult.state.guide.questions
+          .slice(-2)
+          .map((question) => [question.question, question.answer]),
+      );
+      expect(queuedAnswers).toEqual({
+        "Second queued request?": "Second answer.",
+        "Third queued request?": "Third answer.",
+      });
       expect(thirdResult.state).toEqual(secondResult.state);
 
       const updateCalls = client.submitThreadMessage.mock.calls
@@ -1665,6 +1655,64 @@ describe("built-in diff tool", () => {
       continueBootstrap?.();
       await server.close();
       await bridge.close();
+    }
+  });
+
+  it("waits for pending state mutations before returning a review", async () => {
+    let saveCount = 0;
+    let markCommentStarted;
+    const commentStarted = new Promise((resolve) => {
+      markCommentStarted = resolve;
+    });
+    let finishComment;
+    const commentFinished = new Promise((resolve) => {
+      finishComment = resolve;
+    });
+    const storage = {
+      load: vi.fn(async () => undefined),
+      save: vi.fn(async () => {
+        saveCount += 1;
+        if (saveCount === 3) {
+          markCommentStarted();
+          await commentFinished;
+        }
+      }),
+    };
+    const client = createClientStub({
+      submitThreadMessage: vi.fn(async ({ forkFromThreadId }) =>
+        forkFromThreadId
+          ? { threadId: "guide-thread", response: createGuideAgentResponse() }
+          : { threadId: "bootstrap-thread", response: "bootstrap" },
+      ),
+    });
+    const server = new DiffToolHttpServer({ client, storage });
+
+    try {
+      const started = await server.start();
+      await fetchJson(`${started.url}api/guide/generate`, { method: "POST" });
+      const pendingComment = fetch(`${started.url}api/guide/comment`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ target: { kind: "orientation" }, body: "Pending feedback" }),
+      });
+      await commentStarted;
+
+      const pendingReview = fetch(`${started.url}api/review`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(client.returnReview).not.toHaveBeenCalled();
+
+      finishComment();
+      expect((await pendingComment).ok).toBe(true);
+      expect((await pendingReview).ok).toBe(true);
+      expect(client.returnReview).toHaveBeenCalledWith({
+        review: expect.stringContaining("Pending feedback"),
+      });
+    } finally {
+      finishComment?.();
+      await server.close();
     }
   });
 

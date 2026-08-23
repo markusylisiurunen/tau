@@ -34,16 +34,14 @@ export function App() {
     applyReviewState: session.applyReviewState,
     syncReviewState: session.syncReviewState,
     setThreadLoading: session.setThreadLoading,
-    setStatus: session.setStatus,
   });
   const guide = useGuide({
     bootstrap: session.bootstrap,
     reviewState: session.reviewState,
-    setStatus: session.setStatus,
     setGuideLoading: session.setGuideLoading,
     syncReviewState: session.syncReviewState,
   });
-  const submission = useReviewSubmission({ setStatus: session.setStatus });
+  const submission = useReviewSubmission();
   const diffRendererReady = useDiffRendererReady(
     session.files,
     session.reviewState.codeTheme,

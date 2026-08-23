@@ -1,13 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { getErrorMessage } from "../../lib/errors.js";
 import { fetchBootstrap, fetchDiff, updateReviewState } from "../../api.js";
-import { parseDiff } from "../diff/parse_diff.js";
-import {
-  emptyReviewState,
-  normalizeReviewState,
-  withGuideLoading,
-  withThreadLoading,
-} from "./review_state.js";
 import type {
   BootstrapPayload,
   DiffReviewGetDiffResult,
@@ -15,6 +7,13 @@ import type {
   ReviewStatePatch,
   StateResponse,
 } from "../../types.js";
+import { parseDiff } from "../diff/parse_diff.js";
+import {
+  emptyReviewState,
+  normalizeReviewState,
+  withGuideLoading,
+  withThreadLoading,
+} from "./review_state.js";
 
 export type ReviewStateSyncOptions = {
   onError?: () => void;
@@ -25,7 +24,6 @@ export function useReviewSession() {
   const [diff, setDiff] = useState<DiffReviewGetDiffResult | null>(null);
   const [reviewState, setReviewState] =
     useState<DiffToolReviewState>(emptyReviewState);
-  const [status, setStatus] = useState("");
 
   const applyReviewState = useCallback((state: DiffToolReviewState) => {
     setReviewState(normalizeReviewState(state));
@@ -39,9 +37,8 @@ export function useReviewSession() {
       try {
         const result = await operation;
         applyReviewState(result.state);
-      } catch (error) {
+      } catch {
         options.onError?.();
-        setStatus(getErrorMessage(error));
       }
     },
     [applyReviewState],
@@ -84,11 +81,7 @@ export function useReviewSession() {
         if (active) {
           setDiff(result);
         }
-      } catch (error) {
-        if (active) {
-          setStatus(getErrorMessage(error));
-        }
-      }
+      } catch {}
     };
 
     void load();
@@ -103,13 +96,11 @@ export function useReviewSession() {
     () => parseDiff(patch, bootstrap?.files, bootstrap?.context.sessionId),
     [bootstrap, patch],
   );
-  const emptyContent = status || (diff ? "no changes to review" : "loading…");
+  const emptyContent = diff ? "no changes to review" : "loading…";
 
   return {
     bootstrap,
     reviewState,
-    status,
-    setStatus,
     files,
     emptyContent,
     applyReviewState,

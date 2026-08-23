@@ -82,12 +82,8 @@ const topicSchema = z
     body: z.string().min(1),
   })
   .strict();
-const questionSchema = z
-  .object({
-    question: z.string().min(1),
-    answer: z.string().min(1),
-  })
-  .strict();
+const answerSchema = z.object({ answer: z.string().min(1) }).strict();
+const questionSchema = answerSchema.extend({ question: z.string().min(1) }).strict();
 const guideResponseSchema = z
   .object({
     orientation: z.string().min(1),
@@ -134,8 +130,8 @@ export function buildDiffReviewGuideOperationPrompt(
       return `${REVIEW_GUIDE_FORK_SYSTEM_PROMPT}${[
         ...context,
         `Answer this reviewer question: ${operation.question}`,
-        "Copy the reviewer's question exactly into the question field. Answer it directly at the requested depth, using the current code as evidence, without repeating unrelated guide content.",
-        'Return only JSON shaped as {"question":{"question":"text","answer":"markdown"}}.',
+        "Answer it directly at the requested depth, using the current code as evidence, without repeating unrelated guide content.",
+        'Return only JSON shaped as {"answer":"markdown"}.',
       ].join("\n")}`;
   }
 }
@@ -154,8 +150,8 @@ export function buildDiffReviewGuideOperationsPrompt(
     "",
     JSON.stringify(operations),
     "",
-    "For topic.add, create one new topic. For topic.revise, return the complete revised topic. For question.ask, copy the reviewer's question exactly and answer it directly. Inspect the repo again when needed, preserve useful unaffected content, and do not rewrite unrelated parts of the guide.",
-    'Return one result per request in the same order. Each topic result must be shaped as {"topic":{"label":"one to three words","heading":"text","body":"markdown"}}. Each question result must be shaped as {"question":{"question":"text","answer":"markdown"}}.',
+    "For topic.add, create one new topic. For topic.revise, return the complete revised topic. For question.ask, answer the reviewer directly. Inspect the repo again when needed, preserve useful unaffected content, and do not rewrite unrelated parts of the guide.",
+    'Return one result per request in the same order. Each topic result must be shaped as {"topic":{"label":"one to three words","heading":"text","body":"markdown"}}. Each question result must be shaped as {"answer":"markdown"}.',
     'Return only JSON shaped as {"results":[...]} with no code fence.',
   ].join("\n")}`;
 }
@@ -204,12 +200,11 @@ function parseGuideOperationContent(
       return { kind: operation.kind, topic: content.topic };
     }
     case "question.ask": {
-      const content = parseGuideAgentResponse(
-        response,
-        z.object({ question: questionSchema }).strict(),
-        "guide question",
-      );
-      return { kind: operation.kind, question: content.question };
+      const content = parseGuideAgentResponse(response, answerSchema, "guide question");
+      return {
+        kind: operation.kind,
+        question: { question: operation.question, answer: content.answer },
+      };
     }
   }
 }

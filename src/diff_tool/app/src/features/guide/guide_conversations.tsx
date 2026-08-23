@@ -1,4 +1,5 @@
 import {
+  Eye,
   EyeOff,
   History,
   MessageSquare,
@@ -36,15 +37,25 @@ export function GuideConversations({ conversations }: GuideConversationsProps) {
           <History size={16} />
         </Button>
         <div className="guide-conversation-header-actions">
-          {selected && !selected.resolved && (
+          {selected && (
             <Button
               variant="ghost"
               iconOnly
-              aria-label="Exclude conversation from review"
-              title="Exclude from review"
-              onClick={() => conversations.exclude(selected.id)}
+              aria-label={
+                selected.resolved
+                  ? "Include conversation in review"
+                  : "Exclude conversation from review"
+              }
+              title={
+                selected.resolved ? "Include in review" : "Exclude from review"
+              }
+              onClick={() =>
+                selected.resolved
+                  ? conversations.include(selected.id)
+                  : conversations.exclude(selected.id)
+              }
             >
-              <EyeOff size={16} />
+              {selected.resolved ? <Eye size={16} /> : <EyeOff size={16} />}
             </Button>
           )}
           <Button

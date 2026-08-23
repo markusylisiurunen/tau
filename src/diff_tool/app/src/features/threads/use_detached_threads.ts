@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createThread, replyToThread } from "../../api.js";
-import { getErrorMessage } from "../../lib/errors.js";
 import type { DiffToolReviewState } from "../../types.js";
 import type { ReviewSession } from "../review/use_review_session.js";
-import { isDetachedThread } from "./thread_state.js";
 import type { ThreadActions } from "./use_thread_actions.js";
+import { isDetachedThread } from "./thread_state.js";
 
 type DetachedThreadDraftKind = "comment" | "conversation";
 
@@ -13,10 +12,7 @@ type DetachedThreadView =
   | { mode: "new"; kind: DetachedThreadDraftKind }
   | { mode: "thread"; threadId: string };
 
-type DetachedThreadOptions = Pick<
-  ReviewSession,
-  "applyReviewState" | "setStatus"
-> & {
+type DetachedThreadOptions = Pick<ReviewSession, "applyReviewState"> & {
   reviewState: DiffToolReviewState;
   requestThreadAgentReply: ThreadActions["requestThreadAgentReply"];
 };
@@ -25,7 +21,6 @@ export function useDetachedThreads({
   reviewState,
   requestThreadAgentReply,
   applyReviewState,
-  setStatus,
 }: DetachedThreadOptions) {
   const [body, setBody] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -98,7 +93,6 @@ export function useDetachedThreads({
     let threadId: string;
     submittingRef.current = true;
     setSubmitting(true);
-    setStatus("");
 
     try {
       if (view.mode === "thread") {
@@ -118,8 +112,7 @@ export function useDetachedThreads({
           setView({ mode: "thread", threadId });
         }
       }
-    } catch (error) {
-      setStatus(getErrorMessage(error));
+    } catch {
       return;
     } finally {
       submittingRef.current = false;
@@ -135,7 +128,6 @@ export function useDetachedThreads({
     requestThreadAgentReply,
     resetDraftIfCurrent,
     selectedThread,
-    setStatus,
     view,
   ]);
 

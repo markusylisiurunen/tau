@@ -10,11 +10,12 @@
   height: 32px;
   justify-content: center;
   min-width: 0;
+  padding-block: 0;
   padding-inline: 8px;
   white-space: nowrap;
 }
 
-.button:not(:disabled):hover,
+.button:not(.button-unstyled):not(:disabled):hover,
 .button-active {
   background: color-mix(in oklch, var(--text) 6%, transparent);
   color: var(--text);
@@ -22,6 +23,15 @@
 
 .button:disabled {
   opacity: 0.4;
+}
+
+.button-unstyled {
+  appearance: none;
+  background: none;
+  border: 0;
+  color: inherit;
+  height: auto;
+  padding: 0;
 }
 
 .button-primary {

@@ -40,11 +40,11 @@
 
 :root {
   color-scheme: dark;
-  --bg: oklch(18.8% 0 0);
-  --surface: oklch(22% 0 0);
-  --border: oklch(100% 0 0 / 0.06);
-  --border-surface: oklch(100% 0 0 / 0.05);
-  --text: oklch(84% 0 0);
+  --bg: oklch(19% 0 0);
+  --surface: oklch(22.4% 0 0);
+  --border: oklch(100% 0 0 / 0.08);
+  --border-surface: oklch(100% 0 0 / 0.04);
+  --text: oklch(86% 0 0);
   --text-muted: oklch(56% 0 0);
   --accent-add: oklch(76% 0.19 152);
   --accent-del: oklch(76% 0.19 34);
@@ -89,7 +89,7 @@
     transparent
   );
   --accent-primary: oklch(96% 0 0);
-  --text-inverse: oklch(16% 0 0);
+  --text-inverse: oklch(12% 0 0);
   --accent-primary-hover: oklch(84% 0 0);
   --thread-agent-bg: color-mix(
     in oklch,
@@ -103,7 +103,6 @@
     var(--accent-change) 72%,
     transparent
   );
-  --dialog-backdrop: color-mix(in oklch, oklch(0% 0 0) 88%, transparent);
   --code-inline-bg: color-mix(
     in oklch,
     var(--accent-interactive) 6%,

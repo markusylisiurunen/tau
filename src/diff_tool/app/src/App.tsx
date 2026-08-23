@@ -4,12 +4,12 @@ import { DiffWorkspace } from "./features/diff/diff_workspace.js";
 import { useDiffFileState } from "./features/diff/use_diff_file_state.js";
 import { useDiffRendererReady } from "./features/diff/use_diff_renderer_ready.js";
 import { Guide } from "./features/guide/guide.js";
+import { GuideConversations } from "./features/guide/guide_conversations.js";
 import { useGuide } from "./features/guide/use_guide.js";
 import { TopBar } from "./features/review/top_bar.js";
 import { useReviewNavigation } from "./features/review/use_review_navigation.js";
 import { useReviewSession } from "./features/review/use_review_session.js";
 import { useReviewSubmission } from "./features/review/use_review_submission.js";
-import { ReviewThreadDialog } from "./features/threads/review_thread_dialog.js";
 import { useReviewThreads } from "./features/threads/use_review_threads.js";
 
 const LocalAgentation = import.meta.env.DEV
@@ -31,7 +31,6 @@ export function App() {
   const threads = useReviewThreads({
     files: session.files,
     reviewState: session.reviewState,
-    revealFile: fileState.revealFile,
     applyReviewState: session.applyReviewState,
     syncReviewState: session.syncReviewState,
     setThreadLoading: session.setThreadLoading,
@@ -81,14 +80,17 @@ export function App() {
           onCancel={submission.cancel}
         />
         {navigation.mode === "guide" ? (
-          <main ref={navigation.contentRef} className="content guide-content">
-            <Guide
-              guide={session.reviewState.guide}
-              onGenerate={guide.requestGuide}
-              onOperate={guide.runGuideOperation}
-              onComment={guide.saveComment}
-            />
-          </main>
+          <>
+            <main ref={navigation.contentRef} className="content guide-content">
+              <Guide
+                guide={session.reviewState.guide}
+                onGenerate={guide.requestGuide}
+                onOperate={guide.runGuideOperation}
+                onComment={guide.saveComment}
+              />
+            </main>
+            <GuideConversations conversations={threads.guideConversations} />
+          </>
         ) : (
           <DiffWorkspace
             contentRef={navigation.contentRef}
@@ -102,7 +104,6 @@ export function App() {
           />
         )}
       </div>
-      <ReviewThreadDialog threads={threads} />
       {LocalAgentation ? (
         <Suspense fallback={null}>
           <LocalAgentation />

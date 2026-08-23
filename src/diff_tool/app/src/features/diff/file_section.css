@@ -2,7 +2,7 @@
   background: var(--surface);
   border-radius: var(--radius-lg);
   border: 1px solid var(--border-surface);
-  overflow: hidden;
+  overflow: clip;
   scroll-margin-top: var(--file-gap);
 }
 
@@ -29,6 +29,20 @@
 
 .file-body {
   background: var(--surface);
+}
+
+.file-toggle {
+  cursor: pointer;
+  flex: 1 1 auto;
+  gap: 4px;
+  justify-content: flex-start;
+  min-width: 0;
+  text-align: left;
+}
+
+.file-toggle:focus-visible {
+  outline: 1px solid var(--accent-interactive);
+  outline-offset: 2px;
 }
 
 .file-path {

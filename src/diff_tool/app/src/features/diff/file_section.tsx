@@ -145,7 +145,8 @@ export const FileSection = memo(function FileSection({
     >
       <div className="file-header">
         <Button
-          variant="ghost"
+          variant="unstyled"
+          className="file-toggle"
           onClick={() => onToggleCollapsed(file.id)}
           aria-label={collapsed ? "Expand file" : "Collapse file"}
         >

@@ -36,11 +36,7 @@ export function DiffWorkspace({
       <Sidebar
         files={files}
         viewed={fileState.viewed}
-        threads={fileState.sidebarThreads}
-        selectedThreadId={threads.selectedDetachedThreadId}
         onJumpToFile={onJumpToFile}
-        onCreateDetachedThread={threads.openDetachedThreadDraft}
-        onOpenThread={threads.openThread}
       />
       <main ref={contentRef} className="content">
         {files.length === 0 && <div className="empty">{emptyContent}</div>}

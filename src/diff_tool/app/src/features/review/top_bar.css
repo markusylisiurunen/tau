@@ -64,3 +64,9 @@
 .top-bar-viewed-text {
   color: var(--text-muted);
 }
+
+.top-bar-actions {
+  align-items: center;
+  display: flex;
+  gap: 4px;
+}

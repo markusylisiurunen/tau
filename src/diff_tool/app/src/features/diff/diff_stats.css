@@ -1,7 +1,7 @@
 .diff-stats {
   align-items: center;
   display: inline-flex;
-  gap: 4px;
+  gap: 2px;
 }
 
 .stat-add {

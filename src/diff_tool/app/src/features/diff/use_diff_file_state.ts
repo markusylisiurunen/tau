@@ -34,10 +34,6 @@ export function useDiffFileState({
     () => reviewState.threads.filter((thread) => !thread.resolved),
     [reviewState.threads],
   );
-  const sidebarThreads = useMemo(
-    () => [...reviewState.threads].reverse(),
-    [reviewState.threads],
-  );
   const filesWithUnresolvedThreads = useMemo(
     () =>
       uniqueIds(
@@ -131,23 +127,6 @@ export function useDiffFileState({
     reviewState.viewedFileIds,
   ]);
 
-  const revealFile = useCallback(
-    (fileId: string) => {
-      if (!reviewState.collapsedFileIds.includes(fileId)) {
-        scrollToFile(fileId);
-        return;
-      }
-
-      pendingScrollTargetRef.current = fileId;
-      applyStatePatch({
-        collapsedFileIds: reviewState.collapsedFileIds.filter(
-          (id) => id !== fileId,
-        ),
-      });
-    },
-    [applyStatePatch, reviewState.collapsedFileIds, scrollToFile],
-  );
-
   useLayoutEffect(() => {
     const targetFileId = pendingScrollTargetRef.current;
     if (!targetFileId) {
@@ -162,7 +141,6 @@ export function useDiffFileState({
     collapsed,
     viewed,
     unresolvedThreadCount: unresolvedThreads.length,
-    sidebarThreads,
     filesWithUnresolvedThreads,
     unresolvedThreadCountsByFileId,
     totals,
@@ -172,7 +150,6 @@ export function useDiffFileState({
     collapseAll,
     expandUnresolved,
     collapseViewed,
-    revealFile,
   };
 }
 

@@ -1,12 +1,9 @@
 import type { ButtonHTMLAttributes } from "react";
 import "./button.css";
 
-type ButtonVariant = "default" | "primary" | "ghost" | "danger";
+type ButtonVariant = "default" | "primary" | "ghost" | "danger" | "unstyled";
 
-type ButtonProps = Omit<
-  ButtonHTMLAttributes<HTMLButtonElement>,
-  "className"
-> & {
+type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: ButtonVariant;
   active?: boolean;
   muted?: boolean;
@@ -23,9 +20,10 @@ export function Button({
   iconOnly = false,
   pill = false,
   type = "button",
+  className,
   ...props
 }: ButtonProps) {
-  const className = [
+  const resolvedClassName = [
     "button",
     `button-${variant}`,
     active && "button-active",
@@ -33,9 +31,10 @@ export function Button({
     fullWidth && "button-full-width",
     iconOnly && "button-icon-only",
     pill && "button-pill",
+    className,
   ]
     .filter(Boolean)
     .join(" ");
 
-  return <button {...props} type={type} className={className} />;
+  return <button {...props} type={type} className={resolvedClassName} />;
 }

@@ -158,18 +158,20 @@ export function TopBar({
             />
           </>
         )}
-        <Button variant="primary" onClick={onSubmit} disabled={finished}>
-          Submit
-        </Button>
-        <Button
-          variant="danger"
-          iconOnly
-          onClick={onCancel}
-          disabled={finished}
-          aria-label="cancel"
-        >
-          <X size={topBarIconSize} strokeWidth={2.25} />
-        </Button>
+        <div className="top-bar-actions">
+          <Button variant="primary" onClick={onSubmit} disabled={finished}>
+            Submit
+          </Button>
+          <Button
+            variant="danger"
+            iconOnly
+            onClick={onCancel}
+            disabled={finished}
+            aria-label="cancel"
+          >
+            <X size={topBarIconSize} strokeWidth={2.25} />
+          </Button>
+        </div>
       </div>
     </header>
   );

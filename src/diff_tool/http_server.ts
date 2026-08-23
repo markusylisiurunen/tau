@@ -570,6 +570,13 @@ export class DiffToolHttpServer {
         return;
       }
 
+      const guideSnapshot =
+        !thread.threadId &&
+        thread.anchor.kind === "detached" &&
+        !thread.messages.some((entry) => entry.role === "assistant")
+          ? this.reviewState.getState().guide
+          : undefined;
+
       this.reviewState.setThreadLoading(id, true);
       try {
         const result = await this.client.submitThreadMessage(
@@ -577,7 +584,7 @@ export class DiffToolHttpServer {
             ? { threadId: thread.threadId, message }
             : {
                 forkFromThreadId: await this.getBootstrapThreadId(),
-                message: buildDiffReviewCommentThreadPrompt(message),
+                message: buildDiffReviewCommentThreadPrompt(message, guideSnapshot),
               },
         );
         const { result: applied, state } = await this.mutateReviewState(

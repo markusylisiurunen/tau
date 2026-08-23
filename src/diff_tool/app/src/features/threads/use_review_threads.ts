@@ -1,7 +1,5 @@
-import { useCallback } from "react";
 import type { ReviewSession } from "../review/use_review_session.js";
 import type { DiffToolReviewState } from "../../types.js";
-import type { CommentThread } from "../diff/comments.js";
 import type { DiffFile } from "../diff/parse_diff.js";
 import { useDetachedThreads } from "./use_detached_threads.js";
 import { useInlineThreads } from "./use_inline_threads.js";
@@ -13,13 +11,11 @@ type ReviewThreadOptions = Pick<
 > & {
   files: DiffFile[];
   reviewState: DiffToolReviewState;
-  revealFile: (fileId: string) => void;
 };
 
 export function useReviewThreads({
   files,
   reviewState,
-  revealFile,
   applyReviewState,
   syncReviewState,
   setThreadLoading,
@@ -45,19 +41,6 @@ export function useReviewThreads({
     setStatus,
   });
 
-  const openThread = useCallback(
-    (thread: CommentThread) => {
-      if (thread.anchor.kind === "detached") {
-        detached.openThread(thread.id);
-        return;
-      }
-
-      detached.close();
-      revealFile(thread.anchor.fileId);
-    },
-    [detached.close, detached.openThread, revealFile],
-  );
-
   return {
     ...inline,
     addReply: actions.addReply,
@@ -65,17 +48,19 @@ export function useReviewThreads({
     toggleResolved: actions.toggleResolved,
     toggleThreadCollapsed: actions.toggleThreadCollapsed,
     removeThreadMessage: actions.removeThreadMessage,
-    selectedDetachedThread: detached.selectedThread,
-    selectedDetachedThreadId: detached.selectedThreadId,
-    detachedDialogOpen: detached.open,
-    detachedDraftBody: detached.body,
-    detachedSkipAgentResponse: detached.skipAgentResponse,
-    setDetachedDraftBody: detached.setBody,
-    setDetachedSkipAgentResponse: detached.setSkipAgentResponse,
-    openDetachedThreadDraft: detached.openDraft,
-    closeDetachedThreadDialog: detached.close,
-    submitDetachedDraft: detached.submit,
-    openThread,
+    guideConversations: {
+      items: detached.threads,
+      selected: detached.selectedThread,
+      view: detached.view,
+      body: detached.body,
+      submitting: detached.submitting,
+      setBody: detached.setBody,
+      openNew: detached.openDraft,
+      open: detached.openThread,
+      showHistory: detached.showHistory,
+      submit: detached.submit,
+      exclude: (threadId: string) => actions.toggleResolved(threadId, true),
+    },
   };
 }
 

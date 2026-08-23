@@ -44,7 +44,7 @@ Vite + React TypeScript single-page app. Has its own `package.json`, `tsconfig.j
 
 Key areas:
 - `src/main.tsx` — React root mount and global style imports
-- `src/App.tsx` — top-level composition for the shared session, Guide mode, Diff mode, and thread dialog
+- `src/App.tsx` — top-level composition for the shared session, Guide mode and its conversation panel, and Diff mode
 - `src/features/` — feature-owned components, hooks, and styles for diff, guide, review, and thread behavior
 - `src/ui/` — shared controls and content renderers
 - `src/styles/` — global normalization, tokens, and text-input styling

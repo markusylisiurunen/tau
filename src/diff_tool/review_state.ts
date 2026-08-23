@@ -5,15 +5,16 @@ import type {
   DiffToolGuide,
   DiffToolGuideCommentTarget,
   DiffToolGuideOperation,
+  DiffToolGuideOperationResult,
   DiffToolReviewState,
   DiffToolStatePatch,
   DiffToolThreadAnchor,
 } from "./shared_types.js";
 import {
   DEFAULT_DIFF_TOOL_CODE_THEME,
-  DIFF_TOOL_CODE_THEMES,
   DIFF_TOOL_GUIDE_QUESTION_LIMIT,
   DIFF_TOOL_GUIDE_TOPIC_LIMIT,
+  guideCommentTargetKey,
 } from "./shared_types.js";
 
 const emptyGuide: DiffToolGuide = {
@@ -24,8 +25,6 @@ const emptyGuide: DiffToolGuide = {
   loading: false,
 };
 
-const codeThemes = new Set<DiffToolReviewState["codeTheme"]>(DIFF_TOOL_CODE_THEMES);
-
 type GuideTopicInput = Omit<DiffToolGuide["topics"][number], "id">;
 type GuideQuestionInput = Omit<DiffToolGuide["questions"][number], "id" | "source">;
 type GuideInput = {
@@ -33,10 +32,6 @@ type GuideInput = {
   topics: GuideTopicInput[];
   questions: GuideQuestionInput[];
 };
-
-export type DiffToolGuideOperationResult =
-  | { kind: "topic.add" | "topic.revise"; topic: GuideTopicInput }
-  | { kind: "question.ask"; question: GuideQuestionInput };
 
 function createInitialState(options: {
   codeTheme?: DiffToolReviewState["codeTheme"];
@@ -110,28 +105,20 @@ export class DiffToolReviewStateStore {
   }
 
   updateState(patch: DiffToolStatePatch): void {
-    if (patch.diffStyle === "split" || patch.diffStyle === "stacked") {
+    if (patch.diffStyle) {
       this.state.diffStyle = patch.diffStyle;
     }
-
-    if (patch.overflowMode === "wrap" || patch.overflowMode === "scroll") {
+    if (patch.overflowMode) {
       this.state.overflowMode = patch.overflowMode;
     }
-
-    if (patch.codeTheme && codeThemes.has(patch.codeTheme)) {
+    if (patch.codeTheme) {
       this.state.codeTheme = patch.codeTheme;
     }
-
-    if (Array.isArray(patch.collapsedFileIds)) {
-      this.state.collapsedFileIds = patch.collapsedFileIds.filter(
-        (value): value is string => typeof value === "string" && value.trim().length > 0,
-      );
+    if (patch.collapsedFileIds) {
+      this.state.collapsedFileIds = [...patch.collapsedFileIds];
     }
-
-    if (Array.isArray(patch.viewedFileIds)) {
-      this.state.viewedFileIds = patch.viewedFileIds.filter(
-        (value): value is string => typeof value === "string" && value.trim().length > 0,
-      );
+    if (patch.viewedFileIds) {
+      this.state.viewedFileIds = [...patch.viewedFileIds];
     }
   }
 
@@ -315,8 +302,9 @@ export class DiffToolReviewStateStore {
   }
 
   saveGuideComment(target: DiffToolGuideCommentTarget, body: string): void {
-    const existing = this.state.guide.comments.find((comment) =>
-      guideCommentTargetsEqual(comment.target, target),
+    const targetKey = guideCommentTargetKey(target);
+    const existing = this.state.guide.comments.find(
+      (comment) => guideCommentTargetKey(comment.target) === targetKey,
     );
     if (existing) {
       existing.body = body;
@@ -324,7 +312,6 @@ export class DiffToolReviewStateStore {
     }
 
     this.state.guide.comments.push({
-      id: randomUUID(),
       target: { ...target },
       body,
     });
@@ -374,7 +361,7 @@ export class DiffToolReviewStateStore {
 
   buildReviewText(): string {
     const unresolvedThreads = this.state.threads.filter((thread) => !thread.resolved);
-    const guideComments = this.state.guide.comments.filter((comment) => comment.body.trim());
+    const guideComments = this.state.guide.comments;
     if (unresolvedThreads.length === 0 && guideComments.length === 0) {
       return "(no comments)";
     }
@@ -432,24 +419,6 @@ export class DiffToolReviewStateStore {
   }
 }
 
-function guideCommentTargetsEqual(
-  left: DiffToolGuideCommentTarget,
-  right: DiffToolGuideCommentTarget,
-): boolean {
-  if (left.kind !== right.kind) {
-    return false;
-  }
-
-  switch (left.kind) {
-    case "orientation":
-      return true;
-    case "topic":
-      return right.kind === "topic" && left.topicId === right.topicId;
-    case "question":
-      return right.kind === "question" && left.questionId === right.questionId;
-  }
-}
-
 function formatGuideCommentContext(
   guide: DiffToolGuide,
   target: DiffToolGuideCommentTarget,
@@ -462,19 +431,19 @@ function formatGuideCommentContext(
         content: guide.orientation,
       };
     case "topic": {
-      const topic = guide.topics.find((entry) => entry.id === target.topicId);
+      const topic = guide.topics.find((entry) => entry.id === target.topicId)!;
       return {
-        location: `guide topic · ${topic?.heading ?? "removed topic"}`,
-        heading: topic?.heading ?? "Removed topic",
-        content: topic?.body ?? "(guide block removed)",
+        location: `guide topic · ${topic.heading}`,
+        heading: topic.heading,
+        content: topic.body,
       };
     }
     case "question": {
-      const question = guide.questions.find((entry) => entry.id === target.questionId);
+      const question = guide.questions.find((entry) => entry.id === target.questionId)!;
       return {
-        location: `guide question · ${question?.question ?? "removed question"}`,
-        heading: question?.question ?? "Removed question",
-        content: question?.answer ?? "(guide block removed)",
+        location: `guide question · ${question.question}`,
+        heading: question.question,
+        content: question.answer,
       };
     }
   }

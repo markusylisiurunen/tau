@@ -6,6 +6,7 @@ import {
   DIFF_TOOL_CODE_THEMES,
   DIFF_TOOL_GUIDE_QUESTION_LIMIT,
   DIFF_TOOL_GUIDE_TOPIC_LIMIT,
+  guideCommentTargetKey,
 } from "./shared_types.js";
 
 export type DiffToolReviewStateStorage = {
@@ -86,7 +87,6 @@ const persistedGuideQuestionSchema = z
   .strict();
 const persistedGuideCommentSchema = z
   .object({
-    id: idSchema,
     target: persistedGuideCommentTargetSchema,
     body: nonEmptyTextSchema,
   })
@@ -96,14 +96,15 @@ const persistedGuideSchema = z
     orientation: textSchema,
     topics: z.array(persistedGuideTopicSchema).max(DIFF_TOOL_GUIDE_TOPIC_LIMIT),
     questions: z.array(persistedGuideQuestionSchema).max(DIFF_TOOL_GUIDE_QUESTION_LIMIT),
-    comments: z.array(persistedGuideCommentSchema).max(MAX_GUIDE_COMMENTS).default([]),
+    comments: z.array(persistedGuideCommentSchema).max(MAX_GUIDE_COMMENTS),
   })
   .strict()
   .superRefine((guide, context) => {
     const topicIds = new Set(guide.topics.map((topic) => topic.id));
     const questionIds = new Set(guide.questions.map((question) => question.id));
-    const commentIds = new Set(guide.comments.map((comment) => comment.id));
-    const commentTargets = new Set(guide.comments.map((comment) => guideTargetKey(comment.target)));
+    const commentTargets = new Set(
+      guide.comments.map((comment) => guideCommentTargetKey(comment.target)),
+    );
 
     if (topicIds.size !== guide.topics.length) {
       context.addIssue({ code: "custom", path: ["topics"], message: "topic ids must be unique" });
@@ -115,18 +116,21 @@ const persistedGuideSchema = z
         message: "question ids must be unique",
       });
     }
-    if (commentIds.size !== guide.comments.length) {
-      context.addIssue({
-        code: "custom",
-        path: ["comments"],
-        message: "guide comment ids must be unique",
-      });
-    }
     if (commentTargets.size !== guide.comments.length) {
       context.addIssue({
         code: "custom",
         path: ["comments"],
         message: "guide targets may have at most one review comment",
+      });
+    }
+    if (
+      !guide.orientation.trim() &&
+      (guide.topics.length > 0 || guide.questions.length > 0 || guide.comments.length > 0)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["orientation"],
+        message: "guide content requires an orientation",
       });
     }
 
@@ -185,18 +189,6 @@ const legacyDocumentSchema = z
 
 type PersistedDocument = z.infer<typeof persistedDocumentSchema>;
 type PersistedState = PersistedDocument["state"];
-type PersistedGuideCommentTarget = z.infer<typeof persistedGuideCommentTargetSchema>;
-
-function guideTargetKey(target: PersistedGuideCommentTarget): string {
-  switch (target.kind) {
-    case "orientation":
-      return "orientation";
-    case "topic":
-      return `topic:${target.topicId}`;
-    case "question":
-      return `question:${target.questionId}`;
-  }
-}
 
 export function createDiffReviewScopeFingerprint(
   context: DiffReviewSessionContextResult,

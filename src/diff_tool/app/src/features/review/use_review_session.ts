@@ -10,7 +10,6 @@ import type {
 import { parseDiff } from "../diff/parse_diff.js";
 import {
   emptyReviewState,
-  normalizeReviewState,
   withGuideLoading,
   withThreadLoading,
 } from "./review_state.js";
@@ -26,7 +25,7 @@ export function useReviewSession() {
     useState<DiffToolReviewState>(emptyReviewState);
 
   const applyReviewState = useCallback((state: DiffToolReviewState) => {
-    setReviewState(normalizeReviewState(state));
+    setReviewState(state);
   }, []);
 
   const syncReviewState = useCallback(

@@ -7,7 +7,6 @@ type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: ButtonVariant;
   active?: boolean;
   muted?: boolean;
-  fullWidth?: boolean;
   iconOnly?: boolean;
   pill?: boolean;
 };
@@ -16,7 +15,6 @@ export function Button({
   variant = "default",
   active = false,
   muted = false,
-  fullWidth = false,
   iconOnly = false,
   pill = false,
   type = "button",
@@ -28,7 +26,6 @@ export function Button({
     `button-${variant}`,
     active && "button-active",
     muted && "button-muted",
-    fullWidth && "button-full-width",
     iconOnly && "button-icon-only",
     pill && "button-pill",
     className,

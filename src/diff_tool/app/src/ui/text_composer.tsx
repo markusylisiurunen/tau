@@ -11,13 +11,11 @@ type TextComposerProps = {
   value?: string;
   rows?: number;
   autoFocus?: boolean;
-  disabled?: boolean;
   allowEmptySubmit?: boolean;
   children?: ReactNode;
   onValueChange?: (value: string) => void;
   onSubmit: (value: string) => void;
   onCancel?: () => void;
-  onEscape?: () => void;
 };
 
 export function TextComposer({
@@ -30,13 +28,11 @@ export function TextComposer({
   value,
   rows = 3,
   autoFocus = false,
-  disabled = false,
   allowEmptySubmit = false,
   children,
   onValueChange,
   onSubmit,
   onCancel,
-  onEscape,
 }: TextComposerProps) {
   const [internalValue, setInternalValue] = useState("");
   const currentValue = value ?? internalValue;
@@ -50,7 +46,7 @@ export function TextComposer({
   };
 
   const submit = () => {
-    if ((!trimmedValue && !allowEmptySubmit) || disabled) {
+    if (!trimmedValue && !allowEmptySubmit) {
       return;
     }
     if (value === undefined) {
@@ -72,9 +68,9 @@ export function TextComposer({
           event.preventDefault();
           submit();
         }
-        if (event.key === "Escape" && (onEscape || onCancel)) {
+        if (event.key === "Escape" && onCancel) {
           event.preventDefault();
-          (onEscape ?? onCancel)?.();
+          onCancel();
         }
       }}
     />
@@ -99,7 +95,7 @@ export function TextComposer({
         <Button
           type="submit"
           variant="primary"
-          disabled={(!trimmedValue && !allowEmptySubmit) || disabled}
+          disabled={!trimmedValue && !allowEmptySubmit}
         >
           {submitLabel}
         </Button>

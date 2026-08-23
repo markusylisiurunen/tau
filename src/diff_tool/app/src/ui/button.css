@@ -72,12 +72,6 @@
   opacity: 0.65;
 }
 
-.button-full-width {
-  justify-content: flex-start;
-  text-align: left;
-  width: 100%;
-}
-
 .button-icon-only {
   flex: 0 0 32px;
   padding: 0;

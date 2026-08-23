@@ -34,18 +34,18 @@ export function useDiffFileState({
     () => reviewState.threads.filter((thread) => !thread.resolved),
     [reviewState.threads],
   );
-  const filesWithUnresolvedThreads = useMemo(
-    () =>
-      uniqueIds(
-        unresolvedThreads
-          .filter(isLineThread)
-          .map((thread) => thread.anchor.fileId),
-      ),
+  const unresolvedFileThreads = useMemo(
+    () => unresolvedThreads.filter(isLineThread),
     [unresolvedThreads],
   );
+  const filesWithUnresolvedThreads = useMemo(
+    () =>
+      uniqueIds(unresolvedFileThreads.map((thread) => thread.anchor.fileId)),
+    [unresolvedFileThreads],
+  );
   const unresolvedThreadCountsByFileId = useMemo(
-    () => countThreadsByFileId(unresolvedThreads),
-    [unresolvedThreads],
+    () => countThreadsByFileId(unresolvedFileThreads),
+    [unresolvedFileThreads],
   );
   const totals = useMemo(
     () => files.reduce(sumFileChanges, { additions: 0, deletions: 0 }),
@@ -140,7 +140,7 @@ export function useDiffFileState({
   return {
     collapsed,
     viewed,
-    unresolvedThreadCount: unresolvedThreads.length,
+    unresolvedThreadCount: unresolvedFileThreads.length,
     filesWithUnresolvedThreads,
     unresolvedThreadCountsByFileId,
     totals,

@@ -683,7 +683,6 @@ describe("built-in diff tool", () => {
       });
       expect(commented.state.guide.comments).toEqual([
         {
-          id: expect.stringMatching(/^[0-9a-f-]{36}$/),
           target: { kind: "orientation" },
           body: "Clarify the rollout",
         },
@@ -1387,7 +1386,6 @@ describe("built-in diff tool", () => {
 
     const danglingGuideCommentDocument = structuredClone(storedDocument);
     danglingGuideCommentDocument.state.guide.comments.push({
-      id: "comment-1",
       target: { kind: "topic", topicId: "missing-topic" },
       body: "Comment",
     });

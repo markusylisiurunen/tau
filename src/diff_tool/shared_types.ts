@@ -112,10 +112,20 @@ export type DiffToolGuideCommentTarget =
   | { kind: "question"; questionId: string };
 
 export type DiffToolGuideComment = {
-  id: string;
   target: DiffToolGuideCommentTarget;
   body: string;
 };
+
+export function guideCommentTargetKey(target: DiffToolGuideCommentTarget): string {
+  switch (target.kind) {
+    case "orientation":
+      return "orientation";
+    case "topic":
+      return `topic:${target.topicId}`;
+    case "question":
+      return `question:${target.questionId}`;
+  }
+}
 
 export type DiffToolGuide = {
   threadId?: string;
@@ -148,6 +158,13 @@ export type DiffToolGuideOperation =
   | { kind: "topic.add"; request: string }
   | { kind: "topic.revise"; topicId: string; request: string }
   | { kind: "question.ask"; question: string };
+
+export type DiffToolGuideOperationResult =
+  | { kind: "topic.add" | "topic.revise"; topic: Omit<DiffToolGuideTopic, "id"> }
+  | {
+      kind: "question.ask";
+      question: Omit<DiffToolGuideQuestion, "id" | "source">;
+    };
 
 export type DiffToolGuideCommentPayload = {
   target: DiffToolGuideCommentTarget;

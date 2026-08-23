@@ -1,6 +1,9 @@
 import { z } from "zod";
-import type { DiffToolGuideOperationResult } from "./review_state.js";
-import type { DiffToolGuide, DiffToolGuideOperation } from "./shared_types.js";
+import type {
+  DiffToolGuide,
+  DiffToolGuideOperation,
+  DiffToolGuideOperationResult,
+} from "./shared_types.js";
 import { DIFF_TOOL_GUIDE_QUESTION_LIMIT, DIFF_TOOL_GUIDE_TOPIC_LIMIT } from "./shared_types.js";
 
 function wrapForkSystemPrompt(lines: string[]): string {

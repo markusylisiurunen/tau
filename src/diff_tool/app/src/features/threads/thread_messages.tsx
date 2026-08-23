@@ -6,13 +6,11 @@ import "./thread_messages.css";
 
 type ThreadMessagesProps = {
   thread: CommentThread;
-  deleteIconSize?: number;
   onDeleteMessage: (messageIndex: number) => void;
 };
 
 export function ThreadMessages({
   thread,
-  deleteIconSize = 13,
   onDeleteMessage,
 }: ThreadMessagesProps) {
   return (
@@ -33,7 +31,7 @@ export function ThreadMessages({
               aria-label={`Delete ${message.role === "user" ? "your" : "agent"} comment`}
               title="delete comment"
             >
-              <Trash size={deleteIconSize} />
+              <Trash size={13} />
             </Button>
           </div>
           <MarkdownContent content={message.text} variant="thread" />

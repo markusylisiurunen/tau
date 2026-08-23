@@ -9,11 +9,6 @@
   white-space: nowrap;
 }
 
-.switch:has(.switch-input:disabled) {
-  cursor: not-allowed;
-  opacity: 0.35;
-}
-
 .switch-input {
   inset: 0;
   opacity: 0;

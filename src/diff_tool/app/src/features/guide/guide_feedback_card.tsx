@@ -1,7 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
-import type {
-  DiffToolGuideComment,
-  DiffToolGuideCommentTarget,
+import {
+  type DiffToolGuideComment,
+  type DiffToolGuideCommentTarget,
+  guideCommentTargetKey,
 } from "../../types.js";
 import { Button } from "../../ui/button.js";
 import { TextComposer } from "../../ui/text_composer.js";
@@ -41,8 +42,9 @@ export function GuideFeedbackCard({
   onComment,
 }: GuideFeedbackCardProps) {
   const [mode, setMode] = useState<GuideFeedbackMode | null>(null);
-  const comment = comments.find((entry) =>
-    guideTargetsEqual(entry.target, target),
+  const targetKey = guideCommentTargetKey(target);
+  const comment = comments.find(
+    (entry) => guideCommentTargetKey(entry.target) === targetKey,
   );
   const commentLabel = comment?.body.trim()
     ? "Edit your comment"
@@ -150,22 +152,4 @@ export function GuideFeedbackFormCard({
       />
     </aside>
   );
-}
-
-function guideTargetsEqual(
-  left: DiffToolGuideCommentTarget,
-  right: DiffToolGuideCommentTarget,
-): boolean {
-  if (left.kind !== right.kind) {
-    return false;
-  }
-
-  switch (left.kind) {
-    case "orientation":
-      return true;
-    case "topic":
-      return right.kind === "topic" && left.topicId === right.topicId;
-    case "question":
-      return right.kind === "question" && left.questionId === right.questionId;
-  }
 }

@@ -1,6 +1,6 @@
 import {
   DEFAULT_DIFF_TOOL_CODE_THEME,
-  DIFF_TOOL_CODE_THEMES,
+  guideCommentTargetKey,
 } from "../../shared_types.js";
 import type {
   DiffReviewFile,
@@ -28,7 +28,7 @@ import type {
   DiffToolThreadReplyPayload,
 } from "../../shared_types.js";
 
-export { DEFAULT_DIFF_TOOL_CODE_THEME, DIFF_TOOL_CODE_THEMES };
+export { DEFAULT_DIFF_TOOL_CODE_THEME, guideCommentTargetKey };
 
 export type {
   DiffReviewFile,

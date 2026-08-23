@@ -132,5 +132,4 @@ When the user asks to develop or test the diff tool UI using `@@skill:agent-brow
 - Thread creation: sending a message creates a new thread and shows the mock response
 - Thread selection: clicking a thread shows its message history
 - Review submission and cancellation
-- Cancel flow: clicking "cancel review"
-- Responsive layout: the three-column grid collapses on narrow viewports
+- Guide and Diff layouts at their supported desktop widths

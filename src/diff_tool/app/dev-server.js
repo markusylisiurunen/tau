@@ -742,7 +742,6 @@ const server = createServer(async (req, res) => {
         existing.body = comment;
       } else {
         state.guide.comments.push({
-          id: randomUUID(),
           target: body.target,
           body: comment,
         });

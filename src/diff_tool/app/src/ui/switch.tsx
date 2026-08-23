@@ -3,16 +3,10 @@ import "./switch.css";
 type SwitchProps = {
   checked: boolean;
   label: string;
-  disabled?: boolean;
   onChange: (checked: boolean) => void;
 };
 
-export function Switch({
-  checked,
-  label,
-  disabled = false,
-  onChange,
-}: SwitchProps) {
+export function Switch({ checked, label, onChange }: SwitchProps) {
   return (
     <label className="switch">
       <input
@@ -20,7 +14,6 @@ export function Switch({
         type="checkbox"
         role="switch"
         checked={checked}
-        disabled={disabled}
         onChange={(event) => onChange(event.target.checked)}
       />
       <span className="switch-track" aria-hidden="true">

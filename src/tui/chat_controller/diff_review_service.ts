@@ -17,12 +17,20 @@ import type { ChatView } from "../chat_view.js";
 import type { DiffReviewMessageModel } from "../ui/diff_review_message.js";
 import type { BusyTask, InterruptLifecycle } from "./interrupt_lifecycle.js";
 
-export type DiffReviewReturnedReview = {
+type DiffReviewReturnedReviewScope = {
   diffCommand: string;
   reviewedFiles: string[];
-  review: string;
   historyEntryId: string;
 };
+
+export type DiffReviewReturnedReview = DiffReviewReturnedReviewScope &
+  (
+    | { outcome: "approved" }
+    | {
+        outcome: "commented";
+        review: string;
+      }
+  );
 
 export type DiffReviewServiceOptions = {
   view: ChatView;
@@ -269,7 +277,9 @@ export class DiffReviewService {
         return formatDiffReviewReturnedReviewToolResult({
           command: state.diffCommand,
           reviewedFiles: state.reviewedFiles,
-          review: result.review,
+          ...(result.outcome === "approved"
+            ? { outcome: "approved" }
+            : { outcome: "commented", review: result.review }),
         });
       }
 
@@ -338,8 +348,10 @@ export class DiffReviewService {
         await onReviewReturned({
           diffCommand: state.diffCommand,
           reviewedFiles: state.reviewedFiles,
-          review: result.review,
           historyEntryId: state.messageId,
+          ...(result.outcome === "approved"
+            ? { outcome: "approved" }
+            : { outcome: "commented", review: result.review }),
         });
       } catch (error) {
         state.messageFinalized = false;

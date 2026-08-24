@@ -50,6 +50,7 @@ export type {
   DiffReviewSessionReturnReviewResult,
   DiffReviewSessionSetUiTextParams,
   DiffReviewSessionSetUiTextResult,
+  DiffReviewSubmission,
   DiffReviewSuccessResponseMessage,
   DiffReviewThreadSubmitMessageParams,
   DiffReviewThreadSubmitMessageResult,

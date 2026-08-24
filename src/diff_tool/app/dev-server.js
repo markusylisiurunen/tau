@@ -821,10 +821,14 @@ const server = createServer(async (req, res) => {
           ].join("\n\n");
         })
         .join("\n\n---\n\n");
-      const review =
-        [guideReview, threadReview].filter(Boolean).join("\n\n---\n\n") ||
-        "(no comments)";
-      console.log(`\nreview returned:\n${review}\n`);
+      const review = [guideReview, threadReview]
+        .filter(Boolean)
+        .join("\n\n---\n\n");
+      console.log(
+        review
+          ? `\ncomments returned:\n${review}\n`
+          : "\nreview approved without comments\n",
+      );
       sendJson(res, 200, { status: "returned" });
       return;
     }

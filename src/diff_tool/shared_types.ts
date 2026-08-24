@@ -146,6 +146,10 @@ export type DiffToolReviewState = {
   guide: DiffToolGuide;
 };
 
+export function hasDiffToolReviewComments(state: DiffToolReviewState): boolean {
+  return state.guide.comments.length > 0 || state.threads.some((thread) => !thread.resolved);
+}
+
 export type DiffToolStatePatch = {
   diffStyle?: DiffToolReviewState["diffStyle"];
   overflowMode?: DiffToolReviewState["overflowMode"];

@@ -11,6 +11,7 @@ import { useReviewNavigation } from "./features/review/use_review_navigation.js"
 import { useReviewSession } from "./features/review/use_review_session.js";
 import { useReviewSubmission } from "./features/review/use_review_submission.js";
 import { useReviewThreads } from "./features/threads/use_review_threads.js";
+import { hasDiffToolReviewComments } from "./types.js";
 
 const LocalAgentation = import.meta.env.DEV
   ? lazy(async () => {
@@ -60,6 +61,7 @@ export function App() {
           diffStyle={session.reviewState.diffStyle}
           overflowMode={session.reviewState.overflowMode}
           finished={submission.finished}
+          hasReviewComments={hasDiffToolReviewComments(session.reviewState)}
           hasUnresolvedFileThreads={
             fileState.filesWithUnresolvedThreads.length > 0
           }

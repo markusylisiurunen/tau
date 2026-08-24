@@ -31,7 +31,16 @@ The returned `url` is local to the SDK client machine and ends with a trailing s
 
 The HTTP server does not provide authentication. The default loopback listener is suitable for a same-machine proxy. An explicitly configured non-loopback `host` is safe only within a trusted network boundary; otherwise, keep the listener on loopback and expose it through a protected proxy.
 
-Always call `close()` when the review is no longer available. This cancels the review if needed, closes the ephemeral agent context, and stops the HTTP server. `result` resolves once with the returned review or cancellation reason.
+Always call `close()` when the review is no longer available. This cancels the review if needed, closes the ephemeral agent context, and stops the HTTP server. `result` resolves once with the returned outcome or cancellation reason. Returned results distinguish an approval from submitted comments without sentinel review text:
+
+```ts
+const result = await review.result;
+if (result.status === "returned" && result.outcome === "approved") {
+  console.log("approved without comments");
+} else if (result.status === "returned") {
+  console.log(result.review);
+}
+```
 
 ## Durable review state
 
@@ -63,16 +72,16 @@ const review = await startTauSdkDiffReview({
   session,
   source: { kind: "git_diff", diffArgs: ["main...HEAD"] },
   storage,
-  onSubmit: async ({ review, diffCommand, reviewedFiles }) => {
+  onSubmit: async (submission) => {
     await database.acceptReviewOnce({
       reviewId,
-      review,
-      diffCommand,
-      reviewedFiles,
+      ...submission,
     });
   },
 });
 ```
+
+An approved submission has `outcome: "approved"` and no `review` field. A commented submission has `outcome: "commented"` and a required `review` field. Both include `diffCommand` and `reviewedFiles`.
 
 Tau permits only one in-flight or successful submission per running diff-review server. It awaits `onSubmit` before returning HTTP success and closing the review. If the callback fails, the submission remains available for retry.
 

@@ -1,8 +1,16 @@
-export type DiffReviewReturnedReviewSummary = {
+type DiffReviewReturnedReviewScope = {
   command: string;
   reviewedFiles: string[];
-  review: string;
 };
+
+export type DiffReviewReturnedReviewSummary = DiffReviewReturnedReviewScope &
+  (
+    | { outcome: "approved" }
+    | {
+        outcome: "commented";
+        review: string;
+      }
+  );
 
 export function formatDiffReviewReviewedFiles(files: string[]): string[] {
   return files.length > 0
@@ -13,13 +21,20 @@ export function formatDiffReviewReviewedFiles(files: string[]): string[] {
 export function formatDiffReviewReturnedReviewToolResult(
   review: DiffReviewReturnedReviewSummary,
 ): string {
-  return [
+  const context = [
     "Diff review completed.",
-    "",
-    "The following feedback came from a completed diff review. During that review, the user read through the captured diff snapshot and the files included in it, and may have left comments on specific files, lines, or broader concerns they noticed while reviewing.",
     "",
     `Reviewed scope: ${review.command}`,
     ...formatDiffReviewReviewedFiles(review.reviewedFiles),
+  ];
+  if (review.outcome === "approved") {
+    return [...context, "", "The user approved the reviewed diff without comments."].join("\n");
+  }
+
+  return [
+    ...context,
+    "",
+    "The following feedback came from a completed diff review. During that review, the user read through the captured diff snapshot and the files included in it, and left comments on specific files, lines, or broader concerns they noticed while reviewing.",
     "",
     "Treat the returned review as feedback on that reviewed diff snapshot. Address valid issues directly, clarify anything that seems mistaken or ambiguous, and do not treat it as a new unrelated request.",
     "",
@@ -31,8 +46,13 @@ export function formatDiffReviewReturnedReviewToolResult(
 export function formatDiffReviewReturnedReviewUserSystemMessage(
   review: DiffReviewReturnedReviewSummary,
 ): string {
+  const outcome =
+    review.outcome === "approved"
+      ? "The user approved the reviewed diff without comments."
+      : "The message below is the feedback returned from that review.";
   return [
-    "The following user message comes from a completed diff review. During that review, the user read through the reviewed diff snapshot and the files included in it, and may have left comments on specific files, lines, or broader concerns they noticed while reviewing. The message below is the feedback returned from that review.",
+    "The following user message comes from a completed diff review. During that review, the user read through the reviewed diff snapshot and the files included in it.",
+    outcome,
     "",
     `Reviewed scope: ${review.command}`,
     ...formatDiffReviewReviewedFiles(review.reviewedFiles),

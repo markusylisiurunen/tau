@@ -26,6 +26,11 @@ export type TauSdkDiffReviewSource =
 export type TauSdkDiffReviewResult =
   | {
       status: "returned";
+      outcome: "approved";
+    }
+  | {
+      status: "returned";
+      outcome: "commented";
       review: string;
     }
   | {
@@ -38,11 +43,18 @@ export type TauSdkDiffReviewStorage = {
   save(document: unknown): Promise<void>;
 };
 
-export type TauSdkDiffReviewSubmission = {
-  review: string;
-  diffCommand: string;
-  reviewedFiles: string[];
-};
+export type TauSdkDiffReviewSubmission =
+  | {
+      outcome: "approved";
+      diffCommand: string;
+      reviewedFiles: string[];
+    }
+  | {
+      outcome: "commented";
+      review: string;
+      diffCommand: string;
+      reviewedFiles: string[];
+    };
 
 export type StartTauSdkDiffReviewOptions = {
   session: TauSdkSession;
@@ -125,11 +137,19 @@ export async function startTauSdkDiffReview(
       ...(onSubmit
         ? {
             onSubmit: async (submission) => {
-              await onSubmit({
-                review: submission.review,
+              const scope = {
                 diffCommand: submission.context.diffCommand,
                 reviewedFiles: submission.files.map((file) => file.path),
-              });
+              };
+              await onSubmit(
+                submission.outcome === "approved"
+                  ? { outcome: "approved", ...scope }
+                  : {
+                      outcome: "commented",
+                      review: submission.review,
+                      ...scope,
+                    },
+              );
             },
           }
         : {}),

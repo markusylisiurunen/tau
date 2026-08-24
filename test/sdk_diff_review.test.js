@@ -165,13 +165,40 @@ describe("SDK diff review", () => {
     });
     expect(submitted.ok).toBe(true);
     expect(onSubmit).toHaveBeenCalledWith({
+      outcome: "commented",
       review: expect.stringContaining("Please simplify this."),
       diffCommand: "git diff HEAD",
       reviewedFiles: ["example.ts"],
     });
     await expect(review.result).resolves.toMatchObject({
       status: "returned",
+      outcome: "commented",
       review: expect.stringContaining("Please simplify this."),
+    });
+  });
+
+  it("returns approvals without manufacturing review text", async () => {
+    const cwd = createRepository();
+    const { session } = createSession(cwd);
+    const onSubmit = vi.fn(async () => {});
+    const review = await startTauSdkDiffReview({
+      session,
+      source: { kind: "git_diff", diffArgs: ["HEAD"] },
+      onSubmit,
+    });
+
+    const submitted = await fetch(`${review.url}api/review`, {
+      method: "POST",
+    });
+    expect(submitted.ok).toBe(true);
+    expect(onSubmit).toHaveBeenCalledWith({
+      outcome: "approved",
+      diffCommand: "git diff HEAD",
+      reviewedFiles: ["example.ts"],
+    });
+    await expect(review.result).resolves.toEqual({
+      status: "returned",
+      outcome: "approved",
     });
   });
 });

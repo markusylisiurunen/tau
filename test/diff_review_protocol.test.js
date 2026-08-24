@@ -72,7 +72,7 @@ describe("diff_review protocol", () => {
           type: "request",
           id: 2,
           method: "session.return_review",
-          params: { review: "" },
+          params: { outcome: "commented", review: "" },
         }),
       ),
     ).toEqual({
@@ -106,6 +106,30 @@ describe("diff_review protocol", () => {
     expect(validateDiffReviewParams("session.set_ui_text", { text: "ready" })).toEqual({
       ok: true,
       value: { text: "ready" },
+    });
+
+    expect(validateDiffReviewParams("session.return_review", { outcome: "approved" })).toEqual({
+      ok: true,
+      value: { outcome: "approved" },
+    });
+
+    expect(
+      validateDiffReviewParams("session.return_review", {
+        outcome: "commented",
+        review: "Needs tests.",
+      }),
+    ).toEqual({
+      ok: true,
+      value: { outcome: "commented", review: "Needs tests." },
+    });
+
+    expect(
+      validateDiffReviewParams("session.return_review", {
+        review: "Needs tests.",
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({ code: DIFF_REVIEW_ERROR_CODES.invalidParams }),
     });
 
     expect(

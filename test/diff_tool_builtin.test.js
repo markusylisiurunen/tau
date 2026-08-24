@@ -528,6 +528,7 @@ describe("built-in diff tool", () => {
       expect(reviewResult).toEqual({ status: "returned" });
       await expect(bridge.result).resolves.toEqual({
         status: "returned",
+        outcome: "commented",
         review:
           "The notes below include thread transcripts from the review. In those transcripts:\n\n- **user** is a comment written by the reviewer\n- **agent** is a generated reply within that review thread\n\nTreat thread dialogue as supporting review context, not automatically as a final conclusion.\n\n---\n\n## thread 1\n\n`src/a.ts:1 (new)`\n\n**user**\n\nWhat changed?\n\n**user**\n\nAny risks?\n\n**agent**\n\n" +
           askedThread.state.threads[0].messages[2].text +
@@ -720,16 +721,19 @@ describe("built-in diff tool", () => {
 
       await fetchJson(`${started.url}api/review`, { method: "POST" });
       expect(client.returnReview).toHaveBeenCalledWith({
+        outcome: "commented",
         review: expect.stringContaining(
           "## guide comment 1\n\n`guide · orientation`\n\n### Orientation\n\nReview orientation\n\n**review comment**\n\nClarify the rollout",
         ),
       });
       expect(client.returnReview).toHaveBeenCalledWith({
+        outcome: "commented",
         review: expect.stringContaining(
           "`guide topic · Safe retry behavior`\n\n### Safe retry behavior\n\nRetries preserve both identity and ordering.\n\n**review comment**\n\nCheck the ordering claim",
         ),
       });
       expect(client.returnReview).toHaveBeenCalledWith({
+        outcome: "commented",
         review: expect.stringContaining(
           "`guide question · Can requests be retried?`\n\n### Can requests be retried?\n\nYes, when the caller preserves the request identifier.\n\n**review comment**\n\nDocument this limitation",
         ),
@@ -1033,10 +1037,11 @@ describe("built-in diff tool", () => {
       expect(accepted.ok).toBe(true);
       expect(onSubmit).toHaveBeenCalledTimes(1);
       expect(onSubmit).toHaveBeenCalledWith({
-        review: "(no comments)",
+        outcome: "approved",
         context: expect.objectContaining({ sessionId: "session-1" }),
         files: [],
       });
+      expect(client.returnReview).toHaveBeenCalledWith({ outcome: "approved" });
       expect(client.returnReview).toHaveBeenCalledTimes(1);
       expect(onSubmit.mock.invocationCallOrder[0]).toBeLessThan(
         client.returnReview.mock.invocationCallOrder[0],
@@ -1720,6 +1725,7 @@ describe("built-in diff tool", () => {
       expect((await pendingComment).ok).toBe(true);
       expect((await pendingReview).ok).toBe(true);
       expect(client.returnReview).toHaveBeenCalledWith({
+        outcome: "commented",
         review: expect.stringContaining("Pending feedback"),
       });
     } finally {

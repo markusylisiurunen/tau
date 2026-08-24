@@ -2,7 +2,11 @@ import { existsSync, readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { DiffReviewFile, DiffReviewSessionContextResult } from "../core/diff_review/index.js";
+import type {
+  DiffReviewFile,
+  DiffReviewSessionContextResult,
+  DiffReviewSubmission,
+} from "../core/diff_review/index.js";
 import type { DiffReviewProtocolClient } from "./protocol_client.js";
 import {
   buildDiffReviewBootstrapPrompt,
@@ -49,8 +53,7 @@ export type {
   DiffToolThreadMessage,
 } from "./shared_types.js";
 
-export type DiffToolReviewSubmission = {
-  review: string;
+export type DiffToolReviewSubmission = DiffReviewSubmission & {
   context: DiffReviewSessionContextResult;
   files: DiffReviewFile[];
 };
@@ -763,7 +766,7 @@ export class DiffToolHttpServer {
       }
 
       this.submissionState = "submitting";
-      const review = this.reviewState.buildReviewText();
+      const submission = this.reviewState.buildReviewSubmission();
       const context = this.context;
       if (!context) {
         this.submissionState = "active";
@@ -772,7 +775,7 @@ export class DiffToolHttpServer {
 
       try {
         await this.onSubmit?.({
-          review,
+          ...submission,
           context: { ...context, diffArgs: [...context.diffArgs] },
           files: this.files.map((file) => ({ ...file })),
         });
@@ -782,7 +785,7 @@ export class DiffToolHttpServer {
       }
 
       this.submissionState = "submitted";
-      const result = await this.client.returnReview({ review });
+      const result = await this.client.returnReview(submission);
       this.sendJson(response, 200, result);
       return;
     }

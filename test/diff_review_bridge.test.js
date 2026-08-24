@@ -294,11 +294,13 @@ describe("diff review bridge", () => {
       });
 
       const review = await client.send("return", "session.return_review", {
+        outcome: "commented",
         review: "Looks good overall.",
       });
       expect(review.result).toEqual({ status: "returned" });
       await expect(bridge.result).resolves.toEqual({
         status: "returned",
+        outcome: "commented",
         review: "Looks good overall.",
       });
     } finally {
@@ -330,6 +332,7 @@ describe("diff review bridge", () => {
         return value;
       });
       const review = await client.send("return", "session.return_review", {
+        outcome: "commented",
         review: "Looks good overall.",
       });
       expect(review.result).toEqual({ status: "returned" });
@@ -354,6 +357,7 @@ describe("diff review bridge", () => {
 
       await expect(result).resolves.toEqual({
         status: "returned",
+        outcome: "commented",
         review: "Looks good overall.",
       });
     } finally {
@@ -391,6 +395,7 @@ describe("diff review bridge", () => {
 
       await expect(
         client.send("return", "session.return_review", {
+          outcome: "commented",
           review: "Looks good overall.",
         }),
       ).resolves.toMatchObject({
@@ -399,6 +404,7 @@ describe("diff review bridge", () => {
       });
       await expect(bridge.result).resolves.toEqual({
         status: "returned",
+        outcome: "commented",
         review: "Looks good overall.",
       });
     } finally {
@@ -432,6 +438,7 @@ describe("diff review bridge", () => {
       });
       await expect(
         client.send("return", "session.return_review", {
+          outcome: "commented",
           review: "Looks good overall.",
         }),
       ).resolves.toMatchObject({
@@ -448,6 +455,7 @@ describe("diff review bridge", () => {
 
       await expect(result).resolves.toEqual({
         status: "returned",
+        outcome: "commented",
         review: "Looks good overall.",
       });
     } finally {
@@ -1042,11 +1050,13 @@ describe("diff review bridge", () => {
       await threadStarted;
 
       const review = await client.send("return", "session.return_review", {
+        outcome: "commented",
         review: "Looks good overall.",
       });
       expect(review.result).toEqual({ status: "returned" });
       await expect(bridge.result).resolves.toEqual({
         status: "returned",
+        outcome: "commented",
         review: "Looks good overall.",
       });
       expect(interruptCount).toBe(0);

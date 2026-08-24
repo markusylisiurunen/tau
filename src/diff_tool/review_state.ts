@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { DiffReviewSubmission } from "../core/diff_review/index.js";
 import type {
   DiffToolCommentThread,
   DiffToolCreateThreadPayload,
@@ -15,6 +16,7 @@ import {
   DIFF_TOOL_GUIDE_QUESTION_LIMIT,
   DIFF_TOOL_GUIDE_TOPIC_LIMIT,
   guideCommentTargetKey,
+  hasDiffToolReviewComments,
 } from "./shared_types.js";
 
 const emptyGuide: DiffToolGuide = {
@@ -365,13 +367,13 @@ export class DiffToolReviewStateStore {
     return `${locationPrefix}Continue this restored review conversation. Its previous transcript is included below.\n\n${transcript}`;
   }
 
-  buildReviewText(): string {
-    const unresolvedThreads = this.state.threads.filter((thread) => !thread.resolved);
-    const guideComments = this.state.guide.comments;
-    if (unresolvedThreads.length === 0 && guideComments.length === 0) {
-      return "(no comments)";
+  buildReviewSubmission(): DiffReviewSubmission {
+    if (!hasDiffToolReviewComments(this.state)) {
+      return { outcome: "approved" };
     }
 
+    const unresolvedThreads = this.state.threads.filter((thread) => !thread.resolved);
+    const guideComments = this.state.guide.comments;
     const sections: string[] = [];
     if (guideComments.length > 0) {
       sections.push(
@@ -417,7 +419,10 @@ export class DiffToolReviewStateStore {
       sections.push(`${guidance}\n\n---\n\n${threads}`);
     }
 
-    return sections.join("\n\n---\n\n");
+    return {
+      outcome: "commented",
+      review: sections.join("\n\n---\n\n"),
+    };
   }
 
   private findThreadInternal(id: string): DiffToolCommentThread | undefined {

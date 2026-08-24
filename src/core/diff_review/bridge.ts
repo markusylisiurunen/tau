@@ -40,6 +40,11 @@ export type DiffReviewCancelledReason =
 export type DiffReviewResult =
   | {
       status: "returned";
+      outcome: "approved";
+    }
+  | {
+      status: "returned";
+      outcome: "commented";
       review: string;
     }
   | {
@@ -421,7 +426,7 @@ export class DiffReviewBridge {
         return;
       case "session.return_review":
         await this.respond(connection, request.id, request.method, { status: "returned" });
-        await this.complete({ status: "returned", review: request.params.review });
+        await this.complete({ status: "returned", ...request.params });
         return;
       case "session.cancel":
         await this.respond(connection, request.id, request.method, { status: "cancelled" });

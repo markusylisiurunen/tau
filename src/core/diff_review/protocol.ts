@@ -2,7 +2,7 @@ import { z } from "zod";
 import { type ReasoningEffort, ReasoningEffortSchema } from "../types.js";
 import type { DiffReviewFile } from "./snapshot.js";
 
-export const DIFF_REVIEW_PROTOCOL_VERSION = 2 as const;
+export const DIFF_REVIEW_PROTOCOL_VERSION = 3 as const;
 
 export const DIFF_REVIEW_CLIENT_METHODS = [
   "initialize",
@@ -60,9 +60,10 @@ export type DiffReviewThreadSubmitMessageParams = {
   message: string;
   reasoning?: ReasoningEffort;
 };
-export type DiffReviewSessionReturnReviewParams = {
-  review: string;
-};
+export type DiffReviewSubmission =
+  | { outcome: "approved" }
+  | { outcome: "commented"; review: string };
+export type DiffReviewSessionReturnReviewParams = DiffReviewSubmission;
 export type DiffReviewSessionCancelParams = Record<string, never>;
 export type DiffReviewSessionCloseParams = Record<string, never>;
 
@@ -283,11 +284,15 @@ const threadSubmitMessageParamsSchema = z
       });
     }
   });
-const sessionReturnReviewParamsSchema = z
-  .object({
-    review: z.string().trim().min(1),
-  })
-  .strip();
+const sessionReturnReviewParamsSchema = z.discriminatedUnion("outcome", [
+  z.object({ outcome: z.literal("approved") }).strip(),
+  z
+    .object({
+      outcome: z.literal("commented"),
+      review: z.string().trim().min(1),
+    })
+    .strip(),
+]);
 
 export function createDiffReviewError(
   code: DiffReviewErrorCode,
@@ -557,6 +562,6 @@ function formatParamsError(method: DiffReviewMethod, _error: z.ZodError): string
     case "thread.submit_message":
       return "thread.submit_message requires a non-empty message, optional threadId, optional forkFromThreadId when creating a new thread, and optional valid reasoning effort";
     case "session.return_review":
-      return "session.return_review.review must be a non-empty string";
+      return "session.return_review requires outcome approved, or outcome commented with a non-empty review";
   }
 }

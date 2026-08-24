@@ -871,6 +871,7 @@ async function launchInlineDiffTool({ env, uiText = "http://127.0.0.1:4321", ret
           submitted = true;
           setTimeout(() => {
             request("session.return_review", {
+              outcome: "commented",
               review: "returned review from local diff tool",
             });
           }, returnDelayMs);
@@ -2377,6 +2378,7 @@ describe("SessionChatController", () => {
     const rawText = formatDiffReviewUserMessage({
       diffCommand: "git diff",
       reviewedFiles: ["src/main.ts"],
+      outcome: "commented",
       review: "review feedback",
       historyEntryId: "review-user",
     });

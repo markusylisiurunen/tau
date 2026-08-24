@@ -23,6 +23,7 @@ type TopBarProps = {
   diffStyle: DiffStyle;
   overflowMode: OverflowMode;
   finished: boolean;
+  hasReviewComments: boolean;
   hasUnresolvedFileThreads: boolean;
   onModeChange: (mode: ReviewMode) => void;
   onExpandAll: () => void;
@@ -57,6 +58,7 @@ export function TopBar({
   diffStyle,
   overflowMode,
   finished,
+  hasReviewComments,
   hasUnresolvedFileThreads,
   onModeChange,
   onExpandAll,
@@ -160,7 +162,7 @@ export function TopBar({
         )}
         <div className="top-bar-actions">
           <Button variant="primary" onClick={onSubmit} disabled={finished}>
-            Submit
+            {hasReviewComments ? "Submit" : "Approve"}
           </Button>
           <Button
             variant="danger"

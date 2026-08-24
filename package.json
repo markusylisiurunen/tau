@@ -31,8 +31,8 @@
     "access": "public"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "0.84.2",
-    "@earendil-works/pi-tui": "0.84.2",
+    "@earendil-works/pi-ai": "0.84.3",
+    "@earendil-works/pi-tui": "0.84.3",
     "@fly/sprites": "^0.2.0",
     "chalk": "^6.0.0",
     "colorjs.io": "^0.7.1",
@@ -41,7 +41,7 @@
     "ses": "2.3.0",
     "sharp": "^0.35.3",
     "strip-ansi": "^7.2.0",
-    "typebox": "^1.3.17",
+    "typebox": "^1.3.18",
     "ws": "^8.21.3",
     "yaml": "^2.9.0",
     "zod": "^4.4.3"

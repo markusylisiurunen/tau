@@ -70,6 +70,41 @@
   padding-inline: var(--markdown-inline-code-padding-x);
 }
 
+.markdown-code-block {
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-surface);
+  margin-block: var(--markdown-code-block-margin-block);
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.markdown-code-block-header {
+  align-items: center;
+  background: var(--surface);
+  border-block-end: 1px solid var(--border-surface);
+  display: flex;
+  height: 36px;
+  justify-content: space-between;
+  padding-inline: 10px;
+}
+
+.markdown-code-block-language {
+  color: var(--text-muted);
+  font-family: var(--font-family-code);
+  font-size: var(--markdown-code-block-font-size);
+}
+
+.markdown-code-block-header .switch {
+  font-size: var(--font-size-sm);
+  height: 28px;
+}
+
+.markdown-code-block-content {
+  max-width: 100%;
+  min-width: 0;
+}
+
 .markdown-content pre {
   background: var(--bg) !important;
   border: 1px solid var(--border);
@@ -93,6 +128,18 @@
   min-width: 0;
   padding: 0;
   white-space: inherit;
+}
+
+.markdown-content .markdown-code-block pre {
+  border: 0;
+  border-radius: 0;
+  margin: 0;
+}
+
+.markdown-code-block-wrap pre {
+  overflow-wrap: anywhere;
+  overflow-x: hidden;
+  white-space: pre-wrap;
 }
 
 .markdown-content ul,
@@ -133,6 +180,36 @@
 .markdown-content li > ul,
 .markdown-content li > ol {
   margin-block: var(--markdown-list-nested-gap) 0;
+}
+
+.markdown-table-scroll {
+  margin-block: var(--markdown-paragraph-margin-block);
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.markdown-content table {
+  border-collapse: collapse;
+  min-width: 100%;
+  width: 100%;
+}
+
+.markdown-content th,
+.markdown-content td {
+  border: 1px solid var(--border);
+  padding: 0.5em 0.75em;
+  text-align: start;
+  vertical-align: top;
+}
+
+.markdown-content th {
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.markdown-content td {
+  color: var(--markdown-prose-color);
 }
 
 .markdown-content blockquote {

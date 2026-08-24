@@ -15,7 +15,7 @@
   white-space: nowrap;
 }
 
-.button:not(.button-unstyled):not(:disabled):hover,
+.button:where(:not(.button-unstyled, :disabled)):hover,
 .button-active {
   background: color-mix(in oklch, var(--text) 6%, transparent);
   color: var(--text);

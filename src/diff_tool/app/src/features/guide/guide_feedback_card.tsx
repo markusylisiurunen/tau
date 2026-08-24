@@ -30,6 +30,7 @@ type GuideFeedbackFormCardProps = {
   placeholder: string;
   submitLabel: string;
   value?: string;
+  allowEmptySubmit?: boolean;
   onValueChange?: (value: string) => void;
   onClose: () => void;
   onSubmit: (value: string) => void;
@@ -112,6 +113,7 @@ export function GuideFeedbackCard({
       placeholder="Write your review comment…"
       submitLabel="Save comment"
       value={commentDraft}
+      allowEmptySubmit={Boolean(comment)}
       onValueChange={setCommentDraft}
       onClose={() => setMode(null)}
       onSubmit={(body) => {
@@ -128,6 +130,7 @@ export function GuideFeedbackFormCard({
   placeholder,
   submitLabel,
   value,
+  allowEmptySubmit,
   onValueChange,
   onClose,
   onSubmit,
@@ -146,6 +149,7 @@ export function GuideFeedbackFormCard({
         cancelLabel="Close"
         value={value}
         autoFocus
+        allowEmptySubmit={allowEmptySubmit}
         onValueChange={onValueChange}
         onCancel={onClose}
         onSubmit={onSubmit}

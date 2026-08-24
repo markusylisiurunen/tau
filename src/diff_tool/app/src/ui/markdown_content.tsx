@@ -1,6 +1,8 @@
 import { isValidElement, useEffect, useState } from "react";
 import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { codeToHtml } from "shiki";
+import { Switch } from "./switch.js";
 import "./markdown_content.css";
 
 type MarkdownContentProps = {
@@ -21,9 +23,55 @@ type MarkdownCodeChildProps = {
 
 const highlightedCodeCache = new Map<string, Promise<string | null>>();
 
+const codeLanguageLabels: Readonly<Record<string, string>> = {
+  bash: "Bash",
+  c: "C",
+  cpp: "C++",
+  cs: "C#",
+  csharp: "C#",
+  css: "CSS",
+  diff: "Diff",
+  dockerfile: "Dockerfile",
+  go: "Go",
+  html: "HTML",
+  java: "Java",
+  javascript: "JavaScript",
+  js: "JavaScript",
+  json: "JSON",
+  jsonc: "JSON with Comments",
+  jsx: "JSX",
+  kotlin: "Kotlin",
+  markdown: "Markdown",
+  md: "Markdown",
+  php: "PHP",
+  plaintext: "Plain text",
+  py: "Python",
+  python: "Python",
+  rb: "Ruby",
+  rs: "Rust",
+  ruby: "Ruby",
+  rust: "Rust",
+  scss: "SCSS",
+  sh: "Shell",
+  shell: "Shell",
+  sql: "SQL",
+  swift: "Swift",
+  text: "Plain text",
+  ts: "TypeScript",
+  tsx: "TSX",
+  txt: "Plain text",
+  typescript: "TypeScript",
+  xml: "XML",
+  yaml: "YAML",
+  yml: "YAML",
+  zsh: "Zsh",
+};
+
 function MarkdownCodeBlock({ className, children }: MarkdownCodeBlockProps) {
   const [html, setHtml] = useState<string | null>(null);
+  const [wrap, setWrap] = useState(false);
   const language = className?.match(/language-([^\s]+)/)?.[1] ?? "text";
+  const languageLabel = codeLanguageLabels[language.toLowerCase()] ?? language;
   const code = String(children ?? "").replace(/\n$/, "");
 
   useEffect(() => {
@@ -41,15 +89,26 @@ function MarkdownCodeBlock({ className, children }: MarkdownCodeBlockProps) {
     };
   }, [code, language]);
 
-  if (html === null) {
-    return (
+  const highlightedCode =
+    html === null ? (
       <pre>
         <code>{children}</code>
       </pre>
+    ) : (
+      <div dangerouslySetInnerHTML={{ __html: html }} />
     );
-  }
 
-  return <div dangerouslySetInnerHTML={{ __html: html }} />;
+  return (
+    <div
+      className={`markdown-code-block${wrap ? " markdown-code-block-wrap" : ""}`}
+    >
+      <div className="markdown-code-block-header">
+        <span className="markdown-code-block-language">{languageLabel}</span>
+        <Switch checked={wrap} label="Wrap" onChange={setWrap} />
+      </div>
+      <div className="markdown-code-block-content">{highlightedCode}</div>
+    </div>
+  );
 }
 
 async function highlightCodeBlock(
@@ -102,7 +161,15 @@ export function MarkdownContent({
   return (
     <div className={resolvedClassName}>
       <Markdown
+        remarkPlugins={[remarkGfm]}
         components={{
+          table({ children }) {
+            return (
+              <div className="markdown-table-scroll">
+                <table>{children}</table>
+              </div>
+            );
+          },
           pre({ children }) {
             if (isValidElement(children)) {
               const { className: codeClassName, children: codeChildren } =

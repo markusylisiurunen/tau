@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { generateGuide, operateGuide, saveGuideComment } from "../../api.js";
 import type {
   DiffToolGuideCommentTarget,
@@ -11,6 +11,14 @@ type GuideControllerOptions = Pick<
   "bootstrap" | "reviewState" | "setGuideLoading" | "syncReviewState"
 >;
 
+export type PendingGuideTopic =
+  { id: string; kind: "add" } | { id: string; kind: "revise"; topicId: string };
+
+export type PendingGuideQuestion = {
+  id: string;
+  question: string;
+};
+
 export function useGuide({
   bootstrap,
   reviewState,
@@ -18,6 +26,11 @@ export function useGuide({
   syncReviewState,
 }: GuideControllerOptions) {
   const guideRequestedRef = useRef(false);
+  const pendingOperationIdRef = useRef(0);
+  const [pendingTopics, setPendingTopics] = useState<PendingGuideTopic[]>([]);
+  const [pendingQuestions, setPendingQuestions] = useState<
+    PendingGuideQuestion[]
+  >([]);
 
   const requestGuide = useCallback(() => {
     setGuideLoading(true);
@@ -31,11 +44,42 @@ export function useGuide({
 
   const runGuideOperation = useCallback(
     (operation: DiffToolGuideOperation) => {
+      const pendingId = `guide-operation-${pendingOperationIdRef.current++}`;
+      if (operation.kind === "topic.add") {
+        setPendingTopics((topics) => [
+          ...topics,
+          { id: pendingId, kind: "add" },
+        ]);
+      } else if (operation.kind === "topic.revise") {
+        setPendingTopics((topics) => [
+          ...topics,
+          { id: pendingId, kind: "revise", topicId: operation.topicId },
+        ]);
+      } else if (operation.kind === "question.ask") {
+        setPendingQuestions((questions) => [
+          ...questions,
+          { id: pendingId, question: operation.question },
+        ]);
+      }
+
       setGuideLoading(true);
       void syncReviewState(operateGuide(operation), {
         onError: () => {
           setGuideLoading(false);
         },
+      }).finally(() => {
+        if (
+          operation.kind === "topic.add" ||
+          operation.kind === "topic.revise"
+        ) {
+          setPendingTopics((topics) =>
+            topics.filter((topic) => topic.id !== pendingId),
+          );
+        } else if (operation.kind === "question.ask") {
+          setPendingQuestions((questions) =>
+            questions.filter((question) => question.id !== pendingId),
+          );
+        }
       });
     },
     [setGuideLoading, syncReviewState],
@@ -62,6 +106,8 @@ export function useGuide({
   }, [bootstrap, requestGuide, reviewState.guide.orientation]);
 
   return {
+    pendingTopics,
+    pendingQuestions,
     requestGuide,
     runGuideOperation,
     saveComment,

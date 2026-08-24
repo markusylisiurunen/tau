@@ -306,6 +306,12 @@ export class DiffToolReviewStateStore {
     const existing = this.state.guide.comments.find(
       (comment) => guideCommentTargetKey(comment.target) === targetKey,
     );
+    if (!body) {
+      if (existing) {
+        this.state.guide.comments.splice(this.state.guide.comments.indexOf(existing), 1);
+      }
+      return;
+    }
     if (existing) {
       existing.body = body;
       return;

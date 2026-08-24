@@ -910,12 +910,12 @@ function parseGuideOperation(payload: Record<string, unknown>): DiffToolGuideOpe
 function parseGuideCommentPayload(
   payload: Record<string, unknown>,
 ): DiffToolGuideCommentPayload | undefined {
-  const body = typeof payload.body === "string" ? payload.body.trim() : "";
+  const body = typeof payload.body === "string" ? payload.body.trim() : undefined;
   const target =
     payload.target && typeof payload.target === "object" && !Array.isArray(payload.target)
       ? (payload.target as Record<string, unknown>)
       : undefined;
-  if (!body || !target) {
+  if (body === undefined || !target) {
     return undefined;
   }
   if (target.kind === "orientation") {

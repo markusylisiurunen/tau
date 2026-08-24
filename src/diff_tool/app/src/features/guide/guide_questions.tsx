@@ -12,10 +12,12 @@ import {
   GuideFeedbackCard,
   GuideFeedbackFormCard,
 } from "./guide_feedback_card.js";
+import type { PendingGuideQuestion } from "./use_guide.js";
 import "./guide_questions.css";
 
 type GuideQuestionsProps = {
   questions: DiffToolGuideQuestion[];
+  pendingQuestions: PendingGuideQuestion[];
   comments: DiffToolGuideComment[];
   onOperate: (operation: DiffToolGuideOperation) => void;
   onComment: (target: DiffToolGuideCommentTarget, body: string) => void;
@@ -23,6 +25,7 @@ type GuideQuestionsProps = {
 
 export function GuideQuestions({
   questions,
+  pendingQuestions,
   comments,
   onOperate,
   onComment,
@@ -37,7 +40,7 @@ export function GuideQuestions({
         </h2>
       </header>
 
-      {questions.length > 0 && (
+      {(questions.length > 0 || pendingQuestions.length > 0) && (
         <ul className="guide-question-list">
           {questions.map((question) => (
             <li key={question.id} className="guide-question-item">
@@ -46,7 +49,6 @@ export function GuideQuestions({
                   <ChevronRight className="guide-question-icon" size={16} />
                   <span className="guide-question-label">
                     <strong>{question.question}</strong>
-                    {question.source === "user" && <span>Your question</span>}
                   </span>
                 </summary>
                 <div className="guide-question-answer">
@@ -58,6 +60,19 @@ export function GuideQuestions({
                   />
                 </div>
               </details>
+            </li>
+          ))}
+          {pendingQuestions.map((question) => (
+            <li key={question.id} className="guide-question-item">
+              <div
+                className="guide-question-pending"
+                role="status"
+                aria-label={`${question.question}, generating answer`}
+              >
+                <span className="guide-question-label">
+                  <strong>{question.question}</strong>
+                </span>
+              </div>
             </li>
           ))}
         </ul>

@@ -82,6 +82,8 @@ export function App() {
             <main ref={navigation.contentRef} className="content guide-content">
               <Guide
                 guide={session.reviewState.guide}
+                pendingTopics={guide.pendingTopics}
+                pendingQuestions={guide.pendingQuestions}
                 onGenerate={guide.requestGuide}
                 onOperate={guide.runGuideOperation}
                 onComment={guide.saveComment}

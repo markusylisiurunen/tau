@@ -687,6 +687,20 @@ describe("built-in diff tool", () => {
           body: "Clarify the rollout",
         },
       ]);
+      const cleared = await fetchJson(`${started.url}api/guide/comment`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ target: { kind: "orientation" }, body: "" }),
+      });
+      expect(cleared.state.guide.comments).toEqual([]);
+      await fetchJson(`${started.url}api/guide/comment`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          target: { kind: "orientation" },
+          body: "Clarify the rollout",
+        }),
+      });
       await fetchJson(`${started.url}api/guide/comment`, {
         method: "POST",
         headers: { "content-type": "application/json" },

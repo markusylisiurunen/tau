@@ -31,7 +31,7 @@ export const ThreadCard = memo(function ThreadCard({
     lastMessage?.role === "user" && !thread.loading && !thread.resolved;
   const count = thread.messages.length;
   const summary = `${thread.resolved ? "Resolved thread" : "Thread"} with ${count} comment${count === 1 ? "" : "s"}`;
-  const resolveLabel = thread.resolved ? "reopen" : "resolve";
+  const resolveLabel = thread.resolved ? "Reopen" : "Resolve";
 
   const handleAddReply = useCallback(
     (text: string) => {
@@ -58,7 +58,7 @@ export const ThreadCard = memo(function ThreadCard({
       >
         <div className="thread-collapsed-row">
           <Button
-            variant="ghost"
+            variant="unstyled"
             onClick={() => onToggleCollapsed(false)}
             aria-label="Expand thread"
             aria-expanded={false}
@@ -75,7 +75,7 @@ export const ThreadCard = memo(function ThreadCard({
     <div className={`thread-card${thread.resolved ? " resolved" : ""}`}>
       <div className="thread-header-row">
         <Button
-          variant="ghost"
+          variant="unstyled"
           onClick={() => onToggleCollapsed(true)}
           aria-label="Collapse thread"
           aria-expanded
@@ -91,14 +91,14 @@ export const ThreadCard = memo(function ThreadCard({
             inputClassName="thread-reply-input"
             actionsClassName="thread-actions"
             placeholder="Reply…"
-            submitLabel="comment"
+            submitLabel="Comment"
             autoFocus
             onSubmit={handleAddReply}
             onCancel={handleCancelReply}
           >
             <Checkbox
               checked={requestAgentReply}
-              label="ask agent"
+              label="Ask agent"
               onChange={setRequestAgentReply}
             />
           </TextComposer>
@@ -107,11 +107,11 @@ export const ThreadCard = memo(function ThreadCard({
             <Button variant="ghost" onClick={handleToggleResolved}>
               {resolveLabel}
             </Button>
-            <Button onClick={() => setIsReplying(true)}>reply</Button>
+            <Button onClick={() => setIsReplying(true)}>Reply</Button>
             {canAsk && (
               <Button onClick={onRequestAgent}>
                 <Sparkles size={14} />
-                ask agent
+                Ask agent
               </Button>
             )}
           </div>

@@ -10,6 +10,19 @@
   gap: var(--guide-space-md);
 }
 
+.guide-topic-working-dot {
+  background: var(--accent-interactive);
+  border-radius: var(--radius-full);
+  flex: 0 0 auto;
+  height: 6px;
+  margin-inline-start: 4px;
+  width: 6px;
+}
+
+.guide-topic-generating {
+  color: var(--text-muted);
+}
+
 .guide-topic-heading h3 {
   color: var(--text);
   font-size: 27px;

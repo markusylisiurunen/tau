@@ -22,20 +22,21 @@
   color: color-mix(in oklch, var(--text) 84%, transparent);
   display: flex;
   flex-direction: column;
-  gap: var(--guide-space-sm);
-  max-width: 480px;
-  padding: var(--guide-space-lg);
+  gap: 4px;
+  margin: 0 auto;
+  max-width: 640px;
+  padding-block: calc(2 * var(--guide-space-lg)) calc(4 * var(--guide-space-lg));
+  padding-inline: var(--content-padding-x);
   text-align: center;
-}
-
-.guide-empty h1 {
-  color: var(--text);
-  font-size: 27px;
-  font-weight: 600;
 }
 
 .guide-empty p {
   line-height: 1.5;
+  text-wrap: balance;
+}
+
+.guide-empty button {
+  margin-block-start: 8px;
 }
 
 .guide-section {
@@ -72,5 +73,4 @@
 
 .markdown-content-guide pre {
   background: var(--surface) !important;
-  border-color: var(--border-surface);
 }

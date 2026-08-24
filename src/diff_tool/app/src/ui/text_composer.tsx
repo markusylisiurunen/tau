@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "./button.js";
 
 type TextComposerProps = {
@@ -35,8 +35,15 @@ export function TextComposer({
   onCancel,
 }: TextComposerProps) {
   const [internalValue, setInternalValue] = useState("");
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const currentValue = value ?? internalValue;
   const trimmedValue = currentValue.trim();
+
+  useEffect(() => {
+    if (autoFocus) {
+      textareaRef.current?.focus();
+    }
+  }, [autoFocus]);
 
   const updateValue = (nextValue: string) => {
     if (value === undefined) {
@@ -57,6 +64,7 @@ export function TextComposer({
 
   const textarea = (
     <textarea
+      ref={textareaRef}
       className={["text-input-area", inputClassName].filter(Boolean).join(" ")}
       value={currentValue}
       rows={rows}

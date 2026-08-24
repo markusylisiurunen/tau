@@ -48,7 +48,7 @@ const sessionPatch = [
   "index abc1234..def5678 100644",
   "--- a/src/auth/login.ts",
   "+++ b/src/auth/login.ts",
-  "@@ -1,8 +1,9 @@",
+  "@@ -1,10 +1,12 @@",
   '-import { createSession } from "./session";',
   '+import { signToken } from "./jwt";',
   ' import { hashPassword, verifyPassword } from "./crypto";',
@@ -62,6 +62,12 @@ const sessionPatch = [
   "-  return createSession(user.id);",
   "+  const token: AuthToken = await signToken({ sub: user.id, email: user.email });",
   "+  return { token, expiresIn: 3600 };",
+  " }",
+  "@@ -42,2 +44,4 @@ export async function logout() {",
+  "-  await destroySession();",
+  "+  // JWTs cannot be revoked by deleting server-side session state.",
+  "+  // Logout now removes the token from the client only.",
+  "+  return;",
   " }",
   "diff --git a/src/auth/middleware.ts b/src/auth/middleware.ts",
   "index 1234567..89abcde 100644",
@@ -623,13 +629,33 @@ const server = createServer(async (req, res) => {
             label: "Auth flow",
             heading: "The new authentication flow",
             body: [
-              "Login now returns a token directly:",
+              "Login now returns a token directly. The main request-path changes are:",
+              "",
+              "| Step | Previous behavior | New behavior | Client impact |",
+              "| --- | --- | --- | --- |",
+              "| Login | Creates an in-memory session and sets a `sessionId` cookie | Signs a short-lived JWT and returns it in the response body | Read and securely store the returned token |",
+              "| Authenticated request | Sends the browser-managed session cookie | Sends `Authorization: Bearer <token>` explicitly | Update every API client and request helper |",
+              "| Logout | Deletes server-side session state immediately | Removes only the client-side token | A copied token remains valid until expiration |",
+              "",
+              "The login response now has this shape:",
               "",
               "```json",
-              '{ "token": "eyJ…", "expiresIn": 3600 }',
+              '{ "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.mock-signature", "expiresIn": 3600, "tokenType": "Bearer", "permissions": ["account:read", "account:write", "audit-log:read"] }',
               "```",
               "",
               "Clients attach it to subsequent requests as `Authorization: Bearer <token>`. Middleware verifies the signature and expiration, then places the decoded user identity on the request context.",
+            ].join("\n"),
+          },
+          {
+            id: randomUUID(),
+            label: "Code wrapping",
+            heading: "Code block wrapping demo",
+            body: [
+              "This deliberately long line demonstrates the code-block wrap toggle:",
+              "",
+              "```ts",
+              'const authenticatedRequest = await apiClient.request({ method: "POST", path: "/v1/accounts/current/security/audit-log/export", headers: { Authorization: `Bearer ${token}`, "X-Request-ID": requestId }, query: { includeMetadata: true, includeActorDetails: true, format: "json" } });',
+              "```",
             ].join("\n"),
           },
           {
@@ -678,6 +704,7 @@ const server = createServer(async (req, res) => {
 
     if (req.method === "POST" && url.pathname === "/api/guide/operate") {
       const body = await readBody(req);
+      await new Promise((resolve) => setTimeout(resolve, 1200));
       if (body.kind === "question.ask" && typeof body.question === "string") {
         state.guide.questions.push({
           id: randomUUID(),
@@ -718,12 +745,17 @@ const server = createServer(async (req, res) => {
 
     if (req.method === "POST" && url.pathname === "/api/guide/comment") {
       const body = await readBody(req);
-      const comment = typeof body.body === "string" ? body.body.trim() : "";
-      if (!comment || !body.target || typeof body.target !== "object") {
+      const comment =
+        typeof body.body === "string" ? body.body.trim() : undefined;
+      if (
+        comment === undefined ||
+        !body.target ||
+        typeof body.target !== "object"
+      ) {
         sendJson(res, 400, { error: "invalid guide comment" });
         return;
       }
-      const existing = state.guide.comments.find((entry) => {
+      const existingIndex = state.guide.comments.findIndex((entry) => {
         if (entry.target.kind !== body.target.kind) {
           return false;
         }
@@ -738,8 +770,12 @@ const server = createServer(async (req, res) => {
             return false;
         }
       });
-      if (existing) {
-        existing.body = comment;
+      if (!comment) {
+        if (existingIndex !== -1) {
+          state.guide.comments.splice(existingIndex, 1);
+        }
+      } else if (existingIndex !== -1) {
+        state.guide.comments[existingIndex].body = comment;
       } else {
         state.guide.comments.push({
           target: body.target,

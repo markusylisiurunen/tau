@@ -51,7 +51,11 @@
   --accent-change: oklch(76% 0.19 300);
   --accent-interactive: oklch(72% 0.28 255);
   --diffs-annotation-bg-override: var(--surface);
-  --diffs-bg-separator-override: var(--surface);
+  --diffs-bg-separator-override: color-mix(
+    in oklch,
+    var(--surface),
+    var(--text) 4%
+  );
   --diffs-bg-context-override: var(--surface);
   --diffs-bg-context-gutter-override: var(--surface);
   --diffs-addition-color-override: var(--accent-add);
@@ -90,7 +94,7 @@
   );
   --accent-primary: oklch(96% 0 0);
   --text-inverse: oklch(12% 0 0);
-  --accent-primary-hover: oklch(84% 0 0);
+  --accent-primary-hover: color-mix(in oklch, var(--accent-primary), black 6%);
   --thread-agent-bg: color-mix(
     in oklch,
     var(--accent-interactive) 4%,

@@ -9,14 +9,20 @@
 .thread-message-header {
   align-items: center;
   display: flex;
-  gap: 8px;
-  justify-content: flex-start;
+  gap: 16px;
+  justify-content: space-between;
 }
 
 .thread-message-role {
   color: var(--text);
   display: inline-block;
   font-weight: 600;
+}
+
+.thread-message-header button {
+  flex: 0 0 24px;
+  height: 24px;
+  width: 24px;
 }
 
 .thread-message-thinking {

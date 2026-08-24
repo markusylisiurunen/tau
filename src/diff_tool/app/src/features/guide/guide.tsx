@@ -1,4 +1,3 @@
-import { Sparkles } from "lucide-react";
 import type {
   DiffToolGuide,
   DiffToolGuideCommentTarget,
@@ -8,34 +7,43 @@ import { Button } from "../../ui/button.js";
 import { GuideOrientation } from "./guide_orientation.js";
 import { GuideQuestions } from "./guide_questions.js";
 import { GuideTopics } from "./guide_topics.js";
+import type { PendingGuideQuestion, PendingGuideTopic } from "./use_guide.js";
 import "./guide.css";
 
 type GuideProps = {
   guide: DiffToolGuide;
+  pendingTopics: PendingGuideTopic[];
+  pendingQuestions: PendingGuideQuestion[];
   onGenerate: () => void;
   onOperate: (operation: DiffToolGuideOperation) => void;
   onComment: (target: DiffToolGuideCommentTarget, body: string) => void;
 };
 
-export function Guide({ guide, onGenerate, onOperate, onComment }: GuideProps) {
+export function Guide({
+  guide,
+  pendingTopics,
+  pendingQuestions,
+  onGenerate,
+  onOperate,
+  onComment,
+}: GuideProps) {
   if (!guide.orientation.trim()) {
     return (
-      <section className="guide-empty" aria-labelledby="guide-empty-title">
-        <Sparkles size={20} aria-hidden="true" />
-        <h1 id="guide-empty-title">
-          {guide.loading
-            ? "Building your change guide…"
-            : "Understand this change"}
+      <section
+        className="guide-empty"
+        aria-labelledby="guide-empty-title"
+        aria-busy={guide.loading}
+      >
+        <h1 id="guide-empty-title" className="guide-section-title">
+          Understand this change
         </h1>
         <p>
           Get oriented before reading the implementation, then explore the parts
           and questions that matter to you.
         </p>
-        {!guide.loading && (
-          <Button variant="primary" onClick={onGenerate}>
-            Generate guide
-          </Button>
-        )}
+        <Button variant="primary" disabled={guide.loading} onClick={onGenerate}>
+          {guide.loading ? "Building guide…" : "Generate guide"}
+        </Button>
       </section>
     );
   }
@@ -50,12 +58,14 @@ export function Guide({ guide, onGenerate, onOperate, onComment }: GuideProps) {
       />
       <GuideTopics
         topics={guide.topics}
+        pendingTopics={pendingTopics}
         comments={guide.comments}
         onOperate={onOperate}
         onComment={onComment}
       />
       <GuideQuestions
         questions={guide.questions}
+        pendingQuestions={pendingQuestions}
         comments={guide.comments}
         onOperate={onOperate}
         onComment={onComment}

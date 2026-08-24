@@ -20,6 +20,12 @@
   display: none;
 }
 
+.guide-question-pending {
+  opacity: 0.55;
+  padding-block: var(--guide-space-md);
+  padding-inline-start: calc(16px + var(--guide-space-sm));
+}
+
 .guide-question-icon {
   color: var(--text-muted);
   flex: 0 0 auto;

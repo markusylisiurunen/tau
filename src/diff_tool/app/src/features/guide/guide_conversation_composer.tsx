@@ -63,7 +63,6 @@ export function GuideConversationComposer({
         className="guide-conversation-input"
         value={body}
         rows={1}
-        autoFocus
         disabled={disabled}
         placeholder={`${inputLabel}…`}
         aria-label={inputLabel}

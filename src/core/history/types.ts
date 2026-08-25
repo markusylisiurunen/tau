@@ -34,6 +34,7 @@ export type HistorySessionDescriptor = {
   attributes: SessionAttributes;
   createdAt: number;
   updatedAt: number;
+  webUrl?: string;
   digest?: HistoryDigest;
   snippets: string[];
 };

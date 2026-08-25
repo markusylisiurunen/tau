@@ -25,6 +25,7 @@ type Env = {
   DB: D1Database;
   AI: Ai<HistoryAiModels>;
   API_KEY: string;
+  VIEWER_PASSWORD: string;
 };
 
 type Digest = { title: string; summary: string };
@@ -55,6 +56,31 @@ type Operation =
     }
   | { id: string; sessionId: string; type: "append"; entries: HistoryEntry[] }
   | { id: string; sessionId: string; type: "truncate"; afterEntryId: string | null };
+
+type HistorySessionDescriptor = {
+  sessionId: string;
+  attributes: Record<string, string>;
+  createdAt: number;
+  updatedAt: number;
+  webUrl: string;
+  digest?: {
+    title: string;
+    summary: string;
+    updatedThroughEntryId: string;
+  };
+  snippets: string[];
+};
+
+type HistorySearchResult = {
+  sessions: HistorySessionDescriptor[];
+  nextCursor?: string;
+};
+
+type HistoryReadResult = {
+  session: HistorySessionDescriptor;
+  entries: HistoryEntry[];
+  nextCursor?: string;
+};
 
 const DIGEST_MODEL = "openai/gpt-5.6-luna";
 const DIGEST_TEXT_CONFIG = {
@@ -88,6 +114,17 @@ const MAX_ENTRIES_PER_OPERATION = 25;
 const MAX_SEARCH_LIMIT = 75;
 const MAX_READ_LIMIT = 100;
 const MAX_READ_PAGE_PAYLOAD_BYTES = 12 * 1024 * 1024;
+const VIEWER_USERNAME = "tau";
+const VIEWER_SEARCH_PAGE_SIZE = 20;
+const VIEWER_READ_PAGE_SIZE = 50;
+const VIEWER_SECURITY_HEADERS = {
+  "cache-control": "no-store",
+  "content-security-policy":
+    "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+  "referrer-policy": "no-referrer",
+  "x-content-type-options": "nosniff",
+  "x-frame-options": "DENY",
+};
 const DIGEST_NEW_ENTRY_THRESHOLD = 8;
 const DIGEST_MAX_STALENESS_MS = 12 * 60 * 60 * 1_000;
 const DIGEST_RETRY_BASE_MS = 5 * 60 * 1_000;
@@ -118,37 +155,52 @@ function invalidRequest(message: string): HistoryApiError {
 
 export default {
   async fetch(request: Request, env: Env, _context: ExecutionContext): Promise<Response> {
-    if (!authorize(request, env)) return error("unauthorized", "Invalid API key", 401);
-    if (request.method !== "POST") return error("method_not_allowed", "Use POST", 405);
+    const url = new URL(request.url);
+    const viewerRoute = url.pathname === "/" || /^\/sessions\/[^/]+$/.test(url.pathname);
 
     try {
-      if (new URL(request.url).pathname === "/v1/operations") {
-        const body = await readJson(request);
-        const operations = parseOperations(body);
-        let applied = 0;
-        for (const operation of operations) {
-          if (await applyOperation(env.DB, operation)) applied += 1;
+      if (url.pathname.startsWith("/v1/")) {
+        if (!authorizeApi(request, env)) return error("unauthorized", "Invalid API key", 401);
+        if (request.method !== "POST") return error("method_not_allowed", "Use POST", 405);
+
+        if (url.pathname === "/v1/operations") {
+          const body = await readJson(request);
+          const operations = parseOperations(body);
+          let applied = 0;
+          for (const operation of operations) {
+            if (await applyOperation(env.DB, operation)) applied += 1;
+          }
+          return json({ applied });
         }
-        return json({ applied });
+
+        if (url.pathname === "/v1/search") {
+          return json(await search(env.DB, await readJson(request), url.origin));
+        }
+
+        if (url.pathname === "/v1/read") {
+          return json(await read(env.DB, await readJson(request), url.origin));
+        }
+
+        return error("not_found", "Not found", 404);
       }
 
-      if (new URL(request.url).pathname === "/v1/search") {
-        return json(await search(env.DB, await readJson(request)));
+      if (!viewerRoute) return viewerError("Not found", 404);
+      if (!authorizeViewer(request, env)) return viewerUnauthorized();
+      if (request.method !== "GET") {
+        return viewerError("Use GET", 405, { allow: "GET" });
       }
-
-      if (new URL(request.url).pathname === "/v1/read") {
-        return json(await read(env.DB, await readJson(request)));
-      }
-
-      return error("not_found", "Not found", 404);
+      if (url.pathname === "/") return await renderViewerIndex(env.DB, url);
+      return await renderViewerSession(env.DB, url);
     } catch (caught) {
       if (caught instanceof HistoryApiError) {
-        return error(caught.code, caught.message, caught.status);
+        return viewerRoute
+          ? viewerError(caught.message, caught.status)
+          : error(caught.code, caught.message, caught.status);
       }
-      logWorkerError("history_request_failed", caught, {
-        pathname: new URL(request.url).pathname,
-      });
-      return error("internal_error", "Internal server error", 500);
+      logWorkerError("history_request_failed", caught, { pathname: url.pathname });
+      return viewerRoute
+        ? viewerError("Internal server error", 500)
+        : error("internal_error", "Internal server error", 500);
     }
   },
 
@@ -336,10 +388,38 @@ function providerErrorDetails(error: Record<string, unknown>, depth = 0): Record
   return details;
 }
 
-function authorize(request: Request, env: Env): boolean {
+function authorizeApi(request: Request, env: Env): boolean {
   const expected = env.API_KEY?.trim();
   if (!expected) return false;
   return request.headers.get("authorization") === `Bearer ${expected}`;
+}
+
+function authorizeViewer(request: Request, env: Env): boolean {
+  const expected = env.VIEWER_PASSWORD?.trim();
+  const authorization = request.headers.get("authorization");
+  if (!expected || !authorization?.startsWith("Basic ")) return false;
+  try {
+    const encoded = authorization.slice("Basic ".length);
+    const bytes = Uint8Array.from(atob(encoded), (character) => character.charCodeAt(0));
+    const credentials = new TextDecoder().decode(bytes);
+    const separator = credentials.indexOf(":");
+    return (
+      separator >= 0 &&
+      credentials.slice(0, separator) === VIEWER_USERNAME &&
+      secretsEqual(credentials.slice(separator + 1), expected)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function secretsEqual(actual: string, expected: string): boolean {
+  if (actual.length !== expected.length) return false;
+  let difference = 0;
+  for (let index = 0; index < actual.length; index += 1) {
+    difference |= actual.charCodeAt(index) ^ expected.charCodeAt(index);
+  }
+  return difference === 0;
 }
 
 export async function applyOperation(database: D1Database, operation: Operation): Promise<boolean> {
@@ -500,7 +580,11 @@ async function operationExists(database: D1Database, operationId: string): Promi
   return Boolean(existing);
 }
 
-async function search(database: D1Database, raw: unknown): Promise<unknown> {
+async function search(
+  database: D1Database,
+  raw: unknown,
+  origin: string,
+): Promise<HistorySearchResult> {
   const input = asRecord(raw, "search input");
   const query = optionalString(input.query, "query", 1_000)?.trim();
   const attributes = parseAttributeFilters(input.attributes);
@@ -528,7 +612,7 @@ async function search(database: D1Database, raw: unknown): Promise<unknown> {
       .bind(...attributeValues, limit + 1, offset)
       .all<Record<string, unknown>>();
     return {
-      sessions: rows.results.slice(0, limit).map((row) => descriptor(row)),
+      sessions: rows.results.slice(0, limit).map((row) => descriptor(row, origin)),
       ...(rows.results.length > limit
         ? { nextCursor: encodeCursor({ offset: offset + limit }) }
         : {}),
@@ -561,7 +645,7 @@ async function search(database: D1Database, raw: unknown): Promise<unknown> {
     .bind(ftsQuery, ftsQuery, ...attributeValues, limit + 1, offset)
     .all<Record<string, unknown>>();
   const selectedRows = candidates.results.slice(0, limit);
-  const sessions = selectedRows.map((row) => descriptor(row));
+  const sessions = selectedRows.map((row) => descriptor(row, origin));
 
   if (selectedRows.length > 0) {
     const sessionIds = selectedRows.map((row) => String(row.session_id));
@@ -603,7 +687,11 @@ async function search(database: D1Database, raw: unknown): Promise<unknown> {
   };
 }
 
-async function read(database: D1Database, raw: unknown): Promise<unknown> {
+async function read(
+  database: D1Database,
+  raw: unknown,
+  origin: string,
+): Promise<HistoryReadResult> {
   const input = asRecord(raw, "read input");
   const sessionId = requiredString(input.sessionId, "sessionId", 256);
   const limit = boundedInteger(input.limit ?? 50, "limit", 1, MAX_READ_LIMIT);
@@ -630,8 +718,8 @@ async function read(database: D1Database, raw: unknown): Promise<unknown> {
     .all<{ position: number; payload_json: string }>();
   const last = rows.results.at(-1);
   return {
-    session: descriptor(session),
-    entries: rows.results.map((row) => JSON.parse(row.payload_json)),
+    session: descriptor(session, origin),
+    entries: rows.results.map((row) => JSON.parse(row.payload_json) as HistoryEntry),
     ...(page.hasMore && last ? { nextCursor: encodeCursor({ position: last.position }) } : {}),
   };
 }
@@ -651,7 +739,7 @@ export function selectHistoryReadPage(
   return { count, hasMore: candidates.length > count };
 }
 
-function descriptor(row: Record<string, unknown>): Record<string, unknown> {
+function descriptor(row: Record<string, unknown>, origin: string): HistorySessionDescriptor {
   const title = typeof row.digest_title === "string" ? row.digest_title : undefined;
   const summary = typeof row.digest_summary === "string" ? row.digest_summary : undefined;
   const through =
@@ -661,12 +749,279 @@ function descriptor(row: Record<string, unknown>): Record<string, unknown> {
     attributes: JSON.parse(String(row.attributes_json)),
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
+    webUrl: `${origin}/sessions/${encodeURIComponent(String(row.session_id))}`,
     ...(title && summary && through
       ? { digest: { title, summary, updatedThroughEntryId: through } }
       : {}),
     snippets: [],
   };
 }
+
+async function renderViewerIndex(database: D1Database, url: URL): Promise<Response> {
+  const query = url.searchParams.get("q")?.trim() || undefined;
+  if (query && query.length > 1_000) throw invalidRequest("query is too long");
+  const cursor = url.searchParams.get("cursor") || undefined;
+  if (cursor && cursor.length > 2_048) throw invalidRequest("cursor is too long");
+  const result = await search(
+    database,
+    { query, limit: VIEWER_SEARCH_PAGE_SIZE, cursor },
+    url.origin,
+  );
+  const sessions = result.sessions.map(renderSessionCard).join("");
+  const nextUrl = new URL("/", url.origin);
+  if (query) nextUrl.searchParams.set("q", query);
+  if (result.nextCursor) nextUrl.searchParams.set("cursor", result.nextCursor);
+  const pagination = result.nextCursor
+    ? `<nav class="pagination"><a href="${escapeHtml(`${nextUrl.pathname}${nextUrl.search}`)}">Older sessions</a></nav>`
+    : "";
+  const heading = query ? `Search results for “${escapeHtml(query)}”` : "Recent sessions";
+
+  return viewerPage(
+    "History",
+    `<header class="page-header">
+      <p class="eyebrow">Tau history</p>
+      <h1>Conversations</h1>
+      <p>Private, read-only transcripts replicated to this history service.</p>
+    </header>
+    <form class="search" action="/" method="get" role="search">
+      <label for="q">Search conversations</label>
+      <div class="search-row">
+        <input id="q" name="q" type="search" maxlength="1000" value="${escapeHtml(query ?? "")}" placeholder="Search titles, summaries, and transcript text">
+        <button type="submit">Search</button>
+      </div>
+    </form>
+    <section aria-labelledby="session-list-heading">
+      <div class="section-heading">
+        <h2 id="session-list-heading">${heading}</h2>
+        ${query ? '<a href="/">Clear search</a>' : ""}
+      </div>
+      <div class="session-list">${sessions || '<p class="empty">No conversations found.</p>'}</div>
+      ${pagination}
+    </section>`,
+  );
+}
+
+function renderSessionCard(session: HistorySessionDescriptor): string {
+  const digest = session.digest;
+  const snippets = session.snippets
+    .map((snippet) => `<blockquote>${escapeHtml(snippet)}</blockquote>`)
+    .join("");
+  return `<article class="session-card">
+    <div class="session-card-heading">
+      <div>
+        <h3><a href="${escapeHtml(session.webUrl)}">${escapeHtml(digest?.title ?? "Untitled session")}</a></h3>
+        <p class="session-id">${escapeHtml(session.sessionId)}</p>
+      </div>
+      ${digest ? "" : '<span class="pending">Digest pending</span>'}
+    </div>
+    <p class="summary">${escapeHtml(digest?.summary ?? "A generated summary is not available yet.")}</p>
+    ${snippets}
+    ${renderAttributes(session.attributes)}
+    <p class="timestamps">Created ${renderTime(session.createdAt)} · Updated ${renderTime(session.updatedAt)}</p>
+  </article>`;
+}
+
+async function renderViewerSession(database: D1Database, url: URL): Promise<Response> {
+  let sessionId: string;
+  try {
+    sessionId = decodeURIComponent(url.pathname.slice("/sessions/".length));
+  } catch {
+    throw invalidRequest("invalid session URL");
+  }
+  const cursor = url.searchParams.get("cursor") || undefined;
+  if (cursor && cursor.length > 2_048) throw invalidRequest("cursor is too long");
+  const result = await read(
+    database,
+    { sessionId, limit: VIEWER_READ_PAGE_SIZE, cursor },
+    url.origin,
+  );
+  const { session } = result;
+  const entries = result.entries.map(renderViewerEntry).join("");
+  const nextUrl = new URL(session.webUrl);
+  if (result.nextCursor) nextUrl.searchParams.set("cursor", result.nextCursor);
+  const pagination = result.nextCursor
+    ? `<nav class="pagination"><a href="${escapeHtml(`${nextUrl.pathname}${nextUrl.search}`)}">Continue transcript</a></nav>`
+    : "";
+
+  return viewerPage(
+    session.digest?.title ?? "Untitled session",
+    `<nav class="back"><a href="/">← All conversations</a></nav>
+    <header class="conversation-header">
+      <p class="eyebrow">Conversation</p>
+      <h1>${escapeHtml(session.digest?.title ?? "Untitled session")}</h1>
+      <p class="session-id">${escapeHtml(session.sessionId)}</p>
+      <p class="summary">${escapeHtml(session.digest?.summary ?? "A generated summary is not available yet.")}</p>
+      ${renderAttributes(session.attributes)}
+      <p class="timestamps">Created ${renderTime(session.createdAt)} · Updated ${renderTime(session.updatedAt)}</p>
+    </header>
+    <aside class="history-note">
+      Remote replication can lag. Rewind removes the superseded suffix, compaction keeps earlier transcript entries, and oversized remote payloads can contain truncation markers.
+    </aside>
+    <main class="transcript" aria-label="Conversation transcript">
+      ${entries || '<p class="empty">This conversation has no transcript entries.</p>'}
+    </main>
+    ${pagination}`,
+  );
+}
+
+function renderViewerEntry(entry: HistoryEntry): string {
+  if (entry.type === "tool") {
+    return `<details class="entry tool-entry">
+      <summary>
+        <span>Tool · ${escapeHtml(formatViewerValue(entry.name))}</span>
+        <span class="outcome">${escapeHtml(formatViewerValue(entry.outcome))}</span>
+      </summary>
+      <div class="tool-section"><h3>Arguments</h3><pre>${escapeHtml(formatViewerValue(entry.arguments))}</pre></div>
+      <div class="tool-section"><h3>Result</h3><pre>${escapeHtml(formatViewerValue(entry.result))}</pre></div>
+      <p class="entry-time">${renderTime(entry.timestamp)}</p>
+    </details>`;
+  }
+  return `<article class="entry ${entry.type}">
+    <div class="entry-heading"><h2>${entry.type === "user" ? "User" : "Assistant"}</h2><span>${renderTime(entry.timestamp)}</span></div>
+    <pre>${escapeHtml(formatViewerValue(entry.content))}</pre>
+  </article>`;
+}
+
+function renderAttributes(attributes: Record<string, string>): string {
+  const ordered = Object.entries(attributes).sort(([left], [right]) => {
+    const priority = (key: string): number => (key === "repository" ? 0 : key === "source" ? 1 : 2);
+    return priority(left) - priority(right) || left.localeCompare(right);
+  });
+  if (ordered.length === 0) return "";
+  return `<dl class="metadata">${ordered
+    .map(([key, value]) => `<div><dt>${escapeHtml(key)}</dt><dd>${escapeHtml(value)}</dd></div>`)
+    .join("")}</dl>`;
+}
+
+function formatViewerValue(value: unknown): string {
+  if (typeof value === "string") return value;
+  return JSON.stringify(value, null, 2) ?? String(value);
+}
+
+function renderTime(timestamp: number): string {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "Unknown time";
+  const value = date.toISOString();
+  return `<time datetime="${value}">${value.replace("T", " ").replace(".000Z", " UTC")}</time>`;
+}
+
+function viewerPage(title: string, content: string): Response {
+  return viewerResponse(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${escapeHtml(title)} · Tau history</title>
+  <style>${VIEWER_CSS}</style>
+</head>
+<body><div class="shell">${content}</div></body>
+</html>`);
+}
+
+function viewerResponse(
+  body: string,
+  status = 200,
+  headers: Record<string, string> = {},
+): Response {
+  return new Response(body, {
+    status,
+    headers: {
+      ...VIEWER_SECURITY_HEADERS,
+      "content-type": "text/html; charset=utf-8",
+      ...headers,
+    },
+  });
+}
+
+function viewerUnauthorized(): Response {
+  return viewerError("Authentication required", 401, {
+    "www-authenticate": 'Basic realm="Tau history", charset="UTF-8"',
+  });
+}
+
+function viewerError(
+  message: string,
+  status: number,
+  headers: Record<string, string> = {},
+): Response {
+  return viewerResponse(
+    `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${status} · Tau history</title><style>${VIEWER_CSS}</style></head><body><div class="shell"><main class="error-page"><p class="eyebrow">Tau history</p><h1>${status}</h1><p>${escapeHtml(message)}</p><a href="/">Return to conversations</a></main></div></body></html>`,
+    status,
+    headers,
+  );
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+const VIEWER_CSS = `
+:root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, sans-serif; line-height: 1.5; background: #f4f3ef; color: #20201d; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+a { color: #255c4c; text-underline-offset: 0.18em; }
+.shell { width: min(920px, calc(100% - 32px)); margin: 0 auto; padding: 48px 0 80px; }
+h1, h2, h3, p { margin-top: 0; }
+h1 { font-size: clamp(2rem, 7vw, 3.75rem); line-height: 1; letter-spacing: -0.04em; margin-bottom: 16px; }
+h2 { font-size: 1.2rem; }
+h3 { font-size: 1.05rem; }
+.eyebrow { color: #8b4f2f; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; }
+.page-header, .conversation-header { margin-bottom: 32px; }
+.page-header > p:last-child, .summary, .timestamps, .session-id { color: #66645d; }
+.search { padding: 20px; margin-bottom: 36px; border: 1px solid #d8d4ca; border-radius: 12px; background: #fff; }
+.search label { display: block; margin-bottom: 8px; font-weight: 650; }
+.search-row { display: flex; gap: 8px; }
+.search input { min-width: 0; flex: 1; padding: 11px 12px; border: 1px solid #aaa69c; border-radius: 7px; font: inherit; }
+.search button { padding: 0 18px; border: 0; border-radius: 7px; background: #255c4c; color: #fff; font: inherit; font-weight: 650; }
+.section-heading, .session-card-heading, .entry-heading, details summary { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
+.session-list { display: grid; gap: 14px; }
+.session-card, .entry, .history-note { padding: 22px; border: 1px solid #d8d4ca; border-radius: 12px; background: #fff; }
+.session-card h3 { margin-bottom: 3px; }
+.session-id { overflow-wrap: anywhere; font-family: ui-monospace, monospace; font-size: 0.78rem; }
+.pending, .outcome { flex: none; padding: 3px 8px; border-radius: 999px; background: #ece9e0; color: #66645d; font-size: 0.72rem; font-weight: 700; text-transform: uppercase; }
+.metadata { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 14px; }
+.metadata div { max-width: 100%; padding: 5px 9px; border-radius: 6px; background: #f0eee8; }
+.metadata dt, .metadata dd { display: inline; margin: 0; overflow-wrap: anywhere; font-size: 0.78rem; }
+.metadata dt { margin-right: 5px; color: #747169; font-weight: 700; }
+blockquote { margin: 14px 0; padding-left: 14px; border-left: 3px solid #c7aa86; color: #4d4b45; }
+.timestamps { margin-bottom: 0; font-size: 0.8rem; }
+.pagination { margin-top: 24px; text-align: right; }
+.pagination a { display: inline-block; padding: 9px 13px; border: 1px solid #aaa69c; border-radius: 7px; background: #fff; text-decoration: none; }
+.back { margin-bottom: 36px; }
+.history-note { margin-bottom: 20px; border-color: #c7aa86; background: #fff9ed; }
+.transcript { display: grid; gap: 12px; }
+.entry-heading h2 { margin-bottom: 0; }
+.entry-heading span, .entry-time { color: #747169; font-size: 0.8rem; }
+.entry.assistant { margin-left: min(8vw, 56px); }
+.entry.user { margin-right: min(8vw, 56px); border-color: #a9c5bb; }
+.entry pre, .tool-section pre { margin: 14px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+details summary { cursor: pointer; font-weight: 700; }
+.tool-section { margin-top: 18px; }
+.tool-section h3 { margin-bottom: 0; color: #747169; font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; }
+.empty { padding: 28px; text-align: center; color: #747169; }
+.error-page { padding-top: 15vh; }
+@media (prefers-color-scheme: dark) {
+  :root { background: #171815; color: #ecebe5; }
+  a { color: #91cfba; }
+  .search, .session-card, .entry, .pagination a { background: #22231f; border-color: #41423b; }
+  .page-header > p:last-child, .summary, .timestamps, .session-id, .entry-heading span, .entry-time { color: #aaa99f; }
+  .pending, .outcome, .metadata div { background: #30312b; color: #c7c5bb; }
+  .metadata dt { color: #aaa99f; }
+  blockquote { color: #c7c5bb; }
+  .history-note { background: #29251d; }
+}
+@media (max-width: 580px) {
+  .shell { width: min(100% - 22px, 920px); padding-top: 28px; }
+  .search-row, .section-heading, .session-card-heading, .entry-heading { align-items: stretch; flex-direction: column; }
+  .search button { padding: 11px 18px; }
+  .entry.assistant, .entry.user { margin-left: 0; margin-right: 0; }
+}
+`;
 
 export async function refreshDigestIfNeeded(env: Env, sessionId: string): Promise<boolean> {
   const session = await env.DB.prepare(

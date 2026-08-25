@@ -11,7 +11,7 @@ export function printHistoryHelp(log: (line: string) => void = console.log): voi
   log(
     [
       "usage:",
-      "  tau history setup --domain <domain> --zone-name <zone> [--api-key <key>]  # Workers Paid",
+      "  tau history setup --domain <domain> --zone-name <zone> [--api-key <key>] [--viewer-password <password>]  # Workers Paid",
       "  tau history destroy --yes",
     ].join("\n"),
   );
@@ -33,6 +33,7 @@ export async function runHistoryCommand(
       let domain = options.env?.TAU_HISTORY_DOMAIN;
       let zoneName = options.env?.TAU_HISTORY_ZONE_NAME;
       let apiKey: string | undefined;
+      let viewerPassword: string | undefined;
       for (let index = 0; index < args.length; index += 1) {
         const argument = args[index]!;
         if (argument === "--domain" || argument.startsWith("--domain=")) {
@@ -47,6 +48,10 @@ export async function runHistoryCommand(
           const parsed = parseValue(argument, args, index);
           apiKey = parsed.value;
           index = parsed.nextIndex;
+        } else if (argument === "--viewer-password" || argument.startsWith("--viewer-password=")) {
+          const parsed = parseValue(argument, args, index);
+          viewerPassword = parsed.value;
+          index = parsed.nextIndex;
         } else {
           throw new Error(`unknown option: ${argument}`);
         }
@@ -58,6 +63,7 @@ export async function runHistoryCommand(
         domain,
         zoneName,
         ...(apiKey ? { apiKey } : {}),
+        ...(viewerPassword ? { viewerPassword } : {}),
         env: options.env,
         stdout,
       });

@@ -38,6 +38,7 @@ const descriptorSchema = z
     attributes: z.record(z.string(), z.string()),
     createdAt: z.number(),
     updatedAt: z.number(),
+    webUrl: z.url(),
     digest: digestSchema.optional(),
     snippets: z.array(z.string()),
   })

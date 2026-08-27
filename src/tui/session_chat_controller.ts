@@ -28,7 +28,10 @@ import { TOOL_NAME_BASH } from "../core/tools/tool_names.js";
 import { REASONING_LEVELS, type ReasoningEffort } from "../core/types.js";
 import { formatAdaptiveNumber, formatCwd, formatTokenWindow } from "../core/utils/format.js";
 import { extractAssistantText } from "../core/utils/messages.js";
-import type { SpeechToTextDependencies } from "../core/utils/speech_to_text.js";
+import {
+  getSpeechToTextStreamingSampleRate,
+  type SpeechToTextDependencies,
+} from "../core/utils/speech_to_text.js";
 import { collectSpeechToTextContext } from "../core/utils/speech_to_text_context.js";
 import { hasAutoCompactionContinuationMetadata } from "../core/utils/user_metadata.js";
 import { APP_VERSION } from "../core/version.js";
@@ -89,6 +92,7 @@ import {
   deleteListenTempFile,
   getSpeechToTextApiKey,
   getSpeechToTextApiKeyErrorMessage,
+  getSpeechToTextProvider,
   LISTEN_CAPTURE_START_TIMEOUT_MS,
   LISTEN_RECORDING_MAX_DURATION_MS,
   LISTEN_RECORDING_MIN_BYTES,
@@ -847,6 +851,9 @@ export class SessionChatController {
         deps: this.deps,
         audioPath,
         signal: abortController.signal,
+        streamingSampleRate: getSpeechToTextStreamingSampleRate(
+          getSpeechToTextProvider(this.config),
+        ),
         onAudioChunk: (audio) => transcription?.appendAudio(audio),
       });
       completion = capture.completion;
@@ -1045,8 +1052,6 @@ export class SessionChatController {
       const text = await activeTranscription.finish({
         audio,
         mimeType: "audio/wav",
-        fileName: "speech.wav",
-        language: "en",
       });
       this.view.insertEditorTextAtCursor(text);
       this.retainedListenAudioPath = undefined;

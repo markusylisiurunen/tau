@@ -901,6 +901,14 @@ function createMockDeps(spawn = vi.fn(), platform = "darwin") {
   };
 }
 
+function createIdleSpeechWebSocketFactory() {
+  const socket = new EventEmitter();
+  socket.send = vi.fn((_data, callback) => callback?.());
+  socket.close = vi.fn();
+  socket.terminate = vi.fn();
+  return vi.fn(() => socket);
+}
+
 describe("formatRewindCandidateAge", () => {
   const now = 10 * 24 * 60 * 60 * 1000;
 
@@ -5305,12 +5313,38 @@ describe("SessionChatController", () => {
     expect(session.submit).not.toHaveBeenCalled();
   });
 
-  it("records local microphone input and transcribes it into the session editor", async () => {
-    const mktempPath = join(tmpdir(), `tau-session-listen-test-${Date.now()}.wav`);
-    const spawn = vi.fn(async (cmd, _args, options = {}) => {
-      if (cmd === "mktemp") {
+  it("streams Gemini transcription while recording and inserts only the final transcript", async () => {
+    const audioPath = join(tmpdir(), `tau-session-listen-gemini-${Date.now()}.wav`);
+    const pcm = Buffer.from([1, 2, 3, 4]);
+    const socket = new EventEmitter();
+    const socketEvents = [];
+    socket.send = vi.fn((data, callback) => {
+      const event = JSON.parse(data);
+      socketEvents.push(event);
+      callback?.();
+      if (event.setup) {
+        queueMicrotask(() => socket.emit("message", JSON.stringify({ setupComplete: {} })));
+      }
+      if (event.realtimeInput?.activityEnd) {
+        queueMicrotask(() =>
+          socket.emit(
+            "message",
+            JSON.stringify({
+              serverContent: {
+                inputTranscription: { text: "session transcript" },
+              },
+            }),
+          ),
+        );
+      }
+    });
+    socket.close = vi.fn();
+    socket.terminate = vi.fn();
+    const webSocketFactory = vi.fn(() => socket);
+    const spawn = vi.fn(async (command, _args, options = {}) => {
+      if (command === "mktemp") {
         return {
-          stdout: `${mktempPath}\n`,
+          stdout: `${audioPath}\n`,
           stderr: "",
           output: undefined,
           exitCode: 0,
@@ -5320,11 +5354,10 @@ describe("SessionChatController", () => {
           closeSignal: null,
         };
       }
-
-      if (cmd === "ffmpeg") {
+      if (command === "ffmpeg") {
         const stdout = new EventEmitter();
         options.onSpawn({ stdout });
-        queueMicrotask(() => stdout.emit("data", Buffer.from([1, 2, 3, 4])));
+        queueMicrotask(() => stdout.emit("data", pcm));
         return await new Promise((resolve) => {
           options.signal.addEventListener("abort", () => {
             resolve({
@@ -5340,14 +5373,8 @@ describe("SessionChatController", () => {
           });
         });
       }
-
-      throw new Error(`unexpected command: ${cmd}`);
+      throw new Error(`unexpected command: ${command}`);
     });
-    const fetchMock = vi.fn(
-      async () => new Response(JSON.stringify({ text: "session transcript" })),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-
     const session = new FakeSession();
     const view = new FakeView();
     const controller = new SessionChatController({
@@ -5357,43 +5384,41 @@ describe("SessionChatController", () => {
       targetLabel: "ws://host",
       deps: createMockDeps(spawn),
       config: {
-        speechToText: { provider: "mistral" },
-        apiKeys: { mistral: "mistral-key" },
+        speechToText: { provider: "gemini" },
+        apiKeys: { google: "gemini-key" },
       },
+      speechToTextDeps: { webSocketFactory },
     });
 
     try {
       controller.start();
-      controller.getInputHandlers().onSubmit("/listen");
-      await flush();
-
+      await controller.onUserInput("/listen");
       expect(view.status.editor.mode).toBe("recording");
-      expect(view.editorEnabledUpdates).toContain(false);
-      await writeFile(mktempPath, Buffer.alloc(2048, 1));
+      await writeFile(audioPath, Buffer.alloc(2048, 1));
 
       controller.getInputHandlers().onCtrlY();
+      socket.emit("open");
       for (let i = 0; i < 50 && view.editorText !== "session transcript"; i += 1) {
         await flush();
         await waitMs(1);
       }
     } finally {
-      vi.unstubAllGlobals();
-      await rm(mktempPath, { force: true });
+      await controller.dispose();
+      await rm(audioPath, { force: true });
     }
 
     expect(view.editorEnabledUpdates).toContain(true);
     expect(view.editorText).toBe("session transcript");
-    expect(view.statusUpdates).toContainEqual(
-      expect.objectContaining({
-        footer: { type: "activity", label: "transcribing voice input" },
-      }),
-    );
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(spawn).toHaveBeenNthCalledWith(1, "mktemp", [join(tmpdir(), "tau-listen.XXXXXX")]);
+    expect(socketEvents).toHaveLength(4);
+    expect(socketEvents[0].setup.inputAudioTranscription.mode).toBe("SMART");
+    expect(socketEvents[2].realtimeInput.audio).toEqual({
+      data: pcm.toString("base64"),
+      mimeType: "audio/pcm;rate=16000",
+    });
     expect(spawn).toHaveBeenNthCalledWith(
       2,
       "ffmpeg",
-      expect.arrayContaining(["-f", "avfoundation", "-i", ":0", "-f", "s16le", "pipe:1"]),
+      expect.arrayContaining(["-ar", "16000", "-f", "s16le", "pipe:1"]),
       expect.objectContaining({
         detached: true,
         killProcessGroup: true,
@@ -5570,7 +5595,21 @@ describe("SessionChatController", () => {
       .fn()
       .mockRejectedValueOnce(new Error("service unavailable"))
       .mockResolvedValueOnce(new Response(JSON.stringify({ text: "recovered transcript" })));
-    vi.stubGlobal("fetch", fetchMock);
+    const spawnImpl = vi.fn(async (_command, _args, options) => {
+      const stdout = new EventEmitter();
+      options.onSpawn({ stdout });
+      stdout.emit("data", Buffer.from([1, 2, 3, 4]));
+      return {
+        stdout: "",
+        stderr: "",
+        output: undefined,
+        exitCode: 0,
+        captureLimitExceeded: false,
+        timedOut: false,
+        aborted: false,
+        closeSignal: null,
+      };
+    });
 
     const session = new FakeSession();
     const view = new FakeView();
@@ -5579,11 +5618,9 @@ describe("SessionChatController", () => {
       session,
       snapshot: await session.snapshot(),
       targetLabel: "in-process",
-      deps: createMockDeps(),
-      config: {
-        speechToText: { provider: "mistral" },
-        apiKeys: { mistral: "mistral-key" },
-      },
+      deps: createMockDeps(spawnImpl),
+      config: { apiKeys: { openai: "openai-key" } },
+      speechToTextDeps: { fetchImpl: fetchMock },
     });
     controller.listenRecording = {
       audioPath,
@@ -5609,7 +5646,6 @@ describe("SessionChatController", () => {
       expect(view.editorText).toBe("recovered transcript");
       await expect(readFile(audioPath)).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
-      vi.unstubAllGlobals();
       await rm(audioPath, { force: true });
     }
 
@@ -5619,10 +5655,22 @@ describe("SessionChatController", () => {
   it("retains voice input when a provider returns an empty transcript", async () => {
     const audioPath = join(tmpdir(), `tau-session-listen-empty-${Date.now()}.wav`);
     await writeFile(audioPath, Buffer.alloc(2048, 1));
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => new Response(JSON.stringify({ text: "" }))),
-    );
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ text: "" })));
+    const spawnImpl = vi.fn(async (_command, _args, options) => {
+      const stdout = new EventEmitter();
+      options.onSpawn({ stdout });
+      stdout.emit("data", Buffer.from([1, 2, 3, 4]));
+      return {
+        stdout: "",
+        stderr: "",
+        output: undefined,
+        exitCode: 0,
+        captureLimitExceeded: false,
+        timedOut: false,
+        aborted: false,
+        closeSignal: null,
+      };
+    });
     const session = new FakeSession();
     const view = new FakeView();
     const controller = new SessionChatController({
@@ -5630,11 +5678,9 @@ describe("SessionChatController", () => {
       session,
       snapshot: await session.snapshot(),
       targetLabel: "in-process",
-      deps: createMockDeps(),
-      config: {
-        speechToText: { provider: "mistral" },
-        apiKeys: { mistral: "mistral-key" },
-      },
+      deps: createMockDeps(spawnImpl),
+      config: { apiKeys: { openai: "openai-key" } },
+      speechToTextDeps: { fetchImpl },
     });
     controller.listenRecording = {
       audioPath,
@@ -5647,7 +5693,6 @@ describe("SessionChatController", () => {
       await controller.stopListenCapture();
       await expect(readFile(audioPath)).resolves.toHaveLength(2048);
     } finally {
-      vi.unstubAllGlobals();
       await rm(audioPath, { force: true });
     }
 
@@ -5736,9 +5781,10 @@ describe("SessionChatController", () => {
       targetLabel: "in-process",
       deps: createMockDeps(spawn),
       config: {
-        speechToText: { provider: "mistral" },
-        apiKeys: { mistral: "mistral-key" },
+        speechToText: { provider: "gemini" },
+        apiKeys: { google: "gemini-key" },
       },
+      speechToTextDeps: { webSocketFactory: createIdleSpeechWebSocketFactory() },
     });
     controller.retainedListenAudioPath = retainedPath;
 
@@ -5793,9 +5839,10 @@ describe("SessionChatController", () => {
       targetLabel: "in-process",
       deps: createMockDeps(spawn),
       config: {
-        speechToText: { provider: "mistral" },
-        apiKeys: { mistral: "mistral-key" },
+        speechToText: { provider: "gemini" },
+        apiKeys: { google: "gemini-key" },
       },
+      speechToTextDeps: { webSocketFactory: createIdleSpeechWebSocketFactory() },
     });
     controller.retainedListenAudioPath = retainedPath;
 
@@ -5860,9 +5907,10 @@ describe("SessionChatController", () => {
       targetLabel: "in-process",
       deps: createMockDeps(spawn),
       config: {
-        speechToText: { provider: "mistral" },
-        apiKeys: { mistral: "mistral-key" },
+        speechToText: { provider: "gemini" },
+        apiKeys: { google: "gemini-key" },
       },
+      speechToTextDeps: { webSocketFactory: createIdleSpeechWebSocketFactory() },
     });
     controller.retainedListenAudioPath = retainedPath;
 
@@ -5934,9 +5982,10 @@ describe("SessionChatController", () => {
       targetLabel: "in-process",
       deps: createMockDeps(spawn),
       config: {
-        speechToText: { provider: "mistral" },
-        apiKeys: { mistral: "mistral-key" },
+        speechToText: { provider: "gemini" },
+        apiKeys: { google: "gemini-key" },
       },
+      speechToTextDeps: { webSocketFactory: createIdleSpeechWebSocketFactory() },
     });
     controller.retainedListenAudioPath = retainedPath;
 

@@ -1,29 +1,76 @@
+import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
-import { transcribeGeminiAudio } from "../dist/core/utils/gemini_transcription.js";
+import {
+  startGeminiTranscription,
+  transcribeGeminiAudio,
+} from "../dist/core/utils/gemini_transcription.js";
 
-describe("gemini transcription", () => {
-  it("transcribes audio with Gemini 3.7 Flash and low thinking", async () => {
-    const fetchMock = vi.fn(
-      async () =>
-        new Response(
-          JSON.stringify({
-            candidates: [
-              {
-                content: {
-                  parts: [
-                    {
-                      text: JSON.stringify({
-                        transcription: "ship the fix",
-                      }),
-                    },
-                  ],
+function createJsonResponse(payload, status = 200, headers = {}) {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { "content-type": "application/json", ...headers },
+  });
+}
+
+function createGeminiFetchMock({ transcript = "ship the fix", interactionStatus = 200 } = {}) {
+  return vi.fn(async (input, options = {}) => {
+    const url = String(input);
+    if (url.endsWith("/gemini-3.7-flash:generateContent")) {
+      return createJsonResponse({
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  text: JSON.stringify({
+                    keywords: ["Acme SSO", "OAuth", "oauth", "bad\nterm"],
+                  }),
                 },
+              ],
+            },
+          },
+        ],
+      });
+    }
+    if (url === "https://generativelanguage.googleapis.com/upload/v1beta/files") {
+      return new Response(null, {
+        headers: { "x-goog-upload-url": "https://upload.example.test/audio" },
+      });
+    }
+    if (url === "https://upload.example.test/audio") {
+      return createJsonResponse({
+        file: {
+          name: "files/audio-1",
+          uri: "https://generativelanguage.googleapis.com/v1beta/files/audio-1",
+        },
+      });
+    }
+    if (url === "https://generativelanguage.googleapis.com/v1beta/interactions") {
+      return interactionStatus === 200
+        ? createJsonResponse({
+            steps: [
+              {
+                type: "model_output",
+                content: [{ type: "text", text: transcript }],
               },
             ],
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        ),
-    );
+          })
+        : createJsonResponse({ error: { message: transcript } }, interactionStatus);
+    }
+    if (url.endsWith("/v1beta/files/audio-1") && options.method === "DELETE") {
+      return new Response(null, { status: 204 });
+    }
+    throw new Error(`unexpected request: ${url}`);
+  });
+}
+
+function getCall(fetchMock, suffix) {
+  return fetchMock.mock.calls.find(([input]) => String(input).endsWith(suffix));
+}
+
+describe("gemini transcription", () => {
+  it("transcribes uploaded audio with Gemini 3.5 Transcribe smart mode and context keywords", async () => {
+    const fetchMock = createGeminiFetchMock();
 
     const transcript = await transcribeGeminiAudio({
       apiKey: "gemini-key",
@@ -39,78 +86,114 @@ describe("gemini transcription", () => {
     });
 
     expect(transcript).toBe("ship the fix");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0][0]).toContain(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent",
-    );
-    expect(fetchMock.mock.calls[0][1].headers["x-goog-api-key"]).toBe("gemini-key");
 
-    const request = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(request.systemInstruction.parts[0].text).toContain("You are a speech-to-text engine.");
-    expect(request.systemInstruction.parts[0].text).toContain(
-      "Transcribe the speaker's intended message for insertion into a chat input.",
+    const keywordCall = getCall(fetchMock, "/gemini-3.7-flash:generateContent");
+    const keywordRequest = JSON.parse(keywordCall[1].body);
+    expect(keywordRequest.systemInstruction.parts[0].text).toContain(
+      "Extract words and short phrases",
     );
-    expect(request.systemInstruction.parts[0].text).toContain(
-      "Detect the speaker's language and transcribe in that same language",
-    );
-    expect(request.systemInstruction.parts[0].text).toContain(
-      "do not normalize informal speech into formal standard language",
-    );
-    expect(request.systemInstruction.parts[0].text).toContain(
-      "Lightly clean only speech artifacts that do not affect meaning",
-    );
-    expect(request.contents[0].parts[0].text).toContain(
-      "Transcribe the attached audio into the transcription field.",
-    );
-    expect(request.contents[0].parts[0].text).toContain(
-      "Use the recent conversation context below only to resolve likely words, names, acronyms, terminology, and references in the audio.",
-    );
-    expect(request.contents[0].parts[0].text).toContain(
-      "Do not transcribe the context itself, and do not add words from the context that were not spoken.",
-    );
-    expect(request.contents[0].parts[0].text).toContain("<speech-to-text-context>");
-    expect(request.contents[0].parts[0].text).toContain(
-      '<message index="1" role="user">\nCan we support OAuth',
-    );
-    expect(request.contents[0].parts[0].text).toContain(
-      '<message index="2" role="assistant">\nYes, the Acme SSO flow',
-    );
-    expect(request.contents[0].parts[0].text).toContain("</speech-to-text-context>");
-    expect(request.contents[0].parts[1].inlineData.mimeType).toBe("audio/ogg");
-    expect(request.contents[0].parts[1].inlineData.data).toBe(
-      Buffer.from("audio payload").toString("base64"),
-    );
-    expect(request.generationConfig.responseMimeType).toBe("application/json");
-    expect(request.generationConfig.responseSchema).toEqual({
-      type: "OBJECT",
-      properties: {
-        transcription: { type: "STRING" },
+    expect(keywordRequest.contents[0].parts[0].text).toContain("<speech-to-text-context>");
+    expect(keywordRequest.generationConfig.thinkingConfig.thinkingLevel).toBe("low");
+
+    const uploadStartCall = getCall(fetchMock, "/upload/v1beta/files");
+    expect(uploadStartCall[1].headers["X-Goog-Upload-Protocol"]).toBe("resumable");
+    expect(uploadStartCall[1].headers["X-Goog-Upload-Header-Content-Type"]).toBe("audio/ogg");
+
+    const interactionCall = getCall(fetchMock, "/v1beta/interactions");
+    const interactionRequest = JSON.parse(interactionCall[1].body);
+    expect(interactionRequest).toMatchObject({
+      model: "gemini-3.5-transcribe",
+      input: [
+        {
+          type: "audio",
+          uri: "https://generativelanguage.googleapis.com/v1beta/files/audio-1",
+          mime_type: "audio/ogg",
+        },
+      ],
+      generation_config: {
+        transcription_config: {
+          language_codes: [],
+          custom_vocabulary: ["Acme SSO", "OAuth"],
+          mode: { type: "smart" },
+        },
       },
-      required: ["transcription"],
+      store: false,
     });
-    expect(request.generationConfig.thinkingConfig.thinkingLevel).toBe("low");
+    expect(getCall(fetchMock, "/v1beta/files/audio-1")[1].method).toBe("DELETE");
   });
 
-  it("rejects malformed successful responses without retrying", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ candidates: [] })));
+  it("streams microphone audio through Gemini 3.5 Transcribe Live in smart mode", async () => {
+    const fetchMock = createGeminiFetchMock();
+    const socket = new EventEmitter();
+    const sent = [];
+    socket.send = vi.fn((data, callback) => {
+      sent.push(JSON.parse(data));
+      callback?.();
+    });
+    socket.close = vi.fn();
+    socket.terminate = vi.fn();
+    const webSocketFactory = vi.fn(() => socket);
+    const transcription = startGeminiTranscription({
+      apiKey: "gemini key",
+      context: { messages: [{ role: "user", text: "Configure Acme SSO" }] },
+      fetchImpl: fetchMock,
+      webSocketFactory,
+    });
+    const audio = Buffer.from([1, 2, 3, 4]);
+    transcription.appendAudio(audio);
 
-    await expect(
-      transcribeGeminiAudio({
-        apiKey: "gemini-key",
-        audio: Buffer.from("audio payload"),
-        fetchImpl: fetchMock,
+    socket.emit("open");
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+    expect(webSocketFactory).toHaveBeenCalledWith(expect.stringContaining("BidiGenerateContent"));
+    expect(webSocketFactory.mock.calls[0][0]).toContain("key=gemini%20key");
+    expect(sent[0]).toEqual({
+      setup: {
+        model: "models/gemini-3.5-transcribe-live",
+        generationConfig: { responseModalities: ["TEXT"] },
+        inputAudioTranscription: {
+          languageCodes: [],
+          customVocabulary: ["Acme SSO", "OAuth"],
+          mode: "SMART",
+        },
+        realtimeInputConfig: {
+          automaticActivityDetection: { disabled: true },
+        },
+      },
+    });
+
+    socket.emit("message", JSON.stringify({ setupComplete: {} }));
+    await vi.waitFor(() => expect(sent).toHaveLength(3));
+    expect(sent[1]).toEqual({ realtimeInput: { activityStart: {} } });
+    expect(sent[2]).toEqual({
+      realtimeInput: {
+        audio: {
+          data: audio.toString("base64"),
+          mimeType: "audio/pcm;rate=16000",
+        },
+      },
+    });
+
+    const completion = transcription.finish();
+    await vi.waitFor(() => expect(sent).toHaveLength(4));
+    expect(sent[3]).toEqual({ realtimeInput: { activityEnd: {} } });
+    socket.emit(
+      "message",
+      JSON.stringify({
+        serverContent: {
+          inputTranscription: { text: "live transcript" },
+        },
       }),
-    ).rejects.toThrow("transcription result was empty or malformed");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    );
+
+    await expect(completion).resolves.toBe("live transcript");
+    expect(socket.close).toHaveBeenCalledTimes(1);
   });
 
-  it("reports provider failures without retrying", async () => {
-    const fetchMock = vi.fn(
-      async () =>
-        new Response(JSON.stringify({ error: { message: "service unavailable" } }), {
-          status: 503,
-        }),
-    );
+  it("reports provider failures and deletes the uploaded file", async () => {
+    const fetchMock = createGeminiFetchMock({
+      transcript: "service unavailable",
+      interactionStatus: 503,
+    });
 
     await expect(
       transcribeGeminiAudio({
@@ -119,6 +202,6 @@ describe("gemini transcription", () => {
         fetchImpl: fetchMock,
       }),
     ).rejects.toThrow("service unavailable");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(getCall(fetchMock, "/v1beta/files/audio-1")[1].method).toBe("DELETE");
   });
 });

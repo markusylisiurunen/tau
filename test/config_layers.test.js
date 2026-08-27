@@ -101,7 +101,7 @@ describe("config paths", () => {
           subagents: {
             defaultLaunchModels: ["anthropic/claude-haiku-4-5:low"],
           },
-          speechToText: { provider: "mistral" },
+          speechToText: { provider: "openai" },
           history: {
             endpoint: "https://history.example.com/",
             apiKeyEnv: "HISTORY_KEY",
@@ -331,6 +331,32 @@ describe("config paths", () => {
       expect(result.config.defaultTheme).toBe("midnight");
       expect(result.errors).toContain(
         `${join(fx.repo, ".tau", "config.json")}: 'disableBuiltinThemes' must be a boolean.`,
+      );
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("rejects the removed Mistral speech-to-text provider", () => {
+    const fx = setupFixture();
+
+    try {
+      mkdirSync(join(fx.repo, ".tau"), { recursive: true });
+      const configPath = join(fx.repo, ".tau", "config.json");
+      writeFileSync(configPath, JSON.stringify({ speechToText: { provider: "mistral" } }));
+
+      const deps = createConfigDeps({
+        cwd: fx.repo,
+        home: fx.home,
+        env: {},
+      });
+
+      const levels = resolveConfigLevels(deps, { cwd: fx.repo });
+      const modelResolver = loadModelResolver({ deps, levels });
+      const result = loadConfigWithDiagnostics(deps, { levels, modelResolver });
+      expect(result.config.speechToText).toBeUndefined();
+      expect(result.errors).toContain(
+        `${configPath}: speechToText.provider must be 'gemini' or 'openai'.`,
       );
     } finally {
       fx.cleanup();

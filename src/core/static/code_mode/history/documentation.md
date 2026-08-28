@@ -12,6 +12,7 @@ for (const session of page.sessions) {
   console.log(
     `${session.sessionId} | ${new Date(session.updatedAt).toISOString()} | ${session.digest?.title ?? "untitled"}`,
   );
+  if (session.webUrl) console.log(`  ${session.webUrl}`);
   if (session.digest?.summary) console.log(`  ${session.digest.summary}`);
   for (const snippet of session.snippets) console.log(`  ${snippet}`);
 }
@@ -36,6 +37,7 @@ Search returns:
     attributes: Record<string, string>,
     createdAt: number,
     updatedAt: number,
+    webUrl?: string,
     digest?: {
       title: string,
       summary: string,
@@ -47,7 +49,7 @@ Search returns:
 }
 ```
 
-`createdAt` and `updatedAt` are Unix timestamps in milliseconds. Snippets are bounded transcript excerpts. Digests are intentionally compact generated metadata; print a relevant digest whole rather than mechanically truncating it. A digest may be absent or stale, and `updatedThroughEntryId` identifies the latest transcript entry it covers.
+`createdAt` and `updatedAt` are Unix timestamps in milliseconds. `webUrl` is present for sessions returned by the remote history service and links to its private browser view; return it directly when the user asks for a conversation URL. Local-only history has no browser URL. Snippets are bounded transcript excerpts. Digests are intentionally compact generated metadata; print a relevant digest whole rather than mechanically truncating it. A digest may be absent or stale, and `updatedThroughEntryId` identifies the latest transcript entry it covers.
 
 Two optional conventional attributes are common:
 

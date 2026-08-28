@@ -20,11 +20,12 @@
   },
   "scripts": {
     "build": "rm -rf dist tsconfig.tsbuildinfo && (cd src/diff_tool/app && npm run --silent build) && tsc -p tsconfig.json",
-    "postbuild": "node scripts/copy-starter.js && node scripts/copy-static-prompts.js && node scripts/copy-code-mode-assets.js && node scripts/copy-tau-docs.js && node scripts/copy-diff-tool-app.js && node scripts/copy-nook-assets.js && find dist -name '*.d.ts' ! -path 'dist/sdk/*' ! -path 'dist/code_mode/*' ! -path 'dist/protocol/*' ! -path 'dist/transport/index.d.ts' ! -path 'dist/transport/session_transport.d.ts' ! -path 'dist/transport/websocket_session_transport.d.ts' ! -path 'dist/transport/errors.d.ts' -delete",
+    "postbuild": "node scripts/copy-starter.js && node scripts/copy-static-prompts.js && node scripts/copy-code-mode-assets.js && node scripts/copy-tau-docs.js && node scripts/copy-diff-tool-app.js && node scripts/copy-nook-assets.js && node scripts/copy-history-assets.js && find dist -name '*.d.ts' ! -path 'dist/sdk/*' ! -path 'dist/code_mode/*' ! -path 'dist/protocol/*' ! -path 'dist/transport/index.d.ts' ! -path 'dist/transport/session_transport.d.ts' ! -path 'dist/transport/websocket_session_transport.d.ts' ! -path 'dist/transport/errors.d.ts' -delete",
     "check": "prettier --log-level warn -w .tau/**/*.md docs/**/*.md src/core/static/**/*.md starter/**/*.md *.md && biome check --write . && tsc -p tsconfig.json --noEmit && (cd src/diff_tool/app && npm run --silent check)",
     "precheck": "node scripts/generate-version.js && node scripts/generate-themes.js",
     "prebuild": "node scripts/generate-version.js && node scripts/generate-themes.js",
     "start": "node dist/main.js",
+    "history:dev": "wrangler d1 migrations apply tau-history-dev --local --config src/history/worker/wrangler.dev.json && wrangler d1 execute tau-history-dev --local --config src/history/worker/wrangler.dev.json --file src/history/worker/dev-seed.sql && wrangler dev --config src/history/worker/wrangler.dev.json",
     "test": "npm run --silent build && vitest run --reporter=dot"
   },
   "publishConfig": {
@@ -53,13 +54,16 @@
     "@types/ws": "^8.18.1",
     "prettier": "^3.9.6",
     "typescript": "^7.0.2",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "wrangler": "^4.126.0"
   },
   "engines": {
     "node": ">=24.0.0"
   },
   "allowScripts": {
     "@google/genai@1.52.0": true,
-    "protobufjs@7.6.5": true
+    "esbuild@0.28.1": true,
+    "protobufjs@7.6.5": true,
+    "workerd@1.20260825.1": true
   }
 }

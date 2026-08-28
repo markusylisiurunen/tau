@@ -62,6 +62,8 @@
   },
   "allowScripts": {
     "@google/genai@1.52.0": true,
-    "protobufjs@7.6.5": true
+    "esbuild@0.28.1": true,
+    "protobufjs@7.6.5": true,
+    "workerd@1.20260825.1": true
   }
 }

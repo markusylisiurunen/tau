@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createSpeechToTextTranscription } from "../dist/core/utils/speech_to_text.js";
 
 describe("speech-to-text transcription", () => {
-  it.each(["gemini", "mistral"])("aborts an active %s request", async (provider) => {
+  it("aborts an active Gemini file upload", async () => {
     let requestSignal;
     const fetchMock = vi.fn(
       async (_url, options) =>
@@ -14,7 +14,7 @@ describe("speech-to-text transcription", () => {
         }),
     );
     const transcription = createSpeechToTextTranscription({
-      provider,
+      provider: "gemini",
       mode: "file",
       apiKey: "provider-key",
       deps: { fetchImpl: fetchMock },

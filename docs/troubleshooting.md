@@ -273,13 +273,13 @@ Recovery needs the same `workspaceRoot`, project definitions, host home, and Tau
 
 ## Telegram audio or attachment processing fails
 
-Telegram audio transcription uses the runner's `speechToText.provider`, which defaults to OpenAI. OpenAI needs `OPENAI_API_KEY` or `apiKeys.openai` and runner-side `ffmpeg`; Gemini needs `GEMINI_API_KEY` or `apiKeys.google`; Mistral needs `MISTRAL_API_KEY` or `apiKeys.mistral`. Set the credential for the runner process and restart it after changing the environment or provider.
+Telegram audio transcription uses the runner's `speechToText.provider`, which defaults to OpenAI. OpenAI needs `OPENAI_API_KEY` or `apiKeys.openai` and runner-side `ffmpeg`; Gemini needs `GEMINI_API_KEY` or `apiKeys.google`. Set the credential for the runner process and restart it after changing the environment or provider.
 
 Distinguish download, materialization, format, and transcription errors. The reply or runner log states which stage failed. Confirm Telegram can deliver the file to the bot, the attachment type is supported, the runner can write its temporary directory, and the selected provider accepts the media type. Do not log media bytes or transcripts merely to prove they exist.
 
 Successful audio turns echo `transcribed: …` before submission. In groups, non-triggering audio can be buffered for later mentioned context. If that is inappropriate for the chat, narrow `allowedChatIds` or avoid enabling the group.
 
-Outgoing `/tts_on` voice responses always need `GEMINI_API_KEY` or `apiKeys.google`, even when incoming audio uses Mistral. They also require runner-side `ffmpeg` with Opus support. A generation or delivery failure sends `voice response failed. please try again.` while detailed diagnostics remain in runner logs. The original text response remains delivered.
+Outgoing `/tts_on` voice responses always need `GEMINI_API_KEY` or `apiKeys.google`, even when incoming audio uses OpenAI. They also require runner-side `ffmpeg` with Opus support. A generation or delivery failure sends `voice response failed. please try again.` while detailed diagnostics remain in runner logs. The original text response remains delivered.
 
 ## Telegram replies or notifications are delayed or missing
 

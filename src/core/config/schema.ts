@@ -52,7 +52,7 @@ export type BuiltInDiffToolConfig = {
   codeTheme?: string;
 };
 
-export type SpeechToTextProvider = "mistral" | "gemini" | "openai";
+export type SpeechToTextProvider = "gemini" | "openai";
 
 export type SpeechToTextConfig = {
   provider: SpeechToTextProvider;
@@ -228,7 +228,7 @@ const ApiKeyProviderSchema = z.string();
 const ApiKeysSchema = z.object({}).catchall(z.unknown());
 const SpeechToTextConfigSchema = z
   .object({
-    provider: z.enum(["mistral", "gemini", "openai"]),
+    provider: z.enum(["gemini", "openai"]),
   })
   .strip();
 const CloudflareSandboxBridgeSchema = z
@@ -639,7 +639,7 @@ function parseSpeechToTextConfig(
   if (!parsed.success) {
     if (parsed.error.issues.some((issue) => issue.path[0] === "provider")) {
       return {
-        errors: [`${sourceLabel}: speechToText.provider must be 'mistral', 'gemini', or 'openai'.`],
+        errors: [`${sourceLabel}: speechToText.provider must be 'gemini' or 'openai'.`],
       };
     }
     return { errors: [`${sourceLabel}: 'speechToText' must be an object.`] };

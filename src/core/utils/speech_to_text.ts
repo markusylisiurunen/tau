@@ -1,17 +1,27 @@
 import type { SpeechToTextProvider } from "../config/schema.js";
-import { transcribeGeminiAudio } from "./gemini_transcription.js";
-import { transcribeMistralAudio } from "./mistral_transcription.js";
-import {
-  type OpenAITranscriptionWebSocketFactory,
-  startOpenAITranscription,
-  transcribeOpenAIAudio,
-} from "./openai_transcription.js";
+import { startGeminiTranscription, transcribeGeminiAudio } from "./gemini_transcription.js";
+import { startOpenAITranscription, transcribeOpenAIAudio } from "./openai_transcription.js";
 import type { spawnWithCapture } from "./spawn_capture.js";
 import type { SpeechToTextContext } from "./speech_to_text_context.js";
 
+export type SpeechToTextWebSocket = {
+  on(event: "open", listener: () => void): unknown;
+  on(event: "message", listener: (data: unknown) => void): unknown;
+  on(event: "error", listener: (error: Error) => void): unknown;
+  on(event: "close", listener: (code: number, reason: Buffer) => void): unknown;
+  send(data: string, callback?: (error?: Error) => void): void;
+  close(): void;
+  terminate(): void;
+};
+
+export type SpeechToTextWebSocketFactory = (
+  url: string,
+  options?: { headers?: Record<string, string> },
+) => SpeechToTextWebSocket;
+
 export type SpeechToTextDependencies = {
   fetchImpl?: typeof fetch;
-  webSocketFactory?: OpenAITranscriptionWebSocketFactory;
+  webSocketFactory?: SpeechToTextWebSocketFactory;
   spawnImpl?: typeof spawnWithCapture;
 };
 
@@ -26,8 +36,6 @@ export type SpeechToTextTranscriptionOptions = {
 export type SpeechToTextRecording = {
   audio: Buffer;
   mimeType?: string;
-  fileName?: string;
-  language?: string;
 };
 
 export type SpeechToTextTranscription = {
@@ -36,11 +44,35 @@ export type SpeechToTextTranscription = {
   abort(): void;
 };
 
+export function getSpeechToTextStreamingSampleRate(provider: SpeechToTextProvider): number {
+  switch (provider) {
+    case "gemini":
+      return 16_000;
+    case "openai":
+      return 24_000;
+  }
+}
+
 export function createSpeechToTextTranscription(
   options: SpeechToTextTranscriptionOptions,
 ): SpeechToTextTranscription {
   switch (options.provider) {
-    case "gemini":
+    case "gemini": {
+      if (options.mode === "streaming") {
+        const transcription = startGeminiTranscription({
+          apiKey: options.apiKey,
+          context: options.context,
+          fetchImpl: options.deps?.fetchImpl,
+          webSocketFactory: options.deps?.webSocketFactory,
+        });
+        return {
+          appendAudio: (audio) => transcription.appendAudio(audio),
+          finish: async (_recording, finishOptions) =>
+            await transcription.finish({ signal: finishOptions?.signal }),
+          abort: () => transcription.abort(),
+        };
+      }
+
       return createBatchTranscription(async (recording, signal) => {
         return await transcribeGeminiAudio({
           apiKey: options.apiKey,
@@ -51,18 +83,7 @@ export function createSpeechToTextTranscription(
           fetchImpl: options.deps?.fetchImpl,
         });
       });
-    case "mistral":
-      return createBatchTranscription(async (recording, signal) => {
-        return await transcribeMistralAudio({
-          apiKey: options.apiKey,
-          audio: recording.audio,
-          mimeType: recording.mimeType,
-          fileName: recording.fileName,
-          language: recording.language,
-          signal,
-          fetchImpl: options.deps?.fetchImpl,
-        });
-      });
+    }
     case "openai": {
       if (options.mode === "streaming") {
         const transcription = startOpenAITranscription({

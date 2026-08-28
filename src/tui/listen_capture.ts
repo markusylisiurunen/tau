@@ -5,7 +5,6 @@ import { join } from "node:path";
 import {
   type Config,
   getGoogleApiKey,
-  getMistralApiKey,
   getOpenAIApiKey,
   type SpeechToTextProvider,
 } from "../core/config/index.js";
@@ -50,6 +49,7 @@ export function startListenAudioCapture(args: {
   deps: CoreDeps;
   audioPath: string;
   signal: AbortSignal;
+  streamingSampleRate: number;
   onAudioChunk: (audio: Buffer) => void;
 }): { completion: Promise<SpawnCaptureResult>; started: Promise<void> } {
   const inputArgs = [
@@ -82,7 +82,7 @@ export function startListenAudioCapture(args: {
     "-ac",
     "1",
     "-ar",
-    "24000",
+    String(args.streamingSampleRate),
     "-c:a",
     "pcm_s16le",
     "-f",
@@ -165,8 +165,6 @@ export function getSpeechToTextApiKey(config: Config, deps: CoreDeps): string | 
   switch (provider) {
     case "gemini":
       return getGoogleApiKey(config, deps.env.env());
-    case "mistral":
-      return getMistralApiKey(config, deps.env.env());
     case "openai":
       return getOpenAIApiKey(config, deps.env.env());
   }
@@ -177,8 +175,6 @@ export function getSpeechToTextApiKeyErrorMessage(config: Config, action: string
   switch (provider) {
     case "gemini":
       return `set GEMINI_API_KEY or apiKeys.google to ${action}`;
-    case "mistral":
-      return `set MISTRAL_API_KEY or apiKeys.mistral to ${action}`;
     case "openai":
       return `set OPENAI_API_KEY or apiKeys.openai to ${action}`;
   }

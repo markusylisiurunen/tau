@@ -280,13 +280,12 @@ The local execution environment can access these runner temporary paths. Pending
 
 Telegram `voice` and `audio` messages are downloaded and transcribed. Direct DM turns and bot-triggering group turns echo the transcript to the chat before submission so the sender can verify it.
 
-OpenAI is the default. Select another provider with `speechToText.provider`. Runner credentials are:
+OpenAI is the default. Select Gemini with `speechToText.provider`. Runner credentials are:
 
-- Mistral: `MISTRAL_API_KEY`, then `apiKeys.mistral`
 - Gemini: `GEMINI_API_KEY`, then `apiKeys.google`
 - OpenAI: `OPENAI_API_KEY`, then `apiKeys.openai`
 
-OpenAI normalizes downloaded audio with runner-side `ffmpeg` and uploads it to `gpt-transcribe`. Missing keys reject the audio. See [credentials](credentials.md).
+Gemini extracts spelling hints from recent conversation with Gemini 3.7 Flash, uploads downloaded audio for `gemini-3.5-transcribe` smart transcription, and attempts to delete the remote file afterward. OpenAI normalizes downloaded audio with runner-side `ffmpeg` and uploads it to `gpt-transcribe`. Missing keys reject the audio. See [credentials](credentials.md).
 
 `/tts_on` uses `gemini-3.7-flash`, `gemini-3.1-flash-tts-preview`, Despina, the Google key, and runner `ffmpeg` with Opus. Source and rewritten text each allow 10,000 Unicode characters; audio allows 32 MiB. Rewrite and job timeouts are one and five minutes. Jobs are ephemeral. Failure sends `voice response failed. please try again.` without affecting text; details stay in logs.
 

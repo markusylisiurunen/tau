@@ -54,7 +54,7 @@ describe("telegram runtime", () => {
         },
       }),
       createSessionClient: vi.fn(),
-      mistralApiKey: "mistral-key",
+      geminiApiKey: "gemini-key",
       onLog: (line) => {
         logs.push(line);
       },

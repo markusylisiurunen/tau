@@ -54,6 +54,50 @@ function createJsonResponse(payload, status = 200) {
   });
 }
 
+function createGeminiTranscriptionFetchMock(transcript) {
+  return vi.fn(async (input, options = {}) => {
+    const url = getRequestUrl(input);
+    if (url.endsWith("/gemini-3.7-flash:generateContent")) {
+      return createJsonResponse({
+        candidates: [
+          {
+            content: {
+              parts: [{ text: JSON.stringify({ keywords: ["Tau"] }) }],
+            },
+          },
+        ],
+      });
+    }
+    if (url === "https://generativelanguage.googleapis.com/upload/v1beta/files") {
+      return new Response(null, {
+        headers: { "x-goog-upload-url": "https://upload.example.test/telegram-audio" },
+      });
+    }
+    if (url === "https://upload.example.test/telegram-audio") {
+      return createJsonResponse({
+        file: {
+          name: "files/telegram-audio",
+          uri: "https://generativelanguage.googleapis.com/v1beta/files/telegram-audio",
+        },
+      });
+    }
+    if (url === "https://generativelanguage.googleapis.com/v1beta/interactions") {
+      return createJsonResponse({
+        steps: [
+          {
+            type: "model_output",
+            content: [{ type: "text", text: transcript }],
+          },
+        ],
+      });
+    }
+    if (url.endsWith("/v1beta/files/telegram-audio") && options.method === "DELETE") {
+      return new Response(null, { status: 204 });
+    }
+    throw new Error(`unexpected Gemini transcription request: ${url}`);
+  });
+}
+
 function getRequestUrl(input) {
   if (typeof input === "string") {
     return input;
@@ -1687,7 +1731,7 @@ describe("telegram adapter", () => {
       apiHarness.downloadFileCalls.push(fileId);
       return Buffer.from(`${fileId} bytes`);
     });
-    const mistralFetch = vi.fn(async () => createJsonResponse({ text: "transcribed audio" }));
+    const geminiFetch = createGeminiTranscriptionFetchMock("transcribed audio");
     const managerHarness = createSessionManagerHarness(
       [
         {
@@ -1705,11 +1749,11 @@ describe("telegram adapter", () => {
       botToken: "token",
       projects: { demo: { repo: "git@example.com:demo.git" } },
       allowedChatIds: [groupChatId],
-      speechToTextProvider: "mistral",
-      mistralApiKey: "mistral-key",
+      speechToTextProvider: "gemini",
+      geminiApiKey: "gemini-key",
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
-      fetchImpl: mistralFetch,
+      fetchImpl: geminiFetch,
       pollIntervalMs: 1,
       requestTimeoutSeconds: 1,
     });
@@ -1734,7 +1778,9 @@ describe("telegram adapter", () => {
       expect(text).toContain("<telegram-trigger-message>");
       expect(text).toContain('text: "summarize"');
       expect(apiHarness.downloadFileCalls).toEqual(["photo-1", "photo-2", "voice-1"]);
-      expect(mistralFetch).toHaveBeenCalledTimes(1);
+      expect(geminiFetch.mock.calls.map(([input]) => getRequestUrl(input))).toContain(
+        "https://generativelanguage.googleapis.com/v1beta/interactions",
+      );
       await waitFor(() => apiHarness.sendMessages.length === 1);
       expect(apiHarness.sendMessages[0].text).toContain(
         "some Telegram group context could not be processed",
@@ -2285,16 +2331,16 @@ describe("telegram adapter", () => {
       { defaultOwnerId: ownerIdForChat(210) },
     );
 
-    const mistralFetch = vi.fn(async () => createJsonResponse({ text: "ship the fix" }));
+    const geminiFetch = createGeminiTranscriptionFetchMock("ship the fix");
 
     const adapter = await startAdapter({
       botToken: "token",
       projects: { demo: { repo: "git@example.com:demo.git" } },
-      speechToTextProvider: "mistral",
-      mistralApiKey: "mistral-key",
+      speechToTextProvider: "gemini",
+      geminiApiKey: "gemini-key",
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
-      fetchImpl: mistralFetch,
+      fetchImpl: geminiFetch,
       pollIntervalMs: 1,
       requestTimeoutSeconds: 1,
     });
@@ -2308,7 +2354,9 @@ describe("telegram adapter", () => {
       expect(apiHarness.sendMessages).toEqual([
         expect.objectContaining({ chatId: 210, text: "transcribed: ship the fix" }),
       ]);
-      expect(mistralFetch).toHaveBeenCalledTimes(1);
+      expect(geminiFetch.mock.calls.map(([input]) => getRequestUrl(input))).toContain(
+        "https://generativelanguage.googleapis.com/v1beta/interactions",
+      );
       await waitFor(() =>
         apiHarness.setMessageReactions.some(
           (entry) => entry.chatId === 210 && entry.messageId === 902,
@@ -2349,23 +2397,7 @@ describe("telegram adapter", () => {
       { defaultOwnerId: ownerIdForChat(211) },
     );
 
-    const geminiFetch = vi.fn(async () =>
-      createJsonResponse({
-        candidates: [
-          {
-            content: {
-              parts: [
-                {
-                  text: JSON.stringify({
-                    transcription: "use google transcription",
-                  }),
-                },
-              ],
-            },
-          },
-        ],
-      }),
-    );
+    const geminiFetch = createGeminiTranscriptionFetchMock("use google transcription");
 
     const adapter = await startAdapter({
       botToken: "token",
@@ -2387,12 +2419,17 @@ describe("telegram adapter", () => {
         "use google transcription",
         { mode: "auto" },
       );
-      expect(geminiFetch).toHaveBeenCalledTimes(1);
-      const request = JSON.parse(geminiFetch.mock.calls[0][1].body);
-      expect(request.generationConfig.responseMimeType).toBe("application/json");
-      expect(request.generationConfig.responseSchema.required).toEqual(["transcription"]);
-      expect(request.generationConfig.thinkingConfig.thinkingLevel).toBe("low");
-      expect(request.contents[0].parts[1].inlineData.mimeType).toBe("audio/ogg");
+      const interactionCall = geminiFetch.mock.calls.find(
+        ([input]) =>
+          getRequestUrl(input) === "https://generativelanguage.googleapis.com/v1beta/interactions",
+      );
+      const request = JSON.parse(interactionCall[1].body);
+      expect(request.model).toBe("gemini-3.5-transcribe");
+      expect(request.generation_config.transcription_config).toEqual({
+        language_codes: [],
+        mode: "smart",
+      });
+      expect(request.input[0].mime_type).toBe("audio/ogg");
     } finally {
       await adapter.close();
     }

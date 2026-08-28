@@ -179,9 +179,9 @@ Credentials are consumed where the model or feature runs. In an attached session
 
 An object with one required field when present:
 
-| Nested field | Type   | Values                           |
-| ------------ | ------ | -------------------------------- |
-| `provider`   | String | `mistral`, `gemini`, or `openai` |
+| Nested field | Type   | Values               |
+| ------------ | ------ | -------------------- |
+| `provider`   | String | `gemini` or `openai` |
 
 ```json
 {

@@ -22,7 +22,6 @@ export type StartTelegramRuntimeOptions = {
   config: TelegramConfig;
   speechToTextProvider?: SpeechToTextProvider;
   geminiApiKey?: string;
-  mistralApiKey?: string;
   openaiApiKey?: string;
   createSessionClient: (options: TelegramSessionClientOptions) => Promise<TelegramSessionClient>;
   onLog?: (line: string) => void;
@@ -187,7 +186,6 @@ export async function startTelegramRuntime(
         requestTimeoutSeconds: botConfig.requestTimeoutSeconds,
         speechToTextProvider: options.speechToTextProvider,
         geminiApiKey: options.geminiApiKey,
-        mistralApiKey: options.mistralApiKey,
         openaiApiKey: options.openaiApiKey,
         sessionManager,
         projectPreferences,

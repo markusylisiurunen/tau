@@ -23,7 +23,7 @@ try {
 }
 ```
 
-The source may instead be `{ kind: "patch_files", patchFiles, scopeLabel }`. Paths and Git arguments belong to the session execution environment. Optional `host`, `port`, and `signal` fields control the client-owned HTTP process and startup cancellation.
+The source may instead be `{ kind: "patch_files", patchFiles, scopeLabel }`. Paths and Git arguments belong to the session execution environment. Captured snapshot patches are limited to 16 MiB; narrow the Git arguments or patch-file selection when a larger scope is rejected. A plain working-tree snapshot includes non-binary untracked files up to 4 MiB each within that aggregate limit. Optional `host`, `port`, and `signal` fields control the client-owned HTTP process and startup cancellation.
 
 ## Routing and lifecycle
 

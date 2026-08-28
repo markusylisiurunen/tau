@@ -167,6 +167,45 @@ describe("diff_review snapshot", () => {
     }
   });
 
+  it("enforces the aggregate patch limit after adding large untracked files", async () => {
+    const trackedContent = "x".repeat(6 * 1024 * 1024);
+    const trackedPatch = [
+      "diff --git a/src/tracked.ts b/src/tracked.ts",
+      "--- a/src/tracked.ts",
+      "+++ b/src/tracked.ts",
+      "@@ -1 +1 @@",
+      `-${trackedContent}`,
+      `+${trackedContent}`,
+    ].join("\n");
+    const untrackedContent = "y".repeat(4 * 1024 * 1024);
+    const spawn = async (_cmd, args) => {
+      if (args[0] === "rev-parse") {
+        return createSpawnResult(args[1] === "--show-toplevel" ? "/repo\n" : "deadbeef\n");
+      }
+      if (args[0] === "ls-files") {
+        return createSpawnResult("src/untracked.ts\0");
+      }
+      if (args[0] === "diff" && args[1] === "--name-status") {
+        return createSpawnResult("M\0src/tracked.ts\0");
+      }
+      return createSpawnResult(trackedPatch);
+    };
+
+    await expect(
+      captureDiffReviewSnapshot({
+        cwd: "/repo",
+        source: { kind: "git_diff", diffArgs: [] },
+        deps: {
+          spawn,
+          env: { env: () => ({}) },
+          fs: { readFile: async () => untrackedContent },
+        },
+      }),
+    ).rejects.toThrow(
+      "diff review snapshot patch exceeds the 16777216-byte limit; narrow the review scope",
+    );
+  });
+
   it("fails fast when any git command output is truncated", async () => {
     const spawn = async (_cmd, args) => {
       if (args[0] === "rev-parse") {
@@ -188,8 +227,43 @@ describe("diff_review snapshot", () => {
         },
       }),
     ).rejects.toThrow(
-      "git diff --name-status -z HEAD output exceeded 2097152 bytes while capturing diff review snapshot",
+      "git diff --name-status -z HEAD output exceeded 16777216 bytes while capturing diff review snapshot",
     );
+  });
+
+  it("captures explicit Git diffs larger than the previous 2 MiB limit", async () => {
+    const content = `export const value = "${"x".repeat(2 * 1024 * 1024)}";`;
+    const patch = [
+      "diff --git a/src/large.ts b/src/large.ts",
+      "new file mode 100644",
+      "--- /dev/null",
+      "+++ b/src/large.ts",
+      "@@ -0,0 +1 @@",
+      `+${content}`,
+    ].join("\n");
+    const spawn = async (_cmd, args) => {
+      if (args[0] === "rev-parse") {
+        return createSpawnResult("/repo\n");
+      }
+      if (args[0] === "diff" && args[1] === "--name-status") {
+        return createSpawnResult("A\0src/large.ts\0");
+      }
+      return createSpawnResult(patch);
+    };
+
+    const snapshot = await captureDiffReviewSnapshot({
+      cwd: "/repo",
+      source: { kind: "git_diff", diffArgs: ["main...HEAD"] },
+      deps: {
+        spawn,
+        env: { env: () => ({}) },
+      },
+    });
+
+    expect(Buffer.byteLength(snapshot.patch, "utf-8")).toBeGreaterThan(2 * 1024 * 1024);
+    expect(snapshot.files).toEqual([
+      { path: "src/large.ts", status: "added", newPath: "src/large.ts" },
+    ]);
   });
 
   it("stops snapshot capture when diff review startup is aborted", async () => {
@@ -303,18 +377,20 @@ describe("diff_review snapshot", () => {
     }
   });
 
-  it("rejects patch files that exceed the snapshot capture limit", async () => {
+  it("rejects patch files that exceed the snapshot patch limit", async () => {
     const fx = createRepoFixture();
 
     try {
-      writeFileSync(join(fx.repo, "large.patch"), "x".repeat(2 * 1024 * 1024 + 1), "utf-8");
+      writeFileSync(join(fx.repo, "large.patch"), "x".repeat(16 * 1024 * 1024 + 1), "utf-8");
 
       await expect(
         captureDiffReviewSnapshot({
           cwd: fx.repo,
           source: { kind: "patch_files", patchFiles: ["large.patch"], scopeLabel: "large.patch" },
         }),
-      ).rejects.toThrow(/patch files exceeded/);
+      ).rejects.toThrow(
+        "diff review snapshot patch exceeds the 16777216-byte limit; narrow the review scope",
+      );
     } finally {
       fx.cleanup();
     }

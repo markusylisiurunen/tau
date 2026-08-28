@@ -7,9 +7,11 @@ export const SPEECH_TO_TEXT_KEYWORD_INSTRUCTIONS = [
 
 const SPEECH_TO_TEXT_MAX_KEYWORDS = 100;
 const SPEECH_TO_TEXT_MAX_KEYWORD_CHARACTERS = 100;
-const SPEECH_TO_TEXT_MAX_KEYWORD_CHARACTERS_TOTAL = 1_024;
 
-export function normalizeSpeechToTextKeywords(keywords: string[]): string[] {
+export function normalizeSpeechToTextKeywords(
+  keywords: string[],
+  options: { maxTotalCharacters: number },
+): string[] {
   const result: string[] = [];
   const seen = new Set<string>();
   let totalCharacters = 0;
@@ -23,7 +25,7 @@ export function normalizeSpeechToTextKeywords(keywords: string[]): string[] {
       characters > SPEECH_TO_TEXT_MAX_KEYWORD_CHARACTERS ||
       /[<>\r\n]/.test(keyword) ||
       seen.has(identity) ||
-      totalCharacters + characters > SPEECH_TO_TEXT_MAX_KEYWORD_CHARACTERS_TOTAL
+      totalCharacters + characters > options.maxTotalCharacters
     ) {
       continue;
     }

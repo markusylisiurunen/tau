@@ -17,6 +17,7 @@ const GEMINI_LIVE_TRANSCRIPTION_URL =
 const GEMINI_TRANSCRIPTION_MODEL = "gemini-3.5-transcribe";
 const GEMINI_LIVE_TRANSCRIPTION_MODEL = "gemini-3.5-transcribe-live";
 const GEMINI_TRANSCRIPTION_KEYWORD_MODEL = "gemini-3.7-flash";
+const GEMINI_TRANSCRIPTION_MAX_KEYWORD_CHARACTERS_TOTAL = 10_000;
 const GEMINI_TRANSCRIPTION_KEYWORD_TIMEOUT_MS = 15_000;
 const GEMINI_TRANSCRIPTION_CONNECT_TIMEOUT_MS = 15_000;
 const GEMINI_TRANSCRIPTION_COMPLETION_TIMEOUT_MS = 30_000;
@@ -158,6 +159,8 @@ class GeminiStreamingTranscriptionImpl implements GeminiStreamingTranscription {
     this.readyTimeout.unref?.();
 
     this.socket.on("open", () => {
+      if (this.readyTimeout) clearTimeout(this.readyTimeout);
+      this.readyTimeout = undefined;
       void this.configureSession();
     });
     this.socket.on("message", (data) => this.handleMessage(data));
@@ -236,6 +239,11 @@ class GeminiStreamingTranscriptionImpl implements GeminiStreamingTranscription {
     const keywords = await this.keywordsPromise;
     if (this.aborted || this.failure) return;
 
+    this.readyTimeout = setTimeout(() => {
+      this.fail(new Error("timed out opening Gemini transcription session"));
+      this.socket.terminate();
+    }, GEMINI_TRANSCRIPTION_CONNECT_TIMEOUT_MS);
+    this.readyTimeout.unref?.();
     this.send({
       setup: {
         model: `models/${GEMINI_LIVE_TRANSCRIPTION_MODEL}`,
@@ -406,9 +414,7 @@ export async function transcribeGeminiAudio(options: GeminiTranscriptionOptions)
           transcription_config: {
             language_codes: [],
             ...(keywords.length > 0 ? { custom_vocabulary: keywords } : {}),
-            mode: {
-              type: "smart",
-            },
+            mode: "smart",
           },
         },
         store: false,
@@ -493,7 +499,9 @@ async function prepareGeminiTranscriptionKeywords(args: {
       outputText ? (JSON.parse(outputText) as unknown) : undefined,
     );
     return parsedKeywords.success
-      ? normalizeSpeechToTextKeywords(parsedKeywords.data.keywords)
+      ? normalizeSpeechToTextKeywords(parsedKeywords.data.keywords, {
+          maxTotalCharacters: GEMINI_TRANSCRIPTION_MAX_KEYWORD_CHARACTERS_TOTAL,
+        })
       : [];
   } catch {
     return [];

@@ -12,7 +12,11 @@ function createJsonResponse(payload, status = 200, headers = {}) {
   });
 }
 
-function createGeminiFetchMock({ transcript = "ship the fix", interactionStatus = 200 } = {}) {
+function createGeminiFetchMock({
+  transcript = "ship the fix",
+  interactionStatus = 200,
+  keywords = ["Acme SSO", "OAuth", "oauth", "bad\nterm"],
+} = {}) {
   return vi.fn(async (input, options = {}) => {
     const url = String(input);
     if (url.endsWith("/gemini-3.7-flash:generateContent")) {
@@ -22,9 +26,7 @@ function createGeminiFetchMock({ transcript = "ship the fix", interactionStatus 
             content: {
               parts: [
                 {
-                  text: JSON.stringify({
-                    keywords: ["Acme SSO", "OAuth", "oauth", "bad\nterm"],
-                  }),
+                  text: JSON.stringify({ keywords }),
                 },
               ],
             },
@@ -114,12 +116,31 @@ describe("gemini transcription", () => {
         transcription_config: {
           language_codes: [],
           custom_vocabulary: ["Acme SSO", "OAuth"],
-          mode: { type: "smart" },
+          mode: "smart",
         },
       },
       store: false,
     });
     expect(getCall(fetchMock, "/v1beta/files/audio-1")[1].method).toBe("DELETE");
+  });
+
+  it("preserves Gemini custom vocabulary beyond the OpenAI aggregate limit", async () => {
+    const keywords = Array.from({ length: 20 }, (_, index) => `keyword-${index}-${"x".repeat(70)}`);
+    const fetchMock = createGeminiFetchMock({ keywords });
+
+    await transcribeGeminiAudio({
+      apiKey: "gemini-key",
+      audio: Buffer.from("audio payload"),
+      context: { messages: [{ role: "user", text: "Use the project vocabulary" }] },
+      fetchImpl: fetchMock,
+    });
+
+    const interactionCall = getCall(fetchMock, "/v1beta/interactions");
+    const interactionRequest = JSON.parse(interactionCall[1].body);
+    const customVocabulary =
+      interactionRequest.generation_config.transcription_config.custom_vocabulary;
+    expect(customVocabulary).toEqual(keywords);
+    expect(customVocabulary.join("").length).toBeGreaterThan(1_024);
   });
 
   it("streams microphone audio through Gemini 3.5 Transcribe Live in smart mode", async () => {
@@ -187,6 +208,52 @@ describe("gemini transcription", () => {
 
     await expect(completion).resolves.toBe("live transcript");
     expect(socket.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts the session readiness timeout after keyword extraction", async () => {
+    vi.useFakeTimers();
+    const keywordResponse = Promise.withResolvers();
+    const setupSent = Promise.withResolvers();
+    const socket = new EventEmitter();
+    socket.send = vi.fn((data, callback) => {
+      const event = JSON.parse(data);
+      if (event.setup) setupSent.resolve(event);
+      callback?.();
+    });
+    socket.close = vi.fn();
+    socket.terminate = vi.fn();
+    let transcription;
+
+    try {
+      transcription = startGeminiTranscription({
+        apiKey: "gemini-key",
+        context: { messages: [{ role: "user", text: "Configure Acme SSO" }] },
+        fetchImpl: vi.fn(() => keywordResponse.promise),
+        webSocketFactory: vi.fn(() => socket),
+      });
+      socket.emit("open");
+
+      await vi.advanceTimersByTimeAsync(14_900);
+      keywordResponse.resolve(
+        createJsonResponse({
+          candidates: [
+            {
+              content: {
+                parts: [{ text: JSON.stringify({ keywords: ["Acme SSO"] }) }],
+              },
+            },
+          ],
+        }),
+      );
+      await setupSent.promise;
+      await vi.advanceTimersByTimeAsync(200);
+
+      expect(socket.terminate).not.toHaveBeenCalled();
+      socket.emit("message", JSON.stringify({ setupComplete: {} }));
+    } finally {
+      transcription?.abort();
+      vi.useRealTimers();
+    }
   });
 
   it("reports provider failures and deletes the uploaded file", async () => {

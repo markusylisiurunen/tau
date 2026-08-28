@@ -22,6 +22,7 @@ const OPENAI_FILE_SAMPLE_RATE = 16_000;
 const OPENAI_TRANSCRIPTION_CONNECT_TIMEOUT_MS = 15_000;
 const OPENAI_TRANSCRIPTION_COMPLETION_TIMEOUT_MS = 30_000;
 const OPENAI_TRANSCRIPTION_KEYWORD_TIMEOUT_MS = 15_000;
+const OPENAI_TRANSCRIPTION_MAX_KEYWORD_CHARACTERS_TOTAL = 1_024;
 const OPENAI_TRANSCRIPTION_CONTEXT_TOKENS = 1_024;
 const OPENAI_TRANSCRIPTION_FFMPEG_TIMEOUT_MS = 5 * 60 * 1_000;
 const OPENAI_TRANSCRIPTION_FFMPEG_OUTPUT_LIMIT_BYTES = 20_000;
@@ -581,7 +582,9 @@ async function prepareOpenAITranscriptionKeywords(args: {
       .join("");
     const parsedKeywords = transcriptionKeywordsSchema.safeParse(JSON.parse(outputText) as unknown);
     return parsedKeywords.success
-      ? normalizeSpeechToTextKeywords(parsedKeywords.data.keywords)
+      ? normalizeSpeechToTextKeywords(parsedKeywords.data.keywords, {
+          maxTotalCharacters: OPENAI_TRANSCRIPTION_MAX_KEYWORD_CHARACTERS_TOTAL,
+        })
       : [];
   } catch {
     return [];

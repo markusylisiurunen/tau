@@ -224,6 +224,24 @@ describe("OpenAI transcription", () => {
     expect(harness.socket.closed).toBe(true);
   });
 
+  it("keeps realtime keywords within the OpenAI aggregate limit", async () => {
+    const keywords = Array.from({ length: 20 }, (_, index) => `keyword-${index}-${"x".repeat(70)}`);
+    const harness = createWebSocketHarness();
+    const transcription = startOpenAITranscription({
+      apiKey: "openai-key",
+      context: { messages: [{ role: "user", text: "Use the project vocabulary" }] },
+      fetchImpl: vi.fn(async () => keywordResponse(keywords)),
+      webSocketFactory: harness.factory,
+    });
+    transcription.appendAudio(Buffer.from([1, 2, 3, 4]));
+
+    await transcription.finish();
+
+    const transcriptionConfig = harness.socket.sent[0].session.audio.input.transcription;
+    expect(transcriptionConfig.keywords).toEqual(keywords.slice(0, 12));
+    expect(transcriptionConfig.keywords.join("").length).toBeLessThanOrEqual(1_024);
+  });
+
   it("continues realtime transcription when keyword extraction fails", async () => {
     const harness = createWebSocketHarness();
     const keywordResponse = new Response("unavailable", { status: 503 });

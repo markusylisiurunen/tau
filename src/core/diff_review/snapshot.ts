@@ -57,8 +57,8 @@ type DiffSnapshotDeps = Pick<CoreDeps, "spawn"> & {
 };
 
 const GIT_TIMEOUT_MS = 30_000;
-const GIT_MAX_CAPTURE_BYTES = 2 * 1024 * 1024;
-const MAX_UNTRACKED_TEXT_BYTES = 512 * 1024;
+const MAX_SNAPSHOT_PATCH_BYTES = 16 * 1024 * 1024;
+const MAX_UNTRACKED_TEXT_BYTES = 4 * 1024 * 1024;
 const WORKING_TREE_SCOPE_LABEL = "current working tree";
 
 export class DiffReviewSnapshot {
@@ -155,6 +155,7 @@ export async function captureDiffReviewSnapshot(
       : source.diffArgs.length > 0
         ? await captureExplicitDiffSnapshot(cwd, source.diffArgs, deps, signal)
         : await captureWorkingTreeSnapshot(repoRoot, deps, signal);
+  assertSnapshotPatchBytesWithinLimit(Buffer.byteLength(captured.patch, "utf-8"));
   const diffArgs = source.kind === "git_diff" ? [...source.diffArgs] : [];
 
   return new DiffReviewSnapshot({
@@ -178,6 +179,14 @@ type CapturedSnapshotData = {
 function throwIfSnapshotAborted(signal?: AbortSignal): void {
   if (signal?.aborted) {
     throw new Error("diff review start aborted");
+  }
+}
+
+function assertSnapshotPatchBytesWithinLimit(bytes: number): void {
+  if (bytes > MAX_SNAPSHOT_PATCH_BYTES) {
+    throw new Error(
+      `diff review snapshot patch exceeds the ${MAX_SNAPSHOT_PATCH_BYTES}-byte limit; narrow the review scope`,
+    );
   }
 }
 
@@ -224,11 +233,7 @@ async function capturePatchFilesSnapshot(
     const patchPath = resolve(cwd, patchFile);
     const patch = await deps.fs.readFile(patchPath);
     totalBytes += Buffer.byteLength(patch, "utf-8");
-    if (totalBytes > GIT_MAX_CAPTURE_BYTES) {
-      throw new Error(
-        `patch files exceeded ${GIT_MAX_CAPTURE_BYTES} bytes while capturing diff review snapshot`,
-      );
-    }
+    assertSnapshotPatchBytesWithinLimit(totalBytes);
 
     const patchSections = splitPatchSections(patch);
     if (patchSections.length === 0 && patch.trim().length > 0) {
@@ -517,13 +522,13 @@ async function gitRefExists(
     timeoutMs: GIT_TIMEOUT_MS,
     signal,
     captureOutput: "combined",
-    maxCaptureBytes: GIT_MAX_CAPTURE_BYTES,
+    maxCaptureBytes: MAX_SNAPSHOT_PATCH_BYTES,
     maxCaptureMode: "ignore",
   });
 
   if (result.captureLimitExceeded) {
     throw new Error(
-      `git rev-parse --verify ${ref} output exceeded ${GIT_MAX_CAPTURE_BYTES} bytes while capturing diff review snapshot`,
+      `git rev-parse --verify ${ref} output exceeded ${MAX_SNAPSHOT_PATCH_BYTES} bytes while capturing diff review snapshot`,
     );
   }
 
@@ -556,13 +561,13 @@ async function runGitCommand(
     timeoutMs: GIT_TIMEOUT_MS,
     signal,
     captureOutput: "combined-and-split",
-    maxCaptureBytes: GIT_MAX_CAPTURE_BYTES,
+    maxCaptureBytes: MAX_SNAPSHOT_PATCH_BYTES,
     maxCaptureMode: "ignore",
   });
 
   if (result.captureLimitExceeded) {
     throw new Error(
-      `git ${args.join(" ")} output exceeded ${GIT_MAX_CAPTURE_BYTES} bytes while capturing diff review snapshot`,
+      `git ${args.join(" ")} output exceeded ${MAX_SNAPSHOT_PATCH_BYTES} bytes while capturing diff review snapshot`,
     );
   }
 

@@ -176,6 +176,8 @@ Theme ids are exact and case-sensitive. `/theme` does not persist the selection.
 /diff --staged
 ```
 
+Captured snapshot patches are limited to 16 MiB. Narrow the Git arguments when a larger scope is rejected. A plain working-tree snapshot includes non-binary untracked files up to 4 MiB each within that aggregate limit.
+
 A `diffTool` entry in the attaching client’s configuration replaces the launcher. Relative commands resolve from the configuration level that defines them:
 
 ```json

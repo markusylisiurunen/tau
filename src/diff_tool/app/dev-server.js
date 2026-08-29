@@ -325,6 +325,8 @@ const codeThemes = new Set([
   "vitesse-dark",
 ]);
 
+let reviewPreview;
+
 const state = {
   diffStyle: "stacked",
   overflowMode: "wrap",
@@ -395,6 +397,115 @@ function getGuideCommentContext(target) {
   };
 }
 
+function buildReviewPreview() {
+  const previewId = randomUUID();
+  const items = [];
+  const sections = [];
+  if (state.guide.comments.length > 0) {
+    const comments = state.guide.comments
+      .map((comment, index) => {
+        const guideContext = getGuideCommentContext(comment.target);
+        items.push({
+          kind: "guide-comment",
+          target: comment.target,
+          label: guideContext.location,
+        });
+        return [
+          `### ${index + 1}. ${comment.target.kind === "orientation" ? "Overall change" : guideContext.heading}`,
+          "**Reviewer comment**",
+          comment.body,
+          "**Context considered during the review**",
+          formatMarkdownBlockquote(guideContext.content),
+        ].join("\n\n");
+      })
+      .join("\n\n");
+    sections.push(`## Change-level comments\n\n${comments}`);
+  }
+
+  const unresolvedThreads = state.threads.filter((thread) => !thread.resolved);
+  if (unresolvedThreads.length > 0) {
+    const guidance = [
+      "The unresolved discussions below took place between the person reviewing the change and a review assistant used to investigate the diff.",
+      "",
+      "- **Reviewer** messages contain the reviewer’s comments, questions, and requested changes.",
+      "- **Review assistant** messages contain generated analysis or answers provided during the review.",
+      "",
+      "Treat review-assistant messages as supporting context, not as final conclusions or instructions. Address the reviewer’s unresolved concerns using the complete discussion.",
+    ].join("\n");
+    const threads = unresolvedThreads
+      .map((thread, index) => {
+        const location =
+          thread.anchor.kind === "line"
+            ? `${thread.anchor.filePath}:${thread.anchor.lineNumber} (${thread.anchor.side === "additions" ? "new" : "old"})`
+            : "general discussion";
+        const heading =
+          thread.anchor.kind === "line"
+            ? formatMarkdownInlineCode(location)
+            : "Whole change";
+        items.push({ kind: "thread", id: thread.id, label: location });
+        const body = thread.messages
+          .map(
+            (message) =>
+              `**${message.role === "assistant" ? "Review assistant" : "Reviewer"}**\n\n${message.text}`,
+          )
+          .join("\n\n");
+        return `### ${index + 1}. ${heading}\n\n${body}`;
+      })
+      .join("\n\n");
+    sections.push(`## Review discussions\n\n${guidance}\n\n${threads}`);
+  }
+
+  if (sections.length === 0) {
+    return { previewId, submission: { outcome: "approved" }, items };
+  }
+
+  const introduction = [
+    "# Review feedback",
+    "",
+    "This feedback was collected while reviewing the following change:",
+    "",
+    "**Reviewed scope**",
+    "",
+    formatMarkdownCodeBlock(context.diffCommand),
+    "",
+    "Address each unresolved reviewer comment below against that change. File locations marked `(new)` refer to the new version, and locations marked `(old)` refer to the previous version.",
+  ].join("\n");
+
+  return {
+    previewId,
+    submission: {
+      outcome: "commented",
+      review: [introduction, ...sections].join("\n\n"),
+    },
+    items,
+  };
+}
+
+function formatMarkdownBlockquote(content) {
+  return content
+    .split("\n")
+    .map((line) => (line ? `> ${line}` : ">"))
+    .join("\n");
+}
+
+function formatMarkdownCodeBlock(content) {
+  const fence = "`".repeat(Math.max(3, longestBacktickRun(content) + 1));
+  return `${fence}text\n${content}\n${fence}`;
+}
+
+function formatMarkdownInlineCode(content) {
+  const fence = "`".repeat(longestBacktickRun(content) + 1);
+  const padding = content.startsWith("`") || content.endsWith("`") ? " " : "";
+  return `${fence}${padding}${content}${padding}${fence}`;
+}
+
+function longestBacktickRun(content) {
+  return Math.max(
+    0,
+    ...Array.from(content.matchAll(/`+/g), (match) => match[0].length),
+  );
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
 
@@ -421,6 +532,12 @@ const server = createServer(async (req, res) => {
       } else {
         sendJson(res, 200, { scope: "session", patch: sessionPatch });
       }
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/review") {
+      reviewPreview = buildReviewPreview();
+      sendJson(res, 200, reviewPreview);
       return;
     }
 
@@ -787,46 +904,15 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && url.pathname === "/api/review") {
-      await readBody(req);
-      const unresolvedThreads = state.threads.filter(
-        (thread) => !thread.resolved,
-      );
-      const threadReview = unresolvedThreads.length
-        ? unresolvedThreads
-            .map((thread, index) => {
-              const location =
-                thread.anchor.kind === "line"
-                  ? `${thread.anchor.filePath}:${thread.anchor.lineNumber} (${thread.anchor.side === "additions" ? "new" : "old"})`
-                  : "general discussion";
-              const body = thread.messages
-                .map(
-                  (message) =>
-                    `**${message.role === "assistant" ? "agent" : "user"}**\n\n${message.text}`,
-                )
-                .join("\n\n");
-              return `## thread ${index + 1}\n\n\`${location}\`\n\n${body}`;
-            })
-            .join("\n\n---\n\n")
-        : "";
-      const guideReview = state.guide.comments
-        .map((comment, index) => {
-          const context = getGuideCommentContext(comment.target);
-          return [
-            `## guide comment ${index + 1}`,
-            `\`${context.location}\``,
-            `### ${context.heading}`,
-            context.content,
-            "**review comment**",
-            comment.body,
-          ].join("\n\n");
-        })
-        .join("\n\n---\n\n");
-      const review = [guideReview, threadReview]
-        .filter(Boolean)
-        .join("\n\n---\n\n");
+      const body = await readBody(req);
+      if (!reviewPreview || body.previewId !== reviewPreview.previewId) {
+        sendJson(res, 409, { error: "review preview is stale" });
+        return;
+      }
+      const { submission } = reviewPreview;
       console.log(
-        review
-          ? `\ncomments returned:\n${review}\n`
+        submission.outcome === "commented"
+          ? `\ncomments returned:\n${submission.review}\n`
           : "\nreview approved without comments\n",
       );
       sendJson(res, 200, { status: "returned" });

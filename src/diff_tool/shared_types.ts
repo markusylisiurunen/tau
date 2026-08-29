@@ -2,6 +2,7 @@ import type {
   DiffReviewFile,
   DiffReviewSessionContextResult,
   DiffReviewSessionGetDiffResult,
+  DiffReviewSubmission,
 } from "../core/diff_review/index.js";
 
 export type { DiffReviewFile };
@@ -149,6 +150,28 @@ export type DiffToolReviewState = {
 export function hasDiffToolReviewComments(state: DiffToolReviewState): boolean {
   return state.guide.comments.length > 0 || state.threads.some((thread) => !thread.resolved);
 }
+
+export type DiffToolReviewPreviewItem =
+  | {
+      kind: "guide-comment";
+      target: DiffToolGuideCommentTarget;
+      label: string;
+    }
+  | {
+      kind: "thread";
+      id: string;
+      label: string;
+    };
+
+export type DiffToolReviewPreview = {
+  previewId: string;
+  submission: DiffReviewSubmission;
+  items: DiffToolReviewPreviewItem[];
+};
+
+export type DiffToolReviewSubmissionPayload = {
+  previewId: string;
+};
 
 export type DiffToolStatePatch = {
   diffStyle?: DiffToolReviewState["diffStyle"];

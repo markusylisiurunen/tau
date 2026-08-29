@@ -31,7 +31,9 @@ import type {
   DiffToolGetDiffResult,
   DiffToolGuideCommentPayload,
   DiffToolGuideOperation,
+  DiffToolReviewPreview,
   DiffToolReviewState,
+  DiffToolReviewSubmissionPayload,
   DiffToolStatePatch,
 } from "./shared_types.js";
 import {
@@ -119,6 +121,7 @@ export class DiffToolHttpServer {
   private files: DiffReviewFile[] = [];
   private persistence?: ReviewStatePersistence;
   private stateMutationQueue: Promise<void> = Promise.resolve();
+  private reviewPreview?: DiffToolReviewPreview;
   private submissionState: "active" | "submitting" | "submitted" = "active";
   private bootstrapThreadPromise?: Promise<string>;
   private guideGenerationPromise?: Promise<DiffToolReviewState>;
@@ -759,20 +762,35 @@ export class DiffToolHttpServer {
 
     if (method === "GET" && requestUrl.pathname === "/api/review") {
       await this.stateMutationQueue;
-      this.sendJson(response, 200, this.reviewState.buildReviewPreview());
+      const context = this.context;
+      if (!context) {
+        throw new Error("diff tool session context is unavailable");
+      }
+      const preview = this.reviewState.buildReviewPreview(context.diffCommand);
+      this.reviewPreview = preview;
+      this.sendJson(response, 200, preview);
       return;
     }
 
     if (method === "POST" && requestUrl.pathname === "/api/review") {
-      await this.readJsonBody(request);
+      const payload = parseReviewSubmissionPayload(await this.readJsonBody(request));
+      if (!payload) {
+        this.sendJson(response, 400, { error: "invalid review submission" });
+        return;
+      }
       await this.stateMutationQueue;
       if (this.submissionState !== "active") {
         this.sendJson(response, 409, { error: "diff review has already been submitted" });
         return;
       }
+      const preview = this.reviewPreview;
+      if (!preview || preview.previewId !== payload.previewId) {
+        this.sendJson(response, 409, { error: "review preview is stale" });
+        return;
+      }
 
       this.submissionState = "submitting";
-      const submission = this.reviewState.buildReviewPreview().submission;
+      const submission = preview.submission;
       const context = this.context;
       if (!context) {
         this.submissionState = "active";
@@ -894,6 +912,13 @@ export class DiffToolHttpServer {
 
 function formatHttpUrlHost(host: string): string {
   return host.includes(":") ? `[${host}]` : host;
+}
+
+function parseReviewSubmissionPayload(
+  payload: Record<string, unknown>,
+): DiffToolReviewSubmissionPayload | undefined {
+  const previewId = typeof payload.previewId === "string" ? payload.previewId.trim() : "";
+  return previewId ? { previewId } : undefined;
 }
 
 function parseGuideOperation(payload: Record<string, unknown>): DiffToolGuideOperation | undefined {

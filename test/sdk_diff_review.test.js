@@ -160,8 +160,17 @@ describe("SDK diff review", () => {
     expect(createdThread.ok).toBe(true);
     expect(storedDocument.state.threads).toHaveLength(1);
 
+    const preview = await fetch(`${review.url}api/review`).then((response) => response.json());
+    expect(preview.submission.review).toContain(
+      "# Review feedback\n\nThis feedback was collected while reviewing the following change:\n\n**Reviewed scope**\n\n```text\ngit diff HEAD\n```",
+    );
+    expect(preview.submission.review).toContain(
+      "## Review discussions\n\nThe unresolved discussions below took place between the person reviewing the change and a review assistant used to investigate the diff.",
+    );
     const submitted = await fetch(`${review.url}api/review`, {
       method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ previewId: preview.previewId }),
     });
     expect(submitted.ok).toBe(true);
     expect(onSubmit).toHaveBeenCalledWith({
@@ -187,8 +196,11 @@ describe("SDK diff review", () => {
       onSubmit,
     });
 
+    const preview = await fetch(`${review.url}api/review`).then((response) => response.json());
     const submitted = await fetch(`${review.url}api/review`, {
       method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ previewId: preview.previewId }),
     });
     expect(submitted.ok).toBe(true);
     expect(onSubmit).toHaveBeenCalledWith({

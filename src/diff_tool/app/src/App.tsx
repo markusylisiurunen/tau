@@ -50,6 +50,7 @@ export function App() {
     session.files,
     session.reviewState.codeTheme,
   );
+  const hasReviewComments = hasDiffToolReviewComments(session.reviewState);
 
   return (
     <>
@@ -64,7 +65,7 @@ export function App() {
           diffStyle={session.reviewState.diffStyle}
           overflowMode={session.reviewState.overflowMode}
           finished={submission.finished}
-          hasReviewComments={hasDiffToolReviewComments(session.reviewState)}
+          hasReviewComments={hasReviewComments}
           hasUnresolvedFileThreads={
             fileState.filesWithUnresolvedThreads.length > 0
           }
@@ -79,7 +80,9 @@ export function App() {
           onOverflowModeChange={(overflowMode) => {
             session.applyStatePatch({ overflowMode });
           }}
-          onSubmit={submission.openPreview}
+          onSubmit={
+            hasReviewComments ? submission.openPreview : submission.approve
+          }
           onCancel={submission.cancel}
         />
         {navigation.mode === "guide" ? (

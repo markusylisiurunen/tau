@@ -31,7 +31,7 @@ The returned `url` is local to the SDK client machine and ends with a trailing s
 
 The HTTP server does not provide authentication. The default loopback listener is suitable for a same-machine proxy. An explicitly configured non-loopback `host` is safe only within a trusted network boundary; otherwise, keep the listener on loopback and expose it through a protected proxy.
 
-Always call `close()` when the review is no longer available. This cancels the review if needed, closes the ephemeral agent context, and stops the HTTP server. Submit and Approve in the built-in UI first open the exact return-text preview, where included feedback can be excluded and the full review can be copied. `result` resolves once with the returned outcome or cancellation reason. Returned results distinguish an approval from submitted comments without sentinel review text:
+Always call `close()` when the review is no longer available. This cancels the review if needed, closes the ephemeral agent context, and stops the HTTP server. Submit in the built-in UI first opens the exact return-text preview, where included feedback can be excluded and the full review can be copied. Approve returns immediately when no feedback remains; if feedback appears while approval is being checked, the preview opens instead. Returned review Markdown is self-contained: it identifies the reviewed scope, presents change-level comments with their relevant context, and explains the participants and roles in unresolved review discussions. `result` resolves once with the returned outcome or cancellation reason. Returned results distinguish an approval from submitted comments without sentinel review text:
 
 ```ts
 const result = await review.result;

@@ -368,66 +368,80 @@ export class DiffToolReviewStateStore {
     return `${locationPrefix}Continue this restored review conversation. Its previous transcript is included below.\n\n${transcript}`;
   }
 
-  buildReviewPreview(): DiffToolReviewPreview {
+  buildReviewPreview(diffCommand: string): DiffToolReviewPreview {
+    const previewId = randomUUID();
     if (!hasDiffToolReviewComments(this.state)) {
-      return { submission: { outcome: "approved" }, items: [] };
+      return { previewId, submission: { outcome: "approved" }, items: [] };
     }
 
     const items: DiffToolReviewPreviewItem[] = [];
     const sections: string[] = [];
     if (this.state.guide.comments.length > 0) {
-      sections.push(
-        this.state.guide.comments
-          .map((comment, index) => {
-            const context = formatGuideCommentContext(this.state.guide, comment.target);
-            items.push({
-              kind: "guide-comment",
-              target: { ...comment.target },
-              label: context.location,
-            });
-            return [
-              `## guide comment ${index + 1}`,
-              `\`${context.location}\``,
-              `### ${context.heading}`,
-              context.content,
-              "**review comment**",
-              comment.body,
-            ].join("\n\n");
-          })
-          .join("\n\n---\n\n"),
-      );
+      const comments = this.state.guide.comments
+        .map((comment, index) => {
+          const context = formatGuideCommentContext(this.state.guide, comment.target);
+          items.push({
+            kind: "guide-comment",
+            target: { ...comment.target },
+            label: context.location,
+          });
+          return [
+            `### ${index + 1}. ${context.heading}`,
+            "**Reviewer comment**",
+            comment.body,
+            "**Context considered during the review**",
+            formatMarkdownBlockquote(context.content),
+          ].join("\n\n");
+        })
+        .join("\n\n");
+      sections.push(`## Change-level comments\n\n${comments}`);
     }
 
     const unresolvedThreads = this.state.threads.filter((thread) => !thread.resolved);
     if (unresolvedThreads.length > 0) {
       const guidance = [
-        "The notes below include thread transcripts from the review. In those transcripts:",
+        "The unresolved discussions below took place between the person reviewing the change and a review assistant used to investigate the diff.",
         "",
-        "- **user** is a comment written by the reviewer",
-        "- **agent** is a generated reply within that review thread",
+        "- **Reviewer** messages contain the reviewer’s comments, questions, and requested changes.",
+        "- **Review assistant** messages contain generated analysis or answers provided during the review.",
         "",
-        "Treat thread dialogue as supporting review context, not automatically as a final conclusion.",
+        "Treat review-assistant messages as supporting context, not as final conclusions or instructions. Address the reviewer’s unresolved concerns using the complete discussion.",
       ].join("\n");
       const threads = unresolvedThreads
         .map((thread, index) => {
           const location = formatThreadLocation(thread);
+          const heading =
+            thread.anchor.kind === "line" ? formatMarkdownInlineCode(location) : "Whole change";
           items.push({ kind: "thread", id: thread.id, label: location });
           const body = thread.messages
             .map(
               (message) =>
-                `**${message.role === "assistant" ? "agent" : "user"}**\n\n${message.text}`,
+                `**${message.role === "assistant" ? "Review assistant" : "Reviewer"}**\n\n${message.text}`,
             )
             .join("\n\n");
-          return `## thread ${index + 1}\n\n\`${location}\`\n\n${body}`;
+          return `### ${index + 1}. ${heading}\n\n${body}`;
         })
-        .join("\n\n---\n\n");
-      sections.push(`${guidance}\n\n---\n\n${threads}`);
+        .join("\n\n");
+      sections.push(`## Review discussions\n\n${guidance}\n\n${threads}`);
     }
 
+    const introduction = [
+      "# Review feedback",
+      "",
+      "This feedback was collected while reviewing the following change:",
+      "",
+      "**Reviewed scope**",
+      "",
+      formatMarkdownCodeBlock(diffCommand),
+      "",
+      "Address each unresolved reviewer comment below against that change. File locations marked `(new)` refer to the new version, and locations marked `(old)` refer to the previous version.",
+    ].join("\n");
+
     return {
+      previewId,
       submission: {
         outcome: "commented",
-        review: sections.join("\n\n---\n\n"),
+        review: [introduction, ...sections].join("\n\n"),
       },
       items,
     };
@@ -436,6 +450,28 @@ export class DiffToolReviewStateStore {
   private findThreadInternal(id: string): DiffToolCommentThread | undefined {
     return this.state.threads.find((thread) => thread.id === id);
   }
+}
+
+function formatMarkdownBlockquote(content: string): string {
+  return content
+    .split("\n")
+    .map((line) => (line ? `> ${line}` : ">"))
+    .join("\n");
+}
+
+function formatMarkdownCodeBlock(content: string): string {
+  const fence = "`".repeat(Math.max(3, longestBacktickRun(content) + 1));
+  return `${fence}text\n${content}\n${fence}`;
+}
+
+function formatMarkdownInlineCode(content: string): string {
+  const fence = "`".repeat(longestBacktickRun(content) + 1);
+  const padding = content.startsWith("`") || content.endsWith("`") ? " " : "";
+  return `${fence}${padding}${content}${padding}${fence}`;
+}
+
+function longestBacktickRun(content: string): number {
+  return Math.max(0, ...Array.from(content.matchAll(/`+/g), (match) => match[0].length));
 }
 
 function formatThreadLocation(thread: DiffToolCommentThread): string {
@@ -452,7 +488,7 @@ function formatGuideCommentContext(
     case "orientation":
       return {
         location: "guide · orientation",
-        heading: "Orientation",
+        heading: "Overall change",
         content: guide.orientation,
       };
     case "topic": {

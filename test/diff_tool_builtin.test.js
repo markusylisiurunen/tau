@@ -521,20 +521,22 @@ describe("built-in diff tool", () => {
       const refreshedBootstrap = await fetchJson(`${started.url}api/bootstrap`);
       expect(refreshedBootstrap.state).toEqual(globalComment.state);
 
+      const preview = await fetchJson(`${started.url}api/review`);
       const reviewResult = await fetchJson(`${started.url}api/review`, {
         method: "POST",
         headers: { "content-type": "application/json" },
+        body: JSON.stringify({ previewId: preview.previewId }),
       });
       expect(reviewResult).toEqual({ status: "returned" });
       await expect(bridge.result).resolves.toEqual({
         status: "returned",
         outcome: "commented",
         review:
-          "The notes below include thread transcripts from the review. In those transcripts:\n\n- **user** is a comment written by the reviewer\n- **agent** is a generated reply within that review thread\n\nTreat thread dialogue as supporting review context, not automatically as a final conclusion.\n\n---\n\n## thread 1\n\n`src/a.ts:1 (new)`\n\n**user**\n\nWhat changed?\n\n**user**\n\nAny risks?\n\n**agent**\n\n" +
+          "# Review feedback\n\nThis feedback was collected while reviewing the following change:\n\n**Reviewed scope**\n\n```text\ngit diff --staged\n```\n\nAddress each unresolved reviewer comment below against that change. File locations marked `(new)` refer to the new version, and locations marked `(old)` refer to the previous version.\n\n## Review discussions\n\nThe unresolved discussions below took place between the person reviewing the change and a review assistant used to investigate the diff.\n\n- **Reviewer** messages contain the reviewer’s comments, questions, and requested changes.\n- **Review assistant** messages contain generated analysis or answers provided during the review.\n\nTreat review-assistant messages as supporting context, not as final conclusions or instructions. Address the reviewer’s unresolved concerns using the complete discussion.\n\n### 1. `src/a.ts:1 (new)`\n\n**Reviewer**\n\nWhat changed?\n\n**Reviewer**\n\nAny risks?\n\n**Review assistant**\n\n" +
           askedThread.state.threads[0].messages[2].text +
-          "\n\n---\n\n## thread 2\n\n`general discussion`\n\n**user**\n\nAnything else worth checking?\n\n**agent**\n\n" +
+          "\n\n### 2. Whole change\n\n**Reviewer**\n\nAnything else worth checking?\n\n**Review assistant**\n\n" +
           askedDetachedThread.state.threads[1].messages[1].text +
-          "\n\n---\n\n## thread 3\n\n`general discussion`\n\n**user**\n\nThis needs a migration note.",
+          "\n\n### 3. Whole change\n\n**Reviewer**\n\nThis needs a migration note.",
       });
       await server.waitUntilClosed();
     } finally {
@@ -720,6 +722,7 @@ describe("built-in diff tool", () => {
       });
 
       const preview = await fetchJson(`${started.url}api/review`);
+      expect(preview.submission.review).not.toMatch(/\bguide\b/i);
       expect(preview.items).toEqual([
         {
           kind: "guide-comment",
@@ -738,24 +741,28 @@ describe("built-in diff tool", () => {
         },
       ]);
 
-      await fetchJson(`${started.url}api/review`, { method: "POST" });
+      await fetchJson(`${started.url}api/review`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ previewId: preview.previewId }),
+      });
       expect(client.returnReview).toHaveBeenCalledWith(preview.submission);
       expect(client.returnReview).toHaveBeenCalledWith({
         outcome: "commented",
         review: expect.stringContaining(
-          "## guide comment 1\n\n`guide · orientation`\n\n### Orientation\n\nReview orientation\n\n**review comment**\n\nClarify the rollout",
+          "# Review feedback\n\nThis feedback was collected while reviewing the following change:\n\n**Reviewed scope**\n\n```text\ncurrent working tree\n```",
         ),
       });
       expect(client.returnReview).toHaveBeenCalledWith({
         outcome: "commented",
         review: expect.stringContaining(
-          "`guide topic · Safe retry behavior`\n\n### Safe retry behavior\n\nRetries preserve both identity and ordering.\n\n**review comment**\n\nCheck the ordering claim",
+          "## Change-level comments\n\n### 1. Overall change\n\n**Reviewer comment**\n\nClarify the rollout\n\n**Context considered during the review**\n\n> Review orientation",
         ),
       });
       expect(client.returnReview).toHaveBeenCalledWith({
         outcome: "commented",
         review: expect.stringContaining(
-          "`guide question · Can requests be retried?`\n\n### Can requests be retried?\n\nYes, when the caller preserves the request identifier.\n\n**review comment**\n\nDocument this limitation",
+          "### 2. Safe retry behavior\n\n**Reviewer comment**\n\nCheck the ordering claim\n\n**Context considered during the review**\n\n> Retries preserve both identity and ordering.\n\n### 3. Can requests be retried?\n\n**Reviewer comment**\n\nDocument this limitation\n\n**Context considered during the review**\n\n> Yes, when the caller preserves the request identifier.",
         ),
       });
       expect(client.submitThreadMessage).toHaveBeenLastCalledWith({
@@ -1021,7 +1028,7 @@ describe("built-in diff tool", () => {
     }
   });
 
-  it("previews the exact submission and regenerates it after a thread is excluded", async () => {
+  it("submits the exact preview after review state changes", async () => {
     const client = createClientStub();
     const server = new DiffToolHttpServer({ client });
 
@@ -1038,6 +1045,7 @@ describe("built-in diff tool", () => {
 
       const preview = await fetchJson(`${started.url}api/review`);
       expect(preview).toEqual({
+        previewId: expect.any(String),
         submission: {
           outcome: "commented",
           review: expect.stringContaining("Document the migration risk."),
@@ -1058,11 +1066,24 @@ describe("built-in diff tool", () => {
       });
       const approvedPreview = await fetchJson(`${started.url}api/review`);
       expect(approvedPreview).toEqual({
+        previewId: expect.any(String),
         submission: { outcome: "approved" },
         items: [],
       });
 
-      await fetchJson(`${started.url}api/review`, { method: "POST" });
+      await fetchJson(`${started.url}api/thread`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          anchor: { kind: "detached" },
+          body: "Feedback added after the preview.",
+        }),
+      });
+      await fetchJson(`${started.url}api/review`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ previewId: approvedPreview.previewId }),
+      });
       expect(client.returnReview).toHaveBeenCalledWith({ outcome: "approved" });
     } finally {
       await server.close();
@@ -1087,13 +1108,18 @@ describe("built-in diff tool", () => {
 
     try {
       const started = await server.start();
+      const preview = await fetchJson(`${started.url}api/review`);
       const firstSubmission = fetch(`${started.url}api/review`, {
         method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ previewId: preview.previewId }),
       });
       await submitStarted;
 
       const duplicate = await fetch(`${started.url}api/review`, {
         method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ previewId: preview.previewId }),
       });
       expect(duplicate.status).toBe(409);
       await expect(duplicate.json()).resolves.toEqual({
@@ -1130,10 +1156,11 @@ describe("built-in diff tool", () => {
 
     try {
       const started = await server.start();
+      const preview = await fetchJson(`${started.url}api/review`);
       const failed = await fetch(`${started.url}api/review`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ previewId: preview.previewId }),
       });
       expect(failed.status).toBe(500);
       await expect(failed.json()).resolves.toEqual({ error: "database unavailable" });
@@ -1141,7 +1168,7 @@ describe("built-in diff tool", () => {
       const accepted = await fetch(`${started.url}api/review`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ previewId: preview.previewId }),
       });
       expect(accepted.ok).toBe(true);
       expect(onSubmit).toHaveBeenCalledTimes(2);
@@ -1743,7 +1770,7 @@ describe("built-in diff tool", () => {
     }
   });
 
-  it("waits for pending state mutations before returning a review", async () => {
+  it("waits for pending state mutations before previewing a review", async () => {
     let saveCount = 0;
     let markCommentStarted;
     const commentStarted = new Promise((resolve) => {
@@ -1782,16 +1809,18 @@ describe("built-in diff tool", () => {
       });
       await commentStarted;
 
-      const pendingReview = fetch(`${started.url}api/review`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-      });
+      const pendingPreview = fetchJson(`${started.url}api/review`);
       await new Promise((resolve) => setTimeout(resolve, 10));
       expect(client.returnReview).not.toHaveBeenCalled();
 
       finishComment();
       expect((await pendingComment).ok).toBe(true);
-      expect((await pendingReview).ok).toBe(true);
+      const preview = await pendingPreview;
+      await fetchJson(`${started.url}api/review`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ previewId: preview.previewId }),
+      });
       expect(client.returnReview).toHaveBeenCalledWith({
         outcome: "commented",
         review: expect.stringContaining("Pending feedback"),
@@ -1808,10 +1837,12 @@ describe("built-in diff tool", () => {
 
     try {
       const started = await server.start();
+      const preview = await fetchJson(`${started.url}api/review`);
 
       const result = await fetchJson(`${started.url}api/review`, {
         method: "POST",
         headers: { "content-type": "application/json" },
+        body: JSON.stringify({ previewId: preview.previewId }),
       });
       expect(result).toEqual({ status: "returned" });
       expect(client.returnReview).toHaveBeenCalledTimes(1);

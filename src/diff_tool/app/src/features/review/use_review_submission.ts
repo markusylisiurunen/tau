@@ -15,6 +15,43 @@ import type { ReviewSession } from "./use_review_session.js";
 
 type ReviewSubmissionOptions = Pick<ReviewSession, "applyReviewState">;
 
+async function copyText(text: string): Promise<void> {
+  if (window.isSecureContext && navigator.clipboard) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      if (copyTextWithExecCommand(text)) {
+        return;
+      }
+      throw new Error("copy is unavailable in this browser");
+    }
+  }
+
+  if (!copyTextWithExecCommand(text)) {
+    throw new Error("copy is unavailable in this browser");
+  }
+}
+
+function copyTextWithExecCommand(text: string): boolean {
+  const textarea = document.createElement("textarea");
+  const focusedElement = document.activeElement;
+  textarea.value = text;
+  textarea.readOnly = true;
+  textarea.style.opacity = "0";
+  textarea.style.position = "fixed";
+  document.body.append(textarea);
+  try {
+    textarea.select();
+    return document.execCommand("copy");
+  } finally {
+    textarea.remove();
+    if (focusedElement instanceof HTMLElement) {
+      focusedElement.focus();
+    }
+  }
+}
+
 export function useReviewSubmission({
   applyReviewState,
 }: ReviewSubmissionOptions) {
@@ -52,6 +89,27 @@ export function useReviewSubmission({
     }
   }, [finished]);
 
+  const approve = useCallback(async () => {
+    setFinished(true);
+    setPreview(null);
+    setCopied(false);
+    setError(null);
+    try {
+      const approvalPreview = await fetchReviewPreview();
+      setPreview(approvalPreview);
+      if (approvalPreview.submission.outcome === "commented") {
+        setFinished(false);
+        setPreviewOpen(true);
+        return;
+      }
+      await returnReview({ previewId: approvalPreview.previewId });
+    } catch (approveError) {
+      setFinished(false);
+      setPreviewOpen(true);
+      setError(getErrorMessage(approveError));
+    }
+  }, []);
+
   const exclude = useCallback(
     async (item: DiffToolReviewPreviewItem) => {
       setExcludingItem(item);
@@ -80,7 +138,7 @@ export function useReviewSubmission({
 
     setError(null);
     try {
-      await navigator.clipboard.writeText(preview.submission.review);
+      await copyText(preview.submission.review);
       setCopied(true);
     } catch (copyError) {
       setError(getErrorMessage(copyError));
@@ -88,15 +146,19 @@ export function useReviewSubmission({
   }, [preview]);
 
   const submit = useCallback(async () => {
+    if (!preview) {
+      return;
+    }
+
     setFinished(true);
     setError(null);
     try {
-      await returnReview();
+      await returnReview({ previewId: preview.previewId });
     } catch (submitError) {
       setFinished(false);
       setError(getErrorMessage(submitError));
     }
-  }, []);
+  }, [preview]);
 
   const cancel = useCallback(async () => {
     setFinished(true);
@@ -117,6 +179,7 @@ export function useReviewSubmission({
     error,
     openPreview,
     closePreview,
+    approve,
     exclude,
     copy,
     submit,

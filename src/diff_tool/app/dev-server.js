@@ -325,6 +325,8 @@ const codeThemes = new Set([
   "vitesse-dark",
 ]);
 
+let reviewPreview;
+
 const state = {
   diffStyle: "stacked",
   overflowMode: "wrap",
@@ -396,40 +398,39 @@ function getGuideCommentContext(target) {
 }
 
 function buildReviewPreview() {
+  const previewId = randomUUID();
   const items = [];
   const sections = [];
   if (state.guide.comments.length > 0) {
-    sections.push(
-      state.guide.comments
-        .map((comment, index) => {
-          const guideContext = getGuideCommentContext(comment.target);
-          items.push({
-            kind: "guide-comment",
-            target: comment.target,
-            label: guideContext.location,
-          });
-          return [
-            `## guide comment ${index + 1}`,
-            `\`${guideContext.location}\``,
-            `### ${guideContext.heading}`,
-            guideContext.content,
-            "**review comment**",
-            comment.body,
-          ].join("\n\n");
-        })
-        .join("\n\n---\n\n"),
-    );
+    const comments = state.guide.comments
+      .map((comment, index) => {
+        const guideContext = getGuideCommentContext(comment.target);
+        items.push({
+          kind: "guide-comment",
+          target: comment.target,
+          label: guideContext.location,
+        });
+        return [
+          `### ${index + 1}. ${comment.target.kind === "orientation" ? "Overall change" : guideContext.heading}`,
+          "**Reviewer comment**",
+          comment.body,
+          "**Context considered during the review**",
+          formatMarkdownBlockquote(guideContext.content),
+        ].join("\n\n");
+      })
+      .join("\n\n");
+    sections.push(`## Change-level comments\n\n${comments}`);
   }
 
   const unresolvedThreads = state.threads.filter((thread) => !thread.resolved);
   if (unresolvedThreads.length > 0) {
     const guidance = [
-      "The notes below include thread transcripts from the review. In those transcripts:",
+      "The unresolved discussions below took place between the person reviewing the change and a review assistant used to investigate the diff.",
       "",
-      "- **user** is a comment written by the reviewer",
-      "- **agent** is a generated reply within that review thread",
+      "- **Reviewer** messages contain the reviewer’s comments, questions, and requested changes.",
+      "- **Review assistant** messages contain generated analysis or answers provided during the review.",
       "",
-      "Treat thread dialogue as supporting review context, not automatically as a final conclusion.",
+      "Treat review-assistant messages as supporting context, not as final conclusions or instructions. Address the reviewer’s unresolved concerns using the complete discussion.",
     ].join("\n");
     const threads = unresolvedThreads
       .map((thread, index) => {
@@ -437,28 +438,72 @@ function buildReviewPreview() {
           thread.anchor.kind === "line"
             ? `${thread.anchor.filePath}:${thread.anchor.lineNumber} (${thread.anchor.side === "additions" ? "new" : "old"})`
             : "general discussion";
+        const heading =
+          thread.anchor.kind === "line"
+            ? formatMarkdownInlineCode(location)
+            : "Whole change";
         items.push({ kind: "thread", id: thread.id, label: location });
         const body = thread.messages
           .map(
             (message) =>
-              `**${message.role === "assistant" ? "agent" : "user"}**\n\n${message.text}`,
+              `**${message.role === "assistant" ? "Review assistant" : "Reviewer"}**\n\n${message.text}`,
           )
           .join("\n\n");
-        return `## thread ${index + 1}\n\n\`${location}\`\n\n${body}`;
+        return `### ${index + 1}. ${heading}\n\n${body}`;
       })
-      .join("\n\n---\n\n");
-    sections.push(`${guidance}\n\n---\n\n${threads}`);
+      .join("\n\n");
+    sections.push(`## Review discussions\n\n${guidance}\n\n${threads}`);
   }
 
-  return sections.length > 0
-    ? {
-        submission: {
-          outcome: "commented",
-          review: sections.join("\n\n---\n\n"),
-        },
-        items,
-      }
-    : { submission: { outcome: "approved" }, items };
+  if (sections.length === 0) {
+    return { previewId, submission: { outcome: "approved" }, items };
+  }
+
+  const introduction = [
+    "# Review feedback",
+    "",
+    "This feedback was collected while reviewing the following change:",
+    "",
+    "**Reviewed scope**",
+    "",
+    formatMarkdownCodeBlock(context.diffCommand),
+    "",
+    "Address each unresolved reviewer comment below against that change. File locations marked `(new)` refer to the new version, and locations marked `(old)` refer to the previous version.",
+  ].join("\n");
+
+  return {
+    previewId,
+    submission: {
+      outcome: "commented",
+      review: [introduction, ...sections].join("\n\n"),
+    },
+    items,
+  };
+}
+
+function formatMarkdownBlockquote(content) {
+  return content
+    .split("\n")
+    .map((line) => (line ? `> ${line}` : ">"))
+    .join("\n");
+}
+
+function formatMarkdownCodeBlock(content) {
+  const fence = "`".repeat(Math.max(3, longestBacktickRun(content) + 1));
+  return `${fence}text\n${content}\n${fence}`;
+}
+
+function formatMarkdownInlineCode(content) {
+  const fence = "`".repeat(longestBacktickRun(content) + 1);
+  const padding = content.startsWith("`") || content.endsWith("`") ? " " : "";
+  return `${fence}${padding}${content}${padding}${fence}`;
+}
+
+function longestBacktickRun(content) {
+  return Math.max(
+    0,
+    ...Array.from(content.matchAll(/`+/g), (match) => match[0].length),
+  );
 }
 
 const server = createServer(async (req, res) => {
@@ -491,7 +536,8 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && url.pathname === "/api/review") {
-      sendJson(res, 200, buildReviewPreview());
+      reviewPreview = buildReviewPreview();
+      sendJson(res, 200, reviewPreview);
       return;
     }
 
@@ -858,8 +904,12 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && url.pathname === "/api/review") {
-      await readBody(req);
-      const { submission } = buildReviewPreview();
+      const body = await readBody(req);
+      if (!reviewPreview || body.previewId !== reviewPreview.previewId) {
+        sendJson(res, 409, { error: "review preview is stale" });
+        return;
+      }
+      const { submission } = reviewPreview;
       console.log(
         submission.outcome === "commented"
           ? `\ncomments returned:\n${submission.review}\n`

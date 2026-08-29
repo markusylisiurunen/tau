@@ -24,6 +24,7 @@ import type {
   DiffToolReviewPreview,
   DiffToolReviewPreviewItem,
   DiffToolReviewState,
+  DiffToolReviewSubmissionPayload,
   DiffToolStatePatch,
   DiffToolStateResponse,
   DiffToolThreadAnchor,
@@ -51,6 +52,7 @@ export type {
   DiffToolReviewPreview,
   DiffToolReviewPreviewItem,
   DiffToolReviewState,
+  DiffToolReviewSubmissionPayload,
   DiffToolThreadAnchor,
   DiffToolThreadMessage,
 };

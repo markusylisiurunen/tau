@@ -9,6 +9,7 @@ import type {
   DiffToolGuideOperation,
   ResolveThreadPayload,
   DiffToolReviewPreview,
+  DiffToolReviewSubmissionPayload,
   ReviewStatePatch,
   StateResponse,
   ThreadReplyPayload,
@@ -145,8 +146,13 @@ export async function fetchReviewPreview(): Promise<DiffToolReviewPreview> {
   return request<DiffToolReviewPreview>("api/review");
 }
 
-export async function returnReview(): Promise<{ status: string }> {
-  return request<{ status: string }>("api/review", { method: "POST" });
+export async function returnReview(
+  payload: DiffToolReviewSubmissionPayload,
+): Promise<{ status: string }> {
+  return request<{ status: string }>("api/review", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
 export async function cancelReview(): Promise<{ status: string }> {

@@ -164,8 +164,13 @@ export type DiffToolReviewPreviewItem =
     };
 
 export type DiffToolReviewPreview = {
+  previewId: string;
   submission: DiffReviewSubmission;
   items: DiffToolReviewPreviewItem[];
+};
+
+export type DiffToolReviewSubmissionPayload = {
+  previewId: string;
 };
 
 export type DiffToolStatePatch = {

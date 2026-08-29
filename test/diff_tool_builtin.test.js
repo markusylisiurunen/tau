@@ -719,7 +719,27 @@ describe("built-in diff tool", () => {
         }),
       });
 
+      const preview = await fetchJson(`${started.url}api/review`);
+      expect(preview.items).toEqual([
+        {
+          kind: "guide-comment",
+          target: { kind: "orientation" },
+          label: "guide · orientation",
+        },
+        {
+          kind: "guide-comment",
+          target: { kind: "topic", topicId: addedTopic.id },
+          label: "guide topic · Safe retry behavior",
+        },
+        {
+          kind: "guide-comment",
+          target: { kind: "question", questionId: askedQuestion.id },
+          label: "guide question · Can requests be retried?",
+        },
+      ]);
+
       await fetchJson(`${started.url}api/review`, { method: "POST" });
+      expect(client.returnReview).toHaveBeenCalledWith(preview.submission);
       expect(client.returnReview).toHaveBeenCalledWith({
         outcome: "commented",
         review: expect.stringContaining(
@@ -998,6 +1018,54 @@ describe("built-in diff tool", () => {
       expect(restoredCall.message).toContain("What about retries?");
     } finally {
       await secondServer.close();
+    }
+  });
+
+  it("previews the exact submission and regenerates it after a thread is excluded", async () => {
+    const client = createClientStub();
+    const server = new DiffToolHttpServer({ client });
+
+    try {
+      const started = await server.start();
+      const created = await fetchJson(`${started.url}api/thread`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          anchor: { kind: "detached" },
+          body: "Document the migration risk.",
+        }),
+      });
+
+      const preview = await fetchJson(`${started.url}api/review`);
+      expect(preview).toEqual({
+        submission: {
+          outcome: "commented",
+          review: expect.stringContaining("Document the migration risk."),
+        },
+        items: [
+          {
+            kind: "thread",
+            id: created.threadId,
+            label: "general discussion",
+          },
+        ],
+      });
+
+      await fetchJson(`${started.url}api/thread/resolve`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: created.threadId, resolved: true }),
+      });
+      const approvedPreview = await fetchJson(`${started.url}api/review`);
+      expect(approvedPreview).toEqual({
+        submission: { outcome: "approved" },
+        items: [],
+      });
+
+      await fetchJson(`${started.url}api/review`, { method: "POST" });
+      expect(client.returnReview).toHaveBeenCalledWith({ outcome: "approved" });
+    } finally {
+      await server.close();
     }
   });
 

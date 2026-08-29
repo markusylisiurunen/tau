@@ -33,6 +33,7 @@ The HTTP server (`http_server.ts`) serves these endpoints, which the React app c
 | POST | `/api/guide/generate` | Start or join generation of the reviewer guide |
 | POST | `/api/guide/operate` | Add or revise a guide topic, or ask a reviewer question |
 | POST | `/api/guide/comment` | Save the review comment for one guide target |
+| GET | `/api/review` | Preview the composed review text and its source items |
 | POST | `/api/review` | Return the composed review text to Tau |
 | POST | `/api/cancel` | Cancel the review session |
 

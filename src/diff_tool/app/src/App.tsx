@@ -6,6 +6,7 @@ import { useDiffRendererReady } from "./features/diff/use_diff_renderer_ready.js
 import { Guide } from "./features/guide/guide.js";
 import { GuideConversations } from "./features/guide/guide_conversations.js";
 import { useGuide } from "./features/guide/use_guide.js";
+import { ReviewSubmissionDialog } from "./features/review/review_submission_dialog.js";
 import { TopBar } from "./features/review/top_bar.js";
 import { useReviewNavigation } from "./features/review/use_review_navigation.js";
 import { useReviewSession } from "./features/review/use_review_session.js";
@@ -42,7 +43,9 @@ export function App() {
     setGuideLoading: session.setGuideLoading,
     syncReviewState: session.syncReviewState,
   });
-  const submission = useReviewSubmission();
+  const submission = useReviewSubmission({
+    applyReviewState: session.applyReviewState,
+  });
   const diffRendererReady = useDiffRendererReady(
     session.files,
     session.reviewState.codeTheme,
@@ -76,7 +79,7 @@ export function App() {
           onOverflowModeChange={(overflowMode) => {
             session.applyStatePatch({ overflowMode });
           }}
-          onSubmit={submission.submit}
+          onSubmit={submission.openPreview}
           onCancel={submission.cancel}
         />
         {navigation.mode === "guide" ? (
@@ -106,6 +109,7 @@ export function App() {
           />
         )}
       </div>
+      <ReviewSubmissionDialog {...submission} />
       {LocalAgentation ? (
         <Suspense fallback={null}>
           <LocalAgentation />

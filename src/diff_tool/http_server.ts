@@ -757,6 +757,12 @@ export class DiffToolHttpServer {
       return;
     }
 
+    if (method === "GET" && requestUrl.pathname === "/api/review") {
+      await this.stateMutationQueue;
+      this.sendJson(response, 200, this.reviewState.buildReviewPreview());
+      return;
+    }
+
     if (method === "POST" && requestUrl.pathname === "/api/review") {
       await this.readJsonBody(request);
       await this.stateMutationQueue;
@@ -766,7 +772,7 @@ export class DiffToolHttpServer {
       }
 
       this.submissionState = "submitting";
-      const submission = this.reviewState.buildReviewSubmission();
+      const submission = this.reviewState.buildReviewPreview().submission;
       const context = this.context;
       if (!context) {
         this.submissionState = "active";

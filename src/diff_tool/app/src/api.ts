@@ -8,6 +8,7 @@ import type {
   GuideCommentPayload,
   DiffToolGuideOperation,
   ResolveThreadPayload,
+  DiffToolReviewPreview,
   ReviewStatePatch,
   StateResponse,
   ThreadReplyPayload,
@@ -138,6 +139,10 @@ export async function saveGuideComment(
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+export async function fetchReviewPreview(): Promise<DiffToolReviewPreview> {
+  return request<DiffToolReviewPreview>("api/review");
 }
 
 export async function returnReview(): Promise<{ status: string }> {

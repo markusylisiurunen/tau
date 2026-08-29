@@ -395,6 +395,72 @@ function getGuideCommentContext(target) {
   };
 }
 
+function buildReviewPreview() {
+  const items = [];
+  const sections = [];
+  if (state.guide.comments.length > 0) {
+    sections.push(
+      state.guide.comments
+        .map((comment, index) => {
+          const guideContext = getGuideCommentContext(comment.target);
+          items.push({
+            kind: "guide-comment",
+            target: comment.target,
+            label: guideContext.location,
+          });
+          return [
+            `## guide comment ${index + 1}`,
+            `\`${guideContext.location}\``,
+            `### ${guideContext.heading}`,
+            guideContext.content,
+            "**review comment**",
+            comment.body,
+          ].join("\n\n");
+        })
+        .join("\n\n---\n\n"),
+    );
+  }
+
+  const unresolvedThreads = state.threads.filter((thread) => !thread.resolved);
+  if (unresolvedThreads.length > 0) {
+    const guidance = [
+      "The notes below include thread transcripts from the review. In those transcripts:",
+      "",
+      "- **user** is a comment written by the reviewer",
+      "- **agent** is a generated reply within that review thread",
+      "",
+      "Treat thread dialogue as supporting review context, not automatically as a final conclusion.",
+    ].join("\n");
+    const threads = unresolvedThreads
+      .map((thread, index) => {
+        const location =
+          thread.anchor.kind === "line"
+            ? `${thread.anchor.filePath}:${thread.anchor.lineNumber} (${thread.anchor.side === "additions" ? "new" : "old"})`
+            : "general discussion";
+        items.push({ kind: "thread", id: thread.id, label: location });
+        const body = thread.messages
+          .map(
+            (message) =>
+              `**${message.role === "assistant" ? "agent" : "user"}**\n\n${message.text}`,
+          )
+          .join("\n\n");
+        return `## thread ${index + 1}\n\n\`${location}\`\n\n${body}`;
+      })
+      .join("\n\n---\n\n");
+    sections.push(`${guidance}\n\n---\n\n${threads}`);
+  }
+
+  return sections.length > 0
+    ? {
+        submission: {
+          outcome: "commented",
+          review: sections.join("\n\n---\n\n"),
+        },
+        items,
+      }
+    : { submission: { outcome: "approved" }, items };
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
 
@@ -421,6 +487,11 @@ const server = createServer(async (req, res) => {
       } else {
         sendJson(res, 200, { scope: "session", patch: sessionPatch });
       }
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/review") {
+      sendJson(res, 200, buildReviewPreview());
       return;
     }
 
@@ -788,45 +859,10 @@ const server = createServer(async (req, res) => {
 
     if (req.method === "POST" && url.pathname === "/api/review") {
       await readBody(req);
-      const unresolvedThreads = state.threads.filter(
-        (thread) => !thread.resolved,
-      );
-      const threadReview = unresolvedThreads.length
-        ? unresolvedThreads
-            .map((thread, index) => {
-              const location =
-                thread.anchor.kind === "line"
-                  ? `${thread.anchor.filePath}:${thread.anchor.lineNumber} (${thread.anchor.side === "additions" ? "new" : "old"})`
-                  : "general discussion";
-              const body = thread.messages
-                .map(
-                  (message) =>
-                    `**${message.role === "assistant" ? "agent" : "user"}**\n\n${message.text}`,
-                )
-                .join("\n\n");
-              return `## thread ${index + 1}\n\n\`${location}\`\n\n${body}`;
-            })
-            .join("\n\n---\n\n")
-        : "";
-      const guideReview = state.guide.comments
-        .map((comment, index) => {
-          const context = getGuideCommentContext(comment.target);
-          return [
-            `## guide comment ${index + 1}`,
-            `\`${context.location}\``,
-            `### ${context.heading}`,
-            context.content,
-            "**review comment**",
-            comment.body,
-          ].join("\n\n");
-        })
-        .join("\n\n---\n\n");
-      const review = [guideReview, threadReview]
-        .filter(Boolean)
-        .join("\n\n---\n\n");
+      const { submission } = buildReviewPreview();
       console.log(
-        review
-          ? `\ncomments returned:\n${review}\n`
+        submission.outcome === "commented"
+          ? `\ncomments returned:\n${submission.review}\n`
           : "\nreview approved without comments\n",
       );
       sendJson(res, 200, { status: "returned" });

@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import type { DiffReviewSubmission } from "../core/diff_review/index.js";
 import type {
   DiffToolCommentThread,
   DiffToolCreateThreadPayload,
@@ -7,6 +6,8 @@ import type {
   DiffToolGuideCommentTarget,
   DiffToolGuideOperation,
   DiffToolGuideOperationResult,
+  DiffToolReviewPreview,
+  DiffToolReviewPreviewItem,
   DiffToolReviewState,
   DiffToolStatePatch,
   DiffToolThreadAnchor,
@@ -367,19 +368,23 @@ export class DiffToolReviewStateStore {
     return `${locationPrefix}Continue this restored review conversation. Its previous transcript is included below.\n\n${transcript}`;
   }
 
-  buildReviewSubmission(): DiffReviewSubmission {
+  buildReviewPreview(): DiffToolReviewPreview {
     if (!hasDiffToolReviewComments(this.state)) {
-      return { outcome: "approved" };
+      return { submission: { outcome: "approved" }, items: [] };
     }
 
-    const unresolvedThreads = this.state.threads.filter((thread) => !thread.resolved);
-    const guideComments = this.state.guide.comments;
+    const items: DiffToolReviewPreviewItem[] = [];
     const sections: string[] = [];
-    if (guideComments.length > 0) {
+    if (this.state.guide.comments.length > 0) {
       sections.push(
-        guideComments
+        this.state.guide.comments
           .map((comment, index) => {
             const context = formatGuideCommentContext(this.state.guide, comment.target);
+            items.push({
+              kind: "guide-comment",
+              target: { ...comment.target },
+              label: context.location,
+            });
             return [
               `## guide comment ${index + 1}`,
               `\`${context.location}\``,
@@ -392,6 +397,8 @@ export class DiffToolReviewStateStore {
           .join("\n\n---\n\n"),
       );
     }
+
+    const unresolvedThreads = this.state.threads.filter((thread) => !thread.resolved);
     if (unresolvedThreads.length > 0) {
       const guidance = [
         "The notes below include thread transcripts from the review. In those transcripts:",
@@ -403,10 +410,8 @@ export class DiffToolReviewStateStore {
       ].join("\n");
       const threads = unresolvedThreads
         .map((thread, index) => {
-          const location =
-            thread.anchor.kind === "line"
-              ? `${thread.anchor.filePath}:${thread.anchor.lineNumber} (${thread.anchor.side === "additions" ? "new" : "old"})`
-              : "general discussion";
+          const location = formatThreadLocation(thread);
+          items.push({ kind: "thread", id: thread.id, label: location });
           const body = thread.messages
             .map(
               (message) =>
@@ -420,14 +425,23 @@ export class DiffToolReviewStateStore {
     }
 
     return {
-      outcome: "commented",
-      review: sections.join("\n\n---\n\n"),
+      submission: {
+        outcome: "commented",
+        review: sections.join("\n\n---\n\n"),
+      },
+      items,
     };
   }
 
   private findThreadInternal(id: string): DiffToolCommentThread | undefined {
     return this.state.threads.find((thread) => thread.id === id);
   }
+}
+
+function formatThreadLocation(thread: DiffToolCommentThread): string {
+  return thread.anchor.kind === "line"
+    ? `${thread.anchor.filePath}:${thread.anchor.lineNumber} (${thread.anchor.side === "additions" ? "new" : "old"})`
+    : "general discussion";
 }
 
 function formatGuideCommentContext(

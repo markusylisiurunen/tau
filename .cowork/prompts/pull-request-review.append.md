@@ -1,3 +1,3 @@
-Inspect @@skill:code-review for additional guidance on finding, validating, and prioritizing actionable issues. Apply relevant review principles, but follow the built-in workflow's scope, materiality threshold, inline-comment format, and GitHub publication contract instead of the skill's aggregate output format.
+Inspect @@skill:code-review and follow its guidance for finding qualification, prioritization, ordering, explanation, and fix recommendations. Cowork remains authoritative for the complete pull request snapshot, orchestration and trust rules, and GitHub publication contract. Adapt the skill's aggregate output to the GitHub review interface by publishing each finding as a separate unnumbered inline comment. Omit aggregate section headings, location fields, gaps sections, and finding numbers while preserving each finding's priority, title, and substantive content.
 
 Use review subagents with launch model `openai-codex/gpt-5.6-luna:high`.

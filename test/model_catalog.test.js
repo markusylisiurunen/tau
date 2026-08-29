@@ -41,17 +41,17 @@ describe("model catalog", () => {
     expect(sol.provider).toBe("openai");
     expect(sol.api).toBe("openai-responses");
     expect(sol.cost).toEqual({
-      input: 5,
-      output: 30,
-      cacheRead: 0.5,
-      cacheWrite: 6.25,
+      input: 4,
+      output: 20,
+      cacheRead: 0.4,
+      cacheWrite: 5,
       tiers: [
         {
           inputTokensAbove: 272000,
-          input: 10,
-          output: 45,
-          cacheRead: 1,
-          cacheWrite: 12.5,
+          input: 8,
+          output: 30,
+          cacheRead: 0.8,
+          cacheWrite: 10,
         },
       ],
     });

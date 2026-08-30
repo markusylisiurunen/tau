@@ -77,6 +77,7 @@ describe("gemini transcription", () => {
     const transcript = await transcribeGeminiAudio({
       apiKey: "gemini-key",
       audio: Buffer.from("audio payload"),
+      durationMs: 1_000,
       mimeType: "audio/ogg",
       fetchImpl: fetchMock,
       context: {
@@ -131,6 +132,7 @@ describe("gemini transcription", () => {
     await transcribeGeminiAudio({
       apiKey: "gemini-key",
       audio: Buffer.from("audio payload"),
+      durationMs: 1_000,
       context: { messages: [{ role: "user", text: "Use the project vocabulary" }] },
       fetchImpl: fetchMock,
     });
@@ -210,6 +212,28 @@ describe("gemini transcription", () => {
     expect(socket.close).toHaveBeenCalledTimes(1);
   });
 
+  it("rejects streaming audio longer than 30 minutes", async () => {
+    const socket = new EventEmitter();
+    socket.send = vi.fn();
+    socket.close = vi.fn();
+    socket.terminate = vi.fn();
+    const transcription = startGeminiTranscription({
+      apiKey: "gemini-key",
+      webSocketFactory: vi.fn(() => socket),
+    });
+    const oneMinute = Buffer.alloc(16_000 * 2 * 60);
+
+    for (let minute = 0; minute < 30; minute += 1) {
+      transcription.appendAudio(oneMinute);
+    }
+    transcription.appendAudio(Buffer.alloc(1));
+
+    await expect(transcription.finish()).rejects.toThrow(
+      "audio exceeds the 30-minute Gemini transcription limit",
+    );
+    expect(socket.terminate).toHaveBeenCalledTimes(1);
+  });
+
   it("starts the session readiness timeout after keyword extraction", async () => {
     vi.useFakeTimers();
     const keywordResponse = Promise.withResolvers();
@@ -256,6 +280,20 @@ describe("gemini transcription", () => {
     }
   });
 
+  it("rejects completed audio longer than 30 minutes before upload", async () => {
+    const fetchMock = vi.fn();
+
+    await expect(
+      transcribeGeminiAudio({
+        apiKey: "gemini-key",
+        audio: Buffer.from("audio payload"),
+        durationMs: 30 * 60_000 + 1,
+        fetchImpl: fetchMock,
+      }),
+    ).rejects.toThrow("audio exceeds the 30-minute Gemini transcription limit");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("reports provider failures and deletes the uploaded file", async () => {
     const fetchMock = createGeminiFetchMock({
       transcript: "service unavailable",
@@ -266,6 +304,7 @@ describe("gemini transcription", () => {
       transcribeGeminiAudio({
         apiKey: "gemini-key",
         audio: Buffer.from("audio payload"),
+        durationMs: 1_000,
         fetchImpl: fetchMock,
       }),
     ).rejects.toThrow("service unavailable");

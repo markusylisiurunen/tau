@@ -20,10 +20,10 @@ import type { SpeechToTextContext } from "../core/utils/speech_to_text_context.j
 export const LISTEN_TEMP_FILE_TEMPLATE = join(tmpdir(), "tau-listen.XXXXXX");
 export const LISTEN_CAPTURE_START_TIMEOUT_MS = 15_000;
 export const LISTEN_RECORDING_MIN_BYTES = 1024;
-export const LISTEN_RECORDING_MAX_DURATION_MS = 5 * 60 * 1000;
 
 export type ListenRecording = {
   audioPath: string;
+  startedAt: number;
   stopRequested: boolean;
   abortController: AbortController;
   completion: Promise<SpawnCaptureResult>;

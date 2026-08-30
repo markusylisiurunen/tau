@@ -5571,7 +5571,7 @@ describe("SessionChatController", () => {
       config: { apiKeys: { openai: "openai-key" } },
       speechToTextDeps: { fetchImpl, spawnImpl, webSocketFactory },
     });
-    controller.retainedListenAudioPath = audioPath;
+    controller.retainedListenAudio = { audioPath, durationMs: 1_000 };
 
     try {
       await controller.onUserInput("/listen retry");
@@ -5624,6 +5624,7 @@ describe("SessionChatController", () => {
     });
     controller.listenRecording = {
       audioPath,
+      startedAt: Date.now(),
       stopRequested: false,
       abortController: new AbortController(),
       completion: Promise.resolve(),
@@ -5684,6 +5685,7 @@ describe("SessionChatController", () => {
     });
     controller.listenRecording = {
       audioPath,
+      startedAt: Date.now(),
       stopRequested: false,
       abortController: new AbortController(),
       completion: Promise.resolve(),
@@ -5718,7 +5720,7 @@ describe("SessionChatController", () => {
       targetLabel: "in-process",
       deps: createMockDeps(),
     });
-    controller.retainedListenAudioPath = audioPath;
+    controller.retainedListenAudio = { audioPath, durationMs: 1_000 };
 
     try {
       await controller.onUserInput("/listen discard");
@@ -5732,7 +5734,7 @@ describe("SessionChatController", () => {
       tone: "default",
       durationMs: 3000,
     });
-    expect(controller.retainedListenAudioPath).toBeUndefined();
+    expect(controller.retainedListenAudio).toBeUndefined();
   });
 
   it("deletes retained voice input when a new recording replaces it", async () => {
@@ -5786,7 +5788,7 @@ describe("SessionChatController", () => {
       },
       speechToTextDeps: { webSocketFactory: createIdleSpeechWebSocketFactory() },
     });
-    controller.retainedListenAudioPath = retainedPath;
+    controller.retainedListenAudio = { audioPath: retainedPath, durationMs: 1_000 };
 
     try {
       await controller.onUserInput("/listen");
@@ -5844,7 +5846,7 @@ describe("SessionChatController", () => {
       },
       speechToTextDeps: { webSocketFactory: createIdleSpeechWebSocketFactory() },
     });
-    controller.retainedListenAudioPath = retainedPath;
+    controller.retainedListenAudio = { audioPath: retainedPath, durationMs: 1_000 };
 
     try {
       await controller.onUserInput("/listen");
@@ -5854,7 +5856,7 @@ describe("SessionChatController", () => {
       await rm(nextPath, { force: true });
     }
 
-    expect(controller.retainedListenAudioPath).toBe(retainedPath);
+    expect(controller.retainedListenAudio).toEqual({ audioPath: retainedPath, durationMs: 1_000 });
     expect(view.transcriptNotices.at(-1)).toEqual({
       text: "failed to start recording",
       tone: "error",
@@ -5912,7 +5914,7 @@ describe("SessionChatController", () => {
       },
       speechToTextDeps: { webSocketFactory: createIdleSpeechWebSocketFactory() },
     });
-    controller.retainedListenAudioPath = retainedPath;
+    controller.retainedListenAudio = { audioPath: retainedPath, durationMs: 1_000 };
 
     vi.useFakeTimers();
     try {
@@ -5927,7 +5929,7 @@ describe("SessionChatController", () => {
       await rm(nextPath, { force: true });
     }
 
-    expect(controller.retainedListenAudioPath).toBe(retainedPath);
+    expect(controller.retainedListenAudio).toEqual({ audioPath: retainedPath, durationMs: 1_000 });
     expect(view.transcriptNotices.at(-1)).toEqual({
       text: "failed to start recording",
       tone: "error",
@@ -5987,7 +5989,7 @@ describe("SessionChatController", () => {
       },
       speechToTextDeps: { webSocketFactory: createIdleSpeechWebSocketFactory() },
     });
-    controller.retainedListenAudioPath = retainedPath;
+    controller.retainedListenAudio = { audioPath: retainedPath, durationMs: 1_000 };
 
     try {
       const start = controller.onUserInput("/listen");
@@ -6001,7 +6003,7 @@ describe("SessionChatController", () => {
     }
 
     expect(captureSignal.aborted).toBe(true);
-    expect(controller.retainedListenAudioPath).toBe(retainedPath);
+    expect(controller.retainedListenAudio).toEqual({ audioPath: retainedPath, durationMs: 1_000 });
     expect(view.transcriptNotices).not.toContainEqual(
       expect.objectContaining({ text: "failed to start recording" }),
     );
@@ -6018,7 +6020,7 @@ describe("SessionChatController", () => {
       targetLabel: "in-process",
       deps: createMockDeps(),
     });
-    controller.retainedListenAudioPath = audioPath;
+    controller.retainedListenAudio = { audioPath, durationMs: 1_000 };
 
     try {
       await controller.dispose();

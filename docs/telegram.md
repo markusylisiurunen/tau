@@ -280,7 +280,7 @@ An attachment-only DM queues files for the next text or voice/audio turn; it doe
 
 The local execution environment can access these runner temporary paths. Pending attachments and group context are not snapshot data. Shutdown clears their queues, and startup removes stale `tau-telegram-attachments-*` directories.
 
-Telegram `voice` and `audio` messages are downloaded and transcribed. Direct DM turns and bot-triggering group turns echo the transcript to the chat before submission so the sender can verify it.
+Telegram `voice` and `audio` messages up to 20 minutes long are downloaded and transcribed. Direct DM turns and bot-triggering group turns echo the transcript to the chat before submission so the sender can verify it.
 
 OpenAI is the default. Select Gemini with `speechToText.provider`. Runner credentials are:
 

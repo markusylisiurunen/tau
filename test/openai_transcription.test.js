@@ -293,6 +293,25 @@ describe("OpenAI transcription", () => {
     expect(harness.socket.closed).toBe(true);
   });
 
+  it("rejects streaming audio longer than 30 minutes", async () => {
+    const harness = createWebSocketHarness();
+    const transcription = startOpenAITranscription({
+      apiKey: "openai-key",
+      webSocketFactory: harness.factory,
+    });
+    const oneMinute = Buffer.alloc(24_000 * 2 * 60);
+
+    for (let minute = 0; minute < 30; minute += 1) {
+      transcription.appendAudio(oneMinute);
+    }
+    transcription.appendAudio(Buffer.alloc(1));
+
+    await expect(transcription.finish()).rejects.toThrow(
+      "audio exceeds the 30-minute OpenAI transcription limit",
+    );
+    expect(harness.socket.terminated).toBe(true);
+  });
+
   it("uploads completed audio through OpenAI file transcription", async () => {
     const audio = Buffer.from("encoded audio");
     const pcm = Buffer.from([5, 6, 7, 8]);
@@ -310,6 +329,7 @@ describe("OpenAI transcription", () => {
     const transcript = await transcribeOpenAIAudio({
       apiKey: "openai-key",
       audio,
+      durationMs: 1_000,
       context: {
         messages: [{ role: "user", text: `We are discussing Tau. ${"context ".repeat(500)}` }],
       },
@@ -365,6 +385,7 @@ describe("OpenAI transcription", () => {
     const transcription = transcribeOpenAIAudio({
       apiKey: "openai-key",
       audio: Buffer.from("encoded audio"),
+      durationMs: 1_000,
       signal: abortController.signal,
       fetchImpl: vi.fn(),
       spawnImpl,
@@ -377,7 +398,7 @@ describe("OpenAI transcription", () => {
     expect(decoderSignal.aborted).toBe(true);
   });
 
-  it("rejects decoded audio longer than five minutes", async () => {
+  it("rejects decoded audio longer than 30 minutes", async () => {
     const spawnImpl = vi.fn(async (_command, _args, options) => {
       const stdout = new EventEmitter();
       options.onSpawn({ stdout });
@@ -386,7 +407,11 @@ describe("OpenAI transcription", () => {
           resolve({ ...successfulSpawnResult(), aborted: true });
         });
       });
-      stdout.emit("data", Buffer.alloc(16_000 * 2 * 300 + 1));
+      const oneMinute = Buffer.alloc(16_000 * 2 * 60);
+      for (let minute = 0; minute < 30; minute += 1) {
+        stdout.emit("data", oneMinute);
+      }
+      stdout.emit("data", Buffer.alloc(1));
       return await completion;
     });
 
@@ -394,10 +419,11 @@ describe("OpenAI transcription", () => {
       transcribeOpenAIAudio({
         apiKey: "openai-key",
         audio: Buffer.from("encoded audio"),
+        durationMs: 1_000,
         fetchImpl: vi.fn(),
         spawnImpl,
       }),
-    ).rejects.toThrow("audio exceeds the five-minute OpenAI transcription limit");
+    ).rejects.toThrow("audio exceeds the 30-minute OpenAI transcription limit");
   });
 
   it("reports OpenAI file transcription errors", async () => {
@@ -416,6 +442,7 @@ describe("OpenAI transcription", () => {
       transcribeOpenAIAudio({
         apiKey: "openai-key",
         audio: Buffer.from("encoded audio"),
+        durationMs: 1_000,
         fetchImpl,
         spawnImpl,
       }),
@@ -434,6 +461,7 @@ describe("OpenAI transcription", () => {
       transcribeOpenAIAudio({
         apiKey: "openai-key",
         audio: Buffer.from("encoded audio"),
+        durationMs: 1_000,
         fetchImpl: vi.fn(async () => new Response(JSON.stringify({ text: "" }))),
         spawnImpl,
       }),

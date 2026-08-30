@@ -21,6 +21,9 @@ const GEMINI_TRANSCRIPTION_MAX_KEYWORD_CHARACTERS_TOTAL = 10_000;
 const GEMINI_TRANSCRIPTION_KEYWORD_TIMEOUT_MS = 15_000;
 const GEMINI_TRANSCRIPTION_CONNECT_TIMEOUT_MS = 15_000;
 const GEMINI_TRANSCRIPTION_COMPLETION_TIMEOUT_MS = 30_000;
+const GEMINI_TRANSCRIPTION_MAX_DURATION_MS = 30 * 60 * 1_000;
+const GEMINI_TRANSCRIPTION_MAX_STREAMING_PCM_BYTES =
+  16_000 * 2 * (GEMINI_TRANSCRIPTION_MAX_DURATION_MS / 1_000);
 const GEMINI_FILE_DELETE_TIMEOUT_MS = 5_000;
 const DEFAULT_GEMINI_AUDIO_MIME_TYPE = "audio/wav";
 
@@ -89,6 +92,7 @@ const liveMessageSchema = z
 export type GeminiTranscriptionOptions = {
   apiKey: string;
   audio: Buffer;
+  durationMs: number;
   mimeType?: string;
   context?: SpeechToTextContext;
   signal?: AbortSignal;
@@ -122,6 +126,7 @@ class GeminiStreamingTranscriptionImpl implements GeminiStreamingTranscription {
   private failure?: Error;
   private completedTranscript?: string;
   private hasAudio = false;
+  private audioBytes = 0;
   private pendingAudio: Buffer[] = [];
   private readyTimeout?: ReturnType<typeof setTimeout>;
   private completionTimeout?: ReturnType<typeof setTimeout>;
@@ -182,6 +187,11 @@ class GeminiStreamingTranscriptionImpl implements GeminiStreamingTranscription {
 
   appendAudio(audio: Buffer): void {
     if (audio.length === 0 || this.aborted || this.failure || this.completedTranscript) return;
+    this.audioBytes += audio.length;
+    if (this.audioBytes > GEMINI_TRANSCRIPTION_MAX_STREAMING_PCM_BYTES) {
+      this.fail(new Error("audio exceeds the 30-minute Gemini transcription limit"));
+      return;
+    }
     this.hasAudio = true;
     if (!this.ready) {
       this.pendingAudio.push(audio);
@@ -374,6 +384,9 @@ export async function transcribeGeminiAudio(options: GeminiTranscriptionOptions)
   const apiKey = options.apiKey.trim();
   if (!apiKey) {
     throw new Error("missing Gemini API key");
+  }
+  if (options.durationMs > GEMINI_TRANSCRIPTION_MAX_DURATION_MS) {
+    throw new Error("audio exceeds the 30-minute Gemini transcription limit");
   }
 
   const fetchFn = options.fetchImpl ?? fetch;

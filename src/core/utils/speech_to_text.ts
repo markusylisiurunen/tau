@@ -4,6 +4,8 @@ import { startOpenAITranscription, transcribeOpenAIAudio } from "./openai_transc
 import type { spawnWithCapture } from "./spawn_capture.js";
 import type { SpeechToTextContext } from "./speech_to_text_context.js";
 
+export const SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS = 20 * 60 * 1_000;
+
 export type SpeechToTextWebSocket = {
   on(event: "open", listener: () => void): unknown;
   on(event: "message", listener: (data: unknown) => void): unknown;
@@ -35,12 +37,19 @@ export type SpeechToTextTranscriptionOptions = {
 
 export type SpeechToTextRecording = {
   audio: Buffer;
+  durationMs: number;
   mimeType?: string;
 };
 
 export type SpeechToTextTranscription = {
   appendAudio(audio: Buffer): void;
   finish(recording: SpeechToTextRecording, options?: { signal?: AbortSignal }): Promise<string>;
+  abort(): void;
+};
+
+type ProviderStreamingTranscription = {
+  appendAudio(audio: Buffer): void;
+  finish(options?: { signal?: AbortSignal }): Promise<string>;
   abort(): void;
 };
 
@@ -59,24 +68,22 @@ export function createSpeechToTextTranscription(
   switch (options.provider) {
     case "gemini": {
       if (options.mode === "streaming") {
-        const transcription = startGeminiTranscription({
-          apiKey: options.apiKey,
-          context: options.context,
-          fetchImpl: options.deps?.fetchImpl,
-          webSocketFactory: options.deps?.webSocketFactory,
-        });
-        return {
-          appendAudio: (audio) => transcription.appendAudio(audio),
-          finish: async (_recording, finishOptions) =>
-            await transcription.finish({ signal: finishOptions?.signal }),
-          abort: () => transcription.abort(),
-        };
+        return createStreamingTranscription(
+          options.provider,
+          startGeminiTranscription({
+            apiKey: options.apiKey,
+            context: options.context,
+            fetchImpl: options.deps?.fetchImpl,
+            webSocketFactory: options.deps?.webSocketFactory,
+          }),
+        );
       }
 
       return createBatchTranscription(async (recording, signal) => {
         return await transcribeGeminiAudio({
           apiKey: options.apiKey,
           audio: recording.audio,
+          durationMs: recording.durationMs,
           mimeType: recording.mimeType,
           context: options.context,
           signal,
@@ -86,38 +93,60 @@ export function createSpeechToTextTranscription(
     }
     case "openai": {
       if (options.mode === "streaming") {
-        const transcription = startOpenAITranscription({
-          apiKey: options.apiKey,
-          context: options.context,
-          fetchImpl: options.deps?.fetchImpl,
-          webSocketFactory: options.deps?.webSocketFactory,
-        });
-        return {
-          appendAudio: (audio) => transcription.appendAudio(audio),
-          finish: async (_recording, finishOptions) =>
-            await transcription.finish({ signal: finishOptions?.signal }),
-          abort: () => transcription.abort(),
-        };
+        return createStreamingTranscription(
+          options.provider,
+          startOpenAITranscription({
+            apiKey: options.apiKey,
+            context: options.context,
+            fetchImpl: options.deps?.fetchImpl,
+            webSocketFactory: options.deps?.webSocketFactory,
+          }),
+        );
       }
 
-      const abortController = new AbortController();
-      return {
-        appendAudio: () => {},
-        finish: async (recording, finishOptions) =>
-          await transcribeOpenAIAudio({
-            apiKey: options.apiKey,
-            audio: recording.audio,
-            context: options.context,
-            signal: finishOptions?.signal
-              ? AbortSignal.any([abortController.signal, finishOptions.signal])
-              : abortController.signal,
-            fetchImpl: options.deps?.fetchImpl,
-            spawnImpl: options.deps?.spawnImpl,
-          }),
-        abort: () => abortController.abort(new Error("OpenAI transcription was aborted")),
-      };
+      return createBatchTranscription(async (recording, signal) => {
+        return await transcribeOpenAIAudio({
+          apiKey: options.apiKey,
+          audio: recording.audio,
+          durationMs: recording.durationMs,
+          context: options.context,
+          signal,
+          fetchImpl: options.deps?.fetchImpl,
+          spawnImpl: options.deps?.spawnImpl,
+        });
+      });
     }
   }
+}
+
+function createStreamingTranscription(
+  provider: SpeechToTextProvider,
+  transcription: ProviderStreamingTranscription,
+): SpeechToTextTranscription {
+  const maxAudioBytes =
+    getSpeechToTextStreamingSampleRate(provider) *
+    2 *
+    (SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS / 1_000);
+  let audioBytes = 0;
+  let durationFailure: Error | undefined;
+
+  return {
+    appendAudio: (audio) => {
+      if (durationFailure) return;
+      audioBytes += audio.length;
+      if (audioBytes > maxAudioBytes) {
+        durationFailure = new Error("audio exceeds the 20-minute speech-to-text limit");
+        transcription.abort();
+        return;
+      }
+      transcription.appendAudio(audio);
+    },
+    finish: async (_recording, finishOptions) => {
+      if (durationFailure) throw durationFailure;
+      return await transcription.finish({ signal: finishOptions?.signal });
+    },
+    abort: () => transcription.abort(),
+  };
 }
 
 function createBatchTranscription(
@@ -127,6 +156,9 @@ function createBatchTranscription(
   return {
     appendAudio: () => {},
     finish: async (recording, finishOptions) => {
+      if (recording.durationMs > SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS) {
+        throw new Error("audio exceeds the 20-minute speech-to-text limit");
+      }
       const signal = finishOptions?.signal
         ? AbortSignal.any([abortController.signal, finishOptions.signal])
         : abortController.signal;

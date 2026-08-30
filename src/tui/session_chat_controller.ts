@@ -30,6 +30,7 @@ import { formatAdaptiveNumber, formatCwd, formatTokenWindow } from "../core/util
 import { extractAssistantText } from "../core/utils/messages.js";
 import {
   getSpeechToTextStreamingSampleRate,
+  SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS,
   type SpeechToTextDependencies,
 } from "../core/utils/speech_to_text.js";
 import { collectSpeechToTextContext } from "../core/utils/speech_to_text_context.js";
@@ -94,7 +95,6 @@ import {
   getSpeechToTextApiKeyErrorMessage,
   getSpeechToTextProvider,
   LISTEN_CAPTURE_START_TIMEOUT_MS,
-  LISTEN_RECORDING_MAX_DURATION_MS,
   LISTEN_RECORDING_MIN_BYTES,
   type ListenRecording,
   readListenAudio,
@@ -173,7 +173,7 @@ export class SessionChatController {
   private turnTimer?: ReturnType<typeof setInterval>;
   private lastEmptySubmitAt?: number;
   private listenRecording?: ListenRecording;
-  private retainedListenAudioPath?: string;
+  private retainedListenAudio?: { audioPath: string; durationMs: number };
   private listenTransition?: Promise<void>;
   private listenStartupAbortController?: AbortController;
   private activeListenTranscription?: ListenRecording["transcription"];
@@ -837,7 +837,7 @@ export class SessionChatController {
       return;
     }
 
-    const retainedAudioPath = this.retainedListenAudioPath;
+    const retainedAudio = this.retainedListenAudio;
     let audioPath: string | undefined;
     let transcription: ListenRecording["transcription"] | undefined;
     let abortController: AbortController | undefined;
@@ -865,11 +865,11 @@ export class SessionChatController {
         this.listenStartupAbortController = undefined;
       }
 
-      if (retainedAudioPath) {
+      if (retainedAudio) {
         try {
-          await deleteListenTempFile(retainedAudioPath);
-          if (this.retainedListenAudioPath === retainedAudioPath) {
-            this.retainedListenAudioPath = undefined;
+          await deleteListenTempFile(retainedAudio.audioPath);
+          if (this.retainedListenAudio === retainedAudio) {
+            this.retainedListenAudio = undefined;
           }
         } catch (error) {
           abortController.abort();
@@ -878,7 +878,7 @@ export class SessionChatController {
           await cleanupListenTempFile(audioPath);
           this.view.addTranscriptNotice("failed to replace retained recording", "error", [
             (error as Error).message,
-            `recording retained at ${retainedAudioPath}`,
+            `recording retained at ${retainedAudio.audioPath}`,
           ]);
           return;
         }
@@ -886,6 +886,7 @@ export class SessionChatController {
 
       const recording: ListenRecording = {
         audioPath,
+        startedAt: Date.now(),
         stopRequested: false,
         abortController,
         completion,
@@ -894,7 +895,7 @@ export class SessionChatController {
       recording.maxDurationTimeout = setTimeout(() => {
         if (this.listenRecording !== recording || this.listenTransition) return;
         void this.runListenTransition(() => this.stopListenCapture());
-      }, LISTEN_RECORDING_MAX_DURATION_MS);
+      }, SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS);
       this.listenRecording = recording;
       this.view.setEditorInputEnabled(false);
       this.refreshStatus();
@@ -962,7 +963,11 @@ export class SessionChatController {
       return;
     }
 
-    await this.transcribeListenAudioFile(recording.audioPath, recording.transcription);
+    const durationMs = Math.min(
+      Math.max(Date.now() - recording.startedAt, 0),
+      SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS,
+    );
+    await this.transcribeListenAudioFile(recording.audioPath, durationMs, recording.transcription);
   }
 
   private async retryRetainedListenAudio(): Promise<void> {
@@ -971,13 +976,15 @@ export class SessionChatController {
       return;
     }
 
-    const audioPath = this.retainedListenAudioPath;
-    if (!audioPath) {
+    const retainedAudio = this.retainedListenAudio;
+    if (!retainedAudio) {
       this.view.showFooterNotice("no failed speech recording to retry", "default");
       return;
     }
 
-    await this.runListenTransition(() => this.transcribeListenAudioFile(audioPath));
+    await this.runListenTransition(() =>
+      this.transcribeListenAudioFile(retainedAudio.audioPath, retainedAudio.durationMs),
+    );
   }
 
   private async discardRetainedListenAudio(): Promise<void> {
@@ -986,20 +993,22 @@ export class SessionChatController {
       return;
     }
 
-    const audioPath = this.retainedListenAudioPath;
-    if (!audioPath) {
+    const retainedAudio = this.retainedListenAudio;
+    if (!retainedAudio) {
       this.view.showFooterNotice("no failed speech recording to discard", "default");
       return;
     }
 
     try {
-      await deleteListenTempFile(audioPath);
-      this.retainedListenAudioPath = undefined;
+      await deleteListenTempFile(retainedAudio.audioPath);
+      if (this.retainedListenAudio === retainedAudio) {
+        this.retainedListenAudio = undefined;
+      }
       this.view.showFooterNotice("discarded retained speech recording", "default");
     } catch (error) {
       this.view.addTranscriptNotice("failed to discard speech recording", "error", [
         (error as Error).message,
-        `recording retained at ${audioPath}`,
+        `recording retained at ${retainedAudio.audioPath}`,
       ]);
     }
   }
@@ -1016,6 +1025,7 @@ export class SessionChatController {
 
   private async transcribeListenAudioFile(
     audioPath: string,
+    durationMs: number,
     transcription?: ListenRecording["transcription"],
   ): Promise<void> {
     let audio: Buffer;
@@ -1026,8 +1036,8 @@ export class SessionChatController {
       this.view.addTranscriptNotice("failed to read speech recording", "error", [
         (error as Error).message,
       ]);
-      if (this.retainedListenAudioPath === audioPath) {
-        this.retainedListenAudioPath = undefined;
+      if (this.retainedListenAudio?.audioPath === audioPath) {
+        this.retainedListenAudio = undefined;
       }
       await cleanupListenTempFile(audioPath);
       return;
@@ -1036,8 +1046,8 @@ export class SessionChatController {
     if (audio.byteLength < LISTEN_RECORDING_MIN_BYTES) {
       transcription?.abort();
       this.view.showFooterNotice("recording too short, try again", "default");
-      if (this.retainedListenAudioPath === audioPath) {
-        this.retainedListenAudioPath = undefined;
+      if (this.retainedListenAudio?.audioPath === audioPath) {
+        this.retainedListenAudio = undefined;
       }
       await cleanupListenTempFile(audioPath);
       return;
@@ -1051,10 +1061,11 @@ export class SessionChatController {
       this.activeListenTranscription = activeTranscription;
       const text = await activeTranscription.finish({
         audio,
+        durationMs,
         mimeType: "audio/wav",
       });
       this.view.insertEditorTextAtCursor(text);
-      this.retainedListenAudioPath = undefined;
+      this.retainedListenAudio = undefined;
       try {
         await deleteListenTempFile(audioPath);
       } catch (error) {
@@ -1064,7 +1075,7 @@ export class SessionChatController {
         ]);
       }
     } catch (error) {
-      this.retainedListenAudioPath = audioPath;
+      this.retainedListenAudio = { audioPath, durationMs };
       this.view.addTranscriptNotice("failed to transcribe speech", "error", [
         (error as Error).message,
         `recording retained at ${audioPath}`,

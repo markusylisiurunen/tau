@@ -24,10 +24,13 @@ const OPENAI_TRANSCRIPTION_COMPLETION_TIMEOUT_MS = 30_000;
 const OPENAI_TRANSCRIPTION_KEYWORD_TIMEOUT_MS = 15_000;
 const OPENAI_TRANSCRIPTION_MAX_KEYWORD_CHARACTERS_TOTAL = 1_024;
 const OPENAI_TRANSCRIPTION_CONTEXT_TOKENS = 1_024;
+const OPENAI_TRANSCRIPTION_MAX_DURATION_MS = 30 * 60 * 1_000;
 const OPENAI_TRANSCRIPTION_FFMPEG_TIMEOUT_MS = 5 * 60 * 1_000;
 const OPENAI_TRANSCRIPTION_FFMPEG_OUTPUT_LIMIT_BYTES = 20_000;
-const OPENAI_TRANSCRIPTION_MAX_PCM_BYTES =
-  OPENAI_FILE_SAMPLE_RATE * 2 * (OPENAI_TRANSCRIPTION_FFMPEG_TIMEOUT_MS / 1_000);
+const OPENAI_TRANSCRIPTION_MAX_FILE_PCM_BYTES =
+  OPENAI_FILE_SAMPLE_RATE * 2 * (OPENAI_TRANSCRIPTION_MAX_DURATION_MS / 1_000);
+const OPENAI_TRANSCRIPTION_MAX_STREAMING_PCM_BYTES =
+  OPENAI_STREAMING_SAMPLE_RATE * 2 * (OPENAI_TRANSCRIPTION_MAX_DURATION_MS / 1_000);
 const OPENAI_REALTIME_TRANSCRIPTION_PROMPT =
   "The speaker is dictating a message for insertion into an AI coding assistant chat input.";
 const OPENAI_TRANSCRIPTION_KEYWORD_TEXT_CONFIG = {
@@ -99,6 +102,7 @@ export type StartOpenAITranscriptionOptions = {
 export type TranscribeOpenAIAudioOptions = {
   apiKey: string;
   audio: Buffer;
+  durationMs: number;
   context?: SpeechToTextContext;
   signal?: AbortSignal;
   fetchImpl?: typeof fetch;
@@ -114,6 +118,7 @@ class OpenAIStreamingTranscriptionImpl implements OpenAIStreamingTranscription {
   private failure?: Error;
   private completedTranscript?: string;
   private hasAudio = false;
+  private audioBytes = 0;
   private pendingAudio: Buffer[] = [];
   private readyTimeout?: ReturnType<typeof setTimeout>;
   private completionTimeout?: ReturnType<typeof setTimeout>;
@@ -172,6 +177,11 @@ class OpenAIStreamingTranscriptionImpl implements OpenAIStreamingTranscription {
 
   appendAudio(audio: Buffer): void {
     if (audio.length === 0 || this.aborted || this.failure || this.completedTranscript) return;
+    this.audioBytes += audio.length;
+    if (this.audioBytes > OPENAI_TRANSCRIPTION_MAX_STREAMING_PCM_BYTES) {
+      this.fail(new Error("audio exceeds the 30-minute OpenAI transcription limit"));
+      return;
+    }
     this.hasAudio = true;
     if (!this.ready) {
       this.pendingAudio.push(audio);
@@ -383,6 +393,9 @@ export async function transcribeOpenAIAudio(
   if (!apiKey) {
     throw new Error("missing OpenAI API key");
   }
+  if (options.durationMs > OPENAI_TRANSCRIPTION_MAX_DURATION_MS) {
+    throw new Error("audio exceeds the 30-minute OpenAI transcription limit");
+  }
 
   const wav = await decodeOpenAIAudio({
     audio: options.audio,
@@ -469,8 +482,8 @@ async function decodeOpenAIAudio(args: {
           child.stdout?.on("data", (chunk: Buffer) => {
             if (decodeFailure || signal.aborted) return;
             decodedBytes += chunk.length;
-            if (decodedBytes > OPENAI_TRANSCRIPTION_MAX_PCM_BYTES) {
-              decodeFailure = new Error("audio exceeds the five-minute OpenAI transcription limit");
+            if (decodedBytes > OPENAI_TRANSCRIPTION_MAX_FILE_PCM_BYTES) {
+              decodeFailure = new Error("audio exceeds the 30-minute OpenAI transcription limit");
               decoderAbortController.abort(decodeFailure);
               return;
             }

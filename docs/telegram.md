@@ -220,7 +220,9 @@ After preparation, Tau creates an ordinary local session at the workspace `cwd`.
 
 A project `persona` overrides the normal default for that session. `noAgentContextFiles: true` suppresses `AGENTS.md` injection for repository or persistent-directory sessions. Composite root context is generated deliberately and uses its required persona.
 
-The top-level and per-bot `systemMessage` values are different from project context. Tau prepends them as a hidden `<system>` block to every Telegram-submitted turn, with the top-level message first and the bot message second. They are persisted as part of the user turn and can appear in history, so never put credentials in them.
+Every Telegram turn starts with hidden `<system>` guidance identifying Telegram as the source and reply destination. It favors direct simple answers and brief acknowledgements or meaningful progress updates for tool-driven or multi-step work, since users cannot see tool activity.
+
+Top-level and per-bot `systemMessage` values share a second hidden block after the default, in that order. Audio transcripts receive another warning that they may contain noise or errors. Unlike project context, hidden guidance is persisted with user turns and can appear in history, so never put credentials in configured messages.
 
 The runner's speech-to-text provider is loaded from normal Tau config at runner startup, based on the runner process's startup `cwd`. Restart the runner after changing that provider or its environment.
 

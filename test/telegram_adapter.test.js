@@ -5,6 +5,13 @@ import { describe, expect, it, vi } from "vitest";
 import { startTelegramAdapter, TelegramRequestError } from "../dist/core/telegram/adapter.js";
 import { TauSessionProtocolResponseError } from "../dist/transport/errors.js";
 
+const TELEGRAM_AUDIO_TRANSCRIPTION_SYSTEM_MESSAGE =
+  "This text was transcribed from Telegram audio and may contain noise, misheard words, or transcription errors.";
+
+function transcribedTelegramUserText(text) {
+  return `<system>${TELEGRAM_AUDIO_TRANSCRIPTION_SYSTEM_MESSAGE}</system>\n${text}`;
+}
+
 async function startAdapter(options) {
   const preferences = new Map();
   const ttsPreferences = new Map();
@@ -1770,6 +1777,9 @@ describe("telegram adapter", () => {
       expect(text).toContain('caption: "second image"');
       expect(text).toContain("3. sender: Katherine (@kat, id 9)");
       expect(text).toContain('   audio_transcript: "transcribed audio"');
+      expect(text).toContain(
+        `</system>\n<system>${TELEGRAM_AUDIO_TRANSCRIPTION_SYSTEM_MESSAGE}</system>\n<telegram-group-context>`,
+      );
       expect(text).toContain("4. sender: Margaret (@margaret, id 10)");
       expect(text).toContain('   text: "normal context"');
       expect(text).toContain("5. sender: Edsger (@edsger, id 12)");
@@ -2348,9 +2358,11 @@ describe("telegram adapter", () => {
     try {
       await waitFor(() => managerHarness.manager.sendMessage.mock.calls.length === 1);
       expect(apiHarness.downloadFileCalls).toEqual(["voice-123"]);
-      expect(managerHarness.manager.sendMessage).toHaveBeenCalledWith("s21", "ship the fix", {
-        mode: "auto",
-      });
+      expect(managerHarness.manager.sendMessage).toHaveBeenCalledWith(
+        "s21",
+        transcribedTelegramUserText("ship the fix"),
+        { mode: "auto" },
+      );
       expect(apiHarness.sendMessages).toEqual([
         expect.objectContaining({ chatId: 210, text: "transcribed: ship the fix" }),
       ]);
@@ -2416,7 +2428,7 @@ describe("telegram adapter", () => {
       expect(apiHarness.downloadFileCalls).toEqual(["voice-456"]);
       expect(managerHarness.manager.sendMessage).toHaveBeenCalledWith(
         "s22",
-        "use google transcription",
+        transcribedTelegramUserText("use google transcription"),
         { mode: "auto" },
       );
       const interactionCall = geminiFetch.mock.calls.find(
@@ -2497,7 +2509,7 @@ describe("telegram adapter", () => {
       await waitFor(() => managerHarness.manager.sendMessage.mock.calls.length === 1);
       expect(managerHarness.manager.sendMessage).toHaveBeenCalledWith(
         "s23",
-        "use file transcription",
+        transcribedTelegramUserText("use file transcription"),
         { mode: "auto" },
       );
       expect(spawnImpl).toHaveBeenCalledWith(

@@ -228,6 +228,8 @@ type TelegramNotificationOptions = { rich?: false } | { rich: true; messageId: s
 
 const DEFAULT_POLL_INTERVAL_MS = 1000;
 const DEFAULT_REQUEST_TIMEOUT_SECONDS = 30;
+const TELEGRAM_AUDIO_TRANSCRIPTION_SYSTEM_MESSAGE =
+  "This text was transcribed from Telegram audio and may contain noise, misheard words, or transcription errors.";
 const MAX_COMMAND_PREVIEW_CHARS = 128;
 const MAX_PROVISION_DIAGNOSTIC_CHARS = 2_000;
 const DEFAULT_TELEGRAM_VOICE_MIME_TYPE = "audio/ogg";
@@ -2621,7 +2623,15 @@ class TelegramAdapterImpl {
     this.pushIndentedAttachmentLines(lines, triggerAttachments, "");
     lines.push("</telegram-trigger-message>");
 
-    return formatTauUserText({ text: lines.join("\n"), hiddenSystemMessages: [system] });
+    const hasAudioTranscript =
+      Boolean(triggerAudioTranscript) || pending.some((message) => message.audioTranscript);
+    return formatTauUserText({
+      text: lines.join("\n"),
+      hiddenSystemMessages: [
+        system,
+        ...(hasAudioTranscript ? [TELEGRAM_AUDIO_TRANSCRIPTION_SYSTEM_MESSAGE] : []),
+      ],
+    });
   }
 
   private pushIndentedErrorLines(
@@ -2759,7 +2769,11 @@ class TelegramAdapterImpl {
 
     try {
       await this.reply(chatId, `transcribed: ${result.transcript}`);
-      await this.submitSessionMessage(chatId, session.id, result.transcript, sourceMessageId);
+      const text = formatTauUserText({
+        text: result.transcript,
+        hiddenSystemMessages: [TELEGRAM_AUDIO_TRANSCRIPTION_SYSTEM_MESSAGE],
+      });
+      await this.submitSessionMessage(chatId, session.id, text, sourceMessageId);
     } catch (error) {
       await this.reply(chatId, this.formatManagerError(error));
     }

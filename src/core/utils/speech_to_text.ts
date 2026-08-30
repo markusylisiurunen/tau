@@ -37,7 +37,6 @@ export type SpeechToTextTranscriptionOptions = {
 
 export type SpeechToTextRecording = {
   audio: Buffer;
-  durationMs: number;
   mimeType?: string;
 };
 
@@ -69,7 +68,6 @@ export function createSpeechToTextTranscription(
     case "gemini": {
       if (options.mode === "streaming") {
         return createStreamingTranscription(
-          options.provider,
           startGeminiTranscription({
             apiKey: options.apiKey,
             context: options.context,
@@ -83,7 +81,6 @@ export function createSpeechToTextTranscription(
         return await transcribeGeminiAudio({
           apiKey: options.apiKey,
           audio: recording.audio,
-          durationMs: recording.durationMs,
           mimeType: recording.mimeType,
           context: options.context,
           signal,
@@ -94,7 +91,6 @@ export function createSpeechToTextTranscription(
     case "openai": {
       if (options.mode === "streaming") {
         return createStreamingTranscription(
-          options.provider,
           startOpenAITranscription({
             apiKey: options.apiKey,
             context: options.context,
@@ -108,7 +104,6 @@ export function createSpeechToTextTranscription(
         return await transcribeOpenAIAudio({
           apiKey: options.apiKey,
           audio: recording.audio,
-          durationMs: recording.durationMs,
           context: options.context,
           signal,
           fetchImpl: options.deps?.fetchImpl,
@@ -120,31 +115,12 @@ export function createSpeechToTextTranscription(
 }
 
 function createStreamingTranscription(
-  provider: SpeechToTextProvider,
   transcription: ProviderStreamingTranscription,
 ): SpeechToTextTranscription {
-  const maxAudioBytes =
-    getSpeechToTextStreamingSampleRate(provider) *
-    2 *
-    (SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS / 1_000);
-  let audioBytes = 0;
-  let durationFailure: Error | undefined;
-
   return {
-    appendAudio: (audio) => {
-      if (durationFailure) return;
-      audioBytes += audio.length;
-      if (audioBytes > maxAudioBytes) {
-        durationFailure = new Error("audio exceeds the 20-minute speech-to-text limit");
-        transcription.abort();
-        return;
-      }
-      transcription.appendAudio(audio);
-    },
-    finish: async (_recording, finishOptions) => {
-      if (durationFailure) throw durationFailure;
-      return await transcription.finish({ signal: finishOptions?.signal });
-    },
+    appendAudio: (audio) => transcription.appendAudio(audio),
+    finish: async (_recording, finishOptions) =>
+      await transcription.finish({ signal: finishOptions?.signal }),
     abort: () => transcription.abort(),
   };
 }
@@ -156,9 +132,6 @@ function createBatchTranscription(
   return {
     appendAudio: () => {},
     finish: async (recording, finishOptions) => {
-      if (recording.durationMs > SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS) {
-        throw new Error("audio exceeds the 20-minute speech-to-text limit");
-      }
       const signal = finishOptions?.signal
         ? AbortSignal.any([abortController.signal, finishOptions.signal])
         : abortController.signal;

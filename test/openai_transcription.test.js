@@ -293,25 +293,6 @@ describe("OpenAI transcription", () => {
     expect(harness.socket.closed).toBe(true);
   });
 
-  it("rejects streaming audio longer than 30 minutes", async () => {
-    const harness = createWebSocketHarness();
-    const transcription = startOpenAITranscription({
-      apiKey: "openai-key",
-      webSocketFactory: harness.factory,
-    });
-    const oneMinute = Buffer.alloc(24_000 * 2 * 60);
-
-    for (let minute = 0; minute < 30; minute += 1) {
-      transcription.appendAudio(oneMinute);
-    }
-    transcription.appendAudio(Buffer.alloc(1));
-
-    await expect(transcription.finish()).rejects.toThrow(
-      "audio exceeds the 30-minute OpenAI transcription limit",
-    );
-    expect(harness.socket.terminated).toBe(true);
-  });
-
   it("uploads completed audio through OpenAI file transcription", async () => {
     const audio = Buffer.from("encoded audio");
     const pcm = Buffer.from([5, 6, 7, 8]);
@@ -329,7 +310,6 @@ describe("OpenAI transcription", () => {
     const transcript = await transcribeOpenAIAudio({
       apiKey: "openai-key",
       audio,
-      durationMs: 1_000,
       context: {
         messages: [{ role: "user", text: `We are discussing Tau. ${"context ".repeat(500)}` }],
       },
@@ -385,7 +365,6 @@ describe("OpenAI transcription", () => {
     const transcription = transcribeOpenAIAudio({
       apiKey: "openai-key",
       audio: Buffer.from("encoded audio"),
-      durationMs: 1_000,
       signal: abortController.signal,
       fetchImpl: vi.fn(),
       spawnImpl,
@@ -398,32 +377,35 @@ describe("OpenAI transcription", () => {
     expect(decoderSignal.aborted).toBe(true);
   });
 
-  it("rejects decoded audio longer than 30 minutes", async () => {
+  it("splits long decoded audio into bounded uploads", async () => {
+    const pcm = Buffer.alloc(24_000_000);
     const spawnImpl = vi.fn(async (_command, _args, options) => {
       const stdout = new EventEmitter();
       options.onSpawn({ stdout });
-      const completion = new Promise((resolve) => {
-        options.signal.addEventListener("abort", () => {
-          resolve({ ...successfulSpawnResult(), aborted: true });
-        });
-      });
-      const oneMinute = Buffer.alloc(16_000 * 2 * 60);
-      for (let minute = 0; minute < 30; minute += 1) {
-        stdout.emit("data", oneMinute);
-      }
-      stdout.emit("data", Buffer.alloc(1));
-      return await completion;
+      stdout.emit("data", pcm);
+      return successfulSpawnResult();
     });
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ text: "first chunk" })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ text: "second chunk" })));
 
     await expect(
       transcribeOpenAIAudio({
         apiKey: "openai-key",
         audio: Buffer.from("encoded audio"),
-        durationMs: 1_000,
-        fetchImpl: vi.fn(),
+        fetchImpl,
         spawnImpl,
       }),
-    ).rejects.toThrow("audio exceeds the 30-minute OpenAI transcription limit");
+    ).resolves.toBe("first chunk second chunk");
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    for (const [, request] of fetchImpl.mock.calls) {
+      const file = request.body.get("file");
+      expect(file.size).toBeLessThanOrEqual(24_000_000);
+    }
+    expect(fetchImpl.mock.calls[1][1].body.get("prompt")).toContain("first chunk");
+    expect(spawnImpl.mock.calls[0][2]).not.toHaveProperty("timeoutMs");
   });
 
   it("reports OpenAI file transcription errors", async () => {
@@ -442,7 +424,6 @@ describe("OpenAI transcription", () => {
       transcribeOpenAIAudio({
         apiKey: "openai-key",
         audio: Buffer.from("encoded audio"),
-        durationMs: 1_000,
         fetchImpl,
         spawnImpl,
       }),
@@ -461,7 +442,6 @@ describe("OpenAI transcription", () => {
       transcribeOpenAIAudio({
         apiKey: "openai-key",
         audio: Buffer.from("encoded audio"),
-        durationMs: 1_000,
         fetchImpl: vi.fn(async () => new Response(JSON.stringify({ text: "" }))),
         spawnImpl,
       }),

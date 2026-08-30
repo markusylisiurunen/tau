@@ -9,6 +9,7 @@ import {
   buildToolRunPresentation,
   TOOL_UI_FACET_VERSION,
 } from "../dist/core/tools/presentation.js";
+import { SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS } from "../dist/core/utils/speech_to_text.js";
 import {
   hasAutoCompactionContinuationMetadata,
   prependTauUserMetadata,
@@ -5538,6 +5539,75 @@ describe("SessionChatController", () => {
     );
   });
 
+  it("submits voice input automatically at the 20-minute recording limit", async () => {
+    const audioPath = join(tmpdir(), `tau-session-listen-limit-${Date.now()}.wav`);
+    await writeFile(audioPath, Buffer.alloc(2048, 1));
+    const spawn = vi.fn(async (command, _args, options = {}) => {
+      if (command === "mktemp") {
+        return {
+          stdout: `${audioPath}\n`,
+          stderr: "",
+          output: undefined,
+          exitCode: 0,
+          captureLimitExceeded: false,
+          timedOut: false,
+          aborted: false,
+          closeSignal: null,
+        };
+      }
+      if (command === "ffmpeg") {
+        const stdout = new EventEmitter();
+        options.onSpawn({ stdout });
+        queueMicrotask(() => stdout.emit("data", Buffer.from([1, 2])));
+        return await new Promise((resolve) => {
+          options.signal.addEventListener("abort", () => {
+            resolve({
+              stdout: "",
+              stderr: "",
+              output: undefined,
+              exitCode: 0,
+              captureLimitExceeded: false,
+              timedOut: false,
+              aborted: true,
+              closeSignal: null,
+            });
+          });
+        });
+      }
+      throw new Error(`unexpected command: ${command}`);
+    });
+    const transcription = {
+      appendAudio: vi.fn(),
+      finish: vi.fn(async () => "automatic transcript"),
+      abort: vi.fn(),
+    };
+    const session = new FakeSession();
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "in-process",
+      deps: createMockDeps(spawn),
+      config: { apiKeys: { openai: "openai-key" } },
+    });
+    controller.createSpeechTranscription = vi.fn(() => transcription);
+
+    vi.useFakeTimers();
+    try {
+      await controller.onUserInput("/listen");
+      await vi.advanceTimersByTimeAsync(SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS);
+      await controller.listenTransition;
+    } finally {
+      vi.useRealTimers();
+      await controller.dispose();
+      await rm(audioPath, { force: true });
+    }
+
+    expect(session.submit).toHaveBeenCalledWith("automatic transcript");
+    expect(view.editorText).toBe("");
+  });
+
   it("retries retained OpenAI audio through file transcription", async () => {
     const audioPath = join(tmpdir(), `tau-session-listen-openai-retry-${Date.now()}.wav`);
     await writeFile(audioPath, Buffer.alloc(2048, 1));
@@ -5586,6 +5656,42 @@ describe("SessionChatController", () => {
       "https://api.openai.com/v1/audio/transcriptions",
       expect.objectContaining({ body: expect.any(FormData) }),
     );
+  });
+
+  it("rejects retained voice input longer than 20 minutes before provider work", async () => {
+    const audioPath = join(tmpdir(), `tau-session-listen-too-long-${Date.now()}.wav`);
+    await writeFile(audioPath, Buffer.alloc(2048, 1));
+    const session = new FakeSession();
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "in-process",
+      deps: createMockDeps(),
+    });
+    controller.retainedListenAudio = {
+      audioPath,
+      durationMs: SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS + 1,
+    };
+    controller.createSpeechTranscription = vi.fn();
+
+    try {
+      await controller.onUserInput("/listen retry");
+    } finally {
+      await rm(audioPath, { force: true });
+    }
+
+    expect(controller.createSpeechTranscription).not.toHaveBeenCalled();
+    expect(view.transcriptNotices.at(-1)).toMatchObject({
+      text: "failed to transcribe speech",
+      tone: "error",
+      content: [
+        "audio is longer than 20 minutes",
+        `recording retained at ${audioPath}`,
+        "run /listen discard to delete it",
+      ],
+    });
   });
 
   it("retains failed voice input and retries it into the editor", async () => {

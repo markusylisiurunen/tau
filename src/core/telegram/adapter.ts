@@ -2755,7 +2755,6 @@ class TelegramAdapterImpl {
         transcript = await transcription.finish(
           {
             audio,
-            durationMs: message.durationMs,
             mimeType: message.mimeType,
           },
           { signal: this.abortController.signal },

@@ -15,6 +15,17 @@ import { SESSION_PROTOCOL_VERSION } from "../dist/protocol/session_protocol.js";
 import { TauSessionProtocolResponseError } from "../dist/transport/errors.js";
 import { createProtocolSnapshot } from "./helpers/session_protocol_fixtures.js";
 
+const DEFAULT_TELEGRAM_SYSTEM_MESSAGE =
+  "This user message came from Telegram, and your assistant messages will be sent back to the Telegram chat. Adapt your communication style to this context. Answer straightforward requests directly. For work that involves tools or multiple steps, send a brief acknowledgement before starting and concise progress updates at meaningful points, since the user cannot see tool activity.";
+
+function telegramUserText(text, ...configuredSystemMessages) {
+  const configuredText =
+    configuredSystemMessages.length > 0
+      ? `<system>${configuredSystemMessages.join("\n")}</system>\n`
+      : "";
+  return `<system>${DEFAULT_TELEGRAM_SYSTEM_MESSAGE}</system>\n${configuredText}${text}`;
+}
+
 function deferred() {
   let resolve;
   let reject;
@@ -633,7 +644,7 @@ describe("telegram session manager", () => {
     );
   });
 
-  it("prepends configured system message to submitted user text", async () => {
+  it("prepends default and configured system messages to submitted user text", async () => {
     const clientHarness = createClientHarness();
     const manager = createTelegramSessionManager({
       projects: {
@@ -655,7 +666,7 @@ describe("telegram session manager", () => {
 
     await manager.sendMessage(created.id, "write issue about X");
     expect(clientHarness.session.submit).toHaveBeenCalledWith(
-      "<system>follow project conventions</system>\nwrite issue about X",
+      telegramUserText("write issue about X", "follow project conventions"),
       { historyEntryId: expect.stringMatching(/^telegram-turn-/) },
     );
 
@@ -691,7 +702,11 @@ describe("telegram session manager", () => {
       additionalSystemMessage: "this message came from telegram",
     });
     expect(clientHarness.session.submit).toHaveBeenCalledWith(
-      "<system>follow project conventions\nthis message came from telegram</system>\nwrite issue about X",
+      telegramUserText(
+        "write issue about X",
+        "follow project conventions",
+        "this message came from telegram",
+      ),
       { historyEntryId: expect.stringMatching(/^telegram-turn-/) },
     );
 
@@ -732,10 +747,10 @@ describe("telegram session manager", () => {
     await manager.sendMessage(created.id, "start work");
     await manager.sendMessage(created.id, "steer it", { mode: "steer" });
 
-    expect(clientHarness.session.submit).toHaveBeenCalledWith("start work", {
+    expect(clientHarness.session.submit).toHaveBeenCalledWith(telegramUserText("start work"), {
       historyEntryId: expect.stringMatching(/^telegram-turn-/),
     });
-    expect(clientHarness.session.steer).toHaveBeenCalledWith("steer it");
+    expect(clientHarness.session.steer).toHaveBeenCalledWith(telegramUserText("steer it"));
     expect(manager.getSession(created.id)?.state).toBe("running");
 
     firstSubmit.resolve({

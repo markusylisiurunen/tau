@@ -218,6 +218,8 @@ const NANOSECONDS_PER_MILLISECOND = 1_000_000n;
 const PROVISION_SCRIPT_PATH = ".tau/scripts/provision";
 const MAX_PROVISION_DIAGNOSTIC_CHARS = 2_000;
 const TURN_RECOVERY_POLL_INTERVAL_MS = 1_000;
+const DEFAULT_TELEGRAM_SYSTEM_MESSAGE =
+  "This user message came from Telegram, and your assistant messages will be sent back to the Telegram chat. Adapt your communication style to this context. Answer straightforward requests directly. For work that involves tools or multiple steps, send a brief acknowledgement before starting and concise progress updates at meaningful points, since the user cannot see tool activity.";
 
 const ACTIVE_STATES: Set<TelegramSessionState> = new Set([
   "queued",
@@ -533,7 +535,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
   private readonly projects: Record<string, TelegramProjectConfig>;
   private readonly workspaceRoot: string;
   private readonly maxSessions?: number;
-  private readonly systemMessage?: string;
+  private readonly configuredSystemMessage?: string;
   private readonly persistencePath?: string;
   private readonly now: () => Date;
   private readonly onLog?: (entry: WorkspaceLogEntry) => void;
@@ -554,7 +556,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       options.workspaceRoot ?? resolve(process.cwd(), ".tau/telegram-workspaces"),
     );
     this.maxSessions = options.maxSessions;
-    this.systemMessage = options.systemMessage?.trim() || undefined;
+    this.configuredSystemMessage = options.systemMessage?.trim() || undefined;
     this.persistencePath = options.persistencePath ? resolve(options.persistencePath) : undefined;
     this.now = options.now ?? (() => new Date());
     this.onLog = options.onLog;
@@ -1928,15 +1930,17 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
   }
 
   private buildSubmitPayload(text: string, additionalSystemMessage?: string): string {
-    const messages = [this.systemMessage, additionalSystemMessage?.trim() || undefined].filter(
-      (message): message is string => Boolean(message),
-    );
-
-    if (messages.length === 0) {
-      return text;
-    }
-
-    return formatTauUserText({ text, hiddenSystemMessages: [messages.join("\n")] });
+    const configuredMessages = [
+      this.configuredSystemMessage,
+      additionalSystemMessage?.trim() || undefined,
+    ].filter((message): message is string => Boolean(message));
+    return formatTauUserText({
+      text,
+      hiddenSystemMessages: [
+        DEFAULT_TELEGRAM_SYSTEM_MESSAGE,
+        ...(configuredMessages.length > 0 ? [configuredMessages.join("\n")] : []),
+      ],
+    });
   }
 
   private countActiveSessions(): number {

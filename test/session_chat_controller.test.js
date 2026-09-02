@@ -3287,6 +3287,196 @@ describe("SessionChatController", () => {
     await controller.dispose();
   });
 
+  it("preserves append order for mixed targeted timeline changes", async () => {
+    const snapshot = updateSnapshot(
+      createSnapshot([
+        {
+          id: "history-1",
+          message: { role: "user", content: [{ type: "text", text: "first" }] },
+        },
+      ]),
+      { revision: 3 },
+    );
+    const session = new FakeSession(snapshot);
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "local",
+    });
+
+    controller.start();
+    const addMessageSpy = vi.spyOn(view, "addMessage");
+    const nextMessage = {
+      id: "history-2",
+      state: "committed",
+      modelVisible: true,
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "second" }],
+        timestamp: 3,
+      },
+    };
+    const delta = {
+      version: SESSION_PROTOCOL_VERSION,
+      type: "session.delta",
+      sessionId: session.id,
+      fromRevision: 3,
+      toRevision: 4,
+      cause: { type: "maintenance" },
+      delta: {
+        type: "snapshot.patch",
+        changes: [
+          {
+            type: "timeline.append",
+            item: {
+              type: "notice",
+              id: "notice-between",
+              sequence: snapshot.timeline.sequence + 1,
+              createdAt: 2,
+              notice: {
+                kind: "tau.test.notice",
+                version: 1,
+                severity: "info",
+                subject: { type: "session" },
+                presentation: { title: "between" },
+                data: {},
+              },
+            },
+          },
+          { type: "message.append", message: nextMessage },
+          {
+            type: "timeline.append",
+            item: {
+              type: "message",
+              id: "timeline-history-2",
+              sequence: snapshot.timeline.sequence + 2,
+              createdAt: 3,
+              messageId: nextMessage.id,
+            },
+          },
+        ],
+      },
+    };
+    session.snapshotValue = applySessionProtocolDelta(session.snapshotValue, delta);
+    for (const listener of session.listeners) {
+      listener(delta);
+    }
+
+    expect(addMessageSpy.mock.calls).toEqual([
+      [{ type: "transcript_notice", title: "between", tone: "default" }, "notice-between"],
+      [{ type: "user", text: "second" }, "history-2"],
+    ]);
+    expect(view.messages.slice(-2).map((message) => message.id)).toEqual([
+      "notice-between",
+      "history-2",
+    ]);
+    await controller.dispose();
+  });
+
+  it("keeps late assistant outcome notices at the visible tail", async () => {
+    const assistantMessage = createAssistantToolCallMessage([
+      {
+        type: "toolCall",
+        id: "tool-a",
+        name: "bash",
+        arguments: { command: "echo a" },
+      },
+    ]);
+    const baseSnapshot = createSnapshot();
+    const snapshot = updateSnapshot(baseSnapshot, {
+      revision: 3,
+      messages: [
+        ...baseSnapshot.messages,
+        {
+          id: "assistant-active",
+          state: "draft",
+          modelVisible: false,
+          message: assistantMessage,
+        },
+      ],
+      timeline: [
+        ...baseSnapshot.timeline.items,
+        { type: "message", id: "timeline-assistant-active", messageId: "assistant-active" },
+      ],
+      tools: {
+        "tool-a": {
+          id: "tool-a",
+          toolCallId: "tool-a",
+          toolName: "bash",
+          call: { messageId: "assistant-active", contentIndex: 0 },
+          status: "succeeded",
+          startedAt: 1,
+          finishedAt: 2,
+          facetIds: [],
+        },
+      },
+    });
+    const session = new FakeSession(snapshot);
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "local",
+    });
+
+    controller.start();
+    const failedMessage = {
+      id: "assistant-active",
+      state: "committed",
+      modelVisible: true,
+      message: {
+        ...assistantMessage,
+        stopReason: "error",
+        errorMessage: "provider failed",
+      },
+    };
+    const delta = {
+      version: SESSION_PROTOCOL_VERSION,
+      type: "session.delta",
+      sessionId: session.id,
+      fromRevision: 3,
+      toRevision: 4,
+      cause: { type: "assistant-message" },
+      delta: {
+        type: "snapshot.patch",
+        changes: [{ type: "message.replace", message: failedMessage }],
+      },
+    };
+    session.snapshotValue = applySessionProtocolDelta(session.snapshotValue, delta);
+    for (const listener of session.listeners) {
+      listener(delta);
+    }
+
+    expect(
+      view.messages
+        .map((message) => message.id)
+        .filter((id) =>
+          [
+            "assistant-active",
+            "timeline-tool-tool-a",
+            "presentation:failure:assistant-active",
+          ].includes(id),
+        ),
+    ).toEqual([
+      "assistant-active",
+      "timeline-tool-tool-a",
+      "presentation:failure:assistant-active",
+    ]);
+    expect(view.messages.at(-1)).toEqual({
+      id: "presentation:failure:assistant-active",
+      model: {
+        type: "transcript_notice",
+        title: "model request failed after tool execution",
+        content: ["provider failed"],
+        tone: "error",
+      },
+    });
+    await controller.dispose();
+  });
+
   it("applies assistant content append deltas without full snapshot reconciliation", async () => {
     const baseSnapshot = createSnapshot();
     const snapshot = updateSnapshot(baseSnapshot, {

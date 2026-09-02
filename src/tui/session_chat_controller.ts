@@ -1475,7 +1475,7 @@ export class SessionChatController {
     const previousSnapshot = this.snapshot;
     const affectedMessageIds = new Set<string>();
     const affectedToolIds = new Set<string>();
-    const appendedNotices: Array<Extract<SessionProtocolTimelineItem, { type: "notice" }>> = [];
+    const appendedNoticeIds = new Set<string>();
     let hasTimelineChange = false;
 
     for (const change of delta.delta.changes) {
@@ -1506,7 +1506,7 @@ export class SessionChatController {
           } else if (change.item.type === "tool") {
             affectedToolIds.add(change.item.toolId);
           } else if (change.item.type === "notice") {
-            appendedNotices.push(change.item);
+            appendedNoticeIds.add(change.item.id);
           }
           break;
         case "tool.set":
@@ -1533,23 +1533,33 @@ export class SessionChatController {
     this.snapshot = nextSnapshot;
     this.observedSessionRevision = Math.max(this.observedSessionRevision, nextSnapshot.revision);
 
+    const remainingMessageIds = new Set(affectedMessageIds);
+    const affectedMessages = new Map<string, SessionProtocolMessage>();
     for (const messageId of affectedMessageIds) {
       const message = nextSnapshot.messages.find((entry) => entry.id === messageId);
       if (message) {
-        this.syncProtocolMessage(message);
-      } else {
-        this.removeProtocolMessage(messageId);
+        affectedMessages.set(messageId, message);
       }
     }
-
-    if (affectedToolIds.size > 0) {
-      for (const item of [
-        ...nextSnapshot.timeline.items,
-        ...this.ephemeralTimelineItems.values(),
-      ]) {
-        if (item.type !== "tool" || !affectedToolIds.has(item.toolId)) {
-          continue;
+    const timelineItems = [...nextSnapshot.timeline.items, ...this.ephemeralTimelineItems.values()]
+      .filter((item) => {
+        if (item.type === "message") {
+          return affectedMessageIds.has(item.messageId);
         }
+        if (item.type === "tool") {
+          return affectedToolIds.has(item.toolId);
+        }
+        return item.type === "notice" && appendedNoticeIds.has(item.id);
+      })
+      .sort((left, right) => left.sequence - right.sequence);
+
+    for (const item of timelineItems) {
+      if (item.type === "message" && remainingMessageIds.delete(item.messageId)) {
+        const message = affectedMessages.get(item.messageId);
+        if (message) {
+          this.syncProtocolMessage(message);
+        }
+      } else if (item.type === "tool" && affectedToolIds.has(item.toolId)) {
         const tool = nextSnapshot.tools[item.toolId];
         if (tool) {
           this.upsertRenderedMessage(item.id, {
@@ -1557,22 +1567,25 @@ export class SessionChatController {
             tool: buildToolUiModel(nextSnapshot, tool),
           });
         }
+      } else if (item.type === "notice" && appendedNoticeIds.has(item.id)) {
+        this.upsertRenderedMessage(item.id, {
+          type: "transcript_notice",
+          title: item.notice.presentation.title,
+          ...(item.notice.presentation.content
+            ? { content: item.notice.presentation.content }
+            : {}),
+          tone: item.notice.severity === "error" ? "error" : "default",
+        });
       }
     }
 
-    for (const item of appendedNotices.sort((left, right) => left.sequence - right.sequence)) {
-      const nextItem = nextSnapshot.timeline.items.find((candidate) => candidate.id === item.id);
-      if (nextItem?.type !== "notice") {
-        continue;
+    for (const messageId of remainingMessageIds) {
+      const message = affectedMessages.get(messageId);
+      if (message) {
+        this.syncProtocolMessage(message);
+      } else {
+        this.removeProtocolMessage(messageId);
       }
-      this.upsertRenderedMessage(nextItem.id, {
-        type: "transcript_notice",
-        title: nextItem.notice.presentation.title,
-        ...(nextItem.notice.presentation.content
-          ? { content: nextItem.notice.presentation.content }
-          : {}),
-        tone: nextItem.notice.severity === "error" ? "error" : "default",
-      });
     }
 
     this.updateStreamingStateFromSnapshot(nextSnapshot);

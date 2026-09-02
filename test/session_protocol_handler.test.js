@@ -560,6 +560,7 @@ function createHarness(options = {}) {
   const hostShutdown = vi.fn(() => {
     sessions.clear();
   });
+  const releaseSession = vi.fn();
   const host = {
     async createSession() {
       return createHostedSession();
@@ -567,6 +568,7 @@ function createHarness(options = {}) {
     async observeSession(sessionId) {
       return sessions.get(sessionId);
     },
+    releaseSession,
     async listSessions() {
       return [...sessions.values()].map((session) => ({
         sessionId: session.sessionId,
@@ -588,6 +590,7 @@ function createHarness(options = {}) {
     connection,
     host,
     hostShutdown,
+    releaseSession,
     seededSession,
     releaseTurn: () => seededSession?.releaseTurn(),
     emitNotice: (text, revision) => seededSession?.emitNotice(text, revision),
@@ -669,6 +672,21 @@ describe("SessionProtocolHandler", () => {
     expect(list.result).toEqual({ sessions: [] });
   });
 
+  it("releases a created session when its protocol connection closes", async () => {
+    const harness = createHarness({ precreate: false });
+
+    await harness.connection.handleRequest(request("create", "session.create", localCreateParams));
+    const response = harness.lines.find(
+      (line) => line.type === "response" && line.id === "create" && line.ok,
+    );
+    const session = await harness.host.observeSession(response.result.sessionId);
+
+    await harness.connection.close();
+
+    expect(harness.releaseSession).toHaveBeenCalledTimes(1);
+    expect(harness.releaseSession).toHaveBeenCalledWith(session);
+  });
+
   it("returns busy for concurrent ephemeral thread submissions", async () => {
     const harness = createHarness({
       submitEphemeralThread: async ({ threadId }) => {
@@ -736,6 +754,7 @@ describe("SessionProtocolHandler", () => {
     await create;
 
     expect(harness.seededSession.createEphemeralContext).not.toHaveBeenCalled();
+    expect(harness.releaseSession).toHaveBeenCalledWith(harness.seededSession);
     expect(lines.some((line) => line.id === "ephemeral-create")).toBe(false);
   });
 

@@ -186,7 +186,7 @@ Different changes have different owners:
 
 ## Reconnect and observe safely
 
-A WebSocket connection observes a hosted session; it does not own or delete it. If a TUI disconnects while a turn runs, the host keeps working. Reattach with the same session id to obtain the current persisted state and continue receiving updates.
+A WebSocket connection observes a hosted session; it does not own or delete its durable state. After the last observer disconnects, the host unloads an idle live runtime while retaining its persisted snapshot. If a client disconnects while work runs, the host keeps working and unloads the runtime only after that work settles. Reattach with the same session id to recover the current persisted state and continue receiving updates.
 
 A clean `tau serve` shutdown interrupts active work, persists live sessions, and closes clients. On restart, the host lists sessions whose execution environments it can restore. Recovery returns sessions idle, drops pending queued and steering messages, discards live subagents, and changes an active persistent goal to blocked. Use `/goal resume` only after checking why the host stopped.
 

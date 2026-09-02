@@ -142,6 +142,7 @@ export type TauHostedSession = {
 export type TauSessionHost = {
   createSession(input: SessionProtocolCreateParams): Promise<TauHostedSession>;
   observeSession(sessionId: string): Promise<TauHostedSession | undefined>;
+  releaseSession?(session: TauHostedSession): void;
   listSessions(): Promise<SessionProtocolSessionSummary[]>;
   registerClientTools?(options: {
     tools: SessionProtocolClientToolDefinition[];

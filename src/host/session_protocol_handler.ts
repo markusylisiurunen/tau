@@ -93,6 +93,8 @@ type SessionProtocolHandlerSessionState = {
   bufferedDeltas?: SessionProtocolDeltaMessage[];
   bufferedPendingUserMessages?: SessionProtocolPendingUserMessagesMessage[];
   bufferedSubagentActivities?: SessionProtocolSubagentActivitiesMessage[];
+  observed: boolean;
+  released: boolean;
 };
 
 type SessionMutationQueueState = {
@@ -747,6 +749,7 @@ export class SessionProtocolHandler {
       await session.dispose();
       return;
     }
+    this.registerSession(session);
     this.sendMessage(
       createSessionProtocolSuccessResponse(request.id, "session.create", {
         sessionId: session.sessionId,
@@ -767,7 +770,7 @@ export class SessionProtocolHandler {
   private async handleAttach(
     request: Extract<SessionProtocolRequestMessage, { method: "session.observe" }>,
   ): Promise<void> {
-    const wasObserved = this.sessionStates.has(request.params.sessionId);
+    const wasObserved = this.sessionStates.get(request.params.sessionId)?.observed ?? false;
     const state = await this.getSessionState(request.params.sessionId);
     if (!state) {
       this.sendMessage(
@@ -797,6 +800,7 @@ export class SessionProtocolHandler {
         }),
       );
       observed = true;
+      state.observed = true;
       this.flushBufferedDeltasAfterSnapshot(state, snapshot.revision);
       this.flushBufferedPendingUserMessagesAfter(state, pendingUserMessages.revision);
       this.flushBufferedSubagentActivitiesAfter(state, subagentActivities.revision);
@@ -1586,6 +1590,8 @@ export class SessionProtocolHandler {
     const state: SessionProtocolHandlerSessionState = {
       session,
       live: getSessionLiveState(session),
+      observed: false,
+      released: false,
     };
 
     state.unsubscribeDelta = session.onDelta((delta) => {
@@ -1658,7 +1664,9 @@ export class SessionProtocolHandler {
     }
 
     const session = await this.host.observeSession(sessionId);
-    if (!session || this.closed) {
+    if (!session) return undefined;
+    if (this.closed) {
+      this.host.releaseSession?.(session);
       return undefined;
     }
     return this.registerSession(session);
@@ -1792,6 +1800,10 @@ export class SessionProtocolHandler {
 
   private unsubscribeSessionListeners(state: SessionProtocolHandlerSessionState): void {
     this.clientToolRegistration?.detachSession(state.session.sessionId);
+    if (!state.released) {
+      state.released = true;
+      this.host.releaseSession?.(state.session);
+    }
 
     state.unsubscribeDelta?.();
     state.unsubscribeDelta = undefined;

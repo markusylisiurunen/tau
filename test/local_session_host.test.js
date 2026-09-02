@@ -5098,6 +5098,64 @@ describe("LocalSessionHost", () => {
     expect(executionEnvironment.dispose).toHaveBeenCalledTimes(1);
   });
 
+  it("evicts an idle live session after its final observer releases it", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const session = await host.createSession(localCreateInput);
+    await session.record({ text: "recover after observer release" });
+    const storedSnapshot = await session.snapshot();
+    const secondObserver = await host.observeSession(session.sessionId);
+    expect(secondObserver).toBe(session);
+
+    host.releaseSession(session);
+    await Promise.resolve();
+    expect(session.isDisposed).toBe(false);
+
+    host.releaseSession(secondObserver);
+    await vi.waitFor(() => expect(session.isDisposed).toBe(true));
+
+    const recoveredSession = await host.observeSession(storedSnapshot.sessionId);
+    expect(recoveredSession).toBeDefined();
+    expect(recoveredSession).not.toBe(session);
+    await expect(recoveredSession.snapshot()).resolves.toEqual(storedSnapshot);
+    host.releaseSession(recoveredSession);
+    await host.shutdown();
+  });
+
+  it("keeps an unobserved live session until active work settles", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const session = await host.createSession(localCreateInput);
+    let markModelStarted;
+    const modelStarted = new Promise((resolve) => {
+      markModelStarted = resolve;
+    });
+    let releaseModel;
+    const modelReleased = new Promise((resolve) => {
+      releaseModel = resolve;
+    });
+    session.runtime.agent.spec.model.stream = () => ({
+      async *[Symbol.asyncIterator]() {},
+      async result() {
+        markModelStarted();
+        await modelReleased;
+        return fauxAssistantMessage("finished while detached");
+      },
+    });
+
+    await session.record({ text: "finish without an observer" });
+    const turn = session.runTurn();
+    await modelStarted;
+    host.releaseSession(session);
+    await Promise.resolve();
+    expect(session.isDisposed).toBe(false);
+
+    releaseModel();
+    await expect(turn).resolves.toEqual({ status: "completed", stopReason: "stop" });
+    await vi.waitFor(() => expect(session.isDisposed).toBe(true));
+    await host.shutdown();
+  });
+
   it("removes directly disposed live handles from host recovery bookkeeping", async () => {
     const store = new MemorySessionStore();
     const host = createHost(store);

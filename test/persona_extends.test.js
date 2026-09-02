@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { loadAllContent, resolveConfigLevels } from "../dist/core/config/index.js";
-import { loadModelResolver } from "../dist/core/models/catalog.js";
+import { loadModelResolver, resolveModel } from "../dist/core/models/catalog.js";
 
 function setupFixture() {
   const home = mkdtempSync(join(tmpdir(), "tau-personas-home-"));
@@ -33,6 +33,7 @@ async function loadAllContentWithModelResolver(config, options) {
   const modelResolverResult = loadModelResolver({
     deps: options.deps,
     levels,
+    remoteCatalog: options.remoteCatalog,
   });
   return await loadAllContent(config, {
     deps: options.deps,
@@ -150,16 +151,59 @@ describe("custom personas", () => {
     }
   });
 
-  it("loads only the current built-in Anthropic personas", async () => {
+  it("omits catalog-only built-in personas when their model is unavailable", async () => {
     const fx = setupFixture();
 
     try {
       const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
       const { personas, errors } = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
       expect(errors).toEqual([]);
+      expect(personas.find((persona) => persona.id === "fable-5.1-chat")).toBeUndefined();
+      expect(personas.find((persona) => persona.id === "fable-5.1-coder")).toBeUndefined();
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("loads only the current built-in Anthropic personas", async () => {
+    const fx = setupFixture();
+
+    try {
+      const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
+      const opus = resolveModel("anthropic", "claude-opus-5");
+      expect(opus).toBeTruthy();
+      const remoteCatalog = new Map([
+        [
+          "anthropic",
+          [
+            {
+              ...structuredClone(opus),
+              id: "claude-fable-5-1",
+              name: "Claude Fable 5.1",
+            },
+          ],
+        ],
+      ]);
+      const { personas, errors } = await loadAllContentWithModelResolver(
+        {},
+        { deps, cwd: fx.cwd, remoteCatalog },
+      );
+      expect(errors).toEqual([]);
 
       expect(personas.find((persona) => persona.id === "opus-4.6-chat")).toBeUndefined();
       expect(personas.find((persona) => persona.id === "opus-4.8-chat")).toBeUndefined();
+      expect(personas.find((persona) => persona.id === "fable-5.1-chat")?.model.id).toBe(
+        "claude-fable-5-1",
+      );
+      expect(personas.find((persona) => persona.id === "fable-5.1-chat")?.settings.reasoning).toBe(
+        "medium",
+      );
+      expect(
+        personas.find((persona) => persona.id === "fable-5.1-chat")?.allowedReasoningLevels,
+      ).toEqual(["low", "medium", "high", "xhigh", "max"]);
+      expect(personas.find((persona) => persona.id === "fable-5.1-coder")?.model.id).toBe(
+        "claude-fable-5-1",
+      );
       expect(personas.find((persona) => persona.id === "opus-5-chat")?.model.id).toBe(
         "claude-opus-5",
       );

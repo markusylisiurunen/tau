@@ -19,7 +19,7 @@ function createGeminiFetchMock({
 } = {}) {
   return vi.fn(async (input, options = {}) => {
     const url = String(input);
-    if (url.endsWith("/gemini-3.7-flash:generateContent")) {
+    if (url.endsWith("/gemini-3.8-flash:generateContent")) {
       return createJsonResponse({
         candidates: [
           {
@@ -89,7 +89,7 @@ describe("gemini transcription", () => {
 
     expect(transcript).toBe("ship the fix");
 
-    const keywordCall = getCall(fetchMock, "/gemini-3.7-flash:generateContent");
+    const keywordCall = getCall(fetchMock, "/gemini-3.8-flash:generateContent");
     const keywordRequest = JSON.parse(keywordCall[1].body);
     expect(keywordRequest.systemInstruction.parts[0].text).toContain(
       "Extract words and short phrases",

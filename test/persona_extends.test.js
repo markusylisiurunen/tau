@@ -160,6 +160,8 @@ describe("custom personas", () => {
       expect(errors).toEqual([]);
       expect(personas.find((persona) => persona.id === "fable-5.1-chat")).toBeUndefined();
       expect(personas.find((persona) => persona.id === "fable-5.1-coder")).toBeUndefined();
+      expect(personas.find((persona) => persona.id === "gemini-3.8-flash-chat")).toBeUndefined();
+      expect(personas.find((persona) => persona.id === "gemini-3.8-flash-coder")).toBeUndefined();
     } finally {
       fx.cleanup();
     }
@@ -233,21 +235,39 @@ describe("custom personas", () => {
     }
   });
 
-  it("loads only the current built-in Gemini persona", async () => {
+  it("loads only the current built-in Gemini persona from the remote catalog", async () => {
     const fx = setupFixture();
 
     try {
       const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
-      const { personas, errors } = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
+      const flash = resolveModel("google", "gemini-3.7-flash");
+      expect(flash).toBeTruthy();
+      const remoteCatalog = new Map([
+        [
+          "google",
+          [
+            {
+              ...structuredClone(flash),
+              id: "gemini-3.8-flash",
+              name: "Gemini 3.8 Flash",
+            },
+          ],
+        ],
+      ]);
+      const { personas, errors } = await loadAllContentWithModelResolver(
+        {},
+        { deps, cwd: fx.cwd, remoteCatalog },
+      );
       expect(errors).toEqual([]);
 
       expect(personas.find((persona) => persona.id === "gemini-3.1-pro-chat")).toBeUndefined();
       expect(personas.find((persona) => persona.id === "gemini-3-flash-chat")).toBeUndefined();
       expect(personas.find((persona) => persona.id === "gemini-3.6-flash-chat")).toBeUndefined();
-      expect(personas.find((persona) => persona.id === "gemini-3.7-flash-chat")?.model.id).toBe(
-        "gemini-3.7-flash",
+      expect(personas.find((persona) => persona.id === "gemini-3.7-flash-chat")).toBeUndefined();
+      expect(personas.find((persona) => persona.id === "gemini-3.8-flash-chat")?.model.id).toBe(
+        "gemini-3.8-flash",
       );
-      expect(personas.find((persona) => persona.id === "gemini-3.7-flash-coder")).toBeUndefined();
+      expect(personas.find((persona) => persona.id === "gemini-3.8-flash-coder")).toBeUndefined();
     } finally {
       fx.cleanup();
     }

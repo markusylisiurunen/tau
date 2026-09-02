@@ -3771,10 +3771,10 @@ export function applySessionProtocolDelta(
     return contentAppendSnapshot;
   }
 
-  const keyedPatchSnapshot = applyKeyedRecordDelta(snapshot, message);
-  if (keyedPatchSnapshot) {
-    validateAppliedSnapshotChanges(snapshot, keyedPatchSnapshot, message.delta.changes);
-    return keyedPatchSnapshot;
+  const structurallySharedSnapshot = applyStructurallySharedPatch(snapshot, message);
+  if (structurallySharedSnapshot) {
+    validateAppliedSnapshotChanges(snapshot, structurallySharedSnapshot, message.delta.changes);
+    return structurallySharedSnapshot;
   }
 
   const next = structuredClone(snapshot);
@@ -3974,7 +3974,7 @@ function setSessionProtocolTurn(
   });
 }
 
-function applyKeyedRecordDelta(
+function applyStructurallySharedPatch(
   snapshot: SessionProtocolSnapshot,
   message: SessionProtocolDeltaMessage,
 ): SessionProtocolSnapshot | undefined {
@@ -3982,6 +3982,9 @@ function applyKeyedRecordDelta(
     return undefined;
   }
 
+  const topLevelChanges: Partial<
+    Pick<SessionProtocolSnapshot, "agentState" | "lifecycle" | "goal" | "costTotal" | "settings">
+  > = {};
   let nextTurns: SessionProtocolSnapshot["turns"] | undefined;
   let nextTools: SessionProtocolSnapshot["tools"] | undefined;
   let nextOperations: SessionProtocolSnapshot["operations"] | undefined;
@@ -4011,6 +4014,21 @@ function applyKeyedRecordDelta(
 
   for (const change of message.delta.changes) {
     switch (change.type) {
+      case "agent-state.set":
+        topLevelChanges.agentState = structuredClone(change.agentState);
+        break;
+      case "lifecycle.set":
+        topLevelChanges.lifecycle = change.lifecycle;
+        break;
+      case "goal.set":
+        topLevelChanges.goal = structuredClone(change.goal);
+        break;
+      case "cost.set":
+        topLevelChanges.costTotal = change.costTotal;
+        break;
+      case "settings.set":
+        topLevelChanges.settings = structuredClone(change.settings);
+        break;
       case "turn.set":
         setSessionProtocolTurn(cloneTurns(), change.turn);
         break;
@@ -4045,6 +4063,7 @@ function applyKeyedRecordDelta(
 
   return {
     ...snapshot,
+    ...topLevelChanges,
     revision: message.toRevision,
     ...(nextTurns ? { turns: nextTurns } : {}),
     ...(nextTools ? { tools: nextTools } : {}),

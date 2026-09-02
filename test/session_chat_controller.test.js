@@ -3049,6 +3049,61 @@ describe("SessionChatController", () => {
     expect(session.submit).not.toHaveBeenCalled();
   });
 
+  it("applies snapshot state deltas without reconciling transcript messages", async () => {
+    const snapshot = createSnapshot([
+      {
+        id: "user-1",
+        message: { role: "user", content: [{ type: "text", text: "hello" }] },
+      },
+      {
+        id: "assistant-1",
+        message: createAssistantMessage("hi"),
+      },
+    ]);
+    const session = new FakeSession(snapshot);
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "local",
+    });
+
+    controller.start();
+    const addMessageSpy = vi.spyOn(view, "addMessage");
+    const updateMessageSpy = vi.spyOn(view, "updateMessage");
+    const updateAssistantMessageSpy = vi.spyOn(view, "updateAssistantMessage");
+    const delta = {
+      version: SESSION_PROTOCOL_VERSION,
+      type: "session.delta",
+      sessionId: session.id,
+      fromRevision: snapshot.revision,
+      toRevision: snapshot.revision + 1,
+      cause: { type: "configuration" },
+      delta: {
+        type: "snapshot.patch",
+        changes: [
+          {
+            type: "settings.set",
+            settings: { ...snapshot.settings, reasoning: "high" },
+          },
+        ],
+      },
+    };
+    session.snapshotValue = applySessionProtocolDelta(session.snapshotValue, delta);
+
+    for (const listener of session.listeners) {
+      listener(delta);
+    }
+
+    expect(addMessageSpy).not.toHaveBeenCalled();
+    expect(updateMessageSpy).not.toHaveBeenCalled();
+    expect(updateAssistantMessageSpy).not.toHaveBeenCalled();
+    expect(view.status.editor.reasoning).toBe("high");
+    expect(controller.snapshot.messages).toBe(snapshot.messages);
+    await controller.dispose();
+  });
+
   it("applies assistant content append deltas without full snapshot reconciliation", async () => {
     const baseSnapshot = createSnapshot();
     const snapshot = updateSnapshot(baseSnapshot, {
@@ -3850,6 +3905,8 @@ describe("SessionChatController", () => {
 
     controller.start();
     const resetCount = view.resetToolUiSession.mock.calls.length;
+    const updateMessageSpy = vi.spyOn(view, "updateMessage");
+    const updateAssistantMessageSpy = vi.spyOn(view, "updateAssistantMessage");
     const delta = {
       version: SESSION_PROTOCOL_VERSION,
       type: "session.delta",
@@ -3888,6 +3945,10 @@ describe("SessionChatController", () => {
         presentation: expect.objectContaining({ subject: "echo a" }),
       }),
     ]);
+    expect(updateMessageSpy).toHaveBeenCalledTimes(1);
+    expect(updateMessageSpy.mock.calls[0]?.[1].type).toBe("tool");
+    expect(updateAssistantMessageSpy).not.toHaveBeenCalled();
+    updateMessageSpy.mockClear();
 
     const facetDelta = {
       version: SESSION_PROTOCOL_VERSION,
@@ -3925,6 +3986,9 @@ describe("SessionChatController", () => {
         presentation: expect.objectContaining({ subject: "echo a\necho b" }),
       }),
     ]);
+    expect(updateMessageSpy).toHaveBeenCalledTimes(1);
+    expect(updateMessageSpy.mock.calls[0]?.[1].type).toBe("tool");
+    expect(updateAssistantMessageSpy).not.toHaveBeenCalled();
     expect(view.status.footer.sessionCost).toBe("$0.42");
     expect(controller.snapshot.tools["tool-a"].status).toBe("running");
     await controller.dispose();

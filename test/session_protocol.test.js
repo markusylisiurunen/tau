@@ -2453,18 +2453,19 @@ describe("session_protocol", () => {
         ],
       },
     });
-    const settingsPatchedSnapshot = applySessionProtocolDelta(
-      createProtocolSnapshot({
-        sessionId: "session-1",
-        revision: 2,
-      }),
-      settingsDelta,
-    );
+    const settingsSnapshot = createProtocolSnapshot({
+      sessionId: "session-1",
+      revision: 2,
+    });
+    const settingsPatchedSnapshot = applySessionProtocolDelta(settingsSnapshot, settingsDelta);
     expect(settingsPatchedSnapshot.revision).toBe(3);
     expect(settingsPatchedSnapshot.settings).toEqual({
       personaId: "default",
       reasoning: "high",
     });
+    expect(settingsPatchedSnapshot.settings).not.toBe(settingsSnapshot.settings);
+    expect(settingsPatchedSnapshot.messages).toBe(settingsSnapshot.messages);
+    expect(settingsPatchedSnapshot.timeline).toBe(settingsSnapshot.timeline);
 
     const goalDelta = createSessionProtocolDeltaMessage({
       sessionId: "session-1",

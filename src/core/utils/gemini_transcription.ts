@@ -16,7 +16,7 @@ const GEMINI_LIVE_TRANSCRIPTION_URL =
   "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent";
 const GEMINI_TRANSCRIPTION_MODEL = "gemini-3.5-transcribe";
 const GEMINI_LIVE_TRANSCRIPTION_MODEL = "gemini-3.5-transcribe-live";
-const GEMINI_TRANSCRIPTION_KEYWORD_MODEL = "gemini-3.7-flash";
+const GEMINI_TRANSCRIPTION_KEYWORD_MODEL = "gemini-3.8-flash";
 const GEMINI_TRANSCRIPTION_MAX_KEYWORD_CHARACTERS_TOTAL = 10_000;
 const GEMINI_TRANSCRIPTION_KEYWORD_TIMEOUT_MS = 15_000;
 const GEMINI_TRANSCRIPTION_CONNECT_TIMEOUT_MS = 15_000;

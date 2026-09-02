@@ -64,7 +64,7 @@ function createJsonResponse(payload, status = 200) {
 function createGeminiTranscriptionFetchMock(transcript) {
   return vi.fn(async (input, options = {}) => {
     const url = getRequestUrl(input);
-    if (url.endsWith("/gemini-3.7-flash:generateContent")) {
+    if (url.endsWith("/gemini-3.8-flash:generateContent")) {
       return createJsonResponse({
         candidates: [
           {

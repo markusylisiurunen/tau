@@ -377,27 +377,77 @@ describe("OpenAI transcription", () => {
     expect(decoderSignal.aborted).toBe(true);
   });
 
-  it("rejects decoded audio longer than five minutes", async () => {
+  it("bounds decoder runtime while allowing proportionate progress", async () => {
+    vi.useFakeTimers();
+    const stdout = new EventEmitter();
+    let decoderSignal;
     const spawnImpl = vi.fn(async (_command, _args, options) => {
-      const stdout = new EventEmitter();
+      decoderSignal = options.signal;
       options.onSpawn({ stdout });
-      const completion = new Promise((resolve) => {
+      return await new Promise((resolve) => {
         options.signal.addEventListener("abort", () => {
           resolve({ ...successfulSpawnResult(), aborted: true });
         });
       });
-      stdout.emit("data", Buffer.alloc(16_000 * 2 * 300 + 1));
-      return await completion;
     });
 
-    await expect(
-      transcribeOpenAIAudio({
+    try {
+      const transcription = transcribeOpenAIAudio({
         apiKey: "openai-key",
         audio: Buffer.from("encoded audio"),
         fetchImpl: vi.fn(),
         spawnImpl,
-      }),
-    ).rejects.toThrow("audio exceeds the five-minute OpenAI transcription limit");
+      });
+      const rejection = expect(transcription).rejects.toThrow(
+        "ffmpeg timed out while decoding audio for OpenAI transcription",
+      );
+      await vi.advanceTimersByTimeAsync(59_000);
+      stdout.emit("data", Buffer.alloc(16_000 * 2));
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(decoderSignal.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+
+      await rejection;
+      expect(decoderSignal.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("transcribes upload-safe chunks independently and preserves audio order", async () => {
+    const pcm = Buffer.alloc(24_000_000);
+    const spawnImpl = vi.fn(async (_command, _args, options) => {
+      const stdout = new EventEmitter();
+      options.onSpawn({ stdout });
+      stdout.emit("data", pcm);
+      return successfulSpawnResult();
+    });
+    const responses = [Promise.withResolvers(), Promise.withResolvers()];
+    let requestIndex = 0;
+    const fetchImpl = vi.fn(() => responses[requestIndex++].promise);
+
+    const transcription = transcribeOpenAIAudio({
+      apiKey: "openai-key",
+      audio: Buffer.from("encoded audio"),
+      context: { messages: [{ role: "user", text: "Use Acme terminology." }] },
+      fetchImpl,
+      spawnImpl,
+    });
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(2));
+
+    for (const [, request] of fetchImpl.mock.calls) {
+      const file = request.body.get("file");
+      expect(file.size).toBeLessThanOrEqual(24_000_000);
+    }
+    expect(fetchImpl.mock.calls[0][1].body.get("prompt")).toContain("Use Acme terminology.");
+    expect(fetchImpl.mock.calls[1][1].body.get("prompt")).toBe(
+      fetchImpl.mock.calls[0][1].body.get("prompt"),
+    );
+    responses[1].resolve(new Response(JSON.stringify({ text: "second chunk" })));
+    responses[0].resolve(new Response(JSON.stringify({ text: "first chunk" })));
+
+    await expect(transcription).resolves.toBe("first chunk second chunk");
+    expect(spawnImpl.mock.calls[0][2]).not.toHaveProperty("timeoutMs");
   });
 
   it("reports OpenAI file transcription errors", async () => {

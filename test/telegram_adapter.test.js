@@ -1700,7 +1700,7 @@ describe("telegram adapter", () => {
           message: {
             chat: { id: groupChatId, type: "group" },
             from: { id: 9, first_name: "Katherine", username: "kat" },
-            voice: { file_id: "voice-1", mime_type: "audio/ogg" },
+            voice: { duration: 1, file_id: "voice-1", mime_type: "audio/ogg" },
           },
         },
         {
@@ -2320,6 +2320,7 @@ describe("telegram adapter", () => {
             chat: { id: 210, type: "private" },
             from: { id: 7 },
             voice: {
+              duration: 1,
               file_id: "voice-123",
               mime_type: "audio/ogg",
             },
@@ -2379,6 +2380,58 @@ describe("telegram adapter", () => {
     }
   });
 
+  it("rejects voice messages longer than 20 minutes before download", async () => {
+    const apiHarness = createApiHarness([
+      [
+        {
+          update_id: 1,
+          message: {
+            chat: { id: 211, type: "private" },
+            from: { id: 7 },
+            voice: {
+              duration: 20 * 60 + 1,
+              file_id: "voice-too-long",
+              mime_type: "audio/ogg",
+            },
+          },
+        },
+      ],
+    ]);
+    const managerHarness = createSessionManagerHarness(
+      [
+        {
+          id: "s22",
+          projectId: "demo",
+          state: "waiting-input",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+      ],
+      { defaultOwnerId: ownerIdForChat(211) },
+    );
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      openaiApiKey: "openai-key",
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+
+    try {
+      await waitFor(() => apiHarness.sendMessages.length === 1);
+      expect(apiHarness.sendMessages[0]).toMatchObject({
+        chatId: 211,
+        text: "audio transcription failed: audio is longer than 20 minutes",
+      });
+      expect(apiHarness.downloadFileCalls).toEqual([]);
+      expect(managerHarness.manager.sendMessage).not.toHaveBeenCalled();
+    } finally {
+      await adapter.close();
+    }
+  });
+
   it("transcribes voice messages with Gemini when configured", async () => {
     const apiHarness = createApiHarness([
       [
@@ -2388,6 +2441,7 @@ describe("telegram adapter", () => {
             chat: { id: 211, type: "private" },
             from: { id: 7 },
             voice: {
+              duration: 1,
               file_id: "voice-456",
               mime_type: "audio/ogg",
             },
@@ -2456,6 +2510,7 @@ describe("telegram adapter", () => {
             chat: { id: 212, type: "private" },
             from: { id: 7 },
             voice: {
+              duration: 1,
               file_id: "voice-789",
               mime_type: "audio/ogg",
             },

@@ -24,10 +24,11 @@ const OPENAI_TRANSCRIPTION_COMPLETION_TIMEOUT_MS = 30_000;
 const OPENAI_TRANSCRIPTION_KEYWORD_TIMEOUT_MS = 15_000;
 const OPENAI_TRANSCRIPTION_MAX_KEYWORD_CHARACTERS_TOTAL = 1_024;
 const OPENAI_TRANSCRIPTION_CONTEXT_TOKENS = 1_024;
-const OPENAI_TRANSCRIPTION_FFMPEG_TIMEOUT_MS = 5 * 60 * 1_000;
+const OPENAI_TRANSCRIPTION_DECODER_BASE_TIMEOUT_MS = 60_000;
 const OPENAI_TRANSCRIPTION_FFMPEG_OUTPUT_LIMIT_BYTES = 20_000;
-const OPENAI_TRANSCRIPTION_MAX_PCM_BYTES =
-  OPENAI_FILE_SAMPLE_RATE * 2 * (OPENAI_TRANSCRIPTION_FFMPEG_TIMEOUT_MS / 1_000);
+const OPENAI_TRANSCRIPTION_MAX_UPLOAD_BYTES = 24_000_000;
+const OPENAI_TRANSCRIPTION_MAX_UPLOAD_PCM_BYTES = OPENAI_TRANSCRIPTION_MAX_UPLOAD_BYTES - 44;
+const OPENAI_TRANSCRIPTION_MAX_CONCURRENT_UPLOADS = 4;
 const OPENAI_REALTIME_TRANSCRIPTION_PROMPT =
   "The speaker is dictating a message for insertion into an AI coding assistant chat input.";
 const OPENAI_TRANSCRIPTION_KEYWORD_TEXT_CONFIG = {
@@ -384,22 +385,75 @@ export async function transcribeOpenAIAudio(
     throw new Error("missing OpenAI API key");
   }
 
-  const wav = await decodeOpenAIAudio({
+  const pcm = await decodeOpenAIAudio({
     audio: options.audio,
     signal: options.signal,
     spawnImpl: options.spawnImpl,
   });
+  const fetchFn = options.fetchImpl ?? fetch;
+  const prompt = buildOpenAIFileTranscriptionPrompt(options.context);
+  const chunkCount = Math.ceil(pcm.length / OPENAI_TRANSCRIPTION_MAX_UPLOAD_PCM_BYTES);
+  const transcripts = new Array<string>(chunkCount);
+  const chunkAbortController = new AbortController();
+  const signal = options.signal
+    ? AbortSignal.any([options.signal, chunkAbortController.signal])
+    : chunkAbortController.signal;
+  let nextChunkIndex = 0;
+  let failed = false;
+  let failure: unknown;
+
+  const transcribeNextChunks = async () => {
+    while (!failed) {
+      const chunkIndex = nextChunkIndex;
+      if (chunkIndex >= chunkCount) return;
+      nextChunkIndex += 1;
+      const offset = chunkIndex * OPENAI_TRANSCRIPTION_MAX_UPLOAD_PCM_BYTES;
+      try {
+        signal.throwIfAborted();
+        transcripts[chunkIndex] = await transcribeOpenAIPcmChunk({
+          apiKey,
+          pcm: pcm.subarray(offset, offset + OPENAI_TRANSCRIPTION_MAX_UPLOAD_PCM_BYTES),
+          prompt,
+          signal,
+          fetchImpl: fetchFn,
+        });
+      } catch (error) {
+        if (failed) return;
+        failed = true;
+        failure = error;
+        chunkAbortController.abort(error);
+      }
+    }
+  };
+
+  await Promise.all(
+    Array.from(
+      { length: Math.min(chunkCount, OPENAI_TRANSCRIPTION_MAX_CONCURRENT_UPLOADS) },
+      transcribeNextChunks,
+    ),
+  );
+  if (failed) throw failure;
+  return transcripts.join(" ");
+}
+
+async function transcribeOpenAIPcmChunk(args: {
+  apiKey: string;
+  pcm: Buffer;
+  prompt: string;
+  signal?: AbortSignal;
+  fetchImpl: typeof fetch;
+}): Promise<string> {
+  const wav = createPcmWav(args.pcm);
   const formData = new FormData();
   formData.append("model", OPENAI_FILE_TRANSCRIPTION_MODEL);
   formData.append("file", new Blob([Uint8Array.from(wav)], { type: "audio/wav" }), "speech.wav");
-  formData.append("prompt", buildOpenAIFileTranscriptionPrompt(options.context));
+  formData.append("prompt", args.prompt);
 
-  const fetchFn = options.fetchImpl ?? fetch;
-  const response = await fetchFn(OPENAI_FILE_TRANSCRIPTION_URL, {
+  const response = await args.fetchImpl(OPENAI_FILE_TRANSCRIPTION_URL, {
     method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}` },
+    headers: { Authorization: `Bearer ${args.apiKey}` },
     body: formData,
-    signal: options.signal,
+    signal: args.signal,
   });
   const responseText = await response.text();
   let payload: unknown;
@@ -434,8 +488,26 @@ async function decodeOpenAIAudio(args: {
     ? AbortSignal.any([args.signal, decoderAbortController.signal])
     : decoderAbortController.signal;
   const chunks: Buffer[] = [];
+  const startedAt = Date.now();
   let decodedBytes = 0;
-  let decodeFailure: Error | undefined;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const scheduleTimeout = () => {
+    if (timeout) clearTimeout(timeout);
+    const decodedDurationMs = (decodedBytes / (OPENAI_FILE_SAMPLE_RATE * 2)) * 1_000;
+    const remainingMs =
+      OPENAI_TRANSCRIPTION_DECODER_BASE_TIMEOUT_MS + decodedDurationMs - (Date.now() - startedAt);
+    timeout = setTimeout(
+      () => {
+        decoderAbortController.abort(
+          new Error("ffmpeg timed out while decoding audio for OpenAI transcription"),
+        );
+      },
+      Math.max(remainingMs, 0),
+    );
+    timeout.unref?.();
+  };
+  scheduleTimeout();
+
   let result: SpawnCaptureResult;
   try {
     result = await spawnImpl(
@@ -461,20 +533,15 @@ async function decodeOpenAIAudio(args: {
       {
         input: args.audio,
         signal,
-        timeoutMs: OPENAI_TRANSCRIPTION_FFMPEG_TIMEOUT_MS,
         maxCaptureBytes: OPENAI_TRANSCRIPTION_FFMPEG_OUTPUT_LIMIT_BYTES,
         captureOutput: "stderr",
         stdio: ["pipe", "pipe", "pipe"],
         onSpawn: (child: ChildProcess) => {
           child.stdout?.on("data", (chunk: Buffer) => {
-            if (decodeFailure || signal.aborted) return;
+            if (signal.aborted) return;
             decodedBytes += chunk.length;
-            if (decodedBytes > OPENAI_TRANSCRIPTION_MAX_PCM_BYTES) {
-              decodeFailure = new Error("audio exceeds the five-minute OpenAI transcription limit");
-              decoderAbortController.abort(decodeFailure);
-              return;
-            }
             chunks.push(Buffer.from(chunk));
+            scheduleTimeout();
           });
         },
       },
@@ -484,18 +551,14 @@ async function decodeOpenAIAudio(args: {
       throw new Error("ffmpeg is required for OpenAI speech transcription");
     }
     throw error;
+  } finally {
+    if (timeout) clearTimeout(timeout);
   }
 
-  if (decodeFailure) {
-    throw decodeFailure;
-  }
   if (result.aborted) {
     throw signal.reason instanceof Error
       ? signal.reason
       : new Error("OpenAI transcription was aborted");
-  }
-  if (result.timedOut) {
-    throw new Error("ffmpeg timed out while decoding audio for OpenAI transcription");
   }
   if (result.exitCode !== 0) {
     const detail = result.stderr.trim();
@@ -509,7 +572,7 @@ async function decodeOpenAIAudio(args: {
     throw new Error("audio contained no decodable speech data");
   }
 
-  return createPcmWav(Buffer.concat(chunks, decodedBytes));
+  return Buffer.concat(chunks, decodedBytes);
 }
 
 function createPcmWav(pcm: Buffer): Buffer {

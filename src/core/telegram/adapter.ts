@@ -12,6 +12,7 @@ import type { SpeechToTextProvider, TelegramProjectConfig } from "../config/sche
 import { formatAdaptiveNumber, formatTokenWindow } from "../utils/format.js";
 import {
   createSpeechToTextTranscription,
+  SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS,
   type SpeechToTextDependencies,
 } from "../utils/speech_to_text.js";
 import {
@@ -62,10 +63,12 @@ type TelegramMessage = {
   };
   voice?: {
     file_id?: string;
+    duration: number;
     mime_type?: string;
   };
   audio?: {
     file_id?: string;
+    duration: number;
     mime_type?: string;
     file_name?: string;
   };
@@ -170,6 +173,7 @@ type NewCommandResolution =
 
 type TelegramAudioMessage = {
   fileId: string;
+  durationMs: number;
   mimeType: string;
   fileName: string;
 };
@@ -890,9 +894,14 @@ const TelegramPhotoVariantSchema = telegramPartialObject({
   height: z.number(),
 });
 
-const TelegramVoiceSchema = TelegramFileSchema.pick({ file_id: true, mime_type: true });
-const TelegramAudioSchema = TelegramFileSchema.pick({
+const TelegramVoiceSchema = TelegramFileSchema.extend({
+  duration: z.number().int().nonnegative(),
+}).pick({ file_id: true, duration: true, mime_type: true });
+const TelegramAudioSchema = TelegramFileSchema.extend({
+  duration: z.number().int().nonnegative(),
+}).pick({
   file_id: true,
+  duration: true,
   mime_type: true,
   file_name: true,
 });
@@ -1800,24 +1809,28 @@ class TelegramAdapterImpl {
   }
 
   private parseAudioMessage(message: TelegramMessage): TelegramAudioMessage | undefined {
-    const voiceFileId = message.voice?.file_id?.trim();
-    if (voiceFileId) {
+    const voice = message.voice;
+    const voiceFileId = voice?.file_id?.trim();
+    if (voice && voiceFileId) {
       return {
         fileId: voiceFileId,
-        mimeType: message.voice?.mime_type?.trim() || DEFAULT_TELEGRAM_VOICE_MIME_TYPE,
+        durationMs: voice.duration * 1_000,
+        mimeType: voice.mime_type?.trim() || DEFAULT_TELEGRAM_VOICE_MIME_TYPE,
         fileName: DEFAULT_TELEGRAM_VOICE_FILE_NAME,
       };
     }
 
-    const audioFileId = message.audio?.file_id?.trim();
-    if (!audioFileId) {
+    const audio = message.audio;
+    const audioFileId = audio?.file_id?.trim();
+    if (!audio || !audioFileId) {
       return undefined;
     }
 
     return {
       fileId: audioFileId,
-      mimeType: message.audio?.mime_type?.trim() || DEFAULT_TELEGRAM_AUDIO_MIME_TYPE,
-      fileName: message.audio?.file_name?.trim() || DEFAULT_TELEGRAM_AUDIO_FILE_NAME,
+      durationMs: audio.duration * 1_000,
+      mimeType: audio.mime_type?.trim() || DEFAULT_TELEGRAM_AUDIO_MIME_TYPE,
+      fileName: audio.file_name?.trim() || DEFAULT_TELEGRAM_AUDIO_FILE_NAME,
     };
   }
 
@@ -2708,6 +2721,14 @@ class TelegramAdapterImpl {
     message: TelegramAudioMessage,
     options: { silent?: boolean } = {},
   ): Promise<TelegramAudioTranscriptionResult> {
+    if (message.durationMs > SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS) {
+      const error = "audio transcription failed: audio is longer than 20 minutes";
+      if (!options.silent) {
+        await this.reply(chatId, error);
+      }
+      return { error };
+    }
+
     const apiKey = this.getSpeechToTextApiKey();
     if (!apiKey) {
       const error = this.getSpeechToTextApiKeyErrorMessage("transcribe Telegram audio");

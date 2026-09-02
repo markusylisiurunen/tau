@@ -205,6 +205,7 @@ type PersonaSpec = {
   description: string;
   provider: string;
   modelId: string;
+  catalogOnly?: boolean;
   allowedReasoningLevels: NonNullable<Persona["allowedReasoningLevels"]>;
   settings: Persona["settings"];
   skills: string[] | "*";
@@ -302,6 +303,16 @@ const PERSONA_SPECS: PersonaSpec[] = [
     skills: "*",
   },
   {
+    id: "fable-5.1",
+    description: "Claude Fable 5.1",
+    provider: "anthropic",
+    modelId: "claude-fable-5-1",
+    catalogOnly: true,
+    allowedReasoningLevels: ["low", "medium", "high", "xhigh", "max"],
+    settings: { reasoning: "medium" },
+    skills: "*",
+  },
+  {
     id: "opus-5",
     description: "Claude Opus 5",
     provider: "anthropic",
@@ -379,6 +390,10 @@ function buildPersona(spec: PersonaSpec, variant: Variant, modelResolver: ModelR
 
 export function createBuiltinPersonas(modelResolver: ModelResolver = resolveModel): Persona[] {
   return PERSONA_SPECS.flatMap((spec) => {
+    if (spec.catalogOnly && !modelResolver(spec.provider, spec.modelId)) {
+      return [];
+    }
+
     if (spec.id.includes("-codex-")) {
       const coderPersona = buildPersona(spec, "coder", modelResolver);
       return [

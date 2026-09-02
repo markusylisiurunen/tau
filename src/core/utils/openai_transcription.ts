@@ -24,6 +24,7 @@ const OPENAI_TRANSCRIPTION_COMPLETION_TIMEOUT_MS = 30_000;
 const OPENAI_TRANSCRIPTION_KEYWORD_TIMEOUT_MS = 15_000;
 const OPENAI_TRANSCRIPTION_MAX_KEYWORD_CHARACTERS_TOTAL = 1_024;
 const OPENAI_TRANSCRIPTION_CONTEXT_TOKENS = 1_024;
+const OPENAI_TRANSCRIPTION_DECODER_BASE_TIMEOUT_MS = 60_000;
 const OPENAI_TRANSCRIPTION_FFMPEG_OUTPUT_LIMIT_BYTES = 20_000;
 const OPENAI_TRANSCRIPTION_MAX_UPLOAD_BYTES = 24_000_000;
 const OPENAI_TRANSCRIPTION_MAX_UPLOAD_PCM_BYTES = OPENAI_TRANSCRIPTION_MAX_UPLOAD_BYTES - 44;
@@ -450,8 +451,31 @@ async function decodeOpenAIAudio(args: {
   spawnImpl?: typeof spawnWithCapture;
 }): Promise<Buffer> {
   const spawnImpl = args.spawnImpl ?? spawnWithCapture;
+  const decoderAbortController = new AbortController();
+  const signal = args.signal
+    ? AbortSignal.any([args.signal, decoderAbortController.signal])
+    : decoderAbortController.signal;
   const chunks: Buffer[] = [];
+  const startedAt = Date.now();
   let decodedBytes = 0;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const scheduleTimeout = () => {
+    if (timeout) clearTimeout(timeout);
+    const decodedDurationMs = (decodedBytes / (OPENAI_FILE_SAMPLE_RATE * 2)) * 1_000;
+    const remainingMs =
+      OPENAI_TRANSCRIPTION_DECODER_BASE_TIMEOUT_MS + decodedDurationMs - (Date.now() - startedAt);
+    timeout = setTimeout(
+      () => {
+        decoderAbortController.abort(
+          new Error("ffmpeg timed out while decoding audio for OpenAI transcription"),
+        );
+      },
+      Math.max(remainingMs, 0),
+    );
+    timeout.unref?.();
+  };
+  scheduleTimeout();
+
   let result: SpawnCaptureResult;
   try {
     result = await spawnImpl(
@@ -476,15 +500,16 @@ async function decodeOpenAIAudio(args: {
       ],
       {
         input: args.audio,
-        signal: args.signal,
+        signal,
         maxCaptureBytes: OPENAI_TRANSCRIPTION_FFMPEG_OUTPUT_LIMIT_BYTES,
         captureOutput: "stderr",
         stdio: ["pipe", "pipe", "pipe"],
         onSpawn: (child: ChildProcess) => {
           child.stdout?.on("data", (chunk: Buffer) => {
-            if (args.signal?.aborted) return;
+            if (signal.aborted) return;
             decodedBytes += chunk.length;
             chunks.push(Buffer.from(chunk));
+            scheduleTimeout();
           });
         },
       },
@@ -494,11 +519,13 @@ async function decodeOpenAIAudio(args: {
       throw new Error("ffmpeg is required for OpenAI speech transcription");
     }
     throw error;
+  } finally {
+    if (timeout) clearTimeout(timeout);
   }
 
   if (result.aborted) {
-    throw args.signal?.reason instanceof Error
-      ? args.signal.reason
+    throw signal.reason instanceof Error
+      ? signal.reason
       : new Error("OpenAI transcription was aborted");
   }
   if (result.exitCode !== 0) {

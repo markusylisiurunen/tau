@@ -377,6 +377,43 @@ describe("OpenAI transcription", () => {
     expect(decoderSignal.aborted).toBe(true);
   });
 
+  it("bounds decoder runtime while allowing proportionate progress", async () => {
+    vi.useFakeTimers();
+    const stdout = new EventEmitter();
+    let decoderSignal;
+    const spawnImpl = vi.fn(async (_command, _args, options) => {
+      decoderSignal = options.signal;
+      options.onSpawn({ stdout });
+      return await new Promise((resolve) => {
+        options.signal.addEventListener("abort", () => {
+          resolve({ ...successfulSpawnResult(), aborted: true });
+        });
+      });
+    });
+
+    try {
+      const transcription = transcribeOpenAIAudio({
+        apiKey: "openai-key",
+        audio: Buffer.from("encoded audio"),
+        fetchImpl: vi.fn(),
+        spawnImpl,
+      });
+      const rejection = expect(transcription).rejects.toThrow(
+        "ffmpeg timed out while decoding audio for OpenAI transcription",
+      );
+      await vi.advanceTimersByTimeAsync(59_000);
+      stdout.emit("data", Buffer.alloc(16_000 * 2));
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(decoderSignal.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+
+      await rejection;
+      expect(decoderSignal.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("splits long decoded audio into bounded uploads", async () => {
     const pcm = Buffer.alloc(24_000_000);
     const spawnImpl = vi.fn(async (_command, _args, options) => {

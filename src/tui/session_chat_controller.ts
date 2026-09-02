@@ -1362,7 +1362,7 @@ export class SessionChatController {
       if (this.tryApplyFastContentAppendDelta(delta)) {
         return true;
       }
-      if (this.tryApplyFastToolUiDelta(delta)) {
+      if (this.tryApplyFastTimelineDelta(delta)) {
         return true;
       }
       if (this.tryApplyFastAgentDelta(delta)) {
@@ -1406,6 +1406,7 @@ export class SessionChatController {
           case "cost.set":
           case "settings.set":
           case "turn.set":
+          case "timeline.advance":
           case "operation.set":
           case "operation.remove":
             return false;
@@ -1466,6 +1467,132 @@ export class SessionChatController {
     return true;
   }
 
+  private tryApplyFastTimelineDelta(delta: SessionProtocolDeltaMessage): boolean {
+    if (delta.delta.type !== "snapshot.patch" || delta.delta.changes.length === 0) {
+      return false;
+    }
+
+    const previousSnapshot = this.snapshot;
+    const affectedMessageIds = new Set<string>();
+    const affectedToolIds = new Set<string>();
+    const appendedNoticeIds = new Set<string>();
+    let hasTimelineChange = false;
+
+    for (const change of delta.delta.changes) {
+      switch (change.type) {
+        case "agent-state.set":
+        case "lifecycle.set":
+        case "goal.set":
+        case "cost.set":
+        case "settings.set":
+        case "turn.set":
+        case "timeline.advance":
+        case "operation.set":
+        case "operation.remove":
+          break;
+        case "message.append":
+        case "message.replace":
+          hasTimelineChange = true;
+          affectedMessageIds.add(change.message.id);
+          break;
+        case "message.content.append":
+          hasTimelineChange = true;
+          affectedMessageIds.add(change.messageId);
+          break;
+        case "timeline.append":
+          hasTimelineChange = true;
+          if (change.item.type === "message") {
+            affectedMessageIds.add(change.item.messageId);
+          } else if (change.item.type === "tool") {
+            affectedToolIds.add(change.item.toolId);
+          } else if (change.item.type === "notice") {
+            appendedNoticeIds.add(change.item.id);
+          }
+          break;
+        case "tool.set":
+          hasTimelineChange = true;
+          affectedToolIds.add(change.tool.id);
+          break;
+        case "facet.set":
+          if (change.facet.kind !== "tau.tool-ui-events" || change.facet.subject.type !== "tool") {
+            return false;
+          }
+          hasTimelineChange = true;
+          affectedToolIds.add(change.facet.subject.id);
+          break;
+        default:
+          return false;
+      }
+    }
+
+    if (!hasTimelineChange) {
+      return false;
+    }
+
+    const nextSnapshot = applySessionProtocolDelta(previousSnapshot, delta);
+    this.snapshot = nextSnapshot;
+    this.observedSessionRevision = Math.max(this.observedSessionRevision, nextSnapshot.revision);
+
+    const remainingMessageIds = new Set(affectedMessageIds);
+    const affectedMessages = new Map<string, SessionProtocolMessage>();
+    for (const messageId of affectedMessageIds) {
+      const message = nextSnapshot.messages.find((entry) => entry.id === messageId);
+      if (message) {
+        affectedMessages.set(messageId, message);
+      }
+    }
+    const timelineItems = [...nextSnapshot.timeline.items, ...this.ephemeralTimelineItems.values()]
+      .filter((item) => {
+        if (item.type === "message") {
+          return affectedMessageIds.has(item.messageId);
+        }
+        if (item.type === "tool") {
+          return affectedToolIds.has(item.toolId);
+        }
+        return item.type === "notice" && appendedNoticeIds.has(item.id);
+      })
+      .sort((left, right) => left.sequence - right.sequence);
+
+    for (const item of timelineItems) {
+      if (item.type === "message" && remainingMessageIds.delete(item.messageId)) {
+        const message = affectedMessages.get(item.messageId);
+        if (message) {
+          this.syncProtocolMessage(message);
+        }
+      } else if (item.type === "tool" && affectedToolIds.has(item.toolId)) {
+        const tool = nextSnapshot.tools[item.toolId];
+        if (tool) {
+          this.upsertRenderedMessage(item.id, {
+            type: "tool",
+            tool: buildToolUiModel(nextSnapshot, tool),
+          });
+        }
+      } else if (item.type === "notice" && appendedNoticeIds.has(item.id)) {
+        this.upsertRenderedMessage(item.id, {
+          type: "transcript_notice",
+          title: item.notice.presentation.title,
+          ...(item.notice.presentation.content
+            ? { content: item.notice.presentation.content }
+            : {}),
+          tone: item.notice.severity === "error" ? "error" : "default",
+        });
+      }
+    }
+
+    for (const messageId of remainingMessageIds) {
+      const message = affectedMessages.get(messageId);
+      if (message) {
+        this.syncProtocolMessage(message);
+      } else {
+        this.removeProtocolMessage(messageId);
+      }
+    }
+
+    this.updateStreamingStateFromSnapshot(nextSnapshot);
+    this.refreshStatus();
+    return true;
+  }
+
   private tryApplyFastAgentDelta(delta: SessionProtocolDeltaMessage): boolean {
     if (delta.delta.type !== "snapshot.patch") {
       return false;
@@ -1493,58 +1620,80 @@ export class SessionChatController {
     return true;
   }
 
-  private tryApplyFastToolUiDelta(delta: SessionProtocolDeltaMessage): boolean {
-    if (
-      delta.delta.type !== "snapshot.patch" ||
-      delta.delta.changes.length === 0 ||
-      delta.delta.changes.some(
-        (change) => change.type !== "tool.set" && change.type !== "facet.set",
-      )
-    ) {
-      return false;
+  private syncProtocolMessage(message: SessionProtocolMessage): void {
+    if (this.hiddenHistoryEntryIds.has(message.id) || !this.isMessageProjected(message.id)) {
+      this.removeProtocolMessage(message.id);
+      return;
     }
 
-    const facetChanges = delta.delta.changes.filter((change) => change.type === "facet.set");
-    if (
-      facetChanges.some(
-        ({ facet }) => facet.kind !== "tau.tool-ui-events" || facet.subject.type !== "tool",
-      )
-    ) {
-      return false;
+    const model = this.buildProtocolMessageModel(message);
+    if (model) {
+      this.upsertRenderedMessage(message.id, model);
+    } else {
+      this.removeRenderedProtocolItems([message.id]);
     }
 
-    const nextSnapshot = applySessionProtocolDelta(this.snapshot, delta);
-    this.snapshot = nextSnapshot;
-    this.observedSessionRevision = Math.max(this.observedSessionRevision, nextSnapshot.revision);
-
-    const toolIds = new Set<string>();
-    for (const change of delta.delta.changes) {
-      if (change.type === "tool.set") {
-        toolIds.add(change.tool.id);
-      } else if (change.type === "facet.set" && change.facet.subject.type === "tool") {
-        toolIds.add(change.facet.subject.id);
-      }
+    const outcomeNotice = getMessageOutcomeNotice(message);
+    const outcomeNoticeId = `presentation:failure:${message.id}`;
+    const interruptionNoticeId = `presentation:interruption:${message.id}`;
+    if (outcomeNotice) {
+      this.upsertRenderedMessage(outcomeNotice.id, {
+        type: "transcript_notice",
+        title: outcomeNotice.title,
+        ...(outcomeNotice.content ? { content: outcomeNotice.content } : {}),
+        tone: outcomeNotice.severity === "error" ? "error" : "default",
+      });
     }
+    if (outcomeNotice?.id !== outcomeNoticeId) {
+      this.removeRenderedProtocolItems([outcomeNoticeId]);
+    }
+    if (outcomeNotice?.id !== interruptionNoticeId) {
+      this.removeRenderedProtocolItems([interruptionNoticeId]);
+    }
+  }
 
-    for (const item of [...nextSnapshot.timeline.items, ...this.ephemeralTimelineItems.values()]) {
-      if (item.type !== "tool" || !toolIds.has(item.toolId)) {
-        continue;
-      }
-      const tool = nextSnapshot.tools[item.toolId];
-      if (!tool) {
-        continue;
-      }
-      const model = { type: "tool" as const, tool: buildToolUiModel(nextSnapshot, tool) };
-      const viewMessageId = this.getViewMessageId(item.id);
-      if (this.renderedMessageIds.includes(viewMessageId)) {
-        this.view.updateMessage(viewMessageId, model);
+  private removeProtocolMessage(messageId: string): void {
+    this.removeRenderedProtocolItems([
+      messageId,
+      `presentation:failure:${messageId}`,
+      `presentation:interruption:${messageId}`,
+    ]);
+  }
+
+  private upsertRenderedMessage(protocolId: string, model: ChatMessageModel): void {
+    const viewMessageId = this.getViewMessageId(protocolId);
+    if (this.renderedMessageIds.includes(viewMessageId)) {
+      if (model.type === "assistant" || model.type === "assistant_partial") {
+        this.view.updateAssistantMessage(viewMessageId, model);
       } else {
-        this.renderedMessageIds.push(this.view.addMessage(model, viewMessageId));
+        this.view.updateMessage(viewMessageId, model);
       }
+      return;
     }
+    this.renderedMessageIds.push(this.view.addMessage(model, viewMessageId));
+  }
 
-    this.refreshStatus();
-    return true;
+  private removeRenderedProtocolItems(protocolIds: string[]): void {
+    this.removeRenderedMessages(
+      protocolIds.flatMap((id) => {
+        const viewMessageId = this.viewMessageIds.get(id);
+        return viewMessageId ? [viewMessageId] : [];
+      }),
+    );
+  }
+
+  private removeRenderedMessages(ids: string[]): void {
+    const idsToRemove = ids.filter((id) => this.renderedMessageIds.includes(id));
+    if (idsToRemove.length === 0) {
+      return;
+    }
+    const idSet = new Set(idsToRemove);
+    this.renderedMessageIds.splice(
+      0,
+      this.renderedMessageIds.length,
+      ...this.renderedMessageIds.filter((id) => !idSet.has(id)),
+    );
+    this.view.removeMessages(idsToRemove);
   }
 
   private getViewMessageId(protocolId: string): string {

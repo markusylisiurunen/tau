@@ -3104,6 +3104,379 @@ describe("SessionChatController", () => {
     await controller.dispose();
   });
 
+  it("targets message and notice updates in a long timeline", async () => {
+    const baseSnapshot = createSnapshot(
+      Array.from({ length: 1_000 }, (_, index) => ({
+        id: `history-${index}`,
+        message: {
+          role: "user",
+          content: [{ type: "text", text: `history ${index}` }],
+          timestamp: index,
+        },
+      })),
+    );
+    const draftMessage = {
+      id: "assistant-active",
+      state: "draft",
+      modelVisible: false,
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "working" }],
+        timestamp: 1_001,
+      },
+    };
+    const snapshot = updateSnapshot(baseSnapshot, {
+      revision: 3,
+      lifecycle: "running",
+      messages: [...baseSnapshot.messages, draftMessage],
+      timeline: [
+        ...baseSnapshot.timeline.items,
+        {
+          type: "message",
+          id: "timeline-assistant-active",
+          messageId: draftMessage.id,
+        },
+      ],
+    });
+    const session = new FakeSession(snapshot);
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "local",
+    });
+
+    controller.start();
+    const addMessageSpy = vi.spyOn(view, "addMessage");
+    const updateMessageSpy = vi.spyOn(view, "updateMessage");
+    const updateAssistantMessageSpy = vi.spyOn(view, "updateAssistantMessage");
+    const userMessage = {
+      id: "user-next",
+      state: "committed",
+      modelVisible: true,
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "next" }],
+        timestamp: 1_002,
+      },
+    };
+    const appendDelta = {
+      version: SESSION_PROTOCOL_VERSION,
+      type: "session.delta",
+      sessionId: session.id,
+      fromRevision: 3,
+      toRevision: 4,
+      cause: { type: "user-message" },
+      delta: {
+        type: "snapshot.patch",
+        changes: [
+          {
+            type: "agent-state.set",
+            agentState: { ...snapshot.agentState, revision: snapshot.agentState.revision + 1 },
+          },
+          { type: "message.append", message: userMessage },
+          {
+            type: "timeline.append",
+            item: {
+              type: "message",
+              id: "timeline-user-next",
+              sequence: snapshot.timeline.sequence + 1,
+              createdAt: userMessage.message.timestamp,
+              messageId: userMessage.id,
+            },
+          },
+        ],
+      },
+    };
+    session.snapshotValue = applySessionProtocolDelta(session.snapshotValue, appendDelta);
+    for (const listener of session.listeners) {
+      listener(appendDelta);
+    }
+
+    expect(addMessageSpy).toHaveBeenCalledTimes(1);
+    expect(addMessageSpy).toHaveBeenCalledWith({ type: "user", text: "next" }, "user-next");
+    expect(updateMessageSpy).not.toHaveBeenCalled();
+    expect(updateAssistantMessageSpy).not.toHaveBeenCalled();
+
+    addMessageSpy.mockClear();
+    updateMessageSpy.mockClear();
+    updateAssistantMessageSpy.mockClear();
+    const finalMessage = {
+      ...draftMessage,
+      state: "committed",
+      modelVisible: true,
+      message: createAssistantMessage("done"),
+    };
+    const finalDelta = {
+      version: SESSION_PROTOCOL_VERSION,
+      type: "session.delta",
+      sessionId: session.id,
+      fromRevision: 4,
+      toRevision: 5,
+      cause: { type: "assistant-message" },
+      delta: {
+        type: "snapshot.patch",
+        changes: [
+          { type: "cost.set", costTotal: 0.01 },
+          { type: "message.replace", message: finalMessage },
+          { type: "lifecycle.set", lifecycle: "idle" },
+        ],
+      },
+    };
+    session.snapshotValue = applySessionProtocolDelta(session.snapshotValue, finalDelta);
+    for (const listener of session.listeners) {
+      listener(finalDelta);
+    }
+
+    expect(addMessageSpy).not.toHaveBeenCalled();
+    expect(updateAssistantMessageSpy).toHaveBeenCalledTimes(1);
+    expect(updateMessageSpy).toHaveBeenCalledTimes(1);
+    expect(view.messages.find((message) => message.id === draftMessage.id)?.model).toEqual(
+      expect.objectContaining({
+        type: "assistant",
+        message: expect.objectContaining({ content: [{ type: "text", text: "done" }] }),
+      }),
+    );
+
+    addMessageSpy.mockClear();
+    updateMessageSpy.mockClear();
+    updateAssistantMessageSpy.mockClear();
+    const noticeDelta = {
+      version: SESSION_PROTOCOL_VERSION,
+      type: "session.delta",
+      sessionId: session.id,
+      fromRevision: 5,
+      toRevision: 6,
+      cause: { type: "notice" },
+      delta: {
+        type: "snapshot.patch",
+        changes: [
+          {
+            type: "timeline.append",
+            item: {
+              type: "notice",
+              id: "notice-next",
+              sequence: snapshot.timeline.sequence + 2,
+              createdAt: 1_003,
+              notice: {
+                kind: "tau.test.notice",
+                version: 1,
+                severity: "warn",
+                subject: { type: "session" },
+                presentation: { title: "check this" },
+                data: {},
+              },
+            },
+          },
+        ],
+      },
+    };
+    session.snapshotValue = applySessionProtocolDelta(session.snapshotValue, noticeDelta);
+    for (const listener of session.listeners) {
+      listener(noticeDelta);
+    }
+
+    expect(addMessageSpy).toHaveBeenCalledTimes(1);
+    expect(addMessageSpy).toHaveBeenCalledWith(
+      { type: "transcript_notice", title: "check this", tone: "default" },
+      "notice-next",
+    );
+    expect(updateMessageSpy).not.toHaveBeenCalled();
+    expect(updateAssistantMessageSpy).not.toHaveBeenCalled();
+    await controller.dispose();
+  });
+
+  it("preserves append order for mixed targeted timeline changes", async () => {
+    const snapshot = updateSnapshot(
+      createSnapshot([
+        {
+          id: "history-1",
+          message: { role: "user", content: [{ type: "text", text: "first" }] },
+        },
+      ]),
+      { revision: 3 },
+    );
+    const session = new FakeSession(snapshot);
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "local",
+    });
+
+    controller.start();
+    const addMessageSpy = vi.spyOn(view, "addMessage");
+    const nextMessage = {
+      id: "history-2",
+      state: "committed",
+      modelVisible: true,
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "second" }],
+        timestamp: 3,
+      },
+    };
+    const delta = {
+      version: SESSION_PROTOCOL_VERSION,
+      type: "session.delta",
+      sessionId: session.id,
+      fromRevision: 3,
+      toRevision: 4,
+      cause: { type: "maintenance" },
+      delta: {
+        type: "snapshot.patch",
+        changes: [
+          {
+            type: "timeline.append",
+            item: {
+              type: "notice",
+              id: "notice-between",
+              sequence: snapshot.timeline.sequence + 1,
+              createdAt: 2,
+              notice: {
+                kind: "tau.test.notice",
+                version: 1,
+                severity: "info",
+                subject: { type: "session" },
+                presentation: { title: "between" },
+                data: {},
+              },
+            },
+          },
+          { type: "message.append", message: nextMessage },
+          {
+            type: "timeline.append",
+            item: {
+              type: "message",
+              id: "timeline-history-2",
+              sequence: snapshot.timeline.sequence + 2,
+              createdAt: 3,
+              messageId: nextMessage.id,
+            },
+          },
+        ],
+      },
+    };
+    session.snapshotValue = applySessionProtocolDelta(session.snapshotValue, delta);
+    for (const listener of session.listeners) {
+      listener(delta);
+    }
+
+    expect(addMessageSpy.mock.calls).toEqual([
+      [{ type: "transcript_notice", title: "between", tone: "default" }, "notice-between"],
+      [{ type: "user", text: "second" }, "history-2"],
+    ]);
+    expect(view.messages.slice(-2).map((message) => message.id)).toEqual([
+      "notice-between",
+      "history-2",
+    ]);
+    await controller.dispose();
+  });
+
+  it("keeps late assistant outcome notices at the visible tail", async () => {
+    const assistantMessage = createAssistantToolCallMessage([
+      {
+        type: "toolCall",
+        id: "tool-a",
+        name: "bash",
+        arguments: { command: "echo a" },
+      },
+    ]);
+    const baseSnapshot = createSnapshot();
+    const snapshot = updateSnapshot(baseSnapshot, {
+      revision: 3,
+      messages: [
+        ...baseSnapshot.messages,
+        {
+          id: "assistant-active",
+          state: "draft",
+          modelVisible: false,
+          message: assistantMessage,
+        },
+      ],
+      timeline: [
+        ...baseSnapshot.timeline.items,
+        { type: "message", id: "timeline-assistant-active", messageId: "assistant-active" },
+      ],
+      tools: {
+        "tool-a": {
+          id: "tool-a",
+          toolCallId: "tool-a",
+          toolName: "bash",
+          call: { messageId: "assistant-active", contentIndex: 0 },
+          status: "succeeded",
+          startedAt: 1,
+          finishedAt: 2,
+          facetIds: [],
+        },
+      },
+    });
+    const session = new FakeSession(snapshot);
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "local",
+    });
+
+    controller.start();
+    const failedMessage = {
+      id: "assistant-active",
+      state: "committed",
+      modelVisible: true,
+      message: {
+        ...assistantMessage,
+        stopReason: "error",
+        errorMessage: "provider failed",
+      },
+    };
+    const delta = {
+      version: SESSION_PROTOCOL_VERSION,
+      type: "session.delta",
+      sessionId: session.id,
+      fromRevision: 3,
+      toRevision: 4,
+      cause: { type: "assistant-message" },
+      delta: {
+        type: "snapshot.patch",
+        changes: [{ type: "message.replace", message: failedMessage }],
+      },
+    };
+    session.snapshotValue = applySessionProtocolDelta(session.snapshotValue, delta);
+    for (const listener of session.listeners) {
+      listener(delta);
+    }
+
+    expect(
+      view.messages
+        .map((message) => message.id)
+        .filter((id) =>
+          [
+            "assistant-active",
+            "timeline-tool-tool-a",
+            "presentation:failure:assistant-active",
+          ].includes(id),
+        ),
+    ).toEqual([
+      "assistant-active",
+      "timeline-tool-tool-a",
+      "presentation:failure:assistant-active",
+    ]);
+    expect(view.messages.at(-1)).toEqual({
+      id: "presentation:failure:assistant-active",
+      model: {
+        type: "transcript_notice",
+        title: "model request failed after tool execution",
+        content: ["provider failed"],
+        tone: "error",
+      },
+    });
+    await controller.dispose();
+  });
+
   it("applies assistant content append deltas without full snapshot reconciliation", async () => {
     const baseSnapshot = createSnapshot();
     const snapshot = updateSnapshot(baseSnapshot, {
@@ -3843,6 +4216,116 @@ describe("SessionChatController", () => {
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
+  });
+
+  it("targets a tool result update in a long timeline", async () => {
+    const baseSnapshot = createSnapshot(
+      Array.from({ length: 1_000 }, (_, index) => ({
+        id: `history-${index}`,
+        message: {
+          role: "user",
+          content: [{ type: "text", text: `history ${index}` }],
+          timestamp: index,
+        },
+      })),
+    );
+    const toolCallMessage = {
+      id: "assistant-tools",
+      state: "committed",
+      modelVisible: true,
+      message: createAssistantToolCallMessage([
+        {
+          type: "toolCall",
+          id: "tool-a",
+          name: "bash",
+          arguments: { command: "echo a" },
+        },
+      ]),
+    };
+    const tool = {
+      id: "tool-a",
+      toolCallId: "tool-a",
+      toolName: "bash",
+      call: { messageId: toolCallMessage.id, contentIndex: 0 },
+      status: "succeeded",
+      startedAt: 1_001,
+      finishedAt: 1_002,
+      facetIds: [],
+    };
+    const snapshot = updateSnapshot(baseSnapshot, {
+      revision: 3,
+      messages: [...baseSnapshot.messages, toolCallMessage],
+      timeline: [
+        ...baseSnapshot.timeline.items,
+        {
+          type: "message",
+          id: "timeline-assistant-tools",
+          messageId: toolCallMessage.id,
+        },
+      ],
+      tools: { "tool-a": tool },
+    });
+    const session = new FakeSession(snapshot);
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "local",
+    });
+
+    controller.start();
+    const addMessageSpy = vi.spyOn(view, "addMessage");
+    const updateMessageSpy = vi.spyOn(view, "updateMessage");
+    const updateAssistantMessageSpy = vi.spyOn(view, "updateAssistantMessage");
+    const resultMessage = {
+      id: "tool-result-a",
+      state: "committed",
+      modelVisible: true,
+      message: {
+        role: "toolResult",
+        toolCallId: "tool-a",
+        toolName: "bash",
+        content: [{ type: "text", text: "a\n" }],
+        isError: false,
+        timestamp: 1_003,
+      },
+    };
+    const delta = {
+      version: SESSION_PROTOCOL_VERSION,
+      type: "session.delta",
+      sessionId: session.id,
+      fromRevision: 3,
+      toRevision: 4,
+      cause: { type: "tool-result" },
+      delta: {
+        type: "snapshot.patch",
+        changes: [
+          {
+            type: "agent-state.set",
+            agentState: { ...snapshot.agentState, revision: snapshot.agentState.revision + 1 },
+          },
+          { type: "message.append", message: resultMessage },
+          { type: "tool.set", tool: { ...tool, resultMessageId: resultMessage.id } },
+        ],
+      },
+    };
+    session.snapshotValue = applySessionProtocolDelta(session.snapshotValue, delta);
+    for (const listener of session.listeners) {
+      listener(delta);
+    }
+
+    expect(addMessageSpy).not.toHaveBeenCalled();
+    expect(updateMessageSpy).toHaveBeenCalledTimes(1);
+    expect(updateMessageSpy.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({
+        type: "tool",
+        tool: expect.objectContaining({ toolCallId: "tool-a", status: "succeeded" }),
+      }),
+    );
+    expect(updateAssistantMessageSpy).not.toHaveBeenCalled();
+    expect(controller.snapshot.messages.at(-1)).toEqual(resultMessage);
+    await controller.dispose();
   });
 
   it("applies tool status and presentation facet deltas independently", async () => {

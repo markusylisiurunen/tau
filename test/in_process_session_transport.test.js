@@ -211,6 +211,7 @@ function createHost() {
       async observeSession(sessionId) {
         return sessions.get(sessionId);
       },
+      releaseSession() {},
       async listSessions() {
         return [...sessions.values()].map((session) => ({
           sessionId: session.sessionId,

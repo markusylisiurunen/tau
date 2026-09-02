@@ -560,6 +560,7 @@ function createHarness(options = {}) {
   const hostShutdown = vi.fn(() => {
     sessions.clear();
   });
+  const releaseSession = vi.fn();
   const host = {
     async createSession() {
       return createHostedSession();
@@ -567,6 +568,7 @@ function createHarness(options = {}) {
     async observeSession(sessionId) {
       return sessions.get(sessionId);
     },
+    releaseSession,
     async listSessions() {
       return [...sessions.values()].map((session) => ({
         sessionId: session.sessionId,
@@ -588,6 +590,7 @@ function createHarness(options = {}) {
     connection,
     host,
     hostShutdown,
+    releaseSession,
     seededSession,
     releaseTurn: () => seededSession?.releaseTurn(),
     emitNotice: (text, revision) => seededSession?.emitNotice(text, revision),
@@ -669,6 +672,60 @@ describe("SessionProtocolHandler", () => {
     expect(list.result).toEqual({ sessions: [] });
   });
 
+  it("releases a created session when its protocol connection closes", async () => {
+    const harness = createHarness({ precreate: false });
+
+    await harness.connection.handleRequest(request("create", "session.create", localCreateParams));
+    const response = harness.lines.find(
+      (line) => line.type === "response" && line.id === "create" && line.ok,
+    );
+    const session = await harness.host.observeSession(response.result.sessionId);
+
+    await harness.connection.close();
+
+    expect(harness.releaseSession).toHaveBeenCalledTimes(1);
+    expect(harness.releaseSession).toHaveBeenCalledWith(session);
+  });
+
+  it("releases redundant handles acquired by concurrent session lookups", async () => {
+    const harness = createHarness();
+    let started = 0;
+    let markLookupsStarted;
+    const lookupsStarted = new Promise((resolve) => {
+      markLookupsStarted = resolve;
+    });
+    let releaseLookups;
+    const lookupBlocker = new Promise((resolve) => {
+      releaseLookups = resolve;
+    });
+    const observeSession = vi.fn(async (sessionId) => {
+      started += 1;
+      if (started === 2) markLookupsStarted();
+      await lookupBlocker;
+      return await harness.host.observeSession(sessionId);
+    });
+    const connection = new TestSessionProtocolConnection({
+      host: { ...harness.host, observeSession },
+      send: () => {},
+    });
+
+    const first = connection.handleRequest(
+      request("snapshot-1", "session.snapshot", { sessionId: "session-1" }),
+    );
+    const second = connection.handleRequest(
+      request("snapshot-2", "session.snapshot", { sessionId: "session-1" }),
+    );
+    await lookupsStarted;
+    releaseLookups();
+    await Promise.all([first, second]);
+
+    expect(observeSession).toHaveBeenCalledTimes(2);
+    expect(harness.releaseSession).toHaveBeenCalledTimes(1);
+
+    await connection.close();
+    expect(harness.releaseSession).toHaveBeenCalledTimes(2);
+  });
+
   it("returns busy for concurrent ephemeral thread submissions", async () => {
     const harness = createHarness({
       submitEphemeralThread: async ({ threadId }) => {
@@ -736,6 +793,7 @@ describe("SessionProtocolHandler", () => {
     await create;
 
     expect(harness.seededSession.createEphemeralContext).not.toHaveBeenCalled();
+    expect(harness.releaseSession).toHaveBeenCalledWith(harness.seededSession);
     expect(lines.some((line) => line.id === "ephemeral-create")).toBe(false);
   });
 
@@ -1372,6 +1430,56 @@ describe("SessionProtocolHandler", () => {
     await Promise.resolve();
 
     expect(observerLines.some((line) => deltaHasNotice(line, "after failed observe"))).toBe(false);
+    await observer.close();
+  });
+
+  it("preserves a successful observer when an overlapping observe fails", async () => {
+    let markSnapshotStarted;
+    const snapshotStarted = new Promise((resolve) => {
+      markSnapshotStarted = resolve;
+    });
+    let releaseSnapshot;
+    const snapshotBlocker = new Promise((resolve) => {
+      releaseSnapshot = resolve;
+    });
+    const harness = createHarness({
+      snapshotDelays: [
+        async () => {
+          markSnapshotStarted();
+          await snapshotBlocker;
+          throw new Error("snapshot unavailable");
+        },
+        0,
+      ],
+    });
+    const observerLines = [];
+    const observer = new TestSessionProtocolConnection({
+      host: harness.host,
+      send: (message) => observerLines.push(message),
+    });
+
+    const failed = observer.handleRequest(
+      request("attach-failed", "session.observe", { sessionId: "session-1" }),
+    );
+    await snapshotStarted;
+    const succeeded = observer.handleRequest(
+      request("attach-succeeded", "session.observe", { sessionId: "session-1" }),
+    );
+    releaseSnapshot();
+    await Promise.all([failed, succeeded]);
+
+    expect(observerLines.find((line) => line.id === "attach-failed")).toEqual(
+      expect.objectContaining({ ok: false }),
+    );
+    expect(observerLines.find((line) => line.id === "attach-succeeded")).toEqual(
+      expect.objectContaining({ ok: true }),
+    );
+
+    harness.emitNotice("after overlapping observe", 1);
+    expect(observerLines.some((line) => deltaHasNotice(line, "after overlapping observe"))).toBe(
+      true,
+    );
+
     await observer.close();
   });
 

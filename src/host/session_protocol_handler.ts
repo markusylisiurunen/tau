@@ -93,6 +93,8 @@ type SessionProtocolHandlerSessionState = {
   bufferedDeltas?: SessionProtocolDeltaMessage[];
   bufferedPendingUserMessages?: SessionProtocolPendingUserMessagesMessage[];
   bufferedSubagentActivities?: SessionProtocolSubagentActivitiesMessage[];
+  observed: boolean;
+  released: boolean;
 };
 
 type SessionMutationQueueState = {
@@ -189,6 +191,7 @@ export class SessionProtocolHandler {
   private readonly host: TauSessionHost;
   private readonly send: (message: SessionProtocolOutgoingMessage) => void;
   private readonly sessionStates = new Map<string, SessionProtocolHandlerSessionState>();
+  private readonly sessionObservationQueues = new Map<string, Promise<void>>();
   private readonly connectionAbortController = new AbortController();
   private readonly activeSideChannels = new Set<Promise<void>>();
   private readonly activeExecAbortControllers = new Map<string, AbortController>();
@@ -747,6 +750,7 @@ export class SessionProtocolHandler {
       await session.dispose();
       return;
     }
+    this.registerSession(session);
     this.sendMessage(
       createSessionProtocolSuccessResponse(request.id, "session.create", {
         sessionId: session.sessionId,
@@ -767,7 +771,23 @@ export class SessionProtocolHandler {
   private async handleAttach(
     request: Extract<SessionProtocolRequestMessage, { method: "session.observe" }>,
   ): Promise<void> {
-    const wasObserved = this.sessionStates.has(request.params.sessionId);
+    const sessionId = request.params.sessionId;
+    const previous = this.sessionObservationQueues.get(sessionId) ?? Promise.resolve();
+    const observation = previous.catch(() => undefined).then(() => this.handleAttachNow(request));
+    this.sessionObservationQueues.set(sessionId, observation);
+    try {
+      await observation;
+    } finally {
+      if (this.sessionObservationQueues.get(sessionId) === observation) {
+        this.sessionObservationQueues.delete(sessionId);
+      }
+    }
+  }
+
+  private async handleAttachNow(
+    request: Extract<SessionProtocolRequestMessage, { method: "session.observe" }>,
+  ): Promise<void> {
+    const wasObserved = this.sessionStates.get(request.params.sessionId)?.observed ?? false;
     const state = await this.getSessionState(request.params.sessionId);
     if (!state) {
       this.sendMessage(
@@ -797,6 +817,7 @@ export class SessionProtocolHandler {
         }),
       );
       observed = true;
+      state.observed = true;
       this.flushBufferedDeltasAfterSnapshot(state, snapshot.revision);
       this.flushBufferedPendingUserMessagesAfter(state, pendingUserMessages.revision);
       this.flushBufferedSubagentActivitiesAfter(state, subagentActivities.revision);
@@ -1580,12 +1601,15 @@ export class SessionProtocolHandler {
   private registerSession(session: TauHostedSession): SessionProtocolHandlerSessionState {
     const existing = this.sessionStates.get(session.sessionId);
     if (existing) {
+      this.host.releaseSession(session);
       return existing;
     }
 
     const state: SessionProtocolHandlerSessionState = {
       session,
       live: getSessionLiveState(session),
+      observed: false,
+      released: false,
     };
 
     state.unsubscribeDelta = session.onDelta((delta) => {
@@ -1658,7 +1682,9 @@ export class SessionProtocolHandler {
     }
 
     const session = await this.host.observeSession(sessionId);
-    if (!session || this.closed) {
+    if (!session) return undefined;
+    if (this.closed) {
+      this.host.releaseSession(session);
       return undefined;
     }
     return this.registerSession(session);
@@ -1792,6 +1818,10 @@ export class SessionProtocolHandler {
 
   private unsubscribeSessionListeners(state: SessionProtocolHandlerSessionState): void {
     this.clientToolRegistration?.detachSession(state.session.sessionId);
+    if (!state.released) {
+      state.released = true;
+      this.host.releaseSession(state.session);
+    }
 
     state.unsubscribeDelta?.();
     state.unsubscribeDelta = undefined;

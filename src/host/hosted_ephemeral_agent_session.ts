@@ -84,6 +84,7 @@ export class HostedEphemeralAgentSession {
 
   async submitThreadMessage(
     options: Omit<SessionProtocolEphemeralSubmitParams, "sessionId">,
+    signal?: AbortSignal,
   ): Promise<SessionProtocolEphemeralSubmitResult> {
     this.assertActive();
     if (options.contextId !== this.options.contextId) {
@@ -105,8 +106,18 @@ export class HostedEphemeralAgentSession {
     this.activeThreadIds.add(options.threadId);
     try {
       const thread = await this.getOrCreateThread(options.threadId, options.forkFromThreadId);
-      if (options.reasoning !== undefined) thread.setReasoning(options.reasoning);
-      return { threadId: options.threadId, response: await thread.submitMessage(options.message) };
+      signal?.throwIfAborted();
+      const interrupt = () => thread.interrupt();
+      signal?.addEventListener("abort", interrupt, { once: true });
+      try {
+        if (options.reasoning !== undefined) thread.setReasoning(options.reasoning);
+        return {
+          threadId: options.threadId,
+          response: await thread.submitMessage(options.message),
+        };
+      } finally {
+        signal?.removeEventListener("abort", interrupt);
+      }
     } finally {
       this.activeThreadIds.delete(options.threadId);
     }
@@ -277,6 +288,10 @@ class EphemeralAgentThread {
     const response = extractAssistantText(assistant).trim();
     if (!response) throw new Error("ephemeral agent thread produced an empty assistant response");
     return response;
+  }
+
+  interrupt(): boolean {
+    return this.runtime.interrupt();
   }
 
   dispose(): void {

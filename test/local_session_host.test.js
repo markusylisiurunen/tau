@@ -5156,6 +5156,52 @@ describe("LocalSessionHost", () => {
     await host.shutdown();
   });
 
+  it("keeps an unobserved live session until an ephemeral submission settles", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const session = await host.createSession(localCreateInput);
+    const { contextId } = await session.createEphemeralContext({
+      instructions: "review instructions",
+      tools: [],
+    });
+    const hostedContext = session.ephemeralAgentSessions.get(contextId);
+    const thread = await hostedContext.getOrCreateThread("thread-1");
+    let markModelStarted;
+    const modelStarted = new Promise((resolve) => {
+      markModelStarted = resolve;
+    });
+    let releaseModel;
+    const modelReleased = new Promise((resolve) => {
+      releaseModel = resolve;
+    });
+    thread.runtime.spec.model.stream = () => ({
+      async *[Symbol.asyncIterator]() {},
+      async result() {
+        markModelStarted();
+        await modelReleased;
+        return fauxAssistantMessage("finished ephemeral work while detached");
+      },
+    });
+
+    const submission = session.submitEphemeralThread({
+      contextId,
+      threadId: "thread-1",
+      message: "finish without an observer",
+    });
+    await modelStarted;
+    host.releaseSession(session);
+    await Promise.resolve();
+    expect(session.isDisposed).toBe(false);
+
+    releaseModel();
+    await expect(submission).resolves.toEqual({
+      threadId: "thread-1",
+      response: "finished ephemeral work while detached",
+    });
+    await vi.waitFor(() => expect(session.isDisposed).toBe(true));
+    await host.shutdown();
+  });
+
   it("removes directly disposed live handles from host recovery bookkeeping", async () => {
     const store = new MemorySessionStore();
     const host = createHost(store);

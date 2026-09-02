@@ -1641,7 +1641,7 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     if (!session) {
       throw new Error(`unknown ephemeral context '${options.contextId}'`);
     }
-    return await session.submitThreadMessage(options);
+    return await this.runActiveWork((signal) => session.submitThreadMessage(options, signal));
   }
 
   async closeEphemeralContext(contextId: string): Promise<SessionProtocolEphemeralCloseResult> {

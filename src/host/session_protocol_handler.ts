@@ -191,6 +191,7 @@ export class SessionProtocolHandler {
   private readonly host: TauSessionHost;
   private readonly send: (message: SessionProtocolOutgoingMessage) => void;
   private readonly sessionStates = new Map<string, SessionProtocolHandlerSessionState>();
+  private readonly sessionObservationQueues = new Map<string, Promise<void>>();
   private readonly connectionAbortController = new AbortController();
   private readonly activeSideChannels = new Set<Promise<void>>();
   private readonly activeExecAbortControllers = new Map<string, AbortController>();
@@ -768,6 +769,22 @@ export class SessionProtocolHandler {
   }
 
   private async handleAttach(
+    request: Extract<SessionProtocolRequestMessage, { method: "session.observe" }>,
+  ): Promise<void> {
+    const sessionId = request.params.sessionId;
+    const previous = this.sessionObservationQueues.get(sessionId) ?? Promise.resolve();
+    const observation = previous.catch(() => undefined).then(() => this.handleAttachNow(request));
+    this.sessionObservationQueues.set(sessionId, observation);
+    try {
+      await observation;
+    } finally {
+      if (this.sessionObservationQueues.get(sessionId) === observation) {
+        this.sessionObservationQueues.delete(sessionId);
+      }
+    }
+  }
+
+  private async handleAttachNow(
     request: Extract<SessionProtocolRequestMessage, { method: "session.observe" }>,
   ): Promise<void> {
     const wasObserved = this.sessionStates.get(request.params.sessionId)?.observed ?? false;
@@ -1584,6 +1601,7 @@ export class SessionProtocolHandler {
   private registerSession(session: TauHostedSession): SessionProtocolHandlerSessionState {
     const existing = this.sessionStates.get(session.sessionId);
     if (existing) {
+      this.host.releaseSession(session);
       return existing;
     }
 
@@ -1666,7 +1684,7 @@ export class SessionProtocolHandler {
     const session = await this.host.observeSession(sessionId);
     if (!session) return undefined;
     if (this.closed) {
-      this.host.releaseSession?.(session);
+      this.host.releaseSession(session);
       return undefined;
     }
     return this.registerSession(session);
@@ -1802,7 +1820,7 @@ export class SessionProtocolHandler {
     this.clientToolRegistration?.detachSession(state.session.sessionId);
     if (!state.released) {
       state.released = true;
-      this.host.releaseSession?.(state.session);
+      this.host.releaseSession(state.session);
     }
 
     state.unsubscribeDelta?.();

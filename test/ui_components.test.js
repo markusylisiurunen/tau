@@ -537,7 +537,7 @@ test("FooterComponent renders activity instead of regular status", () => {
     expect(text).toContain("<feedback>compacting context</feedback>");
     expect(text).not.toContain("tau-one");
 
-    vi.advanceTimersByTime(120);
+    vi.advanceTimersByTime(240);
     expect(renderText(footer, 120)).toContain("<feedback>⠙</feedback>");
 
     footer.setStatus({
@@ -685,11 +685,11 @@ test("FooterComponent uses distinct standard and sand cadences", () => {
     expect(renderLines(dots, 20)[0]).toContain("<brandAccent>⠋</brandAccent>");
     expect(renderLines(sand, 20)[0]).toContain("<brandAccent>⠀</brandAccent>");
 
-    vi.advanceTimersByTime(120);
+    vi.advanceTimersByTime(240);
     expect(renderLines(dots, 20)[0]).toContain("<brandAccent>⠙</brandAccent>");
     expect(renderLines(sand, 20)[0]).toContain("<brandAccent>⠀</brandAccent>");
 
-    vi.advanceTimersByTime(40);
+    vi.advanceTimersByTime(80);
     expect(renderLines(sand, 20)[0]).toContain("<brandAccent>⠁</brandAccent>");
   } finally {
     dots.dispose();

@@ -51,7 +51,7 @@ const WORKING_ANIMATIONS = [
   ],
 ] as const;
 
-const WORKING_FRAME_INTERVALS = [120, 120, 120, 120, 80] as const;
+const WORKING_FRAME_INTERVALS = [240, 240, 240, 240, 160] as const;
 export const DEFAULT_FOOTER_NOTICE_DURATION_MS = 3000;
 const COMPLETION_DURATION_MS = 3000;
 const IDLE_ICON = "○";

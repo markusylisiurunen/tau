@@ -1356,6 +1356,9 @@ export class SessionChatController {
     }
 
     try {
+      if (this.tryApplyFastSnapshotStateDelta(delta)) {
+        return true;
+      }
       if (this.tryApplyFastContentAppendDelta(delta)) {
         return true;
       }
@@ -1388,6 +1391,36 @@ export class SessionChatController {
       ]);
       return false;
     }
+    return true;
+  }
+
+  private tryApplyFastSnapshotStateDelta(delta: SessionProtocolDeltaMessage): boolean {
+    if (
+      delta.delta.type !== "snapshot.patch" ||
+      delta.delta.changes.length === 0 ||
+      delta.delta.changes.some((change) => {
+        switch (change.type) {
+          case "agent-state.set":
+          case "lifecycle.set":
+          case "goal.set":
+          case "cost.set":
+          case "settings.set":
+          case "turn.set":
+          case "operation.set":
+          case "operation.remove":
+            return false;
+          default:
+            return true;
+        }
+      })
+    ) {
+      return false;
+    }
+
+    this.snapshot = applySessionProtocolDelta(this.snapshot, delta);
+    this.observedSessionRevision = Math.max(this.observedSessionRevision, this.snapshot.revision);
+    this.updateStreamingStateFromSnapshot(this.snapshot);
+    this.refreshStatus();
     return true;
   }
 
@@ -1481,7 +1514,35 @@ export class SessionChatController {
     }
 
     const nextSnapshot = applySessionProtocolDelta(this.snapshot, delta);
-    this.syncRenderedHistory(nextSnapshot);
+    this.snapshot = nextSnapshot;
+    this.observedSessionRevision = Math.max(this.observedSessionRevision, nextSnapshot.revision);
+
+    const toolIds = new Set<string>();
+    for (const change of delta.delta.changes) {
+      if (change.type === "tool.set") {
+        toolIds.add(change.tool.id);
+      } else if (change.type === "facet.set" && change.facet.subject.type === "tool") {
+        toolIds.add(change.facet.subject.id);
+      }
+    }
+
+    for (const item of [...nextSnapshot.timeline.items, ...this.ephemeralTimelineItems.values()]) {
+      if (item.type !== "tool" || !toolIds.has(item.toolId)) {
+        continue;
+      }
+      const tool = nextSnapshot.tools[item.toolId];
+      if (!tool) {
+        continue;
+      }
+      const model = { type: "tool" as const, tool: buildToolUiModel(nextSnapshot, tool) };
+      const viewMessageId = this.getViewMessageId(item.id);
+      if (this.renderedMessageIds.includes(viewMessageId)) {
+        this.view.updateMessage(viewMessageId, model);
+      } else {
+        this.renderedMessageIds.push(this.view.addMessage(model, viewMessageId));
+      }
+    }
+
     this.refreshStatus();
     return true;
   }

@@ -5539,7 +5539,7 @@ describe("SessionChatController", () => {
     );
   });
 
-  it("submits voice input automatically at the 20-minute recording limit", async () => {
+  it("finishes voice input without submitting at the 20-minute recording limit", async () => {
     const audioPath = join(tmpdir(), `tau-session-listen-limit-${Date.now()}.wav`);
     await writeFile(audioPath, Buffer.alloc(2048, 1));
     const spawn = vi.fn(async (command, _args, options = {}) => {
@@ -5604,8 +5604,8 @@ describe("SessionChatController", () => {
       await rm(audioPath, { force: true });
     }
 
-    expect(session.submit).toHaveBeenCalledWith("automatic transcript");
-    expect(view.editorText).toBe("");
+    expect(session.submit).not.toHaveBeenCalled();
+    expect(view.editorText).toBe("automatic transcript");
   });
 
   it("retries retained OpenAI audio through file transcription", async () => {

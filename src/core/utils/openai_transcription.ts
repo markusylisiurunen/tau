@@ -28,6 +28,7 @@ const OPENAI_TRANSCRIPTION_DECODER_BASE_TIMEOUT_MS = 60_000;
 const OPENAI_TRANSCRIPTION_FFMPEG_OUTPUT_LIMIT_BYTES = 20_000;
 const OPENAI_TRANSCRIPTION_MAX_UPLOAD_BYTES = 24_000_000;
 const OPENAI_TRANSCRIPTION_MAX_UPLOAD_PCM_BYTES = OPENAI_TRANSCRIPTION_MAX_UPLOAD_BYTES - 44;
+const OPENAI_TRANSCRIPTION_MAX_CONCURRENT_UPLOADS = 4;
 const OPENAI_REALTIME_TRANSCRIPTION_PROMPT =
   "The speaker is dictating a message for insertion into an AI coding assistant chat input.";
 const OPENAI_TRANSCRIPTION_KEYWORD_TEXT_CONFIG = {
@@ -390,17 +391,48 @@ export async function transcribeOpenAIAudio(
     spawnImpl: options.spawnImpl,
   });
   const fetchFn = options.fetchImpl ?? fetch;
-  const transcripts: string[] = [];
-  for (let offset = 0; offset < pcm.length; offset += OPENAI_TRANSCRIPTION_MAX_UPLOAD_PCM_BYTES) {
-    const transcript = await transcribeOpenAIPcmChunk({
-      apiKey,
-      pcm: pcm.subarray(offset, offset + OPENAI_TRANSCRIPTION_MAX_UPLOAD_PCM_BYTES),
-      prompt: buildOpenAIFileTranscriptionPrompt(options.context, transcripts.at(-1)),
-      signal: options.signal,
-      fetchImpl: fetchFn,
-    });
-    transcripts.push(transcript);
-  }
+  const prompt = buildOpenAIFileTranscriptionPrompt(options.context);
+  const chunkCount = Math.ceil(pcm.length / OPENAI_TRANSCRIPTION_MAX_UPLOAD_PCM_BYTES);
+  const transcripts = new Array<string>(chunkCount);
+  const chunkAbortController = new AbortController();
+  const signal = options.signal
+    ? AbortSignal.any([options.signal, chunkAbortController.signal])
+    : chunkAbortController.signal;
+  let nextChunkIndex = 0;
+  let failed = false;
+  let failure: unknown;
+
+  const transcribeNextChunks = async () => {
+    while (!failed) {
+      const chunkIndex = nextChunkIndex;
+      if (chunkIndex >= chunkCount) return;
+      nextChunkIndex += 1;
+      const offset = chunkIndex * OPENAI_TRANSCRIPTION_MAX_UPLOAD_PCM_BYTES;
+      try {
+        signal.throwIfAborted();
+        transcripts[chunkIndex] = await transcribeOpenAIPcmChunk({
+          apiKey,
+          pcm: pcm.subarray(offset, offset + OPENAI_TRANSCRIPTION_MAX_UPLOAD_PCM_BYTES),
+          prompt,
+          signal,
+          fetchImpl: fetchFn,
+        });
+      } catch (error) {
+        if (failed) return;
+        failed = true;
+        failure = error;
+        chunkAbortController.abort(error);
+      }
+    }
+  };
+
+  await Promise.all(
+    Array.from(
+      { length: Math.min(chunkCount, OPENAI_TRANSCRIPTION_MAX_CONCURRENT_UPLOADS) },
+      transcribeNextChunks,
+    ),
+  );
+  if (failed) throw failure;
   return transcripts.join(" ");
 }
 
@@ -622,18 +654,10 @@ async function prepareOpenAITranscriptionKeywords(args: {
   }
 }
 
-function buildOpenAIFileTranscriptionPrompt(
-  context: SpeechToTextContext | undefined,
-  precedingTranscript?: string,
-): string {
-  const promptContext = [
-    formatSpeechToTextContext(context),
-    precedingTranscript ? `Previous audio chunk transcript:\n${precedingTranscript}` : undefined,
-  ]
-    .filter((value): value is string => value !== undefined)
-    .join("\n\n");
-  const boundedContext = promptContext
-    ? truncateForTokens(promptContext, {
+function buildOpenAIFileTranscriptionPrompt(context: SpeechToTextContext | undefined): string {
+  const formattedContext = formatSpeechToTextContext(context);
+  const boundedContext = formattedContext
+    ? truncateForTokens(formattedContext, {
         maxTokens: OPENAI_TRANSCRIPTION_CONTEXT_TOKENS,
         strategy: "tail",
       }).content.trim()

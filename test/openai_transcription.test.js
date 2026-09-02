@@ -414,7 +414,7 @@ describe("OpenAI transcription", () => {
     }
   });
 
-  it("splits long decoded audio into bounded uploads", async () => {
+  it("transcribes upload-safe chunks independently and preserves audio order", async () => {
     const pcm = Buffer.alloc(24_000_000);
     const spawnImpl = vi.fn(async (_command, _args, options) => {
       const stdout = new EventEmitter();
@@ -422,26 +422,31 @@ describe("OpenAI transcription", () => {
       stdout.emit("data", pcm);
       return successfulSpawnResult();
     });
-    const fetchImpl = vi
-      .fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ text: "first chunk" })))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ text: "second chunk" })));
+    const responses = [Promise.withResolvers(), Promise.withResolvers()];
+    let requestIndex = 0;
+    const fetchImpl = vi.fn(() => responses[requestIndex++].promise);
 
-    await expect(
-      transcribeOpenAIAudio({
-        apiKey: "openai-key",
-        audio: Buffer.from("encoded audio"),
-        fetchImpl,
-        spawnImpl,
-      }),
-    ).resolves.toBe("first chunk second chunk");
+    const transcription = transcribeOpenAIAudio({
+      apiKey: "openai-key",
+      audio: Buffer.from("encoded audio"),
+      context: { messages: [{ role: "user", text: "Use Acme terminology." }] },
+      fetchImpl,
+      spawnImpl,
+    });
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(2));
 
-    expect(fetchImpl).toHaveBeenCalledTimes(2);
     for (const [, request] of fetchImpl.mock.calls) {
       const file = request.body.get("file");
       expect(file.size).toBeLessThanOrEqual(24_000_000);
     }
-    expect(fetchImpl.mock.calls[1][1].body.get("prompt")).toContain("first chunk");
+    expect(fetchImpl.mock.calls[0][1].body.get("prompt")).toContain("Use Acme terminology.");
+    expect(fetchImpl.mock.calls[1][1].body.get("prompt")).toBe(
+      fetchImpl.mock.calls[0][1].body.get("prompt"),
+    );
+    responses[1].resolve(new Response(JSON.stringify({ text: "second chunk" })));
+    responses[0].resolve(new Response(JSON.stringify({ text: "first chunk" })));
+
+    await expect(transcription).resolves.toBe("first chunk second chunk");
     expect(spawnImpl.mock.calls[0][2]).not.toHaveProperty("timeoutMs");
   });
 

@@ -894,7 +894,7 @@ export class SessionChatController {
       };
       recording.maxDurationTimeout = setTimeout(() => {
         if (this.listenRecording !== recording || this.listenTransition) return;
-        void this.runListenTransition(() => this.stopListenCapture({ submit: true }));
+        void this.runListenTransition(() => this.stopListenCapture());
       }, SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS);
       this.listenRecording = recording;
       this.view.setEditorInputEnabled(false);
@@ -942,7 +942,7 @@ export class SessionChatController {
     }
   }
 
-  private async stopListenCapture(options: { submit?: boolean } = {}): Promise<void> {
+  private async stopListenCapture(): Promise<void> {
     const recording = this.listenRecording;
     if (!recording) return;
 
@@ -967,12 +967,7 @@ export class SessionChatController {
       Math.max(Date.now() - recording.startedAt, 0),
       SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS,
     );
-    await this.transcribeListenAudioFile(
-      recording.audioPath,
-      durationMs,
-      recording.transcription,
-      options,
-    );
+    await this.transcribeListenAudioFile(recording.audioPath, durationMs, recording.transcription);
   }
 
   private async retryRetainedListenAudio(): Promise<void> {
@@ -1032,7 +1027,6 @@ export class SessionChatController {
     audioPath: string,
     durationMs: number,
     transcription?: ListenRecording["transcription"],
-    options: { submit?: boolean } = {},
   ): Promise<void> {
     if (durationMs > SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS) {
       transcription?.abort();
@@ -1081,14 +1075,6 @@ export class SessionChatController {
         mimeType: "audio/wav",
       });
       this.view.insertEditorTextAtCursor(text);
-      if (options.submit) {
-        const editorText = this.view.getExpandedEditorText();
-        if (this.beforeSubmit(editorText)) {
-          this.view.setEditorText("");
-          this.handleEditorChange("");
-          void this.handleSubmit(editorText);
-        }
-      }
       this.retainedListenAudio = undefined;
       try {
         await deleteListenTempFile(audioPath);

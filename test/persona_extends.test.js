@@ -162,6 +162,18 @@ describe("custom personas", () => {
       expect(personas.find((persona) => persona.id === "fable-5.1-coder")).toBeUndefined();
       expect(personas.find((persona) => persona.id === "gemini-3.8-flash-chat")).toBeUndefined();
       expect(personas.find((persona) => persona.id === "gemini-3.8-flash-coder")).toBeUndefined();
+      expect(personas.find((persona) => persona.id === "gpt-6-astra-chat")).toBeUndefined();
+      expect(personas.find((persona) => persona.id === "gpt-6-astra-coder")).toBeUndefined();
+      expect(personas.find((persona) => persona.id === "gpt-6-astra-chatgpt-chat")).toBeUndefined();
+      expect(
+        personas.find((persona) => persona.id === "gpt-6-astra-chatgpt-coder"),
+      ).toBeUndefined();
+      expect(
+        personas.find((persona) => persona.id === "gpt-6-astra-chatgpt-fast-chat"),
+      ).toBeUndefined();
+      expect(
+        personas.find((persona) => persona.id === "gpt-6-astra-chatgpt-fast-coder"),
+      ).toBeUndefined();
     } finally {
       fx.cleanup();
     }
@@ -315,6 +327,69 @@ describe("custom personas", () => {
       ).toBe("priority");
       expect(
         personas.find((persona) => persona.id === "gpt-5.6-luna-chatgpt-fast-chat")?.settings
+          .serviceTier,
+      ).toBe("priority");
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("loads GPT-6 Astra personas from both remote OpenAI catalogs", async () => {
+    const fx = setupFixture();
+
+    try {
+      const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
+      const openaiModel = resolveModel("openai", "gpt-5.6-sol");
+      const codexModel = resolveModel("openai-codex", "gpt-5.6-sol");
+      expect(openaiModel).toBeTruthy();
+      expect(codexModel).toBeTruthy();
+      const remoteCatalog = new Map([
+        [
+          "openai",
+          [
+            {
+              ...structuredClone(openaiModel),
+              id: "gpt-6-astra",
+              name: "GPT-6 Astra",
+            },
+          ],
+        ],
+        [
+          "openai-codex",
+          [
+            {
+              ...structuredClone(codexModel),
+              id: "gpt-6-astra",
+              name: "GPT-6 Astra",
+            },
+          ],
+        ],
+      ]);
+      const { personas, errors } = await loadAllContentWithModelResolver(
+        {},
+        { deps, cwd: fx.cwd, remoteCatalog },
+      );
+      expect(errors).toEqual([]);
+
+      for (const id of [
+        "gpt-6-astra-chat",
+        "gpt-6-astra-coder",
+        "gpt-6-astra-chatgpt-chat",
+        "gpt-6-astra-chatgpt-coder",
+        "gpt-6-astra-chatgpt-fast-chat",
+        "gpt-6-astra-chatgpt-fast-coder",
+      ]) {
+        const persona = personas.find((entry) => entry.id === id);
+        expect(persona?.model.id).toBe("gpt-6-astra");
+        expect(persona?.settings.reasoning).toBe("medium");
+        expect(persona?.allowedReasoningLevels).toEqual(["low", "medium", "high", "xhigh", "max"]);
+      }
+      expect(
+        personas.find((persona) => persona.id === "gpt-6-astra-chatgpt-fast-chat")?.settings
+          .serviceTier,
+      ).toBe("priority");
+      expect(
+        personas.find((persona) => persona.id === "gpt-6-astra-chatgpt-fast-coder")?.settings
           .serviceTier,
       ).toBe("priority");
     } finally {

@@ -217,7 +217,7 @@ For dependency internals, use the read-only checkouts in `references/repos/` rat
 
 Honor skill and subagent trigger sensitivity. An explicit capability is used only when named by an exact `@@skill:<name>` or `@@agent:<name>` reference, by active instructions, or by an already-active skill. Do not infer explicit activation from generic task overlap.
 
-When a user explicitly requests a GPT-5.6 subagent without a reasoning effort, use `openai-codex/gpt-5.6-sol:high` for Sol, `openai-codex/gpt-5.6-terra:high` for Terra, and `openai-codex/gpt-5.6-luna:high` for Luna. Otherwise omit a launch override unless the user requests one.
+When a user explicitly requests a GPT-5.6 subagent without a reasoning effort, use `openai-codex/gpt-5.6-sol:high` for Sol, `openai-codex/gpt-5.6-terra:high` for Terra, and `openai-codex/gpt-5.6-luna:high` for Luna. When a user explicitly requests a GPT-6 Astra subagent without a reasoning effort, use `openai-codex/gpt-6-astra:medium`. Otherwise omit a launch override unless the user requests one.
 
 ## Code, security, and testing discipline
 

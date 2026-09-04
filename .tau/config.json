@@ -1,5 +1,5 @@
 {
-  "defaultPersona": "gpt-5.6-sol-chatgpt-coder:high",
+  "defaultPersona": "gpt-6-astra-chatgpt-coder:medium",
   "subagents": {
     "defaultLaunchModels": [
       "openai-codex/gpt-5.6-sol:medium",
@@ -13,7 +13,11 @@
       "openai-codex/gpt-5.6-luna:medium",
       "openai-codex/gpt-5.6-luna:high",
       "openai-codex/gpt-5.6-luna:xhigh",
-      "openai-codex/gpt-5.6-luna:max"
+      "openai-codex/gpt-5.6-luna:max",
+      "openai-codex/gpt-6-astra:low",
+      "openai-codex/gpt-6-astra:medium",
+      "openai-codex/gpt-6-astra:high",
+      "openai-codex/gpt-6-astra:xhigh"
     ]
   }
 }

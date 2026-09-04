@@ -8,7 +8,7 @@ describe("diff tool parseDiff", () => {
       "index 1111111..2222222 100644",
       "--- a/src/example.ts",
       "+++ b/src/example.ts",
-      "@@ -1,4 +1,5 @@",
+      "@@ -1,5 +1,6 @@",
       ' import { a } from "./a";',
       "-const removed = true;",
       "+const updated = true;",
@@ -21,7 +21,7 @@ describe("diff tool parseDiff", () => {
     const [file] = parseDiff(patch, undefined, "session-123");
 
     expect(file).toMatchObject({
-      id: "session-123-0-0",
+      id: 'ck1:["patch-file","session-123","0","0"]',
       displayPath: "src/example.ts",
       newRepoPath: "src/example.ts",
       additions: 2,
@@ -51,7 +51,7 @@ describe("diff tool parseDiff", () => {
     );
 
     expect(file).toMatchObject({
-      id: "session-rename-0-0",
+      id: 'ck1:["patch-file","session-rename","0","0"]',
       displayPath: "src/old.ts → src/new.ts",
       oldRepoPath: "src/old.ts",
       newRepoPath: "src/new.ts",

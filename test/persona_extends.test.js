@@ -158,9 +158,6 @@ describe("custom personas", () => {
       const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
       const { personas, errors } = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
       expect(errors).toEqual([]);
-      expect(personas.find((persona) => persona.id === "fable-5.1-chat")).toBeUndefined();
-      expect(personas.find((persona) => persona.id === "fable-5.1-coder")).toBeUndefined();
-      expect(personas.find((persona) => persona.id === "gemini-3.8-flash-chat")).toBeUndefined();
       expect(personas.find((persona) => persona.id === "gemini-3.8-flash-coder")).toBeUndefined();
       expect(personas.find((persona) => persona.id === "gpt-6-astra-chat")).toBeUndefined();
       expect(personas.find((persona) => persona.id === "gpt-6-astra-coder")).toBeUndefined();

@@ -51,7 +51,7 @@ When Tau is idle, Enter and Ctrl+Enter both start a normal turn. While a turn is
 
 Pending input is session state shared by attached clients while the host remains alive. It is not durable across host restart or session recovery. A queued turn captures the persona, reasoning, tools, and model settings when that turn actually starts. Steering remains part of the active logical turn and keeps the settings captured when that turn began.
 
-Escape interrupts foreground client work or the main session’s active work. If a local diff review, recording, or speech playback task owns the foreground, Escape stops that task first; otherwise it requests main-session interruption from the host. It does not stop independently running supervised subagents; select one with Alt+Down and use Ctrl+G. Press Escape twice to clear the current editor text.
+Escape interrupts foreground client work or the main session’s active work. If a local diff review, recording, or speech playback task owns the foreground, Escape stops that task first; otherwise it requests main-session interruption from the host, including cancellation of a running manual compaction. Once compaction has replaced model context, a late interruption does not undo it or turn successful persistence into a failure. It does not stop independently running supervised subagents; select one with Alt+Down and use Ctrl+G. Press Escape twice to clear the current editor text.
 
 Press Enter twice on an empty editor to retry from the current session history. Retry does not rewind or duplicate the last user message. Goal-controlled turns cannot be retried; resume a blocked goal instead.
 

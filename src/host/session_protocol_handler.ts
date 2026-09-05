@@ -1132,8 +1132,9 @@ export class SessionProtocolHandler {
       return;
     }
 
+    // Cancellation must reach maintenance work while it holds the mutation queue.
+    const interrupted = state.session.interruptActiveWork();
     const result = await this.enqueueMutation(state, async () => {
-      const interrupted = state.session.interruptActiveWork();
       if (interrupted) {
         state.live.interrupting = true;
       }

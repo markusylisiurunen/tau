@@ -2144,6 +2144,62 @@ describe("LocalSessionHost", () => {
     await host.shutdown();
   });
 
+  it("keeps the session usable when interrupted during final compaction persistence", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const hostedSession = await host.createSession(localCreateInput);
+    const responses = [
+      fauxAssistantMessage("first response"),
+      fauxAssistantMessage(
+        "compacted summary\n\n<preserved-user-message-ids>\n[]\n</preserved-user-message-ids>",
+      ),
+      fauxAssistantMessage("response after compaction"),
+    ];
+    hostedSession.runtime.agent.spec.model.stream = () => {
+      const response = responses.shift();
+      if (!response) throw new Error("unexpected model call");
+      return {
+        async *[Symbol.asyncIterator]() {},
+        async result() {
+          return response;
+        },
+      };
+    };
+
+    await hostedSession.record({ text: "compact me" });
+    await expect(hostedSession.runTurn()).resolves.toMatchObject({ status: "completed" });
+    const previousSnapshot = await hostedSession.snapshot();
+    const persistenceReached = deferred();
+    const releasePersistence = deferred();
+    const commitSessionSnapshot = store.commitSessionSnapshot.bind(store);
+    let paused = false;
+    store.commitSessionSnapshot = vi.fn(async (snapshot, options) => {
+      if (!paused && snapshot.timeline.epoch === previousSnapshot.timeline.epoch + 1) {
+        paused = true;
+        persistenceReached.resolve();
+        await releasePersistence.promise;
+      }
+      return await commitSessionSnapshot(snapshot, options);
+    });
+    const deltas = [];
+    hostedSession.onDelta((delta) => deltas.push(delta));
+
+    const compaction = hostedSession.compact({ mode: "summary-only" });
+    await persistenceReached.promise;
+    expect(hostedSession.interruptActiveWork()).toBe(true);
+    releasePersistence.resolve();
+
+    const result = await compaction;
+    expect(result.snapshot.timeline.epoch).toBe(previousSnapshot.timeline.epoch + 1);
+    expect(result.snapshot.messages).toHaveLength(2);
+    expect(deltas.reduce(applySessionProtocolDelta, previousSnapshot)).toEqual(result.snapshot);
+    await expect(hostedSession.snapshot()).resolves.toEqual(result.snapshot);
+    await expect(store.loadSession(hostedSession.sessionId)).resolves.toEqual(result.snapshot);
+    await hostedSession.record({ text: "continue after compaction" });
+    await expect(hostedSession.runTurn()).resolves.toMatchObject({ status: "completed" });
+    await host.shutdown();
+  });
+
   it("emits runtime feedback without adding it to the timeline", async () => {
     const host = createHost(new MemorySessionStore());
     const hostedSession = await host.createSession(localCreateInput);

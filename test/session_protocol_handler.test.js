@@ -454,6 +454,9 @@ function createHarness(options = {}) {
         return { revision: snapshot.revision, settings: snapshot.settings };
       },
       async compact(compactOptions) {
+        if (options.compact) {
+          return await runActiveWork((signal) => options.compact({ ...compactOptions, signal }));
+        }
         const compactionMessage = `compacted with ${compactOptions.mode}`;
         historyEntries.splice(0, historyEntries.length, {
           id: `history-${nextHistoryId++}`,
@@ -2342,6 +2345,47 @@ describe("SessionProtocolHandler", () => {
         ok: true,
         result: { interrupted: true, isTurnRunning: true },
       }),
+    );
+  });
+
+  it("interrupts manual compaction while it holds the mutation queue", async () => {
+    let compactSignal;
+    const harness = createHarness({
+      compact: ({ signal }) =>
+        new Promise((_resolve, reject) => {
+          compactSignal = signal;
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        }),
+    });
+    const compact = harness.connection.handleRequest(
+      request("compact", "session.compact", {
+        sessionId: "session-1",
+        mode: "summary-only",
+      }),
+    );
+    await waitFor(() => compactSignal);
+
+    const interrupt = harness.connection.handleRequest(
+      request("interrupt-compact", "session.interrupt", { sessionId: "session-1" }),
+    );
+    await waitFor(() => compactSignal.aborted);
+    await Promise.all([compact, interrupt]);
+
+    expect(harness.lines.find((line) => line.id === "compact")).toEqual(
+      expect.objectContaining({ ok: false }),
+    );
+    expect(harness.lines.find((line) => line.id === "interrupt-compact")).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: { interrupted: true, isTurnRunning: true },
+      }),
+    );
+
+    await harness.connection.handleRequest(
+      request("snapshot-after-compact", "session.snapshot", { sessionId: "session-1" }),
+    );
+    expect(harness.lines.find((line) => line.id === "snapshot-after-compact")).toEqual(
+      expect.objectContaining({ ok: true }),
     );
   });
 

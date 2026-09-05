@@ -5049,6 +5049,42 @@ describe("SessionChatController", () => {
     );
   });
 
+  it("interrupts manual compaction with Escape and allows later compactions to be interrupted", async () => {
+    const session = new FakeSession();
+    let pendingCompact;
+    session.compact = vi.fn(() => {
+      pendingCompact = deferred();
+      return pendingCompact.promise;
+    });
+    session.interrupt = vi.fn(async () => {
+      pendingCompact.reject(new Error("compaction aborted"));
+      return { interrupted: true, isTurnRunning: false };
+    });
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot: await session.snapshot(),
+      targetLabel: "ws://host",
+    });
+    controller.start();
+
+    for (const command of ["/compact-all", "/compact-keep-last"]) {
+      controller.getInputHandlers().onSubmit(command);
+      await flush();
+      expect(view.status.footer).toEqual({ type: "activity", label: "compacting context" });
+
+      controller.getInputHandlers().onEscape();
+      controller.getInputHandlers().onEscape();
+      await flush();
+      expect(view.status.footer.type).toBe("regular");
+    }
+    expect(session.interrupt).toHaveBeenCalledTimes(2);
+    controller.getInputHandlers().onEscape();
+    await flush();
+    expect(session.interrupt).toHaveBeenCalledTimes(2);
+  });
+
   it("shows manual compaction status until the compact request finishes", async () => {
     const session = new FakeSession();
     const pendingCompact = deferred();

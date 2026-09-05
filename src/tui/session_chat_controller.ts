@@ -736,7 +736,10 @@ export class SessionChatController {
       return;
     }
 
-    if (!this.isStreaming || this.assistantInterruptRequested) {
+    if (
+      (!this.isStreaming && !this.manualCompactionInProgress) ||
+      this.assistantInterruptRequested
+    ) {
       return;
     }
 
@@ -2232,6 +2235,7 @@ export class SessionChatController {
       this.view.addTranscriptNotice("failed to compact session", "error", [message]);
     } finally {
       this.manualCompactionInProgress = false;
+      this.assistantInterruptRequested = false;
       this.refreshStatus();
     }
   }

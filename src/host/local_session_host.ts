@@ -1513,7 +1513,6 @@ class LocalHostedSessionHandle implements LocalHostedSession {
           signal,
         });
 
-        signal.throwIfAborted();
         return {
           snapshot: await this.snapshot(),
           compactionMessage: result.compactionMessage,

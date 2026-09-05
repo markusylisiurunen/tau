@@ -1,6 +1,8 @@
 {
   "workflows": {
     "issue-plan": { "reasoning": "medium" },
-    "pull-request-explain": { "reasoning": "medium" }
+    "pull-request-explain": { "reasoning": "medium" },
+    "pull-request-review": { "reasoning": "high" },
+    "pull-request-diff": { "reasoning": "medium" }
   }
 }

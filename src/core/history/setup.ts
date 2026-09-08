@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnWithCapture } from "../utils/spawn_capture.js";
-import { HISTORY_INITIAL_MIGRATION_NAME, HISTORY_INITIAL_MIGRATION_SQL } from "./migrations.js";
+import { HISTORY_INITIAL_MIGRATION_NAME } from "./migrations.js";
 
 const WORKER_NAME = "tau-history";
 const DATABASE_NAME = "tau-history";
@@ -14,6 +14,7 @@ export type HistorySetupOptions = {
   domain: string;
   zoneName: string;
   apiKey?: string;
+  viewerPassword?: string;
   env?: NodeJS.ProcessEnv;
   stdout?: (line: string) => void;
 };
@@ -40,7 +41,13 @@ export async function setupHistoryService(options: HistorySetupOptions): Promise
   const zoneName = options.zoneName.trim();
   if (!zoneName) throw new Error("zone name is required");
   const suppliedApiKey = options.apiKey?.trim() || env.TAU_HISTORY_API_KEY?.trim();
-  const apiKey = suppliedApiKey || generateApiKey();
+  const suppliedViewerPassword =
+    options.viewerPassword?.trim() || env.TAU_HISTORY_VIEWER_PASSWORD?.trim();
+  const apiKey = suppliedApiKey || generateSecret();
+  const viewerPassword = suppliedViewerPassword || generateSecret();
+  if (apiKey === viewerPassword) {
+    throw new Error("history API key and viewer password must be different");
+  }
   const databaseId = await ensureDatabase(env, stdout);
   const temporaryDirectory = mkdtempSync(join(tmpdir(), "tau-history-"));
   try {
@@ -52,6 +59,11 @@ export async function setupHistoryService(options: HistorySetupOptions): Promise
       cwd: temporaryDirectory,
       env,
       input: `${apiKey}\n`,
+    });
+    await runWrangler(["secret", "put", "VIEWER_PASSWORD"], {
+      cwd: temporaryDirectory,
+      env,
+      input: `${viewerPassword}\n`,
     });
     stdout(`deployed Worker ${WORKER_NAME}`);
     stdout("");
@@ -76,6 +88,14 @@ export async function setupHistoryService(options: HistorySetupOptions): Promise
     } else {
       stdout("Set TAU_HISTORY_API_KEY to:");
       stdout(apiKey);
+    }
+    stdout("");
+    stdout(`Open the private history viewer at https://${domain}/`);
+    if (suppliedViewerPassword) {
+      stdout("Sign in with username tau and the viewer password supplied for this deployment.");
+    } else {
+      stdout("Sign in with username tau and this viewer password:");
+      stdout(viewerPassword);
     }
   } finally {
     rmSync(temporaryDirectory, { recursive: true, force: true });
@@ -180,13 +200,15 @@ async function applyHistoryMigrations(
 }
 
 function writeHistoryMigration(directory: string): void {
+  const source = fileURLToPath(
+    new URL(`../../history/worker/migrations/${HISTORY_INITIAL_MIGRATION_NAME}`, import.meta.url),
+  );
+  if (!existsSync(source)) {
+    throw new Error(`bundled history migration is missing at ${source}; rebuild or reinstall Tau`);
+  }
   const migrationsDirectory = join(directory, "migrations");
   mkdirSync(migrationsDirectory, { recursive: true });
-  writeFileSync(
-    join(migrationsDirectory, HISTORY_INITIAL_MIGRATION_NAME),
-    HISTORY_INITIAL_MIGRATION_SQL,
-    "utf8",
-  );
+  copyFileSync(source, join(migrationsDirectory, HISTORY_INITIAL_MIGRATION_NAME));
 }
 
 function writeWorkerProject(
@@ -200,6 +222,9 @@ function writeWorkerProject(
   const destination = join(directory, "worker", "index.js");
   mkdirSync(dirname(destination), { recursive: true });
   copyFileSync(workerPath, destination);
+  for (const name of ["viewer.css", "viewer.js"]) {
+    copyFileSync(join(dirname(workerPath), name), join(dirname(destination), name));
+  }
   writeHistoryMigration(directory);
   writeFileSync(
     join(directory, "wrangler.json"),
@@ -207,6 +232,7 @@ function writeWorkerProject(
       {
         name: WORKER_NAME,
         main: "worker/index.js",
+        rules: [{ type: "Text", globs: ["**/viewer.css", "**/viewer.js"], fallthrough: false }],
         compatibility_date: "2026-08-01",
         workers_dev: false,
         routes: [{ pattern: `${options.domain}/*`, zone_name: options.zoneName }],
@@ -272,6 +298,6 @@ function requireCloudflareAuth(env: NodeJS.ProcessEnv): void {
   }
 }
 
-function generateApiKey(): string {
+function generateSecret(): string {
   return randomBytes(32).toString("base64url");
 }

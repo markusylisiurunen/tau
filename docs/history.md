@@ -16,8 +16,8 @@ The path belongs to the **host home**. An attached TUI and a remote execution en
 
 For each session, history stores its immutable creation attributes and an ordered active transcript containing:
 
-- committed user content, after Tau's internal metadata is removed
-- assistant text segments, including committed preambles and responses, but not thinking
+- committed user content as a string or an array of text and image blocks, after Tau's internal metadata is removed
+- assistant text segments as strings, including committed preambles and responses, but not thinking
 - completed tool calls with the tool name, arguments, result, and terminal outcome
 
 Leading model-facing `<system>...</system>` blocks in user messages remain in history. Tool arguments and results can contain file contents, command output, or other sensitive data. Treat the database as private user data. Tau creates its history directory and database with private permissions, but the host user and machine administrators can still access them. Do not copy the database into a repository or expose it through a shared artifact.
@@ -74,7 +74,7 @@ The setup command requires:
 - Wrangler installed and available on `PATH`
 - a Cloudflare zone containing the chosen history hostname
 - `CLOUDFLARE_API_TOKEN` available to the command for non-interactive Wrangler authentication
-- a history API key supplied securely, or permission for setup to generate one
+- a history API key and separate viewer password supplied securely, or permission for setup to generate them
 
 Run setup on an operator machine with Cloudflare access:
 
@@ -84,9 +84,29 @@ tau history setup \
   --zone-name example.net
 ```
 
-`TAU_HISTORY_DOMAIN` and `TAU_HISTORY_ZONE_NAME` can provide the two values instead. Setup creates or reuses the `tau-history` D1 database, applies the bundled migrations, deploys the `tau-history` Worker route, and installs the history API key as a Worker secret.
+`TAU_HISTORY_DOMAIN` and `TAU_HISTORY_ZONE_NAME` can provide the two values instead. Setup creates or reuses the `tau-history` D1 database, applies the bundled migrations, deploys the `tau-history` Worker route, and installs the history API key and viewer password as separate Worker secrets.
 
-For the API key used during setup, `--api-key` takes precedence over `TAU_HISTORY_API_KEY`; otherwise setup generates a new key. Prefer a secret manager or protected process environment over a command-line value, which may enter shell history. Do not paste the resulting key into a session transcript.
+For the API key used during setup, `--api-key` takes precedence over `TAU_HISTORY_API_KEY`; otherwise setup generates a new key. For the viewer password, `--viewer-password` takes precedence over `TAU_HISTORY_VIEWER_PASSWORD`; otherwise setup generates one. The API key and viewer password must differ. Prefer a secret manager or protected process environment over command-line values, which may enter shell history. Do not paste either credential into a session transcript.
+
+## Browse remote conversations
+
+Open the configured service origin, for example `https://history.example.net/`, to browse the private read-only history collection. HTTP Basic authentication uses the fixed username `tau` and the viewer password installed by setup. Setup prints generated viewer passwords but does not echo supplied credentials. External HTTP viewer requests redirect to HTTPS before authentication; loopback HTTP remains available for local development. The credential is never placed in a URL, and browser responses are not cached. Keep the viewer password private because it grants read access to transcripts, attributes, tool arguments, and tool results across every host using that service.
+
+The index lists recently updated sessions with generated titles, summaries, timestamps, attributes, and a server-rendered search form. Repository and source inputs filter metadata by case-sensitive substring match; both filters combine with text search and remain active across pages. The Older sessions button loads the next index page; the index never advances automatically. A digest can be pending or stale while the underlying transcript is already available. Session pages initially show an empty transcript, then automatically fetch bounded batches and append them in chronological order without scrolling or pagination controls. The Copy conversation button at the top stays disabled until the full transcript has loaded. Failed loads show a retry button and keep copying disabled. API reads remain paginated. Tool entries are collapsed by default. Text and metadata are escaped rather than interpreted as HTML or Markdown. Valid PNG, JPEG, GIF, and WebP content blocks render as inline images; other structured content falls back to escaped text.
+
+Remote history search and read results include a stable `webUrl` for each session. The `history` tool can return this URL when asked for a conversation link. The URL alone does not grant access; the browser still needs the viewer credential. Local-only history has no web URL.
+
+## Develop the browser view locally
+
+From a source checkout with dependencies installed, run:
+
+```sh
+npm run history:dev
+```
+
+The command applies the canonical Worker migration to a local-only `tau-history-dev` D1 database, loads an idempotent fixture conversation, and starts the TypeScript Worker with Wrangler. Open the local URL printed by Wrangler and use username `tau` with password `tau-history-dev-password`. The local API key is `tau-history-dev-api-key`.
+
+The checked-in development configuration does not contain a production route or remote D1 database identifier. Wrangler keeps its local state under `src/history/worker/.wrangler/`; rerunning the command preserves that local database and safely reapplies the migration and fixture.
 
 ## Configure hosts to replicate
 
@@ -138,7 +158,7 @@ Verify the owning boundary rather than inspecting credentials or dumping transcr
 4. Explicitly ask the agent to search history for that session, following the history tool's `docs` step.
 5. If using several hosts, repeat from another host and allow for asynchronous replication and digest generation.
 
-A transcript can become remotely searchable before its generated digest appears. Search results without a digest are not evidence of a failed import.
+A transcript can become remotely searchable before its generated digest appears. Search results without a digest are not evidence of a failed import. Open the service URL and sign in to the browser view to confirm the session card and transcript are available.
 
 Cloudflare operational failures are visible through normal Worker logs, Cron Events, and D1 diagnostics. The service has no separate Tau administration dashboard or status endpoint.
 
@@ -147,6 +167,8 @@ Cloudflare operational failures are visible through normal Worker logs, Cron Eve
 **`history` is configured but no API key is available.** Set `TAU_HISTORY_API_KEY`, populate the environment variable named by `apiKeyEnv`, or use an inline key only when the config file is appropriately protected. Restart the host.
 
 **The history tool returns a service error while the session still works.** Remote queries and asynchronous replication can fail independently of session execution. Check endpoint reachability and Worker logs without printing the bearer key. Local capture should continue unless the session also contains a `history unavailable` warning.
+
+**The browser view repeatedly asks for credentials.** Use the fixed username `tau` and the viewer password installed by the latest setup. The history API key is a bearer credential for hosts and does not authenticate the browser.
 
 **A session does not appear in remote search.** Confirm that the host was restarted with the global remote config, that the session was opened while that target was active, and that later history activity has had a chance to flush the durable outbox. Check host logs for `history_replication_failed`; a quarantined failure affects only the named session, while an unquarantined endpoint failure remains retryable. Do not assume remote digests are immediate.
 

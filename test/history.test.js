@@ -2,15 +2,16 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { runInNewContext } from "node:vm";
 import { describe, expect, it, vi } from "vitest";
 import { resolveHistoryRemoteTarget } from "../dist/core/history/config.js";
 import { HistoryManager } from "../dist/core/history/history_manager.js";
 import { LocalHistoryStore } from "../dist/core/history/local_history_store.js";
-import { HISTORY_INITIAL_MIGRATION_SQL } from "../dist/core/history/migrations.js";
 import {
   RemoteHistoryClient,
   RemoteHistoryError,
 } from "../dist/core/history/remote_history_client.js";
+import { projectHistoryEntryForRemote } from "../dist/core/history/replication.js";
 import { setupHistoryService } from "../dist/core/history/setup.js";
 import {
   assistantHistoryEntries,
@@ -18,6 +19,14 @@ import {
   userHistoryEntry,
 } from "../dist/core/history/transcript.js";
 import { createHistoryToolDefinition, HISTORY_TOOL } from "../dist/core/tools/history.js";
+
+vi.mock("../dist/history/worker/viewer.js", () => ({
+  default: readFileSync(new URL("../dist/history/worker/viewer.js", import.meta.url), "utf8"),
+}));
+vi.mock("../dist/history/worker/viewer.css", () => ({
+  default: readFileSync(new URL("../dist/history/worker/viewer.css", import.meta.url), "utf8"),
+}));
+
 import historyWorker, {
   applyOperation,
   boundedSnippet,
@@ -37,6 +46,11 @@ import {
   parseSnapshotForImport,
   snapshotToHistoryEntries,
 } from "../scripts/import-session-snapshots.js";
+
+const HISTORY_INITIAL_MIGRATION_SQL = readFileSync(
+  new URL("../dist/history/worker/migrations/0001_initial.sql", import.meta.url),
+  "utf8",
+);
 
 function createTextEntry(id, type, content, timestamp) {
   return { id, sourceIds: [id], type, content, timestamp };
@@ -171,9 +185,9 @@ function initializeHistoryD1(harness) {
   harness.sqlite.exec(HISTORY_INITIAL_MIGRATION_SQL);
 }
 
-async function callHistoryWorker(path, body, harness) {
+async function callHistoryWorker(path, body, harness, origin = "https://history.example.com") {
   return await historyWorker.fetch(
-    new Request(`https://history.example.com${path}`, {
+    new Request(`${origin}${path}`, {
       method: "POST",
       headers: {
         authorization: "Bearer secret",
@@ -185,6 +199,25 @@ async function callHistoryWorker(path, body, harness) {
       DB: harness.database,
       AI: { run: vi.fn() },
       API_KEY: "secret",
+      VIEWER_PASSWORD: "viewer-secret",
+    },
+    { waitUntil: vi.fn() },
+  );
+}
+
+async function callHistoryViewer(path, harness, options = {}) {
+  const authorization =
+    options.authorization ?? `Basic ${Buffer.from("tau:viewer-secret").toString("base64")}`;
+  return await historyWorker.fetch(
+    new Request(`${options.origin ?? "https://history.example.com"}${path}`, {
+      method: options.method ?? "GET",
+      headers: { authorization },
+    }),
+    {
+      DB: harness.database,
+      AI: { run: vi.fn() },
+      API_KEY: "secret",
+      VIEWER_PASSWORD: "viewer-secret",
     },
     { waitUntil: vi.fn() },
   );
@@ -975,6 +1008,10 @@ describe("session history", () => {
         '  const config = JSON.parse(readFileSync(join(process.cwd(), "wrangler.json"), "utf8"));',
         "  if (config.observability?.enabled !== true) process.exit(31);",
         '  if (config.d1_databases?.[0]?.migrations_dir !== "migrations") process.exit(32);',
+        '  if (JSON.stringify(config.rules) !== JSON.stringify([{ type: "Text", globs: ["**/viewer.css", "**/viewer.js"], fallthrough: false }])) process.exit(36);',
+        '  for (const name of ["viewer.css", "viewer.js"]) {',
+        '    if (!readFileSync(join(process.cwd(), "worker", name), "utf8").trim()) process.exit(37);',
+        "  }",
         '  const migration = join(process.cwd(), "migrations", "0001_initial.sql");',
         "  if (!existsSync(migration)) process.exit(33);",
         '  const sql = readFileSync(migration, "utf8");',
@@ -993,20 +1030,25 @@ describe("session history", () => {
         ...process.env,
         PATH: `${binDirectory}:${process.env.PATH}`,
         CLOUDFLARE_API_TOKEN: "test-token",
+        TAU_HISTORY_VIEWER_PASSWORD: "test-viewer-password",
         TEST_CALLS: callsPath,
       };
+      const output = [];
       await setupHistoryService({
         domain: "history.example.com",
         zoneName: "example.com",
         apiKey: "test-key",
         env: baseEnv,
-        stdout: () => {},
+        stdout: (line) => output.push(line),
       });
+      expect(output.join("\n")).toContain("https://history.example.com/");
+      expect(output.join("\n")).not.toContain("test-viewer-password");
       expect(readFileSync(callsPath, "utf8").trim().split("\n")).toEqual([
         "d1 list --json",
         "d1 migrations apply tau-history --remote",
         "deploy",
         "secret put API_KEY",
+        "secret put VIEWER_PASSWORD",
       ]);
 
       writeFileSync(callsPath, "");
@@ -1024,6 +1066,7 @@ describe("session history", () => {
         "d1 migrations apply tau-history --remote",
         "deploy",
         "secret put API_KEY",
+        "secret put VIEWER_PASSWORD",
       ]);
 
       writeFileSync(callsPath, "");
@@ -1052,10 +1095,353 @@ describe("session history", () => {
         "d1 migrations apply tau-history --remote",
         "deploy",
         "secret put API_KEY",
+        "secret put VIEWER_PASSWORD",
       ]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it("keeps viewer transport and authentication boundaries isolated", async () => {
+    const harness = createSqliteD1Harness();
+    try {
+      initializeHistoryD1(harness);
+      const insecure = await callHistoryViewer("/", harness, {
+        authorization: "",
+        origin: "http://history.example.com",
+      });
+      expect(insecure.status).toBe(308);
+      expect(insecure.headers.get("location")).toBe("https://history.example.com/");
+      expect(insecure.headers.get("www-authenticate")).toBeNull();
+      expect(insecure.headers.get("cache-control")).toBe("no-store");
+
+      const insecureAuthenticated = await callHistoryViewer("/sessions/private", harness, {
+        origin: "http://history.example.com",
+      });
+      expect(insecureAuthenticated.status).toBe(308);
+      expect(insecureAuthenticated.headers.get("location")).toBe(
+        "https://history.example.com/sessions/private",
+      );
+      expect(insecureAuthenticated.headers.get("www-authenticate")).toBeNull();
+      await expect(insecureAuthenticated.text()).resolves.toBe("");
+
+      const local = await callHistoryViewer("/", harness, {
+        authorization: "",
+        origin: "http://127.0.0.1:8787",
+      });
+      expect(local.status).toBe(401);
+
+      const unauthenticated = await callHistoryViewer("/", harness, { authorization: "" });
+      expect(unauthenticated.status).toBe(401);
+      expect(unauthenticated.headers.get("www-authenticate")).toBe(
+        'Basic realm="Tau history", charset="UTF-8"',
+      );
+      expect(unauthenticated.headers.get("cache-control")).toBe("no-store");
+      expect(unauthenticated.headers.get("content-security-policy")).toContain(
+        "default-src 'none'",
+      );
+      expect(unauthenticated.headers.get("x-frame-options")).toBe("DENY");
+
+      const bearerViewer = await callHistoryViewer("/", harness, {
+        authorization: "Bearer secret",
+      });
+      expect(bearerViewer.status).toBe(401);
+
+      const basicApi = await callHistoryViewer("/v1/search", harness, { method: "POST" });
+      expect(basicApi.status).toBe(401);
+      expect(basicApi.headers.get("www-authenticate")).toBeNull();
+
+      const wrongMethod = await callHistoryViewer("/", harness, { method: "POST" });
+      expect(wrongMethod.status).toBe(405);
+      expect(wrongMethod.headers.get("allow")).toBe("GET");
+
+      const missing = await callHistoryViewer("/missing", harness, { authorization: "" });
+      expect(missing.status).toBe(404);
+    } finally {
+      harness.sqlite.close();
+    }
+  });
+
+  it("formats copied messages and tool results as Markdown", async () => {
+    const response = await callHistoryViewer("/viewer.js", createD1Harness());
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/javascript");
+    const context = {
+      document: { addEventListener: vi.fn(), querySelector: () => null },
+    };
+    runInNewContext(await response.text(), context);
+    const card = {
+      querySelector: (selector) => (selector === "h2" ? { textContent: "User" } : null),
+      querySelectorAll: () => [{ dataset: {}, textContent: "hello" }],
+    };
+    expect(context.cardMarkdown(card)).toBe("## User\n\nhello");
+
+    const tool = {
+      querySelector: (selector) =>
+        ({
+          "summary span": { textContent: "Tool · bash" },
+          ".outcome": { textContent: "succeeded" },
+        })[selector],
+      querySelectorAll: () => [
+        {
+          querySelector: (selector) => ({
+            textContent: selector === "h3" ? "Result" : "```nested```",
+          }),
+        },
+      ],
+    };
+    expect(context.cardMarkdown({ querySelector: () => tool })).toBe(
+      "## Tool: bash (succeeded)\n\n### Result\n\n````\n```nested```\n````",
+    );
+    context.document.querySelector = () => ({
+      querySelector: (selector) => (selector === "h1" ? { textContent: "Session [draft]" } : null),
+      querySelectorAll: () => [],
+    });
+    context.document.querySelectorAll = () => [card];
+    expect(context.conversationMarkdown()).toBe("# Session \\[draft\\]\n\n## User\n\nhello");
+  });
+
+  it("automatically appends transcript batches and enables copying only after a complete load", async () => {
+    let retryLoad;
+    const retry = {
+      hidden: true,
+      addEventListener: (_type, listener) => {
+        retryLoad = listener;
+      },
+    };
+    const status = { textContent: "" };
+    const controls = [{ disabled: true }, { disabled: true }, { disabled: true }];
+    const transcript = {
+      dataset: { transcriptUrl: "/sessions/session-1/entries" },
+      children: [],
+      setAttribute: vi.fn(),
+      insertAdjacentHTML: vi.fn((_position, html) => {
+        transcript.children.push(html);
+      }),
+    };
+    const document = {
+      addEventListener: vi.fn(),
+      querySelector: (selector) =>
+        ({
+          "[data-transcript-url]": transcript,
+          "[data-transcript-status]": status,
+          "[data-transcript-retry]": retry,
+        })[selector] ?? null,
+      querySelectorAll: () => controls,
+    };
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ html: "first batch", nextCursor: "next+cursor" }))
+      .mockResolvedValueOnce(new Response("unavailable", { status: 503 }))
+      .mockResolvedValueOnce(Response.json({ html: "last batch", nextCursor: null }));
+    const source = readFileSync(
+      new URL("../dist/history/worker/viewer.js", import.meta.url),
+      "utf8",
+    );
+    runInNewContext(source, { document, fetch });
+    expect(fetch).toHaveBeenCalledWith("/sessions/session-1/entries", {
+      credentials: "same-origin",
+    });
+    expect(controls.every((control) => control.disabled)).toBe(true);
+    await vi.waitFor(() => expect(retry.hidden).toBe(false));
+    expect(status.textContent).toContain("Failed to load the full conversation");
+    expect(transcript.children).toEqual(["first batch"]);
+    expect(controls.every((control) => control.disabled)).toBe(true);
+    await retryLoad();
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(fetch.mock.calls[1][0]).toBe("/sessions/session-1/entries?cursor=next%2Bcursor");
+    expect(fetch.mock.calls[2][0]).toBe(fetch.mock.calls[1][0]);
+    expect(transcript.children).toEqual(["first batch", "last batch"]);
+    expect(controls.every((control) => !control.disabled)).toBe(true);
+    expect(status.textContent).toBe("Conversation loaded.");
+    expect(retry.hidden).toBe(true);
+    expect(transcript.setAttribute).toHaveBeenLastCalledWith("aria-busy", "false");
+
+    const indexFetch = vi.fn();
+    runInNewContext(source, {
+      document: { ...document, querySelector: () => null },
+      fetch: indexFetch,
+    });
+    expect(indexFetch).not.toHaveBeenCalled();
+  });
+
+  it("renders escaped session cards and preserves search filters across manual pages", async () => {
+    const harness = createSqliteD1Harness();
+    try {
+      initializeHistoryD1(harness);
+      for (let index = 0; index < 24; index += 1) {
+        const sessionId = `filtered-${index}`;
+        await applyOperation(harness.database, {
+          id: `create-${index}`,
+          sessionId,
+          type: "create",
+          session: {
+            sessionId,
+            attributes: {
+              repository: index === 21 ? "other" : "repo&one",
+              source: index === 22 ? "telegram" : "tui",
+            },
+            createdAt: index,
+          },
+        });
+        await applyOperation(harness.database, {
+          id: `append-${index}`,
+          sessionId,
+          type: "append",
+          entries: [
+            createTextEntry(`entry-${index}`, "user", index === 23 ? "unrelated" : "needle", index),
+          ],
+        });
+      }
+      harness.sqlite
+        .prepare(
+          "UPDATE sessions SET digest_title = ?, digest_summary = ?, digest_through_entry_id = ? WHERE session_id = ?",
+        )
+        .run("<script>latest</script>", "<img src=x onerror=alert(1)>", "entry-20", "filtered-20");
+      const response = await callHistoryViewer("/?q=needle&repository=po%26&source=ui", harness);
+      const html = await response.text();
+      expect(html).toContain('value="po&amp;"');
+      expect(html).toContain('value="ui"');
+      expect(html).not.toContain("/sessions/filtered-21");
+      expect(html).not.toContain("/sessions/filtered-22");
+      expect(html).not.toContain("/sessions/filtered-23");
+      expect(html).not.toContain('href="https://history.example.com/sessions/filtered-0"');
+      expect(html).toContain("&lt;script&gt;latest&lt;/script&gt;");
+      expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
+      expect(html).not.toContain("<script>latest</script>");
+      const pagination = html.match(/<form class="pagination"[\s\S]*?<\/form>/)[0];
+      expect(pagination).toContain('<button type="submit">Older sessions</button>');
+      const params = new URLSearchParams(
+        [...pagination.matchAll(/name="([^"]+)" value="([^"]*)"/g)].map(([, key, value]) => [
+          key,
+          value.replaceAll("&amp;", "&"),
+        ]),
+      );
+      const next = `/?${params}`;
+      expect(next).toContain("repository=po%26");
+      expect(next).toContain("source=ui");
+      expect(next).toContain("q=needle");
+      const second = await callHistoryViewer(next, harness);
+      const secondHtml = await second.text();
+      expect(secondHtml).toContain("/sessions/filtered-0");
+      expect(secondHtml).not.toContain("Older sessions");
+    } finally {
+      harness.sqlite.close();
+    }
+  });
+
+  it("serves an empty conversation shell and authenticated bounded transcript batches", async () => {
+    const harness = createSqliteD1Harness();
+    try {
+      initializeHistoryD1(harness);
+      await applyOperation(harness.database, {
+        id: "viewer-create",
+        sessionId: "viewer/session",
+        type: "create",
+        session: {
+          sessionId: "viewer/session",
+          attributes: { repository: "github.com/example/repo", source: "tui" },
+          createdAt: 1,
+        },
+      });
+      await applyOperation(harness.database, {
+        id: "viewer-append",
+        sessionId: "viewer/session",
+        type: "append",
+        entries: [
+          {
+            id: "viewer-user",
+            sourceIds: ["viewer-user"],
+            type: "user",
+            timestamp: 2,
+            content: [
+              { type: "text", text: "<script>alert(1)</script>" },
+              { type: "image", mimeType: "image/png", data: "aGVsbG8=" },
+            ],
+          },
+          createTextEntry("viewer-assistant", "assistant", "<img src=x onerror=alert(1)>", 3),
+          {
+            id: "viewer-tool",
+            sourceIds: ["viewer-tool"],
+            type: "tool",
+            timestamp: 4,
+            name: "bash",
+            arguments: { command: "<b>unsafe</b>" },
+            result: "<svg onload=alert(1)>",
+            outcome: "succeeded",
+          },
+          ...Array.from({ length: 208 }, (_, index) =>
+            createTextEntry(`viewer-extra-${index}`, "assistant", `extra ${index}`, 5 + index),
+          ),
+        ],
+      });
+      harness.sqlite
+        .prepare(
+          "UPDATE sessions SET digest_title = ?, digest_summary = ?, digest_through_entry_id = ? WHERE session_id = ?",
+        )
+        .run("Viewer <title>", "Summary <script>", "viewer-extra-207", "viewer/session");
+
+      const response = await callHistoryViewer("/sessions/viewer%2Fsession", harness);
+      expect(response.status).toBe(200);
+      const shell = await response.text();
+      expect(shell).toContain("Viewer &lt;title&gt;");
+      expect(shell).toContain('data-copy="conversation" disabled');
+      expect(shell).toContain('data-transcript-url="/sessions/viewer%2Fsession/entries"></main>');
+      expect(shell).not.toContain('<article class="entry ');
+      expect(response.headers.get("content-security-policy")).toContain("connect-src 'self'");
+      const endpoint = "/sessions/viewer%2Fsession/entries";
+      for (const authorization of ["", "Bearer secret"]) {
+        expect((await callHistoryViewer(endpoint, harness, { authorization })).status).toBe(401);
+      }
+      expect((await callHistoryViewer(endpoint, harness, { method: "POST" })).status).toBe(405);
+      expect((await callHistoryViewer(`${endpoint}?cursor=bad`, harness)).status).toBe(400);
+      let nextUrl = endpoint;
+      const pages = [];
+      while (nextUrl) {
+        const pageResponse = await callHistoryViewer(nextUrl, harness);
+        expect(pageResponse.status).toBe(200);
+        expect(pageResponse.headers.get("cache-control")).toBe("no-store");
+        expect(pageResponse.headers.get("content-type")).toContain("application/json");
+        const page = await pageResponse.json();
+        expect(page.html.match(/<article class="entry /g).length).toBeLessThanOrEqual(100);
+        pages.push(page.html);
+        nextUrl =
+          page.nextCursor === null
+            ? null
+            : `${endpoint}?cursor=${encodeURIComponent(page.nextCursor)}`;
+      }
+      expect(pages).toHaveLength(3);
+      const html = pages.join("");
+      expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+      expect(html).toContain('src="data:image/png;base64,aGVsbG8="');
+      expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
+      expect(html).toContain('<details class="tool-entry">');
+      expect(html).toContain("&lt;svg onload=alert(1)&gt;");
+      expect(html.match(/<article class="entry /g)).toHaveLength(211);
+      expect(
+        [...html.matchAll(/<pre>extra (\d+)<\/pre>/g)].map((match) => Number(match[1])),
+      ).toEqual(Array.from({ length: 208 }, (_, index) => index));
+      expect(html).not.toContain("<script>alert(1)</script>");
+
+      const missing = await callHistoryViewer("/sessions/missing", harness);
+      expect(missing.status).toBe(404);
+      await expect(missing.text()).resolves.toContain(
+        "history session &#39;missing&#39; was not found",
+      );
+    } finally {
+      harness.sqlite.close();
+    }
+  });
+
+  it("keeps the development Worker isolated from production", () => {
+    const config = JSON.parse(
+      readFileSync(new URL("../src/history/worker/wrangler.dev.json", import.meta.url), "utf8"),
+    );
+    expect(config.name).not.toBe("tau-history");
+    expect(config.routes).toBeUndefined();
+    expect(config.d1_databases).toEqual([
+      expect.objectContaining({ database_id: "local", database_name: "tau-history-dev" }),
+    ]);
   });
 
   it("treats an operation committed by a concurrent request as already applied", async () => {
@@ -1152,6 +1538,81 @@ describe("session history", () => {
       expect(harness.prepared.every((statement) => statement.run.mock.calls.length === 0)).toBe(
         true,
       );
+    }
+  });
+
+  it("validates text content at both remote history boundaries", async () => {
+    const valid = [
+      createTextEntry("assistant", "assistant", "response", 1),
+      createTextEntry("user-string", "user", "request", 2),
+      createTextEntry(
+        "user-blocks",
+        "user",
+        [
+          { type: "text", text: "request", textSignature: "signature" },
+          { type: "image", data: "aGVsbG8=", mimeType: "image/png" },
+        ],
+        3,
+      ),
+      projectHistoryEntryForRemote(
+        createTextEntry("large-user", "user", [{ type: "text", text: "x".repeat(1_100_000) }], 4),
+      ),
+      projectHistoryEntryForRemote(
+        createTextEntry("large-assistant", "assistant", "x".repeat(1_100_000), 5),
+      ),
+    ];
+    expect(typeof valid[3].content).toBe("string");
+    expect(valid[3].content).toContain("middle-truncated for remote history");
+    const harness = createSqliteD1Harness();
+    try {
+      initializeHistoryD1(harness);
+      const client = new RemoteHistoryClient(
+        { endpoint: "https://history.example.com", apiKey: "secret" },
+        async (url, init) =>
+          callHistoryWorker(new URL(url).pathname, JSON.parse(init.body), harness),
+      );
+      await client.applyOperations([
+        {
+          id: "create",
+          sessionId: "session-1",
+          type: "create",
+          session: { sessionId: "session-1", attributes: {}, createdAt: 1 },
+        },
+        { id: "append", sessionId: "session-1", type: "append", entries: valid },
+      ]);
+      await expect(client.read({ sessionId: "session-1", limit: 10 })).resolves.toMatchObject({
+        entries: valid,
+      });
+
+      const invalid = [
+        ["assistant", [{ type: "text", text: "response" }]],
+        ["assistant", null],
+        ["user", null],
+        ["user", { type: "text", text: "request" }],
+        ["user", [{ type: "text", text: 123 }]],
+        ["user", [{ type: "text", text: "request", textSignature: 123 }]],
+        ["user", [{ type: "image", data: "aGVsbG8=" }]],
+        ["user", [{ type: "thinking", thinking: "hidden" }]],
+        ["user", [{ type: "text", text: "request", extra: true }]],
+      ];
+      const session = (await client.read({ sessionId: "session-1", limit: 1 })).session;
+      for (const [type, content] of invalid) {
+        const entry = createTextEntry("invalid", type, content, 6);
+        await expect(
+          client.applyOperations([
+            { id: "invalid", sessionId: "session-1", type: "append", entries: [entry] },
+          ]),
+        ).rejects.toMatchObject({ status: 400, code: "invalid_request" });
+        const malformedClient = new RemoteHistoryClient(
+          { endpoint: "https://history.example.com", apiKey: "secret" },
+          async () => Response.json({ session, entries: [entry] }),
+        );
+        await expect(malformedClient.read({ sessionId: "session-1", limit: 10 })).rejects.toThrow(
+          "History service returned invalid transcript data",
+        );
+      }
+    } finally {
+      harness.sqlite.close();
     }
   });
 
@@ -1409,6 +1870,7 @@ describe("session history", () => {
         "/v1/search",
         { query: "history", limit: 2 },
         harness,
+        "http://history.example.com",
       );
       expect(firstResponse.status).toBe(200);
       const firstPage = await firstResponse.json();
@@ -1416,6 +1878,7 @@ describe("session history", () => {
         "session-1",
         "session-2",
       ]);
+      expect(firstPage.sessions[0].webUrl).toBe("https://history.example.com/sessions/session-1");
       expect(firstPage.nextCursor).toEqual(expect.any(String));
 
       const secondResponse = await callHistoryWorker(
@@ -1943,15 +2406,57 @@ describe("session history", () => {
 
     const fetchImpl = vi.fn(async (_url, options) => {
       expect(options.headers.authorization).toBe("Bearer remote-key");
-      return new Response(JSON.stringify({ sessions: [] }), {
-        headers: { "content-type": "application/json" },
-      });
+      return new Response(
+        JSON.stringify({
+          sessions: [
+            {
+              sessionId: "remote-session",
+              attributes: {},
+              createdAt: 1,
+              updatedAt: 2,
+              webUrl: "https://history.example.com/sessions/remote-session",
+              snippets: [],
+            },
+          ],
+        }),
+        { headers: { "content-type": "application/json" } },
+      );
     });
     const client = new RemoteHistoryClient(
       { endpoint: "https://history.example.com", apiKey: "remote-key" },
       fetchImpl,
     );
-    await expect(client.search({ limit: 10 })).resolves.toEqual({ sessions: [] });
+    await expect(client.search({ limit: 10 })).resolves.toMatchObject({
+      sessions: [
+        {
+          sessionId: "remote-session",
+          webUrl: "https://history.example.com/sessions/remote-session",
+        },
+      ],
+    });
+  });
+
+  it("requires an absolute viewer URL on remote session descriptors", async () => {
+    const client = new RemoteHistoryClient(
+      { endpoint: "https://history.example.com", apiKey: "remote-key" },
+      vi.fn(async () =>
+        Response.json({
+          sessions: [
+            {
+              sessionId: "session-without-url",
+              attributes: {},
+              createdAt: 1,
+              updatedAt: 1,
+              snippets: [],
+            },
+          ],
+        }),
+      ),
+    );
+
+    await expect(client.search({ limit: 10 })).rejects.toThrow(
+      "History service returned invalid search results",
+    );
   });
 
   it("rejects malformed type-specific entries returned by the remote service", async () => {
@@ -1966,6 +2471,7 @@ describe("session history", () => {
                 attributes: {},
                 createdAt: 1,
                 updatedAt: 1,
+                webUrl: "https://history.example.com/sessions/session-1",
                 snippets: [],
               },
               entries: [

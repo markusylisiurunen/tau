@@ -9,6 +9,7 @@
       "scripts/**/*.js",
       "*.{ts,json,md}",
       "!**/node_modules/**/*",
+      "!**/.wrangler/**/*",
       "!dist/**/*",
       "!references/repos/**/*",
       "!src/diff_tool/app/**/*"

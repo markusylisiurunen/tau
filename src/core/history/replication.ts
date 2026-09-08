@@ -16,7 +16,7 @@ export function projectHistoryEntryForRemote(entry: HistoryEntry): HistoryEntry 
   if (entry.type !== "tool") {
     const base = { ...entry, content: "" };
     const content = projectRemoteValue(
-      entry.content,
+      typeof entry.content === "string" ? entry.content : JSON.stringify(entry.content),
       HISTORY_REMOTE_ENTRY_MAX_BYTES - serializedBytes(base) - PAYLOAD_SIZE_ALLOWANCE,
     );
     return { ...entry, content };
@@ -66,6 +66,8 @@ export function batchHistoryEntriesForRemote(
   return batches;
 }
 
+function projectRemoteValue(value: string, maxBytes: number): string;
+function projectRemoteValue(value: unknown, maxBytes: number): unknown;
 function projectRemoteValue(value: unknown, maxBytes: number): unknown {
   const encoded = JSON.stringify(value) ?? String(value);
   const encodedBytes = Buffer.byteLength(encoded, "utf8");

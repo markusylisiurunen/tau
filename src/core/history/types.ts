@@ -2,19 +2,25 @@ export type SessionAttributes = Record<string, string>;
 export type HistoryAttributeFilter = string | { contains: string };
 export type HistoryAttributeFilters = Record<string, HistoryAttributeFilter>;
 
-export type HistoryTextEntry = {
+type HistoryEntryBase = {
   id: string;
   sourceIds: string[];
-  type: "user" | "assistant";
   timestamp: number;
-  content: unknown;
 };
 
-export type HistoryToolEntry = {
-  id: string;
-  sourceIds: string[];
+export type HistoryUserContent =
+  | string
+  | Array<
+      | { type: "text"; text: string; textSignature?: string }
+      | { type: "image"; data: string; mimeType: string }
+    >;
+
+export type HistoryTextEntry =
+  | (HistoryEntryBase & { type: "user"; content: HistoryUserContent })
+  | (HistoryEntryBase & { type: "assistant"; content: string });
+
+export type HistoryToolEntry = HistoryEntryBase & {
   type: "tool";
-  timestamp: number;
   name: string;
   arguments: unknown;
   result: unknown;
@@ -34,6 +40,7 @@ export type HistorySessionDescriptor = {
   attributes: SessionAttributes;
   createdAt: number;
   updatedAt: number;
+  webUrl?: string;
   digest?: HistoryDigest;
   snippets: string[];
 };

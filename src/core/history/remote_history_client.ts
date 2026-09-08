@@ -38,6 +38,7 @@ const descriptorSchema = z
     attributes: z.record(z.string(), z.string()),
     createdAt: z.number(),
     updatedAt: z.number(),
+    webUrl: z.url(),
     digest: digestSchema.optional(),
     snippets: z.array(z.string()),
   })
@@ -55,9 +56,22 @@ const entryBaseSchema = z.object({
   sourceIds: z.array(z.string()),
   timestamp: z.number(),
 });
+const userContentSchema = z.union([
+  z.string(),
+  z.array(
+    z.discriminatedUnion("type", [
+      z
+        .object({ type: z.literal("text"), text: z.string(), textSignature: z.string().optional() })
+        .strict(),
+      z
+        .object({ type: z.literal("image"), data: z.string(), mimeType: z.string().min(1) })
+        .strict(),
+    ]),
+  ),
+]);
 const entrySchema = z.discriminatedUnion("type", [
-  entryBaseSchema.extend({ type: z.literal("user"), content: jsonValueSchema }).strict(),
-  entryBaseSchema.extend({ type: z.literal("assistant"), content: jsonValueSchema }).strict(),
+  entryBaseSchema.extend({ type: z.literal("user"), content: userContentSchema }).strict(),
+  entryBaseSchema.extend({ type: z.literal("assistant"), content: z.string() }).strict(),
   entryBaseSchema
     .extend({
       type: z.literal("tool"),

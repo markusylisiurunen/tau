@@ -6,6 +6,16 @@ import type {
   ResponsesInput,
   ResponsesOutput,
 } from "@cloudflare/workers-types";
+import type {
+  HistoryEntry,
+  HistoryReadResult,
+  HistoryReplicationOperation,
+  HistorySearchResult,
+  HistorySessionDescriptor,
+  HistoryUserContent,
+} from "../../core/history/types.js";
+import VIEWER_CSS from "./viewer.css";
+import VIEWER_JS from "./viewer.js";
 
 type HistoryAiModels = {
   "openai/gpt-5.6-luna": {
@@ -25,6 +35,7 @@ type Env = {
   DB: D1Database;
   AI: Ai<HistoryAiModels>;
   API_KEY: string;
+  VIEWER_PASSWORD: string;
 };
 
 type Digest = { title: string; summary: string };
@@ -34,27 +45,13 @@ type DigestEntryRow = {
   payload_json: string;
 };
 
-type HistoryEntry = {
-  id: string;
-  sourceIds: string[];
-  type: "user" | "assistant" | "tool";
-  timestamp: number;
-  [key: string]: unknown;
+type RemoteHistorySessionDescriptor = HistorySessionDescriptor & { webUrl: string };
+type RemoteHistorySearchResult = Omit<HistorySearchResult, "sessions"> & {
+  sessions: RemoteHistorySessionDescriptor[];
 };
-
-type Operation =
-  | {
-      id: string;
-      sessionId: string;
-      type: "create";
-      session: {
-        sessionId: string;
-        attributes: Record<string, string>;
-        createdAt: number;
-      };
-    }
-  | { id: string; sessionId: string; type: "append"; entries: HistoryEntry[] }
-  | { id: string; sessionId: string; type: "truncate"; afterEntryId: string | null };
+type RemoteHistoryReadResult = Omit<HistoryReadResult, "session"> & {
+  session: RemoteHistorySessionDescriptor;
+};
 
 const DIGEST_MODEL = "openai/gpt-5.6-luna";
 const DIGEST_TEXT_CONFIG = {
@@ -88,6 +85,17 @@ const MAX_ENTRIES_PER_OPERATION = 25;
 const MAX_SEARCH_LIMIT = 75;
 const MAX_READ_LIMIT = 100;
 const MAX_READ_PAGE_PAYLOAD_BYTES = 12 * 1024 * 1024;
+const VIEWER_USERNAME = "tau";
+const VIEWER_SEARCH_PAGE_SIZE = 20;
+const VIEWER_READ_PAGE_PAYLOAD_BYTES = 512 * 1024;
+const VIEWER_SECURITY_HEADERS = {
+  "cache-control": "no-store",
+  "content-security-policy":
+    "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'self'; img-src data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+  "referrer-policy": "no-referrer",
+  "x-content-type-options": "nosniff",
+  "x-frame-options": "DENY",
+};
 const DIGEST_NEW_ENTRY_THRESHOLD = 8;
 const DIGEST_MAX_STALENESS_MS = 12 * 60 * 60 * 1_000;
 const DIGEST_RETRY_BASE_MS = 5 * 60 * 1_000;
@@ -118,37 +126,66 @@ function invalidRequest(message: string): HistoryApiError {
 
 export default {
   async fetch(request: Request, env: Env, _context: ExecutionContext): Promise<Response> {
-    if (!authorize(request, env)) return error("unauthorized", "Invalid API key", 401);
-    if (request.method !== "POST") return error("method_not_allowed", "Use POST", 405);
+    const url = new URL(request.url);
+    const viewerRoute =
+      url.pathname === "/" ||
+      url.pathname === "/viewer.js" ||
+      /^\/sessions\/[^/]+(?:\/entries)?$/.test(url.pathname);
+    if (viewerRoute && url.protocol === "http:" && !isLoopbackHost(url.hostname)) {
+      return redirectViewerToHttps(url);
+    }
+    const origin = viewerOrigin(url);
 
     try {
-      if (new URL(request.url).pathname === "/v1/operations") {
-        const body = await readJson(request);
-        const operations = parseOperations(body);
-        let applied = 0;
-        for (const operation of operations) {
-          if (await applyOperation(env.DB, operation)) applied += 1;
+      if (url.pathname.startsWith("/v1/")) {
+        if (!authorizeApi(request, env)) return error("unauthorized", "Invalid API key", 401);
+        if (request.method !== "POST") return error("method_not_allowed", "Use POST", 405);
+
+        if (url.pathname === "/v1/operations") {
+          const body = await readJson(request);
+          const operations = parseOperations(body);
+          let applied = 0;
+          for (const operation of operations) {
+            if (await applyOperation(env.DB, operation)) applied += 1;
+          }
+          return json({ applied });
         }
-        return json({ applied });
+
+        if (url.pathname === "/v1/search") {
+          return json(await search(env.DB, await readJson(request), origin));
+        }
+
+        if (url.pathname === "/v1/read") {
+          return json(await read(env.DB, await readJson(request), origin));
+        }
+
+        return error("not_found", "Not found", 404);
       }
 
-      if (new URL(request.url).pathname === "/v1/search") {
-        return json(await search(env.DB, await readJson(request)));
+      if (!viewerRoute) return viewerError("Not found", 404);
+      if (!authorizeViewer(request, env)) return viewerUnauthorized();
+      if (request.method !== "GET") {
+        return viewerError("Use GET", 405, { allow: "GET" });
       }
-
-      if (new URL(request.url).pathname === "/v1/read") {
-        return json(await read(env.DB, await readJson(request)));
+      if (url.pathname === "/viewer.js") {
+        return new Response(VIEWER_JS, {
+          headers: { ...VIEWER_SECURITY_HEADERS, "content-type": "text/javascript; charset=utf-8" },
+        });
       }
-
-      return error("not_found", "Not found", 404);
+      if (url.pathname === "/") return await renderViewerIndex(env.DB, url);
+      if (/^\/sessions\/[^/]+\/entries$/.test(url.pathname))
+        return await readViewerEntries(env.DB, url);
+      return await renderViewerSession(env.DB, url);
     } catch (caught) {
       if (caught instanceof HistoryApiError) {
-        return error(caught.code, caught.message, caught.status);
+        return viewerRoute
+          ? viewerError(caught.message, caught.status)
+          : error(caught.code, caught.message, caught.status);
       }
-      logWorkerError("history_request_failed", caught, {
-        pathname: new URL(request.url).pathname,
-      });
-      return error("internal_error", "Internal server error", 500);
+      logWorkerError("history_request_failed", caught, { pathname: url.pathname });
+      return viewerRoute
+        ? viewerError("Internal server error", 500)
+        : error("internal_error", "Internal server error", 500);
     }
   },
 
@@ -336,13 +373,64 @@ function providerErrorDetails(error: Record<string, unknown>, depth = 0): Record
   return details;
 }
 
-function authorize(request: Request, env: Env): boolean {
+function isLoopbackHost(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
+}
+
+function viewerOrigin(url: URL): string {
+  if (url.protocol !== "http:" || isLoopbackHost(url.hostname)) return url.origin;
+  const secure = new URL(url.origin);
+  secure.protocol = "https:";
+  return secure.origin;
+}
+
+function redirectViewerToHttps(url: URL): Response {
+  const location = new URL(url);
+  location.protocol = "https:";
+  return new Response(null, {
+    status: 308,
+    headers: { ...VIEWER_SECURITY_HEADERS, location: location.toString() },
+  });
+}
+
+function authorizeApi(request: Request, env: Env): boolean {
   const expected = env.API_KEY?.trim();
   if (!expected) return false;
   return request.headers.get("authorization") === `Bearer ${expected}`;
 }
 
-export async function applyOperation(database: D1Database, operation: Operation): Promise<boolean> {
+function authorizeViewer(request: Request, env: Env): boolean {
+  const expected = env.VIEWER_PASSWORD?.trim();
+  const authorization = request.headers.get("authorization");
+  if (!expected || !authorization?.startsWith("Basic ")) return false;
+  try {
+    const encoded = authorization.slice("Basic ".length);
+    const bytes = Uint8Array.from(atob(encoded), (character) => character.charCodeAt(0));
+    const credentials = new TextDecoder().decode(bytes);
+    const separator = credentials.indexOf(":");
+    return (
+      separator >= 0 &&
+      credentials.slice(0, separator) === VIEWER_USERNAME &&
+      secretsEqual(credentials.slice(separator + 1), expected)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function secretsEqual(actual: string, expected: string): boolean {
+  if (actual.length !== expected.length) return false;
+  let difference = 0;
+  for (let index = 0; index < actual.length; index += 1) {
+    difference |= actual.charCodeAt(index) ^ expected.charCodeAt(index);
+  }
+  return difference === 0;
+}
+
+export async function applyOperation(
+  database: D1Database,
+  operation: HistoryReplicationOperation,
+): Promise<boolean> {
   if (await operationExists(database, operation.id)) return false;
 
   const statements: D1PreparedStatement[] = [];
@@ -500,7 +588,11 @@ async function operationExists(database: D1Database, operationId: string): Promi
   return Boolean(existing);
 }
 
-async function search(database: D1Database, raw: unknown): Promise<unknown> {
+async function search(
+  database: D1Database,
+  raw: unknown,
+  origin: string,
+): Promise<RemoteHistorySearchResult> {
   const input = asRecord(raw, "search input");
   const query = optionalString(input.query, "query", 1_000)?.trim();
   const attributes = parseAttributeFilters(input.attributes);
@@ -528,7 +620,7 @@ async function search(database: D1Database, raw: unknown): Promise<unknown> {
       .bind(...attributeValues, limit + 1, offset)
       .all<Record<string, unknown>>();
     return {
-      sessions: rows.results.slice(0, limit).map((row) => descriptor(row)),
+      sessions: rows.results.slice(0, limit).map((row) => descriptor(row, origin)),
       ...(rows.results.length > limit
         ? { nextCursor: encodeCursor({ offset: offset + limit }) }
         : {}),
@@ -561,7 +653,7 @@ async function search(database: D1Database, raw: unknown): Promise<unknown> {
     .bind(ftsQuery, ftsQuery, ...attributeValues, limit + 1, offset)
     .all<Record<string, unknown>>();
   const selectedRows = candidates.results.slice(0, limit);
-  const sessions = selectedRows.map((row) => descriptor(row));
+  const sessions = selectedRows.map((row) => descriptor(row, origin));
 
   if (selectedRows.length > 0) {
     const sessionIds = selectedRows.map((row) => String(row.session_id));
@@ -603,7 +695,12 @@ async function search(database: D1Database, raw: unknown): Promise<unknown> {
   };
 }
 
-async function read(database: D1Database, raw: unknown): Promise<unknown> {
+async function read(
+  database: D1Database,
+  raw: unknown,
+  origin: string,
+  maxPayloadBytes = MAX_READ_PAGE_PAYLOAD_BYTES,
+): Promise<RemoteHistoryReadResult> {
   const input = asRecord(raw, "read input");
   const sessionId = requiredString(input.sessionId, "sessionId", 256);
   const limit = boundedInteger(input.limit ?? 50, "limit", 1, MAX_READ_LIMIT);
@@ -621,7 +718,7 @@ async function read(database: D1Database, raw: unknown): Promise<unknown> {
     )
     .bind(sessionId, position, limit + 1)
     .all<{ position: number; payload_bytes: number }>();
-  const page = selectHistoryReadPage(candidates.results, limit);
+  const page = selectHistoryReadPage(candidates.results, limit, maxPayloadBytes);
   const rows = await database
     .prepare(
       "SELECT position, payload_json FROM entries WHERE session_id = ? AND position > ? ORDER BY position LIMIT ?",
@@ -630,8 +727,8 @@ async function read(database: D1Database, raw: unknown): Promise<unknown> {
     .all<{ position: number; payload_json: string }>();
   const last = rows.results.at(-1);
   return {
-    session: descriptor(session),
-    entries: rows.results.map((row) => JSON.parse(row.payload_json)),
+    session: descriptor(session, origin),
+    entries: rows.results.map((row) => JSON.parse(row.payload_json) as HistoryEntry),
     ...(page.hasMore && last ? { nextCursor: encodeCursor({ position: last.position }) } : {}),
   };
 }
@@ -639,19 +736,20 @@ async function read(database: D1Database, raw: unknown): Promise<unknown> {
 export function selectHistoryReadPage(
   candidates: Array<{ payload_bytes: number }>,
   limit: number,
+  maxPayloadBytes = MAX_READ_PAGE_PAYLOAD_BYTES,
 ): { count: number; hasMore: boolean } {
   let count = 0;
   let bytes = 0;
   for (const candidate of candidates.slice(0, limit)) {
     const nextBytes = bytes + Number(candidate.payload_bytes) + 1;
-    if (count > 0 && nextBytes > MAX_READ_PAGE_PAYLOAD_BYTES) break;
+    if (count > 0 && nextBytes > maxPayloadBytes) break;
     count += 1;
     bytes = nextBytes;
   }
   return { count, hasMore: candidates.length > count };
 }
 
-function descriptor(row: Record<string, unknown>): Record<string, unknown> {
+function descriptor(row: Record<string, unknown>, origin: string): RemoteHistorySessionDescriptor {
   const title = typeof row.digest_title === "string" ? row.digest_title : undefined;
   const summary = typeof row.digest_summary === "string" ? row.digest_summary : undefined;
   const through =
@@ -661,11 +759,278 @@ function descriptor(row: Record<string, unknown>): Record<string, unknown> {
     attributes: JSON.parse(String(row.attributes_json)),
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
+    webUrl: `${origin}/sessions/${encodeURIComponent(String(row.session_id))}`,
     ...(title && summary && through
       ? { digest: { title, summary, updatedThroughEntryId: through } }
       : {}),
     snippets: [],
   };
+}
+
+async function renderViewerIndex(database: D1Database, url: URL): Promise<Response> {
+  const query = url.searchParams.get("q")?.trim() || undefined;
+  if (query && query.length > 1_000) throw invalidRequest("query is too long");
+  const cursor = url.searchParams.get("cursor") || undefined;
+  if (cursor && cursor.length > 2_048) throw invalidRequest("cursor is too long");
+  const attributes = Object.fromEntries(
+    ["repository", "source"].flatMap((key) => {
+      const value = url.searchParams.get(key)?.trim();
+      return value ? [[key, value]] : [];
+    }),
+  );
+  const result = await search(
+    database,
+    {
+      query,
+      attributes: Object.fromEntries(
+        Object.entries(attributes).map(([key, value]) => [key, { contains: value }]),
+      ),
+      limit: VIEWER_SEARCH_PAGE_SIZE,
+      cursor,
+    },
+    url.origin,
+  );
+  const filters = ["repository", "source"].map(
+    (key) =>
+      `<input id="${key}" name="${key}" type="text" aria-label="${key}" maxlength="1024" value="${escapeHtml(attributes[key] ?? "")}" placeholder="${key === "repository" ? "Repository contains…" : "Source contains…"}">`,
+  );
+  const sessions = result.sessions.map(renderSessionCard).join("");
+  const nextUrl = new URL("/", url.origin);
+  if (query) nextUrl.searchParams.set("q", query);
+  for (const [key, value] of Object.entries(attributes)) nextUrl.searchParams.set(key, value);
+  if (result.nextCursor) nextUrl.searchParams.set("cursor", result.nextCursor);
+  const pagination = result.nextCursor
+    ? `<form class="pagination" action="/" method="get">
+        ${[...nextUrl.searchParams].map(([key, value]) => `<input type="hidden" name="${escapeHtml(key)}" value="${escapeHtml(value)}">`).join("")}
+        <button type="submit">Older sessions</button>
+      </form>`
+    : "";
+
+  return viewerPage(
+    "History",
+    `<form class="search" action="/" method="get" role="search">
+      <div class="search-row">
+        <input id="q" name="q" type="search" aria-label="Search conversations" maxlength="1000" value="${escapeHtml(query ?? "")}" placeholder="Search titles, summaries, and transcript text">
+        <button type="submit">Search</button>
+      </div>
+      <div class="search-filters">
+        ${filters.join("")}
+      </div>
+    </form>
+    <section aria-label="Conversations">
+      ${query || Object.keys(attributes).length > 0 ? '<p><a href="/">Clear filters</a></p>' : ""}
+      <div class="session-list">${sessions || '<p class="empty">No conversations found.</p>'}</div>
+      ${pagination}
+    </section>`,
+  );
+}
+
+function renderSessionCard(session: RemoteHistorySessionDescriptor): string {
+  const digest = session.digest;
+  const snippets = session.snippets
+    .map((snippet) => `<blockquote>${escapeHtml(snippet)}</blockquote>`)
+    .join("");
+  return `<article class="session-card">
+    <div class="session-card-heading">
+      <div>
+        <h3><a href="${escapeHtml(session.webUrl)}">${escapeHtml(digest?.title ?? "Untitled session")}</a></h3>
+        <p class="session-id">${escapeHtml(session.sessionId)}</p>
+      </div>
+      ${digest ? "" : '<span class="pending">Digest pending</span>'}
+    </div>
+    ${digest ? `<p class="summary">${escapeHtml(digest.summary)}</p>` : ""}
+    ${snippets}
+    ${renderAttributes(session.attributes)}
+    <p class="timestamps">Created ${renderTime(session.createdAt)} · Updated ${renderTime(session.updatedAt)}</p>
+  </article>`;
+}
+
+function viewerSessionId(url: URL): string {
+  try {
+    return decodeURIComponent(url.pathname.split("/")[2]!);
+  } catch {
+    throw invalidRequest("invalid session URL");
+  }
+}
+
+async function readViewerEntries(database: D1Database, url: URL): Promise<Response> {
+  const result = await read(
+    database,
+    {
+      sessionId: viewerSessionId(url),
+      limit: MAX_READ_LIMIT,
+      cursor: url.searchParams.get("cursor") ?? undefined,
+    },
+    url.origin,
+    VIEWER_READ_PAGE_PAYLOAD_BYTES,
+  );
+  return viewerResponse(
+    JSON.stringify({
+      html: result.entries.map(renderViewerEntry).join(""),
+      nextCursor: result.nextCursor ?? null,
+    }),
+    200,
+    { "content-type": "application/json; charset=utf-8" },
+  );
+}
+
+async function renderViewerSession(database: D1Database, url: URL): Promise<Response> {
+  const sessionId = viewerSessionId(url);
+  const row = await database
+    .prepare("SELECT * FROM sessions WHERE session_id = ?")
+    .bind(sessionId)
+    .first<Record<string, unknown>>();
+  if (!row)
+    throw new HistoryApiError("not_found", `history session '${sessionId}' was not found`, 404);
+  const session = descriptor(row, url.origin);
+
+  return viewerPage(
+    session.digest?.title ?? "Untitled session",
+    `<nav class="back"><a href="/">← All conversations</a></nav>
+    <header class="conversation-header">
+      <h1>${escapeHtml(session.digest?.title ?? "Untitled session")}</h1>
+      <p class="session-id">${escapeHtml(session.sessionId)}</p>
+      ${session.digest ? `<p class="summary">${escapeHtml(session.digest.summary)}</p>` : ""}
+      ${renderAttributes(session.attributes)}
+      <p class="timestamps">Created ${renderTime(session.createdAt)} · Updated ${renderTime(session.updatedAt)}</p>
+    </header>
+    <div class="transcript-actions">
+      <button type="button" data-copy="conversation" disabled>Copy conversation</button>
+      <button type="button" data-tools="open" disabled>Expand tools</button>
+      <button type="button" data-tools="close" disabled>Collapse tools</button>
+    </div>
+    <p data-transcript-status role="status">Loading conversation…</p>
+    <button type="button" data-transcript-retry hidden>Retry loading</button>
+    <noscript>JavaScript is required to load the conversation.</noscript>
+    <main class="transcript" aria-label="Conversation transcript" aria-busy="true" data-transcript-url="/sessions/${escapeHtml(encodeURIComponent(sessionId))}/entries"></main>`,
+  );
+}
+
+function renderViewerEntry(entry: HistoryEntry): string {
+  if (entry.type === "tool") {
+    return `<article class="entry tool-card">
+      <div class="entry-actions"><button type="button" data-copy="entry">Copy</button></div>
+      <details class="tool-entry">
+        <summary>
+          <span>Tool · ${escapeHtml(entry.name)}</span>
+          <span class="outcome">${escapeHtml(entry.outcome)}</span>
+        </summary>
+        <div class="tool-section"><h3>Arguments</h3><pre>${escapeHtml(formatViewerValue(entry.arguments))}</pre></div>
+        <div class="tool-section"><h3>Result</h3><pre>${escapeHtml(formatViewerValue(entry.result))}</pre></div>
+        <p class="entry-time">${renderTime(entry.timestamp)}</p>
+      </details>
+    </article>`;
+  }
+  return `<article class="entry ${entry.type}">
+    <div class="entry-heading"><h2>${entry.type === "user" ? "User" : "Assistant"}</h2><span>${renderTime(entry.timestamp)}</span><button type="button" data-copy="entry">Copy</button></div>
+    ${renderViewerContent(entry.content)}
+  </article>`;
+}
+
+function renderAttributes(attributes: Record<string, string>): string {
+  const ordered = Object.entries(attributes).sort(([left], [right]) => {
+    const priority = (key: string): number => (key === "repository" ? 0 : key === "source" ? 1 : 2);
+    return priority(left) - priority(right) || left.localeCompare(right);
+  });
+  if (ordered.length === 0) return "";
+  return `<table class="metadata"><tbody>${ordered
+    .map(
+      ([key, value]) =>
+        `<tr><th scope="row">${escapeHtml(key)}</th><td>${escapeHtml(value)}</td></tr>`,
+    )
+    .join("")}</tbody></table>`;
+}
+
+function renderViewerContent(content: unknown): string {
+  if (!Array.isArray(content)) return `<pre>${escapeHtml(formatViewerValue(content))}</pre>`;
+  const blocks = content.map((block) => {
+    if (typeof block !== "object" || block === null) {
+      return `<pre>${escapeHtml(formatViewerValue(block))}</pre>`;
+    }
+    const value = block as Record<string, unknown>;
+    if (value.type === "text" && typeof value.text === "string") {
+      return `<pre>${escapeHtml(value.text)}</pre>`;
+    }
+    if (
+      value.type === "image" &&
+      typeof value.mimeType === "string" &&
+      /^(image\/(?:png|jpeg|gif|webp))$/.test(value.mimeType) &&
+      typeof value.data === "string" &&
+      /^[a-zA-Z0-9+/]*={0,2}$/.test(value.data)
+    ) {
+      return `<figure class="image-attachment" data-markdown="[image ${escapeHtml(value.mimeType)}]"><img src="data:${value.mimeType};base64,${value.data}" alt="Attached ${escapeHtml(value.mimeType)} image"><figcaption>${escapeHtml(value.mimeType)}</figcaption></figure>`;
+    }
+    return `<pre>${escapeHtml(formatViewerValue(value))}</pre>`;
+  });
+  return `<div class="content-blocks">${blocks.join("")}</div>`;
+}
+
+function formatViewerValue(value: unknown): string {
+  if (typeof value === "string") return value;
+  return JSON.stringify(value, null, 2) ?? String(value);
+}
+
+function renderTime(timestamp: number): string {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "Unknown time";
+  const value = date.toISOString();
+  return `<time datetime="${value}">${value.replace("T", " ").replace(".000Z", " UTC")}</time>`;
+}
+
+function viewerPage(title: string, content: string): Response {
+  return viewerResponse(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${escapeHtml(title)} · Tau history</title>
+  <style>${VIEWER_CSS}</style>
+  <script src="/viewer.js" defer></script>
+</head>
+<body><div class="shell">${content}</div></body>
+</html>`);
+}
+
+function viewerResponse(
+  body: string,
+  status = 200,
+  headers: Record<string, string> = {},
+): Response {
+  return new Response(body, {
+    status,
+    headers: {
+      ...VIEWER_SECURITY_HEADERS,
+      "content-type": "text/html; charset=utf-8",
+      ...headers,
+    },
+  });
+}
+
+function viewerUnauthorized(): Response {
+  return viewerError("Authentication required", 401, {
+    "www-authenticate": 'Basic realm="Tau history", charset="UTF-8"',
+  });
+}
+
+function viewerError(
+  message: string,
+  status: number,
+  headers: Record<string, string> = {},
+): Response {
+  return viewerResponse(
+    `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${status} · Tau history</title><style>${VIEWER_CSS}</style></head><body><div class="shell"><main class="error-page"><h1>${status}</h1><p>${escapeHtml(message)}</p><a href="/">Return to conversations</a></main></div></body></html>`,
+    status,
+    headers,
+  );
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 export async function refreshDigestIfNeeded(env: Env, sessionId: string): Promise<boolean> {
@@ -955,12 +1320,12 @@ function parseDigest(value: string): { title: string; summary: string } {
   return { title, summary };
 }
 
-function parseOperations(raw: unknown): Operation[] {
+function parseOperations(raw: unknown): HistoryReplicationOperation[] {
   const body = asRecord(raw, "operations request");
   if (!Array.isArray(body.operations) || body.operations.length > MAX_OPERATIONS) {
     throw invalidRequest(`operations must be an array of at most ${MAX_OPERATIONS} items`);
   }
-  return body.operations.map((value): Operation => {
+  return body.operations.map((value): HistoryReplicationOperation => {
     const operation = asRecord(value, "operation");
     const id = requiredString(operation.id, "operation.id", 256);
     const sessionId = requiredString(operation.sessionId, "operation.sessionId", 256);
@@ -1026,11 +1391,14 @@ function parseEntry(raw: unknown): HistoryEntry {
     sourceIds: entry.sourceIds.map((value) => requiredString(value, "entry.sourceId", 512)),
     timestamp: finiteNumber(entry.timestamp, "entry.timestamp"),
   };
-  if (type === "user" || type === "assistant") {
-    if (!Object.hasOwn(entry, "content")) {
-      throw invalidRequest(`${type} entry.content is required`);
+  if (type === "assistant") {
+    if (typeof entry.content !== "string") {
+      throw invalidRequest("assistant entry.content must be a string");
     }
     return validateEntrySize({ ...base, type, content: entry.content });
+  }
+  if (type === "user") {
+    return validateEntrySize({ ...base, type, content: parseUserContent(entry.content) });
   }
 
   if (!Object.hasOwn(entry, "arguments") || !Object.hasOwn(entry, "result")) {
@@ -1052,6 +1420,40 @@ function parseEntry(raw: unknown): HistoryEntry {
     arguments: entry.arguments,
     result: entry.result,
     outcome,
+  });
+}
+
+function parseUserContent(raw: unknown): HistoryUserContent {
+  if (typeof raw === "string") return raw;
+  if (!Array.isArray(raw)) {
+    throw invalidRequest(
+      "user entry.content must be a string or an array of text and image blocks",
+    );
+  }
+  return raw.map((rawBlock) => {
+    const block = asRecord(rawBlock, "user content block");
+    if (
+      block.type === "text" &&
+      typeof block.text === "string" &&
+      (block.textSignature === undefined || typeof block.textSignature === "string") &&
+      Object.keys(block).every((key) => ["type", "text", "textSignature"].includes(key))
+    ) {
+      return {
+        type: "text",
+        text: block.text,
+        ...(typeof block.textSignature === "string" ? { textSignature: block.textSignature } : {}),
+      };
+    }
+    if (
+      block.type === "image" &&
+      typeof block.data === "string" &&
+      typeof block.mimeType === "string" &&
+      block.mimeType.length > 0 &&
+      Object.keys(block).every((key) => ["type", "data", "mimeType"].includes(key))
+    ) {
+      return { type: "image", data: block.data, mimeType: block.mimeType };
+    }
+    throw invalidRequest("user content block must be a valid text or image block");
   });
 }
 

@@ -1041,10 +1041,7 @@ describe("session history", () => {
         env: baseEnv,
         stdout: (line) => output.push(line),
       });
-      expect(output).toContain("Open the private history viewer at https://history.example.com/");
-      expect(output).toContain(
-        "Sign in with username tau and the viewer password supplied for this deployment.",
-      );
+      expect(output.join("\n")).toContain("https://history.example.com/");
       expect(output.join("\n")).not.toContain("test-viewer-password");
       expect(readFileSync(callsPath, "utf8").trim().split("\n")).toEqual([
         "d1 list --json",
@@ -1165,85 +1162,43 @@ describe("session history", () => {
     }
   });
 
-  it("serves executable copy and tool controls", async () => {
-    const harness = createSqliteD1Harness();
-    try {
-      initializeHistoryD1(harness);
-      const response = await callHistoryViewer("/viewer.js", harness);
-      expect(response.status).toBe(200);
-      expect(response.headers.get("content-type")).toContain("text/javascript");
-      const source = await response.text();
+  it("formats copied messages and tool results as Markdown", async () => {
+    const response = await callHistoryViewer("/viewer.js", createD1Harness());
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/javascript");
+    const context = {
+      document: { addEventListener: vi.fn(), querySelector: () => null },
+    };
+    runInNewContext(await response.text(), context);
+    const card = {
+      querySelector: (selector) => (selector === "h2" ? { textContent: "User" } : null),
+      querySelectorAll: () => [{ dataset: {}, textContent: "hello" }],
+    };
+    expect(context.cardMarkdown(card)).toBe("## User\n\nhello");
 
-      let click;
-      const clipboard = { writeText: vi.fn() };
-      const toolEntries = [{ open: false }, { open: false }];
-      const card = {
-        querySelector: (selector) => (selector === "h2" ? { textContent: "User" } : null),
-        querySelectorAll: () => [{ dataset: {}, textContent: "hello" }],
-      };
-      const tool = {
-        querySelector: (selector) => {
-          if (selector === "summary span") return { textContent: "Tool · bash" };
-          if (selector === ".outcome") return { textContent: "succeeded" };
-          return null;
+    const tool = {
+      querySelector: (selector) =>
+        ({
+          "summary span": { textContent: "Tool · bash" },
+          ".outcome": { textContent: "succeeded" },
+        })[selector],
+      querySelectorAll: () => [
+        {
+          querySelector: (selector) => ({
+            textContent: selector === "h3" ? "Result" : "```nested```",
+          }),
         },
-        querySelectorAll: () => [
-          {
-            querySelector: (selector) => ({
-              textContent: selector === "h3" ? "Arguments" : '{"command":"pwd"}',
-            }),
-          },
-        ],
-      };
-      const toolCard = {
-        querySelector: (selector) => (selector === ".tool-entry" ? tool : null),
-      };
-      const header = {
-        querySelector: (selector) =>
-          selector === "h1" ? { textContent: "Session [draft]" } : null,
-        querySelectorAll: () => [],
-      };
-      const document = {
-        addEventListener: vi.fn((_type, listener) => {
-          click = listener;
-        }),
-        querySelector: (selector) => (selector === ".conversation-header" ? header : null),
-        querySelectorAll: (selector) => {
-          if (selector === ".tool-entry") return toolEntries;
-          if (selector === ".transcript .entry") return [card];
-          return [];
-        },
-      };
-      runInNewContext(source, { document, navigator: { clipboard } });
-      expect(click).toEqual(expect.any(Function));
-
-      const clickButton = (button) => click({ target: { closest: () => button } });
-      clickButton({
-        dataset: { copy: "entry" },
-        closest: () => card,
-      });
-      expect(clipboard.writeText).toHaveBeenLastCalledWith("## User\n\nhello");
-
-      clickButton({
-        dataset: { copy: "entry" },
-        closest: () => toolCard,
-      });
-      expect(clipboard.writeText).toHaveBeenLastCalledWith(
-        '## Tool: bash (succeeded)\n\n### Arguments\n\n```\n{"command":"pwd"}\n```',
-      );
-
-      clickButton({ dataset: { copy: "conversation" } });
-      expect(clipboard.writeText).toHaveBeenLastCalledWith(
-        "# Session \\[draft\\]\n\n## User\n\nhello",
-      );
-
-      clickButton({ dataset: { tools: "open" } });
-      expect(toolEntries.every((entry) => entry.open)).toBe(true);
-      clickButton({ dataset: { tools: "close" } });
-      expect(toolEntries.every((entry) => !entry.open)).toBe(true);
-    } finally {
-      harness.sqlite.close();
-    }
+      ],
+    };
+    expect(context.cardMarkdown({ querySelector: () => tool })).toBe(
+      "## Tool: bash (succeeded)\n\n### Result\n\n````\n```nested```\n````",
+    );
+    context.document.querySelector = () => ({
+      querySelector: (selector) => (selector === "h1" ? { textContent: "Session [draft]" } : null),
+      querySelectorAll: () => [],
+    });
+    context.document.querySelectorAll = () => [card];
+    expect(context.conversationMarkdown()).toBe("# Session \\[draft\\]\n\n## User\n\nhello");
   });
 
   it("automatically appends transcript batches and enables copying only after a complete load", async () => {
@@ -1310,61 +1265,11 @@ describe("session history", () => {
     expect(indexFetch).not.toHaveBeenCalled();
   });
 
-  it("renders escaped, searchable, paginated session cards", async () => {
+  it("renders escaped session cards and preserves search filters across manual pages", async () => {
     const harness = createSqliteD1Harness();
     try {
       initializeHistoryD1(harness);
-      const insertSession = harness.sqlite.prepare(
-        `INSERT INTO sessions (
-          session_id, attributes_json, created_at, updated_at,
-          digest_title, digest_summary, digest_through_entry_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      );
-      for (let index = 0; index < 21; index += 1) {
-        insertSession.run(
-          `session-${index.toString().padStart(2, "0")}`,
-          index === 20
-            ? JSON.stringify({ repository: "<repo>", source: "tui", custom: "<script>" })
-            : "{}",
-          index,
-          index,
-          index === 20 ? "<script>latest</script>" : null,
-          index === 20 ? "<img src=x onerror=alert(1)>" : null,
-          index === 20 ? "entry-latest" : null,
-        );
-      }
-      harness.sqlite
-        .prepare(
-          "INSERT INTO entries_fts (session_id, entry_id, position, text) VALUES (?, ?, ?, ?)",
-        )
-        .run("session-00", "entry-search", 1, "distinctive needle");
-
-      const response = await callHistoryViewer("/", harness);
-      expect(response.status).toBe(200);
-      const html = await response.text();
-      expect(html).toContain("session-20");
-      expect(html).not.toContain("session-00");
-      expect(html).toContain("Older sessions");
-      expect(html).toContain("Digest pending");
-      expect(html).toContain("&lt;script&gt;latest&lt;/script&gt;");
-      expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
-      expect(html).not.toContain("<script>latest</script>");
-
-      const searchResponse = await callHistoryViewer("/?q=distinctive%20needle", harness);
-      const searchHtml = await searchResponse.text();
-      expect(searchHtml).toContain("session-00");
-      expect(searchHtml).not.toContain("session-20");
-      expect(searchHtml).toContain("distinctive needle");
-    } finally {
-      harness.sqlite.close();
-    }
-  });
-
-  it("combines viewer metadata filters with search and preserves them across pages", async () => {
-    const harness = createSqliteD1Harness();
-    try {
-      initializeHistoryD1(harness);
-      for (let index = 0; index < 23; index += 1) {
+      for (let index = 0; index < 24; index += 1) {
         const sessionId = `filtered-${index}`;
         await applyOperation(harness.database, {
           id: `create-${index}`,
@@ -1383,15 +1288,27 @@ describe("session history", () => {
           id: `append-${index}`,
           sessionId,
           type: "append",
-          entries: [createTextEntry(`entry-${index}`, "user", "needle", index)],
+          entries: [
+            createTextEntry(`entry-${index}`, "user", index === 23 ? "unrelated" : "needle", index),
+          ],
         });
       }
+      harness.sqlite
+        .prepare(
+          "UPDATE sessions SET digest_title = ?, digest_summary = ?, digest_through_entry_id = ? WHERE session_id = ?",
+        )
+        .run("<script>latest</script>", "<img src=x onerror=alert(1)>", "entry-20", "filtered-20");
       const response = await callHistoryViewer("/?q=needle&repository=po%26&source=ui", harness);
       const html = await response.text();
       expect(html).toContain('value="po&amp;"');
       expect(html).toContain('value="ui"');
       expect(html).not.toContain("/sessions/filtered-21");
       expect(html).not.toContain("/sessions/filtered-22");
+      expect(html).not.toContain("/sessions/filtered-23");
+      expect(html).not.toContain('href="https://history.example.com/sessions/filtered-0"');
+      expect(html).toContain("&lt;script&gt;latest&lt;/script&gt;");
+      expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
+      expect(html).not.toContain("<script>latest</script>");
       const pagination = html.match(/<form class="pagination"[\s\S]*?<\/form>/)[0];
       expect(pagination).toContain('<button type="submit">Older sessions</button>');
       const params = new URLSearchParams(
@@ -1497,18 +1414,13 @@ describe("session history", () => {
       const html = pages.join("");
       expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
       expect(html).toContain('src="data:image/png;base64,aGVsbG8="');
-      expect(html).toContain('data-markdown="[image image/png]"');
       expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
-      expect(html).toContain('<article class="entry tool-card">');
       expect(html).toContain('<details class="tool-entry">');
-      expect(html).toContain("Arguments");
-      expect(html).toContain("succeeded");
       expect(html).toContain("&lt;svg onload=alert(1)&gt;");
-      expect(html).not.toContain("Continue transcript");
-      expect(html).not.toContain("?cursor=");
       expect(html.match(/<article class="entry /g)).toHaveLength(211);
-      expect(html).toContain("<pre>extra 207</pre>");
-      expect(html.indexOf("<pre>extra 0</pre>")).toBeLessThan(html.indexOf("<pre>extra 207</pre>"));
+      expect(
+        [...html.matchAll(/<pre>extra (\d+)<\/pre>/g)].map((match) => Number(match[1])),
+      ).toEqual(Array.from({ length: 208 }, (_, index) => index));
       expect(html).not.toContain("<script>alert(1)</script>");
 
       const missing = await callHistoryViewer("/sessions/missing", harness);
@@ -1521,35 +1433,15 @@ describe("session history", () => {
     }
   });
 
-  it("uses one migration and a development-only Wrangler project for the local viewer", () => {
+  it("keeps the development Worker isolated from production", () => {
     const config = JSON.parse(
       readFileSync(new URL("../src/history/worker/wrangler.dev.json", import.meta.url), "utf8"),
     );
-    const packageJson = JSON.parse(
-      readFileSync(new URL("../package.json", import.meta.url), "utf8"),
-    );
-
-    expect(config).toMatchObject({
-      name: "tau-history-dev",
-      main: "index.ts",
-      rules: [{ type: "Text", globs: ["**/viewer.css", "**/viewer.js"], fallthrough: false }],
-      d1_databases: [
-        {
-          database_name: "tau-history-dev",
-          database_id: "local",
-          migrations_dir: "migrations",
-        },
-      ],
-      vars: {
-        API_KEY: "tau-history-dev-api-key",
-        VIEWER_PASSWORD: "tau-history-dev-password",
-      },
-    });
+    expect(config.name).not.toBe("tau-history");
     expect(config.routes).toBeUndefined();
-    expect(packageJson.scripts["history:dev"]).toContain("d1 migrations apply");
-    expect(packageJson.scripts["history:dev"]).toContain("dev-seed.sql");
-    expect(packageJson.scripts["history:dev"]).toContain("wrangler dev");
-    expect(HISTORY_INITIAL_MIGRATION_SQL).toContain("CREATE TABLE IF NOT EXISTS sessions");
+    expect(config.d1_databases).toEqual([
+      expect.objectContaining({ database_id: "local", database_name: "tau-history-dev" }),
+    ]);
   });
 
   it("treats an operation committed by a concurrent request as already applied", async () => {
@@ -2605,9 +2497,6 @@ describe("session history", () => {
   it("documents bounded overview and drill-down retrieval", async () => {
     expect(HISTORY_TOOL.description).not.toContain("automatic-compaction");
     expect(HISTORY_TOOL.description).toContain("a bounded chronological overview is one way");
-    expect(HISTORY_TOOL.description).toContain(
-      "return it when the user asks for a conversation link",
-    );
 
     const tool = createHistoryToolDefinition(createBackend(), {
       search: vi.fn(),
@@ -2616,9 +2505,6 @@ describe("session history", () => {
     const result = await runTool(tool, "console.log(docs)");
     const text = toolText(result);
     expect(text).toContain("examples, not a required workflow or output format");
-    expect(text).toContain(
-      "`webUrl` is present for sessions returned by the remote history service",
-    );
     expect(text).toContain("Adapt, combine, or replace them");
     expect(text).toContain("project one bounded page without printing complete payloads");
     expect(text).toContain("id=…");

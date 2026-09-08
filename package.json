@@ -60,6 +60,7 @@
   },
   "allowScripts": {
     "@google/genai@1.52.0": true,
-    "protobufjs@7.6.5": true
+    "protobufjs@7.6.5": true,
+    "fsevents@2.3.3": true
   }
 }

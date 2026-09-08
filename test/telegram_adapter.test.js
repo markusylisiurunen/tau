@@ -2591,66 +2591,91 @@ describe("telegram adapter", () => {
     }
   });
 
-  it("records a selected prompt once, rejects stale pickers, and waits for the next message", async () => {
+  it("parses picker callbacks, paginates, and records a selected prompt only once without starting a turn", async () => {
     const chat = { id: 329, type: "private" };
     const from = { id: 7 };
-    const apiHarness = createApiHarness([]);
+    const sendMessages = [];
+    const edits = [];
+    const answers = [];
     const managerHarness = createSessionManagerHarness([], {
       createSnapshot: () => ({
         catalog: { prompts: Array.from({ length: 21 }, (_, i) => ({ id: `prompt-${i}` })) },
       }),
     });
-    let poll = 0;
-    apiHarness.api.getUpdates.mockImplementation(async () => {
-      poll++;
-      if (poll === 1)
-        return [
-          { update_id: 1, message: { chat, from, text: "/new" } },
-          { update_id: 2, message: { chat, from, text: "/prompt" } },
-        ];
-      if (poll === 2) {
-        await waitFor(() => apiHarness.sendMessages.some((m) => m.options.replyMarkup));
-        const keyboard = apiHarness.sendMessages.at(-1).options.replyMarkup.inline_keyboard;
-        const callback = (id, data) => ({
-          update_id: id,
-          callback_query: { id: `${id}`, from, message: { chat, message_id: 42 }, data },
-        });
-        const data = keyboard[0][0].callback_data;
-        expect(keyboard).toHaveLength(21);
-        expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
-        return [callback(3, keyboard.at(-1)[0].callback_data)];
-      }
-      if (poll === 3) {
-        await waitFor(() => apiHarness.api.editMessage.mock.calls.length === 1);
-        const keyboard = apiHarness.api.editMessage.mock.calls[0][3].replyMarkup.inline_keyboard;
-        const data = keyboard[0][0].callback_data;
-        return [4, 5].map((id) => ({
-          update_id: id,
-          callback_query: { id: `${id}`, from, message: { chat, message_id: 42 }, data },
-        }));
-      }
-      return await new Promise(() => {});
+    const callback = (id, data) => ({
+      update_id: id,
+      callback_query: { id: `${id}`, from, message: { chat, message_id: 42 }, data },
     });
+    vi.stubGlobal(
+      "fetch",
+      createTelegramFetchStub({
+        setMyCommands: async () => createJsonResponse({ ok: true, result: true }),
+        sendMessage: async ({ init }) => {
+          sendMessages.push(JSON.parse(init.body));
+          return createJsonResponse({ ok: true, result: { message_id: 42 } });
+        },
+        editMessageText: async ({ init }) => {
+          edits.push(JSON.parse(init.body));
+          return createJsonResponse({ ok: true, result: true });
+        },
+        answerCallbackQuery: async ({ init }) => {
+          answers.push(JSON.parse(init.body));
+          return createJsonResponse({ ok: true, result: true });
+        },
+        getUpdates: async ({ call }) => {
+          if (call === 1) {
+            return createJsonResponse({
+              ok: true,
+              result: [
+                { update_id: 1, message: { chat, from, text: "/new" } },
+                { update_id: 2, message: { chat, from, text: "/prompt" } },
+              ],
+            });
+          }
+          if (call === 2) {
+            await waitFor(() => sendMessages.some((m) => m.reply_markup));
+            const keyboard = sendMessages.at(-1).reply_markup.inline_keyboard;
+            expect(keyboard).toHaveLength(21);
+            expect(Buffer.byteLength(keyboard[0][0].callback_data)).toBeLessThanOrEqual(64);
+            return createJsonResponse({
+              ok: true,
+              result: [callback(3, keyboard.at(-1)[0].callback_data)],
+            });
+          }
+          if (call === 3) {
+            await waitFor(() => edits.length === 1);
+            const keyboard = edits[0].reply_markup.inline_keyboard;
+            return createJsonResponse({
+              ok: true,
+              result: [4, 5].map((id) => callback(id, keyboard[0][0].callback_data)),
+            });
+          }
+          return pendingTelegramCall();
+        },
+      }),
+    );
     const adapter = await startAdapter({
       botToken: "token",
       projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
-      api: apiHarness.api,
       pollIntervalMs: 1,
       requestTimeoutSeconds: 1,
     });
     try {
-      await waitFor(() => apiHarness.answerCallbackQueryCalls.length === 3);
+      await waitFor(() => answers.length === 3);
       expect(managerHarness.manager.recordPrompt).toHaveBeenCalledExactlyOnceWith(
         "s1",
         "prompt-20",
       );
       expect(managerHarness.manager.sendMessage).not.toHaveBeenCalled();
-      expect(apiHarness.api.editMessage.mock.calls[1][2]).toContain("Saved prompt body");
-      expect(apiHarness.api.editMessage.mock.calls[1][3].replyMarkup).toBeUndefined();
-      expect(apiHarness.sendMessages.at(-1).text).toContain("expired");
+      expect(edits).toHaveLength(2);
+      expect(edits.every((edit) => edit.chat_id === chat.id && edit.message_id === 42)).toBe(true);
+      expect(edits[1].text).toContain("Saved prompt body");
+      expect(edits[1].reply_markup.inline_keyboard).toEqual([]);
+      expect(sendMessages.at(-1).text).toContain("expired");
     } finally {
       await adapter.close();
+      vi.unstubAllGlobals();
     }
   });
 

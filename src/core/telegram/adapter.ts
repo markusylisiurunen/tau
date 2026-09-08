@@ -929,7 +929,7 @@ const TelegramCallbackQuerySchema = telegramPartialObject({
   id: z.string(),
   from: TelegramUserSchema,
   data: z.string(),
-  message: telegramPartialObject({ chat: TelegramChatSchema }),
+  message: telegramPartialObject({ message_id: z.number(), chat: TelegramChatSchema }),
 });
 
 const TelegramUpdateSchema = telegramPartialObject({

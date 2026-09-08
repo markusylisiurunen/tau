@@ -156,7 +156,23 @@ describe("custom personas", () => {
 
     try {
       const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
-      const { personas, errors } = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
+      const levels = resolveConfigLevels(deps, { cwd: fx.cwd });
+      const resolveAvailableModel = (provider, modelId) =>
+        modelId === "gemini-3.8-flash" || modelId === "gpt-6-astra"
+          ? undefined
+          : resolveModel(provider, modelId);
+      const { personas, errors } = await loadAllContent(
+        {},
+        {
+          deps,
+          levels,
+          modelResolver: {
+            resolveModel: resolveAvailableModel,
+            resolveConfiguredModel: resolveAvailableModel,
+            errors: [],
+          },
+        },
+      );
       expect(errors).toEqual([]);
       expect(personas.find((persona) => persona.id === "gemini-3.8-flash-coder")).toBeUndefined();
       expect(personas.find((persona) => persona.id === "gpt-6-astra-chat")).toBeUndefined();

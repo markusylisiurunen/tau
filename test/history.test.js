@@ -2,6 +2,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { runInNewContext } from "node:vm";
 import { describe, expect, it, vi } from "vitest";
 import { resolveHistoryRemoteTarget } from "../dist/core/history/config.js";
 import { HistoryManager } from "../dist/core/history/history_manager.js";
@@ -175,9 +176,9 @@ function initializeHistoryD1(harness) {
   harness.sqlite.exec(HISTORY_INITIAL_MIGRATION_SQL);
 }
 
-async function callHistoryWorker(path, body, harness) {
+async function callHistoryWorker(path, body, harness, origin = "https://history.example.com") {
   return await historyWorker.fetch(
-    new Request(`https://history.example.com${path}`, {
+    new Request(`${origin}${path}`, {
       method: "POST",
       headers: {
         authorization: "Bearer secret",
@@ -199,7 +200,7 @@ async function callHistoryViewer(path, harness, options = {}) {
   const authorization =
     options.authorization ?? `Basic ${Buffer.from("tau:viewer-secret").toString("base64")}`;
   return await historyWorker.fetch(
-    new Request(`https://history.example.com${path}`, {
+    new Request(`${options.origin ?? "https://history.example.com"}${path}`, {
       method: options.method ?? "GET",
       headers: { authorization },
     }),
@@ -1028,8 +1029,10 @@ describe("session history", () => {
         stdout: (line) => output.push(line),
       });
       expect(output).toContain("Open the private history viewer at https://history.example.com/");
-      expect(output).toContain("Sign in with username tau and this viewer password:");
-      expect(output).toContain("test-viewer-password");
+      expect(output).toContain(
+        "Sign in with username tau and the viewer password supplied for this deployment.",
+      );
+      expect(output.join("\n")).not.toContain("test-viewer-password");
       expect(readFileSync(callsPath, "utf8").trim().split("\n")).toEqual([
         "d1 list --json",
         "d1 migrations apply tau-history --remote",
@@ -1089,10 +1092,35 @@ describe("session history", () => {
     }
   });
 
-  it("keeps viewer and API authentication isolated with private browser responses", async () => {
+  it("keeps viewer transport and authentication boundaries isolated", async () => {
     const harness = createSqliteD1Harness();
     try {
       initializeHistoryD1(harness);
+      const insecure = await callHistoryViewer("/", harness, {
+        authorization: "",
+        origin: "http://history.example.com",
+      });
+      expect(insecure.status).toBe(308);
+      expect(insecure.headers.get("location")).toBe("https://history.example.com/");
+      expect(insecure.headers.get("www-authenticate")).toBeNull();
+      expect(insecure.headers.get("cache-control")).toBe("no-store");
+
+      const insecureAuthenticated = await callHistoryViewer("/sessions/private", harness, {
+        origin: "http://history.example.com",
+      });
+      expect(insecureAuthenticated.status).toBe(308);
+      expect(insecureAuthenticated.headers.get("location")).toBe(
+        "https://history.example.com/sessions/private",
+      );
+      expect(insecureAuthenticated.headers.get("www-authenticate")).toBeNull();
+      await expect(insecureAuthenticated.text()).resolves.toBe("");
+
+      const local = await callHistoryViewer("/", harness, {
+        authorization: "",
+        origin: "http://127.0.0.1:8787",
+      });
+      expect(local.status).toBe(401);
+
       const unauthenticated = await callHistoryViewer("/", harness, { authorization: "" });
       expect(unauthenticated.status).toBe(401);
       expect(unauthenticated.headers.get("www-authenticate")).toBe(
@@ -1113,17 +1141,93 @@ describe("session history", () => {
       expect(basicApi.status).toBe(401);
       expect(basicApi.headers.get("www-authenticate")).toBeNull();
 
-      const script = await callHistoryViewer("/viewer.js", harness);
-      expect(script.status).toBe(200);
-      expect(script.headers.get("content-type")).toContain("text/javascript");
-      await expect(script.text()).resolves.toContain("navigator.clipboard.writeText");
-
       const wrongMethod = await callHistoryViewer("/", harness, { method: "POST" });
       expect(wrongMethod.status).toBe(405);
       expect(wrongMethod.headers.get("allow")).toBe("GET");
 
       const missing = await callHistoryViewer("/missing", harness, { authorization: "" });
       expect(missing.status).toBe(404);
+    } finally {
+      harness.sqlite.close();
+    }
+  });
+
+  it("serves executable copy and tool controls", async () => {
+    const harness = createSqliteD1Harness();
+    try {
+      initializeHistoryD1(harness);
+      const response = await callHistoryViewer("/viewer.js", harness);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toContain("text/javascript");
+      const source = await response.text();
+
+      let click;
+      const clipboard = { writeText: vi.fn() };
+      const toolEntries = [{ open: false }, { open: false }];
+      const card = {
+        querySelector: (selector) => (selector === "h2" ? { textContent: "User" } : null),
+        querySelectorAll: () => [{ dataset: {}, textContent: "hello" }],
+      };
+      const tool = {
+        querySelector: (selector) => {
+          if (selector === "summary span") return { textContent: "Tool · bash" };
+          if (selector === ".outcome") return { textContent: "succeeded" };
+          return null;
+        },
+        querySelectorAll: () => [
+          {
+            querySelector: (selector) => ({
+              textContent: selector === "h3" ? "Arguments" : '{"command":"pwd"}',
+            }),
+          },
+        ],
+      };
+      const toolCard = {
+        querySelector: (selector) => (selector === ".tool-entry" ? tool : null),
+      };
+      const header = {
+        querySelector: (selector) =>
+          selector === "h1" ? { textContent: "Session [draft]" } : null,
+        querySelectorAll: () => [],
+      };
+      const document = {
+        addEventListener: vi.fn((_type, listener) => {
+          click = listener;
+        }),
+        querySelector: (selector) => (selector === ".conversation-header" ? header : null),
+        querySelectorAll: (selector) => {
+          if (selector === ".tool-entry") return toolEntries;
+          if (selector === ".transcript .entry") return [card];
+          return [];
+        },
+      };
+      runInNewContext(source, { document, navigator: { clipboard } });
+      expect(click).toEqual(expect.any(Function));
+
+      const clickButton = (button) => click({ target: { closest: () => button } });
+      clickButton({
+        dataset: { copy: "entry" },
+        closest: () => card,
+      });
+      expect(clipboard.writeText).toHaveBeenLastCalledWith("## User\n\nhello");
+
+      clickButton({
+        dataset: { copy: "entry" },
+        closest: () => toolCard,
+      });
+      expect(clipboard.writeText).toHaveBeenLastCalledWith(
+        '## Tool: bash (succeeded)\n\n### Arguments\n\n```\n{"command":"pwd"}\n```',
+      );
+
+      clickButton({ dataset: { copy: "conversation" } });
+      expect(clipboard.writeText).toHaveBeenLastCalledWith(
+        "# Session \\[draft\\]\n\n## User\n\nhello",
+      );
+
+      clickButton({ dataset: { tools: "open" } });
+      expect(toolEntries.every((entry) => entry.open)).toBe(true);
+      clickButton({ dataset: { tools: "close" } });
+      expect(toolEntries.every((entry) => !entry.open)).toBe(true);
     } finally {
       harness.sqlite.close();
     }
@@ -1209,10 +1313,6 @@ describe("session history", () => {
       const html = await response.text();
       expect(html).toContain('value="po&amp;"');
       expect(html).toContain('value="ui"');
-      expect(html).toContain('placeholder="Repository contains…"');
-      expect(html).toContain('placeholder="Source contains…"');
-      expect(html).not.toContain("<select");
-      expect(html).not.toContain("<label");
       expect(html).not.toContain("/sessions/filtered-21");
       expect(html).not.toContain("/sessions/filtered-22");
       const next = html.match(/href="([^"]+)">Older sessions/)[1].replaceAll("&amp;", "&");
@@ -1294,10 +1394,6 @@ describe("session history", () => {
       expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
       expect(html).toContain('<article class="entry tool-card">');
       expect(html).toContain('<details class="tool-entry">');
-      expect(html).toContain('data-copy=".transcript"');
-      expect(html).toContain('data-tools="open"');
-      expect(html).toContain('data-tools="close"');
-      expect(html.match(/data-copy="closest"/g)).toHaveLength(50);
       expect(html).toContain("Arguments");
       expect(html).toContain("succeeded");
       expect(html).toContain("&lt;svg onload=alert(1)&gt;");
@@ -1696,6 +1792,7 @@ describe("session history", () => {
         "/v1/search",
         { query: "history", limit: 2 },
         harness,
+        "http://history.example.com",
       );
       expect(firstResponse.status).toBe(200);
       const firstPage = await firstResponse.json();

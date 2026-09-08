@@ -6,6 +6,13 @@ import type {
   ResponsesInput,
   ResponsesOutput,
 } from "@cloudflare/workers-types";
+import type {
+  HistoryEntry,
+  HistoryReadResult,
+  HistoryReplicationOperation,
+  HistorySearchResult,
+  HistorySessionDescriptor,
+} from "../../core/history/types.js";
 
 type HistoryAiModels = {
   "openai/gpt-5.6-luna": {
@@ -35,51 +42,12 @@ type DigestEntryRow = {
   payload_json: string;
 };
 
-type HistoryEntry = {
-  id: string;
-  sourceIds: string[];
-  type: "user" | "assistant" | "tool";
-  timestamp: number;
-  [key: string]: unknown;
+type RemoteHistorySessionDescriptor = HistorySessionDescriptor & { webUrl: string };
+type RemoteHistorySearchResult = Omit<HistorySearchResult, "sessions"> & {
+  sessions: RemoteHistorySessionDescriptor[];
 };
-
-type Operation =
-  | {
-      id: string;
-      sessionId: string;
-      type: "create";
-      session: {
-        sessionId: string;
-        attributes: Record<string, string>;
-        createdAt: number;
-      };
-    }
-  | { id: string; sessionId: string; type: "append"; entries: HistoryEntry[] }
-  | { id: string; sessionId: string; type: "truncate"; afterEntryId: string | null };
-
-type HistorySessionDescriptor = {
-  sessionId: string;
-  attributes: Record<string, string>;
-  createdAt: number;
-  updatedAt: number;
-  webUrl: string;
-  digest?: {
-    title: string;
-    summary: string;
-    updatedThroughEntryId: string;
-  };
-  snippets: string[];
-};
-
-type HistorySearchResult = {
-  sessions: HistorySessionDescriptor[];
-  nextCursor?: string;
-};
-
-type HistoryReadResult = {
-  session: HistorySessionDescriptor;
-  entries: HistoryEntry[];
-  nextCursor?: string;
+type RemoteHistoryReadResult = Omit<HistoryReadResult, "session"> & {
+  session: RemoteHistorySessionDescriptor;
 };
 
 const DIGEST_MODEL = "openai/gpt-5.6-luna";
@@ -160,6 +128,10 @@ export default {
       url.pathname === "/" ||
       url.pathname === "/viewer.js" ||
       /^\/sessions\/[^/]+$/.test(url.pathname);
+    if (viewerRoute && url.protocol === "http:" && !isLoopbackHost(url.hostname)) {
+      return redirectViewerToHttps(url);
+    }
+    const origin = viewerOrigin(url);
 
     try {
       if (url.pathname.startsWith("/v1/")) {
@@ -177,11 +149,11 @@ export default {
         }
 
         if (url.pathname === "/v1/search") {
-          return json(await search(env.DB, await readJson(request), url.origin));
+          return json(await search(env.DB, await readJson(request), origin));
         }
 
         if (url.pathname === "/v1/read") {
-          return json(await read(env.DB, await readJson(request), url.origin));
+          return json(await read(env.DB, await readJson(request), origin));
         }
 
         return error("not_found", "Not found", 404);
@@ -396,6 +368,26 @@ function providerErrorDetails(error: Record<string, unknown>, depth = 0): Record
   return details;
 }
 
+function isLoopbackHost(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
+}
+
+function viewerOrigin(url: URL): string {
+  if (url.protocol !== "http:" || isLoopbackHost(url.hostname)) return url.origin;
+  const secure = new URL(url.origin);
+  secure.protocol = "https:";
+  return secure.origin;
+}
+
+function redirectViewerToHttps(url: URL): Response {
+  const location = new URL(url);
+  location.protocol = "https:";
+  return new Response(null, {
+    status: 308,
+    headers: { ...VIEWER_SECURITY_HEADERS, location: location.toString() },
+  });
+}
+
 function authorizeApi(request: Request, env: Env): boolean {
   const expected = env.API_KEY?.trim();
   if (!expected) return false;
@@ -430,7 +422,10 @@ function secretsEqual(actual: string, expected: string): boolean {
   return difference === 0;
 }
 
-export async function applyOperation(database: D1Database, operation: Operation): Promise<boolean> {
+export async function applyOperation(
+  database: D1Database,
+  operation: HistoryReplicationOperation,
+): Promise<boolean> {
   if (await operationExists(database, operation.id)) return false;
 
   const statements: D1PreparedStatement[] = [];
@@ -592,7 +587,7 @@ async function search(
   database: D1Database,
   raw: unknown,
   origin: string,
-): Promise<HistorySearchResult> {
+): Promise<RemoteHistorySearchResult> {
   const input = asRecord(raw, "search input");
   const query = optionalString(input.query, "query", 1_000)?.trim();
   const attributes = parseAttributeFilters(input.attributes);
@@ -699,7 +694,7 @@ async function read(
   database: D1Database,
   raw: unknown,
   origin: string,
-): Promise<HistoryReadResult> {
+): Promise<RemoteHistoryReadResult> {
   const input = asRecord(raw, "read input");
   const sessionId = requiredString(input.sessionId, "sessionId", 256);
   const limit = boundedInteger(input.limit ?? 50, "limit", 1, MAX_READ_LIMIT);
@@ -747,7 +742,7 @@ export function selectHistoryReadPage(
   return { count, hasMore: candidates.length > count };
 }
 
-function descriptor(row: Record<string, unknown>, origin: string): HistorySessionDescriptor {
+function descriptor(row: Record<string, unknown>, origin: string): RemoteHistorySessionDescriptor {
   const title = typeof row.digest_title === "string" ? row.digest_title : undefined;
   const summary = typeof row.digest_summary === "string" ? row.digest_summary : undefined;
   const through =
@@ -820,7 +815,7 @@ async function renderViewerIndex(database: D1Database, url: URL): Promise<Respon
   );
 }
 
-function renderSessionCard(session: HistorySessionDescriptor): string {
+function renderSessionCard(session: RemoteHistorySessionDescriptor): string {
   const digest = session.digest;
   const snippets = session.snippets
     .map((snippet) => `<blockquote>${escapeHtml(snippet)}</blockquote>`)
@@ -873,7 +868,7 @@ async function renderViewerSession(database: D1Database, url: URL): Promise<Resp
       <p class="timestamps">Created ${renderTime(session.createdAt)} · Updated ${renderTime(session.updatedAt)}</p>
     </header>
     <div class="transcript-actions">
-      <button type="button" data-copy=".transcript">Copy conversation</button>
+      <button type="button" data-copy="conversation">Copy conversation</button>
       <button type="button" data-tools="open">Expand tools</button>
       <button type="button" data-tools="close">Collapse tools</button>
     </div>
@@ -887,11 +882,11 @@ async function renderViewerSession(database: D1Database, url: URL): Promise<Resp
 function renderViewerEntry(entry: HistoryEntry): string {
   if (entry.type === "tool") {
     return `<article class="entry tool-card">
-      <div class="entry-actions"><button type="button" data-copy="closest">Copy</button></div>
+      <div class="entry-actions"><button type="button" data-copy="entry">Copy</button></div>
       <details class="tool-entry">
         <summary>
-          <span>Tool · ${escapeHtml(formatViewerValue(entry.name))}</span>
-          <span class="outcome">${escapeHtml(formatViewerValue(entry.outcome))}</span>
+          <span>Tool · ${escapeHtml(entry.name)}</span>
+          <span class="outcome">${escapeHtml(entry.outcome)}</span>
         </summary>
         <div class="tool-section"><h3>Arguments</h3><pre>${escapeHtml(formatViewerValue(entry.arguments))}</pre></div>
         <div class="tool-section"><h3>Result</h3><pre>${escapeHtml(formatViewerValue(entry.result))}</pre></div>
@@ -900,7 +895,7 @@ function renderViewerEntry(entry: HistoryEntry): string {
     </article>`;
   }
   return `<article class="entry ${entry.type}">
-    <div class="entry-heading"><h2>${entry.type === "user" ? "User" : "Assistant"}</h2><span>${renderTime(entry.timestamp)}</span><button type="button" data-copy="closest">Copy</button></div>
+    <div class="entry-heading"><h2>${entry.type === "user" ? "User" : "Assistant"}</h2><span>${renderTime(entry.timestamp)}</span><button type="button" data-copy="entry">Copy</button></div>
     ${renderViewerContent(entry.content)}
   </article>`;
 }
@@ -1011,10 +1006,10 @@ function escapeHtml(value: string): string {
     .replaceAll("'", "&#39;");
 }
 
-const VIEWER_JS = `
+const VIEWER_JS = String.raw`
 function inline(value) {
   const tick = String.fromCharCode(96);
-  return value.trim().replace(/([\\\\*_{}[]<>#+.!|~-])/g, "\\$1").replaceAll(tick, "\\" + tick);
+  return value.trim().replace(/([\\*_{}[\]<>#+.!|~-])/g, "\\$1").replaceAll(tick, "\\" + tick);
 }
 function fenced(value) {
   const tick = String.fromCharCode(96);
@@ -1056,18 +1051,19 @@ function conversationMarkdown() {
   parts.push(...[...document.querySelectorAll(".transcript .entry")].map(cardMarkdown));
   return parts.join("\n\n");
 }
-function copyMarkdown(value) {
-  navigator.clipboard.writeText(value);
-}
 document.addEventListener("click", (event) => {
   const button = event.target.closest("button");
   if (!button) return;
-  if (button.dataset.copy) {
+  if (button.dataset.copy === "entry") {
     const card = button.closest(".entry");
-    copyMarkdown(card ? cardMarkdown(card) : conversationMarkdown());
+    if (card) navigator.clipboard.writeText(cardMarkdown(card));
+  } else if (button.dataset.copy === "conversation") {
+    navigator.clipboard.writeText(conversationMarkdown());
   }
-  if (button.dataset.tools) {
-    document.querySelectorAll(".tool-entry").forEach((tool) => tool.open = button.dataset.tools === "open");
+  if (button.dataset.tools === "open" || button.dataset.tools === "close") {
+    document.querySelectorAll(".tool-entry").forEach((tool) => {
+      tool.open = button.dataset.tools === "open";
+    });
   }
 });
 `;
@@ -1111,9 +1107,9 @@ a, a:visited { color: inherit; text-underline-offset: 0.15em; }
 .conversation-header, .search, .back, .transcript-actions { margin-bottom: var(--space-6); }
 .search-filters { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-2); }
 .search-row { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-input, select, button { height: var(--control-height); font: inherit; color: inherit; background: var(--background); border: 1px solid var(--border); border-radius: 0; padding: var(--space-1) var(--space-2); }
+input, button { height: var(--control-height); font: inherit; color: inherit; background: var(--background); border: 1px solid var(--border); border-radius: 0; padding: var(--space-1) var(--space-2); }
 button { background: transparent; }
-input:focus, select:focus, button:focus { outline: none; border-color: var(--text-muted); }
+input:focus, button:focus { outline: none; border-color: var(--text-muted); }
 button:hover { border-color: var(--text-muted); }
 input::placeholder { color: var(--text-dim); opacity: 1; }
 .search input { min-width: 0; flex: 1 1 200px; }
@@ -1433,12 +1429,12 @@ function parseDigest(value: string): { title: string; summary: string } {
   return { title, summary };
 }
 
-function parseOperations(raw: unknown): Operation[] {
+function parseOperations(raw: unknown): HistoryReplicationOperation[] {
   const body = asRecord(raw, "operations request");
   if (!Array.isArray(body.operations) || body.operations.length > MAX_OPERATIONS) {
     throw invalidRequest(`operations must be an array of at most ${MAX_OPERATIONS} items`);
   }
-  return body.operations.map((value): Operation => {
+  return body.operations.map((value): HistoryReplicationOperation => {
     const operation = asRecord(value, "operation");
     const id = requiredString(operation.id, "operation.id", 256);
     const sessionId = requiredString(operation.sessionId, "operation.sessionId", 256);

@@ -91,8 +91,12 @@ export async function setupHistoryService(options: HistorySetupOptions): Promise
     }
     stdout("");
     stdout(`Open the private history viewer at https://${domain}/`);
-    stdout("Sign in with username tau and this viewer password:");
-    stdout(viewerPassword);
+    if (suppliedViewerPassword) {
+      stdout("Sign in with username tau and the viewer password supplied for this deployment.");
+    } else {
+      stdout("Sign in with username tau and this viewer password:");
+      stdout(viewerPassword);
+    }
   } finally {
     rmSync(temporaryDirectory, { recursive: true, force: true });
   }

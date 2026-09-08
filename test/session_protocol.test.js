@@ -3017,6 +3017,106 @@ describe("session_protocol", () => {
     ).toThrow("session protocol error response is invalid");
   });
 
+  it("shares unaffected snapshot records across ordered message and timeline patches", () => {
+    const snapshot = createProtocolSnapshot({
+      historyEntries: [{ id: "old", message: { role: "user", content: "old", timestamp: 1 } }],
+    });
+    const original = structuredClone(snapshot);
+    const freeze = (value) => {
+      if (!value || typeof value !== "object") return;
+      Object.freeze(value);
+      for (const child of Object.values(value)) freeze(child);
+    };
+    freeze(snapshot);
+    const message = (id, text) => ({
+      id,
+      state: "committed",
+      modelVisible: true,
+      message: { role: "user", content: [{ type: "text", text }], timestamp: 2 },
+    });
+    const item = (id, sequence) => ({
+      type: "message",
+      id: `timeline-${id}`,
+      messageId: id,
+      sequence,
+      createdAt: 2,
+    });
+    const changes = [
+      { type: "message.append", message: message("new", "draft") },
+      { type: "message.replace", message: message("new", "final") },
+      { type: "message.replace", message: message("missing", "inserted") },
+      { type: "timeline.advance", epoch: snapshot.timeline.epoch, sequence: 2 },
+      { type: "timeline.append", item: item("new", 3) },
+      { type: "timeline.append", item: item("missing", 4) },
+      { type: "cost.set", costTotal: 0.1 },
+    ];
+    const delta = (changes) =>
+      createSessionProtocolDeltaMessage({
+        sessionId: snapshot.sessionId,
+        fromRevision: snapshot.revision,
+        toRevision: snapshot.revision + 1,
+        cause: { type: "user-message" },
+        delta: { type: "snapshot.patch", changes },
+      });
+    const patch = delta(changes);
+    const next = applySessionProtocolDelta(snapshot, patch);
+    expect(snapshot).toEqual(original);
+    expect(next.messages).not.toBe(snapshot.messages);
+    expect(next.messages.slice(2)).toEqual([
+      message("new", "final"),
+      message("missing", "inserted"),
+    ]);
+    expect(next.messages[0]).toBe(snapshot.messages[0]);
+    expect(next.messages[1]).toBe(snapshot.messages[1]);
+    expect(next.timeline).not.toBe(snapshot.timeline);
+    expect(next.timeline.items[0]).toBe(snapshot.timeline.items[0]);
+    expect(next.timeline.items.slice(1)).toEqual([item("new", 3), item("missing", 4)]);
+    expect(next.timeline.sequence).toBe(4);
+    expect(next.costTotal).toBe(0.1);
+    for (const key of [
+      "tools",
+      "operations",
+      "agents",
+      "facets",
+      "turns",
+      "bootstrap",
+      "catalog",
+    ]) {
+      expect(next[key]).toBe(snapshot[key]);
+    }
+    patch.delta.changes[1].message.message.content[0].text = "mutated";
+    patch.delta.changes[4].item.id = "mutated";
+    expect(next.messages[2].message.content[0].text).toBe("final");
+    expect(next.timeline.items[1].id).toBe("timeline-new");
+
+    for (const invalid of [
+      { type: "timeline.append", item: item("new", 4) },
+      { type: "timeline.append", item: item("unknown", 5) },
+      { type: "timeline.advance", epoch: snapshot.timeline.epoch + 1, sequence: 5 },
+    ]) {
+      expect(() => applySessionProtocolDelta(snapshot, delta([...changes, invalid]))).toThrow();
+      expect(snapshot).toEqual(original);
+    }
+
+    const replaced = applySessionProtocolDelta(
+      snapshot,
+      delta([{ type: "message.replace", message: message("old", "replaced") }]),
+    );
+    expect(replaced.timeline).toBe(snapshot.timeline);
+    expect(replaced.messages[1]).not.toBe(snapshot.messages[1]);
+    expect(snapshot).toEqual(original);
+
+    const fallback = applySessionProtocolDelta(
+      snapshot,
+      delta([...changes, { type: "timeline.remove", id: "timeline-new" }]),
+    );
+    expect(fallback.timeline.items.map((entry) => entry.id)).toEqual([
+      "timeline-old",
+      "timeline-missing",
+    ]);
+    expect(snapshot).toEqual(original);
+  });
+
   it("validates and applies durable turn record deltas", () => {
     const snapshot = createProtocolSnapshot({ sessionId: "session-1", revision: 1 });
     const running = {

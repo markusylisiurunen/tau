@@ -3985,12 +3985,22 @@ function applyStructurallySharedPatch(
   const topLevelChanges: Partial<
     Pick<SessionProtocolSnapshot, "agentState" | "lifecycle" | "goal" | "costTotal" | "settings">
   > = {};
+  let nextMessages: SessionProtocolSnapshot["messages"] | undefined;
+  let nextTimeline: SessionProtocolSnapshot["timeline"] | undefined;
   let nextTurns: SessionProtocolSnapshot["turns"] | undefined;
   let nextTools: SessionProtocolSnapshot["tools"] | undefined;
   let nextOperations: SessionProtocolSnapshot["operations"] | undefined;
   let nextAgents: SessionProtocolSnapshot["agents"] | undefined;
   let nextFacets: SessionProtocolSnapshot["facets"] | undefined;
 
+  const cloneMessages = () => {
+    nextMessages ??= [...snapshot.messages];
+    return nextMessages;
+  };
+  const cloneTimeline = () => {
+    nextTimeline ??= { ...snapshot.timeline, items: [...snapshot.timeline.items] };
+    return nextTimeline;
+  };
   const cloneTurns = () => {
     nextTurns ??= { ...snapshot.turns };
     return nextTurns;
@@ -4032,6 +4042,43 @@ function applyStructurallySharedPatch(
       case "turn.set":
         setSessionProtocolTurn(cloneTurns(), change.turn);
         break;
+      case "message.append":
+        cloneMessages().push(structuredClone(change.message));
+        break;
+      case "message.replace": {
+        const messages = cloneMessages();
+        const index = messages.findIndex((entry) => entry.id === change.message.id);
+        if (index === -1) {
+          messages.push(structuredClone(change.message));
+        } else {
+          messages[index] = structuredClone(change.message);
+        }
+        break;
+      }
+      case "timeline.append": {
+        const timeline = cloneTimeline();
+        if (change.item.sequence <= timeline.sequence) {
+          throw new Error(
+            `timeline append sequence ${change.item.sequence} must exceed current timeline sequence ${timeline.sequence}`,
+          );
+        }
+        timeline.items.push(structuredClone(change.item));
+        timeline.sequence = change.item.sequence;
+        break;
+      }
+      case "timeline.advance": {
+        const timeline = cloneTimeline();
+        if (timeline.epoch !== change.epoch) {
+          throw new Error("timeline advance epoch does not match the active epoch");
+        }
+        if (change.sequence <= timeline.sequence) {
+          throw new Error(
+            `timeline advance sequence ${change.sequence} must exceed current timeline sequence ${timeline.sequence}`,
+          );
+        }
+        timeline.sequence = change.sequence;
+        break;
+      }
       case "tool.set":
         cloneTools()[change.tool.id] = structuredClone(change.tool);
         break;
@@ -4065,6 +4112,8 @@ function applyStructurallySharedPatch(
     ...snapshot,
     ...topLevelChanges,
     revision: message.toRevision,
+    ...(nextMessages ? { messages: nextMessages } : {}),
+    ...(nextTimeline ? { timeline: nextTimeline } : {}),
     ...(nextTurns ? { turns: nextTurns } : {}),
     ...(nextTools ? { tools: nextTools } : {}),
     ...(nextOperations ? { operations: nextOperations } : {}),

@@ -3162,6 +3162,7 @@ describe("SessionChatController", () => {
         timestamp: 1_002,
       },
     };
+    const previousControllerSnapshot = controller.snapshot;
     const appendDelta = {
       version: SESSION_PROTOCOL_VERSION,
       type: "session.delta",
@@ -3197,6 +3198,14 @@ describe("SessionChatController", () => {
 
     expect(addMessageSpy).toHaveBeenCalledTimes(1);
     expect(addMessageSpy).toHaveBeenCalledWith({ type: "user", text: "next" }, "user-next");
+    expect(controller.snapshot.messages[1]).toBe(previousControllerSnapshot.messages[1]);
+    expect(controller.snapshot.timeline.items[0]).toBe(
+      previousControllerSnapshot.timeline.items[0],
+    );
+    expect(controller.snapshot.tools).toBe(previousControllerSnapshot.tools);
+    expect(previousControllerSnapshot.messages.some((message) => message.id === "user-next")).toBe(
+      false,
+    );
     expect(updateMessageSpy).not.toHaveBeenCalled();
     expect(updateAssistantMessageSpy).not.toHaveBeenCalled();
 

@@ -69,17 +69,26 @@ export class ChatContainerComponent extends Container {
     return true;
   }
 
-  updateMessage(id: string, model: ChatMessageModel): boolean {
+  updateMessage(id: string, model: ChatMessageModel): "missing" | "unchanged" | "updated" {
     const index = this.idToIndex.get(id);
-    if (index === undefined) return false;
+    if (index === undefined) return "missing";
 
     const record = this.allMessages[index];
-    if (!record) return false;
+    if (!record) return "missing";
+    const previousModel = record.model;
     record.model = model;
+
+    if (
+      !this.thoughtsVisible &&
+      previousModel.type === "assistant_partial" &&
+      model.type === "assistant_partial" &&
+      previousModel.text.trim() === model.text.trim()
+    ) {
+      return "unchanged";
+    }
 
     const rendered = record.renderedMessage;
     if (rendered?.update) {
-      const wasVisible = rendered.hasVisibleText ? rendered.hasVisibleText() : true;
       const updated = rendered.update(model, {
         theme: this.theme,
         thoughtsVisible: this.thoughtsVisible,
@@ -87,31 +96,28 @@ export class ChatContainerComponent extends Container {
 
       if (updated) {
         const shouldShow = this.shouldShowMessage(rendered);
-        const isVisibleNow = rendered.hasVisibleText ? rendered.hasVisibleText() : true;
-
-        if (record.rendered && shouldShow) {
-          if (!wasVisible && isVisibleNow) {
-            this.rebuild();
-          }
-          this.invalidateRenderCache();
-          return true;
-        }
-
-        if (!record.rendered && shouldShow) {
-          this.rebuild();
-          return true;
-        }
-
-        if (record.rendered && !shouldShow) {
-          this.rebuild();
+        if (record.rendered !== shouldShow) {
+          this.syncVisibleMessages();
         }
         this.invalidateRenderCache();
-        return true;
+        return "updated";
       }
     }
 
     this.rebuild();
-    return true;
+    return "updated";
+  }
+
+  private syncVisibleMessages(): void {
+    this.chatContainer.clear();
+    for (const record of this.allMessages) {
+      const rendered = record.renderedMessage!;
+      record.rendered = this.shouldShowMessage(rendered);
+      if (record.rendered) {
+        this.addSpacerIfNeeded();
+        this.chatContainer.addChild(rendered.component);
+      }
+    }
   }
 
   setThinkingVisibility(visible: boolean) {

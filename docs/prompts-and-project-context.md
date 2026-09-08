@@ -56,6 +56,14 @@ The session catalog stores only prompt metadata. Tau loads the body lazily from 
 
 If the file is missing or invalid when Tau resolves it, invocation fails instead of using a stale body. Remote clients ask the host to resolve the prompt from the session's execution environment; they do not read a same-named file on the client machine.
 
+### Telegram prompt picker
+
+In [Telegram](telegram.md), `/prompt` lists the active session’s saved prompts, with pages for larger catalogs. Selecting a prompt resolves its current body through the session and records it as a committed user message. Selection is allowed only while the session is idle; otherwise wait for Tau to finish or use `/interrupt` first.
+
+After recording succeeds, the picker becomes non-actionable and shows the prompt text, continued in additional messages when needed. Send a normal message (for example, details or “go”) to start the next turn with the prompt in context. In groups, that message must mention the bot as usual. Selecting another prompt appends another message rather than replacing the previous one. Recorded prompts survive session recovery.
+
+Only the newest picker in a chat is active. Pickers are bound to the session that opened them and expire after selection, session replacement, or runner restart. Duplicate taps do not record the same picker twice. Prompt selection does not consume pending attachments or group context.
+
 ### Install starter prompts
 
 Use `tau install` to copy Tau's starter content:

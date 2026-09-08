@@ -159,7 +159,7 @@ Every Bash invocation runs in a fresh, noninteractive login Bash in the executio
 - Tool producers own bounded `ToolRunPresentation`. Preserve the canonical lifecycle from `preparing` to `queued` to `running` to a terminal protocol status. Keep one generic tool-card renderer, with no tool-specific renderers or expanded mode. Exact preview policies belong in `src/core/tools/presentation.ts` and their tests, not in the TUI.
 - Tool presentation facets have an independent version. Missing or historical presentation degrades from canonical tool name, status, and textual result without revealing stored arguments. Malformed current-version presentation fails validation.
 - Use semantic palette tokens for TUI colors. Add a dedicated token for a new semantic state; never repurpose an unrelated token. See `src/tui/ui/theme/` and terminal appearance tests.
-- Programmatic Telegram replies and notices must be natural-language sentences. Integrate project and session identifiers into prose and translate internal states instead of emitting metadata-style labels.
+- Programmatic Telegram replies and notices must be natural-language sentences with lowercase prose, including sentence beginnings. Use lowercase for Tau-authored button labels too. Preserve proper nouns and identifiers, and do not change the casing of user content, saved prompts, or model responses. Integrate project and session identifiers into prose and translate internal states instead of emitting metadata-style labels.
 
 ## Codebase map
 

@@ -139,6 +139,7 @@ function createApiHarness(updateBatches, options = {}) {
     sendMessage: vi.fn(async (chatId, text, options) => {
       sendMessages.push({ chatId, text, options, sentAt: Date.now() });
     }),
+    editMessage: vi.fn(async () => {}),
     sendRichMessage: vi.fn(async (chatId, markdown, options) => {
       sendRichMessages.push({ chatId, markdown, options, sentAt: Date.now() });
     }),
@@ -332,6 +333,7 @@ function createSessionManagerHarness(initialSessions = [], options = {}) {
         isTurnRunning: false,
       };
     }),
+    recordPrompt: vi.fn(async () => "Saved prompt body"),
     compactSession: vi.fn(async (sessionId) => {
       const session = sessions.get(sessionId);
       if (!session) throw new Error("missing session");
@@ -440,6 +442,7 @@ describe("telegram adapter", () => {
       expect(apiHarness.setCommandsCalls[0]).toEqual([
         { command: "new", description: "start a new session" },
         { command: "status", description: "show active session status" },
+        { command: "prompt", description: "add a saved prompt without starting a turn" },
         { command: "compact", description: "compact session context" },
         { command: "interrupt", description: "interrupt active run" },
         { command: "tts_on", description: "enable voice responses" },
@@ -2588,6 +2591,150 @@ describe("telegram adapter", () => {
     }
   });
 
+  it("parses picker callbacks, paginates, and records a selected prompt only once without starting a turn", async () => {
+    const chat = { id: 329, type: "private" };
+    const from = { id: 7 };
+    const sendMessages = [];
+    const edits = [];
+    const answers = [];
+    const managerHarness = createSessionManagerHarness([], {
+      createSnapshot: () => ({
+        catalog: { prompts: Array.from({ length: 21 }, (_, i) => ({ id: `prompt-${i}` })) },
+      }),
+    });
+    const callback = (id, data) => ({
+      update_id: id,
+      callback_query: { id: `${id}`, from, message: { chat, message_id: 42 }, data },
+    });
+    vi.stubGlobal(
+      "fetch",
+      createTelegramFetchStub({
+        setMyCommands: async () => createJsonResponse({ ok: true, result: true }),
+        sendMessage: async ({ init }) => {
+          sendMessages.push(JSON.parse(init.body));
+          return createJsonResponse({ ok: true, result: { message_id: 42 } });
+        },
+        editMessageText: async ({ init }) => {
+          edits.push(JSON.parse(init.body));
+          return createJsonResponse({ ok: true, result: true });
+        },
+        answerCallbackQuery: async ({ init }) => {
+          answers.push(JSON.parse(init.body));
+          return createJsonResponse({ ok: true, result: true });
+        },
+        getUpdates: async ({ call }) => {
+          if (call === 1) {
+            return createJsonResponse({
+              ok: true,
+              result: [
+                { update_id: 1, message: { chat, from, text: "/new" } },
+                { update_id: 2, message: { chat, from, text: "/prompt" } },
+              ],
+            });
+          }
+          if (call === 2) {
+            await waitFor(() => sendMessages.some((m) => m.reply_markup));
+            const keyboard = sendMessages.at(-1).reply_markup.inline_keyboard;
+            expect(keyboard).toHaveLength(21);
+            expect(Buffer.byteLength(keyboard[0][0].callback_data)).toBeLessThanOrEqual(64);
+            return createJsonResponse({
+              ok: true,
+              result: [callback(3, keyboard.at(-1)[0].callback_data)],
+            });
+          }
+          if (call === 3) {
+            await waitFor(() => edits.length === 1);
+            const keyboard = edits[0].reply_markup.inline_keyboard;
+            return createJsonResponse({
+              ok: true,
+              result: [4, 5].map((id) => callback(id, keyboard[0][0].callback_data)),
+            });
+          }
+          return pendingTelegramCall();
+        },
+      }),
+    );
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      sessionManager: managerHarness.manager,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+    try {
+      await waitFor(() => answers.length === 3);
+      expect(managerHarness.manager.recordPrompt).toHaveBeenCalledExactlyOnceWith(
+        "s1",
+        "prompt-20",
+      );
+      expect(managerHarness.manager.sendMessage).not.toHaveBeenCalled();
+      expect(edits).toHaveLength(2);
+      expect(edits.every((edit) => edit.chat_id === chat.id && edit.message_id === 42)).toBe(true);
+      const pickerMessage = sendMessages.find((message) => message.reply_markup);
+      expect(pickerMessage.text).toBe(
+        "choose a saved prompt to add to the conversation without starting a turn. selection is available only while Tau is idle.",
+      );
+      expect(pickerMessage.reply_markup.inline_keyboard.at(-1)[0].text).toBe("next");
+      expect(edits[0].text).toBe(pickerMessage.text);
+      expect(edits[0].reply_markup.inline_keyboard.at(-1)[0].text).toBe("previous");
+      expect(edits[1].text).toBe(
+        "added this prompt to the conversation. send a message when you’re ready for Tau to respond.\n\nSaved prompt body",
+      );
+      expect(edits[1].reply_markup.inline_keyboard).toEqual([]);
+      expect(sendMessages.at(-1).text).toBe(
+        "this prompt picker has expired. use /prompt to open a new one.",
+      );
+    } finally {
+      await adapter.close();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("does not let an old picker record a prompt into a replacement session", async () => {
+    const chat = { id: 329, type: "private" };
+    const from = { id: 7 };
+    const apiHarness = createApiHarness([]);
+    const managerHarness = createSessionManagerHarness([], {
+      createSnapshot: () => ({ catalog: { prompts: [{ id: "review" }] } }),
+    });
+    apiHarness.api.getUpdates
+      .mockImplementationOnce(async () => [
+        { update_id: 1, message: { chat, from, text: "/new" } },
+        { update_id: 2, message: { chat, from, text: "/prompt" } },
+      ])
+      .mockImplementationOnce(async () => {
+        await waitFor(() => apiHarness.sendMessages.some((message) => message.options.replyMarkup));
+        return [
+          { update_id: 3, message: { chat, from, text: "/new" } },
+          {
+            update_id: 4,
+            callback_query: {
+              id: "old-picker",
+              from,
+              message: { chat, message_id: 42 },
+              data: apiHarness.sendMessages.at(-1).options.replyMarkup.inline_keyboard[0][0]
+                .callback_data,
+            },
+          },
+        ];
+      })
+      .mockImplementation(async () => await new Promise(() => {}));
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+    });
+    try {
+      await waitFor(() => apiHarness.answerCallbackQueryCalls.length === 1);
+      expect(managerHarness.manager.createSession).toHaveBeenCalledTimes(2);
+      expect(managerHarness.manager.recordPrompt).not.toHaveBeenCalled();
+      expect(apiHarness.sendMessages.at(-1).text).toContain("expired");
+    } finally {
+      await adapter.close();
+    }
+  });
+
   it("compacts the active session", async () => {
     const apiHarness = createApiHarness([
       [
@@ -2709,7 +2856,7 @@ describe("telegram adapter", () => {
     try {
       await waitFor(() => apiHarness.sendMessages.length === 1);
       expect(apiHarness.sendMessages[0].text).toBe(
-        "unsupported command. supported commands: /new, /status, /compact, /interrupt, /tts_on, /tts_off, /effort_low, /effort_medium, /effort_high, /effort_xhigh, /use_demo",
+        "unsupported command. supported commands: /new, /status, /prompt, /compact, /interrupt, /tts_on, /tts_off, /effort_low, /effort_medium, /effort_high, /effort_xhigh, /use_demo",
       );
       expect(managerHarness.manager.closeSession).not.toHaveBeenCalled();
     } finally {

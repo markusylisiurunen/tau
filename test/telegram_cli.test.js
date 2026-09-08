@@ -168,27 +168,27 @@ describe("telegram cli", () => {
     );
   });
 
-  it("reserves ten Telegram commands when validating the project command limit", () => {
+  it("reserves eleven Telegram commands when validating the project command limit", () => {
     const projects = Object.fromEntries(
-      Array.from({ length: 91 }, (_, index) => [`project_${index}`, { repo: "owner/repo" }]),
+      Array.from({ length: 90 }, (_, index) => [`project_${index}`, { repo: "owner/repo" }]),
     );
     const accepted = writeConfig({
       bots: {
         ops: {
           botToken: "token",
-          allowedProjectIds: Object.keys(projects).slice(0, 90),
+          allowedProjectIds: Object.keys(projects).slice(0, 89),
         },
       },
       projects,
     });
-    expect(loadTelegramConfig(accepted.path).bots.ops.allowedProjectIds).toHaveLength(90);
+    expect(loadTelegramConfig(accepted.path).bots.ops.allowedProjectIds).toHaveLength(89);
 
     const rejected = writeConfig({
       bots: { ops: { botToken: "token" } },
       projects,
     });
     expect(() => loadTelegramConfig(rejected.path)).toThrow(
-      "bots.ops exposes 91 projects, exceeding Telegram's 100-command limit with built-in commands",
+      "bots.ops exposes 90 projects, exceeding Telegram's 100-command limit with built-in commands",
     );
   });
 

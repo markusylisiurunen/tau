@@ -63,6 +63,8 @@ function createClientHarness() {
   const session = {
     id: "session-1",
     submit: submit,
+    resolvePrompt: vi.fn(async (promptId) => ({ promptId, text: "Saved prompt body" })),
+    record: vi.fn(async () => ({})),
     steer: vi.fn(async () => {
       return await submitDeferred.promise;
     }),
@@ -207,6 +209,43 @@ function assistantProgressTexts(events) {
 }
 
 describe("telegram session manager", () => {
+  it("records prompts only while idle, including after lazy resolution", async () => {
+    const harness = createClientHarness();
+    const manager = createDemoSessionManager(harness);
+    const created = await manager.createSession({ projectId: "demo" });
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+    try {
+      await expect(manager.recordPrompt(created.id, "review")).resolves.toBe("Saved prompt body");
+      expect(harness.session.record).toHaveBeenCalledExactlyOnceWith("Saved prompt body");
+      expect(harness.session.submit).not.toHaveBeenCalled();
+      expect(manager.getSession(created.id).state).toBe("waiting-input");
+      harness.session.snapshot.mockResolvedValueOnce(
+        createProtocolSnapshot({ lifecycle: "running" }),
+      );
+      await expect(manager.recordPrompt(created.id, "review")).rejects.toThrow(
+        "wait for Tau to finish",
+      );
+      harness.session.resolvePrompt.mockRejectedValueOnce(new Error("Prompt file is missing"));
+      await expect(manager.recordPrompt(created.id, "review")).rejects.toThrow(
+        "Prompt file is missing",
+      );
+      const resolution = deferred();
+      harness.session.resolvePrompt.mockReturnValueOnce(resolution.promise);
+      const recording = manager.recordPrompt(created.id, "review");
+      await manager.sendMessage(created.id, "go");
+      resolution.resolve({ promptId: "review", text: "Another body" });
+      await expect(recording).rejects.toThrow("wait for Tau to finish");
+      await expect(manager.recordPrompt(created.id, "review")).rejects.toThrow(
+        "wait for Tau to finish",
+      );
+      expect(harness.session.record).toHaveBeenCalledTimes(1);
+      expect(harness.session.interrupt).not.toHaveBeenCalled();
+    } finally {
+      harness.submitDeferred.resolve({ status: "completed" });
+      await manager.close();
+    }
+  });
+
   it("creates a session and transitions to waiting-input after workspace/client setup", async () => {
     const workspaceDeferred = deferred();
     const clientHarness = createClientHarness();

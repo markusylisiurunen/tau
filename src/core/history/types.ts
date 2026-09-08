@@ -8,9 +8,16 @@ type HistoryEntryBase = {
   timestamp: number;
 };
 
+export type HistoryUserContent =
+  | string
+  | Array<
+      | { type: "text"; text: string; textSignature?: string }
+      | { type: "image"; data: string; mimeType: string }
+    >;
+
 export type HistoryTextEntry =
-  | (HistoryEntryBase & { type: "user"; content: unknown })
-  | (HistoryEntryBase & { type: "assistant"; content: unknown });
+  | (HistoryEntryBase & { type: "user"; content: HistoryUserContent })
+  | (HistoryEntryBase & { type: "assistant"; content: string });
 
 export type HistoryToolEntry = HistoryEntryBase & {
   type: "tool";

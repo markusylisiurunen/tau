@@ -1,4 +1,4 @@
-import { cpSync, mkdirSync } from "node:fs";
+import { copyFileSync, cpSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -9,4 +9,8 @@ const targetDir = join(__dirname, "../dist/history/worker/migrations");
 mkdirSync(targetDir, { recursive: true });
 cpSync(sourceDir, targetDir, { recursive: true });
 
-console.log("copied history Worker migrations to dist/history/worker/migrations");
+for (const name of ["viewer.css", "viewer.js"]) {
+  copyFileSync(join(sourceDir, "..", name), join(targetDir, "..", name));
+}
+
+console.log("copied history Worker assets to dist/history/worker");

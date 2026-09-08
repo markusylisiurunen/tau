@@ -222,6 +222,9 @@ function writeWorkerProject(
   const destination = join(directory, "worker", "index.js");
   mkdirSync(dirname(destination), { recursive: true });
   copyFileSync(workerPath, destination);
+  for (const name of ["viewer.css", "viewer.js"]) {
+    copyFileSync(join(dirname(workerPath), name), join(dirname(destination), name));
+  }
   writeHistoryMigration(directory);
   writeFileSync(
     join(directory, "wrangler.json"),
@@ -229,6 +232,7 @@ function writeWorkerProject(
       {
         name: WORKER_NAME,
         main: "worker/index.js",
+        rules: [{ type: "Text", globs: ["**/viewer.css", "**/viewer.js"], fallthrough: false }],
         compatibility_date: "2026-08-01",
         workers_dev: false,
         routes: [{ pattern: `${options.domain}/*`, zone_name: options.zoneName }],

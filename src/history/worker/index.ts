@@ -12,7 +12,10 @@ import type {
   HistoryReplicationOperation,
   HistorySearchResult,
   HistorySessionDescriptor,
+  HistoryUserContent,
 } from "../../core/history/types.js";
+import VIEWER_CSS from "./viewer.css";
+import VIEWER_JS from "./viewer.js";
 
 type HistoryAiModels = {
   "openai/gpt-5.6-luna": {
@@ -84,11 +87,11 @@ const MAX_READ_LIMIT = 100;
 const MAX_READ_PAGE_PAYLOAD_BYTES = 12 * 1024 * 1024;
 const VIEWER_USERNAME = "tau";
 const VIEWER_SEARCH_PAGE_SIZE = 20;
-const VIEWER_READ_PAGE_SIZE = 50;
+const VIEWER_READ_PAGE_PAYLOAD_BYTES = 512 * 1024;
 const VIEWER_SECURITY_HEADERS = {
   "cache-control": "no-store",
   "content-security-policy":
-    "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; img-src data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+    "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'self'; img-src data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
   "referrer-policy": "no-referrer",
   "x-content-type-options": "nosniff",
   "x-frame-options": "DENY",
@@ -127,7 +130,7 @@ export default {
     const viewerRoute =
       url.pathname === "/" ||
       url.pathname === "/viewer.js" ||
-      /^\/sessions\/[^/]+$/.test(url.pathname);
+      /^\/sessions\/[^/]+(?:\/entries)?$/.test(url.pathname);
     if (viewerRoute && url.protocol === "http:" && !isLoopbackHost(url.hostname)) {
       return redirectViewerToHttps(url);
     }
@@ -170,6 +173,8 @@ export default {
         });
       }
       if (url.pathname === "/") return await renderViewerIndex(env.DB, url);
+      if (/^\/sessions\/[^/]+\/entries$/.test(url.pathname))
+        return await readViewerEntries(env.DB, url);
       return await renderViewerSession(env.DB, url);
     } catch (caught) {
       if (caught instanceof HistoryApiError) {
@@ -694,6 +699,7 @@ async function read(
   database: D1Database,
   raw: unknown,
   origin: string,
+  maxPayloadBytes = MAX_READ_PAGE_PAYLOAD_BYTES,
 ): Promise<RemoteHistoryReadResult> {
   const input = asRecord(raw, "read input");
   const sessionId = requiredString(input.sessionId, "sessionId", 256);
@@ -712,7 +718,7 @@ async function read(
     )
     .bind(sessionId, position, limit + 1)
     .all<{ position: number; payload_bytes: number }>();
-  const page = selectHistoryReadPage(candidates.results, limit);
+  const page = selectHistoryReadPage(candidates.results, limit, maxPayloadBytes);
   const rows = await database
     .prepare(
       "SELECT position, payload_json FROM entries WHERE session_id = ? AND position > ? ORDER BY position LIMIT ?",
@@ -730,12 +736,13 @@ async function read(
 export function selectHistoryReadPage(
   candidates: Array<{ payload_bytes: number }>,
   limit: number,
+  maxPayloadBytes = MAX_READ_PAGE_PAYLOAD_BYTES,
 ): { count: number; hasMore: boolean } {
   let count = 0;
   let bytes = 0;
   for (const candidate of candidates.slice(0, limit)) {
     const nextBytes = bytes + Number(candidate.payload_bytes) + 1;
-    if (count > 0 && nextBytes > MAX_READ_PAGE_PAYLOAD_BYTES) break;
+    if (count > 0 && nextBytes > maxPayloadBytes) break;
     count += 1;
     bytes = nextBytes;
   }
@@ -793,7 +800,10 @@ async function renderViewerIndex(database: D1Database, url: URL): Promise<Respon
   for (const [key, value] of Object.entries(attributes)) nextUrl.searchParams.set(key, value);
   if (result.nextCursor) nextUrl.searchParams.set("cursor", result.nextCursor);
   const pagination = result.nextCursor
-    ? `<nav class="pagination"><a href="${escapeHtml(`${nextUrl.pathname}${nextUrl.search}`)}">Older sessions</a></nav>`
+    ? `<form class="pagination" action="/" method="get">
+        ${[...nextUrl.searchParams].map(([key, value]) => `<input type="hidden" name="${escapeHtml(key)}" value="${escapeHtml(value)}">`).join("")}
+        <button type="submit">Older sessions</button>
+      </form>`
     : "";
 
   return viewerPage(
@@ -835,27 +845,44 @@ function renderSessionCard(session: RemoteHistorySessionDescriptor): string {
   </article>`;
 }
 
-async function renderViewerSession(database: D1Database, url: URL): Promise<Response> {
-  let sessionId: string;
+function viewerSessionId(url: URL): string {
   try {
-    sessionId = decodeURIComponent(url.pathname.slice("/sessions/".length));
+    return decodeURIComponent(url.pathname.split("/")[2]!);
   } catch {
     throw invalidRequest("invalid session URL");
   }
-  const cursor = url.searchParams.get("cursor") || undefined;
-  if (cursor && cursor.length > 2_048) throw invalidRequest("cursor is too long");
+}
+
+async function readViewerEntries(database: D1Database, url: URL): Promise<Response> {
   const result = await read(
     database,
-    { sessionId, limit: VIEWER_READ_PAGE_SIZE, cursor },
+    {
+      sessionId: viewerSessionId(url),
+      limit: MAX_READ_LIMIT,
+      cursor: url.searchParams.get("cursor") ?? undefined,
+    },
     url.origin,
+    VIEWER_READ_PAGE_PAYLOAD_BYTES,
   );
-  const { session } = result;
-  const entries = result.entries.map(renderViewerEntry).join("");
-  const nextUrl = new URL(session.webUrl);
-  if (result.nextCursor) nextUrl.searchParams.set("cursor", result.nextCursor);
-  const pagination = result.nextCursor
-    ? `<nav class="pagination"><a href="${escapeHtml(`${nextUrl.pathname}${nextUrl.search}`)}">Continue transcript</a></nav>`
-    : "";
+  return viewerResponse(
+    JSON.stringify({
+      html: result.entries.map(renderViewerEntry).join(""),
+      nextCursor: result.nextCursor ?? null,
+    }),
+    200,
+    { "content-type": "application/json; charset=utf-8" },
+  );
+}
+
+async function renderViewerSession(database: D1Database, url: URL): Promise<Response> {
+  const sessionId = viewerSessionId(url);
+  const row = await database
+    .prepare("SELECT * FROM sessions WHERE session_id = ?")
+    .bind(sessionId)
+    .first<Record<string, unknown>>();
+  if (!row)
+    throw new HistoryApiError("not_found", `history session '${sessionId}' was not found`, 404);
+  const session = descriptor(row, url.origin);
 
   return viewerPage(
     session.digest?.title ?? "Untitled session",
@@ -868,14 +895,14 @@ async function renderViewerSession(database: D1Database, url: URL): Promise<Resp
       <p class="timestamps">Created ${renderTime(session.createdAt)} · Updated ${renderTime(session.updatedAt)}</p>
     </header>
     <div class="transcript-actions">
-      <button type="button" data-copy="conversation">Copy conversation</button>
-      <button type="button" data-tools="open">Expand tools</button>
-      <button type="button" data-tools="close">Collapse tools</button>
+      <button type="button" data-copy="conversation" disabled>Copy conversation</button>
+      <button type="button" data-tools="open" disabled>Expand tools</button>
+      <button type="button" data-tools="close" disabled>Collapse tools</button>
     </div>
-    <main class="transcript" aria-label="Conversation transcript">
-      ${entries || '<p class="empty">This conversation has no transcript entries.</p>'}
-    </main>
-    ${pagination}`,
+    <p data-transcript-status role="status">Loading conversation…</p>
+    <button type="button" data-transcript-retry hidden>Retry loading</button>
+    <noscript>JavaScript is required to load the conversation.</noscript>
+    <main class="transcript" aria-label="Conversation transcript" aria-busy="true" data-transcript-url="/sessions/${escapeHtml(encodeURIComponent(sessionId))}/entries"></main>`,
   );
 }
 
@@ -1005,142 +1032,6 @@ function escapeHtml(value: string): string {
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
 }
-
-const VIEWER_JS = String.raw`
-function inline(value) {
-  const tick = String.fromCharCode(96);
-  return value.trim().replace(/([\\*_{}[\]<>#+.!|~-])/g, "\\$1").replaceAll(tick, "\\" + tick);
-}
-function fenced(value) {
-  const tick = String.fromCharCode(96);
-  const ticks = value.match(new RegExp(tick + "+", "g")) || [];
-  const width = Math.max(3, ...ticks.map((run) => run.length + 1));
-  const fence = tick.repeat(width);
-  return fence + "\n" + value.trim() + "\n" + fence;
-}
-function cardMarkdown(card) {
-  const tool = card.querySelector(".tool-entry");
-  if (tool) {
-    const name = tool.querySelector("summary span")?.textContent.replace(/^Tool · /, "") || "Tool";
-    const outcome = tool.querySelector(".outcome")?.textContent || "";
-    const sections = [...tool.querySelectorAll(".tool-section")].map((section) => {
-      const heading = section.querySelector("h3")?.textContent || "Details";
-      const value = section.querySelector("pre")?.textContent || "";
-      return "### " + inline(heading) + "\n\n" + fenced(value);
-    });
-    return "## Tool: " + inline(name) + (outcome ? " (" + inline(outcome) + ")" : "") + "\n\n" + sections.join("\n\n");
-  }
-  const role = card.querySelector("h2")?.textContent || "Message";
-  const content = [...card.querySelectorAll(".content-blocks > *, :scope > pre")].map((block) => {
-    return block.dataset.markdown || block.textContent || "";
-  }).join("\n\n");
-  return "## " + inline(role) + "\n\n" + content.trim();
-}
-function conversationMarkdown() {
-  const header = document.querySelector(".conversation-header");
-  const title = header?.querySelector("h1")?.textContent || "Conversation";
-  const summary = header?.querySelector(".summary")?.textContent;
-  const metadata = [...(header?.querySelectorAll(".metadata tr") || [])].map((row) => {
-    const key = row.querySelector("th")?.textContent || "";
-    const value = row.querySelector("td")?.textContent || "";
-    return "- **" + inline(key) + ":** " + inline(value);
-  });
-  const parts = ["# " + inline(title)];
-  if (summary) parts.push(summary.trim());
-  if (metadata.length) parts.push(metadata.join("\n"));
-  parts.push(...[...document.querySelectorAll(".transcript .entry")].map(cardMarkdown));
-  return parts.join("\n\n");
-}
-document.addEventListener("click", (event) => {
-  const button = event.target.closest("button");
-  if (!button) return;
-  if (button.dataset.copy === "entry") {
-    const card = button.closest(".entry");
-    if (card) navigator.clipboard.writeText(cardMarkdown(card));
-  } else if (button.dataset.copy === "conversation") {
-    navigator.clipboard.writeText(conversationMarkdown());
-  }
-  if (button.dataset.tools === "open" || button.dataset.tools === "close") {
-    document.querySelectorAll(".tool-entry").forEach((tool) => {
-      tool.open = button.dataset.tools === "open";
-    });
-  }
-});
-`;
-
-const VIEWER_CSS = `
-:root {
-  --text: #ddd;
-  --text-muted: #aaa;
-  --text-dim: #999;
-  --background: #1c1c1c;
-  --surface: #222;
-  --border: #383838;
-  --space-half: 2px;
-  --space-1: 4px;
-  --space-2: 8px;
-  --space-3: 12px;
-  --space-4: 16px;
-  --space-6: 24px;
-  --font-family: ui-monospace, monospace;
-  --font-size: 14px;
-  --font-weight: 400;
-  --font-weight-medium: 600;
-  --line-height: 1.6;
-  --content-width: 800px;
-  --control-height: 40px;
-  color-scheme: dark;
-  font-family: var(--font-family);
-  font-size: var(--font-size);
-  font-weight: var(--font-weight);
-  line-height: var(--line-height);
-  color: var(--text);
-  background: var(--background);
-}
-* { box-sizing: border-box; }
-body { margin: 0; }
-.shell { max-width: var(--content-width); margin: 0 auto; padding: var(--space-6) var(--space-2); overflow-wrap: anywhere; }
-h1, h2, h3, p, pre, blockquote, table { margin: 0 0 var(--space-3); }
-h1, h2, h3, input, button, pre { font: inherit; }
-h1, h2, h3, button, summary { font-weight: var(--font-weight-medium); }
-a, a:visited { color: inherit; text-underline-offset: 0.15em; }
-.conversation-header, .search, .back, .transcript-actions { margin-bottom: var(--space-6); }
-.search-filters { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-2); }
-.search-row { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-input, button { height: var(--control-height); font: inherit; color: inherit; background: var(--background); border: 1px solid var(--border); border-radius: 0; padding: var(--space-1) var(--space-2); }
-button { background: transparent; }
-input:focus, button:focus { outline: none; border-color: var(--text-muted); }
-button:hover { border-color: var(--text-muted); }
-input::placeholder { color: var(--text-dim); opacity: 1; }
-.search input { min-width: 0; flex: 1 1 200px; }
-button, summary { cursor: pointer; }
-.session-list, .transcript { display: grid; gap: var(--space-2); }
-.session-card, .entry { padding: var(--space-2); border: 1px solid var(--border); background: var(--surface); }
-.entry { position: relative; }
-.session-card > :last-child, .entry > :last-child, .conversation-header > :last-child { margin-bottom: 0; }
-.transcript-actions, .entry-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-.entry button { height: 24px; padding: 0 var(--space-2); }
-.entry-actions { position: absolute; top: var(--space-2); right: var(--space-2); }
-.tool-entry summary { padding-right: 56px; }
-.entry-heading { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-4); margin-bottom: var(--space-2); }
-.entry-heading time { margin-left: auto; }
-.session-card h3 { margin-bottom: var(--space-1); }
-.entry-heading h2 { margin-bottom: 0; }
-.metadata { border-collapse: collapse; width: 100%; table-layout: fixed; }
-.metadata th, .metadata td { padding: var(--space-half) 0; text-align: left; vertical-align: top; }
-.metadata th { width: 30%; padding-right: var(--space-4); color: var(--text-muted); font-weight: var(--font-weight); }
-blockquote { padding-left: var(--space-4); border-left: 1px solid currentColor; }
-.entry pre { white-space: pre-wrap; }
-.content-blocks { display: grid; gap: var(--space-2); }
-.content-blocks > :last-child { margin-bottom: 0; }
-.image-attachment { margin: 0; }
-.image-attachment img { display: block; max-width: 100%; max-height: 480px; border: 1px solid var(--border); }
-.image-attachment figcaption { margin-top: var(--space-1); color: var(--text-dim); }
-.tool-section { margin-top: var(--space-2); }
-.outcome { margin-left: var(--space-2); }
-.pagination { margin-top: var(--space-6); }
-.timestamps, .session-id, .entry-heading time, .entry-time { color: var(--text-dim); }
-`;
 
 export async function refreshDigestIfNeeded(env: Env, sessionId: string): Promise<boolean> {
   const session = await env.DB.prepare(
@@ -1500,11 +1391,14 @@ function parseEntry(raw: unknown): HistoryEntry {
     sourceIds: entry.sourceIds.map((value) => requiredString(value, "entry.sourceId", 512)),
     timestamp: finiteNumber(entry.timestamp, "entry.timestamp"),
   };
-  if (type === "user" || type === "assistant") {
-    if (!Object.hasOwn(entry, "content")) {
-      throw invalidRequest(`${type} entry.content is required`);
+  if (type === "assistant") {
+    if (typeof entry.content !== "string") {
+      throw invalidRequest("assistant entry.content must be a string");
     }
     return validateEntrySize({ ...base, type, content: entry.content });
+  }
+  if (type === "user") {
+    return validateEntrySize({ ...base, type, content: parseUserContent(entry.content) });
   }
 
   if (!Object.hasOwn(entry, "arguments") || !Object.hasOwn(entry, "result")) {
@@ -1526,6 +1420,40 @@ function parseEntry(raw: unknown): HistoryEntry {
     arguments: entry.arguments,
     result: entry.result,
     outcome,
+  });
+}
+
+function parseUserContent(raw: unknown): HistoryUserContent {
+  if (typeof raw === "string") return raw;
+  if (!Array.isArray(raw)) {
+    throw invalidRequest(
+      "user entry.content must be a string or an array of text and image blocks",
+    );
+  }
+  return raw.map((rawBlock) => {
+    const block = asRecord(rawBlock, "user content block");
+    if (
+      block.type === "text" &&
+      typeof block.text === "string" &&
+      (block.textSignature === undefined || typeof block.textSignature === "string") &&
+      Object.keys(block).every((key) => ["type", "text", "textSignature"].includes(key))
+    ) {
+      return {
+        type: "text",
+        text: block.text,
+        ...(typeof block.textSignature === "string" ? { textSignature: block.textSignature } : {}),
+      };
+    }
+    if (
+      block.type === "image" &&
+      typeof block.data === "string" &&
+      typeof block.mimeType === "string" &&
+      block.mimeType.length > 0 &&
+      Object.keys(block).every((key) => ["type", "data", "mimeType"].includes(key))
+    ) {
+      return { type: "image", data: block.data, mimeType: block.mimeType };
+    }
+    throw invalidRequest("user content block must be a valid text or image block");
   });
 }
 

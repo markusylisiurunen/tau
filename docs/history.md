@@ -16,8 +16,8 @@ The path belongs to the **host home**. An attached TUI and a remote execution en
 
 For each session, history stores its immutable creation attributes and an ordered active transcript containing:
 
-- committed user content, after Tau's internal metadata is removed
-- assistant text segments, including committed preambles and responses, but not thinking
+- committed user content as a string or an array of text and image blocks, after Tau's internal metadata is removed
+- assistant text segments as strings, including committed preambles and responses, but not thinking
 - completed tool calls with the tool name, arguments, result, and terminal outcome
 
 Leading model-facing `<system>...</system>` blocks in user messages remain in history. Tool arguments and results can contain file contents, command output, or other sensitive data. Treat the database as private user data. Tau creates its history directory and database with private permissions, but the host user and machine administrators can still access them. Do not copy the database into a repository or expose it through a shared artifact.
@@ -92,7 +92,7 @@ For the API key used during setup, `--api-key` takes precedence over `TAU_HISTOR
 
 Open the configured service origin, for example `https://history.example.net/`, to browse the private read-only history collection. HTTP Basic authentication uses the fixed username `tau` and the viewer password installed by setup. Setup prints generated viewer passwords but does not echo supplied credentials. External HTTP viewer requests redirect to HTTPS before authentication; loopback HTTP remains available for local development. The credential is never placed in a URL, and browser responses are not cached. Keep the viewer password private because it grants read access to transcripts, attributes, tool arguments, and tool results across every host using that service.
 
-The index lists recently updated sessions with generated titles, summaries, timestamps, attributes, and a server-rendered search form. Repository and source inputs filter metadata by case-sensitive substring match; both filters combine with text search and remain active across pages. A digest can be pending or stale while the underlying transcript is already available. Session pages render the active flat transcript in chronological pages. Tool entries are collapsed by default. Text and metadata are escaped rather than interpreted as HTML or Markdown. Valid PNG, JPEG, GIF, and WebP content blocks render as inline images; other structured content falls back to escaped text.
+The index lists recently updated sessions with generated titles, summaries, timestamps, attributes, and a server-rendered search form. Repository and source inputs filter metadata by case-sensitive substring match; both filters combine with text search and remain active across pages. The Older sessions button loads the next index page; the index never advances automatically. A digest can be pending or stale while the underlying transcript is already available. Session pages initially show an empty transcript, then automatically fetch bounded batches and append them in chronological order without scrolling or pagination controls. The Copy conversation button at the top stays disabled until the full transcript has loaded. Failed loads show a retry button and keep copying disabled. API reads remain paginated. Tool entries are collapsed by default. Text and metadata are escaped rather than interpreted as HTML or Markdown. Valid PNG, JPEG, GIF, and WebP content blocks render as inline images; other structured content falls back to escaped text.
 
 Remote history search and read results include a stable `webUrl` for each session. The `history` tool can return this URL when asked for a conversation link. The URL alone does not grant access; the browser still needs the viewer credential. Local-only history has no web URL.
 

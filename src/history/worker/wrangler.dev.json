@@ -14,5 +14,15 @@
   "vars": {
     "API_KEY": "tau-history-dev-api-key",
     "VIEWER_PASSWORD": "tau-history-dev-password"
-  }
+  },
+  "rules": [
+    {
+      "type": "Text",
+      "globs": [
+        "**/viewer.css",
+        "**/viewer.js"
+      ],
+      "fallthrough": false
+    }
+  ]
 }

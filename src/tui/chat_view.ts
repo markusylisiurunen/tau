@@ -196,13 +196,13 @@ export class TuiChatView implements ChatView {
   }
 
   updateMessage(id: string, model: ChatMessageModel): void {
-    this.chatContainer.updateMessage(id, model);
-    this.ui.requestRender();
+    if (this.chatContainer.updateMessage(id, model) === "updated") {
+      this.ui.requestRender();
+    }
   }
 
   updateAssistantMessage(id: string, model: AssistantMessageModel): void {
-    this.chatContainer.updateMessage(id, model);
-    this.ui.requestRender();
+    this.updateMessage(id, model);
   }
 
   showFooterNotice(

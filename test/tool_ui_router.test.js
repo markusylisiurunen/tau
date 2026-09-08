@@ -16,9 +16,9 @@ function createHarness() {
       return id;
     },
     updateMessage: (id, message) => {
-      if (!messageIds.has(id)) return false;
+      if (!messageIds.has(id)) return "missing";
       updated.push({ id, message });
-      return true;
+      return "updated";
     },
     removeMessages: (ids) => {
       removed.push(...ids);

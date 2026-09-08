@@ -37,7 +37,7 @@ export class ToolUiRouter {
 
   private upsertToolMessage(model: ToolUiModel): void {
     const message = { type: "tool" as const, tool: model };
-    if (!this.chatContainer.updateMessage(model.toolCallId, message)) {
+    if (this.chatContainer.updateMessage(model.toolCallId, message) === "missing") {
       this.chatContainer.addMessage(message, model.toolCallId);
     }
   }

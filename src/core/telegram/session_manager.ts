@@ -12,6 +12,8 @@ import type {
   SessionProtocolInterruptResult,
   SessionProtocolMessage,
   SessionProtocolReasoningEffort,
+  SessionProtocolRecordResult,
+  SessionProtocolResolvePromptResult,
   SessionProtocolSettingsUpdateResult,
   SessionProtocolSnapshot,
   SessionProtocolSteerResult,
@@ -462,6 +464,8 @@ export type TelegramTauSession = {
   submit(text: string, options?: { historyEntryId?: string }): Promise<SessionProtocolSubmitResult>;
   steer(text: string): Promise<SessionProtocolSteerResult>;
   interrupt(): Promise<SessionProtocolInterruptResult>;
+  record(text: string): Promise<SessionProtocolRecordResult>;
+  resolvePrompt(promptId: string): Promise<SessionProtocolResolvePromptResult>;
   compact(mode: "summary-only" | "summary-and-last"): Promise<SessionProtocolCompactResult>;
   setReasoning(
     reasoning: SessionProtocolReasoningEffort,
@@ -504,6 +508,7 @@ export type TelegramSessionManager = {
     options?: TelegramSessionSubmitOptions,
   ): Promise<TelegramSessionRecord>;
   interruptSession(sessionId: string): Promise<TelegramSessionInterruptResult>;
+  recordPrompt(sessionId: string, promptId: string): Promise<string>;
   compactSession(sessionId: string): Promise<SessionProtocolCompactResult>;
   setReasoning(
     sessionId: string,
@@ -765,6 +770,37 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       interrupted: result.interrupted,
       isTurnRunning: result.isTurnRunning,
     };
+  }
+
+  async recordPrompt(sessionId: string, promptId: string): Promise<string> {
+    const requireIdleSession = () => {
+      const entry = this.requireSession(sessionId);
+      if (!entry.tauSession) {
+        throw new TelegramSessionManagerError("not_ready", "The session is still preparing.");
+      }
+      if (entry.record.state !== "waiting-input" || entry.activeSubmit) {
+        throw new TelegramSessionManagerError(
+          "busy",
+          "Wait for Tau to finish, or use /interrupt first.",
+        );
+      }
+      return entry.tauSession;
+    };
+    const session = requireIdleSession();
+    const prompt = await session.resolvePrompt(promptId);
+    const snapshot = await session.snapshot();
+    if (
+      snapshot.lifecycle !== "idle" ||
+      Object.values(snapshot.operations).some((operation) => operation.status === "running")
+    ) {
+      throw new TelegramSessionManagerError(
+        "busy",
+        "Wait for Tau to finish, or use /interrupt first.",
+      );
+    }
+    requireIdleSession();
+    await session.record(prompt.text);
+    return prompt.text;
   }
 
   async compactSession(sessionId: string): Promise<SessionProtocolCompactResult> {
@@ -2361,6 +2397,11 @@ class ScopedTelegramSessionManager implements TelegramSessionManager {
   async interruptSession(sessionId: string): Promise<TelegramSessionInterruptResult> {
     this.requireSession(sessionId);
     return await this.sessionManager.interruptSession(sessionId);
+  }
+
+  async recordPrompt(sessionId: string, promptId: string): Promise<string> {
+    this.requireSession(sessionId);
+    return await this.sessionManager.recordPrompt(sessionId, promptId);
   }
 
   async compactSession(sessionId: string): Promise<SessionProtocolCompactResult> {

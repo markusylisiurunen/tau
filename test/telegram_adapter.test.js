@@ -139,6 +139,7 @@ function createApiHarness(updateBatches, options = {}) {
     sendMessage: vi.fn(async (chatId, text, options) => {
       sendMessages.push({ chatId, text, options, sentAt: Date.now() });
     }),
+    editMessage: vi.fn(async () => {}),
     sendRichMessage: vi.fn(async (chatId, markdown, options) => {
       sendRichMessages.push({ chatId, markdown, options, sentAt: Date.now() });
     }),
@@ -332,6 +333,7 @@ function createSessionManagerHarness(initialSessions = [], options = {}) {
         isTurnRunning: false,
       };
     }),
+    recordPrompt: vi.fn(async () => "Saved prompt body"),
     compactSession: vi.fn(async (sessionId) => {
       const session = sessions.get(sessionId);
       if (!session) throw new Error("missing session");
@@ -440,6 +442,7 @@ describe("telegram adapter", () => {
       expect(apiHarness.setCommandsCalls[0]).toEqual([
         { command: "new", description: "start a new session" },
         { command: "status", description: "show active session status" },
+        { command: "prompt", description: "add a saved prompt without starting a turn" },
         { command: "compact", description: "compact session context" },
         { command: "interrupt", description: "interrupt active run" },
         { command: "tts_on", description: "enable voice responses" },
@@ -2588,6 +2591,114 @@ describe("telegram adapter", () => {
     }
   });
 
+  it("records a selected prompt once, rejects stale pickers, and waits for the next message", async () => {
+    const chat = { id: 329, type: "private" };
+    const from = { id: 7 };
+    const apiHarness = createApiHarness([]);
+    const managerHarness = createSessionManagerHarness([], {
+      createSnapshot: () => ({
+        catalog: { prompts: Array.from({ length: 21 }, (_, i) => ({ id: `prompt-${i}` })) },
+      }),
+    });
+    let poll = 0;
+    apiHarness.api.getUpdates.mockImplementation(async () => {
+      poll++;
+      if (poll === 1)
+        return [
+          { update_id: 1, message: { chat, from, text: "/new" } },
+          { update_id: 2, message: { chat, from, text: "/prompt" } },
+        ];
+      if (poll === 2) {
+        await waitFor(() => apiHarness.sendMessages.some((m) => m.options.replyMarkup));
+        const keyboard = apiHarness.sendMessages.at(-1).options.replyMarkup.inline_keyboard;
+        const callback = (id, data) => ({
+          update_id: id,
+          callback_query: { id: `${id}`, from, message: { chat, message_id: 42 }, data },
+        });
+        const data = keyboard[0][0].callback_data;
+        expect(keyboard).toHaveLength(21);
+        expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
+        return [callback(3, keyboard.at(-1)[0].callback_data)];
+      }
+      if (poll === 3) {
+        await waitFor(() => apiHarness.api.editMessage.mock.calls.length === 1);
+        const keyboard = apiHarness.api.editMessage.mock.calls[0][3].replyMarkup.inline_keyboard;
+        const data = keyboard[0][0].callback_data;
+        return [4, 5].map((id) => ({
+          update_id: id,
+          callback_query: { id: `${id}`, from, message: { chat, message_id: 42 }, data },
+        }));
+      }
+      return await new Promise(() => {});
+    });
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+    try {
+      await waitFor(() => apiHarness.answerCallbackQueryCalls.length === 3);
+      expect(managerHarness.manager.recordPrompt).toHaveBeenCalledExactlyOnceWith(
+        "s1",
+        "prompt-20",
+      );
+      expect(managerHarness.manager.sendMessage).not.toHaveBeenCalled();
+      expect(apiHarness.api.editMessage.mock.calls[1][2]).toContain("Saved prompt body");
+      expect(apiHarness.api.editMessage.mock.calls[1][3].replyMarkup).toBeUndefined();
+      expect(apiHarness.sendMessages.at(-1).text).toContain("expired");
+    } finally {
+      await adapter.close();
+    }
+  });
+
+  it("does not let an old picker record a prompt into a replacement session", async () => {
+    const chat = { id: 329, type: "private" };
+    const from = { id: 7 };
+    const apiHarness = createApiHarness([]);
+    const managerHarness = createSessionManagerHarness([], {
+      createSnapshot: () => ({ catalog: { prompts: [{ id: "review" }] } }),
+    });
+    apiHarness.api.getUpdates
+      .mockImplementationOnce(async () => [
+        { update_id: 1, message: { chat, from, text: "/new" } },
+        { update_id: 2, message: { chat, from, text: "/prompt" } },
+      ])
+      .mockImplementationOnce(async () => {
+        await waitFor(() => apiHarness.sendMessages.some((message) => message.options.replyMarkup));
+        return [
+          { update_id: 3, message: { chat, from, text: "/new" } },
+          {
+            update_id: 4,
+            callback_query: {
+              id: "old-picker",
+              from,
+              message: { chat, message_id: 42 },
+              data: apiHarness.sendMessages.at(-1).options.replyMarkup.inline_keyboard[0][0]
+                .callback_data,
+            },
+          },
+        ];
+      })
+      .mockImplementation(async () => await new Promise(() => {}));
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+    });
+    try {
+      await waitFor(() => apiHarness.answerCallbackQueryCalls.length === 1);
+      expect(managerHarness.manager.createSession).toHaveBeenCalledTimes(2);
+      expect(managerHarness.manager.recordPrompt).not.toHaveBeenCalled();
+      expect(apiHarness.sendMessages.at(-1).text).toContain("expired");
+    } finally {
+      await adapter.close();
+    }
+  });
+
   it("compacts the active session", async () => {
     const apiHarness = createApiHarness([
       [
@@ -2709,7 +2820,7 @@ describe("telegram adapter", () => {
     try {
       await waitFor(() => apiHarness.sendMessages.length === 1);
       expect(apiHarness.sendMessages[0].text).toBe(
-        "unsupported command. supported commands: /new, /status, /compact, /interrupt, /tts_on, /tts_off, /effort_low, /effort_medium, /effort_high, /effort_xhigh, /use_demo",
+        "unsupported command. supported commands: /new, /status, /prompt, /compact, /interrupt, /tts_on, /tts_off, /effort_low, /effort_medium, /effort_high, /effort_xhigh, /use_demo",
       );
       expect(managerHarness.manager.closeSession).not.toHaveBeenCalled();
     } finally {

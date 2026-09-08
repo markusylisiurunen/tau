@@ -83,7 +83,7 @@ Use both lists for a private bot. `allowedUserIds` controls who can trigger work
 
 A bot sees only `allowedProjectIds`. If that field is omitted, it sees every configured project. A sole allowed project is selected automatically; otherwise a chat needs `defaultProjectId` or an explicit `/use_<project>` preference before `/new`.
 
-Tau registers ten built-in commands plus one `/use_<projectId>` command per visible project. A bot may expose at most 90 projects under Telegram's 100-command limit.
+Telegram’s 100-command limit permits eleven built-ins and up to 89 `/use_<projectId>` commands.
 
 ## Project IDs and common fields
 
@@ -237,12 +237,13 @@ The runner's speech-to-text provider is loaded from normal Tau config at runner 
 | `/effort_medium` | Selects medium reasoning for later independent turns. |
 | `/effort_high` | Selects high reasoning for later independent turns. |
 | `/effort_xhigh` | Selects xhigh reasoning for later independent turns. |
+| `/prompt` | [Records a saved prompt](prompts-and-project-context.md#telegram-prompt-picker) while idle, without starting a turn. |
 | `/compact` | Runs summary-only manual compaction while the session is idle. |
 | `/interrupt` | Interrupts the active Tau turn. |
 | `/tts_on` | Enables a Gemini-generated voice note after each final assistant response. |
 | `/tts_off` | Disables voice responses. |
 
-Preferences are scoped to one bot and chat and survive restarts, projects, and sessions. A new project choice does not switch the active session; `/status` reports the difference.
+Preferences persist per bot and chat across restarts, projects, and sessions. Project changes apply to `/new`, not the active session.
 
 In groups, commands must explicitly mention the bot. Accepted forms include:
 
@@ -252,7 +253,7 @@ In groups, commands must explicitly mention the bot. Accepted forms include:
 @tau_engineering_bot /status
 ```
 
-A command addressed to another bot does not trigger this one.
+Commands addressed to other bots are ignored.
 
 ## DMs, groups, and active work
 

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
@@ -120,6 +121,12 @@ export type TelegramApi = {
     allowedUpdates: TelegramAllowedUpdates;
   }): Promise<TelegramUpdate[]>;
   sendMessage(chatId: number, text: string, options: TelegramSendOptions): Promise<void>;
+  editMessage(
+    chatId: number,
+    messageId: number,
+    text: string,
+    options: TelegramSendOptions,
+  ): Promise<void>;
   sendRichMessage(chatId: number, markdown: string, options: TelegramSendOptions): Promise<void>;
   sendVoice(chatId: number, voice: Buffer, options: TelegramSendOptions): Promise<void>;
   sendChatAction(chatId: number, action: string): Promise<void>;
@@ -1185,6 +1192,19 @@ function createTelegramApi(botToken: string): TelegramApi {
         options.signal,
       );
     },
+    async editMessage(chatId, messageId, text, options) {
+      await callTelegramMethod(
+        "editMessageText",
+        {
+          chat_id: chatId,
+          message_id: messageId,
+          text,
+          reply_markup: options.replyMarkup ?? { inline_keyboard: [] },
+        },
+        z.unknown(),
+        options.signal,
+      );
+    },
     async sendRichMessage(chatId, markdown, options) {
       await callTelegramMethod(
         "sendRichMessage",
@@ -1299,6 +1319,14 @@ class TelegramAdapterImpl {
   private readonly commandHandlers: Map<string, TelegramCommandHandler>;
   private readonly callbackActionHandlers: Map<QuickAction, TelegramCommandHandler>;
   private readonly abortController = new AbortController();
+  private readonly promptPickers = new Map<
+    number,
+    {
+      token: string;
+      sessionId: string;
+      prompts: SessionProtocolSnapshot["catalog"]["prompts"];
+    }
+  >();
   private readonly activeSessionsByChat = new Map<number, string>();
   private readonly sessionsByChat = new Map<number, Set<string>>();
   private readonly chatsBySession = new Map<string, Set<number>>();
@@ -1435,6 +1463,11 @@ class TelegramAdapterImpl {
         description: "show active session status",
         callbackAction: "status",
         handler: async (chatId) => this.handleStatus(chatId),
+      },
+      {
+        command: "/prompt",
+        description: "add a saved prompt without starting a turn",
+        handler: async (chatId, args) => this.handlePrompt(chatId, args),
       },
       {
         command: "/compact",
@@ -1804,7 +1837,11 @@ class TelegramAdapterImpl {
       return;
     }
 
-    const callbackHandled = await this.handleCallback(chat.id, callbackData);
+    const callbackHandled = await this.handleCallback(
+      chat.id,
+      callbackData,
+      callbackQuery.message?.message_id,
+    );
     await this.answerCallbackQuery(callbackQuery.id, callbackHandled ? "done" : undefined);
   }
 
@@ -2259,7 +2296,15 @@ class TelegramAdapterImpl {
     await handler(chatId, args, sourceMessageId);
   }
 
-  private async handleCallback(chatId: number, callbackData: string): Promise<boolean> {
+  private async handleCallback(
+    chatId: number,
+    callbackData: string,
+    messageId?: number,
+  ): Promise<boolean> {
+    if (callbackData.startsWith("prompt:")) {
+      await this.handlePromptCallback(chatId, callbackData, messageId);
+      return true;
+    }
     if (!callbackData.startsWith(CALLBACK_ACTION_PREFIX)) {
       return false;
     }
@@ -2343,6 +2388,108 @@ class TelegramAdapterImpl {
         chatId,
         `failed to save voice response preference: ${error instanceof Error ? error.message : String(error)}`,
       );
+    }
+  }
+
+  private async handlePrompt(chatId: number, args: string[]): Promise<void> {
+    if (args.length > 0) {
+      await this.reply(chatId, "Use /prompt to choose a saved prompt.");
+      return;
+    }
+    const session = await this.requireActiveSession(chatId);
+    if (!session) return;
+    try {
+      const snapshot = await this.getSessionManagerForChat(chatId).getSessionSnapshot(session.id);
+      if (!snapshot) {
+        await this.reply(chatId, "The session is still preparing.");
+        return;
+      }
+      const prompts = snapshot.catalog.prompts;
+      if (prompts.length === 0) {
+        await this.reply(chatId, "This session has no saved prompts.");
+        return;
+      }
+      this.promptPickers.set(chatId, { token: randomUUID(), sessionId: session.id, prompts });
+      await this.showPromptPage(chatId, 0);
+    } catch (error) {
+      await this.reply(chatId, this.formatManagerError(error));
+    }
+  }
+
+  private async showPromptPage(chatId: number, page: number, messageId?: number): Promise<void> {
+    const picker = this.promptPickers.get(chatId);
+    if (!picker) return;
+    const start = page * 20;
+    const keyboard = picker.prompts.slice(start, start + 20).map((prompt, index) => [
+      {
+        text: prompt.label ?? prompt.id,
+        callback_data: `prompt:${picker.token}:select:${start + index}`,
+      },
+    ]);
+    const navigation: TelegramInlineKeyboardButton[] = [];
+    if (page > 0)
+      navigation.push({
+        text: "Previous",
+        callback_data: `prompt:${picker.token}:page:${page - 1}`,
+      });
+    if (start + 20 < picker.prompts.length)
+      navigation.push({ text: "Next", callback_data: `prompt:${picker.token}:page:${page + 1}` });
+    if (navigation.length > 0) keyboard.push(navigation);
+    const text =
+      "Choose a saved prompt to add to the conversation without starting a turn. Selection is available only while Tau is idle.";
+    const replyMarkup = { inline_keyboard: keyboard };
+    if (messageId !== undefined) {
+      await this.sendWithRetry((signal) =>
+        this.api.editMessage(chatId, messageId, text, { replyMarkup, signal }),
+      );
+    } else {
+      await this.reply(chatId, text, { replyMarkup });
+    }
+  }
+
+  private async handlePromptCallback(
+    chatId: number,
+    data: string,
+    messageId?: number,
+  ): Promise<void> {
+    const match = /^prompt:([^:]+):(select|page):(0|[1-9][0-9]*)$/.exec(data);
+    const picker = this.promptPickers.get(chatId);
+    if (
+      !match ||
+      !picker ||
+      picker.token !== match[1] ||
+      this.getActiveSession(chatId)?.id !== picker.sessionId ||
+      messageId === undefined
+    ) {
+      await this.reply(chatId, "This prompt picker has expired. Use /prompt to open a new one.");
+      return;
+    }
+    const index = Number(match[3]);
+    if (match[2] === "page") {
+      if (index * 20 < picker.prompts.length) await this.showPromptPage(chatId, index, messageId);
+      return;
+    }
+    const prompt = picker.prompts[index];
+    if (!prompt) return;
+    let text: string;
+    try {
+      text = await this.getSessionManagerForChat(chatId).recordPrompt(picker.sessionId, prompt.id);
+    } catch (error) {
+      await this.reply(chatId, this.formatManagerError(error));
+      return;
+    }
+    this.promptPickers.delete(chatId);
+    const chunks = splitTelegramMessage(
+      `Added this prompt to the conversation. Send a message when you’re ready for Tau to respond.\n\n${text}`,
+    );
+    for (const [index, chunk] of chunks.entries()) {
+      if (index === 0) {
+        await this.sendWithRetry((signal) =>
+          this.api.editMessage(chatId, messageId, chunk, { signal }),
+        );
+      } else {
+        await this.reply(chatId, chunk);
+      }
     }
   }
 

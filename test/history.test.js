@@ -1113,6 +1113,11 @@ describe("session history", () => {
       expect(basicApi.status).toBe(401);
       expect(basicApi.headers.get("www-authenticate")).toBeNull();
 
+      const script = await callHistoryViewer("/viewer.js", harness);
+      expect(script.status).toBe(200);
+      expect(script.headers.get("content-type")).toContain("text/javascript");
+      await expect(script.text()).resolves.toContain("navigator.clipboard.writeText");
+
       const wrongMethod = await callHistoryViewer("/", harness, { method: "POST" });
       expect(wrongMethod.status).toBe(405);
       expect(wrongMethod.headers.get("allow")).toBe("GET");
@@ -1174,6 +1179,55 @@ describe("session history", () => {
     }
   });
 
+  it("combines viewer metadata filters with search and preserves them across pages", async () => {
+    const harness = createSqliteD1Harness();
+    try {
+      initializeHistoryD1(harness);
+      for (let index = 0; index < 23; index += 1) {
+        const sessionId = `filtered-${index}`;
+        await applyOperation(harness.database, {
+          id: `create-${index}`,
+          sessionId,
+          type: "create",
+          session: {
+            sessionId,
+            attributes: {
+              repository: index === 21 ? "other" : "repo&one",
+              source: index === 22 ? "telegram" : "tui",
+            },
+            createdAt: index,
+          },
+        });
+        await applyOperation(harness.database, {
+          id: `append-${index}`,
+          sessionId,
+          type: "append",
+          entries: [createTextEntry(`entry-${index}`, "user", "needle", index)],
+        });
+      }
+      const response = await callHistoryViewer("/?q=needle&repository=po%26&source=ui", harness);
+      const html = await response.text();
+      expect(html).toContain('value="po&amp;"');
+      expect(html).toContain('value="ui"');
+      expect(html).toContain('placeholder="Repository contains…"');
+      expect(html).toContain('placeholder="Source contains…"');
+      expect(html).not.toContain("<select");
+      expect(html).not.toContain("<label");
+      expect(html).not.toContain("/sessions/filtered-21");
+      expect(html).not.toContain("/sessions/filtered-22");
+      const next = html.match(/href="([^"]+)">Older sessions/)[1].replaceAll("&amp;", "&");
+      expect(next).toContain("repository=po%26");
+      expect(next).toContain("source=ui");
+      expect(next).toContain("q=needle");
+      const second = await callHistoryViewer(next, harness);
+      const secondHtml = await second.text();
+      expect(secondHtml).toContain("/sessions/filtered-0");
+      expect(secondHtml).not.toContain("Older sessions");
+    } finally {
+      harness.sqlite.close();
+    }
+  });
+
   it("renders every transcript entry type as escaped text with bounded pages", async () => {
     const harness = createSqliteD1Harness();
     try {
@@ -1193,7 +1247,16 @@ describe("session history", () => {
         sessionId: "viewer/session",
         type: "append",
         entries: [
-          createTextEntry("viewer-user", "user", "<script>alert(1)</script>", 2),
+          {
+            id: "viewer-user",
+            sourceIds: ["viewer-user"],
+            type: "user",
+            timestamp: 2,
+            content: [
+              { type: "text", text: "<script>alert(1)</script>" },
+              { type: "image", mimeType: "image/png", data: "aGVsbG8=" },
+            ],
+          },
           createTextEntry(
             "viewer-assistant",
             "assistant",
@@ -1226,8 +1289,15 @@ describe("session history", () => {
       const html = await response.text();
       expect(html).toContain("Viewer &lt;title&gt;");
       expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+      expect(html).toContain('src="data:image/png;base64,aGVsbG8="');
+      expect(html).toContain('data-markdown="[image image/png]"');
       expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
-      expect(html).toContain('<details class="entry tool-entry">');
+      expect(html).toContain('<article class="entry tool-card">');
+      expect(html).toContain('<details class="tool-entry">');
+      expect(html).toContain('data-copy=".transcript"');
+      expect(html).toContain('data-tools="open"');
+      expect(html).toContain('data-tools="close"');
+      expect(html.match(/data-copy="closest"/g)).toHaveLength(50);
       expect(html).toContain("Arguments");
       expect(html).toContain("succeeded");
       expect(html).toContain("&lt;svg onload=alert(1)&gt;");

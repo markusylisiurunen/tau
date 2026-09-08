@@ -120,7 +120,7 @@ const VIEWER_READ_PAGE_SIZE = 50;
 const VIEWER_SECURITY_HEADERS = {
   "cache-control": "no-store",
   "content-security-policy":
-    "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+    "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; img-src data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
   "referrer-policy": "no-referrer",
   "x-content-type-options": "nosniff",
   "x-frame-options": "DENY",
@@ -156,7 +156,10 @@ function invalidRequest(message: string): HistoryApiError {
 export default {
   async fetch(request: Request, env: Env, _context: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
-    const viewerRoute = url.pathname === "/" || /^\/sessions\/[^/]+$/.test(url.pathname);
+    const viewerRoute =
+      url.pathname === "/" ||
+      url.pathname === "/viewer.js" ||
+      /^\/sessions\/[^/]+$/.test(url.pathname);
 
     try {
       if (url.pathname.startsWith("/v1/")) {
@@ -188,6 +191,11 @@ export default {
       if (!authorizeViewer(request, env)) return viewerUnauthorized();
       if (request.method !== "GET") {
         return viewerError("Use GET", 405, { allow: "GET" });
+      }
+      if (url.pathname === "/viewer.js") {
+        return new Response(VIEWER_JS, {
+          headers: { ...VIEWER_SECURITY_HEADERS, "content-type": "text/javascript; charset=utf-8" },
+        });
       }
       if (url.pathname === "/") return await renderViewerIndex(env.DB, url);
       return await renderViewerSession(env.DB, url);
@@ -762,39 +770,50 @@ async function renderViewerIndex(database: D1Database, url: URL): Promise<Respon
   if (query && query.length > 1_000) throw invalidRequest("query is too long");
   const cursor = url.searchParams.get("cursor") || undefined;
   if (cursor && cursor.length > 2_048) throw invalidRequest("cursor is too long");
+  const attributes = Object.fromEntries(
+    ["repository", "source"].flatMap((key) => {
+      const value = url.searchParams.get(key)?.trim();
+      return value ? [[key, value]] : [];
+    }),
+  );
   const result = await search(
     database,
-    { query, limit: VIEWER_SEARCH_PAGE_SIZE, cursor },
+    {
+      query,
+      attributes: Object.fromEntries(
+        Object.entries(attributes).map(([key, value]) => [key, { contains: value }]),
+      ),
+      limit: VIEWER_SEARCH_PAGE_SIZE,
+      cursor,
+    },
     url.origin,
+  );
+  const filters = ["repository", "source"].map(
+    (key) =>
+      `<input id="${key}" name="${key}" type="text" aria-label="${key}" maxlength="1024" value="${escapeHtml(attributes[key] ?? "")}" placeholder="${key === "repository" ? "Repository contains…" : "Source contains…"}">`,
   );
   const sessions = result.sessions.map(renderSessionCard).join("");
   const nextUrl = new URL("/", url.origin);
   if (query) nextUrl.searchParams.set("q", query);
+  for (const [key, value] of Object.entries(attributes)) nextUrl.searchParams.set(key, value);
   if (result.nextCursor) nextUrl.searchParams.set("cursor", result.nextCursor);
   const pagination = result.nextCursor
     ? `<nav class="pagination"><a href="${escapeHtml(`${nextUrl.pathname}${nextUrl.search}`)}">Older sessions</a></nav>`
     : "";
-  const heading = query ? `Search results for “${escapeHtml(query)}”` : "Recent sessions";
 
   return viewerPage(
     "History",
-    `<header class="page-header">
-      <p class="eyebrow">Tau history</p>
-      <h1>Conversations</h1>
-      <p>Private, read-only transcripts replicated to this history service.</p>
-    </header>
-    <form class="search" action="/" method="get" role="search">
-      <label for="q">Search conversations</label>
+    `<form class="search" action="/" method="get" role="search">
       <div class="search-row">
-        <input id="q" name="q" type="search" maxlength="1000" value="${escapeHtml(query ?? "")}" placeholder="Search titles, summaries, and transcript text">
+        <input id="q" name="q" type="search" aria-label="Search conversations" maxlength="1000" value="${escapeHtml(query ?? "")}" placeholder="Search titles, summaries, and transcript text">
         <button type="submit">Search</button>
       </div>
-    </form>
-    <section aria-labelledby="session-list-heading">
-      <div class="section-heading">
-        <h2 id="session-list-heading">${heading}</h2>
-        ${query ? '<a href="/">Clear search</a>' : ""}
+      <div class="search-filters">
+        ${filters.join("")}
       </div>
+    </form>
+    <section aria-label="Conversations">
+      ${query || Object.keys(attributes).length > 0 ? '<p><a href="/">Clear filters</a></p>' : ""}
       <div class="session-list">${sessions || '<p class="empty">No conversations found.</p>'}</div>
       ${pagination}
     </section>`,
@@ -814,7 +833,7 @@ function renderSessionCard(session: HistorySessionDescriptor): string {
       </div>
       ${digest ? "" : '<span class="pending">Digest pending</span>'}
     </div>
-    <p class="summary">${escapeHtml(digest?.summary ?? "A generated summary is not available yet.")}</p>
+    ${digest ? `<p class="summary">${escapeHtml(digest.summary)}</p>` : ""}
     ${snippets}
     ${renderAttributes(session.attributes)}
     <p class="timestamps">Created ${renderTime(session.createdAt)} · Updated ${renderTime(session.updatedAt)}</p>
@@ -847,16 +866,17 @@ async function renderViewerSession(database: D1Database, url: URL): Promise<Resp
     session.digest?.title ?? "Untitled session",
     `<nav class="back"><a href="/">← All conversations</a></nav>
     <header class="conversation-header">
-      <p class="eyebrow">Conversation</p>
       <h1>${escapeHtml(session.digest?.title ?? "Untitled session")}</h1>
       <p class="session-id">${escapeHtml(session.sessionId)}</p>
-      <p class="summary">${escapeHtml(session.digest?.summary ?? "A generated summary is not available yet.")}</p>
+      ${session.digest ? `<p class="summary">${escapeHtml(session.digest.summary)}</p>` : ""}
       ${renderAttributes(session.attributes)}
       <p class="timestamps">Created ${renderTime(session.createdAt)} · Updated ${renderTime(session.updatedAt)}</p>
     </header>
-    <aside class="history-note">
-      Remote replication can lag. Rewind removes the superseded suffix, compaction keeps earlier transcript entries, and oversized remote payloads can contain truncation markers.
-    </aside>
+    <div class="transcript-actions">
+      <button type="button" data-copy=".transcript">Copy conversation</button>
+      <button type="button" data-tools="open">Expand tools</button>
+      <button type="button" data-tools="close">Collapse tools</button>
+    </div>
     <main class="transcript" aria-label="Conversation transcript">
       ${entries || '<p class="empty">This conversation has no transcript entries.</p>'}
     </main>
@@ -866,19 +886,22 @@ async function renderViewerSession(database: D1Database, url: URL): Promise<Resp
 
 function renderViewerEntry(entry: HistoryEntry): string {
   if (entry.type === "tool") {
-    return `<details class="entry tool-entry">
-      <summary>
-        <span>Tool · ${escapeHtml(formatViewerValue(entry.name))}</span>
-        <span class="outcome">${escapeHtml(formatViewerValue(entry.outcome))}</span>
-      </summary>
-      <div class="tool-section"><h3>Arguments</h3><pre>${escapeHtml(formatViewerValue(entry.arguments))}</pre></div>
-      <div class="tool-section"><h3>Result</h3><pre>${escapeHtml(formatViewerValue(entry.result))}</pre></div>
-      <p class="entry-time">${renderTime(entry.timestamp)}</p>
-    </details>`;
+    return `<article class="entry tool-card">
+      <div class="entry-actions"><button type="button" data-copy="closest">Copy</button></div>
+      <details class="tool-entry">
+        <summary>
+          <span>Tool · ${escapeHtml(formatViewerValue(entry.name))}</span>
+          <span class="outcome">${escapeHtml(formatViewerValue(entry.outcome))}</span>
+        </summary>
+        <div class="tool-section"><h3>Arguments</h3><pre>${escapeHtml(formatViewerValue(entry.arguments))}</pre></div>
+        <div class="tool-section"><h3>Result</h3><pre>${escapeHtml(formatViewerValue(entry.result))}</pre></div>
+        <p class="entry-time">${renderTime(entry.timestamp)}</p>
+      </details>
+    </article>`;
   }
   return `<article class="entry ${entry.type}">
-    <div class="entry-heading"><h2>${entry.type === "user" ? "User" : "Assistant"}</h2><span>${renderTime(entry.timestamp)}</span></div>
-    <pre>${escapeHtml(formatViewerValue(entry.content))}</pre>
+    <div class="entry-heading"><h2>${entry.type === "user" ? "User" : "Assistant"}</h2><span>${renderTime(entry.timestamp)}</span><button type="button" data-copy="closest">Copy</button></div>
+    ${renderViewerContent(entry.content)}
   </article>`;
 }
 
@@ -888,9 +911,36 @@ function renderAttributes(attributes: Record<string, string>): string {
     return priority(left) - priority(right) || left.localeCompare(right);
   });
   if (ordered.length === 0) return "";
-  return `<dl class="metadata">${ordered
-    .map(([key, value]) => `<div><dt>${escapeHtml(key)}</dt><dd>${escapeHtml(value)}</dd></div>`)
-    .join("")}</dl>`;
+  return `<table class="metadata"><tbody>${ordered
+    .map(
+      ([key, value]) =>
+        `<tr><th scope="row">${escapeHtml(key)}</th><td>${escapeHtml(value)}</td></tr>`,
+    )
+    .join("")}</tbody></table>`;
+}
+
+function renderViewerContent(content: unknown): string {
+  if (!Array.isArray(content)) return `<pre>${escapeHtml(formatViewerValue(content))}</pre>`;
+  const blocks = content.map((block) => {
+    if (typeof block !== "object" || block === null) {
+      return `<pre>${escapeHtml(formatViewerValue(block))}</pre>`;
+    }
+    const value = block as Record<string, unknown>;
+    if (value.type === "text" && typeof value.text === "string") {
+      return `<pre>${escapeHtml(value.text)}</pre>`;
+    }
+    if (
+      value.type === "image" &&
+      typeof value.mimeType === "string" &&
+      /^(image\/(?:png|jpeg|gif|webp))$/.test(value.mimeType) &&
+      typeof value.data === "string" &&
+      /^[a-zA-Z0-9+/]*={0,2}$/.test(value.data)
+    ) {
+      return `<figure class="image-attachment" data-markdown="[image ${escapeHtml(value.mimeType)}]"><img src="data:${value.mimeType};base64,${value.data}" alt="Attached ${escapeHtml(value.mimeType)} image"><figcaption>${escapeHtml(value.mimeType)}</figcaption></figure>`;
+    }
+    return `<pre>${escapeHtml(formatViewerValue(value))}</pre>`;
+  });
+  return `<div class="content-blocks">${blocks.join("")}</div>`;
 }
 
 function formatViewerValue(value: unknown): string {
@@ -913,6 +963,7 @@ function viewerPage(title: string, content: string): Response {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${escapeHtml(title)} · Tau history</title>
   <style>${VIEWER_CSS}</style>
+  <script src="/viewer.js" defer></script>
 </head>
 <body><div class="shell">${content}</div></body>
 </html>`);
@@ -945,7 +996,7 @@ function viewerError(
   headers: Record<string, string> = {},
 ): Response {
   return viewerResponse(
-    `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${status} · Tau history</title><style>${VIEWER_CSS}</style></head><body><div class="shell"><main class="error-page"><p class="eyebrow">Tau history</p><h1>${status}</h1><p>${escapeHtml(message)}</p><a href="/">Return to conversations</a></main></div></body></html>`,
+    `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${status} · Tau history</title><style>${VIEWER_CSS}</style></head><body><div class="shell"><main class="error-page"><h1>${status}</h1><p>${escapeHtml(message)}</p><a href="/">Return to conversations</a></main></div></body></html>`,
     status,
     headers,
   );
@@ -960,67 +1011,139 @@ function escapeHtml(value: string): string {
     .replaceAll("'", "&#39;");
 }
 
+const VIEWER_JS = `
+function inline(value) {
+  const tick = String.fromCharCode(96);
+  return value.trim().replace(/([\\\\*_{}[]<>#+.!|~-])/g, "\\$1").replaceAll(tick, "\\" + tick);
+}
+function fenced(value) {
+  const tick = String.fromCharCode(96);
+  const ticks = value.match(new RegExp(tick + "+", "g")) || [];
+  const width = Math.max(3, ...ticks.map((run) => run.length + 1));
+  const fence = tick.repeat(width);
+  return fence + "\n" + value.trim() + "\n" + fence;
+}
+function cardMarkdown(card) {
+  const tool = card.querySelector(".tool-entry");
+  if (tool) {
+    const name = tool.querySelector("summary span")?.textContent.replace(/^Tool · /, "") || "Tool";
+    const outcome = tool.querySelector(".outcome")?.textContent || "";
+    const sections = [...tool.querySelectorAll(".tool-section")].map((section) => {
+      const heading = section.querySelector("h3")?.textContent || "Details";
+      const value = section.querySelector("pre")?.textContent || "";
+      return "### " + inline(heading) + "\n\n" + fenced(value);
+    });
+    return "## Tool: " + inline(name) + (outcome ? " (" + inline(outcome) + ")" : "") + "\n\n" + sections.join("\n\n");
+  }
+  const role = card.querySelector("h2")?.textContent || "Message";
+  const content = [...card.querySelectorAll(".content-blocks > *, :scope > pre")].map((block) => {
+    return block.dataset.markdown || block.textContent || "";
+  }).join("\n\n");
+  return "## " + inline(role) + "\n\n" + content.trim();
+}
+function conversationMarkdown() {
+  const header = document.querySelector(".conversation-header");
+  const title = header?.querySelector("h1")?.textContent || "Conversation";
+  const summary = header?.querySelector(".summary")?.textContent;
+  const metadata = [...(header?.querySelectorAll(".metadata tr") || [])].map((row) => {
+    const key = row.querySelector("th")?.textContent || "";
+    const value = row.querySelector("td")?.textContent || "";
+    return "- **" + inline(key) + ":** " + inline(value);
+  });
+  const parts = ["# " + inline(title)];
+  if (summary) parts.push(summary.trim());
+  if (metadata.length) parts.push(metadata.join("\n"));
+  parts.push(...[...document.querySelectorAll(".transcript .entry")].map(cardMarkdown));
+  return parts.join("\n\n");
+}
+function copyMarkdown(value) {
+  navigator.clipboard.writeText(value);
+}
+document.addEventListener("click", (event) => {
+  const button = event.target.closest("button");
+  if (!button) return;
+  if (button.dataset.copy) {
+    const card = button.closest(".entry");
+    copyMarkdown(card ? cardMarkdown(card) : conversationMarkdown());
+  }
+  if (button.dataset.tools) {
+    document.querySelectorAll(".tool-entry").forEach((tool) => tool.open = button.dataset.tools === "open");
+  }
+});
+`;
+
 const VIEWER_CSS = `
-:root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, sans-serif; line-height: 1.5; background: #f4f3ef; color: #20201d; }
+:root {
+  --text: #ddd;
+  --text-muted: #aaa;
+  --text-dim: #999;
+  --background: #1c1c1c;
+  --surface: #222;
+  --border: #383838;
+  --space-half: 2px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --font-family: ui-monospace, monospace;
+  --font-size: 14px;
+  --font-weight: 400;
+  --font-weight-medium: 600;
+  --line-height: 1.6;
+  --content-width: 800px;
+  --control-height: 40px;
+  color-scheme: dark;
+  font-family: var(--font-family);
+  font-size: var(--font-size);
+  font-weight: var(--font-weight);
+  line-height: var(--line-height);
+  color: var(--text);
+  background: var(--background);
+}
 * { box-sizing: border-box; }
 body { margin: 0; }
-a { color: #255c4c; text-underline-offset: 0.18em; }
-.shell { width: min(920px, calc(100% - 32px)); margin: 0 auto; padding: 48px 0 80px; }
-h1, h2, h3, p { margin-top: 0; }
-h1 { font-size: clamp(2rem, 7vw, 3.75rem); line-height: 1; letter-spacing: -0.04em; margin-bottom: 16px; }
-h2 { font-size: 1.2rem; }
-h3 { font-size: 1.05rem; }
-.eyebrow { color: #8b4f2f; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; }
-.page-header, .conversation-header { margin-bottom: 32px; }
-.page-header > p:last-child, .summary, .timestamps, .session-id { color: #66645d; }
-.search { padding: 20px; margin-bottom: 36px; border: 1px solid #d8d4ca; border-radius: 12px; background: #fff; }
-.search label { display: block; margin-bottom: 8px; font-weight: 650; }
-.search-row { display: flex; gap: 8px; }
-.search input { min-width: 0; flex: 1; padding: 11px 12px; border: 1px solid #aaa69c; border-radius: 7px; font: inherit; }
-.search button { padding: 0 18px; border: 0; border-radius: 7px; background: #255c4c; color: #fff; font: inherit; font-weight: 650; }
-.section-heading, .session-card-heading, .entry-heading, details summary { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
-.session-list { display: grid; gap: 14px; }
-.session-card, .entry, .history-note { padding: 22px; border: 1px solid #d8d4ca; border-radius: 12px; background: #fff; }
-.session-card h3 { margin-bottom: 3px; }
-.session-id { overflow-wrap: anywhere; font-family: ui-monospace, monospace; font-size: 0.78rem; }
-.pending, .outcome { flex: none; padding: 3px 8px; border-radius: 999px; background: #ece9e0; color: #66645d; font-size: 0.72rem; font-weight: 700; text-transform: uppercase; }
-.metadata { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 14px; }
-.metadata div { max-width: 100%; padding: 5px 9px; border-radius: 6px; background: #f0eee8; }
-.metadata dt, .metadata dd { display: inline; margin: 0; overflow-wrap: anywhere; font-size: 0.78rem; }
-.metadata dt { margin-right: 5px; color: #747169; font-weight: 700; }
-blockquote { margin: 14px 0; padding-left: 14px; border-left: 3px solid #c7aa86; color: #4d4b45; }
-.timestamps { margin-bottom: 0; font-size: 0.8rem; }
-.pagination { margin-top: 24px; text-align: right; }
-.pagination a { display: inline-block; padding: 9px 13px; border: 1px solid #aaa69c; border-radius: 7px; background: #fff; text-decoration: none; }
-.back { margin-bottom: 36px; }
-.history-note { margin-bottom: 20px; border-color: #c7aa86; background: #fff9ed; }
-.transcript { display: grid; gap: 12px; }
+.shell { max-width: var(--content-width); margin: 0 auto; padding: var(--space-6) var(--space-2); overflow-wrap: anywhere; }
+h1, h2, h3, p, pre, blockquote, table { margin: 0 0 var(--space-3); }
+h1, h2, h3, input, button, pre { font: inherit; }
+h1, h2, h3, button, summary { font-weight: var(--font-weight-medium); }
+a, a:visited { color: inherit; text-underline-offset: 0.15em; }
+.conversation-header, .search, .back, .transcript-actions { margin-bottom: var(--space-6); }
+.search-filters { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-2); }
+.search-row { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+input, select, button { height: var(--control-height); font: inherit; color: inherit; background: var(--background); border: 1px solid var(--border); border-radius: 0; padding: var(--space-1) var(--space-2); }
+button { background: transparent; }
+input:focus, select:focus, button:focus { outline: none; border-color: var(--text-muted); }
+button:hover { border-color: var(--text-muted); }
+input::placeholder { color: var(--text-dim); opacity: 1; }
+.search input { min-width: 0; flex: 1 1 200px; }
+button, summary { cursor: pointer; }
+.session-list, .transcript { display: grid; gap: var(--space-2); }
+.session-card, .entry { padding: var(--space-2); border: 1px solid var(--border); background: var(--surface); }
+.entry { position: relative; }
+.session-card > :last-child, .entry > :last-child, .conversation-header > :last-child { margin-bottom: 0; }
+.transcript-actions, .entry-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.entry button { height: 24px; padding: 0 var(--space-2); }
+.entry-actions { position: absolute; top: var(--space-2); right: var(--space-2); }
+.tool-entry summary { padding-right: 56px; }
+.entry-heading { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-4); margin-bottom: var(--space-2); }
+.entry-heading time { margin-left: auto; }
+.session-card h3 { margin-bottom: var(--space-1); }
 .entry-heading h2 { margin-bottom: 0; }
-.entry-heading span, .entry-time { color: #747169; font-size: 0.8rem; }
-.entry.assistant { margin-left: min(8vw, 56px); }
-.entry.user { margin-right: min(8vw, 56px); border-color: #a9c5bb; }
-.entry pre, .tool-section pre { margin: 14px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
-details summary { cursor: pointer; font-weight: 700; }
-.tool-section { margin-top: 18px; }
-.tool-section h3 { margin-bottom: 0; color: #747169; font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; }
-.empty { padding: 28px; text-align: center; color: #747169; }
-.error-page { padding-top: 15vh; }
-@media (prefers-color-scheme: dark) {
-  :root { background: #171815; color: #ecebe5; }
-  a { color: #91cfba; }
-  .search, .session-card, .entry, .pagination a { background: #22231f; border-color: #41423b; }
-  .page-header > p:last-child, .summary, .timestamps, .session-id, .entry-heading span, .entry-time { color: #aaa99f; }
-  .pending, .outcome, .metadata div { background: #30312b; color: #c7c5bb; }
-  .metadata dt { color: #aaa99f; }
-  blockquote { color: #c7c5bb; }
-  .history-note { background: #29251d; }
-}
-@media (max-width: 580px) {
-  .shell { width: min(100% - 22px, 920px); padding-top: 28px; }
-  .search-row, .section-heading, .session-card-heading, .entry-heading { align-items: stretch; flex-direction: column; }
-  .search button { padding: 11px 18px; }
-  .entry.assistant, .entry.user { margin-left: 0; margin-right: 0; }
-}
+.metadata { border-collapse: collapse; width: 100%; table-layout: fixed; }
+.metadata th, .metadata td { padding: var(--space-half) 0; text-align: left; vertical-align: top; }
+.metadata th { width: 30%; padding-right: var(--space-4); color: var(--text-muted); font-weight: var(--font-weight); }
+blockquote { padding-left: var(--space-4); border-left: 1px solid currentColor; }
+.entry pre { white-space: pre-wrap; }
+.content-blocks { display: grid; gap: var(--space-2); }
+.content-blocks > :last-child { margin-bottom: 0; }
+.image-attachment { margin: 0; }
+.image-attachment img { display: block; max-width: 100%; max-height: 480px; border: 1px solid var(--border); }
+.image-attachment figcaption { margin-top: var(--space-1); color: var(--text-dim); }
+.tool-section { margin-top: var(--space-2); }
+.outcome { margin-left: var(--space-2); }
+.pagination { margin-top: var(--space-6); }
+.timestamps, .session-id, .entry-heading time, .entry-time { color: var(--text-dim); }
 `;
 
 export async function refreshDigestIfNeeded(env: Env, sessionId: string): Promise<boolean> {

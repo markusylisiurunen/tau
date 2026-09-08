@@ -65,6 +65,6 @@
     "esbuild@0.28.1": true,
     "protobufjs@7.6.5": true,
     "fsevents@2.3.3": true,
-    "workerd@1.20260825.1": true
+    "workerd@1.20260907.1": true
   }
 }

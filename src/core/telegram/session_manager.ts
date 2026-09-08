@@ -776,12 +776,12 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     const requireIdleSession = () => {
       const entry = this.requireSession(sessionId);
       if (!entry.tauSession) {
-        throw new TelegramSessionManagerError("not_ready", "The session is still preparing.");
+        throw new TelegramSessionManagerError("not_ready", "the session is still preparing.");
       }
       if (entry.record.state !== "waiting-input" || entry.activeSubmit) {
         throw new TelegramSessionManagerError(
           "busy",
-          "Wait for Tau to finish, or use /interrupt first.",
+          "wait for Tau to finish, or use /interrupt first.",
         );
       }
       return entry.tauSession;
@@ -795,7 +795,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     ) {
       throw new TelegramSessionManagerError(
         "busy",
-        "Wait for Tau to finish, or use /interrupt first.",
+        "wait for Tau to finish, or use /interrupt first.",
       );
     }
     requireIdleSession();

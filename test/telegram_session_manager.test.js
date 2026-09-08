@@ -223,7 +223,7 @@ describe("telegram session manager", () => {
         createProtocolSnapshot({ lifecycle: "running" }),
       );
       await expect(manager.recordPrompt(created.id, "review")).rejects.toThrow(
-        "Wait for Tau to finish",
+        "wait for Tau to finish",
       );
       harness.session.resolvePrompt.mockRejectedValueOnce(new Error("Prompt file is missing"));
       await expect(manager.recordPrompt(created.id, "review")).rejects.toThrow(
@@ -234,9 +234,9 @@ describe("telegram session manager", () => {
       const recording = manager.recordPrompt(created.id, "review");
       await manager.sendMessage(created.id, "go");
       resolution.resolve({ promptId: "review", text: "Another body" });
-      await expect(recording).rejects.toThrow("Wait for Tau to finish");
+      await expect(recording).rejects.toThrow("wait for Tau to finish");
       await expect(manager.recordPrompt(created.id, "review")).rejects.toThrow(
-        "Wait for Tau to finish",
+        "wait for Tau to finish",
       );
       expect(harness.session.record).toHaveBeenCalledTimes(1);
       expect(harness.session.interrupt).not.toHaveBeenCalled();

@@ -2670,9 +2670,20 @@ describe("telegram adapter", () => {
       expect(managerHarness.manager.sendMessage).not.toHaveBeenCalled();
       expect(edits).toHaveLength(2);
       expect(edits.every((edit) => edit.chat_id === chat.id && edit.message_id === 42)).toBe(true);
-      expect(edits[1].text).toContain("Saved prompt body");
+      const pickerMessage = sendMessages.find((message) => message.reply_markup);
+      expect(pickerMessage.text).toBe(
+        "choose a saved prompt to add to the conversation without starting a turn. selection is available only while Tau is idle.",
+      );
+      expect(pickerMessage.reply_markup.inline_keyboard.at(-1)[0].text).toBe("next");
+      expect(edits[0].text).toBe(pickerMessage.text);
+      expect(edits[0].reply_markup.inline_keyboard.at(-1)[0].text).toBe("previous");
+      expect(edits[1].text).toBe(
+        "added this prompt to the conversation. send a message when you’re ready for Tau to respond.\n\nSaved prompt body",
+      );
       expect(edits[1].reply_markup.inline_keyboard).toEqual([]);
-      expect(sendMessages.at(-1).text).toContain("expired");
+      expect(sendMessages.at(-1).text).toBe(
+        "this prompt picker has expired. use /prompt to open a new one.",
+      );
     } finally {
       await adapter.close();
       vi.unstubAllGlobals();

@@ -2393,7 +2393,7 @@ class TelegramAdapterImpl {
 
   private async handlePrompt(chatId: number, args: string[]): Promise<void> {
     if (args.length > 0) {
-      await this.reply(chatId, "Use /prompt to choose a saved prompt.");
+      await this.reply(chatId, "use /prompt to choose a saved prompt.");
       return;
     }
     const session = await this.requireActiveSession(chatId);
@@ -2401,12 +2401,12 @@ class TelegramAdapterImpl {
     try {
       const snapshot = await this.getSessionManagerForChat(chatId).getSessionSnapshot(session.id);
       if (!snapshot) {
-        await this.reply(chatId, "The session is still preparing.");
+        await this.reply(chatId, "the session is still preparing.");
         return;
       }
       const prompts = snapshot.catalog.prompts;
       if (prompts.length === 0) {
-        await this.reply(chatId, "This session has no saved prompts.");
+        await this.reply(chatId, "this session has no saved prompts.");
         return;
       }
       this.promptPickers.set(chatId, { token: randomUUID(), sessionId: session.id, prompts });
@@ -2429,14 +2429,14 @@ class TelegramAdapterImpl {
     const navigation: TelegramInlineKeyboardButton[] = [];
     if (page > 0)
       navigation.push({
-        text: "Previous",
+        text: "previous",
         callback_data: `prompt:${picker.token}:page:${page - 1}`,
       });
     if (start + 20 < picker.prompts.length)
-      navigation.push({ text: "Next", callback_data: `prompt:${picker.token}:page:${page + 1}` });
+      navigation.push({ text: "next", callback_data: `prompt:${picker.token}:page:${page + 1}` });
     if (navigation.length > 0) keyboard.push(navigation);
     const text =
-      "Choose a saved prompt to add to the conversation without starting a turn. Selection is available only while Tau is idle.";
+      "choose a saved prompt to add to the conversation without starting a turn. selection is available only while Tau is idle.";
     const replyMarkup = { inline_keyboard: keyboard };
     if (messageId !== undefined) {
       await this.sendWithRetry((signal) =>
@@ -2461,7 +2461,7 @@ class TelegramAdapterImpl {
       this.getActiveSession(chatId)?.id !== picker.sessionId ||
       messageId === undefined
     ) {
-      await this.reply(chatId, "This prompt picker has expired. Use /prompt to open a new one.");
+      await this.reply(chatId, "this prompt picker has expired. use /prompt to open a new one.");
       return;
     }
     const index = Number(match[3]);
@@ -2480,7 +2480,7 @@ class TelegramAdapterImpl {
     }
     this.promptPickers.delete(chatId);
     const chunks = splitTelegramMessage(
-      `Added this prompt to the conversation. Send a message when you’re ready for Tau to respond.\n\n${text}`,
+      `added this prompt to the conversation. send a message when you’re ready for Tau to respond.\n\n${text}`,
     );
     for (const [index, chunk] of chunks.entries()) {
       if (index === 0) {

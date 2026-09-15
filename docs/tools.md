@@ -93,13 +93,27 @@ There is no TTY and assistant `bash` calls have no stdin. Commands that prompt, 
 
 Tau sets `NO_COLOR=1`, `FORCE_COLOR=0`, `TERM=dumb`, and `PAGER=cat` for predictable non-interactive command output. It also forces Git into non-interactive mode: terminal prompts and askpass interaction are disabled, editors are replaced, pagers are disabled, and SSH uses batch mode. These fixed values override inherited and execution-environment values after login startup. A command can still assign its own environment explicitly. Authentication therefore needs to be available non-interactively.
 
-The default timeout is 60 seconds. Tau captures at most 1 MiB of merged stdout and stderr, preserving the tail when raw capture overflows. The default model-facing result limit is roughly 8,192 estimated tokens. When output exceeds it, Tau returns a roughly 2,048-token middle preview and a gating notice. The command has already run and its side effects have already happened.
+The default foreground timeout is 60 seconds. Tau captures at most 1 MiB of merged stdout and stderr, preserving the tail when raw capture overflows. The default model-facing result limit is roughly 8,192 estimated tokens. When output exceeds it, Tau returns a roughly 2,048-token middle preview and a gating notice. The command has already run and its side effects have already happened.
 
 Prefer a narrower command over raising the result limit. When more output is genuinely needed, `maxOutputTokens` can request 8,192 through 16,384 tokens autonomously. Values above 16,384, up to 65,536, are reserved for an explicit user request. Tau may save captured output to a temporary execution-environment file when model-context truncation occurs; the result reports that path when available.
 
 On a local execution backend, Tau removes inherited environment variables whose names end in `_KEY`, `_SECRET`, `_TOKEN`, or `_PASSWORD`, plus `API_KEY`, before running execution-environment commands. Hosted backends begin from their own target environment. Explicit execution-environment overrides still apply. Do not print credentials or broad environment dumps.
 
 Direct TUI commands, `!<command>` and `!!<command>`, use the same fresh login-shell execution boundary. `!` adds the result to model context; `!!` does not. Their user-facing context limit is larger than an ordinary assistant tool result, but raw process capture is still bounded.
+
+With `background: true`, `bash` returns a session-owned job ID after launch rather than waiting for exit. Launch does not establish application readiness. Background jobs have no execution deadline. Combining `background: true` with `timeout` is invalid; execution timeouts are foreground-only. They keep running across turns and interruptions. Main agents, subagents, and ephemeral threads share the session's job registry.
+
+Enabling `bash` also enables `list_bash_jobs`, `read_bash_job`, `stop_bash_job`, and `wait_for_bash_jobs`. These names are not separate persona configuration entries. List returns compact ID/status blocks; read returns the same blocks with a bounded output tail. Stop terminates the managed process group, with forced termination after a grace period. Up to 64 job records are retained, evicting the oldest completed record when needed; starting another job fails if all 64 are still running. Each job retains 64 KiB of merged output, with at most 2,048 estimated tokens returned per job and an 8,192-token shared output budget for multi-job observations. Background output does not use `maxOutputTokens` or save overflow files.
+
+`read_bash_job`, `stop_bash_job`, and `wait_for_bash_jobs` accept `includeOutput`, defaulting to `true`. Setting it to `false` omits captured stdout/stderr and output-truncation notices, but retains job ID, command, cwd, status, exit code when finished, termination reason, and operational errors. List always omits captured output.
+
+Management tool cards use operation-specific Bash-scoped headings such as `reading bash <id>` and `listed bash jobs`, with stable subjects and a seven-line middle-truncated preview of the model-facing result. Background launch uses `started background <command>`; this indicates launch, not readiness or eventual success.
+
+Job-management validation and operational failures include bounded diagnostics in the TUI tool card as well as the model-facing result. Ordinary cancellation leaves the card details empty.
+
+`wait_for_bash_jobs({ids, timeout?, includeOutput?})` returns when any requested job exits or the wait deadline expires. Already-finished jobs return immediately. Its timeout is a positive integer in milliseconds, defaults to 60,000, and cannot exceed 300,000. Expiry is a successful observation and does not stop jobs; interrupting the wait also leaves them running. This waits for exit, not readiness: servers need log or readiness checks instead. Completion does not automatically start an agent turn.
+
+Jobs survive client disconnects while the host remains alive and prevent idle-session eviction until they finish. Orderly session disposal or host shutdown stops them. Job IDs and logs are not persisted or recovered; stale IDs fail clearly. An unknown job ID does not establish that the command never ran, that its side effects were undone, or that it is no longer running. Agents are instructed to check current process and output state before restarting such a command. Cleanup does not cover independently daemonized processes, arbitrary tmux sessions, or processes orphaned by a host crash or forced kill.
 
 ### Write and edit
 

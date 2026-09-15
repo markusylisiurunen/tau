@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { BashJobRegistry, createBashJobToolDefinitions } from "../dist/core/tools/bash_jobs.js";
 import {
   buildToolRunPresentation,
   parseToolRunPresentation,
@@ -140,6 +141,47 @@ describe("tool cards", () => {
       "<textMuted>running web</textMuted> <brandAccent>console.log('ok')</brandAccent>",
     );
   });
+
+  it.each([
+    ["list_bash_jobs", {}, "jobs", "listing", "listed", "list"],
+    ["read_bash_job", { id: "job-1" }, "job-1", "reading", "read", "read"],
+    ["stop_bash_job", { id: "job-1" }, "job-1", "stopping", "stopped", "stop"],
+    [
+      "wait_for_bash_jobs",
+      { ids: ["job-1", "job-2"] },
+      "job-1, job-2",
+      "waiting for",
+      "waited for",
+      "wait",
+    ],
+  ])(
+    "renders Bash-scoped lifecycle headings for %s",
+    (name, args, subject, running, succeeded, verb) => {
+      const tool = createBashJobToolDefinitions(new BashJobRegistry()).find(
+        (tool) => tool.schema.name === name,
+      );
+      const presentation = tool.describe({ id: "call", name, arguments: args }).presentation;
+      for (const [status, action] of Object.entries({
+        queued: `queued ${verb}`,
+        running,
+        succeeded,
+        failed: `failed to ${verb === "wait" ? "wait for" : verb}`,
+        blocked: `${verb} blocked`,
+        cancelled: `${verb} cancelled`,
+      })) {
+        const rendered = renderText(
+          new ToolCardComponent({
+            model: { toolCallId: "call", status, presentation },
+            theme,
+          }),
+          160,
+        );
+        expect(rendered).toContain(
+          `<textMuted>${action} bash</textMuted> <brandAccent>${subject}</brandAccent>`,
+        );
+      }
+    },
+  );
 
   it("uses static active markers with status-specific colors", () => {
     const presentation = buildToolRunPresentation({ toolName: "bash", subject: "pwd" });

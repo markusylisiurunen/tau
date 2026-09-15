@@ -5,6 +5,7 @@ import { AgentSupervisor } from "../subagents/agent_supervisor.js";
 import type { SubagentToolName } from "../subagents/types.js";
 import type { Persona } from "../types.js";
 import { createBashToolDefinition } from "./bash.js";
+import { BashJobRegistry, createBashJobToolDefinitions } from "./bash_jobs.js";
 import { createEditToolDefinition } from "./edit.js";
 import { scopeToolExecutionBackend, type ToolExecutionBackend } from "./execution_backend.js";
 import { createGoalToolDefinitions, type GoalManager } from "./goal.js";
@@ -40,6 +41,7 @@ export const ToolCatalog = {
   }): ToolRegistry {
     return this.createSessionRegistry({
       ...options,
+      bashJobs: new BashJobRegistry(),
       goalManager: {
         getGoal: () => null,
         createGoal: async () => {
@@ -63,11 +65,12 @@ export const ToolCatalog = {
     modelResolver: ModelResolver;
     supervisor: AgentSupervisor;
     goalManager: GoalManager;
+    bashJobs: BashJobRegistry;
     history: HistoryQuery;
     resolveSubagentPrompts?: ResolveSubagentPrompts;
   }): ToolRegistry {
     const tools = [
-      createBashToolDefinition(options.backend, options.cwd),
+      createBashToolDefinition(options.backend, options.cwd, options.bashJobs),
       createWriteToolDefinition(options.backend),
       createEditToolDefinition(options.backend),
       createViewImageToolDefinition(options.backend),
@@ -76,6 +79,7 @@ export const ToolCatalog = {
       createSpawnAgentToolDefinition({
         backend: options.backend,
         supervisor: options.supervisor,
+        bashJobs: options.bashJobs,
         persona: options.persona,
         config: options.config,
         modelResolver: options.modelResolver,
@@ -97,6 +101,9 @@ export const ToolCatalog = {
     const enabledToolNames = new Set<string>(options.persona.tools);
     return new ToolRegistry([
       ...tools.filter((tool) => enabledToolNames.has(tool.schema.name)),
+      ...(enabledToolNames.has(TOOL_NAME_BASH)
+        ? createBashJobToolDefinitions(options.bashJobs)
+        : []),
       createTauDocsToolDefinition(),
       ...createGoalToolDefinitions(options.goalManager),
     ]);
@@ -107,6 +114,7 @@ export const ToolCatalog = {
     backend: ToolExecutionBackend,
     cwd: string,
     config: Config,
+    bashJobs: BashJobRegistry,
     history?: HistoryQuery,
   ): ToolRegistry {
     const scopedBackend = scopeToolExecutionBackend(backend, cwd);
@@ -117,7 +125,8 @@ export const ToolCatalog = {
       seen.add(tool);
       switch (tool) {
         case TOOL_NAME_BASH:
-          definitions.push(createBashToolDefinition(scopedBackend, cwd));
+          definitions.push(createBashToolDefinition(scopedBackend, cwd, bashJobs));
+          definitions.push(...createBashJobToolDefinitions(bashJobs));
           break;
         case TOOL_NAME_WRITE:
           definitions.push(createWriteToolDefinition(scopedBackend));

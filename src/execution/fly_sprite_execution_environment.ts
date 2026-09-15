@@ -145,8 +145,9 @@ export function createFlySpriteToolExecutionBackend(options: {
         timeoutMs: runOptions.timeoutMs,
         env: applyBashEnvironment(runOptions.env),
         maxCaptureBytes: runOptions.maxCaptureBytes,
+        streamOutput: Boolean(runOptions.onOutput),
       },
-      { signal: runOptions.signal },
+      { signal: runOptions.signal, onStarted: runOptions.onStarted, onOutput: runOptions.onOutput },
     );
   const runNodeScript: ToolExecutionBackend["runNodeScript"] = (
     script,
@@ -219,6 +220,7 @@ export function createFlySpriteToolExecutionBackend(options: {
 
 type FlySpriteWorkerRequestByMethod = {
   exec: {
+    streamOutput: boolean;
     command: string;
     args?: string[];
     stdinBase64?: string;
@@ -281,6 +283,8 @@ type FlySpriteWorkerResultByMethod = {
 type FlySpriteWorkerMethod = keyof FlySpriteWorkerRequestByMethod;
 
 type FlySpriteWorkerResponse =
+  | { id: number; event: "started" }
+  | { id: number; event: "output"; data: string }
   | {
       id: number;
       ok: true;
@@ -296,6 +300,8 @@ type FlySpriteWorkerResponse =
     };
 
 type FlySpritePendingRequest = {
+  onStarted?: () => void;
+  onOutput?: (chunk: Buffer) => void;
   resolve: (value: unknown) => void;
   reject: (reason: unknown) => void;
   signal?: AbortSignal;
@@ -321,7 +327,11 @@ class FlySpriteWorker {
   async request<M extends FlySpriteWorkerMethod>(
     method: M,
     params: FlySpriteWorkerRequestByMethod[M],
-    options: { signal?: AbortSignal } = {},
+    options: {
+      signal?: AbortSignal;
+      onStarted?: () => void;
+      onOutput?: (chunk: Buffer) => void;
+    } = {},
   ): Promise<FlySpriteWorkerResultByMethod[M]> {
     if (this.closed && method !== "shutdown") {
       throw new Error("Fly Sprite worker is closed");
@@ -339,6 +349,8 @@ class FlySpriteWorker {
         resolve: (value) => resolve(value as FlySpriteWorkerResultByMethod[M]),
         reject,
         signal,
+        onStarted: options.onStarted,
+        onOutput: options.onOutput,
       };
 
       if (timeoutMs !== undefined && Number.isFinite(timeoutMs) && timeoutMs > 0) {
@@ -492,6 +504,11 @@ class FlySpriteWorker {
     if (!pending) {
       return;
     }
+    if ("event" in message) {
+      if (message.event === "started") pending.onStarted?.();
+      else pending.onOutput?.(Buffer.from(message.data, "base64"));
+      return;
+    }
     this.pendingRequests.delete(message.id);
     this.cleanupPendingRequest(pending);
 
@@ -643,6 +660,7 @@ async function handleLine(line) {
           env: request.env,
           maxCaptureBytes: request.maxCaptureBytes,
           stdinBase64: request.stdinBase64,
+          streamOutput: request.streamOutput,
         },
       );
       respond(request.id, result);
@@ -717,6 +735,7 @@ function runCommand(id, command, args, options) {
     let settled = false;
     let timer;
     let stopTimer;
+    let closedResult;
     let markStopped = () => {};
     const stopped = new Promise((resolveStopped) => {
       markStopped = resolveStopped;
@@ -752,6 +771,9 @@ function runCommand(id, command, args, options) {
 
     const append = (chunk, target) => {
       const buffer = Buffer.from(chunk);
+      if (options.streamOutput) {
+        console.log(JSON.stringify({ id, event: "output", data: buffer.toString("base64") }));
+      }
       chunks.push(buffer);
       bytes += buffer.byteLength;
       bytes = trimChunks(chunks, bytes);
@@ -775,6 +797,10 @@ function runCommand(id, command, args, options) {
 
     const finish = (exitCode, closeSignal = null) => {
       if (settled) return;
+      if (stopTimer) {
+        closedResult = [exitCode, closeSignal];
+        return;
+      }
       settled = true;
       cleanup();
       markStopped();
@@ -802,12 +828,15 @@ function runCommand(id, command, args, options) {
     };
 
     const cancel = (reason) => {
-      if (settled) return;
+      if (settled || stopTimer) return;
       if (reason === "timeout") timedOut = true;
       if (reason === "abort") aborted = true;
       killProcessGroup("SIGTERM");
-      if (stopTimer) clearTimeout(stopTimer);
-      stopTimer = setTimeout(() => killProcessGroup("SIGKILL"), COMMAND_STOP_GRACE_MS);
+      stopTimer = setTimeout(() => {
+        stopTimer = undefined;
+        killProcessGroup("SIGKILL");
+        if (closedResult) finish(...closedResult);
+      }, COMMAND_STOP_GRACE_MS);
     };
 
     running.set(id, { cancel, stopped });
@@ -816,6 +845,7 @@ function runCommand(id, command, args, options) {
       timer = setTimeout(() => cancel("timeout"), options.timeoutMs);
     }
 
+    child.once("spawn", () => console.log(JSON.stringify({ id, event: "started" })));
     child.stdout.on("data", (chunk) => append(chunk, "stdout"));
     child.stderr.on("data", (chunk) => append(chunk, "stderr"));
     child.on("error", (err) => {

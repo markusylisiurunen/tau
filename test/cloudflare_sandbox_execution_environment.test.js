@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { personas } from "../dist/core/personas.js";
+import { BashJobRegistry } from "../dist/core/tools/bash_jobs.js";
 import {
   CloudflareSandboxBridgeClient,
   CloudflareSandboxExecutionEnvironment,
@@ -60,6 +61,65 @@ async function waitFor(predicate) {
 }
 
 describe("Cloudflare Sandbox execution environment", () => {
+  it("streams background logs in a dedicated session without blocking foreground commands", async () => {
+    let sequence = 0;
+    const deleted = [];
+    const executions = [];
+    const jobs = new BashJobRegistry();
+    const client = new CloudflareSandboxBridgeClient({
+      bridgeId: "default",
+      baseUrl: "https://bridge.example",
+      fetch: async (url, init = {}) => {
+        if (init.method === "DELETE") {
+          deleted.push(String(url).split("/").at(-1));
+          return jsonResponse({});
+        }
+        if (String(url).endsWith("/session")) return jsonResponse({ id: `session-${++sequence}` });
+        executions.push(init.headers["Session-Id"]);
+        if (executions.length > 1) return sseResponse(execSse({ stdout: "foreground" }));
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                Buffer.from(`event: stdout\ndata: ${Buffer.from("ready").toString("base64")}\n\n`),
+              );
+              init.signal.addEventListener(
+                "abort",
+                () => controller.error(new DOMException("aborted", "AbortError")),
+                { once: true },
+              );
+            },
+          }),
+          { headers: { "Content-Type": "text/event-stream" } },
+        );
+      },
+    });
+    const backend = createCloudflareSandboxToolExecutionBackend({
+      client,
+      sandboxId: "sandbox-1",
+      cwd: "/workspace",
+    });
+    try {
+      const started = await jobs.start(
+        backend,
+        "server",
+        "/workspace",
+        new AbortController().signal,
+      );
+      const id = started.match(/`([^`]+)`/)[1];
+      await waitFor(() => jobs.format([id]).includes("ready"));
+      expect((await backend.runBash("echo foreground")).output).toBe("foreground");
+      expect(executions).toEqual(["session-1", "session-2"]);
+      expect(await jobs.stop(id, true)).toContain("stopped");
+      expect(deleted).toEqual(["session-1"]);
+      await backend.dispose();
+      expect(deleted).toEqual(["session-1", "session-2"]);
+    } finally {
+      await jobs.dispose();
+      await backend.dispose();
+    }
+  });
+
   it("runs bash through the bridge exec route with an adapter-owned command session", async () => {
     const requests = [];
     const fetchMock = async (url, init = {}) => {

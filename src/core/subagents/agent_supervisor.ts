@@ -6,6 +6,7 @@ import type { HistoryQuery } from "../history/types.js";
 import { resolveAgentModel } from "../runtime/agent_model.js";
 import { type CoreDeps, createDefaultCoreDeps } from "../runtime/deps.js";
 import { createAutoCompactionArchiver } from "../session/auto_compaction_archive.js";
+import type { BashJobRegistry } from "../tools/bash_jobs.js";
 import { ToolCatalog } from "../tools/catalog.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
 import type { ToolRunPresentation } from "../tools/presentation.js";
@@ -129,6 +130,7 @@ export class AgentSupervisor {
     originHistoryEntryId: string;
     config: Config;
     backend: ToolExecutionBackend;
+    bashJobs: BashJobRegistry;
     history?: HistoryQuery;
     personaId?: string;
   }): SubagentSpawnResult {
@@ -169,6 +171,7 @@ export class AgentSupervisor {
           options.backend,
           workingDirectory,
           options.config,
+          options.bashJobs,
           options.history,
         ),
       }),

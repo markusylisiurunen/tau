@@ -25,6 +25,8 @@ Three components can be physically colocated but remain logically separate:
 
 The host persists ordinary sessions under `~/.config/tau/sessions` for the host user. These versioned documents are managed storage, not an editing interface. Never modify them directly. Use Tau’s session operations, normal project configuration, and recovery path instead.
 
+Session-owned [background Bash jobs](tools.md#bash) survive turns, interruption, and client detach. Running jobs retain an otherwise unobserved live session without blocking new turns. They stop on orderly session disposal or host shutdown, and are not recovered after restart. Crash or forced-kill cleanup is not guaranteed.
+
 ## Submit, queue, and steer
 
 A normal submission is accepted and persisted before model work begins. Tau then runs model and tool subturns until the turn completes, fails, is blocked, or is interrupted.

@@ -1,10 +1,11 @@
 import type { SpeechToTextProvider } from "../config/schema.js";
-import { startTelegramAdapter, type TelegramAdapterHandle } from "./adapter.js";
+import { createTelegramApi, startTelegramAdapter, type TelegramAdapterHandle } from "./adapter.js";
 import type { TelegramConfig } from "./config.js";
 import {
   createTelegramProjectPreferenceStore,
   resolveTelegramProjectPreferencesPath,
 } from "./project_preferences.js";
+import { createTelegramSendImageTool } from "./send_image.js";
 import {
   createTelegramSessionManager,
   resolveTelegramSessionStatePath,
@@ -144,7 +145,21 @@ export async function startTelegramRuntime(
     onLog: (entry) => {
       options.onLog?.(formatRuntimeLog("telegram", entry));
     },
-    createClient: options.createSessionClient,
+    createClient: async (client) => {
+      const match = /^telegram:(.+):chat:(-?\d+)$/.exec(client.ownerId ?? "");
+      if (!match) return await options.createSessionClient(client);
+      const [, botId, chatIdText] = match;
+      if (botId === undefined) throw new Error("invalid Telegram session owner");
+      const bot = options.config.bots[botId];
+      const chatId = Number(chatIdText);
+      if (!bot?.botToken || !Number.isSafeInteger(chatId)) {
+        throw new Error("invalid Telegram session owner or missing bot token");
+      }
+      return await options.createSessionClient({
+        ...client,
+        clientTools: [createTelegramSendImageTool(createTelegramApi(bot.botToken), chatId)],
+      });
+    },
   });
 
   const projectPreferences = createTelegramProjectPreferenceStore(

@@ -28,11 +28,18 @@ export async function createLocalTelegramSessionClient(options: {
 }): Promise<TelegramSessionClient> {
   const deps = { ...defaultDependencies, ...options.deps };
   const workspaceConfig = deps.loadConfig(options.client.cwd, options.configDeps);
-  const clientTools = deps.createCommandClientTools(workspaceConfig.clientTools ?? []);
+  const clientTools = [
+    ...(options.client.clientTools ?? []),
+    ...deps.createCommandClientTools(workspaceConfig.clientTools ?? []),
+  ];
 
   return await deps.createSdkClient(
     {
-      ...options.client,
+      cwd: options.client.cwd,
+      ...(options.client.persona !== undefined ? { persona: options.client.persona } : {}),
+      ...(options.client.noAgentContextFiles !== undefined
+        ? { noAgentContextFiles: options.client.noAgentContextFiles }
+        : {}),
       initialize: { client: { name: "tau-telegram", version: "1" } },
       clientTools,
       ...(options.reportDiagnostic ? { onDiagnostic: options.reportDiagnostic } : {}),

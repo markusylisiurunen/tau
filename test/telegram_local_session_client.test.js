@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createCommandClientTools } from "../dist/core/client_tools/command_client_tools.js";
 import { createLocalTelegramSessionClient } from "../dist/core/telegram/local_session_client.js";
+import { createTelegramSendImageTool } from "../dist/core/telegram/send_image.js";
 
 function createConfigDeps(home) {
   return {
@@ -80,7 +81,13 @@ describe("local Telegram session client", () => {
       const configDeps = createConfigDeps(home);
       for (const cwd of [defaultWorkspace, selectedWorkspace, disabledWorkspace]) {
         await createLocalTelegramSessionClient({
-          client: { cwd, persona: "gpt-5.6-sol-coder", noAgentContextFiles: true },
+          client: {
+            cwd,
+            ownerId: "telegram:bot:chat:123",
+            clientTools: [createTelegramSendImageTool({ sendDocument: vi.fn() }, 123)],
+            persona: "gpt-5.6-sol-coder",
+            noAgentContextFiles: true,
+          },
           hostConfig,
           configDeps,
           remoteModelCatalog,
@@ -108,8 +115,13 @@ describe("local Telegram session client", () => {
         initialize: { client: { name: "tau-telegram", version: "1" } },
       });
       expect(createSdkClient.mock.calls[1][0].clientTools.map((tool) => tool.schema.name)).toEqual([
+        "send_image",
         "deploy",
       ]);
+      expect(createSdkClient.mock.calls[2][0].clientTools.map((tool) => tool.schema.name)).toEqual([
+        "send_image",
+      ]);
+      expect(createSdkClient.mock.calls[1][0]).not.toHaveProperty("ownerId");
       expect(createSdkClient.mock.calls[1][1]).toBe(hostConfig);
       expect(createSdkClient.mock.calls.map((call) => call[2])).toEqual([
         { remoteModelCatalog },

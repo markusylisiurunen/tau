@@ -128,6 +128,11 @@ export type TelegramApi = {
     options: TelegramSendOptions,
   ): Promise<void>;
   sendRichMessage(chatId: number, markdown: string, options: TelegramSendOptions): Promise<void>;
+  sendDocument(
+    chatId: number,
+    document: { data: Buffer; fileName: string; mimeType: string; caption?: string },
+    options: TelegramSendOptions,
+  ): Promise<void>;
   sendVoice(chatId: number, voice: Buffer, options: TelegramSendOptions): Promise<void>;
   sendChatAction(chatId: number, action: string): Promise<void>;
   downloadFile(fileId: string): Promise<Buffer>;
@@ -1048,7 +1053,7 @@ type TelegramUpload = {
   data: Buffer;
 };
 
-function createTelegramApi(botToken: string): TelegramApi {
+export function createTelegramApi(botToken: string): TelegramApi {
   const apiUrl = `https://api.telegram.org/bot${botToken}`;
 
   async function callTelegramMethod<Result>(
@@ -1217,6 +1222,19 @@ function createTelegramApi(botToken: string): TelegramApi {
         },
         z.unknown(),
         options.signal,
+      );
+    },
+    async sendDocument(chatId, document, options) {
+      await callTelegramMethod(
+        "sendDocument",
+        {
+          chat_id: chatId,
+          disable_content_type_detection: true,
+          ...(document.caption !== undefined ? { caption: document.caption } : {}),
+        },
+        z.unknown(),
+        options.signal,
+        { field: "document", ...document },
       );
     },
     async sendVoice(chatId, voice, options) {

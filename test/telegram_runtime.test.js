@@ -1,4 +1,4 @@
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
@@ -34,6 +34,67 @@ function createTelegramConfig(overrides = {}) {
 }
 
 describe("telegram runtime", () => {
+  it("binds image tools to each session's owning bot and chat", async () => {
+    const root = await mkdtemp(join(tmpdir(), "tau-image-routing-"));
+    const clients = [];
+    let manager;
+    let runtime;
+    const fetchMock = vi.fn(
+      async () => new Response(JSON.stringify({ ok: true, result: {} }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      runtime = await startTelegramRuntime({
+        config: createTelegramConfig({
+          workspaceRoot: join(root, "managed"),
+          projects: { alpha: { directory: root } },
+          bots: { first: { botToken: "first-token" }, second: { botToken: "second-token" } },
+        }),
+        createSessionClient: async (options) => {
+          clients.push(options);
+          throw new Error("stop after client creation");
+        },
+        deps: {
+          startTelegramAdapter: async (options) => {
+            manager = options.sessionManager;
+            return { close: async () => {} };
+          },
+        },
+      });
+      for (const ownerId of ["telegram:first:chat:123", "telegram:second:chat:-456"]) {
+        await manager.createSession({ projectId: "alpha", ownerId });
+      }
+      await vi.waitFor(() => expect(clients).toHaveLength(2));
+      const content = Buffer.from("ffd8ffe000104a464946000101", "hex");
+      for (const client of clients) {
+        await client.clientTools[0].execute(
+          { path: "image.jpg" },
+          {
+            signal: new AbortController().signal,
+            executionEnvironment: {
+              exec: async () => ({
+                exitCode: 0,
+                stdout: JSON.stringify({
+                  identity: "stable",
+                  size: content.length,
+                  content: content.toString("base64"),
+                }),
+              }),
+            },
+          },
+        );
+      }
+      expect(fetchMock.mock.calls.map(([url, init]) => [url, init.body.get("chat_id")])).toEqual([
+        ["https://api.telegram.org/botfirst-token/sendDocument", "123"],
+        ["https://api.telegram.org/botsecond-token/sendDocument", "-456"],
+      ]);
+    } finally {
+      await runtime?.close();
+      vi.unstubAllGlobals();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("starts telegram adapters and closes resources", async () => {
     const logs = [];
     const events = [];

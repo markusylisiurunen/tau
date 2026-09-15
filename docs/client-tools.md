@@ -13,7 +13,7 @@ Tau's TUI advertises two built-in client tools:
 
 The TUI also advertises the configured command client tools selected for its current client-side working directory. This is true for local `tau` and for `tau attach`. During remote attach, the command executable and its environment belong to the attaching machine, not the remote host.
 
-A Telegram runner advertises only the configured command client tools selected from each prepared workspace's Tau configuration. It does not advertise TUI-only tools. Repository, persistent-directory, and composite workspace preparation determines the client-side configuration scope used for that Telegram session. See [Telegram](telegram.md) for workspace ownership.
+A Telegram runner advertises the built-in `send_image` tool and the configured command client tools selected from each prepared workspace's Tau configuration. `send_image` delivers original PNG/JPEG files to the session's chat and is independent of `enabledClientTools`. It does not advertise TUI-only tools. Repository, persistent-directory, and composite workspace preparation determines the client-side configuration scope used for that Telegram session. See [Telegram](telegram.md) for workspace ownership.
 
 Node SDK clients can supply `TauSdkClientTool` handlers directly when they initialize. The same session routing, cancellation, and execution-environment contracts apply.
 

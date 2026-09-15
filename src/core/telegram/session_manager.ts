@@ -23,6 +23,7 @@ import type {
   SessionProtocolTurnRecord,
   SessionProtocolUnobserveResult,
 } from "../../protocol/session_protocol.js";
+import type { TauSdkClientTool } from "../../sdk/types.js";
 import { TauSessionProtocolResponseError } from "../../transport/errors.js";
 import type { TelegramDirectoryProjectConfig, TelegramProjectConfig } from "../config/schema.js";
 import { extractAssistantText } from "../utils/messages.js";
@@ -452,6 +453,8 @@ export type TelegramSessionSubmitOptions = {
 
 export type TelegramSessionClientOptions = {
   cwd: string;
+  ownerId?: string;
+  clientTools?: TauSdkClientTool[];
   persona?: string;
   noAgentContextFiles?: boolean;
 };
@@ -1742,6 +1745,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
 
   private buildClientOptions(entry: SessionEntry, cwd: string): TelegramSessionClientOptions {
     const options: TelegramSessionClientOptions = { cwd };
+    if (entry.record.ownerId) options.ownerId = entry.record.ownerId;
     if (entry.project.persona) {
       options.persona = entry.project.persona;
     }

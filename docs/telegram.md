@@ -294,7 +294,7 @@ Gemini extracts spelling hints from recent conversation with Gemini 3.8 Flash, u
 
 ## Command client tools
 
-Each Telegram session advertises the configured command client tools selected by normal Tau configuration for its prepared workspace. Global `clientTools` definitions provide executable behavior, while the workspace's most-specific `enabledClientTools` value selects an exact subset. An empty list disables all configured client tools for that workspace.
+Telegram provides [`send_image`](tools.md#sending-images-to-telegram) for original PNG/JPEG delivery, plus workspace-selected command tools. Global `clientTools` definitions provide executables; the workspace's nearest `enabledClientTools` selects an exact subset. An empty list disables configured tools, not `send_image`.
 
 These command processes run on the Telegram runner machine with the runner process environment. They can reach the session workspace only through their explicit execution-environment facade, despite physical co-location. Telegram does not advertise TUI-only `diff_review` or `prefill_input` tools.
 

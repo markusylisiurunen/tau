@@ -189,6 +189,14 @@ The TUI advertises `diff_review` and `prefill_input` unless client tools are dis
 
 Configured command client tools are also client-owned. They can run local client processes and use a bounded execution-environment facade when work belongs on the session machine. Remote attachment makes this distinction visible: the TUI process and its tools may be on a laptop while the host and execution environment are elsewhere. See [client tools](client-tools.md) for configuration, protocol helpers, and limits, and [TUI](tui.md) for diff-tool configuration.
 
+### Sending images to Telegram
+
+The Telegram-only `send_image({ path, caption? })` client tool delivers a PNG or JPEG from the session execution environment to the current chat as a Telegram document. It preserves the original bytes and filename without resizing or recompression. Paths may be absolute or relative to the session working directory; captions are plain text, limited to 1,024 UTF-16 code units.
+
+Images may be up to 50,000,000 bytes. Transfers read at most 8,000,000 bytes per execution-environment request and reject non-regular, empty, oversized, or changing files. Format is detected from file content rather than the extension. Image bytes do not enter model context or session history. Reading, validation, cancellation, and Telegram delivery failures fail the tool call. Calls allow five minutes and are not automatically retried, since an interrupted upload may already have reached Telegram.
+
+The runner owns upload credentials and binds the recipient to the session's bot and chat; the agent cannot select a recipient. This built-in tool is independent of configured command-tool selection and does not appear in TUI sessions or subagents. Inspecting an image with `view_image` does not send it to Telegram.
+
 ## When a tool is missing or fails
 
 First identify which owner should provide it:

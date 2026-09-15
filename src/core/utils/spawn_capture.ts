@@ -58,6 +58,8 @@ export async function spawnWithCapture(
     stdio?: ["ignore" | "pipe", "ignore" | "pipe", "ignore" | "pipe"];
     input?: string | Buffer;
     keepStdinOpen?: boolean;
+    onStarted?: () => void;
+    onOutput?: (chunk: Buffer) => void;
     onSpawn?: (child: ChildProcess) => void;
   } = {},
 ): Promise<SpawnCaptureResult> {
@@ -210,7 +212,10 @@ export async function spawnWithCapture(
       }
     }
 
+    child.once("spawn", () => options.onStarted?.());
+
     const onData = (chunk: Buffer, target: "stdout" | "stderr") => {
+      options.onOutput?.(chunk);
       if (captureFrozen) return;
 
       captureBytes += chunk.length;

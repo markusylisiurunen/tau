@@ -35,6 +35,10 @@ export const TOOL_NAMES = [
 export type ToolName = (typeof TOOL_NAMES)[number];
 
 export const HOST_TOOL_NAMES = [
+  "list_bash_jobs",
+  "read_bash_job",
+  "stop_bash_job",
+  "wait_for_bash_jobs",
   ...TOOL_NAMES,
   TOOL_NAME_TAU_DOCS,
   TOOL_NAME_GET_GOAL,

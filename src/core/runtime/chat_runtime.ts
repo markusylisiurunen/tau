@@ -19,6 +19,7 @@ import { createAutoCompactionArchiver } from "../session/auto_compaction_archive
 import { buildGoalPolicy, GOAL_TURN_USER_METADATA } from "../session/goal.js";
 import { AgentSupervisor } from "../subagents/agent_supervisor.js";
 import type { SubagentEvent } from "../subagents/types.js";
+import { BashJobRegistry } from "../tools/bash_jobs.js";
 import { ToolCatalog } from "../tools/catalog.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
 import type { GoalManager } from "../tools/goal.js";
@@ -65,6 +66,7 @@ export type CreateChatRuntimeOptions = {
 
 export class ChatRuntime {
   readonly agent: AgentRuntime;
+  readonly bashJobs = new BashJobRegistry();
   readonly supervisor: AgentSupervisor;
   private currentPersona: Persona;
   private currentConfig: Config;
@@ -329,6 +331,7 @@ export class ChatRuntime {
       modelResolver: this.currentModelResolver,
       supervisor: this.supervisor,
       goalManager: this.goalManager,
+      bashJobs: this.bashJobs,
       history: this.historyQuery,
       ...(this.resolveSubagentPrompts
         ? { resolveSubagentPrompts: this.resolveSubagentPrompts }

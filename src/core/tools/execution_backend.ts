@@ -23,6 +23,8 @@ export type BashExecutionResult = {
 };
 
 export type BashExecutionOptions = {
+  onStarted?: () => void;
+  onOutput?: (chunk: Buffer) => void;
   timeoutMs?: number;
   signal?: AbortSignal;
   cwd?: string;
@@ -177,6 +179,8 @@ export function createLocalToolExecutionBackend(
         detached: true,
         killProcessGroup: true,
         cwd: resolveCwd(options.cwd),
+        onStarted: options.onStarted,
+        onOutput: options.onOutput,
         signal: options.signal,
         timeoutMs: effectiveTimeoutMs,
         maxCaptureBytes: options.maxCaptureBytes ?? DEFAULT_COMMAND_CAPTURE_BYTES,

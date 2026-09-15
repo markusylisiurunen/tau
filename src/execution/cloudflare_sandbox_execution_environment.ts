@@ -249,6 +249,8 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
       signal?: AbortSignal;
       cwd?: string;
       env?: Record<string, string>;
+      onStarted?: () => void;
+      onOutput?: (chunk: Buffer) => void;
       maxCaptureBytes?: number;
       stdin?: Buffer;
     } = {},
@@ -268,13 +270,17 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
     );
     const stdinPath =
       runOptions.stdin !== undefined ? `/tmp/tau-exec-${randomUUID()}.stdin` : undefined;
+    let dedicatedSessionId: string | undefined;
     let sessionAcquired = false;
     try {
-      return await runQueued(cwd, signal, async () => {
+      const execute = async () => {
         if (stdinPath && runOptions.stdin) {
           await client.writeFile(sandboxId, stdinPath, runOptions.stdin, signal);
         }
-        const sessionId = await ensureCommandSession(cwd, signal);
+        if (runOptions.onStarted) {
+          dedicatedSessionId = await client.createSession(sandboxId, { cwd, signal });
+        }
+        const sessionId = dedicatedSessionId ?? (await ensureCommandSession(cwd, signal));
         sessionAcquired = true;
         const executionArgv: [string, ...string[]] = stdinPath
           ? ["bash", "-c", 'exec "$@" < "$0"', stdinPath, ...argv]
@@ -284,12 +290,15 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
           cwd,
           timeoutMs: runOptions.timeoutMs,
           signal,
+          onStarted: runOptions.onStarted,
+          onOutput: runOptions.onOutput,
           maxCaptureBytes: runOptions.maxCaptureBytes,
           sessionId,
         });
-      });
+      };
+      return await (runOptions.onStarted ? execute() : runQueued(cwd, signal, execute));
     } catch (error) {
-      if (sessionAcquired && (signal.aborted || isAbortError(error))) {
+      if (!runOptions.onStarted && sessionAcquired && (signal.aborted || isAbortError(error))) {
         scheduleCommandSessionReset(cwd);
       }
       if (timeoutSignal?.aborted) {
@@ -300,6 +309,13 @@ export function createCloudflareSandboxToolExecutionBackend(options: {
       }
       throw error;
     } finally {
+      if (dedicatedSessionId) {
+        await client.deleteSession(
+          sandboxId,
+          dedicatedSessionId,
+          AbortSignal.timeout(HELPER_OPERATION_TIMEOUT_MS),
+        );
+      }
       if (stdinPath) {
         await client
           .exec(sandboxId, {
@@ -437,6 +453,8 @@ export class CloudflareSandboxBridgeClient {
       cwd?: string;
       timeoutMs?: number;
       signal?: AbortSignal;
+      onStarted?: () => void;
+      onOutput?: (chunk: Buffer) => void;
       maxCaptureBytes?: number;
       sessionId?: string;
     },
@@ -470,7 +488,8 @@ export class CloudflareSandboxBridgeClient {
         throw new Error(`Cloudflare Sandbox bridge '${this.bridgeId}' returned an empty exec body`);
       }
 
-      return await parseExecSse(response.body, options.maxCaptureBytes);
+      options.onStarted?.();
+      return await parseExecSse(response.body, options.maxCaptureBytes, options.onOutput);
     } finally {
       options.signal?.removeEventListener("abort", abort);
     }
@@ -610,6 +629,7 @@ function terminatedExecutionResult(reason: "timeout" | "abort"): BashExecutionRe
 async function parseExecSse(
   body: ReadableStream<Uint8Array>,
   maxCaptureBytes: number = DEFAULT_COMMAND_CAPTURE_BYTES,
+  onOutput?: (chunk: Buffer) => void,
 ): Promise<BashExecutionResult> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -621,6 +641,7 @@ async function parseExecSse(
   let truncated = false;
 
   const appendOutput = (target: "stdout" | "stderr", chunk: Buffer) => {
+    onOutput?.(chunk);
     truncated = output.append(chunk) || truncated;
     if (target === "stdout") {
       truncated = stdout.append(chunk) || truncated;

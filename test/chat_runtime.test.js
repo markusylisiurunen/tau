@@ -254,6 +254,10 @@ Ship &lt;all&gt; requirements
 
     expect(configuredWithoutPersona.agent.spec.tools.schemas.map((tool) => tool.name)).toEqual([
       "bash",
+      "list_bash_jobs",
+      "read_bash_job",
+      "stop_bash_job",
+      "wait_for_bash_jobs",
       "tau_docs",
       "get_goal",
       "create_goal",
@@ -261,6 +265,10 @@ Ship &lt;all&gt; requirements
     ]);
     expect(personaWithoutConfig.agent.spec.tools.schemas.map((tool) => tool.name)).toEqual([
       "bash",
+      "list_bash_jobs",
+      "read_bash_job",
+      "stop_bash_job",
+      "wait_for_bash_jobs",
       "tau_docs",
       "get_goal",
       "create_goal",
@@ -269,6 +277,10 @@ Ship &lt;all&gt; requirements
     expect(enabled.agent.spec.tools.schemas.map((tool) => tool.name)).toEqual([
       "bash",
       "nook",
+      "list_bash_jobs",
+      "read_bash_job",
+      "stop_bash_job",
+      "wait_for_bash_jobs",
       "tau_docs",
       "get_goal",
       "create_goal",

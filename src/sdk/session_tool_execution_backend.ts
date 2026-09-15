@@ -21,6 +21,11 @@ export function createSdkToolExecutionBackend(options: {
   const { executionEnvironment, cwd } = options;
 
   const runBash: ToolExecutionBackend["runBash"] = async (command, runOptions = {}) => {
+    if (runOptions.onStarted || runOptions.onOutput) {
+      throw new Error(
+        "Streaming command callbacks are unavailable through the client execution facade.",
+      );
+    }
     const result = await executionEnvironment.exec(command, {
       ...(runOptions.args !== undefined ? { args: runOptions.args } : {}),
       ...(runOptions.env !== undefined ? { env: runOptions.env } : {}),

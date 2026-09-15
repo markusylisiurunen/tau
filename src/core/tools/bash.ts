@@ -13,6 +13,7 @@ import {
 } from "../utils/truncate.js";
 import { formatZodError } from "../utils/zod.js";
 import type { ToolActivity } from "./activity.js";
+import type { BashJobRegistry } from "./bash_jobs.js";
 import type { ToolExecutionBackend } from "./execution_backend.js";
 import {
   buildToolRunPresentation,
@@ -79,6 +80,7 @@ export const BASH_DEFAULT_TIMEOUT_MS = 60_000;
 
 const BASH_DESCRIPTION = [
   "Execute a command in a fresh non-interactive login Bash in the current working directory and return its output.",
+  "Set background: true for a session-owned command that keeps running across turns. Use this instead of tmux or shell &. Returns a job ID after launch, not a readiness guarantee; use the Bash job tools to read, wait, or stop it. Tau stops jobs on orderly session closure, not after every turn.",
   "Interactive commands are not supported (no TTY/stdin); commands that prompt or open editors will hang or fail.",
 ].join(" ");
 
@@ -88,10 +90,10 @@ const BASH_WORKING_DIRECTORY_DESCRIPTION =
   "Single-line working directory for the command. If omitted, uses the current working directory. Prefer this over `cd` in the command.";
 
 const BASH_TIMEOUT_DESCRIPTION =
-  "Timeout in milliseconds. If omitted, defaults to 60 seconds. Use a longer timeout for known slow operations like builds or large clones.";
+  "Timeout in milliseconds. If omitted, foreground commands default to 60 seconds; background jobs have no execution deadline. Use a longer timeout for known slow operations like builds or large clones.";
 
 const BASH_MAX_OUTPUT_TOKENS_DESCRIPTION = [
-  "Optional maximum number of output tokens to return to the model.",
+  "Optional maximum number of output tokens to return to the model. Foreground only; omit for background jobs, which use bounded log tails.",
   `Defaults to ${BASH_MODEL_DEFAULT_MAX_TOKENS} tokens if unset. Most commands should leave this unset. Usually it is better to run a more scoped command than to request more output. Do not set it speculatively or just in case. Only set it when you genuinely need more output, such as after a truncated result or when the user explicitly asks for more detail.`,
   `When more output is truly needed, set a value between ${BASH_MODEL_DEFAULT_MAX_TOKENS} and ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS}.`,
   `Only exceed ${BASH_MODEL_MAX_AUTONOMOUS_TOKENS} when the user explicitly requests more output, up to ${BASH_MAX_OUTPUT_TOKENS}.`,
@@ -104,6 +106,9 @@ export const BASH_TOOL: Tool = {
   description: BASH_DESCRIPTION,
   parameters: Type.Object(
     {
+      background: Type.Optional(
+        Type.Boolean({ description: "Run as a session-owned background job." }),
+      ),
       command: Type.String({
         description: BASH_COMMAND_DESCRIPTION,
       }),
@@ -375,6 +380,7 @@ function resolveBashWorkingDirectory(args: {
 
 const bashArgsSchema = z
   .object({
+    background: z.boolean().optional(),
     command: z.string(),
     workingDirectory: z.string().optional(),
     timeout: z.number().optional(),
@@ -386,6 +392,7 @@ function parseBashArgs(raw: unknown):
   | {
       ok: true;
       data: {
+        background?: boolean;
         command: string;
         workingDirectory?: string;
         timeout?: number;
@@ -431,6 +438,14 @@ function parseBashArgs(raw: unknown):
   if (parsed.data.timeout !== undefined && parsed.data.timeout <= 0) {
     return { ok: false, error: "timeout must be greater than 0.", commandForDisplay };
   }
+  if (parsed.data.background && hasMaxOutputTokens) {
+    return {
+      ok: false,
+      error:
+        "maxOutputTokens is only available for foreground commands; background jobs use bounded log tails.",
+      commandForDisplay,
+    };
+  }
   if (parsed.data.maxOutputTokens !== undefined && parsed.data.maxOutputTokens <= 0) {
     return {
       ok: false,
@@ -453,6 +468,7 @@ function parseBashArgs(raw: unknown):
     ok: true,
     data: {
       command,
+      background: parsed.data.background,
       workingDirectory,
       timeout: parsed.data.timeout,
       maxOutputTokens: clampOutputTokens(parsed.data.maxOutputTokens),
@@ -467,7 +483,11 @@ function getBashSubject(raw: unknown): string {
   return parsed.ok ? parsed.data.commandForDisplay : parsed.commandForDisplay;
 }
 
-export function createBashToolDefinition(backend: ToolExecutionBackend, cwd: string): AgentTool {
+export function createBashToolDefinition(
+  backend: ToolExecutionBackend,
+  cwd: string,
+  jobs: BashJobRegistry,
+): AgentTool {
   return {
     schema: BASH_TOOL,
     describe: (toolCall) => {
@@ -529,6 +549,30 @@ export function createBashToolDefinition(backend: ToolExecutionBackend, cwd: str
         context,
         async () => {
           try {
+            if (parsedArgs.data.background) {
+              const text = await jobs.start(
+                backend,
+                command,
+                effectiveWorkingDirectory,
+                timeout,
+                signal,
+              );
+              const outcome = createTextToolOutcome(text, "succeeded");
+              const uiEvent: ToolActivity = {
+                type: "bash_execution",
+                toolCallId: toolCall.id,
+                command,
+                exitCode: null,
+                presentation: buildToolRunPresentation({
+                  toolName: TOOL_NAME_BASH,
+                  subject: command,
+                  operation: "background",
+                  details: text.split("\n").map((text) => ({ text })),
+                  actionOverrides: { succeeded: "started" },
+                }),
+              };
+              return { ...outcome, uiEvent };
+            }
             const startedAt = Date.now();
             const effectiveTimeoutMs = timeout ?? BASH_DEFAULT_TIMEOUT_MS;
             const {

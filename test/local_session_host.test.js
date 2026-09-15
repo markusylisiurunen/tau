@@ -5178,6 +5178,65 @@ describe("LocalSessionHost", () => {
     await host.shutdown();
   });
 
+  it("retains background jobs across turns and observer release, then cleans up on shutdown", async () => {
+    const host = createHost(new MemorySessionStore());
+    const session = await host.createSession(localCreateInput);
+    const backend = createLocalToolExecutionBackend();
+    try {
+      const started = await session.runtime.bashJobs.start(
+        backend,
+        "sleep 100",
+        process.cwd(),
+        undefined,
+        new AbortController().signal,
+      );
+      const id = started.match(/`([^`]+)`/)[1];
+      session.runtime.agent.spec.model.stream = () => ({
+        async *[Symbol.asyncIterator]() {},
+        async result() {
+          return fauxAssistantMessage("done");
+        },
+      });
+      await session.record({ text: "first turn" });
+      await session.runTurn();
+      session.interruptActiveWork();
+      host.releaseSession(session);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(session.isDisposed).toBe(false);
+      const reattached = await host.observeSession(session.sessionId);
+      expect(reattached).toBe(session);
+      await session.record({ text: "second turn" });
+      await session.runTurn();
+      expect(session.runtime.bashJobs.format([id])).toContain("running");
+      host.releaseSession(reattached);
+      await host.shutdown();
+      expect(session.runtime.bashJobs.format([id])).toContain("stopped");
+    } finally {
+      await host.shutdown();
+      await backend.dispose();
+    }
+  });
+
+  it("evicts a released session when its last Bash job exits", async () => {
+    const host = createHost(new MemorySessionStore());
+    const session = await host.createSession(localCreateInput);
+    const backend = createLocalToolExecutionBackend();
+    try {
+      await session.runtime.bashJobs.start(
+        backend,
+        "sleep 0.1",
+        process.cwd(),
+        undefined,
+        new AbortController().signal,
+      );
+      host.releaseSession(session);
+      await vi.waitFor(() => expect(session.isDisposed).toBe(true));
+    } finally {
+      await host.shutdown();
+      await backend.dispose();
+    }
+  });
+
   it("keeps an unobserved live session until active work settles", async () => {
     const store = new MemorySessionStore();
     const host = createHost(store);

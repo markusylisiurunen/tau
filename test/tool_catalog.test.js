@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { BashJobRegistry } from "../dist/core/tools/bash_jobs.js";
 import { ToolCatalog } from "../dist/core/tools/catalog.js";
 
 function createBackend() {
@@ -50,10 +51,64 @@ describe("ToolCatalog", () => {
       createBackend(),
       "/workspace/child",
       {},
+      new BashJobRegistry(),
       history,
     );
 
     expect(registry.schemas.map((tool) => tool.name)).toEqual(["history", "tau_docs"]);
+  });
+
+  it("shares Bash jobs across child registries without losing their working directory", async () => {
+    const jobs = new BashJobRegistry();
+    const backend = createBackend();
+    backend.runBash = vi.fn(
+      (_command, options) =>
+        new Promise((resolve) => {
+          options.onStarted();
+          options.onOutput(Buffer.from(options.cwd));
+          options.signal.addEventListener(
+            "abort",
+            () =>
+              resolve({
+                output: options.cwd,
+                exitCode: null,
+                aborted: true,
+                timedOut: false,
+                closeSignal: "SIGTERM",
+                truncated: false,
+              }),
+            { once: true },
+          );
+        }),
+    );
+    const first = ToolCatalog.createSubagentRegistry(
+      ["bash"],
+      backend,
+      "/workspace/first",
+      {},
+      jobs,
+    );
+    const second = ToolCatalog.createSubagentRegistry(
+      ["bash"],
+      backend,
+      "/workspace/second",
+      {},
+      jobs,
+    );
+    try {
+      const started = await execute(first, "bash", { command: "server", background: true });
+      const id = started.content[0].text.match(/`([^`]+)`/)[1];
+      const listed = await execute(second, "list_bash_jobs", {});
+      expect(listed.content[0].text).toContain(id);
+      expect(listed.content[0].text).toContain("/workspace/first");
+      expect(backend.runBash).toHaveBeenCalledWith(
+        "server",
+        expect.objectContaining({ cwd: "/workspace/first", timeoutMs: undefined }),
+      );
+      expect((await execute(second, "stop_bash_job", { id })).content[0].text).toContain("stopped");
+    } finally {
+      await jobs.dispose();
+    }
   });
 
   it("scopes every child filesystem and process tool to the child working directory", async () => {
@@ -63,6 +118,7 @@ describe("ToolCatalog", () => {
       backend,
       "/workspace/child",
       {},
+      new BashJobRegistry(),
     );
 
     await execute(registry, "write", { path: "created.txt", content: "created" });

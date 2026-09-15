@@ -13,6 +13,7 @@ import { createDefaultCoreDeps } from "../core/runtime/deps.js";
 import { composeSessionPrompts } from "../core/runtime/session_prompt_composer.js";
 import { createAutoCompactionArchiver } from "../core/session/auto_compaction_archive.js";
 import type { SubagentToolName } from "../core/subagents/types.js";
+import type { BashJobRegistry } from "../core/tools/bash_jobs.js";
 import { ToolCatalog } from "../core/tools/catalog.js";
 import type { Persona, ReasoningEffort, Skill } from "../core/types.js";
 import {
@@ -57,6 +58,7 @@ type EphemeralAgentThreadForkSource = {
 };
 
 export type HostedEphemeralAgentSessionOptions = {
+  bashJobs: BashJobRegistry;
   contextId: string;
   sessionId: string;
   sessionStartedAt: number;
@@ -172,6 +174,7 @@ export class HostedEphemeralAgentSession {
     });
     return new EphemeralAgentThread({
       threadId,
+      bashJobs: this.options.bashJobs,
       persona: this.options.persona,
       systemPrompt: [composition.baseSystemPrompt, this.options.instructions].join("\n\n"),
       config: this.options.config,
@@ -192,6 +195,7 @@ export class HostedEphemeralAgentSession {
 }
 
 type EphemeralAgentThreadOptions = {
+  bashJobs: BashJobRegistry;
   threadId: string;
   persona: Persona;
   systemPrompt: string;
@@ -234,6 +238,7 @@ class EphemeralAgentThread {
           options.backend,
           options.cwd,
           options.config,
+          options.bashJobs,
         ),
       });
     this.onUpdate = options.onUpdate;

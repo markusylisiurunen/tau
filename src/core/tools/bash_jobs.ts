@@ -285,14 +285,27 @@ export function createBashJobToolDefinitions(jobs: BashJobRegistry): AgentTool[]
       execute: (call, context) =>
         executeTool(context, async () => {
           const parsed = parser.safeParse(call.arguments);
-          if (!parsed.success)
-            return createTextToolOutcome(
-              `Invalid arguments: ${formatZodError(parsed.error)}`,
-              "blocked",
-            );
+          if (!parsed.success) {
+            const reason = `Invalid arguments: ${formatZodError(parsed.error)}`;
+            return {
+              ...createTextToolOutcome(reason, "blocked"),
+              uiEvent: {
+                type: "tool_call_blocked" as const,
+                toolCallId: call.id,
+                toolName: schema.name,
+                reason,
+                presentation: buildToolRunPresentation({
+                  toolName: schema.name,
+                  subject: "Bash jobs",
+                  details: [{ text: reason }],
+                }),
+              },
+            };
+          }
+          const args = parsed.data;
+          const subject = "ids" in args ? String(args.ids) : "id" in args ? args.id : "Bash jobs";
           try {
             context.signal.throwIfAborted();
-            const args = parsed.data;
             const text =
               "ids" in args
                 ? await jobs.wait(
@@ -320,10 +333,25 @@ export function createBashJobToolDefinitions(jobs: BashJobRegistry): AgentTool[]
               },
             };
           } catch (error) {
-            return createTextToolOutcome(
-              error instanceof Error ? error.message : String(error),
-              context.signal.aborted ? "cancelled" : "failed",
-            );
+            const reason = context.signal.aborted
+              ? "Bash job operation was cancelled."
+              : error instanceof Error
+                ? error.message
+                : String(error);
+            return {
+              ...createTextToolOutcome(reason, context.signal.aborted ? "cancelled" : "failed"),
+              uiEvent: {
+                type: "tool_call_finished" as const,
+                toolCallId: call.id,
+                toolName: schema.name,
+                status: "error" as const,
+                presentation: buildToolRunPresentation({
+                  toolName: schema.name,
+                  subject,
+                  details: context.signal.aborted ? [] : [{ text: reason }],
+                }),
+              },
+            };
           }
         }),
     }),

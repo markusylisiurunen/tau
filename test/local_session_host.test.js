@@ -5178,6 +5178,51 @@ describe("LocalSessionHost", () => {
     await host.shutdown();
   });
 
+  it("persists Bash job failure diagnostics in the TUI facet and ordered deltas", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const session = await host.createSession(localCreateInput);
+    try {
+      const call = fauxToolCall("read_bash_job", { id: "stale-job" }, { id: "read-job" });
+      const toolMessage = fauxAssistantMessage([call], { stopReason: "toolUse" });
+      const responses = [toolMessage, fauxAssistantMessage("done")];
+      session.runtime.agent.spec.model.stream = () => {
+        const response = responses.shift();
+        return {
+          async *[Symbol.asyncIterator]() {
+            if (response !== toolMessage) return;
+            yield { type: "toolcall_start", contentIndex: 0, partial: toolMessage };
+            yield { type: "toolcall_end", contentIndex: 0, toolCall: call, partial: toolMessage };
+          },
+          async result() {
+            return response;
+          },
+        };
+      };
+      const previous = await session.snapshot();
+      const deltas = [];
+      session.onDelta((delta) => deltas.push(delta));
+      await session.record({ text: "read the old job" });
+      await session.runTurn();
+      const snapshot = await session.snapshot();
+      expect(deltas.reduce(applySessionProtocolDelta, previous)).toEqual(snapshot);
+      expect(snapshot.tools[call.id].status).toBe("failed");
+      const facet = snapshot.facets[`tool-ui-${call.id}`];
+      expect(facet.version).toBe(TOOL_UI_FACET_VERSION);
+      expect(facet.data.events.at(-1)).toMatchObject({
+        type: "tool_call_finished",
+        status: "error",
+        presentation: {
+          subject: "stale-job",
+          details: [{ text: expect.stringContaining("Unknown Bash job 'stale-job'") }],
+        },
+      });
+      await expect(store.loadSession(session.sessionId)).resolves.toEqual(snapshot);
+    } finally {
+      await host.shutdown();
+    }
+  });
+
   it("retains background jobs across turns and observer release, then cleans up on shutdown", async () => {
     const host = createHost(new MemorySessionStore());
     const session = await host.createSession(localCreateInput);

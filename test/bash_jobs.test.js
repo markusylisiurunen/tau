@@ -149,6 +149,85 @@ it("defaults waits to 60 seconds, validates the cap, and retains a running job o
   }
 });
 
+it.each(["read_bash_job", "stop_bash_job", "wait_for_bash_jobs"])(
+  "%s presents unknown IDs and validation failures, but keeps cancellation quiet",
+  async (name) => {
+    const tool = createBashJobToolDefinitions(new BashJobRegistry()).find(
+      (tool) => tool.schema.name === name,
+    );
+    const args = name === "wait_for_bash_jobs" ? { ids: ["stale-job"] } : { id: "stale-job" };
+    const events = [];
+    const controller = new AbortController();
+    const executionContext = {
+      ...context(controller.signal),
+      emitActivity: async (event) => events.push(event),
+    };
+    const call = { id: "job-call", name, arguments: args };
+    const failed = await tool.execute(call, executionContext);
+    expect(failed.outcome).toBe("failed");
+    expect(events.at(-1)).toMatchObject({
+      type: "tool_call_finished",
+      status: "error",
+      presentation: {
+        subject: "stale-job",
+        actionByStatus: { failed: "failed", cancelled: "cancelled" },
+        details: [{ text: failed.content[0].text }],
+      },
+    });
+    expect(failed.content[0].text).toContain("Unknown Bash job 'stale-job'");
+
+    const blocked = await tool.execute({ ...call, arguments: {} }, executionContext);
+    expect(blocked.outcome).toBe("blocked");
+    expect(events.at(-1)).toMatchObject({
+      type: "tool_call_blocked",
+      presentation: { details: [{ text: blocked.content[0].text }] },
+    });
+    expect(blocked.content[0].text).toMatch(/^Invalid arguments:/);
+
+    controller.abort();
+    const cancelled = await tool.execute(call, executionContext);
+    expect(cancelled.outcome).toBe("cancelled");
+    expect(cancelled.content[0].text).toBe("Bash job operation was cancelled.");
+    expect(events.at(-1).presentation).toMatchObject({ subject: "stale-job", details: [] });
+  },
+);
+
+it("presents bounded cleanup diagnostics without changing backend text casing", async () => {
+  const jobs = new BashJobRegistry();
+  const reason = `Failed to terminate PID 123: ${"x".repeat(10000)}`;
+  const backend = {
+    runBash: (_command, options) =>
+      new Promise((_, reject) => {
+        options.onStarted();
+        options.signal.addEventListener("abort", () => reject(new Error(reason)), { once: true });
+      }),
+  };
+  try {
+    const id = jobId(
+      await jobs.start(backend, "ServerCommand", "/Workspace", undefined, context().signal),
+    );
+    const tool = createBashJobToolDefinitions(jobs).find(
+      (tool) => tool.schema.name === "stop_bash_job",
+    );
+    const events = [];
+    const outcome = await tool.execute(
+      { id: "stop-call", name: "stop_bash_job", arguments: { id } },
+      { ...context(), emitActivity: async (event) => events.push(event) },
+    );
+    expect(outcome.outcome).toBe("failed");
+    expect(outcome.content[0].text).toBe(reason);
+    expect(events.at(-1).presentation.subject).toBe(id);
+    const diagnostic = events
+      .at(-1)
+      .presentation.details.map((line) => line.text)
+      .join("\n");
+    expect(diagnostic).toContain("Failed to terminate PID 123:");
+    expect(diagnostic.length).toBeLessThan(1000);
+  } finally {
+    await jobs.dispose();
+  }
+});
+
 it("bounds job records and reports backend cleanup failures", async () => {
   const jobs = new BashJobRegistry();
   const backend = {

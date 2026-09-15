@@ -5,7 +5,7 @@ import { Type } from "typebox";
 import { z } from "zod";
 import { truncateForTokens, truncateToBytesFromEnd } from "../utils/truncate.js";
 import { formatZodError } from "../utils/zod.js";
-import { formatBashToolResultText, getBashTerminationNotice } from "./bash.js";
+import { formatBashToolResultText } from "./bash.js";
 import type { BashExecutionResult, ToolExecutionBackend } from "./execution_backend.js";
 import { buildToolRunPresentation } from "./presentation.js";
 import { type AgentTool, createTextToolOutcome, executeTool } from "./registry.js";
@@ -19,7 +19,6 @@ interface BashJob {
   id: string;
   command: string;
   cwd: string;
-  timeout: number | undefined;
   output: string;
   truncated: boolean;
   controller: AbortController;
@@ -28,7 +27,7 @@ interface BashJob {
     | { status: "running" }
     | {
         status: "finished";
-        result: Pick<BashExecutionResult, "exitCode" | "aborted" | "timedOut" | "closeSignal">;
+        result: Pick<BashExecutionResult, "exitCode" | "aborted" | "closeSignal">;
       }
     | { status: "failed"; error: string };
 }
@@ -41,7 +40,6 @@ export class BashJobRegistry {
     backend: ToolExecutionBackend,
     command: string,
     cwd: string,
-    timeout: number | undefined,
     signal: AbortSignal,
   ): Promise<string> {
     signal.throwIfAborted();
@@ -62,7 +60,6 @@ export class BashJobRegistry {
       id: randomUUID(),
       command: truncateForTokens(command, { maxTokens: 128, strategy: "middle" }).content,
       cwd: truncateForTokens(cwd, { maxTokens: 128, strategy: "middle" }).content,
-      timeout,
       output: "",
       truncated: false,
       controller: new AbortController(),
@@ -77,7 +74,6 @@ export class BashJobRegistry {
       try {
         const result = await backend.runBash(command, {
           cwd,
-          timeoutMs: timeout,
           signal: job.controller.signal,
           maxCaptureBytes: MAX_OUTPUT_BYTES,
           onStarted: started,
@@ -89,8 +85,8 @@ export class BashJobRegistry {
         });
         job.output = truncateToBytesFromEnd(job.output + decoder.end(), MAX_OUTPUT_BYTES);
         job.truncated ||= result.truncated;
-        const { exitCode, aborted, timedOut, closeSignal } = result;
-        job.state = { status: "finished", result: { exitCode, aborted, timedOut, closeSignal } };
+        const { exitCode, aborted, closeSignal } = result;
+        job.state = { status: "finished", result: { exitCode, aborted, closeSignal } };
       } catch (error) {
         job.state = {
           status: "failed",
@@ -132,16 +128,20 @@ export class BashJobRegistry {
           const state = job.state;
           const status =
             state.status === "finished"
-              ? state.result.timedOut
-                ? "timed out"
-                : state.result.aborted
-                  ? "stopped"
-                  : state.result.exitCode === 0
-                    ? "succeeded"
-                    : "failed"
+              ? state.result.aborted
+                ? "stopped"
+                : state.result.exitCode === 0
+                  ? "succeeded"
+                  : "failed"
               : state.status;
           const lines = [`\`${id}\` · ${job.command}`, status, `cwd ${job.cwd}`];
           if (state.status === "failed") lines.push(state.error);
+          if (state.status === "finished") {
+            lines.push(state.result.exitCode === null ? "exit ?" : `exit ${state.result.exitCode}`);
+            if (state.result.aborted) lines.push("Command was cancelled.");
+            if (state.result.closeSignal)
+              lines.push(`Command was terminated by signal ${state.result.closeSignal}.`);
+          }
           if (includeOutput) {
             const model = truncateForTokens(stripAnsi(job.output), {
               maxTokens: Math.min(2048, Math.floor(8192 / Math.max(1, jobs.length))),
@@ -151,16 +151,9 @@ export class BashJobRegistry {
               "",
               formatBashToolResultText({
                 truncationInfo: { output: model.content, model, captureTruncated: job.truncated },
-                exitCode: state.status === "finished" ? state.result.exitCode : null,
+                exitCode: null,
               }),
             );
-          }
-          if (state.status === "finished") {
-            const notice = getBashTerminationNotice({
-              ...state.result,
-              timeoutMs: job.timeout ?? 0,
-            });
-            if (notice) lines.push(notice);
           }
           return lines.join("\n");
         })
@@ -168,15 +161,20 @@ export class BashJobRegistry {
     );
   }
 
-  async stop(id: string): Promise<string> {
+  async stop(id: string, includeOutput: boolean): Promise<string> {
     const job = this.get(id);
     job.controller.abort();
     await job.done;
     if (job.state.status === "failed") throw new Error(job.state.error);
-    return this.formatJobs([job], true);
+    return this.formatJobs([job], includeOutput);
   }
 
-  async wait(ids: string[], timeout: number, signal: AbortSignal): Promise<string> {
+  async wait(
+    ids: string[],
+    timeout: number,
+    signal: AbortSignal,
+    includeOutput: boolean,
+  ): Promise<string> {
     if (!Number.isInteger(timeout) || timeout <= 0 || timeout > BASH_JOB_WAIT_MAX_MS)
       throw new Error(`timeout must be a positive integer up to ${BASH_JOB_WAIT_MAX_MS}.`);
     const jobs = [...new Set(ids)].map((id) => this.get(id));
@@ -195,7 +193,7 @@ export class BashJobRegistry {
           signal.addEventListener("abort", abort, { once: true });
         }),
       ]);
-      return `${this.formatJobs(jobs, true)}${timedOut ? `\n\nWait timed out after ${timeout}ms; jobs are still running.` : ""}`;
+      return `${this.formatJobs(jobs, includeOutput)}${timedOut ? `\n\nWait timed out after ${timeout}ms; jobs are still running.` : ""}`;
     } finally {
       clearTimeout(timer);
       signal.removeEventListener("abort", abort);
@@ -224,12 +222,31 @@ export class BashJobRegistry {
   }
 }
 
+function buildBashJobPresentation(
+  toolName: string,
+  args: { id?: string; ids?: string[] } | undefined,
+  text?: string,
+) {
+  return buildToolRunPresentation({
+    toolName,
+    operation: "bash",
+    subject: args ? (args.ids?.join(", ") ?? args.id ?? "jobs") : "(invalid arguments)",
+    details: text?.split("\n").map((text) => ({ text })),
+  });
+}
+
 export function createBashJobToolDefinitions(jobs: BashJobRegistry): AgentTool[] {
   const id = Type.String({ minLength: 1, pattern: "^[^\\r\\n]+$" });
   const idSchema = z
     .string()
     .min(1)
     .regex(/^[^\r\n]+$/);
+  const includeOutput = Type.Optional(
+    Type.Boolean({
+      description:
+        "Include the captured output tail; defaults to true. Set false for metadata only. Status, exit code, termination reason, and operational errors are always included.",
+    }),
+  );
   return [
     {
       name: "list_bash_jobs",
@@ -242,15 +259,15 @@ export function createBashJobToolDefinitions(jobs: BashJobRegistry): AgentTool[]
       name: "read_bash_job",
       description:
         "Read a Bash job's status and bounded output tail immediately (up to 2048 tokens from 64 KiB retained output).",
-      parameters: Type.Object({ id }, { additionalProperties: false }),
-      parser: z.object({ id: idSchema }).strict(),
+      parameters: Type.Object({ id, includeOutput }, { additionalProperties: false }),
+      parser: z.object({ id: idSchema, includeOutput: z.boolean().optional() }).strict(),
     },
     {
       name: "stop_bash_job",
       description:
         "Stop a Bash job and its process group, escalating to forced termination if needed.",
-      parameters: Type.Object({ id }, { additionalProperties: false }),
-      parser: z.object({ id: idSchema }).strict(),
+      parameters: Type.Object({ id, includeOutput }, { additionalProperties: false }),
+      parser: z.object({ id: idSchema, includeOutput: z.boolean().optional() }).strict(),
     },
     {
       name: "wait_for_bash_jobs",
@@ -258,6 +275,7 @@ export function createBashJobToolDefinitions(jobs: BashJobRegistry): AgentTool[]
         "Wait for any requested Bash job to exit, not for readiness. Use logs or readiness checks for servers. Returns after 60 seconds by default, at most 5 minutes. Timeout and interruption cancel only the wait, not jobs. Completed results remain readable.",
       parameters: Type.Object(
         {
+          includeOutput,
           ids: Type.Array(id, { minItems: 1, maxItems: MAX_JOBS }),
           timeout: Type.Optional(
             Type.Integer({
@@ -271,6 +289,7 @@ export function createBashJobToolDefinitions(jobs: BashJobRegistry): AgentTool[]
       ),
       parser: z
         .object({
+          includeOutput: z.boolean().optional(),
           ids: z.array(idSchema).min(1).max(MAX_JOBS),
           timeout: z.number().int().positive().max(BASH_JOB_WAIT_MAX_MS).optional(),
         })
@@ -279,9 +298,15 @@ export function createBashJobToolDefinitions(jobs: BashJobRegistry): AgentTool[]
   ].map(
     ({ parser, ...schema }): AgentTool => ({
       schema,
-      describe: () => ({
-        presentation: buildToolRunPresentation({ toolName: schema.name, subject: "Bash jobs" }),
-      }),
+      describe: (call) => {
+        const parsed = parser.safeParse(call.arguments);
+        return {
+          presentation: buildBashJobPresentation(
+            schema.name,
+            parsed.success ? parsed.data : undefined,
+          ),
+        };
+      },
       execute: (call, context) =>
         executeTool(context, async () => {
           const parsed = parser.safeParse(call.arguments);
@@ -294,16 +319,11 @@ export function createBashJobToolDefinitions(jobs: BashJobRegistry): AgentTool[]
                 toolCallId: call.id,
                 toolName: schema.name,
                 reason,
-                presentation: buildToolRunPresentation({
-                  toolName: schema.name,
-                  subject: "Bash jobs",
-                  details: [{ text: reason }],
-                }),
+                presentation: buildBashJobPresentation(schema.name, undefined, reason),
               },
             };
           }
           const args = parsed.data;
-          const subject = "ids" in args ? String(args.ids) : "id" in args ? args.id : "Bash jobs";
           try {
             context.signal.throwIfAborted();
             const text =
@@ -312,11 +332,12 @@ export function createBashJobToolDefinitions(jobs: BashJobRegistry): AgentTool[]
                     args.ids,
                     args.timeout ?? BASH_JOB_WAIT_DEFAULT_MS,
                     context.signal,
+                    args.includeOutput ?? true,
                   )
                 : "id" in args
                   ? schema.name === "stop_bash_job"
-                    ? await jobs.stop(args.id)
-                    : jobs.format([args.id])
+                    ? await jobs.stop(args.id, args.includeOutput ?? true)
+                    : jobs.format([args.id], args.includeOutput ?? true)
                   : jobs.format(undefined, false);
             return {
               ...createTextToolOutcome(text, "succeeded"),
@@ -325,11 +346,7 @@ export function createBashJobToolDefinitions(jobs: BashJobRegistry): AgentTool[]
                 toolCallId: call.id,
                 toolName: schema.name,
                 status: "success" as const,
-                presentation: buildToolRunPresentation({
-                  toolName: schema.name,
-                  subject: "Bash jobs",
-                  details: text.split("\n").map((text) => ({ text })),
-                }),
+                presentation: buildBashJobPresentation(schema.name, args, text),
               },
             };
           } catch (error) {
@@ -345,11 +362,11 @@ export function createBashJobToolDefinitions(jobs: BashJobRegistry): AgentTool[]
                 toolCallId: call.id,
                 toolName: schema.name,
                 status: "error" as const,
-                presentation: buildToolRunPresentation({
-                  toolName: schema.name,
-                  subject,
-                  details: context.signal.aborted ? [] : [{ text: reason }],
-                }),
+                presentation: buildBashJobPresentation(
+                  schema.name,
+                  args,
+                  context.signal.aborted ? undefined : reason,
+                ),
               },
             };
           }

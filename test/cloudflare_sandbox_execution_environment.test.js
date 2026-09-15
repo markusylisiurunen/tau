@@ -104,14 +104,13 @@ describe("Cloudflare Sandbox execution environment", () => {
         backend,
         "server",
         "/workspace",
-        undefined,
         new AbortController().signal,
       );
       const id = started.match(/`([^`]+)`/)[1];
       await waitFor(() => jobs.format([id]).includes("ready"));
       expect((await backend.runBash("echo foreground")).output).toBe("foreground");
       expect(executions).toEqual(["session-1", "session-2"]);
-      expect(await jobs.stop(id)).toContain("stopped");
+      expect(await jobs.stop(id, true)).toContain("stopped");
       expect(deleted).toEqual(["session-1"]);
       await backend.dispose();
       expect(deleted).toEqual(["session-1", "session-2"]);

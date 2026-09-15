@@ -103,8 +103,9 @@ describe("ToolCatalog", () => {
       expect(listed.content[0].text).toContain("/workspace/first");
       expect(backend.runBash).toHaveBeenCalledWith(
         "server",
-        expect.objectContaining({ cwd: "/workspace/first", timeoutMs: undefined }),
+        expect.objectContaining({ cwd: "/workspace/first" }),
       );
+      expect(backend.runBash.mock.calls[0][1].timeoutMs).toBeUndefined();
       expect((await execute(second, "stop_bash_job", { id })).content[0].text).toContain("stopped");
     } finally {
       await jobs.dispose();

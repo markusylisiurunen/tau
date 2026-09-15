@@ -5214,6 +5214,8 @@ describe("LocalSessionHost", () => {
         status: "error",
         presentation: {
           subject: "stale-job",
+          operation: "bash",
+          actionByStatus: { running: "reading", failed: "failed to read" },
           details: [{ text: expect.stringContaining("Unknown Bash job 'stale-job'") }],
         },
       });
@@ -5232,7 +5234,6 @@ describe("LocalSessionHost", () => {
         backend,
         "sleep 100",
         process.cwd(),
-        undefined,
         new AbortController().signal,
       );
       const id = started.match(/`([^`]+)`/)[1];
@@ -5271,7 +5272,6 @@ describe("LocalSessionHost", () => {
         backend,
         "sleep 0.1",
         process.cwd(),
-        undefined,
         new AbortController().signal,
       );
       host.releaseSession(session);

@@ -80,7 +80,7 @@ export const BASH_DEFAULT_TIMEOUT_MS = 60_000;
 
 const BASH_DESCRIPTION = [
   "Execute a command in a fresh non-interactive login Bash in the current working directory and return its output.",
-  "Set background: true for a session-owned command that keeps running across turns. Use this instead of tmux or shell &. Returns a job ID after launch, not a readiness guarantee; use the Bash job tools to read, wait, or stop it. Tau stops jobs on orderly session closure, not after every turn.",
+  "Set background: true for a session-owned command that keeps running across turns. Use this instead of tmux or shell &. Returns a job ID after launch, not a readiness guarantee; use the Bash job tools to read, wait, or stop it. Jobs survive turns and interruptions, but job IDs and logs are not recovered after a session restart. If a previously returned job ID is unknown, do not assume the command never ran or is no longer running; check current process and output state before restarting it.",
   "Interactive commands are not supported (no TTY/stdin); commands that prompt or open editors will hang or fail.",
 ].join(" ");
 
@@ -90,7 +90,7 @@ const BASH_WORKING_DIRECTORY_DESCRIPTION =
   "Single-line working directory for the command. If omitted, uses the current working directory. Prefer this over `cd` in the command.";
 
 const BASH_TIMEOUT_DESCRIPTION =
-  "Timeout in milliseconds. If omitted, foreground commands default to 60 seconds; background jobs have no execution deadline. Use a longer timeout for known slow operations like builds or large clones.";
+  "Timeout in milliseconds for foreground commands only; cannot be combined with background: true. If omitted, defaults to 60 seconds. Use a longer timeout for known slow operations like builds or large clones.";
 
 const BASH_MAX_OUTPUT_TOKENS_DESCRIPTION = [
   "Optional maximum number of output tokens to return to the model. Foreground only; omit for background jobs, which use bounded log tails.",
@@ -107,7 +107,10 @@ export const BASH_TOOL: Tool = {
   parameters: Type.Object(
     {
       background: Type.Optional(
-        Type.Boolean({ description: "Run as a session-owned background job." }),
+        Type.Boolean({
+          description:
+            "Run as a session-owned background job. Cannot be combined with timeout or maxOutputTokens.",
+        }),
       ),
       command: Type.String({
         description: BASH_COMMAND_DESCRIPTION,
@@ -438,6 +441,14 @@ function parseBashArgs(raw: unknown):
   if (parsed.data.timeout !== undefined && parsed.data.timeout <= 0) {
     return { ok: false, error: "timeout must be greater than 0.", commandForDisplay };
   }
+  if (parsed.data.background && rawRecord && "timeout" in rawRecord) {
+    return {
+      ok: false,
+      error:
+        "timeout is only available for foreground commands; background jobs have no execution deadline.",
+      commandForDisplay,
+    };
+  }
   if (parsed.data.background && hasMaxOutputTokens) {
     return {
       ok: false,
@@ -550,13 +561,7 @@ export function createBashToolDefinition(
         async () => {
           try {
             if (parsedArgs.data.background) {
-              const text = await jobs.start(
-                backend,
-                command,
-                effectiveWorkingDirectory,
-                timeout,
-                signal,
-              );
+              const text = await jobs.start(backend, command, effectiveWorkingDirectory, signal);
               const outcome = createTextToolOutcome(text, "succeeded");
               const uiEvent: ToolActivity = {
                 type: "bash_execution",

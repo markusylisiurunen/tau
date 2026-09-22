@@ -71,7 +71,7 @@ Thought visibility is client-local presentation. Ctrl+T does not enable model re
 For example:
 
 ```text
-/persona:opus-5-coder
+/persona:opus-5.5-coder
 ```
 
 Then use Shift+Tab to select an allowed reasoning level. Newly added personas do not appear until session content has been reloaded.

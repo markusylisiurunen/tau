@@ -10,7 +10,7 @@ These are defaults built into this Tau version, not a dump of the effective conf
 
 | Behavior | Shipped default |
 | --- | --- |
-| Default persona | `opus-5-chat` |
+| Default persona | `opus-5.5-chat` |
 | Default TUI theme | `gold` |
 | Built-in personas | Enabled |
 | Built-in themes | Enabled |

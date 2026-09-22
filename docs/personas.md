@@ -8,6 +8,8 @@ Tau ships generated built-in personas and discovers custom persona Markdown from
 
 Built-in personas are generated from Tau's current model catalog. Most model families have separate chat and coder variants; some families expose only the variants Tau supports. Built-ins carry Tau-maintained prompts, defaults, tool selections, skills, and the built-in `default` subagent.
 
+The Opus 5.5 chat and coder personas are available only when `anthropic/claude-opus-5-5` is present in the effective model catalog. After a remote catalog refresh, `/reload` adopts the updated catalog for an existing session.
+
 Set `disableBuiltinPersonas: true` in `config.json` to omit built-ins from the effective catalog. Custom personas can also replace a built-in by using the same ID. A shipped built-in is therefore not necessarily available in a particular session.
 
 Use one of these to inspect the current effective list:
@@ -44,7 +46,7 @@ id: release-coder
 label: release coder
 description: Prepares and verifies repository releases.
 provider: anthropic
-model: claude-opus-5
+model: claude-opus-5-5
 reasoning: high
 allowedReasoningLevels:
   - medium
@@ -114,7 +116,7 @@ An explicit `tools` array replaces defaults. Names are normalized to lowercase, 
 ```markdown
 ---
 id: concise-haiku-coder
-extends: opus-5-coder
+extends: opus-5.5-coder
 provider: anthropic
 model: claude-haiku-4-5
 reasoning: low

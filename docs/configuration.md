@@ -47,7 +47,7 @@ In `~/.config/tau/config.json`:
 
 ```json
 {
-  "defaultPersona": "opus-5-chat",
+  "defaultPersona": "opus-5.5-chat",
   "speechToText": { "provider": "openai" }
 }
 ```

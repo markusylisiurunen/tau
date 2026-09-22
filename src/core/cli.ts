@@ -195,7 +195,7 @@ export function printHelp(personas: Persona[]): void {
       "",
       "examples:",
       "  tau --persona gpt-5.6-sol-chat:high",
-      "  tau -p opus-5-coder",
+      "  tau -p opus-5.5-coder",
       "  tau attach --new --cwd /repo ws://127.0.0.1:8787",
       "  tau attach ws://127.0.0.1:8787",
       "",

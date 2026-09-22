@@ -87,7 +87,7 @@ For the default `local` execution kind, this path is on the host machine, not th
 
 Remote `--new` supplies the conventional creation attribute `source: "tui"`. It does not infer repository metadata by inspecting the remote cwd. Clients that need repository provenance should create through the SDK or protocol and provide complete immutable attributes. See [sessions](sessions.md).
 
-`tau attach` does not accept the normal local startup persona flags. Select the server’s default at host startup, for example `tau serve --persona opus-5-coder`, or switch the newly created session with `/persona:<id>` after attaching.
+`tau attach` does not accept the normal local startup persona flags. Select the server’s default at host startup, for example `tau serve --persona opus-5.5-coder`, or switch the newly created session with `/persona:<id>` after attaching.
 
 ## Select an execution environment
 

@@ -10,7 +10,7 @@ Built-in personas are generated from Tau's current model catalog. Most model fam
 
 The Opus 5.5 chat and coder personas are available only when `anthropic/claude-opus-5-5` is present in the effective model catalog.
 
-GPT-6 Sol and Luna replace their GPT-5.6 built-in personas across API, ChatGPT, and fast ChatGPT variants. They are available only when the effective catalog contains `gpt-6-sol` or `gpt-6-luna` for the corresponding provider. GPT-5.6 Terra is unchanged.
+GPT-6 Sol and Luna have API, ChatGPT, and fast ChatGPT variants. They are available only when the effective catalog contains `gpt-6-sol` or `gpt-6-luna` for the corresponding provider.
 
 After a remote catalog refresh, `/reload` adopts the updated catalog for an existing session.
 

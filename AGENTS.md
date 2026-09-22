@@ -327,6 +327,7 @@ gh release create v$(node -p "require('./package.json').version") --generate-not
 Keep each documentation surface within its role. Do not copy volatile product inventories into this guide.
 
 - Write public documentation as product documentation for human and agent readers, not as model-facing instructions to the Tau agent. Describe agent-facing rules and behavior in the third person; reserve direct instructions for readers performing user or operator actions.
+- Describe only the current product state, as if no earlier version existed. Do not narrate changes, compare old and new behavior, or say that something was added, replaced, removed, or left unchanged. Keep change history and migration narratives in PR descriptions or release notes, not product documentation.
 - Update the relevant flat `docs/*.md` pages when changing supported user, operator, configuration, integration, security, or troubleshooting behavior. Protocol changes usually affect `docs/session-protocol.md` and `docs/session-protocol-methods.md`; SDK changes usually affect `docs/node-sdk.md`.
 - Update `README.md` only when the public landing or first-run path changes.
 - Update `AGENTS.md` when contributor workflow, source ownership, cross-cutting architecture, or a safeguard changes.

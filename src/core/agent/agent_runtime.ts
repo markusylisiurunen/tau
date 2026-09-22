@@ -436,7 +436,7 @@ export class AgentRuntime {
   }
 
   restoreState(state: AgentState): AgentStateRecovery {
-    this.assertActive();
+    this.assertHistoryMutable();
     if (this.status === "running") {
       throw new Error("cannot restore a running agent");
     }
@@ -471,19 +471,23 @@ export class AgentRuntime {
   }
 
   private assertActive(): void {
+    if (this.disposed) {
+      throw new Error(`agent '${this.agentId}' is disposed`);
+    }
+  }
+
+  private assertHistoryMutable(): void {
+    this.assertActive();
     if (this.manualCompactionPending) {
       throw new Error("manual compaction is pending");
     }
     if (this.historyCommitPending) {
       throw new Error(`${this.historyCommitPending} message commit is pending`);
     }
-    if (this.disposed) {
-      throw new Error(`agent '${this.agentId}' is disposed`);
-    }
   }
 
   async commitSystemMessage(content: string, metadata: SystemMessageMetadata): Promise<string> {
-    this.assertActive();
+    this.assertHistoryMutable();
     if (this.status !== "idle" || this.submitPending) {
       throw new Error("cannot commit a system message while an agent turn is pending or running");
     }
@@ -534,7 +538,7 @@ export class AgentRuntime {
     modelNotice: string | undefined,
     options?: { historyEntryId?: string; origin?: "input" | "steering" },
   ): Promise<string> {
-    this.assertActive();
+    this.assertHistoryMutable();
     const message: UserMessage = {
       role: "user",
       content: [
@@ -580,7 +584,7 @@ export class AgentRuntime {
     message: AssistantMessage,
     historyEntryId: string,
   ): Promise<void> {
-    this.assertActive();
+    this.assertHistoryMutable();
     if (this.status !== "idle" || this.submitPending || message.stopReason !== "aborted") {
       throw new Error("only an idle agent can commit an interrupted assistant message");
     }
@@ -647,7 +651,7 @@ export class AgentRuntime {
   }
 
   async rewindToHistoryEntryId(historyEntryId: string): Promise<RewindResult | undefined> {
-    this.assertActive();
+    this.assertHistoryMutable();
     if (this.status !== "idle") {
       throw new Error("cannot rewind a running agent");
     }
@@ -735,7 +739,7 @@ export class AgentRuntime {
     if (this.status === "running" || this.submitPending) {
       throw new Error("agent is already running");
     }
-    this.assertActive();
+    this.assertHistoryMutable();
     this.submitPending = true;
     try {
       await this.commitUserText(text, options);
@@ -813,7 +817,7 @@ export class AgentRuntime {
   }
 
   async runTurn(): Promise<AgentTurnResult> {
-    this.assertActive();
+    this.assertHistoryMutable();
     if (this.activeAbortController) {
       throw new Error("agent is already running");
     }
@@ -937,7 +941,7 @@ export class AgentRuntime {
   }
 
   async compact(options: AgentCompactionOptions): Promise<AgentCompactionResult> {
-    this.assertActive();
+    this.assertHistoryMutable();
     if (this.status !== "idle") {
       throw new Error("cannot compact a running agent");
     }

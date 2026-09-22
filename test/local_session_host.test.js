@@ -20,6 +20,7 @@ import {
 import { HostedEphemeralAgentSession } from "../dist/host/hosted_ephemeral_agent_session.js";
 import { LocalSessionHost } from "../dist/host/local_session_host.js";
 import { EphemeralThreadBusyError } from "../dist/host/session_host.js";
+import { SessionProtocolHandler } from "../dist/host/session_protocol_handler.js";
 import {
   applySessionProtocolDelta,
   SESSION_PROTOCOL_MAX_SUBAGENT_ASSISTANT_TEXT_BYTES,
@@ -3963,6 +3964,89 @@ describe("LocalSessionHost", () => {
     await expect(store.loadSession(hostedSession.sessionId)).resolves.toEqual(persisted);
     await hostedSession.dispose();
     await host.shutdown();
+  });
+
+  it("changes reasoning through the protocol while steering persistence is pending", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const messages = [];
+    const handler = new SessionProtocolHandler({ host, send: (message) => messages.push(message) });
+    const releasePersistence = deferred();
+    const modelGates = [deferred(), deferred()];
+
+    try {
+      const session = await host.createSession(localCreateInput);
+      const request = (id, method, params = {}) =>
+        handler.handleRequest({
+          version: SESSION_PROTOCOL_VERSION,
+          type: "request",
+          id,
+          method,
+          params: { sessionId: session.sessionId, ...params },
+        });
+      await request("observe", "session.observe");
+      const baseline = await session.snapshot();
+      const persistenceReached = deferred();
+      const commitSessionSnapshot = store.commitSessionSnapshot.bind(store);
+      let paused = false;
+      store.commitSessionSnapshot = vi.fn(async (snapshot, options) => {
+        if (!paused && snapshotUserMessageCount(snapshot) === 2) {
+          paused = true;
+          persistenceReached.resolve();
+          await releasePersistence.promise;
+        }
+        await commitSessionSnapshot(snapshot, options);
+      });
+      const modelStarts = [deferred(), deferred()];
+      let modelCall = 0;
+      session.runtime.agent.spec.model.stream = () => {
+        const index = modelCall++;
+        return {
+          async *[Symbol.asyncIterator]() {
+            modelStarts[index].resolve();
+            await modelGates[index].promise;
+            yield* [];
+          },
+          async result() {
+            return fauxAssistantMessage(`response ${index + 1}`);
+          },
+        };
+      };
+
+      const turn = request("submit", "session.submit", { text: "original" });
+      await modelStarts[0].promise;
+      const steering = request("steer", "session.steer", { text: "change direction" });
+      await vi.waitFor(() => expect(session.runtime.agent.pendingSteering).toHaveLength(1));
+      modelGates[0].resolve();
+      await persistenceReached.promise;
+      const reasoning = request("reasoning", "session.setReasoning", { reasoning: "high" });
+      releasePersistence.resolve();
+      await reasoning;
+      expect(messages.find((message) => message.id === "reasoning")).toMatchObject({ ok: true });
+      await modelStarts[1].promise;
+      modelGates[1].resolve();
+      await Promise.all([turn, steering]);
+      for (const id of ["submit", "steer"]) {
+        expect(messages.find((message) => message.id === id)).toMatchObject({
+          ok: true,
+          result: { turn: { status: "completed", stopReason: "stop" } },
+        });
+      }
+      await request("snapshot", "session.snapshot");
+      expect(messages.find((message) => message.id === "snapshot")).toMatchObject({ ok: true });
+      const snapshot = await session.snapshot();
+      expect(snapshot.settings.reasoning).toBe("high");
+      expect(session.runtime.agent.spec.attribution.reasoningEffort).toBe("high");
+      expect(await store.loadSession(session.sessionId)).toEqual(snapshot);
+      const projected = messages
+        .filter((message) => message.type === "session.delta")
+        .reduce((state, delta) => applySessionProtocolDelta(state, delta), baseline);
+      expect(projected).toEqual(snapshot);
+    } finally {
+      releasePersistence.resolve();
+      for (const gate of modelGates) gate.resolve();
+      await handler.close("shutdown-host");
+    }
   });
 
   it("does not let a reasoning write replace streamed state at the same revision", async () => {

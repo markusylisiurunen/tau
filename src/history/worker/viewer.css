@@ -36,9 +36,9 @@ a, a:visited { color: inherit; text-underline-offset: 0.15em; }
 .conversation-header, .search, .back, .transcript-actions { margin-bottom: var(--space-6); }
 .search-filters { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-2); }
 .search-row { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-input, button { height: var(--control-height); font: inherit; color: inherit; background: var(--background); border: 1px solid var(--border); border-radius: 0; padding: var(--space-1) var(--space-2); }
+input, button, select { height: var(--control-height); font: inherit; color: inherit; background: var(--background); border: 1px solid var(--border); border-radius: 0; padding: var(--space-1) var(--space-2); }
 button { background: transparent; }
-input:focus, button:focus { outline: none; border-color: var(--text-muted); }
+input:focus, button:focus, select:focus { outline: none; border-color: var(--text-muted); }
 button:disabled { opacity: 0.5; cursor: default; }
 button:hover { border-color: var(--text-muted); }
 input::placeholder { color: var(--text-dim); opacity: 1; }

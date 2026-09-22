@@ -895,6 +895,11 @@ async function renderViewerSession(database: D1Database, url: URL): Promise<Resp
       <p class="timestamps">Created ${renderTime(session.createdAt)} · Updated ${renderTime(session.updatedAt)}</p>
     </header>
     <div class="transcript-actions">
+      <select data-copy-mode aria-label="Conversation copy contents">
+        <option value="messages" selected>Messages only</option>
+        <option value="calls">Include tool calls</option>
+        <option value="everything">Include everything</option>
+      </select>
       <button type="button" data-copy="conversation" disabled>Copy conversation</button>
       <button type="button" data-tools="open" disabled>Expand tools</button>
       <button type="button" data-tools="close" disabled>Collapse tools</button>
@@ -915,8 +920,8 @@ function renderViewerEntry(entry: HistoryEntry): string {
           <span>Tool · ${escapeHtml(entry.name)}</span>
           <span class="outcome">${escapeHtml(entry.outcome)}</span>
         </summary>
-        <div class="tool-section"><h3>Arguments</h3><pre>${escapeHtml(formatViewerValue(entry.arguments))}</pre></div>
-        <div class="tool-section"><h3>Result</h3><pre>${escapeHtml(formatViewerValue(entry.result))}</pre></div>
+        <div class="tool-section" data-section="arguments"><h3>Arguments</h3><pre>${escapeHtml(formatViewerValue(entry.arguments))}</pre></div>
+        <div class="tool-section" data-section="result"><h3>Result</h3><pre>${escapeHtml(formatViewerValue(entry.result))}</pre></div>
         <p class="entry-time">${renderTime(entry.timestamp)}</p>
       </details>
     </article>`;

@@ -38,7 +38,7 @@ A useful configuration defines at least one bot and one project:
     "ledger": {
       "repo": "acme/ledger",
       "ref": "main",
-      "persona": "gpt-5.6-sol-coder:high"
+      "persona": "gpt-6-sol-coder:high"
     }
   }
 }
@@ -111,7 +111,7 @@ A repository project clones one GitHub repository into a session-specific manage
       "ref": "main",
       "workingDirectory": "packages/api",
       "workspaceRoot": "/var/lib/tau/ledger-workspaces",
-      "persona": "gpt-5.6-sol-coder",
+      "persona": "gpt-6-sol-coder",
       "noAgentContextFiles": false
     }
   }
@@ -151,7 +151,7 @@ A persistent-directory project reuses one existing directory instead of creating
   "projects": {
     "notes": {
       "directory": "/srv/tau/notes",
-      "persona": "gpt-5.6-sol-coder"
+      "persona": "gpt-6-sol-coder"
     }
   }
 }
@@ -176,7 +176,7 @@ A composite project creates a root containing multiple repositories:
     "api": { "repo": "acme/api", "workingDirectory": "services/http" },
     "platform": {
       "projectIds": ["web", "api"],
-      "persona": "gpt-5.6-sol-coder:high",
+      "persona": "gpt-6-sol-coder:high",
       "instructions": "Keep shared contracts synchronized.",
       "subagents": {
         "defaultLaunchModels": ["openai/gpt-5.6-sol:high"]

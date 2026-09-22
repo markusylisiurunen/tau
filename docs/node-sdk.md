@@ -28,7 +28,7 @@ Tau is an ES module package.
 
 ```ts
 const client = await createTauSdkClient({
-  persona: "gpt-5.6-sol-coder:high",
+  persona: "gpt-6-sol-coder:high",
 });
 ```
 

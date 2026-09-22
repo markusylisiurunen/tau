@@ -56,7 +56,7 @@ In `~/work/ledger/.tau/config.json`:
 
 ```json
 {
-  "defaultPersona": "gpt-5.6-sol-coder:high",
+  "defaultPersona": "gpt-6-sol-coder:high",
   "speechToText": { "provider": "gemini" }
 }
 ```
@@ -121,7 +121,7 @@ Unknown object fields are accepted and stripped without a warning. This applies 
 
 ```json
 {
-  "defaultPersnoa": "gpt-5.6-sol-coder"
+  "defaultPersnoa": "gpt-6-sol-coder"
 }
 ```
 

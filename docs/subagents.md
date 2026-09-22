@@ -36,7 +36,7 @@ subagents:
       - history
     launchModels:
       - anthropic/claude-haiku-4-5:low
-      - openai/gpt-5.6-sol:high
+      - openai/gpt-6-sol:high
 ```
 
 A custom subagent name must:
@@ -123,7 +123,7 @@ The built-in `default` definition cannot be edited in persona frontmatter. Confi
   "subagents": {
     "defaultLaunchModels": [
       "anthropic/claude-haiku-4-5:low",
-      "openai/gpt-5.6-sol:high"
+      "openai/gpt-6-sol:high"
     ]
   }
 }

@@ -16,4 +16,4 @@ Do not include aggregate finding numbers, `Location` fields, verdicts, findings 
 
 Include code only when it makes the correction materially clearer.
 
-Use review subagents with launch model `openai-codex/gpt-5.6-luna:high`.
+Use review subagents with launch model `openai-codex/gpt-6-luna:high`.

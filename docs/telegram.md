@@ -179,7 +179,7 @@ A composite project creates a root containing multiple repositories:
       "persona": "gpt-6-sol-coder:high",
       "instructions": "Keep shared contracts synchronized.",
       "subagents": {
-        "defaultLaunchModels": ["openai/gpt-5.6-sol:high"]
+        "defaultLaunchModels": ["openai/gpt-6-sol:high"]
       }
     }
   }

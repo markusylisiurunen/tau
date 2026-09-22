@@ -102,7 +102,7 @@ Each entry must use `<provider>/<model>:<effort>` and resolve against the merged
 {
   "subagents": {
     "defaultLaunchModels": [
-      "openai-codex/gpt-5.6-sol:high",
+      "openai-codex/gpt-6-sol:high",
       "anthropic/claude-haiku-4-5:low"
     ]
   }
@@ -140,7 +140,7 @@ A map from exact `<provider>/<model>` targets to non-empty notice text:
 ```json
 {
   "modelSystemNotices": {
-    "openai/gpt-5.6-sol": "Use the repository's checked-in formatter for source changes."
+    "openai/gpt-6-sol": "Use the repository's checked-in formatter for source changes."
   }
 }
 ```

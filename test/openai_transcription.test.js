@@ -129,7 +129,7 @@ describe("OpenAI transcription", () => {
     );
     const keywordBody = JSON.parse(fetchImpl.mock.calls[0][1].body);
     expect(keywordBody).toMatchObject({
-      model: "gpt-5.6-luna",
+      model: "gpt-6-luna",
       reasoning: { effort: "low" },
       store: false,
       text: {

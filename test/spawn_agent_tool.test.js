@@ -1,8 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { resolveConfigLevels } from "../dist/core/config/index.js";
-import { loadModelResolver } from "../dist/core/models/catalog.js";
-import { personas } from "../dist/core/personas.js";
+import { loadModelResolver, resolveModel } from "../dist/core/models/catalog.js";
 import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
 import { createInterruptAgentToolDefinition } from "../dist/core/tools/interrupt_agent.js";
 import { createListAgentsToolDefinition } from "../dist/core/tools/list_agents.js";
@@ -67,7 +66,7 @@ function createModelResolver(cwd = "/repo/current", home = "/repo") {
 }
 
 function createFixture(overrides = {}) {
-  const anthropic = personas.find((persona) => persona.id === "opus-5-chat")?.model;
+  const anthropic = resolveModel("anthropic", "claude-opus-5");
   expect(anthropic).toBeTruthy();
   const supervisor = {
     spawn: vi.fn(({ runtimeConfig, title }) => ({

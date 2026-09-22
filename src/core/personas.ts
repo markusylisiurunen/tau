@@ -344,10 +344,11 @@ const PERSONA_SPECS: PersonaSpec[] = [
     skills: "*",
   },
   {
-    id: "opus-5",
-    description: "Claude Opus 5",
+    id: "opus-5.5",
+    description: "Claude Opus 5.5",
     provider: "anthropic",
-    modelId: "claude-opus-5",
+    modelId: "claude-opus-5-5",
+    catalogOnly: true,
     allowedReasoningLevels: ["low", "medium", "high", "xhigh", "max"],
     settings: { reasoning: "medium" },
     skills: "*",
@@ -363,7 +364,7 @@ const PERSONA_SPECS: PersonaSpec[] = [
   },
 ];
 
-export const DEFAULT_BUILTIN_PERSONA_ID = "opus-5-chat";
+export const DEFAULT_BUILTIN_PERSONA_ID = "opus-5.5-chat";
 
 type Variant = "chat" | "coder";
 

@@ -130,7 +130,7 @@ describe("custom personas", () => {
 
       expect(errors).toEqual([]);
       expect(personas.find((persona) => persona.id === "nook-persona")?.tools).toEqual(["nook"]);
-      expect(personas.find((persona) => persona.id === "opus-5-chat")?.tools).toContain("nook");
+      expect(personas.find((persona) => persona.id === "sonnet-5-chat")?.tools).toContain("nook");
     } finally {
       fx.cleanup();
     }
@@ -158,7 +158,7 @@ describe("custom personas", () => {
       const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
       const levels = resolveConfigLevels(deps, { cwd: fx.cwd });
       const resolveAvailableModel = (provider, modelId) =>
-        modelId === "gemini-3.8-flash" || modelId === "gpt-6-astra"
+        modelId === "gemini-3.8-flash" || modelId === "gpt-6-astra" || modelId === "claude-opus-5-5"
           ? undefined
           : resolveModel(provider, modelId);
       const { personas, errors } = await loadAllContent(
@@ -175,6 +175,8 @@ describe("custom personas", () => {
       );
       expect(errors).toEqual([]);
       expect(personas.find((persona) => persona.id === "gemini-3.8-flash-coder")).toBeUndefined();
+      expect(personas.find((persona) => persona.id === "opus-5.5-chat")).toBeUndefined();
+      expect(personas.find((persona) => persona.id === "opus-5.5-coder")).toBeUndefined();
       expect(personas.find((persona) => persona.id === "gpt-6-astra-chat")).toBeUndefined();
       expect(personas.find((persona) => persona.id === "gpt-6-astra-coder")).toBeUndefined();
       expect(personas.find((persona) => persona.id === "gpt-6-astra-chatgpt-chat")).toBeUndefined();
@@ -205,6 +207,11 @@ describe("custom personas", () => {
           [
             {
               ...structuredClone(opus),
+              id: "claude-opus-5-5",
+              name: "Claude Opus 5.5",
+            },
+            {
+              ...structuredClone(opus),
               id: "claude-fable-5-1",
               name: "Claude Fable 5.1",
             },
@@ -217,6 +224,8 @@ describe("custom personas", () => {
       );
       expect(errors).toEqual([]);
 
+      expect(personas.find((persona) => persona.id === "opus-5-chat")).toBeUndefined();
+      expect(personas.find((persona) => persona.id === "opus-5-coder")).toBeUndefined();
       expect(personas.find((persona) => persona.id === "opus-4.6-chat")).toBeUndefined();
       expect(personas.find((persona) => persona.id === "opus-4.8-chat")).toBeUndefined();
       expect(personas.find((persona) => persona.id === "fable-5.1-chat")?.model.id).toBe(
@@ -231,17 +240,17 @@ describe("custom personas", () => {
       expect(personas.find((persona) => persona.id === "fable-5.1-coder")?.model.id).toBe(
         "claude-fable-5-1",
       );
-      expect(personas.find((persona) => persona.id === "opus-5-chat")?.model.id).toBe(
-        "claude-opus-5",
+      expect(personas.find((persona) => persona.id === "opus-5.5-chat")?.model.id).toBe(
+        "claude-opus-5-5",
       );
-      expect(personas.find((persona) => persona.id === "opus-5-chat")?.settings.reasoning).toBe(
+      expect(personas.find((persona) => persona.id === "opus-5.5-chat")?.settings.reasoning).toBe(
         "medium",
       );
       expect(
-        personas.find((persona) => persona.id === "opus-5-chat")?.allowedReasoningLevels,
+        personas.find((persona) => persona.id === "opus-5.5-chat")?.allowedReasoningLevels,
       ).toEqual(["low", "medium", "high", "xhigh", "max"]);
-      expect(personas.find((persona) => persona.id === "opus-5-coder")?.model.id).toBe(
-        "claude-opus-5",
+      expect(personas.find((persona) => persona.id === "opus-5.5-coder")?.model.id).toBe(
+        "claude-opus-5-5",
       );
       expect(personas.find((persona) => persona.id === "sonnet-5-chat")?.model.id).toBe(
         "claude-sonnet-5",

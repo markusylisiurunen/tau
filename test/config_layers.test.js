@@ -266,7 +266,7 @@ describe("config paths", () => {
 
       const config = loadConfig(fx.repo, deps);
       expect(config).toMatchObject({
-        defaultPersona: "opus-5-chat",
+        defaultPersona: "opus-5.5-chat",
         autoCompact: {
           enabled: true,
           reserveTokens: 16384,
@@ -295,7 +295,7 @@ describe("config paths", () => {
       const modelResolver = loadModelResolver({ deps, levels });
       const result = loadConfigWithDiagnostics(deps, { levels, modelResolver });
       expect(result.config).toMatchObject({
-        defaultPersona: "opus-5-chat",
+        defaultPersona: "opus-5.5-chat",
       });
       expect(result.errors.length).toBeGreaterThan(0);
     } finally {

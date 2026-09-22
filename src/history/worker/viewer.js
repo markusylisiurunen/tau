@@ -12,16 +12,19 @@ function fenced(value) {
   const fence = tick.repeat(width);
   return fence + "\n" + value.trim() + "\n" + fence;
 }
-function cardMarkdown(card) {
+function cardMarkdown(card, mode) {
   const tool = card.querySelector(".tool-entry");
   if (tool) {
+    if (mode === "messages") return "";
     const name = tool.querySelector("summary span")?.textContent.replace(/^Tool · /, "") || "Tool";
     const outcome = tool.querySelector(".outcome")?.textContent || "";
-    const sections = [...tool.querySelectorAll(".tool-section")].map((section) => {
-      const heading = section.querySelector("h3")?.textContent || "Details";
-      const value = section.querySelector("pre")?.textContent || "";
-      return "### " + inline(heading) + "\n\n" + fenced(value);
-    });
+    const sections = [...tool.querySelectorAll(".tool-section")]
+      .filter((section) => mode === "everything" || section.dataset.section === "arguments")
+      .map((section) => {
+        const heading = section.querySelector("h3")?.textContent || "Details";
+        const value = section.querySelector("pre")?.textContent || "";
+        return "### " + inline(heading) + "\n\n" + fenced(value);
+      });
     return (
       "## Tool: " +
       inline(name) +
@@ -38,7 +41,7 @@ function cardMarkdown(card) {
     .join("\n\n");
   return "## " + inline(role) + "\n\n" + content.trim();
 }
-function conversationMarkdown() {
+function conversationMarkdown(mode) {
   const header = document.querySelector(".conversation-header");
   const title = header?.querySelector("h1")?.textContent || "Conversation";
   const summary = header?.querySelector(".summary")?.textContent;
@@ -50,7 +53,11 @@ function conversationMarkdown() {
   const parts = ["# " + inline(title)];
   if (summary) parts.push(summary.trim());
   if (metadata.length) parts.push(metadata.join("\n"));
-  parts.push(...[...document.querySelectorAll(".transcript .entry")].map(cardMarkdown));
+  parts.push(
+    ...[...document.querySelectorAll(".transcript .entry")]
+      .map((card) => cardMarkdown(card, mode))
+      .filter(Boolean),
+  );
   return parts.join("\n\n");
 }
 document.addEventListener("click", (event) => {
@@ -58,9 +65,11 @@ document.addEventListener("click", (event) => {
   if (!button || button.disabled) return;
   if (button.dataset.copy === "entry") {
     const card = button.closest(".entry");
-    if (card) navigator.clipboard.writeText(cardMarkdown(card));
+    if (card) navigator.clipboard.writeText(cardMarkdown(card, "everything"));
   } else if (button.dataset.copy === "conversation") {
-    navigator.clipboard.writeText(conversationMarkdown());
+    navigator.clipboard.writeText(
+      conversationMarkdown(document.querySelector("[data-copy-mode]").value),
+    );
   }
   if (button.dataset.tools === "open" || button.dataset.tools === "close") {
     document.querySelectorAll(".tool-entry").forEach((tool) => {

@@ -1174,7 +1174,7 @@ describe("session history", () => {
       querySelector: (selector) => (selector === "h2" ? { textContent: "User" } : null),
       querySelectorAll: () => [{ dataset: {}, textContent: "hello" }],
     };
-    expect(context.cardMarkdown(card)).toBe("## User\n\nhello");
+    expect(context.cardMarkdown(card, "everything")).toBe("## User\n\nhello");
 
     const tool = {
       querySelector: (selector) =>
@@ -1184,21 +1184,58 @@ describe("session history", () => {
         })[selector],
       querySelectorAll: () => [
         {
+          dataset: { section: "arguments" },
+          querySelector: (selector) => ({
+            textContent: selector === "h3" ? "Arguments" : '{"command":"pwd"}',
+          }),
+        },
+        {
+          dataset: { section: "result" },
           querySelector: (selector) => ({
             textContent: selector === "h3" ? "Result" : "```nested```",
           }),
         },
       ],
     };
-    expect(context.cardMarkdown({ querySelector: () => tool })).toBe(
-      "## Tool: bash (succeeded)\n\n### Result\n\n````\n```nested```\n````",
+    expect(context.cardMarkdown({ querySelector: () => tool }, "everything")).toBe(
+      '## Tool: bash (succeeded)\n\n### Arguments\n\n```\n{"command":"pwd"}\n```\n\n### Result\n\n````\n```nested```\n````',
     );
     context.document.querySelector = () => ({
       querySelector: (selector) => (selector === "h1" ? { textContent: "Session [draft]" } : null),
       querySelectorAll: () => [],
     });
     context.document.querySelectorAll = () => [card];
-    expect(context.conversationMarkdown()).toBe("# Session \\[draft\\]\n\n## User\n\nhello");
+    expect(context.conversationMarkdown("messages")).toBe(
+      "# Session \\[draft\\]\n\n## User\n\nhello",
+    );
+    const messages = context.conversationMarkdown("messages");
+    context.document.querySelectorAll = () => [card, { querySelector: () => tool }, card];
+    expect(context.conversationMarkdown("messages")).toBe(messages + "\n\n## User\n\nhello");
+    const calls = context.conversationMarkdown("calls");
+    expect(calls).toContain(
+      '## Tool: bash (succeeded)\n\n### Arguments\n\n```\n{"command":"pwd"}\n```',
+    );
+    expect(calls).not.toContain("### Result");
+    expect(calls).not.toContain("nested");
+    expect(context.conversationMarkdown("everything")).toContain(
+      "### Result\n\n````\n```nested```\n````",
+    );
+    const writeText = vi.fn();
+    context.navigator = { clipboard: { writeText } };
+    const select = { value: "calls" };
+    const querySelector = context.document.querySelector;
+    context.document.querySelector = (selector) =>
+      selector === "[data-copy-mode]" ? select : querySelector(selector);
+    const click = context.document.addEventListener.mock.calls[0][1];
+    const button = { dataset: { copy: "conversation" }, disabled: true };
+    click({ target: { closest: () => button } });
+    expect(writeText).not.toHaveBeenCalled();
+    button.disabled = false;
+    click({ target: { closest: () => button } });
+    expect(writeText).toHaveBeenLastCalledWith(calls);
+    select.value = "messages";
+    click({ target: { closest: () => button } });
+    expect(writeText).toHaveBeenLastCalledWith(context.conversationMarkdown("messages"));
   });
 
   it("automatically appends transcript batches and enables copying only after a complete load", async () => {

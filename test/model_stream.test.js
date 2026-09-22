@@ -203,7 +203,7 @@ describe("model stream option resolution", () => {
         authPath: fx.authPath,
         env: {},
       });
-      const model = runtime.resolveModel("openai-codex", "gpt-5.4");
+      const model = runtime.resolveModel("openai-codex", "gpt-5.6-sol");
       expect(model).toBeDefined();
 
       const stream = runtime.streamModel(

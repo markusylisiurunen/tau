@@ -79,6 +79,55 @@ describe("FileSessionStore", () => {
     });
   });
 
+  it("round-trips intermediate system message metadata", async () => {
+    await withTempStore(async (store, directory) => {
+      const snapshot = createSnapshot("session-1", "hello");
+      snapshot.messages.push(
+        ...["instruction", "auto-compaction-continuation"].map((type, index) => ({
+          id: `system-entry-${index}`,
+          state: "committed",
+          modelVisible: true,
+          message: {
+            role: "system",
+            content: `system message ${type}`,
+            timestamp: index + 1,
+            metadata: { type, version: 1 },
+          },
+        })),
+      );
+      await store.commitSessionSnapshot(snapshot);
+
+      const reopenedStore = new FileSessionStore({ directory });
+      await expect(reopenedStore.loadSession("session-1")).resolves.toEqual(snapshot);
+      await expect(reopenedStore.listSessionSnapshots()).resolves.toEqual([snapshot]);
+      const stored = JSON.parse(await readFile(join(directory, "c2Vzc2lvbi0x.json"), "utf8"));
+      expect(stored.snapshot.messages).toEqual(snapshot.messages);
+    });
+  });
+
+  it("loads version 8 snapshots with the original plain system prompt", async () => {
+    await withTempStore(async (store, directory) => {
+      const snapshot = createSnapshot("session-1", "persisted request");
+      await mkdir(directory, { recursive: true });
+      await writeFile(
+        join(directory, "c2Vzc2lvbi0x.json"),
+        JSON.stringify({
+          format: STORED_SESSION_DOCUMENT_FORMAT,
+          version: 8,
+          snapshot,
+        }),
+        "utf8",
+      );
+
+      await expect(store.loadSession("session-1")).resolves.toEqual(snapshot);
+      expect(snapshot.messages[0].message).toEqual({
+        role: "system",
+        content: "system prompt",
+        timestamp: 0,
+      });
+    });
+  });
+
   it("writes the current versioned storage document", async () => {
     await withTempStore(async (store, directory) => {
       const snapshot = createSnapshot("session-1", "hello");

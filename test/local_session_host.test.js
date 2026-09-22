@@ -510,6 +510,129 @@ describe("LocalSessionHost", () => {
     await host.shutdown();
   });
 
+  it("persists intermediate system messages and replays them after host recovery", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "tau-system-message-recovery-"));
+    const store = new FileSessionStore({ directory });
+    const historyStore = new LocalHistoryStore(":memory:");
+    const originalHost = createHost(store, { history: new HistoryManager(historyStore) });
+    let recoveredHost;
+
+    try {
+      const session = await originalHost.createSession(localCreateInput);
+      await session.record({ text: "before instructions" });
+      const previous = await session.snapshot();
+      const deltas = [];
+      session.onDelta((delta) => deltas.push(delta));
+      const metadata = { type: "instruction", version: 1 };
+      const historyEntryId = await session.runtime.commitSystemMessage(
+        "Preserve the exact identifier ProjectAlpha.",
+        metadata,
+      );
+      const snapshot = await session.snapshot();
+      const systemEntry = {
+        id: historyEntryId,
+        state: "committed",
+        modelVisible: true,
+        message: {
+          role: "system",
+          content: "Preserve the exact identifier ProjectAlpha.",
+          timestamp: expect.any(Number),
+          metadata,
+        },
+      };
+
+      expect(snapshot.messages).toEqual([...previous.messages, systemEntry]);
+      expect(snapshot.timeline).toEqual(previous.timeline);
+      expect(snapshot.turns).toEqual(previous.turns);
+      expect(deltas).toHaveLength(1);
+      expect(deltas[0].cause.type).toBe("system-message");
+      expect(deltas.reduce(applySessionProtocolDelta, previous)).toEqual(snapshot);
+      await expect(store.loadSession(session.sessionId)).resolves.toEqual(snapshot);
+      await expect(
+        historyStore.read({ sessionId: session.sessionId, limit: 10 }),
+      ).resolves.toMatchObject({ entries: [{ type: "user" }] });
+
+      await originalHost.shutdown();
+      recoveredHost = createHost(new FileSessionStore({ directory }));
+      const recoveredSession = await recoveredHost.observeSession(session.sessionId);
+      expect(recoveredSession).toBeDefined();
+      const recoveredSnapshot = await recoveredSession.snapshot();
+      expect(recoveredSnapshot.messages).toEqual(snapshot.messages);
+      expect(recoveredSession.runtime.rawHistoryEntries).toEqual(
+        snapshot.messages.slice(1).map(({ id, message }) => ({ id, message })),
+      );
+
+      const contexts = [];
+      recoveredSession.runtime.agent.spec.model.stream = (context) => {
+        contexts.push(structuredClone(context));
+        return {
+          async *[Symbol.asyncIterator]() {},
+          async result() {
+            return fauxAssistantMessage("ProjectAlpha preserved");
+          },
+        };
+      };
+      await recoveredSession.record({ text: "continue" });
+      await expect(recoveredSession.runTurn()).resolves.toMatchObject({ status: "completed" });
+      expect(contexts).toHaveLength(1);
+      expect(contexts[0].systemPrompt).toBe(recoveredSession.runtime.agent.spec.systemPrompt);
+      expect(contexts[0].systemPrompt).toContain(snapshot.messages[0].message.content);
+      expect(contexts[0].messages.map((message) => message.role)).toEqual([
+        "user",
+        "system",
+        "user",
+      ]);
+      const { metadata: _metadata, ...nativeSystemMessage } = systemEntry.message;
+      expect(contexts[0].messages[1]).toEqual(nativeSystemMessage);
+      expect((await recoveredSession.snapshot()).messages).toContainEqual(systemEntry);
+    } finally {
+      await recoveredHost?.shutdown();
+      await originalHost.shutdown();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("rolls back a system append when persistence fails without publishing a delta", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+
+    try {
+      const session = await host.createSession(localCreateInput);
+      await session.record({ text: "persisted request" });
+      await session.runtime.commitSystemMessage("persisted instruction", {
+        type: "instruction",
+        version: 1,
+      });
+      const persisted = await session.snapshot();
+      const runtimeState = session.runtime.snapshot();
+      const rawHistory = session.runtime.rawHistory;
+      const deltas = [];
+      session.onDelta((delta) => deltas.push(delta));
+      const commitSessionSnapshot = vi.spyOn(store, "commitSessionSnapshot");
+      commitSessionSnapshot.mockRejectedValueOnce(new Error("system persistence failed"));
+
+      await expect(
+        session.runtime.commitSystemMessage("uncommitted instruction", {
+          type: "instruction",
+          version: 1,
+        }),
+      ).rejects.toThrow("system persistence failed");
+
+      expect(commitSessionSnapshot).toHaveBeenCalledTimes(1);
+      expect(commitSessionSnapshot.mock.calls[0][0].messages.at(-1).message).toMatchObject({
+        role: "system",
+        content: "uncommitted instruction",
+        metadata: { type: "instruction", version: 1 },
+      });
+      expect(session.runtime.rawHistory).toEqual(rawHistory);
+      expect(session.runtime.snapshot()).toEqual(runtimeState);
+      await expect(store.loadSession(session.sessionId)).resolves.toEqual(persisted);
+      expect(deltas).toEqual([]);
+    } finally {
+      await host.shutdown();
+    }
+  });
+
   it("preserves durable notice position across recovery", async () => {
     const store = new MemorySessionStore();
     const originalHost = createHost(store);

@@ -1,4 +1,5 @@
 import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
+import type { SystemMessageMetadata } from "../../protocol/system_message.js";
 import {
   AgentRuntime,
   type AgentState,
@@ -182,6 +183,10 @@ export class ChatRuntime {
 
   get historyEntries(): readonly HistoryEntry[] {
     return this.agent.historyEntriesSnapshot;
+  }
+
+  async commitSystemMessage(content: string, metadata: SystemMessageMetadata): Promise<string> {
+    return await this.agent.commitSystemMessage(content, metadata);
   }
 
   async commitUserText(text: string, options?: { historyEntryId?: string }): Promise<string> {

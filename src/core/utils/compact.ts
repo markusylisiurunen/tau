@@ -189,6 +189,14 @@ export function formatHistoryForCompaction(
   }
 
   for (const message of history) {
+    if (message.role === "system") {
+      const id = options?.historyEntryIds?.get(message);
+      const marker = id
+        ? `[System instruction id=${JSON.stringify(id)}]:`
+        : "[System instruction]:";
+      lines.push(formatCompactionBlock(marker, extractTextFromContent(message.content)));
+      continue;
+    }
     if (message.role === "user") {
       const userText = stripTauUserMetadata(extractTextFromContent(message.content));
       const text = hasToolRecoveryMetadata(message)

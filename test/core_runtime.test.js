@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { personas } from "../dist/core/personas.js";
 import { resolveRuntimePromptBootstrap } from "../dist/core/runtime/runtime_bootstrap.js";
 import { composeSessionPrompts } from "../dist/core/runtime/session_prompt_composer.js";
@@ -663,6 +663,53 @@ describe("summary formatting", () => {
 });
 
 describe("automatic compaction archive", () => {
+  it("archives system text and structured metadata", async () => {
+    const archive = createAutoCompactionArchiver(createLocalToolExecutionBackend());
+    const message = {
+      role: "system",
+      content: "native instruction",
+      timestamp: 1,
+      metadata: { type: "instruction", version: 1 },
+    };
+    const paths = await archive({
+      agentId: `agent-${randomUUID()}`,
+      createdAt: 1,
+      historyEntries: [{ id: "native-1", message }],
+      signal: new AbortController().signal,
+    });
+    try {
+      const record = JSON.parse(readFileSync(paths.jsonPath, "utf8"));
+      expect(record.messages).toEqual([
+        {
+          historyEntryId: "native-1",
+          ...message,
+          content: [{ type: "text", text: message.content }],
+        },
+      ]);
+      expect(readFileSync(paths.textPath, "utf8")).toContain('[System instruction id="native-1"');
+      expect(readFileSync(paths.textPath, "utf8")).toContain(message.content);
+    } finally {
+      rmSync(dirname(paths.textPath), { recursive: true, force: true });
+    }
+  });
+
+  it("rejects untyped system messages before writing an archive", async () => {
+    const runNodeScript = vi.fn();
+    const archive = createAutoCompactionArchiver({ runNodeScript });
+
+    await expect(
+      archive({
+        agentId: "agent-1",
+        createdAt: 1,
+        historyEntries: [
+          { id: "system-1", message: { role: "system", content: "instructions", timestamp: 1 } },
+        ],
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow();
+    expect(runNodeScript).not.toHaveBeenCalled();
+  });
+
   it("writes private ordered snapshots and preserves full JSON tool results", async () => {
     const backend = createLocalToolExecutionBackend();
     const archive = createAutoCompactionArchiver(backend);
@@ -1558,3 +1605,56 @@ function toolResultMessage(text) {
     timestamp: 0,
   };
 }
+
+describe("native system instruction compaction", () => {
+  const instruction = (content, type = "instruction") => ({
+    role: "system",
+    content,
+    timestamp: 1,
+    metadata: { type, version: 1 },
+  });
+
+  it("summarizes ordinary instructions but excludes obsolete continuation guidance", () => {
+    const entries = historyEntries([
+      userMessage(`older request ${"x".repeat(9_000)}`),
+      instruction("older native instruction"),
+      instruction("obsolete prefix", "auto-compaction-continuation"),
+      assistantMessage("older answer"),
+      userMessage("new request"),
+      instruction("retained native instruction"),
+      instruction("obsolete tail", "auto-compaction-continuation"),
+      assistantMessage("new answer"),
+    ]);
+    const before = structuredClone(entries);
+    const manual = prepareSessionCompaction(entries, { systemPrompt: "persona instructions" });
+    expect(manual.formattedHistory).toContain("[System instruction id=");
+    expect(manual.formattedHistory).toContain("older native instruction");
+    expect(manual.formattedHistory).toContain("retained native instruction");
+    expect(manual.formattedHistory).not.toContain("obsolete");
+    expect(manual.userMessageCandidates.map((candidate) => candidate.id)).toEqual([
+      "entry-0",
+      "entry-4",
+    ]);
+    const auto = prepareAutoCompaction(entries, {
+      keepRecentTokens: 1_000,
+      systemPrompt: "persona instructions",
+    });
+    expect(auto.formattedHistory).toContain("older native instruction");
+    expect(auto.formattedHistory).not.toContain("obsolete");
+    expect(auto.retainedEntries.map((entry) => entry.id)).toEqual([
+      "entry-4",
+      "entry-5",
+      "entry-7",
+    ]);
+    expect(auto.retainedEntries[1].message.metadata).toEqual({ type: "instruction", version: 1 });
+    const withLargeObsoleteMessage = structuredClone(entries);
+    withLargeObsoleteMessage[6].message.content = "obsolete".repeat(20_000);
+    const sameCut = prepareAutoCompaction(withLargeObsoleteMessage, {
+      keepRecentTokens: 1_000,
+      systemPrompt: "persona instructions",
+    });
+    expect(sameCut.cutType).toBe(auto.cutType);
+    expect(sameCut.retainedEntries).toEqual(auto.retainedEntries);
+    expect(entries).toEqual(before);
+  });
+});

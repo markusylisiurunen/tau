@@ -131,6 +131,14 @@ Configure the policy in [configuration](configuration.md):
 }
 ```
 
+### Intermediate system instructions
+
+Tau supports plain-text system instructions in conversation history separately from the persona/base prompt. These records are hidden in the TUI, persisted for recovery, and sent to the model in conversation order. Providers that cannot represent intermediate system messages may fold their instructions into the leading prompt through the model adapter.
+
+Compaction treats ordinary intermediate instructions as historical context: their relevant consequences can enter the summary, while instructions in the retained recent tail remain unchanged. The persona/base prompt is supplied separately and is not replaced by the summary. Structured continuation metadata identifies obsolete compaction guidance, which is excluded from both summarization and retained context. Instructions needing exact long-lived preservation must be regenerated or retained by their owning feature rather than relying on system-role authority alone. Rewind removes intermediate instructions after the selected boundary.
+
+Existing hidden `<system>` blocks and instruction producers are unchanged. Native system-message support does not promote user-authored tags into privileged instructions.
+
 ### Manual compaction
 
 Manual compaction requires idle state and summarizes the whole active model history rather than retaining an automatic recent tail.

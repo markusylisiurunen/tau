@@ -3028,7 +3028,9 @@ function unescapeXmlAttribute(value: string): string {
     .replaceAll("&amp;", "&");
 }
 
-function isCoreMessage(message: SessionProtocolMessage["message"]): message is Message {
+function isCoreMessage(
+  message: SessionProtocolMessage["message"],
+): message is Exclude<Message, { role: "system" }> {
   switch (message.role) {
     case "user":
       return typeof message.content === "string" || Array.isArray(message.content);

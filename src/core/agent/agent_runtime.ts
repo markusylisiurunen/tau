@@ -10,6 +10,12 @@ import type {
   ToolResultMessage,
   UserMessage,
 } from "@earendil-works/pi-ai";
+import {
+  isSystemCompactionContinuation,
+  parseIntermediateSystemMessage,
+  projectSystemMessage,
+  type SystemMessageMetadata,
+} from "../../protocol/system_message.js";
 import type { NormalizedAutoCompactConfig } from "../config/index.js";
 import type { CoreClock } from "../runtime/deps.js";
 import type { ModelExecutor } from "../runtime/model_executor.js";
@@ -245,6 +251,11 @@ function getModelContextKey(spec: AgentSpec): string {
 
 export function recoverAgentState(state: AgentState, timestamp: number): AgentStateRecovery {
   const sourceEntries = structuredClone(state.historyEntries);
+  for (const entry of sourceEntries) {
+    if (entry.message.role === "system") {
+      entry.message = parseIntermediateSystemMessage(entry.message);
+    }
+  }
   const historyEntries: HistoryEntry[] = [];
   const recoveredToolResults: AgentStateRecovery["recoveredToolResults"] = [];
   const historyEntryIds = new Set(sourceEntries.map((entry) => entry.id));
@@ -353,6 +364,8 @@ export class AgentRuntime {
   private usageCheckpoint?: AgentUsageCheckpoint;
   private activeAbortController?: AbortController;
   private submitPending = false;
+  private historyCommitPending?: "user" | "system" | "assistant";
+  private manualCompactionPending = false;
   private stopAtBoundaryRequested = false;
   private pendingSteering: Array<{
     id: string;
@@ -423,6 +436,7 @@ export class AgentRuntime {
   }
 
   restoreState(state: AgentState): AgentStateRecovery {
+    this.assertActive();
     if (this.status === "running") {
       throw new Error("cannot restore a running agent");
     }
@@ -457,8 +471,50 @@ export class AgentRuntime {
   }
 
   private assertActive(): void {
+    if (this.manualCompactionPending) {
+      throw new Error("manual compaction is pending");
+    }
+    if (this.historyCommitPending) {
+      throw new Error(`${this.historyCommitPending} message commit is pending`);
+    }
     if (this.disposed) {
       throw new Error(`agent '${this.agentId}' is disposed`);
+    }
+  }
+
+  async commitSystemMessage(content: string, metadata: SystemMessageMetadata): Promise<string> {
+    this.assertActive();
+    if (this.status !== "idle" || this.submitPending) {
+      throw new Error("cannot commit a system message while an agent turn is pending or running");
+    }
+    const message = parseIntermediateSystemMessage({
+      role: "system",
+      content,
+      metadata,
+      timestamp: this.clock.now(),
+    });
+    const previousRevision = this.revision;
+    const entry = this.appendHistoryEntry(message);
+    this.historyCommitPending = "system";
+    try {
+      await this.deliver({
+        type: "system_message",
+        historyEntryId: entry.id,
+        message,
+        revision: this.revision,
+      });
+      return entry.id;
+    } catch (error) {
+      if (this.historyEntries.at(-1) !== entry || this.revision !== previousRevision + 1) {
+        throw new Error(`cannot roll back uncommitted history entry '${entry.id}'`, {
+          cause: error,
+        });
+      }
+      this.historyEntries.pop();
+      this.revision = previousRevision;
+      throw error;
+    } finally {
+      this.historyCommitPending = undefined;
     }
   }
 
@@ -491,6 +547,7 @@ export class AgentRuntime {
     };
     const previousRevision = this.revision;
     const entry = this.appendHistoryEntry(message, options?.historyEntryId);
+    this.historyCommitPending = "user";
     try {
       await this.deliver({
         type: "user_message",
@@ -510,6 +567,8 @@ export class AgentRuntime {
       this.historyEntries.pop();
       this.revision = previousRevision;
       throw error;
+    } finally {
+      this.historyCommitPending = undefined;
     }
   }
 
@@ -521,18 +580,34 @@ export class AgentRuntime {
     message: AssistantMessage,
     historyEntryId: string,
   ): Promise<void> {
-    if (this.status !== "idle" || message.stopReason !== "aborted") {
+    this.assertActive();
+    if (this.status !== "idle" || this.submitPending || message.stopReason !== "aborted") {
       throw new Error("only an idle agent can commit an interrupted assistant message");
     }
-    this.addMessage(message, { historyEntryId });
-    await this.deliver({
-      type: "assistant_final",
-      historyEntryId,
-      message,
-      personaId: this.currentSpec.attribution.personaId,
-      reasoningEffort: this.currentSpec.attribution.reasoningEffort,
-      revision: this.revision,
-    });
+    const previousRevision = this.revision;
+    const entry = this.appendHistoryEntry(message, historyEntryId);
+    this.historyCommitPending = "assistant";
+    try {
+      await this.deliver({
+        type: "assistant_final",
+        historyEntryId,
+        message,
+        personaId: this.currentSpec.attribution.personaId,
+        reasoningEffort: this.currentSpec.attribution.reasoningEffort,
+        revision: this.revision,
+      });
+    } catch (error) {
+      if (this.historyEntries.at(-1) !== entry || this.revision !== previousRevision + 1) {
+        throw new Error(`cannot roll back uncommitted history entry '${entry.id}'`, {
+          cause: error,
+        });
+      }
+      this.historyEntries.pop();
+      this.revision = previousRevision;
+      throw error;
+    } finally {
+      this.historyCommitPending = undefined;
+    }
   }
 
   listRewindCandidates(): RewindCandidate[] {
@@ -556,7 +631,10 @@ export class AgentRuntime {
 
     for (let i = index - 1; i >= 0; i -= 1) {
       const message = this.historyEntries[i]!.message;
-      if (hasAutoCompactionContinuationMetadata(message)) {
+      if (
+        hasAutoCompactionContinuationMetadata(message) ||
+        isSystemCompactionContinuation(message)
+      ) {
         return true;
       }
       const metadata = getAutoCompactionMetadataFromMessage(message);
@@ -612,7 +690,7 @@ export class AgentRuntime {
 
   private get modelHistoryEntries(): readonly HistoryEntry[] {
     return this.historyEntries.flatMap((entry) => {
-      const message = stripTauUserMetadataFromMessage(entry.message);
+      const message = projectSystemMessage(stripTauUserMetadataFromMessage(entry.message));
       if (
         message.role === "assistant" &&
         (message.stopReason === "error" || message.stopReason === "aborted")
@@ -654,10 +732,10 @@ export class AgentRuntime {
   }
 
   async submit(text: string, options?: { historyEntryId?: string }): Promise<AgentTurnResult> {
-    this.assertActive();
     if (this.status === "running" || this.submitPending) {
       throw new Error("agent is already running");
     }
+    this.assertActive();
     this.submitPending = true;
     try {
       await this.commitUserText(text, options);
@@ -863,40 +941,45 @@ export class AgentRuntime {
     if (this.status !== "idle") {
       throw new Error("cannot compact a running agent");
     }
-    await this.deliver({ type: "compaction_start", reason: "manual" });
-    let result: AgentCompactionResult;
+    this.manualCompactionPending = true;
     try {
-      result = await this.compactNow(options);
-    } catch (error) {
-      const aborted = options.signal?.aborted === true;
-      await this.deliver(
-        aborted
-          ? { type: "compaction_end", reason: "manual", outcome: "aborted" }
-          : {
-              type: "compaction_end",
-              reason: "manual",
-              outcome: "failed",
-              errorMessage: error instanceof Error ? error.message : String(error),
-            },
-      );
-      throw error;
-    }
+      await this.deliver({ type: "compaction_start", reason: "manual" });
+      let result: AgentCompactionResult;
+      try {
+        result = await this.compactNow(options);
+      } catch (error) {
+        const aborted = options.signal?.aborted === true;
+        await this.deliver(
+          aborted
+            ? { type: "compaction_end", reason: "manual", outcome: "aborted" }
+            : {
+                type: "compaction_end",
+                reason: "manual",
+                outcome: "failed",
+                errorMessage: error instanceof Error ? error.message : String(error),
+              },
+        );
+        throw error;
+      }
 
-    const summaryHistoryEntryId = this.historyEntries[0]!.id;
-    await this.deliver({
-      type: "compaction_end",
-      reason: "manual",
-      outcome: "compacted",
-      result: {
-        summaryHistoryEntryId,
-        continuationHistoryEntryId: summaryHistoryEntryId,
-        compactionMessage: result.compactionMessage,
-        cutType: "turn-boundary",
-        retainedMessageCount: 0,
-      },
-      revision: this.revision,
-    });
-    return result;
+      const summaryHistoryEntryId = this.historyEntries[0]!.id;
+      await this.deliver({
+        type: "compaction_end",
+        reason: "manual",
+        outcome: "compacted",
+        result: {
+          summaryHistoryEntryId,
+          continuationHistoryEntryId: summaryHistoryEntryId,
+          compactionMessage: result.compactionMessage,
+          cutType: "turn-boundary",
+          retainedMessageCount: 0,
+        },
+        revision: this.revision,
+      });
+      return result;
+    } finally {
+      this.manualCompactionPending = false;
+    }
   }
 
   private async compactNow(options: AgentCompactionOptions): Promise<AgentCompactionResult> {
@@ -1307,7 +1390,20 @@ export class AgentRuntime {
       return await this.archiveAutoCompaction({
         agentId: this.agentId,
         createdAt: this.clock.now(),
-        historyEntries: structuredClone(this.modelHistoryEntries),
+        historyEntries: structuredClone(
+          this.historyEntries
+            .filter(
+              (entry) =>
+                !(
+                  entry.message.role === "assistant" &&
+                  (entry.message.stopReason === "error" || entry.message.stopReason === "aborted")
+                ),
+            )
+            .map((entry) => ({
+              ...entry,
+              message: stripTauUserMetadataFromMessage(entry.message),
+            })),
+        ),
         signal,
       });
     } catch {
@@ -1358,7 +1454,7 @@ export class AgentRuntime {
     }
 
     return this.historyEntries.slice(checkpointIndex + 1).reduce((total, entry) => {
-      const message = stripTauUserMetadataFromMessage(entry.message);
+      const message = projectSystemMessage(stripTauUserMetadataFromMessage(entry.message));
       if (
         message.role === "assistant" &&
         (message.stopReason === "error" || message.stopReason === "aborted")
@@ -1371,7 +1467,10 @@ export class AgentRuntime {
 
   private findLatestAutoCompactionContinuationIndex(): number {
     for (let index = this.historyEntries.length - 1; index >= 0; index -= 1) {
-      if (hasAutoCompactionContinuationMetadata(this.historyEntries[index]!.message)) {
+      if (
+        hasAutoCompactionContinuationMetadata(this.historyEntries[index]!.message) ||
+        isSystemCompactionContinuation(this.historyEntries[index]!.message)
+      ) {
         return index;
       }
     }

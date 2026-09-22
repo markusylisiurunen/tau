@@ -95,13 +95,13 @@ A **persona** selects a provider and model together with instructions, tools, sk
 Start with a specific persona by passing its exact id:
 
 ```sh
-tau --persona gpt-5.6-sol-coder
+tau --persona gpt-6-sol-coder
 ```
 
 Append a reasoning level when the selected model supports it:
 
 ```sh
-tau --persona gpt-5.6-sol-coder:high
+tau --persona gpt-6-sol-coder:high
 ```
 
 The accepted reasoning levels are `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. A persona may expose only a subset in the TUI, and providers that do not support reasoning ignore the setting.
@@ -112,7 +112,7 @@ To choose a default for new sessions, set `defaultPersona`:
 
 ```json
 {
-  "defaultPersona": "gpt-5.6-sol-coder:high"
+  "defaultPersona": "gpt-6-sol-coder:high"
 }
 ```
 
@@ -131,7 +131,7 @@ Tau reports configuration and content warnings on stderr during startup. Warning
 For a local startup, `--debug` shows the resources and tool schemas resolved for the selected working directory without opening the TUI:
 
 ```sh
-tau --debug --persona gpt-5.6-sol-coder:high
+tau --debug --persona gpt-6-sol-coder:high
 ```
 
 Debug output can contain project instructions and other model-facing context, so review where it is captured before sharing it. It is a local startup inspection, not a query of an already running remote host or attached client's effective state.

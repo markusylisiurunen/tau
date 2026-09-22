@@ -54,7 +54,7 @@ A persona id, optionally followed by `:` and a reasoning level:
 
 ```json
 {
-  "defaultPersona": "gpt-5.6-sol-coder:high"
+  "defaultPersona": "gpt-6-sol-coder:high"
 }
 ```
 

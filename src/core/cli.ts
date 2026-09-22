@@ -194,7 +194,7 @@ export function printHelp(personas: Persona[]): void {
       "  diff-tool                     built-in browser diff review demo tool.",
       "",
       "examples:",
-      "  tau --persona gpt-5.6-sol-chat:high",
+      "  tau --persona gpt-6-sol-chat:high",
       "  tau -p opus-5.5-coder",
       "  tau attach --new --cwd /repo ws://127.0.0.1:8787",
       "  tau attach ws://127.0.0.1:8787",

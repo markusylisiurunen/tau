@@ -14,7 +14,7 @@ tau
 Tau creates a local execution environment rooted at that directory. A startup persona and reasoning level can be selected together:
 
 ```sh
-tau --persona gpt-5.6-sol-coder:high
+tau --persona gpt-6-sol-coder:high
 ```
 
 `-p` is the short form. `--no-agent-context-files` omits `AGENTS.md` and explicitly configured context files, and `--no-client-tools` prevents the TUI from advertising its built-in and configured [client tools](client-tools.md).

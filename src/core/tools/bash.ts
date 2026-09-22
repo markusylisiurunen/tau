@@ -80,7 +80,8 @@ export const BASH_DEFAULT_TIMEOUT_MS = 60_000;
 
 const BASH_DESCRIPTION = [
   "Execute a command in a fresh non-interactive login Bash in the current working directory and return its output.",
-  "Set background: true for a session-owned command that keeps running across turns. Use this instead of tmux or shell &. Returns a job ID after launch, not a readiness guarantee; use the Bash job tools to read, wait, or stop it. Jobs survive turns and interruptions, but job IDs and logs are not recovered after a session restart. If a previously returned job ID is unknown, do not assume the command never ran or is no longer running; check current process and output state before restarting it.",
+  "Run commands in the foreground by default, including builds, tests, installs, and clones. If your next action would only be to wait for completion, use a foreground call with an appropriate timeout. A long runtime alone is not a reason to use background mode.",
+  "Use background: true when you need to do independent work while the command runs, keep a service running, or preserve execution across turns or interruptions. Launching several independent jobs and then waiting for them is valid concurrency. Use background mode instead of tmux or shell &. Returns a job ID after launch, not a readiness guarantee; use the Bash job tools to read, wait, or stop it. Jobs survive turns and interruptions, but job IDs and logs are not recovered after a session restart. If a previously returned job ID is unknown, do not assume the command never ran or is no longer running; check current process and output state before restarting it.",
   "Interactive commands are not supported (no TTY/stdin); commands that prompt or open editors will hang or fail.",
 ].join(" ");
 
@@ -109,7 +110,7 @@ export const BASH_TOOL: Tool = {
       background: Type.Optional(
         Type.Boolean({
           description:
-            "Run as a session-owned background job. Cannot be combined with timeout or maxOutputTokens.",
+            "Run as a session-owned background job for independent concurrent work, a persistent service, or execution across turns or interruptions. Otherwise omit or use false, even for slow commands. Cannot be combined with timeout or maxOutputTokens.",
         }),
       ),
       command: Type.String({

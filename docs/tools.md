@@ -93,6 +93,10 @@ There is no TTY and assistant `bash` calls have no stdin. Commands that prompt, 
 
 Tau sets `NO_COLOR=1`, `FORCE_COLOR=0`, `TERM=dumb`, and `PAGER=cat` for predictable non-interactive command output. It also forces Git into non-interactive mode: terminal prompts and askpass interaction are disabled, editors are replaced, pagers are disabled, and SSH uses batch mode. These fixed values override inherited and execution-environment values after login startup. A command can still assign its own environment explicitly. Authentication therefore needs to be available non-interactively.
 
+Agents are instructed to run commands in the foreground by default, including builds, tests, installs, and clones, with a longer `timeout` when needed. The choice depends on whether the agent needs to act before the command exits, not on runtime alone. If the next action would only be to wait for completion, a foreground call is preferred over launching a background job and immediately waiting for it.
+
+Background mode is appropriate for independent concurrent work, a service that must remain running, or execution that needs to survive turns or interruptions. Launching several independent jobs and then waiting for them is valid concurrency. This is tool guidance, not a runtime restriction on waiting.
+
 The default foreground timeout is 60 seconds. Tau captures at most 1 MiB of merged stdout and stderr, preserving the tail when raw capture overflows. The default model-facing result limit is roughly 8,192 estimated tokens. When output exceeds it, Tau returns a roughly 2,048-token middle preview and a gating notice. The command has already run and its side effects have already happened.
 
 Prefer a narrower command over raising the result limit. When more output is genuinely needed, `maxOutputTokens` can request 8,192 through 16,384 tokens autonomously. Values above 16,384, up to 65,536, are reserved for an explicit user request. Tau may save captured output to a temporary execution-environment file when model-context truncation occurs; the result reports that path when available.

@@ -18,7 +18,7 @@ import VIEWER_CSS from "./viewer.css";
 import VIEWER_JS from "./viewer.js";
 
 type HistoryAiModels = {
-  "openai/gpt-5.6-luna": {
+  "openai/gpt-6-luna": {
     inputs: ResponsesInput & {
       input: string;
       instructions: string;
@@ -53,7 +53,7 @@ type RemoteHistoryReadResult = Omit<HistoryReadResult, "session"> & {
   session: RemoteHistorySessionDescriptor;
 };
 
-const DIGEST_MODEL = "openai/gpt-5.6-luna";
+const DIGEST_MODEL = "openai/gpt-6-luna";
 const DIGEST_TEXT_CONFIG = {
   format: {
     type: "json_schema",

@@ -6,7 +6,7 @@ Tau ships a versioned catalog, refreshes compatible model metadata from `pi.dev`
 
 ## Providers, models, and personas
 
-A **provider** owns authentication and one or more request APIs. A **model** is addressed by a provider ID and an exact model ID, such as `openai/gpt-5.6-sol`. A [persona](personas.md) binds that pair to a system prompt, settings, tools, skills, and subagents.
+A **provider** owns authentication and one or more request APIs. A **model** is addressed by a provider ID and an exact model ID, such as `openai/gpt-6-sol`. A [persona](personas.md) binds that pair to a system prompt, settings, tools, skills, and subagents.
 
 The bundled catalog comes from Tau's model runtime. It supplies known provider IDs, bundled model IDs, request API names, endpoints, capability flags, token limits, and pricing. Bundled does not mean currently usable: a provider may still lack credentials, an account may not expose a model, or a configured endpoint may reject it. See [credentials](credentials.md).
 
@@ -48,7 +48,7 @@ A `models.json` file has one required `providers` object. Provider keys are norm
       },
       "models": [
         {
-          "id": "gpt-5.6-sol",
+          "id": "gpt-6-sol",
           "contextWindow": 300000,
           "maxTokens": 48000
         },

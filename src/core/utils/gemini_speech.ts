@@ -1,10 +1,10 @@
 import { z } from "zod";
 
 const GEMINI_GENERATE_CONTENT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
-export const GEMINI_SPEECH_PLAYBACK_RATE = 1.15;
+const GEMINI_INTERACTIONS_URL = "https://generativelanguage.googleapis.com/v1beta/interactions";
 const DEFAULT_GEMINI_SPEECH_REWRITE_MODEL = "gemini-3.8-flash";
 const DEFAULT_GEMINI_SPEECH_REWRITE_THINKING_LEVEL = "low";
-const DEFAULT_GEMINI_SPEECH_TTS_MODEL = "gemini-3.1-flash-tts-preview";
+const DEFAULT_GEMINI_SPEECH_TTS_MODEL = "gemini-3.8-flash-tts";
 const DEFAULT_GEMINI_TTS_VOICE_NAME = "Despina";
 export const GEMINI_SPEECH_SAMPLE_RATE_HZ = 24000;
 export const GEMINI_SPEECH_CHANNEL_COUNT = 1;
@@ -86,10 +86,10 @@ class GeminiTtsResponseError extends Error {
   }
 }
 
-class GeminiTtsOutputLimitError extends Error {
+class GeminiTtsIncompleteError extends Error {
   constructor() {
-    super("Gemini TTS reached its output token limit");
-    this.name = "GeminiTtsOutputLimitError";
+    super("Gemini TTS returned incomplete audio");
+    this.name = "GeminiTtsIncompleteError";
   }
 }
 
@@ -438,21 +438,22 @@ async function synthesizeSpeechAudioSegment(
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      const payload = await requestGeminiGenerateContent({
+      const response = await requestGeminiResponse({
+        url: GEMINI_INTERACTIONS_URL,
         apiKey: args.apiKey,
-        model: args.model,
         fetchImpl: args.fetchImpl,
         signal: args.signal,
-        body: buildSpeechSynthesisRequest(args.spokenText, args.voiceName),
+        body: buildSpeechSynthesisRequest(args.model, args.spokenText, args.voiceName),
       });
 
+      const payload: unknown = await response.json();
       assertGeminiTtsCompleted(payload);
-      const audioData = extractGeminiInlineAudioData(payload);
-      if (!audioData) {
+      const audio = extractGeminiAudio(payload);
+      if (audio.length === 0) {
         throw new GeminiTtsResponseError("Gemini TTS response did not include audio data");
       }
 
-      return Buffer.from(audioData, "base64");
+      return Buffer.concat(audio);
     } catch (error) {
       lastError = error;
       if (args.signal?.aborted || !isRetryableTtsError(error) || attempt >= maxAttempts) {
@@ -546,12 +547,14 @@ async function collectStreamingSpeechSegment(
 
 async function* requestGeminiSpeechStream(args: StreamSpeechSegmentArgs): AsyncGenerator<Buffer> {
   const response = await requestGeminiResponse({
+    url: GEMINI_INTERACTIONS_URL,
     apiKey: args.apiKey,
-    model: args.model,
-    method: "streamGenerateContent?alt=sse",
     fetchImpl: args.fetchImpl,
     signal: args.signal,
-    body: buildSpeechSynthesisRequest(args.spokenText, args.voiceName),
+    body: {
+      ...buildSpeechSynthesisRequest(args.model, args.spokenText, args.voiceName),
+      stream: true,
+    },
   });
   if (!response.body) {
     throw new GeminiTtsResponseError("Gemini TTS streaming response did not include a body");
@@ -559,16 +562,40 @@ async function* requestGeminiSpeechStream(args: StreamSpeechSegmentArgs): AsyncG
 
   let receivedAudio = false;
   let completed = false;
+  let totalPcmBytes = 0;
   for await (const payload of parseGeminiSse(response.body)) {
-    const finishReason = getGeminiFinishReason(payload);
-    if (finishReason) {
-      assertGeminiTtsFinishReason(finishReason);
-      completed = finishReason === "STOP";
+    if (!isObject(payload)) {
+      throw new GeminiTtsResponseError("Gemini TTS returned malformed streaming data");
     }
-
-    for (const audioData of extractGeminiInlineAudioDataParts(payload)) {
-      receivedAudio = true;
-      yield Buffer.from(audioData, "base64");
+    if (payload.event_type === "error") {
+      const message =
+        isObject(payload.error) && typeof payload.error.message === "string"
+          ? payload.error.message
+          : "Gemini TTS streaming request failed";
+      throw new GeminiTtsResponseError(message);
+    }
+    if (payload.event_type === "interaction.completed") {
+      assertGeminiTtsCompleted(payload.interaction);
+      completed = true;
+      break;
+    }
+    const chunks =
+      payload.event_type === "step.start"
+        ? extractGeminiAudio({ steps: [payload.step] })
+        : payload.event_type === "step.delta" &&
+            isObject(payload.delta) &&
+            payload.delta.type === "audio"
+          ? [decodeGeminiAudio(payload.delta)]
+          : [];
+    for (const audio of chunks) {
+      totalPcmBytes += audio.length;
+      if (totalPcmBytes > MAX_SPEECH_PCM_BYTES) {
+        throw new Error("generated speech audio exceeds the 32 MiB limit");
+      }
+      if (audio.length > 0) {
+        receivedAudio = true;
+        yield audio;
+      }
     }
   }
 
@@ -576,34 +603,27 @@ async function* requestGeminiSpeechStream(args: StreamSpeechSegmentArgs): AsyncG
     throw new GeminiTtsResponseError("Gemini TTS response did not include audio data");
   }
   if (!completed) {
-    throw new GeminiTtsResponseError("Gemini TTS stream ended without a stop response");
+    throw new GeminiTtsResponseError("Gemini TTS stream ended without a completion response");
   }
 }
 
 function buildSpeechSynthesisRequest(
+  model: string,
   spokenText: string,
   voiceName: string,
 ): Record<string, unknown> {
   return {
-    contents: [
-      {
-        parts: [
-          {
-            text: buildSpeechSynthesisPrompt(spokenText),
-          },
-        ],
-      },
-    ],
-    generationConfig: {
-      responseModalities: ["AUDIO"],
-      maxOutputTokens: TTS_MAX_OUTPUT_TOKENS,
-      speechConfig: {
-        voiceConfig: {
-          prebuiltVoiceConfig: {
-            voiceName,
-          },
-        },
-      },
+    model,
+    store: false,
+    input: [{ type: "user_input", content: [{ type: "text", text: spokenText }] }],
+    response_format: {
+      type: "audio",
+      mime_type: "audio/l16",
+      sample_rate: GEMINI_SPEECH_SAMPLE_RATE_HZ,
+    },
+    generation_config: {
+      max_output_tokens: TTS_MAX_OUTPUT_TOKENS,
+      speech_config: [{ voice: voiceName }],
     },
   };
 }
@@ -616,14 +636,17 @@ type RequestGeminiGenerateContentArgs = {
   signal?: AbortSignal;
 };
 
-type RequestGeminiResponseArgs = RequestGeminiGenerateContentArgs & {
-  method: string;
+type RequestGeminiResponseArgs = Omit<RequestGeminiGenerateContentArgs, "model"> & {
+  url: string;
 };
 
 async function requestGeminiGenerateContent(
   args: RequestGeminiGenerateContentArgs,
 ): Promise<unknown> {
-  const response = await requestGeminiResponse({ ...args, method: "generateContent" });
+  const response = await requestGeminiResponse({
+    ...args,
+    url: `${GEMINI_GENERATE_CONTENT_BASE_URL}/${encodeURIComponent(args.model)}:generateContent`,
+  });
   const responseText = await response.text();
   try {
     return responseText ? (JSON.parse(responseText) as unknown) : undefined;
@@ -633,18 +656,15 @@ async function requestGeminiGenerateContent(
 }
 
 async function requestGeminiResponse(args: RequestGeminiResponseArgs): Promise<Response> {
-  const response = await args.fetchImpl(
-    `${GEMINI_GENERATE_CONTENT_BASE_URL}/${encodeURIComponent(args.model)}:${args.method}`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-goog-api-key": args.apiKey,
-      },
-      body: JSON.stringify(args.body),
-      signal: args.signal,
+  const response = await args.fetchImpl(args.url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-goog-api-key": args.apiKey,
     },
-  );
+    body: JSON.stringify(args.body),
+    signal: args.signal,
+  });
   if (response.ok) {
     return response;
   }
@@ -753,69 +773,54 @@ function extractGeminiText(payload: unknown): string {
 }
 
 function assertGeminiTtsCompleted(payload: unknown): void {
-  const finishReason = getGeminiFinishReason(payload);
-  if (finishReason) {
-    assertGeminiTtsFinishReason(finishReason);
+  if (isObject(payload) && payload.status === "incomplete") {
+    throw new GeminiTtsIncompleteError();
+  }
+  if (!isObject(payload) || payload.status !== "completed") {
+    throw new GeminiTtsResponseError("Gemini TTS did not complete successfully");
   }
 }
 
-function assertGeminiTtsFinishReason(finishReason: string): void {
-  if (finishReason === "MAX_TOKENS") {
-    throw new GeminiTtsOutputLimitError();
+function decodeGeminiAudio(part: Record<string, unknown>): Buffer {
+  if (
+    (part.mime_type !== undefined && part.mime_type !== "audio/l16") ||
+    (part.sample_rate !== undefined && part.sample_rate !== GEMINI_SPEECH_SAMPLE_RATE_HZ) ||
+    (part.channels !== undefined && part.channels !== GEMINI_SPEECH_CHANNEL_COUNT)
+  ) {
+    throw new GeminiTtsResponseError("Gemini TTS returned an unsupported audio format");
   }
-  if (finishReason !== "STOP") {
-    throw new GeminiTtsResponseError(`Gemini TTS stopped with finish reason '${finishReason}'`);
+  if (part.data === undefined && part.uri === undefined) {
+    return Buffer.alloc(0);
   }
+  if (typeof part.data !== "string") {
+    throw new GeminiTtsResponseError("Gemini TTS returned invalid audio data");
+  }
+  const audio = Buffer.from(part.data, "base64");
+  if (audio.toString("base64") !== part.data) {
+    throw new GeminiTtsResponseError("Gemini TTS returned invalid audio data");
+  }
+  return audio;
 }
 
-function getGeminiFinishReason(payload: unknown): string | undefined {
-  if (!isObject(payload) || !Array.isArray(payload.candidates)) {
-    return undefined;
-  }
-
-  for (const candidate of payload.candidates) {
-    if (isObject(candidate) && typeof candidate.finishReason === "string") {
-      return candidate.finishReason;
-    }
-  }
-  return undefined;
-}
-
-function extractGeminiInlineAudioData(payload: unknown): string | undefined {
-  return extractGeminiInlineAudioDataParts(payload)[0];
-}
-
-function extractGeminiInlineAudioDataParts(payload: unknown): string[] {
-  if (!isObject(payload) || !Array.isArray(payload.candidates)) {
+function extractGeminiAudio(payload: unknown): Buffer[] {
+  if (!isObject(payload) || !Array.isArray(payload.steps)) {
     return [];
   }
-
-  const audioData: string[] = [];
-  for (const candidate of payload.candidates) {
-    if (
-      !isObject(candidate) ||
-      !isObject(candidate.content) ||
-      !Array.isArray(candidate.content.parts)
-    ) {
+  const audio: Buffer[] = [];
+  for (const step of payload.steps) {
+    if (!isObject(step) || step.type !== "model_output" || !Array.isArray(step.content)) {
       continue;
     }
-
-    for (const part of candidate.content.parts) {
-      if (
-        !isObject(part) ||
-        !isObject(part.inlineData) ||
-        typeof part.inlineData.data !== "string"
-      ) {
-        continue;
-      }
-      const data = part.inlineData.data.trim();
-      if (data) {
-        audioData.push(data);
+    for (const part of step.content) {
+      if (isObject(part) && part.type === "audio") {
+        const chunk = decodeGeminiAudio(part);
+        if (chunk.length > 0) {
+          audio.push(chunk);
+        }
       }
     }
   }
-
-  return audioData;
+  return audio;
 }
 
 function buildSpeechRewritePrompt(sourceText: string): string {
@@ -979,22 +984,8 @@ function isSpeechSentenceBoundary(previous: string, next: string): boolean {
   return /[。！？]/u.test(previous) || (/[.!?;:]/u.test(previous) && /\s/u.test(next));
 }
 
-function buildSpeechSynthesisPrompt(spokenText: string): string {
-  return [
-    "Synthesize speech audio for the labeled transcript below.",
-    "Speak only the transcript. Do not speak the instructions or section labels.",
-    "",
-    "### DIRECTOR'S NOTES",
-    "Style: Clear, natural, conversational.",
-    "Pacing: Brisk conversational speed. Keep it clear, confident, and energetic without sounding rushed.",
-    "",
-    "### TRANSCRIPT",
-    spokenText,
-  ].join("\n");
-}
-
 function isRetryableTtsError(error: unknown): boolean {
-  if (error instanceof GeminiTtsOutputLimitError) {
+  if (error instanceof GeminiTtsIncompleteError) {
     return false;
   }
 

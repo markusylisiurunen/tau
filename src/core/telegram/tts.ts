@@ -1,7 +1,7 @@
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { GEMINI_SPEECH_PLAYBACK_RATE, generateGeminiSpeechAudio } from "../utils/gemini_speech.js";
+import { generateGeminiSpeechAudio } from "../utils/gemini_speech.js";
 import { spawnWithCapture } from "../utils/spawn_capture.js";
 
 const TELEGRAM_TTS_TEMP_DIR_PREFIX = "tau-telegram-tts-";
@@ -94,8 +94,6 @@ export async function generateTelegramVoice(
         "1",
         "-i",
         "speech.ffconcat",
-        "-filter:a",
-        `atempo=${GEMINI_SPEECH_PLAYBACK_RATE}`,
         "-c:a",
         "libopus",
         "-b:a",

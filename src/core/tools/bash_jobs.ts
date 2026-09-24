@@ -227,11 +227,12 @@ function buildBashJobPresentation(
   args: { id?: string; ids?: string[] } | undefined,
   text?: string,
 ) {
+  const detailText = text?.replace(/\r\n?/g, "\n").trimEnd();
   return buildToolRunPresentation({
     toolName,
     operation: "bash",
     subject: args ? (args.ids?.join(", ") ?? args.id ?? "jobs") : "(invalid arguments)",
-    details: text?.split("\n").map((text) => ({ text })),
+    details: detailText ? detailText.split("\n").map((text) => ({ text })) : [],
   });
 }
 

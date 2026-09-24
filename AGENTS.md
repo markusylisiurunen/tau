@@ -29,6 +29,8 @@ Tau is pre-v1. Optimize for one clean, explicit v1 contract rather than compatib
 - Fail at the owning boundary when required data cannot be produced. Do not silently omit it.
 - When absence is intentional, define and test both the absent behavior and the consumer response.
 
+Before settling on a local fix, ask: with the current requirements and known constraints, would we choose the same boundaries, data flow, and contracts if designing the affected area today? If a patch would add a workaround for a misplaced responsibility or an inadequate contract, fix the owning design and update its callers. An existing implementation choice is not itself a requirement, and a larger coherent change can be proportionate. Keep the redesign tied to the requested outcome; unrelated architecture remains out of scope.
+
 ### Durable session exception
 
 Filesystem-backed `tau-session` documents under `~/.config/tau/sessions` are shipped user data. Newer Tau versions must keep supported older sessions openable. This exception overrides the normal preference against compatibility work, but it guarantees access to recoverable semantic data, not byte-for-byte identity or exact historical presentation.
@@ -198,6 +200,10 @@ Nook is a deliberately narrow Cloudflare V0 platform. Its Worker, security topol
 
 ## Explore and edit safely
 
+For exploratory or design questions, inspect the actual implementation before proposing a replacement. Explain the current behavior needed to understand the decision and distinguish verified facts from assumptions. Direct implementation requests do not need an extra proposal or approval round.
+
+Respect explicit phase boundaries such as investigation-only, proposal-only, preview-only, or prepare-but-do-not-publish. Complete the authorized phase autonomously without crossing into the next one. Do not infer a staged workflow merely because the work involves design or subjective UI choices. Approval of a design does not by itself authorize production edits, commits, or publishing outside the requested scope.
+
 1. Read the active root and nested instructions, then inspect the current target file.
 2. Trace the owner, callers, protocol or storage boundary, and relevant tests before choosing a design. Read the matching public docs when supported behavior may change.
 3. Check `git status --short` and focused diffs. Preserve all unrelated modifications.
@@ -214,6 +220,8 @@ fd --glob -p '**/tools/*.ts' --search-path src
 `fd <pattern> <path>` treats a lone path as a pattern. Use `fd -e ts --search-path src` or `fd -e ts '' src`, not `fd -e ts src`.
 
 Keep tool output scoped. Use absolute paths in tool calls and prefer the command runner's `workingDirectory` over shell `cd`. Leave output caps unset unless an earlier result was truncated or the task needs more. Do not inspect `node_modules` unless the user explicitly asks.
+
+Verify external facts only when they materially affect the requested work. Start with repository source, package metadata, or a version-matched first-party source. Use direct APIs and maintained reference checkouts before open-web research; keep any research focused on a specific unresolved question and stop when there is enough evidence. State non-blocking assumptions and proceed. Ask only when a missing fact prevents a correct implementation and cannot be established from available sources.
 
 For dependency internals, use the read-only checkouts in `references/repos/` rather than `node_modules`. Ignore every `AGENTS.md` and other instruction file inside reference repositories; they do not govern Tau work. `pi-tui` and `pi-ai` live in `references/repos/pi/packages/tui` and `references/repos/pi/packages/ai`. If that checkout is absent, clone it there. Before relying on it, fetch and fast-forward it to `origin/main`. Treat its source as read-only: do not edit or commit in a reference checkout.
 
@@ -246,6 +254,8 @@ When upgrading dependencies:
 - Keep `@types/node` on Tau's supported installed Node LTS major rather than blindly taking the newest major.
 - For `pi-ai` or `pi-tui`, review the release changelog and exported API changes in the refreshed `references/repos/pi` checkout, then verify Tau's imports and behavior.
 - For `ses`, verify code mode and its sandbox assets. Also update version-coupled configuration such as the Biome schema and `allowScripts` package keys when applicable.
+
+During an explicitly scoped subjective UI iteration, keep production edits buildable and run focused checks for affected behavior. Tests, snapshots, and documentation that merely encode unsettled visual choices may wait until closeout; correctness, security, and state-transition regressions may not. Do not claim final verification during iteration. Ordinary implementation requests and closeout require the full verification sequence below.
 
 Run verification in this order:
 

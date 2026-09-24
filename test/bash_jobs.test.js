@@ -135,6 +135,44 @@ it.each([
   },
 );
 
+it.each([
+  ["hello\n", ["hello"]],
+  ["", ["exit 0"]],
+  [" \t\n", ["exit 0"]],
+  ["hello\r\n\r\nworld\r \t", ["hello", "", "world"]],
+])("trims only presentation whitespace for job output %j", async (output, tail) => {
+  const jobs = new BashJobRegistry();
+  const backend = {
+    async runBash(_command, options) {
+      options.onStarted();
+      options.onOutput(Buffer.from(output));
+      return { exitCode: 0, aborted: false, timedOut: false, closeSignal: null, truncated: false };
+    },
+  };
+  try {
+    const id = jobId(await jobs.start(backend, "command", "/Workspace", context().signal));
+    await jobs.waitForIdle();
+    const expectedText = `\`${id}\` · command\nsucceeded\ncwd /Workspace\nexit 0\n\n${output}`;
+    for (const tool of createBashJobToolDefinitions(jobs)) {
+      const name = tool.schema.name;
+      if (name === "list_bash_jobs") continue;
+      const events = [];
+      const result = await tool.execute(
+        { id: "observe", name, arguments: name === "wait_for_bash_jobs" ? { ids: [id] } : { id } },
+        { ...context(), emitActivity: async (event) => events.push(event) },
+      );
+      expect(result.outcome).toBe("succeeded");
+      expect(result.content[0].text).toBe(expectedText);
+      const details = events.at(-1).presentation.details.map((line) => line.text);
+      expect(details.slice(-tail.length)).toEqual(tail);
+      expect(details.every((line) => !line.includes("\r"))).toBe(true);
+    }
+    expect(jobs.format([id])).toBe(expectedText);
+  } finally {
+    await jobs.dispose();
+  }
+});
+
 for (const kind of ["local", "Sprite"]) {
   describe(`${kind} Bash jobs`, () => {
     const createBackend = () =>

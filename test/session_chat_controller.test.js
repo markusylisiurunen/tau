@@ -27,6 +27,7 @@ import { TauSessionProtocolResponseError } from "../dist/transport/errors.js";
 import { formatDiffReviewUserMessage } from "../dist/tui/chat_controller/diff_review_user_message.js";
 import { formatRewindCandidateAge } from "../dist/tui/chat_controller/history_labels.js";
 import { copyTextToClipboard } from "../dist/tui/clipboard.js";
+import * as listenCapture from "../dist/tui/listen_capture.js";
 import { LISTEN_CAPTURE_START_TIMEOUT_MS } from "../dist/tui/listen_capture.js";
 import { createTuiClientTools, SessionChatApp } from "../dist/tui/session_chat_app.js";
 import { SessionChatController } from "../dist/tui/session_chat_controller.js";
@@ -6917,6 +6918,72 @@ describe("SessionChatController", () => {
       expect.objectContaining({ text: "failed to start recording" }),
     );
   });
+
+  it.each(["capture shutdown", "audio read"])(
+    "deletes stopped voice input when disposed during %s",
+    async (phase) => {
+      const audioPath = join(tmpdir(), `tau-session-listen-stopping-${Date.now()}.wav`);
+      const audio = Buffer.alloc(2048, 1);
+      await writeFile(audioPath, audio);
+      const session = new FakeSession();
+      const view = new FakeView();
+      view.editorText = "draft ";
+      const controller = new SessionChatController({
+        view,
+        session,
+        snapshot: await session.snapshot(),
+        targetLabel: "in-process",
+      });
+      const capture = Promise.withResolvers();
+      const read = Promise.withResolvers();
+      const readSpy =
+        phase === "audio read"
+          ? vi.spyOn(listenCapture, "readListenAudio").mockReturnValueOnce(read.promise)
+          : undefined;
+      const transcription = { finish: vi.fn(), abort: vi.fn() };
+      const abortController = new AbortController();
+      controller.beginListenPreview();
+      controller.listenPreview.update("provisional");
+      controller.listenRecording = {
+        audioPath,
+        startedAt: Date.now(),
+        stopRequested: false,
+        abortController,
+        completion: capture.promise,
+        transcription,
+      };
+
+      try {
+        const stop = controller.runListenTransition(() => controller.stopListenCapture());
+        expect(abortController.signal.aborted).toBe(true);
+        expect(controller.listenRecording).toBeUndefined();
+        if (readSpy) {
+          capture.resolve();
+          await waitUntil(() => readSpy.mock.calls.length > 0);
+        }
+        const disposal = controller.dispose();
+        expect(view.editorText).toBe("draft ");
+        capture.resolve();
+        read.resolve(audio);
+        await Promise.all([stop, disposal]);
+
+        await expect(readFile(audioPath)).rejects.toMatchObject({ code: "ENOENT" });
+        expect(transcription.abort).toHaveBeenCalled();
+        expect(transcription.finish).not.toHaveBeenCalled();
+        expect(controller.retainedListenAudio).toBeUndefined();
+        expect(view.transcriptNotices).toEqual([]);
+        expect(view.editorText).toBe("draft ");
+        expect(view.editorEnabledUpdates.at(-1)).toBe(true);
+        expect(session.submit).not.toHaveBeenCalled();
+      } finally {
+        capture.resolve();
+        read.resolve(audio);
+        readSpy?.mockRestore();
+        await controller.dispose();
+        await rm(audioPath, { force: true });
+      }
+    },
+  );
 
   it("keeps retained voice input on shutdown", async () => {
     const audioPath = join(tmpdir(), `tau-session-listen-shutdown-${Date.now()}.wav`);

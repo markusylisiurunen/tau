@@ -1072,6 +1072,10 @@ export class SessionChatController {
   ): Promise<void> {
     if (this.disposed) {
       transcription?.abort();
+      if (this.retainedListenAudio?.audioPath === audioPath) {
+        this.retainedListenAudio = undefined;
+      }
+      await cleanupListenTempFile(audioPath);
       return;
     }
     if (!this.listenPreview) this.beginListenPreview();
@@ -1115,6 +1119,10 @@ export class SessionChatController {
 
       if (this.disposed) {
         transcription?.abort();
+        if (this.retainedListenAudio?.audioPath === audioPath) {
+          this.retainedListenAudio = undefined;
+        }
+        await cleanupListenTempFile(audioPath);
         return;
       }
       let activeTranscription = transcription;

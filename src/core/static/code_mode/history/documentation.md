@@ -123,7 +123,7 @@ The result is:
     | {
         id: string,
         sourceIds: string[],
-        type: "user" | "assistant",
+        type: "user" | "assistant" | "system",
         timestamp: number,
         content: unknown,
       }

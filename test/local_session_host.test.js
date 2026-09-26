@@ -551,7 +551,22 @@ describe("LocalSessionHost", () => {
       await expect(store.loadSession(session.sessionId)).resolves.toEqual(snapshot);
       await expect(
         historyStore.read({ sessionId: session.sessionId, limit: 10 }),
-      ).resolves.toMatchObject({ entries: [{ type: "user" }] });
+      ).resolves.toMatchObject({
+        entries: [
+          { type: "user" },
+          {
+            id: historyEntryId,
+            sourceIds: [historyEntryId],
+            type: "system",
+            content: "Preserve the exact identifier ProjectAlpha.",
+          },
+        ],
+      });
+      await expect(
+        historyStore.search({ query: "ProjectAlpha", limit: 10 }),
+      ).resolves.toMatchObject({
+        sessions: [{ sessionId: session.sessionId }],
+      });
 
       await originalHost.shutdown();
       recoveredHost = createHost(new FileSessionStore({ directory }));
@@ -595,7 +610,8 @@ describe("LocalSessionHost", () => {
 
   it("rolls back a system append when persistence fails without publishing a delta", async () => {
     const store = new MemorySessionStore();
-    const host = createHost(store);
+    const historyStore = new LocalHistoryStore(":memory:");
+    const host = createHost(store, { history: new HistoryManager(historyStore) });
 
     try {
       const session = await host.createSession(localCreateInput);
@@ -625,6 +641,11 @@ describe("LocalSessionHost", () => {
         content: "uncommitted instruction",
         metadata: { type: "instruction", version: 1 },
       });
+      expect(
+        (await historyStore.read({ sessionId: session.sessionId, limit: 10 })).entries.map(
+          (entry) => entry.type,
+        ),
+      ).toEqual(["user", "system"]);
       expect(session.runtime.rawHistory).toEqual(rawHistory);
       expect(session.runtime.snapshot()).toEqual(runtimeState);
       await expect(store.loadSession(session.sessionId)).resolves.toEqual(persisted);
@@ -678,6 +699,19 @@ describe("LocalSessionHost", () => {
       ],
     });
 
+    const systemId = await session.runtime.commitSystemMessage("native instruction", {
+      type: "instruction",
+      version: 1,
+    });
+    expect(
+      (await historyStore.read({ sessionId: session.sessionId, limit: 10 })).entries.at(-1),
+    ).toEqual({
+      id: systemId,
+      sourceIds: [systemId],
+      type: "system",
+      content: "native instruction",
+      timestamp: expect.any(Number),
+    });
     await session.rewindToHistoryEntryId(recorded.userHistoryEntryId);
     await expect(
       historyStore.read({ sessionId: session.sessionId, limit: 10 }),
@@ -2214,6 +2248,36 @@ describe("LocalSessionHost", () => {
       },
     ]);
     expect(ephemeralMessages).toEqual([]);
+  });
+
+  it("preserves system instructions in transcript history after compaction", async () => {
+    const historyStore = new LocalHistoryStore(":memory:");
+    const host = createHost(new MemorySessionStore(), {
+      history: new HistoryManager(historyStore),
+    });
+    try {
+      const session = await host.createSession(localCreateInput);
+      await session.record({ text: "compact me" });
+      for (const type of ["instruction", "auto-compaction-continuation"]) {
+        await session.runtime.commitSystemMessage(type, { type, version: 1 });
+      }
+      const before = await historyStore.read({ sessionId: session.sessionId, limit: 10 });
+      expect(before.entries.map((entry) => entry.type)).toEqual(["user", "system", "system"]);
+      session.runtime.agent.spec.model.stream = () => ({
+        async *[Symbol.asyncIterator]() {},
+        async result() {
+          return fauxAssistantMessage(
+            "compacted summary\n\n<preserved-user-message-ids>\n[]\n</preserved-user-message-ids>",
+          );
+        },
+      });
+      await session.compact({ mode: "summary-only" });
+      expect(
+        (await historyStore.read({ sessionId: session.sessionId, limit: 10 })).entries,
+      ).toEqual(before.entries);
+    } finally {
+      await host.shutdown();
+    }
   });
 
   it("replaces the active epoch after successful manual compaction", async () => {

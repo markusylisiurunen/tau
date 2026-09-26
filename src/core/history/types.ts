@@ -17,7 +17,7 @@ export type HistoryUserContent =
 
 export type HistoryTextEntry =
   | (HistoryEntryBase & { type: "user"; content: HistoryUserContent })
-  | (HistoryEntryBase & { type: "assistant"; content: string });
+  | (HistoryEntryBase & { type: "assistant" | "system"; content: string });
 
 export type HistoryToolEntry = HistoryEntryBase & {
   type: "tool";

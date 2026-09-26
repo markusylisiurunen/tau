@@ -7,6 +7,7 @@ import { type Config, resolvePromptTemplateWithBackend } from "../core/config/in
 import type { HistoryManager } from "../core/history/history_manager.js";
 import {
   assistantHistoryEntries,
+  systemHistoryEntry,
   toolHistoryEntry,
   userHistoryEntry,
 } from "../core/history/transcript.js";
@@ -2555,6 +2556,13 @@ class LocalHostedSessionHandle implements LocalHostedSession {
             },
           ],
           { persist: true },
+        );
+        await this.recordHistoryFailure(
+          this.history.append(
+            this.sessionId,
+            [systemHistoryEntry(event.historyEntryId, event.message)],
+            this.historyRemote,
+          ),
         );
         return;
       }

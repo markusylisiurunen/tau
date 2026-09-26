@@ -4,8 +4,22 @@ import type {
   ToolResultMessage,
   UserMessage,
 } from "@earendil-works/pi-ai";
+import type { IntermediateSystemMessage } from "../../protocol/system_message.js";
 import { stripTauUserMetadataFromMessage } from "../utils/user_metadata.js";
 import type { HistoryEntry, HistoryToolEntry } from "./types.js";
+
+export function systemHistoryEntry(
+  historyEntryId: string,
+  message: IntermediateSystemMessage,
+): HistoryEntry {
+  return {
+    id: historyEntryId,
+    sourceIds: [historyEntryId],
+    type: "system",
+    timestamp: message.timestamp,
+    content: message.content,
+  };
+}
 
 export function userHistoryEntry(historyEntryId: string, message: UserMessage): HistoryEntry {
   const stripped = stripTauUserMetadataFromMessage(message) as UserMessage;

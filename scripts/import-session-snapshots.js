@@ -9,6 +9,7 @@ import { RemoteHistoryClient } from "../dist/core/history/remote_history_client.
 import { batchHistoryEntriesForRemote } from "../dist/core/history/replication.js";
 import {
   assistantHistoryEntries,
+  systemHistoryEntry,
   toolHistoryEntry,
   userHistoryEntry,
 } from "../dist/core/history/transcript.js";
@@ -132,6 +133,8 @@ export function snapshotToHistoryEntries(snapshot) {
     const message = wrapped.message;
     if (message.role === "user") {
       entries.push(userHistoryEntry(wrapped.id, message));
+    } else if (message.role === "system" && message.metadata) {
+      entries.push(systemHistoryEntry(wrapped.id, message));
     } else if (message.role === "assistant") {
       entries.push(...assistantHistoryEntries(wrapped.id, message));
     } else if (message.role === "toolResult") {

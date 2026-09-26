@@ -17,6 +17,7 @@ The path belongs to the **host home**. An attached TUI and a remote execution en
 For each session, history stores its immutable creation attributes and an ordered active transcript containing:
 
 - committed user content as a string or an array of text and image blocks, after Tau's internal metadata is removed
+- committed intermediate system instructions as plain text, labeled as system entries, without Tau metadata (the initial persona/base prompt is excluded)
 - assistant text segments as strings, including committed preambles and responses, but not thinking
 - completed tool calls with the tool name, arguments, result, and terminal outcome
 

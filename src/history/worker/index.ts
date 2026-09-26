@@ -922,7 +922,7 @@ function renderViewerEntry(entry: HistoryEntry): string {
     </article>`;
   }
   return `<article class="entry ${entry.type}">
-    <div class="entry-heading"><h2>${entry.type === "user" ? "User" : "Assistant"}</h2><span>${renderTime(entry.timestamp)}</span><button type="button" data-copy="entry">Copy</button></div>
+    <div class="entry-heading"><h2>${entry.type === "user" ? "User" : entry.type === "system" ? "System" : "Assistant"}</h2><span>${renderTime(entry.timestamp)}</span><button type="button" data-copy="entry">Copy</button></div>
     ${renderViewerContent(entry.content)}
   </article>`;
 }
@@ -1380,7 +1380,7 @@ function parseOperations(raw: unknown): HistoryReplicationOperation[] {
 function parseEntry(raw: unknown): HistoryEntry {
   const entry = asRecord(raw, "entry");
   const type = entry.type;
-  if (type !== "user" && type !== "assistant" && type !== "tool") {
+  if (type !== "user" && type !== "assistant" && type !== "system" && type !== "tool") {
     throw invalidRequest("entry.type is invalid");
   }
   if (!Array.isArray(entry.sourceIds) || entry.sourceIds.length === 0) {
@@ -1391,9 +1391,9 @@ function parseEntry(raw: unknown): HistoryEntry {
     sourceIds: entry.sourceIds.map((value) => requiredString(value, "entry.sourceId", 512)),
     timestamp: finiteNumber(entry.timestamp, "entry.timestamp"),
   };
-  if (type === "assistant") {
+  if (type === "assistant" || type === "system") {
     if (typeof entry.content !== "string") {
-      throw invalidRequest("assistant entry.content must be a string");
+      throw invalidRequest(`${type} entry.content must be a string`);
     }
     return validateEntrySize({ ...base, type, content: entry.content });
   }
@@ -1563,7 +1563,7 @@ class DigestSourceTooLargeError extends Error {
 }
 
 export function formatDigestEntry(entry: HistoryEntry): string {
-  if (entry.type === "user" || entry.type === "assistant") {
+  if (entry.type !== "tool") {
     return `[${entry.type}]\n${formatDigestContent(entry.content)}`;
   }
   const argumentsJson = JSON.stringify(entry.arguments) ?? "null";

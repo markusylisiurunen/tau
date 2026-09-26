@@ -133,7 +133,7 @@ Configure the policy in [configuration](configuration.md):
 
 ### Intermediate system instructions
 
-Tau supports plain-text system instructions in conversation history separately from the persona/base prompt. These records are hidden in the TUI, persisted for recovery, and sent to the model in conversation order. Providers that cannot represent intermediate system messages may fold their instructions into the leading prompt through the model adapter.
+Tau supports plain-text system instructions in conversation history separately from the persona/base prompt. These records are hidden in the TUI, persisted for recovery, recorded as system entries in searchable transcript history, and sent to the model in conversation order. The initial persona/base prompt is not recorded in transcript history. Providers that cannot represent intermediate system messages may fold their instructions into the leading prompt through the model adapter.
 
 Compaction treats ordinary intermediate instructions as historical context: their relevant consequences can enter the summary, while instructions in the retained recent tail remain unchanged. The persona/base prompt is supplied separately and is not replaced by the summary. Structured continuation metadata identifies obsolete compaction guidance, which is excluded from both summarization and retained context. Instructions needing exact long-lived preservation must be regenerated or retained by their owning feature rather than relying on system-role authority alone. Rewind removes intermediate instructions after the selected boundary.
 
@@ -172,7 +172,7 @@ Protocol clients can request mutations directly, but should still wait for idle 
 Tau keeps two durable views for different jobs:
 
 - The session snapshot is the recoverable source of truth for continuing one conversation. It contains the current active model context and user-visible session state.
-- Transcript history is a flat sequence of committed user entries, assistant text, and completed tools used for cross-session search and reading. It is stored separately in the host’s history database and may also replicate to a configured history service.
+- Transcript history is a flat sequence of committed user entries, intermediate system instructions, assistant text, and completed tools used for cross-session search and reading. It is stored separately in the host’s history database and may also replicate to a configured history service.
 
 Compaction changes the session snapshot’s active context but leaves transcript history intact. Rewind truncates both from the removed boundary. Transcript history cannot reconstruct all session runtime state and is not used to recover a session. See [history](history.md) for storage, replication, and the history tool.
 

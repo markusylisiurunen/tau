@@ -71,7 +71,7 @@ function getCall(fetchMock, suffix) {
 }
 
 describe("gemini transcription", () => {
-  it("transcribes uploaded audio with Gemini 3.5 Transcribe smart mode and context keywords", async () => {
+  it("transcribes uploaded audio with Gemini 3.5 Transcribe verbatim mode and context keywords", async () => {
     const fetchMock = createGeminiFetchMock();
 
     const transcript = await transcribeGeminiAudio({
@@ -114,9 +114,9 @@ describe("gemini transcription", () => {
       ],
       generation_config: {
         transcription_config: {
-          language_codes: [],
+          language_codes: ["en-US", "fi-FI"],
           custom_vocabulary: ["Acme SSO", "OAuth"],
-          mode: "smart",
+          mode: { type: "verbatim" },
         },
       },
       store: false,
@@ -143,7 +143,7 @@ describe("gemini transcription", () => {
     expect(customVocabulary.join("").length).toBeGreaterThan(1_024);
   });
 
-  it("streams microphone audio through Gemini 3.5 Transcribe Live in smart mode", async () => {
+  it("streams microphone audio through Gemini 3.5 Transcribe Live in verbatim mode", async () => {
     const fetchMock = createGeminiFetchMock();
     const socket = new EventEmitter();
     const sent = [];
@@ -154,8 +154,10 @@ describe("gemini transcription", () => {
     socket.close = vi.fn();
     socket.terminate = vi.fn();
     const webSocketFactory = vi.fn(() => socket);
+    const onProgress = vi.fn();
     const transcription = startGeminiTranscription({
       apiKey: "gemini key",
+      onProgress,
       context: { messages: [{ role: "user", text: "Configure Acme SSO" }] },
       fetchImpl: fetchMock,
       webSocketFactory,
@@ -172,9 +174,9 @@ describe("gemini transcription", () => {
         model: "models/gemini-3.5-transcribe-live",
         generationConfig: { responseModalities: ["TEXT"] },
         inputAudioTranscription: {
-          languageCodes: [],
+          languageCodes: ["en-US", "fi-FI"],
           customVocabulary: ["Acme SSO", "OAuth"],
-          mode: "SMART",
+          mode: "VERBATIM",
         },
         realtimeInputConfig: {
           automaticActivityDetection: { disabled: true },
@@ -194,6 +196,20 @@ describe("gemini transcription", () => {
       },
     });
 
+    for (const text of ["Hey", "Hey, um", "Hey, um This is", "Hey, um this is"]) {
+      socket.emit(
+        "message",
+        JSON.stringify({ serverContent: { interimInputTranscription: { text } } }),
+      );
+    }
+    expect(onProgress.mock.calls.map(([text]) => text)).toEqual([
+      "Hey",
+      "Hey, um",
+      "Hey, um This is",
+      "Hey, um this is",
+    ]);
+    socket.emit("message", JSON.stringify({ setupComplete: {} }));
+    expect(sent.filter((event) => event.realtimeInput?.activityStart)).toHaveLength(1);
     const completion = transcription.finish();
     await vi.waitFor(() => expect(sent).toHaveLength(4));
     expect(sent[3]).toEqual({ realtimeInput: { activityEnd: {} } });
@@ -201,13 +217,47 @@ describe("gemini transcription", () => {
       "message",
       JSON.stringify({
         serverContent: {
-          inputTranscription: { text: "live transcript" },
+          inputTranscription: { text: "live " },
         },
       }),
     );
 
+    expect(onProgress).toHaveBeenLastCalledWith("live ");
+    socket.emit(
+      "message",
+      JSON.stringify({ serverContent: { inputTranscription: { text: "transcript" } } }),
+    );
+    expect(onProgress).toHaveBeenLastCalledWith("live transcript");
+    expect(socket.close).not.toHaveBeenCalled();
+    socket.emit("message", JSON.stringify({ serverContent: { generationComplete: true } }));
     await expect(completion).resolves.toBe("live transcript");
+    socket.emit(
+      "message",
+      JSON.stringify({ serverContent: { interimInputTranscription: { text: "late" } } }),
+    );
+    expect(onProgress).toHaveBeenLastCalledWith("live transcript");
     expect(socket.close).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["abort", "error"])("ignores late previews after %s", async (outcome) => {
+    const socket = new EventEmitter();
+    socket.send = vi.fn((_data, callback) => callback?.());
+    socket.close = vi.fn();
+    socket.terminate = vi.fn();
+    const onProgress = vi.fn();
+    const transcription = startGeminiTranscription({
+      apiKey: "key",
+      onProgress,
+      webSocketFactory: () => socket,
+    });
+    if (outcome === "abort") transcription.abort();
+    else socket.emit("error", new Error("disconnected"));
+    socket.emit(
+      "message",
+      JSON.stringify({ serverContent: { interimInputTranscription: { text: "late" } } }),
+    );
+    expect(onProgress).not.toHaveBeenCalled();
+    await expect(transcription.finish()).rejects.toThrow();
   });
 
   it("starts the session readiness timeout after keyword extraction", async () => {

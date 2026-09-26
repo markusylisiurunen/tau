@@ -33,6 +33,7 @@ export type SpeechToTextTranscriptionOptions = {
   apiKey: string;
   context?: SpeechToTextContext;
   deps?: SpeechToTextDependencies;
+  onProgress?: (text: string) => void;
 };
 
 export type SpeechToTextRecording = {
@@ -52,6 +53,10 @@ type ProviderStreamingTranscription = {
   abort(): void;
 };
 
+export function getSpeechToTextRecordingMaxDurationMs(provider: SpeechToTextProvider): number {
+  return provider === "gemini" ? 9 * 60 * 1_000 : SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS;
+}
+
 export function getSpeechToTextStreamingSampleRate(provider: SpeechToTextProvider): number {
   switch (provider) {
     case "gemini":
@@ -69,6 +74,7 @@ export function createSpeechToTextTranscription(
       if (options.mode === "streaming") {
         return createStreamingTranscription(
           startGeminiTranscription({
+            onProgress: options.onProgress,
             apiKey: options.apiKey,
             context: options.context,
             fetchImpl: options.deps?.fetchImpl,

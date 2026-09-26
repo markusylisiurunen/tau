@@ -2495,8 +2495,8 @@ describe("telegram adapter", () => {
       const request = JSON.parse(interactionCall[1].body);
       expect(request.model).toBe("gemini-3.5-transcribe");
       expect(request.generation_config.transcription_config).toEqual({
-        language_codes: [],
-        mode: "smart",
+        language_codes: ["en-US", "fi-FI"],
+        mode: { type: "verbatim" },
       });
       expect(request.input[0].mime_type).toBe("audio/ogg");
     } finally {

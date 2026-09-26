@@ -70,11 +70,9 @@ const liveMessageSchema = z
     setupComplete: z.object({}).optional(),
     serverContent: z
       .object({
-        inputTranscription: z
-          .object({
-            text: z.string().trim().min(1),
-          })
-          .optional(),
+        generationComplete: z.boolean().optional(),
+        interimInputTranscription: z.object({ text: z.string() }).optional(),
+        inputTranscription: z.object({ text: z.string() }).optional(),
       })
       .passthrough()
       .optional(),
@@ -100,6 +98,7 @@ export type StartGeminiTranscriptionOptions = {
   context?: SpeechToTextContext;
   fetchImpl?: typeof fetch;
   webSocketFactory?: SpeechToTextWebSocketFactory;
+  onProgress?: (text: string) => void;
 };
 
 export type GeminiStreamingTranscription = {
@@ -117,6 +116,9 @@ class GeminiStreamingTranscriptionImpl implements GeminiStreamingTranscription {
   private readonly socket: SpeechToTextWebSocket;
   private readonly keywordAbortController = new AbortController();
   private readonly keywordsPromise: Promise<string[]>;
+  private readonly onProgress?: (text: string) => void;
+  private finalizedText = "";
+  private finishing = false;
   private ready = false;
   private aborted = false;
   private failure?: Error;
@@ -137,6 +139,7 @@ class GeminiStreamingTranscriptionImpl implements GeminiStreamingTranscription {
       throw new Error("missing Gemini API key");
     }
 
+    this.onProgress = options.onProgress;
     this.keywordsPromise = prepareGeminiTranscriptionKeywords({
       apiKey,
       context: options.context,
@@ -215,6 +218,7 @@ class GeminiStreamingTranscriptionImpl implements GeminiStreamingTranscription {
         this.socket.terminate();
       }, GEMINI_TRANSCRIPTION_COMPLETION_TIMEOUT_MS);
       this.completionTimeout.unref?.();
+      this.finishing = true;
       this.send({ realtimeInput: { activityEnd: {} } });
       return await completion;
     } finally {
@@ -251,9 +255,9 @@ class GeminiStreamingTranscriptionImpl implements GeminiStreamingTranscription {
           responseModalities: ["TEXT"],
         },
         inputAudioTranscription: {
-          languageCodes: [],
+          languageCodes: ["en-US", "fi-FI"],
           ...(keywords.length > 0 ? { customVocabulary: keywords } : {}),
-          mode: "SMART",
+          mode: "VERBATIM",
         },
         realtimeInputConfig: {
           automaticActivityDetection: {
@@ -265,6 +269,7 @@ class GeminiStreamingTranscriptionImpl implements GeminiStreamingTranscription {
   }
 
   private handleMessage(data: unknown): void {
+    if (this.aborted || this.failure || this.completedTranscript) return;
     let payload: unknown;
     try {
       payload = JSON.parse(formatWebSocketMessage(data)) as unknown;
@@ -301,11 +306,23 @@ class GeminiStreamingTranscriptionImpl implements GeminiStreamingTranscription {
       return;
     }
 
-    const transcript = event.data.serverContent?.inputTranscription?.text;
+    const content = event.data.serverContent;
+    const transcript = content?.inputTranscription?.text;
     if (transcript) {
-      this.completedTranscript = transcript;
+      this.finalizedText += transcript;
+      this.onProgress?.(this.finalizedText);
+    } else if (content?.interimInputTranscription) {
+      this.onProgress?.(this.finalizedText + content.interimInputTranscription.text);
+    }
+    if (content?.generationComplete && this.finishing) {
+      const text = this.finalizedText.trim();
+      if (!text) {
+        this.fail(new Error("transcription result was empty"));
+        return;
+      }
+      this.completedTranscript = text;
       this.clearTimers();
-      this.resolveCompletion?.(transcript);
+      this.resolveCompletion?.(text);
       this.clearWaiters();
       this.socket.close();
     }
@@ -412,9 +429,9 @@ export async function transcribeGeminiAudio(options: GeminiTranscriptionOptions)
         ],
         generation_config: {
           transcription_config: {
-            language_codes: [],
+            language_codes: ["en-US", "fi-FI"],
             ...(keywords.length > 0 ? { custom_vocabulary: keywords } : {}),
-            mode: "smart",
+            mode: { type: "verbatim" },
           },
         },
         store: false,

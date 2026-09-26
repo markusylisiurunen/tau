@@ -186,6 +186,7 @@ export function createListenTranscription(args: {
   mode: "streaming" | "file";
   context?: SpeechToTextContext;
   speechToTextDeps?: SpeechToTextDependencies;
+  onProgress?: (text: string) => void;
 }): SpeechToTextTranscription {
   const provider = getSpeechToTextProvider(args.config);
   const apiKey = getSpeechToTextApiKey(args.config, args.deps);
@@ -195,6 +196,7 @@ export function createListenTranscription(args: {
 
   return createSpeechToTextTranscription({
     provider,
+    onProgress: args.onProgress,
     mode: args.mode,
     apiKey,
     context: args.context,

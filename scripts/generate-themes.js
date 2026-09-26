@@ -118,6 +118,7 @@ const generatePalette = (brandHue, appearance) => {
     editorBorderBash: toHex(editorBorderBash),
     editorBorderRecording: toHex(editorBorderRecording),
     editorPlaceholder: toHex(textDim),
+    editorPreview: toHex(textMuted),
     autocompleteSelectedSurface: toHex(userSurface),
     autocompleteSelectedText: toHex(userText),
 

@@ -14,6 +14,14 @@ const MIN_EDITOR_LINES = 3;
 const EDITOR_PLACEHOLDER =
   "ask the agent anything · / for commands · ! for bash mode · ctrl+y for voice";
 
+type EditorLayoutLine = {
+  text: string;
+  line: number;
+  startIndex: number;
+  hasCursor: boolean;
+  cursorPos?: number;
+};
+
 export class CustomEditor extends Editor {
   private uiTheme: Theme;
   private headerLeft = "";
@@ -64,6 +72,7 @@ export class CustomEditor extends Editor {
   }
 
   setInputEnabled(enabled: boolean): void {
+    this.lastEscapeAt = undefined;
     this.inputEnabled = enabled;
   }
 
@@ -125,6 +134,12 @@ export class CustomEditor extends Editor {
   }
 
   handleInput(data: string): void {
+    if (!this.inputEnabled) {
+      if (matchesKey(data, Key.ctrl("c"))) this.onCtrlC?.();
+      else if (matchesKey(data, Key.ctrl("y"))) this.onCtrlY?.();
+      else if (matchesKey(data, Key.escape)) this.onEscape?.();
+      return;
+    }
     const previousText = this.getText();
     const isEscape = matchesKey(data, Key.escape);
     const isAltUp = matchesKey(data, Key.alt("up")) || data === "\x1b[1;3A";
@@ -233,10 +248,6 @@ export class CustomEditor extends Editor {
 
     if (matchesKey(data, Key.pageDown) && !this.isShowingAutocomplete()) {
       this.handlePageScroll(1);
-      return;
-    }
-
-    if (!this.inputEnabled) {
       return;
     }
 
@@ -556,25 +567,30 @@ export class CustomEditor extends Editor {
     const visibleLines = this.sliceVisibleLayoutLines(layoutLines, maxContentLines);
     const lines: string[] = [];
     for (const layoutLine of visibleLines) {
-      let displayText = layoutLine.text;
+      const style = (text: string, offset = 0) =>
+        this.stylePreviewText(text, layoutLine.line, layoutLine.startIndex + offset);
+      let displayText = style(layoutLine.text);
       let lineVisibleWidth = visibleWidth(layoutLine.text);
 
       if (layoutLine.hasCursor && layoutLine.cursorPos !== undefined) {
-        const before = displayText.slice(0, layoutLine.cursorPos);
-        const after = displayText.slice(layoutLine.cursorPos);
+        const before = layoutLine.text.slice(0, layoutLine.cursorPos);
+        const after = layoutLine.text.slice(layoutLine.cursorPos);
         if (after.length > 0) {
           const firstGrapheme = this.getFirstGrapheme(after);
           const restAfter = after.slice(firstGrapheme.length);
-          displayText = before + this.cursorStyle(firstGrapheme) + restAfter;
+          displayText =
+            style(before) +
+            this.cursorStyle(firstGrapheme) +
+            style(restAfter, layoutLine.cursorPos + firstGrapheme.length);
         } else {
           if (lineVisibleWidth < width) {
-            displayText = before + this.cursorStyle(" ");
+            displayText = style(before) + this.cursorStyle(" ");
             lineVisibleWidth = lineVisibleWidth + 1;
           } else {
             const lastGrapheme = this.getLastGrapheme(before);
             if (lastGrapheme) {
               const beforeWithoutLast = this.sliceWithoutLastGrapheme(before);
-              displayText = beforeWithoutLast + this.cursorStyle(lastGrapheme);
+              displayText = style(beforeWithoutLast) + this.cursorStyle(lastGrapheme);
             }
           }
         }
@@ -595,15 +611,28 @@ export class CustomEditor extends Editor {
     return lines;
   }
 
+  private stylePreviewText(text: string, line: number, col: number): string {
+    const range = this.textPreviewRange;
+    if (!range || line < range.start.line || line > range.end.line) return text;
+    const start = line === range.start.line ? Math.max(0, range.start.col - col) : 0;
+    const end = line === range.end.line ? Math.min(text.length, range.end.col - col) : text.length;
+    if (start >= end) return text;
+    return (
+      text.slice(0, start) +
+      this.uiTheme.text.italic(this.uiTheme.palette.editorPreview(text.slice(start, end))) +
+      text.slice(end)
+    );
+  }
+
   private renderAutocompleteLines(width: number): string[] {
     if (!this.isShowingAutocomplete() || !this.autocompleteList) return [];
     return this.autocompleteList.render(width);
   }
 
   private sliceVisibleLayoutLines(
-    layoutLines: Array<{ text: string; hasCursor: boolean; cursorPos?: number }>,
+    layoutLines: EditorLayoutLine[],
     maxContentLines: number,
-  ): Array<{ text: string; hasCursor: boolean; cursorPos?: number }> {
+  ): EditorLayoutLine[] {
     if (maxContentLines <= 0) return layoutLines.slice(0, 1);
     if (layoutLines.length <= maxContentLines) {
       this.scrollTop = 0;
@@ -636,20 +665,18 @@ export class CustomEditor extends Editor {
     return { minLines, maxLines };
   }
 
-  private layoutTextPreserveIndent(
-    contentWidth: number,
-  ): Array<{ text: string; hasCursor: boolean; cursorPos?: number }> {
+  private layoutTextPreserveIndent(contentWidth: number): EditorLayoutLine[] {
     if (contentWidth <= 0) {
-      return [{ text: "", hasCursor: true, cursorPos: 0 }];
+      return [{ text: "", line: 0, startIndex: 0, hasCursor: true, cursorPos: 0 }];
     }
 
     const lines = this.getLines();
     const cursor = this.getCursor();
     if (lines.length === 0 || (lines.length === 1 && lines[0] === "")) {
-      return [{ text: "", hasCursor: true, cursorPos: 0 }];
+      return [{ text: "", line: 0, startIndex: 0, hasCursor: true, cursorPos: 0 }];
     }
 
-    const layoutLines: Array<{ text: string; hasCursor: boolean; cursorPos?: number }> = [];
+    const layoutLines: EditorLayoutLine[] = [];
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i] ?? "";
@@ -658,9 +685,15 @@ export class CustomEditor extends Editor {
 
       if (lineVisibleWidth <= contentWidth) {
         if (isCurrentLine) {
-          layoutLines.push({ text: line, hasCursor: true, cursorPos: cursor.col });
+          layoutLines.push({
+            text: line,
+            line: i,
+            startIndex: 0,
+            hasCursor: true,
+            cursorPos: cursor.col,
+          });
         } else {
-          layoutLines.push({ text: line, hasCursor: false });
+          layoutLines.push({ text: line, line: i, startIndex: 0, hasCursor: false });
         }
         continue;
       }
@@ -692,11 +725,18 @@ export class CustomEditor extends Editor {
         if (hasCursorInChunk) {
           layoutLines.push({
             text: chunk.text,
+            line: i,
+            startIndex: chunk.startIndex,
             hasCursor: true,
             cursorPos: adjustedCursorPos,
           });
         } else {
-          layoutLines.push({ text: chunk.text, hasCursor: false });
+          layoutLines.push({
+            text: chunk.text,
+            line: i,
+            startIndex: chunk.startIndex,
+            hasCursor: false,
+          });
         }
       }
     }

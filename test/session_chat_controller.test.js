@@ -9,7 +9,10 @@ import {
   buildToolRunPresentation,
   TOOL_UI_FACET_VERSION,
 } from "../dist/core/tools/presentation.js";
-import { SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS } from "../dist/core/utils/speech_to_text.js";
+import {
+  getSpeechToTextRecordingMaxDurationMs,
+  SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS,
+} from "../dist/core/utils/speech_to_text.js";
 import {
   hasAutoCompactionContinuationMetadata,
   prependTauUserMetadata,
@@ -28,6 +31,8 @@ import { LISTEN_CAPTURE_START_TIMEOUT_MS } from "../dist/tui/listen_capture.js";
 import { createTuiClientTools, SessionChatApp } from "../dist/tui/session_chat_app.js";
 import { SessionChatController } from "../dist/tui/session_chat_controller.js";
 import { runSpeechPlaybackTask } from "../dist/tui/speech_playback.js";
+import { CustomEditor } from "../dist/tui/ui/custom_editor.js";
+import { createUiTheme } from "../dist/tui/ui/theme/index.js";
 import {
   createProtocolBootstrap,
   createProtocolExecResult,
@@ -762,6 +767,23 @@ class FakeView {
   }
   insertEditorTextAtCursor(text) {
     this.editorText += text;
+  }
+  beginEditorTextPreview() {
+    const original = this.editorText;
+    let active = true;
+    return {
+      update: (text) => {
+        if (active) this.editorText = original + text;
+      },
+      commit: (text) => {
+        if (active) this.editorText = original + text;
+        active = false;
+      },
+      cancel: () => {
+        if (active) this.editorText = original;
+        active = false;
+      },
+    };
   }
   setEditorInputEnabled(enabled) {
     this.editorEnabledUpdates.push(enabled);
@@ -5906,7 +5928,50 @@ describe("SessionChatController", () => {
     expect(session.submit).not.toHaveBeenCalled();
   });
 
-  it("streams Gemini transcription while recording and inserts only the final transcript", async () => {
+  it.each(["prompt", "stash", "pending", "rewind"])(
+    "does not start dictation while a %s editor update is pending",
+    async (kind) => {
+      const session = new FakeSession();
+      const view = new FakeView();
+      view.editorText = "draft";
+      const controller = new SessionChatController({
+        view,
+        session,
+        snapshot: await session.snapshot(),
+        targetLabel: "in-process",
+      });
+      const deferred = Promise.withResolvers();
+      let task;
+      if (kind === "prompt") {
+        session.resolvePrompt = () => deferred.promise;
+        task = controller.insertPrompt("fix");
+      } else if (kind === "stash") {
+        copyTextToClipboard.mockImplementationOnce(() => deferred.promise);
+        task = controller.stashEditorToClipboard();
+      } else if (kind === "pending") {
+        session.cancelPendingMessages = () => deferred.promise;
+        task = controller.cancelPendingMessagesIntoEditor();
+      } else {
+        session.rewindToHistoryEntryId = () => deferred.promise;
+        task = controller.applyRewindSelection("entry");
+      }
+      controller.startListenCapture = vi.fn(async () => {});
+      await controller.toggleListenCapture();
+      expect(controller.startListenCapture).not.toHaveBeenCalled();
+      deferred.resolve({
+        text: "loaded",
+        cancelled: [],
+        snapshot: await session.snapshot(),
+        removedEntryIds: [],
+      });
+      await task;
+      await controller.toggleListenCapture();
+      expect(controller.startListenCapture).toHaveBeenCalledTimes(1);
+      await controller.dispose();
+    },
+  );
+
+  it("replaces Gemini previews and keeps editing locked until generation completes", async () => {
     const audioPath = join(tmpdir(), `tau-session-listen-gemini-${Date.now()}.wav`);
     const pcm = Buffer.from([1, 2, 3, 4]);
     const socket = new EventEmitter();
@@ -5953,6 +6018,7 @@ describe("SessionChatController", () => {
         queueMicrotask(() => stdout.emit("data", pcm));
         return await new Promise((resolve) => {
           options.signal.addEventListener("abort", () => {
+            stdout.emit("data", Buffer.from([5, 6]));
             resolve({
               stdout: "",
               stderr: "",
@@ -5970,6 +6036,20 @@ describe("SessionChatController", () => {
     });
     const session = new FakeSession();
     const view = new FakeView();
+    const editor = new CustomEditor(createUiTheme("plain"));
+    const prefix = "header\nprefix ";
+    const suffix = "suffix\nfooter";
+    editor.setText(prefix + suffix);
+    editor.handleInput("\x01");
+    editor.handleInput("\x1b[A");
+    for (let i = 0; i < 7; i++) editor.handleInput("\x1b[C");
+    const cursor = editor.getCursor();
+    view.beginEditorTextPreview = () => editor.beginTextPreview();
+    view.getEditorText = () => editor.getText();
+    view.setEditorInputEnabled = (enabled) => {
+      view.editorEnabledUpdates.push(enabled);
+      editor.setInputEnabled(enabled);
+    };
     const controller = new SessionChatController({
       view,
       session,
@@ -5989,21 +6069,59 @@ describe("SessionChatController", () => {
       expect(view.status.editor.mode).toBe("recording");
       await writeFile(audioPath, Buffer.alloc(2048, 1));
 
-      controller.getInputHandlers().onCtrlY();
       socket.emit("open");
-      for (let i = 0; i < 50 && view.editorText !== "session transcript"; i += 1) {
+      await waitUntil(() => socketEvents.length === 3);
+      for (const text of [
+        "English",
+        "English.\nSuomeksi myös.",
+        "Revised English.\nSuomeksi myös.",
+      ]) {
+        socket.emit(
+          "message",
+          JSON.stringify({ serverContent: { interimInputTranscription: { text } } }),
+        );
+        expect(editor.getText()).toBe(prefix + text + suffix);
+        const previewCursor = editor.getCursor();
+        for (const key of ["x", "\x1b[D", "\r", "\x7f", "\x1b[200~paste\x1b[201~"])
+          editor.handleInput(key);
+        expect(editor.getText()).toBe(prefix + text + suffix);
+        expect(editor.getCursor()).toEqual(previewCursor);
+      }
+      controller.getInputHandlers().onCtrlY();
+      for (
+        let i = 0;
+        i < 50 && editor.getText() !== prefix + "session transcript" + suffix;
+        i += 1
+      ) {
         await flush();
         await waitMs(1);
       }
+      expect(view.editorEnabledUpdates.at(-1)).toBe(false);
+      socket.emit("message", JSON.stringify({ serverContent: { generationComplete: true } }));
+      await controller.listenTransition;
+      expect(view.editorEnabledUpdates.at(-1)).toBe(true);
     } finally {
       await controller.dispose();
       await rm(audioPath, { force: true });
     }
 
     expect(view.editorEnabledUpdates).toContain(true);
-    expect(view.editorText).toBe("session transcript");
-    expect(socketEvents).toHaveLength(4);
-    expect(socketEvents[0].setup.inputAudioTranscription.mode).toBe("SMART");
+    expect(editor.getText()).toBe(prefix + "session transcript" + suffix);
+    expect(editor.getCursor()).toEqual({ line: 1, col: 7 + "session transcript".length });
+    editor.handleInput("\x1b[45;5u");
+    expect(editor.getText()).toBe(prefix + suffix);
+    expect(editor.getCursor()).toEqual(cursor);
+    expect(socketEvents).toHaveLength(5);
+    expect(socketEvents[3]).toEqual({
+      realtimeInput: {
+        audio: {
+          data: Buffer.from([5, 6]).toString("base64"),
+          mimeType: "audio/pcm;rate=16000",
+        },
+      },
+    });
+    expect(socketEvents[4]).toEqual({ realtimeInput: { activityEnd: {} } });
+    expect(socketEvents[0].setup.inputAudioTranscription.mode).toBe("VERBATIM");
     expect(socketEvents[2].realtimeInput.audio).toEqual({
       data: pcm.toString("base64"),
       mimeType: "audio/pcm;rate=16000",
@@ -6131,74 +6249,167 @@ describe("SessionChatController", () => {
     );
   });
 
-  it("finishes voice input without submitting at the 20-minute recording limit", async () => {
-    const audioPath = join(tmpdir(), `tau-session-listen-limit-${Date.now()}.wav`);
-    await writeFile(audioPath, Buffer.alloc(2048, 1));
-    const spawn = vi.fn(async (command, _args, options = {}) => {
-      if (command === "mktemp") {
-        return {
-          stdout: `${audioPath}\n`,
-          stderr: "",
-          output: undefined,
-          exitCode: 0,
-          captureLimitExceeded: false,
-          timedOut: false,
-          aborted: false,
-          closeSignal: null,
-        };
-      }
-      if (command === "ffmpeg") {
-        const stdout = new EventEmitter();
-        options.onSpawn({ stdout });
-        queueMicrotask(() => stdout.emit("data", Buffer.from([1, 2])));
-        return await new Promise((resolve) => {
-          options.signal.addEventListener("abort", () => {
-            resolve({
-              stdout: "",
-              stderr: "",
-              output: undefined,
-              exitCode: 0,
-              captureLimitExceeded: false,
-              timedOut: false,
-              aborted: true,
-              closeSignal: null,
+  it.each(["openai", "gemini"])(
+    "finishes %s voice input at its recording limit",
+    async (provider) => {
+      const audioPath = join(tmpdir(), `tau-session-listen-limit-${Date.now()}.wav`);
+      await writeFile(audioPath, Buffer.alloc(2048, 1));
+      const spawn = vi.fn(async (command, _args, options = {}) => {
+        if (command === "mktemp") {
+          return {
+            stdout: `${audioPath}\n`,
+            stderr: "",
+            output: undefined,
+            exitCode: 0,
+            captureLimitExceeded: false,
+            timedOut: false,
+            aborted: false,
+            closeSignal: null,
+          };
+        }
+        if (command === "ffmpeg") {
+          const stdout = new EventEmitter();
+          options.onSpawn({ stdout });
+          queueMicrotask(() => stdout.emit("data", Buffer.from([1, 2])));
+          return await new Promise((resolve) => {
+            options.signal.addEventListener("abort", () => {
+              resolve({
+                stdout: "",
+                stderr: "",
+                output: undefined,
+                exitCode: 0,
+                captureLimitExceeded: false,
+                timedOut: false,
+                aborted: true,
+                closeSignal: null,
+              });
             });
           });
-        });
+        }
+        throw new Error(`unexpected command: ${command}`);
+      });
+      const transcription = {
+        appendAudio: vi.fn(),
+        finish: vi.fn(async () => "automatic transcript"),
+        abort: vi.fn(),
+      };
+      const session = new FakeSession();
+      const view = new FakeView();
+      const controller = new SessionChatController({
+        view,
+        session,
+        snapshot: await session.snapshot(),
+        targetLabel: "in-process",
+        deps: createMockDeps(spawn),
+        config: { speechToText: { provider }, apiKeys: { openai: "key", google: "key" } },
+      });
+      controller.createSpeechTranscription = vi.fn(() => transcription);
+
+      vi.useFakeTimers();
+      try {
+        await controller.onUserInput("/listen");
+        await vi.advanceTimersByTimeAsync(getSpeechToTextRecordingMaxDurationMs(provider));
+        await controller.listenTransition;
+      } finally {
+        vi.useRealTimers();
+        await controller.dispose();
+        await rm(audioPath, { force: true });
       }
-      throw new Error(`unexpected command: ${command}`);
-    });
-    const transcription = {
-      appendAudio: vi.fn(),
-      finish: vi.fn(async () => "automatic transcript"),
-      abort: vi.fn(),
-    };
+
+      expect(session.submit).not.toHaveBeenCalled();
+      expect(view.editorText).toBe("automatic transcript");
+    },
+  );
+
+  it("restores the draft after a failed preview and retries without duplicating it", async () => {
+    const audioPath = join(tmpdir(), `tau-preview-retry-${Date.now()}.wav`);
+    await writeFile(audioPath, Buffer.alloc(2048, 1));
     const session = new FakeSession();
     const view = new FakeView();
+    view.editorText = "draft ";
     const controller = new SessionChatController({
       view,
       session,
       snapshot: await session.snapshot(),
-      targetLabel: "in-process",
-      deps: createMockDeps(spawn),
-      config: { apiKeys: { openai: "openai-key" } },
+      targetLabel: "ws://host",
     });
-    controller.createSpeechTranscription = vi.fn(() => transcription);
-
-    vi.useFakeTimers();
+    const result = Promise.withResolvers();
+    const transcription = { finish: () => result.promise, abort: vi.fn() };
     try {
-      await controller.onUserInput("/listen");
-      await vi.advanceTimersByTimeAsync(SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS);
-      await controller.listenTransition;
+      controller.beginListenPreview();
+      const preview = controller.listenPreview;
+      preview.update("provisional");
+      const task = controller.transcribeListenAudioFile(audioPath, 1000, transcription);
+      await waitUntil(() => controller.activeListenTranscription === transcription);
+      result.reject(new Error("disconnected"));
+      await task;
+      expect(view.editorText).toBe("draft ");
+      expect(view.editorEnabledUpdates.at(-1)).toBe(true);
+      preview.update("stale");
+      expect(view.editorText).toBe("draft ");
+      controller.createSpeechTranscription = () => ({ finish: async () => "final", abort() {} });
+      await controller.onUserInput("/listen retry");
+      expect(view.editorText).toBe("draft final");
+      expect(controller.retainedListenAudio).toBeUndefined();
+      expect(session.submit).not.toHaveBeenCalled();
     } finally {
-      vi.useRealTimers();
       await controller.dispose();
       await rm(audioPath, { force: true });
     }
-
-    expect(session.submit).not.toHaveBeenCalled();
-    expect(view.editorText).toBe("automatic transcript");
   });
+
+  it.each(["failure", "disposal"])(
+    "restores the real editor after transcription %s and ignores late updates",
+    async (outcome) => {
+      const audioPath = join(tmpdir(), `tau-preview-${outcome}-${Date.now()}.wav`);
+      await writeFile(audioPath, Buffer.alloc(2048, 1));
+      const session = new FakeSession();
+      const view = new FakeView();
+      const editor = new CustomEditor(createUiTheme("plain"));
+      editor.setText("ennen jälkeen");
+      editor.handleInput("\x01");
+      for (let i = 0; i < 6; i++) editor.handleInput("\x1b[C");
+      const originalCursor = editor.getCursor();
+      view.beginEditorTextPreview = () => editor.beginTextPreview();
+      view.setEditorInputEnabled = (enabled) => editor.setInputEnabled(enabled);
+      const controller = new SessionChatController({
+        view,
+        session,
+        snapshot: await session.snapshot(),
+        targetLabel: "in-process",
+      });
+      const result = Promise.withResolvers();
+      const transcription = {
+        finish: () => result.promise,
+        abort: () => result.reject(new Error("aborted")),
+      };
+      try {
+        controller.beginListenPreview();
+        const preview = controller.listenPreview;
+        preview.update("English.\nSuomeksi. ");
+        const task = controller.runListenTransition(() =>
+          controller.transcribeListenAudioFile(audioPath, 1000, transcription),
+        );
+        await waitUntil(() => controller.activeListenTranscription === transcription);
+        editor.handleInput("x");
+        expect(editor.getText()).toBe("ennen English.\nSuomeksi. jälkeen");
+        if (outcome === "disposal") await controller.dispose();
+        else result.reject(new Error("failed"));
+        await task;
+        expect(editor.getText()).toBe("ennen jälkeen");
+        expect(editor.getCursor()).toEqual(originalCursor);
+        preview.update("late");
+        preview.commit("late final");
+        expect(editor.getText()).toBe("ennen jälkeen");
+        editor.handleInput("x");
+        expect(editor.getText()).toBe("ennen xjälkeen");
+        expect(controller.retainedListenAudio?.audioPath).toBe(audioPath);
+      } finally {
+        await controller.dispose();
+        await rm(audioPath, { force: true });
+      }
+    },
+  );
 
   it("retries retained OpenAI audio through file transcription", async () => {
     const audioPath = join(tmpdir(), `tau-session-listen-openai-retry-${Date.now()}.wav`);

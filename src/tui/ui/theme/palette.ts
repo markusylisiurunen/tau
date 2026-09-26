@@ -57,6 +57,7 @@ const PALETTE_TEXT_TOKENS = [
   "editorBorderBash",
   "editorBorderRecording",
   "editorPlaceholder",
+  "editorPreview",
   "autocompleteSelectedText",
   "feedback",
   "feedbackError",
@@ -419,6 +420,7 @@ export function deriveBuiltinPaletteOverrides(
   derived.thinkingText = neutralText.dim;
   derived.actionOutput = neutralText.dim;
   derived.editorPlaceholder = neutralText.dim;
+  derived.editorPreview = neutralText.muted;
   derived.autocompleteSelectedText = neutralText.strong;
   derived.userText = neutralText.strong;
 

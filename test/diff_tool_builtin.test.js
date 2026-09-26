@@ -1742,11 +1742,12 @@ describe("built-in diff tool", () => {
       const started = await server.start();
       await bootstrapStarted;
 
+      const guideRequestStarted = once(server.server, "request");
       const guideRequest = fetch(`${started.url}api/guide/generate`, {
         method: "POST",
         headers: { "content-type": "application/json" },
       });
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await guideRequestStarted;
 
       await expect(
         Promise.race([

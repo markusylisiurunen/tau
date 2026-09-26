@@ -510,16 +510,21 @@ describe("Fly Sprite execution environment", () => {
     const abortController = new AbortController();
 
     try {
-      const execution = backend.runBash('trap "" TERM; echo $$; while true; do sleep 1; done', {
+      let output = "";
+      const result = await backend.runBash('trap "" TERM; echo $$; while true; do sleep 1; done', {
         signal: abortController.signal,
+        onOutput: (chunk) => {
+          output += chunk.toString("utf-8");
+          if (output.includes("\n")) abortController.abort();
+        },
       });
-      setTimeout(() => abortController.abort(), 500);
-      const result = await execution;
       const pid = Number(result.stdout.trim().split("\n")[0]);
 
+      expect(Number.isInteger(pid) && pid > 0).toBe(true);
       expect(result.stderr).toBe("");
       expect(result.output).toBe(result.stdout);
       expect(result.aborted).toBe(true);
+      expect(result.closeSignal).toBe("SIGKILL");
       expect(() => process.kill(pid, 0)).toThrow();
     } finally {
       await backend.dispose();

@@ -75,6 +75,7 @@ describe("telegram TTS", () => {
     );
     expect(manifest).toBe("ffconcat version 1.0\nfile 'chunk-000.wav'\nfile 'chunk-001.wav'\n");
     expect(writtenWaves).toEqual(waves);
+    expect(spawn.mock.calls[0][1]).not.toContain("-filter:a");
     expect(spawn).toHaveBeenCalledWith(
       "ffmpeg",
       expect.arrayContaining([
@@ -82,8 +83,6 @@ describe("telegram TTS", () => {
         "concat",
         "-safe",
         "1",
-        "-filter:a",
-        "atempo=1.15",
         "-c:a",
         "libopus",
         "-application",

@@ -20,17 +20,19 @@ function createSseResponse(payloads) {
   );
 }
 
-function createStreamingAudioPayload(audio, finishReason) {
+function createStreamingAudioPayload(audio) {
   return {
-    candidates: [
-      {
-        ...(finishReason ? { finishReason } : {}),
-        content: {
-          parts: [{ inlineData: { data: Buffer.from(audio).toString("base64") } }],
-        },
-      },
-    ],
+    event_type: "step.delta",
+    delta: {
+      type: "audio",
+      mime_type: "audio/l16",
+      data: Buffer.from(audio).toString("base64"),
+    },
   };
+}
+
+function createCompletionPayload(status = "completed") {
+  return { event_type: "interaction.completed", interaction: { status } };
 }
 
 describe("gemini speech", () => {
@@ -54,17 +56,17 @@ describe("gemini speech", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            candidates: [
+            status: "completed",
+            steps: [
               {
-                content: {
-                  parts: [
-                    {
-                      inlineData: {
-                        data: Buffer.from([1, 2, 3, 4]).toString("base64"),
-                      },
-                    },
-                  ],
-                },
+                type: "model_output",
+                content: [
+                  {
+                    type: "audio",
+                    mime_type: "audio/l16",
+                    data: Buffer.from([1, 2, 3, 4]).toString("base64"),
+                  },
+                ],
               },
             ],
           }),
@@ -142,19 +144,23 @@ describe("gemini speech", () => {
     expect(rewriteRequest.generationConfig.thinkingConfig.thinkingLevel).toBe("low");
 
     const ttsRequest = JSON.parse(fetchMock.mock.calls[1][1].body);
-    expect(ttsRequest.generationConfig.responseModalities).toEqual(["AUDIO"]);
-    expect(ttsRequest.generationConfig.temperature).toBeUndefined();
-    expect(ttsRequest.generationConfig.maxOutputTokens).toBe(8192);
-    expect(ttsRequest.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName).toBe(
-      "Despina",
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      "https://generativelanguage.googleapis.com/v1beta/interactions",
     );
-    expect(ttsRequest.contents[0].parts[0].text).toContain("### TRANSCRIPT");
-    expect(ttsRequest.contents[0].parts[0].text).toContain(
-      "Pacing: Brisk conversational speed. Keep it clear, confident, and energetic without sounding rushed.",
-    );
-    expect(ttsRequest.contents[0].parts[0].text).toContain(
-      "Use src slash app dot t s, line 42, for the fix.",
-    );
+    expect(ttsRequest).toEqual({
+      model: "gemini-3.8-flash-tts",
+      store: false,
+      input: [
+        {
+          type: "user_input",
+          content: [{ type: "text", text: "Use src slash app dot t s, line 42, for the fix." }],
+        },
+      ],
+      response_format: { type: "audio", mime_type: "audio/l16", sample_rate: 24000 },
+      generation_config: { max_output_tokens: 8192, speech_config: [{ voice: "Despina" }] },
+    });
+    expect(result.audio.subarray(44)).toEqual(Buffer.from([1, 2, 3, 4]));
+    expect(result.audio.readUInt32LE(40)).toBe(4);
   });
 
   it("merges short rewritten paragraphs into one TTS chunk", async () => {
@@ -183,17 +189,17 @@ describe("gemini speech", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            candidates: [
+            status: "completed",
+            steps: [
               {
-                content: {
-                  parts: [
-                    {
-                      inlineData: {
-                        data: Buffer.from([1, 2]).toString("base64"),
-                      },
-                    },
-                  ],
-                },
+                type: "model_output",
+                content: [
+                  {
+                    type: "audio",
+                    mime_type: "audio/l16",
+                    data: Buffer.from([1, 2]).toString("base64"),
+                  },
+                ],
               },
             ],
           }),
@@ -222,7 +228,7 @@ describe("gemini speech", () => {
     ]);
 
     const ttsRequest = JSON.parse(fetchMock.mock.calls[1][1].body);
-    expect(ttsRequest.contents[0].parts[0].text).toContain(rewrittenText);
+    expect(ttsRequest.input[0].content[0].text).toContain(rewrittenText);
   });
 
   it("balances segments under the estimated two-minute maximum", async () => {
@@ -244,11 +250,17 @@ describe("gemini speech", () => {
 
       return new Response(
         JSON.stringify({
-          candidates: [
+          status: "completed",
+          steps: [
             {
-              content: {
-                parts: [{ inlineData: { data: Buffer.from([1, 2]).toString("base64") } }],
-              },
+              type: "model_output",
+              content: [
+                {
+                  type: "audio",
+                  mime_type: "audio/l16",
+                  data: Buffer.from([1, 2]).toString("base64"),
+                },
+              ],
             },
           ],
         }),
@@ -266,9 +278,7 @@ describe("gemini speech", () => {
 
     const transcripts = fetchMock.mock.calls
       .slice(1)
-      .map(([, init]) =>
-        JSON.parse(init.body).contents[0].parts[0].text.split("### TRANSCRIPT\n")[1].trim(),
-      );
+      .map(([, init]) => JSON.parse(init.body).input[0].content[0].text);
     expect(transcripts).toHaveLength(2);
     expect(transcripts[0]).toBe(sentences.slice(0, 5).join(" "));
     expect(transcripts[1]).toBe(sentences.slice(5).join(" "));
@@ -293,11 +303,17 @@ describe("gemini speech", () => {
 
       return new Response(
         JSON.stringify({
-          candidates: [
+          status: "completed",
+          steps: [
             {
-              content: {
-                parts: [{ inlineData: { data: Buffer.from([1, 2]).toString("base64") } }],
-              },
+              type: "model_output",
+              content: [
+                {
+                  type: "audio",
+                  mime_type: "audio/l16",
+                  data: Buffer.from([1, 2]).toString("base64"),
+                },
+              ],
             },
           ],
         }),
@@ -315,9 +331,7 @@ describe("gemini speech", () => {
 
     const transcripts = fetchMock.mock.calls
       .slice(1)
-      .map(([, init]) =>
-        JSON.parse(init.body).contents[0].parts[0].text.split("### TRANSCRIPT\n")[1].trim(),
-      );
+      .map(([, init]) => JSON.parse(init.body).input[0].content[0].text);
     expect(transcripts).toHaveLength(3);
     expect(transcripts).toEqual([
       paragraphs.slice(0, 3).join("\n\n"),
@@ -343,11 +357,17 @@ describe("gemini speech", () => {
 
       return new Response(
         JSON.stringify({
-          candidates: [
+          status: "completed",
+          steps: [
             {
-              content: {
-                parts: [{ inlineData: { data: Buffer.from([1, 2]).toString("base64") } }],
-              },
+              type: "model_output",
+              content: [
+                {
+                  type: "audio",
+                  mime_type: "audio/l16",
+                  data: Buffer.from([1, 2]).toString("base64"),
+                },
+              ],
             },
           ],
         }),
@@ -365,9 +385,7 @@ describe("gemini speech", () => {
 
     const transcripts = fetchMock.mock.calls
       .slice(1)
-      .map(([, init]) =>
-        JSON.parse(init.body).contents[0].parts[0].text.split("### TRANSCRIPT\n")[1].trim(),
-      );
+      .map(([, init]) => JSON.parse(init.body).input[0].content[0].text);
     expect(transcripts).toEqual([firstSentence, secondSentence]);
   });
 
@@ -386,11 +404,17 @@ describe("gemini speech", () => {
 
       return new Response(
         JSON.stringify({
-          candidates: [
+          status: "completed",
+          steps: [
             {
-              content: {
-                parts: [{ inlineData: { data: Buffer.from([1, 2]).toString("base64") } }],
-              },
+              type: "model_output",
+              content: [
+                {
+                  type: "audio",
+                  mime_type: "audio/l16",
+                  data: Buffer.from([1, 2]).toString("base64"),
+                },
+              ],
             },
           ],
         }),
@@ -408,9 +432,7 @@ describe("gemini speech", () => {
 
     const transcripts = fetchMock.mock.calls
       .slice(1)
-      .map(([, init]) =>
-        JSON.parse(init.body).contents[0].parts[0].text.split("### TRANSCRIPT\n")[1].trim(),
-      );
+      .map(([, init]) => JSON.parse(init.body).input[0].content[0].text);
     const speechWeight = (text) =>
       Array.from(text).reduce(
         (total, character) =>
@@ -441,7 +463,8 @@ describe("gemini speech", () => {
       .mockResolvedValueOnce(
         createSseResponse([
           createStreamingAudioPayload([1, 2]),
-          createStreamingAudioPayload([3, 4], "STOP"),
+          createStreamingAudioPayload([3, 4]),
+          createCompletionPayload(),
         ]),
       );
     const progress = [];
@@ -463,7 +486,7 @@ describe("gemini speech", () => {
       { ready: 1, total: 1 },
     ]);
     expect(fetchMock.mock.calls[1][0]).toContain(
-      "gemini-3.1-flash-tts-preview:streamGenerateContent?alt=sse",
+      "https://generativelanguage.googleapis.com/v1beta/interactions",
     );
   });
 
@@ -482,8 +505,12 @@ describe("gemini speech", () => {
           { status: 200, headers: { "Content-Type": "application/json" } },
         ),
       )
-      .mockResolvedValueOnce(createSseResponse([createStreamingAudioPayload([1, 2], "STOP")]))
-      .mockResolvedValueOnce(createSseResponse([createStreamingAudioPayload([3, 4], "STOP")]));
+      .mockResolvedValueOnce(
+        createSseResponse([createStreamingAudioPayload([1, 2]), createCompletionPayload()]),
+      )
+      .mockResolvedValueOnce(
+        createSseResponse([createStreamingAudioPayload([3, 4]), createCompletionPayload()]),
+      );
     const stream = streamGeminiSpeechPcm({
       apiKey: "gemini-key",
       sourceText: "Original response.",
@@ -501,9 +528,7 @@ describe("gemini speech", () => {
     expect(remaining).toEqual([{ index: 1, total: 2, audio: Buffer.from([3, 4]) }]);
     const transcripts = fetchMock.mock.calls
       .slice(1)
-      .map(([, init]) =>
-        JSON.parse(init.body).contents[0].parts[0].text.split("### TRANSCRIPT\n")[1].trim(),
-      );
+      .map(([, init]) => JSON.parse(init.body).input[0].content[0].text);
     expect(transcripts).toEqual([sentences.slice(0, 5).join(" "), sentences.slice(5).join(" ")]);
   });
 
@@ -524,7 +549,9 @@ describe("gemini speech", () => {
           headers: { "Content-Type": "application/json" },
         }),
       )
-      .mockResolvedValueOnce(createSseResponse([createStreamingAudioPayload([1, 2], "STOP")]));
+      .mockResolvedValueOnce(
+        createSseResponse([createStreamingAudioPayload([1, 2]), createCompletionPayload()]),
+      );
     const chunks = [];
 
     for await (const chunk of streamGeminiSpeechPcm({
@@ -552,15 +579,13 @@ describe("gemini speech", () => {
         ),
       )
       .mockResolvedValueOnce(
-        createSseResponse([
-          createStreamingAudioPayload([9, 9]),
-          { candidates: [{ finishReason: "OTHER" }] },
-        ]),
+        createSseResponse([createStreamingAudioPayload([9, 9]), createCompletionPayload("failed")]),
       )
       .mockResolvedValueOnce(
         createSseResponse([
           createStreamingAudioPayload([1, 2]),
-          createStreamingAudioPayload([3, 4], "STOP"),
+          createStreamingAudioPayload([3, 4]),
+          createCompletionPayload(),
         ]),
       );
     const chunks = [];
@@ -603,7 +628,9 @@ describe("gemini speech", () => {
           { status: 200, headers: { "Content-Type": "text/event-stream" } },
         ),
       )
-      .mockResolvedValueOnce(createSseResponse([createStreamingAudioPayload([1, 2], "STOP")]));
+      .mockResolvedValueOnce(
+        createSseResponse([createStreamingAudioPayload([1, 2]), createCompletionPayload()]),
+      );
     const chunks = [];
 
     for await (const chunk of streamGeminiSpeechPcm({
@@ -632,10 +659,7 @@ describe("gemini speech", () => {
         ),
       )
       .mockResolvedValueOnce(
-        createSseResponse([
-          createStreamingAudioPayload([1, 2]),
-          { candidates: [{ finishReason: "OTHER" }] },
-        ]),
+        createSseResponse([createStreamingAudioPayload([1, 2]), createCompletionPayload("failed")]),
       );
     const stream = streamGeminiSpeechPcm({
       apiKey: "gemini-key",
@@ -647,7 +671,7 @@ describe("gemini speech", () => {
     await expect(stream.next()).resolves.toMatchObject({
       value: { audio: Buffer.from([1, 2]) },
     });
-    await expect(stream.next()).rejects.toThrow("Gemini TTS stopped with finish reason 'OTHER'");
+    await expect(stream.next()).rejects.toThrow("Gemini TTS did not complete successfully");
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
@@ -760,7 +784,13 @@ describe("gemini speech", () => {
   it("rejects generated speech above the cumulative PCM limit", async () => {
     const oversizedAudio = Buffer.alloc(32 * 1024 * 1024 + 1).toString("base64");
     const ttsPayload = JSON.stringify({
-      candidates: [{ content: { parts: [{ inlineData: { data: oversizedAudio } }] } }],
+      status: "completed",
+      steps: [
+        {
+          type: "model_output",
+          content: [{ type: "audio", mime_type: "audio/l16", data: oversizedAudio }],
+        },
+      ],
     });
     const fetchMock = vi
       .fn()
@@ -775,7 +805,7 @@ describe("gemini speech", () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        text: async () => ttsPayload,
+        json: async () => JSON.parse(ttsPayload),
       });
 
     await expect(async () => {
@@ -790,7 +820,7 @@ describe("gemini speech", () => {
     }).rejects.toThrow("generated speech audio exceeds the 32 MiB limit");
   });
 
-  it("rejects audio truncated by the TTS output token limit", async () => {
+  it("rejects incomplete TTS audio without retrying", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
@@ -804,18 +834,17 @@ describe("gemini speech", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            candidates: [
+            status: "incomplete",
+            steps: [
               {
-                finishReason: "MAX_TOKENS",
-                content: {
-                  parts: [
-                    {
-                      inlineData: {
-                        data: Buffer.from([1, 2]).toString("base64"),
-                      },
-                    },
-                  ],
-                },
+                type: "model_output",
+                content: [
+                  {
+                    type: "audio",
+                    mime_type: "audio/l16",
+                    data: Buffer.from([1, 2]).toString("base64"),
+                  },
+                ],
               },
             ],
           }),
@@ -832,7 +861,7 @@ describe("gemini speech", () => {
       })) {
         void _chunk;
       }
-    }).rejects.toThrow("Gemini TTS reached its output token limit");
+    }).rejects.toThrow("Gemini TTS returned incomplete audio");
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
@@ -866,17 +895,17 @@ describe("gemini speech", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            candidates: [
+            status: "completed",
+            steps: [
               {
-                content: {
-                  parts: [
-                    {
-                      inlineData: {
-                        data: Buffer.from([5, 6]).toString("base64"),
-                      },
-                    },
-                  ],
-                },
+                type: "model_output",
+                content: [
+                  {
+                    type: "audio",
+                    mime_type: "audio/l16",
+                    data: Buffer.from([5, 6]).toString("base64"),
+                  },
+                ],
               },
             ],
           }),
@@ -897,4 +926,199 @@ describe("gemini speech", () => {
     expect(chunks).toHaveLength(1);
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
+
+  it("collects every audio part from model output steps", async () => {
+    const part = (audio) => createStreamingAudioPayload(audio).delta;
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json({ candidates: [{ content: { parts: [{ text: "Spoken version." }] } }] }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          status: "completed",
+          steps: [
+            { type: "user_input", content: [part([9, 9])] },
+            { type: "model_output", content: [part([1, 2]), part([3, 4])] },
+            { type: "model_output", content: [part([5, 6])] },
+          ],
+        }),
+      );
+    const chunks = [];
+    for await (const chunk of generateGeminiSpeechAudio({
+      apiKey: "key",
+      sourceText: "text",
+      fetchImpl: fetchMock,
+    })) {
+      chunks.push(chunk);
+    }
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0].audio.subarray(44)).toEqual(Buffer.from([1, 2, 3, 4, 5, 6]));
+  });
+
+  it.each([
+    ["WAV", { mime_type: "audio/wav", data: "AQI=" }, "unsupported audio format"],
+    [
+      "sample rate",
+      { mime_type: "audio/l16", sample_rate: 16000, data: "AQI=" },
+      "unsupported audio format",
+    ],
+    ["base64", { mime_type: "audio/l16", data: "not base64!" }, "invalid audio data"],
+    ["invalid data", { mime_type: "audio/l16", data: null }, "invalid audio data"],
+    ["channels", { mime_type: "audio/l16", channels: 2, data: "AQI=" }, "unsupported audio format"],
+  ])("rejects invalid %s in unary and streamed audio", async (_name, audio, error) => {
+    for (const streaming of [false, true]) {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(
+          Response.json({ candidates: [{ content: { parts: [{ text: "Spoken version." }] } }] }),
+        )
+        .mockResolvedValueOnce(
+          streaming
+            ? createSseResponse([
+                { event_type: "step.delta", delta: { type: "audio", ...audio } },
+                createCompletionPayload(),
+              ])
+            : Response.json({
+                status: "completed",
+                steps: [{ type: "model_output", content: [{ type: "audio", ...audio }] }],
+              }),
+        );
+      const generate = streaming ? streamGeminiSpeechPcm : generateGeminiSpeechAudio;
+      await expect(async () => {
+        for await (const chunk of generate({
+          apiKey: "key",
+          sourceText: "text",
+          fetchImpl: fetchMock,
+          maxTtsAttempts: 1,
+        })) {
+          void chunk;
+        }
+      }).rejects.toThrow(error);
+    }
+  });
+
+  it.each([
+    ["missing completion", [createStreamingAudioPayload([1, 2])], "without a completion response"],
+    ["missing audio", [createCompletionPayload()], "did not include audio data"],
+    ["failed completion", [createCompletionPayload("failed")], "did not complete successfully"],
+    ["incomplete completion", [createCompletionPayload("incomplete")], "incomplete audio"],
+    [
+      "server error",
+      [{ event_type: "error", error: { message: "generation failed" } }],
+      "generation failed",
+    ],
+  ])("rejects streams with %s", async (_name, events, error) => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json({ candidates: [{ content: { parts: [{ text: "Spoken version." }] } }] }),
+      )
+      .mockResolvedValueOnce(createSseResponse(events));
+    await expect(async () => {
+      for await (const chunk of streamGeminiSpeechPcm({
+        apiKey: "key",
+        sourceText: "text",
+        fetchImpl: fetchMock,
+        maxTtsAttempts: 1,
+      })) {
+        void chunk;
+      }
+    }).rejects.toThrow(error);
+  });
+
+  it("preserves initial audio in step.start and ignores non-audio events", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json({ candidates: [{ content: { parts: [{ text: "Spoken version." }] } }] }),
+      )
+      .mockResolvedValueOnce(
+        createSseResponse([
+          { event_type: "interaction.created", interaction: { status: "in_progress" } },
+          {
+            event_type: "step.start",
+            step: { type: "model_output", content: [createStreamingAudioPayload([1, 2]).delta] },
+          },
+          {
+            event_type: "step.delta",
+            delta: { type: "thought_signature", signature: "signature" },
+          },
+          createStreamingAudioPayload([3, 4]),
+          { event_type: "step.stop", index: 0 },
+          createCompletionPayload(),
+        ]),
+      );
+    const chunks = [];
+    for await (const chunk of streamGeminiSpeechPcm({
+      apiKey: "key",
+      sourceText: "text",
+      fetchImpl: fetchMock,
+    })) {
+      chunks.push(chunk.audio);
+    }
+    expect(Buffer.concat(chunks)).toEqual(Buffer.from([1, 2, 3, 4]));
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toMatchObject({
+      model: "gemini-3.8-flash-tts",
+      stream: true,
+      store: false,
+      response_format: { type: "audio", mime_type: "audio/l16", sample_rate: 24000 },
+      generation_config: { speech_config: [{ voice: "Despina" }] },
+    });
+  });
+
+  it("accepts metadata-only audio events and data-only deltas", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json({ candidates: [{ content: { parts: [{ text: "Spoken version." }] } }] }),
+      )
+      .mockResolvedValueOnce(
+        createSseResponse([
+          {
+            event_type: "step.start",
+            step: {
+              type: "model_output",
+              content: [{ type: "audio", mime_type: "audio/l16", sample_rate: 24000, channels: 1 }],
+            },
+          },
+          { event_type: "step.delta", delta: { type: "audio", data: "AQI=" } },
+          createCompletionPayload(),
+        ]),
+      );
+    const chunks = [];
+    for await (const chunk of streamGeminiSpeechPcm({
+      apiKey: "key",
+      sourceText: "text",
+      fetchImpl: fetchMock,
+    })) {
+      chunks.push(chunk.audio);
+    }
+    expect(chunks).toEqual([Buffer.from([1, 2])]);
+  });
+
+  it.each([undefined, "failed", "in_progress"])(
+    "rejects unary audio with status %s",
+    async (status) => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(
+          Response.json({ candidates: [{ content: { parts: [{ text: "Spoken version." }] } }] }),
+        )
+        .mockResolvedValueOnce(
+          Response.json({
+            status,
+            steps: [{ type: "model_output", content: [createStreamingAudioPayload([1, 2]).delta] }],
+          }),
+        );
+      await expect(
+        generateGeminiSpeechAudio({
+          apiKey: "key",
+          sourceText: "text",
+          fetchImpl: fetchMock,
+          maxTtsAttempts: 1,
+        }).next(),
+      ).rejects.toThrow("did not complete successfully");
+    },
+  );
 });

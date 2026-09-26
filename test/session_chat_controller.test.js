@@ -7090,24 +7090,14 @@ describe("SessionChatController", () => {
     const secondAudio = Buffer.alloc(12_000, 2);
     const streamingBody = [
       {
-        candidates: [
-          {
-            content: {
-              parts: [{ inlineData: { data: firstAudio.toString("base64") } }],
-            },
-          },
-        ],
+        event_type: "step.delta",
+        delta: { type: "audio", mime_type: "audio/l16", data: firstAudio.toString("base64") },
       },
       {
-        candidates: [
-          {
-            finishReason: "STOP",
-            content: {
-              parts: [{ inlineData: { data: secondAudio.toString("base64") } }],
-            },
-          },
-        ],
+        event_type: "step.delta",
+        delta: { type: "audio", mime_type: "audio/l16", data: secondAudio.toString("base64") },
       },
+      { event_type: "interaction.completed", interaction: { status: "completed" } },
     ]
       .map((payload) => `data: ${JSON.stringify(payload)}\n\n`)
       .join("");
@@ -7157,17 +7147,7 @@ describe("SessionChatController", () => {
     expect(spawn).toHaveBeenCalledOnce();
     expect(spawn).toHaveBeenCalledWith(
       "ffplay",
-      expect.arrayContaining([
-        "-f",
-        "s16le",
-        "-ar",
-        "24000",
-        "-ch_layout",
-        "mono",
-        "-af",
-        "atempo=1.15",
-        "pipe:0",
-      ]),
+      expect.arrayContaining(["-f", "s16le", "-ar", "24000", "-ch_layout", "mono", "pipe:0"]),
       expect.objectContaining({
         detached: true,
         killProcessGroup: true,
@@ -7175,6 +7155,7 @@ describe("SessionChatController", () => {
         onSpawn: expect.any(Function),
       }),
     );
+    expect(spawn.mock.calls[0][1]).not.toContain("-af");
     expect(writtenAudio).toEqual([Buffer.concat([firstAudio, secondAudio])]);
     expect(stdin.end).toHaveBeenCalledOnce();
     expect(session.submit).not.toHaveBeenCalled();
@@ -7223,22 +7204,7 @@ describe("SessionChatController", () => {
       )
       .mockResolvedValueOnce(
         new Response(
-          `data: ${JSON.stringify({
-            candidates: [
-              {
-                finishReason: "STOP",
-                content: {
-                  parts: [
-                    {
-                      inlineData: {
-                        data: Buffer.alloc(24_000, 1).toString("base64"),
-                      },
-                    },
-                  ],
-                },
-              },
-            ],
-          })}\n\n`,
+          `data: ${JSON.stringify({ event_type: "step.delta", delta: { type: "audio", mime_type: "audio/l16", data: Buffer.alloc(24_000, 1).toString("base64") } })}\n\ndata: ${JSON.stringify({ event_type: "interaction.completed", interaction: { status: "completed" } })}\n\n`,
           { status: 200, headers: { "Content-Type": "text/event-stream" } },
         ),
       );
@@ -7305,21 +7271,7 @@ describe("SessionChatController", () => {
             start(controller) {
               controller.enqueue(
                 encoder.encode(
-                  `data: ${JSON.stringify({
-                    candidates: [
-                      {
-                        content: {
-                          parts: [
-                            {
-                              inlineData: {
-                                data: Buffer.alloc(24_000, 1).toString("base64"),
-                              },
-                            },
-                          ],
-                        },
-                      },
-                    ],
-                  })}\n\n`,
+                  `data: ${JSON.stringify({ event_type: "step.delta", delta: { type: "audio", mime_type: "audio/l16", data: Buffer.alloc(24_000, 1).toString("base64") } })}\n\n`,
                 ),
               );
               init.signal.addEventListener(
@@ -7404,16 +7356,7 @@ describe("SessionChatController", () => {
       )
       .mockResolvedValueOnce(
         new Response(
-          `data: ${JSON.stringify({
-            candidates: [
-              {
-                finishReason: "STOP",
-                content: {
-                  parts: [{ inlineData: { data: Buffer.from([1, 2]).toString("base64") } }],
-                },
-              },
-            ],
-          })}\n\n`,
+          `data: ${JSON.stringify({ event_type: "step.delta", delta: { type: "audio", mime_type: "audio/l16", data: Buffer.from([1, 2]).toString("base64") } })}\n\ndata: ${JSON.stringify({ event_type: "interaction.completed", interaction: { status: "completed" } })}\n\n`,
           { status: 200, headers: { "Content-Type": "text/event-stream" } },
         ),
       );

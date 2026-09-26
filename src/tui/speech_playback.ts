@@ -4,7 +4,6 @@ import type { CoreDeps } from "../core/runtime/deps.js";
 import {
   GEMINI_SPEECH_BITS_PER_SAMPLE,
   GEMINI_SPEECH_CHANNEL_COUNT,
-  GEMINI_SPEECH_PLAYBACK_RATE,
   GEMINI_SPEECH_SAMPLE_RATE_HZ,
   streamGeminiSpeechPcm,
 } from "../core/utils/gemini_speech.js";
@@ -49,8 +48,6 @@ export async function runSpeechPlaybackTask(args: {
             String(GEMINI_SPEECH_SAMPLE_RATE_HZ),
             "-ch_layout",
             "mono",
-            "-af",
-            `atempo=${GEMINI_SPEECH_PLAYBACK_RATE}`,
             "pipe:0",
           ],
           {

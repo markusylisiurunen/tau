@@ -148,6 +148,104 @@ function setStreams(runtime, streams) {
 }
 
 describe("AgentRuntime", () => {
+  it("commits system instructions durably, projects metadata away, and rewinds them", async () => {
+    const { runtime, events, persona } = createRuntime();
+    const firstId = await runtime.commitSystemMessage("first instruction", {
+      type: "instruction",
+      version: 1,
+    });
+    const userId = await runtime.commitUserText("request");
+    const secondId = await runtime.commitSystemMessage("second instruction", {
+      type: "instruction",
+      version: 1,
+    });
+    expect(
+      events
+        .filter((event) => event.type === "system_message")
+        .map((event) => event.historyEntryId),
+    ).toEqual([firstId, secondId]);
+    const state = runtime.snapshot();
+    const restored = createRuntime().runtime;
+    restored.restoreState(state);
+    const stream = setStreams(restored, [createStream([], createAssistant(persona, "done"))]);
+    await restored.runTurn();
+    const context = stream.mock.calls[0][0];
+    expect(context.systemPrompt).toBe("system");
+    expect(context.messages.map((message) => message.role)).toEqual(["system", "user", "system"]);
+    expect(context.messages[0]).toEqual({
+      role: "system",
+      content: "first instruction",
+      timestamp: state.historyEntries[0].message.timestamp,
+    });
+    expect(context.messages[2]).not.toHaveProperty("metadata");
+    expect(restored.rawHistory[0].metadata).toEqual({ type: "instruction", version: 1 });
+    await restored.rewindToHistoryEntryId(userId);
+    expect(restored.rawHistoryEntriesSnapshot.map((entry) => entry.id)).toEqual([firstId]);
+  });
+
+  it("blocks dependent work until system persistence and rolls back failed commits", async () => {
+    const gate = deferred();
+    const { runtime } = createRuntime({ eventSink: () => gate.promise });
+    const commit = runtime.commitSystemMessage("instruction", { type: "instruction", version: 1 });
+    await expect(runtime.submit("request")).rejects.toThrow("system message commit is pending");
+    await expect(runtime.runTurn()).rejects.toThrow("system message commit is pending");
+    await expect(
+      runtime.commitSystemMessage("another", { type: "instruction", version: 1 }),
+    ).rejects.toThrow("system message commit is pending");
+    gate.resolve();
+    await commit;
+    const error = new Error("storage unavailable");
+    const failing = createRuntime({
+      eventSink: async () => {
+        throw error;
+      },
+    }).runtime;
+    const before = failing.snapshot();
+    await expect(
+      failing.commitSystemMessage("instruction", { type: "instruction", version: 1 }),
+    ).rejects.toThrow(error);
+    expect(failing.snapshot()).toEqual(before);
+    await expect(
+      failing.commitSystemMessage("instruction", { type: "unknown", version: 1 }),
+    ).rejects.toThrow();
+    expect(failing.snapshot()).toEqual(before);
+  });
+
+  it.each(["user", "system", "assistant"])(
+    "serializes %s commits against other history insertions",
+    async (kind) => {
+      const gate = deferred();
+      const error = new Error("persistence failed");
+      const { runtime, persona } = createRuntime({
+        eventSink: async () => {
+          await gate.promise;
+          throw error;
+        },
+      });
+      const before = runtime.snapshot();
+      const assistant = createAssistant(persona, "interrupted", { stopReason: "aborted" });
+      const pending =
+        kind === "user"
+          ? runtime.commitUserText("request")
+          : kind === "system"
+            ? runtime.commitSystemMessage("instruction", { type: "instruction", version: 1 })
+            : runtime.commitInterruptedAssistant(assistant, "interrupted-1");
+      const rejected = expect(pending).rejects.toThrow(error);
+      await expect(
+        runtime.commitSystemMessage("another", { type: "instruction", version: 1 }),
+      ).rejects.toThrow(`${kind} message commit is pending`);
+      await expect(runtime.commitInterruptedAssistant(assistant, "interrupted-2")).rejects.toThrow(
+        `${kind} message commit is pending`,
+      );
+      await expect(runtime.commitUserText("another request")).rejects.toThrow(
+        `${kind} message commit is pending`,
+      );
+      gate.resolve();
+      await rejected;
+      expect(runtime.snapshot()).toEqual(before);
+    },
+  );
+
   it("defaults to 1024 model subturns", () => {
     expect(createRuntime().runtime.spec.maxModelSubturns).toBe(1024);
   });
@@ -964,6 +1062,31 @@ describe("AgentRuntime", () => {
     const continuationContext = JSON.stringify(streamModel.mock.calls[2][0]);
     expect(continuationContext).not.toContain("temporary storage unavailable");
     expect(continuationContext).not.toContain("000001.json");
+  });
+
+  it("rejects system insertion while manual compaction is in progress", async () => {
+    const { runtime, persona } = createRuntime();
+    await runtime.commitUserText("request");
+    const gate = deferred();
+    runtime.spec.model.stream = vi.fn(() => ({
+      async *[Symbol.asyncIterator]() {},
+      async result() {
+        await gate.promise;
+        return createAssistant(
+          persona,
+          "summary\n\n<preserved-user-message-ids>\n[]\n</preserved-user-message-ids>",
+        );
+      },
+    }));
+    const compact = runtime.compact({ mode: "summary-only" });
+    await vi.waitFor(() => expect(runtime.spec.model.stream).toHaveBeenCalledOnce());
+    await expect(
+      runtime.commitSystemMessage("must not disappear", { type: "instruction", version: 1 }),
+    ).rejects.toThrow("manual compaction is pending");
+    gate.resolve();
+    await compact;
+    await runtime.commitSystemMessage("after compaction", { type: "instruction", version: 1 });
+    expect(runtime.rawHistory.at(-1).content).toBe("after compaction");
   });
 
   it("inherits stream options and cleans up manual compaction sessions", async () => {

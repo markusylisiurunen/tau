@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
 import type { AssistantMessage, Message, ToolResultMessage } from "@earendil-works/pi-ai";
+import { isSystemCompactionContinuation } from "../../protocol/system_message.js";
 import {
   buildCompactionUserMessage,
   formatHistoryForCompaction,
@@ -181,7 +182,7 @@ export function prepareSessionCompaction(
   const latestCompaction = findLatestCompactionEntry(entries);
   const entriesToSummarize = entries
     .slice(latestCompaction.index + 1)
-    .filter((entry) => !hasAutoCompactionContinuationMetadata(entry.message));
+    .filter((entry) => !isCompactionContinuation(entry.message));
   const messagesToSummarize = entriesToSummarize.map((entry) => entry.message);
   const historyEntryIds = buildHistoryEntryIdMap(entriesToSummarize);
   const formattedConversation = formatHistoryForCompaction(messagesToSummarize, {
@@ -438,7 +439,7 @@ function extractPreservableUserText(message: Message): string | undefined {
   }
   if (
     getSummaryCompactionMetadataFromMessage(message) ||
-    hasAutoCompactionContinuationMetadata(message) ||
+    isCompactionContinuation(message) ||
     hasToolRecoveryMetadata(message)
   ) {
     return undefined;
@@ -545,7 +546,7 @@ export function prepareAutoCompaction(
 
   const entriesToSummarize = entries
     .slice(latestCompaction.index + 1, cut.startIndex)
-    .filter((entry) => !hasAutoCompactionContinuationMetadata(entry.message));
+    .filter((entry) => !isCompactionContinuation(entry.message));
   const messagesToSummarize = entriesToSummarize.map((entry) => entry.message);
   const historyEntryIds = buildHistoryEntryIdMap(
     entriesToSummarize.filter(isAutoCompactionArchiveEntry),
@@ -563,7 +564,7 @@ export function prepareAutoCompaction(
 
   const retainedEntries = entries
     .slice(cut.startIndex)
-    .filter((entry) => !hasAutoCompactionContinuationMetadata(entry.message))
+    .filter((entry) => !isCompactionContinuation(entry.message))
     .map(boundRetainedEntry);
   if (retainedEntries.length === 0) {
     return undefined;
@@ -748,7 +749,7 @@ function collectTurnStarts(
     }
     if (
       getSummaryCompactionMetadataFromMessage(message) ||
-      hasAutoCompactionContinuationMetadata(message) ||
+      isCompactionContinuation(message) ||
       hasToolRecoveryMetadata(message)
     ) {
       continue;
@@ -763,7 +764,7 @@ function findOngoingTurnStart(
   startIndex: number,
 ): number | undefined {
   for (let index = Math.max(0, startIndex); index < entries.length; index += 1) {
-    if (!hasAutoCompactionContinuationMetadata(entries[index]!.message)) {
+    if (!isCompactionContinuation(entries[index]!.message)) {
       return index;
     }
   }
@@ -780,7 +781,7 @@ function selectLatestTurnSplitStart(
 
   for (let index = entries.length - 1; index >= args.turnStart; index -= 1) {
     const entry = entries[index]!;
-    if (hasAutoCompactionContinuationMetadata(entry.message)) {
+    if (isCompactionContinuation(entry.message)) {
       continue;
     }
 
@@ -804,7 +805,7 @@ function selectLatestTurnSplitStart(
 function estimateEntriesTokens(entries: readonly CompactionHistoryEntry[]): number {
   return entries.reduce(
     (total, entry) =>
-      hasAutoCompactionContinuationMetadata(entry.message)
+      isCompactionContinuation(entry.message)
         ? total
         : total + estimateMessageTokens(entry.message),
     0,
@@ -824,4 +825,8 @@ function extractLastAssistantMessage(history: readonly Message[]): string | unde
   }
 
   return undefined;
+}
+
+function isCompactionContinuation(message: Message): boolean {
+  return hasAutoCompactionContinuationMetadata(message) || isSystemCompactionContinuation(message);
 }

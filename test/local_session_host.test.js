@@ -20,6 +20,7 @@ import {
 import { HostedEphemeralAgentSession } from "../dist/host/hosted_ephemeral_agent_session.js";
 import { LocalSessionHost } from "../dist/host/local_session_host.js";
 import { EphemeralThreadBusyError } from "../dist/host/session_host.js";
+import { SessionProtocolHandler } from "../dist/host/session_protocol_handler.js";
 import {
   applySessionProtocolDelta,
   SESSION_PROTOCOL_MAX_SUBAGENT_ASSISTANT_TEXT_BYTES,
@@ -510,6 +511,150 @@ describe("LocalSessionHost", () => {
     await host.shutdown();
   });
 
+  it("persists intermediate system messages and replays them after host recovery", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "tau-system-message-recovery-"));
+    const store = new FileSessionStore({ directory });
+    const historyStore = new LocalHistoryStore(":memory:");
+    const originalHost = createHost(store, { history: new HistoryManager(historyStore) });
+    let recoveredHost;
+
+    try {
+      const session = await originalHost.createSession(localCreateInput);
+      await session.record({ text: "before instructions" });
+      const previous = await session.snapshot();
+      const deltas = [];
+      session.onDelta((delta) => deltas.push(delta));
+      const metadata = { type: "instruction", version: 1 };
+      const historyEntryId = await session.runtime.commitSystemMessage(
+        "Preserve the exact identifier ProjectAlpha.",
+        metadata,
+      );
+      const snapshot = await session.snapshot();
+      const systemEntry = {
+        id: historyEntryId,
+        state: "committed",
+        modelVisible: true,
+        message: {
+          role: "system",
+          content: "Preserve the exact identifier ProjectAlpha.",
+          timestamp: expect.any(Number),
+          metadata,
+        },
+      };
+
+      expect(snapshot.messages).toEqual([...previous.messages, systemEntry]);
+      expect(snapshot.timeline).toEqual(previous.timeline);
+      expect(snapshot.turns).toEqual(previous.turns);
+      expect(deltas).toHaveLength(1);
+      expect(deltas[0].cause.type).toBe("system-message");
+      expect(deltas.reduce(applySessionProtocolDelta, previous)).toEqual(snapshot);
+      await expect(store.loadSession(session.sessionId)).resolves.toEqual(snapshot);
+      await expect(
+        historyStore.read({ sessionId: session.sessionId, limit: 10 }),
+      ).resolves.toMatchObject({
+        entries: [
+          { type: "user" },
+          {
+            id: historyEntryId,
+            sourceIds: [historyEntryId],
+            type: "system",
+            content: "Preserve the exact identifier ProjectAlpha.",
+          },
+        ],
+      });
+      await expect(
+        historyStore.search({ query: "ProjectAlpha", limit: 10 }),
+      ).resolves.toMatchObject({
+        sessions: [{ sessionId: session.sessionId }],
+      });
+
+      await originalHost.shutdown();
+      recoveredHost = createHost(new FileSessionStore({ directory }));
+      const recoveredSession = await recoveredHost.observeSession(session.sessionId);
+      expect(recoveredSession).toBeDefined();
+      const recoveredSnapshot = await recoveredSession.snapshot();
+      expect(recoveredSnapshot.messages).toEqual(snapshot.messages);
+      expect(recoveredSession.runtime.rawHistoryEntries).toEqual(
+        snapshot.messages.slice(1).map(({ id, message }) => ({ id, message })),
+      );
+
+      const contexts = [];
+      recoveredSession.runtime.agent.spec.model.stream = (context) => {
+        contexts.push(structuredClone(context));
+        return {
+          async *[Symbol.asyncIterator]() {},
+          async result() {
+            return fauxAssistantMessage("ProjectAlpha preserved");
+          },
+        };
+      };
+      await recoveredSession.record({ text: "continue" });
+      await expect(recoveredSession.runTurn()).resolves.toMatchObject({ status: "completed" });
+      expect(contexts).toHaveLength(1);
+      expect(contexts[0].systemPrompt).toBe(recoveredSession.runtime.agent.spec.systemPrompt);
+      expect(contexts[0].systemPrompt).toContain(snapshot.messages[0].message.content);
+      expect(contexts[0].messages.map((message) => message.role)).toEqual([
+        "user",
+        "system",
+        "user",
+      ]);
+      const { metadata: _metadata, ...nativeSystemMessage } = systemEntry.message;
+      expect(contexts[0].messages[1]).toEqual(nativeSystemMessage);
+      expect((await recoveredSession.snapshot()).messages).toContainEqual(systemEntry);
+    } finally {
+      await recoveredHost?.shutdown();
+      await originalHost.shutdown();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("rolls back a system append when persistence fails without publishing a delta", async () => {
+    const store = new MemorySessionStore();
+    const historyStore = new LocalHistoryStore(":memory:");
+    const host = createHost(store, { history: new HistoryManager(historyStore) });
+
+    try {
+      const session = await host.createSession(localCreateInput);
+      await session.record({ text: "persisted request" });
+      await session.runtime.commitSystemMessage("persisted instruction", {
+        type: "instruction",
+        version: 1,
+      });
+      const persisted = await session.snapshot();
+      const runtimeState = session.runtime.snapshot();
+      const rawHistory = session.runtime.rawHistory;
+      const deltas = [];
+      session.onDelta((delta) => deltas.push(delta));
+      const commitSessionSnapshot = vi.spyOn(store, "commitSessionSnapshot");
+      commitSessionSnapshot.mockRejectedValueOnce(new Error("system persistence failed"));
+
+      await expect(
+        session.runtime.commitSystemMessage("uncommitted instruction", {
+          type: "instruction",
+          version: 1,
+        }),
+      ).rejects.toThrow("system persistence failed");
+
+      expect(commitSessionSnapshot).toHaveBeenCalledTimes(1);
+      expect(commitSessionSnapshot.mock.calls[0][0].messages.at(-1).message).toMatchObject({
+        role: "system",
+        content: "uncommitted instruction",
+        metadata: { type: "instruction", version: 1 },
+      });
+      expect(
+        (await historyStore.read({ sessionId: session.sessionId, limit: 10 })).entries.map(
+          (entry) => entry.type,
+        ),
+      ).toEqual(["user", "system"]);
+      expect(session.runtime.rawHistory).toEqual(rawHistory);
+      expect(session.runtime.snapshot()).toEqual(runtimeState);
+      await expect(store.loadSession(session.sessionId)).resolves.toEqual(persisted);
+      expect(deltas).toEqual([]);
+    } finally {
+      await host.shutdown();
+    }
+  });
+
   it("preserves durable notice position across recovery", async () => {
     const store = new MemorySessionStore();
     const originalHost = createHost(store);
@@ -554,6 +699,19 @@ describe("LocalSessionHost", () => {
       ],
     });
 
+    const systemId = await session.runtime.commitSystemMessage("native instruction", {
+      type: "instruction",
+      version: 1,
+    });
+    expect(
+      (await historyStore.read({ sessionId: session.sessionId, limit: 10 })).entries.at(-1),
+    ).toEqual({
+      id: systemId,
+      sourceIds: [systemId],
+      type: "system",
+      content: "native instruction",
+      timestamp: expect.any(Number),
+    });
     await session.rewindToHistoryEntryId(recorded.userHistoryEntryId);
     await expect(
       historyStore.read({ sessionId: session.sessionId, limit: 10 }),
@@ -2090,6 +2248,36 @@ describe("LocalSessionHost", () => {
       },
     ]);
     expect(ephemeralMessages).toEqual([]);
+  });
+
+  it("preserves system instructions in transcript history after compaction", async () => {
+    const historyStore = new LocalHistoryStore(":memory:");
+    const host = createHost(new MemorySessionStore(), {
+      history: new HistoryManager(historyStore),
+    });
+    try {
+      const session = await host.createSession(localCreateInput);
+      await session.record({ text: "compact me" });
+      for (const type of ["instruction", "auto-compaction-continuation"]) {
+        await session.runtime.commitSystemMessage(type, { type, version: 1 });
+      }
+      const before = await historyStore.read({ sessionId: session.sessionId, limit: 10 });
+      expect(before.entries.map((entry) => entry.type)).toEqual(["user", "system", "system"]);
+      session.runtime.agent.spec.model.stream = () => ({
+        async *[Symbol.asyncIterator]() {},
+        async result() {
+          return fauxAssistantMessage(
+            "compacted summary\n\n<preserved-user-message-ids>\n[]\n</preserved-user-message-ids>",
+          );
+        },
+      });
+      await session.compact({ mode: "summary-only" });
+      expect(
+        (await historyStore.read({ sessionId: session.sessionId, limit: 10 })).entries,
+      ).toEqual(before.entries);
+    } finally {
+      await host.shutdown();
+    }
   });
 
   it("replaces the active epoch after successful manual compaction", async () => {
@@ -3840,6 +4028,94 @@ describe("LocalSessionHost", () => {
     await expect(store.loadSession(hostedSession.sessionId)).resolves.toEqual(persisted);
     await hostedSession.dispose();
     await host.shutdown();
+  });
+
+  it("changes reasoning through the protocol while steering persistence is pending", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
+    const messages = [];
+    const handler = new SessionProtocolHandler({ host, send: (message) => messages.push(message) });
+    const releasePersistence = deferred();
+    const modelGates = [deferred(), deferred()];
+
+    try {
+      const session = await host.createSession(localCreateInput);
+      const request = (id, method, params = {}) =>
+        handler.handleRequest({
+          version: SESSION_PROTOCOL_VERSION,
+          type: "request",
+          id,
+          method,
+          params: { sessionId: session.sessionId, ...params },
+        });
+      await request("observe", "session.observe");
+      const baseline = await session.snapshot();
+      const persistenceReached = deferred();
+      const commitSessionSnapshot = store.commitSessionSnapshot.bind(store);
+      let paused = false;
+      store.commitSessionSnapshot = vi.fn(async (snapshot, options) => {
+        if (!paused && snapshotUserMessageCount(snapshot) === 2) {
+          paused = true;
+          persistenceReached.resolve();
+          await releasePersistence.promise;
+        }
+        await commitSessionSnapshot(snapshot, options);
+      });
+      const modelStarts = [deferred(), deferred()];
+      let modelCall = 0;
+      session.runtime.agent.spec.model.stream = () => {
+        const index = modelCall++;
+        return {
+          async *[Symbol.asyncIterator]() {
+            modelStarts[index].resolve();
+            await modelGates[index].promise;
+            yield* [];
+          },
+          async result() {
+            return fauxAssistantMessage(`response ${index + 1}`);
+          },
+        };
+      };
+
+      const turn = request("submit", "session.submit", { text: "original" });
+      await modelStarts[0].promise;
+      const steering = request("steer", "session.steer", { text: "change direction" });
+      await vi.waitFor(() =>
+        expect(
+          messages.findLast((message) => message.type === "session.pendingUserMessages")?.state
+            .messages,
+        ).toEqual([expect.objectContaining({ mode: "steer", text: "change direction" })]),
+      );
+      modelGates[0].resolve();
+      await persistenceReached.promise;
+      const reasoning = request("reasoning", "session.setReasoning", { reasoning: "high" });
+      releasePersistence.resolve();
+      await reasoning;
+      expect(messages.find((message) => message.id === "reasoning")).toMatchObject({ ok: true });
+      await modelStarts[1].promise;
+      modelGates[1].resolve();
+      await Promise.all([turn, steering]);
+      for (const id of ["submit", "steer"]) {
+        expect(messages.find((message) => message.id === id)).toMatchObject({
+          ok: true,
+          result: { turn: { status: "completed", stopReason: "stop" } },
+        });
+      }
+      await request("snapshot", "session.snapshot");
+      expect(messages.find((message) => message.id === "snapshot")).toMatchObject({ ok: true });
+      const snapshot = await session.snapshot();
+      expect(snapshot.settings.reasoning).toBe("high");
+      expect(session.runtime.agent.spec.attribution.reasoningEffort).toBe("high");
+      expect(await store.loadSession(session.sessionId)).toEqual(snapshot);
+      const projected = messages
+        .filter((message) => message.type === "session.delta")
+        .reduce((state, delta) => applySessionProtocolDelta(state, delta), baseline);
+      expect(projected).toEqual(snapshot);
+    } finally {
+      releasePersistence.resolve();
+      for (const gate of modelGates) gate.resolve();
+      await handler.close("shutdown-host");
+    }
   });
 
   it("does not let a reasoning write replace streamed state at the same revision", async () => {

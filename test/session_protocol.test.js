@@ -1951,6 +1951,107 @@ describe("session_protocol", () => {
     });
   });
 
+  it("round-trips intermediate system metadata and rejects unsupported capabilities", () => {
+    const message = {
+      role: "system",
+      content: "native instruction",
+      timestamp: 1,
+      metadata: { type: "instruction", version: 1 },
+    };
+    const entry = { id: "native-1", state: "committed", modelVisible: true, message };
+    const snapshot = createProtocolSnapshot();
+    const next = {
+      ...snapshot,
+      revision: snapshot.revision + 1,
+      messages: [...snapshot.messages, entry],
+    };
+    expect(validateSessionProtocolResult("session.snapshot", next)).toEqual({
+      ok: true,
+      value: next,
+    });
+    const delta = createSessionProtocolDeltaMessage({
+      sessionId: snapshot.sessionId,
+      fromRevision: snapshot.revision,
+      toRevision: next.revision,
+      cause: { type: "system-message" },
+      delta: { type: "snapshot.patch", changes: [{ type: "message.append", message: entry }] },
+    });
+    expect(applySessionProtocolDelta(snapshot, delta)).toEqual(next);
+    expect(
+      validateSessionProtocolParams("session.sample", {
+        sessionId: snapshot.sessionId,
+        context: { systemPrompt: "persona", messages: [message] },
+        options: {},
+      }).ok,
+    ).toBe(true);
+    for (const invalid of [
+      { ...message, content: [{ type: "text", text: "instruction" }] },
+      { ...message, metadata: { type: "instruction", version: 2 } },
+      { ...message, metadata: { type: "unknown", version: 1 } },
+      { ...message, metadata: undefined },
+      { ...message, sections: { policy: "replacement" } },
+      { ...message, toolsAdded: [] },
+      { ...message, toolsRemoved: [] },
+    ]) {
+      const invalidEntry = { ...entry, message: invalid };
+      const previous = structuredClone(snapshot);
+      for (const type of ["message.append", "message.replace"]) {
+        expect(() => {
+          const invalidDelta = createSessionProtocolDeltaMessage({
+            ...delta,
+            delta: { type: "snapshot.patch", changes: [{ type, message: invalidEntry }] },
+          });
+          applySessionProtocolDelta(snapshot, invalidDelta);
+        }).toThrow();
+        expect(snapshot).toEqual(previous);
+      }
+      expect(
+        validateSessionProtocolResult("session.snapshot", {
+          ...next,
+          messages: [...snapshot.messages, invalidEntry],
+        }).ok,
+      ).toBe(false);
+      expect(
+        validateSessionProtocolParams("session.sample", {
+          sessionId: snapshot.sessionId,
+          context: { systemPrompt: "persona", messages: [invalid] },
+          options: {},
+        }).ok,
+      ).toBe(false);
+    }
+  });
+
+  it("rejects intermediate metadata on the initial persona prompt", () => {
+    const snapshot = createProtocolSnapshot();
+    const first = {
+      ...snapshot.messages[0],
+      message: { ...snapshot.messages[0].message, metadata: { type: "instruction", version: 1 } },
+    };
+    expect(
+      validateSessionProtocolResult("session.snapshot", { ...snapshot, messages: [first] }).ok,
+    ).toBe(false);
+    const delta = createSessionProtocolDeltaMessage({
+      sessionId: snapshot.sessionId,
+      fromRevision: snapshot.revision,
+      toRevision: snapshot.revision + 1,
+      cause: { type: "system-message" },
+      delta: { type: "snapshot.patch", changes: [{ type: "message.replace", message: first }] },
+    });
+    expect(() => applySessionProtocolDelta(snapshot, delta)).toThrow();
+    expect(snapshot.messages[0].message).not.toHaveProperty("metadata");
+  });
+
+  it("keeps protocol system messages text-only", () => {
+    const snapshot = createProtocolSnapshot();
+    expect(validateSessionProtocolResult("session.snapshot", snapshot)).toEqual({
+      ok: true,
+      value: snapshot,
+    });
+
+    snapshot.messages[0].message.content = [{ type: "text", text: "system prompt" }];
+    expect(validateSessionProtocolResult("session.snapshot", snapshot).ok).toBe(false);
+  });
+
   it("rejects semantically mismatched snapshot projections", () => {
     const messages = [
       {

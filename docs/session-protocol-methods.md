@@ -1,6 +1,6 @@
 # Session protocol method reference
 
-This page defines every request method in protocol version 13. It is the compact wire reference for clients that already understand connection, observation, and delta application from the [session protocol](session-protocol.md).
+This page defines every request method in protocol version 14. It is the compact wire reference for clients that already understand connection, observation, and delta application from the [session protocol](session-protocol.md).
 
 Every request uses `{ version, type: "request", id, method, params }`. Every successful response uses `{ version, type: "response", id, ok: true, result }`. `params` is required even when empty, and unknown object fields are stripped.
 
@@ -47,7 +47,7 @@ params: {
 }
 
 result: {
-  protocolVersion: 13;
+  protocolVersion: 14;
   methods: string[];
   alreadyInitialized: boolean;
 }
@@ -306,7 +306,7 @@ params: {
 result: { message: AssistantMessage }
 ```
 
-`context.messages` and the returned message use Tau's provider-neutral model message shape. Returned tool calls are data only. Samples can run concurrently and are cancelled by `session.interrupt`, transport shutdown, or host shutdown.
+`context.messages` and the returned message use Tau's provider-neutral model message shape. Intermediate system messages use the plain-text, versioned metadata shape described in the [session protocol](session-protocol.md); metadata is not sent to the provider. Unsupported sections and tool mutations are rejected. Returned tool calls are data only. Samples can run concurrently and are cancelled by `session.interrupt`, transport shutdown, or host shutdown.
 
 ## Read and change session state
 

@@ -4,6 +4,7 @@ import type {
   ToolResultMessage,
   UserMessage,
 } from "@earendil-works/pi-ai";
+import type { IntermediateSystemMessage } from "../../protocol/system_message.js";
 import type { AssistantPartialSnapshot } from "../session/message_accumulator.js";
 import type { ToolActivity } from "../tools/activity.js";
 import type { ReasoningEffort } from "../types.js";
@@ -57,6 +58,12 @@ export type AgentEvent =
       historyEntryId: string;
       text: string;
       removedEntryIds: string[];
+      revision: number;
+    }
+  | {
+      type: "system_message";
+      historyEntryId: string;
+      message: IntermediateSystemMessage;
       revision: number;
     }
   | { type: "assistant_start"; historyEntryId: string }

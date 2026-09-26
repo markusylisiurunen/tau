@@ -374,6 +374,30 @@ describe("session history", () => {
     });
   });
 
+  it("imports intermediate system instructions without the initial persona prompt", () => {
+    const entries = snapshotToHistoryEntries({
+      tools: {},
+      messages: [
+        {
+          id: "base",
+          state: "committed",
+          message: { role: "system", content: "persona", timestamp: 1 },
+        },
+        {
+          id: "instruction",
+          state: "committed",
+          message: {
+            role: "system",
+            content: "instruction",
+            timestamp: 2,
+            metadata: { type: "instruction", version: 1 },
+          },
+        },
+      ],
+    });
+    expect(entries).toEqual([createTextEntry("instruction", "system", "instruction", 2)]);
+  });
+
   it("best-effort snapshot import preserves identities, attributes, and transcript order", () => {
     const snapshot = {
       sessionId: "legacy-session",
@@ -1397,6 +1421,7 @@ describe("session history", () => {
             ],
           },
           createTextEntry("viewer-assistant", "assistant", "<img src=x onerror=alert(1)>", 3),
+          createTextEntry("viewer-system", "system", "<system>native instruction</system>", 3),
           {
             id: "viewer-tool",
             sourceIds: ["viewer-tool"],
@@ -1454,7 +1479,10 @@ describe("session history", () => {
       expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
       expect(html).toContain('<details class="tool-entry">');
       expect(html).toContain("&lt;svg onload=alert(1)&gt;");
-      expect(html.match(/<article class="entry /g)).toHaveLength(211);
+      expect(html.match(/<article class="entry /g)).toHaveLength(212);
+      expect(html).toContain('<article class="entry system">');
+      expect(html).toContain("<h2>System</h2>");
+      expect(html).toContain("&lt;system&gt;native instruction&lt;/system&gt;");
       expect(
         [...html.matchAll(/<pre>extra (\d+)<\/pre>/g)].map((match) => Number(match[1])),
       ).toEqual(Array.from({ length: 208 }, (_, index) => index));
@@ -1597,6 +1625,10 @@ describe("session history", () => {
       projectHistoryEntryForRemote(
         createTextEntry("large-assistant", "assistant", "x".repeat(1_100_000), 5),
       ),
+      createTextEntry("system", "system", "ProjectAlpha instruction", 6),
+      projectHistoryEntryForRemote(
+        createTextEntry("large-system", "system", "x".repeat(1_100_000), 7),
+      ),
     ];
     expect(typeof valid[3].content).toBe("string");
     expect(valid[3].content).toContain("middle-truncated for remote history");
@@ -1621,9 +1653,16 @@ describe("session history", () => {
         entries: valid,
       });
 
+      await expect(client.search({ query: "ProjectAlpha", limit: 10 })).resolves.toMatchObject({
+        sessions: [{ sessionId: "session-1" }],
+      });
+      expect(formatDigestEntry(valid[5])).toBe("[system]\nProjectAlpha instruction");
+
       const invalid = [
         ["assistant", [{ type: "text", text: "response" }]],
         ["assistant", null],
+        ["system", [{ type: "text", text: "instruction" }]],
+        ["system", null],
         ["user", null],
         ["user", { type: "text", text: "request" }],
         ["user", [{ type: "text", text: 123 }]],

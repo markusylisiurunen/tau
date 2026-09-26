@@ -8,6 +8,10 @@ import type {
   ToolResultMessage,
   UserMessage,
 } from "@earendil-works/pi-ai";
+import {
+  parseIntermediateSystemMessage,
+  type SystemMessageMetadata,
+} from "../../protocol/system_message.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
 import { truncateForTokens } from "../utils/truncate.js";
 
@@ -37,6 +41,7 @@ const AUTO_COMPACTION_ARCHIVE_DOCUMENTATION = [
   "  arguments: Record<string, unknown>;",
   "};",
   "type Message =",
+  '  | { historyEntryId: string; role: "system"; timestamp: number; content: TextContent[]; metadata: { type: "instruction" | "auto-compaction-continuation"; version: 1 } }',
   '  | { historyEntryId: string; role: "user"; timestamp: number; content: Array<TextContent | ImageContent> }',
   '  | { historyEntryId: string; role: "assistant"; timestamp: number; content: Array<TextContent | ToolCall> }',
   '  | { historyEntryId: string; role: "toolResult"; timestamp: number; toolCallId: string; toolName: string; isError: boolean; content: Array<TextContent | ImageContent> };',
@@ -226,6 +231,13 @@ type ArchiveContent = ArchiveTextContent | ArchiveImageContent | ArchiveToolCall
 type AutoCompactionArchiveMessage =
   | {
       historyEntryId: string;
+      role: "system";
+      timestamp: number;
+      content: ArchiveTextContent[];
+      metadata: SystemMessageMetadata;
+    }
+  | {
+      historyEntryId: string;
       role: "user";
       timestamp: number;
       content: Array<ArchiveTextContent | ArchiveImageContent>;
@@ -306,7 +318,17 @@ function normalizeArchiveMessage(
   if (message.role === "assistant") {
     return normalizeAssistantMessage(entry.id, message);
   }
-  return normalizeToolResultMessage(entry.id, message);
+  if (message.role === "toolResult") {
+    return normalizeToolResultMessage(entry.id, message);
+  }
+  const systemMessage = parseIntermediateSystemMessage(message);
+  return {
+    historyEntryId: entry.id,
+    role: systemMessage.role,
+    timestamp: systemMessage.timestamp,
+    content: [{ type: "text", text: systemMessage.content }],
+    metadata: structuredClone(systemMessage.metadata),
+  };
 }
 
 function normalizeUserMessage(
@@ -386,7 +408,12 @@ function formatArchiveMessage(message: AutoCompactionArchiveMessage): string {
     return `[Tool result ${marker} callId=${JSON.stringify(message.toolCallId)} name=${JSON.stringify(message.toolName)} status=${message.isError ? "error" : "ok"}]\n${content}`;
   }
 
-  const role = message.role === "user" ? "User" : "Assistant";
+  const role =
+    message.role === "system"
+      ? "System instruction"
+      : message.role === "user"
+        ? "User"
+        : "Assistant";
   return `[${role} ${marker}]\n${formatArchiveContent(message.content)}`;
 }
 

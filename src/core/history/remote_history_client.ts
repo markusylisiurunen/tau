@@ -72,6 +72,7 @@ const userContentSchema = z.union([
 const entrySchema = z.discriminatedUnion("type", [
   entryBaseSchema.extend({ type: z.literal("user"), content: userContentSchema }).strict(),
   entryBaseSchema.extend({ type: z.literal("assistant"), content: z.string() }).strict(),
+  entryBaseSchema.extend({ type: z.literal("system"), content: z.string() }).strict(),
   entryBaseSchema
     .extend({
       type: z.literal("tool"),

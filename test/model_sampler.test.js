@@ -57,6 +57,24 @@ describe("sampleModel", () => {
     expect(cleanupSession).toHaveBeenCalledWith(options.sessionId);
   });
 
+  it("projects system metadata out of isolated samples without mutating input", async () => {
+    const stream = vi.fn(() => createResultStream(fauxAssistantMessage("done")));
+    const message = {
+      role: "system",
+      content: "instruction",
+      timestamp: 1,
+      metadata: { type: "instruction", version: 1 },
+    };
+    await sampleModel(
+      { model: { stream, cleanupSession: () => {} }, streamOptions: {} },
+      { context: { systemPrompt: "persona", messages: [message] }, options: {} },
+    );
+    expect(stream.mock.calls[0][0].messages).toEqual([
+      { role: "system", content: "instruction", timestamp: 1 },
+    ]);
+    expect(message.metadata).toEqual({ type: "instruction", version: 1 });
+  });
+
   it("cleans up the isolated model session when sampling fails", async () => {
     const error = new Error("sample failed");
     const cleanupSession = vi.fn();

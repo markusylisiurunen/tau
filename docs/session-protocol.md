@@ -18,7 +18,7 @@ The server sends `ready` as its first message:
 
 ```json
 {
-  "version": 13,
+  "version": 14,
   "type": "ready",
   "methods": ["initialize", "session.create", "session.list"]
 }
@@ -30,7 +30,7 @@ After `ready`, send `initialize` with non-empty client metadata:
 
 ```json
 {
-  "version": 13,
+  "version": 14,
   "type": "request",
   "id": "init-1",
   "method": "initialize",
@@ -50,7 +50,7 @@ Every request has the same envelope:
 
 ```json
 {
-  "version": 13,
+  "version": 14,
   "type": "request",
   "id": "req-42",
   "method": "session.snapshot",
@@ -58,13 +58,13 @@ Every request has the same envelope:
 }
 ```
 
-`id` is a non-empty client-chosen string and must identify the outstanding request on that connection. `params` is always required, including `{}` for `session.list`. The host validates required fields, field types, discriminators, method names, and the exact protocol version. Unknown object fields are accepted and stripped.
+`id` is a non-empty client-chosen string and must identify the outstanding request on that connection. `params` is always required, including `{}` for `session.list`. The host validates required fields, field types, discriminators, method names, and the exact protocol version. Unknown object fields are accepted and stripped, except system messages and their metadata, which reject unsupported fields.
 
 Successful responses echo the request id:
 
 ```json
 {
-  "version": 13,
+  "version": 14,
   "type": "response",
   "id": "req-42",
   "ok": true,
@@ -114,6 +114,10 @@ The timeline has an `epoch`, a per-epoch sequence high-water mark, and ordered i
 
 User message text is raw recoverable session text. User-facing renderers should remove Tau metadata and leading exact `<system>...</system>\n` blocks. The Node SDK exports projection helpers for this purpose. Do not apply user-text projection to assistant, tool-result, or protocol system messages.
 
+The initial system message is the separate persona/base prompt. Intermediate system messages are ordered history records with plain-text `content`, a `timestamp`, and required structured `metadata`: `{ type: "instruction" | "auto-compaction-continuation", version: 1 }`. They remain model-visible and recoverable. The normal TUI hides them, while searchable conversation history includes them as system entries. Tau metadata is removed before provider dispatch. Text-block arrays, named sections, and tool additions or removals are not supported in system messages.
+
+Intermediate instructions are committed without a user turn receipt. Their durable append uses the `system-message` delta cause and does not require a timeline item. The initial prompt has no intermediate-message metadata; recovery restores subsequent instructions without duplicating that base prompt. There is no public insertion method or automatic conversion of user-authored `<system>` text.
+
 Turn requests return a terminal outcome, and accepted user turns are also keyed by `userHistoryEntryId` in `snapshot.turns`. Use that ledger to distinguish an unknown request from accepted running work and settled work. Do not infer request outcomes from notice titles, message counts, or timing.
 
 User-facing behavior such as goals, retry, compaction, rewind, and recovery is described in [sessions](sessions.md).
@@ -124,7 +128,7 @@ Observed snapshot changes arrive as `session.delta`:
 
 ```json
 {
-  "version": 13,
+  "version": 14,
   "type": "session.delta",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "fromRevision": 8,
@@ -162,7 +166,7 @@ Not all observed state belongs in the recoverable snapshot. Each live channel ha
 
 ```json
 {
-  "version": 13,
+  "version": 14,
   "type": "session.pendingUserMessages",
   "sessionId": "...",
   "state": {
@@ -199,7 +203,7 @@ An initialized client that advertised a tool can receive:
 
 ```json
 {
-  "version": 13,
+  "version": 14,
   "type": "session.clientTool.call",
   "sessionId": "...",
   "agentId": "main",
@@ -223,7 +227,7 @@ Error responses use `ok: false`:
 
 ```json
 {
-  "version": 13,
+  "version": 14,
   "type": "response",
   "id": "req-42",
   "ok": false,

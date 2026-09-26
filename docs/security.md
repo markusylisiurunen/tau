@@ -140,7 +140,7 @@ Protect the runner configuration, generated session state, project-preference st
 
 ## Know what history retains
 
-Tau writes a flat transcript history in the host home independently of recoverable session snapshots. It contains committed user entries, assistant text, and completed tool entries. Compaction does not remove it. Rewind truncates entries after the selected boundary, but history is not an ephemeral cache.
+Tau writes a flat transcript history in the host home independently of recoverable session snapshots. It contains committed user entries, intermediate system instructions, assistant text, and completed tool entries. The initial persona/base prompt is excluded. Compaction does not remove it. Rewind truncates entries after the selected boundary, but history is not an ephemeral cache.
 
 Without remote history configuration, this collection stays in the host's local SQLite database. The `history` tool can search the complete machine-local collection, subject to its persona and invocation policy. Protect the host account and database as transcript data.
 

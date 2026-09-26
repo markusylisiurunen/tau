@@ -94,6 +94,35 @@ function createSession(
 }
 
 describe("HostedEphemeralAgentSession", () => {
+  it("preserves native instructions and metadata when forking without sending metadata to the model", async () => {
+    const { session } = createSession();
+    try {
+      const source = await session.getOrCreateThread("source");
+      await source.runtime.commitSystemMessage("fork instruction", {
+        type: "instruction",
+        version: 1,
+      });
+      const fork = await session.getOrCreateThread("fork", "source");
+      expect(fork.runtime.rawHistory).toEqual(source.runtime.rawHistory);
+      const stream = vi.fn(() => createStream(createAssistant("done")));
+      fork.runtime.spec.model.stream = stream;
+      await session.submitThreadMessage({
+        contextId: "ephemeral-1",
+        threadId: "fork",
+        message: "continue",
+      });
+      const message = stream.mock.calls[0][0].messages.find((entry) => entry.role === "system");
+      expect(message.content).toBe("fork instruction");
+      expect(message).not.toHaveProperty("metadata");
+      expect(fork.runtime.rawHistory.find((entry) => entry.role === "system").metadata).toEqual({
+        type: "instruction",
+        version: 1,
+      });
+    } finally {
+      await session.dispose();
+    }
+  });
+
   it("continues and forks thread state", async () => {
     const { session, recordUsage, emitUpdate } = createSession(
       vi.fn(),

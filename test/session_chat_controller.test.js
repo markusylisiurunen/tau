@@ -20,6 +20,7 @@ import {
 } from "../dist/core/utils/user_metadata.js";
 import {
   applySessionProtocolDelta,
+  createSessionProtocolDeltaMessage,
   SESSION_PROTOCOL_VERSION,
 } from "../dist/protocol/session_protocol.js";
 import { FileSessionStore } from "../dist/store/file_session_store.js";
@@ -2364,6 +2365,50 @@ describe("SessionChatController", () => {
         }),
       ]),
     );
+  });
+
+  it("hides intermediate system messages on attach and live updates", async () => {
+    const instruction = {
+      role: "system",
+      content: "private native instruction",
+      timestamp: 1,
+      metadata: { type: "instruction", version: 1 },
+    };
+    const snapshot = createSnapshot([{ id: "native-1", message: instruction }]);
+    const session = new FakeSession(snapshot);
+    const view = new FakeView();
+    const controller = new SessionChatController({
+      view,
+      session,
+      snapshot,
+      targetLabel: "in-process",
+    });
+    controller.start();
+    expect(view.messages.every((message) => message.model.type === "app_intro")).toBe(true);
+    const before = structuredClone(view.messages);
+    const delta = createSessionProtocolDeltaMessage({
+      sessionId: snapshot.sessionId,
+      fromRevision: snapshot.revision,
+      toRevision: snapshot.revision + 1,
+      cause: { type: "system-message" },
+      delta: {
+        type: "snapshot.patch",
+        changes: [
+          {
+            type: "message.append",
+            message: {
+              id: "native-2",
+              state: "committed",
+              modelVisible: true,
+              message: instruction,
+            },
+          },
+        ],
+      },
+    });
+    for (const listener of session.listeners) listener(delta);
+    await flush();
+    expect(view.messages).toEqual(before);
   });
 
   it("hides raw user-message metadata and hidden system blocks from snapshots", async () => {

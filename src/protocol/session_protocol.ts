@@ -7,8 +7,9 @@ import type {
   ToolCall,
 } from "@earendil-works/pi-ai";
 import { type ZodError, z } from "zod";
+import { type IntermediateSystemMessage, isIntermediateSystemMessage } from "./system_message.js";
 
-export const SESSION_PROTOCOL_VERSION = 13 as const;
+export const SESSION_PROTOCOL_VERSION = 14 as const;
 export const SESSION_PROTOCOL_MAX_EXEC_CAPTURE_BYTES = 24 * 1024 * 1024;
 export const SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES = 16 * 1024 * 1024;
 export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES = 1024 * 1024;
@@ -192,7 +193,7 @@ export type SessionProtocolCancelExecParams = SessionProtocolSessionIdParams & {
 };
 export type SessionProtocolSampleContext = {
   systemPrompt: string;
-  messages: Message[];
+  messages: (Exclude<Message, { role: "system" }> | IntermediateSystemMessage)[];
   tools?: Tool[];
 };
 export type SessionProtocolSampleOptions = {
@@ -484,7 +485,8 @@ export type SessionProtocolDraftAssistantMessage = {
 
 export type SessionProtocolMessagePayload =
   | SessionProtocolSystemMessage
-  | Message
+  | IntermediateSystemMessage
+  | Exclude<Message, { role: "system" }>
   | SessionProtocolDraftAssistantMessage;
 
 export type SessionProtocolMessageState = "draft" | "committed" | "interrupted" | "discarded";
@@ -1223,6 +1225,7 @@ export type SessionProtocolDeltaCause =
   | {
       type:
         | "user-message"
+        | "system-message"
         | "assistant-stream"
         | "assistant-message"
         | "tool-run"
@@ -1635,10 +1638,11 @@ const modelToolResultMessageSchema = z
   })
   .strip();
 const modelMessageSchema = z.union([
+  z.custom<IntermediateSystemMessage>(isIntermediateSystemMessage),
   modelUserMessageSchema,
   modelAssistantMessageSchema,
   modelToolResultMessageSchema,
-]) as z.ZodType<Message>;
+]) as z.ZodType<SessionProtocolSampleContext["messages"][number]>;
 
 const sessionProtocolReadyMessageSchema = z
   .object({
@@ -2216,13 +2220,11 @@ const sessionProtocolExecutionEnvironmentSnapshotSchema = z.discriminatedUnion("
   sessionProtocolFlySpriteExecutionEnvironmentSnapshotSchema,
 ]);
 
-const sessionProtocolSystemMessageSchema = z
-  .object({
-    role: z.literal("system"),
-    content: z.string(),
-    timestamp: z.number().finite(),
-  })
-  .strip();
+const sessionProtocolSystemMessageSchema = z.strictObject({
+  role: z.literal("system"),
+  content: z.string(),
+  timestamp: z.number().finite(),
+});
 
 const sessionProtocolDraftAssistantMessageSchema = z
   .object({
@@ -2621,6 +2623,19 @@ const sessionProtocolSnapshotSchema = z
           message: `duplicate message id '${message.id}'`,
         });
       }
+      if (message.message.role === "system") {
+        const isInitialPrompt = message === snapshot.messages[0];
+        const isIntermediate = "metadata" in message.message;
+        if (isInitialPrompt === isIntermediate) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["messages"],
+            message: isInitialPrompt
+              ? "the initial system prompt must not have intermediate metadata"
+              : "intermediate system messages require metadata",
+          });
+        }
+      }
       messagesById.set(message.id, message);
     }
     const checkpoint = snapshot.agentState.usageCheckpoint;
@@ -2888,6 +2903,7 @@ const sessionProtocolDeltaCauseSchema = z.union([
     .object({
       type: z.enum([
         "user-message",
+        "system-message",
         "assistant-stream",
         "assistant-message",
         "tool-run",

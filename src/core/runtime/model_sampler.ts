@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { AssistantMessage, Context } from "@earendil-works/pi-ai";
+import { projectSystemMessage } from "../../protocol/system_message.js";
 import type { ReasoningEffort } from "../types.js";
 import type { TauStreamOptions } from "../utils/streaming_settings.js";
 import type { ModelExecutor } from "./model_executor.js";
@@ -24,7 +25,9 @@ export async function sampleModel(
 ): Promise<AssistantMessage> {
   input.signal?.throwIfAborted();
   const sampleSessionId = `sample-${randomUUID()}`;
-  const stream = target.model.stream(structuredClone(input.context), {
+  const context = structuredClone(input.context);
+  context.messages = context.messages.map(projectSystemMessage);
+  const stream = target.model.stream(context, {
     ...target.streamOptions,
     ...(input.options.reasoning !== undefined ? { reasoning: input.options.reasoning } : {}),
     ...(input.options.maxTokens !== undefined ? { maxTokens: input.options.maxTokens } : {}),

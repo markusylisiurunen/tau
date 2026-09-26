@@ -7,6 +7,7 @@ import { type Config, resolvePromptTemplateWithBackend } from "../core/config/in
 import type { HistoryManager } from "../core/history/history_manager.js";
 import {
   assistantHistoryEntries,
+  systemHistoryEntry,
   toolHistoryEntry,
   userHistoryEntry,
 } from "../core/history/transcript.js";
@@ -100,6 +101,10 @@ import {
   projectSessionProtocolSubagentActivity,
   SESSION_PROTOCOL_MAX_SUBAGENT_ACTIVITIES,
 } from "../protocol/session_protocol.js";
+import {
+  type IntermediateSystemMessage,
+  isIntermediateSystemMessage,
+} from "../protocol/system_message.js";
 import { LEGACY_SESSION_MODEL_CONTEXT_KEY } from "../store/session_snapshot_migrations.js";
 import type { SessionStore } from "../store/session_store.js";
 import { ClientToolBroker } from "./client_tool_broker.js";
@@ -2088,14 +2093,17 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         timestamp: 0,
       },
     };
-    const historyMessages = this.session.rawHistoryEntries.map(
-      (entry): SessionProtocolMessage => ({
+    const historyMessages = this.session.rawHistoryEntries.map((entry): SessionProtocolMessage => {
+      if (!isCoreMessage(entry.message)) {
+        throw new Error("agent history contains an invalid message");
+      }
+      return {
         id: entry.id,
         state: this.messageStates.get(entry.id) ?? "committed",
         modelVisible: true,
         message: entry.message,
-      }),
-    );
+      };
+    });
     return [
       systemMessage,
       ...historyMessages,
@@ -2530,6 +2538,32 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         await this.emitPatch("assistant-stream", [...changes, ...toolChanges], {
           persist: false,
         });
+        return;
+      }
+      case "system_message": {
+        await this.emitPatch(
+          "system-message",
+          [
+            this.agentStateChange(),
+            {
+              type: "message.append",
+              message: {
+                id: event.historyEntryId,
+                state: "committed",
+                modelVisible: true,
+                message: event.message,
+              },
+            },
+          ],
+          { persist: true },
+        );
+        await this.recordHistoryFailure(
+          this.history.append(
+            this.sessionId,
+            [systemHistoryEntry(event.historyEntryId, event.message)],
+            this.historyRemote,
+          ),
+        );
         return;
       }
       case "user_message": {
@@ -3487,8 +3521,12 @@ function cloneSubagentPrompts(subagentPrompts: Record<string, string>): Record<s
   return { ...subagentPrompts };
 }
 
-function isCoreMessage(message: SessionProtocolMessage["message"]): message is Message {
+function isCoreMessage(
+  message: SessionProtocolMessage["message"] | Message,
+): message is Exclude<Message, { role: "system" }> | IntermediateSystemMessage {
   switch (message.role) {
+    case "system":
+      return isIntermediateSystemMessage(message);
     case "user":
       return typeof message.content === "string" || Array.isArray(message.content);
     case "assistant":

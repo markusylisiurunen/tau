@@ -4080,7 +4080,12 @@ describe("LocalSessionHost", () => {
       const turn = request("submit", "session.submit", { text: "original" });
       await modelStarts[0].promise;
       const steering = request("steer", "session.steer", { text: "change direction" });
-      await vi.waitFor(() => expect(session.runtime.agent.pendingSteering).toHaveLength(1));
+      await vi.waitFor(() =>
+        expect(
+          messages.findLast((message) => message.type === "session.pendingUserMessages")?.state
+            .messages,
+        ).toEqual([expect.objectContaining({ mode: "steer", text: "change direction" })]),
+      );
       modelGates[0].resolve();
       await persistenceReached.promise;
       const reasoning = request("reasoning", "session.setReasoning", { reasoning: "high" });

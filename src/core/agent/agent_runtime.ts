@@ -11,6 +11,7 @@ import type {
   UserMessage,
 } from "@earendil-works/pi-ai";
 import {
+  type IntermediateSystemMessage,
   isSystemCompactionContinuation,
   parseIntermediateSystemMessage,
   projectSystemMessage,
@@ -497,29 +498,12 @@ export class AgentRuntime {
       metadata,
       timestamp: this.clock.now(),
     });
-    const previousRevision = this.revision;
-    const entry = this.appendHistoryEntry(message);
-    this.historyCommitPending = "system";
-    try {
-      await this.deliver({
-        type: "system_message",
-        historyEntryId: entry.id,
-        message,
-        revision: this.revision,
-      });
-      return entry.id;
-    } catch (error) {
-      if (this.historyEntries.at(-1) !== entry || this.revision !== previousRevision + 1) {
-        throw new Error(`cannot roll back uncommitted history entry '${entry.id}'`, {
-          cause: error,
-        });
-      }
-      this.historyEntries.pop();
-      this.revision = previousRevision;
-      throw error;
-    } finally {
-      this.historyCommitPending = undefined;
-    }
+    return await this.commitHistoryMessage(message, undefined, (historyEntryId, revision) => ({
+      type: "system_message",
+      historyEntryId,
+      message,
+      revision,
+    }));
   }
 
   async commitUserText(
@@ -549,31 +533,17 @@ export class AgentRuntime {
       ],
       timestamp: this.clock.now(),
     };
-    const previousRevision = this.revision;
-    const entry = this.appendHistoryEntry(message, options?.historyEntryId);
-    this.historyCommitPending = "user";
-    try {
-      await this.deliver({
+    return await this.commitHistoryMessage(
+      message,
+      options?.historyEntryId,
+      (historyEntryId, revision) => ({
         type: "user_message",
-        historyEntryId: entry.id,
+        historyEntryId,
         message,
         origin: options?.origin ?? "input",
-        revision: this.revision,
-      });
-      return entry.id;
-    } catch (error) {
-      const appendedEntry = this.historyEntries.at(-1);
-      if (appendedEntry !== entry || this.revision !== previousRevision + 1) {
-        throw new Error(`cannot roll back uncommitted history entry '${entry.id}'`, {
-          cause: error,
-        });
-      }
-      this.historyEntries.pop();
-      this.revision = previousRevision;
-      throw error;
-    } finally {
-      this.historyCommitPending = undefined;
-    }
+        revision,
+      }),
+    );
   }
 
   private addMessage(message: Message, options?: { historyEntryId?: string }): string {
@@ -588,18 +558,27 @@ export class AgentRuntime {
     if (this.status !== "idle" || this.submitPending || message.stopReason !== "aborted") {
       throw new Error("only an idle agent can commit an interrupted assistant message");
     }
+    await this.commitHistoryMessage(message, historyEntryId, (id, revision) => ({
+      type: "assistant_final",
+      historyEntryId: id,
+      message,
+      personaId: this.currentSpec.attribution.personaId,
+      reasoningEffort: this.currentSpec.attribution.reasoningEffort,
+      revision,
+    }));
+  }
+
+  private async commitHistoryMessage(
+    message: UserMessage | IntermediateSystemMessage | AssistantMessage,
+    preferredId: string | undefined,
+    createEvent: (historyEntryId: string, revision: number) => AgentEvent,
+  ): Promise<string> {
     const previousRevision = this.revision;
-    const entry = this.appendHistoryEntry(message, historyEntryId);
-    this.historyCommitPending = "assistant";
+    const entry = this.appendHistoryEntry(message, preferredId);
+    this.historyCommitPending = message.role;
     try {
-      await this.deliver({
-        type: "assistant_final",
-        historyEntryId,
-        message,
-        personaId: this.currentSpec.attribution.personaId,
-        reasoningEffort: this.currentSpec.attribution.reasoningEffort,
-        revision: this.revision,
-      });
+      await this.deliver(createEvent(entry.id, this.revision));
+      return entry.id;
     } catch (error) {
       if (this.historyEntries.at(-1) !== entry || this.revision !== previousRevision + 1) {
         throw new Error(`cannot roll back uncommitted history entry '${entry.id}'`, {

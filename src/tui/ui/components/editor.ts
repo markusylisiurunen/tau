@@ -220,6 +220,12 @@ export interface EditorTheme {
   selectList: AutocompleteListTheme;
 }
 
+export type EditorTextPreview = {
+  update(text: string): void;
+  commit(text: string): void;
+  cancel(): void;
+};
+
 export class Editor implements Component {
   protected state: EditorState = {
     lines: [""],
@@ -260,6 +266,10 @@ export class Editor implements Component {
 
   private lastAction: "type-word" | null = null;
   private undoStack = new UndoStack<EditorState>();
+  protected textPreviewRange?: {
+    start: { line: number; col: number };
+    end: { line: number; col: number };
+  };
 
   public onSubmit?: (text: string) => void;
   public onChange?: (text: string) => void;
@@ -853,6 +863,44 @@ export class Editor implements Component {
     this.lastAction = null;
     this.historyIndex = -1;
     this.insertTextAtCursorInternal(text);
+  }
+
+  beginTextPreview(): EditorTextPreview {
+    const original = structuredClone(this.state);
+    this.cancelAutocomplete();
+    let active = true;
+    const restore = () => {
+      this.state = structuredClone(original);
+    };
+    return {
+      update: (text) => {
+        if (!active) return;
+        restore();
+        this.insertTextAtCursorInternal(text);
+        this.textPreviewRange = {
+          start: { line: original.cursorLine, col: original.cursorCol },
+          end: this.getCursor(),
+        };
+        if (!text) this.onChange?.(this.getText());
+        this.requestUiRender();
+      },
+      commit: (text) => {
+        if (!active) return;
+        active = false;
+        this.textPreviewRange = undefined;
+        restore();
+        this.insertTextAtCursor(text);
+        this.requestUiRender();
+      },
+      cancel: () => {
+        if (!active) return;
+        active = false;
+        this.textPreviewRange = undefined;
+        restore();
+        this.onChange?.(this.getText());
+        this.requestUiRender();
+      },
+    };
   }
 
   private insertTextAtCursorInternal(text: string): void {

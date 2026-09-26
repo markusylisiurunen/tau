@@ -34,6 +34,7 @@ export interface Palette {
   editorBorderBash: (text: string) => string;
   editorBorderRecording: (text: string) => string;
   editorPlaceholder: (text: string) => string;
+  editorPreview: (text: string) => string;
   autocompleteSelectedSurface: (text: string) => string;
   autocompleteSelectedText: (text: string) => string;
 

@@ -745,6 +745,76 @@ test("truncateFromEndByWidthPreserveAnsi keeps the ellipsis inside the active st
   expect(truncated).not.toContain("\x1b[0m…");
 });
 
+test("CustomEditor keeps the draft and cursor locked while speech input is active", () => {
+  const editor = new CustomEditor(createUiTheme("plain"));
+  editor.setText("draft");
+  const cursor = editor.getCursor();
+  let stops = 0;
+  editor.onEscape = () => stops++;
+  editor.setInputEnabled(false);
+  for (const input of ["x", "\x1b[A", "\x13", "\r", "\x1b", "\x1b"]) editor.handleInput(input);
+  expect(stops).toBe(2);
+  expect(editor.getText()).toBe("draft");
+  expect(editor.getCursor()).toEqual(cursor);
+  editor.setInputEnabled(true);
+  editor.handleInput("x");
+  expect(editor.getText()).toBe("draftx");
+});
+
+test("CustomEditor does not carry a pre-recording Escape into draft clearing", () => {
+  const editor = new CustomEditor(createUiTheme("plain"));
+  editor.setText("draft");
+  editor.onEscape = () => {};
+  editor.handleInput("\x1b");
+  editor.setInputEnabled(false);
+  editor.setInputEnabled(true);
+  editor.handleInput("\x1b");
+  expect(editor.getText()).toBe("draft");
+});
+
+test("CustomEditor styles only the provisional insertion and clears styling on commit or cancel", () => {
+  const editor = new CustomEditor(createTagTheme());
+  editor.setText("before after");
+  editor.handleInput("\x01");
+  for (let i = 0; i < 7; i++) editor.handleInput("\x1b[C");
+  const preview = editor.beginTextPreview();
+  preview.update("draft ");
+  expect(editor.render(120).join("\n")).toContain(
+    "before <italic><editorPreview>draft </editorPreview></italic>",
+  );
+  expect(editor.getText()).toBe("before draft after");
+  preview.update("revised ");
+  expect(editor.render(120).join("\n")).toContain("<editorPreview>revised </editorPreview>");
+  preview.commit("final ");
+  expect(editor.render(120).join("\n")).not.toContain("<editorPreview>");
+  expect(editor.getExpandedText()).toBe("before final after");
+  const cancelled = editor.beginTextPreview();
+  cancelled.update("temporary");
+  cancelled.cancel();
+  expect(editor.render(120).join("\n")).not.toContain("<editorPreview>");
+  expect(editor.getText()).toBe("before final after");
+});
+
+test("CustomEditor preview styling preserves wrapped Unicode layout and cursor position", () => {
+  const editor = new CustomEditor(createUiTheme("ansi"));
+  const plain = new CustomEditor(createUiTheme("plain"));
+  for (const target of [editor, plain]) target.setText("prefix ");
+  const preview = editor.beginTextPreview();
+  const text = "こんにちは é words that wrap\n  more speech";
+  preview.update(text);
+  plain.insertTextAtCursor(text);
+  for (const width of [12, 22, 80]) {
+    const rendered = editor.render(width);
+    expect(rendered.map(stripAnsi)).toEqual(plain.render(width));
+    expect(rendered.join("\n")).toContain("\x1b[3m");
+    expect(rendered.every((line) => visibleWidth(line) <= width)).toBe(true);
+  }
+  expect(editor.getCursor()).toEqual(plain.getCursor());
+  expect(editor.getText()).toBe(plain.getText());
+  preview.commit(text);
+  expect(editor.render(80).join("\n")).not.toContain("\x1b[3m");
+});
+
 test("CustomEditor renders a presentation-only placeholder when empty", () => {
   const theme = createTagTheme();
   const editor = new CustomEditor(theme);

@@ -12,6 +12,7 @@ import { FALLBACK_TERMINAL_COLORS, type TerminalColors } from "./terminal_appear
 import { ToolUiRouter } from "./tool_ui_router.js";
 import { ChatContainerComponent } from "./ui/chat_container.js";
 import type { AssistantMessageModel, ChatMessageModel } from "./ui/chat_message_model.js";
+import type { EditorTextPreview } from "./ui/components/editor.js";
 import { CustomEditor } from "./ui/custom_editor.js";
 import {
   DEFAULT_FOOTER_NOTICE_DURATION_MS,
@@ -95,6 +96,7 @@ export interface ChatView {
   getExpandedEditorText(): string;
   setEditorText(text: string): void;
   insertEditorTextAtCursor(text: string): void;
+  beginEditorTextPreview(): EditorTextPreview;
   setEditorInputEnabled(enabled: boolean): void;
   showRewindPicker(options: RewindPickerOptions): void;
   hideRewindPicker(): void;
@@ -327,6 +329,10 @@ export class TuiChatView implements ChatView {
   insertEditorTextAtCursor(text: string): void {
     this.editor.insertTextAtCursor(text);
     this.ui.requestRender();
+  }
+
+  beginEditorTextPreview(): EditorTextPreview {
+    return this.editor.beginTextPreview();
   }
 
   setEditorInputEnabled(enabled: boolean): void {

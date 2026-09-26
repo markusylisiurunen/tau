@@ -29,6 +29,7 @@ import { REASONING_LEVELS, type ReasoningEffort } from "../core/types.js";
 import { formatAdaptiveNumber, formatCwd, formatTokenWindow } from "../core/utils/format.js";
 import { extractAssistantText } from "../core/utils/messages.js";
 import {
+  getSpeechToTextRecordingMaxDurationMs,
   getSpeechToTextStreamingSampleRate,
   SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS,
   type SpeechToTextDependencies,
@@ -172,12 +173,15 @@ export class SessionChatController {
   private lastTurnDurationMs = 0;
   private turnTimer?: ReturnType<typeof setInterval>;
   private lastEmptySubmitAt?: number;
+  private disposed = false;
   private listenRecording?: ListenRecording;
   private retainedListenAudio?: { audioPath: string; durationMs: number };
   private listenTransition?: Promise<void>;
   private listenStartupAbortController?: AbortController;
   private activeListenTranscription?: ListenRecording["transcription"];
   private listenActivityLabel?: string;
+  private listenPreview?: ReturnType<ChatView["beginEditorTextPreview"]>;
+  private pendingEditorMutations = 0;
   private speechActivityLabel?: string;
   private speakTask?: {
     abortController: AbortController;
@@ -253,6 +257,8 @@ export class SessionChatController {
   }
 
   async dispose(): Promise<void> {
+    this.disposed = true;
+    this.endListenPreview();
     this.eventUnsubscribe?.();
     this.ephemeralUnsubscribe?.();
     this.pendingUserMessagesUnsubscribe?.();
@@ -652,6 +658,7 @@ export class SessionChatController {
   }
 
   private async cancelPendingMessagesIntoEditor(): Promise<void> {
+    this.pendingEditorMutations++;
     try {
       const { cancelled } = await this.session.cancelPendingMessages();
       if (cancelled.length === 0) {
@@ -669,6 +676,8 @@ export class SessionChatController {
       this.view.addTranscriptNotice("failed to cancel pending messages", "error", [
         (error as Error).message,
       ]);
+    } finally {
+      this.pendingEditorMutations--;
     }
   }
 
@@ -791,6 +800,10 @@ export class SessionChatController {
   }
 
   private async startListenCaptureFromCommand(): Promise<void> {
+    if (this.pendingEditorMutations > 0) {
+      this.view.showFooterNotice("wait for the input update before recording", "default");
+      return;
+    }
     if (this.listenTransition) {
       this.view.showFooterNotice("speech recording state change already in progress", "default");
       return;
@@ -840,6 +853,7 @@ export class SessionChatController {
       return;
     }
 
+    this.beginListenPreview();
     const retainedAudio = this.retainedListenAudio;
     let audioPath: string | undefined;
     let transcription: ListenRecording["transcription"] | undefined;
@@ -847,6 +861,7 @@ export class SessionChatController {
     let completion: ListenRecording["completion"] | undefined;
     try {
       audioPath = await createListenTempFilePath(this.deps);
+      if (this.disposed) throw new Error("speech recording startup cancelled");
       transcription = this.createSpeechTranscription("streaming");
       abortController = new AbortController();
       this.listenStartupAbortController = abortController;
@@ -895,16 +910,19 @@ export class SessionChatController {
         completion,
         transcription,
       };
-      recording.maxDurationTimeout = setTimeout(() => {
-        if (this.listenRecording !== recording || this.listenTransition) return;
-        void this.runListenTransition(() => this.stopListenCapture());
-      }, SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS);
+      recording.maxDurationTimeout = setTimeout(
+        () => {
+          if (this.listenRecording !== recording || this.listenTransition) return;
+          void this.runListenTransition(() => this.stopListenCapture());
+        },
+        getSpeechToTextRecordingMaxDurationMs(getSpeechToTextProvider(this.config)),
+      );
       this.listenRecording = recording;
-      this.view.setEditorInputEnabled(false);
       this.refreshStatus();
       void this.watchListenRecording(recording);
     } catch (err) {
-      const cancelled = abortController?.signal.reason === LISTEN_CAPTURE_START_CANCELLED;
+      const cancelled =
+        this.disposed || abortController?.signal.reason === LISTEN_CAPTURE_START_CANCELLED;
       abortController?.abort();
       transcription?.abort();
       await completion?.catch(() => undefined);
@@ -917,6 +935,7 @@ export class SessionChatController {
         ]);
       }
     } finally {
+      if (!this.listenRecording) this.endListenPreview();
       if (this.listenStartupAbortController === abortController) {
         this.listenStartupAbortController = undefined;
       }
@@ -952,7 +971,6 @@ export class SessionChatController {
     recording.stopRequested = true;
     this.clearListenRecordingMaxDurationTimeout(recording);
     this.listenRecording = undefined;
-    this.view.setEditorInputEnabled(true);
     this.refreshStatus();
 
     recording.abortController.abort();
@@ -961,6 +979,7 @@ export class SessionChatController {
       await recording.completion;
     } catch (err) {
       recording.transcription.abort();
+      this.endListenPreview();
       this.view.addTranscriptNotice("failed to record audio", "error", [(err as Error).message]);
       await cleanupListenTempFile(recording.audioPath);
       return;
@@ -974,6 +993,10 @@ export class SessionChatController {
   }
 
   private async retryRetainedListenAudio(): Promise<void> {
+    if (this.pendingEditorMutations > 0) {
+      this.view.showFooterNotice("wait for the input update before transcribing", "default");
+      return;
+    }
     if (this.listenRecording || this.listenTransition || this.listenActivityLabel) {
       this.view.showFooterNotice("speech recording state change already in progress", "default");
       return;
@@ -1016,13 +1039,29 @@ export class SessionChatController {
     }
   }
 
+  private beginListenPreview(): void {
+    this.listenPreview = this.view.beginEditorTextPreview();
+    this.view.setEditorInputEnabled(false);
+  }
+
+  private endListenPreview(): void {
+    const preview = this.listenPreview;
+    this.listenPreview = undefined;
+    preview?.cancel();
+    this.view.setEditorInputEnabled(true);
+  }
+
   private createSpeechTranscription(mode: "streaming" | "file"): ListenRecording["transcription"] {
+    const preview = this.listenPreview;
     return createListenTranscription({
       config: this.config,
       deps: this.deps,
       mode,
       context: collectSpeechToTextContext(this.snapshot),
       speechToTextDeps: this.speechToTextDeps,
+      onProgress: (text) => {
+        if (preview && this.listenPreview === preview) preview.update(text);
+      },
     });
   }
 
@@ -1031,76 +1070,99 @@ export class SessionChatController {
     durationMs: number,
     transcription?: ListenRecording["transcription"],
   ): Promise<void> {
-    if (durationMs > SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS) {
+    if (this.disposed) {
       transcription?.abort();
-      this.retainedListenAudio = { audioPath, durationMs };
-      this.view.addTranscriptNotice("failed to transcribe speech", "error", [
-        "audio is longer than 20 minutes",
-        `recording retained at ${audioPath}`,
-        "run /listen discard to delete it",
-      ]);
-      return;
-    }
-
-    let audio: Buffer;
-    try {
-      audio = await readListenAudio(audioPath);
-    } catch (error) {
-      transcription?.abort();
-      this.view.addTranscriptNotice("failed to read speech recording", "error", [
-        (error as Error).message,
-      ]);
       if (this.retainedListenAudio?.audioPath === audioPath) {
         this.retainedListenAudio = undefined;
       }
       await cleanupListenTempFile(audioPath);
       return;
     }
-
-    if (audio.byteLength < LISTEN_RECORDING_MIN_BYTES) {
-      transcription?.abort();
-      this.view.showFooterNotice("recording too short, try again", "default");
-      if (this.retainedListenAudio?.audioPath === audioPath) {
-        this.retainedListenAudio = undefined;
-      }
-      await cleanupListenTempFile(audioPath);
-      return;
-    }
-
-    let activeTranscription = transcription;
-    this.listenActivityLabel = "transcribing voice input";
-    this.refreshStatus();
+    if (!this.listenPreview) this.beginListenPreview();
+    const preview = this.listenPreview!;
     try {
-      activeTranscription ??= this.createSpeechTranscription("file");
-      this.activeListenTranscription = activeTranscription;
-      const text = await activeTranscription.finish({
-        audio,
-        mimeType: "audio/wav",
-      });
-      this.view.insertEditorTextAtCursor(text);
-      this.retainedListenAudio = undefined;
-      try {
-        await deleteListenTempFile(audioPath);
-      } catch (error) {
-        this.view.addTranscriptNotice("failed to delete speech recording", "error", [
-          (error as Error).message,
-          `recording remains at ${audioPath}; delete it manually`,
+      if (durationMs > SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS) {
+        transcription?.abort();
+        this.retainedListenAudio = { audioPath, durationMs };
+        this.view.addTranscriptNotice("failed to transcribe speech", "error", [
+          "audio is longer than 20 minutes",
+          `recording retained at ${audioPath}`,
+          "run /listen discard to delete it",
         ]);
+        return;
       }
-    } catch (error) {
-      this.retainedListenAudio = { audioPath, durationMs };
-      this.view.addTranscriptNotice("failed to transcribe speech", "error", [
-        (error as Error).message,
-        `recording retained at ${audioPath}`,
-        "run /listen retry to try again, or /listen discard to delete it",
-      ]);
-    } finally {
-      activeTranscription?.abort();
-      if (this.activeListenTranscription === activeTranscription) {
-        this.activeListenTranscription = undefined;
+
+      let audio: Buffer;
+      try {
+        audio = await readListenAudio(audioPath);
+      } catch (error) {
+        transcription?.abort();
+        this.view.addTranscriptNotice("failed to read speech recording", "error", [
+          (error as Error).message,
+        ]);
+        if (this.retainedListenAudio?.audioPath === audioPath) {
+          this.retainedListenAudio = undefined;
+        }
+        await cleanupListenTempFile(audioPath);
+        return;
       }
-      this.listenActivityLabel = undefined;
+
+      if (audio.byteLength < LISTEN_RECORDING_MIN_BYTES) {
+        transcription?.abort();
+        this.view.showFooterNotice("recording too short, try again", "default");
+        if (this.retainedListenAudio?.audioPath === audioPath) {
+          this.retainedListenAudio = undefined;
+        }
+        await cleanupListenTempFile(audioPath);
+        return;
+      }
+
+      if (this.disposed) {
+        transcription?.abort();
+        if (this.retainedListenAudio?.audioPath === audioPath) {
+          this.retainedListenAudio = undefined;
+        }
+        await cleanupListenTempFile(audioPath);
+        return;
+      }
+      let activeTranscription = transcription;
+      this.listenActivityLabel = "transcribing voice input";
       this.refreshStatus();
+      try {
+        activeTranscription ??= this.createSpeechTranscription("file");
+        this.activeListenTranscription = activeTranscription;
+        const text = await activeTranscription.finish({
+          audio,
+          mimeType: "audio/wav",
+        });
+        if (this.listenPreview !== preview) return;
+        preview.commit(text);
+        this.retainedListenAudio = undefined;
+        try {
+          await deleteListenTempFile(audioPath);
+        } catch (error) {
+          this.view.addTranscriptNotice("failed to delete speech recording", "error", [
+            (error as Error).message,
+            `recording remains at ${audioPath}; delete it manually`,
+          ]);
+        }
+      } catch (error) {
+        this.retainedListenAudio = { audioPath, durationMs };
+        this.view.addTranscriptNotice("failed to transcribe speech", "error", [
+          (error as Error).message,
+          `recording retained at ${audioPath}`,
+          "run /listen retry to try again, or /listen discard to delete it",
+        ]);
+      } finally {
+        activeTranscription?.abort();
+        if (this.activeListenTranscription === activeTranscription) {
+          this.activeListenTranscription = undefined;
+        }
+        this.listenActivityLabel = undefined;
+        this.refreshStatus();
+      }
+    } finally {
+      this.endListenPreview();
     }
   }
 
@@ -1111,7 +1173,7 @@ export class SessionChatController {
     recording.stopRequested = true;
     this.clearListenRecordingMaxDurationTimeout(recording);
     this.listenRecording = undefined;
-    this.view.setEditorInputEnabled(true);
+    this.endListenPreview();
     this.refreshStatus();
 
     recording.abortController.abort();
@@ -1132,7 +1194,7 @@ export class SessionChatController {
 
       this.listenRecording = undefined;
       recording.transcription.abort();
-      this.view.setEditorInputEnabled(true);
+      this.endListenPreview();
       this.refreshStatus();
       const detail =
         result.exitCode !== null
@@ -1148,7 +1210,7 @@ export class SessionChatController {
 
       this.listenRecording = undefined;
       recording.transcription.abort();
-      this.view.setEditorInputEnabled(true);
+      this.endListenPreview();
       this.refreshStatus();
       const error = err as NodeJS.ErrnoException;
       if (error.code === "ENOENT") {
@@ -2172,11 +2234,14 @@ export class SessionChatController {
       return;
     }
 
+    this.pendingEditorMutations++;
     try {
       const resolved = await this.session.resolvePrompt(prompt.id);
       this.view.setEditorText(resolved.text);
     } catch (error) {
       this.view.addTranscriptNotice("failed to load prompt", "error", [(error as Error).message]);
+    } finally {
+      this.pendingEditorMutations--;
     }
   }
 
@@ -2562,6 +2627,9 @@ export class SessionChatController {
   }
 
   prefillInput(text: string): string {
+    if (this.listenPreview) {
+      throw new Error("Cannot prefill input while speech input is active.");
+    }
     if (this.view.getEditorText().length > 0) {
       throw new Error("Cannot prefill input because the editor already contains text.");
     }
@@ -2764,6 +2832,7 @@ export class SessionChatController {
   private async applyRewindSelection(historyEntryId: string): Promise<void> {
     this.view.hideRewindPicker();
 
+    this.pendingEditorMutations++;
     try {
       const rewound = await this.session.rewindToHistoryEntryId(historyEntryId);
       this.syncRenderedHistory(rewound.snapshot);
@@ -2773,6 +2842,8 @@ export class SessionChatController {
       this.refreshStatus();
     } catch {
       this.view.addTranscriptNotice("failed to rewind session", "error");
+    } finally {
+      this.pendingEditorMutations--;
     }
   }
 
@@ -2804,6 +2875,7 @@ export class SessionChatController {
       return;
     }
 
+    this.pendingEditorMutations++;
     try {
       await copyTextToClipboard(text);
       this.view.setEditorText("");
@@ -2812,6 +2884,8 @@ export class SessionChatController {
       this.view.addTranscriptNotice("failed to copy to clipboard", "error", [
         (err as Error).message,
       ]);
+    } finally {
+      this.pendingEditorMutations--;
     }
   }
 

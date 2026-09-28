@@ -8,7 +8,7 @@ Tau ships generated built-in personas and discovers custom persona Markdown from
 
 Built-in personas are generated from Tau's current model catalog. Most model families have separate chat and coder variants; some families expose only the variants Tau supports. Built-ins carry Tau-maintained prompts, defaults, tool selections, skills, and the built-in `default` subagent.
 
-The Opus 5.5 chat and coder personas are available only when `anthropic/claude-opus-5-5` is present in the effective model catalog.
+The Opus 5.5 chat and coder personas are available only when `anthropic/claude-opus-5-5` is present in the effective model catalog. The Sonnet 5.5 variants (`sonnet-5.5-chat` and `sonnet-5.5-coder`) likewise require `anthropic/claude-sonnet-5-5`.
 
 GPT-6 Sol and Luna have API, ChatGPT, and fast ChatGPT variants. They are available only when the effective catalog contains `gpt-6-sol` or `gpt-6-luna` for the corresponding provider.
 

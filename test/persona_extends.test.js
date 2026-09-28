@@ -130,7 +130,9 @@ describe("custom personas", () => {
 
       expect(errors).toEqual([]);
       expect(personas.find((persona) => persona.id === "nook-persona")?.tools).toEqual(["nook"]);
-      expect(personas.find((persona) => persona.id === "sonnet-5-chat")?.tools).toContain("nook");
+      expect(personas.find((persona) => persona.id === "gpt-5.6-terra-chat")?.tools).toContain(
+        "nook",
+      );
     } finally {
       fx.cleanup();
     }
@@ -158,9 +160,14 @@ describe("custom personas", () => {
       const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
       const levels = resolveConfigLevels(deps, { cwd: fx.cwd });
       const resolveAvailableModel = (provider, modelId) =>
-        ["gemini-3.8-flash", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "claude-opus-5-5"].includes(
-          modelId,
-        )
+        [
+          "gemini-3.8-flash",
+          "gpt-6-astra",
+          "gpt-6-sol",
+          "gpt-6-luna",
+          "claude-opus-5-5",
+          "claude-sonnet-5-5",
+        ].includes(modelId)
           ? undefined
           : resolveModel(provider, modelId);
       const { personas, errors } = await loadAllContent(
@@ -179,6 +186,8 @@ describe("custom personas", () => {
       expect(personas.find((persona) => persona.id === "gemini-3.8-flash-coder")).toBeUndefined();
       expect(personas.find((persona) => persona.id === "opus-5.5-chat")).toBeUndefined();
       expect(personas.find((persona) => persona.id === "opus-5.5-coder")).toBeUndefined();
+      expect(personas.find((persona) => persona.id === "sonnet-5.5-chat")).toBeUndefined();
+      expect(personas.find((persona) => persona.id === "sonnet-5.5-coder")).toBeUndefined();
       expect(personas.find((persona) => persona.id === "gpt-6-astra-chat")).toBeUndefined();
       expect(personas.some((persona) => /^gpt-6-(sol|luna)-/.test(persona.id))).toBe(false);
       expect(personas.find((persona) => persona.id === "gpt-6-astra-coder")).toBeUndefined();
@@ -218,6 +227,11 @@ describe("custom personas", () => {
               id: "claude-fable-5-1",
               name: "Claude Fable 5.1",
             },
+            {
+              ...structuredClone(resolveModel("anthropic", "claude-sonnet-5")),
+              id: "claude-sonnet-5-5",
+              name: "Claude Sonnet 5.5",
+            },
           ],
         ],
       ]);
@@ -227,6 +241,9 @@ describe("custom personas", () => {
       );
       expect(errors).toEqual([]);
 
+      expect(personas.find((persona) => persona.id === "sonnet-5-chat")).toBeUndefined();
+      expect(personas.find((persona) => persona.id === "sonnet-5-coder")).toBeUndefined();
+      expect(personas.find((persona) => persona.id === "sonnet-5.5-chat")?.tools).toContain("nook");
       expect(personas.find((persona) => persona.id === "opus-5-chat")).toBeUndefined();
       expect(personas.find((persona) => persona.id === "opus-5-coder")).toBeUndefined();
       expect(personas.find((persona) => persona.id === "opus-4.6-chat")).toBeUndefined();
@@ -255,17 +272,17 @@ describe("custom personas", () => {
       expect(personas.find((persona) => persona.id === "opus-5.5-coder")?.model.id).toBe(
         "claude-opus-5-5",
       );
-      expect(personas.find((persona) => persona.id === "sonnet-5-chat")?.model.id).toBe(
-        "claude-sonnet-5",
+      expect(personas.find((persona) => persona.id === "sonnet-5.5-chat")?.model.id).toBe(
+        "claude-sonnet-5-5",
       );
-      expect(personas.find((persona) => persona.id === "sonnet-5-chat")?.settings.reasoning).toBe(
+      expect(personas.find((persona) => persona.id === "sonnet-5.5-chat")?.settings.reasoning).toBe(
         "medium",
       );
       expect(
-        personas.find((persona) => persona.id === "sonnet-5-chat")?.allowedReasoningLevels,
+        personas.find((persona) => persona.id === "sonnet-5.5-chat")?.allowedReasoningLevels,
       ).toEqual(["low", "medium", "high", "xhigh", "max"]);
-      expect(personas.find((persona) => persona.id === "sonnet-5-coder")?.model.id).toBe(
-        "claude-sonnet-5",
+      expect(personas.find((persona) => persona.id === "sonnet-5.5-coder")?.model.id).toBe(
+        "claude-sonnet-5-5",
       );
     } finally {
       fx.cleanup();

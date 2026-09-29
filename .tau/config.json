@@ -2,10 +2,10 @@
   "defaultPersona": "gpt-6-astra-chatgpt-coder:medium",
   "subagents": {
     "defaultLaunchModels": [
-      "openai-codex/gpt-6-sol:medium",
-      "openai-codex/gpt-6-sol:high",
-      "openai-codex/gpt-6-sol:xhigh",
-      "openai-codex/gpt-6-sol:max",
+      "openai-codex/gpt-6.1-sol:medium",
+      "openai-codex/gpt-6.1-sol:high",
+      "openai-codex/gpt-6.1-sol:xhigh",
+      "openai-codex/gpt-6.1-sol:max",
       "openai-codex/gpt-5.6-terra:medium",
       "openai-codex/gpt-5.6-terra:high",
       "openai-codex/gpt-5.6-terra:xhigh",

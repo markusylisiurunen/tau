@@ -164,6 +164,7 @@ describe("custom personas", () => {
           "gemini-3.8-flash",
           "gpt-6-astra",
           "gpt-6-sol",
+          "gpt-6.1-sol",
           "gpt-6-luna",
           "claude-opus-5-5",
           "claude-sonnet-5-5",
@@ -189,7 +190,9 @@ describe("custom personas", () => {
       expect(personas.find((persona) => persona.id === "sonnet-5.5-chat")).toBeUndefined();
       expect(personas.find((persona) => persona.id === "sonnet-5.5-coder")).toBeUndefined();
       expect(personas.find((persona) => persona.id === "gpt-6-astra-chat")).toBeUndefined();
-      expect(personas.some((persona) => /^gpt-6-(sol|luna)-/.test(persona.id))).toBe(false);
+      expect(personas.some((persona) => /^gpt-(6(?:\.1)?-sol|6-luna)-/.test(persona.id))).toBe(
+        false,
+      );
       expect(personas.find((persona) => persona.id === "gpt-6-astra-coder")).toBeUndefined();
       expect(personas.find((persona) => persona.id === "gpt-6-astra-chatgpt-chat")).toBeUndefined();
       expect(
@@ -358,15 +361,15 @@ describe("custom personas", () => {
   });
 
   it.each([
-    ["astra", "medium"],
-    ["sol", "low"],
-    ["luna", "medium"],
-  ])("loads GPT-6 %s personas from both remote OpenAI catalogs", async (family, reasoning) => {
+    ["gpt-6-astra", "medium"],
+    ["gpt-6-sol", "low"],
+    ["gpt-6.1-sol", "low"],
+    ["gpt-6-luna", "medium"],
+  ])("loads %s personas from both remote OpenAI catalogs", async (modelId, reasoning) => {
     const fx = setupFixture();
 
     try {
       const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
-      const modelId = `gpt-6-${family}`;
       const remoteCatalog = new Map(
         ["openai", "openai-codex"].map((provider) => {
           const model = resolveModel(provider, "gpt-5.6-terra");

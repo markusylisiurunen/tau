@@ -157,9 +157,9 @@ The command uploads the PDF to Mistral and attempts to delete the remote upload 
 
 ### Image and speech generation
 
-`tau tool image-generate` creates one image from a prompt and ordered local references using Google or OpenAI. `tau tool speech-generate` uses ElevenLabs to generate caller-chunked narration or dialogue and assemble one WAV, retaining completed batches. They are standalone utilities invoked through Bash, not host tool schemas, and use the invoking machine's files and credentials.
+`tau tool image-generate` creates an image from a prompt and optional local references using Google or OpenAI. `tau tool speech-generate` uses ElevenLabs to generate narration or dialogue and assemble a WAV. Both run through Bash using the invoking machine's files and credentials.
 
-See [image generation](image-generation.md) for models, generic capabilities, editing examples, and estimated costs. See [speech generation](speech-generation.md) for voice discovery, the input JSON contract, long-form assembly, recovery, and estimated costs. Both commands support `--help`, refuse overwrites, and avoid automatic retries of paid requests.
+See [image generation](image-generation.md) and [speech generation](speech-generation.md) for options, examples, pricing, and recovery. Both commands support `--help`.
 
 ## Code-mode service tools
 

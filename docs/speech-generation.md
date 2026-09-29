@@ -1,20 +1,20 @@
 # Speech generation
 
-`tau tool speech-generate` turns a caller-chunked script into one WAV using ElevenLabs `eleven_v4`. It supports existing voices, single-speaker narration, and multi-speaker dialogue. The command owns request batching and audio assembly, not script writing or automatic text splitting. It is independent of `/speak`, Telegram voice responses, and the session model. Music, sound effects, voice creation, and cloning are not supported.
+`tau tool speech-generate` turns a caller-chunked script into one WAV using ElevenLabs `eleven_v4`. It supports single-speaker narration and multi-speaker dialogue.
 
 ## Credentials and voices
 
-Set `ELEVENLABS_API_KEY` or configure `apiKeys.elevenlabs`; the environment variable wins. Configuration and files belong to the machine running the command. Agent Bash removes inherited API-key variables, so command-local private configuration may be needed. Host credentials are not forwarded to execution environments. See [credentials](credentials.md).
+Set `ELEVENLABS_API_KEY` or configure `apiKeys.elevenlabs`; the environment variable wins. Configuration and files belong to the machine running the command. Agent Bash removes inherited API-key variables, so credentials may need to be set in private configuration on that machine. See [credentials](credentials.md).
 
 ```bash
 tau tool speech-generate --list-voices
 ```
 
-Voice listing prints one JSON object per voice, containing `voice_id` and `name`, following all provider pages. Use those IDs in the script. Voice availability, consent, and plan restrictions remain provider-controlled.
+Voice listing prints one JSON object per voice, containing `voice_id` and `name`. Use those IDs in the script.
 
 ## Input contract
 
-Supply a UTF-8 JSON document with exactly `voices` and `chunks`. `voices` maps speaker names to existing voice IDs; `chunks` is an ordered, nonempty array of nonempty arrays of speaker turns. Each turn contains exactly `speaker` and nonblank `text`.
+Supply a UTF-8 JSON document with exactly `voices` and `chunks`. `voices` maps speaker names to voice IDs; `chunks` is an ordered, nonempty array of nonempty arrays of speaker turns. Each turn contains exactly `speaker` and nonblank `text`.
 
 ```json
 {
@@ -51,22 +51,21 @@ tau tool speech-generate --model eleven_v4 \
   --input ./dialogue.json --output ./dialogue.wav
 ```
 
-Single-speaker narration uses the same shape with one voice. For long narration, the caller supplies more chunks at suitable boundaries. All chunks are validated before any generation:
+Single-speaker narration uses the same shape with one voice. All chunks are validated before generation:
 
-- Each chunk contains at most 2,000 Unicode code points across all its text, including whitespace and delivery tags.
+- Each chunk contains at most 2,000 Unicode code points across its text, including whitespace and delivery tags.
 - Every speaker must resolve to a voice. At most 10 distinct voices may be used.
-- Tau preserves text, delivery tags, turn order, and speaker assignments. It never invents split points, rewrites text, or truncates a script.
 
-The adapter greedily packs consecutive whole chunks into requests of at most 2,000 characters. Chunk boundaries are not a promise of one request per chunk, a pause, or a reset. This conservative budget follows the [dialogue endpoint's reliability recommendation](https://elevenlabs.io/docs/api-reference/text-to-dialogue/convert) rather than the [model's larger advertised capacity](https://elevenlabs.io/docs/overview/models#eleven-v4).
+Tau packs consecutive whole chunks into requests of at most 2,000 characters, following the [dialogue endpoint's reliability recommendation](https://elevenlabs.io/docs/api-reference/text-to-dialogue/convert). The caller chooses chunk boundaries; text and turn order are preserved.
 
 ## Conversational assistant replies
 
-For an assistant speaking directly to the listener, short first-person replies and restrained delivery cues can help avoid a theatrical or narration-like style. These tags are useful starting points:
+For a brisk, relaxed assistant voice, try either of these delivery tags:
 
 - `[Brisk but relaxed, speaking naturally to a colleague]`
 - `[Brisk but relaxed, slightly faster, brief natural pauses]`
 
-For example, save this as `assistant-reply.json`, replacing `VOICE_ID` with an ID from `--list-voices`:
+Save this as `assistant-reply.json`, replacing `VOICE_ID` with an ID from `--list-voices`:
 
 ```json
 {
@@ -93,32 +92,32 @@ For a Finnish reply, replace the turn's `text` with:
 [Brisk but relaxed, speaking naturally to a colleague] Löysin ongelman. Sovellus käytti vanhaa asetusta, joten muutoksesi eivät päätyneet palvelimelle. Korjasin asetuksen ja tarkistin, että tallennus toimii. Sinun ei tarvitse asentaa mitään uudelleen. Kokeile tallentaa vielä kerran. Jos varoitus palaa, lähetä minulle sen tarkka teksti, niin selvitän syyn.
 ```
 
-To compare pacing, replace only the leading tag with `[Brisk but relaxed, slightly faster, brief natural pauses]` and generate to a fresh output path. Keep the voice and spoken text fixed. Listen for natural phrasing, pronunciation, and completeness, not just a shorter recording.
+To compare pacing, replace the leading tag with `[Brisk but relaxed, slightly faster, brief natural pauses]` and generate to a fresh output path, keeping the voice and spoken text fixed.
 
-Tags are delivery cues, not precise speed controls; their effect varies by voice, language, and generation. [Eleven v4](https://elevenlabs.io/docs/overview/capabilities/text-to-speech/eleven-v4) does not expose a numeric speed setting or support SSML. Tau passes the tags through without rewriting them or accelerating the resulting audio.
+[Eleven v4](https://elevenlabs.io/docs/overview/capabilities/text-to-speech/eleven-v4) controls delivery through audio tags rather than a numeric speed setting. Results vary by voice and language.
 
 ## Long recordings and assembly
 
-Each request asks for mono 24 kHz, signed 16-bit little-endian PCM. Responses are streamed to disk, then assembled in order under one valid WAV header. There is no MP3-header concatenation, inserted silence, automatic crossfade, or whole-recording memory buffer. Approximately 30 minutes occupies 86.4 MB of PCM; there is no 32 MiB recording limit. Each batch is capped at 128 MiB and the assembled file must fit standard RIFF/WAV's roughly 4 GiB limit. Provider requests have a ten-minute deadline and are not automatically retried.
+Responses are streamed to disk as mono 24 kHz, signed 16-bit little-endian PCM. Batches are concatenated in order into one WAV. Approximately 30 minutes occupies 86.4 MB of PCM. Each batch is capped at 128 MiB and the assembled file must fit standard RIFF/WAV's roughly 4 GiB limit. Provider requests have a ten-minute deadline.
 
-After completely consuming a response, the adapter passes up to three previous request IDs to the next dialogue request for provider-side request stitching. This is transient speech conditioning, not a saved conversation or a `--continue` workflow. The dialogue API documents stitching as model-dependent: request acceptance does not guarantee naturalness or identical delivery across joins. Listen across batch boundaries before approving a long recording. Missing request IDs stop further generation rather than silently dropping conditioning. Requests use normal provider logging; zero-retention mode is not exposed because it disables stitching.
+Each request receives up to three previous completed request IDs for ElevenLabs request stitching. A missing ID stops subsequent generation. Stitching uses normal ElevenLabs request logging.
 
-## Outputs and partial failure
+## Outputs and recovery
 
 The output parent directory must exist. Neither the requested WAV nor `<output>.parts` may exist. The `.parts` directory contains:
 
-- `manifest.json`: model, PCM format, output path, request plan, original speaker/text inputs, one-based input chunk indices, completion flags, and byte counts. `requestId` and `characterCost` retain the provider's `request-id` and `character-cost` headers when supplied, including when a subsequent audio download fails. `characterCost` is the raw billing header, not a count of input characters or proof of spoken completeness.
+- `manifest.json`: model, PCM format, output path, request plan, text and voice IDs, one-based chunk indices, completion flags, and byte counts. `requestId` and `characterCost` retain the provider's `request-id` and `character-cost` headers, including when a subsequent audio download fails.
 - `batch-0001.pcm`, etc.: completed raw PCM batches in request order.
-- `.partial` files: interrupted or invalid downloads, not approved for reuse.
-- `assembled.wav`: the complete local assembly, published at the requested output path only after success.
+- `.partial` files: interrupted downloads.
+- `assembled.wav`: the assembled output.
 
-Stdout on success is one JSON object with absolute `output`, `artifacts`, and the number of `batches`. An existing output is never replaced, even if created concurrently. The manifest includes script content, so keep artifacts private when the text is sensitive.
+Stdout on success is one JSON object with absolute `output`, `artifacts`, and the number of `batches`. The manifest contains the script text; keep artifacts private for sensitive scripts.
 
-Failures exit nonzero and report the retained directory. A later failed batch does not discard completed PCM. No partial recording is published as the successful final WAV. A timeout may already have been billed; Tau does not retry automatically or provide automatic resume.
+Failures exit nonzero and report the retained directory. Requests are not automatically retried because a failed request may already have incurred a charge.
 
-To avoid regenerating completed speech after failure, inspect `manifest.json`. Prepare a new input with only the unfinished chunks and a fresh output path. Do not include completed chunks again. Generate the remaining speech, then locally assemble the completed raw PCM files from both artifact directories in order. Provider continuity from the original run is not restored by this manual recovery.
+To recover after a later batch fails, inspect the manifest's `completed` flags and chunk mapping. Generate only the unfinished chunks to a fresh output path, then assemble the completed PCM files from both runs in script order. Request stitching does not carry over between invocations.
 
-For example, with FFmpeg installed, after verifying these are exactly the completed batches in script order:
+For example, with FFmpeg installed:
 
 ```bash
 cat ./first.wav.parts/batch-0001.pcm \
@@ -127,8 +126,8 @@ cat ./first.wav.parts/batch-0001.pcm \
 ffmpeg -n -f s16le -ar 24000 -ac 1 -i ./complete.pcm -c:a pcm_s16le ./complete.wav
 ```
 
-Never concatenate `.wav` files as raw bytes or include `.partial` files. Concatenating the retained raw PCM adds no silence or crossfade. A reported successful provider response can still omit or mispronounce words; validate completeness by listening.
+Use only completed `.pcm` batches, not `.partial` files.
 
 ## Approximate cost
 
-The [ElevenLabs API pricing page](https://elevenlabs.io/pricing/api) lists v4 at $0.08 per 1,000 characters, with a promotional $0.022 rate through October 12, 2026. At those rates, 2,000 characters cost approximately $0.16 or $0.044 respectively; 27,000 characters (roughly 30 minutes at 900 characters/minute) cost approximately $2.16 or $0.59. These are planning estimates, not duration guarantees or per-call invoices. Check current API pricing, plan allowances, and voice-specific rates before a long generation; do not assume one credit per input character. The manifest's `characterCost` preserves the provider's billing header verbatim, while account usage determines the actual charge. Repeated generations consume additional quota.
+The [ElevenLabs API pricing page](https://elevenlabs.io/pricing/api) lists v4 at $0.08 per 1,000 characters, with a promotional $0.022 rate through October 12, 2026. At those rates, 2,000 characters cost approximately $0.16 or $0.044; 27,000 characters (roughly 30 minutes) cost approximately $2.16 or $0.59. Check current API pricing for plan and voice-specific rates. The manifest's `characterCost` preserves the provider's billing header verbatim.

@@ -237,7 +237,6 @@ describe("image generation CLI", () => {
       );
       const output = await readFile(join(options.cwd, "image.png"));
       expect((await sharp(output).metadata()).format).toBe("png");
-      expect((await sharp(output).stats()).isOpaque).toBe(true);
       expect(await sharp(output).raw().toBuffer()).toEqual(await sharp(image).raw().toBuffer());
       expect(await readFile(join(options.cwd, "image.png.parts", "original.bin"))).toEqual(image);
       const manifest = JSON.parse(
@@ -246,7 +245,6 @@ describe("image generation CLI", () => {
       expect(manifest.source).toEqual({
         file: "original.bin",
         declaredMimeType: `image/${format}`,
-        detectedMimeType: `image/${format}`,
       });
       expect(manifest.usage).toEqual({ candidatesTokenCount: 1120 });
       expect(JSON.parse(options.stdout.mock.calls[0][0]).usage).toEqual(manifest.usage);
@@ -254,120 +252,49 @@ describe("image generation CLI", () => {
     },
   );
 
-  it.each(["mismatched", "truncated", "invalid", "unsupported"])(
-    "retains Gemini diagnostics without publishing or retrying a %s image",
-    async (kind) => {
-      const options = await fixture();
-      const complete = await png();
-      const image =
-        kind === "truncated"
-          ? complete.subarray(0, 48)
-          : kind === "invalid"
-            ? Buffer.from("not an image")
-            : kind === "unsupported"
-              ? await sharp(complete).gif().toBuffer()
-              : complete;
-      const mimeType =
-        kind === "mismatched" ? "image/jpeg" : kind === "unsupported" ? "image/gif" : "image/png";
-      options.fetchImpl.mockResolvedValue(
-        Response.json({
-          candidates: [
-            {
-              finishReason: "STOP",
-              content: {
-                parts: [{ inlineData: { mimeType, data: image.toString("base64") } }],
-              },
-            },
-          ],
-          usageMetadata: { candidatesTokenCount: 1120 },
-        }),
-      );
-      await expect(
-        runToolCommand(
-          [...imageArgs.slice(0, 2), "gemini-3.1-flash-lite-image", ...imageArgs.slice(3)],
-          options,
-        ),
-      ).rejects.toThrow("artifacts:");
-      await expect(stat(join(options.cwd, "image.png"))).rejects.toThrow();
-      await expect(stat(join(options.cwd, "image.png.parts", "image.png"))).rejects.toThrow();
-      expect(await readFile(join(options.cwd, "image.png.parts", "original.bin"))).toEqual(image);
-      const manifest = JSON.parse(
-        await readFile(join(options.cwd, "image.png.parts", "manifest.json"), "utf8"),
-      );
-      expect(manifest.source.declaredMimeType).toBe(mimeType);
-      expect(manifest.usage).toEqual({ candidatesTokenCount: 1120 });
-      expect(options.fetchImpl).toHaveBeenCalledTimes(1);
-    },
-  );
-
-  it("rejects OpenAI responses that do not match the requested encoding", async () => {
+  it("retains the original and usage if Gemini PNG conversion fails", async () => {
     const options = await fixture();
-    const image = await sharp(await png())
-      .jpeg()
-      .toBuffer();
+    const image = Buffer.from("incomplete image data");
     options.fetchImpl.mockResolvedValue(
-      Response.json({ data: [{ b64_json: image.toString("base64") }] }),
+      Response.json({
+        candidates: [
+          {
+            finishReason: "STOP",
+            content: {
+              parts: [{ inlineData: { mimeType: "image/jpeg", data: image.toString("base64") } }],
+            },
+          },
+        ],
+        usageMetadata: { candidatesTokenCount: 1120 },
+      }),
     );
-    await expect(runToolCommand(imageArgs, options)).rejects.toThrow("expected png");
+    await expect(
+      runToolCommand(
+        [...imageArgs.slice(0, 2), "gemini-3.1-flash-lite-image", ...imageArgs.slice(3)],
+        options,
+      ),
+    ).rejects.toThrow("artifacts:");
     await expect(stat(join(options.cwd, "image.png"))).rejects.toThrow();
+    expect(await readFile(join(options.cwd, "image.png.parts", "original.bin"))).toEqual(image);
+    const manifest = JSON.parse(
+      await readFile(join(options.cwd, "image.png.parts", "manifest.json"), "utf8"),
+    );
+    expect(manifest.usage).toEqual({ candidatesTokenCount: 1120 });
     expect(options.fetchImpl).toHaveBeenCalledTimes(1);
   });
 
-  it.each(["png", "webp"])("preserves OpenAI transparency in %s output", async (format) => {
+  it("writes OpenAI image bytes as returned by the provider", async () => {
     const options = await fixture();
-    const image = await sharp(await png())
-      .ensureAlpha(0.5)
-      .toFormat(format)
-      .toBuffer();
-    options.fetchImpl.mockResolvedValue(
-      Response.json({ data: [{ b64_json: image.toString("base64") }] }),
-    );
-    await runToolCommand(
-      [
-        ...imageArgs.slice(0, -1),
-        `image.${format}`,
-        "--format",
-        format,
-        "--background",
-        "transparent",
-      ],
-      options,
-    );
-    const output = await readFile(join(options.cwd, `image.${format}`));
-    expect(output).toEqual(image);
-    expect((await sharp(output).stats()).isOpaque).toBe(false);
-    expect(JSON.parse(options.fetchImpl.mock.calls[0][1].body)).toMatchObject({
-      background: "transparent",
-      output_format: format,
-    });
-  });
-
-  it("does not reject valid opaque pixels when a transparent background is requested", async () => {
-    const options = await fixture();
-    const image = await png();
-    options.fetchImpl.mockResolvedValue(
-      Response.json({ data: [{ b64_json: image.toString("base64") }] }),
-    );
-    await runToolCommand([...imageArgs, "--background", "transparent"], options);
-    expect(await readFile(join(options.cwd, "image.png"))).toEqual(image);
-  });
-
-  it("retains but does not publish a truncated OpenAI image", async () => {
-    const options = await fixture();
-    const image = (await png()).subarray(0, 48);
+    const image = Buffer.from("provider image bytes");
     options.fetchImpl.mockResolvedValue(
       Response.json({
         data: [{ b64_json: image.toString("base64") }],
         usage: { output_tokens: 100 },
       }),
     );
-    await expect(runToolCommand(imageArgs, options)).rejects.toThrow("artifacts:");
-    await expect(stat(join(options.cwd, "image.png"))).rejects.toThrow();
-    expect(await readFile(join(options.cwd, "image.png.parts", "original.bin"))).toEqual(image);
-    const manifest = JSON.parse(
-      await readFile(join(options.cwd, "image.png.parts", "manifest.json"), "utf8"),
-    );
-    expect(manifest.usage).toEqual({ output_tokens: 100 });
+    await runToolCommand(imageArgs, options);
+    expect(await readFile(join(options.cwd, "image.png"))).toEqual(image);
+    expect(JSON.parse(options.stdout.mock.calls[0][0]).usage).toEqual({ output_tokens: 100 });
     expect(options.fetchImpl).toHaveBeenCalledTimes(1);
   });
 

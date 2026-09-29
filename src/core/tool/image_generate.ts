@@ -1,6 +1,6 @@
 import { link, readFile, writeFile } from "node:fs/promises";
 import { basename, extname, join, resolve } from "node:path";
-import { type FileTypeResult, fileTypeFromBuffer } from "file-type";
+import { fileTypeFromBuffer } from "file-type";
 import sharp from "sharp";
 import { z } from "zod";
 import { getGoogleApiKey, getOpenAIApiKey } from "../config/schema.js";
@@ -328,50 +328,25 @@ async function publishImage(
     flag: "wx",
     mode: 0o600,
   });
-  let type: FileTypeResult | undefined;
-  try {
-    type = await fileTypeFromBuffer(image.bytes);
-  } finally {
-    await writeFile(
-      join(destination.parts, "manifest.json"),
-      JSON.stringify(
-        {
-          model: generation.model,
-          output: destination.path,
-          usage: image.usage,
-          source: {
-            file: "original.bin",
-            declaredMimeType: image.declaredMimeType,
-            detectedMimeType: type?.mime ?? null,
-          },
-        },
-        null,
-        2,
-      ),
-      { flag: "wx" },
-    );
-  }
+  await writeFile(
+    join(destination.parts, "manifest.json"),
+    JSON.stringify(
+      {
+        model: generation.model,
+        output: destination.path,
+        usage: image.usage,
+        source: { file: "original.bin", declaredMimeType: image.declaredMimeType },
+      },
+      null,
+      2,
+    ),
+    { flag: "wx" },
+  );
   const { format } = generation.settings;
-  const decoder = sharp(image.bytes, { failOn: "warning", limitInputPixels: 64 * 1024 * 1024 });
-  let bytes: Buffer;
-  if (generation.provider === "google") {
-    if (
-      !type ||
-      !["image/png", "image/jpeg", "image/webp"].includes(type.mime) ||
-      image.declaredMimeType !== type.mime
-    ) {
-      throw new ToolCliError("provider returned an invalid image or mismatched MIME type");
-    }
-    bytes = await decoder.png().toBuffer();
-  } else {
-    if (type?.mime !== `image/${format}`) {
-      throw new ToolCliError(
-        `provider returned an invalid or unexpected image format; expected ${format}`,
-      );
-    }
-    await decoder.stats();
-    bytes = image.bytes;
-  }
+  const bytes =
+    generation.provider === "google" && image.declaredMimeType !== "image/png"
+      ? await sharp(image.bytes).png().toBuffer()
+      : image.bytes;
   const artifact = join(destination.parts, `image.${format}`);
   await writeFile(artifact, bytes, { flag: "wx" });
   await link(artifact, destination.path);

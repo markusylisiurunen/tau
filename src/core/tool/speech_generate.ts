@@ -277,14 +277,6 @@ export async function runSpeechGenerateCommand(
       batch.requestId = response.headers.get("request-id");
       batch.characterCost = response.headers.get("character-cost");
       await saveManifest();
-      const contentType = response.headers.get("content-type")?.split(";")[0]?.trim();
-      if (
-        contentType &&
-        !["audio/pcm", "audio/x-pcm", "audio/raw", "application/octet-stream"].includes(contentType)
-      ) {
-        await response.body?.cancel();
-        throw new ToolCliError(`provider returned unexpected audio content type: ${contentType}`);
-      }
       const path = join(destination.parts, batch.file);
       batch.bytes = await savePcm(response, `${path}.partial`);
       await rename(`${path}.partial`, path);

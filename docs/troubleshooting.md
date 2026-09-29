@@ -108,7 +108,7 @@ Providers must be known and model IDs are exact and case-sensitive. Check warnin
 
 ### Theme
 
-Check the client `cwd` and home, exact filename ID, colors, `disableBuiltinThemes`, and `defaultTheme`. `/reload` does not reload themes. Restart the TUI, then select `/theme:<id>`. A remote host's themes do not supply an attached client's theme.
+Check the exact built-in theme ID and the client’s `defaultTheme`. Select `/theme:<id>` for the current run, or restart the TUI to apply a new startup default. A remote host’s theme selection does not affect an attached client.
 
 ## A tool or subagent is unavailable
 
@@ -148,13 +148,13 @@ A detached owning client makes its tools unavailable and cancels active calls. R
 
 Find the process making the request:
 
-| Operation                                   | Owner        |
-| ------------------------------------------- | ------------ |
-| Model, host `web`, `history`, or `nook`     | Host         |
-| `/listen`, `/speak`, or TUI client tool     | Client       |
-| Telegram bot or transcription               | Runner       |
-| `tau nook`, `tau history`, or PDF unpack    | Invoking CLI |
-| Cloudflare Sandbox or Fly Sprite resolution | Host startup |
+| Operation                                | Owner        |
+| ---------------------------------------- | ------------ |
+| Model, host `web`, `history`, or `nook`  | Host         |
+| `/listen`, `/speak`, or TUI client tool  | Client       |
+| Telegram bot or transcription            | Runner       |
+| `tau nook`, `tau history`, or PDF unpack | Invoking CLI |
+| Fly Sprite resolution                    | Host startup |
 
 A laptop variable does not update a remote host. Environment changes require an owner restart. Runtime `apiKeys` can reload, but only from an eligible execution-environment level and subject to feature precedence.
 
@@ -205,11 +205,11 @@ If attachment reports an unsupported protocol version or invalid peer message, u
 
 For `tau attach --new`, `--cwd` must be an absolute path inside the selected execution environment. With the default local execution kind it is a host path, not a path on the attaching machine. Tau does not create the directory, clone a repository, or infer remote repository attributes.
 
-For Cloudflare Sandbox or Fly Sprite creation, verify on the host that:
+For Fly Sprite creation, verify on the host that:
 
-- the named bridge or API id exists in startup configuration;
+- the named API id exists in startup configuration;
 - its credential is available to the host process;
-- the named sandbox or Sprite already exists;
+- the named Sprite already exists;
 - the absolute target `cwd` exists there; and
 - the configured execution home matches the intended target account.
 
@@ -219,7 +219,7 @@ Without `--session` or `--new`, attach needs a TTY for its selector. In automati
 
 ## A session is missing, interrupted, or will not recover
 
-A selector shows only sessions this host can load and restore. Confirm its machine, OS user, home, Tau version, resolver configuration, and target still match the creator. Another user's `~/.config/tau/sessions` is a different store. Restore missing bridge/API definitions, credentials, local directory, sandbox, or Sprite. Never edit session JSON to substitute a target or `cwd`.
+A selector shows only sessions this host can load and restore. Confirm its machine, OS user, home, Tau version, resolver configuration, and target still match the creator. Another user's `~/.config/tau/sessions` is a different store. Restore missing API definitions, credentials, local directory, or Sprite. Never edit session JSON to substitute a target or `cwd`.
 
 Recovery returns idle, aborts unfinished turns, cancels running maintenance, removes live subagents, and blocks an active goal. Review the last assistant and tools, then safely check `!!pwd` and `!!git status --short`. Resume a goal only after understanding the stop. Retry continues current history without rerunning completed tools automatically.
 

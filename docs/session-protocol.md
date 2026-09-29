@@ -18,7 +18,7 @@ The server sends `ready` as its first message:
 
 ```json
 {
-  "version": 14,
+  "version": 15,
   "type": "ready",
   "methods": ["initialize", "session.create", "session.list"]
 }
@@ -30,7 +30,7 @@ After `ready`, send `initialize` with non-empty client metadata:
 
 ```json
 {
-  "version": 14,
+  "version": 15,
   "type": "request",
   "id": "init-1",
   "method": "initialize",
@@ -50,7 +50,7 @@ Every request has the same envelope:
 
 ```json
 {
-  "version": 14,
+  "version": 15,
   "type": "request",
   "id": "req-42",
   "method": "session.snapshot",
@@ -64,7 +64,7 @@ Successful responses echo the request id:
 
 ```json
 {
-  "version": 14,
+  "version": 15,
   "type": "response",
   "id": "req-42",
   "ok": true,
@@ -128,7 +128,7 @@ Observed snapshot changes arrive as `session.delta`:
 
 ```json
 {
-  "version": 14,
+  "version": 15,
   "type": "session.delta",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "fromRevision": 8,
@@ -166,7 +166,7 @@ Not all observed state belongs in the recoverable snapshot. Each live channel ha
 
 ```json
 {
-  "version": 14,
+  "version": 15,
   "type": "session.pendingUserMessages",
   "sessionId": "...",
   "state": {
@@ -203,7 +203,7 @@ An initialized client that advertised a tool can receive:
 
 ```json
 {
-  "version": 14,
+  "version": 15,
   "type": "session.clientTool.call",
   "sessionId": "...",
   "agentId": "main",
@@ -227,7 +227,7 @@ Error responses use `ok: false`:
 
 ```json
 {
-  "version": 14,
+  "version": 15,
   "type": "response",
   "id": "req-42",
   "ok": false,

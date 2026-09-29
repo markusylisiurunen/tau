@@ -142,7 +142,7 @@ Intermediate system messages use the strict plain-text contract in `src/protocol
 
 Searchable history is a separate flat transcript of committed user entries, intermediate system instructions, assistant text, and completed tools. Rewind truncates it; compaction does not. Remote replication proceeds asynchronously from the durable local outbox, preserves per-session order, and quarantines permanent failures by session so one poisoned lane cannot block unrelated histories. History is not sufficient to recover session state. See `docs/sessions.md`, `docs/history.md`, and tests under `test/history.test.js` and `test/local_session_host.test.js`.
 
-Themes are client-local and never belong in a snapshot. Prompt catalogs contain metadata only; prompt bodies resolve lazily through the execution environment. Path autocomplete is also lazy and must not become persisted session state.
+Themes are client-local, selected from the fixed built-in catalog, and never belong in a snapshot. Prompt catalogs contain metadata only; prompt bodies resolve lazily through the execution environment. Path autocomplete is also lazy and must not become persisted session state.
 
 ## Tool, process, and presentation boundaries
 
@@ -176,7 +176,7 @@ Start with the smallest owning area, its callers, and its tests. This map is tas
 | Host lifecycle and session mutations | `src/host/` | `test/local_session_host.test.js`, `test/hosted_ephemeral_agent_session.test.js` |
 | Wire protocol and deltas | `src/protocol/session_protocol.ts` | `test/session_protocol.test.js`, `docs/session-protocol.md`, `docs/session-protocol-methods.md` |
 | Persistence and migrations | `src/store/` | `test/session_store.test.js`, `test/file_session_store.test.js`, `test/local_session_host.test.js` |
-| Execution environments | `src/execution/`, `src/core/tools/execution_backend.ts` | `test/local_execution_environment.test.js`, `test/cloudflare_sandbox_execution_environment.test.js`, `test/fly_sprite_execution_environment.test.js`, `docs/ownership-and-scope.md` |
+| Execution environments | `src/execution/`, `src/core/tools/execution_backend.ts` | `test/local_execution_environment.test.js`, `test/fly_sprite_execution_environment.test.js`, `docs/ownership-and-scope.md` |
 | Transports and Node SDK | `src/transport/`, `src/sdk/` | `test/in_process_session_transport.test.js`, `test/sdk_client_integration.test.js`, `docs/node-sdk.md`, `docs/remote-sessions.md` |
 | Config, content, models, prompts | `src/core/config/`, `src/core/models/`, `src/core/personas.ts`, `src/core/runtime/runtime_bootstrap.ts` | `test/config_layers.test.js`, `test/model_catalog.test.js`, `test/skills_discovery.test.js`, `docs/configuration.md`, `docs/config-reference.md` |
 | Credentials and authentication | `src/core/auth/` | `test/auth_storage.test.js`, `test/auth_cli.test.js`, `docs/credentials.md` |
@@ -350,5 +350,7 @@ Keep each documentation surface within its role. Do not copy volatile product in
 - Update `AGENTS.md` when contributor workflow, source ownership, cross-cutting architecture, or a safeguard changes.
 - Update source and tests together. Neither this guide nor public docs replace reading the current implementation.
 - Do not opportunistically document unrelated previously undocumented behavior unless the user asks.
+
+Skills and saved prompts are user or project content, discovered from their configured directories.
 
 The public documentation corpus is flat and version-matched. Every Markdown page must appear once in `docs/manifest.json`, use valid flat internal links, and remain within packaging bounds. It is copied by `scripts/copy-tau-docs.js`, served to agents by `src/core/tools/tau_docs.ts`, and enforced by `test/tau_docs_corpus.test.js` and `test/tau_docs.test.js`.

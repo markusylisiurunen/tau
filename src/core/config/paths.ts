@@ -1,7 +1,7 @@
 import { dirname, join, parse, resolve, sep } from "node:path";
 import type { ConfigDeps } from "./deps.js";
 
-export type ConfigLevelScope = "global" | "project" | "builtin";
+export type ConfigLevelScope = "global" | "project";
 
 export type ConfigLevel = {
   levelRoot: string;
@@ -12,7 +12,6 @@ export type ConfigLevel = {
   promptsDir: string;
   skillsDir: string;
   agentsSkillsDir: string;
-  themesDir: string;
   scope: ConfigLevelScope;
 };
 
@@ -28,7 +27,6 @@ function buildLevel(levelRoot: string, configDir: string, scope: ConfigLevelScop
     promptsDir: join(dir, "prompts"),
     skillsDir: join(dir, "skills"),
     agentsSkillsDir: join(root, ".agents", "skills"),
-    themesDir: join(dir, "themes"),
     scope,
   };
 }

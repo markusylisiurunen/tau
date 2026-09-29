@@ -66,7 +66,6 @@ A few fields intentionally use other rules:
 - `apiKeys` merges by provider id. A more-specific key replaces only the same provider's value.
 - `autoCompact` merges by field on top of shipped defaults.
 - `modelSystemNotices` merges by normalized `<provider>/<model>` key.
-- `cloudflareSandbox.bridges` merges by bridge id. A more-specific bridge replaces the complete bridge with that id.
 - `flySprites.apis` merges by API id. A more-specific API replaces the complete API entry with that id.
 - `agentContextFiles` is additive across levels, resolves each entry at its owning level, and removes duplicate resolved paths while preserving order.
 - `diffTool` and `builtInDiffTool` select the complete object from the most-specific level that defines them.
@@ -158,7 +157,7 @@ Never verify a secret by printing the full config or environment into a shared t
 
 Tau loads startup configuration and content before opening the TUI. Restart the local TUI or `tau attach` to apply client-owned changes such as:
 
-- `defaultTheme`, `disableBuiltinThemes`, and theme files
+- `defaultTheme`
 - `diffTool` and `builtInDiffTool`
 - `clientTools` and `enabledClientTools`
 - client environment variables
@@ -177,7 +176,6 @@ A logical turn captures its persona, model settings, and tools when it starts. R
 
 Restart the host process to apply settings used to construct host-wide services, including:
 
-- `cloudflareSandbox.bridges`
 - `flySprites.apis`
 - `history`
 - host environment variables and Codex account forcing
@@ -198,7 +196,7 @@ The Telegram runner loads its speech provider and separate runner config at star
 
 **Editing the host filesystem for target content.** A hosted execution environment owns its project files and home. Put project `.tau` content on that target, not in a similarly named path on the host.
 
-**Expecting nested objects to deep-merge.** A project bridge or Sprite API entry replaces the complete entry with the same id. Repeat required fields such as a Cloudflare bridge `url`.
+**Expecting nested objects to deep-merge.** A project Sprite API entry replaces the complete entry with the same id. Repeat any credentials and settings needed by that API.
 
 **Expecting `/reload` to rebuild the client or server.** Reload is a current-session runtime operation. Restart the component that owns startup-only behavior.
 

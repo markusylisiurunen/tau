@@ -1,7 +1,7 @@
 import chalk from "chalk";
 import Color from "colorjs.io";
 import { builtinThemes } from "../../../core/config/builtin_themes.js";
-import type { ThemeAppearance } from "../../../core/config/content_loader.js";
+import type { ThemeAppearance } from "../../../core/config/theme_variants.js";
 import { hslToHex } from "../../../core/utils/color.js";
 import type { TerminalColors, TerminalRgbColor } from "../../terminal_appearance.js";
 import type { Palette, ThemeMode } from "./theme.js";

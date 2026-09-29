@@ -13,13 +13,12 @@ These are defaults built into this Tau version, not a dump of the effective conf
 | Default persona | `sonnet-5.5-coder` |
 | Default TUI theme | `gold` |
 | Built-in personas | Enabled |
-| Built-in themes | Enabled |
 | Automatic compaction | `{ "enabled": true, "reserveTokens": 16384, "keepRecentTokens": 20000 }` |
 | Speech-to-text provider when unset | `openai` |
 | Built-in diff tool code theme | `github-dark-dimmed` |
 | Command client tool timeout when unset | `60000` ms |
 
-Project and global content can change which ids are actually available. A configured default that is not loaded produces a warning rather than creating that persona or theme.
+Project and global content can change which persona ids are available. A configured default must match an available persona or built-in theme; otherwise Tau reports a warning.
 
 ## Field summary
 
@@ -28,7 +27,6 @@ Project and global content can change which ids are actually available. A config
 | `apiKeys` | Object of string values | Global, project | Merge by provider id | Host or feature consumer; `/reload` for session runtime keys, process restart for environment changes |
 | `defaultPersona` | Non-empty string | Global, project | Most-specific wins | Session host; new session |
 | `disableBuiltinPersonas` | Boolean | Global, project | Most-specific wins | Session runtime; `/reload` or new session |
-| `disableBuiltinThemes` | Boolean | Global, project | Most-specific wins | TUI client; client restart |
 | `defaultTheme` | Non-empty string | Global, project | Most-specific wins | TUI client; client restart |
 | `diffTool` | Object | Global, project | Most-specific complete object | TUI client; client restart |
 | `builtInDiffTool` | Object | Global, project | Most-specific complete object | TUI client; client restart |
@@ -38,7 +36,6 @@ Project and global content can change which ids are actually available. A config
 | `subagents` | Object | Global, project | Field-wise, currently one selectable list | Session runtime; `/reload` or new session |
 | `autoCompact` | Object | Global, project | Merge by field over shipped defaults | Session runtime; `/reload` or new session |
 | `modelSystemNotices` | String map | Global, project | Merge by model target | Session runtime; `/reload`, affects later inputs |
-| `cloudflareSandbox` | Object | Global, project | Merge bridges by id | Host startup; host restart |
 | `flySprites` | Object | Global, project | Merge APIs by id | Host startup; host restart |
 | `nook` | Object | Global, project | Most-specific complete object | Host tool runtime; `/reload` or new session |
 | `history` | Object | Global only | One global object | Host startup; host restart |
@@ -220,21 +217,9 @@ Credential precedence is `TAU_HISTORY_API_KEY`, then the variable named by `apiK
 
 ## TUI presentation and diff review
 
-### `disableBuiltinThemes`
-
-A boolean that removes shipped themes from the TUI client's loaded theme list. The default is `false`.
-
-```json
-{
-  "disableBuiltinThemes": true
-}
-```
-
-If built-ins are disabled, provide a valid custom theme. This setting does not affect personas or model behavior.
-
 ### `defaultTheme`
 
-The exact, case-sensitive id of a loaded theme. The shipped default is `gold`:
+The exact, case-sensitive id of a built-in theme. The shipped default is `gold`:
 
 ```json
 {
@@ -242,7 +227,7 @@ The exact, case-sensitive id of a loaded theme. The shipped default is `gold`:
 }
 ```
 
-The attached TUI uses its client-local configuration and theme files. `/theme:<id>` changes the current client only and is not persisted into the session. See [TUI](tui.md).
+The attached TUI uses its client-local configuration. `/theme:<id>` changes the current client only and is not persisted into the session. See [TUI](tui.md).
 
 ### `diffTool`
 
@@ -343,36 +328,7 @@ The most-specific project list replaces broader project lists. Project configura
 
 ## Hosted execution environments
 
-These fields configure resolvers owned by a host process. They do not provision sandboxes or Sprites. A client creating a session supplies an existing environment identity and `cwd` that references one of these host-known entries. See [remote sessions](remote-sessions.md).
-
-### `cloudflareSandbox`
-
-An optional `bridges` map keyed by bridge id:
-
-```json
-{
-  "cloudflareSandbox": {
-    "bridges": {
-      "team": {
-        "url": "https://tau-sandbox.example.workers.dev",
-        "apiKeyEnv": "TAU_SANDBOX_BRIDGE_KEY",
-        "home": "/home/sandbox"
-      }
-    }
-  }
-}
-```
-
-Each bridge accepts:
-
-| Nested field | Type | Required | Default or behavior |
-| --- | --- | --- | --- |
-| `url` | Non-empty string | Yes | Bridge base URL; schema requires a string but does not perform general URL validation |
-| `apiKey` | Non-empty string | No | Inline bridge key; takes precedence when present |
-| `apiKeyEnv` | Non-empty string | No | Host environment variable used when `apiKey` is absent |
-| `home` | Non-empty string | No | Execution-environment home, default `/home/sandbox` |
-
-Bridge maps merge by id. A more-specific bridge replaces the complete entry with that id, so it must repeat the required `url`.
+These fields configure resolvers owned by a host process. They do not provision Sprites. A client creating a session supplies an existing environment identity and `cwd` that references one of these host-known entries. See [remote sessions](remote-sessions.md).
 
 ### `flySprites`
 

@@ -133,28 +133,6 @@ Skill references compose. If `release-check` instructs the agent to use `@@skill
 
 After activation, the agent reads `SKILL.md` from the path in the discovered index. It should load only relevant files from `references/` or `assets/`, and prefer provided scripts when they implement the required workflow. Skills are treated as read-only unless the user explicitly asks to edit them.
 
-## Installing starter skills
-
-Tau ships starter prompts and skills that can be copied into a project:
-
-```bash
-tau install
-```
-
-By default this installs all starter prompts and skills under the current directory's `.tau/`. To install one skill:
-
-```bash
-tau install --skill code-review
-```
-
-To install under `~/.config/tau/` instead:
-
-```bash
-tau install --global --skill commit
-```
-
-Existing skill directories are skipped. `--force` replaces the entire same-named target directory, including files that are not present in the starter copy, so use it only when replacement is intended. `--prompt` and `--skill` are mutually exclusive. See [prompts and project context](prompts-and-project-context.md) for the prompt side of `tau install`.
-
 ## Applying changes and checking discovery
 
 A running TUI session keeps its current content catalog and prompt context until it reloads. Run:

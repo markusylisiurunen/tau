@@ -31,8 +31,6 @@ export {
 export type { CliOptions } from "./cli.js";
 export { CliError, parseCliArgs, parsePersonaString, printDiffToolHelp, printHelp } from "./cli.js";
 export type {
-  CloudflareSandboxBridgeConfig,
-  CloudflareSandboxConfig,
   Config,
   ConfigDeps,
   DiffToolConfig,
@@ -60,7 +58,6 @@ export {
 } from "./config/index.js";
 export { printDebugInfo } from "./debug.js";
 export * from "./diff_review/index.js";
-export { InstallCliError, printInstallHelp, runInstallCommand } from "./install/cli.js";
 export * from "./modes/index.js";
 export {
   NookCliError,

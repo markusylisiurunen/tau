@@ -13,12 +13,12 @@ import {
   printDiffToolHelp,
   printHelp,
 } from "./core/cli.js";
-import type { ThemeDefinition } from "./core/config/content_loader.js";
 import { createDefaultConfigDeps } from "./core/config/deps.js";
 import type { RuntimeBootstrap, RuntimeConfigResult } from "./core/config/runtime.js";
 import { loadRuntimeBootstrap, loadRuntimeConfig } from "./core/config/runtime.js";
 import type { Config } from "./core/config/schema.js";
 import { loadConfig } from "./core/config/schema.js";
+import type { ThemeDefinition } from "./core/config/theme_variants.js";
 import { resolveHistoryRemoteTarget } from "./core/history/config.js";
 import {
   HistoryManager,
@@ -121,8 +121,6 @@ type AttachCliOptions = {
   createNew: boolean;
   cwd?: string;
   executionKind?: SessionProtocolExecutionEnvironmentInput["kind"];
-  cloudflareBridgeId?: string;
-  cloudflareSandboxId?: string;
   flyApiId?: string;
   flySpriteName?: string;
   target?: AttachTarget;
@@ -149,8 +147,6 @@ function parseAttachArgs(args: string[]): AttachCliOptions {
   let createNew = false;
   let cwd: string | undefined;
   let executionKind: SessionProtocolExecutionEnvironmentInput["kind"] | undefined;
-  let cloudflareBridgeId: string | undefined;
-  let cloudflareSandboxId: string | undefined;
   let flyApiId: string | undefined;
   let flySpriteName: string | undefined;
   let authToken: string | undefined;
@@ -185,28 +181,10 @@ function parseAttachArgs(args: string[]): AttachCliOptions {
     }
     if (arg === "--execution-kind" || arg.startsWith("--execution-kind=")) {
       const parsed = parseAttachValue(arg, args, i);
-      if (
-        parsed.value !== "local" &&
-        parsed.value !== "cloudflare-sandbox" &&
-        parsed.value !== "fly-sprite"
-      ) {
-        throw new CliError("--execution-kind must be local, cloudflare-sandbox, or fly-sprite");
+      if (parsed.value !== "local" && parsed.value !== "fly-sprite") {
+        throw new CliError("--execution-kind must be local or fly-sprite");
       }
       executionKind = parsed.value;
-      i = parsed.nextIndex;
-      continue;
-    }
-    if (arg === "--cloudflare-bridge" || arg.startsWith("--cloudflare-bridge=")) {
-      const parsed = parseAttachValue(arg, args, i);
-      cloudflareBridgeId = parsed.value;
-      executionKind ??= "cloudflare-sandbox";
-      i = parsed.nextIndex;
-      continue;
-    }
-    if (arg === "--cloudflare-sandbox" || arg.startsWith("--cloudflare-sandbox=")) {
-      const parsed = parseAttachValue(arg, args, i);
-      cloudflareSandboxId = parsed.value;
-      executionKind ??= "cloudflare-sandbox";
       i = parsed.nextIndex;
       continue;
     }
@@ -258,11 +236,6 @@ function parseAttachArgs(args: string[]): AttachCliOptions {
 
   if (!help && createNew) {
     const kind = executionKind ?? "local";
-    if (kind === "cloudflare-sandbox" && (!cloudflareBridgeId || !cloudflareSandboxId)) {
-      throw new CliError(
-        "--new --execution-kind cloudflare-sandbox requires --cloudflare-bridge and --cloudflare-sandbox",
-      );
-    }
     if (kind === "fly-sprite" && (!flyApiId || !flySpriteName)) {
       throw new CliError("--new --execution-kind fly-sprite requires --fly-api and --fly-sprite");
     }
@@ -274,8 +247,6 @@ function parseAttachArgs(args: string[]): AttachCliOptions {
     createNew,
     cwd,
     executionKind,
-    cloudflareBridgeId,
-    cloudflareSandboxId,
     flyApiId,
     flySpriteName,
     target,
@@ -353,21 +324,6 @@ function buildAttachCreateInput(attach: AttachCliOptions): SessionProtocolCreate
   switch (kind) {
     case "local":
       return { executionEnvironment: { kind: "local", cwd }, attributes: { source: "tui" } };
-    case "cloudflare-sandbox":
-      if (!attach.cloudflareBridgeId || !attach.cloudflareSandboxId) {
-        throw new CliError(
-          "--new --execution-kind cloudflare-sandbox requires --cloudflare-bridge and --cloudflare-sandbox",
-        );
-      }
-      return {
-        executionEnvironment: {
-          kind: "cloudflare-sandbox",
-          bridgeId: attach.cloudflareBridgeId,
-          sandboxId: attach.cloudflareSandboxId,
-          cwd,
-        },
-        attributes: { source: "tui" },
-      };
     case "fly-sprite":
       if (!attach.flyApiId || !attach.flySpriteName) {
         throw new CliError("--new --execution-kind fly-sprite requires --fly-api and --fly-sprite");
@@ -396,9 +352,7 @@ function printAttachHelp(): void {
       "  --session <id>                 attach to an existing hosted session.",
       "  --new                          create and attach to a new hosted session.",
       "  --cwd <path>                   absolute cwd for a new session's execution environment.",
-      "  --execution-kind <kind>        local, cloudflare-sandbox, or fly-sprite. default: local.",
-      "  --cloudflare-bridge <id>       configured Cloudflare Sandbox bridge id.",
-      "  --cloudflare-sandbox <id>      already-provisioned Cloudflare sandbox id.",
+      "  --execution-kind <kind>        local or fly-sprite. default: local.",
       "  --fly-api <id>                 configured Fly Sprites API id.",
       "  --fly-sprite <name>            already-provisioned Fly Sprite name.",
       "  --auth-token <token>           token for websocket servers started with --auth-token.",
@@ -408,7 +362,6 @@ function printAttachHelp(): void {
       "examples:",
       "  tau attach ws://127.0.0.1:8787",
       "  tau attach --new --cwd /srv/workspaces/repo ws://127.0.0.1:8787",
-      "  tau attach --new --execution-kind cloudflare-sandbox --cloudflare-bridge default --cloudflare-sandbox sandbox-1 --cwd /workspace/repo ws://127.0.0.1:8787",
       "  tau attach --new --execution-kind fly-sprite --fly-api default --fly-sprite sprite-1 --cwd /home/sprite/repo ws://127.0.0.1:8787",
       "  tau attach --session 0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3 --auth-token $TAU_WS_AUTH_TOKEN ws://vps:8787",
       "",
@@ -545,14 +498,6 @@ async function createLocalSessionHost(options: {
     local: localExecutionEnvironmentResolver,
   };
 
-  if (options.config.cloudflareSandbox?.bridges) {
-    const { CloudflareSandboxExecutionEnvironmentResolver } = await import(
-      "./execution/cloudflare_sandbox_execution_environment.js"
-    );
-    resolvers["cloudflare-sandbox"] = new CloudflareSandboxExecutionEnvironmentResolver({
-      bridges: options.config.cloudflareSandbox.bridges,
-    });
-  }
   if (options.config.flySprites?.apis) {
     const { FlySpriteExecutionEnvironmentResolver } = await import(
       "./execution/fly_sprite_execution_environment.js"
@@ -693,29 +638,6 @@ if (argv[0] === "usage") {
       // eslint-disable-next-line no-console
       console.error("");
       printUsageHelp();
-      process.exit(1);
-    }
-    throw err;
-  }
-}
-
-if (argv[0] === "install") {
-  const { InstallCliError, printInstallHelp, runInstallCommand } = await import(
-    "./core/install/cli.js"
-  );
-  try {
-    await runInstallCommand(argv.slice(1), {
-      cwd,
-      home: process.env.HOME,
-    });
-    process.exit(0);
-  } catch (err) {
-    if (err instanceof InstallCliError) {
-      // eslint-disable-next-line no-console
-      console.error(err.message);
-      // eslint-disable-next-line no-console
-      console.error("");
-      printInstallHelp();
       process.exit(1);
     }
     throw err;
@@ -926,22 +848,13 @@ try {
   config = runtimeBootstrap.config;
 
   const { virtualBundle } = runtimeBootstrap;
-  const hasBuiltins =
-    virtualBundle.personas.length > 0 ||
-    virtualBundle.prompts.length > 0 ||
-    virtualBundle.skills.length > 0 ||
-    virtualBundle.themes.length > 0;
 
   // eslint-disable-next-line no-console
-  console.error(
-    hasBuiltins
-      ? "using built-in resources only."
-      : "no built-in resources available (built-ins disabled by config).",
-  );
+  console.error("using built-in resources only.");
 
   personas = virtualBundle.personas;
-  prompts = virtualBundle.prompts;
-  skills = virtualBundle.skills;
+  prompts = [];
+  skills = [];
   themes = virtualBundle.themes;
 }
 

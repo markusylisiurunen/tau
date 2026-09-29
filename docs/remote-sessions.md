@@ -91,7 +91,7 @@ Remote `--new` supplies the conventional creation attribute `source: "tui"`. It 
 
 ## Select an execution environment
 
-A session can use a local host directory, an already-provisioned Cloudflare Sandbox, or an already-provisioned Fly Sprite. In all cases, the execution cwd is an absolute path inside that environment.
+A session can use a local host directory or an already-provisioned Fly Sprite. In all cases, the execution cwd is an absolute path inside that environment.
 
 ### Host-local directory
 
@@ -102,22 +102,6 @@ tau attach --new --cwd /srv/workspaces/tau ws://host.example:8787
 ```
 
 The host process executes agent-visible filesystem and command operations on its own machine. Tau does not clone, pull, or provision a repository.
-
-### Cloudflare Sandbox
-
-The host must already have a named bridge in `cloudflareSandbox.bridges`, and the sandbox must already exist:
-
-```sh
-tau attach \
-  --new \
-  --execution-kind cloudflare-sandbox \
-  --cloudflare-bridge production \
-  --cloudflare-sandbox sandbox-42 \
-  --cwd /workspace/tau \
-  wss://tau.example.com
-```
-
-`--cloudflare-bridge` identifies host configuration. `--cloudflare-sandbox` identifies an existing sandbox reachable through that bridge. Tau does not create the sandbox or copy a repository into it.
 
 ### Fly Sprite
 
@@ -166,7 +150,7 @@ An attached session spans three logical machines even when two happen to share o
 - command execution, platform, PATH, and runtime dependencies
 - automatic-compaction archives and other target-side temporary files
 
-This is why changing a host theme does not affect a remote TUI, why `!git status` runs against the execution environment, and why a custom diff application opens on the attaching machine. [Ownership and scope](ownership-and-scope.md) applies the same model across Tau.
+This is why changing a host’s theme selection does not affect a remote TUI, why `!git status` runs against the execution environment, and why a custom diff application opens on the attaching machine. [Ownership and scope](ownership-and-scope.md) applies the same model across Tau.
 
 ## Reload or restart the correct process
 
@@ -178,7 +162,7 @@ Different changes have different owners:
 | Effective model `apiKeys` in execution-environment or session configuration | Wait for idle, then run `/reload`; new sessions also resolve the current values. |
 | Managed Codex auth changed with `tau auth` | No host restart; auth storage is read again on later credential resolutions. |
 | Attaching themes, diff launcher, speech config, or configured client tools | Restart `tau attach`. |
-| Host process environment variables, history target, WebSocket listener, Cloudflare bridge, Fly API target, or host startup flags | Restart `tau serve`. |
+| Host process environment variables, history target, WebSocket listener, Fly API target, or host startup flags | Restart `tau serve`. |
 | Host Tau package, built-in tools, protocol, session recovery code, or built-in documentation | Upgrade and restart the host. |
 | TUI package, keybindings, rendering, local speech, or client-tool implementation | Upgrade and restart the attaching client. |
 
@@ -215,9 +199,9 @@ Avoid downgrading a host that has already written sessions with a newer storage 
 The host lists only stored sessions whose execution-environment kind it can currently restore. Confirm that:
 
 - the connection uses the same host user and home directory as the original process
-- the Cloudflare bridge id or Fly API id still exists in host configuration
+- the Fly API id still exists in host configuration
 - host credentials are available to the restarted process
-- the target sandbox, Sprite, or local directory still exists
+- the target Sprite or local directory still exists
 - the session was created on this host rather than another machine with a different store
 
 Do not edit the session JSON to change environment identity. Restore the owning configuration or target instead.

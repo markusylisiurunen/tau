@@ -170,8 +170,6 @@ const themes = brands.map((brand) => {
     variants: {
       light: lightTokens,
     },
-    sourcePath: `builtin:themes/${brand.name}.json`,
-    scope: "builtin",
   };
 });
 
@@ -192,14 +190,12 @@ const themeEntries = themes.map((theme) => {
     `    id: "${theme.id}",`,
     `    tokens: ${formatTokens(theme.tokens)},`,
     `    variants: ${formatTokens(theme.variants)},`,
-    `    sourcePath: "${theme.sourcePath}",`,
-    '    scope: "builtin"',
     "  },",
   ].join("\n");
 });
 
 const output = [
-  'import type { ThemeDefinition } from "./content_loader.js";',
+  'import type { ThemeDefinition } from "./theme_variants.js";',
   "",
   `export const PALETTE_TOKEN_NAMES = ${JSON.stringify(paletteTokenNames, null, 2)} as const;`,
   "",

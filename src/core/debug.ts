@@ -94,10 +94,8 @@ export function printDebugInfo(args: {
   } else {
     const defaultPersona = virtualBundle.config.defaultPersona ?? "(none)";
     const personaIds = virtualBundle.personas.map((p) => p.id).join(", ") || "(none)";
-    const promptIds = virtualBundle.prompts.map((p) => p.id).join(", ") || "(none)";
     console.log(`\n  defaultPersona: ${defaultPersona}`);
     console.log(`  personas: ${personaIds}`);
-    console.log(`  prompts: ${promptIds}`);
   }
 
   // Personas

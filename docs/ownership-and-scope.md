@@ -43,7 +43,7 @@ For repository and composite projects it prepares managed workspaces. A configur
 | SDK over WebSocket | SDK caller | Remote server | Environment selected or restored by that host |
 | `tau telegram` | Telegram runner | In-process on the runner machine | Prepared project workspace or persistent directory |
 
-A Cloudflare Sandbox or Fly Sprite can place the execution environment on another target while the host stays on its own machine. The host keeps provider credentials and orchestration authority; the target owns its paths and commands.
+A Fly Sprite can place the execution environment on another target while the host stays on its own machine. The host keeps provider credentials and orchestration authority; the target owns its paths and commands.
 
 ## Who owns common paths and behavior
 
@@ -56,11 +56,11 @@ A Cloudflare Sandbox or Fly Sprite can place the execution environment on anothe
 | Codex OAuth accounts | Host home | Run `tau auth …` on the host machine. Do not edit auth storage. |
 | Session snapshots | Host home | Local defaults live under the host's Tau config directory. Do not edit session files. |
 | Local transcript history and remote history outbox | Host home | History follows the host, not an attached TUI or execution target. |
-| Terminal theme and `/theme` | TUI client | An attached client uses themes loaded on the client machine. Themes are not session state. |
+| Terminal theme and `/theme` | TUI client | An attached client selects from Tau’s built-in themes. Themes are not session state. |
 | `/diff` process | TUI client | `diffTool.command` must exist on the client machine. Repository capture still runs through the session execution environment. |
 | Configured command client tools | Owning client | Commands and their environment are client-local; their execution-environment facade reaches the session target explicitly. |
 | `/listen` and `/speak` capture or playback | TUI client | Required programs, devices, and media credentials belong on the client machine. |
-| Host execution-environment targets | Host startup | Cloudflare bridge and Fly Sprite API definitions must be available to the host before it accepts sessions using them. |
+| Host execution-environment targets | Host startup | Fly Sprite API definitions must be available to the host before it accepts sessions using them. |
 | Telegram bot token, routing, workspaces, and generated runner state | Telegram runner | Manage these through the Telegram config and runner commands, not project `config.json`. |
 
 ## Decide where to edit configuration

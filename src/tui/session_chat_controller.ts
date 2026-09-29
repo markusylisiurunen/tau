@@ -1360,13 +1360,6 @@ export class SessionChatController {
     switch (snapshot.kind) {
       case "local":
         return { kind: "local", cwd: snapshot.cwd };
-      case "cloudflare-sandbox":
-        return {
-          kind: "cloudflare-sandbox",
-          bridgeId: snapshot.bridgeId,
-          sandboxId: snapshot.sandboxId,
-          cwd: snapshot.cwd,
-        };
       case "fly-sprite":
         return {
           kind: "fly-sprite",

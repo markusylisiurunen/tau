@@ -9,6 +9,7 @@ import {
   normalizeToolExecutionBackendError,
   type ToolExecutionBackend,
 } from "../core/tools/execution_backend.js";
+import { formatBytes } from "../core/utils/truncate.js";
 import type {
   SessionProtocolExecutionEnvironmentInput,
   SessionProtocolExecutionEnvironmentSnapshot,
@@ -16,7 +17,6 @@ import type {
   SessionProtocolFlySpriteExecutionEnvironmentSnapshot,
 } from "../protocol/session_protocol.js";
 import type { ExecutionEnvironmentResolver } from "./execution_environment.js";
-import { assertFileWithinMaxBytes } from "./sandbox_tool_helpers.js";
 import { ToolBackendExecutionEnvironment } from "./tool_backend_execution_environment.js";
 
 const DEFAULT_BASE_URL = "https://api.sprites.dev";
@@ -180,7 +180,11 @@ export function createFlySpriteToolExecutionBackend(options: {
         });
         const content = Buffer.from(result.contentBase64, "base64");
         const bytes = result.bytes;
-        assertFileWithinMaxBytes(bytes, readOptions.maxBytes);
+        if (readOptions.maxBytes !== undefined && bytes > readOptions.maxBytes) {
+          throw new Error(
+            `file exceeds maximum size of ${formatBytes(readOptions.maxBytes)} (got ${formatBytes(bytes)}).`,
+          );
+        }
         return { path, content, bytes };
       } catch (error) {
         throw normalizeToolExecutionBackendError(error);

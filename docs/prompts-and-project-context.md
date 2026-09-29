@@ -64,16 +64,6 @@ After recording succeeds, the picker becomes non-actionable and shows the prompt
 
 Only the newest picker in a chat is active. Pickers are bound to the session that opened them and expire after selection, session replacement, or runner restart. Duplicate taps do not record the same picker twice. Prompt selection does not consume pending attachments or group context.
 
-### Install starter prompts
-
-Use `tau install` to copy Tau's starter content:
-
-```bash
-tau install --prompt commit-staged
-```
-
-The default target is `.tau/prompts/` under the current directory. Add `--global` for `~/.config/tau/prompts/`. Existing prompt files are skipped unless `--force` is supplied. Running `tau install` without `--prompt` or `--skill` installs all starter prompts and skills.
-
 ## `AGENTS.md` provides standing context
 
 `AGENTS.md` is project context injected into the effective system prompt. It is suitable for repository conventions, architectural boundaries, verification commands, and instructions that should apply to every relevant request.

@@ -1,4 +1,4 @@
-import type { ThemeDefinition } from "./content_loader.js";
+import type { ThemeDefinition } from "./theme_variants.js";
 
 export const PALETTE_TOKEN_NAMES = [
   "brandAccent",
@@ -99,8 +99,6 @@ export const builtinThemes: ThemeDefinition[] = [
         userReviewTextDim: "#696d67",
       },
     },
-    sourcePath: "builtin:themes/crimson.json",
-    scope: "builtin",
   },
   {
     id: "ember",
@@ -168,8 +166,6 @@ export const builtinThemes: ThemeDefinition[] = [
         userReviewTextDim: "#696d67",
       },
     },
-    sourcePath: "builtin:themes/ember.json",
-    scope: "builtin",
   },
   {
     id: "gold",
@@ -237,8 +233,6 @@ export const builtinThemes: ThemeDefinition[] = [
         userReviewTextDim: "#696d67",
       },
     },
-    sourcePath: "builtin:themes/gold.json",
-    scope: "builtin",
   },
   {
     id: "lime",
@@ -306,8 +300,6 @@ export const builtinThemes: ThemeDefinition[] = [
         userReviewTextDim: "#696d67",
       },
     },
-    sourcePath: "builtin:themes/lime.json",
-    scope: "builtin",
   },
   {
     id: "grass",
@@ -375,8 +367,6 @@ export const builtinThemes: ThemeDefinition[] = [
         userReviewTextDim: "#696d67",
       },
     },
-    sourcePath: "builtin:themes/grass.json",
-    scope: "builtin",
   },
   {
     id: "emerald",
@@ -444,8 +434,6 @@ export const builtinThemes: ThemeDefinition[] = [
         userReviewTextDim: "#696d67",
       },
     },
-    sourcePath: "builtin:themes/emerald.json",
-    scope: "builtin",
   },
   {
     id: "jade",
@@ -513,8 +501,6 @@ export const builtinThemes: ThemeDefinition[] = [
         userReviewTextDim: "#696d67",
       },
     },
-    sourcePath: "builtin:themes/jade.json",
-    scope: "builtin",
   },
   {
     id: "teal",
@@ -582,8 +568,6 @@ export const builtinThemes: ThemeDefinition[] = [
         userReviewTextDim: "#696d67",
       },
     },
-    sourcePath: "builtin:themes/teal.json",
-    scope: "builtin",
   },
   {
     id: "cyan",
@@ -651,8 +635,6 @@ export const builtinThemes: ThemeDefinition[] = [
         userReviewTextDim: "#696d67",
       },
     },
-    sourcePath: "builtin:themes/cyan.json",
-    scope: "builtin",
   },
   {
     id: "azure",
@@ -720,8 +702,6 @@ export const builtinThemes: ThemeDefinition[] = [
         userReviewTextDim: "#696d67",
       },
     },
-    sourcePath: "builtin:themes/azure.json",
-    scope: "builtin",
   },
   {
     id: "cobalt",
@@ -789,8 +769,6 @@ export const builtinThemes: ThemeDefinition[] = [
         userReviewTextDim: "#696d67",
       },
     },
-    sourcePath: "builtin:themes/cobalt.json",
-    scope: "builtin",
   },
   {
     id: "violet",
@@ -858,8 +836,6 @@ export const builtinThemes: ThemeDefinition[] = [
         userReviewTextDim: "#696d67",
       },
     },
-    sourcePath: "builtin:themes/violet.json",
-    scope: "builtin",
   },
   {
     id: "purple",
@@ -927,8 +903,6 @@ export const builtinThemes: ThemeDefinition[] = [
         userReviewTextDim: "#696d67",
       },
     },
-    sourcePath: "builtin:themes/purple.json",
-    scope: "builtin",
   },
   {
     id: "magenta",
@@ -996,8 +970,6 @@ export const builtinThemes: ThemeDefinition[] = [
         userReviewTextDim: "#696d67",
       },
     },
-    sourcePath: "builtin:themes/magenta.json",
-    scope: "builtin",
   },
   {
     id: "rose",
@@ -1065,7 +1037,5 @@ export const builtinThemes: ThemeDefinition[] = [
         userReviewTextDim: "#696d67",
       },
     },
-    sourcePath: "builtin:themes/rose.json",
-    scope: "builtin",
   },
 ];

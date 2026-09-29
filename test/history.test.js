@@ -1234,7 +1234,7 @@ describe("session history", () => {
     );
     const messages = context.conversationMarkdown("messages");
     context.document.querySelectorAll = () => [card, { querySelector: () => tool }, card];
-    expect(context.conversationMarkdown("messages")).toBe(messages + "\n\n## User\n\nhello");
+    expect(context.conversationMarkdown("messages")).toBe(`${messages}\n\n## User\n\nhello`);
     const calls = context.conversationMarkdown("calls");
     expect(calls).toContain(
       '## Tool: bash (succeeded)\n\n### Arguments\n\n```\n{"command":"pwd"}\n```',

@@ -6136,7 +6136,7 @@ describe("SessionChatController", () => {
       controller.getInputHandlers().onCtrlY();
       for (
         let i = 0;
-        i < 50 && editor.getText() !== prefix + "session transcript" + suffix;
+        i < 50 && editor.getText() !== `${prefix}session transcript${suffix}`;
         i += 1
       ) {
         await flush();
@@ -6152,7 +6152,7 @@ describe("SessionChatController", () => {
     }
 
     expect(view.editorEnabledUpdates).toContain(true);
-    expect(editor.getText()).toBe(prefix + "session transcript" + suffix);
+    expect(editor.getText()).toBe(`${prefix}session transcript${suffix}`);
     expect(editor.getCursor()).toEqual({ line: 1, col: 7 + "session transcript".length });
     editor.handleInput("\x1b[45;5u");
     expect(editor.getText()).toBe(prefix + suffix);

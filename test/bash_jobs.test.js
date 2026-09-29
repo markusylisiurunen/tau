@@ -397,7 +397,7 @@ it("bounds job records and reports backend cleanup failures", async () => {
   const jobs = new BashJobRegistry();
   const backend = {
     runBash: (_command, options) =>
-      new Promise((resolve, reject) => {
+      new Promise((_resolve, reject) => {
         options.onStarted();
         options.signal.addEventListener(
           "abort",

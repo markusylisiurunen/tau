@@ -3,14 +3,14 @@ function inline(value) {
   return value
     .trim()
     .replace(/([\\*_{}[\]<>#+.!|~-])/g, "\\$1")
-    .replaceAll(tick, "\\" + tick);
+    .replaceAll(tick, `\\${tick}`);
 }
 function fenced(value) {
   const tick = String.fromCharCode(96);
-  const ticks = value.match(new RegExp(tick + "+", "g")) || [];
+  const ticks = value.match(new RegExp(`${tick}+`, "g")) || [];
   const width = Math.max(3, ...ticks.map((run) => run.length + 1));
   const fence = tick.repeat(width);
-  return fence + "\n" + value.trim() + "\n" + fence;
+  return `${fence}\n${value.trim()}\n${fence}`;
 }
 function cardMarkdown(card, mode) {
   const tool = card.querySelector(".tool-entry");
@@ -23,12 +23,12 @@ function cardMarkdown(card, mode) {
       .map((section) => {
         const heading = section.querySelector("h3")?.textContent || "Details";
         const value = section.querySelector("pre")?.textContent || "";
-        return "### " + inline(heading) + "\n\n" + fenced(value);
+        return `### ${inline(heading)}\n\n${fenced(value)}`;
       });
     return (
       "## Tool: " +
       inline(name) +
-      (outcome ? " (" + inline(outcome) + ")" : "") +
+      (outcome ? ` (${inline(outcome)})` : "") +
       "\n\n" +
       sections.join("\n\n")
     );
@@ -39,7 +39,7 @@ function cardMarkdown(card, mode) {
       return block.dataset.markdown || block.textContent || "";
     })
     .join("\n\n");
-  return "## " + inline(role) + "\n\n" + content.trim();
+  return `## ${inline(role)}\n\n${content.trim()}`;
 }
 function conversationMarkdown(mode) {
   const header = document.querySelector(".conversation-header");
@@ -48,9 +48,9 @@ function conversationMarkdown(mode) {
   const metadata = [...(header?.querySelectorAll(".metadata tr") || [])].map((row) => {
     const key = row.querySelector("th")?.textContent || "";
     const value = row.querySelector("td")?.textContent || "";
-    return "- **" + inline(key) + ":** " + inline(value);
+    return `- **${inline(key)}:** ${inline(value)}`;
   });
-  const parts = ["# " + inline(title)];
+  const parts = [`# ${inline(title)}`];
   if (summary) parts.push(summary.trim());
   if (metadata.length) parts.push(metadata.join("\n"));
   parts.push(

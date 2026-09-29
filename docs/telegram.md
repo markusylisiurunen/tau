@@ -230,18 +230,21 @@ The runner's speech-to-text provider is loaded from normal Tau config at runner 
 
 | Command | Behavior |
 | --- | --- |
-| `/use_<projectId>` | Saves the project preference for future `/new` sessions; does not change the active session. |
-| `/new` | Closes the current active session, then creates one from the current project preference. |
-| `/status` | Reports session state, project, model, reasoning, context usage, cost, and goal state when available. |
-| `/effort_low` | Selects low reasoning for later independent turns. |
-| `/effort_medium` | Selects medium reasoning for later independent turns. |
-| `/effort_high` | Selects high reasoning for later independent turns. |
-| `/effort_xhigh` | Selects xhigh reasoning for later independent turns. |
+| `/use_<projectId>` | Selects the project for future `/new` sessions. |
+| `/new` | Replaces the active session using the preferred project. |
+| `/status` | Reports session state, project, model, reasoning, context usage, cost, and goal. |
+| `/persona` | Switches persona while idle without losing history or starting a turn. |
+| `/effort_low` | Selects low reasoning for future turns. |
+| `/effort_medium` | Selects medium reasoning for future turns. |
+| `/effort_high` | Selects high reasoning for future turns. |
+| `/effort_xhigh` | Selects xhigh reasoning for future turns. |
 | `/prompt` | [Records a saved prompt](prompts-and-project-context.md#telegram-prompt-picker) while idle, without starting a turn. |
-| `/compact` | Runs summary-only manual compaction while the session is idle. |
+| `/compact` | Runs summary-only compaction while idle. |
 | `/interrupt` | Interrupts the active Tau turn. |
 | `/tts_on` | Enables a Gemini-generated voice note after each final assistant response. |
 | `/tts_off` | Disables voice responses. |
+
+[Persona](personas.md) selection is session-local; `/new` uses the project default.
 
 Preferences persist per bot and chat across restarts, projects, and sessions. Project changes apply to `/new`, not the active session.
 

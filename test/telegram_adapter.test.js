@@ -339,6 +339,10 @@ function createSessionManagerHarness(initialSessions = [], options = {}) {
         isTurnRunning: false,
       };
     }),
+    setPersona: vi.fn(async (_sessionId, personaId) => ({
+      settings: { personaId, reasoning: "high" },
+      bootstrap: { model: { id: "selected-model", name: "Selected Model" } },
+    })),
     recordPrompt: vi.fn(async () => "Saved prompt body"),
     compactSession: vi.fn(async (sessionId) => {
       const session = sessions.get(sessionId);
@@ -448,6 +452,7 @@ describe("telegram adapter", () => {
       expect(apiHarness.setCommandsCalls[0]).toEqual([
         { command: "new", description: "start a new session" },
         { command: "status", description: "show active session status" },
+        { command: "persona", description: "switch the active session persona" },
         { command: "prompt", description: "add a saved prompt without starting a turn" },
         { command: "compact", description: "compact session context" },
         { command: "interrupt", description: "interrupt active run" },
@@ -2965,6 +2970,154 @@ describe("telegram adapter", () => {
     }
   });
 
+  it("parses picker callbacks, paginates, and switches to a selected persona only once without starting a turn", async () => {
+    const chat = { id: 329, type: "private" };
+    const from = { id: 7 };
+    const sendMessages = [];
+    const edits = [];
+    const answers = [];
+    const managerHarness = createSessionManagerHarness([], {
+      createSnapshot: () => ({
+        settings: { personaId: "persona-0" },
+        catalog: { personas: Array.from({ length: 21 }, (_, i) => ({ id: `persona-${i}` })) },
+      }),
+    });
+    const callback = (id, data) => ({
+      update_id: id,
+      callback_query: { id: `${id}`, from, message: { chat, message_id: 42 }, data },
+    });
+    vi.stubGlobal(
+      "fetch",
+      createTelegramFetchStub({
+        setMyCommands: async () => createJsonResponse({ ok: true, result: true }),
+        sendMessage: async ({ init }) => {
+          sendMessages.push(JSON.parse(init.body));
+          return createJsonResponse({ ok: true, result: { message_id: 42 } });
+        },
+        editMessageText: async ({ init }) => {
+          edits.push(JSON.parse(init.body));
+          return createJsonResponse({ ok: true, result: true });
+        },
+        answerCallbackQuery: async ({ init }) => {
+          answers.push(JSON.parse(init.body));
+          return createJsonResponse({ ok: true, result: true });
+        },
+        getUpdates: async ({ call }) => {
+          if (call === 1) {
+            return createJsonResponse({
+              ok: true,
+              result: [
+                { update_id: 1, message: { chat, from, text: "/new" } },
+                { update_id: 2, message: { chat, from, text: "/persona" } },
+              ],
+            });
+          }
+          if (call === 2) {
+            await waitFor(() => sendMessages.some((m) => m.reply_markup));
+            const keyboard = sendMessages.at(-1).reply_markup.inline_keyboard;
+            expect(keyboard).toHaveLength(21);
+            expect(Buffer.byteLength(keyboard[0][0].callback_data)).toBeLessThanOrEqual(64);
+            return createJsonResponse({
+              ok: true,
+              result: [callback(3, keyboard.at(-1)[0].callback_data)],
+            });
+          }
+          if (call === 3) {
+            await waitFor(() => edits.length === 1);
+            const keyboard = edits[0].reply_markup.inline_keyboard;
+            return createJsonResponse({
+              ok: true,
+              result: [4, 5].map((id) => callback(id, keyboard[0][0].callback_data)),
+            });
+          }
+          return pendingTelegramCall();
+        },
+      }),
+    );
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      sessionManager: managerHarness.manager,
+      pollIntervalMs: 1,
+      requestTimeoutSeconds: 1,
+    });
+    try {
+      await waitFor(() => answers.length === 3);
+      expect(managerHarness.manager.setPersona).toHaveBeenCalledExactlyOnceWith("s1", "persona-20");
+      expect(managerHarness.manager.sendMessage).not.toHaveBeenCalled();
+      expect(edits).toHaveLength(2);
+      expect(edits.every((edit) => edit.chat_id === chat.id && edit.message_id === 42)).toBe(true);
+      const pickerMessage = sendMessages.find((message) => message.reply_markup);
+      expect(pickerMessage.text).toBe(
+        "choose a persona for this session. switching is available only while Tau is idle.",
+      );
+      expect(pickerMessage.reply_markup.inline_keyboard[0][0].text).toBe("persona-0 (current)");
+      expect(pickerMessage.reply_markup.inline_keyboard.at(-1)[0].text).toBe("next");
+      expect(edits[0].text).toBe(pickerMessage.text);
+      expect(edits[0].reply_markup.inline_keyboard.at(-1)[0].text).toBe("previous");
+      expect(edits[1].text).toBe(
+        "switched to persona-20. this session is using Selected Model with high reasoning.",
+      );
+      expect(edits[1].reply_markup.inline_keyboard).toEqual([]);
+      expect(sendMessages.at(-1).text).toBe(
+        "this persona picker has expired. use /persona to open a new one.",
+      );
+    } finally {
+      await adapter.close();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it.each(["/new", "/persona"])("expires the persona picker after %s", async (command) => {
+    const chat = { id: 329, type: "private" };
+    const from = { id: 7 };
+    const apiHarness = createApiHarness([]);
+    const managerHarness = createSessionManagerHarness([], {
+      createSnapshot: () => ({
+        settings: { personaId: "review" },
+        catalog: { personas: [{ id: "review" }] },
+      }),
+    });
+    apiHarness.api.getUpdates
+      .mockImplementationOnce(async () => [
+        { update_id: 1, message: { chat, from, text: "/new" } },
+        { update_id: 2, message: { chat, from, text: "/persona" } },
+      ])
+      .mockImplementationOnce(async () => {
+        await waitFor(() => apiHarness.sendMessages.some((message) => message.options.replyMarkup));
+        return [
+          { update_id: 3, message: { chat, from, text: command } },
+          {
+            update_id: 4,
+            callback_query: {
+              id: "old-picker",
+              from,
+              message: { chat, message_id: 42 },
+              data: apiHarness.sendMessages.at(-1).options.replyMarkup.inline_keyboard[0][0]
+                .callback_data,
+            },
+          },
+        ];
+      })
+      .mockImplementation(async () => await new Promise(() => {}));
+    const adapter = await startAdapter({
+      botToken: "token",
+      projects: { demo: { repo: "git@example.com:demo.git" } },
+      sessionManager: managerHarness.manager,
+      api: apiHarness.api,
+    });
+    try {
+      await waitFor(() => apiHarness.answerCallbackQueryCalls.length === 1);
+      expect(managerHarness.manager.createSession).toHaveBeenCalledTimes(
+        command === "/new" ? 2 : 1,
+      );
+      expect(managerHarness.manager.setPersona).not.toHaveBeenCalled();
+      expect(apiHarness.sendMessages.at(-1).text).toContain("expired");
+    } finally {
+      await adapter.close();
+    }
+  });
+
   it("parses picker callbacks, paginates, and records a selected prompt only once without starting a turn", async () => {
     const chat = { id: 329, type: "private" };
     const from = { id: 7 };
@@ -3230,7 +3383,7 @@ describe("telegram adapter", () => {
     try {
       await waitFor(() => apiHarness.sendMessages.length === 1);
       expect(apiHarness.sendMessages[0].text).toBe(
-        "unsupported command. supported commands: /new, /status, /prompt, /compact, /interrupt, /tts_on, /tts_off, /effort_low, /effort_medium, /effort_high, /effort_xhigh, /use_demo",
+        "unsupported command. supported commands: /new, /status, /persona, /prompt, /compact, /interrupt, /tts_on, /tts_off, /effort_low, /effort_medium, /effort_high, /effort_xhigh, /use_demo",
       );
       expect(managerHarness.manager.closeSession).not.toHaveBeenCalled();
     } finally {

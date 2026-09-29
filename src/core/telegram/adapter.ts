@@ -1293,6 +1293,15 @@ class TelegramAdapterImpl {
   private readonly commandHandlers: Map<string, TelegramCommandHandler>;
   private readonly callbackActionHandlers: Map<QuickAction, TelegramCommandHandler>;
   private readonly abortController = new AbortController();
+  private readonly personaPickers = new Map<
+    number,
+    {
+      token: string;
+      sessionId: string;
+      personas: SessionProtocolSnapshot["catalog"]["personas"];
+      currentPersonaId: string;
+    }
+  >();
   private readonly promptPickers = new Map<
     number,
     {
@@ -1434,6 +1443,11 @@ class TelegramAdapterImpl {
         description: "show active session status",
         callbackAction: "status",
         handler: async (chatId) => this.handleStatus(chatId),
+      },
+      {
+        command: "/persona",
+        description: "switch the active session persona",
+        handler: async (chatId, args) => this.handlePersona(chatId, args),
       },
       {
         command: "/prompt",
@@ -2134,6 +2148,10 @@ class TelegramAdapterImpl {
     callbackData: string,
     messageId?: number,
   ): Promise<boolean> {
+    if (callbackData.startsWith("persona:")) {
+      await this.handlePersonaCallback(chatId, callbackData, messageId);
+      return true;
+    }
     if (callbackData.startsWith("prompt:")) {
       await this.handlePromptCallback(chatId, callbackData, messageId);
       return true;
@@ -2222,6 +2240,106 @@ class TelegramAdapterImpl {
         `failed to save voice response preference: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
+  }
+
+  private async handlePersona(chatId: number, args: string[]): Promise<void> {
+    if (args.length > 0) {
+      await this.reply(chatId, "use /persona to choose a persona.");
+      return;
+    }
+    const session = await this.requireActiveSession(chatId);
+    if (!session) return;
+    try {
+      const snapshot = await this.getSessionManagerForChat(chatId).getSessionSnapshot(session.id);
+      if (!snapshot) {
+        await this.reply(chatId, "the session is still preparing.");
+        return;
+      }
+      const personas = snapshot.catalog.personas;
+      if (personas.length === 0) {
+        await this.reply(chatId, "this session has no personas.");
+        return;
+      }
+      this.personaPickers.set(chatId, {
+        token: randomUUID(),
+        sessionId: session.id,
+        personas,
+        currentPersonaId: snapshot.settings.personaId,
+      });
+      await this.showPersonaPage(chatId, 0);
+    } catch (error) {
+      await this.reply(chatId, this.formatManagerError(error));
+    }
+  }
+
+  private async showPersonaPage(chatId: number, page: number, messageId?: number): Promise<void> {
+    const picker = this.personaPickers.get(chatId);
+    if (!picker) return;
+    const start = page * 20;
+    const keyboard = picker.personas.slice(start, start + 20).map((persona, index) => [
+      {
+        text: `${persona.label ?? persona.id}${persona.id === picker.currentPersonaId ? " (current)" : ""}`,
+        callback_data: `persona:${picker.token}:select:${start + index}`,
+      },
+    ]);
+    const navigation: TelegramInlineKeyboardButton[] = [];
+    if (page > 0)
+      navigation.push({
+        text: "previous",
+        callback_data: `persona:${picker.token}:page:${page - 1}`,
+      });
+    if (start + 20 < picker.personas.length)
+      navigation.push({ text: "next", callback_data: `persona:${picker.token}:page:${page + 1}` });
+    if (navigation.length > 0) keyboard.push(navigation);
+    const text =
+      "choose a persona for this session. switching is available only while Tau is idle.";
+    const replyMarkup = { inline_keyboard: keyboard };
+    if (messageId !== undefined) {
+      await this.sendWithRetry((signal) =>
+        this.api.editMessage(chatId, messageId, text, { replyMarkup, signal }),
+      );
+    } else {
+      await this.reply(chatId, text, { replyMarkup });
+    }
+  }
+
+  private async handlePersonaCallback(
+    chatId: number,
+    data: string,
+    messageId?: number,
+  ): Promise<void> {
+    const match = /^persona:([^:]+):(select|page):(0|[1-9][0-9]*)$/.exec(data);
+    const picker = this.personaPickers.get(chatId);
+    if (
+      !match ||
+      !picker ||
+      picker.token !== match[1] ||
+      this.getActiveSession(chatId)?.id !== picker.sessionId ||
+      messageId === undefined
+    ) {
+      await this.reply(chatId, "this persona picker has expired. use /persona to open a new one.");
+      return;
+    }
+    const index = Number(match[3]);
+    if (match[2] === "page") {
+      if (index * 20 < picker.personas.length) await this.showPersonaPage(chatId, index, messageId);
+      return;
+    }
+    const persona = picker.personas[index];
+    if (!persona) return;
+    let snapshot: SessionProtocolSnapshot;
+    try {
+      snapshot = await this.getSessionManagerForChat(chatId).setPersona(
+        picker.sessionId,
+        persona.id,
+      );
+    } catch (error) {
+      await this.reply(chatId, this.formatManagerError(error));
+      return;
+    }
+    this.personaPickers.delete(chatId);
+    const text = `switched to ${persona.label ?? persona.id}. this session is using ${snapshot.bootstrap.model.name || snapshot.bootstrap.model.id} with ${snapshot.settings.reasoning ?? "none"} reasoning.`;
+    await this.sendWithRetry((signal) => this.api.editMessage(chatId, messageId, text, { signal }));
   }
 
   private async handlePrompt(chatId: number, args: string[]): Promise<void> {

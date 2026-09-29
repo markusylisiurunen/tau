@@ -70,6 +70,7 @@ function createClientHarness() {
       return await submitDeferred.promise;
     }),
     interrupt: vi.fn(async () => ({ interrupted: true, isTurnRunning: true })),
+    setPersona: vi.fn(async () => createProtocolSnapshot()),
     setReasoning: vi.fn(async (reasoning) => ({
       revision: 2,
       settings: { personaId: "default", reasoning },
@@ -363,6 +364,10 @@ describe("telegram session manager", () => {
 
     const created = await manager.createSession({ projectId: "demo" });
     expect(["queued", "preparing-workspace"]).toContain(created.state);
+    await expect(manager.setPersona(created.id, "other")).rejects.toMatchObject({
+      code: "not_ready",
+    });
+    expect(clientHarness.session.setPersona).not.toHaveBeenCalled();
 
     workspaceDeferred.resolve();
 
@@ -1506,6 +1511,30 @@ describe("telegram session manager", () => {
 
     const logs = manager.getLogs(created.id) ?? [];
     expect(logs.some((entry) => entry.message === "interrupt requested")).toBe(true);
+  });
+
+  it("switches personas only while idle and forwards failures", async () => {
+    const clientHarness = createClientHarness();
+    const manager = createDemoSessionManager(clientHarness);
+    const created = await manager.createSession({ projectId: "demo" });
+    try {
+      await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+      await expect(manager.setPersona(created.id, "other")).resolves.toEqual(
+        createProtocolSnapshot(),
+      );
+      expect(clientHarness.session.setPersona).toHaveBeenCalledExactlyOnceWith("other");
+      clientHarness.session.setPersona.mockRejectedValueOnce(new Error("unknown persona"));
+      await expect(manager.setPersona(created.id, "missing")).rejects.toThrow("unknown persona");
+      await manager.sendMessage(created.id, "run");
+      await expect(manager.setPersona(created.id, "other")).rejects.toMatchObject({ code: "busy" });
+      expect(clientHarness.session.setPersona).toHaveBeenCalledTimes(2);
+    } finally {
+      clientHarness.submitDeferred.resolve({
+        userHistoryEntryId: "history-persona",
+        turn: { status: "completed", stopReason: "stop" },
+      });
+      await manager.close();
+    }
   });
 
   it("changes reasoning effort while a session is running", async () => {
@@ -3011,6 +3040,7 @@ describe("telegram session manager", () => {
         interrupted: true,
         isTurnRunning: false,
       })),
+      setPersona: vi.fn(async () => createProtocolSnapshot()),
       setReasoning: vi.fn(async (_sessionId, reasoning) => ({
         revision: 2,
         settings: { personaId: "default", reasoning },
@@ -3054,6 +3084,12 @@ describe("telegram session manager", () => {
     );
     await scopedManager.setReasoning("s-demo-owned", "high");
     expect(manager.setReasoning).toHaveBeenCalledWith("s-demo-owned", "high");
+
+    await expect(scopedManager.setPersona("s-demo-other-owner", "other")).rejects.toMatchObject({
+      code: "not_found",
+    });
+    await scopedManager.setPersona("s-demo-owned", "other");
+    expect(manager.setPersona).toHaveBeenCalledWith("s-demo-owned", "other");
 
     await scopedManager.createSession({ projectId: "demo" });
     expect(manager.createSession).toHaveBeenCalledWith({

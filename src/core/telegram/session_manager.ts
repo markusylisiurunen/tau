@@ -471,6 +471,7 @@ export type TelegramTauSession = {
   record(text: string): Promise<SessionProtocolRecordResult>;
   resolvePrompt(promptId: string): Promise<SessionProtocolResolvePromptResult>;
   compact(mode: "summary-only" | "summary-and-last"): Promise<SessionProtocolCompactResult>;
+  setPersona(personaId: string): Promise<SessionProtocolSnapshot>;
   setReasoning(
     reasoning: SessionProtocolReasoningEffort,
   ): Promise<SessionProtocolSettingsUpdateResult>;
@@ -517,6 +518,7 @@ export type TelegramSessionManager = {
   interruptSession(sessionId: string): Promise<TelegramSessionInterruptResult>;
   recordPrompt(sessionId: string, promptId: string): Promise<string>;
   compactSession(sessionId: string): Promise<SessionProtocolCompactResult>;
+  setPersona(sessionId: string, personaId: string): Promise<SessionProtocolSnapshot>;
   setReasoning(
     sessionId: string,
     reasoning: SessionProtocolReasoningEffort,
@@ -832,6 +834,17 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       throw new TelegramSessionManagerError("not_ready", "session is still preparing");
     }
     return await entry.tauSession.compact("summary-only");
+  }
+
+  async setPersona(sessionId: string, personaId: string): Promise<SessionProtocolSnapshot> {
+    const entry = this.requireSession(sessionId);
+    if (entry.record.state === "running" || entry.activeSubmit) {
+      throw new TelegramSessionManagerError("busy", "session is running");
+    }
+    if (!entry.tauSession) {
+      throw new TelegramSessionManagerError("not_ready", "session is still preparing");
+    }
+    return await entry.tauSession.setPersona(personaId);
   }
 
   async setReasoning(
@@ -2438,6 +2451,11 @@ class ScopedTelegramSessionManager implements TelegramSessionManager {
   async compactSession(sessionId: string): Promise<SessionProtocolCompactResult> {
     this.requireSession(sessionId);
     return await this.sessionManager.compactSession(sessionId);
+  }
+
+  async setPersona(sessionId: string, personaId: string): Promise<SessionProtocolSnapshot> {
+    this.requireSession(sessionId);
+    return await this.sessionManager.setPersona(sessionId, personaId);
   }
 
   async setReasoning(

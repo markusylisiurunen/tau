@@ -18,7 +18,7 @@ import { TOOL_NAME_TAU_DOCS } from "./tool_names.js";
 
 const TAU_DOCS_DESCRIPTION = [
   [
-    "Read the user-facing documentation shipped with the running Tau version (the Tau host providing this tool, not Tau source code in the agent's workspace).",
+    "Read the user-facing documentation shipped with the running Tau version (not necessarily the version of Tau source code in your working directory).",
     "Use when needed to operate or configure Tau, to use the command-line tools described below, or when the user explicitly asks to consult Tau's documentation.",
     "Do not call it merely because Tau is mentioned.",
     "In a Tau source checkout, inspect source and tests instead for questions about implementation, built-in content, defaults, or current branch behavior.",
@@ -38,7 +38,7 @@ const TAU_DOCS_DESCRIPTION = [
   "Guidelines:",
   "- Selection: Consider these tools when their capabilities match the task, even if the user has not explicitly named them. Their use is optional; choose the approach that best fits the request.",
   "- Documentation: Before using a tool, read its listed page directly through tau_docs. Load only the relevant guides, and reuse instructions already visible in context.",
-  "- Execution: Follow the guide's prerequisites and usage instructions. Tools run in the execution environment; listing a tool here does not guarantee its executable, dependencies, or credentials are available there.",
+  "- Execution: Follow the guide's prerequisites and usage instructions. Listing a tool here does not guarantee its executable, dependencies, or credentials are available where you run commands.",
   "- Scope: Tool availability does not expand the user's request or authorize unrelated actions. If a tool is unavailable or unsuitable, use another appropriate approach or explain the blocker.",
 ].join("\n");
 

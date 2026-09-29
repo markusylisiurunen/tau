@@ -3,8 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { runToolCommand } from "../dist/core/tool/cli.js";
-import { assembleSpeechWav } from "../dist/core/tool/speech_generate.js";
+import { printToolHelp, runToolCommand } from "../dist/core/tool/cli.js";
+import { printImageGenerateHelp } from "../dist/core/tool/image_generate.js";
+import { printPdfUnpackHelp } from "../dist/core/tool/pdf_unpack.js";
+import { assembleSpeechWav, printSpeechGenerateHelp } from "../dist/core/tool/speech_generate.js";
 
 const roots = [];
 afterEach(async () => {
@@ -71,7 +73,32 @@ function pcmResponse(samples, id) {
   });
 }
 
+describe("standalone tool help", () => {
+  it.each([
+    [printToolHelp, "tools.md"],
+    [printPdfUnpackHelp, "pdf-unpacking.md"],
+    [printImageGenerateHelp, "image-generation.md"],
+    [printSpeechGenerateHelp, "speech-generation.md"],
+  ])("provides usage and public documentation for %s", (printHelp, guide) => {
+    const log = vi.fn();
+    printHelp(log);
+    const text = log.mock.calls.map(([line]) => line).join("\n");
+    expect(text).toContain("usage:");
+    expect(text).toContain(`https://github.com/markusylisiurunen/tau/blob/main/docs/${guide}`);
+    expect(text).not.toContain("tau_docs");
+  });
+});
+
 describe("image generation CLI", () => {
+  it("requires an explicit model before generating or creating artifacts", async () => {
+    const options = await fixture();
+    await expect(runToolCommand([imageArgs[0], ...imageArgs.slice(3)], options)).rejects.toThrow(
+      "--model is required",
+    );
+    expect(options.fetchImpl).not.toHaveBeenCalled();
+    expect(await readdir(options.cwd)).toEqual([]);
+  });
+
   it("dispatches native generation with command-local credentials and publishes only a complete image", async () => {
     const options = await fixture();
     options.env.OPENAI_API_KEY = "env-key";
@@ -416,56 +443,72 @@ describe("image generation CLI", () => {
 });
 
 describe("speech generation CLI", () => {
-  it("packs whole chunks, preserves speaker/text order, stitches completed requests, and writes valid ordered WAV", async () => {
+  it.each(["eleven_v4_turbo", "eleven_v4"])(
+    "generates %s with ordered chunks, request stitching, and valid WAV",
+    async (model) => {
+      const options = await fixture();
+      const chunks = [
+        [{ speaker: "host", text: `[calm] ${"a".repeat(893)}` }],
+        [{ speaker: "guest", text: "b".repeat(900) }],
+        [{ speaker: "host", text: "c".repeat(900) }],
+      ];
+      await script(options, chunks);
+      options.fetchImpl
+        .mockResolvedValueOnce(pcmResponse([1, -2], "first"))
+        .mockResolvedValueOnce(pcmResponse([3, -4], "second"));
+      await runToolCommand([...speechArgs.slice(0, 2), model, ...speechArgs.slice(3)], options);
+      const calls = options.fetchImpl.mock.calls.map(([url, request]) => {
+        expect(url).toContain("output_format=pcm_24000");
+        expect(request.headers["xi-api-key"]).toBe("eleven-key");
+        return JSON.parse(request.body);
+      });
+      expect(calls).toEqual([
+        {
+          model_id: model,
+          inputs: [
+            { voice_id: "host-id", text: chunks[0][0].text },
+            { voice_id: "guest-id", text: chunks[1][0].text },
+          ],
+        },
+        {
+          model_id: model,
+          inputs: [{ voice_id: "host-id", text: chunks[2][0].text }],
+          previous_request_ids: ["first"],
+        },
+      ]);
+      const wav = await readFile(join(options.cwd, "speech.wav"));
+      expect(wav.subarray(0, 4).toString()).toBe("RIFF");
+      expect(wav.readUInt32LE(4)).toBe(wav.length - 8);
+      expect(wav.readUInt32LE(24)).toBe(24000);
+      expect(wav.readUInt32LE(40)).toBe(8);
+      expect([44, 46, 48, 50].map((offset) => wav.readInt16LE(offset))).toEqual([1, -2, 3, -4]);
+      const manifest = JSON.parse(
+        await readFile(join(options.cwd, "speech.wav.parts", "manifest.json"), "utf8"),
+      );
+      expect(manifest.model).toBe(model);
+      expect(
+        manifest.batches.map(({ chunks, completed, requestId }) => ({
+          chunks,
+          completed,
+          requestId,
+        })),
+      ).toEqual([
+        { chunks: [1, 2], completed: true, requestId: "first" },
+        { chunks: [3], completed: true, requestId: "second" },
+      ]);
+    },
+  );
+
+  it("requires an explicit supported model before generating or creating artifacts", async () => {
     const options = await fixture();
-    const chunks = [
-      [{ speaker: "host", text: `[calm] ${"a".repeat(893)}` }],
-      [{ speaker: "guest", text: "b".repeat(900) }],
-      [{ speaker: "host", text: "c".repeat(900) }],
-    ];
-    await script(options, chunks);
-    options.fetchImpl
-      .mockResolvedValueOnce(pcmResponse([1, -2], "first"))
-      .mockResolvedValueOnce(pcmResponse([3, -4], "second"));
-    await runToolCommand(speechArgs, options);
-    const calls = options.fetchImpl.mock.calls.map(([url, request]) => {
-      expect(url).toContain("output_format=pcm_24000");
-      expect(request.headers["xi-api-key"]).toBe("eleven-key");
-      return JSON.parse(request.body);
-    });
-    expect(calls).toEqual([
-      {
-        model_id: "eleven_v4",
-        inputs: [
-          { voice_id: "host-id", text: chunks[0][0].text },
-          { voice_id: "guest-id", text: chunks[1][0].text },
-        ],
-      },
-      {
-        model_id: "eleven_v4",
-        inputs: [{ voice_id: "host-id", text: chunks[2][0].text }],
-        previous_request_ids: ["first"],
-      },
-    ]);
-    const wav = await readFile(join(options.cwd, "speech.wav"));
-    expect(wav.subarray(0, 4).toString()).toBe("RIFF");
-    expect(wav.readUInt32LE(4)).toBe(wav.length - 8);
-    expect(wav.readUInt32LE(24)).toBe(24000);
-    expect(wav.readUInt32LE(40)).toBe(8);
-    expect([44, 46, 48, 50].map((offset) => wav.readInt16LE(offset))).toEqual([1, -2, 3, -4]);
-    const manifest = JSON.parse(
-      await readFile(join(options.cwd, "speech.wav.parts", "manifest.json"), "utf8"),
+    await expect(runToolCommand([speechArgs[0], ...speechArgs.slice(3)], options)).rejects.toThrow(
+      "--model is required",
     );
-    expect(
-      manifest.batches.map(({ chunks, completed, requestId }) => ({
-        chunks,
-        completed,
-        requestId,
-      })),
-    ).toEqual([
-      { chunks: [1, 2], completed: true, requestId: "first" },
-      { chunks: [3], completed: true, requestId: "second" },
-    ]);
+    await expect(
+      runToolCommand([...speechArgs.slice(0, 2), "unknown", ...speechArgs.slice(3)], options),
+    ).rejects.toThrow("unsupported speech model: unknown");
+    expect(options.fetchImpl).not.toHaveBeenCalled();
+    expect(await readdir(options.cwd)).toEqual([]);
   });
 
   it("validates every chunk before generating or creating artifacts", async () => {

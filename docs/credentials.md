@@ -72,6 +72,8 @@ The Google, Mistral, OpenAI, and ElevenLabs rows describe feature-specific helpe
 
 Set these variables on the process that owns the feature. For example, a remote TUI's `/speak` reads the attached client's `GEMINI_API_KEY`, while a Google model selected by the session reads credentials at the host.
 
+For `tau tool` commands, credentials and configuration belong to the machine running the command. Tau's agent Bash removes inherited API-key environment variables, so commands invoked through it may need keys in private configuration on that machine. See [configuration](configuration.md) for configuration file locations and [security](security.md) for command environment handling.
+
 ## OpenAI Codex OAuth
 
 The `openai-codex` provider uses ChatGPT Plus or Pro OAuth accounts managed by Tau. Authenticate on the host:

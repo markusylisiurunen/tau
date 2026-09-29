@@ -26,10 +26,10 @@ export function printToolHelp(log: (line: string) => void = console.log): void {
       "",
       "examples:",
       "  tau tool pdf-unpack ./docs/spec.pdf",
-      '  tau tool image-generate --model gemini-3.1-flash-image --prompt "A lakeside sauna" --output ./sauna.png',
-      "  tau tool speech-generate --model eleven_v4 --input ./script.json --output ./speech.wav",
+      '  tau tool image-generate --model gpt-image-2.5-flare --quality medium --size 1536x1024 --prompt "A lakeside sauna" --output ./sauna.png',
+      "  tau tool speech-generate --model eleven_v4_turbo --input ./script.json --output ./speech.wav",
       "",
-      "see tools.md in tau_docs for command guides.",
+      "documentation: https://github.com/markusylisiurunen/tau/blob/main/docs/tools.md",
     ].join("\n"),
   );
 }

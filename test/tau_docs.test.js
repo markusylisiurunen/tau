@@ -43,7 +43,7 @@ describe("tau_docs tool", () => {
     expect(TAU_DOCS_TOOL.description).toContain("Their use is optional");
     expect(TAU_DOCS_TOOL.description).toContain("read its listed page directly through tau_docs");
     expect(TAU_DOCS_TOOL.description).toContain(
-      "does not guarantee its executable, dependencies, or credentials are available there",
+      "does not guarantee its executable, dependencies, or credentials are available where you run commands",
     );
     expect(TAU_DOCS_TOOL.parameters.additionalProperties).toBe(false);
   });

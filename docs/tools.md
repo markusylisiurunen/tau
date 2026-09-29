@@ -135,7 +135,7 @@ The supported formats are JPEG, PNG, and WebP. Source reads are capped at 50 MiB
 
 ## Command-line tools
 
-`tau tool` provides standalone utilities that agents can invoke through Bash. They are not separate agent-callable host tools. Files, configuration, credentials, and required executables belong to the machine running the command, including the execution environment when invoked through agent Bash.
+`tau tool` provides standalone utilities for people and agents, usable from a shell inside or outside Tau. Files, configuration, credentials, and required executables must be available on the machine running the command. Agents can invoke these commands through Bash.
 
 | Command | Purpose | Guide |
 | --- | --- | --- |

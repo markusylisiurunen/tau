@@ -9,7 +9,7 @@ tau tool pdf-unpack ./docs/architecture.pdf
 
 ## Credentials and requirements
 
-Set `MISTRAL_API_KEY` or configure `apiKeys.mistral`; the environment variable wins. Configuration and files belong to the machine running the command. Agent Bash removes inherited API-key variables, so credentials may need to be set in private configuration on that machine. See [credentials](credentials.md).
+Requires a Mistral API key. See [feature-specific credentials](credentials.md#feature-specific-keys) for setup.
 
 The command requires `pdftoppm` from Poppler on `PATH`. On macOS, install it with `brew install poppler`; Debian-based Linux distributions provide it through `apt install poppler-utils`.
 

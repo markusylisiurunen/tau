@@ -10,7 +10,7 @@ const inputSchema = z.strictObject({
     .string()
     .min(1)
     .regex(/^[^\r\n\0]+$/)
-    .describe("Path to the file, absolute or relative to the session working directory."),
+    .describe("Path to the file, absolute or relative to the working directory."),
   caption: z
     .string()
     .max(1024)
@@ -32,28 +32,28 @@ export function createTelegramFileTools(api: TelegramFileApi, chatId: number): T
       method: "sendPhoto",
       maxBytes: 10_000_000,
       description:
-        "Send a JPEG or PNG from the execution environment to the current Telegram chat as a photo. Maximum 10 MB; width plus height must not exceed 10,000 pixels and aspect ratio must not exceed 20. Use send_document_to_telegram for original-quality files or images outside these limits. This sends the photo to the chat; it does not display it to the model.",
+        "Send a local JPEG or PNG file to the current Telegram chat as a photo. Maximum 10 MB; width plus height must not exceed 10,000 pixels and aspect ratio must not exceed 20. Use send_document_to_telegram for original-quality files or images outside these limits. This sends the photo to the chat; it does not display it to the model.",
     },
     {
       kind: "video",
       method: "sendVideo",
       maxBytes: MAX_FILE_BYTES,
       description:
-        "Send an MPEG4 video from the execution environment to the current Telegram chat as a playable video. Maximum 50 MB. Use send_document_to_telegram for other video formats.",
+        "Send a local MPEG4 video to the current Telegram chat as a playable video. Maximum 50 MB. Use send_document_to_telegram for other video formats.",
     },
     {
       kind: "audio",
       method: "sendAudio",
       maxBytes: MAX_FILE_BYTES,
       description:
-        "Send an MP3 or M4A file from the execution environment to the current Telegram chat in Telegram's audio player. Maximum 50 MB. Use send_document_to_telegram for other audio formats, including WAV.",
+        "Send a local MP3 or M4A file to the current Telegram chat in Telegram's audio player. Maximum 50 MB. Use send_document_to_telegram for other audio formats, including WAV.",
     },
     {
       kind: "document",
       method: "sendDocument",
       maxBytes: MAX_FILE_BYTES,
       description:
-        "Send any file from the execution environment to the current Telegram chat as a document, including PDF, CSV, archives, and original-quality media. Preserves the original bytes and filename. Maximum 50 MB.",
+        "Send any local file to the current Telegram chat as a document, including PDF, CSV, archives, and original-quality media. Preserves the original bytes and filename. Maximum 50 MB.",
     },
   ] as const;
   return deliveries.map(({ kind, method, maxBytes, description }) => ({

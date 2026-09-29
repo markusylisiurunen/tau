@@ -102,8 +102,9 @@ export function printImageGenerateHelp(log: (line: string) => void = console.log
       "",
       "one stateless generation; unsupported features fail before generation.",
       "never overwrites output or its .parts directory.",
+      "requires GEMINI_API_KEY or apiKeys.google for Google; OPENAI_API_KEY or apiKeys.openai for OpenAI.",
       "",
-      "see image-generation.md in tau_docs for setup, examples, outputs, and recovery.",
+      "documentation: https://github.com/markusylisiurunen/tau/blob/main/docs/image-generation.md",
     ].join("\n"),
   );
 }
@@ -367,7 +368,13 @@ export async function runImageGenerateCommand(
     generation.provider === "google"
       ? getGoogleApiKey(options.config, options.env)
       : getOpenAIApiKey(options.config, options.env);
-  if (!apiKey) throw new ToolCliError(`missing ${generation.provider} API key; see credentials.md`);
+  if (!apiKey) {
+    throw new ToolCliError(
+      generation.provider === "google"
+        ? "missing GEMINI_API_KEY or apiKeys.google"
+        : "missing OPENAI_API_KEY or apiKeys.openai",
+    );
+  }
   const request = buildImageRequest(generation, apiKey);
   const destination = await prepareMediaOutput(generation.output, cwd);
   try {

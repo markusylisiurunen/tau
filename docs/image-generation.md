@@ -5,18 +5,20 @@
 ```bash
 tau tool image-generate --help
 tau tool image-generate \
-  --model gemini-3.1-flash-image \
+  --model gpt-image-2.5-flare \
   --prompt 'A quiet lakeside sauna at dusk, editorial photograph, no text' \
-  --aspect-ratio 16:9 --resolution 2K --output ./sauna.png
+  --size 1536x1024 --quality medium --output ./sauna.png
 ```
 
 ## Credentials and requirements
 
-Google uses `GEMINI_API_KEY`, then `apiKeys.google`. OpenAI uses `OPENAI_API_KEY`, then `apiKeys.openai`. Configuration and files belong to the machine running the command. Agent Bash removes inherited API-key variables, so credentials may need to be set in private configuration on that machine. See [credentials](credentials.md).
+Requires an OpenAI or Google API key for the selected model. See [feature-specific credentials](credentials.md#feature-specific-keys) for setup.
 
 ## Models and capabilities
 
-`--model` is required. Omitted controls use provider defaults, except `--format`, which defaults to `png`. Unsupported options fail before generation.
+`--model` is required; the CLI has no implicit default. Start with `gpt-image-2.5-flare` at `--quality medium` for everyday generation and editing. Increase quality or choose `gpt-image-2.5-sunburst` when precise edits justify the extra effort. See [approximate cost](#approximate-cost) before choosing settings.
+
+Choose size, resolution, and aspect ratio for the intended use; there is no recommended universal size. Dimensions in the examples illustrate particular use cases. Omitted controls use provider defaults, except `--format`, which defaults to `png`. Unsupported options fail before generation.
 
 | Model | Resolution | Aspect ratios | Thinking | Other controls |
 | --- | --- | --- | --- | --- |
@@ -58,7 +60,7 @@ Edit an existing image:
 
 ```bash
 tau tool image-generate \
-  --model gpt-image-2.5-sunburst --reference ./otter.png \
+  --model gpt-image-2.5-flare --reference ./otter.png \
   --prompt 'Give the otter a blue scarf. Preserve its face, pose, proportions, and transparent background.' \
   --quality high --background transparent --output ./otter-scarf.png
 ```
@@ -72,11 +74,12 @@ tau tool image-generate \
   --aspect-ratio 16:9 --resolution 4K --output ./sauna-4k.png
 ```
 
-Generate variants:
+Generate inexpensive draft variants:
 
 ```bash
 for i in 1 2 3 4; do
-  tau tool image-generate --model gemini-3.1-flash-lite-image \
+  tau tool image-generate --model gpt-image-2.5-flare \
+    --size 1024x1024 --quality low \
     --prompt-file ./prompt.txt --output "./variant-$i.png" || break
 done
 ```
@@ -97,10 +100,33 @@ Failures exit nonzero and report the retained artifact directory when generation
 
 ## Approximate cost
 
-USD image-output estimates: Flash Lite at 1K is about $0.034; Flash at 1K/2K/4K about $0.067/$0.101/$0.151; Pro at 1K–2K/4K about $0.134/$0.24. Input and text/thinking usage are additional.
+Use Flare for fast everyday images and drafts; reserve Sunburst for demanding edits where preservation and precision matter most. Start at `medium`, use `low` for inexpensive exploration, and increase quality only when the result needs it. Explicit `--size` and `--quality` make budgeting more predictable than `auto`.
 
-Both OpenAI 2.5 models charge about $0.03 per 1,000 image-output tokens, $0.008 per 1,000 image-input tokens, and $0.005 per 1,000 text-input tokens. Usage is recorded in the manifest.
+### OpenAI: cost per image
 
-See [Google pricing](https://ai.google.dev/gemini-api/docs/pricing) and [OpenAI image pricing](https://developers.openai.com/api/docs/guides/image-generation#gpt-image-25-costs) for current rates.
+Both `gpt-image-2.5-flare` and `gpt-image-2.5-sunburst` charge $30 per million image-output tokens. The [OpenAI output-cost calculator](https://developers.openai.com/api/docs/guides/image-generation#gpt-image-25-and-gpt-image-2-output-tokens) groups both models under GPT Image 2.5 and gives these approximate USD image-output costs:
+
+| Size        | `low`    | `medium` | `high`   | `xhigh`  | `max`    |
+| ----------- | -------- | -------- | -------- | -------- | -------- |
+| `1024x1024` | $0.00588 | $0.01317 | $0.05268 | $0.09366 | $0.21072 |
+| `1536x1024` | $0.00474 | $0.01029 | $0.04116 | $0.07377 | $0.16464 |
+| `2048x2048` | $0.01191 | $0.02676 | $0.10704 | $0.19029 | $0.42816 |
+| `3840x2160` | $0.01113 | $0.02595 | $0.10008 | $0.17790 | $0.40026 |
+
+These are calculator estimates, not fixed prices or a guarantee that Flare and Sunburst cost the same per request. OpenAI notes that actual token consumption can differ by model and quality. The calculator accounts for aspect ratio as well as pixel count, so estimates need not increase with pixel count alone. Sizes above 2560×1440 total pixels are experimental.
+
+For example, 100 square 1024-pixel drafts at `low` have an estimated output cost of $0.59, compared with $1.32 at `medium`, $5.27 at `high`, or $21.07 at `max`. Text input adds $5 per million tokens and reference images add $8 per million image-input tokens. A request with 1,000 text-input tokens and 2,000 image-input tokens adds $0.021 to the output cost. Direct Images API requests do not receive cached-input pricing. The manifest records provider `usage` for checking actual consumption.
+
+### Google: cost per image
+
+Approximate USD image-output costs from [Google pricing](https://ai.google.dev/gemini-api/docs/pricing), excluding input and text/thinking usage:
+
+| Model | 1K | 2K | 4K | When to choose it |
+| --- | --- | --- | --- | --- |
+| `gemini-3.1-flash-lite-image` | $0.034 | Unsupported | Unsupported | Simple 1K images; not optimized for multiple references |
+| `gemini-3.1-flash-image` | $0.067 | $0.101 | $0.151 | Resolution tiers and very wide aspect ratios |
+| `gemini-3-pro-image` | $0.134 | $0.134 | $0.24 | Higher-resolution reference-based work with standard aspect ratios |
+
+Use OpenAI when transparent backgrounds or JPEG/WebP output are required. Compare the quality needed for the task, not just matching tier names across providers. Check [OpenAI pricing](https://developers.openai.com/api/docs/guides/image-generation#gpt-image-25-costs) and Google pricing for current rates before large batches.
 
 See [command-line tools](tools.md) for command discovery and execution ownership.

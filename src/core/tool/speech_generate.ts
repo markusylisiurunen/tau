@@ -74,7 +74,7 @@ function parseSpeechBatches(value: unknown): SpeechBatch[] {
 export function printSpeechGenerateHelp(log: (line: string) => void = console.log): void {
   log(
     [
-      "usage: tau tool speech-generate --model eleven_v4 --input <script.json> --output <audio.wav>",
+      "usage: tau tool speech-generate --model <eleven_v4_turbo|eleven_v4> --input <script.json> --output <audio.wav>",
       "       tau tool speech-generate --list-voices",
       "",
       'input: {"voices":{"narrator":"VOICE_ID"},"chunks":[[{"speaker":"narrator","text":"Hello."}]]}',
@@ -83,7 +83,7 @@ export function printSpeechGenerateHelp(log: (line: string) => void = console.lo
       "writes mono 24 kHz 16-bit PCM WAV and retains request batches in <output>.parts.",
       "requires ELEVENLABS_API_KEY or apiKeys.elevenlabs; never overwrites or retries.",
       "",
-      "see speech-generation.md in tau_docs for setup, examples, outputs, and recovery.",
+      "documentation: https://github.com/markusylisiurunen/tau/blob/main/docs/speech-generation.md",
     ].join("\n"),
   );
 }
@@ -215,7 +215,7 @@ export async function runSpeechGenerateCommand(
     return listVoices(fetchImpl, apiKey, log);
   }
   const model = requiredArg(args.model, "model");
-  if (model !== "eleven_v4") {
+  if (model !== "eleven_v4_turbo" && model !== "eleven_v4") {
     throw new ToolCliError(`unsupported speech model: ${model}`);
   }
   const cwd = options.cwd ?? process.cwd();

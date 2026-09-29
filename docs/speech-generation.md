@@ -1,6 +1,6 @@
 # Speech generation
 
-`tau tool speech-generate` turns a caller-chunked script into one WAV using ElevenLabs `eleven_v4`. It supports single-speaker narration and multi-speaker dialogue.
+`tau tool speech-generate` turns a caller-chunked script into one WAV using ElevenLabs Eleven v4 Turbo (`eleven_v4_turbo`) or Eleven v4 (`eleven_v4`). It supports single-speaker narration and multi-speaker dialogue.
 
 ```bash
 tau tool speech-generate --help
@@ -8,13 +8,17 @@ tau tool speech-generate --help
 
 ## Credentials and requirements
 
-Set `ELEVENLABS_API_KEY` or configure `apiKeys.elevenlabs`; the environment variable wins. Configuration and files belong to the machine running the command. Agent Bash removes inherited API-key variables, so credentials may need to be set in private configuration on that machine. See [credentials](credentials.md).
+Requires an ElevenLabs API key. See [feature-specific credentials](credentials.md#feature-specific-keys) for setup.
 
 ```bash
 tau tool speech-generate --list-voices
 ```
 
 Voice listing prints one JSON object per voice, containing `voice_id` and `name`. Use those IDs in the script.
+
+## Models
+
+`--model` is required; the CLI has no implicit default. Use `eleven_v4_turbo` for lower-latency speech, as shown in the examples. Use `eleven_v4` when maximum quality matters more than latency. Both support narration and multi-speaker dialogue.
 
 ## Input and examples
 
@@ -51,8 +55,12 @@ Supply a UTF-8 JSON document with exactly `voices` and `chunks`. `voices` maps s
 Save as `dialogue.json`, replacing the placeholder voice IDs:
 
 ```bash
-tau tool speech-generate --model eleven_v4 \
+tau tool speech-generate --model eleven_v4_turbo \
   --input ./dialogue.json --output ./dialogue.wav
+
+# Alternatively, use Eleven v4 for maximum quality.
+tau tool speech-generate --model eleven_v4 \
+  --input ./dialogue.json --output ./dialogue-v4.wav
 ```
 
 Single-speaker narration uses the same shape with one voice. All chunks are validated before generation:
@@ -64,10 +72,33 @@ Tau packs consecutive whole chunks into requests of at most 2,000 characters, fo
 
 ## Conversational assistant replies
 
-For a brisk, relaxed assistant voice, try either of these delivery tags:
+For conversational assistant replies with Eleven v4 Turbo or Eleven v4, use `[Brisk but relaxed, speaking naturally to a colleague]` as a starting point. Put the tag at the beginning of the turn's `text`, followed by the words to speak. Tags guide delivery; they are not intended to be spoken aloud.
 
-- `[Brisk but relaxed, speaking naturally to a colleague]`
-- `[Brisk but relaxed, slightly faster, brief natural pauses]`
+Choose a delivery that fits the content:
+
+| Use case | Suggested tag |
+| --- | --- |
+| Everyday assistant reply | `[Brisk but relaxed, speaking naturally to a colleague]` |
+| Faster update | `[Brisk but relaxed, slightly faster, brief natural pauses]` |
+| Step-by-step explanation | `[Calm and clear, measured pace, brief pauses between steps]` |
+| Story narration | `[Warm, expressive storytelling, unhurried pace]` |
+| Quiet aside in dialogue | `[whispering]` |
+
+These are custom prompting suggestions, not official named presets or guaranteed speed controls. Each speaker turn can use a different tag; place a tag before a phrase when the delivery should change within a turn.
+
+ElevenLabs documents open-ended audio tags in its [v4 prompting guide](https://elevenlabs.io/docs/overview/capabilities/text-to-speech/best-practices#prompting-eleven-v4), also available as [plain Markdown](https://elevenlabs.io/docs/overview/capabilities/text-to-speech/best-practices.md#prompting-eleven-v4). Its [documentation index](https://elevenlabs.io/docs/llms.txt) lists other guides in an agent-friendly format.
+
+Documented tags include `[curious]`, `[excited]`, `[sarcastic]`, `[whispering]`, `[laughs]`, `[sighs]`, and `[short pause]`. For example, a turn's `text` can contain:
+
+```text
+[curious] What happens if we try the other route?
+
+[excited] That worked! [short pause] Here's what changed.
+
+[Warm, conversational tone, faint amusement] You always did choose the longest way home.
+```
+
+Tags describe audible delivery or vocal actions, not visual actions such as smiling or standing. Clear descriptions reduce ambiguity between a delivery instruction and a sound effect. Results vary by voice and language; neither Eleven v4 Turbo nor Eleven v4 treats tags as deterministic controls.
 
 Save this as `assistant-reply.json`, replacing `VOICE_ID` with an ID from `--list-voices`:
 
@@ -86,8 +117,12 @@ Save this as `assistant-reply.json`, replacing `VOICE_ID` with an ID from `--lis
 ```
 
 ```bash
-tau tool speech-generate --model eleven_v4 \
+tau tool speech-generate --model eleven_v4_turbo \
   --input ./assistant-reply.json --output ./assistant-reply.wav
+
+# Alternatively, use Eleven v4 for maximum quality.
+tau tool speech-generate --model eleven_v4 \
+  --input ./assistant-reply.json --output ./assistant-reply-v4.wav
 ```
 
 For a Finnish reply, replace the turn's `text` with:
@@ -98,7 +133,7 @@ For a Finnish reply, replace the turn's `text` with:
 
 To compare pacing, replace the leading tag with `[Brisk but relaxed, slightly faster, brief natural pauses]` and generate to a fresh output path, keeping the voice and spoken text fixed.
 
-[Eleven v4](https://elevenlabs.io/docs/overview/capabilities/text-to-speech/eleven-v4) controls delivery through audio tags rather than a numeric speed setting. Results vary by voice and language.
+[Eleven v4 Turbo and Eleven v4](https://elevenlabs.io/docs/overview/capabilities/text-to-speech/eleven-v4) control delivery through audio tags rather than a numeric speed setting. Results vary by voice and language.
 
 ## Long recordings and assembly
 
@@ -134,6 +169,13 @@ Use only completed `.pcm` batches, not `.partial` files.
 
 ## Approximate cost
 
-The [ElevenLabs API pricing page](https://elevenlabs.io/pricing/api) lists v4 at $0.08 per 1,000 characters, with a promotional $0.022 rate through October 12, 2026. At those rates, 2,000 characters cost approximately $0.16 or $0.044; 27,000 characters (roughly 30 minutes) cost approximately $2.16 or $0.59. Check current API pricing for plan and voice-specific rates. The manifest's `characterCost` preserves the provider's billing header verbatim.
+Standard rates from the [ElevenLabs API pricing page](https://elevenlabs.io/pricing/api):
+
+| Model | Per 1,000 characters | 2,000 characters | 27,000 characters (roughly 30 minutes) |
+| --- | --- | --- | --- |
+| `eleven_v4_turbo` | $0.04 | $0.08 | $1.08 |
+| `eleven_v4` | $0.08 | $0.16 | $2.16 |
+
+Check current API pricing for plan and voice-specific rates. The manifest's `characterCost` preserves the provider's billing header verbatim.
 
 See [command-line tools](tools.md) for command discovery and execution ownership.

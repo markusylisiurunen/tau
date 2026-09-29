@@ -47,7 +47,7 @@ In `~/.config/tau/config.json`:
 
 ```json
 {
-  "defaultPersona": "opus-5.5-chat",
+  "defaultPersona": "sonnet-5.5-coder",
   "speechToText": { "provider": "openai" }
 }
 ```

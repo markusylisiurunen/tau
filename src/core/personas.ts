@@ -213,40 +213,11 @@ type PersonaSpec = {
 
 const PERSONA_SPECS: PersonaSpec[] = [
   {
-    id: "gemini-3.8-flash",
-    description: "Gemini 3.8 Flash",
-    provider: "google",
-    modelId: "gemini-3.8-flash",
-    catalogOnly: true,
-    allowedReasoningLevels: ["low", "medium", "high"],
-    settings: { reasoning: "medium" },
-    skills: "*",
-  },
-  {
-    id: "gpt-6-sol",
-    description: "GPT-6 Sol",
-    provider: "openai",
-    modelId: "gpt-6-sol",
-    catalogOnly: true,
-    allowedReasoningLevels: ["low", "medium", "high", "xhigh", "max"],
-    settings: { reasoning: "low" },
-    skills: "*",
-  },
-  {
     id: "gpt-6.1-sol",
     description: "GPT-6.1 Sol",
     provider: "openai",
     modelId: "gpt-6.1-sol",
     catalogOnly: true,
-    allowedReasoningLevels: ["low", "medium", "high", "xhigh", "max"],
-    settings: { reasoning: "low" },
-    skills: "*",
-  },
-  {
-    id: "gpt-5.6-terra",
-    description: "GPT-5.6 Terra",
-    provider: "openai",
-    modelId: "gpt-5.6-terra",
     allowedReasoningLevels: ["low", "medium", "high", "xhigh", "max"],
     settings: { reasoning: "medium" },
     skills: "*",
@@ -262,30 +233,11 @@ const PERSONA_SPECS: PersonaSpec[] = [
     skills: "*",
   },
   {
-    id: "gpt-6-sol-chatgpt",
-    description: "GPT-6 Sol (ChatGPT)",
-    provider: "openai-codex",
-    modelId: "gpt-6-sol",
-    catalogOnly: true,
-    allowedReasoningLevels: ["low", "medium", "high", "xhigh", "max"],
-    settings: { reasoning: "low" },
-    skills: "*",
-  },
-  {
     id: "gpt-6.1-sol-chatgpt",
     description: "GPT-6.1 Sol (ChatGPT)",
     provider: "openai-codex",
     modelId: "gpt-6.1-sol",
     catalogOnly: true,
-    allowedReasoningLevels: ["low", "medium", "high", "xhigh", "max"],
-    settings: { reasoning: "low" },
-    skills: "*",
-  },
-  {
-    id: "gpt-5.6-terra-chatgpt",
-    description: "GPT-5.6 Terra (ChatGPT)",
-    provider: "openai-codex",
-    modelId: "gpt-5.6-terra",
     allowedReasoningLevels: ["low", "medium", "high", "xhigh", "max"],
     settings: { reasoning: "medium" },
     skills: "*",
@@ -301,30 +253,11 @@ const PERSONA_SPECS: PersonaSpec[] = [
     skills: "*",
   },
   {
-    id: "gpt-6-sol-chatgpt-fast",
-    description: "GPT-6 Sol Fast (ChatGPT)",
-    provider: "openai-codex",
-    modelId: "gpt-6-sol",
-    catalogOnly: true,
-    allowedReasoningLevels: ["low", "medium", "high", "xhigh", "max"],
-    settings: { reasoning: "low", serviceTier: "priority" },
-    skills: "*",
-  },
-  {
     id: "gpt-6.1-sol-chatgpt-fast",
     description: "GPT-6.1 Sol Fast (ChatGPT)",
     provider: "openai-codex",
     modelId: "gpt-6.1-sol",
     catalogOnly: true,
-    allowedReasoningLevels: ["low", "medium", "high", "xhigh", "max"],
-    settings: { reasoning: "low", serviceTier: "priority" },
-    skills: "*",
-  },
-  {
-    id: "gpt-5.6-terra-chatgpt-fast",
-    description: "GPT-5.6 Terra Fast (ChatGPT)",
-    provider: "openai-codex",
-    modelId: "gpt-5.6-terra",
     allowedReasoningLevels: ["low", "medium", "high", "xhigh", "max"],
     settings: { reasoning: "medium", serviceTier: "priority" },
     skills: "*",
@@ -401,7 +334,7 @@ const PERSONA_SPECS: PersonaSpec[] = [
   },
 ];
 
-export const DEFAULT_BUILTIN_PERSONA_ID = "opus-5.5-chat";
+export const DEFAULT_BUILTIN_PERSONA_ID = "sonnet-5.5-coder";
 
 type Variant = "chat" | "coder";
 
@@ -463,20 +396,8 @@ export function createBuiltinPersonas(modelResolver: ModelResolver = resolveMode
       return [];
     }
 
-    if (spec.id.includes("-codex-")) {
-      const coderPersona = buildPersona(spec, "coder", modelResolver);
-      return [
-        {
-          ...coderPersona,
-          id: spec.id,
-          label: spec.id,
-          description: spec.description,
-        },
-      ];
-    }
-
-    if (spec.id.startsWith("gemini-")) {
-      return [buildPersona(spec, "chat", modelResolver)];
+    if (spec.id.endsWith("-fast")) {
+      return [buildPersona(spec, "coder", modelResolver)];
     }
 
     return [buildPersona(spec, "chat", modelResolver), buildPersona(spec, "coder", modelResolver)];

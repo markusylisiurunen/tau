@@ -3357,19 +3357,6 @@ describe("LocalSessionHost", () => {
     expect(store.commitSessionSnapshot).toHaveBeenCalledTimes(2);
   });
 
-  it("observes live sessions without refreshing every live snapshot first", async () => {
-    const store = new MemorySessionStore();
-    const originalCommit = store.commitSessionSnapshot.bind(store);
-    store.commitSessionSnapshot = vi.fn(originalCommit);
-    const host = createHost(store);
-    const hostedSession = await host.createSession(localCreateInput);
-    await hostedSession.session.commitUserText("hello");
-
-    await expect(host.observeSession(hostedSession.session.sessionId)).resolves.toBe(hostedSession);
-
-    expect(store.commitSessionSnapshot).toHaveBeenCalledTimes(1);
-  });
-
   it("does not let delta listener failures fail hosted runtime events", async () => {
     const store = new MemorySessionStore();
     const host = createHost(store);

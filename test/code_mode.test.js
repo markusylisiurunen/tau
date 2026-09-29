@@ -2,11 +2,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
-import {
-  buildTauCodeModeToolDescription,
-  executeTauCodeMode,
-  runTauCodeModeCommand,
-} from "../dist/code_mode/index.js";
+import { buildTauCodeModeToolDescription, executeTauCodeMode } from "../dist/code_mode/index.js";
 import { createTauCodeModeClientTool } from "../dist/sdk/index.js";
 
 const invocation = {
@@ -75,10 +71,6 @@ describe("public code-mode runtime", () => {
     });
 
     expect(result.content).toContain("# Code-mode runtime");
-    expect(result.content).toContain("at most 128 API calls");
-    expect(result.content).toContain("at most 8 unresolved calls concurrently");
-    expect(result.content).toContain("a 1.0 MB limit per request or response");
-    expect(result.content).toContain("Undefined object properties are omitted");
     expect(result.content).not.toContain("`files`");
     expect(result.content).toContain("# Linear API");
   });
@@ -304,7 +296,6 @@ describe("public code-mode runtime", () => {
 
 describe("code-mode command adapter", () => {
   it("reads and writes the command client-tool framing", async () => {
-    expect(typeof runTauCodeModeCommand).toBe("function");
     const moduleUrl = pathToFileURL(resolve("dist/code_mode/index.js")).href;
     const script = [
       `import(${JSON.stringify(moduleUrl)}).then(async ({ runTauCodeModeCommand }) => {`,

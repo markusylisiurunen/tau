@@ -316,10 +316,6 @@ describe("custom personas", () => {
       );
       expect(errors).toEqual([]);
 
-      expect(personas.find((persona) => persona.id === "gemini-3.1-pro-chat")).toBeUndefined();
-      expect(personas.find((persona) => persona.id === "gemini-3-flash-chat")).toBeUndefined();
-      expect(personas.find((persona) => persona.id === "gemini-3.6-flash-chat")).toBeUndefined();
-      expect(personas.find((persona) => persona.id === "gemini-3.7-flash-chat")).toBeUndefined();
       expect(personas.some((persona) => persona.id.startsWith("gemini-"))).toBe(false);
     } finally {
       fx.cleanup();
@@ -406,30 +402,30 @@ describe("custom personas", () => {
     }
   });
 
-  it.each(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-sol"])(
-    "omits %s personas even when their model is in both remote OpenAI catalogs",
-    async (modelId) => {
-      const fx = setupFixture();
+  it("omits retired GPT personas even when their models are in both remote OpenAI catalogs", async () => {
+    const fx = setupFixture();
+    const modelIds = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-sol"];
 
-      try {
-        const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
-        const remoteCatalog = new Map(
-          ["openai", "openai-codex"].map((provider) => [
-            provider,
-            [{ ...structuredClone(resolveModel(provider, "gpt-6.1-sol")), id: modelId }],
-          ]),
-        );
-        const { personas, errors } = await loadAllContentWithModelResolver(
-          {},
-          { deps, cwd: fx.cwd, remoteCatalog },
-        );
-        expect(errors).toEqual([]);
+    try {
+      const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
+      const remoteCatalog = new Map(
+        ["openai", "openai-codex"].map((provider) => [
+          provider,
+          modelIds.map((id) => ({ ...structuredClone(resolveModel(provider, "gpt-6.1-sol")), id })),
+        ]),
+      );
+      const { personas, errors } = await loadAllContentWithModelResolver(
+        {},
+        { deps, cwd: fx.cwd, remoteCatalog },
+      );
+      expect(errors).toEqual([]);
+      for (const modelId of modelIds) {
         expect(personas.some((persona) => persona.id.startsWith(`${modelId}-`))).toBe(false);
-      } finally {
-        fx.cleanup();
       }
-    },
-  );
+    } finally {
+      fx.cleanup();
+    }
+  });
 
   it("applies configured models.json entries to built-in personas", async () => {
     const fx = setupFixture();

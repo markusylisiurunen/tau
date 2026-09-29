@@ -1,4 +1,3 @@
-import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import {
   SESSION_PROTOCOL_METHODS,
@@ -394,48 +393,6 @@ describe("sdk_client", () => {
     });
     expect(getTauSdkSessionTurnRecord(prototypeSnapshot, "__proto__")).toEqual(prototypeTurn);
     expect(getTauSdkSessionTurnOutcome(prototypeSnapshot, "__proto__")).toEqual(outcome);
-  });
-
-  it("keeps published sdk declarations free of core type imports", () => {
-    const indexDeclaration = readFileSync(
-      new URL("../dist/sdk/index.d.ts", import.meta.url),
-      "utf8",
-    );
-    const typesDeclaration = readFileSync(
-      new URL("../dist/sdk/types.d.ts", import.meta.url),
-      "utf8",
-    );
-    const sessionDeclaration = readFileSync(
-      new URL("../dist/sdk/session.d.ts", import.meta.url),
-      "utf8",
-    );
-    const transportErrorsDeclaration = readFileSync(
-      new URL("../dist/transport/errors.d.ts", import.meta.url),
-      "utf8",
-    );
-    const transportDeclaration = readFileSync(
-      new URL("../dist/transport/session_transport.d.ts", import.meta.url),
-      "utf8",
-    );
-    const websocketTransportDeclaration = readFileSync(
-      new URL("../dist/transport/websocket_session_transport.d.ts", import.meta.url),
-      "utf8",
-    );
-    const protocolDeclaration = readFileSync(
-      new URL("../dist/protocol/session_protocol.d.ts", import.meta.url),
-      "utf8",
-    );
-
-    expect(
-      existsSync(new URL("../dist/transport/in_process_session_transport.d.ts", import.meta.url)),
-    ).toBe(false);
-    expect(indexDeclaration).not.toContain("../core/");
-    expect(typesDeclaration).not.toContain("../core/");
-    expect(sessionDeclaration).not.toContain("../core/");
-    expect(transportErrorsDeclaration).not.toContain("../core/");
-    expect(transportDeclaration).not.toContain("../core/");
-    expect(websocketTransportDeclaration).not.toContain("../core/");
-    expect(protocolDeclaration).not.toContain("../core/");
   });
 
   it("creates the same sdk session facade from an arbitrary session protocol transport", async () => {

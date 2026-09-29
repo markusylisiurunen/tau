@@ -1,15 +1,20 @@
 import { createReadStream } from "node:fs";
-import { link, open, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { open, rename, stat, writeFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import { z } from "zod";
 import { getElevenLabsApiKey } from "../config/schema.js";
 import type { RunToolCommandOptions } from "./cli.js";
 import { ToolCliError } from "./errors.js";
 import {
+  describeMediaError,
   mediaRequest,
+  mediaValidationConstraint,
   parseMediaArgs,
+  parseMediaJson,
   prepareMediaOutput,
-  readMediaResponse,
+  publishMediaArtifact,
+  readMediaInput,
+  readMediaJsonResponse,
   requiredArg,
 } from "./media.js";
 
@@ -36,22 +41,38 @@ type SpeechInput = { voice_id: string; text: string };
 type SpeechBatch = { chunks: number[]; inputs: SpeechInput[]; characters: number };
 
 function parseSpeechBatches(value: unknown): SpeechBatch[] {
-  const document = speechDocument.parse(value);
+  const result = speechDocument.safeParse(value);
+  if (!result.success) {
+    const details = result.error.issues.map((issue) => {
+      const [field, chunk, turn, ...rest] = issue.path;
+      const location =
+        field === "chunks" && typeof chunk === "number"
+          ? `chunk ${chunk + 1}${typeof turn === "number" ? `, turn ${turn + 1}` : ""}${rest.length ? `, ${rest.join(".")}` : ""}`
+          : issue.path.join(".") || "document";
+      return `${location}: ${mediaValidationConstraint(issue)}`;
+    });
+    throw new ToolCliError(
+      `invalid speech script: ${details.join("; ")}; correct --input before generating`,
+    );
+  }
+  const document = result.data;
   const batches: SpeechBatch[] = [];
   const voices = new Set<string>();
   for (const [index, chunk] of document.chunks.entries()) {
     const characters = chunk.reduce((sum, turn) => sum + Array.from(turn.text).length, 0);
     if (characters > CHUNK_CHARACTERS) {
       throw new ToolCliError(
-        `chunk ${index + 1} has ${characters} characters; maximum ${CHUNK_CHARACTERS}`,
+        `chunk ${index + 1} has ${characters} characters; maximum ${CHUNK_CHARACTERS}; split it into smaller chunks in --input`,
       );
     }
-    const inputs = chunk.map((turn) => {
+    const inputs = chunk.map((turn, turnIndex) => {
       const voice = Object.hasOwn(document.voices, turn.speaker)
         ? document.voices[turn.speaker]
         : undefined;
       if (!voice) {
-        throw new ToolCliError(`chunk ${index + 1}: unknown speaker ${turn.speaker}`);
+        throw new ToolCliError(
+          `chunk ${index + 1}, turn ${turnIndex + 1}: unknown speaker ${turn.speaker}; add it to voices or use a defined speaker`,
+        );
       }
       voices.add(voice);
       return { voice_id: voice, text: turn.text };
@@ -98,13 +119,16 @@ async function listVoices(fetchImpl: typeof fetch, apiKey: string, log: (line: s
       url.searchParams.set("next_page_token", token);
     }
     const response = await mediaRequest(fetchImpl, url.href, { headers: { "xi-api-key": apiKey } });
-    const page = z
-      .object({
+    const page = await readMediaJsonResponse(
+      response,
+      8 * 1024 * 1024,
+      z.object({
         voices: z.array(z.object({ voice_id: z.string(), name: z.string() })),
         has_more: z.boolean(),
         next_page_token: z.string().nullable().optional(),
-      })
-      .parse(JSON.parse((await readMediaResponse(response, 8 * 1024 * 1024)).toString("utf8")));
+      }),
+      "ElevenLabs voice-list response",
+    );
     for (const voice of page.voices) {
       log(JSON.stringify(voice));
     }
@@ -224,7 +248,12 @@ export async function runSpeechGenerateCommand(
   if (extname(output).toLowerCase() !== ".wav") {
     throw new ToolCliError("--output must have a .wav extension");
   }
-  const batches = parseSpeechBatches(JSON.parse(await readFile(resolve(cwd, input), "utf8")));
+  const batches = parseSpeechBatches(
+    parseMediaJson(
+      (await readMediaInput(resolve(cwd, input), "--input script")).toString("utf8"),
+      `--input script ${input}`,
+    ),
+  );
   if (!apiKey) {
     throw new ToolCliError("missing ELEVENLABS_API_KEY or apiKeys.elevenlabs");
   }
@@ -249,9 +278,12 @@ export async function runSpeechGenerateCommand(
     await writeFile(temporary, JSON.stringify(manifest, null, 2), { mode: 0o600 });
     await rename(temporary, join(destination.parts, "manifest.json"));
   };
+  let stage = "saving the batch plan";
+  let requestStarted = false;
   try {
     await saveManifest();
     for (const [index, batch] of manifest.batches.entries()) {
+      stage = `preparing batch ${index + 1} of ${manifest.batches.length}`;
       const previousRequestIds = manifest.batches
         .slice(Math.max(0, index - 3), index)
         .map((previous) => {
@@ -262,6 +294,8 @@ export async function runSpeechGenerateCommand(
           }
           return previous.requestId;
         });
+      stage = `requesting batch ${index + 1} of ${manifest.batches.length}`;
+      requestStarted = true;
       const response = await mediaRequest(
         fetchImpl,
         "https://api.elevenlabs.io/v1/text-to-dialogue?output_format=pcm_24000",
@@ -275,6 +309,7 @@ export async function runSpeechGenerateCommand(
           }),
         },
       );
+      stage = `saving batch ${index + 1} of ${manifest.batches.length}`;
       batch.requestId = response.headers.get("request-id");
       batch.characterCost = response.headers.get("character-cost");
       await saveManifest();
@@ -284,12 +319,14 @@ export async function runSpeechGenerateCommand(
       batch.completed = true;
       await saveManifest();
     }
+    stage = "assembling the WAV";
     const artifact = join(destination.parts, "assembled.wav");
     await assembleSpeechWav(
       manifest.batches.map((batch) => join(destination.parts, batch.file)),
       artifact,
     );
-    await link(artifact, destination.path);
+    stage = "publishing the WAV";
+    await publishMediaArtifact(artifact, destination.path);
     log(
       JSON.stringify({
         output: destination.path,
@@ -299,7 +336,7 @@ export async function runSpeechGenerateCommand(
     );
   } catch (error) {
     throw new ToolCliError(
-      `speech generation failed; completed batches and manifest retained at ${destination.parts}; ${error instanceof Error ? error.message : String(error)}`,
+      `speech generation failed while ${stage}: ${describeMediaError(error)}; retained artifacts: ${destination.parts} (any saved manifest, completed .pcm batches, .partial downloads, and assembled.wav); inspect the manifest before recovery and do not reuse .partial files; ${requestStarted ? "no automatic retry; another generation request may incur another charge" : "no generation request was sent"}`,
     );
   }
 }

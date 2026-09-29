@@ -1,4 +1,4 @@
-import { link, readFile, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { basename, extname, join, resolve } from "node:path";
 import { fileTypeFromBuffer } from "file-type";
 import sharp from "sharp";
@@ -7,10 +7,14 @@ import { getGoogleApiKey, getOpenAIApiKey } from "../config/schema.js";
 import type { RunToolCommandOptions } from "./cli.js";
 import { ToolCliError } from "./errors.js";
 import {
+  describeMediaError,
   mediaRequest,
+  mediaValidationConstraint,
   parseMediaArgs,
   prepareMediaOutput,
-  readMediaResponse,
+  publishMediaArtifact,
+  readMediaInput,
+  readMediaJsonResponse,
   requiredArg,
 } from "./media.js";
 
@@ -36,13 +40,15 @@ const openaiSettings = z
     format: z.enum(["png", "jpeg", "webp"]).default("png"),
     compression: z
       .string()
-      .regex(/^\d+$/)
+      .refine((value) => /^\d+$/.test(value) && Number(value) <= 100, {
+        message: "--compression requires an integer from 0 to 100",
+      })
       .transform(Number)
-      .pipe(z.number().int().min(0).max(100))
       .optional(),
   })
   .refine((settings) => settings.background !== "transparent" || settings.format !== "jpeg", {
-    message: "transparent backgrounds require png or webp",
+    message:
+      "--background transparent requires --format png or webp; use --background opaque for jpeg",
   })
   .refine((settings) => settings.compression === undefined || settings.format !== "png", {
     message: "--compression requires jpeg or webp and an integer from 0 to 100",
@@ -145,6 +151,26 @@ function parseImageArgs(argv: string[]) {
   });
 }
 
+function parseImageSettings<T>(schema: z.ZodType<T>, controls: unknown, model: string): T {
+  const result = schema.safeParse(controls);
+  if (!result.success) {
+    const details = result.error.issues.map((issue) => {
+      if (issue.code === "unrecognized_keys") {
+        return `${model} does not support ${issue.keys.map((key) => `--${key}`).join(", ")}; omit these options`;
+      }
+      const option = `--${String(issue.path[0])}`;
+      if (issue.code === "invalid_type" && issue.expected === "never") {
+        return `${model} does not support ${option}; omit this option`;
+      }
+      return issue.code === "custom"
+        ? issue.message
+        : `${option} for ${model}: ${mediaValidationConstraint(issue)}`;
+    });
+    throw new ToolCliError(details.join("; "));
+  }
+  return result.data;
+}
+
 async function prepareImageGeneration(
   args: Omit<ReturnType<typeof parseImageArgs>, "help">,
   cwd: string,
@@ -162,8 +188,8 @@ async function prepareImageGeneration(
   if (!spec) throw new ToolCliError(`unsupported image model: ${model}`);
   const selected: ImageSettings =
     spec.provider === "google"
-      ? { provider: "google", settings: spec.settings.parse(controls) }
-      : { provider: "openai", settings: spec.settings.parse(controls) };
+      ? { provider: "google", settings: parseImageSettings(spec.settings, controls, model) }
+      : { provider: "openai", settings: parseImageSettings(spec.settings, controls, model) };
   const output = requiredArg(outputArg, "output");
   const { format } = selected.settings;
   const extensions = { png: [".png"], jpeg: [".jpg", ".jpeg"], webp: [".webp"] };
@@ -178,12 +204,15 @@ async function prepareImageGeneration(
     throw new ToolCliError(`model ${model} supports at most ${referenceLimit} references`);
   }
   const prompt =
-    promptArg ?? (await readFile(resolve(cwd, requiredArg(promptFile, "prompt-file")), "utf8"));
+    promptArg ??
+    (
+      await readMediaInput(resolve(cwd, requiredArg(promptFile, "prompt-file")), "--prompt-file")
+    ).toString("utf8");
   if (!prompt.trim()) throw new ToolCliError("prompt must not be empty");
   const references: ImageReference[] = [];
   let referenceBytes = 0;
   for (const path of reference) {
-    const data = await readFile(resolve(cwd, path));
+    const data = await readMediaInput(resolve(cwd, path), "--reference image");
     const type = await fileTypeFromBuffer(data);
     if (!type || !["image/png", "image/jpeg", "image/webp"].includes(type.mime)) {
       throw new ToolCliError(`unsupported reference image: ${path}`);
@@ -299,16 +328,25 @@ async function readGeneratedImage(
   response: Response,
   provider: ImageGeneration["provider"],
 ): Promise<GeneratedImage> {
-  const value = JSON.parse((await readMediaResponse(response, 128 * 1024 * 1024)).toString("utf8"));
   if (provider === "openai") {
-    const result = openaiResponse.parse(value);
+    const result = await readMediaJsonResponse(
+      response,
+      128 * 1024 * 1024,
+      openaiResponse,
+      "OpenAI image response",
+    );
     return {
       bytes: Buffer.from(result.data[0]!.b64_json, "base64"),
       usage: result.usage ?? null,
       declaredMimeType: null,
     };
   }
-  const result = googleResponse.parse(value);
+  const result = await readMediaJsonResponse(
+    response,
+    128 * 1024 * 1024,
+    googleResponse,
+    "Google image response",
+  );
   const candidate = result.candidates?.[0];
   const images = candidate?.content?.parts.filter((part) => part.inlineData && !part.thought) ?? [];
   if (candidate?.finishReason !== "STOP" || images.length !== 1) {
@@ -352,7 +390,7 @@ async function publishImage(
       : image.bytes;
   const artifact = join(destination.parts, `image.${format}`);
   await writeFile(artifact, bytes, { flag: "wx" });
-  await link(artifact, destination.path);
+  await publishMediaArtifact(artifact, destination.path);
 }
 
 export async function runImageGenerateCommand(
@@ -377,9 +415,12 @@ export async function runImageGenerateCommand(
   }
   const request = buildImageRequest(generation, apiKey);
   const destination = await prepareMediaOutput(generation.output, cwd);
+  let stage = "requesting an image";
   try {
     const response = await mediaRequest(options.fetchImpl ?? fetch, request.url, request.init);
+    stage = "reading the provider image response";
     const image = await readGeneratedImage(response, generation.provider);
+    stage = "saving or converting the generated image";
     await publishImage(image, generation, destination);
     log(
       JSON.stringify({
@@ -390,7 +431,7 @@ export async function runImageGenerateCommand(
     );
   } catch (error) {
     throw new ToolCliError(
-      `image generation failed; artifacts: ${destination.parts}; ${error instanceof Error ? error.message : String(error)}`,
+      `image generation failed while ${stage}: ${describeMediaError(error)}; retained artifacts: ${destination.parts} (may be incomplete; inspect original.bin, manifest.json, and image.${generation.settings.format} if present); no automatic retry; another generation request may incur another charge`,
     );
   }
 }

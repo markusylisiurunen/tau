@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
@@ -86,6 +86,51 @@ describe("standalone tool help", () => {
     expect(text).toContain("usage:");
     expect(text).toContain(`https://github.com/markusylisiurunen/tau/blob/main/docs/${guide}`);
     expect(text).not.toContain("tau_docs");
+  });
+});
+
+describe("media output preparation", () => {
+  it.each([imageArgs, speechArgs])(
+    "protects output and artifacts before requests: %s",
+    async (...args) => {
+      const options = await fixture();
+      await script(options, [[{ speaker: "host", text: "hello" }]]);
+      const output = join(options.cwd, args.at(-1));
+      await writeFile(output, "existing output");
+      await expect(runToolCommand(args, options)).rejects.toThrow(
+        /output already exists.*fresh --output/,
+      );
+      expect(await readFile(output, "utf8")).toBe("existing output");
+      const freshArgs = [...args.slice(0, -1), `fresh-${args.at(-1)}`];
+      const parts = join(options.cwd, `${freshArgs.at(-1)}.parts`);
+      await mkdir(parts);
+      await writeFile(join(parts, "recovery"), "retained");
+      await expect(runToolCommand(freshArgs, options)).rejects.toThrow(
+        /artifact directory already exists.*fresh --output.*preserve/,
+      );
+      expect(await readFile(join(parts, "recovery"), "utf8")).toBe("retained");
+      await expect(
+        runToolCommand([...args.slice(0, -1), `missing/${args.at(-1)}`], options),
+      ).rejects.toThrow(/cannot create artifact directory.*parent directory does not exist/);
+      expect(options.fetchImpl).not.toHaveBeenCalled();
+      expect(options.stdout).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    [
+      [...imageArgs.slice(0, 3), "--prompt-file", "missing.txt", ...imageArgs.slice(5)],
+      "--prompt-file",
+    ],
+    [[...imageArgs, "--reference", "missing.png"], "--reference image"],
+    [speechArgs, "--input script"],
+  ])("identifies unreadable input without paid requests: %s", async (args, label) => {
+    const options = await fixture();
+    await expect(runToolCommand(args, options)).rejects.toThrow(
+      `cannot read ${label}: file or parent directory does not exist`,
+    );
+    expect(options.fetchImpl).not.toHaveBeenCalled();
+    expect(await readdir(options.cwd)).toEqual([]);
   });
 });
 
@@ -399,10 +444,40 @@ describe("image generation CLI", () => {
         [...imageArgs.slice(0, 2), model, ...imageArgs.slice(3), flag, value],
         options,
       ),
-    ).rejects.toThrow();
+    ).rejects.toThrow(new RegExp(`${flag}.*(?:use|omit)|does not support ${flag}`));
     expect(options.fetchImpl).not.toHaveBeenCalled();
     expect(await readdir(options.cwd)).toEqual([]);
   });
+
+  it.each([
+    [["--size", "2048x2049"], /--size requires auto or multiples of 16/],
+    [["--compression", "101"], /--compression requires an integer from 0 to 100/],
+    [["--compression", "abc"], /--compression requires an integer from 0 to 100/],
+    [["--compression", "50"], /--compression requires jpeg or webp/],
+    [
+      ["--background", "transparent", "--format", "jpeg"],
+      /--background transparent requires --format png or webp/,
+    ],
+  ])("explains invalid image settings before paid requests: %s", async (controls, message) => {
+    const options = await fixture();
+    await expect(runToolCommand([...imageArgs, ...controls], options)).rejects.toThrow(message);
+    expect(options.fetchImpl).not.toHaveBeenCalled();
+    expect(await readdir(options.cwd)).toEqual([]);
+  });
+
+  it.each(["not json", JSON.stringify({ data: [{}] })])(
+    "explains malformed provider responses without schema internals",
+    async (body) => {
+      const options = await fixture();
+      options.fetchImpl.mockResolvedValue(new Response(body));
+      await expect(runToolCommand(imageArgs, options)).rejects.toThrow(
+        /OpenAI image response.*(?:not valid JSON|missing required fields).*retained artifacts:.*another charge/,
+      );
+      expect(options.fetchImpl).toHaveBeenCalledTimes(1);
+      expect(options.stdout).not.toHaveBeenCalled();
+      await expect(stat(join(options.cwd, "image.png"))).rejects.toThrow();
+    },
+  );
 
   it("does not retry failures or publish refusals and cannot clobber a concurrently created output", async () => {
     const options = await fixture();
@@ -410,7 +485,9 @@ describe("image generation CLI", () => {
       await writeFile(join(options.cwd, "image.png"), "other writer");
       return Response.json({ data: [{ b64_json: (await png()).toString("base64") }] });
     });
-    await expect(runToolCommand(imageArgs, options)).rejects.toThrow("artifacts:");
+    await expect(runToolCommand(imageArgs, options)).rejects.toThrow(
+      /cannot publish output: path already exists.*completed artifact retained.*image.png.parts.*instead of generating again.*another charge/,
+    );
     expect(await readFile(join(options.cwd, "image.png"), "utf8")).toBe("other writer");
     expect(await stat(join(options.cwd, "image.png.parts", "image.png"))).toBeDefined();
     expect(options.fetchImpl).toHaveBeenCalledTimes(1);
@@ -527,6 +604,55 @@ describe("speech generation CLI", () => {
     expect(await readdir(options.cwd)).toEqual(["script.json"]);
   });
 
+  it.each([
+    ["{broken", /--input script.*not valid JSON/],
+    [JSON.stringify({ voices: {}, chunks: [] }), /chunks: must contain at least 1 item/],
+    [
+      JSON.stringify({ voices: { host: "voice" }, chunks: [[{ speaker: "host" }]] }),
+      /chunk 1, turn 1, text: expected string/,
+    ],
+    [
+      JSON.stringify({ voices: { host: "voice" }, chunks: [[{ speaker: "host", text: " " }]] }),
+      /chunk 1, turn 1, text: text must not be blank/,
+    ],
+  ])("identifies invalid script locations before requests", async (text, message) => {
+    const options = await fixture();
+    await writeFile(join(options.cwd, "script.json"), text);
+    await expect(runToolCommand(speechArgs, options)).rejects.toThrow(message);
+    expect(options.fetchImpl).not.toHaveBeenCalled();
+    expect(await readdir(options.cwd)).toEqual(["script.json"]);
+  });
+
+  it("points to the completed WAV when another writer creates the output", async () => {
+    const options = await fixture();
+    await script(options, [[{ speaker: "host", text: "hello" }]]);
+    options.fetchImpl.mockImplementation(async () => {
+      await writeFile(join(options.cwd, "speech.wav"), "other writer");
+      return pcmResponse([42], "first");
+    });
+    await expect(runToolCommand(speechArgs, options)).rejects.toThrow(
+      /cannot publish output.*completed artifact retained.*assembled.wav.*instead of generating again/,
+    );
+    expect(await readFile(join(options.cwd, "speech.wav"), "utf8")).toBe("other writer");
+    expect(
+      (await readFile(join(options.cwd, "speech.wav.parts", "assembled.wav")))
+        .subarray(0, 4)
+        .toString(),
+    ).toBe("RIFF");
+    expect(options.fetchImpl).toHaveBeenCalledTimes(1);
+    expect(options.stdout).not.toHaveBeenCalled();
+  });
+
+  it("explains malformed voice listings without emitting invalid JSON lines", async () => {
+    const options = await fixture();
+    options.fetchImpl.mockResolvedValue(Response.json({ voices: [{}] }));
+    await expect(runToolCommand(["speech-generate", "--list-voices"], options)).rejects.toThrow(
+      /ElevenLabs voice-list response.*missing required fields/,
+    );
+    expect(options.stdout).not.toHaveBeenCalled();
+    expect(options.fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
   it("stitches only the last three completed requests and counts Unicode code points", async () => {
     const options = await fixture();
     await script(
@@ -593,7 +719,7 @@ describe("speech generation CLI", () => {
       .mockResolvedValueOnce(pcmResponse([42], "first"))
       .mockResolvedValueOnce(new Response("error", { status: 503 }));
     await expect(runToolCommand(speechArgs, options)).rejects.toThrow(
-      "completed batches and manifest retained",
+      /requesting batch 2 of 2.*retained artifacts:.*another charge/,
     );
     expect(options.fetchImpl).toHaveBeenCalledTimes(2);
     await expect(stat(join(options.cwd, "speech.wav"))).rejects.toThrow();
@@ -626,7 +752,9 @@ describe("speech generation CLI", () => {
         { headers: { "request-id": "interrupted", "character-cost": "83" } },
       ),
     );
-    await expect(runToolCommand(speechArgs, options)).rejects.toThrow();
+    await expect(runToolCommand(speechArgs, options)).rejects.toThrow(
+      /saving batch 1 of 1.*connection lost.*do not reuse .partial files.*another charge/,
+    );
     await expect(stat(join(options.cwd, "speech.wav"))).rejects.toThrow();
     await expect(stat(join(options.cwd, "speech.wav.parts", "batch-0001.pcm"))).rejects.toThrow();
     const manifest = JSON.parse(

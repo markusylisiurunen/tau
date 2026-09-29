@@ -96,7 +96,7 @@ The output's parent directory must exist. Neither the output nor `<output>.parts
 
 Original bytes and usage remain available if conversion fails. Conversion may discard embedded metadata; use the original when provenance matters.
 
-Failures exit nonzero and report the retained artifact directory when generation has started. Requests are not automatically retried because a failed request may already have incurred a charge.
+Failures exit nonzero and identify the invalid option or failed processing stage. Existing output or artifact paths require a fresh `--output` path; preserve retained recovery artifacts. Once generation starts, errors report the retained directory, which may be empty or incomplete. If final publication fails, the error points to the completed image to copy to a fresh path without generating again. Requests are not automatically retried because a failed request may already have incurred a charge; another generation request may incur another charge.
 
 ## Approximate cost
 

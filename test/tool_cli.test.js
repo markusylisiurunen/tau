@@ -123,10 +123,64 @@ describe("pdf-unpack", () => {
           spawnImpl: createRenderSpawnMock([{ width: 400, height: 300 }]),
         }),
       ).rejects.toMatchObject({
-        message: "pdf-unpack failed: Service unavailable.",
+        message: expect.stringMatching(
+          /pdf-unpack failed while requesting OCR: Service unavailable.*partial local output was removed.*another OCR request may incur another charge/,
+        ),
         helpPrinter: undefined,
       });
 
+      await expect(access(outputDir)).rejects.toThrow();
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("explains output preparation failures without starting OCR", async () => {
+    const fixture = await createFixture();
+    const ocrImpl = vi.fn();
+    try {
+      await expect(
+        runPdfUnpackCommand([fixture.inputPdfPath], {
+          config: { apiKeys: { mistral: "mistral-key" } },
+          env: {},
+          spawnImpl: createRenderSpawnMock([]),
+          mkdtempImpl: async () => {
+            throw Object.assign(new Error("EACCES"), { code: "EACCES", path: fixture.root });
+          },
+          ocrImpl,
+        }),
+      ).rejects.toThrow(
+        /creating the output directory: permission denied.*check file and directory permissions.*no OCR request was sent/,
+      );
+      expect(ocrImpl).not.toHaveBeenCalled();
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("reports rendering failures and removed artifacts after OCR", async () => {
+    const fixture = await createFixture();
+    const outputDir = join(fixture.root, "output");
+    const ocrImpl = vi.fn(async () => ({ pages: [] }));
+    try {
+      await expect(
+        runPdfUnpackCommand([fixture.inputPdfPath], {
+          config: { apiKeys: { mistral: "mistral-key" } },
+          env: {},
+          mkdtempImpl: async () => {
+            await mkdir(outputDir);
+            return outputDir;
+          },
+          ocrImpl,
+          spawnImpl: async (_command, args) =>
+            args[0] === "-v"
+              ? createSpawnResult()
+              : { ...createSpawnResult(), exitCode: 1, stderr: "damaged PDF" },
+        }),
+      ).rejects.toThrow(
+        /rendering PDF pages with pdftoppm.*damaged PDF.*no local artifacts were retained.*another charge/,
+      );
+      expect(ocrImpl).toHaveBeenCalledTimes(1);
       await expect(access(outputDir)).rejects.toThrow();
     } finally {
       await fixture.cleanup();

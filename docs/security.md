@@ -104,13 +104,23 @@ The TUI's built-in diff review tool is also a client-local process.
 
 ## Use code mode as a capability boundary
 
-The generated JavaScript used by `web`, `history`, `nook`, and code-mode client tools runs in Tau's bounded worker runtime. It receives only a declared API, `docs`, console output, live `Date`, `Math.random()`, and, when configured, agent-scoped UTF-8 scratch files. Generated code has no direct imports, process, environment, credentials, timers, `fetch`, or arbitrary network access.
+The generated JavaScript used by `web`, `history`, `nook`, `mcp`, and code-mode client tools runs in Tau's bounded worker runtime. It receives only a declared API, `docs`, console output, the asynchronous `image(block)` output helper, live `Date`, `Math.random()`, and, when configured, agent-scoped UTF-8 scratch files. Generated code has no direct imports, process, environment, credentials, timers, `fetch`, or arbitrary network access.
 
 API handlers run outside that worker and retain the authority deliberately exposed by the tool. The boundary therefore limits generated code to declared capabilities, but it does not make an overpowered API safe. Tool authors should validate every argument, expose narrow operations, keep credentials in the parent, enforce cancellation, and avoid returning secrets.
 
 Scratch files live in a private execution-environment temporary directory derived from the agent id. They are shared across code-mode tools for that agent, are not persisted in the session snapshot, and are not a durable secret store. Their limits and temporary lifetime are described in [tools](tools.md).
 
 The `history` code-mode API is read-only, but it can see transcripts across repositories and execution environments in the configured collection. Its agent policy requires a direct user or active-instruction request before use. That policy does not replace access control on the history service.
+
+## Trust MCP servers
+
+MCP server definitions are accepted only from the host's global configuration. A project cannot introduce a host command through `mcpServers`. MCP capabilities apply to all sessions on that host whose persona allows `mcp`; they are not isolated per repository or client.
+
+A stdio MCP server is trusted host code. It runs outside the code-mode sandbox with the host account's filesystem and process permissions and full inherited environment, including credentials. Review executables and arguments before configuring them. HTTP servers receive configured headers and the arguments sent to their tools. Use HTTPS for remote services and grant only the access needed.
+
+MCP does not add a confirmation layer. Tools can mutate external systems or host resources immediately. Interrupting a call cannot undo a completed effect, and an unknown outcome does not make retrying a mutation safe. Server descriptions, instructions, annotations, and results are untrusted data. Annotations such as `readOnlyHint` are not enforced permissions.
+
+The execution environment does not sandbox a host-run MCP server. A server that exposes host files or commands gives the agent that host authority even when Bash runs in a remote sandbox. Disable `mcp` in the persona or disable the server if that authority is inappropriate. Connections and credentials stay outside the generated JavaScript, but the configured server remains responsible for what its tools return.
 
 ## Protect remote session transports
 

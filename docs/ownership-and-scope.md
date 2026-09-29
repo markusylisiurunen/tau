@@ -16,6 +16,8 @@ The **host** creates, observes, persists, and recovers sessions. It owns model c
 
 The host's home owns data such as session snapshots, authentication storage, usage logs, and the local history database. Use Tau commands and session operations to manage these stores rather than editing their files directly.
 
+MCP connections are host-owned. Configure servers on the host; stdio servers run there, with host credentials and host resource access, not in the session execution environment.
+
 The intrinsic `tau_docs` tool is also host-owned. It reads documentation packaged with the installed host version.
 
 ### Execution environment

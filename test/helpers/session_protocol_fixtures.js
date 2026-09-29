@@ -288,3 +288,12 @@ function addMissingMessageDefaults(message) {
     ...message,
   };
 }
+
+export function createProtocolImage(overrides = {}) {
+  return {
+    type: "image",
+    mimeType: "image/png",
+    data: "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEUlEQVQImWMQMgkTMgljgFAAEA4CcV2GZ44AAAAASUVORK5CYII=",
+    ...overrides,
+  };
+}

@@ -44,7 +44,8 @@ export const NOOK_TOOL: Tool = {
   parameters: Type.Object(
     {
       code: Type.String({
-        description: "JavaScript source to execute. Use console output to return information.",
+        description:
+          "JavaScript source to execute. Use console output for text and await image(block) to return images.",
       }),
     },
     { additionalProperties: false },

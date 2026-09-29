@@ -3,6 +3,7 @@ import { parseToolRunPresentation } from "../src/core/tools/presentation.ts";
 import { HOST_TOOL_NAMES } from "../src/core/tools/tool_names.ts";
 import { ClientToolBroker } from "../src/host/client_tool_broker.ts";
 import { SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES } from "../src/protocol/session_protocol.ts";
+import { createProtocolImage } from "./helpers/session_protocol_fixtures.js";
 
 function createToolCall(args = {}) {
   return {
@@ -83,7 +84,7 @@ describe("ClientToolBroker", () => {
         void broker.ack(message.sessionId, message.callId, { subject: "choice a" }).then(() => {
           broker.result(message.sessionId, message.callId, {
             ok: true,
-            content,
+            content: [{ type: "text", text: content }, createProtocolImage()],
             presentation: { subject: "choice a" },
           });
         });
@@ -95,7 +96,11 @@ describe("ClientToolBroker", () => {
     const definition = broker.getToolDefinitions("session-1")[0];
     const result = await runTool(definition, createToolCall({ choice: "a" }));
 
-    expect(result.toolResult.content[0].text).toBe(content);
+    expect(result.toolResult.content).toEqual([
+      { type: "text", text: content },
+      createProtocolImage(),
+    ]);
+    expect(JSON.stringify(result.activities)).not.toContain(createProtocolImage().data);
     expect(result.activities[0]).toMatchObject({
       type: "tool_call_started",
       presentation: {
@@ -140,7 +145,10 @@ describe("ClientToolBroker", () => {
       ],
       sendCall: (message) => {
         void broker.ack(message.sessionId, message.callId, { subject: "empty choice" }).then(() => {
-          broker.result(message.sessionId, message.callId, { ok: true, content: "" });
+          broker.result(message.sessionId, message.callId, {
+            ok: true,
+            content: [{ type: "text", text: "" }],
+          });
         });
       },
       sendCancel: vi.fn(),
@@ -170,7 +178,7 @@ describe("ClientToolBroker", () => {
         void broker.ack(message.sessionId, message.callId).then(() => {
           broker.result(message.sessionId, message.callId, {
             ok: true,
-            content: "hidden result",
+            content: [{ type: "text", text: "hidden result" }],
             presentation: { subject: "local_picker", details: [], metadata: [] },
           });
         });
@@ -217,7 +225,7 @@ describe("ClientToolBroker", () => {
         void broker.ack(message.sessionId, message.callId, presentation).then(() => {
           broker.result(message.sessionId, message.callId, {
             ok: true,
-            content: "result",
+            content: [{ type: "text", text: "result" }],
             presentation,
           });
         });
@@ -257,7 +265,10 @@ describe("ClientToolBroker", () => {
       ],
       sendCall: (message) => {
         void broker.ack(message.sessionId, message.callId, presentation).then(() => {
-          broker.result(message.sessionId, message.callId, { ok: true, content: "result" });
+          broker.result(message.sessionId, message.callId, {
+            ok: true,
+            content: [{ type: "text", text: "result" }],
+          });
         });
       },
       sendCancel: vi.fn(),
@@ -315,7 +326,7 @@ describe("ClientToolBroker", () => {
     expect(
       broker.result(callMessage.sessionId, callMessage.callId, {
         ok: true,
-        content: "too early",
+        content: [{ type: "text", text: "too early" }],
       }),
     ).toBe(false);
 
@@ -324,7 +335,7 @@ describe("ClientToolBroker", () => {
     expect(
       broker.result(callMessage.sessionId, callMessage.callId, {
         ok: true,
-        content: "accepted",
+        content: [{ type: "text", text: "accepted" }],
       }),
     ).toBe(true);
 

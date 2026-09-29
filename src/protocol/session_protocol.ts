@@ -1,5 +1,6 @@
 import type {
   AssistantMessage,
+  ImageContent,
   Message,
   TextContent,
   ThinkingContent,
@@ -7,9 +8,13 @@ import type {
   ToolCall,
 } from "@earendil-works/pi-ai";
 import { type ZodError, z } from "zod";
+import { MODEL_IMAGE_MAX_BYTES, SUPPORTED_IMAGE_TYPES } from "../core/utils/model_image.js";
 import { type IntermediateSystemMessage, isIntermediateSystemMessage } from "./system_message.js";
 
-export const SESSION_PROTOCOL_VERSION = 14 as const;
+export const SESSION_PROTOCOL_VERSION = 15 as const;
+export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_IMAGES = 4;
+export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_CONTENT_BLOCKS = 1024;
+export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_IMAGE_BYTES = MODEL_IMAGE_MAX_BYTES;
 export const SESSION_PROTOCOL_MAX_EXEC_CAPTURE_BYTES = 24 * 1024 * 1024;
 export const SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES = 16 * 1024 * 1024;
 export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES = 1024 * 1024;
@@ -255,20 +260,20 @@ export type SessionProtocolClientToolAckParams = SessionProtocolSessionIdParams 
   callId: string;
   presentation?: SessionProtocolClientToolPresentation;
 };
+export type SessionProtocolClientToolResult =
+  | {
+      ok: true;
+      content: Array<TextContent | ImageContent>;
+      presentation?: SessionProtocolClientToolPresentation;
+    }
+  | {
+      ok: false;
+      error: string;
+      presentation?: SessionProtocolClientToolPresentation;
+    };
 export type SessionProtocolClientToolResultParams = SessionProtocolSessionIdParams & {
   callId: string;
-} & (
-    | {
-        ok: true;
-        content: string;
-        presentation?: SessionProtocolClientToolPresentation;
-      }
-    | {
-        ok: false;
-        error: string;
-        presentation?: SessionProtocolClientToolPresentation;
-      }
-  );
+} & SessionProtocolClientToolResult;
 
 export type SessionProtocolParamsByMethod = {
   initialize: SessionProtocolInitializeParams;
@@ -1973,13 +1978,47 @@ const sessionProtocolClientToolAckParamsSchema = z
   })
   .strip();
 
+const sessionProtocolClientToolContentSchema = z
+  .array(
+    z.union([
+      modelTextContentSchema.strict(),
+      z
+        .object({
+          type: z.literal("image"),
+          data: z
+            .string()
+            .min(1)
+            .max(4 * Math.ceil(SESSION_PROTOCOL_MAX_CLIENT_TOOL_IMAGE_BYTES / 3))
+            .refine(isValidBase64, "must be valid base64")
+            .refine(
+              (value) =>
+                decodedBase64ByteLength(value) <= SESSION_PROTOCOL_MAX_CLIENT_TOOL_IMAGE_BYTES,
+            ),
+          mimeType: z.enum(SUPPORTED_IMAGE_TYPES),
+        })
+        .strict(),
+    ]),
+  )
+  .max(SESSION_PROTOCOL_MAX_CLIENT_TOOL_CONTENT_BLOCKS)
+  .refine(
+    (content) =>
+      content.filter((part) => part.type === "image").length <=
+      SESSION_PROTOCOL_MAX_CLIENT_TOOL_IMAGES,
+  );
+
+export function isSessionProtocolClientToolContent(
+  value: unknown,
+): value is Array<TextContent | ImageContent> {
+  return sessionProtocolClientToolContentSchema.safeParse(value).success;
+}
+
 const sessionProtocolClientToolResultParamsSchema = z.discriminatedUnion("ok", [
   z
     .object({
       sessionId: nonEmptyStringSchema,
       callId: nonEmptyStringSchema,
       ok: z.literal(true),
-      content: z.string(),
+      content: sessionProtocolClientToolContentSchema,
       presentation: sessionProtocolClientToolPresentationSchema.optional(),
     })
     .strip(),

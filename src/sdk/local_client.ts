@@ -85,6 +85,7 @@ async function createInProcessSdkHost(
       reportReplicationFailure: options.onDiagnostic,
     }),
     historyRemote: resolveHistoryRemoteTarget(config),
+    mcpServers: config.mcpServers,
     ...(onShutdown ? { onShutdown } : {}),
     executionEnvironmentResolver,
     includeAgentContext: !options.noAgentContextFiles,

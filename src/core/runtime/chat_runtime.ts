@@ -15,6 +15,7 @@ import {
 import type { AgentEventSink } from "../agent/events.js";
 import type { Config } from "../config/index.js";
 import type { HistoryQuery } from "../history/types.js";
+import type { McpManager } from "../mcp/manager.js";
 import type { ModelResolver } from "../models/catalog.js";
 import { createAutoCompactionArchiver } from "../session/auto_compaction_archive.js";
 import { buildGoalPolicy, GOAL_TURN_USER_METADATA } from "../session/goal.js";
@@ -59,6 +60,7 @@ export type CreateChatRuntimeOptions = {
   subagentEventSink: (event: SubagentEvent) => void | Promise<void>;
   goalManager: GoalManager;
   history: HistoryQuery;
+  mcp?: McpManager;
   recordUsage?: UsageRecorder;
   initialPromptComposition?: SessionPromptComposition;
   config: Config;
@@ -82,6 +84,7 @@ export class ChatRuntime {
   private readonly resolveSubagentPrompt?: ResolveSubagentPrompt;
   private readonly goalManager: GoalManager;
   private readonly historyQuery: HistoryQuery;
+  private readonly mcp?: McpManager;
   private latestPromptComposition: SessionPromptComposition;
 
   static create(options: CreateChatRuntimeOptions): ChatRuntime {
@@ -118,6 +121,7 @@ export class ChatRuntime {
     this.resolveSubagentPrompt = options.resolveSubagentPrompt;
     this.goalManager = options.goalManager;
     this.historyQuery = options.history;
+    this.mcp = options.mcp;
     this.latestPromptComposition = composition;
     this.supervisor = new AgentSupervisor({
       onEvent: options.subagentEventSink,
@@ -338,6 +342,7 @@ export class ChatRuntime {
       goalManager: this.goalManager,
       bashJobs: this.bashJobs,
       history: this.historyQuery,
+      mcp: this.mcp,
       ...(this.resolveSubagentPrompt ? { resolveSubagentPrompt: this.resolveSubagentPrompt } : {}),
     });
     const clientTools = this.clientTools?.() ?? [];

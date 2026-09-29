@@ -227,7 +227,7 @@ class TauSdkClientImpl implements TauSdkClient {
         sessionId: message.sessionId,
         callId: message.callId,
         ok: true,
-        content,
+        content: typeof content === "string" ? [{ type: "text", text: content }] : content,
         ...(terminalPresentation === undefined ? {} : { presentation: terminalPresentation }),
       });
     } catch (error) {

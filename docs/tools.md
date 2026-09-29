@@ -40,6 +40,7 @@ view_image
 web
 nook
 history
+mcp
 spawn_agent
 send_input_to_agent
 wait_for_agents
@@ -47,7 +48,7 @@ list_agents
 interrupt_agent
 ```
 
-When a custom persona extends another persona and omits `tools`, it inherits the base persona's list. A non-extending custom persona that omits `tools` enables `bash`, `write`, `edit`, `view_image`, `web`, `nook`, and `history`. It also enables the five subagent-management tools. Built-in personas enable the same base and subagent tool sets.
+When a custom persona extends another persona and omits `tools`, it inherits the base persona's list. A non-extending custom persona that omits `tools` enables `bash`, `write`, `edit`, `view_image`, `web`, `nook`, `history`, and `mcp`. It also enables the five subagent-management tools. Built-in personas enable the same base and subagent tool sets.
 
 An empty list disables every persona-controlled host tool:
 
@@ -147,7 +148,7 @@ Each guide covers setup, input, examples, outputs, and failure behavior. Use `ta
 
 ## Code-mode service tools
 
-`web`, `history`, and `nook` each run a one-shot JavaScript program in Tau's restricted code-mode runtime. They intentionally disclose their exact API at use time rather than embedding signatures in this page.
+`web`, `history`, `nook`, and `mcp` each run a one-shot JavaScript program in Tau's restricted code-mode runtime. They intentionally disclose their exact API at use time rather than embedding signatures in this page.
 
 Tau exposes each service tool with agent-facing guidance that requires its documentation to be visible before API use. When the documentation is absent, the first useful call is a documentation-only program:
 
@@ -155,9 +156,11 @@ Tau exposes each service tool with agent-facing guidance that requires its docum
 console.log(docs);
 ```
 
-After reading that result, the agent uses the documented API in later calls. While the documentation remains visible, it is reused rather than reloaded. The guidance prohibits guessed signatures and signatures copied from another code-mode tool. Program return values are ignored; only console output is returned.
+After reading that result, the agent uses the documented API in later calls. While the documentation remains visible, it is reused rather than reloaded. The guidance prohibits guessed signatures and signatures copied from another code-mode tool. Program return values are ignored; console text and images explicitly forwarded with `await image(block)` enter the model-facing result.
 
 Code-mode programs have no direct process, environment, credential, import, timer, network, or `fetch` access. They can call only the named API and use agent-scoped scratch files exposed by the runtime. Calls default to a 60-second deadline, allow at most 128 API requests with no more than eight unresolved at once, and limit each serialized request or response to 1 MiB. Undefined object properties are omitted from API arguments; undefined arguments and array entries are invalid. Console output is middle-truncated above roughly 8,192 estimated tokens.
+
+`await image({ type: "image", data, mimeType })` forwards a base64 image without files. Calls must be awaited before the program exits. JPEG, PNG, and WebP bytes must match the declared MIME type and fit the 1 MiB JSON bridge limit. Source images are limited to 40 megapixels; each program may forward four images. Images are resized or re-encoded to fit within 4,096 pixels per dimension and 3.5 MiB each. Adjacent console writes form one text block; awaited images separate the text before and after them. Text truncation keeps images in place. Invalid blocks reject and can be caught. Built-in tools retain valid images if the program later fails.
 
 Scratch files are real UTF-8 files in an execution-environment temporary directory shared by code-mode tools for the same agent. Writes are limited to 128 regular files and 64 MiB total. Scratch state is not stored in the session snapshot. The progressively disclosed documentation gives the exact file API.
 
@@ -178,6 +181,18 @@ The effective history query may be machine-local or backed by a configured remot
 `nook` manages the configured Nook static mini-app platform. It is available when the main persona lists `nook` and Nook is configured. Subagents inherit it under the same conditions.
 
 The tool is intended for explicit requests to inspect or manage Nook, publish a static artifact or mini-app, or work with Nook KV. Once the built-in documentation is visible, app-authoring work requires a second separate documentation-only call that prints the Nook authoring skill. The agent reads that guide before creating or modifying app files. Nook setup and platform behavior are covered in [Nook](nook.md).
+
+### MCP
+
+`mcp` discovers and calls tools offered by host-configured Model Context Protocol servers. It is available to a main-session persona that allows `mcp` when the host has at least one enabled server. Built-in personas allow it. Subagents and ephemeral threads do not receive it.
+
+Servers can use stdio or streamable HTTP. Stdio commands run on the host machine, not in the session execution environment, and inherit the host process environment. HTTP requests use host credentials. A server's files, commands, and working directory are not automatically the agent's workspace.
+
+The documented API lists servers, searches and pages through tools, inspects input/output schemas, and calls tools with structured arguments. Scripts receive MCP content blocks and structured results; only console output and explicitly forwarded images enter model context. Results with `isError: true` are data; protocol and connection failures throw. Private `_meta` is omitted.
+
+Connections start lazily, are shared by sessions on the host, and close at host shutdown. A disconnected server or expired HTTP session reconnects on a later request. Calls are not automatically retried, because a mutation may have already happened. Tool-list-change notifications invalidate cached discovery metadata. MCP connections and in-flight calls are not recovered after a host restart.
+
+Configure servers in the host's global configuration and restart the host to apply changes. See [configuration reference](config-reference.md#mcpservers) and [security](security.md#trust-mcp-servers).
 
 ## Subagent tool eligibility
 

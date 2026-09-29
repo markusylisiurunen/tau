@@ -21,6 +21,7 @@ import type {
   SessionProtocolClientToolCancelMessage,
   SessionProtocolClientToolDefinition,
   SessionProtocolClientToolPresentation,
+  SessionProtocolClientToolResult,
 } from "../protocol/session_protocol.js";
 import { SESSION_PROTOCOL_VERSION } from "../protocol/session_protocol.js";
 
@@ -154,13 +155,7 @@ export class ClientToolBroker {
     }
   }
 
-  result(
-    sessionId: string,
-    callId: string,
-    result:
-      | { ok: true; content: string; presentation?: SessionProtocolClientToolPresentation }
-      | { ok: false; error: string; presentation?: SessionProtocolClientToolPresentation },
-  ): boolean {
+  result(sessionId: string, callId: string, result: SessionProtocolClientToolResult): boolean {
     const pending = this.pendingCalls.get(callId);
     if (
       !pending ||
@@ -172,11 +167,7 @@ export class ClientToolBroker {
     }
 
     if (result.ok) {
-      this.complete(
-        callId,
-        createTextToolOutcome(result.content, "succeeded"),
-        result.presentation,
-      );
+      this.complete(callId, { content: result.content, outcome: "succeeded" }, result.presentation);
     } else {
       this.complete(callId, createTextToolOutcome(result.error, "failed"), result.presentation);
     }

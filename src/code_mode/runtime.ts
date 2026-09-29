@@ -1,4 +1,4 @@
-import stripAnsi from "strip-ansi";
+import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import {
   CODE_MODE_MAX_BRIDGE_PAYLOAD_BYTES,
   CODE_MODE_MAX_BRIDGE_REQUESTS,
@@ -7,6 +7,7 @@ import {
 } from "../core/tools/code_mode_worker.js";
 import { bytesToTokens } from "../core/utils/token.js";
 import { formatBytes, truncateForTokens } from "../core/utils/truncate.js";
+import { SESSION_PROTOCOL_MAX_CLIENT_TOOL_IMAGES } from "../protocol/session_protocol.js";
 import type { TauSdkClientToolExecutionEnvironment } from "../sdk/types.js";
 import {
   createTauCodeModeFilesApi,
@@ -14,13 +15,20 @@ import {
   TAU_CODE_MODE_MAX_TOTAL_FILE_BYTES,
   type TauCodeModeFilesOptions,
 } from "./files.js";
+import { CODE_MODE_MAX_IMAGE_PIXELS, prepareCodeModeImage } from "./images.js";
+import { CodeModeOutput } from "./output.js";
 
 export const TAU_CODE_MODE_DEFAULT_TIMEOUT_MS = 60_000;
 export const TAU_CODE_MODE_MAX_OUTPUT_TOKENS = 8_192;
 
 const sandboxRunnerUrl = new URL("../core/static/code_mode/sandbox_runner.mjs", import.meta.url);
 const javascriptIdentifierPattern = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
-const reservedNames = new Set([...Object.getOwnPropertyNames(globalThis), "docs", "files"]);
+const reservedNames = new Set([
+  ...Object.getOwnPropertyNames(globalThis),
+  "docs",
+  "files",
+  "image",
+]);
 const unsafeApiKeys = new Set(["__proto__", "constructor", "prototype"]);
 
 export type TauCodeModeJsonValue =
@@ -104,7 +112,7 @@ export type ExecuteTauCodeModeOptions = TauCodeModeDefinition & {
 };
 
 export type TauCodeModeResult = {
-  content: string;
+  content: Array<TextContent | ImageContent>;
 };
 
 export type BuildTauCodeModeToolDescriptionOptions = {
@@ -181,7 +189,12 @@ export async function executeTauCodeMode(
 ): Promise<TauCodeModeResult> {
   const runtime = await runTauCodeMode(options);
   if (runtime.status === "succeeded") return runtime.result;
-  throw new Error(runtime.result.content);
+  throw new Error(
+    runtime.result.content
+      .filter((part): part is TextContent => part.type === "text")
+      .map((part) => part.text)
+      .join("\n"),
+  );
 }
 
 export async function runTauCodeMode(
@@ -205,6 +218,34 @@ export async function runTauCodeMode(
     ...(filesMethods.length > 0 ? [{ name: "files", methods: filesMethods }] : []),
   ];
   const methods = apis.flatMap((api) => api.methods);
+  const orderedOutput = new CodeModeOutput();
+  let imageCount = 0;
+  const imageMethodId = methods.length;
+  methods.push({
+    id: imageMethodId,
+    apiName: "image",
+    path: [],
+    handler: async (args, context) => {
+      if (args.length !== 1) throw new Error("image() expects exactly one image block.");
+      if (imageCount >= SESSION_PROTOCOL_MAX_CLIENT_TOOL_IMAGES) {
+        throw new Error(
+          `image() allows at most ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_IMAGES} images per program.`,
+        );
+      }
+      imageCount += 1;
+      const slot = orderedOutput.reserveImage();
+      try {
+        context.signal.throwIfAborted();
+        const prepared = await prepareCodeModeImage(args[0]);
+        context.signal.throwIfAborted();
+        slot.value = prepared;
+        return null;
+      } catch (error) {
+        imageCount -= 1;
+        throw error;
+      }
+    },
+  });
   const timeoutMs = options.timeoutMs ?? TAU_CODE_MODE_DEFAULT_TIMEOUT_MS;
   const invocation = options.invocation ?? null;
   const executionEnvironment = options.executionEnvironment ?? null;
@@ -223,6 +264,7 @@ export async function runTauCodeMode(
       workerData: {
         code: options.code,
         docs,
+        imageMethodId,
         apis: apis.map((api) => ({
           name: api.name,
           methods: api.methods.map(({ id, path }) => ({ id, path })),
@@ -230,6 +272,7 @@ export async function runTauCodeMode(
       },
       signal,
       timeoutMs,
+      onOutput: (text) => orderedOutput.appendText(text),
       handleRequest: async (request, requestSignal) => {
         const method = methods[request.methodId];
         if (!method) throw new Error("unsupported code-mode API method");
@@ -245,8 +288,9 @@ export async function runTauCodeMode(
   } catch (error) {
     const message = error instanceof Error ? error.stack || error.message : String(error);
     const output = `${message}\n`;
+    orderedOutput.appendText(output);
     execution = {
-      output,
+      output: orderedOutput.text,
       stdout: "",
       stderr: output,
       exitCode: 1,
@@ -258,7 +302,8 @@ export async function runTauCodeMode(
   }
   const durationMs = Math.max(0, Date.now() - startedAt);
   const status = getExecutionStatus(execution);
-  const output = appendTerminationNote(stripAnsi(execution.output), execution, timeoutMs);
+  const rawOutput = orderedOutput.text;
+  const output = appendTerminationNote(rawOutput, execution, timeoutMs);
   const projection = truncateForTokens(output, {
     maxTokens: TAU_CODE_MODE_MAX_OUTPUT_TOKENS,
     strategy: "middle",
@@ -280,8 +325,19 @@ export async function runTauCodeMode(
     } catch {}
   }
 
-  const result = {
-    content: formatResultContent({ execution, projection, persistedPath, status }),
+  const formatted = formatResultContent({ execution, projection, persistedPath, status });
+  const displayedText = projection.content.trimEnd();
+  const footer = displayedText
+    ? formatted.slice(displayedText.length)
+    : imageCount > 0 && status === "succeeded"
+      ? ""
+      : formatted;
+  const result: TauCodeModeResult = {
+    content: orderedOutput.project({
+      terminationNote: output.slice(rawOutput.length),
+      projection,
+      footer,
+    }),
   };
   return {
     result,
@@ -416,11 +472,12 @@ function buildRuntimeDocumentation(
       ? ["- `files`: shared UTF-8 scratch files for this agent, documented below."]
       : []),
     "- `docs`: this document.",
-    "- `console`: program output through `debug`, `error`, `info`, `log`, and `warn`.",
+    "- `console`: text output through `debug`, `error`, `info`, `log`, and `warn`.",
+    "- `await image(block)`: explicitly forwards an image block to the model, documented below.",
     "- `Date`: standard date handling with live current-time access.",
     "- `Math`: standard math operations, including `Math.random()`.",
     "",
-    "Top-level `await` is supported. The program return value is ignored; only console output is returned.",
+    "Top-level `await` is supported. The program return value is ignored; console output and explicitly forwarded images are returned.",
     hasFiles
       ? "Generated code has no direct process, environment, network, credential, import, timer, or `fetch` access. Filesystem access is limited to the `files` scratch API."
       : "Generated code has no direct filesystem, process, environment, network, credential, import, timer, or `fetch` access.",
@@ -450,6 +507,13 @@ function buildRuntimeDocumentation(
     "## Output",
     "",
     `Output is middle-truncated above roughly ${TAU_CODE_MODE_MAX_OUTPUT_TOKENS.toLocaleString("en-US")} tokens. Print only information needed for the task.`,
+    "",
+    "## Images",
+    "",
+    'Use `await image({ type: "image", data, mimeType })` to forward a base64-encoded image block returned by any API. Images are never forwarded automatically. Do not print base64 data.',
+    "Await each call so validation and preparation finish before the program exits. Invalid blocks reject and can be caught. No files are created.",
+    `Supported MIME types are image/jpeg, image/png, and image/webp. Blocks must fit the JSON bridge limit, and source images cannot exceed ${CODE_MODE_MAX_IMAGE_PIXELS / 1_000_000} megapixels. At most ${SESSION_PROTOCOL_MAX_CLIENT_TOOL_IMAGES} images can be forwarded per program. Images are validated against their actual bytes and resized or re-encoded to fit the model's image limits.`,
+    "Console text and images are returned as ordered content blocks. Adjacent console writes form one text block; each awaited image stays between the text printed before and after it. Text truncation keeps images in their original positions. Complete the program successfully to ensure all outputs are returned.",
     "",
     documentation.trim(),
   ].join("\n");

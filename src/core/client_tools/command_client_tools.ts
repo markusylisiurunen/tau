@@ -275,10 +275,10 @@ function prepareCommandClientToolCall(
         );
       }
       if (!ready) {
-        throw new Error(`Command client tool '${config.name}' returned no version-4 ready frame.`);
+        throw new Error(`Command client tool '${config.name}' returned no version-5 ready frame.`);
       }
       if (finalResult === undefined) {
-        throw new Error(`Command client tool '${config.name}' returned no version-4 result frame.`);
+        throw new Error(`Command client tool '${config.name}' returned no version-5 result frame.`);
       }
 
       return finalResult;

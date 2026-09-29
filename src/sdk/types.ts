@@ -1,3 +1,4 @@
+import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import type {
   SessionProtocolAutocompletePathsResult,
   SessionProtocolCancelPendingMessagesResult,
@@ -116,7 +117,7 @@ export type TauSdkClientToolResult =
   | string
   | {
       ok?: true;
-      content: string;
+      content: string | Array<TextContent | ImageContent>;
       presentation?: TauClientToolPresentation;
     }
   | {

@@ -19,6 +19,7 @@ import {
   selectCommandClientTools,
 } from "./client_tools.js";
 import type { ConfigDeps } from "./deps.js";
+import { type McpServersConfig, parseMcpServersConfig, resolveMcpServersConfig } from "./mcp.js";
 import type { ConfigLevel } from "./paths.js";
 import { resolveConfigLevels } from "./paths.js";
 import { getVirtualConfigDefaults } from "./virtual_defaults.js";
@@ -38,6 +39,7 @@ export interface Config {
   flySprites?: FlySpritesConfig;
   nook?: NookConfig;
   history?: HistoryConfig;
+  mcpServers?: McpServersConfig;
 }
 
 export type FlySpritesApiConfig = {
@@ -404,6 +406,13 @@ function validateConfigData(
   } else {
     const historyResult = parseHistoryConfig(data.history, sourceLabel);
     assignParsedConfigValue(config, errors, "history", historyResult.config, historyResult.errors);
+  }
+
+  if (data.mcpServers !== undefined && options.scope !== "global") {
+    errors.push(`${sourceLabel}: 'mcpServers' may only be configured in the global config.`);
+  } else {
+    const mcpResult = parseMcpServersConfig(data.mcpServers, sourceLabel);
+    assignParsedConfigValue(config, errors, "mcpServers", mcpResult.config, mcpResult.errors);
   }
 
   return { config, errors };
@@ -791,6 +800,9 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
     }
     if (config.history !== undefined) {
       history = { ...config.history };
+    }
+    if (config.mcpServers !== undefined) {
+      merged.mcpServers = resolveMcpServersConfig(level, config.mcpServers);
     }
 
     if (config.defaultPersona !== undefined) {

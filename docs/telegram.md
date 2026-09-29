@@ -269,26 +269,20 @@ Tau keeps tool and lifecycle chatter quiet. It sends committed assistant text, i
 
 ## Attachments and audio
 
-Telegram accepts photos and documents identified as images, PDF, `.txt`, `.md`, `.json`, `.csv`, `.yaml`, or `.yml`. It downloads supported attachments immediately to a runner temporary directory and gives the agent the local path, MIME type, byte size, and caption.
+Telegram accepts arbitrary documents, photos, videos, animations, video notes, audio files, and voice notes. The agent receives execution-environment paths, sanitized filenames, MIME types, byte sizes, and captions. Receipt never executes files.
 
-Limits are:
+Limits are 32 attachments per turn, 20 MiB per file, and 100 MiB per turn. Downloads are bounded even without size metadata. Oversized or failed transfers are skipped with a warning.
 
-- at most 32 attachments per turn
-- at most 20 MiB per file
-- at most 100 MiB total per turn
+Uploads only queue files; captions are metadata. The next text or voice transcript submits or steers with one hidden `<system>` block per attachment. Only voice notes are automatically transcribed, up to 20 minutes. Audio-player files and audio documents arrive without transcription. Voice originals remain available even if transcription fails. DM and bot-triggering group transcripts are echoed before submission.
 
-An attachment-only DM queues files for the next text or voice/audio turn; it does not run the agent by itself. Unsupported, oversized, or failed downloads are skipped with a warning. Treat every attachment as untrusted input even though its path is local.
-
-The local execution environment can access these runner temporary paths. Pending attachments and group context are not snapshot data. Shutdown clears their queues, and startup removes stale `tau-telegram-attachments-*` directories.
-
-Telegram `voice` and `audio` messages up to 20 minutes long are downloaded and transcribed. Direct DM turns and bot-triggering group turns echo the transcript to the chat before submission so the sender can verify it.
+Files use native temporary directories in the execution environment; OS cleanup can invalidate their paths. Pending queues and group context clear on shutdown. File contents and metadata are untrusted.
 
 OpenAI is the default. Select Gemini with `speechToText.provider`. Runner credentials are:
 
 - Gemini: `GEMINI_API_KEY`, then `apiKeys.google`
 - OpenAI: `OPENAI_API_KEY`, then `apiKeys.openai`
 
-Gemini extracts spelling hints with Gemini 3.8 Flash and transcribes uploaded audio verbatim with `gemini-3.5-transcribe`, using English (`en-US`) and Finnish (`fi-FI`) hints. It attempts remote file deletion afterward. OpenAI normalizes downloaded audio with runner-side `ffmpeg` and uploads it to `gpt-transcribe`. Missing keys reject the audio. See [credentials](credentials.md).
+Gemini extracts spelling hints with Gemini 3.8 Flash and transcribes uploaded audio verbatim with `gemini-3.5-transcribe`, using English (`en-US`) and Finnish (`fi-FI`) hints. It attempts remote file deletion afterward. OpenAI normalizes downloaded audio with runner-side `ffmpeg` and uploads it to `gpt-transcribe`. Missing keys prevent transcription, not file delivery. See [credentials](credentials.md).
 
 `/tts_on` uses `gemini-3.8-flash`, `gemini-3.1-flash-tts-preview`, Despina, the Google key, and runner `ffmpeg` with Opus. Source and rewritten text each allow 10,000 Unicode characters; audio allows 32 MiB. Rewrite and job timeouts are one and five minutes. Jobs are ephemeral. Failure sends `voice response failed. please try again.` without affecting text; details stay in logs.
 

@@ -23,12 +23,13 @@ import type {
   SessionProtocolTurnRecord,
   SessionProtocolUnobserveResult,
 } from "../../protocol/session_protocol.js";
-import type { TauSdkClientTool } from "../../sdk/types.js";
+import type { TauSdkClientTool, TauSdkSessionExecOptions } from "../../sdk/types.js";
 import { TauSessionProtocolResponseError } from "../../transport/errors.js";
 import type { TelegramDirectoryProjectConfig, TelegramProjectConfig } from "../config/schema.js";
 import { extractAssistantText } from "../utils/messages.js";
 import { buildRepositoryAttribute, normalizeRepositoryReference } from "../utils/repository.js";
 import { formatTauUserText } from "../utils/user_metadata.js";
+import { storeTelegramAttachment } from "./attachments.js";
 import {
   cleanupWorkspacePath as cleanupWorkspacePathOnDisk,
   cleanupWorkspaceRootsOnStartup,
@@ -473,10 +474,7 @@ export type TelegramTauSession = {
   setReasoning(
     reasoning: SessionProtocolReasoningEffort,
   ): Promise<SessionProtocolSettingsUpdateResult>;
-  exec(
-    command: string,
-    options?: { cwd?: string; timeoutMs?: number },
-  ): Promise<SessionProtocolExecResult>;
+  exec(command: string, options?: TauSdkSessionExecOptions): Promise<SessionProtocolExecResult>;
   snapshot(): Promise<SessionProtocolSnapshot>;
   unobserve(): Promise<SessionProtocolUnobserveResult>;
 };
@@ -505,6 +503,12 @@ export type TelegramSessionManager = {
   getPendingTurnNotifications(sessionId: string): TelegramSessionTurnNotification[];
   acknowledgeTurnNotification(sessionId: string, historyEntryId: string): Promise<void>;
   getSessionSnapshot(sessionId: string): Promise<SessionProtocolSnapshot | undefined>;
+  storeAttachment(
+    sessionId: string,
+    fileName: string,
+    data: Buffer,
+    signal: AbortSignal,
+  ): Promise<string>;
   sendMessage(
     sessionId: string,
     text: string,
@@ -709,6 +713,19 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     return () => {
       this.listeners.delete(listener);
     };
+  }
+
+  async storeAttachment(
+    sessionId: string,
+    fileName: string,
+    data: Buffer,
+    signal: AbortSignal,
+  ): Promise<string> {
+    const entry = this.requireSession(sessionId);
+    if (!entry.tauSession) {
+      throw new TelegramSessionManagerError("not_ready", "session is still preparing");
+    }
+    return await storeTelegramAttachment(entry.tauSession, fileName, data, signal);
   }
 
   async sendMessage(
@@ -2387,6 +2404,16 @@ class ScopedTelegramSessionManager implements TelegramSessionManager {
   async getSessionSnapshot(sessionId: string): Promise<SessionProtocolSnapshot | undefined> {
     this.requireSession(sessionId);
     return await this.sessionManager.getSessionSnapshot(sessionId);
+  }
+
+  async storeAttachment(
+    sessionId: string,
+    fileName: string,
+    data: Buffer,
+    signal: AbortSignal,
+  ): Promise<string> {
+    this.requireSession(sessionId);
+    return await this.sessionManager.storeAttachment(sessionId, fileName, data, signal);
   }
 
   async sendMessage(

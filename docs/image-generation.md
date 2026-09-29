@@ -16,6 +16,10 @@ Google uses `GEMINI_API_KEY`, then `apiKeys.google`. OpenAI uses `OPENAI_API_KEY
 
 The output's parent directory must exist. Neither the output nor `<output>.parts` may already exist. On success, stdout is one JSON object with absolute `output` and `artifacts` paths and provider `usage` (or `null`). The `.parts` directory retains the original image and `manifest.json` with model and usage. The final output is published only after a complete image is saved, without replacing an existing path, including one created concurrently.
 
+Images are decoded before publication, with a 64 × 1024 × 1024-pixel decoding limit. Gemini PNG, JPEG, and WebP responses are normalized to PNG locally; the declared MIME type must match the detected encoding. OpenAI responses must match the explicitly requested encoding. OpenAI image bytes are preserved without re-encoding.
+
+For both providers, the original bytes are retained as `original.bin`, and the manifest's `source` records the original filename and declared/detected MIME types (`declaredMimeType` is `null` when the response does not declare one). These artifacts and usage remain available if image validation or conversion fails. Keep the original when provider metadata or provenance matters: local conversion does not preserve all embedded metadata.
+
 Failures exit nonzero and report the retained artifact directory when generation has started. Requests are not automatically retried: a timeout or broken connection may already have incurred a charge. Choose a fresh output path for another paid attempt. A provider refusal or incomplete response is not a successful image.
 
 ## Models and capabilities
@@ -42,9 +46,15 @@ OpenAI controls:
 
 Gemini's `--thinking minimal|high` is separate from OpenAI quality. There is no creativity slider, grounding, mask editing, provider conversation state, `--continue`, batch service, or `--n` option.
 
+### Transparency
+
+Google's [Gemini image-generation guide](https://ai.google.dev/gemini-api/docs/generate-content/image-generation#stylized_illustrations_and_stickers) states that transparent-background generation is not supported. Gemini's PNG output is an encoding choice, not a transparency feature: converting an opaque JPEG to PNG does not remove its background or create transparent pixels. Tau rejects `--background` for Gemini locally.
+
+For transparent assets, use either OpenAI 2.5 model with `--background transparent --format png` (or `webp`), as documented in the [OpenAI image-generation guide](https://developers.openai.com/api/docs/guides/image-generation#size-and-quality-options). JPEG cannot carry transparency. Tau forwards the background setting without imposing a minimum number of transparent pixels; a subject can fill the canvas. Inspect the generated image to assess transparency, cutout, and edge quality.
+
 ## Prompts and editing
 
-Supply exactly one of `--prompt` and `--prompt-file` (UTF-8). Repeat `--reference` for multiple PNG, JPEG, or WebP files. Order and original bytes are preserved, without resizing. OpenAI references use its native edit endpoint. Up to 16 references are accepted for OpenAI and 14 for Gemini; Flash Lite is not optimized for multiple references. Each reference is limited to 50 MB; Gemini's inline reference payload and prompt are limited to approximately 19 MB after base64 encoding.
+Supply exactly one of `--prompt` and `--prompt-file` (UTF-8). Repeat `--reference` for multiple PNG, JPEG, or WebP files. Order and original bytes are preserved, without resizing. OpenAI references use its native edit endpoint. Up to 16 references are accepted for OpenAI and 14 for Gemini; Flash Lite is not optimized for multiple references. Each reference is limited to 50 MB; Tau limits Gemini's complete serialized request to 19 MB, including the prompt, base64-encoded references, and JSON escaping.
 
 Create an asset:
 
@@ -87,4 +97,4 @@ Reattaching an output as a reference is a stateless edit, not provider-native co
 
 ## Approximate cost
 
-Illustrative USD image-output estimates: Flash Lite at 1K is about $0.034; Flash at 1K/2K/4K about $0.067/$0.101/$0.151; Pro at 1K–2K/4K about $0.134/$0.24. Input and text/thinking usage are additional. Both OpenAI 2.5 models charge about $0.03 per 1,000 image-output tokens, plus $0.008 per 1,000 image-input tokens and $0.005 per 1,000 text-input tokens. For example, a response using 2,000 image-output tokens costs about $0.06 for output alone; this is not a promise that a particular size or quality uses 2,000 tokens. Inspect reported usage for representative prompts. Variants multiply paid work; account pricing and actual usage determine the bill.
+Illustrative USD image-output estimates: Flash Lite at 1K is about $0.034; Flash at 1K/2K/4K about $0.067/$0.101/$0.151; Pro at 1K–2K/4K about $0.134/$0.24. Input and text/thinking usage are additional. Both OpenAI 2.5 models charge about $0.03 per 1,000 image-output tokens, plus $0.008 per 1,000 image-input tokens and $0.005 per 1,000 text-input tokens. For example, a response using 2,000 image-output tokens costs about $0.06 for output alone; this is not a promise that a particular size or quality uses 2,000 tokens. Inspect reported usage for representative prompts. Variants multiply paid work; account pricing and actual usage determine the bill. See [Google pricing](https://ai.google.dev/gemini-api/docs/pricing) and [OpenAI image pricing](https://developers.openai.com/api/docs/guides/image-generation#gpt-image-25-costs) for current provider rates.

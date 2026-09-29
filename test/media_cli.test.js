@@ -100,14 +100,47 @@ describe("image generation CLI", () => {
     expect(options.fetchImpl).toHaveBeenCalledTimes(1);
   });
 
+  it("normalizes OpenAI encoding controls before building the provider request", async () => {
+    const options = await fixture();
+    const image = await sharp(await png())
+      .jpeg()
+      .toBuffer();
+    options.fetchImpl.mockResolvedValue(
+      Response.json({ data: [{ b64_json: image.toString("base64") }] }),
+    );
+    await runToolCommand(
+      [
+        ...imageArgs.slice(0, -1),
+        "image.jpg",
+        "--size",
+        "auto",
+        "--quality",
+        "low",
+        "--format",
+        "jpeg",
+        "--compression",
+        "100",
+      ],
+      options,
+    );
+    expect(JSON.parse(options.fetchImpl.mock.calls[0][1].body)).toMatchObject({
+      size: "auto",
+      quality: "low",
+      output_format: "jpeg",
+      output_compression: 100,
+    });
+    expect(await readFile(join(options.cwd, "image.jpg"))).toEqual(image);
+  });
+
   it("preserves ordered reference bytes through the edit endpoint without resizing", async () => {
     const options = await fixture();
     const first = await png();
     const second = await png("blue");
     await writeFile(join(options.cwd, "a.png"), first);
     await writeFile(join(options.cwd, "b.png"), second);
+    const result = await sharp(first).ensureAlpha(0.5).png().toBuffer();
     options.fetchImpl.mockResolvedValue(
-      Response.json({ data: [{ b64_json: first.toString("base64") }] }),
+      Response.json({ data: [{ b64_json: result.toString("base64") }] }),
     );
     await runToolCommand(
       [...imageArgs, "--reference", "a.png", "--reference", "b.png", "--background", "transparent"],
@@ -176,6 +209,193 @@ describe("image generation CLI", () => {
     expect(await readFile(join(options.cwd, "image.png"))).toEqual(image);
   });
 
+  it.each(["png", "jpeg", "webp"])(
+    "normalizes Gemini %s images to PNG while retaining the original and usage",
+    async (format) => {
+      const options = await fixture();
+      const image = await sharp(await png())
+        .toFormat(format)
+        .toBuffer();
+      options.fetchImpl.mockResolvedValue(
+        Response.json({
+          candidates: [
+            {
+              finishReason: "STOP",
+              content: {
+                parts: [
+                  { inlineData: { mimeType: `image/${format}`, data: image.toString("base64") } },
+                ],
+              },
+            },
+          ],
+          usageMetadata: { candidatesTokenCount: 1120 },
+        }),
+      );
+      await runToolCommand(
+        [...imageArgs.slice(0, 2), "gemini-3.1-flash-lite-image", ...imageArgs.slice(3)],
+        options,
+      );
+      const output = await readFile(join(options.cwd, "image.png"));
+      expect((await sharp(output).metadata()).format).toBe("png");
+      expect((await sharp(output).stats()).isOpaque).toBe(true);
+      expect(await sharp(output).raw().toBuffer()).toEqual(await sharp(image).raw().toBuffer());
+      expect(await readFile(join(options.cwd, "image.png.parts", "original.bin"))).toEqual(image);
+      const manifest = JSON.parse(
+        await readFile(join(options.cwd, "image.png.parts", "manifest.json"), "utf8"),
+      );
+      expect(manifest.source).toEqual({
+        file: "original.bin",
+        declaredMimeType: `image/${format}`,
+        detectedMimeType: `image/${format}`,
+      });
+      expect(manifest.usage).toEqual({ candidatesTokenCount: 1120 });
+      expect(JSON.parse(options.stdout.mock.calls[0][0]).usage).toEqual(manifest.usage);
+      expect(options.fetchImpl).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(["mismatched", "truncated", "invalid", "unsupported"])(
+    "retains Gemini diagnostics without publishing or retrying a %s image",
+    async (kind) => {
+      const options = await fixture();
+      const complete = await png();
+      const image =
+        kind === "truncated"
+          ? complete.subarray(0, 48)
+          : kind === "invalid"
+            ? Buffer.from("not an image")
+            : kind === "unsupported"
+              ? await sharp(complete).gif().toBuffer()
+              : complete;
+      const mimeType =
+        kind === "mismatched" ? "image/jpeg" : kind === "unsupported" ? "image/gif" : "image/png";
+      options.fetchImpl.mockResolvedValue(
+        Response.json({
+          candidates: [
+            {
+              finishReason: "STOP",
+              content: {
+                parts: [{ inlineData: { mimeType, data: image.toString("base64") } }],
+              },
+            },
+          ],
+          usageMetadata: { candidatesTokenCount: 1120 },
+        }),
+      );
+      await expect(
+        runToolCommand(
+          [...imageArgs.slice(0, 2), "gemini-3.1-flash-lite-image", ...imageArgs.slice(3)],
+          options,
+        ),
+      ).rejects.toThrow("artifacts:");
+      await expect(stat(join(options.cwd, "image.png"))).rejects.toThrow();
+      await expect(stat(join(options.cwd, "image.png.parts", "image.png"))).rejects.toThrow();
+      expect(await readFile(join(options.cwd, "image.png.parts", "original.bin"))).toEqual(image);
+      const manifest = JSON.parse(
+        await readFile(join(options.cwd, "image.png.parts", "manifest.json"), "utf8"),
+      );
+      expect(manifest.source.declaredMimeType).toBe(mimeType);
+      expect(manifest.usage).toEqual({ candidatesTokenCount: 1120 });
+      expect(options.fetchImpl).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("rejects OpenAI responses that do not match the requested encoding", async () => {
+    const options = await fixture();
+    const image = await sharp(await png())
+      .jpeg()
+      .toBuffer();
+    options.fetchImpl.mockResolvedValue(
+      Response.json({ data: [{ b64_json: image.toString("base64") }] }),
+    );
+    await expect(runToolCommand(imageArgs, options)).rejects.toThrow("expected png");
+    await expect(stat(join(options.cwd, "image.png"))).rejects.toThrow();
+    expect(options.fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["png", "webp"])("preserves OpenAI transparency in %s output", async (format) => {
+    const options = await fixture();
+    const image = await sharp(await png())
+      .ensureAlpha(0.5)
+      .toFormat(format)
+      .toBuffer();
+    options.fetchImpl.mockResolvedValue(
+      Response.json({ data: [{ b64_json: image.toString("base64") }] }),
+    );
+    await runToolCommand(
+      [
+        ...imageArgs.slice(0, -1),
+        `image.${format}`,
+        "--format",
+        format,
+        "--background",
+        "transparent",
+      ],
+      options,
+    );
+    const output = await readFile(join(options.cwd, `image.${format}`));
+    expect(output).toEqual(image);
+    expect((await sharp(output).stats()).isOpaque).toBe(false);
+    expect(JSON.parse(options.fetchImpl.mock.calls[0][1].body)).toMatchObject({
+      background: "transparent",
+      output_format: format,
+    });
+  });
+
+  it("does not reject valid opaque pixels when a transparent background is requested", async () => {
+    const options = await fixture();
+    const image = await png();
+    options.fetchImpl.mockResolvedValue(
+      Response.json({ data: [{ b64_json: image.toString("base64") }] }),
+    );
+    await runToolCommand([...imageArgs, "--background", "transparent"], options);
+    expect(await readFile(join(options.cwd, "image.png"))).toEqual(image);
+  });
+
+  it("retains but does not publish a truncated OpenAI image", async () => {
+    const options = await fixture();
+    const image = (await png()).subarray(0, 48);
+    options.fetchImpl.mockResolvedValue(
+      Response.json({
+        data: [{ b64_json: image.toString("base64") }],
+        usage: { output_tokens: 100 },
+      }),
+    );
+    await expect(runToolCommand(imageArgs, options)).rejects.toThrow("artifacts:");
+    await expect(stat(join(options.cwd, "image.png"))).rejects.toThrow();
+    expect(await readFile(join(options.cwd, "image.png.parts", "original.bin"))).toEqual(image);
+    const manifest = JSON.parse(
+      await readFile(join(options.cwd, "image.png.parts", "manifest.json"), "utf8"),
+    );
+    expect(manifest.usage).toEqual({ output_tokens: 100 });
+    expect(options.fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["plain", "escaped"])(
+    "rejects oversized serialized Gemini %s prompts without references or paid calls",
+    async (kind) => {
+      const options = await fixture();
+      const prompt = kind === "plain" ? "a".repeat(19_000_000) : `x${"\n".repeat(9_500_000)}`;
+      await writeFile(join(options.cwd, "prompt.txt"), prompt);
+      await expect(
+        runToolCommand(
+          [
+            "image-generate",
+            "--model",
+            "gemini-3.1-flash-lite-image",
+            "--prompt-file",
+            "prompt.txt",
+            "--output",
+            "image.png",
+          ],
+          options,
+        ),
+      ).rejects.toThrow("19 MB inline request limit");
+      expect(options.fetchImpl).not.toHaveBeenCalled();
+      expect(await readdir(options.cwd)).toEqual(["prompt.txt"]);
+    },
+  );
+
   it("rejects unsupported capabilities, invalid dimensions, and excluded options without paid calls", async () => {
     const options = await fixture();
     for (const args of [
@@ -185,6 +405,14 @@ describe("image generation CLI", () => {
       [...imageArgs, "--mask", "mask.png"],
       [...imageArgs, "--continue", "state.json"],
       [...imageArgs, "--grounding"],
+      [...imageArgs, "--background", "transparent", "--format", "jpeg", "--output", "image.jpg"],
+      [
+        ...imageArgs.slice(0, 2),
+        "gemini-3.1-flash-lite-image",
+        ...imageArgs.slice(3),
+        "--background",
+        "transparent",
+      ],
       [
         "image-generate",
         "--model",
@@ -199,6 +427,25 @@ describe("image generation CLI", () => {
     ]) {
       await expect(runToolCommand(args, options)).rejects.toThrow();
     }
+    expect(options.fetchImpl).not.toHaveBeenCalled();
+    expect(await readdir(options.cwd)).toEqual([]);
+  });
+
+  it.each([
+    ["gemini-3-pro-image", "--resolution", "512"],
+    ["gemini-3-pro-image", "--aspect-ratio", "8:1"],
+    ["gemini-3-pro-image", "--thinking", "high"],
+    ["gemini-3.1-flash-lite-image", "--resolution", "2K"],
+    ["gemini-3.1-flash-image", "--quality", "high"],
+    ["gpt-image-2.5-flare", "--thinking", "minimal"],
+  ])("rejects %s %s %s at the model settings boundary", async (model, flag, value) => {
+    const options = await fixture();
+    await expect(
+      runToolCommand(
+        [...imageArgs.slice(0, 2), model, ...imageArgs.slice(3), flag, value],
+        options,
+      ),
+    ).rejects.toThrow();
     expect(options.fetchImpl).not.toHaveBeenCalled();
     expect(await readdir(options.cwd)).toEqual([]);
   });
@@ -310,6 +557,62 @@ describe("speech generation CLI", () => {
     expect(await readdir(options.cwd)).toEqual(["script.json"]);
   });
 
+  it("stitches only the last three completed requests and counts Unicode code points", async () => {
+    const options = await fixture();
+    await script(
+      options,
+      Array.from({ length: 5 }, () => [{ speaker: "host", text: "🌲".repeat(1001) }]),
+    );
+    let calls = 0;
+    options.fetchImpl.mockImplementation(async () => pcmResponse([42], `request-${++calls}`));
+    await runToolCommand(speechArgs, options);
+    expect(
+      options.fetchImpl.mock.calls.map(
+        ([, request]) => JSON.parse(request.body).previous_request_ids ?? [],
+      ),
+    ).toEqual([
+      [],
+      ["request-1"],
+      ["request-1", "request-2"],
+      ["request-1", "request-2", "request-3"],
+      ["request-2", "request-3", "request-4"],
+    ]);
+    const manifest = JSON.parse(
+      await readFile(join(options.cwd, "speech.wav.parts", "manifest.json"), "utf8"),
+    );
+    expect(
+      manifest.batches.map(({ characters, characterCost }) => ({ characters, characterCost })),
+    ).toEqual(Array.from({ length: 5 }, () => ({ characters: 1001, characterCost: "100" })));
+  });
+
+  it("retains the completed batch but stops before another paid request when its ID is missing", async () => {
+    const options = await fixture();
+    await script(options, [
+      [{ speaker: "host", text: "a".repeat(1500) }],
+      [{ speaker: "guest", text: "b".repeat(1500) }],
+    ]);
+    const response = pcmResponse([42], "first");
+    response.headers.delete("request-id");
+    options.fetchImpl.mockResolvedValue(response);
+    await expect(runToolCommand(speechArgs, options)).rejects.toThrow(
+      "provider omitted request-id",
+    );
+    expect(options.fetchImpl).toHaveBeenCalledTimes(1);
+    const manifest = JSON.parse(
+      await readFile(join(options.cwd, "speech.wav.parts", "manifest.json"), "utf8"),
+    );
+    expect(manifest.batches[0]).toMatchObject({
+      completed: true,
+      requestId: null,
+      characterCost: "100",
+    });
+    expect(manifest.batches[1].completed).toBe(false);
+    expect(await readFile(join(options.cwd, "speech.wav.parts", "batch-0001.pcm"))).toEqual(
+      Buffer.from([42, 0]),
+    );
+    await expect(stat(join(options.cwd, "speech.wav"))).rejects.toThrow();
+  });
+
   it("retains completed PCM and the batch plan on later failure without publishing a partial WAV or retrying", async () => {
     const options = await fixture();
     await script(options, [
@@ -350,11 +653,20 @@ describe("speech generation CLI", () => {
             }
           },
         }),
+        { headers: { "request-id": "interrupted", "character-cost": "83" } },
       ),
     );
     await expect(runToolCommand(speechArgs, options)).rejects.toThrow();
     await expect(stat(join(options.cwd, "speech.wav"))).rejects.toThrow();
     await expect(stat(join(options.cwd, "speech.wav.parts", "batch-0001.pcm"))).rejects.toThrow();
+    const manifest = JSON.parse(
+      await readFile(join(options.cwd, "speech.wav.parts", "manifest.json"), "utf8"),
+    );
+    expect(manifest.batches[0]).toMatchObject({
+      completed: false,
+      requestId: "interrupted",
+      characterCost: "83",
+    });
   });
 
   it("assembles thirty minutes of disk-backed PCM beyond the existing speech helper's 32 MiB cap", async () => {

@@ -240,7 +240,7 @@ export async function runSpeechGenerateCommand(
       completed: false,
       bytes: 0,
       requestId: null as string | null,
-      billedCharacters: null as string | null,
+      characterCost: null as string | null,
     })),
   };
   const saveManifest = async () => {
@@ -250,11 +250,17 @@ export async function runSpeechGenerateCommand(
   };
   try {
     await saveManifest();
-    const requestIds: string[] = [];
     for (const [index, batch] of manifest.batches.entries()) {
-      if (index && requestIds.length !== index) {
-        throw new ToolCliError("provider omitted request-id; cannot stitch the next speech batch");
-      }
+      const previousRequestIds = manifest.batches
+        .slice(Math.max(0, index - 3), index)
+        .map((previous) => {
+          if (!previous.requestId) {
+            throw new ToolCliError(
+              "provider omitted request-id; cannot stitch the next speech batch",
+            );
+          }
+          return previous.requestId;
+        });
       const response = await mediaRequest(
         fetchImpl,
         "https://api.elevenlabs.io/v1/text-to-dialogue?output_format=pcm_24000",
@@ -264,10 +270,13 @@ export async function runSpeechGenerateCommand(
           body: JSON.stringify({
             model_id: model,
             inputs: batch.inputs,
-            ...(requestIds.length ? { previous_request_ids: requestIds.slice(-3) } : {}),
+            ...(previousRequestIds.length ? { previous_request_ids: previousRequestIds } : {}),
           }),
         },
       );
+      batch.requestId = response.headers.get("request-id");
+      batch.characterCost = response.headers.get("character-cost");
+      await saveManifest();
       const contentType = response.headers.get("content-type")?.split(";")[0]?.trim();
       if (
         contentType &&
@@ -280,11 +289,6 @@ export async function runSpeechGenerateCommand(
       batch.bytes = await savePcm(response, `${path}.partial`);
       await rename(`${path}.partial`, path);
       batch.completed = true;
-      batch.requestId = response.headers.get("request-id");
-      batch.billedCharacters = response.headers.get("character-cost");
-      if (batch.requestId) {
-        requestIds.push(batch.requestId);
-      }
       await saveManifest();
     }
     const artifact = join(destination.parts, "assembled.wav");

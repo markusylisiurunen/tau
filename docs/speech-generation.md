@@ -57,7 +57,45 @@ Single-speaker narration uses the same shape with one voice. For long narration,
 - Every speaker must resolve to a voice. At most 10 distinct voices may be used.
 - Tau preserves text, delivery tags, turn order, and speaker assignments. It never invents split points, rewrites text, or truncates a script.
 
-The adapter greedily packs consecutive whole chunks into requests of at most 2,000 characters. Chunk boundaries are not a promise of one request per chunk, a pause, or a reset. This conservative budget follows the dialogue endpoint's reliability recommendation rather than the model's larger advertised capacity.
+The adapter greedily packs consecutive whole chunks into requests of at most 2,000 characters. Chunk boundaries are not a promise of one request per chunk, a pause, or a reset. This conservative budget follows the [dialogue endpoint's reliability recommendation](https://elevenlabs.io/docs/api-reference/text-to-dialogue/convert) rather than the [model's larger advertised capacity](https://elevenlabs.io/docs/overview/models#eleven-v4).
+
+## Conversational assistant replies
+
+For an assistant speaking directly to the listener, short first-person replies and restrained delivery cues can help avoid a theatrical or narration-like style. These tags are useful starting points:
+
+- `[Brisk but relaxed, speaking naturally to a colleague]`
+- `[Brisk but relaxed, slightly faster, brief natural pauses]`
+
+For example, save this as `assistant-reply.json`, replacing `VOICE_ID` with an ID from `--list-voices`:
+
+```json
+{
+  "voices": { "assistant": "VOICE_ID" },
+  "chunks": [
+    [
+      {
+        "speaker": "assistant",
+        "text": "[Brisk but relaxed, speaking naturally to a colleague] I found the issue. The app was using an old setting, so your changes never reached the server. I've fixed that and checked the result. You don't need to reinstall anything. Try saving once more. If the warning comes back, send me the exact message and I'll trace it from there."
+      }
+    ]
+  ]
+}
+```
+
+```bash
+tau tool speech-generate --model eleven_v4 \
+  --input ./assistant-reply.json --output ./assistant-reply.wav
+```
+
+For a Finnish reply, replace the turn's `text` with:
+
+```text
+[Brisk but relaxed, speaking naturally to a colleague] Löysin ongelman. Sovellus käytti vanhaa asetusta, joten muutoksesi eivät päätyneet palvelimelle. Korjasin asetuksen ja tarkistin, että tallennus toimii. Sinun ei tarvitse asentaa mitään uudelleen. Kokeile tallentaa vielä kerran. Jos varoitus palaa, lähetä minulle sen tarkka teksti, niin selvitän syyn.
+```
+
+To compare pacing, replace only the leading tag with `[Brisk but relaxed, slightly faster, brief natural pauses]` and generate to a fresh output path. Keep the voice and spoken text fixed. Listen for natural phrasing, pronunciation, and completeness, not just a shorter recording.
+
+Tags are delivery cues, not precise speed controls; their effect varies by voice, language, and generation. [Eleven v4](https://elevenlabs.io/docs/overview/capabilities/text-to-speech/eleven-v4) does not expose a numeric speed setting or support SSML. Tau passes the tags through without rewriting them or accelerating the resulting audio.
 
 ## Long recordings and assembly
 
@@ -69,7 +107,7 @@ After completely consuming a response, the adapter passes up to three previous r
 
 The output parent directory must exist. Neither the requested WAV nor `<output>.parts` may exist. The `.parts` directory contains:
 
-- `manifest.json`: model, PCM format, output path, request plan, original speaker/text inputs, one-based input chunk indices, and completed batch records with byte counts, request IDs, and billed-character headers when supplied.
+- `manifest.json`: model, PCM format, output path, request plan, original speaker/text inputs, one-based input chunk indices, completion flags, and byte counts. `requestId` and `characterCost` retain the provider's `request-id` and `character-cost` headers when supplied, including when a subsequent audio download fails. `characterCost` is the raw billing header, not a count of input characters or proof of spoken completeness.
 - `batch-0001.pcm`, etc.: completed raw PCM batches in request order.
 - `.partial` files: interrupted or invalid downloads, not approved for reuse.
 - `assembled.wav`: the complete local assembly, published at the requested output path only after success.
@@ -93,4 +131,4 @@ Never concatenate `.wav` files as raw bytes or include `.partial` files. Concate
 
 ## Approximate cost
 
-As a planning example, at roughly one credit per character and a $22/month plan with 121,000 included credits, 2,000 characters consume about $0.36 of that allocation. A 27,000-character script (roughly 30 minutes at 900 characters/minute) consumes about $4.91. This is an allocation estimate, not a per-call invoice or duration guarantee. Model/voice rates, subscriptions, overages, and actual billed characters can differ. Inspect the manifest's `billedCharacters` when available and the provider account usage. Repeated generations consume additional credits.
+The [ElevenLabs API pricing page](https://elevenlabs.io/pricing/api) lists v4 at $0.08 per 1,000 characters, with a promotional $0.022 rate through October 12, 2026. At those rates, 2,000 characters cost approximately $0.16 or $0.044 respectively; 27,000 characters (roughly 30 minutes at 900 characters/minute) cost approximately $2.16 or $0.59. These are planning estimates, not duration guarantees or per-call invoices. Check current API pricing, plan allowances, and voice-specific rates before a long generation; do not assume one credit per input character. The manifest's `characterCost` preserves the provider's billing header verbatim, while account usage determines the actual charge. Repeated generations consume additional quota.

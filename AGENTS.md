@@ -231,6 +231,8 @@ Validate untrusted data at its owning boundary. Avoid shell, SQL, and HTML injec
 
 Do not directly edit or casually delete implementation-owned durable files such as auth storage, session documents, history databases/outboxes, Telegram runner state, managed workspaces, or Nook storage. Use the supported command, protocol, or recovery path. `docs/security.md` is the canonical operator security contract.
 
+`TauCredentialStore.modify` serializes read-refresh-write operations across runtimes and processes through `AuthStorage.withCredentialLock`. Keep this asynchronous credential lock separate from the short synchronous storage lock so network refreshes do not block account commands. Preserve generation checks so concurrent logout, disable, or reauthentication wins over an in-flight refresh.
+
 Tests should protect critical paths, cross-boundary contracts, recovery, concurrency, and likely regressions. Prefer one high-impact behavioral test over broad low-value assertion churn. When a contract changes, test the owner and at least one important consumer. For stored sessions, include a representative old document and normal recovery. For protocol state, verify delta application and observer behavior, not only parser acceptance.
 
 ## Formatting and verification

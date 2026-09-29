@@ -14,6 +14,8 @@ export type StoredOAuthAccount = {
   expires: number;
   enterpriseUrl?: string;
   projectId?: string;
+  clientId?: string;
+  scopes?: string[];
   usage?: AuthAccountUsage;
 };
 
@@ -24,6 +26,7 @@ export type ProviderAuthData = {
 };
 
 export type AuthStorageData = {
+  deviceId?: string;
   providers: Record<string, ProviderAuthData>;
 };
 
@@ -45,7 +48,7 @@ export type AuthAccountInfo = {
   email?: string;
   plan?: string;
   credentialExpired: boolean;
-  credentialRefreshStatus: "succeeded" | "failed";
+  credentialRefreshStatus: "succeeded" | "failed" | "not-requested";
   usage?: AuthAccountUsage;
-  usageRefreshStatus: "succeeded" | "failed";
+  usageRefreshStatus: "succeeded" | "failed" | "unsupported";
 };

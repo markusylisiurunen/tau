@@ -1,4 +1,10 @@
-import type { AuthPrompt, OAuthCredential, ProviderAuthInteraction } from "@earendil-works/pi-ai";
+import type {
+  AuthPrompt,
+  LoginOptions,
+  OAuthCredential,
+  ProviderAuthInteraction,
+} from "@earendil-works/pi-ai";
+import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
 import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
 import { Chalk } from "chalk";
 import { AuthManager } from "./auth_manager.js";
@@ -7,7 +13,10 @@ import type { AuthStorage } from "./auth_storage.js";
 export type AuthLog = (message: string) => void;
 export type AuthPromptFn = (prompt: AuthPrompt) => Promise<string>;
 
-export type AuthLoginHandler = (interaction: ProviderAuthInteraction) => Promise<OAuthCredential>;
+export type AuthLoginHandler = (
+  interaction: ProviderAuthInteraction,
+  options: LoginOptions,
+) => Promise<OAuthCredential>;
 
 export type OAuthProviderSpec = {
   id: string;
@@ -23,6 +32,7 @@ export type AuthCliCommand =
 
 export const SUPPORTED_OAUTH_PROVIDERS: OAuthProviderSpec[] = [
   { id: "openai-codex", cliId: "codex", label: "OpenAI Codex (ChatGPT Plus/Pro)" },
+  { id: "openai", cliId: "openai", label: "OpenAI (Sign in with ChatGPT)" },
 ];
 
 const openaiCodexOAuth = openaiCodexProvider().auth.oauth;
@@ -30,8 +40,14 @@ if (!openaiCodexOAuth) {
   throw new Error("OpenAI Codex provider is missing OAuth support");
 }
 
+const openaiOAuth = openaiProvider().auth.oauth;
+if (!openaiOAuth) {
+  throw new Error("OpenAI provider is missing OAuth support");
+}
+
 const DEFAULT_LOGIN_HANDLERS: Partial<Record<string, AuthLoginHandler>> = {
   "openai-codex": (interaction) => openaiCodexOAuth.login(interaction),
+  openai: (interaction, options) => openaiOAuth.login(interaction, options),
 };
 
 const chalk = new Chalk({ level: process.stdout.isTTY ? 2 : 0 });
@@ -197,34 +213,37 @@ export async function runLoginCommand(options: {
 
   log(`logging in to ${provider}...`);
 
-  const credentials = await handler({
-    signal: new AbortController().signal,
-    prompt: options.prompt,
-    notify: (event) => {
-      if (event.type === "auth_url") {
-        log("");
-        log("copy this url into your browser to complete login:");
-        log(event.url);
-        if (event.instructions) {
-          log(event.instructions);
+  const credentials = await handler(
+    {
+      signal: new AbortController().signal,
+      prompt: options.prompt,
+      notify: (event) => {
+        if (event.type === "auth_url") {
+          log("");
+          log("copy this url into your browser to complete login:");
+          log(event.url);
+          if (event.instructions) {
+            log(event.instructions);
+          }
+          log("if the browser callback fails, you'll be prompted to paste the redirect url/code.");
+          log("");
+          return;
         }
-        log("if the browser callback fails, you'll be prompted to paste the redirect url/code.");
-        log("");
-        return;
-      }
 
-      if (event.type === "device_code") {
-        log("");
-        log("open this url in your browser:");
-        log(event.verificationUri);
-        log(`enter code: ${event.userCode}`);
-        log("");
-        return;
-      }
+        if (event.type === "device_code") {
+          log("");
+          log("open this url in your browser:");
+          log(event.verificationUri);
+          log(`enter code: ${event.userCode}`);
+          log("");
+          return;
+        }
 
-      log(event.message);
+        log(event.message);
+      },
     },
-  });
+    { getDeviceId: () => options.authStorage.getOrCreateDeviceId() },
+  );
 
   const authManager = new AuthManager(options.authStorage);
   authManager.addOAuthAccount(provider, credentials);
@@ -306,10 +325,13 @@ export async function runListCommand(options: {
         log(
           chalk.red(
             account.credentialExpired
-              ? '    credentials expired; refresh failed, run "tau auth login codex" to re-authenticate'
+              ? `    credentials expired; refresh failed, run "tau auth login ${provider.providerId === "openai-codex" ? "codex" : provider.providerId}" to re-authenticate`
               : "    credential refresh failed; stored credentials have not expired",
           ),
         );
+      }
+      if (account.credentialRefreshStatus === "not-requested" && account.credentialExpired) {
+        log("    access token expired; refresh will be attempted on the next model request");
       }
       if (account.usageRefreshStatus === "failed") {
         log(

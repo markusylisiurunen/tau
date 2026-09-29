@@ -39,3 +39,9 @@ The intrinsic `tau_docs` tool reads one exact Markdown path at a time. It does n
 - [History](history.md) covers local transcript history, optional remote replication, and the history tool.
 - [Nook](nook.md) explains configuration and operation of the optional static mini-app platform.
 - [Telegram](telegram.md) covers runner configuration, projects, workspaces, routing, and recovery.
+
+## Run command-line tools
+
+- [PDF unpacking](pdf-unpacking.md) covers PDF OCR with Mistral, Markdown extraction, and page-image patches.
+- [Image generation](image-generation.md) covers image generation and reference editing with Google and OpenAI.
+- [Speech generation](speech-generation.md) covers caller-chunked narration and dialogue, ElevenLabs voices, and long-form WAV assembly.

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -7,6 +7,7 @@ import {
   createTelegramSessionManager,
   TelegramSessionManagerError,
 } from "../dist/core/telegram/session_manager.js";
+import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_backend.js";
 import {
   buildToolRunPresentation,
   TOOL_UI_FACET_VERSION,
@@ -209,6 +210,99 @@ function assistantProgressTexts(events) {
 }
 
 describe("telegram session manager", () => {
+  it("stages attachments through the owning session in bounded chunks and rejects other owners", async () => {
+    const root = await mkdtemp(join(tmpdir(), "tau-attachment-target-"));
+    const backend = createLocalToolExecutionBackend();
+    const harness = createClientHarness();
+    harness.session.exec.mockImplementation((command, options) =>
+      backend.runBash(command, { ...options, cwd: root, env: { TMPDIR: root } }),
+    );
+    const manager = createDemoSessionManager(harness);
+    const created = await manager.createSession({ projectId: "demo", ownerId: "owner" });
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+    const signal = new AbortController().signal;
+    try {
+      const otherOwner = createScopedTelegramSessionManager({
+        sessionManager: manager,
+        ownerId: "other",
+        allowedProjectIds: ["demo"],
+      });
+      await expect(
+        otherOwner.storeAttachment(created.id, "file", Buffer.from("data"), signal),
+      ).rejects.toMatchObject({ code: "not_found" });
+      expect(harness.session.exec).not.toHaveBeenCalled();
+      const owner = createScopedTelegramSessionManager({
+        sessionManager: manager,
+        ownerId: "owner",
+        allowedProjectIds: ["demo"],
+      });
+      const data = Buffer.alloc(20 * 1024 * 1024, 42);
+      const path = await owner.storeAttachment(created.id, "report.pdf", data, signal);
+      expect(
+        (await realpath(path)).startsWith(join(await realpath(root), "tau-telegram-attachment-")),
+      ).toBe(true);
+      expect((await readFile(path)).equals(data)).toBe(true);
+      expect(harness.session.exec).toHaveBeenCalledTimes(4);
+      for (const [, options] of harness.session.exec.mock.calls) {
+        if (options.stdin) expect(options.stdin.length).toBeLessThanOrEqual(8_000_000);
+        expect(options.signal).toBe(signal);
+      }
+      const second = await owner.storeAttachment(
+        created.id,
+        "report.pdf",
+        Buffer.from("second"),
+        signal,
+      );
+      expect(second).not.toBe(path);
+      expect((await readFile(path)).equals(data)).toBe(true);
+      const empty = await owner.storeAttachment(created.id, "empty.csv", Buffer.alloc(0), signal);
+      expect((await readFile(empty)).length).toBe(0);
+      await expect(
+        owner.storeAttachment(created.id, "../escape", Buffer.from("bad"), signal),
+      ).rejects.toThrow("failed to create attachment");
+    } finally {
+      await manager.close();
+      await backend.dispose();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("cleans up partial attachment uploads on cancellation", async () => {
+    const root = await mkdtemp(join(tmpdir(), "tau-attachment-cancel-"));
+    const backend = createLocalToolExecutionBackend();
+    const harness = createClientHarness();
+    const controller = new AbortController();
+    harness.session.exec.mockImplementation(async (command, options) => {
+      const result = await backend.runBash(command, {
+        ...options,
+        cwd: root,
+        env: { TMPDIR: root },
+      });
+      if (options.stdin) controller.abort(new Error("cancelled"));
+      return result;
+    });
+    const manager = createDemoSessionManager(harness);
+    const created = await manager.createSession({ projectId: "demo" });
+    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+    try {
+      await expect(
+        manager.storeAttachment(
+          created.id,
+          "video.mp4",
+          Buffer.alloc(8_000_001),
+          controller.signal,
+        ),
+      ).rejects.toThrow("cancelled");
+      expect(await readdir(root)).toEqual([]);
+      expect(harness.session.exec).toHaveBeenCalledTimes(3);
+      expect(harness.session.exec.mock.calls[2][1].signal).toBeUndefined();
+    } finally {
+      await manager.close();
+      await backend.dispose();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("records prompts only while idle, including after lazy resolution", async () => {
     const harness = createClientHarness();
     const manager = createDemoSessionManager(harness);

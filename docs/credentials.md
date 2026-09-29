@@ -20,7 +20,7 @@ Common cases are:
 | Cloudflare Sandbox bridge and Fly Sprite API | Session host startup |
 | `/listen` and `/speak` | TUI client |
 | Telegram transcription and voice responses | Telegram runner |
-| `tau tool pdf-unpack` | The process running that command |
+| `tau tool pdf-unpack`, `image-generate`, and `speech-generate` | The process running that command |
 
 With local `tau`, these roles normally share one machine. With `tau attach`, setting a key only in the attached client's shell does not authenticate the remote host. Run `tau auth` on the host machine and set host-owned environment variables where `tau serve` or the SDK host actually runs. See [ownership and scope](ownership-and-scope.md) for the full boundary.
 
@@ -61,15 +61,18 @@ Several Tau features share provider credentials but intentionally prefer a fixed
 | Feature | Resolution order |
 | --- | --- |
 | Exa web search and fetch | `EXA_API_KEY`, then `apiKeys.exa` |
-| Google speech, Gemini speech-to-text, Telegram Gemini transcription, and Telegram voice responses | `GEMINI_API_KEY`, then `apiKeys.google` |
+| Google image generation, speech, Gemini speech-to-text, Telegram Gemini transcription, and Telegram voice responses | `GEMINI_API_KEY`, then `apiKeys.google` |
 | Mistral PDF OCR | `MISTRAL_API_KEY`, then `apiKeys.mistral` |
-| OpenAI speech-to-text and Telegram OpenAI transcription | `OPENAI_API_KEY`, then `apiKeys.openai` |
+| OpenAI image generation, speech-to-text, and Telegram OpenAI transcription | `OPENAI_API_KEY`, then `apiKeys.openai` |
+| ElevenLabs speech generation and voice listing | `ELEVENLABS_API_KEY`, then `apiKeys.elevenlabs` |
 
-The Google, Mistral, and OpenAI rows describe feature-specific helpers. Model calls follow the general model-authentication order instead, where the configured provider key wins over ambient environment authentication.
+The Google, Mistral, OpenAI, and ElevenLabs rows describe feature-specific helpers. Model calls follow the general model-authentication order instead, where the configured provider key wins over ambient environment authentication.
 
-`web.discover` does not require Exa. `web.search` and `web.fetch` do. `/speak` and Telegram `/tts_on` voice responses use Google. `/listen` and incoming Telegram audio use the configured `speechToText.provider`, which is `openai` unless configuration selects `gemini`. PDF OCR through `tau tool pdf-unpack` uses Mistral.
+`web.discover` does not require Exa. `web.search` and `web.fetch` do. `/speak` and Telegram `/tts_on` voice responses use Google. `/listen` and incoming Telegram voice notes use the configured `speechToText.provider`, which is `openai` unless configuration selects `gemini`. PDF OCR through `tau tool pdf-unpack` uses Mistral.
 
 Set these variables on the process that owns the feature. For example, a remote TUI's `/speak` reads the attached client's `GEMINI_API_KEY`, while a Google model selected by the session reads credentials at the host.
+
+For `tau tool` commands, credentials and configuration belong to the machine running the command. Tau's agent Bash removes inherited API-key environment variables, so commands invoked through it may need keys in private configuration on that machine. See [configuration](configuration.md) for configuration file locations and [security](security.md) for command environment handling.
 
 ## OpenAI Codex OAuth
 

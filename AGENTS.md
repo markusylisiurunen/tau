@@ -324,6 +324,19 @@ git push --follow-tags
 gh release create v$(node -p "require('./package.json').version") --generate-notes --prerelease
 ```
 
+## Writing perspective
+
+Write from the intended audience's point of view, using only concepts available and relevant to that audience. Do not assume the reader shares a Tau contributor's knowledge of the implementation. Before writing, identify the reader and the action or decision the text supports. Translate implementation facts into the behavior and constraints that reader needs.
+
+- **Tau agent prompts**, including system instructions, tool and parameter descriptions, and injected context, address the agent performing the user's task. Take the perspective of an agent receiving instructions, tools, user messages, and tool results. Describe what it can do and observe: files, commands, the working directory, and the current chat. Do not expose internal machinery such as execution environments, hosts, transports, or ownership abstractions. For example, write "send a local file to the current Telegram chat," not "send a file from the execution environment."
+- **`docs/*.md`** addresses people and agents using, operating, configuring, or integrating Tau. Take an outside-in product perspective, not a repository or maintainer perspective. Describe supported behavior, prerequisites, public interfaces, and limitations, not repository structure or internal abstractions. Explain where commands run or credentials and files belong in operational terms when that affects usage. Describe agent behavior in the third person; use direct instructions for the reader's actions.
+- **CLI help and diagnostics** addresses people and agents running standalone commands, inside or outside Tau. Provide actionable usage, prerequisites, errors, and public documentation links. Never depend on internal agent tools such as `tau_docs` for understanding or using a command.
+- **`AGENTS.md`** addresses coding agents developing and maintaining Tau. Repository structure, internal abstractions, ownership boundaries, canonical contracts, implementation constraints, and verification procedures belong here. Keep product usage and runtime-agent instructions in their owning surfaces.
+- **`README.md`** addresses prospective and first-time users. Explain what Tau is, how to start, and where to learn more, without implementation detail or exhaustive reference material.
+- **Code comments** address maintainers. Explain non-obvious constraints, invariants, and reasons, not user instructions or a narration of the code.
+
+A fact being true about the implementation does not make it relevant to the audience. Accuracy does not require exposing implementation details.
+
 ## Documentation responsibilities
 
 Keep each documentation surface within its role. Do not copy volatile product inventories into this guide.

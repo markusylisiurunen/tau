@@ -210,6 +210,7 @@ export function printHelp(personas: Persona[]): void {
       "  use `tau history --help` to deploy or remove the shared history service.",
       "  use `tau nook --help` to deploy static mini-apps and manage Nook templates.",
       "  use `tau tool pdf-unpack <file.pdf>` to extract markdown and page image patches from a PDF.",
+      "  use `tau tool image-generate --help` or `tau tool speech-generate --help` to generate assets.",
       "  /diff opens the local diff review tool and delegates review work to the session host.",
       "  you can switch persona during a session with /persona:<id>.",
       "  insert prompt templates with /prompt:<id>.",

@@ -1,6 +1,8 @@
 import type { Config } from "../config/schema.js";
 import { ToolCliError } from "./errors.js";
+import { runImageGenerateCommand } from "./image_generate.js";
 import { printPdfUnpackHelp, runPdfUnpackCommand } from "./pdf_unpack.js";
+import { runSpeechGenerateCommand } from "./speech_generate.js";
 
 export type RunToolCommandOptions = {
   config: Config;
@@ -15,13 +17,19 @@ export function printToolHelp(log: (line: string) => void = console.log): void {
     [
       "usage:",
       "  tau tool <command>",
-      "  tau tool pdf-unpack <file.pdf>",
+      "  tau tool <command> --help",
       "",
       "commands:",
-      "  pdf-unpack  extract markdown and page image patches from a PDF.",
+      "  pdf-unpack       extract markdown and page image patches from a PDF.",
+      "  image-generate   generate or edit an image using local references.",
+      "  speech-generate  generate and assemble single- or multi-speaker speech.",
       "",
       "examples:",
       "  tau tool pdf-unpack ./docs/spec.pdf",
+      '  tau tool image-generate --model gpt-image-2.5-flare --quality medium --size 1536x1024 --prompt "A lakeside sauna" --output ./sauna.png',
+      "  tau tool speech-generate --model eleven_v4_turbo --input ./script.json --output ./speech.wav",
+      "",
+      "documentation: https://github.com/markusylisiurunen/tau/blob/main/docs/tools.md",
     ].join("\n"),
   );
 }
@@ -43,6 +51,20 @@ export async function runToolCommand(
 
   if (subcommand === "pdf-unpack") {
     await runPdfUnpackCommand(subcommandArgs, options);
+    return;
+  }
+
+  if (subcommand === "image-generate" || subcommand === "speech-generate") {
+    try {
+      const run =
+        subcommand === "image-generate" ? runImageGenerateCommand : runSpeechGenerateCommand;
+      await run(subcommandArgs, options);
+    } catch (error) {
+      if (error instanceof ToolCliError) throw error;
+      throw new ToolCliError(
+        `${subcommand} failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
     return;
   }
 

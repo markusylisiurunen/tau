@@ -34,8 +34,8 @@ function createTelegramConfig(overrides = {}) {
 }
 
 describe("telegram runtime", () => {
-  it("binds image tools to each session's owning bot and chat", async () => {
-    const root = await mkdtemp(join(tmpdir(), "tau-image-routing-"));
+  it("binds file tools to each session's owning bot and chat", async () => {
+    const root = await mkdtemp(join(tmpdir(), "tau-file-routing-"));
     const clients = [];
     let manager;
     let runtime;
@@ -67,26 +67,40 @@ describe("telegram runtime", () => {
       await vi.waitFor(() => expect(clients).toHaveLength(2));
       const content = Buffer.from("ffd8ffe000104a464946000101", "hex");
       for (const client of clients) {
-        await client.clientTools[0].execute(
-          { path: "image.jpg" },
-          {
-            signal: new AbortController().signal,
-            executionEnvironment: {
-              exec: async () => ({
-                exitCode: 0,
-                stdout: JSON.stringify({
-                  identity: "stable",
-                  size: content.length,
-                  content: content.toString("base64"),
+        expect(client.clientTools.map((tool) => tool.schema.name)).toEqual([
+          "send_photo_to_telegram",
+          "send_video_to_telegram",
+          "send_audio_to_telegram",
+          "send_document_to_telegram",
+        ]);
+        for (const tool of client.clientTools) {
+          await tool.execute(
+            { path: "image.jpg" },
+            {
+              signal: new AbortController().signal,
+              executionEnvironment: {
+                exec: async () => ({
+                  exitCode: 0,
+                  stdout: JSON.stringify({
+                    identity: "stable",
+                    size: content.length,
+                    content: content.toString("base64"),
+                  }),
                 }),
-              }),
+              },
             },
-          },
-        );
+          );
+        }
       }
       expect(fetchMock.mock.calls.map(([url, init]) => [url, init.body.get("chat_id")])).toEqual([
-        ["https://api.telegram.org/botfirst-token/sendDocument", "123"],
-        ["https://api.telegram.org/botsecond-token/sendDocument", "-456"],
+        ...["sendPhoto", "sendVideo", "sendAudio", "sendDocument"].map((method) => [
+          `https://api.telegram.org/botfirst-token/${method}`,
+          "123",
+        ]),
+        ...["sendPhoto", "sendVideo", "sendAudio", "sendDocument"].map((method) => [
+          `https://api.telegram.org/botsecond-token/${method}`,
+          "-456",
+        ]),
       ]);
     } finally {
       await runtime?.close();

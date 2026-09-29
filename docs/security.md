@@ -136,7 +136,7 @@ Each bot's `allowedProjectIds` should expose only intended projects. Telegram ch
 
 Repository and composite projects use managed workspaces and persistent bare caches. New or reconstructed repositories may execute an executable `.tau/scripts/provision` asynchronously. Review that script as trusted project automation. Persistent-directory projects are not provisioned and are never deleted by Tau.
 
-Protect the runner configuration, generated session state, project-preference state, managed workspace root, and attachment temporary storage with an appropriate OS account and filesystem permissions. Do not run two Telegram runners against the same state. Operational details are in [Telegram](telegram.md).
+Protect the runner configuration, generated session state, project-preference state, managed workspace root, and execution-environment temporary attachment storage with an appropriate OS account and filesystem permissions. Do not run two Telegram runners against the same state. Operational details are in [Telegram](telegram.md).
 
 ## Know what history retains
 

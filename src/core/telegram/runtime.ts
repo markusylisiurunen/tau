@@ -5,7 +5,7 @@ import {
   createTelegramProjectPreferenceStore,
   resolveTelegramProjectPreferencesPath,
 } from "./project_preferences.js";
-import { createTelegramSendImageTool } from "./send_image.js";
+import { createTelegramFileTools } from "./send_file.js";
 import {
   createTelegramSessionManager,
   resolveTelegramSessionStatePath,
@@ -157,7 +157,7 @@ export async function startTelegramRuntime(
       }
       return await options.createSessionClient({
         ...client,
-        clientTools: [createTelegramSendImageTool(createTelegramApi(bot.botToken), chatId)],
+        clientTools: createTelegramFileTools(createTelegramApi(bot.botToken), chatId),
       });
     },
   });

@@ -69,7 +69,7 @@ The tool accepts one exact flat Markdown path. It has no search or list operatio
 index.md
 ```
 
-Then follow paths linked by that page. Unknown paths are rejected. The corpus describes supported Tau contracts, not the current effective configuration of a particular session, so use configuration inspection or debug output when the answer depends on local state.
+Then follow paths linked by that page. The tool description also advertises built-in command-line tools with capability summaries and dedicated documentation paths. Agents may read those pages directly when a tool is relevant, without first loading the index. Use of these utilities is optional and depends on the execution environment's prerequisites. Unknown paths are rejected. The corpus describes supported Tau contracts, not the current effective configuration of a particular session, so use configuration inspection or debug output when the answer depends on local state.
 
 ## Main-session goal tools
 
@@ -133,27 +133,17 @@ Neither tool provides a general read operation. Use a scoped non-interactive Bas
 
 The supported formats are JPEG, PNG, and WebP. Source reads are capped at 50 MiB. Images larger than 2,000 pixels in either dimension or 2.5 MiB of model payload are resized or re-encoded while preserving aspect ratio. If Tau cannot reduce a valid image below the model payload limit, the call fails. Relative paths resolve from the execution-environment working directory.
 
-## Unpack a PDF from the command line
+## Command-line tools
 
-`tau tool pdf-unpack` is a standalone utility for turning a PDF into OCR Markdown and page-image patches. It is not an agent-callable host tool. Run it from the machine that owns the input file:
+`tau tool` provides standalone utilities for people and agents, usable from a shell inside or outside Tau. Files, configuration, credentials, and required executables must be available on the machine running the command. Agents can invoke these commands through Bash.
 
-```bash
-tau tool pdf-unpack ./docs/architecture.pdf
-```
+| Command | Purpose | Guide |
+| --- | --- | --- |
+| `tau tool pdf-unpack` | Extract OCR Markdown and page-image patches from a PDF using Mistral. | [PDF unpacking](pdf-unpacking.md) |
+| `tau tool image-generate` | Generate or edit an image using Google or OpenAI. | [Image generation](image-generation.md) |
+| `tau tool speech-generate` | Generate narration or dialogue using ElevenLabs and assemble a WAV. | [Speech generation](speech-generation.md) |
 
-The path is resolved from the command's current working directory and must name a readable file. The command requires `pdftoppm` from Poppler on `PATH`. On macOS, install it with `brew install poppler`; Debian-based Linux distributions provide it through `apt install poppler-utils`.
-
-PDF OCR requires `MISTRAL_API_KEY` or `apiKeys.mistral`, with the environment variable taking precedence. Tau loads configuration for the command's current working directory. The credential and local executable therefore belong to the process running `tau tool`, not to an attached TUI, remote host, or session execution environment unless that is where the command itself runs. See [credentials](credentials.md) for credential ownership.
-
-On success, Tau prints the persistent temporary output directory and a complete artifact list. The directory contains:
-
-- `document.md`, the complete OCR document with recognized tables inlined;
-- `pages/page-0001.md` and later numbered files, one Markdown file per PDF page; and
-- `images/page-0001/patch-0001.png` and later numbered patches for visual verification.
-
-OCR text can contain recognition mistakes. Embedded visuals that are not represented in Markdown are marked with placeholders pointing to the corresponding page patches. Read `document.md` for the whole document, use `pages/` for page-level work, and inspect `images/` before trusting or correcting uncertain OCR.
-
-The command uploads the PDF to Mistral and attempts to delete the remote upload after OCR. A deletion failure is reported in the command output. Successful local artifacts remain on disk for follow-up use; delete them when they are no longer needed. If processing fails, Tau attempts to remove the partial local output directory. Do not use the command for a sensitive document unless sending it to Mistral and retaining derived local artifacts are both permitted.
+Each guide covers setup, input, examples, outputs, and failure behavior. Use `tau tool --help` to list commands or `tau tool <command> --help` for command-specific help. The same guides are packaged for `tau_docs` and linked from its `index.md`.
 
 ## Code-mode service tools
 
@@ -207,13 +197,24 @@ The TUI advertises `diff_review` and `prefill_input` unless client tools are dis
 
 Configured command client tools are also client-owned. They can run local client processes and use a bounded execution-environment facade when work belongs on the session machine. Remote attachment makes this distinction visible: the TUI process and its tools may be on a laptop while the host and execution environment are elsewhere. See [client tools](client-tools.md) for configuration, protocol helpers, and limits, and [TUI](tui.md) for diff-tool configuration.
 
-### Sending images to Telegram
+### Sending files to Telegram
 
-The Telegram-only `send_image({ path, caption? })` client tool delivers a PNG or JPEG from the session execution environment to the current chat as a Telegram document. It preserves the original bytes and filename without resizing or recompression. Paths may be absolute or relative to the session working directory; captions are plain text, limited to 1,024 UTF-16 code units.
+Telegram provides four client tools, each accepting `{ path, caption? }` and delivering to the current chat:
 
-Images may be up to 50,000,000 bytes. Transfers read at most 8,000,000 bytes per execution-environment request and reject non-regular, empty, oversized, or changing files. Format is detected from file content rather than the extension. Image bytes do not enter model context or session history. Reading, validation, cancellation, and Telegram delivery failures fail the tool call. Calls allow five minutes and are not automatically retried, since an interrupted upload may already have reached Telegram.
+| Tool | Delivery | Supported files | Maximum size |
+| --- | --- | --- | --- |
+| `send_photo_to_telegram` | In-chat photo | JPEG/PNG; width plus height at most 10,000 pixels, aspect ratio at most 20 | 10,000,000 bytes |
+| `send_video_to_telegram` | Playable video | MPEG4 | 50,000,000 bytes |
+| `send_audio_to_telegram` | Audio player | MP3/M4A | 50,000,000 bytes |
+| `send_document_to_telegram` | Original file attachment | Any type, including PDF, CSV, ZIP, WAV, and original-quality images | 50,000,000 bytes |
 
-The runner owns upload credentials and binds the recipient to the session's bot and chat; the agent cannot select a recipient. This built-in tool is independent of configured command-tool selection and does not appear in TUI sessions or subagents. Inspecting an image with `view_image` does not send it to Telegram.
+Paths may be absolute or relative to the session working directory. Captions are plain text, limited to 1,024 UTF-16 code units. Document delivery preserves original bytes and filenames; photo delivery uses Telegram's native photo processing. File bytes do not enter model context or session history.
+
+Transfers read at most 8,000,000 bytes per execution-environment request and reject non-regular, empty, oversized, or changing files. Tools do not inspect codecs, convert files, or fall back to another delivery method. Telegram validates media compatibility, including photo dimensions. Unsupported media can be explicitly converted before sending or delivered as a document instead.
+
+Reading, cancellation, and Telegram delivery failures fail the tool call. Calls allow five minutes and are not automatically retried, since an interrupted upload may already have reached Telegram.
+
+The runner owns upload credentials and binds the recipient to the session's bot and chat; the agent cannot select a recipient. These built-in tools are independent of configured command-tool selection and do not appear in TUI sessions or subagents. Inspecting an image with `view_image` does not send it to Telegram. Automatic voice responses through `/tts_on` are separate from these tools.
 
 ## When a tool is missing or fails
 

@@ -1265,6 +1265,16 @@ export function getOpenAIApiKey(config: Config, env?: NodeJS.ProcessEnv): string
   return configKey || undefined;
 }
 
+export function getElevenLabsApiKey(config: Config, env?: NodeJS.ProcessEnv): string | undefined {
+  const envKey = getTrimmedEnvValue("ELEVENLABS_API_KEY", env);
+  if (envKey) {
+    return envKey;
+  }
+
+  const configKey = config.apiKeys?.elevenlabs?.trim();
+  return configKey || undefined;
+}
+
 export function getMistralApiKey(config: Config, env?: NodeJS.ProcessEnv): string | undefined {
   const envKey = getTrimmedEnvValue("MISTRAL_API_KEY", env);
   if (envKey) {

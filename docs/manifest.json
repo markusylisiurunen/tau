@@ -12,6 +12,8 @@
     "skills.md",
     "prompts-and-project-context.md",
     "tools.md",
+    "image-generation.md",
+    "speech-generation.md",
     "client-tools.md",
     "tui.md",
     "sessions.md",

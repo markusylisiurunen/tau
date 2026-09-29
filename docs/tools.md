@@ -155,6 +155,12 @@ OCR text can contain recognition mistakes. Embedded visuals that are not represe
 
 The command uploads the PDF to Mistral and attempts to delete the remote upload after OCR. A deletion failure is reported in the command output. Successful local artifacts remain on disk for follow-up use; delete them when they are no longer needed. If processing fails, Tau attempts to remove the partial local output directory. Do not use the command for a sensitive document unless sending it to Mistral and retaining derived local artifacts are both permitted.
 
+### Image and speech generation
+
+`tau tool image-generate` creates one image from a prompt and ordered local references using Google or OpenAI. `tau tool speech-generate` uses ElevenLabs to generate caller-chunked narration or dialogue and assemble one WAV, retaining completed batches. They are standalone utilities invoked through Bash, not host tool schemas, and use the invoking machine's files and credentials.
+
+See [image generation](image-generation.md) for models, generic capabilities, editing examples, and estimated costs. See [speech generation](speech-generation.md) for voice discovery, the input JSON contract, long-form assembly, recovery, and estimated costs. Both commands support `--help`, refuse overwrites, and avoid automatic retries of paid requests.
+
 ## Code-mode service tools
 
 `web`, `history`, and `nook` each run a one-shot JavaScript program in Tau's restricted code-mode runtime. They intentionally disclose their exact API at use time rather than embedding signatures in this page.

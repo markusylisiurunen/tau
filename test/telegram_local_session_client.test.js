@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createCommandClientTools } from "../dist/core/client_tools/command_client_tools.js";
 import { createLocalTelegramSessionClient } from "../dist/core/telegram/local_session_client.js";
-import { createTelegramSendImageTool } from "../dist/core/telegram/send_image.js";
+import { createTelegramFileTools } from "../dist/core/telegram/send_file.js";
 
 function createConfigDeps(home) {
   return {
@@ -84,7 +84,15 @@ describe("local Telegram session client", () => {
           client: {
             cwd,
             ownerId: "telegram:bot:chat:123",
-            clientTools: [createTelegramSendImageTool({ sendDocument: vi.fn() }, 123)],
+            clientTools: createTelegramFileTools(
+              {
+                sendPhoto: vi.fn(),
+                sendVideo: vi.fn(),
+                sendAudio: vi.fn(),
+                sendDocument: vi.fn(),
+              },
+              123,
+            ),
             persona: "gpt-5.6-sol-coder",
             noAgentContextFiles: true,
           },
@@ -115,11 +123,17 @@ describe("local Telegram session client", () => {
         initialize: { client: { name: "tau-telegram", version: "1" } },
       });
       expect(createSdkClient.mock.calls[1][0].clientTools.map((tool) => tool.schema.name)).toEqual([
-        "send_image",
+        "send_photo_to_telegram",
+        "send_video_to_telegram",
+        "send_audio_to_telegram",
+        "send_document_to_telegram",
         "deploy",
       ]);
       expect(createSdkClient.mock.calls[2][0].clientTools.map((tool) => tool.schema.name)).toEqual([
-        "send_image",
+        "send_photo_to_telegram",
+        "send_video_to_telegram",
+        "send_audio_to_telegram",
+        "send_document_to_telegram",
       ]);
       expect(createSdkClient.mock.calls[1][0]).not.toHaveProperty("ownerId");
       expect(createSdkClient.mock.calls[1][1]).toBe(hostConfig);

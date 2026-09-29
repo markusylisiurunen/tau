@@ -113,6 +113,13 @@ type TelegramSendOptions = {
   signal: AbortSignal;
 };
 
+type TelegramFile = {
+  data: Buffer;
+  fileName: string;
+  mimeType: string;
+  caption?: string;
+};
+
 export type TelegramApi = {
   getMe(): Promise<TelegramBotInfo>;
   getUpdates(args: {
@@ -128,11 +135,10 @@ export type TelegramApi = {
     options: TelegramSendOptions,
   ): Promise<void>;
   sendRichMessage(chatId: number, markdown: string, options: TelegramSendOptions): Promise<void>;
-  sendDocument(
-    chatId: number,
-    document: { data: Buffer; fileName: string; mimeType: string; caption?: string },
-    options: TelegramSendOptions,
-  ): Promise<void>;
+  sendPhoto(chatId: number, file: TelegramFile, options: TelegramSendOptions): Promise<void>;
+  sendVideo(chatId: number, file: TelegramFile, options: TelegramSendOptions): Promise<void>;
+  sendAudio(chatId: number, file: TelegramFile, options: TelegramSendOptions): Promise<void>;
+  sendDocument(chatId: number, file: TelegramFile, options: TelegramSendOptions): Promise<void>;
   sendVoice(chatId: number, voice: Buffer, options: TelegramSendOptions): Promise<void>;
   sendChatAction(chatId: number, action: string): Promise<void>;
   downloadFile(fileId: string): Promise<Buffer>;
@@ -1170,6 +1176,26 @@ export function createTelegramApi(botToken: string): TelegramApi {
     }
   }
 
+  async function sendFile(
+    method: "sendPhoto" | "sendVideo" | "sendAudio" | "sendDocument",
+    field: "photo" | "video" | "audio" | "document",
+    chatId: number,
+    file: TelegramFile,
+    options: TelegramSendOptions,
+  ): Promise<void> {
+    await callTelegramMethod(
+      method,
+      {
+        chat_id: chatId,
+        ...(field === "document" ? { disable_content_type_detection: true } : {}),
+        ...(file.caption !== undefined ? { caption: file.caption } : {}),
+      },
+      z.unknown(),
+      options.signal,
+      { field, ...file },
+    );
+  }
+
   return {
     async getMe() {
       return callTelegramMethod("getMe", {}, TelegramGetMeResultSchema);
@@ -1224,18 +1250,17 @@ export function createTelegramApi(botToken: string): TelegramApi {
         options.signal,
       );
     },
-    async sendDocument(chatId, document, options) {
-      await callTelegramMethod(
-        "sendDocument",
-        {
-          chat_id: chatId,
-          disable_content_type_detection: true,
-          ...(document.caption !== undefined ? { caption: document.caption } : {}),
-        },
-        z.unknown(),
-        options.signal,
-        { field: "document", ...document },
-      );
+    async sendPhoto(chatId, file, options) {
+      await sendFile("sendPhoto", "photo", chatId, file, options);
+    },
+    async sendVideo(chatId, file, options) {
+      await sendFile("sendVideo", "video", chatId, file, options);
+    },
+    async sendAudio(chatId, file, options) {
+      await sendFile("sendAudio", "audio", chatId, file, options);
+    },
+    async sendDocument(chatId, file, options) {
+      await sendFile("sendDocument", "document", chatId, file, options);
     },
     async sendVoice(chatId, voice, options) {
       await callTelegramMethod("sendVoice", { chat_id: chatId }, z.unknown(), options.signal, {

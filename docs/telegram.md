@@ -294,7 +294,7 @@ Gemini extracts spelling hints with Gemini 3.8 Flash and transcribes uploaded au
 
 ## Command client tools
 
-Telegram provides [`send_image`](tools.md#sending-images-to-telegram) for original PNG/JPEG delivery, plus workspace-selected command tools. Global `clientTools` definitions provide executables; the workspace's nearest `enabledClientTools` selects an exact subset. An empty list disables configured tools, not `send_image`.
+Telegram provides [photo, video, audio, and document delivery tools](tools.md#sending-files-to-telegram), plus workspace-selected command tools. Global `clientTools` definitions provide executables; the workspace's nearest `enabledClientTools` selects an exact subset. An empty list disables configured tools, not built-in delivery tools.
 
 These command processes run on the Telegram runner machine with the runner process environment. They can reach the session workspace only through their explicit execution-environment facade, despite physical co-location. Telegram does not advertise TUI-only `diff_review` or `prefill_input` tools.
 

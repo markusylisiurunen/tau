@@ -33,6 +33,24 @@ async function png(color = "red") {
     .toBuffer();
 }
 
+function geminiImageResponse(image, format) {
+  return Response.json({
+    candidates: [
+      {
+        finishReason: "STOP",
+        content: {
+          parts: [{ inlineData: { mimeType: `image/${format}`, data: image.toString("base64") } }],
+        },
+      },
+    ],
+    usageMetadata: { candidatesTokenCount: 1120 },
+  });
+}
+
+async function readManifest(options, output) {
+  return JSON.parse(await readFile(join(options.cwd, `${output}.parts`, "manifest.json"), "utf8"));
+}
+
 const imageArgs = [
   "image-generate",
   "--model",
@@ -243,21 +261,7 @@ describe("image generation CLI", () => {
       const image = await sharp(await png())
         .toFormat(format)
         .toBuffer();
-      options.fetchImpl.mockResolvedValue(
-        Response.json({
-          candidates: [
-            {
-              finishReason: "STOP",
-              content: {
-                parts: [
-                  { inlineData: { mimeType: `image/${format}`, data: image.toString("base64") } },
-                ],
-              },
-            },
-          ],
-          usageMetadata: { candidatesTokenCount: 1120 },
-        }),
-      );
+      options.fetchImpl.mockResolvedValue(geminiImageResponse(image, format));
       await runToolCommand(
         [...imageArgs.slice(0, 2), "gemini-3.1-flash-lite-image", ...imageArgs.slice(3)],
         options,
@@ -266,9 +270,7 @@ describe("image generation CLI", () => {
       expect((await sharp(output).metadata()).format).toBe("png");
       expect(await sharp(output).raw().toBuffer()).toEqual(await sharp(image).raw().toBuffer());
       expect(await readFile(join(options.cwd, "image.png.parts", "original.bin"))).toEqual(image);
-      const manifest = JSON.parse(
-        await readFile(join(options.cwd, "image.png.parts", "manifest.json"), "utf8"),
-      );
+      const manifest = await readManifest(options, "image.png");
       expect(manifest.source).toEqual({
         file: "original.bin",
         declaredMimeType: `image/${format}`,
@@ -282,19 +284,7 @@ describe("image generation CLI", () => {
   it("retains the original and usage if Gemini PNG conversion fails", async () => {
     const options = await fixture();
     const image = Buffer.from("incomplete image data");
-    options.fetchImpl.mockResolvedValue(
-      Response.json({
-        candidates: [
-          {
-            finishReason: "STOP",
-            content: {
-              parts: [{ inlineData: { mimeType: "image/jpeg", data: image.toString("base64") } }],
-            },
-          },
-        ],
-        usageMetadata: { candidatesTokenCount: 1120 },
-      }),
-    );
+    options.fetchImpl.mockResolvedValue(geminiImageResponse(image, "jpeg"));
     await expect(
       runToolCommand(
         [...imageArgs.slice(0, 2), "gemini-3.1-flash-lite-image", ...imageArgs.slice(3)],
@@ -303,9 +293,7 @@ describe("image generation CLI", () => {
     ).rejects.toThrow("artifacts:");
     await expect(stat(join(options.cwd, "image.png"))).rejects.toThrow();
     expect(await readFile(join(options.cwd, "image.png.parts", "original.bin"))).toEqual(image);
-    const manifest = JSON.parse(
-      await readFile(join(options.cwd, "image.png.parts", "manifest.json"), "utf8"),
-    );
+    const manifest = await readManifest(options, "image.png");
     expect(manifest.usage).toEqual({ candidatesTokenCount: 1120 });
     expect(options.fetchImpl).toHaveBeenCalledTimes(1);
   });
@@ -482,9 +470,7 @@ describe("speech generation CLI", () => {
       expect(wav.readUInt32LE(24)).toBe(24000);
       expect(wav.readUInt32LE(40)).toBe(8);
       expect([44, 46, 48, 50].map((offset) => wav.readInt16LE(offset))).toEqual([1, -2, 3, -4]);
-      const manifest = JSON.parse(
-        await readFile(join(options.cwd, "speech.wav.parts", "manifest.json"), "utf8"),
-      );
+      const manifest = await readManifest(options, "speech.wav");
       expect(manifest.model).toBe(model);
       expect(
         manifest.batches.map(({ chunks, completed, requestId }) => ({
@@ -547,9 +533,7 @@ describe("speech generation CLI", () => {
       ["request-1", "request-2", "request-3"],
       ["request-2", "request-3", "request-4"],
     ]);
-    const manifest = JSON.parse(
-      await readFile(join(options.cwd, "speech.wav.parts", "manifest.json"), "utf8"),
-    );
+    const manifest = await readManifest(options, "speech.wav");
     expect(
       manifest.batches.map(({ characters, characterCost }) => ({ characters, characterCost })),
     ).toEqual(Array.from({ length: 5 }, () => ({ characters: 1001, characterCost: "100" })));
@@ -568,9 +552,7 @@ describe("speech generation CLI", () => {
       "provider omitted request-id",
     );
     expect(options.fetchImpl).toHaveBeenCalledTimes(1);
-    const manifest = JSON.parse(
-      await readFile(join(options.cwd, "speech.wav.parts", "manifest.json"), "utf8"),
-    );
+    const manifest = await readManifest(options, "speech.wav");
     expect(manifest.batches[0]).toMatchObject({
       completed: true,
       requestId: null,
@@ -600,9 +582,7 @@ describe("speech generation CLI", () => {
     expect(
       (await readFile(join(options.cwd, "speech.wav.parts", "batch-0001.pcm"))).readInt16LE(),
     ).toBe(42);
-    const manifest = JSON.parse(
-      await readFile(join(options.cwd, "speech.wav.parts", "manifest.json"), "utf8"),
-    );
+    const manifest = await readManifest(options, "speech.wav");
     expect(manifest.batches.map((batch) => batch.completed)).toEqual([true, false]);
     await expect(runToolCommand(speechArgs, options)).rejects.toThrow();
     expect(options.fetchImpl).toHaveBeenCalledTimes(2);
@@ -629,9 +609,7 @@ describe("speech generation CLI", () => {
     await expect(runToolCommand(speechArgs, options)).rejects.toThrow();
     await expect(stat(join(options.cwd, "speech.wav"))).rejects.toThrow();
     await expect(stat(join(options.cwd, "speech.wav.parts", "batch-0001.pcm"))).rejects.toThrow();
-    const manifest = JSON.parse(
-      await readFile(join(options.cwd, "speech.wav.parts", "manifest.json"), "utf8"),
-    );
+    const manifest = await readManifest(options, "speech.wav");
     expect(manifest.batches[0]).toMatchObject({
       completed: false,
       requestId: "interrupted",

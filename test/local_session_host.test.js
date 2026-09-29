@@ -253,17 +253,12 @@ function createStoredSnapshot(overrides = {}) {
     })),
   ];
   return createProtocolSnapshot({
+    ...overrides,
     sessionId: overrides.sessionId ?? "stored-session",
-    attributes: overrides.attributes ?? { source: "test" },
-    createdAt: overrides.createdAt ?? 0,
-    revision: overrides.revision ?? 1,
     agentState: overrides.agentState ?? {
       revision: historyEntries.length,
       modelContextKey: "stored-context",
     },
-    lifecycle: overrides.lifecycle ?? "idle",
-    goal: overrides.goal ?? null,
-    costTotal: overrides.costTotal ?? 0,
     bootstrap: overrides.bootstrap ?? {
       model: expectedModel(persona),
       prompt: {
@@ -273,26 +268,7 @@ function createStoredSnapshot(overrides = {}) {
     },
     catalog: overrides.catalog ?? expectedCatalog(persona),
     settings: overrides.settings ?? expectedSettings(persona),
-    executionEnvironment: overrides.executionEnvironment ?? {
-      kind: "local",
-      cwd: "/repo",
-      home: "/home/user",
-    },
     messages,
-    turns: overrides.turns ?? {},
-    timeline:
-      overrides.timeline ??
-      messages
-        .filter((message) => message.id !== "system")
-        .map((message) => ({
-          type: "message",
-          id: `timeline-${message.id}`,
-          messageId: message.id,
-        })),
-    tools: overrides.tools ?? {},
-    operations: overrides.operations,
-    agents: overrides.agents ?? {},
-    facets: overrides.facets ?? {},
   });
 }
 
@@ -369,14 +345,8 @@ class BlockingCommitStore extends MemorySessionStore {
 
 describe("HostedEphemeralAgentSession", () => {
   it("rejects concurrent thread creation, submission, and forking without mutation", async () => {
-    let markCreating;
-    let releaseCreation;
-    const creating = new Promise((resolve) => {
-      markCreating = resolve;
-    });
-    const creationGate = new Promise((resolve) => {
-      releaseCreation = resolve;
-    });
+    const creating = deferred();
+    const creationGate = deferred();
     const submittedMessages = [];
     const thread = {
       async submitMessage(message) {
@@ -402,8 +372,8 @@ describe("HostedEphemeralAgentSession", () => {
       emitUpdate: vi.fn(),
     });
     session.createThread = vi.fn(async () => {
-      markCreating();
-      await creationGate;
+      creating.resolve();
+      await creationGate.promise;
       return thread;
     });
 
@@ -412,7 +382,7 @@ describe("HostedEphemeralAgentSession", () => {
       threadId: "thread-1",
       message: "first",
     });
-    await creating;
+    await creating.promise;
 
     await expect(
       session.submitThreadMessage({
@@ -430,7 +400,7 @@ describe("HostedEphemeralAgentSession", () => {
       }),
     ).rejects.toBeInstanceOf(EphemeralThreadBusyError);
 
-    releaseCreation();
+    creationGate.resolve();
     await expect(first).resolves.toEqual({ threadId: "thread-1", response: "done" });
     expect(session.createThread).toHaveBeenCalledTimes(1);
     expect(submittedMessages).toEqual(["first"]);
@@ -1953,14 +1923,11 @@ describe("LocalSessionHost", () => {
   it("rejects an exec when the backend resolves after interruption", async () => {
     const store = new MemorySessionStore();
     const toolBackend = createLocalToolExecutionBackend();
-    let markExecStarted;
-    const execStarted = new Promise((resolve) => {
-      markExecStarted = resolve;
-    });
+    const execStarted = deferred();
     vi.spyOn(toolBackend, "runBash").mockImplementation(
       (_command, options) =>
         new Promise((resolve) => {
-          markExecStarted();
+          execStarted.resolve();
           options.signal.addEventListener(
             "abort",
             () =>
@@ -1987,7 +1954,7 @@ describe("LocalSessionHost", () => {
 
     try {
       const exec = hostedSession.exec({ command: "sleep forever" });
-      await execStarted;
+      await execStarted.promise;
 
       expect(hostedSession.interruptActiveWork()).toBe(true);
       await expect(exec).rejects.toMatchObject({ name: "AbortError" });
@@ -2072,14 +2039,11 @@ describe("LocalSessionHost", () => {
     });
     const host = createHostForEnvironment(store, executionEnvironment);
     const hostedSession = await host.createSession(localCreateInput);
-    let markSampleStarted;
-    const sampleStarted = new Promise((resolve) => {
-      markSampleStarted = resolve;
-    });
+    const sampleStarted = deferred();
     hostedSession.runtime.agent.spec.model.stream = (_context, options) => ({
       async *[Symbol.asyncIterator]() {},
       async result() {
-        markSampleStarted();
+        sampleStarted.resolve();
         await new Promise((resolve) => {
           if (options.signal.aborted) {
             resolve();
@@ -2097,7 +2061,7 @@ describe("LocalSessionHost", () => {
       options: {},
     });
     const sampleResult = expect(sample).rejects.toMatchObject({ name: "AbortError" });
-    await sampleStarted;
+    await sampleStarted.promise;
 
     await expect(dispose({ host, hostedSession })).resolves.toBeUndefined();
     await sampleResult;
@@ -3111,14 +3075,8 @@ describe("LocalSessionHost", () => {
 
       const events = [];
       const facetVersions = [];
-      let resolveFirstStarted;
-      const firstStarted = new Promise((resolve) => {
-        resolveFirstStarted = resolve;
-      });
-      let resolveSecondQueued;
-      const secondQueued = new Promise((resolve) => {
-        resolveSecondQueued = resolve;
-      });
+      const firstStarted = deferred();
+      const secondQueued = deferred();
       hostedSession.onDelta((delta) => {
         for (const change of delta.delta.changes ?? []) {
           if (change.type !== "facet.set" || change.facet.kind !== "tau.tool-ui-events") {
@@ -3128,16 +3086,16 @@ describe("LocalSessionHost", () => {
           events.push(event);
           facetVersions.push(change.facet.version);
           if (event.type === "bash_started" && event.toolCallId === firstCall.id) {
-            resolveFirstStarted();
+            firstStarted.resolve();
           } else if (event.type === "tool_call_queued" && event.toolCallId === secondCall.id) {
-            resolveSecondQueued();
+            secondQueued.resolve();
           }
         }
       });
 
       await hostedSession.record({ text: "run both" });
       const turn = hostedSession.runTurn();
-      await Promise.all([firstStarted, secondQueued]);
+      await Promise.all([firstStarted.promise, secondQueued.promise]);
 
       expect(events).toEqual(
         expect.arrayContaining([
@@ -3186,14 +3144,8 @@ describe("LocalSessionHost", () => {
       const toolMessage = fauxAssistantMessage([toolCall], { stopReason: "toolUse" });
       const finalMessage = fauxAssistantMessage("done");
       const responses = [toolMessage, finalMessage];
-      let markArgumentsStreaming;
-      const argumentsStreaming = new Promise((resolve) => {
-        markArgumentsStreaming = resolve;
-      });
-      let releaseArguments;
-      const argumentsReleased = new Promise((resolve) => {
-        releaseArguments = resolve;
-      });
+      const argumentsStreaming = deferred();
+      const argumentsReleased = deferred();
 
       hostedSession.runtime.agent.spec.model.stream = () => {
         const response = responses.shift();
@@ -3214,8 +3166,8 @@ describe("LocalSessionHost", () => {
                 content: [{ ...partialCall, arguments: { path } }],
               },
             };
-            markArgumentsStreaming();
-            await argumentsReleased;
+            argumentsStreaming.resolve();
+            await argumentsReleased.promise;
             yield {
               type: "toolcall_delta",
               contentIndex: 0,
@@ -3239,7 +3191,7 @@ describe("LocalSessionHost", () => {
       hostedSession.onDelta((delta) => deltas.push(delta));
       await hostedSession.record({ text: "write the file" });
       const turn = hostedSession.runTurn();
-      await argumentsStreaming;
+      await argumentsStreaming.promise;
 
       const streamingSnapshot = await hostedSession.snapshot();
       expect(streamingSnapshot.tools[toolCall.id]).toEqual({
@@ -3261,7 +3213,7 @@ describe("LocalSessionHost", () => {
       expect(writeFile).not.toHaveBeenCalled();
       expect(JSON.stringify(deltas)).not.toContain(content);
 
-      releaseArguments();
+      argumentsReleased.resolve();
       await turn;
 
       const finalSnapshot = await hostedSession.snapshot();
@@ -3385,15 +3337,8 @@ describe("LocalSessionHost", () => {
       const hostedSession = await host.createSession(localCreateInput);
       await hostedSession.snapshot();
 
-      const createGate = () => {
-        let resolve;
-        const promise = new Promise((settle) => {
-          resolve = settle;
-        });
-        return { promise, resolve };
-      };
-      const modelGates = [createGate(), createGate(), createGate()];
-      const modelStarts = [createGate(), createGate(), createGate()];
+      const modelGates = [deferred(), deferred(), deferred()];
+      const modelStarts = [deferred(), deferred(), deferred()];
       let modelCall = 0;
       hostedSession.runtime.agent.spec.model.stream = () => {
         const index = modelCall++;
@@ -4245,26 +4190,16 @@ describe("LocalSessionHost", () => {
       warnings: [],
     }));
     const executionEnvironment = {
+      ...createTestExecutionEnvironment(),
       resolveRuntimeConfig,
-      resolveRuntimeContext: ({ persona, discoveredSkills, includeAgentContext }) => ({
-        promptBootstrap: {
-          promptContext: {
-            cwd: "/repo",
-            home: "/home/user",
-            repoRoot: "/repo",
-            platform: "linux",
-            includeAgentContext,
-            projectContextBlock: "<project-context>live context</project-context>",
-            skillsBlock: `<skills>${persona.id}:${discoveredSkills.length}</skills>`,
-          },
-          agentsFiles: [],
-          warnings: [],
-          unknownSkills: [],
-        },
-      }),
-      getToolExecutionBackend: () => createLocalToolExecutionBackend(),
-      snapshot: () => ({ kind: "local", cwd: "/repo", home: "/home/user" }),
-      dispose: async () => {},
+      resolveRuntimeContext: async (options) => {
+        const { persona, discoveredSkills } = options;
+        const context = await createTestExecutionEnvironment().resolveRuntimeContext(options);
+        context.promptBootstrap.promptContext.projectContextBlock =
+          "<project-context>live context</project-context>";
+        context.promptBootstrap.promptContext.skillsBlock = `<skills>${persona.id}:${discoveredSkills.length}</skills>`;
+        return context;
+      },
     };
     const host = createHostForEnvironment(store, executionEnvironment);
     const session = await host.createSession(localCreateInput);
@@ -4387,26 +4322,19 @@ describe("LocalSessionHost", () => {
       truncated: false,
     }));
     const executionEnvironment = {
+      ...createTestExecutionEnvironment(undefined, { runNodeScript }),
       resolveRuntimeConfig,
-      resolveRuntimeContext: ({ persona, discoveredSkills, includeAgentContext }) => ({
-        promptBootstrap: {
-          promptContext: {
-            cwd: "/repo",
-            home: "/home/user",
-            repoRoot: "/repo",
-            platform: "linux",
-            includeAgentContext,
-            projectContextBlock: "<project-context>reloaded</project-context>",
-            skillsBlock: `<skills>${persona.id}:${discoveredSkills.length}</skills>`,
-          },
-          agentsFiles: ["/repo/AGENTS.md"],
-          warnings: ["agents warning"],
-          unknownSkills: ["missing-skill"],
-        },
-      }),
-      getToolExecutionBackend: () => ({ runNodeScript }),
-      snapshot: () => ({ kind: "local", cwd: "/repo", home: "/home/user" }),
-      dispose: async () => {},
+      resolveRuntimeContext: async (options) => {
+        const { persona, discoveredSkills } = options;
+        const context = await createTestExecutionEnvironment().resolveRuntimeContext(options);
+        context.promptBootstrap.promptContext.projectContextBlock =
+          "<project-context>reloaded</project-context>";
+        context.promptBootstrap.promptContext.skillsBlock = `<skills>${persona.id}:${discoveredSkills.length}</skills>`;
+        context.promptBootstrap.agentsFiles = ["/repo/AGENTS.md"];
+        context.promptBootstrap.warnings = ["agents warning"];
+        context.promptBootstrap.unknownSkills = ["missing-skill"];
+        return context;
+      },
     };
 
     const host = createHostForEnvironment(store, executionEnvironment);
@@ -4533,25 +4461,14 @@ describe("LocalSessionHost", () => {
       truncated: false,
     }));
     const executionEnvironment = {
+      ...createTestExecutionEnvironment(undefined, { runNodeScript }),
       resolveRuntimeConfig,
-      resolveRuntimeContext: ({ persona, includeAgentContext }) => ({
-        promptBootstrap: {
-          promptContext: {
-            cwd: "/repo",
-            home: "/home/user",
-            repoRoot: "/repo",
-            platform: "linux",
-            includeAgentContext,
-            skillsBlock: `<skills>${persona.id}</skills>`,
-          },
-          agentsFiles: [],
-          warnings: [],
-          unknownSkills: [],
-        },
-      }),
-      getToolExecutionBackend: () => ({ runNodeScript }),
-      snapshot: () => ({ kind: "local", cwd: "/repo", home: "/home/user" }),
-      dispose: async () => {},
+      resolveRuntimeContext: async (options) => {
+        const { persona } = options;
+        const context = await createTestExecutionEnvironment().resolveRuntimeContext(options);
+        context.promptBootstrap.promptContext.skillsBlock = `<skills>${persona.id}</skills>`;
+        return context;
+      },
     };
     const host = createHostForEnvironment(store, executionEnvironment);
     const session = await host.createSession(localCreateInput);
@@ -4580,6 +4497,7 @@ describe("LocalSessionHost", () => {
       truncated: false,
     }));
     const executionEnvironment = {
+      ...createTestExecutionEnvironment(undefined, { runNodeScript }),
       resolveRuntimeConfig: async () => ({
         bootstrap: { modelResolver: { resolveModel } },
         config: {},
@@ -4589,25 +4507,13 @@ describe("LocalSessionHost", () => {
         themes: [],
         warnings: [],
       }),
-      resolveRuntimeContext: ({ persona, discoveredSkills, includeAgentContext }) => ({
-        promptBootstrap: {
-          promptContext: {
-            cwd: "/repo",
-            home: "/home/user",
-            repoRoot: "/repo",
-            platform: "linux",
-            includeAgentContext,
-            projectContextBlock: "",
-            skillsBlock: `<skills>${persona.id}:${discoveredSkills.length}</skills>`,
-          },
-          agentsFiles: [],
-          warnings: [],
-          unknownSkills: [],
-        },
-      }),
-      getToolExecutionBackend: () => ({ runNodeScript }),
-      snapshot: () => ({ kind: "local", cwd: "/repo", home: "/home/user" }),
-      dispose: async () => {},
+      resolveRuntimeContext: async (options) => {
+        const { persona, discoveredSkills } = options;
+        const context = await createTestExecutionEnvironment().resolveRuntimeContext(options);
+        context.promptBootstrap.promptContext.projectContextBlock = "";
+        context.promptBootstrap.promptContext.skillsBlock = `<skills>${persona.id}:${discoveredSkills.length}</skills>`;
+        return context;
+      },
     };
     const host = createHostForEnvironment(store, executionEnvironment);
     const session = await host.createSession(localCreateInput);
@@ -4992,25 +4898,14 @@ describe("LocalSessionHost", () => {
       warnings: [],
     }));
     const restoredEnvironment = {
+      ...createTestExecutionEnvironment(),
       resolveRuntimeConfig,
-      resolveRuntimeContext: ({ persona, includeAgentContext }) => ({
-        promptBootstrap: {
-          promptContext: {
-            cwd: "/repo",
-            home: "/home/user",
-            repoRoot: "/repo",
-            platform: "linux",
-            includeAgentContext,
-            skillsBlock: `<skills>${persona.id}</skills>`,
-          },
-          agentsFiles: [],
-          warnings: [],
-          unknownSkills: [],
-        },
-      }),
-      getToolExecutionBackend: () => createLocalToolExecutionBackend(),
-      snapshot: () => ({ kind: "local", cwd: "/repo", home: "/home/user" }),
-      dispose: async () => {},
+      resolveRuntimeContext: async (options) => {
+        const { persona } = options;
+        const context = await createTestExecutionEnvironment().resolveRuntimeContext(options);
+        context.promptBootstrap.promptContext.skillsBlock = `<skills>${persona.id}</skills>`;
+        return context;
+      },
     };
 
     const recoveredHost = createHost(store, {
@@ -5190,17 +5085,11 @@ describe("LocalSessionHost", () => {
     });
     await store.commitSessionSnapshot(storedSnapshot);
 
-    let releaseRestore;
-    let markRestoreStarted;
-    const restoreStarted = new Promise((resolve) => {
-      markRestoreStarted = resolve;
-    });
-    const restoreReleased = new Promise((resolve) => {
-      releaseRestore = resolve;
-    });
+    const restoreStarted = deferred();
+    const restoreReleased = deferred();
     const restore = vi.fn(async () => {
-      markRestoreStarted();
-      await restoreReleased;
+      restoreStarted.resolve();
+      await restoreReleased.promise;
       return createTestExecutionEnvironment();
     });
 
@@ -5213,9 +5102,9 @@ describe("LocalSessionHost", () => {
     });
 
     const firstRecovery = host.observeSession(storedSnapshot.sessionId);
-    await restoreStarted;
+    await restoreStarted.promise;
     const secondRecovery = host.observeSession(storedSnapshot.sessionId);
-    releaseRestore();
+    restoreReleased.resolve();
 
     const [firstSession, secondSession] = await Promise.all([firstRecovery, secondRecovery]);
 
@@ -5242,18 +5131,12 @@ describe("LocalSessionHost", () => {
     });
     await store.commitSessionSnapshot(storedSnapshot);
 
-    let releaseRestore;
-    let markRestoreStarted;
     let restoredEnvironment;
-    const restoreStarted = new Promise((resolve) => {
-      markRestoreStarted = resolve;
-    });
-    const restoreReleased = new Promise((resolve) => {
-      releaseRestore = resolve;
-    });
+    const restoreStarted = deferred();
+    const restoreReleased = deferred();
     const restore = vi.fn(async () => {
-      markRestoreStarted();
-      await restoreReleased;
+      restoreStarted.resolve();
+      await restoreReleased.promise;
       restoredEnvironment = createTestExecutionEnvironment();
       restoredEnvironment.dispose = vi.fn(async () => {});
       return restoredEnvironment;
@@ -5268,9 +5151,9 @@ describe("LocalSessionHost", () => {
     });
 
     const recovery = host.observeSession(storedSnapshot.sessionId);
-    await restoreStarted;
+    await restoreStarted.promise;
     const shutdown = host.shutdown();
-    releaseRestore();
+    restoreReleased.resolve();
 
     await expect(recovery).resolves.toBeUndefined();
     await expect(shutdown).resolves.toBeUndefined();
@@ -5311,19 +5194,13 @@ describe("LocalSessionHost", () => {
 
   it("disposes a resolved create-session environment when shutdown wins the resolver race", async () => {
     const store = new MemorySessionStore();
-    let releaseResolve;
-    let markResolveStarted;
-    const resolveStarted = new Promise((resolve) => {
-      markResolveStarted = resolve;
-    });
-    const resolveReleased = new Promise((resolve) => {
-      releaseResolve = resolve;
-    });
+    const resolveStarted = deferred();
+    const resolveReleased = deferred();
     const resolvedEnvironment = createTestExecutionEnvironment();
     resolvedEnvironment.dispose = vi.fn(async () => {});
     const resolve = vi.fn(async () => {
-      markResolveStarted();
-      await resolveReleased;
+      resolveStarted.resolve();
+      await resolveReleased.promise;
       return resolvedEnvironment;
     });
     const host = createHost(store, {
@@ -5337,9 +5214,9 @@ describe("LocalSessionHost", () => {
     });
 
     const create = host.createSession(localCreateInput);
-    await resolveStarted;
+    await resolveStarted.promise;
     const shutdown = host.shutdown();
-    releaseResolve();
+    resolveReleased.resolve();
 
     await expect(create).rejects.toThrow("local session host is shut down");
     await expect(shutdown).resolves.toBeUndefined();
@@ -5382,13 +5259,10 @@ describe("LocalSessionHost", () => {
     hostedSession = await host.createSession(localCreateInput);
     await hostedSession.record({ text: "keep running until disposal" });
 
-    let markStreamStarted;
-    const streamStarted = new Promise((resolve) => {
-      markStreamStarted = resolve;
-    });
+    const streamStarted = deferred();
     hostedSession.runtime.agent.spec.model.stream = (_context, options) => ({
       async *[Symbol.asyncIterator]() {
-        markStreamStarted();
+        streamStarted.resolve();
         await new Promise((resolve) => {
           options.signal.addEventListener("abort", resolve, { once: true });
         });
@@ -5399,7 +5273,7 @@ describe("LocalSessionHost", () => {
     });
 
     const turn = hostedSession.runTurn();
-    await streamStarted;
+    await streamStarted.promise;
     const dispose = hostedSession.dispose();
     const lateRecord = hostedSession.record({ text: "do not admit during disposal" });
     await dispose;
@@ -5549,31 +5423,25 @@ describe("LocalSessionHost", () => {
     const store = new MemorySessionStore();
     const host = createHost(store);
     const session = await host.createSession(localCreateInput);
-    let markModelStarted;
-    const modelStarted = new Promise((resolve) => {
-      markModelStarted = resolve;
-    });
-    let releaseModel;
-    const modelReleased = new Promise((resolve) => {
-      releaseModel = resolve;
-    });
+    const modelStarted = deferred();
+    const modelReleased = deferred();
     session.runtime.agent.spec.model.stream = () => ({
       async *[Symbol.asyncIterator]() {},
       async result() {
-        markModelStarted();
-        await modelReleased;
+        modelStarted.resolve();
+        await modelReleased.promise;
         return fauxAssistantMessage("finished while detached");
       },
     });
 
     await session.record({ text: "finish without an observer" });
     const turn = session.runTurn();
-    await modelStarted;
+    await modelStarted.promise;
     host.releaseSession(session);
     await Promise.resolve();
     expect(session.isDisposed).toBe(false);
 
-    releaseModel();
+    modelReleased.resolve();
     await expect(turn).resolves.toEqual({ status: "completed", stopReason: "stop" });
     await vi.waitFor(() => expect(session.isDisposed).toBe(true));
     await host.shutdown();
@@ -5589,19 +5457,13 @@ describe("LocalSessionHost", () => {
     });
     const hostedContext = session.ephemeralAgentSessions.get(contextId);
     const thread = await hostedContext.getOrCreateThread("thread-1");
-    let markModelStarted;
-    const modelStarted = new Promise((resolve) => {
-      markModelStarted = resolve;
-    });
-    let releaseModel;
-    const modelReleased = new Promise((resolve) => {
-      releaseModel = resolve;
-    });
+    const modelStarted = deferred();
+    const modelReleased = deferred();
     thread.runtime.spec.model.stream = () => ({
       async *[Symbol.asyncIterator]() {},
       async result() {
-        markModelStarted();
-        await modelReleased;
+        modelStarted.resolve();
+        await modelReleased.promise;
         return fauxAssistantMessage("finished ephemeral work while detached");
       },
     });
@@ -5611,12 +5473,12 @@ describe("LocalSessionHost", () => {
       threadId: "thread-1",
       message: "finish without an observer",
     });
-    await modelStarted;
+    await modelStarted.promise;
     host.releaseSession(session);
     await Promise.resolve();
     expect(session.isDisposed).toBe(false);
 
-    releaseModel();
+    modelReleased.resolve();
     await expect(submission).resolves.toEqual({
       threadId: "thread-1",
       response: "finished ephemeral work while detached",

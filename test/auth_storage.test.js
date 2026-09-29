@@ -68,6 +68,31 @@ function createTempAuthPath() {
   };
 }
 
+function writeCodexAccounts(authPath, accounts, options) {
+  writeFileSync(authPath, JSON.stringify({ providers: { "openai-codex": { accounts } } }), options);
+}
+
+function createUsage(usedPercent) {
+  return {
+    windows: [{ name: "primary", usedPercent, resetAt: 4102444800, windowSeconds: 18000 }],
+  };
+}
+
+function createUsageResponse(usedPercent, windowSeconds = 18000) {
+  return {
+    ok: true,
+    json: async () => ({
+      rate_limit: {
+        primary_window: {
+          used_percent: usedPercent,
+          reset_at: 4102444800,
+          limit_window_seconds: windowSeconds,
+        },
+      },
+    }),
+  };
+}
+
 function deferred() {
   let resolve;
   let reject;
@@ -109,24 +134,15 @@ describe("AuthStorage", () => {
   it("defaults existing OAuth accounts to enabled", () => {
     const fx = createTempAuthPath();
     try {
-      writeFileSync(
-        fx.authPath,
-        JSON.stringify({
-          providers: {
-            "openai-codex": {
-              accounts: [
-                {
-                  type: "oauth",
-                  accountId: "acct-existing",
-                  access: "existing-access",
-                  refresh: "existing-refresh",
-                  expires: 1,
-                },
-              ],
-            },
-          },
-        }),
-      );
+      writeCodexAccounts(fx.authPath, [
+        {
+          type: "oauth",
+          accountId: "acct-existing",
+          access: "existing-access",
+          refresh: "existing-refresh",
+          expires: 1,
+        },
+      ]);
 
       const storage = new AuthStorage(fx.authPath);
 
@@ -140,30 +156,17 @@ describe("AuthStorage", () => {
   it("rejects auth.json when any account entry is invalid", () => {
     const fx = createTempAuthPath();
     try {
-      writeFileSync(
-        fx.authPath,
-        JSON.stringify(
-          {
-            providers: {
-              "openai-codex": {
-                accounts: [
-                  {
-                    type: "oauth",
-                    accountId: "acct-good",
-                    access: "old-access",
-                    refresh: "old-refresh",
-                    expires: 0,
-                    idToken: "header.payload.signature",
-                  },
-                  { type: "oauth", accountId: "bad" },
-                ],
-              },
-            },
-          },
-          null,
-          2,
-        ),
-      );
+      writeCodexAccounts(fx.authPath, [
+        {
+          type: "oauth",
+          accountId: "acct-good",
+          access: "old-access",
+          refresh: "old-refresh",
+          expires: 0,
+          idToken: "header.payload.signature",
+        },
+        { type: "oauth", accountId: "bad" },
+      ]);
 
       const storage = new AuthStorage(fx.authPath);
       expect(storage.getInvalidReason()).toBeDefined();
@@ -305,24 +308,18 @@ describe("AuthManager and TauCredentialStore", () => {
         email: "user@example.com",
         plan: "pro",
       });
-      writeFileSync(
+      writeCodexAccounts(
         fx.authPath,
-        JSON.stringify({
-          providers: {
-            "openai-codex": {
-              accounts: [
-                {
-                  type: "oauth",
-                  accountId: "acct-race",
-                  providerAccountId: "acct-race",
-                  access: originalAccess,
-                  refresh: "refresh-race",
-                  expires: 1,
-                },
-              ],
-            },
+        [
+          {
+            type: "oauth",
+            accountId: "acct-race",
+            providerAccountId: "acct-race",
+            access: originalAccess,
+            refresh: "refresh-race",
+            expires: 1,
           },
-        }),
+        ],
         { mode: 0o600 },
       );
       const refreshStarted = deferred();
@@ -357,24 +354,18 @@ describe("AuthManager and TauCredentialStore", () => {
   it("does not let credential-store refresh restore a deleted account", async () => {
     const fx = createTempAuthPath();
     try {
-      writeFileSync(
+      writeCodexAccounts(
         fx.authPath,
-        JSON.stringify({
-          providers: {
-            "openai-codex": {
-              accounts: [
-                {
-                  type: "oauth",
-                  accountId: "acct-modify-race",
-                  providerAccountId: "acct-modify-race",
-                  access: "access-original",
-                  refresh: "refresh-original",
-                  expires: 1,
-                },
-              ],
-            },
+        [
+          {
+            type: "oauth",
+            accountId: "acct-modify-race",
+            providerAccountId: "acct-modify-race",
+            access: "access-original",
+            refresh: "refresh-original",
+            expires: 1,
           },
-        }),
+        ],
         { mode: 0o600 },
       );
       const refreshStarted = deferred();
@@ -410,24 +401,18 @@ describe("AuthManager and TauCredentialStore", () => {
   it("does not let a later parallel refresh overwrite a newer credential generation", async () => {
     const fx = createTempAuthPath();
     try {
-      writeFileSync(
+      writeCodexAccounts(
         fx.authPath,
-        JSON.stringify({
-          providers: {
-            "openai-codex": {
-              accounts: [
-                {
-                  type: "oauth",
-                  accountId: "acct-parallel",
-                  providerAccountId: "acct-parallel",
-                  access: "access-original",
-                  refresh: "refresh-original",
-                  expires: 1,
-                },
-              ],
-            },
+        [
+          {
+            type: "oauth",
+            accountId: "acct-parallel",
+            providerAccountId: "acct-parallel",
+            access: "access-original",
+            refresh: "refresh-original",
+            expires: 1,
           },
-        }),
+        ],
         { mode: 0o600 },
       );
       const bothRefreshesStarted = deferred();
@@ -497,29 +482,16 @@ describe("AuthManager and TauCredentialStore", () => {
         email: "user@example.com",
         plan: "pro",
       });
-      writeFileSync(
-        fx.authPath,
-        JSON.stringify(
-          {
-            providers: {
-              "openai-codex": {
-                accounts: [
-                  {
-                    type: "oauth",
-                    accountId: "acct-plan",
-                    providerAccountId: "acct-plan",
-                    access: originalAccess,
-                    refresh: "refresh-plan",
-                    expires: Number.MAX_SAFE_INTEGER,
-                  },
-                ],
-              },
-            },
-          },
-          null,
-          2,
-        ),
-      );
+      writeCodexAccounts(fx.authPath, [
+        {
+          type: "oauth",
+          accountId: "acct-plan",
+          providerAccountId: "acct-plan",
+          access: originalAccess,
+          refresh: "refresh-plan",
+          expires: Number.MAX_SAFE_INTEGER,
+        },
+      ]);
 
       codexRefresh.mockResolvedValue({
         type: "oauth",
@@ -530,18 +502,7 @@ describe("AuthManager and TauCredentialStore", () => {
       });
       vi.stubGlobal(
         "fetch",
-        vi.fn(async () => ({
-          ok: true,
-          json: async () => ({
-            rate_limit: {
-              primary_window: {
-                used_percent: 12,
-                reset_at: 4102444800,
-                limit_window_seconds: 18000,
-              },
-            },
-          }),
-        })),
+        vi.fn(async () => createUsageResponse(12)),
       );
 
       const storage = new AuthStorage(fx.authPath);
@@ -582,25 +543,19 @@ describe("AuthManager and TauCredentialStore", () => {
           },
         ],
       };
-      writeFileSync(
+      writeCodexAccounts(
         fx.authPath,
-        JSON.stringify({
-          providers: {
-            "openai-codex": {
-              accounts: [
-                {
-                  type: "oauth",
-                  accountId: "acct-stale",
-                  providerAccountId: "acct-stale",
-                  access,
-                  refresh: "refresh-stale",
-                  expires: 0,
-                  usage,
-                },
-              ],
-            },
+        [
+          {
+            type: "oauth",
+            accountId: "acct-stale",
+            providerAccountId: "acct-stale",
+            access,
+            refresh: "refresh-stale",
+            expires: 0,
+            usage,
           },
-        }),
+        ],
         { mode: 0o600 },
       );
       codexRefresh.mockRejectedValue(new Error("refresh token rejected"));
@@ -632,24 +587,18 @@ describe("AuthManager and TauCredentialStore", () => {
         email: "new@example.com",
         plan: "pro",
       });
-      writeFileSync(
+      writeCodexAccounts(
         fx.authPath,
-        JSON.stringify({
-          providers: {
-            "openai-codex": {
-              accounts: [
-                {
-                  type: "oauth",
-                  accountId: "acct-credential-race",
-                  providerAccountId: "acct-credential-race",
-                  access: originalAccess,
-                  refresh: "refresh-original",
-                  expires: 0,
-                },
-              ],
-            },
+        [
+          {
+            type: "oauth",
+            accountId: "acct-credential-race",
+            providerAccountId: "acct-credential-race",
+            access: originalAccess,
+            refresh: "refresh-original",
+            expires: 0,
           },
-        }),
+        ],
         { mode: 0o600 },
       );
       const refreshStarted = deferred();
@@ -660,18 +609,7 @@ describe("AuthManager and TauCredentialStore", () => {
       });
       vi.stubGlobal(
         "fetch",
-        vi.fn(async () => ({
-          ok: true,
-          json: async () => ({
-            rate_limit: {
-              primary_window: {
-                used_percent: 12,
-                reset_at: 4102444800,
-                limit_window_seconds: 18000,
-              },
-            },
-          }),
-        })),
+        vi.fn(async () => createUsageResponse(12)),
       );
 
       const listing = new AuthManager(new AuthStorage(fx.authPath)).listProviderAccounts();
@@ -715,24 +653,18 @@ describe("AuthManager and TauCredentialStore", () => {
         email: "new@example.com",
         plan: "pro",
       });
-      writeFileSync(
+      writeCodexAccounts(
         fx.authPath,
-        JSON.stringify({
-          providers: {
-            "openai-codex": {
-              accounts: [
-                {
-                  type: "oauth",
-                  accountId: "acct-usage-race",
-                  providerAccountId: "acct-usage-race",
-                  access: originalAccess,
-                  refresh: "refresh-original",
-                  expires: Number.MAX_SAFE_INTEGER,
-                },
-              ],
-            },
+        [
+          {
+            type: "oauth",
+            accountId: "acct-usage-race",
+            providerAccountId: "acct-usage-race",
+            access: originalAccess,
+            refresh: "refresh-original",
+            expires: Number.MAX_SAFE_INTEGER,
           },
-        }),
+        ],
         { mode: 0o600 },
       );
       const fetchStarted = deferred();
@@ -742,18 +674,7 @@ describe("AuthManager and TauCredentialStore", () => {
         vi.fn(async () => {
           fetchStarted.resolve();
           await releaseFetch.promise;
-          return {
-            ok: true,
-            json: async () => ({
-              rate_limit: {
-                primary_window: {
-                  used_percent: 12,
-                  reset_at: 4102444800,
-                  limit_window_seconds: 18000,
-                },
-              },
-            }),
-          };
+          return createUsageResponse(12);
         }),
       );
 
@@ -789,76 +710,36 @@ describe("AuthManager and TauCredentialStore", () => {
   it("uses codex failover selection in pi-ai credential store", async () => {
     const fx = createTempAuthPath();
     try {
-      writeFileSync(
-        fx.authPath,
-        JSON.stringify(
-          {
-            providers: {
-              "openai-codex": {
-                accounts: [
-                  {
-                    type: "oauth",
-                    accountId: "acct-exhausted",
-                    providerAccountId: "provider-exhausted",
-                    access: "access-exhausted",
-                    refresh: "refresh-exhausted",
-                    expires: 0,
-                    usage: {
-                      windows: [
-                        {
-                          name: "primary",
-                          usedPercent: 100,
-                          resetAt: 4102444800,
-                          windowSeconds: 18000,
-                        },
-                      ],
-                    },
-                  },
-                  {
-                    type: "oauth",
-                    accountId: "acct-disabled",
-                    disabled: true,
-                    providerAccountId: "provider-disabled",
-                    access: "access-disabled",
-                    refresh: "refresh-disabled",
-                    expires: 0,
-                    usage: {
-                      windows: [
-                        {
-                          name: "primary",
-                          usedPercent: 100,
-                          resetAt: 4102444800,
-                          windowSeconds: 18000,
-                        },
-                      ],
-                    },
-                  },
-                  {
-                    type: "oauth",
-                    accountId: "acct-next",
-                    providerAccountId: "provider-next",
-                    access: "access-next",
-                    refresh: "refresh-next",
-                    expires: 0,
-                    usage: {
-                      windows: [
-                        {
-                          name: "primary",
-                          usedPercent: 100,
-                          resetAt: 4102444800,
-                          windowSeconds: 18000,
-                        },
-                      ],
-                    },
-                  },
-                ],
-              },
-            },
-          },
-          null,
-          2,
-        ),
-      );
+      writeCodexAccounts(fx.authPath, [
+        {
+          type: "oauth",
+          accountId: "acct-exhausted",
+          providerAccountId: "provider-exhausted",
+          access: "access-exhausted",
+          refresh: "refresh-exhausted",
+          expires: 0,
+          usage: createUsage(100),
+        },
+        {
+          type: "oauth",
+          accountId: "acct-disabled",
+          disabled: true,
+          providerAccountId: "provider-disabled",
+          access: "access-disabled",
+          refresh: "refresh-disabled",
+          expires: 0,
+          usage: createUsage(100),
+        },
+        {
+          type: "oauth",
+          accountId: "acct-next",
+          providerAccountId: "provider-next",
+          access: "access-next",
+          refresh: "refresh-next",
+          expires: 0,
+          usage: createUsage(100),
+        },
+      ]);
 
       codexToAuth.mockImplementation(async (credential) => ({
         apiKey: credential.refresh === "refresh-exhausted" ? "api-exhausted" : "api-next",
@@ -875,18 +756,7 @@ describe("AuthManager and TauCredentialStore", () => {
                 ? rawHeaders["ChatGPT-Account-Id"]
                 : undefined;
           const usedPercent = accountId === "provider-next" ? 12 : 100;
-          return {
-            ok: true,
-            json: async () => ({
-              rate_limit: {
-                primary_window: {
-                  used_percent: usedPercent,
-                  reset_at: 4102444800,
-                  limit_window_seconds: 18000,
-                },
-              },
-            }),
-          };
+          return createUsageResponse(usedPercent);
         }),
       );
 
@@ -909,51 +779,27 @@ describe("AuthManager and TauCredentialStore", () => {
   it("excludes disabled accounts from automatic selection", async () => {
     const fx = createTempAuthPath();
     try {
-      writeFileSync(
+      writeCodexAccounts(
         fx.authPath,
-        JSON.stringify({
-          providers: {
-            "openai-codex": {
-              accounts: [
-                {
-                  type: "oauth",
-                  accountId: "acct-disabled",
-                  disabled: true,
-                  access: "access-disabled",
-                  refresh: "refresh-disabled",
-                  expires: Number.MAX_SAFE_INTEGER,
-                  usage: {
-                    windows: [
-                      {
-                        name: "primary",
-                        usedPercent: 90,
-                        resetAt: 4102444800,
-                        windowSeconds: 18000,
-                      },
-                    ],
-                  },
-                },
-                {
-                  type: "oauth",
-                  accountId: "acct-enabled",
-                  access: "access-enabled",
-                  refresh: "refresh-enabled",
-                  expires: Number.MAX_SAFE_INTEGER,
-                  usage: {
-                    windows: [
-                      {
-                        name: "primary",
-                        usedPercent: 10,
-                        resetAt: 4102444800,
-                        windowSeconds: 18000,
-                      },
-                    ],
-                  },
-                },
-              ],
-            },
+        [
+          {
+            type: "oauth",
+            accountId: "acct-disabled",
+            disabled: true,
+            access: "access-disabled",
+            refresh: "refresh-disabled",
+            expires: Number.MAX_SAFE_INTEGER,
+            usage: createUsage(90),
           },
-        }),
+          {
+            type: "oauth",
+            accountId: "acct-enabled",
+            access: "access-enabled",
+            refresh: "refresh-enabled",
+            expires: Number.MAX_SAFE_INTEGER,
+            usage: createUsage(10),
+          },
+        ],
         { mode: 0o600 },
       );
       const storage = new AuthStorage(fx.authPath);
@@ -974,33 +820,18 @@ describe("AuthManager and TauCredentialStore", () => {
   it("does not complete an in-flight selection after the account is disabled", async () => {
     const fx = createTempAuthPath();
     try {
-      writeFileSync(
+      writeCodexAccounts(
         fx.authPath,
-        JSON.stringify({
-          providers: {
-            "openai-codex": {
-              accounts: [
-                {
-                  type: "oauth",
-                  accountId: "acct-disable-race",
-                  access: "access-disable-race",
-                  refresh: "refresh-disable-race",
-                  expires: Number.MAX_SAFE_INTEGER,
-                  usage: {
-                    windows: [
-                      {
-                        name: "primary",
-                        usedPercent: 10,
-                        resetAt: 4102444800,
-                        windowSeconds: 18000,
-                      },
-                    ],
-                  },
-                },
-              ],
-            },
+        [
+          {
+            type: "oauth",
+            accountId: "acct-disable-race",
+            access: "access-disable-race",
+            refresh: "refresh-disable-race",
+            expires: Number.MAX_SAFE_INTEGER,
+            usage: createUsage(10),
           },
-        }),
+        ],
         { mode: 0o600 },
       );
       const authStarted = deferred();
@@ -1028,34 +859,19 @@ describe("AuthManager and TauCredentialStore", () => {
   it("does not return a sticky account disabled during a usage refresh", async () => {
     const fx = createTempAuthPath();
     try {
-      writeFileSync(
+      writeCodexAccounts(
         fx.authPath,
-        JSON.stringify({
-          providers: {
-            "openai-codex": {
-              accounts: [
-                {
-                  type: "oauth",
-                  accountId: "acct-usage-disable-race",
-                  providerAccountId: "provider-usage-disable-race",
-                  access: "access-usage-disable-race",
-                  refresh: "refresh-usage-disable-race",
-                  expires: Number.MAX_SAFE_INTEGER,
-                  usage: {
-                    windows: [
-                      {
-                        name: "primary",
-                        usedPercent: 10,
-                        resetAt: 4102444800,
-                        windowSeconds: 18000,
-                      },
-                    ],
-                  },
-                },
-              ],
-            },
+        [
+          {
+            type: "oauth",
+            accountId: "acct-usage-disable-race",
+            providerAccountId: "provider-usage-disable-race",
+            access: "access-usage-disable-race",
+            refresh: "refresh-usage-disable-race",
+            expires: Number.MAX_SAFE_INTEGER,
+            usage: createUsage(10),
           },
-        }),
+        ],
         { mode: 0o600 },
       );
       const storage = new AuthStorage(fx.authPath);
@@ -1078,18 +894,7 @@ describe("AuthManager and TauCredentialStore", () => {
         vi.fn(async () => {
           usageStarted.resolve();
           await releaseUsage.promise;
-          return {
-            ok: true,
-            json: async () => ({
-              rate_limit: {
-                primary_window: {
-                  used_percent: 10,
-                  reset_at: 4102444800,
-                  limit_window_seconds: 18000,
-                },
-              },
-            }),
-          };
+          return createUsageResponse(10);
         }),
       );
 
@@ -1113,24 +918,18 @@ describe("AuthManager and TauCredentialStore", () => {
   it("propagates credential read cancellation through codex refresh and usage requests", async () => {
     const fx = createTempAuthPath();
     try {
-      writeFileSync(
+      writeCodexAccounts(
         fx.authPath,
-        JSON.stringify({
-          providers: {
-            "openai-codex": {
-              accounts: [
-                {
-                  type: "oauth",
-                  accountId: "acct-cancel",
-                  providerAccountId: "provider-cancel",
-                  access: "access-cancel",
-                  refresh: "refresh-cancel",
-                  expires: 0,
-                },
-              ],
-            },
+        [
+          {
+            type: "oauth",
+            accountId: "acct-cancel",
+            providerAccountId: "provider-cancel",
+            access: "access-cancel",
+            refresh: "refresh-cancel",
+            expires: 0,
           },
-        }),
+        ],
         { mode: 0o600 },
       );
 
@@ -1223,33 +1022,20 @@ describe("AuthManager and TauCredentialStore", () => {
   it("matches forced codex accounts by email in pi-ai credential store", async () => {
     const fx = createTempAuthPath();
     try {
-      writeFileSync(
-        fx.authPath,
-        JSON.stringify(
-          {
-            providers: {
-              "openai-codex": {
-                accounts: [
-                  {
-                    type: "oauth",
-                    accountId: "acct-email",
-                    providerAccountId: "provider-email",
-                    access: createAccessToken({
-                      accountId: "acct-email",
-                      email: "user@example.com",
-                      plan: "plus",
-                    }),
-                    refresh: "refresh-email",
-                    expires: Number.MAX_SAFE_INTEGER,
-                  },
-                ],
-              },
-            },
-          },
-          null,
-          2,
-        ),
-      );
+      writeCodexAccounts(fx.authPath, [
+        {
+          type: "oauth",
+          accountId: "acct-email",
+          providerAccountId: "provider-email",
+          access: createAccessToken({
+            accountId: "acct-email",
+            email: "user@example.com",
+            plan: "plus",
+          }),
+          refresh: "refresh-email",
+          expires: Number.MAX_SAFE_INTEGER,
+        },
+      ]);
 
       const storage = new AuthStorage(fx.authPath);
       const store = new TauCredentialStore({
@@ -1269,35 +1055,29 @@ describe("AuthManager and TauCredentialStore", () => {
   it("rejects a forced disabled codex account", async () => {
     const fx = createTempAuthPath();
     try {
-      writeFileSync(
+      writeCodexAccounts(
         fx.authPath,
-        JSON.stringify({
-          providers: {
-            "openai-codex": {
-              accounts: [
-                {
-                  type: "oauth",
-                  accountId: "acct-disabled-forced",
-                  disabled: true,
-                  access: createAccessToken({
-                    accountId: "acct-disabled-forced",
-                    email: "disabled@example.com",
-                    plan: "plus",
-                  }),
-                  refresh: "refresh-disabled",
-                  expires: Number.MAX_SAFE_INTEGER,
-                },
-                {
-                  type: "oauth",
-                  accountId: "acct-enabled-fallback",
-                  access: "access-enabled",
-                  refresh: "refresh-enabled",
-                  expires: Number.MAX_SAFE_INTEGER,
-                },
-              ],
-            },
+        [
+          {
+            type: "oauth",
+            accountId: "acct-disabled-forced",
+            disabled: true,
+            access: createAccessToken({
+              accountId: "acct-disabled-forced",
+              email: "disabled@example.com",
+              plan: "plus",
+            }),
+            refresh: "refresh-disabled",
+            expires: Number.MAX_SAFE_INTEGER,
           },
-        }),
+          {
+            type: "oauth",
+            accountId: "acct-enabled-fallback",
+            access: "access-enabled",
+            refresh: "refresh-enabled",
+            expires: Number.MAX_SAFE_INTEGER,
+          },
+        ],
         { mode: 0o600 },
       );
       const store = new TauCredentialStore({
@@ -1318,57 +1098,26 @@ describe("AuthManager and TauCredentialStore", () => {
   it("keeps codex account selection sticky per model runtime session", async () => {
     const fx = createTempAuthPath();
     try {
-      writeFileSync(
-        fx.authPath,
-        JSON.stringify(
-          {
-            providers: {
-              "openai-codex": {
-                accounts: [
-                  {
-                    type: "oauth",
-                    accountId: "acct-a",
-                    providerAccountId: "provider-a",
-                    access: "access-a",
-                    refresh: "refresh-a",
-                    expires: Number.MAX_SAFE_INTEGER,
-                    usage: {
-                      windows: [
-                        {
-                          name: "primary",
-                          usedPercent: 80,
-                          resetAt: 4102444800,
-                          windowSeconds: 18000,
-                        },
-                      ],
-                    },
-                  },
-                  {
-                    type: "oauth",
-                    accountId: "acct-b",
-                    providerAccountId: "provider-b",
-                    access: "access-b",
-                    refresh: "refresh-b",
-                    expires: Number.MAX_SAFE_INTEGER,
-                    usage: {
-                      windows: [
-                        {
-                          name: "primary",
-                          usedPercent: 10,
-                          resetAt: 4102444800,
-                          windowSeconds: 18000,
-                        },
-                      ],
-                    },
-                  },
-                ],
-              },
-            },
-          },
-          null,
-          2,
-        ),
-      );
+      writeCodexAccounts(fx.authPath, [
+        {
+          type: "oauth",
+          accountId: "acct-a",
+          providerAccountId: "provider-a",
+          access: "access-a",
+          refresh: "refresh-a",
+          expires: Number.MAX_SAFE_INTEGER,
+          usage: createUsage(80),
+        },
+        {
+          type: "oauth",
+          accountId: "acct-b",
+          providerAccountId: "provider-b",
+          access: "access-b",
+          refresh: "refresh-b",
+          expires: Number.MAX_SAFE_INTEGER,
+          usage: createUsage(10),
+        },
+      ]);
 
       let sessionId = "sticky-disable-session-1";
       const storage = new AuthStorage(fx.authPath);
@@ -1409,57 +1158,26 @@ describe("AuthManager and TauCredentialStore", () => {
   it("clears sticky codex account selection after exhausted-account provider errors", async () => {
     const fx = createTempAuthPath();
     try {
-      writeFileSync(
-        fx.authPath,
-        JSON.stringify(
-          {
-            providers: {
-              "openai-codex": {
-                accounts: [
-                  {
-                    type: "oauth",
-                    accountId: "acct-a",
-                    providerAccountId: "provider-a",
-                    access: "access-a",
-                    refresh: "refresh-a",
-                    expires: Number.MAX_SAFE_INTEGER,
-                    usage: {
-                      windows: [
-                        {
-                          name: "primary",
-                          usedPercent: 80,
-                          resetAt: 4102444800,
-                          windowSeconds: 18000,
-                        },
-                      ],
-                    },
-                  },
-                  {
-                    type: "oauth",
-                    accountId: "acct-b",
-                    providerAccountId: "provider-b",
-                    access: "access-b",
-                    refresh: "refresh-b",
-                    expires: Number.MAX_SAFE_INTEGER,
-                    usage: {
-                      windows: [
-                        {
-                          name: "primary",
-                          usedPercent: 10,
-                          resetAt: 4102444800,
-                          windowSeconds: 18000,
-                        },
-                      ],
-                    },
-                  },
-                ],
-              },
-            },
-          },
-          null,
-          2,
-        ),
-      );
+      writeCodexAccounts(fx.authPath, [
+        {
+          type: "oauth",
+          accountId: "acct-a",
+          providerAccountId: "provider-a",
+          access: "access-a",
+          refresh: "refresh-a",
+          expires: Number.MAX_SAFE_INTEGER,
+          usage: createUsage(80),
+        },
+        {
+          type: "oauth",
+          accountId: "acct-b",
+          providerAccountId: "provider-b",
+          access: "access-b",
+          refresh: "refresh-b",
+          expires: Number.MAX_SAFE_INTEGER,
+          usage: createUsage(10),
+        },
+      ]);
 
       vi.stubGlobal(
         "fetch",
@@ -1471,18 +1189,7 @@ describe("AuthManager and TauCredentialStore", () => {
               : rawHeaders && typeof rawHeaders === "object"
                 ? rawHeaders["ChatGPT-Account-Id"]
                 : undefined;
-          return {
-            ok: true,
-            json: async () => ({
-              rate_limit: {
-                primary_window: {
-                  used_percent: accountId === "provider-a" ? 100 : 10,
-                  reset_at: 4102444800,
-                  limit_window_seconds: 18000,
-                },
-              },
-            }),
-          };
+          return createUsageResponse(accountId === "provider-a" ? 100 : 10);
         }),
       );
 
@@ -1513,44 +1220,20 @@ describe("AuthManager and TauCredentialStore", () => {
   it("fails early when codex usage windows change unexpectedly", async () => {
     const fx = createTempAuthPath();
     try {
-      writeFileSync(
-        fx.authPath,
-        JSON.stringify(
-          {
-            providers: {
-              "openai-codex": {
-                accounts: [
-                  {
-                    type: "oauth",
-                    accountId: "acct-old",
-                    providerAccountId: "provider-old",
-                    access: "old-access",
-                    refresh: "old-refresh",
-                    expires: 0,
-                  },
-                ],
-              },
-            },
-          },
-          null,
-          2,
-        ),
-      );
+      writeCodexAccounts(fx.authPath, [
+        {
+          type: "oauth",
+          accountId: "acct-old",
+          providerAccountId: "provider-old",
+          access: "old-access",
+          refresh: "old-refresh",
+          expires: 0,
+        },
+      ]);
 
       vi.stubGlobal(
         "fetch",
-        vi.fn(async () => ({
-          ok: true,
-          json: async () => ({
-            rate_limit: {
-              primary_window: {
-                used_percent: 12,
-                reset_at: 4102444800,
-                limit_window_seconds: 3600,
-              },
-            },
-          }),
-        })),
+        vi.fn(async () => createUsageResponse(12, 3600)),
       );
 
       const storage = new AuthStorage(fx.authPath);

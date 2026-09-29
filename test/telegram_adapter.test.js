@@ -15,6 +15,16 @@ function transcribedTelegramUserText(text) {
   return expect.stringContaining(`</system>\n${text}`);
 }
 
+function createTtsPreferences(isTtsEnabled) {
+  return {
+    initialize: vi.fn(async () => {}),
+    get: vi.fn(() => undefined),
+    set: vi.fn(async () => {}),
+    isTtsEnabled,
+    setTtsEnabled: vi.fn(async () => {}),
+  };
+}
+
 async function startAdapter(options) {
   const preferences = new Map();
   const ttsPreferences = new Map();
@@ -32,6 +42,10 @@ async function startAdapter(options) {
   await projectPreferences.initialize();
   return startTelegramAdapter({
     botId: "bot-default",
+    botToken: "token",
+    projects: { demo: { repo: "git@example.com:demo.git" } },
+    pollIntervalMs: 1,
+    requestTimeoutSeconds: 1,
     ...options,
     projectPreferences,
   });
@@ -256,6 +270,15 @@ function createStatusSnapshot(overrides = {}) {
   };
 }
 
+function createManagedSession(overrides) {
+  return {
+    projectId: "demo",
+    createdAt: "2024-01-01T00:00:00.000Z",
+    updatedAt: "2024-01-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
 function createSessionManagerHarness(initialSessions = [], options = {}) {
   const sessions = new Map(
     initialSessions.map((session) => [
@@ -400,23 +423,16 @@ function createSessionManagerHarness(initialSessions = [], options = {}) {
 
 async function startNotificationTestAdapter({ chatId, apiHarness, onLog, snapshot }) {
   const managerHarness = createSessionManagerHarness([
-    {
+    createManagedSession({
       id: "s1",
-      projectId: "demo",
       ownerId: ownerIdForChat(chatId),
       state: "running",
-      createdAt: "2024-01-01T00:00:00.000Z",
-      updatedAt: "2024-01-01T00:00:00.000Z",
       ...(snapshot ? { snapshot } : {}),
-    },
+    }),
   ]);
   const adapter = await startAdapter({
-    botToken: "token",
-    projects: { demo: { repo: "git@example.com:demo.git" } },
     sessionManager: managerHarness.manager,
     api: apiHarness.api,
-    pollIntervalMs: 1,
-    requestTimeoutSeconds: 1,
     onLog,
   });
   return { adapter, manager: managerHarness.manager };
@@ -439,12 +455,8 @@ describe("telegram adapter", () => {
     const managerHarness = createSessionManagerHarness();
 
     const adapter = await startAdapter({
-      botToken: "token",
-      projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
     });
 
     try {
@@ -495,26 +507,19 @@ describe("telegram adapter", () => {
       ],
     ]);
     const managerHarness = createSessionManagerHarness([
-      {
+      createManagedSession({
         id: "s-tts",
-        projectId: "demo",
         ownerId,
         state: "running",
-        createdAt: "2024-01-01T00:00:00.000Z",
-        updatedAt: "2024-01-01T00:00:00.000Z",
-      },
+      }),
     ]);
     const generateVoice = vi.fn(async () => Buffer.from("ogg voice"));
     const adapter = await startAdapter({
-      botToken: "token",
-      projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
       projectPreferences,
       api: apiHarness.api,
       geminiApiKey: "gemini-key",
       generateVoice,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
     });
 
     try {
@@ -590,32 +595,19 @@ describe("telegram adapter", () => {
     const ownerId = ownerIdForChat(chatId);
     const apiHarness = createApiHarness([]);
     const managerHarness = createSessionManagerHarness([
-      {
+      createManagedSession({
         id: "s-tts-missing-credential",
-        projectId: "demo",
         ownerId,
         state: "waiting-input",
-        createdAt: "2024-01-01T00:00:00.000Z",
-        updatedAt: "2024-01-01T00:00:00.000Z",
-      },
+      }),
     ]);
     const logs = [];
     const generateVoice = vi.fn();
     const adapter = await startAdapter({
-      botToken: "token",
-      projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
-      projectPreferences: {
-        initialize: vi.fn(async () => {}),
-        get: vi.fn(() => undefined),
-        set: vi.fn(async () => {}),
-        isTtsEnabled: vi.fn((id) => id === ownerId),
-        setTtsEnabled: vi.fn(async () => {}),
-      },
+      projectPreferences: createTtsPreferences(vi.fn((id) => id === ownerId)),
       api: apiHarness.api,
       generateVoice,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
       onLog: (entry) => logs.push(entry),
     });
 
@@ -650,14 +642,11 @@ describe("telegram adapter", () => {
     const ownerId = ownerIdForChat(chatId);
     const apiHarness = createApiHarness([]);
     const managerHarness = createSessionManagerHarness([
-      {
+      createManagedSession({
         id: "s-tts-order",
-        projectId: "demo",
         ownerId,
         state: "waiting-input",
-        createdAt: "2024-01-01T00:00:00.000Z",
-        updatedAt: "2024-01-01T00:00:00.000Z",
-      },
+      }),
     ]);
     const firstVoice = deferred();
     const generateVoice = vi
@@ -665,21 +654,11 @@ describe("telegram adapter", () => {
       .mockImplementationOnce(async () => await firstVoice.promise)
       .mockResolvedValueOnce(Buffer.from("voice B"));
     const adapter = await startAdapter({
-      botToken: "token",
-      projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
-      projectPreferences: {
-        initialize: vi.fn(async () => {}),
-        get: vi.fn(() => undefined),
-        set: vi.fn(async () => {}),
-        isTtsEnabled: vi.fn((id) => id === ownerId),
-        setTtsEnabled: vi.fn(async () => {}),
-      },
+      projectPreferences: createTtsPreferences(vi.fn((id) => id === ownerId)),
       api: apiHarness.api,
       geminiApiKey: "gemini-key",
       generateVoice,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
     });
 
     try {
@@ -724,14 +703,11 @@ describe("telegram adapter", () => {
     const ownerId = ownerIdForChat(chatId);
     const apiHarness = createApiHarness([]);
     const managerHarness = createSessionManagerHarness([
-      {
+      createManagedSession({
         id: "s-tts-timeout",
-        projectId: "demo",
         ownerId,
         state: "waiting-input",
-        createdAt: "2024-01-01T00:00:00.000Z",
-        updatedAt: "2024-01-01T00:00:00.000Z",
-      },
+      }),
     ]);
     const logs = [];
     const generateVoice = vi
@@ -752,21 +728,11 @@ describe("telegram adapter", () => {
       )
       .mockResolvedValueOnce(Buffer.from("voice B"));
     const adapter = await startAdapter({
-      botToken: "token",
-      projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
-      projectPreferences: {
-        initialize: vi.fn(async () => {}),
-        get: vi.fn(() => undefined),
-        set: vi.fn(async () => {}),
-        isTtsEnabled: vi.fn((id) => id === ownerId),
-        setTtsEnabled: vi.fn(async () => {}),
-      },
+      projectPreferences: createTtsPreferences(vi.fn((id) => id === ownerId)),
       api: apiHarness.api,
       geminiApiKey: "gemini-key",
       generateVoice,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
       onLog: (entry) => logs.push(entry),
     });
 
@@ -820,32 +786,19 @@ describe("telegram adapter", () => {
       }),
     );
     const managerHarness = createSessionManagerHarness([
-      {
+      createManagedSession({
         id: "s-tts-upload-timeout",
-        projectId: "demo",
         ownerId,
         state: "waiting-input",
-        createdAt: "2024-01-01T00:00:00.000Z",
-        updatedAt: "2024-01-01T00:00:00.000Z",
-      },
+      }),
     ]);
     const logs = [];
     const adapter = await startAdapter({
-      botToken: "token",
-      projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
-      projectPreferences: {
-        initialize: vi.fn(async () => {}),
-        get: vi.fn(() => undefined),
-        set: vi.fn(async () => {}),
-        isTtsEnabled: vi.fn((id) => id === ownerId),
-        setTtsEnabled: vi.fn(async () => {}),
-      },
+      projectPreferences: createTtsPreferences(vi.fn((id) => id === ownerId)),
       api: apiHarness.api,
       geminiApiKey: "gemini-key",
       generateVoice: vi.fn(async () => Buffer.from("voice")),
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
       onLog: (entry) => logs.push(entry),
     });
 
@@ -888,32 +841,19 @@ describe("telegram adapter", () => {
       new TelegramRequestError("telegram rejected voice", { retryable: false }),
     );
     const managerHarness = createSessionManagerHarness([
-      {
+      createManagedSession({
         id: "s-tts-delivery-failure",
-        projectId: "demo",
         ownerId,
         state: "waiting-input",
-        createdAt: "2024-01-01T00:00:00.000Z",
-        updatedAt: "2024-01-01T00:00:00.000Z",
-      },
+      }),
     ]);
     const logs = [];
     const adapter = await startAdapter({
-      botToken: "token",
-      projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
-      projectPreferences: {
-        initialize: vi.fn(async () => {}),
-        get: vi.fn(() => undefined),
-        set: vi.fn(async () => {}),
-        isTtsEnabled: vi.fn((id) => id === ownerId),
-        setTtsEnabled: vi.fn(async () => {}),
-      },
+      projectPreferences: createTtsPreferences(vi.fn((id) => id === ownerId)),
       api: apiHarness.api,
       geminiApiKey: "gemini-key",
       generateVoice: vi.fn(async () => Buffer.from("voice")),
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
       onLog: (entry) => logs.push(entry),
     });
 
@@ -950,32 +890,19 @@ describe("telegram adapter", () => {
     let enabled = true;
     const apiHarness = createApiHarness([]);
     const managerHarness = createSessionManagerHarness([
-      {
+      createManagedSession({
         id: "s-tts-disabled",
-        projectId: "demo",
         ownerId,
         state: "waiting-input",
-        createdAt: "2024-01-01T00:00:00.000Z",
-        updatedAt: "2024-01-01T00:00:00.000Z",
-      },
+      }),
     ]);
     const voice = deferred();
     const adapter = await startAdapter({
-      botToken: "token",
-      projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
-      projectPreferences: {
-        initialize: vi.fn(async () => {}),
-        get: vi.fn(() => undefined),
-        set: vi.fn(async () => {}),
-        isTtsEnabled: vi.fn((id) => id === ownerId && enabled),
-        setTtsEnabled: vi.fn(async () => {}),
-      },
+      projectPreferences: createTtsPreferences(vi.fn((id) => id === ownerId && enabled)),
       api: apiHarness.api,
       geminiApiKey: "gemini-key",
       generateVoice: vi.fn(async () => await voice.promise),
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
     });
 
     try {
@@ -1025,13 +952,9 @@ describe("telegram adapter", () => {
     ]);
     const managerHarness = createSessionManagerHarness();
     const adapter = await startAdapter({
-      botToken: "token",
-      projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
       projectPreferences,
       api: apiHarness.api,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
     });
 
     try {
@@ -1077,7 +1000,6 @@ describe("telegram adapter", () => {
     });
 
     const adapter = await startAdapter({
-      botToken: "token",
       projects: {
         alpha: { repo: "owner/alpha" },
         beta: { repo: "owner/beta" },
@@ -1089,8 +1011,6 @@ describe("telegram adapter", () => {
       defaultProjectId: "platform",
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
     });
 
     try {
@@ -1147,7 +1067,6 @@ describe("telegram adapter", () => {
     ]);
 
     const adapter = await startAdapter({
-      botToken: "token",
       projects: {
         alpha: { repo: "owner/alpha" },
         beta: { repo: "owner/beta" },
@@ -1158,8 +1077,6 @@ describe("telegram adapter", () => {
       },
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
     });
 
     try {
@@ -1214,7 +1131,6 @@ describe("telegram adapter", () => {
     const managerHarness = createSessionManagerHarness();
 
     const adapter = await startAdapter({
-      botToken: "token",
       projects: {
         alpha: { repo: "owner/alpha" },
         beta: { repo: "owner/beta" },
@@ -1222,8 +1138,6 @@ describe("telegram adapter", () => {
       defaultProjectId: "alpha",
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
     });
 
     try {
@@ -1282,12 +1196,9 @@ describe("telegram adapter", () => {
     );
 
     const adapter = await startAdapter({
-      botToken: "token",
       projects: { demo: { repo: "owner/demo" } },
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
     });
 
     try {
@@ -1375,12 +1286,9 @@ describe("telegram adapter", () => {
     ]);
 
     const adapter = await startAdapter({
-      botToken: "token",
       projects: { demo: { repo: "owner/demo" } },
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
     });
 
     try {
@@ -1419,23 +1327,17 @@ describe("telegram adapter", () => {
       ],
     ]);
     const managerHarness = createSessionManagerHarness([
-      {
+      createManagedSession({
         id: "reasoning-session",
-        projectId: "demo",
         ownerId: ownerIdForChat(activeChatId),
         state: "waiting-input",
-        createdAt: "2024-01-01T00:00:00.000Z",
-        updatedAt: "2024-01-01T00:00:00.000Z",
-      },
+      }),
     ]);
 
     const adapter = await startAdapter({
-      botToken: "token",
       projects: { demo: { repo: "owner/demo" } },
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
     });
 
     try {
@@ -1465,13 +1367,10 @@ describe("telegram adapter", () => {
     const managerHarness = createSessionManagerHarness();
 
     const adapter = await startAdapter({
-      botToken: "token",
       projects: { alpha: { repo: "owner/alpha" }, beta: { repo: "owner/beta" } },
       defaultProjectId: "alpha",
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
     });
 
     try {
@@ -1535,13 +1434,9 @@ describe("telegram adapter", () => {
     );
 
     const adapter = await startAdapter({
-      botToken: "token",
-      projects: { demo: { repo: "git@example.com:demo.git" } },
       allowedChatIds: [chatId],
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
     });
 
     try {
@@ -1596,12 +1491,8 @@ describe("telegram adapter", () => {
     const managerHarness = createSessionManagerHarness();
 
     const adapter = await startAdapter({
-      botToken: "token",
-      projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
     });
 
     try {
@@ -1642,25 +1533,18 @@ describe("telegram adapter", () => {
 
     const managerHarness = createSessionManagerHarness(
       [
-        {
+        createManagedSession({
           id: "s-group",
-          projectId: "demo",
           state: "waiting-input",
-          createdAt: "2024-01-01T00:00:00.000Z",
-          updatedAt: "2024-01-01T00:00:00.000Z",
-        },
+        }),
       ],
       { defaultOwnerId: ownerIdForChat(groupChatId) },
     );
 
     const adapter = await startAdapter({
-      botToken: "token",
-      projects: { demo: { repo: "git@example.com:demo.git" } },
       allowedChatIds: [groupChatId],
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
     });
 
     try {
@@ -1755,28 +1639,21 @@ describe("telegram adapter", () => {
     const geminiFetch = createGeminiTranscriptionFetchMock("transcribed audio");
     const managerHarness = createSessionManagerHarness(
       [
-        {
+        createManagedSession({
           id: "s-group",
-          projectId: "demo",
           state: "waiting-input",
-          createdAt: "2024-01-01T00:00:00.000Z",
-          updatedAt: "2024-01-01T00:00:00.000Z",
-        },
+        }),
       ],
       { defaultOwnerId: ownerIdForChat(groupChatId) },
     );
 
     const adapter = await startAdapter({
-      botToken: "token",
-      projects: { demo: { repo: "git@example.com:demo.git" } },
       allowedChatIds: [groupChatId],
       speechToTextProvider: "gemini",
       geminiApiKey: "gemini-key",
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
       fetchImpl: geminiFetch,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
     });
 
     try {
@@ -1829,24 +1706,17 @@ describe("telegram adapter", () => {
     ]);
     const managerHarness = createSessionManagerHarness(
       [
-        {
+        createManagedSession({
           id: "s-group",
-          projectId: "demo",
           state: "waiting-input",
-          createdAt: "2024-01-01T00:00:00.000Z",
-          updatedAt: "2024-01-01T00:00:00.000Z",
-        },
+        }),
       ],
       { defaultOwnerId: ownerIdForChat(-1002) },
     );
 
     const adapter = await startAdapter({
-      botToken: "token",
-      projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
     });
 
     try {
@@ -1882,25 +1752,18 @@ describe("telegram adapter", () => {
     const apiHarness = createApiHarness([messages]);
     const managerHarness = createSessionManagerHarness(
       [
-        {
+        createManagedSession({
           id: "s-group",
-          projectId: "demo",
           state: "waiting-input",
-          createdAt: "2024-01-01T00:00:00.000Z",
-          updatedAt: "2024-01-01T00:00:00.000Z",
-        },
+        }),
       ],
       { defaultOwnerId: ownerIdForChat(groupChatId) },
     );
 
     const adapter = await startAdapter({
-      botToken: "token",
-      projects: { demo: { repo: "git@example.com:demo.git" } },
       allowedChatIds: [groupChatId],
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
     });
 
     try {
@@ -1964,13 +1827,9 @@ describe("telegram adapter", () => {
     const managerHarness = createSessionManagerHarness();
 
     const adapter = await startAdapter({
-      botToken: "token",
-      projects: { demo: { repo: "git@example.com:demo.git" } },
       allowedChatIds: [groupChatId],
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
     });
 
     try {
@@ -2002,13 +1861,10 @@ describe("telegram adapter", () => {
     ]);
     const managerHarness = createSessionManagerHarness(
       [
-        {
+        createManagedSession({
           id: "old-session",
-          projectId: "demo",
           state: "waiting-input",
-          createdAt: "2024-01-01T00:00:00.000Z",
-          updatedAt: "2024-01-01T00:00:00.000Z",
-        },
+        }),
       ],
       { defaultOwnerId: ownerIdForChat(chatId) },
     );
@@ -2024,13 +1880,9 @@ describe("telegram adapter", () => {
     });
 
     const adapter = await startAdapter({
-      botToken: "token",
-      projects: { demo: { repo: "git@example.com:demo.git" } },
       defaultProjectId: "demo",
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
     });
 
     try {
@@ -2077,7 +1929,6 @@ describe("telegram adapter", () => {
     const managerHarness = createSessionManagerHarness();
 
     const adapter = await startAdapter({
-      botToken: "token",
       projects: {
         demo: { repo: "git@example.com:demo.git" },
         extra: { repo: "git@example.com:extra.git" },
@@ -2086,8 +1937,6 @@ describe("telegram adapter", () => {
       systemMessage: "telegram guidance",
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
     });
 
     try {
@@ -2180,13 +2029,10 @@ describe("telegram adapter", () => {
       ]);
       const managerHarness = createSessionManagerHarness(
         [
-          {
+          createManagedSession({
             id: "s1",
-            projectId: "demo",
             state: "running",
-            createdAt: "2024-01-01T00:00:00.000Z",
-            updatedAt: "2024-01-01T00:00:00.000Z",
-          },
+          }),
         ],
         { defaultOwnerId: ownerIdForChat(chat.id) },
       );
@@ -2208,12 +2054,11 @@ describe("telegram adapter", () => {
           ];
         });
       const adapter = await startAdapter({
-        botToken: "token",
+        requestTimeoutSeconds: undefined,
         projects: { demo: { repo: "owner/demo" } },
         allowedChatIds: [chat.id],
         sessionManager: managerHarness.manager,
         api: apiHarness.api,
-        pollIntervalMs: 1,
       });
       try {
         await waitFor(() => managerHarness.manager.sendMessage.mock.calls.length === 1);
@@ -2254,12 +2099,11 @@ describe("telegram adapter", () => {
     const managerHarness = createSessionManagerHarness();
     managerHarness.manager.sendMessage.mockRejectedValueOnce(new Error("not ready"));
     const adapter = await startAdapter({
-      botToken: "token",
+      requestTimeoutSeconds: undefined,
       projects: { demo: { repo: "owner/demo" } },
       defaultProjectId: "demo",
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
-      pollIntervalMs: 1,
     });
     try {
       await waitFor(() => managerHarness.manager.sendMessage.mock.calls.length === 3);
@@ -2314,13 +2158,12 @@ describe("telegram adapter", () => {
       });
     const transcribe = vi.fn();
     const adapter = await startAdapter({
-      botToken: "token",
+      requestTimeoutSeconds: undefined,
       projects: { demo: { repo: "owner/demo" } },
       defaultProjectId: "demo",
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
       fetchImpl: transcribe,
-      pollIntervalMs: 1,
     });
     try {
       await waitFor(() => managerHarness.manager.sendMessage.mock.calls.length === 1);
@@ -2376,12 +2219,11 @@ describe("telegram adapter", () => {
     ]);
     const managerHarness = createSessionManagerHarness();
     const adapter = await startAdapter({
-      botToken: "token",
+      requestTimeoutSeconds: undefined,
       projects: { demo: { repo: "owner/demo" } },
       defaultProjectId: "demo",
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
-      pollIntervalMs: 1,
     });
     try {
       await waitFor(() => managerHarness.manager.sendMessage.mock.calls.length === 1);
@@ -2448,12 +2290,11 @@ describe("telegram adapter", () => {
       return `/execution/${fileName}`;
     });
     const adapter = await startAdapter({
-      botToken: "token",
+      requestTimeoutSeconds: undefined,
       projects: { demo: { repo: "owner/demo" } },
       defaultProjectId: "demo",
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
-      pollIntervalMs: 1,
     });
     try {
       await waitFor(() => managerHarness.manager.sendMessage.mock.calls.length === 1);
@@ -2555,13 +2396,9 @@ describe("telegram adapter", () => {
     const managerHarness = createSessionManagerHarness();
 
     const adapter = await startAdapter({
-      botToken: "token",
-      projects: { demo: { repo: "git@example.com:demo.git" } },
       defaultProjectId: "demo",
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
     });
 
     try {
@@ -2653,13 +2490,9 @@ describe("telegram adapter", () => {
 
     const managerHarness = createSessionManagerHarness();
     const adapter = await startAdapter({
-      botToken: "token",
-      projects: { demo: { repo: "git@example.com:demo.git" } },
       defaultProjectId: "demo",
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
     });
 
     try {
@@ -2700,13 +2533,10 @@ describe("telegram adapter", () => {
 
     const managerHarness = createSessionManagerHarness(
       [
-        {
+        createManagedSession({
           id: "s21",
-          projectId: "demo",
           state: "waiting-input",
-          createdAt: "2024-01-01T00:00:00.000Z",
-          updatedAt: "2024-01-01T00:00:00.000Z",
-        },
+        }),
       ],
       { defaultOwnerId: ownerIdForChat(210) },
     );
@@ -2714,15 +2544,11 @@ describe("telegram adapter", () => {
     const geminiFetch = createGeminiTranscriptionFetchMock("ship the fix");
 
     const adapter = await startAdapter({
-      botToken: "token",
-      projects: { demo: { repo: "git@example.com:demo.git" } },
       speechToTextProvider: "gemini",
       geminiApiKey: "gemini-key",
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
       fetchImpl: geminiFetch,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
     });
 
     try {
@@ -2780,24 +2606,17 @@ describe("telegram adapter", () => {
     ]);
     const managerHarness = createSessionManagerHarness(
       [
-        {
+        createManagedSession({
           id: "s22",
-          projectId: "demo",
           state: "waiting-input",
-          createdAt: "2024-01-01T00:00:00.000Z",
-          updatedAt: "2024-01-01T00:00:00.000Z",
-        },
+        }),
       ],
       { defaultOwnerId: ownerIdForChat(211) },
     );
     const adapter = await startAdapter({
-      botToken: "token",
-      projects: { demo: { repo: "git@example.com:demo.git" } },
       openaiApiKey: "openai-key",
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
     });
 
     try {
@@ -2834,13 +2653,10 @@ describe("telegram adapter", () => {
 
     const managerHarness = createSessionManagerHarness(
       [
-        {
+        createManagedSession({
           id: "s22",
-          projectId: "demo",
           state: "waiting-input",
-          createdAt: "2024-01-01T00:00:00.000Z",
-          updatedAt: "2024-01-01T00:00:00.000Z",
-        },
+        }),
       ],
       { defaultOwnerId: ownerIdForChat(211) },
     );
@@ -2848,15 +2664,11 @@ describe("telegram adapter", () => {
     const geminiFetch = createGeminiTranscriptionFetchMock("use google transcription");
 
     const adapter = await startAdapter({
-      botToken: "token",
-      projects: { demo: { repo: "git@example.com:demo.git" } },
       speechToTextProvider: "gemini",
       geminiApiKey: "gemini-key",
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
       fetchImpl: geminiFetch,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
     });
 
     try {
@@ -2902,13 +2714,10 @@ describe("telegram adapter", () => {
     ]);
     const managerHarness = createSessionManagerHarness(
       [
-        {
+        createManagedSession({
           id: "s23",
-          projectId: "demo",
           state: "waiting-input",
-          createdAt: "2024-01-01T00:00:00.000Z",
-          updatedAt: "2024-01-01T00:00:00.000Z",
-        },
+        }),
       ],
       { defaultOwnerId: ownerIdForChat(212) },
     );
@@ -2931,15 +2740,11 @@ describe("telegram adapter", () => {
       createJsonResponse({ text: "use file transcription", languages: [{ code: "en" }] }),
     );
     const adapter = await startAdapter({
-      botToken: "token",
-      projects: { demo: { repo: "git@example.com:demo.git" } },
       openaiApiKey: "openai-key",
       speechToTextDeps: { spawnImpl },
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
       fetchImpl: openaiFetch,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
     });
 
     try {
@@ -2970,118 +2775,138 @@ describe("telegram adapter", () => {
     }
   });
 
-  it("parses picker callbacks, paginates, and switches to a selected persona only once without starting a turn", async () => {
-    const chat = { id: 329, type: "private" };
-    const from = { id: 7 };
-    const sendMessages = [];
-    const edits = [];
-    const answers = [];
-    const managerHarness = createSessionManagerHarness([], {
-      createSnapshot: () => ({
-        settings: { personaId: "persona-0" },
-        catalog: { personas: Array.from({ length: 21 }, (_, i) => ({ id: `persona-${i}` })) },
-      }),
-    });
-    const callback = (id, data) => ({
-      update_id: id,
-      callback_query: { id: `${id}`, from, message: { chat, message_id: 42 }, data },
-    });
-    vi.stubGlobal(
-      "fetch",
-      createTelegramFetchStub({
-        setMyCommands: async () => createJsonResponse({ ok: true, result: true }),
-        sendMessage: async ({ init }) => {
-          sendMessages.push(JSON.parse(init.body));
-          return createJsonResponse({ ok: true, result: { message_id: 42 } });
-        },
-        editMessageText: async ({ init }) => {
-          edits.push(JSON.parse(init.body));
-          return createJsonResponse({ ok: true, result: true });
-        },
-        answerCallbackQuery: async ({ init }) => {
-          answers.push(JSON.parse(init.body));
-          return createJsonResponse({ ok: true, result: true });
-        },
-        getUpdates: async ({ call }) => {
-          if (call === 1) {
-            return createJsonResponse({
-              ok: true,
-              result: [
-                { update_id: 1, message: { chat, from, text: "/new" } },
-                { update_id: 2, message: { chat, from, text: "/persona" } },
-              ],
-            });
-          }
-          if (call === 2) {
-            await waitFor(() => sendMessages.some((m) => m.reply_markup));
-            const keyboard = sendMessages.at(-1).reply_markup.inline_keyboard;
-            expect(keyboard).toHaveLength(21);
-            expect(Buffer.byteLength(keyboard[0][0].callback_data)).toBeLessThanOrEqual(64);
-            return createJsonResponse({
-              ok: true,
-              result: [callback(3, keyboard.at(-1)[0].callback_data)],
-            });
-          }
-          if (call === 3) {
-            await waitFor(() => edits.length === 1);
-            const keyboard = edits[0].reply_markup.inline_keyboard;
-            return createJsonResponse({
-              ok: true,
-              result: [4, 5].map((id) => callback(id, keyboard[0][0].callback_data)),
-            });
-          }
-          return pendingTelegramCall();
-        },
-      }),
-    );
-    const adapter = await startAdapter({
-      botToken: "token",
-      projects: { demo: { repo: "git@example.com:demo.git" } },
-      sessionManager: managerHarness.manager,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
-    });
-    try {
-      await waitFor(() => answers.length === 3);
-      expect(managerHarness.manager.setPersona).toHaveBeenCalledExactlyOnceWith("s1", "persona-20");
-      expect(managerHarness.manager.sendMessage).not.toHaveBeenCalled();
-      expect(edits).toHaveLength(2);
-      expect(edits.every((edit) => edit.chat_id === chat.id && edit.message_id === 42)).toBe(true);
-      const pickerMessage = sendMessages.find((message) => message.reply_markup);
-      expect(pickerMessage.text).toBe(
+  it.each([
+    {
+      kind: "persona",
+      action: "setPersona",
+      pickerText:
         "choose a persona for this session. switching is available only while Tau is idle.",
-      );
-      expect(pickerMessage.reply_markup.inline_keyboard[0][0].text).toBe("persona-0 (current)");
-      expect(pickerMessage.reply_markup.inline_keyboard.at(-1)[0].text).toBe("next");
-      expect(edits[0].text).toBe(pickerMessage.text);
-      expect(edits[0].reply_markup.inline_keyboard.at(-1)[0].text).toBe("previous");
-      expect(edits[1].text).toBe(
+      selectedText:
         "switched to persona-20. this session is using Selected Model with high reasoning.",
+    },
+    {
+      kind: "prompt",
+      action: "recordPrompt",
+      pickerText:
+        "choose a saved prompt to add to the conversation without starting a turn. selection is available only while Tau is idle.",
+      selectedText:
+        "added this prompt to the conversation. send a message when you’re ready for Tau to respond.\n\nSaved prompt body",
+    },
+  ])(
+    "paginates the $kind picker and applies a duplicate selection only once without starting a turn",
+    async ({ kind, action, pickerText, selectedText }) => {
+      const chat = { id: 329, type: "private" };
+      const from = { id: 7 };
+      const sendMessages = [];
+      const edits = [];
+      const answers = [];
+      const managerHarness = createSessionManagerHarness([], {
+        createSnapshot: () => ({
+          ...(kind === "persona" ? { settings: { personaId: "persona-0" } } : {}),
+          catalog: { [`${kind}s`]: Array.from({ length: 21 }, (_, i) => ({ id: `${kind}-${i}` })) },
+        }),
+      });
+      const callback = (id, data) => ({
+        update_id: id,
+        callback_query: { id: `${id}`, from, message: { chat, message_id: 42 }, data },
+      });
+      vi.stubGlobal(
+        "fetch",
+        createTelegramFetchStub({
+          setMyCommands: async () => createJsonResponse({ ok: true, result: true }),
+          sendMessage: async ({ init }) => {
+            sendMessages.push(JSON.parse(init.body));
+            return createJsonResponse({ ok: true, result: { message_id: 42 } });
+          },
+          editMessageText: async ({ init }) => {
+            edits.push(JSON.parse(init.body));
+            return createJsonResponse({ ok: true, result: true });
+          },
+          answerCallbackQuery: async ({ init }) => {
+            answers.push(JSON.parse(init.body));
+            return createJsonResponse({ ok: true, result: true });
+          },
+          getUpdates: async ({ call }) => {
+            if (call === 1) {
+              return createJsonResponse({
+                ok: true,
+                result: [
+                  { update_id: 1, message: { chat, from, text: "/new" } },
+                  { update_id: 2, message: { chat, from, text: `/${kind}` } },
+                ],
+              });
+            }
+            if (call === 2) {
+              await waitFor(() => sendMessages.some((m) => m.reply_markup));
+              const keyboard = sendMessages.at(-1).reply_markup.inline_keyboard;
+              expect(keyboard).toHaveLength(21);
+              expect(Buffer.byteLength(keyboard[0][0].callback_data)).toBeLessThanOrEqual(64);
+              return createJsonResponse({
+                ok: true,
+                result: [callback(3, keyboard.at(-1)[0].callback_data)],
+              });
+            }
+            if (call === 3) {
+              await waitFor(() => edits.length === 1);
+              const keyboard = edits[0].reply_markup.inline_keyboard;
+              return createJsonResponse({
+                ok: true,
+                result: [4, 5].map((id) => callback(id, keyboard[0][0].callback_data)),
+              });
+            }
+            return pendingTelegramCall();
+          },
+        }),
       );
-      expect(edits[1].reply_markup.inline_keyboard).toEqual([]);
-      expect(sendMessages.at(-1).text).toBe(
-        "this persona picker has expired. use /persona to open a new one.",
-      );
-    } finally {
-      await adapter.close();
-      vi.unstubAllGlobals();
-    }
-  });
+      const adapter = await startAdapter({
+        sessionManager: managerHarness.manager,
+      });
+      try {
+        await waitFor(() => answers.length === 3);
+        expect(managerHarness.manager[action]).toHaveBeenCalledExactlyOnceWith("s1", `${kind}-20`);
+        expect(managerHarness.manager.sendMessage).not.toHaveBeenCalled();
+        expect(edits).toHaveLength(2);
+        expect(edits.every((edit) => edit.chat_id === chat.id && edit.message_id === 42)).toBe(
+          true,
+        );
+        const pickerMessage = sendMessages.find((message) => message.reply_markup);
+        expect(pickerMessage.text).toBe(pickerText);
+        if (kind === "persona") {
+          expect(pickerMessage.reply_markup.inline_keyboard[0][0].text).toBe("persona-0 (current)");
+        }
+        expect(pickerMessage.reply_markup.inline_keyboard.at(-1)[0].text).toBe("next");
+        expect(edits[0].text).toBe(pickerMessage.text);
+        expect(edits[0].reply_markup.inline_keyboard.at(-1)[0].text).toBe("previous");
+        expect(edits[1].text).toBe(selectedText);
+        expect(edits[1].reply_markup.inline_keyboard).toEqual([]);
+        expect(sendMessages.at(-1).text).toBe(
+          `this ${kind} picker has expired. use /${kind} to open a new one.`,
+        );
+      } finally {
+        await adapter.close();
+        vi.unstubAllGlobals();
+      }
+    },
+  );
 
-  it.each(["/new", "/persona"])("expires the persona picker after %s", async (command) => {
+  it.each([
+    ["persona", "/new", "setPersona"],
+    ["persona", "/persona", "setPersona"],
+    ["prompt", "/new", "recordPrompt"],
+  ])("expires the %s picker after %s", async (kind, command, action) => {
     const chat = { id: 329, type: "private" };
     const from = { id: 7 };
     const apiHarness = createApiHarness([]);
     const managerHarness = createSessionManagerHarness([], {
       createSnapshot: () => ({
-        settings: { personaId: "review" },
-        catalog: { personas: [{ id: "review" }] },
+        ...(kind === "persona" ? { settings: { personaId: "review" } } : {}),
+        catalog: { [`${kind}s`]: [{ id: "review" }] },
       }),
     });
     apiHarness.api.getUpdates
       .mockImplementationOnce(async () => [
         { update_id: 1, message: { chat, from, text: "/new" } },
-        { update_id: 2, message: { chat, from, text: "/persona" } },
+        { update_id: 2, message: { chat, from, text: `/${kind}` } },
       ])
       .mockImplementationOnce(async () => {
         await waitFor(() => apiHarness.sendMessages.some((message) => message.options.replyMarkup));
@@ -3101,8 +2926,8 @@ describe("telegram adapter", () => {
       })
       .mockImplementation(async () => await new Promise(() => {}));
     const adapter = await startAdapter({
-      botToken: "token",
-      projects: { demo: { repo: "git@example.com:demo.git" } },
+      pollIntervalMs: undefined,
+      requestTimeoutSeconds: undefined,
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
     });
@@ -3111,151 +2936,7 @@ describe("telegram adapter", () => {
       expect(managerHarness.manager.createSession).toHaveBeenCalledTimes(
         command === "/new" ? 2 : 1,
       );
-      expect(managerHarness.manager.setPersona).not.toHaveBeenCalled();
-      expect(apiHarness.sendMessages.at(-1).text).toContain("expired");
-    } finally {
-      await adapter.close();
-    }
-  });
-
-  it("parses picker callbacks, paginates, and records a selected prompt only once without starting a turn", async () => {
-    const chat = { id: 329, type: "private" };
-    const from = { id: 7 };
-    const sendMessages = [];
-    const edits = [];
-    const answers = [];
-    const managerHarness = createSessionManagerHarness([], {
-      createSnapshot: () => ({
-        catalog: { prompts: Array.from({ length: 21 }, (_, i) => ({ id: `prompt-${i}` })) },
-      }),
-    });
-    const callback = (id, data) => ({
-      update_id: id,
-      callback_query: { id: `${id}`, from, message: { chat, message_id: 42 }, data },
-    });
-    vi.stubGlobal(
-      "fetch",
-      createTelegramFetchStub({
-        setMyCommands: async () => createJsonResponse({ ok: true, result: true }),
-        sendMessage: async ({ init }) => {
-          sendMessages.push(JSON.parse(init.body));
-          return createJsonResponse({ ok: true, result: { message_id: 42 } });
-        },
-        editMessageText: async ({ init }) => {
-          edits.push(JSON.parse(init.body));
-          return createJsonResponse({ ok: true, result: true });
-        },
-        answerCallbackQuery: async ({ init }) => {
-          answers.push(JSON.parse(init.body));
-          return createJsonResponse({ ok: true, result: true });
-        },
-        getUpdates: async ({ call }) => {
-          if (call === 1) {
-            return createJsonResponse({
-              ok: true,
-              result: [
-                { update_id: 1, message: { chat, from, text: "/new" } },
-                { update_id: 2, message: { chat, from, text: "/prompt" } },
-              ],
-            });
-          }
-          if (call === 2) {
-            await waitFor(() => sendMessages.some((m) => m.reply_markup));
-            const keyboard = sendMessages.at(-1).reply_markup.inline_keyboard;
-            expect(keyboard).toHaveLength(21);
-            expect(Buffer.byteLength(keyboard[0][0].callback_data)).toBeLessThanOrEqual(64);
-            return createJsonResponse({
-              ok: true,
-              result: [callback(3, keyboard.at(-1)[0].callback_data)],
-            });
-          }
-          if (call === 3) {
-            await waitFor(() => edits.length === 1);
-            const keyboard = edits[0].reply_markup.inline_keyboard;
-            return createJsonResponse({
-              ok: true,
-              result: [4, 5].map((id) => callback(id, keyboard[0][0].callback_data)),
-            });
-          }
-          return pendingTelegramCall();
-        },
-      }),
-    );
-    const adapter = await startAdapter({
-      botToken: "token",
-      projects: { demo: { repo: "git@example.com:demo.git" } },
-      sessionManager: managerHarness.manager,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
-    });
-    try {
-      await waitFor(() => answers.length === 3);
-      expect(managerHarness.manager.recordPrompt).toHaveBeenCalledExactlyOnceWith(
-        "s1",
-        "prompt-20",
-      );
-      expect(managerHarness.manager.sendMessage).not.toHaveBeenCalled();
-      expect(edits).toHaveLength(2);
-      expect(edits.every((edit) => edit.chat_id === chat.id && edit.message_id === 42)).toBe(true);
-      const pickerMessage = sendMessages.find((message) => message.reply_markup);
-      expect(pickerMessage.text).toBe(
-        "choose a saved prompt to add to the conversation without starting a turn. selection is available only while Tau is idle.",
-      );
-      expect(pickerMessage.reply_markup.inline_keyboard.at(-1)[0].text).toBe("next");
-      expect(edits[0].text).toBe(pickerMessage.text);
-      expect(edits[0].reply_markup.inline_keyboard.at(-1)[0].text).toBe("previous");
-      expect(edits[1].text).toBe(
-        "added this prompt to the conversation. send a message when you’re ready for Tau to respond.\n\nSaved prompt body",
-      );
-      expect(edits[1].reply_markup.inline_keyboard).toEqual([]);
-      expect(sendMessages.at(-1).text).toBe(
-        "this prompt picker has expired. use /prompt to open a new one.",
-      );
-    } finally {
-      await adapter.close();
-      vi.unstubAllGlobals();
-    }
-  });
-
-  it("does not let an old picker record a prompt into a replacement session", async () => {
-    const chat = { id: 329, type: "private" };
-    const from = { id: 7 };
-    const apiHarness = createApiHarness([]);
-    const managerHarness = createSessionManagerHarness([], {
-      createSnapshot: () => ({ catalog: { prompts: [{ id: "review" }] } }),
-    });
-    apiHarness.api.getUpdates
-      .mockImplementationOnce(async () => [
-        { update_id: 1, message: { chat, from, text: "/new" } },
-        { update_id: 2, message: { chat, from, text: "/prompt" } },
-      ])
-      .mockImplementationOnce(async () => {
-        await waitFor(() => apiHarness.sendMessages.some((message) => message.options.replyMarkup));
-        return [
-          { update_id: 3, message: { chat, from, text: "/new" } },
-          {
-            update_id: 4,
-            callback_query: {
-              id: "old-picker",
-              from,
-              message: { chat, message_id: 42 },
-              data: apiHarness.sendMessages.at(-1).options.replyMarkup.inline_keyboard[0][0]
-                .callback_data,
-            },
-          },
-        ];
-      })
-      .mockImplementation(async () => await new Promise(() => {}));
-    const adapter = await startAdapter({
-      botToken: "token",
-      projects: { demo: { repo: "git@example.com:demo.git" } },
-      sessionManager: managerHarness.manager,
-      api: apiHarness.api,
-    });
-    try {
-      await waitFor(() => apiHarness.answerCallbackQueryCalls.length === 1);
-      expect(managerHarness.manager.createSession).toHaveBeenCalledTimes(2);
-      expect(managerHarness.manager.recordPrompt).not.toHaveBeenCalled();
+      expect(managerHarness.manager[action]).not.toHaveBeenCalled();
       expect(apiHarness.sendMessages.at(-1).text).toContain("expired");
     } finally {
       await adapter.close();
@@ -3277,12 +2958,8 @@ describe("telegram adapter", () => {
     ]);
     const managerHarness = createSessionManagerHarness();
     const adapter = await startAdapter({
-      botToken: "token",
-      projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
     });
 
     try {
@@ -3326,12 +3003,8 @@ describe("telegram adapter", () => {
     );
     const logs = [];
     const adapter = await startAdapter({
-      botToken: "token",
-      projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
       onLog: (entry) => logs.push(entry),
     });
 
@@ -3372,12 +3045,8 @@ describe("telegram adapter", () => {
     const managerHarness = createSessionManagerHarness();
 
     const adapter = await startAdapter({
-      botToken: "token",
-      projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
     });
 
     try {
@@ -3479,13 +3148,10 @@ describe("telegram adapter", () => {
     const apiHarness = createApiHarness([nextUpdate.promise]);
     const managerHarness = createSessionManagerHarness(
       [
-        {
+        createManagedSession({
           id: "s-recovered-failure",
-          projectId: "demo",
           state: "waiting-input",
-          createdAt: "2024-01-01T00:00:00.000Z",
-          updatedAt: "2024-01-01T00:00:00.000Z",
-        },
+        }),
       ],
       {
         defaultOwnerId: ownerIdForChat(chatId),
@@ -3506,12 +3172,8 @@ describe("telegram adapter", () => {
       },
     );
     const adapter = await startAdapter({
-      botToken: "token",
-      projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
     });
 
     try {
@@ -3540,13 +3202,10 @@ describe("telegram adapter", () => {
     );
     const managerHarness = createSessionManagerHarness(
       [
-        {
+        createManagedSession({
           id: "s-rejected-turn",
-          projectId: "demo",
           state: "waiting-input",
-          createdAt: "2024-01-01T00:00:00.000Z",
-          updatedAt: "2024-01-01T00:00:00.000Z",
-        },
+        }),
       ],
       {
         defaultOwnerId: ownerIdForChat(chatId),
@@ -3563,12 +3222,8 @@ describe("telegram adapter", () => {
     );
     const logs = [];
     const adapter = await startAdapter({
-      botToken: "token",
-      projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
       onLog: (entry) => logs.push(entry),
     });
 
@@ -3602,24 +3257,17 @@ describe("telegram adapter", () => {
     ]);
     const managerHarness = createSessionManagerHarness(
       [
-        {
+        createManagedSession({
           id: "s12",
-          projectId: "demo",
           state: "waiting-input",
-          createdAt: "2024-01-01T00:00:00.000Z",
-          updatedAt: "2024-01-01T00:00:00.000Z",
-        },
+        }),
       ],
       { defaultOwnerId: ownerIdForChat(470) },
     );
 
     const adapter = await startAdapter({
-      botToken: "token",
-      projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
       onLog: (entry) => logs.push(entry),
     });
 
@@ -3725,24 +3373,17 @@ describe("telegram adapter", () => {
 
     const managerHarness = createSessionManagerHarness(
       [
-        {
+        createManagedSession({
           id: "s12",
-          projectId: "demo",
           state: "waiting-input",
-          createdAt: "2024-01-01T00:00:00.000Z",
-          updatedAt: "2024-01-01T00:00:00.000Z",
-        },
+        }),
       ],
       { defaultOwnerId: ownerIdForChat(470) },
     );
 
     const adapter = await startAdapter({
-      botToken: "token",
-      projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
     });
 
     try {
@@ -3849,24 +3490,17 @@ describe("telegram adapter", () => {
 
     const managerHarness = createSessionManagerHarness(
       [
-        {
+        createManagedSession({
           id: "s13",
-          projectId: "demo",
           state: "waiting-input",
-          createdAt: "2024-01-01T00:00:00.000Z",
-          updatedAt: "2024-01-01T00:00:00.000Z",
-        },
+        }),
       ],
       { defaultOwnerId: ownerIdForChat(471) },
     );
 
     const adapter = await startAdapter({
-      botToken: "token",
-      projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
     });
 
     try {
@@ -3924,14 +3558,11 @@ describe("telegram adapter", () => {
   it("retries a transient notification delivery failure", async () => {
     const chatId = 472;
     const managerHarness = createSessionManagerHarness([
-      {
+      createManagedSession({
         id: "s1",
-        projectId: "demo",
         ownerId: ownerIdForChat(chatId),
         state: "running",
-        createdAt: "2024-01-01T00:00:00.000Z",
-        updatedAt: "2024-01-01T00:00:00.000Z",
-      },
+      }),
     ]);
     let sendRichMessageCalls = 0;
     vi.stubGlobal(
@@ -3956,11 +3587,7 @@ describe("telegram adapter", () => {
       }),
     );
     const adapter = await startAdapter({
-      botToken: "token",
-      projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
     });
 
     vi.useFakeTimers();
@@ -4005,14 +3632,11 @@ describe("telegram adapter", () => {
   ])("retries a $name", async ({ createResponse }) => {
     const chatId = 473;
     const managerHarness = createSessionManagerHarness([
-      {
+      createManagedSession({
         id: "s1",
-        projectId: "demo",
         ownerId: ownerIdForChat(chatId),
         state: "running",
-        createdAt: "2024-01-01T00:00:00.000Z",
-        updatedAt: "2024-01-01T00:00:00.000Z",
-      },
+      }),
     ]);
     let sendRichMessageCalls = 0;
     vi.stubGlobal(
@@ -4029,11 +3653,7 @@ describe("telegram adapter", () => {
       }),
     );
     const adapter = await startAdapter({
-      botToken: "token",
-      projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
     });
 
     vi.useFakeTimers();
@@ -4054,14 +3674,11 @@ describe("telegram adapter", () => {
   it("does not retry malformed successful response bodies", async () => {
     const chatId = 474;
     const managerHarness = createSessionManagerHarness([
-      {
+      createManagedSession({
         id: "s1",
-        projectId: "demo",
         ownerId: ownerIdForChat(chatId),
         state: "running",
-        createdAt: "2024-01-01T00:00:00.000Z",
-        updatedAt: "2024-01-01T00:00:00.000Z",
-      },
+      }),
     ]);
     let sendRichMessageCalls = 0;
     const logs = [];
@@ -4077,11 +3694,7 @@ describe("telegram adapter", () => {
       }),
     );
     const adapter = await startAdapter({
-      botToken: "token",
-      projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
       onLog: (entry) => logs.push(entry),
     });
 
@@ -4272,24 +3885,17 @@ describe("telegram adapter", () => {
 
     const managerHarness = createSessionManagerHarness(
       [
-        {
+        createManagedSession({
           id: "s13",
-          projectId: "demo",
           state: "waiting-input",
-          createdAt: "2024-01-01T00:00:00.000Z",
-          updatedAt: "2024-01-01T00:00:00.000Z",
-        },
+        }),
       ],
       { defaultOwnerId: ownerIdForChat(471) },
     );
 
     const adapter = await startAdapter({
-      botToken: "token",
-      projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
     });
 
     const finalAnswer = "🙂".repeat(9000);
@@ -4374,14 +3980,11 @@ describe("telegram adapter", () => {
     const chatId = 991;
     const ownerId = ownerIdForChat(chatId);
     const managerHarness = createSessionManagerHarness([
-      {
+      createManagedSession({
         id: "s-voice-upload",
-        projectId: "demo",
         ownerId,
         state: "running",
-        createdAt: "2024-01-01T00:00:00.000Z",
-        updatedAt: "2024-01-01T00:00:00.000Z",
-      },
+      }),
     ]);
     const sendVoiceCalls = [];
     const telegramFetch = createTelegramFetchStub({
@@ -4396,20 +3999,10 @@ describe("telegram adapter", () => {
     vi.stubGlobal("fetch", telegramFetch);
 
     const adapter = await startAdapter({
-      botToken: "token",
-      projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
-      projectPreferences: {
-        initialize: vi.fn(async () => {}),
-        get: vi.fn(() => undefined),
-        set: vi.fn(async () => {}),
-        isTtsEnabled: vi.fn((id) => id === ownerId),
-        setTtsEnabled: vi.fn(async () => {}),
-      },
+      projectPreferences: createTtsPreferences(vi.fn((id) => id === ownerId)),
       geminiApiKey: "gemini-key",
       generateVoice: vi.fn(async () => Buffer.from("OggS voice")),
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
     });
 
     try {
@@ -4529,11 +4122,7 @@ describe("telegram adapter", () => {
     vi.stubGlobal("fetch", createTelegramFetchStub(handlers));
 
     const adapter = await startAdapter({
-      botToken: "token",
-      projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
       onLog: (entry) => logs.push(entry),
     });
 
@@ -4548,13 +4137,10 @@ describe("telegram adapter", () => {
   it("reports getFile result parsing errors when attachment file paths are malformed", async () => {
     const managerHarness = createSessionManagerHarness(
       [
-        {
+        createManagedSession({
           id: "s1",
-          projectId: "demo",
           state: "waiting-input",
-          createdAt: "2024-01-01T00:00:00.000Z",
-          updatedAt: "2024-01-01T00:00:00.000Z",
-        },
+        }),
       ],
       { defaultOwnerId: ownerIdForChat(990) },
     );
@@ -4599,11 +4185,7 @@ describe("telegram adapter", () => {
     );
 
     const adapter = await startAdapter({
-      botToken: "token",
-      projects: { demo: { repo: "git@example.com:demo.git" } },
       sessionManager: managerHarness.manager,
-      pollIntervalMs: 1,
-      requestTimeoutSeconds: 1,
     });
 
     try {

@@ -176,7 +176,7 @@ function createAssistantProtocolMessage(id, content, stopReason = "stop") {
   };
 }
 
-function createDemoSessionManager(clientHarness) {
+function createDemoSessionManager(clientHarness, options = {}) {
   return createTelegramSessionManager({
     projects: {
       demo: {
@@ -189,6 +189,7 @@ function createDemoSessionManager(clientHarness) {
       provisionTargets: [],
     })),
     createClient: vi.fn(async () => clientHarness.client),
+    ...options,
   });
 }
 
@@ -345,12 +346,7 @@ describe("telegram session manager", () => {
     const workspaceDeferred = deferred();
     const clientHarness = createClientHarness();
 
-    const manager = createTelegramSessionManager({
-      projects: {
-        demo: {
-          repo: "git@example.com:demo.git",
-        },
-      },
+    const manager = createDemoSessionManager(clientHarness, {
       prepareWorkspace: vi.fn(async () => {
         await workspaceDeferred.promise;
         return {
@@ -359,7 +355,6 @@ describe("telegram session manager", () => {
           provisionTargets: [],
         };
       }),
-      createClient: vi.fn(async () => clientHarness.client),
     });
 
     const created = await manager.createSession({ projectId: "demo" });
@@ -412,15 +407,7 @@ describe("telegram session manager", () => {
         ],
       }),
     );
-    const manager = createTelegramSessionManager({
-      projects: { demo: { repo: "git@example.com:demo.git" } },
-      prepareWorkspace: vi.fn(async () => ({
-        workspacePath: "/tmp/ws/demo",
-        sessionCwd: "/tmp/ws/demo",
-        provisionTargets: [],
-      })),
-      createClient: vi.fn(async () => clientHarness.client),
-    });
+    const manager = createDemoSessionManager(clientHarness);
     const events = [];
     manager.onEvent((event) => events.push(event));
 
@@ -530,8 +517,7 @@ describe("telegram session manager", () => {
       return { output: "", stdout: "", stderr: "", exitCode: 0, truncated: false };
     });
 
-    const manager = createTelegramSessionManager({
-      projects: { demo: { repo: "git@example.com:demo.git" } },
+    const manager = createDemoSessionManager(clientHarness, {
       prepareWorkspace: vi.fn(async () => ({
         workspacePath: "/tmp/ws/demo",
         sessionCwd: "/tmp/ws/demo/packages/core",
@@ -543,7 +529,6 @@ describe("telegram session manager", () => {
           },
         ],
       })),
-      createClient: vi.fn(async () => clientHarness.client),
     });
 
     const created = await manager.createSession({ projectId: "demo" });
@@ -588,8 +573,7 @@ describe("telegram session manager", () => {
       return { interrupted: true, isTurnRunning: true };
     });
 
-    const manager = createTelegramSessionManager({
-      projects: { demo: { repo: "git@example.com:demo.git" } },
+    const manager = createDemoSessionManager(clientHarness, {
       prepareWorkspace: vi.fn(async () => ({
         workspacePath: "/tmp/ws/demo",
         sessionCwd: "/tmp/ws/demo",
@@ -601,7 +585,6 @@ describe("telegram session manager", () => {
           },
         ],
       })),
-      createClient: vi.fn(async () => clientHarness.client),
     });
 
     const created = await manager.createSession({ projectId: "demo" });
@@ -636,14 +619,13 @@ describe("telegram session manager", () => {
       projectIds,
       persona: "gpt-5.6-sol-coder:high",
     };
-    const manager = createTelegramSessionManager({
+    const manager = createDemoSessionManager(clientHarness, {
       projects,
       prepareWorkspace: vi.fn(async () => ({
         workspacePath: "/tmp/ws/platform",
         sessionCwd: "/tmp/ws/platform",
         provisionTargets: [],
       })),
-      createClient: vi.fn(async () => clientHarness.client),
     });
 
     const created = await manager.createSession({ projectId: "platform" });
@@ -657,7 +639,7 @@ describe("telegram session manager", () => {
 
   it("provisions each composite repository from its configured working directory", async () => {
     const clientHarness = createClientHarness();
-    const manager = createTelegramSessionManager({
+    const manager = createDemoSessionManager(clientHarness, {
       projects: {
         alpha: { repo: "owner/alpha" },
         beta: { repo: "owner/beta" },
@@ -682,7 +664,6 @@ describe("telegram session manager", () => {
           },
         ],
       })),
-      createClient: vi.fn(async () => clientHarness.client),
     });
 
     const created = await manager.createSession({ projectId: "platform" });
@@ -719,8 +700,7 @@ describe("telegram session manager", () => {
       exitCode: 17,
       truncated: false,
     });
-    const manager = createTelegramSessionManager({
-      projects: { demo: { repo: "git@example.com:demo.git" } },
+    const manager = createDemoSessionManager(clientHarness, {
       prepareWorkspace: vi.fn(async () => ({
         workspacePath: "/tmp/ws/demo",
         sessionCwd: "/tmp/ws/demo",
@@ -732,7 +712,6 @@ describe("telegram session manager", () => {
           },
         ],
       })),
-      createClient: vi.fn(async () => clientHarness.client),
     });
     const events = [];
     manager.onEvent((event) => events.push(event));
@@ -761,14 +740,8 @@ describe("telegram session manager", () => {
       provisionTargets: [],
     }));
 
-    const manager = createTelegramSessionManager({
-      projects: {
-        demo: {
-          repo: "git@example.com:demo.git",
-        },
-      },
+    const manager = createDemoSessionManager(clientHarness, {
       prepareWorkspace,
-      createClient: vi.fn(async () => clientHarness.client),
     });
 
     const created = await manager.createSession({ projectId: "demo" });
@@ -782,77 +755,34 @@ describe("telegram session manager", () => {
     );
   });
 
-  it("prepends default and configured system messages to submitted user text", async () => {
+  it.each([
+    ["configured", undefined],
+    ["per-submit", "this message came from telegram"],
+  ])("prepends default and %s system messages", async (_kind, additionalSystemMessage) => {
     const clientHarness = createClientHarness();
-    const manager = createTelegramSessionManager({
-      projects: {
-        demo: {
-          repo: "git@example.com:demo.git",
-        },
-      },
+    const manager = createDemoSessionManager(clientHarness, {
       systemMessage: "follow project conventions",
-      prepareWorkspace: vi.fn(async () => ({
-        workspacePath: "/tmp/ws/demo",
-        sessionCwd: "/tmp/ws/demo",
-        provisionTargets: [],
-      })),
-      createClient: vi.fn(async () => clientHarness.client),
     });
-
     const created = await manager.createSession({ projectId: "demo" });
     await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
 
-    await manager.sendMessage(created.id, "write issue about X");
-    expect(clientHarness.session.submit).toHaveBeenCalledWith(
-      telegramUserText("write issue about X", "follow project conventions"),
-      { historyEntryId: expect.stringMatching(/^telegram-turn-/) },
+    await manager.sendMessage(
+      created.id,
+      "write issue about X",
+      additionalSystemMessage ? { additionalSystemMessage } : undefined,
     );
-
-    clientHarness.submitDeferred.resolve({
-      userHistoryEntryId: "history-system-msg",
-      turn: { status: "completed", stopReason: "stop" },
-    });
-
-    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
-  });
-
-  it("appends additional system message for per-submit context", async () => {
-    const clientHarness = createClientHarness();
-    const manager = createTelegramSessionManager({
-      projects: {
-        demo: {
-          repo: "git@example.com:demo.git",
-        },
-      },
-      systemMessage: "follow project conventions",
-      prepareWorkspace: vi.fn(async () => ({
-        workspacePath: "/tmp/ws/demo",
-        sessionCwd: "/tmp/ws/demo",
-        provisionTargets: [],
-      })),
-      createClient: vi.fn(async () => clientHarness.client),
-    });
-
-    const created = await manager.createSession({ projectId: "demo" });
-    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
-
-    await manager.sendMessage(created.id, "write issue about X", {
-      additionalSystemMessage: "this message came from telegram",
-    });
     expect(clientHarness.session.submit).toHaveBeenCalledWith(
       telegramUserText(
         "write issue about X",
         "follow project conventions",
-        "this message came from telegram",
+        ...(additionalSystemMessage ? [additionalSystemMessage] : []),
       ),
       { historyEntryId: expect.stringMatching(/^telegram-turn-/) },
     );
-
     clientHarness.submitDeferred.resolve({
-      userHistoryEntryId: "history-system-msg-extra",
+      userHistoryEntryId: "history-system-msg",
       turn: { status: "completed", stopReason: "stop" },
     });
-
     await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
   });
 
@@ -865,19 +795,7 @@ describe("telegram session manager", () => {
       applyRequestedHistoryEntryId(await submitDeferreds.shift().promise, options),
     );
     clientHarness.session.steer = vi.fn(async () => await submitDeferreds.shift().promise);
-    const manager = createTelegramSessionManager({
-      projects: {
-        demo: {
-          repo: "git@example.com:demo.git",
-        },
-      },
-      prepareWorkspace: vi.fn(async () => ({
-        workspacePath: "/tmp/ws/demo",
-        sessionCwd: "/tmp/ws/demo",
-        provisionTargets: [],
-      })),
-      createClient: vi.fn(async () => clientHarness.client),
-    });
+    const manager = createDemoSessionManager(clientHarness);
 
     const created = await manager.createSession({ projectId: "demo" });
     await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
@@ -905,7 +823,10 @@ describe("telegram session manager", () => {
     await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
   });
 
-  it("does not complete an earlier assistant response when later steering fails", async () => {
+  it.each([
+    ["provider failure", "waiting-input"],
+    ["transport rejection", "failed"],
+  ])("does not complete a stale response after steering %s", async (failure, state) => {
     const clientHarness = createClientHarness();
     const firstSubmit = deferred();
     const steeringSubmit = deferred();
@@ -941,62 +862,21 @@ describe("telegram session manager", () => {
       userHistoryEntryId: "history-first",
       turn: { status: "completed", stopReason: "stop" },
     });
-    steeringSubmit.resolve({
-      userHistoryEntryId: "history-steering",
-      turn: {
-        status: "failed",
-        stopReason: "error",
-        errorMessage: "OpenAI is unavailable",
-      },
-    });
-    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
+    if (failure === "transport rejection") {
+      steeringSubmit.reject(new Error("steering transport disconnected"));
+    } else {
+      steeringSubmit.resolve({
+        userHistoryEntryId: "history-steering",
+        turn: { status: "failed", stopReason: "error", errorMessage: "OpenAI is unavailable" },
+      });
+    }
+    await waitFor(() => manager.getSession(created.id)?.state === state);
 
     expect(assistantProgressTexts(events)).toEqual(["earlier answer"]);
     expect(events.filter((event) => event.type === "session-response-completed")).toEqual([]);
-    expect(events.filter((event) => event.type === "session-turn-failed")).toHaveLength(1);
-  });
-
-  it("does not complete an earlier response when steering is rejected before acceptance", async () => {
-    const clientHarness = createClientHarness();
-    const firstSubmit = deferred();
-    const steeringSubmit = deferred();
-    clientHarness.session.submit = vi.fn(async (_text, options) =>
-      applyRequestedHistoryEntryId(await firstSubmit.promise, options),
-    );
-    clientHarness.session.steer = vi.fn(async () => await steeringSubmit.promise);
-    const manager = createDemoSessionManager(clientHarness);
-    const events = [];
-    manager.onEvent((event) => events.push(event));
-
-    const created = await manager.createSession({ projectId: "demo" });
-    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
-
-    await manager.sendMessage(created.id, "start work");
-    await manager.sendMessage(created.id, "steer it", { mode: "steer" });
-    clientHarness.emitDelta(
-      createPatchDelta(
-        [
-          {
-            type: "message.append",
-            message: createAssistantProtocolMessage("assistant-stale", [
-              { type: "text", text: "earlier answer" },
-            ]),
-          },
-        ],
-        1,
-        "assistant-message",
-      ),
-    );
-
-    firstSubmit.resolve({
-      userHistoryEntryId: "history-first",
-      turn: { status: "completed", stopReason: "stop" },
-    });
-    steeringSubmit.reject(new Error("steering transport disconnected"));
-    await waitFor(() => manager.getSession(created.id)?.state === "failed");
-
-    expect(assistantProgressTexts(events)).toEqual(["earlier answer"]);
-    expect(events.filter((event) => event.type === "session-response-completed")).toEqual([]);
+    if (failure === "provider failure") {
+      expect(events.filter((event) => event.type === "session-turn-failed")).toHaveLength(1);
+    }
   });
 
   it("does not complete a response after the session is cancelled", async () => {
@@ -1087,19 +967,7 @@ describe("telegram session manager", () => {
 
   it("returns from sendMessage immediately and rejects concurrent submits", async () => {
     const clientHarness = createClientHarness();
-    const manager = createTelegramSessionManager({
-      projects: {
-        demo: {
-          repo: "git@example.com:demo.git",
-        },
-      },
-      prepareWorkspace: vi.fn(async () => ({
-        workspacePath: "/tmp/ws/demo",
-        sessionCwd: "/tmp/ws/demo",
-        provisionTargets: [],
-      })),
-      createClient: vi.fn(async () => clientHarness.client),
-    });
+    const manager = createDemoSessionManager(clientHarness);
 
     const created = await manager.createSession({ projectId: "demo" });
     await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
@@ -1239,15 +1107,13 @@ describe("telegram session manager", () => {
       applyRequestedHistoryEntryId(results.shift(), options),
     );
 
-    const manager = createTelegramSessionManager({
-      projects: { demo: { repo: "git@example.com:demo.git" } },
+    const manager = createDemoSessionManager(clientHarness, {
       persistencePath,
       prepareWorkspace: vi.fn(async () => ({
         workspacePath,
         sessionCwd: workspacePath,
         provisionTargets: [],
       })),
-      createClient: vi.fn(async () => clientHarness.client),
     });
     const events = [];
     manager.onEvent((event) => events.push(event));
@@ -1285,15 +1151,13 @@ describe("telegram session manager", () => {
       ]);
 
       const recoveredClientHarness = createClientHarness();
-      recoveredManager = createTelegramSessionManager({
-        projects: { demo: { repo: "git@example.com:demo.git" } },
+      recoveredManager = createDemoSessionManager(recoveredClientHarness, {
         persistencePath,
         prepareWorkspace: vi.fn(async () => ({
           workspacePath,
           sessionCwd: workspacePath,
           provisionTargets: [],
         })),
-        createClient: vi.fn(async () => recoveredClientHarness.client),
       });
       await recoveredManager.initialize();
 
@@ -1429,19 +1293,7 @@ describe("telegram session manager", () => {
       throw new Error("submit boom");
     });
 
-    const manager = createTelegramSessionManager({
-      projects: {
-        demo: {
-          repo: "git@example.com:demo.git",
-        },
-      },
-      prepareWorkspace: vi.fn(async () => ({
-        workspacePath: "/tmp/ws/demo",
-        sessionCwd: "/tmp/ws/demo",
-        provisionTargets: [],
-      })),
-      createClient: vi.fn(async () => clientHarness.client),
-    });
+    const manager = createDemoSessionManager(clientHarness);
 
     const created = await manager.createSession({ projectId: "demo" });
     await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
@@ -1467,6 +1319,12 @@ describe("telegram session manager", () => {
 
     const logs = manager.getLogs(created.id) ?? [];
     expect(logs.some((entry) => entry.message === "submit failed")).toBe(true);
+    const closed = await manager.closeSession(created.id);
+    expect(closed.state).toBe("failed");
+    expect(manager.getSession(created.id)).toBeUndefined();
+    expect(clientHarness.session.interrupt).toHaveBeenCalledTimes(1);
+    expect(clientHarness.session.unobserve).toHaveBeenCalledTimes(1);
+    expect(clientHarness.client.close).toHaveBeenCalledTimes(1);
   });
 
   it("interrupts a running session without closing it", async () => {
@@ -1479,19 +1337,7 @@ describe("telegram session manager", () => {
       return { interrupted: true, isTurnRunning: true };
     });
 
-    const manager = createTelegramSessionManager({
-      projects: {
-        demo: {
-          repo: "git@example.com:demo.git",
-        },
-      },
-      prepareWorkspace: vi.fn(async () => ({
-        workspacePath: "/tmp/ws/demo",
-        sessionCwd: "/tmp/ws/demo",
-        provisionTargets: [],
-      })),
-      createClient: vi.fn(async () => clientHarness.client),
-    });
+    const manager = createDemoSessionManager(clientHarness);
 
     const created = await manager.createSession({ projectId: "demo" });
     await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
@@ -1559,19 +1405,7 @@ describe("telegram session manager", () => {
   it("returns a no-op interrupt result when no run is active", async () => {
     const clientHarness = createClientHarness();
 
-    const manager = createTelegramSessionManager({
-      projects: {
-        demo: {
-          repo: "git@example.com:demo.git",
-        },
-      },
-      prepareWorkspace: vi.fn(async () => ({
-        workspacePath: "/tmp/ws/demo",
-        sessionCwd: "/tmp/ws/demo",
-        provisionTargets: [],
-      })),
-      createClient: vi.fn(async () => clientHarness.client),
-    });
+    const manager = createDemoSessionManager(clientHarness);
 
     const created = await manager.createSession({ projectId: "demo" });
     await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
@@ -1588,41 +1422,6 @@ describe("telegram session manager", () => {
     expect(clientHarness.session.interrupt).not.toHaveBeenCalled();
   });
 
-  it("closes terminal failed sessions", async () => {
-    const clientHarness = createClientHarness();
-    clientHarness.session.submit = vi.fn(async () => {
-      throw new Error("submit boom");
-    });
-
-    const manager = createTelegramSessionManager({
-      projects: {
-        demo: {
-          repo: "git@example.com:demo.git",
-        },
-      },
-      prepareWorkspace: vi.fn(async () => ({
-        workspacePath: "/tmp/ws/demo",
-        sessionCwd: "/tmp/ws/demo",
-        provisionTargets: [],
-      })),
-      createClient: vi.fn(async () => clientHarness.client),
-    });
-
-    const created = await manager.createSession({ projectId: "demo" });
-    await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
-    clientHarness.session.snapshot.mockRejectedValueOnce(new Error("snapshot unavailable"));
-
-    await manager.sendMessage(created.id, "first");
-    await waitFor(() => manager.getSession(created.id)?.state === "failed");
-
-    const closed = await manager.closeSession(created.id);
-    expect(closed.state).toBe("failed");
-    expect(manager.getSession(created.id)).toBeUndefined();
-    expect(clientHarness.session.interrupt).toHaveBeenCalledTimes(1);
-    expect(clientHarness.session.unobserve).toHaveBeenCalledTimes(1);
-    expect(clientHarness.client.close).toHaveBeenCalledTimes(1);
-  });
-
   it("closes a running session and shuts down the sdk client", async () => {
     const clientHarness = createClientHarness();
     clientHarness.session.interrupt = vi.fn(async () => {
@@ -1633,19 +1432,7 @@ describe("telegram session manager", () => {
       return { interrupted: true, isTurnRunning: true };
     });
 
-    const manager = createTelegramSessionManager({
-      projects: {
-        demo: {
-          repo: "git@example.com:demo.git",
-        },
-      },
-      prepareWorkspace: vi.fn(async () => ({
-        workspacePath: "/tmp/ws/demo",
-        sessionCwd: "/tmp/ws/demo",
-        provisionTargets: [],
-      })),
-      createClient: vi.fn(async () => clientHarness.client),
-    });
+    const manager = createDemoSessionManager(clientHarness);
 
     const created = await manager.createSession({ projectId: "demo" });
     await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
@@ -1669,7 +1456,7 @@ describe("telegram session manager", () => {
     const clientHarness = createClientHarness();
     const cleanupWorkspacePath = vi.fn(async () => {});
 
-    const manager = createTelegramSessionManager({
+    const manager = createDemoSessionManager(clientHarness, {
       projects: {
         demo: {
           repo: "git@example.com:demo.git",
@@ -1685,7 +1472,6 @@ describe("telegram session manager", () => {
           provisionTargets: [],
         };
       }),
-      createClient: vi.fn(async () => clientHarness.client),
       cleanupWorkspacePath,
     });
 
@@ -1705,18 +1491,7 @@ describe("telegram session manager", () => {
     const clientHarness = createClientHarness();
     const cleanupWorkspacePath = vi.fn(async () => {});
 
-    const manager = createTelegramSessionManager({
-      projects: {
-        demo: {
-          repo: "git@example.com:demo.git",
-        },
-      },
-      prepareWorkspace: vi.fn(async () => ({
-        workspacePath: "/tmp/ws/demo",
-        sessionCwd: "/tmp/ws/demo",
-        provisionTargets: [],
-      })),
-      createClient: vi.fn(async () => clientHarness.client),
+    const manager = createDemoSessionManager(clientHarness, {
       cleanupWorkspacePath,
     });
 
@@ -2039,18 +1814,7 @@ describe("telegram session manager", () => {
     });
     const cleanupWorkspacePath = vi.fn(async () => {});
 
-    const manager = createTelegramSessionManager({
-      projects: {
-        demo: {
-          repo: "git@example.com:demo.git",
-        },
-      },
-      prepareWorkspace: vi.fn(async () => ({
-        workspacePath: "/tmp/ws/demo",
-        sessionCwd: "/tmp/ws/demo",
-        provisionTargets: [],
-      })),
-      createClient: vi.fn(async () => clientHarness.client),
+    const manager = createDemoSessionManager(clientHarness, {
       cleanupWorkspacePath,
     });
 
@@ -2108,8 +1872,7 @@ describe("telegram session manager", () => {
       });
     });
     const logs = [];
-    const manager = createTelegramSessionManager({
-      projects: { demo: { repo: "git@example.com:demo.git" } },
+    const manager = createDemoSessionManager(clientHarness, {
       workspaceRoot,
       persistencePath,
       onLog: (entry) => logs.push(entry),
@@ -2118,7 +1881,6 @@ describe("telegram session manager", () => {
         await mkdir(workspacePath, { recursive: true });
         return { workspacePath, sessionCwd: workspacePath, provisionTargets: [] };
       }),
-      createClient: vi.fn(async () => clientHarness.client),
     });
     let recoveredManager;
 
@@ -2206,15 +1968,13 @@ describe("telegram session manager", () => {
     await mkdir(workspacePath, { recursive: true });
 
     const firstClientHarness = createClientHarness();
-    const firstManager = createTelegramSessionManager({
-      projects: { demo: { repo: "git@example.com:demo.git" } },
+    const firstManager = createDemoSessionManager(firstClientHarness, {
       persistencePath,
       prepareWorkspace: vi.fn(async () => ({
         workspacePath,
         sessionCwd: workspacePath,
         provisionTargets: [],
       })),
-      createClient: vi.fn(async () => firstClientHarness.client),
     });
 
     try {
@@ -2286,11 +2046,9 @@ describe("telegram session manager", () => {
           ],
         };
       });
-      const recoveredManager = createTelegramSessionManager({
-        projects: { demo: { repo: "git@example.com:demo.git" } },
+      const recoveredManager = createDemoSessionManager(recoveredClientHarness, {
         persistencePath,
         prepareWorkspace,
-        createClient: vi.fn(async () => recoveredClientHarness.client),
       });
       const recoveredEvents = [];
       recoveredManager.onEvent((event) => recoveredEvents.push(event));
@@ -2393,15 +2151,13 @@ describe("telegram session manager", () => {
         },
       }),
     );
-    const manager = createTelegramSessionManager({
-      projects: { demo: { repo: "git@example.com:demo.git" } },
+    const manager = createDemoSessionManager(clientHarness, {
       persistencePath,
       prepareWorkspace: vi.fn(async () => ({
         workspacePath,
         sessionCwd: workspacePath,
         provisionTargets: [],
       })),
-      createClient: vi.fn(async () => clientHarness.client),
     });
     const events = [];
     manager.onEvent((event) => events.push(event));
@@ -2520,7 +2276,7 @@ describe("telegram session manager", () => {
 
     const clientHarness = createClientHarness();
     const prepareWorkspace = vi.fn();
-    const manager = createTelegramSessionManager({
+    const manager = createDemoSessionManager(clientHarness, {
       projects: {
         demo: {
           repo: "git@example.com:demo.git",
@@ -2530,7 +2286,6 @@ describe("telegram session manager", () => {
       workspaceRoot,
       persistencePath,
       prepareWorkspace,
-      createClient: vi.fn(async () => clientHarness.client),
     });
 
     try {
@@ -2561,18 +2316,7 @@ describe("telegram session manager", () => {
     });
     const cleanupWorkspacePath = vi.fn(async () => {});
 
-    const manager = createTelegramSessionManager({
-      projects: {
-        demo: {
-          repo: "git@example.com:demo.git",
-        },
-      },
-      prepareWorkspace: vi.fn(async () => ({
-        workspacePath: "/tmp/ws/demo",
-        sessionCwd: "/tmp/ws/demo",
-        provisionTargets: [],
-      })),
-      createClient: vi.fn(async () => clientHarness.client),
+    const manager = createDemoSessionManager(clientHarness, {
       cleanupWorkspacePath,
     });
 
@@ -2597,19 +2341,7 @@ describe("telegram session manager", () => {
 
   it("emits progress events for bash/edit/write and assistant output", async () => {
     const clientHarness = createClientHarness();
-    const manager = createTelegramSessionManager({
-      projects: {
-        demo: {
-          repo: "git@example.com:demo.git",
-        },
-      },
-      prepareWorkspace: vi.fn(async () => ({
-        workspacePath: "/tmp/ws/demo",
-        sessionCwd: "/tmp/ws/demo",
-        provisionTargets: [],
-      })),
-      createClient: vi.fn(async () => clientHarness.client),
-    });
+    const manager = createDemoSessionManager(clientHarness);
 
     const events = [];
     manager.onEvent((event) => {
@@ -2860,19 +2592,7 @@ describe("telegram session manager", () => {
 
   it("does not replay already consumed tool facet progress events", async () => {
     const clientHarness = createClientHarness();
-    const manager = createTelegramSessionManager({
-      projects: {
-        demo: {
-          repo: "git@example.com:demo.git",
-        },
-      },
-      prepareWorkspace: vi.fn(async () => ({
-        workspacePath: "/tmp/ws/demo",
-        sessionCwd: "/tmp/ws/demo",
-        provisionTargets: [],
-      })),
-      createClient: vi.fn(async () => clientHarness.client),
-    });
+    const manager = createDemoSessionManager(clientHarness);
 
     const events = [];
     manager.onEvent((event) => {
@@ -2931,19 +2651,7 @@ describe("telegram session manager", () => {
       turn: { status: "completed", stopReason: "stop" },
     });
 
-    const manager = createTelegramSessionManager({
-      projects: {
-        demo: {
-          repo: "git@example.com:demo.git",
-        },
-      },
-      prepareWorkspace: vi.fn(async () => ({
-        workspacePath: "/tmp/ws/demo",
-        sessionCwd: "/tmp/ws/demo",
-        provisionTargets: [],
-      })),
-      createClient: vi.fn(async () => clientHarness.client),
-    });
+    const manager = createDemoSessionManager(clientHarness);
 
     const events = [];
     const unsubscribe = manager.onEvent((event) => {

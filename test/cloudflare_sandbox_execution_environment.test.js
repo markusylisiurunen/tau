@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { personas } from "../dist/core/personas.js";
 import { BashJobRegistry } from "../dist/core/tools/bash_jobs.js";
 import {
   CloudflareSandboxBridgeClient,
@@ -40,6 +39,19 @@ function execSse({ stdout = "", stderr = "", exitCode = 0 }) {
   }
   chunks.push(`event: exit\ndata: ${JSON.stringify({ exit_code: exitCode })}\n\n`);
   return chunks;
+}
+
+function createBackend(fetch, clientOptions = {}) {
+  return createCloudflareSandboxToolExecutionBackend({
+    client: new CloudflareSandboxBridgeClient({
+      bridgeId: "default",
+      baseUrl: "https://bridge.example",
+      fetch,
+      ...clientOptions,
+    }),
+    sandboxId: "sandbox-1",
+    cwd: "/workspace/repo",
+  });
 }
 
 function deferred() {
@@ -133,17 +145,7 @@ describe("Cloudflare Sandbox execution environment", () => {
       return jsonResponse({ error: "not found" }, { status: 404 });
     };
 
-    const client = new CloudflareSandboxBridgeClient({
-      bridgeId: "default",
-      baseUrl: "https://bridge.example",
-      apiKey: "secret",
-      fetch: fetchMock,
-    });
-    const backend = createCloudflareSandboxToolExecutionBackend({
-      client,
-      sandboxId: "sandbox-1",
-      cwd: "/workspace/repo",
-    });
+    const backend = createBackend(fetchMock, { apiKey: "secret" });
     const environment = new CloudflareSandboxExecutionEnvironment({
       bridgeId: "default",
       sandboxId: "sandbox-1",
@@ -166,6 +168,17 @@ describe("Cloudflare Sandbox execution environment", () => {
       aborted: false,
       closeSignal: null,
     });
+
+    expect(environment.snapshot()).toEqual({
+      kind: "cloudflare-sandbox",
+      bridgeId: "default",
+      sandboxId: "sandbox-1",
+      cwd: "/workspace/repo",
+      home: "/home/sandbox",
+    });
+    const snapshot = environment.snapshot();
+    snapshot.cwd = "/mutated";
+    expect(environment.snapshot().cwd).toBe("/workspace/repo");
 
     expect(requests).toHaveLength(2);
     expect(requests[0].url).toBe("https://bridge.example/v1/sandbox/sandbox-1/session");
@@ -219,16 +232,7 @@ describe("Cloudflare Sandbox execution environment", () => {
       }
       return jsonResponse({ error: "not found" }, { status: 404 });
     };
-    const client = new CloudflareSandboxBridgeClient({
-      bridgeId: "default",
-      baseUrl: "https://bridge.example",
-      fetch: fetchMock,
-    });
-    const backend = createCloudflareSandboxToolExecutionBackend({
-      client,
-      sandboxId: "sandbox-1",
-      cwd: "/workspace/repo",
-    });
+    const backend = createBackend(fetchMock);
 
     await expect(backend.runBash("printf €")).resolves.toMatchObject({
       output: "€",
@@ -253,15 +257,7 @@ describe("Cloudflare Sandbox execution environment", () => {
       }
       return jsonResponse({ error: "not found" }, { status: 404 });
     };
-    const backend = createCloudflareSandboxToolExecutionBackend({
-      client: new CloudflareSandboxBridgeClient({
-        bridgeId: "default",
-        baseUrl: "https://bridge.example",
-        fetch: fetchMock,
-      }),
-      sandboxId: "sandbox-1",
-      cwd: "/workspace/repo",
-    });
+    const backend = createBackend(fetchMock);
 
     await expect(backend.runBash("cat", { stdin: Buffer.from("input") })).resolves.toMatchObject({
       stdout: "input",
@@ -312,16 +308,7 @@ describe("Cloudflare Sandbox execution environment", () => {
       }
       return jsonResponse({ error: "not found" }, { status: 404 });
     };
-    const client = new CloudflareSandboxBridgeClient({
-      bridgeId: "default",
-      baseUrl: "https://bridge.example",
-      fetch: fetchMock,
-    });
-    const backend = createCloudflareSandboxToolExecutionBackend({
-      client,
-      sandboxId: "sandbox-1",
-      cwd: "/workspace/repo",
-    });
+    const backend = createBackend(fetchMock);
 
     await expect(
       backend.writeFileBinary("/workspace/repo/assets/image.bin", content),
@@ -334,57 +321,20 @@ describe("Cloudflare Sandbox execution environment", () => {
     expect(Buffer.from(requests[2].init.body)).toEqual(content);
   });
 
-  it("stops reading binary files when they exceed the requested limit", async () => {
+  it.each([
+    ["streamed", [8, 8], {}],
+    ["declared", [16], { "Content-Length": "16" }],
+  ])("cancels binary responses over the %s size limit", async (_kind, chunks, headers) => {
     let cancelled = false;
     const body = new ReadableStream({
       start(controller) {
-        controller.enqueue(Buffer.alloc(8));
-        controller.enqueue(Buffer.alloc(8));
+        for (const bytes of chunks) controller.enqueue(Buffer.alloc(bytes));
       },
       cancel() {
         cancelled = true;
       },
     });
-    const client = new CloudflareSandboxBridgeClient({
-      bridgeId: "default",
-      baseUrl: "https://bridge.example",
-      fetch: async () => new Response(body),
-    });
-    const backend = createCloudflareSandboxToolExecutionBackend({
-      client,
-      sandboxId: "sandbox-1",
-      cwd: "/workspace/repo",
-    });
-
-    await expect(
-      backend.readFileBinary("/workspace/repo/large.bin", { maxBytes: 10 }),
-    ).rejects.toThrow("file exceeds maximum size of 10 B (got 16 B)");
-    expect(cancelled).toBe(true);
-  });
-
-  it("cancels binary responses whose content length exceeds the requested limit", async () => {
-    let cancelled = false;
-    const body = new ReadableStream({
-      start(controller) {
-        controller.enqueue(Buffer.alloc(16));
-      },
-      cancel() {
-        cancelled = true;
-      },
-    });
-    const client = new CloudflareSandboxBridgeClient({
-      bridgeId: "default",
-      baseUrl: "https://bridge.example",
-      fetch: async () =>
-        new Response(body, {
-          headers: { "Content-Length": "16" },
-        }),
-    });
-    const backend = createCloudflareSandboxToolExecutionBackend({
-      client,
-      sandboxId: "sandbox-1",
-      cwd: "/workspace/repo",
-    });
+    const backend = createBackend(async () => new Response(body, { headers }));
 
     await expect(
       backend.readFileBinary("/workspace/repo/large.bin", { maxBytes: 10 }),
@@ -393,23 +343,16 @@ describe("Cloudflare Sandbox execution environment", () => {
   });
 
   it("normalizes missing binary files at the backend boundary", async () => {
-    const client = new CloudflareSandboxBridgeClient({
-      bridgeId: "default",
-      baseUrl: "https://bridge.example",
-      fetch: async () => jsonResponse({ error: "file not found" }, { status: 404 }),
-    });
-    const backend = createCloudflareSandboxToolExecutionBackend({
-      client,
-      sandboxId: "sandbox-1",
-      cwd: "/workspace/repo",
-    });
+    const backend = createBackend(async () =>
+      jsonResponse({ error: "file not found" }, { status: 404 }),
+    );
 
     await expect(backend.readFileBinary("/workspace/repo/missing.png")).rejects.toMatchObject({
       code: "not-found",
     });
   });
 
-  it("serializes bridge exec calls that share a command session", async () => {
+  it.each(["Bash", "Node"])("serializes %s behind Bash on a shared session", async (kind) => {
     const encoder = new TextEncoder();
     const requests = [];
     const execStreams = [];
@@ -434,20 +377,15 @@ describe("Cloudflare Sandbox execution environment", () => {
       return jsonResponse({ error: "not found" }, { status: 404 });
     };
 
-    const client = new CloudflareSandboxBridgeClient({
-      bridgeId: "default",
-      baseUrl: "https://bridge.example",
-      fetch: fetchMock,
-    });
-    const backend = createCloudflareSandboxToolExecutionBackend({
-      client,
-      sandboxId: "sandbox-1",
-      cwd: "/workspace/repo",
-    });
+    const backend = createBackend(fetchMock);
 
     const first = backend.runBash("one");
     await waitFor(() => execStreams.length === 1);
-    const second = backend.runBash("two");
+    const secondOutput = kind === "Bash" ? "two\n" : "two";
+    const second =
+      kind === "Bash"
+        ? backend.runBash("two")
+        : backend.runNodeScript("process.stdout.write(process.argv[1])", ["two"]);
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(execStreams).toHaveLength(1);
@@ -456,10 +394,57 @@ describe("Cloudflare Sandbox execution environment", () => {
     await expect(first).resolves.toMatchObject({ output: "one\n" });
 
     await waitFor(() => execStreams.length === 2);
-    execStreams[1].controller.enqueue(encoder.encode(execSse({ stdout: "two\n" }).join("")));
+    execStreams[1].controller.enqueue(encoder.encode(execSse({ stdout: secondOutput }).join("")));
     execStreams[1].controller.close();
-    await expect(second).resolves.toMatchObject({ output: "two\n" });
+    await expect(second).resolves.toMatchObject({ output: secondOutput });
 
+    const execRequests = requests.filter((request) => request.url.endsWith("/exec"));
+    expect(execRequests.map((request) => JSON.parse(request.init.body).argv)).toEqual([
+      [
+        "env",
+        "NO_COLOR=1",
+        "FORCE_COLOR=0",
+        "TERM=dumb",
+        "PAGER=cat",
+        "GIT_TERMINAL_PROMPT=0",
+        "GIT_EDITOR=true",
+        "GIT_SEQUENCE_EDITOR=true",
+        "GIT_PAGER=cat",
+        "GIT_ASKPASS=true",
+        "GIT_SSH_COMMAND=ssh -o BatchMode=yes",
+        "bash",
+        "-lc",
+        expect.stringMatching(/\none$/),
+      ],
+      [
+        "env",
+        "NO_COLOR=1",
+        "FORCE_COLOR=0",
+        "TERM=dumb",
+        "PAGER=cat",
+        "GIT_TERMINAL_PROMPT=0",
+        "GIT_EDITOR=true",
+        "GIT_SEQUENCE_EDITOR=true",
+        "GIT_PAGER=cat",
+        "GIT_ASKPASS=true",
+        "GIT_SSH_COMMAND=ssh -o BatchMode=yes",
+        "bash",
+        "-lc",
+        ...(kind === "Bash"
+          ? [expect.stringMatching(/\ntwo$/)]
+          : [
+              expect.stringMatching(/\nexec "\$0" "\$@"$/),
+              "node",
+              "-e",
+              "process.stdout.write(process.argv[1])",
+              "two",
+            ]),
+      ],
+    ]);
+    expect(execRequests.map((request) => request.init.headers["Session-Id"])).toEqual([
+      "tau-session-1",
+      "tau-session-1",
+    ]);
     const sessionRequests = requests.filter((request) => request.url.endsWith("/session"));
     expect(sessionRequests).toHaveLength(1);
   });
@@ -486,16 +471,7 @@ describe("Cloudflare Sandbox execution environment", () => {
       }
       return jsonResponse({});
     };
-    const client = new CloudflareSandboxBridgeClient({
-      bridgeId: "default",
-      baseUrl: "https://bridge.example",
-      fetch: fetchMock,
-    });
-    const backend = createCloudflareSandboxToolExecutionBackend({
-      client,
-      sandboxId: "sandbox-1",
-      cwd: "/workspace/repo",
-    });
+    const backend = createBackend(fetchMock);
 
     const first = backend.runBash("one");
     await waitFor(() => execStreams.length === 1);
@@ -543,16 +519,7 @@ describe("Cloudflare Sandbox execution environment", () => {
       return jsonResponse({ error: "not found" }, { status: 404 });
     };
 
-    const client = new CloudflareSandboxBridgeClient({
-      bridgeId: "default",
-      baseUrl: "https://bridge.example",
-      fetch: fetchMock,
-    });
-    const backend = createCloudflareSandboxToolExecutionBackend({
-      client,
-      sandboxId: "sandbox-1",
-      cwd: "/workspace/repo",
-    });
+    const backend = createBackend(fetchMock);
 
     const first = backend.runBash("one");
     await waitFor(() => execCount === 1);
@@ -576,156 +543,13 @@ describe("Cloudflare Sandbox execution environment", () => {
     expect(requests.filter((request) => request.url.endsWith("/exec"))).toHaveLength(1);
   });
 
-  it("serializes node scripts with bash commands that share a command session", async () => {
-    const encoder = new TextEncoder();
-    const requests = [];
-    const execStreams = [];
-    const fetchMock = async (url, init = {}) => {
-      requests.push({ url: String(url), init });
-      if (String(url).endsWith("/v1/sandbox/sandbox-1/session")) {
-        return jsonResponse({ id: "tau-session-1" });
-      }
-      if (String(url).endsWith("/v1/sandbox/sandbox-1/exec")) {
-        const stream = {};
-        const body = new ReadableStream({
-          start(controller) {
-            stream.controller = controller;
-          },
-        });
-        execStreams.push(stream);
-        return new Response(body, {
-          status: 200,
-          headers: { "Content-Type": "text/event-stream" },
-        });
-      }
-      return jsonResponse({ error: "not found" }, { status: 404 });
-    };
-
-    const client = new CloudflareSandboxBridgeClient({
-      bridgeId: "default",
-      baseUrl: "https://bridge.example",
-      fetch: fetchMock,
-    });
-    const backend = createCloudflareSandboxToolExecutionBackend({
-      client,
-      sandboxId: "sandbox-1",
-      cwd: "/workspace/repo",
-    });
-
-    const bashRun = backend.runBash("one");
-    await waitFor(() => execStreams.length === 1);
-    const scriptRun = backend.runNodeScript("process.stdout.write(process.argv[1])", ["two"]);
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(execStreams).toHaveLength(1);
-    execStreams[0].controller.enqueue(encoder.encode(execSse({ stdout: "one\n" }).join("")));
-    execStreams[0].controller.close();
-    await expect(bashRun).resolves.toMatchObject({ output: "one\n" });
-
-    await waitFor(() => execStreams.length === 2);
-    execStreams[1].controller.enqueue(encoder.encode(execSse({ stdout: "two" }).join("")));
-    execStreams[1].controller.close();
-    await expect(scriptRun).resolves.toMatchObject({ output: "two" });
-
-    const execRequests = requests.filter((request) => request.url.endsWith("/exec"));
-    expect(execRequests.map((request) => JSON.parse(request.init.body).argv)).toEqual([
-      [
-        "env",
-        "NO_COLOR=1",
-        "FORCE_COLOR=0",
-        "TERM=dumb",
-        "PAGER=cat",
-        "GIT_TERMINAL_PROMPT=0",
-        "GIT_EDITOR=true",
-        "GIT_SEQUENCE_EDITOR=true",
-        "GIT_PAGER=cat",
-        "GIT_ASKPASS=true",
-        "GIT_SSH_COMMAND=ssh -o BatchMode=yes",
-        "bash",
-        "-lc",
-        expect.stringMatching(/\none$/),
-      ],
-      [
-        "env",
-        "NO_COLOR=1",
-        "FORCE_COLOR=0",
-        "TERM=dumb",
-        "PAGER=cat",
-        "GIT_TERMINAL_PROMPT=0",
-        "GIT_EDITOR=true",
-        "GIT_SEQUENCE_EDITOR=true",
-        "GIT_PAGER=cat",
-        "GIT_ASKPASS=true",
-        "GIT_SSH_COMMAND=ssh -o BatchMode=yes",
-        "bash",
-        "-lc",
-        expect.stringMatching(/\nexec "\$0" "\$@"$/),
-        "node",
-        "-e",
-        "process.stdout.write(process.argv[1])",
-        "two",
-      ],
-    ]);
-    expect(execRequests.map((request) => request.init.headers["Session-Id"])).toEqual([
-      "tau-session-1",
-      "tau-session-1",
-    ]);
-  });
-
-  it("uses separate command sessions for separate cwd values", async () => {
-    const requests = [];
-    let nextSession = 1;
-    const fetchMock = async (url, init = {}) => {
-      requests.push({ url: String(url), init });
-      if (String(url).endsWith("/v1/sandbox/sandbox-1/session")) {
-        return jsonResponse({ id: `tau-session-${nextSession++}` });
-      }
-      if (String(url).endsWith("/v1/sandbox/sandbox-1/exec")) {
-        return sseResponse(execSse({ stdout: "ok\n", exitCode: 0 }));
-      }
-      return jsonResponse({ error: "not found" }, { status: 404 });
-    };
-
-    const client = new CloudflareSandboxBridgeClient({
-      bridgeId: "default",
-      baseUrl: "https://bridge.example",
-      fetch: fetchMock,
-    });
-    const backend = createCloudflareSandboxToolExecutionBackend({
-      client,
-      sandboxId: "sandbox-1",
-      cwd: "/workspace/repo",
-    });
-
-    await backend.runBash("pwd");
-    await backend.runBash("pwd", { cwd: "/workspace/other" });
-
-    const sessionRequests = requests.filter((request) => request.url.endsWith("/session"));
-    expect(sessionRequests.map((request) => JSON.parse(request.init.body).cwd)).toEqual([
-      "/workspace/repo",
-      "/workspace/other",
-    ]);
-    const execRequests = requests.filter((request) => request.url.endsWith("/exec"));
-    expect(execRequests.map((request) => request.init.headers["Session-Id"])).toEqual([
-      "tau-session-1",
-      "tau-session-2",
-    ]);
-  });
-
   it("applies the command timeout while creating the bridge session", async () => {
-    const client = new CloudflareSandboxBridgeClient({
-      bridgeId: "default",
-      baseUrl: "https://bridge.example",
-      fetch: async (_url, init = {}) =>
+    const backend = createBackend(
+      async (_url, init = {}) =>
         await new Promise((_resolve, reject) => {
           init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true });
         }),
-    });
-    const backend = createCloudflareSandboxToolExecutionBackend({
-      client,
-      sandboxId: "sandbox-1",
-      cwd: "/workspace/repo",
-    });
+    );
 
     await expect(backend.runBash("pwd", { timeoutMs: 10 })).resolves.toMatchObject({
       output: "",
@@ -758,16 +582,7 @@ describe("Cloudflare Sandbox execution environment", () => {
       return jsonResponse({ error: "not found" }, { status: 404 });
     };
 
-    const client = new CloudflareSandboxBridgeClient({
-      bridgeId: "default",
-      baseUrl: "https://bridge.example",
-      fetch: fetchMock,
-    });
-    const backend = createCloudflareSandboxToolExecutionBackend({
-      client,
-      sandboxId: "sandbox-1",
-      cwd: "/workspace/repo",
-    });
+    const backend = createBackend(fetchMock);
     const controller = new AbortController();
 
     const run = backend.runBash("sleep 10", { signal: controller.signal });
@@ -778,7 +593,7 @@ describe("Cloudflare Sandbox execution environment", () => {
     await waitFor(() => requests.some((request) => request.init.method === "DELETE"));
   });
 
-  it("deletes every per-cwd command session on dispose", async () => {
+  it("uses separate per-cwd command sessions and deletes all of them on dispose", async () => {
     const requests = [];
     let nextSession = 1;
     const fetchMock = async (url, init = {}) => {
@@ -795,19 +610,20 @@ describe("Cloudflare Sandbox execution environment", () => {
       return jsonResponse({ error: "not found" }, { status: 404 });
     };
 
-    const client = new CloudflareSandboxBridgeClient({
-      bridgeId: "default",
-      baseUrl: "https://bridge.example",
-      fetch: fetchMock,
-    });
-    const backend = createCloudflareSandboxToolExecutionBackend({
-      client,
-      sandboxId: "sandbox-1",
-      cwd: "/workspace/repo",
-    });
+    const backend = createBackend(fetchMock);
 
     await backend.runBash("pwd");
     await backend.runBash("pwd", { cwd: "/workspace/other" });
+    const sessionRequests = requests.filter((request) => request.url.endsWith("/session"));
+    expect(sessionRequests.map((request) => JSON.parse(request.init.body).cwd)).toEqual([
+      "/workspace/repo",
+      "/workspace/other",
+    ]);
+    const execRequests = requests.filter((request) => request.url.endsWith("/exec"));
+    expect(execRequests.map((request) => request.init.headers["Session-Id"])).toEqual([
+      "tau-session-1",
+      "tau-session-2",
+    ]);
     await backend.dispose();
 
     const deleteUrls = requests
@@ -838,16 +654,7 @@ describe("Cloudflare Sandbox execution environment", () => {
       return jsonResponse({ error: "not found" }, { status: 404 });
     };
 
-    const client = new CloudflareSandboxBridgeClient({
-      bridgeId: "default",
-      baseUrl: "https://bridge.example",
-      fetch: fetchMock,
-    });
-    const backend = createCloudflareSandboxToolExecutionBackend({
-      client,
-      sandboxId: "sandbox-1",
-      cwd: "/workspace/repo",
-    });
+    const backend = createBackend(fetchMock);
     const controller = new AbortController();
     controller.abort();
 
@@ -878,107 +685,5 @@ describe("Cloudflare Sandbox execution environment", () => {
     expect(requests[0].url).toBe(
       "https://bridge.example/v1/sandbox/sandbox-1/file/workspace/repo/a%20file.txt",
     );
-  });
-
-  it("resolves prompt context and machine metadata through the execution backend", async () => {
-    const nodeScriptCalls = [];
-    const backend = {
-      async runNodeScript(script, args, options) {
-        nodeScriptCalls.push({ script, args, options });
-        return {
-          output: JSON.stringify({
-            platform: "linux",
-            repoRoot: "/workspace/repo",
-            agentsFiles: [
-              { path: "/workspace/repo/AGENTS.md", content: "repo instructions" },
-              { path: "/workspace/AGENTS.md", content: "workspace instructions" },
-              {
-                path: "/workspace/repo/docs/AGENTS.md",
-                content: "configured instructions",
-              },
-            ],
-            childAgentsFiles: ["/workspace/repo/src/AGENTS.md"],
-          }),
-          exitCode: 0,
-          truncated: false,
-        };
-      },
-      async readFile(path) {
-        if (path === "/workspace/repo/AGENTS.md") {
-          return { path, content: "repo instructions" };
-        }
-        if (path === "/workspace/AGENTS.md") {
-          return { path, content: "workspace instructions" };
-        }
-        if (path === "/workspace/repo/src/AGENTS.md") {
-          return { path, content: "nested instructions" };
-        }
-        throw new Error(`missing ${path}`);
-      },
-      async readFileBinary() {
-        throw new Error("readFileBinary should not be called for prompt context");
-      },
-      async writeFile() {
-        throw new Error("writeFile should not be called for prompt context");
-      },
-      async listDir(path) {
-        throw new Error(`listDir should not be called for prompt context: ${path}`);
-      },
-    };
-    const environment = new CloudflareSandboxExecutionEnvironment({
-      bridgeId: "default",
-      sandboxId: "sandbox-1",
-      cwd: "/workspace/repo",
-      home: "/home/sandbox",
-      backend,
-    });
-
-    const runtimeContext = await environment.resolveRuntimeContext({
-      cwd: "/workspace/repo",
-      persona: personas[0],
-      discoveredSkills: [],
-      includeAgentContext: true,
-      agentContextFiles: ["/workspace/repo/docs/AGENTS.md"],
-    });
-
-    expect(runtimeContext.promptBootstrap.promptContext.cwd).toBe("/workspace/repo");
-    expect(runtimeContext.promptBootstrap.agentsFiles).toEqual([
-      "/workspace/repo/AGENTS.md",
-      "/workspace/AGENTS.md",
-      "/workspace/repo/docs/AGENTS.md",
-    ]);
-    expect(runtimeContext.promptBootstrap.promptContext.projectContextBlock).toContain(
-      "repo instructions",
-    );
-    expect(runtimeContext.promptBootstrap.promptContext.projectContextBlock).toContain(
-      "workspace instructions",
-    );
-    expect(runtimeContext.promptBootstrap.promptContext.projectContextBlock).toContain(
-      "configured instructions",
-    );
-    expect(runtimeContext.promptBootstrap.promptContext.projectContextBlock).toContain(
-      "/workspace/repo/src/AGENTS.md",
-    );
-    expect(runtimeContext.promptBootstrap.promptContext).toMatchObject({
-      repoRoot: "/workspace/repo",
-      platform: "linux",
-    });
-    expect(nodeScriptCalls).toHaveLength(1);
-    expect(nodeScriptCalls[0].args[0]).toBe("/workspace/repo");
-    expect(JSON.parse(nodeScriptCalls[0].args[3])).toEqual(["/workspace/repo/docs/AGENTS.md"]);
-    expect(nodeScriptCalls[0].options).toMatchObject({
-      cwd: "/workspace/repo",
-      maxCaptureBytes: 24 * 1024 * 1024,
-    });
-    expect(environment.snapshot()).toEqual({
-      kind: "cloudflare-sandbox",
-      bridgeId: "default",
-      sandboxId: "sandbox-1",
-      cwd: "/workspace/repo",
-      home: "/home/sandbox",
-    });
-    const snapshot = environment.snapshot();
-    snapshot.cwd = "/mutated";
-    expect(environment.snapshot().cwd).toBe("/workspace/repo");
   });
 });

@@ -82,7 +82,8 @@ export function printSpeechGenerateHelp(log: (line: string) => void = console.lo
       "whole chunks may share a request; no automatic text splitting or rewriting.",
       "writes mono 24 kHz 16-bit PCM WAV and retains request batches in <output>.parts.",
       "requires ELEVENLABS_API_KEY or apiKeys.elevenlabs; never overwrites or retries.",
-      "see speech-generation.md in tau_docs for long-form assembly and recovery.",
+      "",
+      "see speech-generation.md in tau_docs for setup, examples, outputs, and recovery.",
     ].join("\n"),
   );
 }

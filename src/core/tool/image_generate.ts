@@ -101,7 +101,9 @@ export function printImageGenerateHelp(log: (line: string) => void = console.log
       "  --help                  show this help.",
       "",
       "one stateless generation; unsupported features fail before generation.",
-      "never overwrites output or its .parts directory; see image-generation.md in tau_docs.",
+      "never overwrites output or its .parts directory.",
+      "",
+      "see image-generation.md in tau_docs for setup, examples, outputs, and recovery.",
     ].join("\n"),
   );
 }

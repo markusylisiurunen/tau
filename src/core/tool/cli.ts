@@ -17,7 +17,7 @@ export function printToolHelp(log: (line: string) => void = console.log): void {
     [
       "usage:",
       "  tau tool <command>",
-      "  tau tool pdf-unpack <file.pdf>",
+      "  tau tool <command> --help",
       "",
       "commands:",
       "  pdf-unpack       extract markdown and page image patches from a PDF.",
@@ -26,6 +26,10 @@ export function printToolHelp(log: (line: string) => void = console.log): void {
       "",
       "examples:",
       "  tau tool pdf-unpack ./docs/spec.pdf",
+      '  tau tool image-generate --model gemini-3.1-flash-image --prompt "A lakeside sauna" --output ./sauna.png',
+      "  tau tool speech-generate --model eleven_v4 --input ./script.json --output ./speech.wav",
+      "",
+      "see tools.md in tau_docs for command guides.",
     ].join("\n"),
   );
 }

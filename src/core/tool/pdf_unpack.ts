@@ -141,6 +141,8 @@ export function printPdfUnpackHelp(log: (line: string) => void = console.log): v
       "  requires pdftoppm from Poppler on PATH.",
       "  requires apiKeys.mistral or MISTRAL_API_KEY for OCR.",
       "  keeps the output directory on disk for follow-up model use.",
+      "",
+      "see pdf-unpacking.md in tau_docs for setup, examples, outputs, and recovery.",
     ].join("\n"),
   );
 }

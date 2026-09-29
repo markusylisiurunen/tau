@@ -2,7 +2,11 @@
 
 `tau tool speech-generate` turns a caller-chunked script into one WAV using ElevenLabs `eleven_v4`. It supports single-speaker narration and multi-speaker dialogue.
 
-## Credentials and voices
+```bash
+tau tool speech-generate --help
+```
+
+## Credentials and requirements
 
 Set `ELEVENLABS_API_KEY` or configure `apiKeys.elevenlabs`; the environment variable wins. Configuration and files belong to the machine running the command. Agent Bash removes inherited API-key variables, so credentials may need to be set in private configuration on that machine. See [credentials](credentials.md).
 
@@ -12,7 +16,7 @@ tau tool speech-generate --list-voices
 
 Voice listing prints one JSON object per voice, containing `voice_id` and `name`. Use those IDs in the script.
 
-## Input contract
+## Input and examples
 
 Supply a UTF-8 JSON document with exactly `voices` and `chunks`. `voices` maps speaker names to voice IDs; `chunks` is an ordered, nonempty array of nonempty arrays of speaker turns. Each turn contains exactly `speaker` and nonblank `text`.
 
@@ -131,3 +135,5 @@ Use only completed `.pcm` batches, not `.partial` files.
 ## Approximate cost
 
 The [ElevenLabs API pricing page](https://elevenlabs.io/pricing/api) lists v4 at $0.08 per 1,000 characters, with a promotional $0.022 rate through October 12, 2026. At those rates, 2,000 characters cost approximately $0.16 or $0.044; 27,000 characters (roughly 30 minutes) cost approximately $2.16 or $0.59. Check current API pricing for plan and voice-specific rates. The manifest's `characterCost` preserves the provider's billing header verbatim.
+
+See [command-line tools](tools.md) for command discovery and execution ownership.

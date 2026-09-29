@@ -39,7 +39,12 @@ describe("tau_docs tool", () => {
     expect(TAU_DOCS_TOOL.description).toContain(
       "In a Tau source checkout, inspect source and tests instead",
     );
-    expect(TAU_DOCS_TOOL.description).toContain("Begin with index.md");
+    expect(TAU_DOCS_TOOL.description).toContain("Begin with index.md for general documentation");
+    expect(TAU_DOCS_TOOL.description).toContain("Their use is optional");
+    expect(TAU_DOCS_TOOL.description).toContain("read its listed page directly through tau_docs");
+    expect(TAU_DOCS_TOOL.description).toContain(
+      "does not guarantee its executable, dependencies, or credentials are available there",
+    );
     expect(TAU_DOCS_TOOL.parameters.additionalProperties).toBe(false);
   });
 
@@ -66,6 +71,27 @@ describe("tau_docs tool", () => {
       `~${Math.floor(Buffer.byteLength(content) / 6)} tokens`,
       `${lines.length} lines`,
     ]);
+  });
+
+  it.each([
+    ["pdf-unpack", "pdf-unpacking.md"],
+    ["image-generate", "image-generation.md"],
+    ["speech-generate", "speech-generation.md"],
+  ])("exposes the dedicated %s guide through the description and index", async (command, path) => {
+    expect(TAU_DOCS_TOOL.description).toContain(`Documentation: ${path}.`);
+    const tool = createTauDocsToolDefinition();
+    const index = await execute(tool, "index.md");
+    expect(resultText(index)).toContain(`](${path})`);
+    const result = await execute(tool, path);
+    expect(result.outcome).toBe("succeeded");
+    expect(resultText(result)).toContain(`tau tool ${command}`);
+    for (const heading of [
+      "Credentials and requirements",
+      "Input and examples",
+      "Outputs and recovery",
+    ]) {
+      expect(resultText(result)).toContain(`## ${heading}`);
+    }
   });
 
   it("rejects unknown and nested paths", async () => {

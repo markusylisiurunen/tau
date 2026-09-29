@@ -17,13 +17,30 @@ import {
 import { TOOL_NAME_TAU_DOCS } from "./tool_names.js";
 
 const TAU_DOCS_DESCRIPTION = [
-  "Read the user-facing documentation shipped with the running Tau version (the Tau host providing this tool, not Tau source code in the agent's workspace).",
-  "Use only when needed to operate or configure Tau, or when the user explicitly asks to consult Tau's documentation.",
-  "Do not call it merely because Tau is mentioned.",
-  "In a Tau source checkout, inspect source and tests instead for questions about implementation, built-in content, defaults, or current branch behavior.",
-  "The documentation does not report effective local configuration.",
-  "Begin with index.md, then follow its exact flat paths.",
-].join(" ");
+  [
+    "Read the user-facing documentation shipped with the running Tau version (the Tau host providing this tool, not Tau source code in the agent's workspace).",
+    "Use when needed to operate or configure Tau, to use the command-line tools described below, or when the user explicitly asks to consult Tau's documentation.",
+    "Do not call it merely because Tau is mentioned.",
+    "In a Tau source checkout, inspect source and tests instead for questions about implementation, built-in content, defaults, or current branch behavior.",
+    "The documentation does not report effective local configuration.",
+    "Begin with index.md for general documentation, or read a command-line tool's listed page directly.",
+  ].join(" "),
+  "",
+  "### Built-in command-line tools",
+  "",
+  "Tau includes command-line tools that agents can invoke through Bash. Each tool has a dedicated documentation page describing its requirements, supported operations, and usage. The summaries below provide discovery without loading the full instructions.",
+  "",
+  "Available tools:",
+  "- PDF unpacking: extract OCR text, tables, and page-image patches from a PDF. Documentation: pdf-unpacking.md.",
+  "- Image generation: generate images from prompts or edit images using local references. Documentation: image-generation.md.",
+  "- Speech generation: turn narration or multi-speaker dialogue scripts into an audio file. Documentation: speech-generation.md.",
+  "",
+  "Guidelines:",
+  "- Selection: Consider these tools when their capabilities match the task, even if the user has not explicitly named them. Their use is optional; choose the approach that best fits the request.",
+  "- Documentation: Before using a tool, read its listed page directly through tau_docs. Load only the relevant guides, and reuse instructions already visible in context.",
+  "- Execution: Follow the guide's prerequisites and usage instructions. Tools run in the execution environment; listing a tool here does not guarantee its executable, dependencies, or credentials are available there.",
+  "- Scope: Tool availability does not expand the user's request or authorize unrelated actions. If a tool is unavailable or unsuitable, use another appropriate approach or explain the blocker.",
+].join("\n");
 
 const documentationRoot = new URL("../static/tau_docs/", import.meta.url);
 const manifest = JSON.parse(
@@ -39,7 +56,8 @@ export const TAU_DOCS_TOOL: Tool = {
   parameters: Type.Object(
     {
       path: Type.String({
-        description: "Exact flat .md path from the Tau documentation index.",
+        description:
+          "Exact flat .md path from the Tau documentation index or this tool description.",
         pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*\\.md$",
       }),
     },

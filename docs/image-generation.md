@@ -10,19 +10,9 @@ tau tool image-generate \
   --aspect-ratio 16:9 --resolution 2K --output ./sauna.png
 ```
 
-## Credentials and output
+## Credentials and requirements
 
 Google uses `GEMINI_API_KEY`, then `apiKeys.google`. OpenAI uses `OPENAI_API_KEY`, then `apiKeys.openai`. Configuration and files belong to the machine running the command. Agent Bash removes inherited API-key variables, so credentials may need to be set in private configuration on that machine. See [credentials](credentials.md).
-
-The output's parent directory must exist. Neither the output nor `<output>.parts` may already exist. On success, stdout is one JSON object with absolute `output` and `artifacts` paths and provider `usage` (or `null`). The `.parts` directory contains:
-
-- `original.bin`: the provider's original image bytes.
-- `image.<format>`: the published image. Gemini responses are converted to PNG when needed; OpenAI bytes are saved as returned.
-- `manifest.json`: model, output path, usage, and `source` with the original filename and provider-declared MIME type (`null` when absent).
-
-Original bytes and usage remain available if conversion fails. Conversion may discard embedded metadata; use the original when provenance matters.
-
-Failures exit nonzero and report the retained artifact directory when generation has started. Requests are not automatically retried because a failed request may already have incurred a charge.
 
 ## Models and capabilities
 
@@ -48,7 +38,7 @@ OpenAI controls:
 
 Gemini does not support transparent-background generation ([Google documentation](https://ai.google.dev/gemini-api/docs/generate-content/image-generation#stylized_illustrations_and_stickers)). For transparent assets, use an OpenAI model with `--background transparent --format png` or `webp` ([OpenAI documentation](https://developers.openai.com/api/docs/guides/image-generation#size-and-quality-options)).
 
-## Prompts and editing
+## Input and examples
 
 Supply exactly one of `--prompt` and `--prompt-file` (UTF-8). Repeat `--reference` for local PNG, JPEG, or WebP files. References retain their order and original bytes. OpenAI reference requests use the edit endpoint.
 
@@ -93,6 +83,18 @@ done
 
 Each invocation is independent; edits use only the supplied prompt and references.
 
+## Outputs and recovery
+
+The output's parent directory must exist. Neither the output nor `<output>.parts` may already exist. On success, stdout is one JSON object with absolute `output` and `artifacts` paths and provider `usage` (or `null`). The `.parts` directory contains:
+
+- `original.bin`: the provider's original image bytes.
+- `image.<format>`: the published image. Gemini responses are converted to PNG when needed; OpenAI bytes are saved as returned.
+- `manifest.json`: model, output path, usage, and `source` with the original filename and provider-declared MIME type (`null` when absent).
+
+Original bytes and usage remain available if conversion fails. Conversion may discard embedded metadata; use the original when provenance matters.
+
+Failures exit nonzero and report the retained artifact directory when generation has started. Requests are not automatically retried because a failed request may already have incurred a charge.
+
 ## Approximate cost
 
 USD image-output estimates: Flash Lite at 1K is about $0.034; Flash at 1K/2K/4K about $0.067/$0.101/$0.151; Pro at 1K–2K/4K about $0.134/$0.24. Input and text/thinking usage are additional.
@@ -100,3 +102,5 @@ USD image-output estimates: Flash Lite at 1K is about $0.034; Flash at 1K/2K/4K 
 Both OpenAI 2.5 models charge about $0.03 per 1,000 image-output tokens, $0.008 per 1,000 image-input tokens, and $0.005 per 1,000 text-input tokens. Usage is recorded in the manifest.
 
 See [Google pricing](https://ai.google.dev/gemini-api/docs/pricing) and [OpenAI image pricing](https://developers.openai.com/api/docs/guides/image-generation#gpt-image-25-costs) for current rates.
+
+See [command-line tools](tools.md) for command discovery and execution ownership.

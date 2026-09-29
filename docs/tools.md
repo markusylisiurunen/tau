@@ -69,7 +69,7 @@ The tool accepts one exact flat Markdown path. It has no search or list operatio
 index.md
 ```
 
-Then follow paths linked by that page. Unknown paths are rejected. The corpus describes supported Tau contracts, not the current effective configuration of a particular session, so use configuration inspection or debug output when the answer depends on local state.
+Then follow paths linked by that page. The tool description also advertises built-in command-line tools with capability summaries and dedicated documentation paths. Agents may read those pages directly when a tool is relevant, without first loading the index. Use of these utilities is optional and depends on the execution environment's prerequisites. Unknown paths are rejected. The corpus describes supported Tau contracts, not the current effective configuration of a particular session, so use configuration inspection or debug output when the answer depends on local state.
 
 ## Main-session goal tools
 
@@ -133,33 +133,17 @@ Neither tool provides a general read operation. Use a scoped non-interactive Bas
 
 The supported formats are JPEG, PNG, and WebP. Source reads are capped at 50 MiB. Images larger than 2,000 pixels in either dimension or 2.5 MiB of model payload are resized or re-encoded while preserving aspect ratio. If Tau cannot reduce a valid image below the model payload limit, the call fails. Relative paths resolve from the execution-environment working directory.
 
-## Unpack a PDF from the command line
+## Command-line tools
 
-`tau tool pdf-unpack` is a standalone utility for turning a PDF into OCR Markdown and page-image patches. It is not an agent-callable host tool. Run it from the machine that owns the input file:
+`tau tool` provides standalone utilities that agents can invoke through Bash. They are not separate agent-callable host tools. Files, configuration, credentials, and required executables belong to the machine running the command, including the execution environment when invoked through agent Bash.
 
-```bash
-tau tool pdf-unpack ./docs/architecture.pdf
-```
+| Command | Purpose | Guide |
+| --- | --- | --- |
+| `tau tool pdf-unpack` | Extract OCR Markdown and page-image patches from a PDF using Mistral. | [PDF unpacking](pdf-unpacking.md) |
+| `tau tool image-generate` | Generate or edit an image using Google or OpenAI. | [Image generation](image-generation.md) |
+| `tau tool speech-generate` | Generate narration or dialogue using ElevenLabs and assemble a WAV. | [Speech generation](speech-generation.md) |
 
-The path is resolved from the command's current working directory and must name a readable file. The command requires `pdftoppm` from Poppler on `PATH`. On macOS, install it with `brew install poppler`; Debian-based Linux distributions provide it through `apt install poppler-utils`.
-
-PDF OCR requires `MISTRAL_API_KEY` or `apiKeys.mistral`, with the environment variable taking precedence. Tau loads configuration for the command's current working directory. The credential and local executable therefore belong to the process running `tau tool`, not to an attached TUI, remote host, or session execution environment unless that is where the command itself runs. See [credentials](credentials.md) for credential ownership.
-
-On success, Tau prints the persistent temporary output directory and a complete artifact list. The directory contains:
-
-- `document.md`, the complete OCR document with recognized tables inlined;
-- `pages/page-0001.md` and later numbered files, one Markdown file per PDF page; and
-- `images/page-0001/patch-0001.png` and later numbered patches for visual verification.
-
-OCR text can contain recognition mistakes. Embedded visuals that are not represented in Markdown are marked with placeholders pointing to the corresponding page patches. Read `document.md` for the whole document, use `pages/` for page-level work, and inspect `images/` before trusting or correcting uncertain OCR.
-
-The command uploads the PDF to Mistral and attempts to delete the remote upload after OCR. A deletion failure is reported in the command output. Successful local artifacts remain on disk for follow-up use; delete them when they are no longer needed. If processing fails, Tau attempts to remove the partial local output directory. Do not use the command for a sensitive document unless sending it to Mistral and retaining derived local artifacts are both permitted.
-
-### Image and speech generation
-
-`tau tool image-generate` creates an image from a prompt and optional local references using Google or OpenAI. `tau tool speech-generate` uses ElevenLabs to generate narration or dialogue and assemble a WAV. Both run through Bash using the invoking machine's files and credentials.
-
-See [image generation](image-generation.md) and [speech generation](speech-generation.md) for options, examples, pricing, and recovery. Both commands support `--help`.
+Each guide covers setup, input, examples, outputs, and failure behavior. Use `tau tool --help` to list commands or `tau tool <command> --help` for command-specific help. The same guides are packaged for `tau_docs` and linked from its `index.md`.
 
 ## Code-mode service tools
 

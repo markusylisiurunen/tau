@@ -17,6 +17,7 @@ export type Command = (
   | { type: "reload" }
   | { type: "listen"; action: "record" | "retry" | "discard" }
   | { type: "speak" }
+  | { type: "autoSpeak"; enabled: boolean | undefined }
   | { type: "persona"; id: string }
   | { type: "prompt"; id: string }
   | { type: "theme"; id: string }
@@ -57,6 +58,7 @@ export interface CommandDispatchContext {
   reload: () => Promise<void>;
   listen: (action: "record" | "retry" | "discard") => Promise<void> | void;
   speak: () => Promise<void> | void;
+  autoSpeak: (enabled: boolean | undefined) => Promise<void> | void;
   persona: (id: string) => void;
   prompt: (id: string) => void;
   theme: (id: string) => void;
@@ -68,6 +70,7 @@ export interface HelpTextOptions {
   skills?: Skill[];
   themes?: string[];
   formatPath?: (path: string) => string;
+  recordingShortcut?: string;
 }
 
 function formatSkillPath(fullPath: string, formatPath: (path: string) => string): string {
@@ -155,7 +158,7 @@ export class CommandRegistry<Ctx = unknown> {
       ["ctrl+p", "cycle personality"],
       ["ctrl+t", "toggle thoughts visibility"],
       ["ctrl+s", "stash input to clipboard"],
-      ["ctrl+y", "toggle voice recording"],
+      [options.recordingShortcut ?? "ctrl+y", "toggle voice recording"],
       ["enter", "steer running assistant with editor input"],
       ["ctrl+enter", "queue editor input for the next turn"],
       ["alt+up", "cancel pending messages into editor"],
@@ -338,6 +341,21 @@ export function createCommandRegistry(): CommandRegistry<CommandDispatchContext>
       return null;
     },
     run: (ctx, command) => ctx.listen(command.action),
+  });
+
+  registry.register({
+    id: "autoSpeak",
+    usage: "/auto-speak [on|off]",
+    description: "toggle automatic reading of final responses",
+    autocompleteDescription: "toggle automatic reading of final responses",
+    argument: "none",
+    allowDuringStreaming: true,
+    parse: (raw) => {
+      const { command, extra } = splitCommandInput(raw);
+      if (command !== "/auto-speak" || (extra && extra !== "on" && extra !== "off")) return null;
+      return { type: "autoSpeak", enabled: extra ? extra === "on" : undefined };
+    },
+    run: (ctx, command) => ctx.autoSpeak(command.enabled),
   });
 
   registry.register({

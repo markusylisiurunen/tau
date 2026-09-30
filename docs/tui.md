@@ -92,13 +92,14 @@ Then use Shift+Tab to select an allowed reasoning level. Newly added personas do
 | `/reload` | Reload session-owned configuration and content from the execution environment. |
 | `/listen [retry/discard]` | Record speech, retry a retained failed recording, or discard it on macOS. |
 | `/speak` | Read the last assistant response aloud on macOS. |
+| `/auto-speak [on | off]` | Toggle automatic reading of final responses, or explicitly enable or disable it. |
 | `/copy-text` | Copy the last assistant response as plain text. |
 | `/copy-code` | Copy code blocks from the last assistant response. |
 | `/persona:<id>` | Switch persona while idle. |
 | `/prompt:<id>` | Resolve a prompt from the execution environment and place it in the editor without submitting it. |
 | `/theme:<id>` | Switch this TUI’s theme for the current run. |
 
-Commands that mutate context, such as persona changes, compaction, rewind, and reload, should be run while idle. `/goal` display and clear, `/listen`, `/prompt:<id>`, and `/exit` have limited useful behavior during a running turn. Ordinary command submissions are otherwise held back until Tau is idle.
+Commands that mutate context, such as persona changes, compaction, rewind, and reload, should be run while idle. `/goal` display and clear, `/auto-speak`, `/listen`, `/prompt:<id>`, and `/exit` have limited useful behavior during a running turn. Ordinary command submissions are otherwise held back until Tau is idle.
 
 Compaction, rewind, goals, recovery, and retry are described in [sessions](sessions.md). Prompt discovery and insertion are covered in [prompts and project context](prompts-and-project-context.md).
 
@@ -172,6 +173,10 @@ The TUI also advertises diff review as a client tool unless `--no-client-tools` 
 ## Use speech
 
 `/listen` and Ctrl+Y are currently macOS-only. Recording uses local `ffmpeg` with the AVFoundation audio input and stops when Ctrl+Y is pressed again, when Escape is pressed, or at the 9-minute recording limit. The Gemini limit leaves time for setup and finalization within its 10-minute live session. Startup fails if the microphone produces no audio within 15 seconds. Pressing Enter or Ctrl+Enter while recording stops capture, finishes transcription, and submits the finalized editor text. While a turn is active, Enter steers it and Ctrl+Enter queues another turn, just like normal editor submission. Pressing Ctrl+Y again or reaching the recording limit finishes transcription and inserts the transcript at the cursor for review without submitting it.
+
+The recording shortcut is configurable with [`speech.recordingShortcut`](config-reference.md#speech), including single-press and double-tap printable keys such as `§`. The editor hint shows the configured gesture. Starting a recording stops speech playback.
+
+`/auto-speak` toggles automatic reading of successful final answers. `/auto-speak on` and `/auto-speak off` explicitly select the mode; turning it off also stops current playback. It starts off and applies only to the current session in this TUI, including when attached remotely. `/new` resets it. It does not change other clients or replay historical answers. Commentary, tool activity, and failed or interrupted answers are not automatically spoken. Responses arriving while recording or playing speech are not queued for later playback. Escape stops playback without disabling the mode. Automatic playback uses the same voice, credentials, and rewriting as `/speak`; it does not open the microphone or automatically submit dictation.
 
 Gemini displays a replaceable live preview in muted italic text at the original cursor position. Finalized dictation uses normal text once transcription settles. Its final transcript replaces the preview without duplication. Submitting a draft containing finalized dictation includes hidden guidance that some or all of the message may have been transcribed from speech and may contain transcription errors. The guidance remains after edits and clears when the draft is emptied. Editing stays disabled from recording startup through finalization, and failure restores the original draft. Recording and retries cannot start while another editor update is pending.
 

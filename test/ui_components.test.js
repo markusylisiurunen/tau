@@ -111,6 +111,7 @@ test("TuiChatView positions the shell prompt directly after its final row", () =
   const stop = vi.fn();
   const view = Object.create(TuiChatView.prototype);
   view.footer = { dispose: vi.fn() };
+  view.editor = { setInputEnabled: vi.fn() };
   view.ui = {
     captureRenderState: () => ({
       previousLines: ["message", "editor", "footer"],
@@ -518,6 +519,7 @@ test("FooterComponent renders dense session status", () => {
     sessionCost: "$63.52",
     duration: "1m 1s",
     pursuingGoal: false,
+    autoSpeak: false,
   });
   const line = renderLines(footer, 120)[0];
   expect(line).toContain(
@@ -566,6 +568,7 @@ test("FooterComponent renders activity instead of regular status", () => {
       sessionCost: "$0.01",
       duration: "12s",
       pursuingGoal: false,
+      autoSpeak: false,
     });
     const regularText = renderText(footer, 120);
     expect(regularText).toContain("<textDim>○</textDim>");
@@ -610,6 +613,7 @@ test("FooterComponent temporarily replaces regular status with a notice", () => 
     sessionCost: "$0.01",
     duration: "12s",
     pursuingGoal: false,
+    autoSpeak: false,
   });
 
   try {
@@ -641,6 +645,7 @@ test("FooterComponent animates active goal work and settles after completion", (
     sessionCost: "$0.01",
     duration: "24s",
     pursuingGoal: true,
+    autoSpeak: false,
   });
 
   try {
@@ -728,6 +733,7 @@ test("FooterComponent compacts cwd before truncating the complete status", () =>
     sessionCost: "$0.01",
     duration: "12s",
     pursuingGoal: false,
+    autoSpeak: false,
   });
 
   const compactLine = renderLines(footer, 42)[0];
@@ -741,6 +747,7 @@ test("FooterComponent compacts cwd before truncating the complete status", () =>
     sessionCost: "$0.01",
     duration: "12s",
     pursuingGoal: false,
+    autoSpeak: false,
   });
 
   const truncatedLine = renderLines(footer, 40)[0];
@@ -1309,3 +1316,69 @@ test("RewindPickerComponent confirms and cancels selection", () => {
   expect(selected).toBe("1");
   expect(cancelled).toBe(true);
 });
+
+test("recording shortcuts distinguish presses, double taps, and bracketed paste", () => {
+  vi.useFakeTimers();
+  try {
+    const editor = new CustomEditor(createUiTheme("plain"));
+    editor.onToggleRecording = vi.fn();
+    editor.setRecordingShortcut({ key: "§", gesture: "press" });
+    editor.handleInput("§");
+    expect(editor.onToggleRecording).toHaveBeenCalledTimes(1);
+    editor.handleInput("\x1b[200~");
+    editor.handleInput("§");
+    editor.handleInput("\x1b[201~");
+    expect(editor.onToggleRecording).toHaveBeenCalledTimes(1);
+    expect(editor.getText()).toBe("§");
+    editor.setText("");
+    editor.setRecordingShortcut({ key: "§", gesture: "double-tap" });
+    editor.handleInput("§");
+    vi.advanceTimersByTime(100);
+    editor.handleInput("§");
+    expect(editor.onToggleRecording).toHaveBeenCalledTimes(2);
+    expect(editor.getText()).toBe("");
+    editor.onUiChange = vi.fn();
+    editor.handleInput("§");
+    editor.onUiChange.mockClear();
+    vi.advanceTimersByTime(301);
+    expect(editor.getText()).toBe("§");
+    expect(editor.onUiChange).toHaveBeenCalledTimes(1);
+    editor.handleInput("§");
+    editor.handleInput("a");
+    expect(editor.getText()).toBe("§§a");
+    editor.setInputEnabled(false);
+    editor.handleInput("§");
+    editor.handleInput("§");
+    expect(editor.onToggleRecording).toHaveBeenCalledTimes(3);
+    expect(editor.getText()).toBe("§§a");
+    editor.handleInput("§");
+    editor.setInputEnabled(true);
+    vi.advanceTimersByTime(301);
+    expect(editor.getText()).toBe("§§a");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test.each(["press", "double-tap"])(
+  "recording shortcuts decode Kitty printable input (%s)",
+  (gesture) => {
+    vi.useFakeTimers();
+    try {
+      const editor = new CustomEditor(createUiTheme("plain"));
+      editor.onToggleRecording = vi.fn();
+      editor.setRecordingShortcut({ key: "A", gesture });
+      editor.handleInput("\x1b[97:65;2u");
+      if (gesture === "double-tap") editor.handleInput("A");
+      expect(editor.onToggleRecording).toHaveBeenCalledTimes(1);
+      expect(editor.getText()).toBe("");
+      if (gesture === "double-tap") {
+        editor.handleInput("\x1b[97:65;2u");
+        vi.advanceTimersByTime(301);
+        expect(editor.getText()).toBe("A");
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);

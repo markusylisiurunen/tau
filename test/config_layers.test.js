@@ -127,7 +127,10 @@ describe("config paths", () => {
         join(fx.home, ".config", "tau", "config.json"),
         JSON.stringify({
           apiKeys: { openai: "global", anthropic: "anthropic-key", mistral: "mistral-key" },
-          speech: { voiceId: "global-voice" },
+          speech: {
+            voiceId: "global-voice",
+            recordingShortcut: { key: "§", gesture: "double-tap" },
+          },
           agentContextFiles: ["AGENTS.md"],
           subagents: {
             launchModels: ["anthropic/claude-haiku-4-5:low"],
@@ -194,7 +197,10 @@ describe("config paths", () => {
 
       const config = loadConfig(nested, deps);
       expect(config.defaultPersona).toBe("custom-persona");
-      expect(config.speech).toEqual({ voiceId: "project-voice" });
+      expect(config.speech).toEqual({
+        voiceId: "project-voice",
+        recordingShortcut: { key: "§", gesture: "double-tap" },
+      });
       expect(config.apiKeys).toEqual({
         openai: "repo",
         anthropic: "anthropic-key",
@@ -278,24 +284,29 @@ describe("config paths", () => {
     }
   });
 
-  it.each([null, "voice", { voiceId: " " }, { voiceId: 42 }])(
-    "rejects invalid speech configuration %j",
-    (speech) => {
-      const fx = setupFixture();
-      try {
-        mkdirSync(join(fx.repo, ".tau"), { recursive: true });
-        writeFileSync(join(fx.repo, ".tau", "config.json"), JSON.stringify({ speech }));
-        const deps = createConfigDeps({ cwd: fx.repo, home: fx.home, env: {} });
-        const levels = resolveConfigLevels(deps, { cwd: fx.repo });
-        const modelResolver = loadModelResolver({ deps, levels });
-        const result = loadConfigWithDiagnostics(deps, { levels, modelResolver });
-        expect(result.config.speech).toBeUndefined();
-        expect(result.errors.length).toBeGreaterThan(0);
-      } finally {
-        fx.cleanup();
-      }
-    },
-  );
+  it.each([
+    null,
+    "voice",
+    { voiceId: " " },
+    { voiceId: 42 },
+    { recordingShortcut: { key: "§" } },
+    { recordingShortcut: { key: "abc", gesture: "press" } },
+    { recordingShortcut: { key: "§", gesture: "hold" } },
+  ])("rejects invalid speech configuration %j", (speech) => {
+    const fx = setupFixture();
+    try {
+      mkdirSync(join(fx.repo, ".tau"), { recursive: true });
+      writeFileSync(join(fx.repo, ".tau", "config.json"), JSON.stringify({ speech }));
+      const deps = createConfigDeps({ cwd: fx.repo, home: fx.home, env: {} });
+      const levels = resolveConfigLevels(deps, { cwd: fx.repo });
+      const modelResolver = loadModelResolver({ deps, levels });
+      const result = loadConfigWithDiagnostics(deps, { levels, modelResolver });
+      expect(result.config.speech).toBeUndefined();
+      expect(result.errors.length).toBeGreaterThan(0);
+    } finally {
+      fx.cleanup();
+    }
+  });
 
   it("keeps valid scalar fields while reporting invalid scalar fields", () => {
     const fx = setupFixture();

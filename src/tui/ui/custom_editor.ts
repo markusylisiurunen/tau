@@ -1,4 +1,11 @@
-import { Key, matchesKey, visibleWidth } from "@earendil-works/pi-tui";
+import {
+  decodeKittyPrintable,
+  Key,
+  type KeyId,
+  matchesKey,
+  visibleWidth,
+} from "@earendil-works/pi-tui";
+import type { RecordingShortcut } from "../../core/config/schema.js";
 import { DOUBLE_PRESS_WINDOW_MS } from "../constants.js";
 import { Editor } from "./components/editor.js";
 import {
@@ -11,8 +18,6 @@ import type { Theme } from "./theme/index.js";
 const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 const DEFAULT_EDITOR_MAX_LINES = 22;
 const MIN_EDITOR_LINES = 3;
-const EDITOR_PLACEHOLDER =
-  "ask the agent anything · / for commands · ! for bash mode · ctrl+y for voice";
 
 export type EditorSubmissionMode = "steer" | "queue";
 
@@ -36,6 +41,8 @@ export class CustomEditor extends Editor {
   private lastEscapeAt?: number;
   private inputEnabled = true;
   private placeholderVisible = true;
+  private recordingShortcut: RecordingShortcut = { key: "ctrl+y", gesture: "press" };
+  private recordingTap?: { data: string; timer: ReturnType<typeof setTimeout> };
 
   public onCtrlC?: () => void;
   public onCtrlT?: () => void;
@@ -43,7 +50,7 @@ export class CustomEditor extends Editor {
   public onShiftTab?: () => void;
   public onCtrlP?: () => void;
   public onCtrlS?: () => void;
-  public onCtrlY?: () => void;
+  public onToggleRecording?: () => void;
   public onCtrlG?: () => void;
   public onAltUp?: () => void;
   public onAltDown?: () => void;
@@ -54,6 +61,26 @@ export class CustomEditor extends Editor {
   constructor(theme: Theme) {
     super(theme.editorTheme);
     this.uiTheme = theme;
+  }
+
+  setRecordingShortcut(shortcut?: RecordingShortcut): void {
+    this.clearRecordingTap();
+    this.recordingShortcut = shortcut ?? { key: "ctrl+y", gesture: "press" };
+  }
+
+  private clearRecordingTap(): string | undefined {
+    const tap = this.recordingTap;
+    if (tap) clearTimeout(tap.timer);
+    this.recordingTap = undefined;
+    return tap?.data;
+  }
+
+  private flushRecordingTap(): void {
+    const data = this.clearRecordingTap();
+    if (data && this.inputEnabled && [...this.recordingShortcut.key].length === 1) {
+      super.handleInput(data);
+      this.onUiChange?.();
+    }
   }
 
   protected override cursorStyle(text: string): string {
@@ -75,6 +102,7 @@ export class CustomEditor extends Editor {
   }
 
   setInputEnabled(enabled: boolean): void {
+    this.clearRecordingTap();
     this.lastEscapeAt = undefined;
     this.inputEnabled = enabled;
   }
@@ -132,6 +160,7 @@ export class CustomEditor extends Editor {
   }
 
   setText(text: string): void {
+    this.clearRecordingTap();
     this.scrollTop = 0;
     super.setText(text);
   }
@@ -146,9 +175,31 @@ export class CustomEditor extends Editor {
   }
 
   handleInput(data: string): void {
+    const paste = this.isInPaste || data.includes("\x1b[200~");
+    const key = this.recordingShortcut.key;
+    const recordingKey =
+      [...key].length === 1
+        ? (decodeKittyPrintable(data) ?? data) === key
+        : matchesKey(data, key as KeyId);
+    if (!paste && recordingKey && this.onToggleRecording && !this.isShowingAutocomplete()) {
+      if (this.recordingShortcut.gesture === "press" || this.recordingTap) {
+        this.clearRecordingTap();
+        this.onToggleRecording();
+      } else {
+        this.recordingTap = {
+          data,
+          timer: setTimeout(() => this.flushRecordingTap(), 300),
+        };
+      }
+      return;
+    }
+    this.flushRecordingTap();
+    if (paste) {
+      if (this.inputEnabled) super.handleInput(data);
+      return;
+    }
     if (!this.inputEnabled) {
       if (matchesKey(data, Key.ctrl("c"))) this.onCtrlC?.();
-      else if (matchesKey(data, Key.ctrl("y"))) this.onCtrlY?.();
       else if (matchesKey(data, Key.escape)) this.onEscape?.();
       else if (matchesKey(data, Key.enter)) this.onDisabledSubmit?.("steer");
       else if (matchesKey(data, Key.ctrl(Key.enter))) this.onDisabledSubmit?.("queue");
@@ -192,11 +243,6 @@ export class CustomEditor extends Editor {
 
     if (matchesKey(data, Key.ctrl("s")) && this.onCtrlS && !this.isShowingAutocomplete()) {
       this.onCtrlS();
-      return;
-    }
-
-    if (matchesKey(data, Key.ctrl("y")) && this.onCtrlY && !this.isShowingAutocomplete()) {
-      this.onCtrlY();
       return;
     }
 
@@ -558,7 +604,10 @@ export class CustomEditor extends Editor {
   ): string[] {
     if (width <= 0) return [""];
     if (this.placeholderVisible && this.getText() === "") {
-      const placeholder = truncateFromEndByWidth(EDITOR_PLACEHOLDER, Math.max(0, width - 1));
+      const placeholder = truncateFromEndByWidth(
+        `ask the agent anything · / for commands · ! for bash mode · ${this.recordingShortcut.gesture === "double-tap" ? "double-tap " : ""}${this.recordingShortcut.key} for voice`,
+        Math.max(0, width - 1),
+      );
       const firstLine = this.padToWidth(
         `${this.cursorStyle(" ")}${this.uiTheme.palette.editorPlaceholder(placeholder)}`,
         width,

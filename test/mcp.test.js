@@ -52,6 +52,106 @@ function assertExited(pid) {
   expect(() => process.kill(pid, 0)).toThrow();
 }
 
+describe("MCP search", () => {
+  it("searches through the code-mode API and observes catalog invalidation", async () => {
+    const client = manager();
+    const tool = createMcpToolDefinition(backend(), client);
+    try {
+      const result = await runTool(tool, 'console.log(await mcp.searchTools("messages"))');
+      expect(result.outcome).toBe("succeeded");
+      expect(JSON.parse(result.text)).toMatchObject({
+        tools: [{ server: "test", name: "echo", score: expect.any(Number) }],
+        errors: [],
+      });
+      await client.callTool("test", "refresh", {}, signal());
+      const refreshed = await runTool(
+        tool,
+        'console.log(await mcp.searchTools("added", { server: "test", limit: 1 }))',
+      );
+      expect(JSON.parse(refreshed.text).tools.map((tool) => tool.name)).toEqual(["added"]);
+      for (const code of [
+        'await mcp.searchTools(" ")',
+        'await mcp.searchTools("echo", { limit: 0 })',
+        'await mcp.searchTools("echo", { offset: 1 })',
+      ]) {
+        expect((await runTool(tool, code)).outcome).toBe("failed");
+      }
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("ranks across servers, scopes discovery, and reports partial failures", async () => {
+    const { searchMcpTools } = await import("../dist/core/mcp/search.js");
+    const client = {
+      listServers: () => [{ name: "first" }, { name: "second" }, { name: "broken" }],
+      listTools: vi.fn(async (server) => {
+        if (server === "broken") throw new Error("private connection details");
+        return {
+          tools: [
+            {
+              name: server === "first" ? "lookup" : "findIssues",
+              inputSchema: {
+                allOf: [
+                  {
+                    properties: {
+                      filters: {
+                        type: "array",
+                        items: {
+                          oneOf: [{ description: "Issue assignees" }],
+                        },
+                      },
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        };
+      }),
+    };
+    const result = await searchMcpTools(client, "issues", { limit: 8 }, signal());
+    expect(result.tools.map((tool) => tool.server)).toEqual(["second", "first"]);
+    expect(result.errors).toEqual([{ server: "broken", error: expect.any(String) }]);
+    expect(JSON.stringify(result)).not.toContain("private connection details");
+    client.listTools.mockClear();
+    const scoped = await searchMcpTools(
+      client,
+      "assignee",
+      { server: "first", limit: 1 },
+      signal(),
+    );
+    expect(scoped.tools.map((tool) => tool.server)).toEqual(["first"]);
+    expect(client.listTools).toHaveBeenCalledTimes(1);
+  });
+
+  it("bounds discovery concurrency and rejects cancellation", async () => {
+    const { searchMcpTools } = await import("../dist/core/mcp/search.js");
+    const controller = new AbortController();
+    let active = 0;
+    let peak = 0;
+    const client = {
+      listServers: () => Array.from({ length: 12 }, (_, index) => ({ name: String(index) })),
+      listTools: vi.fn(async () => {
+        active++;
+        peak = Math.max(peak, active);
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        active--;
+        return { tools: [] };
+      }),
+    };
+    await searchMcpTools(client, "issue", { limit: 8 }, controller.signal);
+    expect(peak).toBe(4);
+    client.listTools.mockImplementation(async () => {
+      controller.abort(new Error("cancelled"));
+      controller.signal.throwIfAborted();
+    });
+    await expect(searchMcpTools(client, "issue", { limit: 8 }, controller.signal)).rejects.toBe(
+      controller.signal.reason,
+    );
+  });
+});
+
 describe("host-owned MCP connections", () => {
   it("separates discovery deadlines from configurable tool and resource execution deadlines", async () => {
     const toolCalls = vi.spyOn(McpClient.prototype, "callTool");

@@ -3,6 +3,7 @@ import type { Tool } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { z } from "zod";
 import type { McpManager } from "../mcp/manager.js";
+import { searchMcpTools } from "../mcp/search.js";
 import { formatZodError } from "../utils/zod.js";
 import {
   buildCodeModeToolDescription,
@@ -93,6 +94,23 @@ export function createMcpToolDefinition(
           listServers: async (args) => {
             parseMethodArgs("listServers", args, z.tuple([]));
             return manager.listServers();
+          },
+          searchTools: async (args, context) => {
+            const [query, options] = parseMethodArgs(
+              "searchTools",
+              args,
+              z.tuple([
+                z.string().trim().min(1).max(1_000),
+                z
+                  .object({
+                    server: nameSchema.optional(),
+                    limit: z.number().int().min(1).max(100).default(8),
+                  })
+                  .strict()
+                  .optional(),
+              ]),
+            );
+            return await searchMcpTools(manager, query, options ?? { limit: 8 }, context.signal);
           },
           listTools: async (args, context) => {
             const [server, options] = parseMethodArgs(

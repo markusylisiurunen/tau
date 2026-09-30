@@ -8,6 +8,23 @@ Returns available servers as `{ name }` entries. Use these names in subsequent A
 console.log((await mcp.listServers()).map(server => server.name).join("\n"));
 ```
 
+## `mcp.searchTools(query, options?)`
+
+Use this for task-oriented tool discovery; use `listTools` to browse a server's catalog. Read each selected tool's description and input schema with `describeTool` before calling it.
+
+Options:
+
+- `server`: optional server name; otherwise searches all enabled servers.
+- `limit`: integer from 1 to 100, default 8.
+
+Returns `{ tools: [{ server, name, description?, score }], errors: [{ server, error }] }`. Tools are ranked by BM25 over tool names, descriptions, input-schema property names and descriptions, server names, and server instructions. Tool names have extra weight. Search splits identifiers and normalizes case and simple plurals; it is lexical, not semantic. Only positive-score matches are returned. Scores are relative to the searched catalog, not confidence values.
+
+Search connects on first use, with at most four concurrent server discoveries. Failed servers are reported in `errors`; successful servers still contribute matches. An empty tool list with errors does not mean no tools exist. Cancellation throws. Cached tool catalogs follow tool-list change notifications. Search does not call service tools or expose their schemas automatically.
+
+```js
+console.log(await mcp.searchTools("open issues assigned to me", { server: "linear" }));
+```
+
 ## `mcp.listTools(server, options?)`
 
 Lists tool names and descriptions for one server.

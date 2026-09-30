@@ -43,6 +43,7 @@ import { collectSpeechToTextContext } from "../core/utils/speech_to_text_context
 import {
   formatTauUserText,
   hasAutoCompactionContinuationMetadata,
+  splitTauUserText,
 } from "../core/utils/user_metadata.js";
 import { APP_VERSION } from "../core/version.js";
 import type {
@@ -132,6 +133,9 @@ export type SessionChatControllerOptions = {
   onExit?: () => void;
 };
 
+const TRANSCRIPTION_GUIDANCE =
+  "Some or all of this message may have been transcribed from speech and may contain misheard words or other transcription errors.";
+
 const LISTEN_CAPTURE_START_CANCELLED = Symbol("listen capture start cancelled");
 
 export class SessionChatController {
@@ -188,8 +192,8 @@ export class SessionChatController {
   private activeListenTranscription?: ListenRecording["transcription"];
   private listenActivityLabel?: string;
   private listenPreview?: ReturnType<ChatView["beginEditorTextPreview"]>;
-  private editorHasTranscription = false;
-  private submissionHasTranscription = false;
+  private editorHiddenSystemMessages: string[] = [];
+  private submissionHiddenSystemMessages: string[] = [];
   private pendingEditorMutations = 0;
   private speechActivityLabel?: string;
   private speakTask?: {
@@ -308,13 +312,13 @@ export class SessionChatController {
       onEscape: () => void this.interrupt(),
       beforeSubmit: (text) => {
         const allowed = this.beforeSubmit(text);
-        this.submissionHasTranscription = allowed && this.editorHasTranscription;
+        this.submissionHiddenSystemMessages = allowed ? [...this.editorHiddenSystemMessages] : [];
         return allowed;
       },
       onChange: (text) => this.handleEditorChange(text),
-      onSubmit: (text) => void this.handleSubmit(text, this.takeTranscriptionSubmission()),
+      onSubmit: (text) => void this.handleSubmit(text, this.takeHiddenSystemSubmission()),
       onSteerSubmit: (text) =>
-        void this.submitSteeringMessage(text, this.takeTranscriptionSubmission()),
+        void this.submitSteeringMessage(text, this.takeHiddenSystemSubmission()),
       onAltUp: () => void this.cancelPendingMessagesIntoEditor(),
       onAltDown: () => this.cycleSubagentSelection(),
     };
@@ -346,25 +350,18 @@ export class SessionChatController {
     return true;
   }
 
-  private takeTranscriptionSubmission(): boolean {
-    const transcribed = this.submissionHasTranscription;
-    this.submissionHasTranscription = false;
-    this.editorHasTranscription = false;
-    return transcribed;
+  private takeHiddenSystemSubmission(): string[] {
+    const hiddenSystemMessages = this.submissionHiddenSystemMessages;
+    this.submissionHiddenSystemMessages = [];
+    this.editorHiddenSystemMessages = [];
+    return hiddenSystemMessages;
   }
 
-  private formatSubmittedText(text: string, transcribed: boolean): string {
-    return transcribed
-      ? formatTauUserText({
-          text,
-          hiddenSystemMessages: [
-            "Some or all of this message may have been transcribed from speech and may contain misheard words or other transcription errors.",
-          ],
-        })
-      : text;
+  private formatSubmittedText(text: string, hiddenSystemMessages: string[]): string {
+    return formatTauUserText({ text, hiddenSystemMessages });
   }
 
-  private async handleSubmit(text: string, transcribed = false): Promise<void> {
+  private async handleSubmit(text: string, hiddenSystemMessages: string[] = []): Promise<void> {
     const trimmed = text.trim();
     if (!trimmed) {
       if (this.isStreaming || this.submittedTurnInProgress) {
@@ -411,7 +408,7 @@ export class SessionChatController {
       if (trimmed.startsWith("!")) {
         return;
       }
-      this.submitQueuedText(this.formatSubmittedText(trimmed, transcribed));
+      this.submitQueuedText(this.formatSubmittedText(trimmed, hiddenSystemMessages));
       return;
     }
 
@@ -446,7 +443,7 @@ export class SessionChatController {
     }
 
     await this.runSessionTurn(() =>
-      this.session.submit(this.formatSubmittedText(trimmed, transcribed)),
+      this.session.submit(this.formatSubmittedText(trimmed, hiddenSystemMessages)),
     );
   }
 
@@ -473,8 +470,8 @@ export class SessionChatController {
   }
 
   private handleEditorChange(text: string): void {
-    if (!text.trim()) this.editorHasTranscription = false;
-    else this.submissionHasTranscription = false;
+    if (!text.trim()) this.editorHiddenSystemMessages = [];
+    else this.submissionHiddenSystemMessages = [];
     const wasBash = this.isBashMode;
     const wasBashIncognito = this.isBashIncognito;
 
@@ -654,7 +651,10 @@ export class SessionChatController {
     }
   }
 
-  private async submitSteeringMessage(text: string, transcribed = false): Promise<void> {
+  private async submitSteeringMessage(
+    text: string,
+    hiddenSystemMessages: string[] = [],
+  ): Promise<void> {
     const trimmed = text.trim();
     if (!trimmed) {
       return;
@@ -662,7 +662,7 @@ export class SessionChatController {
 
     if (!this.isSessionOperationActive()) {
       await this.runSessionTurn(() =>
-        this.session.submit(this.formatSubmittedText(trimmed, transcribed)),
+        this.session.submit(this.formatSubmittedText(trimmed, hiddenSystemMessages)),
       );
       return;
     }
@@ -672,7 +672,7 @@ export class SessionChatController {
       return;
     }
 
-    this.submitSteeringText(this.formatSubmittedText(trimmed, transcribed));
+    this.submitSteeringText(this.formatSubmittedText(trimmed, hiddenSystemMessages));
   }
 
   private submitQueuedText(text: string): void {
@@ -703,12 +703,21 @@ export class SessionChatController {
         return;
       }
 
-      const editorText = this.view.getEditorText();
-      this.view.setEditorText(
-        [...(editorText ? [editorText] : []), ...cancelled.map((message) => message.text)].join(
-          "\n\n---\n\n",
+      const editor = splitTauUserText(this.view.getEditorText());
+      const restored = cancelled.map((message) => splitTauUserText(message.text));
+      const hiddenSystemMessages = [
+        ...this.editorHiddenSystemMessages,
+        ...[editor, ...restored].flatMap((message) =>
+          message.hiddenSystemBlocks.map((block) => block.text),
         ),
+      ];
+      this.view.setEditorText(
+        [
+          ...(editor.displayText ? [editor.displayText] : []),
+          ...restored.map((message) => message.displayText),
+        ].join("\n\n---\n\n"),
       );
+      this.editorHiddenSystemMessages = hiddenSystemMessages;
       this.view.requestRender();
     } catch (error) {
       this.view.addTranscriptNotice("failed to cancel pending messages", "error", [
@@ -1170,7 +1179,9 @@ export class SessionChatController {
         });
         if (this.listenPreview !== preview) return;
         preview.commit(text);
-        if (text.trim()) this.editorHasTranscription = true;
+        if (text.trim() && !this.editorHiddenSystemMessages.includes(TRANSCRIPTION_GUIDANCE)) {
+          this.editorHiddenSystemMessages.push(TRANSCRIPTION_GUIDANCE);
+        }
         this.retainedListenAudio = undefined;
         try {
           await deleteListenTempFile(audioPath);

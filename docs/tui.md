@@ -47,7 +47,7 @@ When Tau is idle, Enter and Ctrl+Enter both start a normal turn. While a turn is
 
 - Enter queues the text as a new turn to run when the session becomes idle.
 - Ctrl+Enter steers the active turn. Tau applies steering at a safe continuation boundary rather than injecting it into a model response or tool execution in progress.
-- Alt+Up cancels all pending queued messages and steering that has not yet been applied, then restores their text to the editor. Multiple messages are separated with `---`.
+- Alt+Up cancels all pending queued messages and steering that has not yet been applied, then restores their text to the editor. Multiple messages are separated with `---`. Hidden guidance, such as transcription warnings, stays hidden in the pending list and editor. Restoring messages preserves their guidance in order after any guidance already attached to the draft. Submission places all guidance at the beginning of the combined message. Editing a non-empty draft preserves it; clearing the draft clears it.
 
 Pending input is session state shared by attached clients while the host remains alive. It is not durable across host restart or session recovery. A queued turn captures the persona, reasoning, tools, and model settings when that turn actually starts. Steering remains part of the active logical turn and keeps the settings captured when that turn began.
 

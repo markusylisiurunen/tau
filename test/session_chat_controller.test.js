@@ -14,8 +14,10 @@ import {
   SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS,
 } from "../dist/core/utils/speech_to_text.js";
 import {
+  formatTauUserText,
   hasAutoCompactionContinuationMetadata,
   prependTauUserMetadata,
+  splitTauUserText,
   stripTauUserDisplayText,
 } from "../dist/core/utils/user_metadata.js";
 import {
@@ -2785,6 +2787,72 @@ describe("SessionChatController", () => {
     expect(session.cancelPendingMessages).toHaveBeenCalledOnce();
     expect(view.editorText).toBe("existing\n\n---\n\nchange direction\n\n---\n\nrun tests");
   });
+
+  it.each(["submit", "queue", "steer"])(
+    "preserves hidden draft instructions through restoration and %s round trips",
+    async (method) => {
+      const { session, view, controller } = await createControllerHarness({});
+      const editor = new CustomEditor(createUiTheme("plain"));
+      const handlers = controller.getInputHandlers();
+      editor.onChange = handlers.onChange;
+      editor.beforeSubmit = handlers.beforeSubmit;
+      editor.onSubmit = handlers.onSubmit;
+      editor.onSteerSubmit = handlers.onSteerSubmit;
+      view.getEditorText = () => editor.getText();
+      view.setEditorText = (text) => editor.setText(text);
+      const pending = (id, mode, text, hiddenSystemMessages) => ({
+        id,
+        mode,
+        text: formatTauUserText({ text, hiddenSystemMessages }),
+      });
+      try {
+        session.cancelPendingMessages.mockResolvedValueOnce({
+          cancelled: [pending("draft", "queue", "existing draft", ["draft guidance"])],
+        });
+        await controller.cancelPendingMessagesIntoEditor();
+        editor.handleInput(" edited");
+        session.cancelPendingMessages.mockResolvedValueOnce({
+          cancelled: [
+            pending("steer", "steer", "change direction", ["A", "B"]),
+            pending("queue", "queue", "keep literal <system>C</system> text", ["A"]),
+          ],
+        });
+        await controller.cancelPendingMessagesIntoEditor();
+        const visible =
+          "existing draft edited\n\n---\n\nchange direction\n\n---\n\nkeep literal <system>C</system> text";
+        expect(editor.getText()).toBe(visible);
+        controller.isStreaming = method !== "submit";
+        const submit = async (count) => {
+          editor.handleInput(method === "steer" ? "\x1b[13;5u" : "\r");
+          await waitUntil(() => session[method].mock.calls.length === count);
+          if (method === "submit") await waitUntil(() => !controller.submittedTurnInProgress);
+          return session[method].mock.calls[count - 1][0];
+        };
+        const first = await submit(1);
+        expect(splitTauUserText(first)).toMatchObject({
+          displayText: visible,
+          hiddenSystemBlocks: ["draft guidance", "A", "B", "A"].map((text) => ({ text })),
+        });
+        session.cancelPendingMessages.mockResolvedValueOnce({
+          cancelled: [{ id: "restored", mode: "queue", text: first }],
+        });
+        await controller.cancelPendingMessagesIntoEditor();
+        expect(editor.getText()).toBe(visible);
+        expect(await submit(2)).toBe(first);
+        editor.handleInput("unrelated text");
+        expect(await submit(3)).toBe("unrelated text");
+        session.cancelPendingMessages.mockResolvedValueOnce({
+          cancelled: [{ id: "cleared", mode: "queue", text: first }],
+        });
+        await controller.cancelPendingMessagesIntoEditor();
+        editor.setText("");
+        editor.handleInput("fresh draft");
+        expect(await submit(4)).toBe("fresh draft");
+      } finally {
+        await controller.dispose();
+      }
+    },
+  );
 
   it("submits steering text as a normal turn while idle", async () => {
     const { session, view, controller } = await createControllerHarness({

@@ -160,6 +160,9 @@ export type TelegramAdapterOptions = {
   pollIntervalMs?: number;
   requestTimeoutSeconds?: number;
   geminiApiKey?: string;
+  openAIApiKey?: string;
+  elevenLabsApiKey?: string;
+  speechVoiceId?: string;
   speechToTextDeps?: SpeechToTextDependencies;
   sessionManager: TelegramSessionManager;
   projectPreferences: TelegramProjectPreferenceStore;
@@ -1275,6 +1278,9 @@ class TelegramAdapterImpl {
   private readonly pollIntervalMs: number;
   private readonly requestTimeoutSeconds: number;
   private readonly geminiApiKey?: string;
+  private readonly openAIApiKey?: string;
+  private readonly elevenLabsApiKey?: string;
+  private readonly speechVoiceId?: string;
   private readonly speechToTextDeps?: SpeechToTextDependencies;
   private readonly sessionManager: TelegramSessionManager;
   private readonly projectPreferences: TelegramProjectPreferenceStore;
@@ -1351,6 +1357,9 @@ class TelegramAdapterImpl {
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     this.requestTimeoutSeconds = options.requestTimeoutSeconds ?? DEFAULT_REQUEST_TIMEOUT_SECONDS;
     this.geminiApiKey = options.geminiApiKey?.trim() || undefined;
+    this.openAIApiKey = options.openAIApiKey?.trim() || undefined;
+    this.elevenLabsApiKey = options.elevenLabsApiKey?.trim() || undefined;
+    this.speechVoiceId = options.speechVoiceId;
     this.speechToTextDeps = options.speechToTextDeps;
     this.sessionManager = options.sessionManager;
     this.projectPreferences = options.projectPreferences;
@@ -2811,6 +2820,7 @@ class TelegramAdapterImpl {
       const transcription = createSpeechToTextTranscription({
         mode: "file",
         apiKey,
+        openAIApiKey: this.openAIApiKey,
         context: await this.resolveSpeechToTextContext(chatId),
         deps: {
           ...this.speechToTextDeps,
@@ -3259,11 +3269,16 @@ class TelegramAdapterImpl {
     timeout.unref?.();
 
     try {
-      if (!this.geminiApiKey) {
-        throw new Error("missing Google credential for Telegram voice responses");
+      if (!this.openAIApiKey) {
+        throw new Error("missing OpenAI credential for Telegram voice responses");
+      }
+      if (!this.elevenLabsApiKey) {
+        throw new Error("missing ElevenLabs credential for Telegram voice responses");
       }
       const voice = await this.generateVoice({
-        apiKey: this.geminiApiKey,
+        openAIApiKey: this.openAIApiKey,
+        elevenLabsApiKey: this.elevenLabsApiKey,
+        voiceId: this.speechVoiceId,
         sourceText,
         fetchImpl: this.fetchImpl,
         signal: AbortSignal.any([this.abortController.signal, timeoutController.signal]),

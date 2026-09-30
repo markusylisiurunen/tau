@@ -80,13 +80,14 @@ function createJsonResponse(payload, status = 200) {
 function createGeminiTranscriptionFetchMock(transcript) {
   return vi.fn(async (input, options = {}) => {
     const url = getRequestUrl(input);
-    if (url.endsWith("/gemini-3.8-flash:generateContent")) {
+    if (url === "https://api.openai.com/v1/responses") {
       return createJsonResponse({
-        candidates: [
+        status: "completed",
+        output: [
           {
-            content: {
-              parts: [{ text: JSON.stringify({ keywords: ["Tau"] }) }],
-            },
+            type: "message",
+            status: "completed",
+            content: [{ type: "output_text", text: JSON.stringify({ keywords: ["Tau"] }) }],
           },
         ],
       });
@@ -518,6 +519,8 @@ describe("telegram adapter", () => {
       projectPreferences,
       api: apiHarness.api,
       geminiApiKey: "gemini-key",
+      elevenLabsApiKey: "eleven-key",
+      openAIApiKey: "openai-key",
       generateVoice,
     });
 
@@ -569,7 +572,9 @@ describe("telegram adapter", () => {
 
       await waitFor(() => apiHarness.sendVoices.length === 1);
       expect(generateVoice).toHaveBeenCalledWith({
-        apiKey: "gemini-key",
+        elevenLabsApiKey: "eleven-key",
+        openAIApiKey: "openai-key",
+        voiceId: undefined,
         sourceText: "final answer",
         fetchImpl: undefined,
         signal: expect.any(AbortSignal),
@@ -589,52 +594,54 @@ describe("telegram adapter", () => {
     }
   });
 
-  it("reports a persisted TTS opt-in when the Google credential is missing", async () => {
-    const chatId = 20;
-    const ownerId = ownerIdForChat(chatId);
-    const apiHarness = createApiHarness([]);
-    const managerHarness = createSessionManagerHarness([
-      createManagedSession({
-        id: "s-tts-missing-credential",
-        ownerId,
-        state: "waiting-input",
-      }),
-    ]);
-    const logs = [];
-    const generateVoice = vi.fn();
-    const adapter = await startAdapter({
-      sessionManager: managerHarness.manager,
-      projectPreferences: createTtsPreferences(vi.fn((id) => id === ownerId)),
-      api: apiHarness.api,
-      generateVoice,
-      onLog: (entry) => logs.push(entry),
-    });
-
-    try {
-      managerHarness.manager.emit({
-        type: "session-response-completed",
-        sessionId: "s-tts-missing-credential",
-        projectId: "demo",
-        timestamp: "2024-01-01T00:01:00.000Z",
-        messageId: "assistant-final",
-        text: "final answer",
+  it.each([{}, { openAIApiKey: "openai-key" }])(
+    "reports a persisted TTS opt-in when a speech credential is missing: %j",
+    async (credentials) => {
+      const chatId = 20;
+      const ownerId = ownerIdForChat(chatId);
+      const apiHarness = createApiHarness([]);
+      const managerHarness = createSessionManagerHarness([
+        createManagedSession({
+          id: "s-tts-missing-credential",
+          ownerId,
+          state: "waiting-input",
+        }),
+      ]);
+      const logs = [];
+      const generateVoice = vi.fn();
+      const adapter = await startAdapter({
+        sessionManager: managerHarness.manager,
+        projectPreferences: createTtsPreferences(vi.fn((id) => id === ownerId)),
+        api: apiHarness.api,
+        generateVoice,
+        ...credentials,
+        onLog: (entry) => logs.push(entry),
       });
 
-      await waitFor(() => apiHarness.sendMessages.length === 1);
-      expect(apiHarness.sendMessages[0].text).toBe("voice response failed. please try again.");
-      expect(generateVoice).not.toHaveBeenCalled();
-      expect(logs).toContainEqual({
-        level: "error",
-        message: "failed to generate Telegram voice response",
-        data: {
+      try {
+        managerHarness.manager.emit({
+          type: "session-response-completed",
           sessionId: "s-tts-missing-credential",
-          cause: "missing Google credential for Telegram voice responses",
-        },
-      });
-    } finally {
-      await adapter.close();
-    }
-  });
+          projectId: "demo",
+          timestamp: "2024-01-01T00:01:00.000Z",
+          messageId: "assistant-final",
+          text: "final answer",
+        });
+
+        await waitFor(() => apiHarness.sendMessages.length === 1);
+        expect(apiHarness.sendMessages[0].text).toBe("voice response failed. please try again.");
+        expect(generateVoice).not.toHaveBeenCalled();
+        expect(logs).toContainEqual(
+          expect.objectContaining({
+            level: "error",
+            data: expect.objectContaining({ sessionId: "s-tts-missing-credential" }),
+          }),
+        );
+      } finally {
+        await adapter.close();
+      }
+    },
+  );
 
   it("serializes voice generation for responses from the same session", async () => {
     const chatId = 15;
@@ -657,6 +664,8 @@ describe("telegram adapter", () => {
       projectPreferences: createTtsPreferences(vi.fn((id) => id === ownerId)),
       api: apiHarness.api,
       geminiApiKey: "gemini-key",
+      elevenLabsApiKey: "eleven-key",
+      openAIApiKey: "openai-key",
       generateVoice,
     });
 
@@ -731,6 +740,8 @@ describe("telegram adapter", () => {
       projectPreferences: createTtsPreferences(vi.fn((id) => id === ownerId)),
       api: apiHarness.api,
       geminiApiKey: "gemini-key",
+      elevenLabsApiKey: "eleven-key",
+      openAIApiKey: "openai-key",
       generateVoice,
       onLog: (entry) => logs.push(entry),
     });
@@ -797,6 +808,8 @@ describe("telegram adapter", () => {
       projectPreferences: createTtsPreferences(vi.fn((id) => id === ownerId)),
       api: apiHarness.api,
       geminiApiKey: "gemini-key",
+      elevenLabsApiKey: "eleven-key",
+      openAIApiKey: "openai-key",
       generateVoice: vi.fn(async () => Buffer.from("voice")),
       onLog: (entry) => logs.push(entry),
     });
@@ -852,6 +865,8 @@ describe("telegram adapter", () => {
       projectPreferences: createTtsPreferences(vi.fn((id) => id === ownerId)),
       api: apiHarness.api,
       geminiApiKey: "gemini-key",
+      elevenLabsApiKey: "eleven-key",
+      openAIApiKey: "openai-key",
       generateVoice: vi.fn(async () => Buffer.from("voice")),
       onLog: (entry) => logs.push(entry),
     });
@@ -901,6 +916,8 @@ describe("telegram adapter", () => {
       projectPreferences: createTtsPreferences(vi.fn((id) => id === ownerId && enabled)),
       api: apiHarness.api,
       geminiApiKey: "gemini-key",
+      elevenLabsApiKey: "eleven-key",
+      openAIApiKey: "openai-key",
       generateVoice: vi.fn(async () => await voice.promise),
     });
 
@@ -1649,6 +1666,8 @@ describe("telegram adapter", () => {
     const adapter = await startAdapter({
       allowedChatIds: [groupChatId],
       geminiApiKey: "gemini-key",
+      elevenLabsApiKey: "eleven-key",
+      openAIApiKey: "openai-key",
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
       fetchImpl: geminiFetch,
@@ -2543,6 +2562,8 @@ describe("telegram adapter", () => {
 
     const adapter = await startAdapter({
       geminiApiKey: "gemini-key",
+      elevenLabsApiKey: "eleven-key",
+      openAIApiKey: "openai-key",
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
       fetchImpl: geminiFetch,
@@ -2612,6 +2633,8 @@ describe("telegram adapter", () => {
     );
     const adapter = await startAdapter({
       geminiApiKey: "gemini-key",
+      elevenLabsApiKey: "eleven-key",
+      openAIApiKey: "openai-key",
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
     });
@@ -2662,6 +2685,8 @@ describe("telegram adapter", () => {
 
     const adapter = await startAdapter({
       geminiApiKey: "gemini-key",
+      elevenLabsApiKey: "eleven-key",
+      openAIApiKey: "openai-key",
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
       fetchImpl: geminiFetch,
@@ -3918,6 +3943,8 @@ describe("telegram adapter", () => {
       sessionManager: managerHarness.manager,
       projectPreferences: createTtsPreferences(vi.fn((id) => id === ownerId)),
       geminiApiKey: "gemini-key",
+      elevenLabsApiKey: "eleven-key",
+      openAIApiKey: "openai-key",
       generateVoice: vi.fn(async () => Buffer.from("OggS voice")),
     });
 

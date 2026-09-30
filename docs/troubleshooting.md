@@ -279,7 +279,7 @@ Distinguish download, materialization, format, and transcription errors. The rep
 
 Successful audio turns echo `transcribed: …` before submission. In groups, non-triggering audio can be buffered for later mentioned context. If that is inappropriate for the chat, narrow `allowedChatIds` or avoid enabling the group.
 
-Outgoing `/tts_on` voice responses always need `GEMINI_API_KEY` or `apiKeys.google`, even when incoming audio uses OpenAI. They also require runner-side `ffmpeg` with Opus support. A generation or delivery failure sends `voice response failed. please try again.` while detailed diagnostics remain in runner logs. The original text response remains delivered.
+Outgoing `/tts_on` voice responses need both `OPENAI_API_KEY` or `apiKeys.openai` for rewriting and `ELEVENLABS_API_KEY` or `apiKeys.elevenlabs` for synthesis. Check [`speech.voiceId`](config-reference.md#speech) if a configured voice is unavailable. They also require runner-side `ffmpeg` with Opus support. A generation or delivery failure sends `voice response failed. please try again.` while detailed diagnostics remain in runner logs. The original text response remains delivered.
 
 ## Telegram replies or notifications are delayed or missing
 

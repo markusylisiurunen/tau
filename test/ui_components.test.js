@@ -488,6 +488,25 @@ test("PendingMessagesComponent distinguishes steering and queued previews", () =
   );
 });
 
+test("PendingMessagesComponent hides leading instructions in queued and steering previews", () => {
+  const component = new PendingMessagesComponent(createUiTheme("plain"));
+  component.setMessages([
+    {
+      id: "steer",
+      mode: "steer",
+      text: "<system>A</system>\n<system>B</system>\nchange direction",
+    },
+    { id: "queue", mode: "queue", text: "<system>A</system>\nrun tests\nsecond line" },
+    { id: "literal", mode: "queue", text: "show <system>literal</system> text" },
+  ]);
+  const lines = renderLines(component, 80).map((line) => stripAnsi(line));
+  expect(lines.slice(1)).toEqual([
+    "  ↳ change direction",
+    "  1› run tests",
+    "  2› show <system>literal</system> text",
+  ]);
+});
+
 test("FooterComponent renders dense session status", () => {
   const theme = createTagTheme();
   const ui = { requestRender() {} };

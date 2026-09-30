@@ -1,5 +1,6 @@
 import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { SessionProtocolPendingUserMessage } from "../../protocol/session_protocol.js";
+import { getTauUserDisplayText } from "../../sdk/user_text.js";
 import type { Theme } from "./theme/index.js";
 
 function firstLine(text: string): string {
@@ -39,7 +40,7 @@ export class PendingMessagesComponent implements Component {
       const prefix = palette.textDim(prefixRaw);
       const prefixWidth = visibleWidth(prefixRaw);
 
-      const line = firstLine(message.text);
+      const line = firstLine(getTauUserDisplayText(message.text));
       const available = Math.max(0, width - prefixWidth);
       const truncated = truncateToWidth(line, available, "…");
       const styled = markdownTheme.italic(palette.textMuted(truncated));

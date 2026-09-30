@@ -1,0 +1,38 @@
+{
+  "capturedAt": "2026-09-30",
+  "available": {
+    "status": 200,
+    "body": {
+      "voice_id": "QtY3JBOUKEB5xzrRfOKc",
+      "name": "Maisie - Friendly Casual Neighbor",
+      "category": "professional",
+      "available_for_tiers": [],
+      "is_owner": null,
+      "is_legacy": false
+    }
+  },
+  "unavailable": {
+    "status": 400,
+    "body": {
+      "detail": {
+        "type": "not_found",
+        "code": "voice_not_found",
+        "message": "A voice with ID '00000000000000000000' was not found.",
+        "status": "voice_not_found",
+        "request_id": "f38c71041d650a512b0eb8ea6df20783"
+      }
+    }
+  },
+  "missingPermission": {
+    "status": 401,
+    "body": {
+      "detail": {
+        "type": "authentication_error",
+        "code": "unauthorized",
+        "message": "The API key you used is missing the permission models_read to execute this operation.",
+        "status": "missing_permissions",
+        "request_id": "6d491d04197bab116bbc591528928302"
+      }
+    }
+  }
+}

@@ -127,6 +127,7 @@ describe("config paths", () => {
         join(fx.home, ".config", "tau", "config.json"),
         JSON.stringify({
           apiKeys: { openai: "global", anthropic: "anthropic-key", mistral: "mistral-key" },
+          speech: { voiceId: "global-voice" },
           diffTool: {
             command: "./scripts/global-diff-tool",
             args: ["--global"],
@@ -163,6 +164,7 @@ describe("config paths", () => {
         join(repo, ".tau", "config.json"),
         JSON.stringify({
           apiKeys: { openai: "repo", google: "google-key" },
+          speech: { voiceId: " project-voice " },
           diffTool: {
             command: "./scripts/repo-diff-tool",
             args: ["--repo"],
@@ -204,6 +206,7 @@ describe("config paths", () => {
 
       const config = loadConfig(nested, deps);
       expect(config.defaultPersona).toBe("custom-persona");
+      expect(config.speech).toEqual({ voiceId: "project-voice" });
       expect(config.apiKeys).toEqual({
         openai: "repo",
         anthropic: "anthropic-key",
@@ -301,6 +304,25 @@ describe("config paths", () => {
       fx.cleanup();
     }
   });
+
+  it.each([null, "voice", { voiceId: " " }, { voiceId: 42 }])(
+    "rejects invalid speech configuration %j",
+    (speech) => {
+      const fx = setupFixture();
+      try {
+        mkdirSync(join(fx.repo, ".tau"), { recursive: true });
+        writeFileSync(join(fx.repo, ".tau", "config.json"), JSON.stringify({ speech }));
+        const deps = createConfigDeps({ cwd: fx.repo, home: fx.home, env: {} });
+        const levels = resolveConfigLevels(deps, { cwd: fx.repo });
+        const modelResolver = loadModelResolver({ deps, levels });
+        const result = loadConfigWithDiagnostics(deps, { levels, modelResolver });
+        expect(result.config.speech).toBeUndefined();
+        expect(result.errors.length).toBeGreaterThan(0);
+      } finally {
+        fx.cleanup();
+      }
+    },
+  );
 
   it("keeps valid scalar fields while reporting invalid scalar fields", () => {
     const fx = setupFixture();

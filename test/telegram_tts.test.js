@@ -32,7 +32,7 @@ describe("telegram TTS", () => {
     await expect(stat(staleDirectory)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("writes ordered Gemini WAV chunks and encodes one Ogg Opus voice note", async () => {
+  it("writes ordered speech WAV chunks and encodes one Ogg Opus voice note", async () => {
     const waves = [
       createWaveAudio(Buffer.from([1, 2, 3, 4])),
       createWaveAudio(Buffer.from([5, 6, 7, 8])),
@@ -64,14 +64,21 @@ describe("telegram TTS", () => {
     });
 
     const voice = await generateTelegramVoice({
-      apiKey: "gemini-key",
+      openAIApiKey: "openai-key",
+      elevenLabsApiKey: "eleven-key",
+      voiceId: "custom-voice",
       sourceText: "final answer",
       deps: { generateSpeechAudio, spawn },
     });
 
     expect(voice).toEqual(Buffer.from("OggS voice"));
     expect(generateSpeechAudio).toHaveBeenCalledWith(
-      expect.objectContaining({ apiKey: "gemini-key", sourceText: "final answer" }),
+      expect.objectContaining({
+        openAIApiKey: "openai-key",
+        elevenLabsApiKey: "eleven-key",
+        voiceId: "custom-voice",
+        sourceText: "final answer",
+      }),
     );
     expect(manifest).toBe("ffconcat version 1.0\nfile 'chunk-000.wav'\nfile 'chunk-001.wav'\n");
     expect(writtenWaves).toEqual(waves);

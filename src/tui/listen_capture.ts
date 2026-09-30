@@ -2,7 +2,7 @@ import type { ChildProcess } from "node:child_process";
 import { readFile, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type Config, getGoogleApiKey } from "../core/config/index.js";
+import { type Config, getGoogleApiKey, getOpenAIApiKey } from "../core/config/index.js";
 import type { CoreDeps } from "../core/runtime/deps.js";
 import type { SpawnCaptureResult } from "../core/utils/spawn_capture.js";
 import {
@@ -176,6 +176,7 @@ export function createListenTranscription(args: {
     onProgress: args.onProgress,
     mode: args.mode,
     apiKey,
+    openAIApiKey: getOpenAIApiKey(args.config, args.deps.env.env()),
     context: args.context,
     deps: args.speechToTextDeps,
   });

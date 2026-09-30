@@ -14,8 +14,10 @@ import {
   SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS,
 } from "../dist/core/utils/speech_to_text.js";
 import {
+  formatTauUserText,
   hasAutoCompactionContinuationMetadata,
   prependTauUserMetadata,
+  splitTauUserText,
   stripTauUserDisplayText,
 } from "../dist/core/utils/user_metadata.js";
 import {
@@ -2785,6 +2787,72 @@ describe("SessionChatController", () => {
     expect(session.cancelPendingMessages).toHaveBeenCalledOnce();
     expect(view.editorText).toBe("existing\n\n---\n\nchange direction\n\n---\n\nrun tests");
   });
+
+  it.each(["submit", "queue", "steer"])(
+    "preserves hidden draft instructions through restoration and %s round trips",
+    async (method) => {
+      const { session, view, controller } = await createControllerHarness({});
+      const editor = new CustomEditor(createUiTheme("plain"));
+      const handlers = controller.getInputHandlers();
+      editor.onChange = handlers.onChange;
+      editor.beforeSubmit = handlers.beforeSubmit;
+      editor.onSubmit = handlers.onSubmit;
+      editor.onSteerSubmit = handlers.onSteerSubmit;
+      view.getEditorText = () => editor.getText();
+      view.setEditorText = (text) => editor.setText(text);
+      const pending = (id, mode, text, hiddenSystemMessages) => ({
+        id,
+        mode,
+        text: formatTauUserText({ text, hiddenSystemMessages }),
+      });
+      try {
+        session.cancelPendingMessages.mockResolvedValueOnce({
+          cancelled: [pending("draft", "queue", "existing draft", ["draft guidance"])],
+        });
+        await controller.cancelPendingMessagesIntoEditor();
+        editor.handleInput(" edited");
+        session.cancelPendingMessages.mockResolvedValueOnce({
+          cancelled: [
+            pending("steer", "steer", "change direction", ["A", "B"]),
+            pending("queue", "queue", "keep literal <system>C</system> text", ["A"]),
+          ],
+        });
+        await controller.cancelPendingMessagesIntoEditor();
+        const visible =
+          "existing draft edited\n\n---\n\nchange direction\n\n---\n\nkeep literal <system>C</system> text";
+        expect(editor.getText()).toBe(visible);
+        controller.isStreaming = method !== "submit";
+        const submit = async (count) => {
+          editor.handleInput(method === "steer" ? "\x1b[13;5u" : "\r");
+          await waitUntil(() => session[method].mock.calls.length === count);
+          if (method === "submit") await waitUntil(() => !controller.submittedTurnInProgress);
+          return session[method].mock.calls[count - 1][0];
+        };
+        const first = await submit(1);
+        expect(splitTauUserText(first)).toMatchObject({
+          displayText: visible,
+          hiddenSystemBlocks: ["draft guidance", "A", "B", "A"].map((text) => ({ text })),
+        });
+        session.cancelPendingMessages.mockResolvedValueOnce({
+          cancelled: [{ id: "restored", mode: "queue", text: first }],
+        });
+        await controller.cancelPendingMessagesIntoEditor();
+        expect(editor.getText()).toBe(visible);
+        expect(await submit(2)).toBe(first);
+        editor.handleInput("unrelated text");
+        expect(await submit(3)).toBe("unrelated text");
+        session.cancelPendingMessages.mockResolvedValueOnce({
+          cancelled: [{ id: "cleared", mode: "queue", text: first }],
+        });
+        await controller.cancelPendingMessagesIntoEditor();
+        editor.setText("");
+        editor.handleInput("fresh draft");
+        expect(await submit(4)).toBe("fresh draft");
+      } finally {
+        await controller.dispose();
+      }
+    },
+  );
 
   it("submits steering text as a normal turn while idle", async () => {
     const { session, view, controller } = await createControllerHarness({
@@ -5990,6 +6058,51 @@ describe("SessionChatController", () => {
     expect(view.editorText).toBe("automatic transcript");
   });
 
+  it.each([
+    ["submit", false],
+    ["queue", false],
+    ["steer", false],
+    ["submit", true],
+  ])("tracks dictation guidance through %s with draft cleared=%s", async (method, clearDraft) => {
+    const audioPath = join(tmpdir(), `tau-provenance-${method}-${Date.now()}.wav`);
+    await writeFile(audioPath, Buffer.alloc(2048, 1));
+    const { session, view, controller } = await createControllerHarness({});
+    const editor = new CustomEditor(createUiTheme("plain"));
+    const handlers = controller.getInputHandlers();
+    editor.onChange = handlers.onChange;
+    editor.beforeSubmit = handlers.beforeSubmit;
+    editor.onSubmit = handlers.onSubmit;
+    editor.onSteerSubmit = handlers.onSteerSubmit;
+    view.beginEditorTextPreview = () => editor.beginTextPreview();
+    view.setEditorInputEnabled = (enabled) => editor.setInputEnabled(enabled);
+    try {
+      editor.setText("typed ");
+      controller.beginListenPreview();
+      await controller.transcribeListenAudioFile(audioPath, 1000, {
+        finish: async () => "dictated",
+        abort() {},
+      });
+      if (clearDraft) editor.setText("");
+      editor.handleInput(" and edited");
+      controller.isStreaming = method !== "submit";
+      editor.handleInput(method === "steer" ? "\x1b[13;5u" : "\r");
+      await waitUntil(() => session[method].mock.calls.length === 1);
+      const submitted = session[method].mock.calls[0][0];
+      expect(stripTauUserDisplayText(submitted)).toBe(
+        clearDraft ? "and edited" : "typed dictated and edited",
+      );
+      expect(submitted.startsWith("<system>")).toBe(!clearDraft);
+      if (method === "submit") await waitUntil(() => !controller.submittedTurnInProgress);
+      editor.handleInput("only typed");
+      editor.handleInput(method === "steer" ? "\x1b[13;5u" : "\r");
+      await waitUntil(() => session[method].mock.calls.length === 2);
+      expect(session[method].mock.calls[1][0]).toBe("only typed");
+    } finally {
+      await controller.dispose();
+      await rm(audioPath, { force: true });
+    }
+  });
+
   it("restores the draft after a failed preview and retries without duplicating it", async () => {
     const audioPath = join(tmpdir(), `tau-preview-retry-${Date.now()}.wav`);
     await writeFile(audioPath, Buffer.alloc(2048, 1));
@@ -6472,57 +6585,38 @@ describe("SessionChatController", () => {
       view,
       session,
       deps: createMockDeps(spawn),
-      config: { apiKeys: { google: "gemini-key" } },
+      config: {
+        apiKeys: { openai: "openai-key", elevenlabs: "eleven-key" },
+        speech: { voiceId: "custom-voice" },
+      },
     });
     const firstAudio = Buffer.alloc(12_000, 1);
     const secondAudio = Buffer.alloc(12_000, 2);
-    const streamingBody = [
-      {
-        candidates: [
-          {
-            content: {
-              parts: [{ inlineData: { data: firstAudio.toString("base64") } }],
-            },
-          },
-        ],
-      },
-      {
-        candidates: [
-          {
-            finishReason: "STOP",
-            content: {
-              parts: [{ inlineData: { data: secondAudio.toString("base64") } }],
-            },
-          },
-        ],
-      },
-    ]
-      .map((payload) => `data: ${JSON.stringify(payload)}\n\n`)
-      .join("");
+    const streamingBody = Buffer.concat([firstAudio, secondAudio]);
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            candidates: [
+            status: "completed",
+            output: [
               {
-                content: {
-                  parts: [
-                    {
-                      text: "Use src slash app dot t s, line 42, for the fix.",
-                    },
-                  ],
-                },
+                type: "message",
+                status: "completed",
+                content: [
+                  { type: "output_text", text: "Use src slash app dot t s, line 42, for the fix." },
+                ],
               },
             ],
           }),
           { status: 200, headers: { "Content-Type": "application/json" } },
         ),
       )
+      .mockResolvedValueOnce(Response.json({ voice_id: "custom-voice" }))
       .mockResolvedValueOnce(
         new Response(streamingBody, {
           status: 200,
-          headers: { "Content-Type": "text/event-stream" },
+          headers: { "Content-Type": "audio/pcm" },
         }),
       );
     vi.stubGlobal("fetch", fetchMock);
@@ -6534,7 +6628,9 @@ describe("SessionChatController", () => {
       vi.unstubAllGlobals();
     }
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock.mock.calls[1][0]).toContain("/voices/custom-voice");
+    expect(fetchMock.mock.calls[2][0]).toContain("/text-to-speech/custom-voice/stream");
     const speechHints = view.statusUpdates
       .map((status) => (status.footer.type === "activity" ? status.footer.label : undefined))
       .filter((hint) => hint !== undefined);
@@ -6597,38 +6693,29 @@ describe("SessionChatController", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            candidates: [{ content: { parts: [{ text: "Spoken version." }] } }],
+            status: "completed",
+            output: [
+              {
+                type: "message",
+                status: "completed",
+                content: [{ type: "output_text", text: "Spoken version." }],
+              },
+            ],
           }),
           { status: 200, headers: { "Content-Type": "application/json" } },
         ),
       )
+      .mockResolvedValueOnce(Response.json({ voice_id: "QtY3JBOUKEB5xzrRfOKc" }))
       .mockResolvedValueOnce(
-        new Response(
-          `data: ${JSON.stringify({
-            candidates: [
-              {
-                finishReason: "STOP",
-                content: {
-                  parts: [
-                    {
-                      inlineData: {
-                        data: Buffer.alloc(24_000, 1).toString("base64"),
-                      },
-                    },
-                  ],
-                },
-              },
-            ],
-          })}\n\n`,
-          { status: 200, headers: { "Content-Type": "text/event-stream" } },
-        ),
+        new Response(Buffer.alloc(24_000, 1), { headers: { "Content-Type": "audio/pcm" } }),
       );
     vi.stubGlobal("fetch", fetchMock);
 
     try {
       const playback = runSpeechPlaybackTask({
         deps: createMockDeps(spawn),
-        apiKey: "gemini-key",
+        openAIApiKey: "openai-key",
+        elevenLabsApiKey: "eleven-key",
         sourceText: "Original response.",
         signal: abortController.signal,
         onActivityLabel: vi.fn(),
@@ -6674,35 +6761,24 @@ describe("SessionChatController", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            candidates: [{ content: { parts: [{ text: "Spoken version." }] } }],
+            status: "completed",
+            output: [
+              {
+                type: "message",
+                status: "completed",
+                content: [{ type: "output_text", text: "Spoken version." }],
+              },
+            ],
           }),
           { status: 200, headers: { "Content-Type": "application/json" } },
         ),
       )
+      .mockResolvedValueOnce(Response.json({ voice_id: "QtY3JBOUKEB5xzrRfOKc" }))
       .mockImplementationOnce(async (_url, init) => {
-        const encoder = new TextEncoder();
         return new Response(
           new ReadableStream({
             start(controller) {
-              controller.enqueue(
-                encoder.encode(
-                  `data: ${JSON.stringify({
-                    candidates: [
-                      {
-                        content: {
-                          parts: [
-                            {
-                              inlineData: {
-                                data: Buffer.alloc(24_000, 1).toString("base64"),
-                              },
-                            },
-                          ],
-                        },
-                      },
-                    ],
-                  })}\n\n`,
-                ),
-              );
+              controller.enqueue(Buffer.alloc(24_000, 1));
               init.signal.addEventListener(
                 "abort",
                 () => {
@@ -6715,7 +6791,7 @@ describe("SessionChatController", () => {
               );
             },
           }),
-          { status: 200, headers: { "Content-Type": "text/event-stream" } },
+          { status: 200, headers: { "Content-Type": "audio/pcm" } },
         );
       });
     vi.stubGlobal("fetch", fetchMock);
@@ -6723,7 +6799,8 @@ describe("SessionChatController", () => {
     try {
       const playback = runSpeechPlaybackTask({
         deps: createMockDeps(spawn),
-        apiKey: "gemini-key",
+        openAIApiKey: "openai-key",
+        elevenLabsApiKey: "eleven-key",
         sourceText: "Original response.",
         signal: new AbortController().signal,
         onActivityLabel: vi.fn(),
@@ -6760,25 +6837,21 @@ describe("SessionChatController", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            candidates: [{ content: { parts: [{ text: "Spoken version." }] } }],
+            status: "completed",
+            output: [
+              {
+                type: "message",
+                status: "completed",
+                content: [{ type: "output_text", text: "Spoken version." }],
+              },
+            ],
           }),
           { status: 200, headers: { "Content-Type": "application/json" } },
         ),
       )
+      .mockResolvedValueOnce(Response.json({ voice_id: "QtY3JBOUKEB5xzrRfOKc" }))
       .mockResolvedValueOnce(
-        new Response(
-          `data: ${JSON.stringify({
-            candidates: [
-              {
-                finishReason: "STOP",
-                content: {
-                  parts: [{ inlineData: { data: Buffer.from([1, 2]).toString("base64") } }],
-                },
-              },
-            ],
-          })}\n\n`,
-          { status: 200, headers: { "Content-Type": "text/event-stream" } },
-        ),
+        new Response(Buffer.alloc(24_000, 1), { headers: { "Content-Type": "audio/pcm" } }),
       );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -6786,7 +6859,8 @@ describe("SessionChatController", () => {
       await expect(
         runSpeechPlaybackTask({
           deps: createMockDeps(spawn),
-          apiKey: "gemini-key",
+          openAIApiKey: "openai-key",
+          elevenLabsApiKey: "eleven-key",
           sourceText: "Original response.",
           signal: new AbortController().signal,
           onActivityLabel: vi.fn(),

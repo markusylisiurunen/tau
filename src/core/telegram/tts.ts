@@ -1,8 +1,8 @@
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { GEMINI_SPEECH_PLAYBACK_RATE, generateGeminiSpeechAudio } from "../utils/gemini_speech.js";
 import { spawnWithCapture } from "../utils/spawn_capture.js";
+import { generateSpeechAudio, SPEECH_PLAYBACK_RATE } from "../utils/speech.js";
 
 const TELEGRAM_TTS_TEMP_DIR_PREFIX = "tau-telegram-tts-";
 const TELEGRAM_TTS_CONVERSION_TIMEOUT_MS = 120_000;
@@ -28,12 +28,14 @@ export async function sweepStaleTelegramTtsTempDirs(): Promise<void> {
 }
 
 export type GenerateTelegramVoiceOptions = {
-  apiKey: string;
+  openAIApiKey: string;
+  elevenLabsApiKey: string;
+  voiceId?: string;
   sourceText: string;
   fetchImpl?: typeof fetch;
   signal?: AbortSignal;
   deps?: {
-    generateSpeechAudio?: typeof generateGeminiSpeechAudio;
+    generateSpeechAudio?: typeof generateSpeechAudio;
     spawn?: typeof spawnWithCapture;
   };
 };
@@ -41,7 +43,7 @@ export type GenerateTelegramVoiceOptions = {
 export async function generateTelegramVoice(
   options: GenerateTelegramVoiceOptions,
 ): Promise<Buffer> {
-  const generateSpeechAudio = options.deps?.generateSpeechAudio ?? generateGeminiSpeechAudio;
+  const generateAudio = options.deps?.generateSpeechAudio ?? generateSpeechAudio;
   const spawn = options.deps?.spawn ?? spawnWithCapture;
   const temporaryDirectory = await mkdtemp(join(tmpdir(), TELEGRAM_TTS_TEMP_DIR_PREFIX));
   const manifestPath = join(temporaryDirectory, "speech.ffconcat");
@@ -51,15 +53,17 @@ export async function generateTelegramVoice(
     const chunkNames: string[] = [];
     let waveFormat: Buffer | undefined;
 
-    for await (const chunk of generateSpeechAudio({
-      apiKey: options.apiKey,
+    for await (const chunk of generateAudio({
+      openAIApiKey: options.openAIApiKey,
+      elevenLabsApiKey: options.elevenLabsApiKey,
+      voiceId: options.voiceId,
       sourceText: options.sourceText,
       fetchImpl: options.fetchImpl,
       signal: options.signal,
     })) {
       const header = parseWaveHeader(chunk.audio);
       if (waveFormat && !header.format.equals(waveFormat)) {
-        throw new Error("Gemini TTS returned incompatible audio chunks");
+        throw new Error("speech synthesis returned incompatible audio chunks");
       }
       waveFormat ??= Buffer.from(header.format);
 
@@ -72,7 +76,7 @@ export async function generateTelegramVoice(
     }
 
     if (chunkNames.length === 0) {
-      throw new Error("Gemini TTS returned no audio");
+      throw new Error("speech synthesis returned no audio");
     }
 
     await writeFile(
@@ -95,7 +99,7 @@ export async function generateTelegramVoice(
         "-i",
         "speech.ffconcat",
         "-filter:a",
-        `atempo=${GEMINI_SPEECH_PLAYBACK_RATE}`,
+        `atempo=${SPEECH_PLAYBACK_RATE}`,
         "-c:a",
         "libopus",
         "-b:a",
@@ -154,12 +158,12 @@ function parseWaveHeader(audio: Buffer): { format: Buffer; dataBytes: number } {
     audio.toString("ascii", 12, 16) !== "fmt " ||
     audio.toString("ascii", 36, 40) !== "data"
   ) {
-    throw new Error("Gemini TTS returned invalid WAV audio");
+    throw new Error("speech synthesis returned invalid WAV audio");
   }
 
   const dataBytes = audio.readUInt32LE(40);
   if (dataBytes > audio.length - WAVE_HEADER_BYTES) {
-    throw new Error("Gemini TTS returned truncated WAV audio");
+    throw new Error("speech synthesis returned truncated WAV audio");
   }
 
   return {

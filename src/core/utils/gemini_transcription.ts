@@ -2,13 +2,8 @@ import WebSocket from "ws";
 import { z } from "zod";
 import type { SpeechToTextWebSocket, SpeechToTextWebSocketFactory } from "./speech_to_text.js";
 import type { SpeechToTextContext } from "./speech_to_text_context.js";
-import { formatSpeechToTextContext } from "./speech_to_text_context.js";
-import {
-  normalizeSpeechToTextKeywords,
-  SPEECH_TO_TEXT_KEYWORD_INSTRUCTIONS,
-} from "./speech_to_text_keywords.js";
+import { prepareSpeechToTextKeywords } from "./speech_to_text_keywords.js";
 
-const GEMINI_GENERATE_CONTENT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 const GEMINI_FILE_UPLOAD_URL = "https://generativelanguage.googleapis.com/upload/v1beta/files";
 const GEMINI_INTERACTIONS_URL = "https://generativelanguage.googleapis.com/v1beta/interactions";
 const GEMINI_FILES_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
@@ -16,9 +11,6 @@ const GEMINI_LIVE_TRANSCRIPTION_URL =
   "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent";
 const GEMINI_TRANSCRIPTION_MODEL = "gemini-3.5-transcribe";
 const GEMINI_LIVE_TRANSCRIPTION_MODEL = "gemini-3.5-transcribe-live";
-const GEMINI_TRANSCRIPTION_KEYWORD_MODEL = "gemini-3.8-flash";
-const GEMINI_TRANSCRIPTION_MAX_KEYWORD_CHARACTERS_TOTAL = 10_000;
-const GEMINI_TRANSCRIPTION_KEYWORD_TIMEOUT_MS = 15_000;
 const GEMINI_TRANSCRIPTION_CONNECT_TIMEOUT_MS = 15_000;
 const GEMINI_TRANSCRIPTION_COMPLETION_TIMEOUT_MS = 30_000;
 const GEMINI_FILE_DELETE_TIMEOUT_MS = 5_000;
@@ -31,23 +23,6 @@ const errorPayloadSchema = z.object({
     })
     .optional(),
 });
-const generateContentResponseSchema = z.object({
-  candidates: z
-    .array(
-      z.object({
-        content: z.object({
-          parts: z.array(z.unknown()).optional(),
-        }),
-      }),
-    )
-    .optional(),
-});
-const textPartSchema = z.object({ text: z.string() });
-const transcriptionKeywordsSchema = z
-  .object({
-    keywords: z.array(z.string()),
-  })
-  .strict();
 const uploadedFileSchema = z.object({
   file: z.object({
     name: z.string().trim().min(1),
@@ -86,6 +61,7 @@ const liveMessageSchema = z
 
 export type GeminiTranscriptionOptions = {
   apiKey: string;
+  openAIApiKey?: string;
   audio: Buffer;
   mimeType?: string;
   context?: SpeechToTextContext;
@@ -95,6 +71,7 @@ export type GeminiTranscriptionOptions = {
 
 export type StartGeminiTranscriptionOptions = {
   apiKey: string;
+  openAIApiKey?: string;
   context?: SpeechToTextContext;
   fetchImpl?: typeof fetch;
   webSocketFactory?: SpeechToTextWebSocketFactory;
@@ -140,8 +117,8 @@ class GeminiStreamingTranscriptionImpl implements GeminiStreamingTranscription {
     }
 
     this.onProgress = options.onProgress;
-    this.keywordsPromise = prepareGeminiTranscriptionKeywords({
-      apiKey,
+    this.keywordsPromise = prepareSpeechToTextKeywords({
+      apiKey: options.openAIApiKey,
       context: options.context,
       signal: this.keywordAbortController.signal,
       fetchImpl: options.fetchImpl,
@@ -395,8 +372,8 @@ export async function transcribeGeminiAudio(options: GeminiTranscriptionOptions)
 
   const fetchFn = options.fetchImpl ?? fetch;
   const [keywords, uploadedFile] = await Promise.all([
-    prepareGeminiTranscriptionKeywords({
-      apiKey,
+    prepareSpeechToTextKeywords({
+      apiKey: options.openAIApiKey,
       context: options.context,
       signal: options.signal,
       fetchImpl: fetchFn,
@@ -453,75 +430,6 @@ export async function transcribeGeminiAudio(options: GeminiTranscriptionOptions)
       fileName: uploadedFile.name,
       fetchImpl: fetchFn,
     });
-  }
-}
-
-async function prepareGeminiTranscriptionKeywords(args: {
-  apiKey: string;
-  context?: SpeechToTextContext;
-  signal?: AbortSignal;
-  fetchImpl?: typeof fetch;
-}): Promise<string[]> {
-  const formattedContext = formatSpeechToTextContext(args.context);
-  if (!formattedContext) return [];
-
-  try {
-    const signals = [AbortSignal.timeout(GEMINI_TRANSCRIPTION_KEYWORD_TIMEOUT_MS)];
-    if (args.signal) signals.push(args.signal);
-    const response = await (args.fetchImpl ?? fetch)(
-      `${GEMINI_GENERATE_CONTENT_BASE_URL}/${GEMINI_TRANSCRIPTION_KEYWORD_MODEL}:generateContent`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-goog-api-key": args.apiKey,
-        },
-        signal: AbortSignal.any(signals),
-        body: JSON.stringify({
-          systemInstruction: {
-            parts: [{ text: SPEECH_TO_TEXT_KEYWORD_INSTRUCTIONS }],
-          },
-          contents: [
-            {
-              parts: [{ text: formattedContext }],
-            },
-          ],
-          generationConfig: {
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: "OBJECT",
-              properties: {
-                keywords: {
-                  type: "ARRAY",
-                  items: { type: "STRING" },
-                },
-              },
-              required: ["keywords"],
-            },
-            thinkingConfig: {
-              thinkingLevel: "low",
-            },
-          },
-        }),
-      },
-    );
-    if (!response.ok) {
-      await response.body?.cancel().catch(() => {});
-      return [];
-    }
-
-    const payload = (await response.json()) as unknown;
-    const outputText = extractGenerateContentText(payload);
-    const parsedKeywords = transcriptionKeywordsSchema.safeParse(
-      outputText ? (JSON.parse(outputText) as unknown) : undefined,
-    );
-    return parsedKeywords.success
-      ? normalizeSpeechToTextKeywords(parsedKeywords.data.keywords, {
-          maxTotalCharacters: GEMINI_TRANSCRIPTION_MAX_KEYWORD_CHARACTERS_TOTAL,
-        })
-      : [];
-  } catch {
-    return [];
   }
 }
 
@@ -594,18 +502,6 @@ async function deleteGeminiFile(args: {
   } catch {
     // best-effort remote cleanup
   }
-}
-
-function extractGenerateContentText(payload: unknown): string | undefined {
-  const parsed = generateContentResponseSchema.safeParse(payload);
-  if (!parsed.success) return undefined;
-
-  return (parsed.data.candidates?.[0]?.content.parts ?? [])
-    .map((part) => {
-      const parsedPart = textPartSchema.safeParse(part);
-      return parsedPart.success ? parsedPart.data.text : "";
-    })
-    .join("");
 }
 
 function extractInteractionText(payload: unknown): string | undefined {

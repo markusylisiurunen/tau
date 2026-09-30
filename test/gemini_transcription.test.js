@@ -19,17 +19,14 @@ function createGeminiFetchMock({
 } = {}) {
   return vi.fn(async (input, options = {}) => {
     const url = String(input);
-    if (url.endsWith("/gemini-3.8-flash:generateContent")) {
+    if (url.endsWith("https://api.openai.com/v1/responses")) {
       return createJsonResponse({
-        candidates: [
+        status: "completed",
+        output: [
           {
-            content: {
-              parts: [
-                {
-                  text: JSON.stringify({ keywords }),
-                },
-              ],
-            },
+            type: "message",
+            status: "completed",
+            content: [{ type: "output_text", text: JSON.stringify({ keywords }) }],
           },
         ],
       });
@@ -71,11 +68,54 @@ function getCall(fetchMock, suffix) {
 }
 
 describe("gemini transcription", () => {
+  it.each(["missing key", "provider error", "incomplete", "refusal", "malformed"])(
+    "transcribes without hints after keyword extraction %s",
+    async (outcome) => {
+      const providerFetch = createGeminiFetchMock();
+      const fetchMock = vi.fn(async (url, options) => {
+        if (url !== "https://api.openai.com/v1/responses") return providerFetch(url, options);
+        if (outcome === "provider error") return new Response(null, { status: 503 });
+        return createJsonResponse({
+          status: outcome === "incomplete" ? "incomplete" : "completed",
+          output: [
+            {
+              type: "message",
+              status: "completed",
+              content: [
+                outcome === "refusal"
+                  ? { type: "refusal", refusal: "declined" }
+                  : {
+                      type: "output_text",
+                      text: outcome === "malformed" ? "not JSON" : '{"keywords":["Tau"]}',
+                    },
+              ],
+            },
+          ],
+        });
+      });
+      await expect(
+        transcribeGeminiAudio({
+          apiKey: "google-key",
+          openAIApiKey: outcome === "missing key" ? undefined : "openai-key",
+          audio: Buffer.from("audio"),
+          context: { messages: [{ role: "user", text: "Use Tau" }] },
+          fetchImpl: fetchMock,
+        }),
+      ).resolves.toBe("ship the fix");
+      const request = JSON.parse(getCall(providerFetch, "/v1beta/interactions")[1].body);
+      expect(request.generation_config.transcription_config.custom_vocabulary).toBeUndefined();
+      expect(getCall(fetchMock, "https://api.openai.com/v1/responses") !== undefined).toBe(
+        outcome !== "missing key",
+      );
+    },
+  );
+
   it("transcribes uploaded audio with Gemini 3.5 Transcribe verbatim mode and context keywords", async () => {
     const fetchMock = createGeminiFetchMock();
 
     const transcript = await transcribeGeminiAudio({
       apiKey: "gemini-key",
+      openAIApiKey: "openai-key",
       audio: Buffer.from("audio payload"),
       mimeType: "audio/ogg",
       fetchImpl: fetchMock,
@@ -89,13 +129,18 @@ describe("gemini transcription", () => {
 
     expect(transcript).toBe("ship the fix");
 
-    const keywordCall = getCall(fetchMock, "/gemini-3.8-flash:generateContent");
+    const keywordCall = getCall(fetchMock, "https://api.openai.com/v1/responses");
     const keywordRequest = JSON.parse(keywordCall[1].body);
-    expect(keywordRequest.systemInstruction.parts[0].text).toContain(
-      "Extract words and short phrases",
-    );
-    expect(keywordRequest.contents[0].parts[0].text).toContain("<speech-to-text-context>");
-    expect(keywordRequest.generationConfig.thinkingConfig.thinkingLevel).toBe("low");
+    expect(keywordRequest.instructions).toContain("Extract words and short phrases");
+    expect(keywordRequest.input).toContain("<speech-to-text-context>");
+    expect(keywordRequest).toMatchObject({
+      model: "gpt-6-luna",
+      reasoning: { effort: "none" },
+      store: false,
+      max_output_tokens: 2048,
+      text: { format: { type: "json_schema", strict: true } },
+    });
+    expect(keywordCall[1].headers.Authorization).toBe("Bearer openai-key");
 
     const uploadStartCall = getCall(fetchMock, "/upload/v1beta/files");
     expect(uploadStartCall[1].headers["X-Goog-Upload-Protocol"]).toBe("resumable");
@@ -130,6 +175,7 @@ describe("gemini transcription", () => {
 
     await transcribeGeminiAudio({
       apiKey: "gemini-key",
+      openAIApiKey: "openai-key",
       audio: Buffer.from("audio payload"),
       context: { messages: [{ role: "user", text: "Use the project vocabulary" }] },
       fetchImpl: fetchMock,
@@ -157,6 +203,7 @@ describe("gemini transcription", () => {
     const onProgress = vi.fn();
     const transcription = startGeminiTranscription({
       apiKey: "gemini key",
+      openAIApiKey: "openai-key",
       onProgress,
       context: { messages: [{ role: "user", text: "Configure Acme SSO" }] },
       fetchImpl: fetchMock,
@@ -277,6 +324,7 @@ describe("gemini transcription", () => {
     try {
       transcription = startGeminiTranscription({
         apiKey: "gemini-key",
+        openAIApiKey: "openai-key",
         context: { messages: [{ role: "user", text: "Configure Acme SSO" }] },
         fetchImpl: vi.fn(() => keywordResponse.promise),
         webSocketFactory: vi.fn(() => socket),
@@ -286,11 +334,12 @@ describe("gemini transcription", () => {
       await vi.advanceTimersByTimeAsync(14_900);
       keywordResponse.resolve(
         createJsonResponse({
-          candidates: [
+          status: "completed",
+          output: [
             {
-              content: {
-                parts: [{ text: JSON.stringify({ keywords: ["Acme SSO"] }) }],
-              },
+              type: "message",
+              status: "completed",
+              content: [{ type: "output_text", text: JSON.stringify({ keywords: ["Acme SSO"] }) }],
             },
           ],
         }),
@@ -315,6 +364,7 @@ describe("gemini transcription", () => {
     await expect(
       transcribeGeminiAudio({
         apiKey: "gemini-key",
+        openAIApiKey: "openai-key",
         audio: Buffer.from("audio payload"),
         fetchImpl: fetchMock,
       }),

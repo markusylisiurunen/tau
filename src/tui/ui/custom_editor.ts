@@ -1,4 +1,10 @@
-import { Key, type KeyId, matchesKey, visibleWidth } from "@earendil-works/pi-tui";
+import {
+  decodeKittyPrintable,
+  Key,
+  type KeyId,
+  matchesKey,
+  visibleWidth,
+} from "@earendil-works/pi-tui";
 import type { RecordingShortcut } from "../../core/config/schema.js";
 import { DOUBLE_PRESS_WINDOW_MS } from "../constants.js";
 import { Editor } from "./components/editor.js";
@@ -73,6 +79,7 @@ export class CustomEditor extends Editor {
     const data = this.clearRecordingTap();
     if (data && this.inputEnabled && [...this.recordingShortcut.key].length === 1) {
       super.handleInput(data);
+      this.onUiChange?.();
     }
   }
 
@@ -170,7 +177,10 @@ export class CustomEditor extends Editor {
   handleInput(data: string): void {
     const paste = this.isInPaste || data.includes("\x1b[200~");
     const key = this.recordingShortcut.key;
-    const recordingKey = [...key].length === 1 ? data === key : matchesKey(data, key as KeyId);
+    const recordingKey =
+      [...key].length === 1
+        ? (decodeKittyPrintable(data) ?? data) === key
+        : matchesKey(data, key as KeyId);
     if (!paste && recordingKey && this.onToggleRecording && !this.isShowingAutocomplete()) {
       if (this.recordingShortcut.gesture === "press" || this.recordingTap) {
         this.clearRecordingTap();

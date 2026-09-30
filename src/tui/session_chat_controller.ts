@@ -1468,24 +1468,44 @@ export class SessionChatController {
     }
 
     if (delta.toRevision <= this.snapshot.revision) return;
-    if (delta.delta.type === "snapshot.reset") this.pendingAutoSpeak = undefined;
+    const invalidatesSpeech =
+      delta.cause.type === "rewind" ||
+      delta.cause.type === "compaction" ||
+      delta.cause.type === "resync";
+    if (invalidatesSpeech) this.pendingAutoSpeak = undefined;
+    const previousLifecycle = this.snapshot.lifecycle;
     const previousTurns = this.snapshot.turns;
     if (this.tryApplySdkDelta(delta)) {
-      if (this.autoSpeak && delta.delta.type === "snapshot.patch") {
-        for (const change of delta.delta.changes) {
-          if (change.type !== "turn.set") continue;
-          if (change.turn.state === "running") {
-            this.pendingAutoSpeak = undefined;
-            this.speakTask?.abortController.abort();
-            continue;
+      if (this.autoSpeak && !invalidatesSpeech) {
+        if (previousLifecycle !== "running" && this.snapshot.lifecycle === "running") {
+          this.pendingAutoSpeak = undefined;
+          this.speakTask?.abortController.abort();
+          this.lastAutoSpeakMessageId = this.snapshot.messages.findLast(
+            (entry) => isAssistantMessage(entry.message) && entry.state === "committed",
+          )?.id;
+        }
+        if (delta.delta.type === "snapshot.patch") {
+          for (const change of delta.delta.changes) {
+            if (change.type !== "turn.set") continue;
+            const turn = change.turn;
+            if (turn.state === "running") {
+              this.pendingAutoSpeak = undefined;
+              this.speakTask?.abortController.abort();
+              continue;
+            }
+            if (
+              previousTurns[turn.userHistoryEntryId]?.state === "running" &&
+              turn.outcome.status === "completed"
+            ) {
+              this.queueAutoSpeak();
+            }
           }
-          const turn = this.snapshot.turns[change.turn.userHistoryEntryId];
-          if (
-            turn?.state !== "settled" ||
-            previousTurns[turn.userHistoryEntryId]?.state !== "running"
-          )
-            continue;
-          if (turn.outcome.status !== "completed") continue;
+        }
+        if (
+          previousLifecycle === "running" &&
+          this.snapshot.lifecycle === "idle" &&
+          !Object.values(previousTurns).some((turn) => turn.state === "running")
+        ) {
           this.queueAutoSpeak();
         }
         this.drainAutoSpeak();
@@ -1493,6 +1513,7 @@ export class SessionChatController {
       return;
     }
 
+    this.pendingAutoSpeak = undefined;
     this.snapshotRecoveryDeltas.push(delta);
     void this.recoverFromRevisionGap();
   }

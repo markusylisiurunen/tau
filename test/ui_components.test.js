@@ -1337,9 +1337,12 @@ test("recording shortcuts distinguish presses, double taps, and bracketed paste"
     editor.handleInput("§");
     expect(editor.onToggleRecording).toHaveBeenCalledTimes(2);
     expect(editor.getText()).toBe("");
+    editor.onUiChange = vi.fn();
     editor.handleInput("§");
+    editor.onUiChange.mockClear();
     vi.advanceTimersByTime(301);
     expect(editor.getText()).toBe("§");
+    expect(editor.onUiChange).toHaveBeenCalledTimes(1);
     editor.handleInput("§");
     editor.handleInput("a");
     expect(editor.getText()).toBe("§§a");
@@ -1356,3 +1359,26 @@ test("recording shortcuts distinguish presses, double taps, and bracketed paste"
     vi.useRealTimers();
   }
 });
+
+test.each(["press", "double-tap"])(
+  "recording shortcuts decode Kitty printable input (%s)",
+  (gesture) => {
+    vi.useFakeTimers();
+    try {
+      const editor = new CustomEditor(createUiTheme("plain"));
+      editor.onToggleRecording = vi.fn();
+      editor.setRecordingShortcut({ key: "A", gesture });
+      editor.handleInput("\x1b[97:65;2u");
+      if (gesture === "double-tap") editor.handleInput("A");
+      expect(editor.onToggleRecording).toHaveBeenCalledTimes(1);
+      expect(editor.getText()).toBe("");
+      if (gesture === "double-tap") {
+        editor.handleInput("\x1b[97:65;2u");
+        vi.advanceTimersByTime(301);
+        expect(editor.getText()).toBe("A");
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);

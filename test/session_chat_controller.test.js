@@ -3,7 +3,13 @@ import { readFile, rm, writeFile } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
+import { HistoryManager } from "../dist/core/history/history_manager.js";
+import { LocalHistoryStore } from "../dist/core/history/local_history_store.js";
+import { createLocalToolExecutionBackend } from "../dist/core/index.js";
+import { resolveModel } from "../dist/core/models/catalog.js";
+import { personas } from "../dist/core/personas.js";
 import { buildAutoCompactionContinuationMessage } from "../dist/core/session/compaction.js";
 import {
   buildToolRunPresentation,
@@ -20,12 +26,14 @@ import {
   splitTauUserText,
   stripTauUserDisplayText,
 } from "../dist/core/utils/user_metadata.js";
+import { LocalSessionHost } from "../dist/host/local_session_host.js";
 import {
   applySessionProtocolDelta,
   createSessionProtocolDeltaMessage,
   SESSION_PROTOCOL_VERSION,
 } from "../dist/protocol/session_protocol.js";
 import { FileSessionStore } from "../dist/store/file_session_store.js";
+import { MemorySessionStore } from "../dist/store/memory_session_store.js";
 import { TauSessionProtocolResponseError } from "../dist/transport/errors.js";
 import { formatDiffReviewUserMessage } from "../dist/tui/chat_controller/diff_review_user_message.js";
 import { formatRewindCandidateAge } from "../dist/tui/chat_controller/history_labels.js";
@@ -4538,7 +4546,7 @@ describe("SessionChatController", () => {
       sessionId: session.id,
       fromRevision: 4,
       toRevision: 5,
-      reason: "tool-activity",
+      cause: { type: "tool-run" },
       delta: {
         type: "snapshot.patch",
         changes: [
@@ -6691,6 +6699,146 @@ describe("SessionChatController", () => {
       expect(controller.autoSpeak).toBe(false);
       await controller.onUserInput("/auto-speak");
       expect(controller.autoSpeak).toBe(true);
+      await controller.dispose();
+    },
+  );
+
+  it.each(["goal", "goal-resume", "retry", "error", "aborted"])(
+    "handles real host speech completion for %s",
+    async (mode) => {
+      const environment = {
+        resolveRuntimeContext: async () => ({
+          promptBootstrap: {
+            promptContext: { cwd: "/repo", home: "/home/user", platform: "linux" },
+            agentsFiles: [],
+            warnings: [],
+            unknownSkills: [],
+          },
+        }),
+        getToolExecutionBackend: () => createLocalToolExecutionBackend(),
+        snapshot: () => ({ kind: "local", cwd: "/repo", home: "/home/user" }),
+        dispose: async () => {},
+      };
+      const host = new LocalSessionHost({
+        store: new MemorySessionStore(),
+        history: new HistoryManager(new LocalHistoryStore(":memory:")),
+        defaultBootstrap: {
+          persona: personas[0],
+          personas: [personas[0]],
+          discoveredSkills: [],
+          prompts: [],
+          modelResolver: resolveModel,
+        },
+        environment: { now: () => Date.now() },
+        executionEnvironmentResolver: { resolve: async () => environment },
+        includeAgentContext: false,
+        getRemoteModelCatalog: () => new Map(),
+      });
+      let controller;
+      try {
+        const hosted = await host.createSession({
+          executionEnvironment: { kind: "local", cwd: "/repo" },
+          attributes: { source: "test" },
+        });
+        const session = new FakeSession();
+        session.id = hosted.sessionId;
+        session.snapshot = () => hosted.snapshot();
+        session.onDelta = (listener) => hosted.onDelta(listener);
+        session.startGoal = (objective) => hosted.startGoal(objective);
+        session.resumeGoal = () => hosted.resumeGoal();
+        ({ controller } = await createControllerHarness({ session, deps: createMockDeps() }));
+        const speak = vi.spyOn(controller, "speakLastAssistantMessage").mockResolvedValue();
+        controller.start();
+        await controller.onUserInput("/auto-speak on");
+        const completeCall = fauxToolCall("update_goal", { status: "complete" });
+        const responses = mode.startsWith("goal")
+          ? [
+              fauxAssistantMessage([completeCall], { stopReason: "toolUse" }),
+              fauxAssistantMessage("done"),
+            ]
+          : [
+              fauxAssistantMessage("first"),
+              fauxAssistantMessage("retry", {
+                stopReason: mode === "retry" ? "stop" : mode,
+              }),
+            ];
+        hosted.runtime.agent.spec.model.stream = () => {
+          const response = responses.shift();
+          return {
+            async *[Symbol.asyncIterator]() {
+              if (response.stopReason === "toolUse") {
+                yield { type: "toolcall_start", contentIndex: 0, partial: response };
+                yield {
+                  type: "toolcall_end",
+                  contentIndex: 0,
+                  toolCall: completeCall,
+                  partial: response,
+                };
+              }
+            },
+            async result() {
+              return response;
+            },
+          };
+        };
+        if (mode.startsWith("goal")) {
+          if (mode === "goal-resume") {
+            responses.unshift(fauxAssistantMessage("interrupted", { stopReason: "aborted" }));
+            await controller.onUserInput("/goal finish");
+            expect(speak).not.toHaveBeenCalled();
+            await controller.onUserInput("/goal resume");
+          } else {
+            await controller.onUserInput("/goal finish");
+          }
+          expect(speak).toHaveBeenCalledTimes(1);
+          expect(speak.mock.calls[0][0].content).toEqual([{ type: "text", text: "done" }]);
+        } else {
+          const accepted = await hosted.acceptTurn({ text: "question" });
+          await hosted.runAcceptedTurn(accepted.userHistoryEntryId);
+          expect(speak).toHaveBeenCalledTimes(1);
+          await hosted.retryTurn();
+          expect(speak).toHaveBeenCalledTimes(mode === "retry" ? 2 : 1);
+        }
+      } finally {
+        await controller?.dispose();
+        await host.shutdown();
+      }
+    },
+  );
+
+  it.each(["assistant-message", "rewind", "compaction", "resync"])(
+    "handles pending speech across a %s reset",
+    async (type) => {
+      const session = new FakeSession();
+      session.snapshotValue = updateSnapshot(session.snapshotValue, { lifecycle: "running" });
+      const { controller } = await createControllerHarness({ session, deps: createMockDeps() });
+      const speak = vi.spyOn(controller, "speakLastAssistantMessage").mockResolvedValue();
+      controller.start();
+      await controller.onUserInput("/auto-speak on");
+      controller.pendingAutoSpeak = createAssistantMessage("pending");
+      const previous = session.snapshotValue;
+      session.snapshotValue = updateSnapshot(previous, {
+        lifecycle: "idle",
+        revision: previous.revision + 1,
+      });
+      const cause =
+        type === "rewind"
+          ? { type, epoch: previous.timeline.epoch, cutoffSequence: previous.timeline.sequence }
+          : type === "compaction"
+            ? {
+                type,
+                previousEpoch: previous.timeline.epoch,
+                epoch: previous.timeline.epoch + 1,
+                kind: "manual",
+                cutType: "turn-boundary",
+                retainedMessageCount: 0,
+              }
+            : { type };
+      if (type === "compaction") session.snapshotValue.timeline.epoch += 1;
+      const delta = createResetDelta(session.id, previous.revision, session.snapshotValue, cause);
+      for (const listener of session.listeners) listener(delta);
+      expect(speak).toHaveBeenCalledTimes(type === "assistant-message" ? 1 : 0);
+      expect(controller.pendingAutoSpeak).toBeUndefined();
       await controller.dispose();
     },
   );

@@ -36,7 +36,7 @@ Only one logical turn runs at a time. Input sent during active work has two usef
 - A queued message waits for the session to become idle, then starts an independent turn.
 - Steering joins the active logical turn at a safe continuation boundary.
 
-In the TUI, Enter queues and Ctrl+Enter steers while work is active. When idle, either starts a normal turn. Pending messages are visible to every observer of the same live hosted session. Alt+Up cancels queued messages and steering that has not been applied and restores the text to the editor.
+In the TUI, Enter steers and Ctrl+Enter queues while work is active. When idle, either starts a normal turn. Pending messages are visible to every observer of the same live hosted session. Alt+Up cancels queued messages and steering that has not been applied and restores the text to the editor.
 
 A turn captures its model, persona, reasoning, system prompt, tools, retry policy, and compaction policy when it starts. Tool subturns and steering continuations keep that captured specification even if reasoning or host configuration changes meanwhile. A queued turn captures the then-current specification when it later starts.
 

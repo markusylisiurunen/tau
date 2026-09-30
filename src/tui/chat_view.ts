@@ -13,7 +13,7 @@ import { ToolUiRouter } from "./tool_ui_router.js";
 import { ChatContainerComponent } from "./ui/chat_container.js";
 import type { AssistantMessageModel, ChatMessageModel } from "./ui/chat_message_model.js";
 import type { EditorTextPreview } from "./ui/components/editor.js";
-import { CustomEditor } from "./ui/custom_editor.js";
+import { CustomEditor, type EditorSubmissionMode } from "./ui/custom_editor.js";
 import {
   DEFAULT_FOOTER_NOTICE_DURATION_MS,
   FooterComponent,
@@ -58,7 +58,8 @@ export type ChatViewInputHandlers = {
   beforeSubmit?: (text: string) => boolean;
   onChange?: (text: string) => void;
   onSubmit?: (text: string) => void;
-  onSteerSubmit?: (text: string) => void;
+  onQueueSubmit?: (text: string) => void;
+  onDisabledSubmit?: (mode: EditorSubmissionMode) => void;
 };
 
 export type RewindPickerOptions = {
@@ -98,6 +99,7 @@ export interface ChatView {
   insertEditorTextAtCursor(text: string): void;
   beginEditorTextPreview(): EditorTextPreview;
   setEditorInputEnabled(enabled: boolean): void;
+  submitEditor(mode: EditorSubmissionMode): void;
   showRewindPicker(options: RewindPickerOptions): void;
   hideRewindPicker(): void;
   getEditorCursor(): { line: number; col: number };
@@ -340,6 +342,10 @@ export class TuiChatView implements ChatView {
     this.ui.requestRender();
   }
 
+  submitEditor(mode: EditorSubmissionMode): void {
+    this.editor.submit(mode);
+  }
+
   showRewindPicker(options: RewindPickerOptions): void {
     const picker = new RewindPickerComponent(this.uiTheme, options.items);
     picker.onSelect = options.onSelect;
@@ -384,7 +390,8 @@ export class TuiChatView implements ChatView {
     this.editor.beforeSubmit = handlers.beforeSubmit;
     this.editor.onChange = handlers.onChange;
     this.editor.onSubmit = handlers.onSubmit;
-    this.editor.onSteerSubmit = handlers.onSteerSubmit;
+    this.editor.onQueueSubmit = handlers.onQueueSubmit;
+    this.editor.onDisabledSubmit = handlers.onDisabledSubmit;
   }
 
   setAutocompleteProvider(provider: AutocompleteProvider): void {

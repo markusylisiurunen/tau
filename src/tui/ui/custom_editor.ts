@@ -14,6 +14,8 @@ const MIN_EDITOR_LINES = 3;
 const EDITOR_PLACEHOLDER =
   "ask the agent anything · / for commands · ! for bash mode · ctrl+y for voice";
 
+export type EditorSubmissionMode = "steer" | "queue";
+
 type EditorLayoutLine = {
   text: string;
   line: number;
@@ -46,7 +48,8 @@ export class CustomEditor extends Editor {
   public onAltUp?: () => void;
   public onAltDown?: () => void;
   public beforeSubmit?: (text: string) => boolean;
-  public onSteerSubmit?: (text: string) => void;
+  public onQueueSubmit?: (text: string) => void;
+  public onDisabledSubmit?: (mode: EditorSubmissionMode) => void;
 
   constructor(theme: Theme) {
     super(theme.editorTheme);
@@ -133,11 +136,22 @@ export class CustomEditor extends Editor {
     super.setText(text);
   }
 
+  submit(mode: EditorSubmissionMode): void {
+    if (!this.inputEnabled) return;
+    const onSubmit = mode === "steer" ? this.onSubmit : this.onQueueSubmit;
+    if (!onSubmit || (this.beforeSubmit && !this.beforeSubmit(this.getText()))) return;
+
+    const result = this.takeSubmission();
+    if (result !== undefined) onSubmit(result);
+  }
+
   handleInput(data: string): void {
     if (!this.inputEnabled) {
       if (matchesKey(data, Key.ctrl("c"))) this.onCtrlC?.();
       else if (matchesKey(data, Key.ctrl("y"))) this.onCtrlY?.();
       else if (matchesKey(data, Key.escape)) this.onEscape?.();
+      else if (matchesKey(data, Key.enter)) this.onDisabledSubmit?.("steer");
+      else if (matchesKey(data, Key.ctrl(Key.enter))) this.onDisabledSubmit?.("queue");
       return;
     }
     const previousText = this.getText();
@@ -196,25 +210,14 @@ export class CustomEditor extends Editor {
       return;
     }
 
-    if (
-      matchesKey(data, Key.ctrl(Key.enter)) &&
-      this.onSteerSubmit &&
-      !this.isShowingAutocomplete() &&
-      this.inputEnabled
-    ) {
-      if (this.beforeSubmit && !this.beforeSubmit(this.getText())) {
-        return;
-      }
-
-      const result = this.takeSubmission();
-      if (result !== undefined) this.onSteerSubmit(result);
+    if (matchesKey(data, Key.ctrl(Key.enter)) && !this.isShowingAutocomplete()) {
+      this.submit("queue");
       return;
     }
 
-    if (matchesKey(data, Key.enter) && this.beforeSubmit && !this.isShowingAutocomplete()) {
-      if (!this.beforeSubmit(this.getText())) {
-        return;
-      }
+    if (matchesKey(data, Key.enter) && !this.isShowingAutocomplete()) {
+      this.submit("steer");
+      return;
     }
 
     if (isEscape && !this.isShowingAutocomplete()) {

@@ -2671,7 +2671,7 @@ describe("SessionChatController", () => {
     expect(controller.submittedTurnInProgress).toBe(true);
     expect(view.status.footer.type).toBe("regular");
 
-    controller.getInputHandlers().onSubmit("queued while response pending");
+    controller.getInputHandlers().onQueueSubmit("queued while response pending");
     await flush();
 
     expect(delayedSubmit).toHaveBeenCalledTimes(1);
@@ -2716,7 +2716,7 @@ describe("SessionChatController", () => {
     };
 
     expect(controller.getInputHandlers().beforeSubmit?.("continue working")).toBe(true);
-    controller.getInputHandlers().onSubmit("continue working");
+    controller.getInputHandlers().onQueueSubmit("continue working");
     await flush();
 
     expect(session.submit).toHaveBeenCalledWith("continue working");
@@ -2797,7 +2797,7 @@ describe("SessionChatController", () => {
       editor.onChange = handlers.onChange;
       editor.beforeSubmit = handlers.beforeSubmit;
       editor.onSubmit = handlers.onSubmit;
-      editor.onSteerSubmit = handlers.onSteerSubmit;
+      editor.onQueueSubmit = handlers.onQueueSubmit;
       view.getEditorText = () => editor.getText();
       view.setEditorText = (text) => editor.setText(text);
       const pending = (id, mode, text, hiddenSystemMessages) => ({
@@ -2823,7 +2823,7 @@ describe("SessionChatController", () => {
         expect(editor.getText()).toBe(visible);
         controller.isStreaming = method !== "submit";
         const submit = async (count) => {
-          editor.handleInput(method === "steer" ? "\x1b[13;5u" : "\r");
+          editor.handleInput(method === "queue" ? "\x1b[13;5u" : "\r");
           await waitUntil(() => session[method].mock.calls.length === count);
           if (method === "submit") await waitUntil(() => !controller.submittedTurnInProgress);
           return session[method].mock.calls[count - 1][0];
@@ -2854,13 +2854,41 @@ describe("SessionChatController", () => {
     },
   );
 
+  it.each([
+    ["Enter", "\r", false, "submit"],
+    ["Ctrl+Enter", "\x1b[13;5u", false, "submit"],
+    ["Enter", "\r", true, "steer"],
+    ["Ctrl+Enter", "\x1b[13;5u", true, "queue"],
+  ])("routes %s (%s) with active turn=%s to %s", async (_keyName, key, active, method) => {
+    const { session, controller } = await createControllerHarness({});
+    const editor = new CustomEditor(createUiTheme("plain"));
+    const handlers = controller.getInputHandlers();
+    editor.beforeSubmit = handlers.beforeSubmit;
+    editor.onChange = handlers.onChange;
+    editor.onSubmit = handlers.onSubmit;
+    editor.onQueueSubmit = handlers.onQueueSubmit;
+    controller.isStreaming = active;
+    try {
+      editor.setText("next instruction");
+      editor.handleInput(key);
+      await waitUntil(() => session[method].mock.calls.length === 1);
+      expect(session[method]).toHaveBeenCalledWith("next instruction");
+      for (const other of ["submit", "steer", "queue"].filter((value) => value !== method)) {
+        expect(session[other]).not.toHaveBeenCalled();
+      }
+      expect(editor.getText()).toBe("");
+    } finally {
+      await controller.dispose();
+    }
+  });
+
   it("submits steering text as a normal turn while idle", async () => {
     const { session, view, controller } = await createControllerHarness({
       targetLabel: "in-process",
     });
     controller.start();
 
-    controller.getInputHandlers().onSteerSubmit?.("start a turn");
+    controller.getInputHandlers().onSubmit("start a turn");
     await flush();
 
     expect(session.submit).toHaveBeenCalledWith("start a turn");
@@ -2875,7 +2903,7 @@ describe("SessionChatController", () => {
     controller.isStreaming = true;
     controller.submittedTurnInProgress = true;
 
-    controller.getInputHandlers().onSteerSubmit?.("change direction");
+    controller.getInputHandlers().onSubmit("change direction");
     await flush();
 
     expect(session.steer).toHaveBeenCalledWith("change direction");
@@ -2914,8 +2942,8 @@ describe("SessionChatController", () => {
     controller.isStreaming = true;
     controller.submittedTurnInProgress = true;
 
-    controller.getInputHandlers().onSubmit("queue this");
-    controller.getInputHandlers().onSteerSubmit?.("steer this");
+    controller.getInputHandlers().onQueueSubmit("queue this");
+    controller.getInputHandlers().onSubmit("steer this");
     await flush();
 
     expect(view.feedback).toEqual(
@@ -3094,7 +3122,7 @@ describe("SessionChatController", () => {
       ]),
     );
 
-    controller.getInputHandlers().onSubmit("queued after attach");
+    controller.getInputHandlers().onQueueSubmit("queued after attach");
     await flush();
 
     expect(session.submit).not.toHaveBeenCalled();
@@ -5776,8 +5804,8 @@ describe("SessionChatController", () => {
     );
 
     controller.isStreaming = true;
-    await controller.onUserInput("queue after review");
-    controller.getInputHandlers().onSteerSubmit?.("adjust the review");
+    controller.getInputHandlers().onQueueSubmit("queue after review");
+    controller.getInputHandlers().onSubmit("adjust the review");
     await flush();
 
     expect(session.queue).toHaveBeenCalledWith("queue after review");
@@ -6012,6 +6040,98 @@ describe("SessionChatController", () => {
     expect(session.submit).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["submit", "steer"],
+    ["submit", "queue"],
+    ["queue", "queue"],
+    ["steer", "steer"],
+    ["failure", "steer"],
+    ["disposed", "steer"],
+    ["empty", "steer"],
+  ])("finalizes recording without submitting the preview (%s via %s)", async (outcome, mode) => {
+    const audioPath = join(tmpdir(), `tau-session-listen-enter-${outcome}-${Date.now()}.wav`);
+    await writeFile(audioPath, Buffer.alloc(2048, 1));
+    const { session, view, controller } = await createControllerHarness({});
+    const editor = new CustomEditor(createUiTheme("plain"));
+    const handlers = controller.getInputHandlers();
+    editor.beforeSubmit = handlers.beforeSubmit;
+    editor.onChange = handlers.onChange;
+    editor.onSubmit = handlers.onSubmit;
+    editor.onQueueSubmit = handlers.onQueueSubmit;
+    editor.onDisabledSubmit = handlers.onDisabledSubmit;
+    view.getEditorText = () => editor.getText();
+    view.beginEditorTextPreview = () => editor.beginTextPreview();
+    view.setEditorInputEnabled = (enabled) => editor.setInputEnabled(enabled);
+    view.submitEditor = vi.fn((mode) => editor.submit(mode));
+    const finalTranscript = deferred();
+    const capture = deferred();
+    const transcription = {
+      finish: vi.fn(() => finalTranscript.promise),
+      abort: vi.fn(),
+    };
+    const abortController = new AbortController();
+    abortController.signal.addEventListener("abort", () => capture.resolve());
+
+    try {
+      editor.setText("typed suffix");
+      editor.handleInput("\x01");
+      for (let i = 0; i < 6; i++) editor.handleInput("\x1b[C");
+      controller.beginListenPreview();
+      controller.listenPreview.update("provisional ");
+      controller.listenRecording = {
+        audioPath,
+        startedAt: Date.now() - 1000,
+        stopRequested: false,
+        abortController,
+        completion: capture.promise,
+        transcription,
+      };
+      controller.isStreaming = outcome === "queue" || outcome === "steer";
+
+      const submitKey = mode === "queue" ? "\x1b[13;5u" : "\r";
+      editor.handleInput(submitKey);
+      await waitUntil(() => transcription.finish.mock.calls.length === 1);
+      expect(abortController.signal.aborted).toBe(true);
+      editor.handleInput(submitKey);
+      expect(session.steer).not.toHaveBeenCalled();
+      expect(session.submit).not.toHaveBeenCalled();
+      expect(session.queue).not.toHaveBeenCalled();
+      expect(editor.getText()).toBe("typed provisional suffix");
+
+      const disposal = outcome === "disposed" ? controller.dispose() : undefined;
+      if (outcome === "failure") finalTranscript.reject(new Error("transcription failed"));
+      else finalTranscript.resolve(outcome === "empty" ? "" : "finalized ");
+      await controller.listenTransition;
+      await disposal;
+
+      if (outcome === "submit" || outcome === "queue" || outcome === "steer") {
+        await waitUntil(() => session[outcome].mock.calls.length === 1);
+        const submitted = session[outcome].mock.calls[0][0];
+        expect(stripTauUserDisplayText(submitted)).toBe("typed finalized suffix");
+        expect(splitTauUserText(submitted).hiddenSystemBlocks).toHaveLength(1);
+        expect(view.submitEditor).toHaveBeenCalledOnce();
+        expect(view.submitEditor).toHaveBeenCalledWith(mode);
+        expect(editor.getText()).toBe("");
+      } else {
+        expect(session.submit).not.toHaveBeenCalled();
+        expect(session.queue).not.toHaveBeenCalled();
+        expect(session.steer).not.toHaveBeenCalled();
+        expect(view.submitEditor).not.toHaveBeenCalled();
+        expect(editor.getText()).toBe("typed suffix");
+      }
+      if (outcome === "failure") {
+        expect(controller.retainedListenAudio?.audioPath).toBe(audioPath);
+        expect(await readFile(audioPath)).toHaveLength(2048);
+      }
+      expect(transcription.finish).toHaveBeenCalledOnce();
+    } finally {
+      finalTranscript.resolve("finalized ");
+      capture.resolve();
+      await controller.dispose();
+      await rm(audioPath, { force: true });
+    }
+  });
+
   it("finishes voice input at its recording limit", async () => {
     const audioPath = join(tmpdir(), `tau-session-listen-limit-${Date.now()}.wav`);
     await writeFile(audioPath, Buffer.alloc(2048, 1));
@@ -6072,7 +6192,7 @@ describe("SessionChatController", () => {
     editor.onChange = handlers.onChange;
     editor.beforeSubmit = handlers.beforeSubmit;
     editor.onSubmit = handlers.onSubmit;
-    editor.onSteerSubmit = handlers.onSteerSubmit;
+    editor.onQueueSubmit = handlers.onQueueSubmit;
     view.beginEditorTextPreview = () => editor.beginTextPreview();
     view.setEditorInputEnabled = (enabled) => editor.setInputEnabled(enabled);
     try {
@@ -6085,7 +6205,7 @@ describe("SessionChatController", () => {
       if (clearDraft) editor.setText("");
       editor.handleInput(" and edited");
       controller.isStreaming = method !== "submit";
-      editor.handleInput(method === "steer" ? "\x1b[13;5u" : "\r");
+      editor.handleInput(method === "queue" ? "\x1b[13;5u" : "\r");
       await waitUntil(() => session[method].mock.calls.length === 1);
       const submitted = session[method].mock.calls[0][0];
       expect(stripTauUserDisplayText(submitted)).toBe(
@@ -6094,7 +6214,7 @@ describe("SessionChatController", () => {
       expect(submitted.startsWith("<system>")).toBe(!clearDraft);
       if (method === "submit") await waitUntil(() => !controller.submittedTurnInProgress);
       editor.handleInput("only typed");
-      editor.handleInput(method === "steer" ? "\x1b[13;5u" : "\r");
+      editor.handleInput(method === "queue" ? "\x1b[13;5u" : "\r");
       await waitUntil(() => session[method].mock.calls.length === 2);
       expect(session[method].mock.calls[1][0]).toBe("only typed");
     } finally {

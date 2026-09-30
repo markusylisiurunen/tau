@@ -45,8 +45,8 @@ Typing `/` at the start of a line opens command completion. Slash commands are r
 
 When Tau is idle, Enter and Ctrl+Enter both start a normal turn. While a turn is active:
 
-- Enter queues the text as a new turn to run when the session becomes idle.
-- Ctrl+Enter steers the active turn. Tau applies steering at a safe continuation boundary rather than injecting it into a model response or tool execution in progress.
+- Ctrl+Enter queues the text as a new turn to run when the session becomes idle.
+- Enter steers the active turn. Tau applies steering at a safe continuation boundary rather than injecting it into a model response or tool execution in progress.
 - Alt+Up cancels all pending queued messages and steering that has not yet been applied, then restores their text to the editor. Multiple messages are separated with `---`. Hidden guidance, such as transcription warnings, stays hidden in the pending list and editor. Restoring messages preserves their guidance in order after any guidance already attached to the draft. Submission places all guidance at the beginning of the combined message. Editing a non-empty draft preserves it; clearing the draft clears it.
 
 Pending input is session state shared by attached clients while the host remains alive. It is not durable across host restart or session recovery. A queued turn captures the persona, reasoning, tools, and model settings when that turn actually starts. Steering remains part of the active logical turn and keeps the settings captured when that turn began.
@@ -111,8 +111,9 @@ Compaction, rewind, goals, recovery, and retry are described in [sessions](sessi
 | Ctrl+P | Cycle persona while idle. |
 | Ctrl+T | Toggle thought visibility in this TUI. |
 | Ctrl+S | Copy the expanded editor contents to the local clipboard, then clear the editor. |
-| Ctrl+Y | Start or stop voice recording. |
-| Ctrl+Enter | Steer an active turn, or submit normally while idle. |
+| Ctrl+Y | Start or stop voice recording without submitting. |
+| Enter | Steer an active turn, or submit normally while idle. |
+| Ctrl+Enter | Queue another turn, or submit normally while idle. |
 | Alt+Up | Cancel pending input and restore it to the editor. |
 | Alt+Down | Cycle the selected active subagent. |
 | Ctrl+G | Interrupt the selected active subagent. |
@@ -182,7 +183,7 @@ The TUI also advertises diff review as a client tool unless `--no-client-tools` 
 
 ## Use speech
 
-`/listen` and Ctrl+Y are currently macOS-only. Recording uses local `ffmpeg` with the AVFoundation audio input and stops when Ctrl+Y is pressed again, when Escape is pressed, or at the 9-minute recording limit. The Gemini limit leaves time for setup and finalization within its 10-minute live session. Startup fails if the microphone produces no audio within 15 seconds. Stopping manually or reaching the recording limit finishes transcription and inserts the transcript at the cursor for review without submitting it.
+`/listen` and Ctrl+Y are currently macOS-only. Recording uses local `ffmpeg` with the AVFoundation audio input and stops when Ctrl+Y is pressed again, when Escape is pressed, or at the 9-minute recording limit. The Gemini limit leaves time for setup and finalization within its 10-minute live session. Startup fails if the microphone produces no audio within 15 seconds. Pressing Enter or Ctrl+Enter while recording stops capture, finishes transcription, and submits the finalized editor text. While a turn is active, Enter steers it and Ctrl+Enter queues another turn, just like normal editor submission. Pressing Ctrl+Y again or reaching the recording limit finishes transcription and inserts the transcript at the cursor for review without submitting it.
 
 Gemini displays a replaceable live preview in muted italic text at the original cursor position. Finalized dictation uses normal text once transcription settles. Its final transcript replaces the preview without duplication. Submitting a draft containing finalized dictation includes hidden guidance that some or all of the message may have been transcribed from speech and may contain transcription errors. The guidance remains after edits and clears when the draft is emptied. Editing stays disabled from recording startup through finalization, and failure restores the original draft. Recording and retries cannot start while another editor update is pending.
 
@@ -207,7 +208,7 @@ Restart the TUI instead after changing client-owned themes, the diff launcher, s
 ## Common mistakes
 
 - `!` and `!!` run in the execution environment, not on the attaching client.
-- Enter during a turn queues another turn. Use Ctrl+Enter to steer the active one.
+- Enter during a turn steers it. Use Ctrl+Enter to queue another turn.
 - Ctrl+T changes visibility only. Use Shift+Tab to change reasoning effort.
 - `/prompt:<id>` fills the editor but does not submit it.
 - `/diff` records returned feedback but does not automatically ask the assistant to act on it.

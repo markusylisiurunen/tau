@@ -115,6 +115,7 @@ import {
 } from "./session_tool_execution_backend.js";
 import { runSpeechPlaybackTask } from "./speech_playback.js";
 import type { ChatMessageModel } from "./ui/chat_message_model.js";
+import type { EditorSubmissionMode } from "./ui/custom_editor.js";
 import type { ToolUiModel } from "./ui/tool_ui_model.js";
 
 export type SessionChatControllerOptions = {
@@ -308,6 +309,11 @@ export class SessionChatController {
       onCtrlP: () => void this.cyclePersonality(),
       onCtrlS: () => void this.stashEditorToClipboard(),
       onCtrlY: () => void this.toggleListenCapture(),
+      onDisabledSubmit: (mode) => {
+        if (this.listenRecording && !this.listenTransition) {
+          void this.runListenTransition(() => this.stopListenCapture(mode));
+        }
+      },
       onCtrlG: () => this.interruptSelectedSubagent(),
       onEscape: () => void this.interrupt(),
       beforeSubmit: (text) => {
@@ -317,8 +323,8 @@ export class SessionChatController {
       },
       onChange: (text) => this.handleEditorChange(text),
       onSubmit: (text) => void this.handleSubmit(text, this.takeHiddenSystemSubmission()),
-      onSteerSubmit: (text) =>
-        void this.submitSteeringMessage(text, this.takeHiddenSystemSubmission()),
+      onQueueSubmit: (text) =>
+        void this.handleSubmit(text, this.takeHiddenSystemSubmission(), "queue"),
       onAltUp: () => void this.cancelPendingMessagesIntoEditor(),
       onAltDown: () => this.cycleSubagentSelection(),
     };
@@ -361,7 +367,11 @@ export class SessionChatController {
     return formatTauUserText({ text, hiddenSystemMessages });
   }
 
-  private async handleSubmit(text: string, hiddenSystemMessages: string[] = []): Promise<void> {
+  private async handleSubmit(
+    text: string,
+    hiddenSystemMessages: string[] = [],
+    mode: EditorSubmissionMode = "steer",
+  ): Promise<void> {
     const trimmed = text.trim();
     if (!trimmed) {
       if (this.isStreaming || this.submittedTurnInProgress) {
@@ -408,7 +418,9 @@ export class SessionChatController {
       if (trimmed.startsWith("!")) {
         return;
       }
-      this.submitQueuedText(this.formatSubmittedText(trimmed, hiddenSystemMessages));
+      const submittedText = this.formatSubmittedText(trimmed, hiddenSystemMessages);
+      if (mode === "steer") this.submitSteeringText(submittedText);
+      else this.submitQueuedText(submittedText);
       return;
     }
 
@@ -649,30 +661,6 @@ export class SessionChatController {
       this.refreshStatus();
       this.view.requestRender();
     }
-  }
-
-  private async submitSteeringMessage(
-    text: string,
-    hiddenSystemMessages: string[] = [],
-  ): Promise<void> {
-    const trimmed = text.trim();
-    if (!trimmed) {
-      return;
-    }
-
-    if (!this.isSessionOperationActive()) {
-      await this.runSessionTurn(() =>
-        this.session.submit(this.formatSubmittedText(trimmed, hiddenSystemMessages)),
-      );
-      return;
-    }
-
-    if (this.isBlockingSessionOperationActive()) {
-      this.view.showFooterNotice("wait for tau to become idle before submitting input", "default");
-      return;
-    }
-
-    this.submitSteeringText(this.formatSubmittedText(trimmed, hiddenSystemMessages));
   }
 
   private submitQueuedText(text: string): void {
@@ -1006,7 +994,7 @@ export class SessionChatController {
     }
   }
 
-  private async stopListenCapture(): Promise<void> {
+  private async stopListenCapture(mode?: EditorSubmissionMode): Promise<void> {
     const recording = this.listenRecording;
     if (!recording) return;
 
@@ -1031,7 +1019,12 @@ export class SessionChatController {
       Math.max(Date.now() - recording.startedAt, 0),
       SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS,
     );
-    await this.transcribeListenAudioFile(recording.audioPath, durationMs, recording.transcription);
+    const transcribed = await this.transcribeListenAudioFile(
+      recording.audioPath,
+      durationMs,
+      recording.transcription,
+    );
+    if (mode && transcribed && !this.disposed) this.view.submitEditor(mode);
   }
 
   private async retryRetainedListenAudio(): Promise<void> {
@@ -1050,9 +1043,9 @@ export class SessionChatController {
       return;
     }
 
-    await this.runListenTransition(() =>
-      this.transcribeListenAudioFile(retainedAudio.audioPath, retainedAudio.durationMs),
-    );
+    await this.runListenTransition(async () => {
+      await this.transcribeListenAudioFile(retainedAudio.audioPath, retainedAudio.durationMs);
+    });
   }
 
   private async discardRetainedListenAudio(): Promise<void> {
@@ -1111,14 +1104,14 @@ export class SessionChatController {
     audioPath: string,
     durationMs: number,
     transcription?: ListenRecording["transcription"],
-  ): Promise<void> {
+  ): Promise<boolean> {
     if (this.disposed) {
       transcription?.abort();
       if (this.retainedListenAudio?.audioPath === audioPath) {
         this.retainedListenAudio = undefined;
       }
       await cleanupListenTempFile(audioPath);
-      return;
+      return false;
     }
     if (!this.listenPreview) this.beginListenPreview();
     const preview = this.listenPreview!;
@@ -1131,7 +1124,7 @@ export class SessionChatController {
           `recording retained at ${audioPath}`,
           "run /listen discard to delete it",
         ]);
-        return;
+        return false;
       }
 
       let audio: Buffer;
@@ -1146,7 +1139,7 @@ export class SessionChatController {
           this.retainedListenAudio = undefined;
         }
         await cleanupListenTempFile(audioPath);
-        return;
+        return false;
       }
 
       if (audio.byteLength < LISTEN_RECORDING_MIN_BYTES) {
@@ -1156,7 +1149,7 @@ export class SessionChatController {
           this.retainedListenAudio = undefined;
         }
         await cleanupListenTempFile(audioPath);
-        return;
+        return false;
       }
 
       if (this.disposed) {
@@ -1165,7 +1158,7 @@ export class SessionChatController {
           this.retainedListenAudio = undefined;
         }
         await cleanupListenTempFile(audioPath);
-        return;
+        return false;
       }
       let activeTranscription = transcription;
       this.listenActivityLabel = "transcribing voice input";
@@ -1177,7 +1170,7 @@ export class SessionChatController {
           audio,
           mimeType: "audio/wav",
         });
-        if (this.listenPreview !== preview) return;
+        if (this.listenPreview !== preview) return false;
         preview.commit(text);
         if (text.trim() && !this.editorHiddenSystemMessages.includes(TRANSCRIPTION_GUIDANCE)) {
           this.editorHiddenSystemMessages.push(TRANSCRIPTION_GUIDANCE);
@@ -1191,6 +1184,7 @@ export class SessionChatController {
             `recording remains at ${audioPath}; delete it manually`,
           ]);
         }
+        return Boolean(text.trim());
       } catch (error) {
         this.retainedListenAudio = { audioPath, durationMs };
         this.view.addTranscriptNotice("failed to transcribe speech", "error", [
@@ -1198,6 +1192,7 @@ export class SessionChatController {
           `recording retained at ${audioPath}`,
           "run /listen retry to try again, or /listen discard to delete it",
         ]);
+        return false;
       } finally {
         activeTranscription?.abort();
         if (this.activeListenTranscription === activeTranscription) {

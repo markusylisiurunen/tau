@@ -11,21 +11,24 @@ import {
   TAU_CLIENT_TOOL_COMMAND_MAX_PROTOCOL_FRAME_BYTES,
   TAU_CLIENT_TOOL_COMMAND_MAX_PROTOCOL_FRAMES,
 } from "../dist/sdk/client_tool_command.js";
-import { createProtocolExecResult } from "./helpers/session_protocol_fixtures.js";
+import {
+  createProtocolExecResult,
+  createProtocolImage,
+} from "./helpers/session_protocol_fixtures.js";
 
 const commandModuleUrl = pathToFileURL(resolve("dist/sdk/index.js")).href;
 const codeModeModuleUrl = pathToFileURL(resolve("dist/code_mode/index.js")).href;
 
 function readyFrame(subject = "notification") {
   return `${JSON.stringify({
-    version: 4,
+    version: 5,
     type: "ready",
     presentation: { subject },
   })}\n`;
 }
 
 function resultFrame(content = "done") {
-  return `${JSON.stringify({ version: 4, type: "result", ok: true, content })}\n`;
+  return `${JSON.stringify({ version: 5, type: "result", ok: true, content: [{ type: "text", text: content }] })}\n`;
 }
 
 function createSpawnResult(overrides = {}) {
@@ -120,6 +123,37 @@ function createContext(overrides = {}) {
 }
 
 describe("command client tools", () => {
+  it("forwards 16 images through the code-mode command helper", async () => {
+    const block = createProtocolImage();
+    const script = [
+      `import { runTauCodeModeCommand } from ${JSON.stringify(codeModeModuleUrl)};`,
+      "await runTauCodeModeCommand({",
+      '  name: "screenshots", documentation: "# Screenshots",',
+      `  api: { take: async () => (${JSON.stringify(block)}) },`,
+      "});",
+    ].join("\n");
+    const [tool] = createCommandClientTools([
+      createConfig({
+        name: "screenshots",
+        parameters: {
+          type: "object",
+          properties: { code: { type: "string" } },
+          required: ["code"],
+          additionalProperties: false,
+        },
+        command: process.execPath,
+        args: ["--input-type=module", "--eval", script],
+      }),
+    ]);
+    const code =
+      'console.log("1"); for (let i = 0; i < 16; i++) await image(await screenshots.take()); console.error("2")';
+    const result = await executeClientTool(tool, { code }, createContext());
+    expect(result).toEqual({
+      content: [{ type: "text", text: "1" }, ...Array(16).fill(block), { type: "text", text: "2" }],
+      presentation: { subject: code, subjectWrap: "character" },
+    });
+  });
+
   it("exposes the execution environment through the command helper", async () => {
     const script = [
       `import { runTauClientToolCommand } from ${JSON.stringify(commandModuleUrl)};`,
@@ -149,7 +183,7 @@ describe("command client tools", () => {
     });
     expect(context.executionEnvironment.exec).not.toHaveBeenCalled();
     await expect(tool.execute(args, context)).resolves.toEqual({
-      content: "hello\nworkspace output",
+      content: [{ type: "text", text: "hello\nworkspace output" }],
       presentation: { metadata: ["workspace"] },
     });
     expect(context.executionEnvironment.exec).toHaveBeenCalledWith("printf workspace", {
@@ -234,7 +268,7 @@ describe("command client tools", () => {
         },
         createContext({ agentId, executionEnvironment }),
       );
-      const output = JSON.parse(result.content);
+      const output = JSON.parse(result.content[0].text);
 
       expect(dirname(output.first.path)).toBe(root);
       expect(output).toMatchObject({
@@ -275,7 +309,7 @@ describe("command client tools", () => {
 
       await expect(executeClientTool(tool, { message: "hello" }, createContext())).resolves.toEqual(
         {
-          content: `${process.cwd()}\ninherited`,
+          content: [{ type: "text", text: `${process.cwd()}\ninherited` }],
         },
       );
     } finally {
@@ -295,14 +329,14 @@ describe("command client tools", () => {
       "const readFrame = async () => JSON.parse((await input.next()).value);",
       "const writeFrame = (frame) => process.stdout.write(JSON.stringify(frame) + '\\n');",
       "const prepare = await readFrame();",
-      "if (prepare.version !== 4 || prepare.type !== 'prepare' || prepare.toolName !== 'system_info') throw new Error('invalid preparation');",
-      "writeFrame({ version: 4, type: 'ready', presentation: { subject: 'raw javascript' } });",
+      "if (prepare.version !== 5 || prepare.type !== 'prepare' || prepare.toolName !== 'system_info') throw new Error('invalid preparation');",
+      "writeFrame({ version: 5, type: 'ready', presentation: { subject: 'raw javascript' } });",
       "const execute = await readFrame();",
-      "if (execute.version !== 4 || execute.type !== 'execute') throw new Error('invalid authorization');",
-      "writeFrame({ version: 4, type: 'exec', requestId: 'status', command: 'git status --short', options: { maxCaptureBytes: 1024 } });",
+      "if (execute.version !== 5 || execute.type !== 'execute') throw new Error('invalid authorization');",
+      "writeFrame({ version: 5, type: 'exec', requestId: 'status', command: 'git status --short', options: { maxCaptureBytes: 1024 } });",
       "const response = await readFrame();",
-      "if (response.version !== 4 || response.type !== 'exec.result' || response.requestId !== 'status' || !response.ok) throw new Error('invalid execution response');",
-      "writeFrame({ version: 4, type: 'result', ok: true, content: response.result.output });",
+      "if (response.version !== 5 || response.type !== 'exec.result' || response.requestId !== 'status' || !response.ok) throw new Error('invalid execution response');",
+      "writeFrame({ version: 5, type: 'result', ok: true, content: [{ type: 'text', text: response.result.output }] });",
       "lines.close();",
     ].join("\n");
     const [tool] = createCommandClientTools([
@@ -319,7 +353,9 @@ describe("command client tools", () => {
     await expect(tool.describe(args, context)).resolves.toMatchObject({
       subject: "raw javascript",
     });
-    await expect(tool.execute(args, context)).resolves.toEqual({ content: "workspace output" });
+    await expect(tool.execute(args, context)).resolves.toEqual({
+      content: [{ type: "text", text: "workspace output" }],
+    });
     expect(context.executionEnvironment.exec).toHaveBeenCalledWith("git status --short", {
       maxCaptureBytes: 1024,
       signal: expect.any(AbortSignal),
@@ -330,16 +366,16 @@ describe("command client tools", () => {
     const script = [
       "IFS= read -r prepare",
       `printf '%s\\n' '${JSON.stringify({
-        version: 4,
+        version: 5,
         type: "ready",
         presentation: { subject: "shell command" },
       })}'`,
       "IFS= read -r execute",
       `printf '%s\\n' '${JSON.stringify({
-        version: 4,
+        version: 5,
         type: "result",
         ok: true,
-        content: "shell result",
+        content: [{ type: "text", text: "shell result" }],
       })}'`,
     ].join("\n");
     const [tool] = createCommandClientTools([
@@ -351,19 +387,23 @@ describe("command client tools", () => {
     await expect(tool.describe(args, context)).resolves.toMatchObject({
       subject: "shell command",
     });
-    await expect(tool.execute(args, context)).resolves.toEqual({ content: "shell result" });
+    await expect(tool.execute(args, context)).resolves.toEqual({
+      content: [{ type: "text", text: "shell result" }],
+    });
   });
 
   it("uses the tool name when a command omits presentation", async () => {
     const spawn = createInteractiveSpawn({
-      beforeExecute: `${JSON.stringify({ version: 4, type: "ready" })}\n`,
+      beforeExecute: `${JSON.stringify({ version: 5, type: "ready" })}\n`,
     });
     const [tool] = createCommandClientTools([createConfig()], createDeps(spawn));
     const context = createContext();
     const args = { message: "hello" };
 
     await expect(tool.describe(args, context)).resolves.toBeUndefined();
-    await expect(tool.execute(args, context)).resolves.toEqual({ content: "done" });
+    await expect(tool.execute(args, context)).resolves.toEqual({
+      content: [{ type: "text", text: "done" }],
+    });
   });
 
   it("starts a configured command with the versioned invocation", async () => {
@@ -372,7 +412,7 @@ describe("command client tools", () => {
     const context = createContext();
 
     await expect(executeClientTool(tool, { message: "hello" }, context)).resolves.toEqual({
-      content: "done",
+      content: [{ type: "text", text: "done" }],
     });
     expect(tool.schema).toEqual({
       name: "notify",
@@ -394,7 +434,7 @@ describe("command client tools", () => {
         stdio: ["pipe", "pipe", "pipe"],
         keepStdinOpen: true,
         input: `${JSON.stringify({
-          version: 4,
+          version: 5,
           type: "prepare",
           sessionId: "session-1",
           agentId: "agent-1",
@@ -431,12 +471,12 @@ describe("command client tools", () => {
     );
   });
 
-  it("requires a version-4 result frame", async () => {
+  it("requires a version-5 result frame", async () => {
     const spawn = createInteractiveSpawn({ afterExecute: "" });
     const [tool] = createCommandClientTools([createConfig()], createDeps(spawn));
 
     await expect(executeClientTool(tool, { message: "hello" }, createContext())).rejects.toThrow(
-      "returned no version-4 result frame",
+      "returned no version-5 result frame",
     );
   });
 
@@ -456,7 +496,7 @@ describe("command client tools", () => {
       { length: TAU_CLIENT_TOOL_COMMAND_MAX_PROTOCOL_FRAMES + 1 },
       (_, index) =>
         JSON.stringify({
-          version: 4,
+          version: 5,
           type: "exec.cancel",
           requestId: String(index),
         }),
@@ -507,7 +547,7 @@ describe("command client tools", () => {
   it("rejects invalid protocol output", async () => {
     const invalidJsonSpawn = createInteractiveSpawn({ beforeExecute: "done\n" });
     const invalidShapeSpawn = createInteractiveSpawn({
-      afterExecute: `${JSON.stringify({ version: 4, type: "result", ok: true, content: "done", extra: true })}\n`,
+      afterExecute: `${JSON.stringify({ version: 5, type: "result", ok: true, content: "done", extra: true })}\n`,
     });
     const oversizedResultSpawn = createInteractiveSpawn({
       afterExecute: resultFrame("x".repeat(1024 * 1024 + 1)),
@@ -531,10 +571,10 @@ describe("command client tools", () => {
     ).rejects.toThrow("invalid JSON protocol framing");
     await expect(
       executeClientTool(invalidShapeTool, { message: "hello" }, createContext()),
-    ).rejects.toThrow("invalid version-4 protocol frame");
+    ).rejects.toThrow("invalid version-5 protocol frame");
     await expect(
       executeClientTool(oversizedResultTool, { message: "hello" }, createContext()),
-    ).rejects.toThrow("invalid version-4 protocol frame");
+    ).rejects.toThrow("invalid version-5 protocol frame");
   });
 
   it("reports timeout and stderr-limit termination", async () => {

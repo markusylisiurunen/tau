@@ -14,6 +14,7 @@ import {
 import {
   createProtocolBootstrap,
   createProtocolExecResult,
+  createProtocolImage,
   createProtocolSnapshot,
 } from "./helpers/session_protocol_fixtures.js";
 
@@ -660,6 +661,29 @@ function snapshotHasUserText(snapshot, text) {
 }
 
 describe("SessionProtocolHandler", () => {
+  it("forwards successful image output to the owning host", async () => {
+    const harness = createHarness();
+    harness.host.completeClientToolCall = vi.fn(() => true);
+    const result = {
+      ok: true,
+      content: [
+        { type: "text", text: "before" },
+        createProtocolImage(),
+        { type: "text", text: "after" },
+      ],
+    };
+    await harness.connection.handleRequest(
+      request("result", "session.clientTool.result", {
+        sessionId: "session-1",
+        callId: "call-1",
+        ...result,
+      }),
+    );
+    expect(harness.host.completeClientToolCall).toHaveBeenCalledWith("session-1", "call-1", result);
+    expect(harness.lines.at(-1).result).toEqual({ accepted: true });
+    await harness.connection.close();
+  });
+
   it("starts without creating an implicit session", async () => {
     const harness = createHarness({ precreate: false });
 

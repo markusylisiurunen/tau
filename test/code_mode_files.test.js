@@ -50,7 +50,7 @@ async function run(code, files, name) {
 }
 
 function parseOutput(result) {
-  return JSON.parse(result.content);
+  return JSON.parse(result.content[0].text);
 }
 
 function rememberRoot(path) {
@@ -71,8 +71,8 @@ describe("code-mode scratch files", () => {
   it("shares real files across code-mode tools and later executions", async () => {
     const files = createFiles();
     const docs = await run("console.log(docs)", files);
-    expect(docs.content).toContain("- `files`: shared UTF-8 scratch files for this agent");
-    expect(docs.content).toContain("## Scratch files");
+    expect(docs.content[0].text).toContain("- `files`: shared UTF-8 scratch files for this agent");
+    expect(docs.content[0].text).toContain("## Scratch files");
 
     const written = parseOutput(
       await run(
@@ -91,7 +91,7 @@ describe("code-mode scratch files", () => {
 
     await expect(
       run('console.log(await files.read("results.json"))', files, "second"),
-    ).resolves.toEqual({ content: "changed by bash" });
+    ).resolves.toEqual({ content: [{ type: "text", text: "changed by bash" }] });
     const listed = parseOutput(await run("console.log(await files.list())", files, "third"));
     expect(listed).toEqual({
       files: [{ name: "results.json", path: written.path, bytes: 15 }],
@@ -102,7 +102,7 @@ describe("code-mode scratch files", () => {
     const stagingRoot = `${root}-staging`;
     writeFileSync(join(stagingRoot, ".tau-write-abandoned"), "partial");
     await expect(run("console.log(await files.list())", files, "fourth")).resolves.toEqual({
-      content: JSON.stringify(listed),
+      content: [{ type: "text", text: JSON.stringify(listed) }],
     });
 
     await run('console.log(await files.remove("results.json"))', files, "fifth");
@@ -163,7 +163,7 @@ describe("code-mode scratch files", () => {
     await expect(
       run('console.log(await files.write("replacement.txt", "x"))', countFiles),
     ).resolves.toEqual({
-      content: expect.stringContaining('"bytes":1'),
+      content: [{ type: "text", text: expect.stringContaining('"bytes":1') }],
     });
 
     const sizeFiles = createFiles();

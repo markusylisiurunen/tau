@@ -19,6 +19,7 @@ import {
   selectCommandClientTools,
 } from "./client_tools.js";
 import type { ConfigDeps } from "./deps.js";
+import { type McpServersConfig, parseMcpServersConfig, resolveMcpServersConfig } from "./mcp.js";
 import type { ConfigLevel } from "./paths.js";
 import { resolveConfigLevels } from "./paths.js";
 import { getVirtualConfigDefaults } from "./virtual_defaults.js";
@@ -38,6 +39,7 @@ export interface Config {
   flySprites?: FlySpritesConfig;
   nook?: NookConfig;
   history?: HistoryConfig;
+  mcpServers?: McpServersConfig;
 }
 
 export type FlySpritesApiConfig = {
@@ -406,6 +408,9 @@ function validateConfigData(
     assignParsedConfigValue(config, errors, "history", historyResult.config, historyResult.errors);
   }
 
+  const mcpResult = parseMcpServersConfig(data.mcpServers, sourceLabel);
+  assignParsedConfigValue(config, errors, "mcpServers", mcpResult.config, mcpResult.errors);
+
   return { config, errors };
 }
 
@@ -757,7 +762,7 @@ function dedupePaths(paths: string[]): string[] {
   return unique;
 }
 
-function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
+function mergeConfigLevels(levels: ConfigLevel[], configs: Config[], home: string): Config {
   const merged: Config = getVirtualConfigDefaults();
   let apiKeys: Config["apiKeys"] | undefined;
   let clientTools: CommandClientToolConfig[] | undefined;
@@ -791,6 +796,12 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
     }
     if (config.history !== undefined) {
       history = { ...config.history };
+    }
+    if (config.mcpServers !== undefined) {
+      merged.mcpServers = {
+        ...merged.mcpServers,
+        ...resolveMcpServersConfig(level, config.mcpServers, home),
+      };
     }
 
     if (config.defaultPersona !== undefined) {
@@ -864,6 +875,7 @@ export function loadConfigWithDiagnostics(
     config: mergeConfigLevels(
       options.levels,
       results.map((result) => result.config),
+      deps.env.home(),
     ),
     errors: [...modelResolverResult.errors, ...results.flatMap((result) => result.errors)],
   };

@@ -73,6 +73,7 @@ describe("sdk npm pack types", () => {
       writeFileSync(
         join(piAiDir, "index.d.ts"),
         [
+          "export type ImageContent = { type: 'image'; data: string; mimeType: string };",
           "export type TextContent = { type: 'text'; text: string };",
           "export type ThinkingContent = { type: 'thinking'; thinking: string };",
           "export type ToolCall = { type: 'tool-call'; id: string; name: string; input: unknown };",
@@ -91,7 +92,7 @@ describe("sdk npm pack types", () => {
           'import { applySessionProtocolDelta, createTauSdkClient, createTauSdkClientFromTransport, createTauSdkWebSocketClient, getTauSdkSessionTurnOutcome, getTauSdkSessionTurnRecord, getTauUserDisplayText, getTauUserModelText, projectTauUserText, runTauClientToolCommand, truncateTauClientToolText } from "@markusylisiurunen/tau/sdk";',
           "",
           "const sdkDelta: TauSdkDelta = {",
-          "  version: 14,",
+          "  version: 15,",
           '  type: "session.delta",',
           '  sessionId: "session-1",',
           "  fromRevision: 1,",
@@ -101,7 +102,7 @@ describe("sdk npm pack types", () => {
           "};",
           "",
           "const sdkReady: TauSdkReadyMessage = {",
-          "  version: 14,",
+          "  version: 15,",
           '  type: "ready",',
           '  methods: ["initialize", "session.submit"],',
           "};",
@@ -242,12 +243,17 @@ describe("sdk npm pack types", () => {
       const validCompileResult = run(process.execPath, [...tscArgs, validFixturePath], {
         cwd: consumerDir,
       });
-      expect(validCompileResult.status).toBe(0);
+      expect(validCompileResult.status, validCompileResult.stdout + validCompileResult.stderr).toBe(
+        0,
+      );
 
       const codeModeCompileResult = run(process.execPath, [...tscArgs, codeModeFixturePath], {
         cwd: consumerDir,
       });
-      expect(codeModeCompileResult.status).toBe(0);
+      expect(
+        codeModeCompileResult.status,
+        codeModeCompileResult.stdout + codeModeCompileResult.stderr,
+      ).toBe(0);
 
       const invalidCompileResult = run(process.execPath, [...tscArgs, invalidFixturePath], {
         cwd: consumerDir,

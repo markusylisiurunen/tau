@@ -35,6 +35,7 @@ Project and global content can change which persona ids are available. A configu
 | `flySprites` | Object | Global, project | Merge APIs by id | Host startup; host restart |
 | `nook` | Object | Global, project | Most-specific complete object | Host tool runtime; `/reload` or new session |
 | `history` | Object | Global only | One global object | Host startup; host restart |
+| `mcpServers` | Object keyed by server name | Global and project | Merge names; nearer entry replaces | Host startup; host restart |
 
 Unknown fields are stripped without warnings. Wrong types and invalid known values produce warnings, and Tau continues with valid fields. A field at a forbidden scope is rejected.
 
@@ -196,6 +197,40 @@ A global-only remote history target:
 ```
 
 Credential precedence is `TAU_HISTORY_API_KEY`, then the variable named by `apiKeyEnv`, then `apiKey`. Configuring an endpoint without an available key prevents the host service from starting. Without `history`, transcript storage and queries remain machine-local. See [history](history.md).
+
+### `mcpServers`
+
+MCP servers are resolved at host startup from the global `~/.config/tau/config.json` and ancestor/project `.tau/config.json` layers for the host's launch directory. Server names accumulate across layers; a nearer definition replaces the entire same-named entry, including credentials. Use `enabled: false` to disable an inherited server. All sessions on that host share the resolved definitions, and subagents inherit their parent's access even in another working directory. Session execution-environment configuration does not contribute servers. Restart the host after changing definitions or credentials; `/reload` does not reload servers.
+
+```json
+{
+  "mcpServers": {
+    "issues": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["example-mcp-server"],
+      "env": { "API_TOKEN": "${ISSUES_TOKEN}" }
+    },
+    "remote": {
+      "type": "http",
+      "url": "https://example.com/mcp",
+      "headers": { "Authorization": "Bearer ${REMOTE_MCP_TOKEN}" }
+    }
+  }
+}
+```
+
+Server names use letters, digits, `_`, and `-`. Every entry requires an explicit `type`:
+
+- `stdio`: requires a non-empty `command`; accepts optional literal `args`, `cwd`, and string-valued `env`.
+- `http`: requires an HTTP(S) `url` without embedded username/password; accepts optional string-valued `headers`. This is streamable HTTP, not the legacy SSE transport.
+- Both accept `enabled` (default `true`), `timeoutMs` for tool calls and resource reads (integer from 1 to 900,000, default 300,000), and `discoveryTimeoutMs` for connection startup and discovery requests (integer from 1 to 60,000, default 30,000). The outer MCP code-mode program has a 15-minute deadline. All calls remain interruptible.
+
+Stdio executables run directly without a shell. Bare commands resolve through the host's `PATH`. Commands containing `/` and relative `cwd` values resolve from the directory owning the defining config layer; `~/` resolves from host home. An omitted `cwd` defaults to the defining layer's directory. Arguments are literal: Tau does not interpolate them or expand shell syntax.
+
+Values in `env` and `headers` can reference host environment variables with `${NAME}`. Missing variables fail connection setup. Command substitution is not supported. Stdio servers inherit the host environment, with `env` overriding matching names. Keep secrets in the host environment rather than committing them to JSON.
+
+Invalid entries are skipped with diagnostics while valid siblings remain configured. OAuth sign-in, MCP prompts, subscriptions, elicitation, sampling, execution-environment servers, and user approval dialogs are not supported. See [tools](tools.md#mcp) for discovery, calls, and result handling.
 
 ## TUI presentation and diff review
 

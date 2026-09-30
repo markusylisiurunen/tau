@@ -40,6 +40,7 @@ view_image
 web
 nook
 history
+mcp
 spawn_agent
 send_input_to_agent
 wait_for_agents
@@ -47,7 +48,7 @@ list_agents
 interrupt_agent
 ```
 
-When a custom persona extends another persona and omits `tools`, it inherits the base persona's list. A non-extending custom persona that omits `tools` enables `bash`, `write`, `edit`, `view_image`, `web`, `nook`, and `history`. It also enables the five subagent-management tools. Built-in personas enable the same base and subagent tool sets.
+When a custom persona extends another persona and omits `tools`, it inherits the base persona's list. A non-extending custom persona that omits `tools` enables `bash`, `write`, `edit`, `view_image`, `web`, `nook`, `history`, and `mcp`. It also enables the five subagent-management tools. Built-in personas enable the same base and subagent tool sets.
 
 An empty list disables every persona-controlled host tool:
 
@@ -147,7 +148,7 @@ Each guide covers setup, input, examples, outputs, and failure behavior. Use `ta
 
 ## Code-mode service tools
 
-`web`, `history`, and `nook` each run a one-shot JavaScript program in Tau's restricted code-mode runtime. They intentionally disclose their exact API at use time rather than embedding signatures in this page.
+`web`, `history`, `nook`, and `mcp` each run a one-shot JavaScript program in Tau's restricted code-mode runtime. They intentionally disclose their exact API at use time rather than embedding signatures in this page.
 
 Tau exposes each service tool with agent-facing guidance that requires its documentation to be visible before API use. When the documentation is absent, the first useful call is a documentation-only program:
 
@@ -155,9 +156,11 @@ Tau exposes each service tool with agent-facing guidance that requires its docum
 console.log(docs);
 ```
 
-After reading that result, the agent uses the documented API in later calls. While the documentation remains visible, it is reused rather than reloaded. The guidance prohibits guessed signatures and signatures copied from another code-mode tool. Program return values are ignored; only console output is returned.
+The agent reuses visible documentation, without guessing or borrowing another tool's signatures. Shared examples show field selection and text-block extraction for concise plain-text output. Return values are ignored; only console text and images forwarded with `await image(block)` enter the result.
 
-Code-mode programs have no direct process, environment, credential, import, timer, network, or `fetch` access. They can call only the named API and use agent-scoped scratch files exposed by the runtime. Calls default to a 60-second deadline, allow at most 128 API requests with no more than eight unresolved at once, and limit each serialized request or response to 1 MiB. Undefined object properties are omitted from API arguments; undefined arguments and array entries are invalid. Console output is middle-truncated above roughly 8,192 estimated tokens.
+Code-mode programs have no direct process, environment, credential, import, timer, network, or `fetch` access. They can call only the named API and use agent-scoped scratch files exposed by the runtime. Programs default to 60 seconds (MCP: 15 minutes), allow 128 API requests with eight unresolved at once, and limit each serialized payload to 16 MiB. Undefined object properties are omitted from API arguments; undefined arguments and array entries are invalid. Console output is middle-truncated above roughly 8,192 estimated tokens.
+
+`await image({ type: "image", data, mimeType })` forwards a base64 image without files. Calls must be awaited before the program exits. JPEG, PNG, and WebP bytes must match the declared MIME type and fit the 16 MiB JSON bridge limit. Source images are limited to 40 megapixels; each program may forward 16 images. Images are resized or re-encoded to fit within 4,096 pixels per dimension and 3.5 MiB each. Adjacent console writes form one text block; awaited images separate the text before and after them. Text truncation keeps images in place. Invalid blocks reject and can be caught. Built-in tools retain valid images if the program later fails.
 
 Scratch files are real UTF-8 files in an execution-environment temporary directory shared by code-mode tools for the same agent. Writes are limited to 128 regular files and 64 MiB total. Scratch state is not stored in the session snapshot. The progressively disclosed documentation gives the exact file API.
 
@@ -179,15 +182,27 @@ The effective history query may be machine-local or backed by a configured remot
 
 The tool is intended for explicit requests to inspect or manage Nook, publish a static artifact or mini-app, or work with Nook KV. Once the built-in documentation is visible, app-authoring work requires a second separate documentation-only call that prints the Nook authoring skill. The agent reads that guide before creating or modifying app files. Nook setup and platform behavior are covered in [Nook](nook.md).
 
+### MCP
+
+`mcp` discovers and calls tools and reads resources from host-configured Model Context Protocol servers. Personas must allow `mcp`, and the host must configure an enabled server. Subagents inherit access; ephemeral threads do not receive it.
+
+Servers use stdio or streamable HTTP. Stdio commands run on the host with its environment; HTTP uses host credentials. Server files need not share the agent's workspace. Supported protocol revisions are `2025-11-25`, `2025-06-18`, `2025-03-26`, and `2024-11-05`, not `2026-07-28`.
+
+`mcp` lists servers, tools, resources, and templates, inspects schemas, calls tools, and reads URIs. `searchTools` ranks tool metadata with BM25, returning matches and per-server errors. Resources return text or base64 data, without automatic context, file writes, or fetching. Only printed text and images enter context. Tools return `{ content, structuredContent?, isError }`; private MCP `_meta` is stripped. `isError: true` is data; protocol failures throw. Calls/reads default to five minutes, configurable to 15; startup/discovery defaults to 30 seconds. Messages are limited to 16 MiB; oversized results fail.
+
+Connections are lazy, shared across sessions, and closed at shutdown. Later requests reconnect. Mutations are not retried. Tool-list changes invalidate cached discovery; resource listings refresh on each call. Restart does not recover connections or calls. Resource subscriptions, prompts, elicitation, and sampling are unsupported.
+
+Servers merge by name from host launch-directory config layers. Restart the host to apply changes. See [configuration reference](config-reference.md#mcpservers) and [security](security.md#trust-mcp-servers).
+
 ## Subagent tool eligibility
 
 A subagent can receive only:
 
 ```text
-bash  write  edit  view_image  web  history  nook
+bash  write  edit  view_image  web  history  nook  mcp
 ```
 
-Tau inherits the intersection of the main persona’s tools and those seven eligible names. `tau_docs` is then added intrinsically. There is no separate child tool selection. Nook is bound only when configured, just as for the parent.
+Tau inherits the intersection of the main persona’s tools and those eight eligible names. `tau_docs` is then added intrinsically. There is no separate child tool selection. Nook and MCP require configuration; MCP uses the parent's host connections.
 
 Subagents do not receive goal tools, subagent-management tools, or client-provided tools. Their Bash and file tools are scoped to the subagent working directory, including an alternate directory selected at launch. See [subagents](subagents.md) for configuration and working-directory context rebuilding.
 

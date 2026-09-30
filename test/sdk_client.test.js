@@ -14,6 +14,7 @@ import {
 import {
   createProtocolBootstrap,
   createProtocolExecResult,
+  createProtocolImage,
   createProtocolSnapshot,
 } from "./helpers/session_protocol_fixtures.js";
 
@@ -886,7 +887,11 @@ describe("sdk_client", () => {
         cwd: "/repo",
       });
       return {
-        content: `picked a from ${execution.output}`,
+        content: [
+          { type: "text", text: `picked a from ${execution.output}` },
+          createProtocolImage(),
+          { type: "text", text: "after" },
+        ],
         presentation: describeClientTool("local_picker", "picked a"),
       };
     });
@@ -971,7 +976,11 @@ describe("sdk_client", () => {
           sessionId: "session-1",
           callId: "call-1",
           ok: true,
-          content: "picked a from raw output",
+          content: [
+            { type: "text", text: "picked a from raw output" },
+            createProtocolImage(),
+            { type: "text", text: "after" },
+          ],
           presentation: describeClientTool("local_picker", "picked a"),
         },
       },

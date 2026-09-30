@@ -1,7 +1,9 @@
 import { createInterface } from "node:readline";
 import { StringDecoder } from "node:string_decoder";
+import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import { z } from "zod";
 import {
+  isSessionProtocolClientToolContent,
   SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES,
   SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAIL_BYTES,
   SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_DETAILS,
@@ -19,9 +21,9 @@ import type {
   TauSdkSessionExecResult,
 } from "./types.js";
 
-export const TAU_CLIENT_TOOL_COMMAND_PROTOCOL_VERSION = 4;
+export const TAU_CLIENT_TOOL_COMMAND_PROTOCOL_VERSION = 5;
 export const TAU_CLIENT_TOOL_COMMAND_MAX_RESULT_BYTES = 1024 * 1024;
-export const TAU_CLIENT_TOOL_COMMAND_MAX_PROTOCOL_FRAME_BYTES = 24 * 1024 * 1024;
+export const TAU_CLIENT_TOOL_COMMAND_MAX_PROTOCOL_FRAME_BYTES = 80 * 1024 * 1024;
 export const TAU_CLIENT_TOOL_COMMAND_MAX_PROTOCOL_BYTES = 192 * 1024 * 1024;
 export const TAU_CLIENT_TOOL_COMMAND_MAX_PROTOCOL_FRAMES = 512;
 
@@ -152,9 +154,14 @@ const resultSchema = z.discriminatedUnion("ok", [
       type: z.literal("result"),
       ok: z.literal(true),
       content: z
-        .string()
+        .custom<Array<TextContent | ImageContent>>(isSessionProtocolClientToolContent)
         .refine(
-          (value) => Buffer.byteLength(value, "utf8") <= TAU_CLIENT_TOOL_COMMAND_MAX_RESULT_BYTES,
+          (value) =>
+            value.reduce(
+              (bytes, part) =>
+                bytes + (part.type === "text" ? Buffer.byteLength(part.text, "utf8") : 0),
+              0,
+            ) <= TAU_CLIENT_TOOL_COMMAND_MAX_RESULT_BYTES,
         ),
       presentation: commandPresentationSchema.optional(),
     })
@@ -209,7 +216,7 @@ const execResponseSchema = z.discriminatedUnion("ok", [
 ]);
 
 export type TauClientToolCommandPrepare = {
-  version: 4;
+  version: 5;
   type: "prepare";
   sessionId: string;
   agentId: string;
@@ -219,12 +226,12 @@ export type TauClientToolCommandPrepare = {
 };
 
 export type TauClientToolCommandExecute = {
-  version: 4;
+  version: 5;
   type: "execute";
 };
 
 export type TauClientToolCommandExecRequest = {
-  version: 4;
+  version: 5;
   type: "exec";
   requestId: string;
   command: string;
@@ -239,7 +246,7 @@ export type TauClientToolCommandExecRequest = {
 };
 
 export type TauClientToolCommandExecCancel = {
-  version: 4;
+  version: 5;
   type: "exec.cancel";
   requestId: string;
 };
@@ -247,21 +254,21 @@ export type TauClientToolCommandExecCancel = {
 export type TauClientToolCommandPresentation = TauClientToolPresentation;
 
 export type TauClientToolCommandReady = {
-  version: 4;
+  version: 5;
   type: "ready";
   presentation?: TauClientToolCommandPresentation;
 };
 
 export type TauClientToolCommandResult =
   | {
-      version: 4;
+      version: 5;
       type: "result";
       ok: true;
-      content: string;
+      content: Array<TextContent | ImageContent>;
       presentation?: TauClientToolCommandPresentation;
     }
   | {
-      version: 4;
+      version: 5;
       type: "result";
       ok: false;
       error: string;
@@ -281,14 +288,14 @@ export type TauClientToolCommandInput =
 
 export type TauClientToolCommandExecResponse =
   | {
-      version: 4;
+      version: 5;
       type: "exec.result";
       requestId: string;
       ok: true;
       result: TauSdkSessionExecResult;
     }
   | {
-      version: 4;
+      version: 5;
       type: "exec.result";
       requestId: string;
       ok: false;
@@ -594,7 +601,7 @@ export async function runTauClientToolCommand(
         version: TAU_CLIENT_TOOL_COMMAND_PROTOCOL_VERSION,
         type: "result",
         ok: true,
-        content,
+        content: typeof content === "string" ? [{ type: "text", text: content }] : content,
         ...(terminalPresentation === undefined ? {} : { presentation: terminalPresentation }),
       });
     }
@@ -617,7 +624,7 @@ export function parseTauClientToolCommandOutput(value: unknown): TauClientToolCo
     .union([readySchema, execRequestSchema, execCancelSchema, resultSchema])
     .safeParse(value);
   if (!parsed.success) {
-    throw new Error("command client tool returned an invalid version-4 protocol frame");
+    throw new Error("command client tool returned an invalid version-5 protocol frame");
   }
   return parsed.data;
 }
@@ -739,7 +746,7 @@ function decodedBase64ByteLength(value: string): number {
 function parsePrepareFrame(line: string): TauClientToolCommandPrepare {
   const parsed = prepareSchema.safeParse(parseJsonLine(line));
   if (!parsed.success) {
-    throw new Error("client-tool command received an invalid version-4 preparation");
+    throw new Error("client-tool command received an invalid version-5 preparation");
   }
   return parsed.data;
 }

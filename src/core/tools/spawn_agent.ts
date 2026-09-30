@@ -4,6 +4,7 @@ import { Type } from "typebox";
 import { z } from "zod";
 import type { Config } from "../config/index.js";
 import type { HistoryQuery } from "../history/types.js";
+import type { McpManager } from "../mcp/manager.js";
 import type { ModelResolver } from "../models/catalog.js";
 import type { AgentSupervisor } from "../subagents/agent_supervisor.js";
 import { formatSpawnAgentResult } from "../subagents/format.js";
@@ -130,6 +131,7 @@ export function createSpawnAgentToolDefinition(options: {
   modelResolver: ModelResolver;
   subagentSystemPrompt: string | undefined;
   history: HistoryQuery;
+  mcp?: McpManager;
   cwd: string;
   resolveSubagentPrompt?: ResolveSubagentPrompt;
 }): AgentTool {
@@ -309,6 +311,7 @@ export function createSpawnAgentToolDefinition(options: {
               backend,
               bashJobs: options.bashJobs,
               history: options.history,
+              mcp: options.mcp,
               personaId: persona.id,
             });
           } catch (error) {

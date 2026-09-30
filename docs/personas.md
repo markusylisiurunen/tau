@@ -101,10 +101,10 @@ If a standalone custom persona omits `skills`, Tau selects all discovered skills
 
 The persona-controlled tool names are:
 
-- `bash`, `write`, `edit`, `view_image`, `web`, `nook`, and `history`;
+- `bash`, `write`, `edit`, `view_image`, `web`, `nook`, `history`, and `mcp`;
 - `spawn_agent`, `send_input_to_agent`, `wait_for_agents`, `list_agents`, and `interrupt_agent`.
 
-An explicit `tools` array replaces defaults. Names are normalized to lowercase, duplicates are removed, and unknown names reject the persona. `tools: []` leaves the persona without these persona-controlled tools. Some host capabilities, such as goal management, are supplied independently of this list. Listing `nook` does not make it usable without effective Nook configuration. [Tools](tools.md) explains eligibility and ownership.
+An explicit `tools` array replaces defaults. Names are normalized to lowercase, duplicates are removed, and unknown names reject the persona. `tools: []` leaves the persona without these persona-controlled tools. Some host capabilities, such as goal management, are supplied independently of this list. Listing `nook` does not make it usable without effective Nook configuration. Listing `mcp` requires enabled MCP servers configured on the host. [Tools](tools.md) explains eligibility and ownership.
 
 ## Extending a built-in
 

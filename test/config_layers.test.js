@@ -519,3 +519,69 @@ describe("config paths", () => {
     }
   });
 });
+
+describe("MCP host configuration", () => {
+  it("merges host launch-directory layers by server name and resolves paths at their defining layer", () => {
+    const fx = setupFixture();
+    try {
+      const repo = join(fx.home, "repo");
+      mkdirSync(join(fx.home, ".config", "tau"), { recursive: true });
+      mkdirSync(join(repo, ".tau"), { recursive: true });
+      writeFileSync(
+        join(fx.home, ".config", "tau", "config.json"),
+        JSON.stringify({
+          mcpServers: {
+            local: {
+              type: "stdio",
+              command: "./bin/mcp",
+              cwd: "~/services",
+              env: { TOKEN: `\${HOST_TOKEN}` },
+            },
+            remote: {
+              type: "http",
+              url: "https://example.com/mcp",
+              headers: { Authorization: `Bearer \${HOST_TOKEN}` },
+            },
+            disabled: { type: "stdio", command: "uvx", enabled: false },
+            invalid: { type: "http", url: "https://user:private-secret@example.com/mcp" },
+            mixed: { type: "stdio", command: "server", url: "https://example.com" },
+          },
+        }),
+      );
+      writeFileSync(
+        join(repo, ".tau", "config.json"),
+        JSON.stringify({
+          mcpServers: {
+            local: { type: "stdio", command: "./project-mcp", cwd: "~/project-services" },
+            project: { type: "stdio", command: "uvx" },
+            disabled: { type: "stdio", command: "disabled-project", enabled: false },
+          },
+        }),
+      );
+      const deps = createConfigDeps({ cwd: repo, home: fx.home, env: {} });
+      const levels = resolveConfigLevels(deps, { cwd: repo });
+      const result = loadConfigWithDiagnostics(deps, {
+        levels,
+        modelResolver: loadModelResolver({ deps, levels }),
+      });
+      expect(result.config.mcpServers).toEqual({
+        local: {
+          type: "stdio",
+          command: join(repo, "project-mcp"),
+          cwd: join(fx.home, "project-services"),
+        },
+        remote: {
+          type: "http",
+          url: "https://example.com/mcp",
+          headers: { Authorization: `Bearer \${HOST_TOKEN}` },
+        },
+        disabled: { type: "stdio", command: "disabled-project", cwd: repo, enabled: false },
+        project: { type: "stdio", command: "uvx", cwd: repo },
+      });
+      expect(result.errors).toHaveLength(2);
+      expect(result.errors.join("\n")).not.toContain("private-secret");
+    } finally {
+      fx.cleanup();
+    }
+  });
+});

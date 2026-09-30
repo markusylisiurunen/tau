@@ -1,5 +1,6 @@
 import type { Config } from "../config/index.js";
 import type { HistoryQuery } from "../history/types.js";
+import { McpManager } from "../mcp/manager.js";
 import type { ModelResolver } from "../models/catalog.js";
 import { AgentSupervisor } from "../subagents/agent_supervisor.js";
 import type { SubagentToolName } from "../subagents/types.js";
@@ -12,6 +13,7 @@ import { createGoalToolDefinitions, type GoalManager } from "./goal.js";
 import { createHistoryToolDefinition } from "./history.js";
 import { createInterruptAgentToolDefinition } from "./interrupt_agent.js";
 import { createListAgentsToolDefinition } from "./list_agents.js";
+import { createMcpToolDefinition } from "./mcp.js";
 import { createNookToolDefinition } from "./nook.js";
 import { ToolRegistry } from "./registry.js";
 import { createSendInputToAgentToolDefinition } from "./send_input_to_agent.js";
@@ -21,6 +23,7 @@ import {
   TOOL_NAME_BASH,
   TOOL_NAME_EDIT,
   TOOL_NAME_HISTORY,
+  TOOL_NAME_MCP,
   TOOL_NAME_NOOK,
   TOOL_NAME_VIEW_IMAGE,
   TOOL_NAME_WEB,
@@ -42,6 +45,7 @@ export const ToolCatalog = {
   }): ToolRegistry {
     return this.createSessionRegistry({
       ...options,
+      mcp: new McpManager(options.config.mcpServers),
       bashJobs: new BashJobRegistry(),
       goalManager: {
         getGoal: () => null,
@@ -68,6 +72,7 @@ export const ToolCatalog = {
     goalManager: GoalManager;
     bashJobs: BashJobRegistry;
     history: HistoryQuery;
+    mcp?: McpManager;
     resolveSubagentPrompt?: ResolveSubagentPrompt;
   }): ToolRegistry {
     const tools = [
@@ -86,6 +91,7 @@ export const ToolCatalog = {
         modelResolver: options.modelResolver,
         subagentSystemPrompt: options.subagentSystemPrompt,
         history: options.history,
+        mcp: options.mcp,
         cwd: options.cwd,
         ...(options.resolveSubagentPrompt
           ? { resolveSubagentPrompt: options.resolveSubagentPrompt }
@@ -96,6 +102,9 @@ export const ToolCatalog = {
       createListAgentsToolDefinition(options.supervisor),
       createInterruptAgentToolDefinition(options.supervisor),
     ];
+    if (options.mcp?.available) {
+      tools.push(createMcpToolDefinition(options.backend, options.mcp));
+    }
     if (options.config.nook) {
       tools.push(createNookToolDefinition(options.backend, options.config));
     }
@@ -117,6 +126,7 @@ export const ToolCatalog = {
     config: Config,
     bashJobs: BashJobRegistry,
     history?: HistoryQuery,
+    mcp?: McpManager,
   ): ToolRegistry {
     const scopedBackend = scopeToolExecutionBackend(backend, cwd);
     const definitions = [];
@@ -144,6 +154,11 @@ export const ToolCatalog = {
         case TOOL_NAME_NOOK:
           if (config.nook) {
             definitions.push(createNookToolDefinition(scopedBackend, config));
+          }
+          break;
+        case TOOL_NAME_MCP:
+          if (mcp?.available) {
+            definitions.push(createMcpToolDefinition(scopedBackend, mcp));
           }
           break;
         case TOOL_NAME_HISTORY:

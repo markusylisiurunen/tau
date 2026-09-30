@@ -7,6 +7,7 @@ import type {
   SessionProtocolClientToolCancelMessage,
   SessionProtocolClientToolDefinition,
   SessionProtocolClientToolPresentation,
+  SessionProtocolClientToolResult,
   SessionProtocolCompactParams,
   SessionProtocolCompactResult,
   SessionProtocolCreateParams,
@@ -162,9 +163,7 @@ export type TauSessionHost = {
   completeClientToolCall?(
     sessionId: string,
     callId: string,
-    result:
-      | { ok: true; content: string; presentation?: SessionProtocolClientToolPresentation }
-      | { ok: false; error: string; presentation?: SessionProtocolClientToolPresentation },
+    result: SessionProtocolClientToolResult,
   ): boolean;
   shutdown(): Promise<void>;
 };

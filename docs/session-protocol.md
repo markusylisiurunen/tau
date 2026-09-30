@@ -18,7 +18,7 @@ The server sends `ready` as its first message:
 
 ```json
 {
-  "version": 14,
+  "version": 15,
   "type": "ready",
   "methods": ["initialize", "session.create", "session.list"]
 }
@@ -30,7 +30,7 @@ After `ready`, send `initialize` with non-empty client metadata:
 
 ```json
 {
-  "version": 14,
+  "version": 15,
   "type": "request",
   "id": "init-1",
   "method": "initialize",
@@ -50,7 +50,7 @@ Every request has the same envelope:
 
 ```json
 {
-  "version": 14,
+  "version": 15,
   "type": "request",
   "id": "req-42",
   "method": "session.snapshot",
@@ -64,7 +64,7 @@ Successful responses echo the request id:
 
 ```json
 {
-  "version": 14,
+  "version": 15,
   "type": "response",
   "id": "req-42",
   "ok": true,
@@ -130,7 +130,7 @@ Observed snapshot changes arrive as `session.delta`:
 
 ```json
 {
-  "version": 14,
+  "version": 15,
   "type": "session.delta",
   "sessionId": "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3",
   "fromRevision": 8,
@@ -168,7 +168,7 @@ Not all observed state belongs in the recoverable snapshot. Each live channel ha
 
 ```json
 {
-  "version": 14,
+  "version": 15,
   "type": "session.pendingUserMessages",
   "sessionId": "...",
   "state": {
@@ -205,7 +205,7 @@ An initialized client that advertised a tool can receive:
 
 ```json
 {
-  "version": 14,
+  "version": 15,
   "type": "session.clientTool.call",
   "sessionId": "...",
   "agentId": "main",
@@ -217,7 +217,7 @@ An initialized client that advertised a tool can receive:
 }
 ```
 
-Acknowledge promptly with `session.clientTool.ack`, optionally including a bounded partial running presentation. Begin execution only after the acknowledgement returns `{ accepted: true }`, then send exactly one `session.clientTool.result` with either `{ ok: true, content }` or `{ ok: false, error }` and an optional independent terminal presentation. Both presentation objects may contain `subject`, `subjectWrap`, `details`, and `metadata`; the host owns action and operation and supplies every omitted field. Explicit fields are preserved unchanged after protocol safety validation, while generated defaults use Tau's canonical display truncation. Empty detail or metadata arrays suppress those defaults.
+Acknowledge promptly with `session.clientTool.ack`, optionally including a bounded partial running presentation. Begin execution only after the acknowledgement returns `{ accepted: true }`, then send exactly one `session.clientTool.result` with either `{ ok: true, content }` or `{ ok: false, error }` and an optional independent terminal presentation. Successful `content` is an ordered array of text/image blocks. Both presentation objects may contain `subject`, `subjectWrap`, `details`, and `metadata`; the host owns action and operation and supplies every omitted field. Explicit fields are preserved unchanged after protocol safety validation, while generated defaults use Tau's canonical display truncation. Empty detail or metadata arrays suppress those defaults.
 
 A successful result is rejected until acknowledgement has completed. If preparation itself fails, send an error result before acknowledgement; the host records it as a preparation failure without authorizing execution. If no result arrives because of timeout, cancellation, detach, or another failure, the host renders a complete fallback terminal presentation. The result method returns `{ accepted: boolean }`; `false` means the message is invalid for the call's current state or the call is no longer waiting for it.
 
@@ -229,7 +229,7 @@ Error responses use `ok: false`:
 
 ```json
 {
-  "version": 14,
+  "version": 15,
   "type": "response",
   "id": "req-42",
   "ok": false,

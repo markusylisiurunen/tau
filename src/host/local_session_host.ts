@@ -12,6 +12,7 @@ import {
   userHistoryEntry,
 } from "../core/history/transcript.js";
 import type { HistoryRemoteTarget } from "../core/history/types.js";
+import { McpManager } from "../core/mcp/manager.js";
 import type { ModelResolver } from "../core/models/catalog.js";
 import type { RemoteModelCatalogSnapshot } from "../core/models/remote_catalog.js";
 import type { PromptTemplate } from "../core/prompts.js";
@@ -46,6 +47,7 @@ import type {
   SessionProtocolAutocompletePathsResult,
   SessionProtocolChange,
   SessionProtocolClientToolPresentation,
+  SessionProtocolClientToolResult,
   SessionProtocolCompactParams,
   SessionProtocolCompactResult,
   SessionProtocolContentCatalogSnapshot,
@@ -155,6 +157,7 @@ export type LocalSessionHostOptions = LocalSessionHostSessionOptions & {
   store: SessionStore;
   history: HistoryManager;
   historyRemote?: HistoryRemoteTarget;
+  mcpServers?: Config["mcpServers"];
   onShutdown?: () => Promise<void>;
 };
 
@@ -177,12 +180,14 @@ export class LocalSessionHost implements TauSessionHost {
   private readonly historyRemote?: HistoryRemoteTarget;
   private readonly onShutdown?: () => Promise<void>;
   private readonly clientToolBroker = new ClientToolBroker();
+  private readonly mcp: McpManager;
   private readonly sessionOptions: LocalSessionHostSessionOptions;
   private shutdownPromise?: Promise<void>;
   private shuttingDown = false;
 
   constructor(options: LocalSessionHostOptions) {
-    const { store, history, historyRemote, onShutdown, ...sessionOptions } = options;
+    const { store, history, historyRemote, mcpServers, onShutdown, ...sessionOptions } = options;
+    this.mcp = new McpManager(mcpServers);
     this.store = store;
     this.history = history;
     this.historyRemote = historyRemote;
@@ -205,9 +210,7 @@ export class LocalSessionHost implements TauSessionHost {
   completeClientToolCall(
     sessionId: string,
     callId: string,
-    result:
-      | { ok: true; content: string; presentation?: SessionProtocolClientToolPresentation }
-      | { ok: false; error: string; presentation?: SessionProtocolClientToolPresentation },
+    result: SessionProtocolClientToolResult,
   ): boolean {
     return this.clientToolBroker.result(sessionId, callId, result);
   }
@@ -348,6 +351,7 @@ export class LocalSessionHost implements TauSessionHost {
         updateGoal: async (update) => await hostedSession.updateGoal(update),
       },
       history: this.history.query(this.historyRemote),
+      mcp: this.mcp,
       initialPromptComposition: committedSnapshot
         ? promptCompositionFromSnapshot(committedSnapshot)
         : undefined,
@@ -653,6 +657,11 @@ export class LocalSessionHost implements TauSessionHost {
     }
     this.sessionEvictions.clear();
 
+    try {
+      await this.mcp.close();
+    } catch (error) {
+      errors.push(error);
+    }
     try {
       await this.history.flush();
     } catch (error) {

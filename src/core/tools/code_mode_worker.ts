@@ -6,7 +6,7 @@ import { type BashExecutionResult, DEFAULT_COMMAND_CAPTURE_BYTES } from "./execu
 
 export const CODE_MODE_MAX_BRIDGE_REQUESTS = 128;
 export const CODE_MODE_MAX_CONCURRENT_BRIDGE_REQUESTS = 8;
-export const CODE_MODE_MAX_BRIDGE_PAYLOAD_BYTES = 1024 * 1024;
+export const CODE_MODE_MAX_BRIDGE_PAYLOAD_BYTES = 16 * 1024 * 1024;
 
 const CODE_MODE_HANDLER_DRAIN_TIMEOUT_MS = 1_000;
 
@@ -24,6 +24,7 @@ type CodeModeWorkerOptions = {
   signal: AbortSignal;
   timeoutMs: number;
   handleRequest(request: CodeModeBridgeRequest, signal: AbortSignal): Promise<string>;
+  onOutput(text: string): void;
 };
 
 function appendCapture(current: string, chunk: string): string {
@@ -59,6 +60,7 @@ export function executeCodeModeWorker(
     const worker = new Worker(options.sandboxRunnerUrl, {
       workerData: {
         ...options.workerData,
+        maxCaptureBytes: DEFAULT_COMMAND_CAPTURE_BYTES,
         maxBridgeRequests: CODE_MODE_MAX_BRIDGE_REQUESTS,
         maxConcurrentBridgeRequests: CODE_MODE_MAX_CONCURRENT_BRIDGE_REQUESTS,
         maxBridgePayloadBytes: CODE_MODE_MAX_BRIDGE_PAYLOAD_BYTES,
@@ -98,6 +100,7 @@ export function executeCodeModeWorker(
     const appendOutput = (target: "stdout" | "stderr", text: string): void => {
       if (!text) return;
       output = appendCapture(output, text);
+      options.onOutput(text);
       if (target === "stdout") {
         stdout = appendCapture(stdout, text);
       } else {
@@ -156,6 +159,39 @@ export function executeCodeModeWorker(
     worker.stderr.on("data", (chunk: Buffer) => capture("stderr", stderrDecoder, chunk));
     worker.on("message", (message: unknown) => {
       if (settled || terminating || workerError) return;
+      if (
+        typeof message === "object" &&
+        message !== null &&
+        "type" in message &&
+        message.type === "output"
+      ) {
+        const entry = message as Record<string, unknown>;
+        if (
+          typeof entry.id !== "number" ||
+          !Number.isSafeInteger(entry.id) ||
+          entry.id <= 0 ||
+          typeof entry.text !== "string" ||
+          typeof entry.stdout !== "string" ||
+          typeof entry.stderr !== "string" ||
+          typeof entry.bytes !== "number" ||
+          !Number.isSafeInteger(entry.bytes) ||
+          entry.bytes < Buffer.byteLength(entry.text) ||
+          Buffer.byteLength(entry.text) > DEFAULT_COMMAND_CAPTURE_BYTES ||
+          Buffer.byteLength(entry.stdout) > DEFAULT_COMMAND_CAPTURE_BYTES ||
+          Buffer.byteLength(entry.stderr) > DEFAULT_COMMAND_CAPTURE_BYTES
+        ) {
+          failWorker(new Error("code-mode sandbox sent invalid console output"));
+          return;
+        }
+        capturedBytes += entry.bytes;
+        if (capturedBytes > DEFAULT_COMMAND_CAPTURE_BYTES) truncated = true;
+        output = appendCapture(output, entry.text);
+        stdout = appendCapture(stdout, entry.stdout);
+        stderr = appendCapture(stderr, entry.stderr);
+        options.onOutput(entry.text);
+        postResponse({ type: "output.ack", id: entry.id });
+        return;
+      }
       if (!isWorkerRequest(message)) {
         failWorker(new Error("code-mode sandbox sent an invalid bridge request"));
         return;

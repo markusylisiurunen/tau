@@ -199,7 +199,6 @@ export function createCodeModeToolDefinition<TArgs>(
                   ),
                 }
               : outputPresentation;
-            const outcome = createTextToolOutcome(runtime.result.content, semanticOutcome);
             const uiEvent: ToolActivity = {
               type: "code_mode_finished",
               toolCallId: toolCall.id,
@@ -207,7 +206,11 @@ export function createCodeModeToolDefinition<TArgs>(
               presentation,
               status: isError ? "error" : "success",
             };
-            return { content: outcome.content, outcome: outcome.outcome, uiEvent };
+            return {
+              content: runtime.result.content,
+              outcome: semanticOutcome,
+              uiEvent,
+            };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
             return blocked(`Could not execute program: ${errorMessage}`, "failed");

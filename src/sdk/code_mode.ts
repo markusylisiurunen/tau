@@ -35,7 +35,8 @@ export function createTauCodeModeClientTool(
         properties: {
           code: {
             type: "string",
-            description: "JavaScript source to execute. Use console output to return information.",
+            description:
+              "JavaScript source to execute. Use console output for text and await image(block) to return images.",
           },
         },
         required: ["code"],

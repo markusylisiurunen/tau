@@ -33,6 +33,7 @@ import {
   createProtocolBootstrap,
   createProtocolCatalog,
   createProtocolExecResult,
+  createProtocolImage,
   createProtocolSnapshot,
 } from "./helpers/session_protocol_fixtures.js";
 
@@ -40,6 +41,48 @@ const bootstrap = createProtocolBootstrap();
 const catalog = createProtocolCatalog();
 
 describe("session_protocol", () => {
+  it("preserves bounded client-tool images and rejects invalid image output", () => {
+    const image = createProtocolImage();
+    const params = {
+      sessionId: "session-1",
+      callId: "call-1",
+      ok: true,
+      content: [{ type: "text", text: "before" }, image, { type: "text", text: "after" }],
+    };
+    expect(validateSessionProtocolParams("session.clientTool.result", params)).toEqual({
+      ok: true,
+      value: params,
+    });
+    expect(
+      validateSessionProtocolParams("session.clientTool.result", {
+        ...params,
+        content: Array(16).fill(image),
+      }).ok,
+    ).toBe(true);
+    for (const images of [
+      Array(1025).fill({ type: "text", text: "" }),
+      Array(17).fill(image),
+      [createProtocolImage({ data: "invalid" })],
+      [createProtocolImage({ mimeType: "image/gif" })],
+      [createProtocolImage({ data: Buffer.alloc(3.5 * 1024 * 1024 + 1).toString("base64") })],
+    ]) {
+      expect(
+        validateSessionProtocolParams("session.clientTool.result", { ...params, content: images })
+          .ok,
+      ).toBe(false);
+    }
+    expect(
+      validateSessionProtocolParams("session.clientTool.result", {
+        ...params,
+        ok: false,
+        error: "failed",
+      }),
+    ).toEqual({
+      ok: true,
+      value: { sessionId: "session-1", callId: "call-1", ok: false, error: "failed" },
+    });
+  });
+
   it.each([
     ["req-1", "session.submit", { sessionId: "session-1", text: "hello" }],
     ["req-2", "session.list", {}],
@@ -863,7 +906,7 @@ describe("session_protocol", () => {
         sessionId: "session-1",
         callId: "call-1",
         ok: true,
-        content: "picked",
+        content: [{ type: "text", text: "picked" }],
         presentation: { details: [], metadata: [] },
       }),
     ).toEqual({
@@ -872,7 +915,7 @@ describe("session_protocol", () => {
         sessionId: "session-1",
         callId: "call-1",
         ok: true,
-        content: "picked",
+        content: [{ type: "text", text: "picked" }],
         presentation: { details: [], metadata: [] },
       },
     });

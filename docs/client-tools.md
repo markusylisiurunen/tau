@@ -117,7 +117,7 @@ Diff review uses Tau’s built-in browser tool on the TUI machine, separately fr
 
 ## Implement a command tool with Tau's helper
 
-Command client tools use Tau's version 4 bidirectional NDJSON protocol over stdin and stdout. Use the exported helper instead of implementing framing manually:
+Command client tools use Tau's version 5 bidirectional NDJSON protocol over stdin and stdout. Use the exported helper instead of implementing framing manually:
 
 ```ts
 import {
@@ -168,34 +168,34 @@ Each detail or metadata entry is a single protocol line, so use `maxLines: 1` wh
 
 `runTauClientToolCommand` reads the preparation, writes readiness and any running presentation, waits until the host accepts the call, then provides the standard execution context and writes the final result. It handles execution-environment request and cancellation framing and reacts to `SIGINT`, `SIGTERM`, and protocol input closure by aborting the handler.
 
-Reserve stdout for the helper's protocol. Write diagnostics to stderr. Return a string or `{ content, presentation? }` for success. Return `{ ok: false, error, presentation? }` for a structured tool failure. Successful content and failure text become model-visible tool results.
+Reserve stdout for the helper's protocol. Write diagnostics to stderr. Return a string or `{ content, presentation? }` for success. Return `{ ok: false, error, presentation? }` for a structured tool failure. `content` may be a string or ordered text/image blocks; the helper wraps strings in text blocks.
 
-### Version 4 frame reference
+### Version 5 frame reference
 
-The shapes below use TypeScript notation. Serialize each frame as one exact JSON object followed by a newline; unknown fields are invalid.
+Write each frame as one JSON object and a newline; unknown fields are invalid.
 
 Tau starts the exchange by writing:
 
-- `{ version: 4, type: "prepare", sessionId, agentId, callId, toolName, arguments }` exactly once. The identity fields are non-empty strings and `arguments` is the validated model input.
-- `{ version: 4, type: "execute" }` after accepting the command's ready frame. This authorizes execution.
+- `{ version: 5, type: "prepare", sessionId, agentId, callId, toolName, arguments }` exactly once. The identity fields are non-empty strings and `arguments` is the validated model input.
+- `{ version: 5, type: "execute" }` after accepting the command's ready frame. This authorizes execution.
 
 The command writes:
 
-- `{ version: 4, type: "ready", presentation?: PresentationOverride }` exactly once after preparation.
-- `{ version: 4, type: "result", ok: true, content, presentation?: PresentationOverride }` or `{ version: 4, type: "result", ok: false, error, presentation?: PresentationOverride }` exactly once after authorization. `content` and `error` are strings.
+- `{ version: 5, type: "ready", presentation?: PresentationOverride }` exactly once after preparation.
+- `{ version: 5, type: "result", ok: true, content, presentation?: PresentationOverride }` or `{ version: 5, type: "result", ok: false, error, presentation?: PresentationOverride }` exactly once after authorization. `error` is a string. `content` is an ordered array of at most 1,024 text (`{ type: "text", text }`) or image (`{ type: "image", data, mimeType }`) blocks. At most 16 images are allowed: padded base64, at most 3.5 MiB decoded each, JPEG/PNG/WebP MIME types.
 
-During authorized execution, the command may write `{ version: 4, type: "exec", requestId, command, options }`. The non-empty `command` string runs in the session execution environment. `options` is required and may contain `args: string[]`, `env: Record<string, string>`, base64-encoded string `stdinBase64`, string `cwd`, positive integer `timeoutMs`, and positive integer `maxCaptureBytes`.
+During authorized execution, the command may write `{ version: 5, type: "exec", requestId, command, options }`. The non-empty `command` string runs in the session execution environment. `options` is required and may contain `args: string[]`, `env: Record<string, string>`, base64-encoded string `stdinBase64`, string `cwd`, positive integer `timeoutMs`, and positive integer `maxCaptureBytes`.
 
 Tau answers with the same `requestId` and either:
 
-- `{ version: 4, type: "exec.result", requestId, ok: true, result: ExecResult }`
-- `{ version: 4, type: "exec.result", requestId, ok: false, error: string }`
+- `{ version: 5, type: "exec.result", requestId, ok: true, result: ExecResult }`
+- `{ version: 5, type: "exec.result", requestId, ok: false, error: string }`
 
-`ExecResult` contains string `output`, `stdout`, and `stderr`; nullable `exitCode` and `closeSignal`; and boolean `truncated`, `timedOut`, and `aborted`. A command may cancel one unresolved request with `{ version: 4, type: "exec.cancel", requestId }`. Request IDs must be non-empty strings and cannot be reused within a call.
+`ExecResult` contains string `output`, `stdout`, and `stderr`; nullable `exitCode` and `closeSignal`; and boolean `truncated`, `timedOut`, and `aborted`. A command may cancel one unresolved request with `{ version: 5, type: "exec.cancel", requestId }`. Request IDs must be non-empty strings and cannot be reused within a call.
 
 ### Implement the protocol directly in JavaScript
 
-A JavaScript command can implement the version 4 handshake using only Node.js built-ins, without importing Tau or the code-mode package:
+A JavaScript command can implement the version 5 handshake using only Node.js built-ins, without importing Tau or the code-mode package:
 
 ```js
 #!/usr/bin/env node
@@ -221,7 +221,7 @@ function writeFrame(frame) {
 
 const prepare = await readFrame();
 if (
-  prepare.version !== 4 ||
+  prepare.version !== 5 ||
   prepare.type !== "prepare" ||
   prepare.toolName !== "system_info"
 ) {
@@ -229,7 +229,7 @@ if (
 }
 
 writeFrame({
-  version: 4,
+  version: 5,
   type: "ready",
   presentation: {
     subject: "local system",
@@ -237,12 +237,12 @@ writeFrame({
 });
 
 const execute = await readFrame();
-if (execute.version !== 4 || execute.type !== "execute") {
+if (execute.version !== 5 || execute.type !== "execute") {
   throw new Error("Invalid system_info authorization");
 }
 
 writeFrame({
-  version: 4,
+  version: 5,
   type: "exec",
   requestId: "git-status",
   command: "git status --short",
@@ -253,7 +253,7 @@ writeFrame({
 
 const response = await readFrame();
 if (
-  response.version !== 4 ||
+  response.version !== 5 ||
   response.type !== "exec.result" ||
   response.requestId !== "git-status"
 ) {
@@ -265,10 +265,10 @@ const localSystem = `${platform()} ${release()} ${arch()}`;
 const workspaceStatus =
   response.result.output.trim() || "Working tree is clean.";
 writeFrame({
-  version: 4,
+  version: 5,
   type: "result",
   ok: true,
-  content: `${localSystem}\n\n${workspaceStatus}`,
+  content: [{ type: "text", text: `${localSystem}\n\n${workspaceStatus}` }],
   presentation: {
     subject: "local system",
   },
@@ -291,13 +291,13 @@ set -euo pipefail
 
 IFS= read -r prepare
 jq -e '
-  .version == 4 and
+  .version == 5 and
   .type == "prepare" and
   .toolName == "system_info"
 ' >/dev/null <<<"$prepare"
 
 jq -cn '{
-  version: 4,
+  version: 5,
   type: "ready",
   presentation: {
     subject: "local system"
@@ -305,14 +305,14 @@ jq -cn '{
 }'
 
 IFS= read -r execute
-jq -e '.version == 4 and .type == "execute"' >/dev/null <<<"$execute"
+jq -e '.version == 5 and .type == "execute"' >/dev/null <<<"$execute"
 
 content=$(uname -a)
 jq -cn --arg content "$content" '{
-  version: 4,
+  version: 5,
   type: "result",
   ok: true,
-  content: $content
+  content: [{type: "text", text: $content}]
 }'
 ```
 
@@ -380,17 +380,19 @@ Tau exports two higher-level helpers for client tools that expose a bounded Java
 
 For an executable configured through `clientTools`, keep the exact parameters schema to one required `code` string with no additional properties, then call `runTauCodeModeCommand` in the executable. For SDK clients, pass the returned tool from `createTauCodeModeClientTool` in the client's `clientTools` array.
 
-Both helpers supply the invocation identities, cancellation signal, execution-environment facade, progressive `docs` value, bounded API bridge, and agent-scoped scratch files. They use the submitted code, concisely truncated and character-wrapped, as the running and terminal tool-card subject. The model-facing description remains explicit caller input. Use Tau's optional shared description builder only when its progressive-disclosure wording fits the tool; Tau does not silently rewrite a configured description.
+Both helpers supply invocation identities, cancellation, the execution-environment facade, `docs`, the API bridge, and scratch files. Code is the truncated, character-wrapped subject for both card phases. Descriptions are caller input; the shared builder is optional.
 
-The generic code-mode runtime is documented through its exported types and generated tool documentation. Do not layer another unbounded process or network channel behind it without making that authority clear in the tool description.
+`await image(block)` emits ordered text/image blocks in `content`; see [tools](tools.md) for limits.
+
+Disclose any additional process or network authority in the tool description.
 
 ## Limits and failure behavior
 
 The command protocol is intentionally bounded:
 
 - The command-to-client stdout NDJSON stream is limited to 512 frames and 192 MiB in total.
-- Each frame on that stdout stream is limited to 24 MiB.
-- The final UTF-8 result is limited to 1 MiB.
+- Each frame on that stdout stream is limited to 80 MiB.
+- Final result text is limited to 1 MiB; images use the bounds above.
 - Captured stderr is limited to 1 MiB. Exceeding it terminates the command and fails the tool.
 - Execution-environment stdin is limited to 16 MiB decoded, and capture can be requested up to 24 MiB per execution.
 - At most eight execution requests may be unresolved concurrently.
@@ -400,7 +402,7 @@ The configured `executionTimeoutMs` covers preparation and execution and default
 
 Tau starts each configured command in a detached process group. Cancellation sends termination to the group and escalates to `SIGKILL` after a short grace period, even if the original group leader exits first. The helper aborts pending execution-environment requests and stops accepting work when stdin closes.
 
-A successful protocol exchange must emit one version 4 ready frame, wait for the execute frame, emit one final version 4 result with `ok: true` or `ok: false`, and exit with status zero. An `ok: false` frame is a communicated tool failure; process and framing failures still use stderr and a nonzero exit. Missing or duplicate readiness, execution data before authorization, missing results, malformed framing, data after the result, reused execution request IDs, timeout, cancellation, excessive output, and protocol-limit violations fail the call.
+A successful protocol exchange must emit one version 5 ready frame, wait for the execute frame, emit one final version 5 result with `ok: true` or `ok: false`, and exit with status zero. An `ok: false` frame is a communicated tool failure; process and framing failures still use stderr and a nonzero exit. Missing or duplicate readiness, execution data before authorization, missing results, malformed framing, data after the result, reused execution request IDs, timeout, cancellation, excessive output, and protocol-limit violations fail the call.
 
 ## Disconnects, reconnects, and durability
 

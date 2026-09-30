@@ -1,6 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import { HistoryManager } from "../dist/core/history/history_manager.js";
@@ -38,7 +39,10 @@ import {
   STORED_SESSION_DOCUMENT_FORMAT,
   STORED_SESSION_DOCUMENT_VERSION,
 } from "../dist/store/session_snapshot_migrations.js";
-import { createProtocolSnapshot } from "./helpers/session_protocol_fixtures.js";
+import {
+  createProtocolImage,
+  createProtocolSnapshot,
+} from "./helpers/session_protocol_fixtures.js";
 
 const localCreateInput = {
   executionEnvironment: { kind: "local", cwd: "/repo" },
@@ -101,6 +105,7 @@ function createHost(store, options = {}) {
   return new LocalSessionHost({
     store,
     history: options.history ?? new HistoryManager(new LocalHistoryStore(":memory:")),
+    ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
     ...(options.defaultBootstrap === false
       ? {}
       : {
@@ -5989,5 +5994,131 @@ describe("LocalSessionHost", () => {
 
     await expect(host.observeSession("unsupported-env")).resolves.toBeUndefined();
     await expect(host.listSessions()).resolves.toEqual([]);
+  });
+});
+
+describe("host-owned MCP tools", () => {
+  it("binds only host servers and persists ordinary tool lifecycle through observers", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store, {
+      mcpServers: {
+        host: {
+          type: "stdio",
+          command: process.execPath,
+          args: [fileURLToPath(new URL("./fixtures/mcp_server.js", import.meta.url))],
+          cwd: tmpdir(),
+        },
+      },
+      config: { mcpServers: { target: { type: "stdio", command: "untrusted-target-command" } } },
+    });
+    let pid;
+    try {
+      const session = await host.createSession(localCreateInput);
+      const spawn = vi.spyOn(session.runtime.supervisor, "spawn").mockReturnValue({
+        ok: true,
+        state: createRunningSubagentState(),
+        capacity: { running: 1, limit: 8 },
+      });
+      const spawned = await session.runtime.agent.spec.tools
+        .get("spawn_agent")
+        .execute(
+          fauxToolCall("spawn_agent", { title: "service task", prompt: "use the service" }),
+          {
+            agentId: "main",
+            turnId: "turn",
+            assistantMessageId: "assistant",
+            signal: new AbortController().signal,
+            emitActivity: async () => {},
+          },
+        );
+      expect(spawned.outcome).toBe("succeeded");
+      const launch = spawn.mock.calls[0][0];
+      expect(launch.runtimeConfig.tools).toContain("mcp");
+      expect(launch.mcp.listServers()).toEqual([{ name: "host" }]);
+      spawn.mockRestore();
+      let projected = await session.snapshot();
+      session.onDelta((delta) => {
+        projected = applySessionProtocolDelta(projected, delta);
+      });
+      const call = fauxToolCall(
+        "mcp",
+        {
+          code: `
+        console.log(await mcp.listServers());
+        const result = await mcp.callTool("host", "echo", { message: "host service result" });
+        console.log({ message: result.structuredContent.message, pid: result.structuredContent.pid });
+        await image((await mcp.callTool("host", "screenshot", {})).content[0]);
+        console.log("after screenshot");
+      `,
+        },
+        { id: "mcp-host-call" },
+      );
+      const toolMessage = fauxAssistantMessage([call], { stopReason: "toolUse" });
+      const responses = [toolMessage, fauxAssistantMessage("done")];
+      session.runtime.agent.spec.model.stream = (context) => {
+        const response = responses.shift();
+        if (response !== toolMessage) {
+          const result = context.messages.find(
+            (message) => message.role === "toolResult" && message.toolCallId === call.id,
+          );
+          expect(result.content[1]).toEqual(createProtocolImage());
+          expect(result.content[2]).toEqual({ type: "text", text: "after screenshot" });
+        }
+        return {
+          async *[Symbol.asyncIterator]() {
+            if (response === toolMessage) {
+              yield { type: "toolcall_start", contentIndex: 0, partial: toolMessage };
+              yield { type: "toolcall_end", contentIndex: 0, toolCall: call, partial: toolMessage };
+            }
+          },
+          async result() {
+            return response;
+          },
+        };
+      };
+      const accepted = await session.acceptTurn({ text: "use the host service" });
+      const result = await session.runAcceptedTurn(accepted.userHistoryEntryId);
+      expect(result.turn.status).toBe("completed");
+      const snapshot = await session.snapshot();
+      expect(projected).toEqual(snapshot);
+      expect(snapshot.tools[call.id]).toMatchObject({ toolName: "mcp", status: "succeeded" });
+      const toolResult = snapshot.messages.find(
+        (entry) => entry.message.role === "toolResult" && entry.message.toolCallId === call.id,
+      );
+      expect(toolResult.message.content[1]).toEqual(createProtocolImage());
+      expect(toolResult.message.content[2]).toEqual({ type: "text", text: "after screenshot" });
+      expect((await store.loadSession(session.sessionId)).messages).toEqual(snapshot.messages);
+      expect(JSON.stringify(snapshot.tools[call.id])).not.toContain(createProtocolImage().data);
+      const text = toolResult.message.content[0].text;
+      expect(text).toContain('"name":"host"');
+      expect(text).toContain("host service result");
+      expect(text).not.toContain("target");
+      pid = Number(text.match(/"pid":(\d+)/)[1]);
+      expect(JSON.stringify(await store.loadSession(session.sessionId))).not.toContain(
+        "untrusted-target-command",
+      );
+      await host.shutdown();
+      expect(() => process.kill(pid, 0)).toThrow();
+    } finally {
+      await host.shutdown();
+    }
+  });
+
+  it("does not expose MCP without host configuration or outside the persona allowlist", async () => {
+    const targetOnly = createHost(new MemorySessionStore(), {
+      config: { mcpServers: { target: { type: "stdio", command: "untrusted-command" } } },
+    });
+    const forbidden = createHost(new MemorySessionStore(), {
+      mcpServers: { host: { type: "stdio", command: "unused-command" } },
+      persona: { ...personas[0], tools: [] },
+    });
+    try {
+      for (const host of [targetOnly, forbidden]) {
+        const session = await host.createSession(localCreateInput);
+        expect(session.runtime.agent.spec.tools.get("mcp")).toBeUndefined();
+      }
+    } finally {
+      await Promise.all([targetOnly.shutdown(), forbidden.shutdown()]);
+    }
   });
 });

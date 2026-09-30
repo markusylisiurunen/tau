@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
 import { parentPort, workerData } from "node:worker_threads";
+import { truncateToBytesFromEnd } from "../../utils/truncate.js";
 import { codeModeMath, createCodeModeDate } from "./capabilities.mjs";
 
 if (!parentPort) {
@@ -10,6 +11,8 @@ if (
   workerData === null ||
   typeof workerData.code !== "string" ||
   typeof workerData.docs !== "string" ||
+  !Number.isSafeInteger(workerData.imageMethodId) ||
+  workerData.imageMethodId < 0 ||
   !Array.isArray(workerData.apis) ||
   workerData.apis.length === 0 ||
   workerData.apis.some(
@@ -24,7 +27,9 @@ if (
   !Number.isSafeInteger(workerData.maxConcurrentBridgeRequests) ||
   workerData.maxConcurrentBridgeRequests <= 0 ||
   !Number.isSafeInteger(workerData.maxBridgePayloadBytes) ||
-  workerData.maxBridgePayloadBytes <= 0
+  workerData.maxBridgePayloadBytes <= 0 ||
+  !Number.isSafeInteger(workerData.maxCaptureBytes) ||
+  workerData.maxCaptureBytes <= 0
 ) {
   throw new Error("code-mode sandbox received invalid worker data");
 }
@@ -34,8 +39,19 @@ lockdown();
 const codeModeDate = createCodeModeDate();
 const pending = new Map();
 let nextRequestId = 1;
+let outputText = "";
+let outputStdout = "";
+let outputStderr = "";
+let outputBytes = 0;
+let nextOutputId = 1;
+const pendingOutputs = new Set();
 
 parentPort.on("message", (message) => {
+  if (message?.type === "output.ack" && typeof message.id === "number") {
+    pendingOutputs.delete(message.id);
+    flushOutput();
+    return;
+  }
   if (message?.type !== "response" || typeof message.id !== "number") return;
   const request = pending.get(message.id);
   if (!request) return;
@@ -83,6 +99,7 @@ function requestApi(methodId, argsJson) {
       ),
     );
   }
+  flushOutput(true);
   const id = nextRequestId++;
   return new Promise((resolve, reject) => {
     pending.set(id, { resolve, reject });
@@ -90,12 +107,40 @@ function requestApi(methodId, argsJson) {
   });
 }
 
+function flushOutput(force = false) {
+  if (
+    !outputBytes ||
+    (!force && pendingOutputs.size >= workerData.maxConcurrentBridgeRequests)
+  ) return;
+  const id = nextOutputId++;
+  pendingOutputs.add(id);
+  parentPort.postMessage({
+    type: "output",
+    id,
+    text: outputText,
+    stdout: outputStdout,
+    stderr: outputStderr,
+    bytes: outputBytes,
+  });
+  outputText = "";
+  outputStdout = "";
+  outputStderr = "";
+  outputBytes = 0;
+}
+
 function writeOutput(stream, text) {
   if ((stream !== "stdout" && stream !== "stderr") || typeof text !== "string") {
     throw new Error("invalid console bridge output");
   }
-  const output = stream === "stderr" ? process.stderr : process.stdout;
-  output.write(text + "\n");
+  const output = text + "\n";
+  outputBytes += Buffer.byteLength(output);
+  outputText = truncateToBytesFromEnd(outputText + output, workerData.maxCaptureBytes);
+  if (stream === "stdout") {
+    outputStdout = truncateToBytesFromEnd(outputStdout + output, workerData.maxCaptureBytes);
+  } else {
+    outputStderr = truncateToBytesFromEnd(outputStderr + output, workerData.maxCaptureBytes);
+  }
+  flushOutput();
 }
 
 const compartment = new Compartment({
@@ -103,6 +148,7 @@ const compartment = new Compartment({
     Date: codeModeDate,
     Math: codeModeMath,
     _apis: harden(workerData.apis),
+    _imageMethodId: workerData.imageMethodId,
     _requestApi: harden(requestApi),
     _writeOutput: harden(writeOutput),
     docs: workerData.docs,
@@ -115,6 +161,8 @@ compartment.evaluate(String.raw`
   const apis = _apis;
   const requestApiBridge = _requestApi;
   const writeOutputBridge = _writeOutput;
+  const imageMethodId = _imageMethodId;
+  delete globalThis._imageMethodId;
   delete globalThis._apis;
   delete globalThis._requestApi;
   delete globalThis._writeOutput;
@@ -157,6 +205,12 @@ compartment.evaluate(String.raw`
     });
   }
 
+  Object.defineProperty(globalThis, "image", {
+    value: async (...args) => {
+      await requestApiBridge(imageMethodId, serializeArguments(args));
+    },
+  });
+
   function freezeApi(value) {
     for (const child of Object.values(value)) {
       if (typeof child === "object" && child !== null) freezeApi(child);
@@ -188,5 +242,6 @@ try {
   writeOutput("stderr", error instanceof Error ? error.stack || error.message : String(error));
   process.exitCode = 1;
 } finally {
+  flushOutput(true);
   parentPort.close();
 }

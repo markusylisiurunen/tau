@@ -511,6 +511,7 @@ async function createLocalSessionHost(options: {
       reportReplicationFailure: reportHostDiagnostic,
     }),
     historyRemote: resolveHistoryRemoteTarget(options.config),
+    mcpServers: options.config.mcpServers,
     executionEnvironmentResolver: new CompositeExecutionEnvironmentResolver(resolvers),
     includeAgentContext: !options.cli.noAgentContextFiles,
     getRemoteModelCatalog: () => remoteModelCatalog.snapshot(),

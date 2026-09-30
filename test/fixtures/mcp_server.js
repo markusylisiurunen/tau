@@ -35,12 +35,59 @@ input.on("line", (line) => {
     if (process.env.MCP_TEST_NO_INITIALIZE === "1") return;
     reply(request.id, {
       protocolVersion: request.params.protocolVersion,
-      capabilities: { tools: { listChanged: true } },
+      capabilities: { tools: { listChanged: true }, resources: {} },
       serverInfo: { name: "test", version: "1" },
       instructions: "Test service usage guidance",
     });
   } else if (request.method === "tools/list") {
     reply(request.id, { tools: tools() });
+  } else if (request.method === "resources/list") {
+    reply(request.id, {
+      resources: [
+        {
+          uri: request.params?.cursor ? "docs://guide" : "docs://schema",
+          name: request.params?.cursor ? "guide" : "schema",
+          title: request.params?.cursor ? "Usage Guide" : "Database Schema",
+          description: "Service documentation",
+          mimeType: "text/plain",
+          annotations: { audience: ["assistant"], priority: 0.8 },
+          _meta: { private: "not for the agent" },
+        },
+      ],
+      ...(request.params?.cursor ? {} : { nextCursor: "second" }),
+    });
+  } else if (request.method === "resources/templates/list") {
+    reply(request.id, {
+      resourceTemplates: [
+        {
+          uriTemplate: "docs://{documentId}",
+          name: "documents",
+          title: "Service Documents",
+          mimeType: "text/plain",
+          _meta: { private: "not for the agent" },
+        },
+      ],
+    });
+  } else if (request.method === "resources/read") {
+    const { uri } = request.params;
+    if (uri === "docs://missing") {
+      send({ jsonrpc: "2.0", id: request.id, error: { code: -32002, message: "missing" } });
+    } else if (uri === "docs://oversized") {
+      reply(request.id, { contents: [{ uri, text: "x".repeat(1024 * 1024) }] });
+    } else if (uri === "docs://slow") {
+      pending.set(
+        request.id,
+        setTimeout(() => reply(request.id, { contents: [] }), 60_000),
+      );
+    } else {
+      reply(request.id, {
+        contents:
+          uri === "docs://preview"
+            ? [{ uri, mimeType: "image/png", blob: createProtocolImage().data }]
+            : [{ uri, mimeType: "text/plain", text: "resource context", _meta: { private: true } }],
+        _meta: { private: "not for the agent" },
+      });
+    }
   } else if (request.method === "tools/call") {
     calls++;
     const { name, arguments: args } = request.params;

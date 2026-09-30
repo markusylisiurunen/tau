@@ -87,6 +87,29 @@ export class McpManager {
     return result;
   }
 
+  async listResources(server: string, signal: AbortSignal) {
+    signal.throwIfAborted();
+    const client = await waitForConnection(this.getConnection(server).ready, signal);
+    const resources = await this.request(client, () => client.listResources({ signal }));
+    return resources.map(({ _meta, ...resource }) => resource);
+  }
+
+  async listResourceTemplates(server: string, signal: AbortSignal) {
+    signal.throwIfAborted();
+    const client = await waitForConnection(this.getConnection(server).ready, signal);
+    const templates = await this.request(client, () => client.listResourceTemplates({ signal }));
+    return templates.map(({ _meta, ...template }) => template);
+  }
+
+  async readResource(server: string, uri: string, signal: AbortSignal) {
+    signal.throwIfAborted();
+    const client = await waitForConnection(this.getConnection(server).ready, signal);
+    const result = await this.request(client, () => client.readResource(uri, { signal }));
+    return {
+      contents: result.contents.map(({ _meta, ...content }) => content),
+    };
+  }
+
   close(): Promise<void> {
     this.closed = true;
     this.closePromise ??= this.closeConnections();

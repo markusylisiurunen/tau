@@ -184,15 +184,15 @@ The tool is intended for explicit requests to inspect or manage Nook, publish a 
 
 ### MCP
 
-`mcp` discovers and calls tools offered by host-configured Model Context Protocol servers. It is available to a main-session persona that allows `mcp` when the host has at least one enabled server. Built-in personas allow it. Subagents and ephemeral threads do not receive it.
+`mcp` discovers and calls tools and reads resources from host-configured Model Context Protocol servers. Main-session personas must allow `mcp`, and the host must configure an enabled server. Built-in personas allow it; subagents and ephemeral threads do not receive it.
 
-Servers can use stdio or streamable HTTP. Stdio commands run on the host machine, not in the session execution environment, and inherit the host process environment. HTTP requests use host credentials. A server's files, commands, and working directory are not automatically the agent's workspace.
+Servers use stdio or streamable HTTP. Stdio commands run on the host with its environment; HTTP uses host credentials. Server files and working directories are not necessarily the agent's workspace. Supported protocol revisions are `2025-11-25`, `2025-06-18`, `2025-03-26`, and `2024-11-05`, not `2026-07-28`.
 
-The documented API lists servers, searches and pages through tools, inspects input/output schemas, and calls tools with structured arguments. Scripts receive MCP content blocks and structured results; only console output and explicitly forwarded images enter model context. Results with `isError: true` are data; protocol and connection failures throw. Private `_meta` is omitted.
+The API discovers tools, resources, and templates; inspects schemas; calls tools; and reads URIs, including unlisted ones. Resources return text or base64 binary data, without automatic context inclusion, file writes, or URL fetching. Only console output and forwarded images enter model context. Private `_meta` is omitted. Tool `isError: true` results are data; protocol failures throw. Calls are bounded and cancellable; oversized results fail.
 
-Connections start lazily, are shared by sessions on the host, and close at host shutdown. A disconnected server or expired HTTP session reconnects on a later request. Calls are not automatically retried, because a mutation may have already happened. Tool-list-change notifications invalidate cached discovery metadata. MCP connections and in-flight calls are not recovered after a host restart.
+Connections start lazily, are shared across sessions, and close at shutdown. Disconnected servers reconnect on later requests. Calls are not retried: mutations may have happened. Tool-list changes invalidate cached discovery; resource listings are refreshed on each call. Connections and calls are not recovered after restart. Resource subscriptions, prompts, elicitation, and sampling are unsupported.
 
-Configure servers in the host's global configuration and restart the host to apply changes. See [configuration reference](config-reference.md#mcpservers) and [security](security.md#trust-mcp-servers).
+Configure servers globally and restart the host to apply changes. See [configuration reference](config-reference.md#mcpservers) and [security](security.md#trust-mcp-servers).
 
 ## Subagent tool eligibility
 

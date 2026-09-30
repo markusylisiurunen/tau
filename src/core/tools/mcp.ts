@@ -18,7 +18,7 @@ export const MCP_TOOL: Tool = {
   description: buildCodeModeToolDescription({
     sdkGlobal: "mcp",
     introduction: [
-      "Run a one-shot JavaScript program to discover and call tools offered by configured MCP servers.",
+      "Run a one-shot JavaScript program to discover and call tools and read resources offered by configured MCP servers.",
       "Use this for connected services relevant to the user's task.",
       "Read a tool's description and input schema before calling it; do not guess names or arguments.",
       "Tool calls can have side effects and are not undone if the program fails or is interrupted.",
@@ -118,6 +118,60 @@ export function createMcpToolDefinition(
                 ? { nextOffset: offset + tools.length }
                 : {}),
             };
+          },
+          listResources: async (args, context) => {
+            const [server, options] = parseMethodArgs(
+              "listResources",
+              args,
+              z.tuple([nameSchema, listOptionsSchema.optional()]),
+            );
+            const { query, limit, offset } = options ?? listOptionsSchema.parse({});
+            const catalog = await manager.listResources(server, context.signal);
+            const terms = query?.toLowerCase().split(/\s+/) ?? [];
+            const matching = catalog.filter((resource) => {
+              const text =
+                `${resource.uri} ${resource.name} ${resource.title ?? ""} ${resource.description ?? ""}`.toLowerCase();
+              return terms.every((term) => text.includes(term));
+            });
+            const resources = matching.slice(offset, offset + limit);
+            return {
+              resources,
+              total: matching.length,
+              ...(offset + resources.length < matching.length
+                ? { nextOffset: offset + resources.length }
+                : {}),
+            };
+          },
+          listResourceTemplates: async (args, context) => {
+            const [server, options] = parseMethodArgs(
+              "listResourceTemplates",
+              args,
+              z.tuple([nameSchema, listOptionsSchema.optional()]),
+            );
+            const { query, limit, offset } = options ?? listOptionsSchema.parse({});
+            const catalog = await manager.listResourceTemplates(server, context.signal);
+            const terms = query?.toLowerCase().split(/\s+/) ?? [];
+            const matching = catalog.filter((resource) => {
+              const text =
+                `${resource.uriTemplate} ${resource.name} ${resource.title ?? ""} ${resource.description ?? ""}`.toLowerCase();
+              return terms.every((term) => text.includes(term));
+            });
+            const resourceTemplates = matching.slice(offset, offset + limit);
+            return {
+              resourceTemplates,
+              total: matching.length,
+              ...(offset + resourceTemplates.length < matching.length
+                ? { nextOffset: offset + resourceTemplates.length }
+                : {}),
+            };
+          },
+          readResource: async (args, context) => {
+            const [server, uri] = parseMethodArgs(
+              "readResource",
+              args,
+              z.tuple([nameSchema, z.string().trim().min(1).max(8_192)]),
+            );
+            return await manager.readResource(server, uri, context.signal);
           },
           describeTool: async (args, context) => {
             const [server, name] = parseMethodArgs(

@@ -277,6 +277,105 @@ describe("MCP code-mode tool", () => {
     }
   });
 
+  it("discovers paginated resources and templates and reads explicit text and image context", async () => {
+    const client = manager();
+    const executionBackend = backend();
+    const tool = createMcpToolDefinition(executionBackend, client);
+    try {
+      const result = await runTool(
+        tool,
+        `
+        console.log(await mcp.listResources("test", { limit: 1 }));
+        console.log(await mcp.listResources("test", { offset: 1 }));
+        console.log(await mcp.listResources("test", { query: "database schema" }));
+        console.log(await mcp.listResourceTemplates("test", { query: "service documents" }));
+        console.log(await mcp.readResource("test", "docs://unlisted"));
+        const preview = await mcp.readResource("test", "docs://preview");
+        console.log("before");
+        await image({ type: "image", data: preview.contents[0].blob, mimeType: preview.contents[0].mimeType });
+        console.log("after");
+      `,
+      );
+      expect(result.outcome).toBe("succeeded");
+      const lines = result.content[0].text.split("\n");
+      expect(JSON.parse(lines[0])).toMatchObject({
+        resources: [{ uri: "docs://schema", annotations: { audience: ["assistant"] } }],
+        total: 2,
+        nextOffset: 1,
+      });
+      expect(JSON.parse(lines[1])).toMatchObject({
+        resources: [{ uri: "docs://guide" }],
+        total: 2,
+      });
+      expect(JSON.parse(lines[2])).toMatchObject({
+        resources: [{ uri: "docs://schema" }],
+        total: 1,
+      });
+      expect(JSON.parse(lines[3])).toMatchObject({
+        resourceTemplates: [{ uriTemplate: "docs://{documentId}" }],
+        total: 1,
+      });
+      expect(JSON.parse(lines[4])).toEqual({
+        contents: [{ uri: "docs://unlisted", mimeType: "text/plain", text: "resource context" }],
+      });
+      expect(result.content[1]).toEqual(createProtocolImage());
+      expect(result.content[2]).toEqual({ type: "text", text: "after" });
+      expect(result.text).not.toContain("_meta");
+      expect(executionBackend.writeFile).not.toHaveBeenCalled();
+      expect(executionBackend.runNodeScript).not.toHaveBeenCalled();
+      const missing = await runTool(tool, 'await mcp.readResource("test", "docs://missing")');
+      expect(missing.outcome).toBe("failed");
+      for (const code of [
+        'await mcp.listResources("test", { limit: 0 })',
+        'await mcp.listResourceTemplates("test", { unknown: true })',
+        'await mcp.readResource("test", "")',
+      ]) {
+        expect((await runTool(tool, code)).outcome).toBe("failed");
+      }
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("rejects oversized resource responses without preventing later reads", async () => {
+    const client = manager({ timeoutMs: 1_000 });
+    try {
+      const tool = createMcpToolDefinition(backend(), client);
+      const result = await runTool(
+        tool,
+        'console.log(await mcp.readResource("test", "docs://oversized"))',
+      );
+      expect(result.outcome).toBe("failed");
+      expect(result.text).not.toContain("x".repeat(100));
+      expect((await client.readResource("test", "docs://schema", signal())).contents[0].text).toBe(
+        "resource context",
+      );
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("cancels resource reads without closing the shared connection", async () => {
+    const client = manager();
+    const controller = new AbortController();
+    try {
+      const tool = createMcpToolDefinition(backend(), client);
+      const run = runTool(tool, 'await mcp.readResource("test", "docs://slow")', controller.signal);
+      await vi.waitFor(async () => expect((await echo(client)).structuredContent.pending).toBe(1));
+      controller.abort();
+      expect((await run).outcome).toBe("cancelled");
+      await vi.waitFor(async () =>
+        expect((await echo(client)).structuredContent.cancelled).toBe(1),
+      );
+      expect((await client.readResource("test", "docs://schema", signal())).contents).toHaveLength(
+        1,
+      );
+    } finally {
+      controller.abort();
+      await client.close();
+    }
+  });
+
   it("propagates interruption to MCP calls without closing the shared connection", async () => {
     const client = manager();
     const tool = createMcpToolDefinition(backend(), client);

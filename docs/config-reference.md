@@ -230,7 +230,7 @@ Stdio executables run directly without a shell. Bare commands resolve through th
 
 Values in `env` and `headers` can reference host environment variables with `${NAME}`. Missing variables fail connection setup. Command substitution is not supported. Stdio servers inherit the host environment, with `env` overriding matching names. Keep secrets in the host environment rather than committing them to JSON.
 
-Invalid entries are skipped with diagnostics while valid siblings remain configured. OAuth sign-in, MCP resources/prompts, execution-environment servers, and user approval dialogs are not supported. See [tools](tools.md#mcp) for discovery, calls, and result handling.
+Invalid entries are skipped with diagnostics while valid siblings remain configured. OAuth sign-in, MCP prompts, subscriptions, elicitation, sampling, execution-environment servers, and user approval dialogs are not supported. See [tools](tools.md#mcp) for discovery, calls, and result handling.
 
 ## TUI presentation and diff review
 

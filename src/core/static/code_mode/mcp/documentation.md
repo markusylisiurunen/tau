@@ -56,11 +56,11 @@ for (const part of result.contents) {
 }
 ```
 
-Resource calls use the same cancellation, deadlines, and 1 MiB bridge limit as tool calls. Oversized results fail rather than silently truncating resource data. Resource subscriptions, prompts, elicitation, and sampling are not available.
+Resource reads and tool calls default to a five-minute deadline, configurable per server up to 15 minutes. Connection startup and discovery default to 30 seconds. The program has a 15-minute deadline and remains interruptible. MCP messages and JSON bridge payloads are limited to 16 MiB. Oversized results fail rather than silently truncating resource data. Resource subscriptions, prompts, elicitation, and sampling are not available.
 
 ## `mcp.describeTool(server, name)`
 
-Returns `{ name, description?, inputSchema, outputSchema?, annotations? }`. Read this before calling a tool. Names are exactly those offered by the server; they are not rewritten or prefixed. Unknown tools fail.
+Returns `{ name, description?, inputSchema, outputSchema?, annotations? }`. Read this before calling a tool. Names are exactly those offered by the server; they are not rewritten or prefixed. Unknown tools fail. When present, `outputSchema` describes `callTool()` result `structuredContent`, not the whole result envelope.
 
 ```js
 console.log(await mcp.describeTool("linear", "list_issues"));
@@ -68,7 +68,7 @@ console.log(await mcp.describeTool("linear", "list_issues"));
 
 ## `mcp.callTool(server, name, arguments)`
 
-Calls a tool with an object matching its `inputSchema`. Invalid arguments fail before the server is called. Returns the MCP result, including `content`, optional `structuredContent`, and optional `isError`. Private `_meta` is omitted.
+Calls a tool with an object matching its `inputSchema`. Invalid arguments fail before the server is called. Returns `{ content, structuredContent?, isError }`. `isError` is always a boolean, defaulting to `false`. `content` contains service text, images, audio, resource links, or embedded resources with their useful metadata. `structuredContent` is the service's structured data. Protocol bookkeeping and private `_meta` are omitted from the result, content blocks, and embedded resource contents; ordinary application data in `structuredContent` is preserved.
 
 Protocol, connection, and argument failures throw. A tool result with `isError: true` resolves normally: check it explicitly. Prefer `structuredContent` when available. Otherwise inspect `content` blocks; a text block is not necessarily JSON. Images and binary blocks are returned as data, not automatically displayed or saved. Forward supported image blocks explicitly with `await image(block)`; this shared runtime helper validates and prepares images without files.
 
@@ -89,4 +89,4 @@ for (const block of result.content ?? []) {
 
 Calls are not automatically retried. Side effects can happen even if the program fails, times out, or is interrupted. Do not repeat a mutation merely because its outcome is unknown. Independent calls can run concurrently within the runtime's request limits; use bounded batches for larger lists.
 
-MCP servers have their own files and command access. Do not assume they share the current working directory or filesystem with Bash. Requests and responses must fit the runtime's 1 MiB JSON bridge limit. Filter or paginate at the service when possible.
+MCP servers have their own files and command access. Do not assume they share the current working directory or filesystem with Bash. Requests and responses must fit the runtime's 16 MiB JSON bridge limit. Filter or paginate at the service when possible.

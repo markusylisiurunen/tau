@@ -12,7 +12,7 @@ import { MODEL_IMAGE_MAX_BYTES, SUPPORTED_IMAGE_TYPES } from "../core/utils/mode
 import { type IntermediateSystemMessage, isIntermediateSystemMessage } from "./system_message.js";
 
 export const SESSION_PROTOCOL_VERSION = 15 as const;
-export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_IMAGES = 4;
+export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_IMAGES = 16;
 export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_CONTENT_BLOCKS = 1024;
 export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_IMAGE_BYTES = MODEL_IMAGE_MAX_BYTES;
 export const SESSION_PROTOCOL_MAX_EXEC_CAPTURE_BYTES = 24 * 1024 * 1024;

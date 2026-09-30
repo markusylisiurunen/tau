@@ -1,4 +1,5 @@
 import {
+  type ContentBlock,
   McpClient,
   type McpFetch,
   McpSessionExpiredError,
@@ -11,8 +12,9 @@ import { Value } from "typebox/value";
 import type { McpServerConfig, McpServersConfig } from "../config/mcp.js";
 import { APP_VERSION } from "../version.js";
 
-const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
-const MAX_MESSAGE_BYTES = 1024 * 1024;
+const DEFAULT_DISCOVERY_TIMEOUT_MS = 30_000;
+const DEFAULT_EXECUTION_TIMEOUT_MS = 300_000;
+const MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
 
 interface Connection {
   client: McpClient;
@@ -81,10 +83,19 @@ export class McpManager {
     }
     signal.throwIfAborted();
     const client = await waitForConnection(this.getConnection(server).ready, signal);
-    const { _meta, ...result } = await this.request(client, () =>
-      client.callTool(name, args, { signal }),
+    const result = await this.request(client, () =>
+      client.callTool(name, args, {
+        signal,
+        timeoutMs: this.servers[server]!.timeoutMs ?? DEFAULT_EXECUTION_TIMEOUT_MS,
+      }),
     );
-    return result;
+    return {
+      content: result.content.map(stripContentMetadata),
+      ...(result.structuredContent === undefined
+        ? {}
+        : { structuredContent: result.structuredContent }),
+      isError: result.isError ?? false,
+    };
   }
 
   async listResources(server: string, signal: AbortSignal) {
@@ -104,7 +115,12 @@ export class McpManager {
   async readResource(server: string, uri: string, signal: AbortSignal) {
     signal.throwIfAborted();
     const client = await waitForConnection(this.getConnection(server).ready, signal);
-    const result = await this.request(client, () => client.readResource(uri, { signal }));
+    const result = await this.request(client, () =>
+      client.readResource(uri, {
+        signal,
+        timeoutMs: this.servers[server]!.timeoutMs ?? DEFAULT_EXECUTION_TIMEOUT_MS,
+      }),
+    );
     return {
       contents: result.contents.map(({ _meta, ...content }) => content),
     };
@@ -165,7 +181,7 @@ export class McpManager {
     const client = new McpClient({
       name: "tau",
       version: APP_VERSION,
-      requestTimeoutMs: server.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+      requestTimeoutMs: server.discoveryTimeoutMs ?? DEFAULT_DISCOVERY_TIMEOUT_MS,
     });
     const transport = this.createTransport(name, server);
     const connection: Connection = {
@@ -180,7 +196,7 @@ export class McpManager {
     });
     const timer = setTimeout(() => {
       void this.closeClient(client).catch(() => {});
-    }, server.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS);
+    }, server.discoveryTimeoutMs ?? DEFAULT_DISCOVERY_TIMEOUT_MS);
     connection.ready = client
       .connect(transport)
       .then(
@@ -221,7 +237,12 @@ export class McpManager {
       return new StreamableHttpTransport({
         url: server.url,
         headers: expand(server.headers),
-        fetch: boundedFetch(server.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS),
+        fetch: boundedFetch(
+          Math.max(
+            server.timeoutMs ?? DEFAULT_EXECUTION_TIMEOUT_MS,
+            server.discoveryTimeoutMs ?? DEFAULT_DISCOVERY_TIMEOUT_MS,
+          ),
+        ),
         maxMessageBytes: MAX_MESSAGE_BYTES,
       });
     }
@@ -243,6 +264,13 @@ export class McpManager {
   }
 }
 
+function stripContentMetadata(block: ContentBlock): ContentBlock {
+  const { _meta, ...content } = block;
+  if (content.type !== "resource") return content;
+  const { _meta: resourceMeta, ...resource } = content.resource;
+  return { ...content, resource };
+}
+
 function boundedFetch(timeoutMs: number): McpFetch {
   return async (input, init) => {
     const signal =
@@ -262,7 +290,7 @@ function boundedFetch(timeoutMs: number): McpFetch {
         transform(chunk, controller) {
           bytes += chunk.byteLength;
           if (bytes > MAX_MESSAGE_BYTES)
-            throw new Error("MCP HTTP response exceeded the 1 MiB limit.");
+            throw new Error("MCP HTTP response exceeded the 16 MiB limit.");
           controller.enqueue(chunk);
         },
       }),

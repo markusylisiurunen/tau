@@ -78,6 +78,49 @@ function getRecord(supervisor, id) {
 }
 
 describe("AgentSupervisor", () => {
+  it("binds the parent's MCP manager without resolving servers from the child workspace", async () => {
+    const supervisor = new AgentSupervisor({ onEvent: () => {} });
+    const mcp = { available: true, listServers: vi.fn(() => [{ name: "host", type: "http" }]) };
+    try {
+      const spawned = supervisor.spawn(
+        createSpawnOptions({
+          runtimeConfig: {
+            ...createSpawnOptions().runtimeConfig,
+            tools: ["mcp"],
+            workingDirectory: "/repo/alternate",
+          },
+          config: { mcpServers: { target: { type: "stdio", command: "must-not-run" } } },
+          mcp,
+        }),
+      );
+      expect(spawned.ok).toBe(true);
+      const tool = getRecord(supervisor, spawned.state.id).runtime.spec.tools.get("mcp");
+      const result = await tool.execute(
+        {
+          id: "mcp-call",
+          name: "mcp",
+          arguments: { code: "console.log(await mcp.listServers())" },
+        },
+        {
+          agentId: spawned.state.id,
+          turnId: "turn",
+          assistantMessageId: "assistant",
+          signal: new AbortController().signal,
+          emitActivity: async () => {},
+        },
+      );
+      expect(result.outcome).toBe("succeeded");
+      expect(JSON.parse(result.content[0].text)).toEqual([{ name: "host", type: "http" }]);
+      expect(mcp.listServers).toHaveBeenCalledOnce();
+      const excluded = supervisor.spawn(createSpawnOptions({ mcp }));
+      expect(
+        getRecord(supervisor, excluded.state.id).runtime.spec.tools.get("mcp"),
+      ).toBeUndefined();
+    } finally {
+      supervisor.reset();
+    }
+  });
+
   it("binds configured history access into child runtimes", async () => {
     const supervisor = new AgentSupervisor({ onEvent: () => {} });
     const history = {

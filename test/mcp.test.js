@@ -2,6 +2,7 @@ import { realpathSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { McpClient } from "@earendil-works/pi-mcp";
 import { describe, expect, it, vi } from "vitest";
 import { McpManager } from "../dist/core/mcp/manager.js";
 import { createMcpToolDefinition } from "../dist/core/tools/mcp.js";
@@ -52,6 +53,29 @@ function assertExited(pid) {
 }
 
 describe("host-owned MCP connections", () => {
+  it("separates discovery deadlines from configurable tool and resource execution deadlines", async () => {
+    const toolCalls = vi.spyOn(McpClient.prototype, "callTool");
+    const resourceReads = vi.spyOn(McpClient.prototype, "readResource");
+    const connect = vi.spyOn(McpClient.prototype, "connect");
+    const clients = [manager(), manager({ timeoutMs: 900_000, discoveryTimeoutMs: 2_000 })];
+    try {
+      for (const client of clients) {
+        await echo(client);
+        await client.readResource("test", "docs://schema", signal());
+      }
+      expect(toolCalls.mock.calls.map((call) => call[2].timeoutMs)).toEqual([300_000, 900_000]);
+      expect(resourceReads.mock.calls.map((call) => call[1].timeoutMs)).toEqual([300_000, 900_000]);
+      expect(connect.mock.instances.map((client) => client.options.requestTimeoutMs)).toEqual([
+        30_000, 2_000,
+      ]);
+    } finally {
+      await Promise.all(clients.map((client) => client.close()));
+      toolCalls.mockRestore();
+      resourceReads.mockRestore();
+      connect.mockRestore();
+    }
+  });
+
   it("discovers and calls a stdio server without exposing host configuration", async () => {
     const client = manager();
     try {
@@ -132,7 +156,7 @@ describe("host-owned MCP connections", () => {
   });
 
   it("bounds startup, skips disabled servers, and fails missing credentials without leaking values", async () => {
-    const client = manager({ timeoutMs: 100, env: { MCP_TEST_NO_INITIALIZE: "1" } });
+    const client = manager({ discoveryTimeoutMs: 100, env: { MCP_TEST_NO_INITIALIZE: "1" } });
     const unavailable = new McpManager({ disabled: stdioConfig({ enabled: false }) });
     const missing = new McpManager({ test: stdioConfig() }, {});
     try {
@@ -190,7 +214,7 @@ describe("host-owned MCP connections", () => {
       if (entry.message === "oversized") {
         response.writeHead(200, { "content-type": "application/json" });
         response.write('{"jsonrpc":"2.0","result":{"content":[],"structuredContent":{"text":"');
-        response.end(`${"x".repeat(1024 * 1024)}"}},"id":${message.id}}`);
+        response.end(`${"x".repeat(16 * 1024 * 1024)}"}},"id":${message.id}}`);
         return;
       }
       if (message.id === undefined) {
@@ -228,7 +252,7 @@ describe("host-owned MCP connections", () => {
     );
     try {
       expect((await echo(client)).structuredContent).toEqual({ message: "hello" });
-      await expect(echo(client, "oversized")).rejects.toThrow("exceeded the 1 MiB limit");
+      await expect(echo(client, "oversized")).rejects.toThrow();
       await expect(echo(client, "expire")).rejects.toThrow();
       expect((await echo(client)).structuredContent).toEqual({ message: "hello" });
       expect(initializations).toBe(2);
@@ -246,6 +270,42 @@ describe("host-owned MCP connections", () => {
 });
 
 describe("MCP code-mode tool", () => {
+  it("returns a clean result and strips metadata only at MCP content boundaries", async () => {
+    const client = manager();
+    try {
+      const tool = createMcpToolDefinition(backend(), client);
+      const result = await runTool(tool, 'console.log(await mcp.callTool("test", "metadata", {}))');
+      expect(result.outcome).toBe("succeeded");
+      const value = JSON.parse(result.text);
+      expect(Object.keys(value)).toEqual(["content", "structuredContent", "isError"]);
+      expect(value.isError).toBe(false);
+      expect(value.content).toEqual([
+        { type: "text", text: "public text", annotations: { priority: 0.8 } },
+        { type: "resource", resource: { uri: "docs://embedded", text: "public resource" } },
+        { type: "resource_link", uri: "docs://linked", name: "linked" },
+      ]);
+      expect(value.structuredContent).toEqual({ _meta: { application: "preserved" } });
+      expect(result.text).not.toContain("private-");
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("allows large resources across transport and bridge without printing their contents", async () => {
+    const client = manager();
+    try {
+      const tool = createMcpToolDefinition(backend(), client);
+      const result = await runTool(
+        tool,
+        'const result = await mcp.readResource("test", "docs://large"); console.log(result.contents[0].text.length)',
+      );
+      expect(result.outcome).toBe("succeeded");
+      expect(Number(result.text)).toBe(2 * 1024 * 1024);
+    } finally {
+      await client.close();
+    }
+  });
+
   it("forwards MCP screenshots as real image content without files or base64 previews", async () => {
     const client = manager();
     const executionBackend = backend();

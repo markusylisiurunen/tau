@@ -123,7 +123,7 @@ function createContext(overrides = {}) {
 }
 
 describe("command client tools", () => {
-  it("forwards image output through the code-mode command helper", async () => {
+  it("forwards 16 images through the code-mode command helper", async () => {
     const block = createProtocolImage();
     const script = [
       `import { runTauCodeModeCommand } from ${JSON.stringify(codeModeModuleUrl)};`,
@@ -145,10 +145,11 @@ describe("command client tools", () => {
         args: ["--input-type=module", "--eval", script],
       }),
     ]);
-    const code = 'console.log("1"); await image(await screenshots.take()); console.error("2")';
+    const code =
+      'console.log("1"); for (let i = 0; i < 16; i++) await image(await screenshots.take()); console.error("2")';
     const result = await executeClientTool(tool, { code }, createContext());
     expect(result).toEqual({
-      content: [{ type: "text", text: "1" }, block, { type: "text", text: "2" }],
+      content: [{ type: "text", text: "1" }, ...Array(16).fill(block), { type: "text", text: "2" }],
       presentation: { subject: code, subjectWrap: "character" },
     });
   });

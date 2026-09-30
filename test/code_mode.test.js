@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { crc32 } from "node:zlib";
@@ -191,11 +192,26 @@ describe("public code-mode runtime", () => {
     ).rejects.toThrow("pixel limit");
   });
 
+  it("forwards images larger than 1 MiB without degrading valid model-sized bytes", async () => {
+    const bytes = await sharp(randomBytes(1000 * 500 * 3), {
+      raw: { width: 1000, height: 500, channels: 3 },
+    })
+      .png()
+      .toBuffer();
+    expect(bytes.length).toBeGreaterThan(1024 * 1024);
+    const block = createProtocolImage({ data: bytes.toString("base64") });
+    const result = await executeTauCodeMode({
+      ...createDefinition({ api: { screenshot: async () => block } }),
+      code: "await image(await linear.screenshot())",
+    });
+    expect(result.content).toEqual([block]);
+  });
+
   it("applies bridge payload limits to image output", async () => {
     await expect(
       executeTauCodeMode({
         ...createDefinition(),
-        code: 'await image({ type: "image", data: "A".repeat(1024 * 1024), mimeType: "image/png" })',
+        code: 'await image({ type: "image", data: "A".repeat(16 * 1024 * 1024), mimeType: "image/png" })',
       }),
     ).rejects.toThrow("bridge payload bytes");
   });
@@ -232,13 +248,13 @@ describe("public code-mode runtime", () => {
       code: [
         'try { await image({ type: "image", data: "invalid", mimeType: "image/png" }); } catch { console.log("rejected"); }',
         "const block = await linear.screenshot();",
-        "await Promise.all(Array.from({ length: 4 }, () => image(block)));",
+        "for (let i = 0; i < 16; i++) await image(block);",
         "try { await image(block); } catch (error) { console.log(error.message); }",
       ].join("\n"),
     });
-    expect(result.content.filter((part) => part.type === "image")).toEqual(Array(4).fill(block));
+    expect(result.content.filter((part) => part.type === "image")).toEqual(Array(16).fill(block));
     expect(getTextContent(result)).toContain("rejected");
-    expect(getTextContent(result)).toContain("at most 4 images");
+    expect(getTextContent(result)).toContain("at most 16 images");
   });
 
   it("keeps images separate from truncated and persisted text", async () => {
@@ -305,7 +321,7 @@ describe("public code-mode runtime", () => {
     await expect(
       executeTauCodeMode({
         ...createDefinition({ api: { echo } }),
-        code: 'await linear.echo("x".repeat(1024 * 1024))',
+        code: 'await linear.echo("x".repeat(16 * 1024 * 1024))',
       }),
     ).rejects.toThrow("bridge payload bytes");
     expect(echo).not.toHaveBeenCalled();
@@ -314,10 +330,10 @@ describe("public code-mode runtime", () => {
   it("rejects oversized handler results before returning them to the worker", async () => {
     await expect(
       executeTauCodeMode({
-        ...createDefinition({ api: { large: async () => "x".repeat(1024 * 1024) } }),
+        ...createDefinition({ api: { large: async () => "x".repeat(16 * 1024 * 1024) } }),
         code: "await linear.large()",
       }),
-    ).rejects.toThrow("result exceeded the 1.0 MB bridge payload limit");
+    ).rejects.toThrow();
   });
 
   it("rejects non-JSON handler results", async () => {

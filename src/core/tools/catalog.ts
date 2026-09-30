@@ -23,6 +23,7 @@ import {
   TOOL_NAME_BASH,
   TOOL_NAME_EDIT,
   TOOL_NAME_HISTORY,
+  TOOL_NAME_MCP,
   TOOL_NAME_NOOK,
   TOOL_NAME_VIEW_IMAGE,
   TOOL_NAME_WEB,
@@ -90,6 +91,7 @@ export const ToolCatalog = {
         modelResolver: options.modelResolver,
         subagentSystemPrompt: options.subagentSystemPrompt,
         history: options.history,
+        mcp: options.mcp,
         cwd: options.cwd,
         ...(options.resolveSubagentPrompt
           ? { resolveSubagentPrompt: options.resolveSubagentPrompt }
@@ -124,6 +126,7 @@ export const ToolCatalog = {
     config: Config,
     bashJobs: BashJobRegistry,
     history?: HistoryQuery,
+    mcp?: McpManager,
   ): ToolRegistry {
     const scopedBackend = scopeToolExecutionBackend(backend, cwd);
     const definitions = [];
@@ -151,6 +154,11 @@ export const ToolCatalog = {
         case TOOL_NAME_NOOK:
           if (config.nook) {
             definitions.push(createNookToolDefinition(scopedBackend, config));
+          }
+          break;
+        case TOOL_NAME_MCP:
+          if (mcp?.available) {
+            definitions.push(createMcpToolDefinition(scopedBackend, mcp));
           }
           break;
         case TOOL_NAME_HISTORY:

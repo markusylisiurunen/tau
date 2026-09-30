@@ -521,7 +521,7 @@ describe("config paths", () => {
 });
 
 describe("MCP host configuration", () => {
-  it("accepts only global server definitions, resolves host paths, and skips invalid entries", () => {
+  it("merges host launch-directory layers by server name and resolves paths at their defining layer", () => {
     const fx = setupFixture();
     try {
       const repo = join(fx.home, "repo");
@@ -551,7 +551,11 @@ describe("MCP host configuration", () => {
       writeFileSync(
         join(repo, ".tau", "config.json"),
         JSON.stringify({
-          mcpServers: { local: { type: "stdio", command: "untrusted-command" } },
+          mcpServers: {
+            local: { type: "stdio", command: "./project-mcp", cwd: "~/project-services" },
+            project: { type: "stdio", command: "uvx" },
+            disabled: { type: "stdio", command: "disabled-project", enabled: false },
+          },
         }),
       );
       const deps = createConfigDeps({ cwd: repo, home: fx.home, env: {} });
@@ -563,19 +567,18 @@ describe("MCP host configuration", () => {
       expect(result.config.mcpServers).toEqual({
         local: {
           type: "stdio",
-          command: join(fx.home, "bin", "mcp"),
-          cwd: join(fx.home, "services"),
-          env: { TOKEN: `\${HOST_TOKEN}` },
+          command: join(repo, "project-mcp"),
+          cwd: join(fx.home, "project-services"),
         },
         remote: {
           type: "http",
           url: "https://example.com/mcp",
           headers: { Authorization: `Bearer \${HOST_TOKEN}` },
         },
-        disabled: { type: "stdio", command: "uvx", cwd: fx.home, enabled: false },
+        disabled: { type: "stdio", command: "disabled-project", cwd: repo, enabled: false },
+        project: { type: "stdio", command: "uvx", cwd: repo },
       });
-      expect(result.errors).toHaveLength(3);
-      expect(result.errors.join("\n")).toContain("may only be configured in the global config");
+      expect(result.errors).toHaveLength(2);
       expect(result.errors.join("\n")).not.toContain("private-secret");
     } finally {
       fx.cleanup();

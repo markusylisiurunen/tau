@@ -408,12 +408,8 @@ function validateConfigData(
     assignParsedConfigValue(config, errors, "history", historyResult.config, historyResult.errors);
   }
 
-  if (data.mcpServers !== undefined && options.scope !== "global") {
-    errors.push(`${sourceLabel}: 'mcpServers' may only be configured in the global config.`);
-  } else {
-    const mcpResult = parseMcpServersConfig(data.mcpServers, sourceLabel);
-    assignParsedConfigValue(config, errors, "mcpServers", mcpResult.config, mcpResult.errors);
-  }
+  const mcpResult = parseMcpServersConfig(data.mcpServers, sourceLabel);
+  assignParsedConfigValue(config, errors, "mcpServers", mcpResult.config, mcpResult.errors);
 
   return { config, errors };
 }
@@ -766,7 +762,7 @@ function dedupePaths(paths: string[]): string[] {
   return unique;
 }
 
-function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
+function mergeConfigLevels(levels: ConfigLevel[], configs: Config[], home: string): Config {
   const merged: Config = getVirtualConfigDefaults();
   let apiKeys: Config["apiKeys"] | undefined;
   let clientTools: CommandClientToolConfig[] | undefined;
@@ -802,7 +798,10 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
       history = { ...config.history };
     }
     if (config.mcpServers !== undefined) {
-      merged.mcpServers = resolveMcpServersConfig(level, config.mcpServers);
+      merged.mcpServers = {
+        ...merged.mcpServers,
+        ...resolveMcpServersConfig(level, config.mcpServers, home),
+      };
     }
 
     if (config.defaultPersona !== undefined) {
@@ -876,6 +875,7 @@ export function loadConfigWithDiagnostics(
     config: mergeConfigLevels(
       options.levels,
       results.map((result) => result.config),
+      deps.env.home(),
     ),
     errors: [...modelResolverResult.errors, ...results.flatMap((result) => result.errors)],
   };

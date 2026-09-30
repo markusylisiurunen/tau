@@ -158,9 +158,9 @@ console.log(docs);
 
 After reading that result, the agent uses the documented API in later calls. While the documentation remains visible, it is reused rather than reloaded. The guidance prohibits guessed signatures and signatures copied from another code-mode tool. Program return values are ignored; console text and images explicitly forwarded with `await image(block)` enter the model-facing result.
 
-Code-mode programs have no direct process, environment, credential, import, timer, network, or `fetch` access. They can call only the named API and use agent-scoped scratch files exposed by the runtime. Calls default to a 60-second deadline, allow at most 128 API requests with no more than eight unresolved at once, and limit each serialized request or response to 1 MiB. Undefined object properties are omitted from API arguments; undefined arguments and array entries are invalid. Console output is middle-truncated above roughly 8,192 estimated tokens.
+Code-mode programs have no direct process, environment, credential, import, timer, network, or `fetch` access. They can call only the named API and use agent-scoped scratch files exposed by the runtime. Programs default to 60 seconds (MCP: 15 minutes), allow 128 API requests with eight unresolved at once, and limit each serialized payload to 16 MiB. Undefined object properties are omitted from API arguments; undefined arguments and array entries are invalid. Console output is middle-truncated above roughly 8,192 estimated tokens.
 
-`await image({ type: "image", data, mimeType })` forwards a base64 image without files. Calls must be awaited before the program exits. JPEG, PNG, and WebP bytes must match the declared MIME type and fit the 1 MiB JSON bridge limit. Source images are limited to 40 megapixels; each program may forward four images. Images are resized or re-encoded to fit within 4,096 pixels per dimension and 3.5 MiB each. Adjacent console writes form one text block; awaited images separate the text before and after them. Text truncation keeps images in place. Invalid blocks reject and can be caught. Built-in tools retain valid images if the program later fails.
+`await image({ type: "image", data, mimeType })` forwards a base64 image without files. Calls must be awaited before the program exits. JPEG, PNG, and WebP bytes must match the declared MIME type and fit the 16 MiB JSON bridge limit. Source images are limited to 40 megapixels; each program may forward 16 images. Images are resized or re-encoded to fit within 4,096 pixels per dimension and 3.5 MiB each. Adjacent console writes form one text block; awaited images separate the text before and after them. Text truncation keeps images in place. Invalid blocks reject and can be caught. Built-in tools retain valid images if the program later fails.
 
 Scratch files are real UTF-8 files in an execution-environment temporary directory shared by code-mode tools for the same agent. Writes are limited to 128 regular files and 64 MiB total. Scratch state is not stored in the session snapshot. The progressively disclosed documentation gives the exact file API.
 
@@ -184,25 +184,25 @@ The tool is intended for explicit requests to inspect or manage Nook, publish a 
 
 ### MCP
 
-`mcp` discovers and calls tools and reads resources from host-configured Model Context Protocol servers. Main-session personas must allow `mcp`, and the host must configure an enabled server. Built-in personas allow it; subagents and ephemeral threads do not receive it.
+`mcp` discovers and calls tools and reads resources from host-configured Model Context Protocol servers. Personas must allow `mcp`, and the host must configure an enabled server. Subagents inherit access; ephemeral threads do not receive it.
 
-Servers use stdio or streamable HTTP. Stdio commands run on the host with its environment; HTTP uses host credentials. Server files and working directories are not necessarily the agent's workspace. Supported protocol revisions are `2025-11-25`, `2025-06-18`, `2025-03-26`, and `2024-11-05`, not `2026-07-28`.
+Servers use stdio or streamable HTTP. Stdio commands run on the host with its environment; HTTP uses host credentials. Server files need not share the agent's workspace. Supported protocol revisions are `2025-11-25`, `2025-06-18`, `2025-03-26`, and `2024-11-05`, not `2026-07-28`.
 
-The API discovers tools, resources, and templates; inspects schemas; calls tools; and reads URIs, including unlisted ones. Resources return text or base64 binary data, without automatic context inclusion, file writes, or URL fetching. Only console output and forwarded images enter model context. Private `_meta` is omitted. Tool `isError: true` results are data; protocol failures throw. Calls are bounded and cancellable; oversized results fail.
+The API discovers tools, resources, and templates, inspects schemas, calls tools, and reads unlisted URIs. Resources return text or base64 data, without automatic context, file writes, or fetching. Only printed text and images enter context. Tools return `{ content, structuredContent?, isError }`; private MCP `_meta` is stripped. `isError: true` is data; protocol failures throw. Calls/reads default to five minutes, configurable to 15; startup/discovery defaults to 30 seconds. Messages are limited to 16 MiB; oversized results fail.
 
-Connections start lazily, are shared across sessions, and close at shutdown. Disconnected servers reconnect on later requests. Calls are not retried: mutations may have happened. Tool-list changes invalidate cached discovery; resource listings are refreshed on each call. Connections and calls are not recovered after restart. Resource subscriptions, prompts, elicitation, and sampling are unsupported.
+Connections are lazy, shared across sessions, and closed at shutdown. Later requests reconnect. Mutations are not retried. Tool-list changes invalidate cached discovery; resource listings refresh on each call. Restart does not recover connections or calls. Resource subscriptions, prompts, elicitation, and sampling are unsupported.
 
-Configure servers globally and restart the host to apply changes. See [configuration reference](config-reference.md#mcpservers) and [security](security.md#trust-mcp-servers).
+Servers merge by name from host launch-directory config layers. Restart the host to apply changes. See [configuration reference](config-reference.md#mcpservers) and [security](security.md#trust-mcp-servers).
 
 ## Subagent tool eligibility
 
 A subagent can receive only:
 
 ```text
-bash  write  edit  view_image  web  history  nook
+bash  write  edit  view_image  web  history  nook  mcp
 ```
 
-Tau inherits the intersection of the main persona’s tools and those seven eligible names. `tau_docs` is then added intrinsically. There is no separate child tool selection. Nook is bound only when configured, just as for the parent.
+Tau inherits the intersection of the main persona’s tools and those eight eligible names. `tau_docs` is then added intrinsically. There is no separate child tool selection. Nook and MCP require configuration; MCP uses the parent's host connections.
 
 Subagents do not receive goal tools, subagent-management tools, or client-provided tools. Their Bash and file tools are scoped to the subagent working directory, including an alternate directory selected at launch. See [subagents](subagents.md) for configuration and working-directory context rebuilding.
 

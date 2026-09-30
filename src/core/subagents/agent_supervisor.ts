@@ -3,6 +3,7 @@ import { AgentRuntime, type AgentTurnResult, createAgentSpec } from "../agent/ag
 import type { AgentEvent } from "../agent/events.js";
 import type { Config } from "../config/index.js";
 import type { HistoryQuery } from "../history/types.js";
+import type { McpManager } from "../mcp/manager.js";
 import { resolveAgentModel } from "../runtime/agent_model.js";
 import { type CoreDeps, createDefaultCoreDeps } from "../runtime/deps.js";
 import { createAutoCompactionArchiver } from "../session/auto_compaction_archive.js";
@@ -130,6 +131,7 @@ export class AgentSupervisor {
     backend: ToolExecutionBackend;
     bashJobs: BashJobRegistry;
     history?: HistoryQuery;
+    mcp?: McpManager;
     personaId?: string;
   }): SubagentSpawnResult {
     if (this.getActiveCount() >= MAX_ACTIVE_SUBAGENTS) {
@@ -172,6 +174,7 @@ export class AgentSupervisor {
           options.config,
           options.bashJobs,
           options.history,
+          options.mcp,
         ),
       }),
       eventSink: async (event) => await this.recordAgentEvent(id, event),

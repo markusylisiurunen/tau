@@ -20,12 +20,18 @@ const tools = () => [
     outputSchema: { type: "object" },
     annotations: { readOnlyHint: true },
   },
-  ...["fail", "slow", "refresh", "exit", "screenshot", ...(catalogVersion ? ["added"] : [])].map(
-    (name) => ({
-      name,
-      inputSchema: { type: "object", properties: {}, additionalProperties: false },
-    }),
-  ),
+  ...[
+    "fail",
+    "slow",
+    "refresh",
+    "exit",
+    "screenshot",
+    "metadata",
+    ...(catalogVersion ? ["added"] : []),
+  ].map((name) => ({
+    name,
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  })),
 ];
 
 const input = createInterface({ input: process.stdin });
@@ -73,7 +79,9 @@ input.on("line", (line) => {
     if (uri === "docs://missing") {
       send({ jsonrpc: "2.0", id: request.id, error: { code: -32002, message: "missing" } });
     } else if (uri === "docs://oversized") {
-      reply(request.id, { contents: [{ uri, text: "x".repeat(1024 * 1024) }] });
+      reply(request.id, { contents: [{ uri, text: "x".repeat(16 * 1024 * 1024) }] });
+    } else if (uri === "docs://large") {
+      reply(request.id, { contents: [{ uri, text: "x".repeat(2 * 1024 * 1024) }] });
     } else if (uri === "docs://slow") {
       pending.set(
         request.id,
@@ -104,6 +112,34 @@ input.on("line", (line) => {
       reply(request.id, { content: [] });
     } else if (name === "screenshot") {
       reply(request.id, { content: [createProtocolImage({ annotations: { title: "screen" } })] });
+    } else if (name === "metadata") {
+      reply(request.id, {
+        content: [
+          {
+            type: "text",
+            text: "public text",
+            annotations: { priority: 0.8 },
+            _meta: { secret: "private-block" },
+          },
+          {
+            type: "resource",
+            resource: {
+              uri: "docs://embedded",
+              text: "public resource",
+              _meta: { secret: "private-resource" },
+            },
+            _meta: { secret: "private-wrapper" },
+          },
+          {
+            type: "resource_link",
+            uri: "docs://linked",
+            name: "linked",
+            _meta: { secret: "private-link" },
+          },
+        ],
+        structuredContent: { _meta: { application: "preserved" } },
+        _meta: { secret: "private-result" },
+      });
     } else if (name === "fail") {
       reply(request.id, {
         content: [{ type: "text", text: "service rejected the operation" }],

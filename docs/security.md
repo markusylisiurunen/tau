@@ -114,11 +114,13 @@ The `history` code-mode API is read-only, but it can see transcripts across repo
 
 ## Trust MCP servers
 
-MCP server definitions are accepted only from the host's global configuration. A project cannot introduce a host command through `mcpServers`. MCP capabilities apply to all sessions on that host whose persona allows `mcp`; they are not isolated per repository or client.
+MCP server definitions come from the host launch directory's global and ancestor/project configuration layers. Launching a host inside a repository trusts those layers to introduce host commands and use host credentials; there is no approval dialog. MCP capabilities apply to all sessions on that host whose persona allows `mcp`, and their supervised subagents; they are not isolated per repository or client. Session execution-environment configuration cannot introduce servers.
 
 A stdio MCP server is trusted host code. It runs outside the code-mode sandbox with the host account's filesystem and process permissions and full inherited environment, including credentials. Review executables and arguments before configuring them. HTTP servers receive configured headers and the arguments sent to their tools. Use HTTPS for remote services and grant only the access needed.
 
 MCP does not add a confirmation layer. Tools can mutate external systems or host resources immediately. Interrupting a call cannot undo a completed effect, and an unknown outcome does not make retrying a mutation safe. Server descriptions, instructions, annotations, and results are untrusted data. Annotations such as `readOnlyHint` are not enforced permissions.
+
+Stdio shutdown depends on the MCP transport. Descendants that ignore `SIGTERM` can survive when the server process exits first; do not rely on shutdown to contain untrusted server processes.
 
 The execution environment does not sandbox a host-run MCP server. A server that exposes host files or commands gives the agent that host authority even when Bash runs in a remote sandbox. Disable `mcp` in the persona or disable the server if that authority is inappropriate. Connections and credentials stay outside the generated JavaScript, but the configured server remains responsible for what its tools return.
 

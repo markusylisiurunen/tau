@@ -62,7 +62,7 @@ export function createMcpToolDefinition(
 ): AgentTool {
   return createCodeModeToolDefinition(backend, {
     schema: MCP_TOOL,
-    timeoutMs: 60_000,
+    timeoutMs: 900_000,
     parseArguments(raw) {
       const code =
         typeof raw === "object" &&
@@ -88,6 +88,7 @@ export function createMcpToolDefinition(
         agentId,
         backend,
         signal,
+        timeoutMs: 900_000,
         api: {
           listServers: async (args) => {
             parseMethodArgs("listServers", args, z.tuple([]));

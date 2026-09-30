@@ -5,7 +5,8 @@ import type { ConfigLevel } from "./paths.js";
 const stringMap = z.record(z.string().min(1), z.string());
 const common = {
   enabled: z.boolean().optional(),
-  timeoutMs: z.number().int().positive().max(60_000).optional(),
+  timeoutMs: z.number().int().positive().max(900_000).optional(),
+  discoveryTimeoutMs: z.number().int().positive().max(60_000).optional(),
 };
 
 const serverSchema = z.discriminatedUnion("type", [
@@ -66,9 +67,10 @@ export function parseMcpServersConfig(
 export function resolveMcpServersConfig(
   level: ConfigLevel,
   servers: McpServersConfig,
+  home: string,
 ): McpServersConfig {
   const resolvePath = (path: string) =>
-    resolve(level.levelRoot, path.startsWith("~/") ? path.slice(2) : path);
+    path.startsWith("~/") ? resolve(home, path.slice(2)) : resolve(level.levelRoot, path);
   return Object.fromEntries(
     Object.entries(servers).map(([name, server]) => [
       name,

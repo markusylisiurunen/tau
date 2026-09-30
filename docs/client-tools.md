@@ -182,7 +182,7 @@ Tau starts the exchange by writing:
 The command writes:
 
 - `{ version: 5, type: "ready", presentation?: PresentationOverride }` exactly once after preparation.
-- `{ version: 5, type: "result", ok: true, content, presentation?: PresentationOverride }` or `{ version: 5, type: "result", ok: false, error, presentation?: PresentationOverride }` exactly once after authorization. `error` is a string. `content` is an ordered array of at most 1,024 text (`{ type: "text", text }`) or image (`{ type: "image", data, mimeType }`) blocks. At most four images are allowed: padded base64, at most 3.5 MiB decoded each, JPEG/PNG/WebP MIME types.
+- `{ version: 5, type: "result", ok: true, content, presentation?: PresentationOverride }` or `{ version: 5, type: "result", ok: false, error, presentation?: PresentationOverride }` exactly once after authorization. `error` is a string. `content` is an ordered array of at most 1,024 text (`{ type: "text", text }`) or image (`{ type: "image", data, mimeType }`) blocks. At most 16 images are allowed: padded base64, at most 3.5 MiB decoded each, JPEG/PNG/WebP MIME types.
 
 During authorized execution, the command may write `{ version: 5, type: "exec", requestId, command, options }`. The non-empty `command` string runs in the session execution environment. `options` is required and may contain `args: string[]`, `env: Record<string, string>`, base64-encoded string `stdinBase64`, string `cwd`, positive integer `timeoutMs`, and positive integer `maxCaptureBytes`.
 
@@ -391,7 +391,7 @@ Disclose any additional process or network authority in the tool description.
 The command protocol is intentionally bounded:
 
 - The command-to-client stdout NDJSON stream is limited to 512 frames and 192 MiB in total.
-- Each frame on that stdout stream is limited to 24 MiB.
+- Each frame on that stdout stream is limited to 80 MiB.
 - Final result text is limited to 1 MiB; images use the bounds above.
 - Captured stderr is limited to 1 MiB. Exceeding it terminates the command and fails the tool.
 - Execution-environment stdin is limited to 16 MiB decoded, and capture can be requested up to 24 MiB per execution.

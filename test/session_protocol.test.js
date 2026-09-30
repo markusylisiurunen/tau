@@ -53,9 +53,15 @@ describe("session_protocol", () => {
       ok: true,
       value: params,
     });
+    expect(
+      validateSessionProtocolParams("session.clientTool.result", {
+        ...params,
+        content: Array(16).fill(image),
+      }).ok,
+    ).toBe(true);
     for (const images of [
       Array(1025).fill({ type: "text", text: "" }),
-      Array(5).fill(image),
+      Array(17).fill(image),
       [createProtocolImage({ data: "invalid" })],
       [createProtocolImage({ mimeType: "image/gif" })],
       [createProtocolImage({ data: Buffer.alloc(3.5 * 1024 * 1024 + 1).toString("base64") })],

@@ -6014,6 +6014,28 @@ describe("host-owned MCP tools", () => {
     let pid;
     try {
       const session = await host.createSession(localCreateInput);
+      const spawn = vi.spyOn(session.runtime.supervisor, "spawn").mockReturnValue({
+        ok: true,
+        state: createRunningSubagentState(),
+        capacity: { running: 1, limit: 8 },
+      });
+      const spawned = await session.runtime.agent.spec.tools
+        .get("spawn_agent")
+        .execute(
+          fauxToolCall("spawn_agent", { title: "service task", prompt: "use the service" }),
+          {
+            agentId: "main",
+            turnId: "turn",
+            assistantMessageId: "assistant",
+            signal: new AbortController().signal,
+            emitActivity: async () => {},
+          },
+        );
+      expect(spawned.outcome).toBe("succeeded");
+      const launch = spawn.mock.calls[0][0];
+      expect(launch.runtimeConfig.tools).toContain("mcp");
+      expect(launch.mcp.listServers()).toEqual([{ name: "host", type: "stdio" }]);
+      spawn.mockRestore();
       let projected = await session.snapshot();
       session.onDelta((delta) => {
         projected = applySessionProtocolDelta(projected, delta);

@@ -625,10 +625,12 @@ describe("spawn_agent tool", () => {
 
   it("inherits only eligible parent tools without recursive supervision", async () => {
     const { persona } = createFixture();
+    const mcp = { available: true };
     const { tool, supervisor } = createFixture({
+      mcp,
       persona: {
         ...persona,
-        tools: ["bash", "edit", "spawn_agent", "list_agents", "nook", "history"],
+        tools: ["bash", "edit", "spawn_agent", "list_agents", "nook", "history", "mcp"],
       },
     });
     const { result } = await execute(tool, baseArguments);
@@ -636,7 +638,10 @@ describe("spawn_agent tool", () => {
     expect(result.toolResult.outcome).toBe("succeeded");
     expect(supervisor.spawn).toHaveBeenCalledWith(
       expect.objectContaining({
-        runtimeConfig: expect.objectContaining({ tools: ["bash", "edit", "nook", "history"] }),
+        runtimeConfig: expect.objectContaining({
+          tools: ["bash", "edit", "nook", "history", "mcp"],
+        }),
+        mcp,
       }),
     );
   });

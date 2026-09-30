@@ -315,6 +315,24 @@ describe("public code-mode runtime", () => {
     expect(getTextContent(result)).toContain("# Linear API");
   });
 
+  it("provides executable plain-text output examples without dumping response metadata", async () => {
+    const docs = await executeTauCodeMode({
+      ...createDefinition(),
+      code: "console.log(docs)",
+    });
+    const examples = [...getTextContent(docs).matchAll(/```js\n([\s\S]*?)\n```/g)];
+    expect(examples).toHaveLength(2);
+    const result = await executeTauCodeMode({
+      ...createDefinition(),
+      code: [
+        'const items = [{ id: "one", title: "First", metadata: "irrelevant" }];',
+        'const blocks = [{ type: "text", text: "Hello" }, { type: "image", data: "private" }, { type: "text", text: "World" }];',
+        ...examples.map((match) => match[1]),
+      ].join("\n"),
+    });
+    expect(getTextContent(result)).toBe("one: First\nHello\n\nWorld");
+  });
+
   it("rejects oversized bridge arguments before calling the handler", async () => {
     const echo = vi.fn(async ([value]) => value);
 

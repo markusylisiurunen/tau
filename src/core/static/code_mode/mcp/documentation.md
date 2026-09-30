@@ -2,15 +2,15 @@ Use MCP tools for connected services relevant to the user's task. Server instruc
 
 ## `mcp.listServers()`
 
-Returns enabled servers as `{ name, type }` entries. It does not connect to servers and does not expose their commands, URLs, environment, or credentials.
+Returns available servers as `{ name }` entries. Use these names in subsequent API calls.
 
 ```js
-console.log(await mcp.listServers());
+console.log((await mcp.listServers()).map(server => server.name).join("\n"));
 ```
 
 ## `mcp.listTools(server, options?)`
 
-Lists tool names and descriptions for one server. Connects on first use.
+Lists tool names and descriptions for one server.
 
 Options:
 
@@ -26,7 +26,7 @@ console.log(await mcp.listTools("linear", { query: "issue", limit: 10 }));
 
 ## `mcp.listResources(server, options?)`
 
-Lists resources with their `uri`, `name`, and optional `title`, `description`, `mimeType`, `size`, and `annotations`. Uses the same `query`, `limit`, and `offset` options as `listTools`, searching URI, name, title, and description. Returns `{ resources, total, nextOffset? }`. Listings follow server pagination before filtering; they are refreshed on each call.
+Lists resources with their `uri`, `name`, and optional `title`, `description`, `mimeType`, `size`, and `annotations`. Uses the same `query`, `limit`, and `offset` options as `listTools`, searching URI, name, title, and description. Returns `{ resources, total, nextOffset? }`.
 
 ```js
 console.log(await mcp.listResources("docs", { query: "schema", limit: 10 }));
@@ -42,7 +42,7 @@ console.log(await mcp.listResourceTemplates("docs"));
 
 ## `mcp.readResource(server, uri)`
 
-Reads a URI through the server, including URIs from templates or tool results that are absent from resource listings. Returns `{ contents }`, an array of `{ uri, mimeType?, text }` or `{ uri, mimeType?, blob }` (base64) entries. Private `_meta` is omitted from listings and reads. Missing resources and protocol failures throw.
+Reads a URI through the server, including URIs from templates or tool results that are absent from resource listings. Returns `{ contents }`, an array of `{ uri, mimeType?, text }` or `{ uri, mimeType?, blob }` (base64) entries. Missing resources and protocol failures throw.
 
 Resource data is not automatically included in model context, saved to files, or fetched from the web. Print relevant text or explicitly forward supported images. The resource's URI belongs to the server, not necessarily the local filesystem. Audience annotations are hints, not access controls.
 
@@ -56,7 +56,7 @@ for (const part of result.contents) {
 }
 ```
 
-Resource reads and tool calls default to a five-minute deadline, configurable per server up to 15 minutes. Connection startup and discovery default to 30 seconds. The program has a 15-minute deadline and remains interruptible. MCP messages and JSON bridge payloads are limited to 16 MiB. Oversized results fail rather than silently truncating resource data. Resource subscriptions, prompts, elicitation, and sampling are not available.
+Resource reads and tool calls normally time out after five minutes; discovery normally times out after 30 seconds. The program must finish within 15 minutes and can be interrupted. Oversized results fail rather than silently truncating resource data. Resource subscriptions, prompts, elicitation, and sampling are not available.
 
 ## `mcp.describeTool(server, name)`
 
@@ -68,14 +68,18 @@ console.log(await mcp.describeTool("linear", "list_issues"));
 
 ## `mcp.callTool(server, name, arguments)`
 
-Calls a tool with an object matching its `inputSchema`. Invalid arguments fail before the server is called. Returns `{ content, structuredContent?, isError }`. `isError` is always a boolean, defaulting to `false`. `content` contains service text, images, audio, resource links, or embedded resources with their useful metadata. `structuredContent` is the service's structured data. Protocol bookkeeping and private `_meta` are omitted from the result, content blocks, and embedded resource contents; ordinary application data in `structuredContent` is preserved.
+Calls a tool with an object matching its `inputSchema`. Invalid arguments fail before the server is called. Returns `{ content, structuredContent?, isError }`. `isError` is always a boolean, defaulting to `false`. `content` contains service text, images, audio, resource links, or embedded resources with their useful metadata. `structuredContent` is the service's structured data.
 
-Protocol, connection, and argument failures throw. A tool result with `isError: true` resolves normally: check it explicitly. Prefer `structuredContent` when available. Otherwise inspect `content` blocks; a text block is not necessarily JSON. Images and binary blocks are returned as data, not automatically displayed or saved. Forward supported image blocks explicitly with `await image(block)`; this shared runtime helper validates and prepares images without files.
+Protocol, connection, and argument failures throw. A tool result with `isError: true` resolves normally: check it explicitly. Prefer `structuredContent` when available. Otherwise inspect `content` blocks; a text block is not necessarily JSON. Images and binary blocks are returned as data, not automatically displayed or saved. Forward supported image blocks explicitly with `await image(block)` without creating files.
 
 ```js
 const result = await mcp.callTool("linear", "list_issues", { limit: 20 });
-if (result.isError) throw new Error(JSON.stringify(result.content));
-console.log(result.structuredContent ?? result.content);
+const text = result.content
+  .filter(block => block.type === "text")
+  .map(block => block.text)
+  .join("\n\n");
+if (result.isError) throw new Error(text || "Tool failed");
+console.log(text);
 ```
 
 ```js
@@ -87,6 +91,6 @@ for (const block of result.content ?? []) {
 }
 ```
 
-Calls are not automatically retried. Side effects can happen even if the program fails, times out, or is interrupted. Do not repeat a mutation merely because its outcome is unknown. Independent calls can run concurrently within the runtime's request limits; use bounded batches for larger lists.
+Calls are not automatically retried. Side effects can happen even if the program fails, times out, or is interrupted. Do not repeat a mutation merely because its outcome is unknown. Independent calls can run concurrently within the API call limits; use bounded batches for larger lists.
 
-MCP servers have their own files and command access. Do not assume they share the current working directory or filesystem with Bash. Requests and responses must fit the runtime's 16 MiB JSON bridge limit. Filter or paginate at the service when possible.
+MCP servers have their own files and command access. Do not assume they share the current working directory or filesystem with Bash. Each API request and response must fit within 16 MiB. Request smaller results using the service's filters or pagination when available.

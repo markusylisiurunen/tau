@@ -6034,7 +6034,7 @@ describe("host-owned MCP tools", () => {
       expect(spawned.outcome).toBe("succeeded");
       const launch = spawn.mock.calls[0][0];
       expect(launch.runtimeConfig.tools).toContain("mcp");
-      expect(launch.mcp.listServers()).toEqual([{ name: "host", type: "stdio" }]);
+      expect(launch.mcp.listServers()).toEqual([{ name: "host" }]);
       spawn.mockRestore();
       let projected = await session.snapshot();
       session.onDelta((delta) => {

@@ -156,7 +156,7 @@ Tau exposes each service tool with agent-facing guidance that requires its docum
 console.log(docs);
 ```
 
-After reading that result, the agent uses the documented API in later calls. While the documentation remains visible, it is reused rather than reloaded. The guidance prohibits guessed signatures and signatures copied from another code-mode tool. Program return values are ignored; console text and images explicitly forwarded with `await image(block)` enter the model-facing result.
+The agent reuses visible documentation, without guessing or borrowing another tool's signatures. Shared examples show field selection and text-block extraction for concise plain-text output. Return values are ignored; only console text and images forwarded with `await image(block)` enter the result.
 
 Code-mode programs have no direct process, environment, credential, import, timer, network, or `fetch` access. They can call only the named API and use agent-scoped scratch files exposed by the runtime. Programs default to 60 seconds (MCP: 15 minutes), allow 128 API requests with eight unresolved at once, and limit each serialized payload to 16 MiB. Undefined object properties are omitted from API arguments; undefined arguments and array entries are invalid. Console output is middle-truncated above roughly 8,192 estimated tokens.
 
@@ -188,7 +188,7 @@ The tool is intended for explicit requests to inspect or manage Nook, publish a 
 
 Servers use stdio or streamable HTTP. Stdio commands run on the host with its environment; HTTP uses host credentials. Server files need not share the agent's workspace. Supported protocol revisions are `2025-11-25`, `2025-06-18`, `2025-03-26`, and `2024-11-05`, not `2026-07-28`.
 
-The API discovers tools, resources, and templates, inspects schemas, calls tools, and reads unlisted URIs. Resources return text or base64 data, without automatic context, file writes, or fetching. Only printed text and images enter context. Tools return `{ content, structuredContent?, isError }`; private MCP `_meta` is stripped. `isError: true` is data; protocol failures throw. Calls/reads default to five minutes, configurable to 15; startup/discovery defaults to 30 seconds. Messages are limited to 16 MiB; oversized results fail.
+`mcp.listServers()` returns available server names as `{ name }` entries. The API discovers tools, resources, and templates, inspects schemas, calls tools, and reads unlisted URIs. Resources return text or base64 data, without automatic context, file writes, or fetching. Only printed text and images enter context. Tools return `{ content, structuredContent?, isError }`; private MCP `_meta` is stripped. `isError: true` is data; protocol failures throw. Calls/reads default to five minutes, configurable to 15; startup/discovery defaults to 30 seconds. Messages are limited to 16 MiB; oversized results fail.
 
 Connections are lazy, shared across sessions, and closed at shutdown. Later requests reconnect. Mutations are not retried. Tool-list changes invalidate cached discovery; resource listings refresh on each call. Restart does not recover connections or calls. Resource subscriptions, prompts, elicitation, and sampling are unsupported.
 

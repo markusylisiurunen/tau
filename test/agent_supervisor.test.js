@@ -80,7 +80,7 @@ function getRecord(supervisor, id) {
 describe("AgentSupervisor", () => {
   it("binds the parent's MCP manager without resolving servers from the child workspace", async () => {
     const supervisor = new AgentSupervisor({ onEvent: () => {} });
-    const mcp = { available: true, listServers: vi.fn(() => [{ name: "host", type: "http" }]) };
+    const mcp = { available: true, listServers: vi.fn(() => [{ name: "host" }]) };
     try {
       const spawned = supervisor.spawn(
         createSpawnOptions({
@@ -110,7 +110,7 @@ describe("AgentSupervisor", () => {
         },
       );
       expect(result.outcome).toBe("succeeded");
-      expect(JSON.parse(result.content[0].text)).toEqual([{ name: "host", type: "http" }]);
+      expect(JSON.parse(result.content[0].text)).toEqual([{ name: "host" }]);
       expect(mcp.listServers).toHaveBeenCalledOnce();
       const excluded = supervisor.spawn(createSpawnOptions({ mcp }));
       expect(

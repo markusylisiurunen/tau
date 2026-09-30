@@ -79,7 +79,7 @@ describe("host-owned MCP connections", () => {
   it("discovers and calls a stdio server without exposing host configuration", async () => {
     const client = manager();
     try {
-      expect(client.listServers()).toEqual([{ name: "test", type: "stdio" }]);
+      expect(client.listServers()).toEqual([{ name: "test" }]);
       expect(JSON.stringify(client.listServers())).not.toContain("test-secret");
       const catalog = await client.listTools("test", signal());
       expect(catalog.instructions).toBe("Test service usage guidance");
@@ -476,6 +476,7 @@ describe("MCP code-mode tool", () => {
       `,
       );
       expect(result.outcome).toBe("succeeded");
+      expect(JSON.parse(result.text.split("\n")[0])).toEqual([{ name: "test" }]);
       expect(result.text).toContain('"nextOffset":1');
       expect(result.text).toContain('"total":1');
       expect(result.text).toContain('"inputSchema"');

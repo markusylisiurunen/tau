@@ -25,9 +25,6 @@ function formatPersona(p: Persona): string {
   if (p.allowedReasoningLevels) {
     lines.push(`  allowedReasoningLevels: ${p.allowedReasoningLevels.join(", ")}`);
   }
-  if (p.skills) {
-    lines.push(`  skills: ${p.skills === "*" ? "*" : p.skills.join(", ")}`);
-  }
   if (p.tools && p.tools.length > 0) {
     lines.push(`  tools: ${p.tools.join(", ")}`);
   }
@@ -37,7 +34,6 @@ function formatPersona(p: Persona): string {
 function formatPrompt(p: PromptTemplate): string {
   const lines = [`  id: ${p.id}`];
   if (p.label) lines.push(`  label: ${p.label}`);
-  if (p.description) lines.push(`  description: ${p.description}`);
   lines.push(`  template: ${p.template.length} chars`);
   return lines.join("\n");
 }
@@ -53,13 +49,6 @@ function formatToolSchema(tool: Tool): string {
     `  parameters: ${JSON.stringify(tool.parameters, null, 4).split("\n").join("\n    ")}`,
   );
   return lines.join("\n");
-}
-
-function getActiveSkills(persona: Persona | undefined, skills: Skill[]): Skill[] {
-  if (!persona?.skills) return [];
-  if (persona.skills === "*") return skills;
-  const enabledNames = new Set(persona.skills.map((s) => s.toLowerCase()));
-  return skills.filter((s) => enabledNames.has(s.name.toLowerCase()));
 }
 
 export function printDebugInfo(args: {
@@ -121,10 +110,8 @@ export function printDebugInfo(args: {
   if (skills.length === 0) {
     console.log("\n  (none)");
   } else {
-    const activeSkills = getActiveSkills(selectedPersona, skills);
-    const activeNames = new Set(activeSkills.map((s) => s.name));
     for (const s of skills) {
-      const isActive = selectedPersona ? activeNames.has(s.name) : false;
+      const isActive = selectedPersona !== undefined;
       console.log(`\n- ${s.name}${isActive ? " [active]" : ""}`);
       console.log(formatSkill(s));
     }

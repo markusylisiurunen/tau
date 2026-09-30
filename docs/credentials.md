@@ -2,7 +2,7 @@
 
 Tau can read secrets from configuration, process environments, and managed OAuth storage. The correct location depends on which process performs the authenticated operation. In a remote session, the attached terminal is usually not that process.
 
-Treat credentials separately from model definitions. [Models](models.md) describes providers, model metadata, and `models.json`; this page describes how authenticated requests obtain secrets.
+Treat credentials separately from model definitions. [Models](models.md) describes providers and model metadata; this page describes how authenticated requests obtain secrets.
 
 ## Credential ownership
 
@@ -26,7 +26,7 @@ With local `tau`, these roles normally share one machine. With `tau attach`, set
 
 ## Provider API keys
 
-Tau accepts provider API keys in the effective runtime configuration:
+Tau accepts provider API keys in private global configuration:
 
 ```json
 {
@@ -38,25 +38,15 @@ Tau accepts provider API keys in the effective runtime configuration:
 }
 ```
 
-Keys are provider IDs, not model IDs. `apiKeys` merges by provider across configuration levels, so a nearer project value replaces the same provider's broader value while unrelated provider entries remain. Global and project discovery is defined in [configuration](configuration.md).
+Keys are provider IDs, not model IDs. `apiKeys` is global-only, in the owning process's `~/.config/tau/config.json`; project values are rejected. Configuration strings are literal and do not expand environment variables.
 
-Configuration files contain literal strings. Tau does not expand `$NAME` or `${NAME}` inside JSON. A key placed in `.tau/config.json` is project data and may be committed accidentally. Prefer host process environment variables or private global configuration when the credential should not live with the project.
+For model API-key authentication, provider-supported environment credentials take precedence over global `apiKeys`. Supported cloud and workload identity authentication remains available. OpenAI uses `OPENAI_API_KEY`; Anthropic also supports `ANTHROPIC_AUTH_TOKEN` and `ANTHROPIC_OAUTH_TOKEN` according to its provider contract. Managed Codex OAuth is separate and always uses the explicitly active stored account.
 
-For model authentication, Tau resolves credentials in this order:
-
-1. A managed stored credential for the provider, when one exists.
-2. `apiKeys.<provider>` from the session's effective runtime configuration.
-3. The provider runtime's ambient authentication, such as its standard API-key environment variable or supported cloud credential mechanism.
-
-This means `apiKeys.openai` wins over `OPENAI_API_KEY` for model calls. If the config entry is absent, OpenAI can use `OPENAI_API_KEY`. Similar conventional variables include `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, and `MISTRAL_API_KEY`. Anthropic's ambient resolution also supports bearer and OAuth token variables, with `ANTHROPIC_AUTH_TOKEN` before `ANTHROPIC_OAUTH_TOKEN` and `ANTHROPIC_API_KEY`.
-
-Other bundled providers define their own ambient authentication. A provider being present in the bundled [model catalog](models.md) does not prove that the host currently has usable credentials.
-
-Changes to `apiKeys` are picked up when an idle session runs `/reload`, or when a new session is created. Environment changes generally require restarting the owning process because an already-running process does not receive later shell exports.
+Set model credentials where the host runs. Restart the owning process after changing environment variables or its global API-key configuration.
 
 ## Feature-specific keys
 
-Several Tau features share provider credentials but intentionally prefer a fixed environment variable over configuration. Their precedence is:
+Feature helpers use environment variables first, then global configuration:
 
 | Feature | Resolution order |
 | --- | --- |
@@ -65,8 +55,6 @@ Several Tau features share provider credentials but intentionally prefer a fixed
 | Mistral PDF OCR | `MISTRAL_API_KEY`, then `apiKeys.mistral` |
 | OpenAI image generation, speech rewriting, and transcription spelling hints | `OPENAI_API_KEY`, then `apiKeys.openai` |
 | ElevenLabs speech generation, `/speak` synthesis, Telegram voice synthesis, and voice listing | `ELEVENLABS_API_KEY`, then `apiKeys.elevenlabs` |
-
-The Google, Mistral, OpenAI, and ElevenLabs rows describe feature-specific helpers. Model calls follow the general model-authentication order instead, where the configured provider key wins over ambient environment authentication.
 
 `web.discover` does not require Exa. `web.search` and `web.fetch` do. `/speak` and Telegram `/tts_on` voice responses require OpenAI for text rewriting and ElevenLabs for synthesis. `/listen` and incoming Telegram voice notes use Google, with optional OpenAI spelling hints. PDF OCR through `tau tool pdf-unpack` uses Mistral.
 
@@ -84,35 +72,20 @@ tau auth login codex
 
 The flow opens or prints a browser URL and may fall back to a device code or pasted redirect. Tau stores the result under the host user's `~/.config/tau/auth.json` with private file permissions. Do not edit this file directly. The auth commands coordinate concurrent access, refresh tokens when needed, and preserve account state safely.
 
-Multiple Codex accounts may be present. Inspect account identities, enabled state, usage windows, and the account Tau would currently prefer without displaying tokens:
+Multiple Codex accounts may be stored, with at most one active account. `tau auth list` displays identities, marks the active account, and shows informational usage windows without revealing tokens.
 
 ```sh
+tau auth login codex
 tau auth list
-```
-
-Manage one account by the account ID or email shown in that output:
-
-```sh
-tau auth disable codex --account developer@example.com
-tau auth enable codex --account developer@example.com
+tau auth use codex --account developer@example.com
 tau auth logout codex --account developer@example.com
 ```
 
-Login adds a new account or refreshes the matching account. Disable keeps the account stored but removes it from automatic selection. Logout removes it.
+First login activates the account only when no accounts are stored. Later logins add or refresh an account without changing the active selection. If stored accounts remain but none is active, use `tau auth use` explicitly. Account IDs and email matching are case-insensitive.
 
-### Account selection and failover
+`auth use` replaces the previous active account. Logout removes the account; logging out the active account leaves no account active even if others remain. With no active account, requests fail with instructions to log in or select one. Failed or exhausted accounts surface failures without automatic switching. Usage never determines selection.
 
-Without an override, Tau chooses among enabled accounts with usable quota and keeps the selected account stable for a session. If a provider error reveals that the selected account's tracked quota is exhausted, Tau clears that session selection so a later attempt can choose another usable account. Disabled accounts, accounts whose credentials cannot be refreshed, and accounts with exhausted quota are not suitable candidates.
-
-Set `TAU_CODEX_ACCOUNT` in the host process environment to force one stored account by email or account ID:
-
-```sh
-TAU_CODEX_ACCOUNT=developer@example.com tau
-```
-
-Matching is case-insensitive. A missing or disabled match fails with an explicit error. A forced account disables automatic failover, so use it when deterministic account selection matters more than continuity.
-
-Auth storage is reloaded when credentials are resolved. Login, enable, disable, and logout therefore affect later credential resolutions without a host restart. They do not rewrite a model request already in flight. A changed `TAU_CODEX_ACCOUNT` still requires restarting the host process.
+Auth storage is reloaded for later requests across sessions. Switching accounts does not alter a request already in flight and needs no host restart.
 
 ## History and Nook indirection
 
@@ -153,31 +126,27 @@ If the named `accessClientSecretEnv` has a non-empty value, it wins over inline 
 
 ## Hosted execution credentials
 
-Fly Sprite APIs are host-owned resolver configuration. They must be available when the host starts, before a client asks it to create a Sprite session. Each API requires a token:
+The Fly Sprite connection is host-owned configuration. They must be available when the host starts, before a client asks it to create a Sprite session. The connection requires a token:
 
 ```json
 {
   "flySprites": {
-    "apis": {
-      "engineering": {
-        "baseURL": "https://api.sprites.dev",
-        "tokenEnv": "FLY_SPRITES_TOKEN"
-      }
-    }
+    "baseURL": "https://api.sprites.dev",
+    "tokenEnv": "FLY_SPRITES_TOKEN"
   }
 }
 ```
 
 For Fly, inline `token` wins when present; `tokenEnv` is the fallback. Session creation fails if neither resolves.
 
-These target definitions are read from the host's startup configuration, not from an attached client. `/reload` refreshes session runtime content but does not rebuild the host's execution-environment resolvers. Restart the host after changing Sprite API definitions or their environment.
+These target definitions are read from the host's startup configuration, not from an attached client. `/reload` refreshes session runtime content but does not rebuild the host's execution-environment resolvers. Restart the host after changing Sprite connection settings or their environment.
 
 ## Safe verification
 
 Verify credentials through the operation that owns them, without printing secret values:
 
-- Run `tau auth list` to check Codex identities, enabled state, refresh health, and quota windows.
-- Run `/reload` while the session is idle after changing runtime `apiKeys`; review every configuration warning.
+- Run `tau auth list` to check Codex identities, active selection, refresh health, and informational usage windows.
+- Restart the owning process after changing global `apiKeys`.
 - Make a small request with the intended persona to verify model authentication and endpoint access.
 - Exercise the specific feature after setting Exa, speech, History, Nook or Fly credentials. Their missing-credential errors name the accepted source.
 - For remote sessions, first confirm which machine is the host and which process owns the feature.

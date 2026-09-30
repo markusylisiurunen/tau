@@ -1,6 +1,5 @@
 ---
-id: "release-alpha"
-description: "release a new alpha pre-release (tagged as alpha on npm)"
+label: release alpha
 ---
 
 Make a new alpha release of tau (published under the npm `alpha` tag, not `latest`):

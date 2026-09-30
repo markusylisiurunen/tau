@@ -388,15 +388,13 @@ async function createSessionFromPrompt(
     });
   }
 
-  const apiId = (await rl.question("Fly API id: ")).trim();
   const spriteName = (await rl.question("Fly Sprite name: ")).trim();
-  if (!apiId || !spriteName) {
-    throw new Error("Fly API id and Sprite name are required");
+  if (!spriteName) {
+    throw new Error("Fly Sprite name is required");
   }
   return await client.sessions.create({
     executionEnvironment: {
       kind,
-      apiId,
       spriteName,
       cwd,
     },

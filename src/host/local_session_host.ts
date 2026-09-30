@@ -297,12 +297,16 @@ export class LocalSessionHost implements TauSessionHost {
     }
     const runtimeContext = await executionEnvironment.resolveRuntimeContext({
       cwd: executionEnvironment.snapshot().cwd,
-      persona: bootstrap.persona,
       discoveredSkills: bootstrap.discoveredSkills,
       includeAgentContext: this.sessionOptions.includeAgentContext,
-      agentContextFiles: bootstrap.config?.agentContextFiles ?? [],
     });
-    const catalog = createContentCatalogSnapshot(bootstrap);
+    const catalog = createContentCatalogSnapshot(
+      bootstrap,
+      this.mcp
+        .listServers()
+        .map(({ name }) => name)
+        .sort(),
+    );
     return this.createLocalSessionHandleFromRuntimeContext(
       executionEnvironment,
       runtimeContext,
@@ -1371,14 +1375,12 @@ class LocalHostedSessionHandle implements LocalHostedSession {
     const selectedPersona = clonePersona(persona);
     const runtimeContext = await this.executionEnvironment.resolveRuntimeContext({
       cwd: this.executionEnvironment.snapshot().cwd,
-      persona: selectedPersona,
       discoveredSkills: runtimeConfig.skills,
       includeAgentContext: this.includeAgentContext,
-      agentContextFiles: runtimeConfig.config.agentContextFiles ?? [],
     });
     return await this.enqueueConfigurationMutation(async () => {
       this.runtime.setRuntimeConfig(
-        runtimeConfig.config,
+        { ...runtimeConfig.config, apiKeys: this.bootstrap.config?.apiKeys },
         runtimeConfig.bootstrap.modelResolver.resolveModel,
       );
       this.runtime.updatePromptContext(runtimeContext.promptBootstrap.promptContext);
@@ -1391,9 +1393,9 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         personas: personas.map(clonePersona),
         prompts: structuredClone(runtimeConfig.prompts),
         modelResolver: runtimeConfig.bootstrap.modelResolver.resolveModel,
-        config: runtimeConfig.config,
+        config: { ...runtimeConfig.config, apiKeys: this.bootstrap.config?.apiKeys },
       };
-      this.catalog = createContentCatalogSnapshot(this.bootstrap);
+      this.catalog = createContentCatalogSnapshot(this.bootstrap, this.catalog.mcpServers);
       const snapshot = await this.commitSnapshot();
       this.emitSnapshotReset("configuration", snapshot);
       return snapshot;
@@ -1420,15 +1422,13 @@ class LocalHostedSessionHandle implements LocalHostedSession {
 
     const runtimeContext = await this.executionEnvironment.resolveRuntimeContext({
       cwd: this.executionEnvironment.snapshot().cwd,
-      persona: nextPersona,
       discoveredSkills: runtimeConfig.skills,
       includeAgentContext: this.includeAgentContext,
-      agentContextFiles: runtimeConfig.config.agentContextFiles ?? [],
     });
 
     return await this.enqueueConfigurationMutation(async () => {
       this.runtime.setRuntimeConfig(
-        runtimeConfig.config,
+        { ...runtimeConfig.config, apiKeys: this.bootstrap.config?.apiKeys },
         runtimeConfig.bootstrap.modelResolver.resolveModel,
       );
       this.runtime.updatePromptContext(runtimeContext.promptBootstrap.promptContext);
@@ -1442,20 +1442,16 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         personas: personas.map(clonePersona),
         prompts: structuredClone(runtimeConfig.prompts),
         modelResolver: runtimeConfig.bootstrap.modelResolver.resolveModel,
-        config: runtimeConfig.config,
+        config: { ...runtimeConfig.config, apiKeys: this.bootstrap.config?.apiKeys },
       };
 
-      this.catalog = createContentCatalogSnapshot(this.bootstrap);
-
-      const unknownSkillWarnings = runtimeContext.promptBootstrap.unknownSkills.map(
-        (skill) => `unknown skill enabled by persona '${nextPersona.id}': ${skill}`,
-      );
+      this.catalog = createContentCatalogSnapshot(this.bootstrap, this.catalog.mcpServers);
 
       const snapshot = await this.commitSnapshot();
       this.emitSnapshotReset("configuration", snapshot);
       return {
         snapshot,
-        warnings: [...runtimeConfig.warnings, ...unknownSkillWarnings],
+        warnings: runtimeConfig.warnings,
         counts: {
           personas: runtimeConfig.personas.length,
           prompts: runtimeConfig.prompts.length,
@@ -3630,19 +3626,20 @@ function cloneResolvedBootstrap(
 
 function createContentCatalogSnapshot(
   bootstrap: LocalSessionResolvedBootstrap,
+  mcpServers: string[],
 ): SessionProtocolContentCatalogSnapshot {
   return {
     personas: bootstrap.personas.map(personaSnapshotFromPersona),
     prompts: bootstrap.prompts.map((prompt) => ({
       id: prompt.id,
-      ...(prompt.label !== undefined ? { label: prompt.label } : {}),
-      ...(prompt.description !== undefined ? { description: prompt.description } : {}),
+      label: prompt.label,
     })),
     skills: bootstrap.discoveredSkills.map((skill) => ({
       name: skill.name,
       description: skill.description,
       path: skill.path,
     })),
+    mcpServers: [...mcpServers],
   };
 }
 
@@ -3660,7 +3657,6 @@ function personaSnapshotFromPersona(persona: Persona): SessionProtocolPersonaSna
       : {}),
     subagentLaunchModels: [...persona.subagentLaunchModels],
     ...(persona.tools ? { tools: [...persona.tools] } : {}),
-    skills: Array.isArray(persona.skills) ? [...persona.skills] : persona.skills,
     source: persona.source,
   };
 }

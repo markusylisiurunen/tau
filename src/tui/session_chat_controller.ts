@@ -503,7 +503,7 @@ export class SessionChatController {
 
   getAutocompleteSources(): {
     personas: () => Array<{ id: string; label?: string }>;
-    prompts: () => Array<{ id: string; label?: string }>;
+    prompts: () => Array<{ id: string; label: string }>;
     themes: () => Array<{ id: string }>;
     autocompletePaths: (query: string, limit: number) => Promise<string[]>;
     skills: () => string[];
@@ -534,6 +534,10 @@ export class SessionChatController {
     }
     if (this.snapshot.catalog.skills.length > 0) {
       parts.push(`${this.snapshot.catalog.skills.length} skills`);
+    }
+    if (this.snapshot.catalog.mcpServers.length > 0) {
+      const count = this.snapshot.catalog.mcpServers.length;
+      parts.push(`${count} MCP server${count === 1 ? "" : "s"}`);
     }
     if (this.configuredClientToolNames.length > 0) {
       const count = this.configuredClientToolNames.length;
@@ -574,6 +578,13 @@ export class SessionChatController {
       lines.push("", "client tools:");
       for (const clientToolName of this.configuredClientToolNames) {
         lines.push(`  ${clientToolName}`);
+      }
+    }
+
+    if (this.snapshot.catalog.mcpServers.length > 0) {
+      lines.push("", "mcp servers (configured):");
+      for (const name of this.snapshot.catalog.mcpServers) {
+        lines.push(`  ${name}`);
       }
     }
 
@@ -1419,7 +1430,6 @@ export class SessionChatController {
       case "fly-sprite":
         return {
           kind: "fly-sprite",
-          apiId: snapshot.apiId,
           spriteName: snapshot.spriteName,
           cwd: snapshot.cwd,
         };

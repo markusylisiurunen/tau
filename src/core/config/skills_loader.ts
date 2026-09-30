@@ -73,10 +73,13 @@ export async function loadSkillsContent(
   const levels = options.levels;
 
   const skillsByName = new Map<string, Skill>();
+  const loadedDirs = new Set<string>();
   const errors: string[] = [];
 
   for (const level of levels) {
-    for (const dir of [level.skillsDir, level.agentsSkillsDir]) {
+    for (const dir of [level.agentsSkillsDir, level.skillsDir]) {
+      if (loadedDirs.has(dir)) continue;
+      loadedDirs.add(dir);
       const result = loadSkillsFromDir(dir, deps);
       errors.push(...result.errors);
       for (const skill of result.skills) {

@@ -79,7 +79,6 @@ function addSkills(dir) {
 
 function addLevel(root, configDir) {
   addFile(path.join(configDir, "config.json"));
-  addFile(path.join(configDir, "models.json"));
   addFiles(path.join(configDir, "personas"), ".md");
   addFiles(path.join(configDir, "prompts"), ".md");
   addSkills(path.join(configDir, "skills"));

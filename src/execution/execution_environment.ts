@@ -2,7 +2,7 @@ import type { RuntimeConfigResult } from "../core/config/index.js";
 import type { RemoteModelCatalogSnapshot } from "../core/models/remote_catalog.js";
 import type { RuntimePromptBootstrap } from "../core/runtime/runtime_bootstrap.js";
 import type { ToolExecutionBackend } from "../core/tools/execution_backend.js";
-import type { Persona, Skill } from "../core/types.js";
+import type { Skill } from "../core/types.js";
 import type {
   SessionProtocolExecutionEnvironmentInput,
   SessionProtocolExecutionEnvironmentSnapshot,
@@ -10,10 +10,8 @@ import type {
 
 export type ResolveExecutionRuntimeContextOptions = {
   cwd: string;
-  persona: Persona;
   discoveredSkills: Skill[];
   includeAgentContext: boolean;
-  agentContextFiles: string[];
 };
 
 export type ExecutionRuntimeContext = {

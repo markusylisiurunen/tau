@@ -48,7 +48,7 @@ list_agents
 interrupt_agent
 ```
 
-When a custom persona extends another persona and omits `tools`, it inherits the base persona's list. A non-extending custom persona that omits `tools` enables `bash`, `write`, `edit`, `view_image`, `web`, `nook`, `history`, and `mcp`. It also enables the five subagent-management tools. Built-in personas enable the same base and subagent tool sets.
+A custom persona that omits `tools` enables `bash`, `write`, `edit`, `view_image`, `web`, `nook`, `history`, and `mcp`. It also enables the five subagent-management tools. Built-in personas enable the same base and subagent tool sets.
 
 An empty list disables every persona-controlled host tool:
 

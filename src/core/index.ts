@@ -25,7 +25,7 @@ export {
   runListCommand,
   runLoginCommand,
   runLogoutCommand,
-  runSetAccountEnabledCommand,
+  runUseAccountCommand,
   SUPPORTED_OAUTH_PROVIDERS,
 } from "./auth/index.js";
 export type { CliOptions } from "./cli.js";
@@ -33,7 +33,6 @@ export { CliError, parseCliArgs, parsePersonaString, printDiffToolHelp, printHel
 export type {
   Config,
   ConfigDeps,
-  FlySpritesApiConfig,
   FlySpritesConfig,
   RuntimeBootstrap,
   TelegramBotConfig,
@@ -75,14 +74,10 @@ export type { CoreDeps } from "./runtime/deps.js";
 export { createDefaultCoreDeps } from "./runtime/deps.js";
 export type { ModelExecutor } from "./runtime/model_executor.js";
 export type {
-  ResolvedPersonaSkills,
   ResolveRuntimePromptBootstrapArgs,
   RuntimePromptBootstrap,
 } from "./runtime/runtime_bootstrap.js";
-export {
-  resolvePersonaSkillsForPromptContext,
-  resolveRuntimePromptBootstrap,
-} from "./runtime/runtime_bootstrap.js";
+export { resolveRuntimePromptBootstrap } from "./runtime/runtime_bootstrap.js";
 export type {
   ComposeSessionPromptsArgs,
   SessionPromptComposition,

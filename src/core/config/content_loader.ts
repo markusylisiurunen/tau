@@ -182,7 +182,6 @@ function resolveContentContext(options: { deps: ConfigDeps; levels: ConfigLevel[
 const personaFrontMatterSchema = z
   .object({
     id: z.string().trim().min(1),
-    extends: z.string().trim().min(1).optional(),
     label: z.string().trim().optional(),
     provider: z.string().trim().min(1),
     model: z.string().trim().min(1),
@@ -190,20 +189,11 @@ const personaFrontMatterSchema = z
     reasoning: ReasoningEffortSchema.optional(),
     serviceTier: ServiceTierSchema.optional(),
     allowedReasoningLevels: z.array(ReasoningEffortSchema).optional(),
-    skills: z.unknown().optional(),
     tools: z.unknown().optional(),
   })
   .strip();
 
-const skillsSchema = z.union([z.literal("*"), z.array(z.string())]);
-
-const promptFrontMatterSchema = z
-  .object({
-    id: z.string().trim().min(1),
-    label: z.string().trim().optional(),
-    description: z.string().trim().optional(),
-  })
-  .strip();
+const promptFrontMatterSchema = z.object({ label: z.string().trim().min(1) }).strip();
 
 const PERSONA_TOOL_NAMES = [
   TOOL_NAME_BASH,
@@ -245,7 +235,6 @@ function parsePersona(
   content: string,
   source: "user" | "project",
   modelResolver: ModelResolver,
-  basePersonasById?: Map<string, Persona>,
 ): { persona?: Persona; error?: string } {
   const markdownResult = parseMarkdownFrontMatter(content);
   if (!markdownResult.ok) {
@@ -257,7 +246,7 @@ function parsePersona(
     return { error: `${file}: missing required fields (id, provider, model). skipped.` };
   }
 
-  const { id, extends: extendsId, label, provider, model, description } = parsedFrontMatter.data;
+  const { id, label, provider, model, description } = parsedFrontMatter.data;
   const fileId = basename(file, ".md");
   if (fileId && id !== fileId) {
     return {
@@ -267,13 +256,10 @@ function parsePersona(
   const reasoning = parsedFrontMatter.data.reasoning;
   const serviceTier = parsedFrontMatter.data.serviceTier;
   const allowedReasoningLevels = parsedFrontMatter.data.allowedReasoningLevels;
-  const skillsRaw = parsedFrontMatter.data.skills;
   const toolsRaw = parsedFrontMatter.data.tools;
 
-  const basePersona = extendsId ? basePersonasById?.get(extendsId.toLowerCase()) : undefined;
-
-  if (extendsId && !basePersona) {
-    return { error: `${file}: extends "${extendsId}" not found. skipped.` };
+  if (!markdownResult.body.trim()) {
+    return { error: `${file}: a base prompt is required. skipped.` };
   }
 
   const modelObj = modelResolver(provider, model);
@@ -281,37 +267,12 @@ function parsePersona(
     return { error: `${file}: failed to load model "${provider}:${model}". skipped.` };
   }
 
-  const settings: Persona["settings"] = basePersona ? { ...basePersona.settings } : {};
+  const settings: Persona["settings"] = {};
   if (reasoning) {
     settings.reasoning = reasoning;
   }
   if (serviceTier) {
     settings.serviceTier = serviceTier;
-  }
-
-  let skills: Persona["skills"];
-  if (skillsRaw === undefined) {
-    skills = basePersona
-      ? Array.isArray(basePersona.skills)
-        ? [...basePersona.skills]
-        : basePersona.skills
-      : "*";
-  } else {
-    const skillsParsed = skillsSchema.safeParse(skillsRaw);
-
-    if (!skillsParsed.success) {
-      return { error: `${file}: skills must be "*" or a list of strings. skipped.` };
-    }
-
-    if (skillsParsed.data === "*") {
-      skills = "*";
-    } else {
-      const cleaned = skillsParsed.data.map((skill) => skill.trim());
-      if (cleaned.some((skill) => !skill)) {
-        return { error: `${file}: skills entries must be non-empty strings. skipped.` };
-      }
-      skills = cleaned;
-    }
   }
 
   const toolsResult = parsePersonaTools(toolsRaw);
@@ -321,20 +282,13 @@ function parsePersona(
 
   const defaultTools = [...DEFAULT_PERSONA_TOOLS, ...DEFAULT_SUBAGENT_TOOLS];
 
-  const inheritedTools =
-    toolsRaw === undefined && basePersona?.tools ? [...basePersona.tools] : undefined;
-  const tools = toolsResult.tools ?? inheritedTools ?? defaultTools;
-
-  const finalLabel = label || basePersona?.label || "custom";
-  const finalDescription = description ?? basePersona?.description;
-  const finalSystemPrompt = markdownResult.body.trim()
-    ? markdownResult.body
-    : (basePersona?.systemPrompt ?? markdownResult.body);
-
-  const finalAllowedReasoningLevels =
-    allowedReasoningLevels && allowedReasoningLevels.length > 0
-      ? allowedReasoningLevels
-      : basePersona?.allowedReasoningLevels;
+  const tools = toolsResult.tools ?? defaultTools;
+  const finalLabel = label || "custom";
+  const finalDescription = description;
+  const finalSystemPrompt = markdownResult.body;
+  const finalAllowedReasoningLevels = allowedReasoningLevels?.length
+    ? allowedReasoningLevels
+    : undefined;
 
   const persona: Persona = {
     id,
@@ -346,7 +300,6 @@ function parsePersona(
     ...(finalDescription && { description: finalDescription }),
     ...(finalAllowedReasoningLevels ? { allowedReasoningLevels: finalAllowedReasoningLevels } : {}),
     subagentLaunchModels: [],
-    skills,
     source,
   };
 
@@ -364,29 +317,19 @@ export function parsePrompt(
 
   const parsedFrontMatter = promptFrontMatterSchema.safeParse(markdownResult.frontMatter);
   if (!parsedFrontMatter.success) {
-    return { error: `${file}: missing required field 'id'. skipped.` };
-  }
-
-  const { id, label, description } = parsedFrontMatter.data;
-  const fileId = basename(file, ".md");
-  if (fileId && id !== fileId) {
-    return {
-      error: `${file}: frontmatter id "${id}" must match file name "${fileId}". skipped.`,
-    };
+    return { error: `${file}: missing required non-empty 'label'. skipped.` };
   }
 
   const prompt: PromptTemplate = {
-    id,
+    id: basename(file, ".md"),
+    label: parsedFrontMatter.data.label,
     template: markdownResult.body,
-    ...(label && { label }),
-    ...(description && { description }),
   };
 
   return { prompt };
 }
 
 export async function loadUserPersonas(args: {
-  basePersonasById: Map<string, Persona>;
   modelResolver: ModelResolver;
   deps: ConfigDeps;
   levels: ConfigLevel[];
@@ -408,13 +351,7 @@ export async function loadUserPersonas(args: {
   const personas: Persona[] = [];
 
   for (const file of entries) {
-    const result = parsePersona(
-      file.path,
-      file.content,
-      "user",
-      args.modelResolver,
-      args.basePersonasById,
-    );
+    const result = parsePersona(file.path, file.content, "user", args.modelResolver);
     if (result.persona) {
       personas.push(result.persona);
     } else if (result.error) {
@@ -426,7 +363,6 @@ export async function loadUserPersonas(args: {
 }
 
 export async function loadProjectPersonas(args: {
-  basePersonasById: Map<string, Persona>;
   modelResolver: ModelResolver;
   deps: ConfigDeps;
   levels: ConfigLevel[];
@@ -453,13 +389,7 @@ export async function loadProjectPersonas(args: {
     errors.push(...entryErrors);
 
     for (const file of entries) {
-      const result = parsePersona(
-        file.path,
-        file.content,
-        "project",
-        args.modelResolver,
-        args.basePersonasById,
-      );
+      const result = parsePersona(file.path, file.content, "project", args.modelResolver);
       if (result.persona) {
         personas.push(result.persona);
       } else if (result.error) {
@@ -579,18 +509,12 @@ export async function loadAllContent(
       }
     }
 
-    const basePersonasById = new Map(
-      resolvedBuiltinPersonas.map((persona) => [persona.id.toLowerCase(), persona] as const),
-    );
-
     const userPersonasResult = await loadUserPersonas({
-      basePersonasById,
       modelResolver: options.modelResolver.resolveModel,
       deps,
       levels,
     });
     const projectPersonasResult = await loadProjectPersonas({
-      basePersonasById,
       modelResolver: options.modelResolver.resolveModel,
       deps,
       levels,
@@ -600,7 +524,6 @@ export async function loadAllContent(
     const skillsResult = await loadSkillsContent(config, { deps, levels });
 
     const allErrors = [
-      ...options.modelResolver.errors,
       ...builtinPersonaErrors,
       ...userPersonasResult.errors,
       ...projectPersonasResult.errors,

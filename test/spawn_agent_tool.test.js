@@ -90,7 +90,6 @@ function createFixture(overrides = {}) {
     systemPrompt: "main",
     settings: { reasoning: "high", serviceTier: "priority" },
     tools: ["bash", "write", "edit", "history"],
-    skills: "*",
     source: "project",
     subagentLaunchModels: ["openai/gpt-5.6-sol:high"],
   };

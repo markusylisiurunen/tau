@@ -1448,15 +1448,6 @@ export class AgentRuntime {
     return -1;
   }
 
-  private async noteProviderError(model: ModelExecutor, message?: string): Promise<void> {
-    try {
-      await model.noteProviderError({
-        sessionId: this.agentId,
-        error: message ? new Error(message) : undefined,
-      });
-    } catch {}
-  }
-
   private async *runSingleSubturn(
     signal: AbortSignal,
     turnSettings: AgentTurnSpec,
@@ -1525,7 +1516,6 @@ export class AgentRuntime {
     const streamingToolCallIdsByContentIndex = new Map<number, string>();
     let modelDone = false;
     let toolDone = false;
-    let shouldNoteProviderError = false;
     let toolRecoveryMode: "continue" | "stop" | undefined;
     let finalMessage: AssistantMessage | undefined;
     let latestAssistantSnapshot: AssistantPartialSnapshot | undefined;
@@ -1585,9 +1575,6 @@ export class AgentRuntime {
             reasoningEffort: turnSettings.attribution.reasoningEffort,
             revision: this.revision,
           };
-          if (!signal.aborted) {
-            await this.noteProviderError(turnSettings.model, errorMessage);
-          }
           continue;
         }
         if (next.source === "tool_error") {
@@ -1600,23 +1587,15 @@ export class AgentRuntime {
             finalMessage = next.result.value;
             void toolRunner.finish().catch(() => undefined);
 
-            try {
-              const reconciliation = reconcileAdmittedToolCalls(finalMessage, admittedToolCalls);
-              finalMessage = reconciliation.message;
-              toolRecoveryMode = reconciliation.recover
-                ? finalMessage.stopReason === "aborted" || signal.aborted
-                  ? "stop"
-                  : consumeSubturnRetry(retryBudget)
-                    ? "continue"
-                    : "stop"
-                : undefined;
-            } catch (error) {
-              shouldNoteProviderError = true;
-              throw error;
-            }
-            if (finalMessage.stopReason === "error") {
-              await this.noteProviderError(turnSettings.model, finalMessage.errorMessage);
-            }
+            const reconciliation = reconcileAdmittedToolCalls(finalMessage, admittedToolCalls);
+            finalMessage = reconciliation.message;
+            toolRecoveryMode = reconciliation.recover
+              ? finalMessage.stopReason === "aborted" || signal.aborted
+                ? "stop"
+                : consumeSubturnRetry(retryBudget)
+                  ? "continue"
+                  : "stop"
+              : undefined;
             if (toolRecoveryMode) {
               recoveryToolResults.push(...pendingToolResults.splice(0));
             }
@@ -1885,12 +1864,6 @@ export class AgentRuntime {
       try {
         await toolRunner.finish();
       } catch {}
-      if (!signal.aborted && shouldNoteProviderError) {
-        await this.noteProviderError(
-          turnSettings.model,
-          err instanceof Error ? err.message : String(err),
-        );
-      }
       if (signal.aborted) {
         return { finalMessage: undefined, continueAfterToolRecovery: false };
       }

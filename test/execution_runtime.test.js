@@ -9,7 +9,6 @@ function createPersona(overrides = {}) {
     model: personas[0].model,
     systemPrompt: "source main instructions",
     settings: { reasoning: "high" },
-    skills: "*",
     source: "project",
     tools: ["bash", "spawn_agent"],
     subagentLaunchModels: [],
@@ -29,7 +28,6 @@ function createPromptBootstrap(cwd = "/workspace/repo") {
       projectContextBlock: "### Project context\n\ntarget AGENTS context",
     },
     agentsFiles: ["/workspace/repo/docs/AGENTS.md"],
-    unknownSkills: [],
   };
 }
 
@@ -49,7 +47,6 @@ describe("execution environment subagent prompt resolver", () => {
       },
     ];
     const config = {
-      agentContextFiles: ["/workspace/repo/docs/AGENTS.md"],
       modelSystemNotices: {},
     };
     const resolveRuntimeContext = vi.fn(async () => ({
@@ -86,10 +83,8 @@ describe("execution environment subagent prompt resolver", () => {
     });
     expect(resolveRuntimeContext).toHaveBeenCalledWith({
       cwd: "/workspace/repo",
-      persona: sourcePersona,
       discoveredSkills: skills,
       includeAgentContext: true,
-      agentContextFiles: config.agentContextFiles,
     });
     expect(prompts).toContain("source main instructions");
     expect(prompts).not.toContain("conflicting target main instructions");
@@ -128,7 +123,7 @@ describe("execution environment subagent prompt resolver", () => {
       resolvePrompts({ cwd: "/workspace/other", persona: sourcePersona }),
     ).resolves.toEqual(expect.stringContaining("source main instructions"));
     expect(resolveRuntimeContext).toHaveBeenCalledWith(
-      expect.objectContaining({ persona: sourcePersona }),
+      expect.objectContaining({ cwd: "/workspace/other" }),
     );
   });
 });

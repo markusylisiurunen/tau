@@ -1,7 +1,5 @@
 ---
-id: "upgrade-dependencies"
 label: "upgrade Tau dependencies"
-description: "bring every Tau dependency up to date safely"
 ---
 
 Bring all dependencies in this repository up to date. Perform the upgrade completely; do not only recommend versions, and do not commit.

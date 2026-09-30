@@ -11,7 +11,6 @@ export {
 } from "./runtime.js";
 export type {
   Config,
-  FlySpritesApiConfig,
   FlySpritesConfig,
   HistoryConfig,
   NookConfig,

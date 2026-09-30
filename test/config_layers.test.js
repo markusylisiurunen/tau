@@ -16,6 +16,10 @@ import { resolveConfigLevels } from "../dist/core/config/paths.js";
 import { loadRuntimeConfig } from "../dist/core/config/runtime.js";
 import {
   getApiKeyForProvider,
+  getElevenLabsApiKey,
+  getExaApiKey,
+  getGoogleApiKey,
+  getMistralApiKey,
   getOpenAIApiKey,
   loadConfig,
   loadConfigWithDiagnostics,
@@ -131,7 +135,6 @@ describe("config paths", () => {
             voiceId: "global-voice",
             recordingShortcut: { key: "§", gesture: "double-tap" },
           },
-          agentContextFiles: ["AGENTS.md"],
           subagents: {
             launchModels: ["anthropic/claude-haiku-4-5:low"],
           },
@@ -140,15 +143,8 @@ describe("config paths", () => {
             apiKeyEnv: "HISTORY_KEY",
           },
           flySprites: {
-            apis: {
-              default: {
-                baseURL: "https://api.sprites.dev",
-                tokenEnv: "GLOBAL_SPRITES_TOKEN",
-              },
-              shared: {
-                tokenEnv: "SHARED_SPRITES_TOKEN",
-              },
-            },
+            baseURL: "https://api.sprites.dev",
+            tokenEnv: "GLOBAL_SPRITES_TOKEN",
           },
           modelSystemNotices: {
             "openai/gpt-5.4": "global codex notice",
@@ -162,18 +158,13 @@ describe("config paths", () => {
         JSON.stringify({
           apiKeys: { openai: "repo", google: "google-key" },
           speech: { voiceId: " project-voice " },
-          agentContextFiles: ["docs/AGENTS.md"],
           subagents: {
             launchModels: ["openai/gpt-5.4:high"],
           },
           flySprites: {
-            apis: {
-              default: {
-                baseURL: "https://repo.sprites.example",
-                tokenEnv: "REPO_SPRITES_TOKEN",
-                home: "/home/sprite",
-              },
-            },
+            baseURL: "https://repo.sprites.example",
+            tokenEnv: "REPO_SPRITES_TOKEN",
+            home: "/home/sprite",
           },
           modelSystemNotices: {
             "openai/gpt-5.4": "repo codex notice",
@@ -185,7 +176,6 @@ describe("config paths", () => {
         join(nested, ".tau", "config.json"),
         JSON.stringify({
           defaultPersona: "custom-persona",
-          agentContextFiles: ["AGENTS.md"],
         }),
       );
 
@@ -202,16 +192,10 @@ describe("config paths", () => {
         recordingShortcut: { key: "§", gesture: "double-tap" },
       });
       expect(config.apiKeys).toEqual({
-        openai: "repo",
+        openai: "global",
         anthropic: "anthropic-key",
-        google: "google-key",
         mistral: "mistral-key",
       });
-      expect(config.agentContextFiles).toEqual([
-        join(fx.home, "AGENTS.md"),
-        join(repo, "docs", "AGENTS.md"),
-        join(nested, "AGENTS.md"),
-      ]);
       expect(config.subagents).toEqual({
         launchModels: ["openai/gpt-5.4:high"],
       });
@@ -220,16 +204,9 @@ describe("config paths", () => {
         apiKeyEnv: "HISTORY_KEY",
       });
       expect(config.flySprites).toEqual({
-        apis: {
-          default: {
-            baseURL: "https://repo.sprites.example",
-            tokenEnv: "REPO_SPRITES_TOKEN",
-            home: "/home/sprite",
-          },
-          shared: {
-            tokenEnv: "SHARED_SPRITES_TOKEN",
-          },
-        },
+        baseURL: "https://repo.sprites.example",
+        tokenEnv: "REPO_SPRITES_TOKEN",
+        home: "/home/sprite",
       });
       expect(config.modelSystemNotices).toEqual({
         "openai/gpt-5.4": "repo codex notice",
@@ -407,18 +384,33 @@ describe("config paths", () => {
         env: {},
       });
 
-      const config = loadConfig(nested, deps);
+      const result = loadConfigWithDiagnostics(deps, {
+        levels: resolveConfigLevels(deps, { cwd: nested }),
+        modelResolver: loadModelResolver(),
+      });
+      expect(result.errors.length).toBeGreaterThan(0);
+      const config = result.config;
       expect(config.apiKeys).toEqual({
         openai: "global-openai",
-        "custom-provider": "repo-custom",
-        "another-provider": "repo-another",
+        "custom-provider": "global-custom",
       });
-      expect(getApiKeyForProvider(config, "custom-provider")).toBe("repo-custom");
-      expect(getApiKeyForProvider(config, "another-provider")).toBe("repo-another");
+      expect(getApiKeyForProvider(config, "custom-provider")).toBe("global-custom");
+      expect(getApiKeyForProvider(config, "another-provider")).toBeUndefined();
       expect(getApiKeyForProvider(config, "openai")).toBe("global-openai");
     } finally {
       fx.cleanup();
     }
+  });
+
+  it.each([
+    [getExaApiKey, "exa", "EXA_API_KEY"],
+    [getGoogleApiKey, "google", "GEMINI_API_KEY"],
+    [getMistralApiKey, "mistral", "MISTRAL_API_KEY"],
+    [getElevenLabsApiKey, "elevenlabs", "ELEVENLABS_API_KEY"],
+  ])("prefers feature environment keys %#", (resolveKey, provider, variable) => {
+    const config = { apiKeys: { [provider]: "global-key" } };
+    expect(resolveKey(config, { [variable]: "env-key" })).toBe("env-key");
+    expect(resolveKey(config, {})).toBe("global-key");
   });
 
   it("prefers OPENAI_API_KEY for OpenAI speech transcription", () => {

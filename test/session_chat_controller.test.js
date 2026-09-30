@@ -1028,6 +1028,7 @@ describe("SessionChatController", () => {
         personas: [bootstrap.persona],
         prompts: [{ id: "fix", label: "Fix", template: "fix the bug" }],
         themes: [{ id: "gold" }],
+        mcpServers: ["github"],
         skills: [
           {
             name: "alpha",
@@ -1058,11 +1059,13 @@ describe("SessionChatController", () => {
     expect(intro.title).toContain("2 context files");
     expect(intro.title).toContain("1 skills");
     expect(intro.title).toContain("1 client tool");
+    expect(intro.title).toContain("1 MCP server");
     expect(intro.title).not.toContain("session");
     expect(intro.body).toContain("skills:\n  alpha (~/.tau/skills)");
     expect(intro.body).toContain(
       "context:\n  ~/repo/AGENTS.md\n  ~/repo/docs/AI_GUIDE.md\n\nclient tools:\n  notify",
     );
+    expect(intro.body).toContain("mcp servers (configured):\n  github");
     expect(intro.body).not.toContain("diff_review");
     expect(intro.body).not.toContain("prefill_input");
     expect(intro.body).not.toContain("~/repo/src/AGENTS.md");
@@ -1077,6 +1080,14 @@ describe("SessionChatController", () => {
     expect(help.text).toContain("context:\n  ~/repo/AGENTS.md\n  ~/repo/docs/AI_GUIDE.md");
     expect(help.text).not.toContain("~/repo/src/AGENTS.md");
     expect(help.text).toContain("skills:\n  alpha (~/.tau/skills)");
+  });
+
+  it("omits MCP startup sections when no servers are configured", async () => {
+    const { controller, view } = await createControllerHarness();
+    controller.start();
+    const intro = view.messages.find((message) => message.model.type === "app_intro").model;
+    expect(intro.title).not.toContain("MCP server");
+    expect(intro.body).not.toContain("mcp servers");
   });
 
   it("renders persisted protocol notices in timeline order", async () => {

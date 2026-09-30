@@ -61,12 +61,10 @@ export class ToolBackendExecutionEnvironment<TSnapshot extends BackendExecutionS
     options: ResolveExecutionRuntimeContextOptions,
   ): Promise<ExecutionRuntimeContext> {
     const promptBootstrap: RuntimePromptBootstrap = await resolveRuntimePromptBootstrap({
-      persona: options.persona,
       discoveredSkills: options.discoveredSkills,
       cwd: options.cwd,
       home: this.home,
       includeAgentContext: options.includeAgentContext,
-      agentContextFiles: options.agentContextFiles,
       backend: this.backend,
     });
 

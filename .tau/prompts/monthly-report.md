@@ -1,7 +1,5 @@
 ---
-id: monthly-report
 label: monthly report
-description: Write a fact-checked monthly repository activity report.
 ---
 
 Write a concise monthly report of my work in this repository for the current calendar month (month-to-date), unless I specify another month.

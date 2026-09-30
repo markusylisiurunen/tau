@@ -11,7 +11,7 @@ import { type ZodError, z } from "zod";
 import { MODEL_IMAGE_MAX_BYTES, SUPPORTED_IMAGE_TYPES } from "../core/utils/model_image.js";
 import { type IntermediateSystemMessage, isIntermediateSystemMessage } from "./system_message.js";
 
-export const SESSION_PROTOCOL_VERSION = 15 as const;
+export const SESSION_PROTOCOL_VERSION = 16 as const;
 export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_IMAGES = 16;
 export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_CONTENT_BLOCKS = 1024;
 export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_IMAGE_BYTES = MODEL_IMAGE_MAX_BYTES;
@@ -136,7 +136,6 @@ export type SessionProtocolLocalExecutionEnvironmentInput = {
 
 export type SessionProtocolFlySpriteExecutionEnvironmentInput = {
   kind: "fly-sprite";
-  apiId: string;
   spriteName: string;
   cwd: string;
 };
@@ -862,7 +861,6 @@ export type SessionProtocolPersonaSnapshot = {
   allowedReasoningLevels?: SessionProtocolReasoningEffort[];
   subagentLaunchModels: string[];
   tools?: string[];
-  skills: string[] | "*";
   source: "builtin" | "user" | "project";
 };
 
@@ -873,8 +871,7 @@ export type SessionProtocolBootstrapSnapshot = {
 
 export type SessionProtocolPromptTemplateSnapshot = {
   id: string;
-  label?: string;
-  description?: string;
+  label: string;
 };
 
 export type SessionProtocolSkillSnapshot = {
@@ -887,6 +884,7 @@ export type SessionProtocolContentCatalogSnapshot = {
   personas: SessionProtocolPersonaSnapshot[];
   prompts: SessionProtocolPromptTemplateSnapshot[];
   skills: SessionProtocolSkillSnapshot[];
+  mcpServers: string[];
 };
 
 export type SessionProtocolSettingsSnapshot = {
@@ -904,7 +902,6 @@ export type SessionProtocolLocalExecutionEnvironmentSnapshot = {
 
 export type SessionProtocolFlySpriteExecutionEnvironmentSnapshot = {
   kind: "fly-sprite";
-  apiId: string;
   spriteName: string;
   cwd: string;
   home: string;
@@ -2044,7 +2041,6 @@ const sessionProtocolLocalExecutionEnvironmentInputSchema = z
 const sessionProtocolFlySpriteExecutionEnvironmentInputSchema = z
   .object({
     kind: z.literal("fly-sprite"),
-    apiId: nonEmptyStringSchema,
     spriteName: nonEmptyStringSchema,
     cwd: absolutePathSchema,
   })
@@ -2133,7 +2129,6 @@ const sessionProtocolPersonaSnapshotSchema = z
     allowedReasoningLevels: z.array(sessionProtocolReasoningEffortSchema).optional(),
     subagentLaunchModels: z.array(nonEmptyStringSchema),
     tools: z.array(nonEmptyStringSchema).optional(),
-    skills: z.union([z.literal("*"), z.array(nonEmptyStringSchema)]),
     source: z.enum(["builtin", "user", "project"]),
   })
   .strip();
@@ -2141,8 +2136,7 @@ const sessionProtocolPersonaSnapshotSchema = z
 const sessionProtocolPromptTemplateSnapshotSchema = z
   .object({
     id: nonEmptyStringSchema,
-    label: z.string().optional(),
-    description: z.string().optional(),
+    label: nonEmptyStringSchema,
   })
   .strip();
 
@@ -2159,6 +2153,7 @@ const sessionProtocolContentCatalogSnapshotSchema = z
     personas: z.array(sessionProtocolPersonaSnapshotSchema),
     prompts: z.array(sessionProtocolPromptTemplateSnapshotSchema),
     skills: z.array(sessionProtocolSkillSnapshotSchema),
+    mcpServers: z.array(nonEmptyStringSchema),
   })
   .strip();
 
@@ -2194,7 +2189,6 @@ const sessionProtocolLocalExecutionEnvironmentSnapshotSchema = z
 const sessionProtocolFlySpriteExecutionEnvironmentSnapshotSchema = z
   .object({
     kind: z.literal("fly-sprite"),
-    apiId: nonEmptyStringSchema,
     spriteName: nonEmptyStringSchema,
     cwd: nonEmptyStringSchema,
     home: nonEmptyStringSchema,

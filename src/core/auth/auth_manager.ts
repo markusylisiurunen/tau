@@ -40,13 +40,8 @@ export class AuthManager {
     for (const adapter of this.adapters.values()) {
       const accounts = await adapter.listAccountInfo(this.authStorage);
       if (accounts.length > 0) {
-        const forcedAccountId = adapter.getForcedAccountId?.(this.authStorage);
-        const candidateAccountId = forcedAccountId ?? adapter.selectAccountFromList?.(accounts);
-        const selectedAccountId = accounts.some(
-          (account) => account.accountId === candidateAccountId && !account.disabled,
-        )
-          ? candidateAccountId
-          : undefined;
+        const selectedAccountId =
+          this.authStorage.getData().providers[adapter.id]?.activeAccountId ?? undefined;
         results.push({
           providerId: adapter.id,
           providerLabel: adapter.label,
@@ -74,14 +69,14 @@ export class AuthManager {
     }
   }
 
-  setAccountEnabled(providerId: string, accountId: string, enabled: boolean): void {
+  useAccount(providerId: string, accountId: string): void {
     const adapter = this.getAdapter(providerId);
     this.authStorage.reload();
     const invalidReason = this.authStorage.getInvalidReason();
     if (invalidReason) {
       throw new Error(invalidReason);
     }
-    const updated = adapter.setAccountEnabled(this.authStorage, accountId, enabled);
+    const updated = adapter.useAccount(this.authStorage, accountId);
     if (!updated) {
       throw new Error(`account "${accountId}" not found for provider "${providerId}"`);
     }

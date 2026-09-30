@@ -22,26 +22,25 @@ Interruption, timeouts, output limits, and process-group termination bound execu
 
 ## Treat project content as executable policy
 
-The execution environment supplies more than source files. Tau can load project `.tau/config.json`, `.tau/models.json`, personas, prompts, skills, `.agents/skills`, and `AGENTS.md` from the working directory and its discovery path. This content can change model endpoints and headers, select tools, add instructions, define workflows, or alter which globally trusted client tools are advertised.
+The execution environment supplies more than source files. Tau can load project `.tau/config.json`, personas, prompts, skills, `.agents/skills`, and `AGENTS.md` from the working directory and its discovery path. This content can select models and tools, add instructions, define workflows, or alter which globally trusted client tools are advertised.
 
 A repository checkout is therefore part of Tau's trust boundary. Before using it with meaningful credentials or write access, inspect relevant `.tau/`, `.agents/`, and `AGENTS.md` content, including nearer nested levels. Pay particular attention to:
 
 - persona system prompts, tool lists, and model launch allowlists;
 - skill instructions and any scripts they direct the agent to run;
-- model overlays that replace endpoints, headers, capabilities, or token limits;
 - project configuration that supplies API keys, Nook targets, model notices, or hosted-environment definitions;
 - `enabledClientTools`, which can select commands previously trusted in the user's global configuration; and
 - provision scripts or other repository automation used by integrations such as Telegram.
 
 Project configuration cannot define a command client-tool executable. It can only select definitions from global configuration. That restriction prevents a checkout from directly introducing a new client process, but it does not make a selected command harmless.
 
-`--no-agent-context-files` disables `AGENTS.md` and configured context injection. It does not disable project configuration, personas, skills, model overlays, or tools. `--no-client-tools` disables TUI-provided tools, not host tools. Use the appropriate control rather than treating either flag as a general safe mode.
+`--no-agent-context-files` disables automatic `AGENTS.md` injection and descendant path discovery. It does not disable project configuration, personas, skills, or tools. `--no-client-tools` disables TUI-provided tools, not host tools. Use the appropriate control rather than treating either flag as a general safe mode.
 
 Prompt templates are inserted into the editor for review rather than submitted automatically. Leading `<system>` blocks, persona prompts, model notices, and committed session messages are model-facing and may become durable session content. Do not place secrets in instructions, prompts, or model notices.
 
 ## Trust remote model metadata as routing configuration
 
-A model-owning Tau host refreshes compatible provider catalogs from `pi.dev` and caches them in `~/.config/tau/models-store.json`. This is a trusted software-update channel, not informational discovery: a remote model record can replace its API adapter, endpoint, headers, compatibility behavior, limits, and pricing before execution-environment `models.json` overlays are applied. Compromise or misconfiguration of that service could redirect provider requests and credentials. Set `TAU_OFFLINE` to disable automatic catalog requests, and use a reviewed `models.json` overlay when a provider must stay on a fixed endpoint.
+A model-owning Tau host refreshes compatible provider catalogs from `pi.dev` and caches them in `~/.config/tau/models-store.json`. This is a trusted software-update channel, not informational discovery: a remote model record can replace its API adapter, endpoint, headers, compatibility behavior, limits, and pricing. Compromise or misconfiguration of that service could redirect provider requests and credentials. Set `TAU_OFFLINE` to disable automatic catalog requests.
 
 ## Keep secrets with the process that needs them
 
@@ -53,7 +52,7 @@ Prefer host process environment variables or private global configuration over p
 
 Never put credentials in:
 
-- committed `.tau/config.json` or `.tau/models.json` files;
+- committed project files;
 - persona, prompt, skill, `AGENTS.md`, or model-notice text;
 - Bash command lines likely to enter shell history or process listings;
 - tool results, session messages, issue comments, or debug output; or

@@ -71,7 +71,7 @@ Use `tau --debug` from the intended directory for a new local startup. For a liv
 
 `/reload` is a TUI command backed by the current session. It is unavailable in a plain shell and is refused while a turn or conflicting session operation is active. Wait for the turn to settle or interrupt it deliberately, then run the command again.
 
-Reload updates runtime configuration, `models.json`, personas, prompts, skills, `AGENTS.md` context, and the host-tool registry for future turns. It does not:
+Reload updates runtime configuration, personas, prompts, skills, `AGENTS.md` context, and the host-tool registry for future turns. It does not:
 
 - alter the execution environment's kind, identity, `cwd`, or home;
 - rebuild an attached client's themes, diff launcher, speech configuration, or advertised tools;
@@ -90,7 +90,7 @@ Session resources come from the execution environment; themes come from the TUI 
 
 ### Persona
 
-For a new local session, run `tau --debug --persona <exact-id>`. The Markdown filename must match `id`; `provider` and `model` are required; `extends` can name only a shipped built-in. Startup IDs are exact and case-sensitive. If built-ins are disabled, at least one custom persona must remain. See [personas](personas.md).
+For a new local session, run `tau --debug --persona <exact-id>`. The Markdown filename must match `id`; `provider`, `model`, and a non-empty prompt body are required. Startup IDs are exact and case-sensitive. If built-ins are disabled, at least one custom persona must remain. See [personas](personas.md).
 
 ### Prompt
 
@@ -98,13 +98,13 @@ Run `/reload` after changing prompt metadata. Bodies load lazily, so an invocati
 
 ### Skill
 
-Use `/help` to inspect loaded skills. A skill needs uppercase `SKILL.md`, valid frontmatter, a lowercase-dash name, and a matching directory name. `.agents/skills` wins over `.tau/skills` at one level; nearer levels win overall.
+Use `/help` to inspect loaded skills. A skill needs uppercase `SKILL.md`, valid frontmatter, a lowercase-dash name, and a matching directory name. `.tau/skills` wins over `.agents/skills` at one level; nearer levels win overall.
 
-The active persona can still exclude a discovered skill, and its trigger determines when the agent opens it. `allowed-tools` is currently ignored. See [skills](skills.md).
+Every persona exposes all discovered skills; the trigger determines when the agent opens a skill. `allowed-tools` is currently ignored. See [skills](skills.md).
 
 ### Model
 
-Providers must be known and model IDs are exact and case-sensitive. Check warnings for malformed `models.json`, invalid metadata, or unknown provider/model references. `tau --debug --persona <id>` shows local resolution; a small request proves endpoint, account, and credential access. Reload overlays while idle. See [models](models.md).
+Providers must be known and model IDs are exact and case-sensitive. Check warnings for unknown provider/model references. `tau --debug --persona <id>` shows local resolution; a small request proves endpoint, account, and credential access. Refresh the remote catalog and reload while idle. See [models](models.md).
 
 ### Theme
 
@@ -155,9 +155,9 @@ Find the process making the request:
 | `tau nook`, `tau history`, or PDF unpack | Invoking CLI |
 | Fly Sprite resolution                    | Host startup |
 
-A laptop variable does not update a remote host. Environment changes require an owner restart. Runtime `apiKeys` can reload, but only from an eligible execution-environment level and subject to feature precedence.
+A laptop variable does not update a remote host. Environment changes require an owner restart. Global `apiKeys` belong to the owning process and require its restart.
 
-Never print the secret, environment, or whole configuration. Privately confirm the expected source, read the missing-credential message, and make one small request. See [credentials](credentials.md). If failure followed a project change, inspect its `apiKeys`, model endpoint/headers, and persona; a nearer key can replace ambient authentication.
+Never print the secret, environment, or whole configuration. Privately confirm the expected source, read the missing-credential message, and make one small request. See [credentials](credentials.md). Project `apiKeys` are rejected; inspect the owning process's environment and private global configuration.
 
 ## A Codex account cannot be selected
 
@@ -167,20 +167,19 @@ Run this on the session host, not an attached client:
 tau auth list
 ```
 
-The output shows stored account identities, enabled state, credential refresh health, usage windows, and current preference without showing tokens.
+The output shows stored account identities, active selection, credential refresh health, and informational usage windows without showing tokens.
 
 Use the supported commands for the condition shown:
 
 ```sh
 tau auth login codex
-tau auth enable codex --account developer@example.com
-tau auth disable codex --account developer@example.com
+tau auth use codex --account developer@example.com
 tau auth logout codex --account developer@example.com
 ```
 
-Re-login when credentials are expired or refresh failed. Enable an intentionally disabled account only after confirming that it should be usable. A forced `TAU_CODEX_ACCOUNT` must match an enabled stored account by email or ID and disables automatic failover. Changing that variable requires a host restart.
+Re-login when credentials are expired or refresh failed. Select an account explicitly with `auth use`. Logging out the active account leaves none active; Tau never switches based on usage or provider failure. Selection applies to later requests across sessions without changing requests already in flight.
 
-Account selection is stable within a session. After a quota error, a later request can choose another usable account unless selection is forced. Do not edit `~/.config/tau/auth.json`; the auth commands coordinate updates and preserve permissions.
+Do not edit `~/.config/tau/auth.json`; the auth commands coordinate updates and preserve permissions.
 
 ## Bash prints unexpected text, prompts, or reports no TTY
 

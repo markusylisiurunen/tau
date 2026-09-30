@@ -24,7 +24,7 @@ const DEFAULT_HOME = "/home/sprite";
 const HELPER_COMMAND_TIMEOUT_MS = 30_000;
 const COMMAND_STOP_GRACE_MS = 2_000;
 
-export type FlySpritesApiConfig = {
+export type FlySpritesConfig = {
   baseURL?: string;
   token?: string;
   tokenEnv?: string;
@@ -32,7 +32,7 @@ export type FlySpritesApiConfig = {
 };
 
 export type FlySpriteExecutionEnvironmentResolverOptions = {
-  apis: Record<string, FlySpritesApiConfig>;
+  connection: FlySpritesConfig;
   env?: Record<string, string | undefined>;
   createClient?: (token: string, options: { baseURL: string }) => SpritesClientLike;
 };
@@ -49,7 +49,6 @@ export class FlySpriteExecutionEnvironment extends ToolBackendExecutionEnvironme
   readonly kind = "fly-sprite" as const;
 
   constructor(options: {
-    apiId: string;
     spriteName: string;
     cwd: string;
     home: string;
@@ -58,7 +57,6 @@ export class FlySpriteExecutionEnvironment extends ToolBackendExecutionEnvironme
     super({
       snapshot: {
         kind: "fly-sprite",
-        apiId: options.apiId,
         spriteName: options.spriteName,
         cwd: options.cwd,
         home: options.home,
@@ -69,12 +67,12 @@ export class FlySpriteExecutionEnvironment extends ToolBackendExecutionEnvironme
 }
 
 export class FlySpriteExecutionEnvironmentResolver implements ExecutionEnvironmentResolver {
-  private readonly apis: Record<string, FlySpritesApiConfig>;
+  private readonly connection: FlySpritesConfig;
   private readonly env: Record<string, string | undefined>;
   private readonly createClient: (token: string, options: { baseURL: string }) => SpritesClientLike;
 
   constructor(options: FlySpriteExecutionEnvironmentResolverOptions) {
-    this.apis = options.apis;
+    this.connection = options.connection;
     this.env = options.env ?? process.env;
     this.createClient =
       options.createClient ?? ((token, clientOptions) => new SpritesClient(token, clientOptions));
@@ -88,7 +86,7 @@ export class FlySpriteExecutionEnvironmentResolver implements ExecutionEnvironme
   }
 
   canRestore(snapshot: SessionProtocolExecutionEnvironmentSnapshot): boolean {
-    return snapshot.kind === "fly-sprite" && snapshot.apiId in this.apis;
+    return snapshot.kind === "fly-sprite";
   }
 
   async restore(snapshot: SessionProtocolExecutionEnvironmentSnapshot) {
@@ -103,14 +101,11 @@ export class FlySpriteExecutionEnvironmentResolver implements ExecutionEnvironme
       | SessionProtocolFlySpriteExecutionEnvironmentInput
       | SessionProtocolFlySpriteExecutionEnvironmentSnapshot,
   ) {
-    const api = this.apis[input.apiId];
-    if (!api) {
-      throw new Error(`unknown Fly Sprite API '${input.apiId}'`);
-    }
+    const api = this.connection;
 
     const token = api.token ?? (api.tokenEnv ? this.env[api.tokenEnv] : undefined);
     if (!token) {
-      throw new Error(`Fly Sprite API '${input.apiId}' is missing a token`);
+      throw new Error("Fly Sprite connection is missing a token");
     }
 
     const client = this.createClient(token, { baseURL: api.baseURL ?? DEFAULT_BASE_URL });
@@ -120,7 +115,6 @@ export class FlySpriteExecutionEnvironmentResolver implements ExecutionEnvironme
     });
 
     return new FlySpriteExecutionEnvironment({
-      apiId: input.apiId,
       spriteName: input.spriteName,
       cwd: input.cwd,
       home: "home" in input ? input.home : (api.home ?? DEFAULT_HOME),

@@ -2370,7 +2370,7 @@ class TelegramAdapterImpl {
     const start = page * 20;
     const keyboard = picker.prompts.slice(start, start + 20).map((prompt, index) => [
       {
-        text: prompt.label ?? prompt.id,
+        text: prompt.label,
         callback_data: `prompt:${picker.token}:select:${start + index}`,
       },
     ]);

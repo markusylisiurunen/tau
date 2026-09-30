@@ -1,17 +1,4 @@
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { resolveConfigLevels } from "../dist/core/config/index.js";
 import {
   listModels,
   listProviders,
@@ -42,21 +29,7 @@ describe("model catalog", () => {
       contextWindow: 654321,
       maxTokens: 12345,
     };
-    const deps = {
-      fs: {
-        readFile: () => "",
-        exists: () => false,
-        listDir: () => [],
-        stat: () => {
-          throw new Error("missing");
-        },
-      },
-      env: { getEnv: () => ({}), cwd: () => "/repo", home: () => "/home/user" },
-    };
-
     const resolver = loadModelResolver({
-      deps,
-      levels: [],
       remoteCatalog: new Map([["openai", [remote]]]),
     });
 
@@ -72,117 +45,12 @@ describe("model catalog", () => {
     expect(resolveModel("missing-provider", "missing-model")).toBeUndefined();
   });
 
-  it("loads models.json overlays with config-level precedence", () => {
-    const home = mkdtempSync(join(tmpdir(), "tau-model-catalog-home-"));
-    const repo = join(home, "repo");
-    const nested = join(repo, "packages", "app");
-
-    try {
-      mkdirSync(join(home, ".config", "tau"), { recursive: true });
-      mkdirSync(join(repo, ".tau"), { recursive: true });
-      mkdirSync(nested, { recursive: true });
-
-      writeFileSync(
-        join(home, ".config", "tau", "models.json"),
-        JSON.stringify(
-          {
-            providers: {
-              openai: {
-                headers: {
-                  "x-route": "global-provider",
-                },
-                models: [
-                  {
-                    id: "gpt-5.9-custom",
-                    baseUrl: "https://model.example/v1",
-                    headers: {
-                      "x-route": "global-model",
-                    },
-                    contextWindow: 100000,
-                    maxTokens: 1000,
-                  },
-                ],
-              },
-            },
-          },
-          null,
-          2,
-        ),
-      );
-
-      writeFileSync(
-        join(repo, ".tau", "models.json"),
-        JSON.stringify(
-          {
-            providers: {
-              openai: {
-                baseUrl: "https://project-provider.example/v1",
-                headers: {
-                  "x-route": "project-provider",
-                  "x-tenant": "project",
-                },
-                models: [
-                  {
-                    id: "gpt-5.9-custom",
-                    contextWindow: 200000,
-                    cost: {
-                      tiers: [
-                        {
-                          inputTokensAbove: 100000,
-                          input: 2,
-                          output: 4,
-                          cacheRead: 0.2,
-                          cacheWrite: 2.5,
-                        },
-                      ],
-                    },
-                  },
-                ],
-              },
-            },
-          },
-          null,
-          2,
-        ),
-      );
-
-      const deps = {
-        fs: {
-          readFile: (path) => readFileSync(path, "utf-8"),
-          exists: (path) => existsSync(path),
-          listDir: (path) => readdirSync(path),
-          stat: (path) => statSync(path),
-        },
-        env: {
-          getEnv: () => ({}),
-          cwd: () => nested,
-          home: () => home,
-        },
-      };
-      const levels = resolveConfigLevels(deps, { cwd: nested });
-      const resolver = loadModelResolver({ deps, levels });
-
-      expect(resolver.errors).toEqual([]);
-      const model = resolver.resolveModel("openai", "gpt-5.9-custom");
-      expect(model).toBeTruthy();
-      expect(model.baseUrl).toBe("https://model.example/v1");
-      expect(model.headers).toEqual({
-        "x-route": "global-model",
-        "x-tenant": "project",
-      });
-      expect(model.contextWindow).toBe(200000);
-      expect(model.maxTokens).toBe(1000);
-      expect(model.cost.tiers).toEqual([
-        {
-          inputTokensAbove: 100000,
-          input: 2,
-          output: 4,
-          cacheRead: 0.2,
-          cacheWrite: 2.5,
-        },
-      ]);
-    } finally {
-      rmSync(home, { recursive: true, force: true });
-    }
+  it("distinguishes catalog models from synthesized model ids", () => {
+    const resolver = loadModelResolver();
+    expect(resolver.resolveConfiguredModel("openai", "unbundled-model")).toBeUndefined();
+    expect(resolver.resolveModel("openai", "unbundled-model")).toMatchObject({
+      provider: "openai",
+      id: "unbundled-model",
+    });
   });
 });

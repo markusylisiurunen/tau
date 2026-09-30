@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { Stats } from "node:fs";
 import {
   chmodSync,
@@ -13,6 +13,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { setTimeout } from "node:timers/promises";
 import { z } from "zod";
 import type { AuthStorageData } from "./types.js";
 
@@ -28,13 +29,13 @@ const authStorageDataSchema = z
       z.string().refine((value) => value.trim().length > 0),
       z
         .object({
+          activeAccountId: nonEmptyStringSchema.nullable().optional(),
           accounts: z.array(
             z.discriminatedUnion("type", [
               z
                 .object({
                   type: z.literal("oauth"),
                   accountId: nonEmptyStringSchema,
-                  disabled: z.boolean().default(false),
                   providerAccountId: nonEmptyStringSchema.optional(),
                   access: nonEmptyStringSchema,
                   refresh: nonEmptyStringSchema,
@@ -130,6 +131,25 @@ export class AuthStorage {
     });
   }
 
+  async withAccountLock<T>(
+    providerId: string,
+    accountId: string,
+    handler: () => Promise<T>,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    signal?.throwIfAborted();
+    ensureSecureDirectory(this.authDirectory);
+    const key = createHash("sha256").update(`${providerId}\0${accountId}`).digest("hex");
+    const lockPath = `${this.authPath}.${key}.refresh.lock`;
+    const owner = await acquireAuthLockAsync(lockPath, signal);
+    try {
+      signal?.throwIfAborted();
+      return await handler();
+    } finally {
+      releaseAuthLock(lockPath, owner);
+    }
+  }
+
   getInvalidReason(): string | undefined {
     return this.invalidReason;
   }
@@ -221,15 +241,16 @@ function assertSafeStorageEntry(path: string, metadata: Stats, type: "file" | "d
   }
 }
 
-function acquireAuthLock(lockPath: string): AuthLockOwner {
+function createAuthLockCandidate(lockPath: string): {
+  owner: AuthLockOwner;
+  candidatePath: string;
+} {
   const owner: AuthLockOwner = {
     pid: process.pid,
     token: randomUUID(),
     createdAt: Date.now(),
   };
   const candidatePath = `${lockPath}.candidate.${owner.token}`;
-  const startedAt = Date.now();
-
   try {
     mkdirSync(candidatePath, { mode: PRIVATE_DIRECTORY_MODE });
     chmodSync(candidatePath, PRIVATE_DIRECTORY_MODE);
@@ -241,6 +262,18 @@ function acquireAuthLock(lockPath: string): AuthLockOwner {
     });
     chmodSync(ownerPath, PRIVATE_FILE_MODE);
 
+    return { owner, candidatePath };
+  } catch (error) {
+    rmSync(candidatePath, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+function acquireAuthLock(lockPath: string): AuthLockOwner {
+  const { owner, candidatePath } = createAuthLockCandidate(lockPath);
+  const startedAt = Date.now();
+
+  try {
     while (true) {
       try {
         renameSync(candidatePath, lockPath);
@@ -256,6 +289,37 @@ function acquireAuthLock(lockPath: string): AuthLockOwner {
           throw new Error("timed out waiting for auth storage lock");
         }
         sleepSync(AUTH_LOCK_RETRY_MS);
+      }
+    }
+  } finally {
+    rmSync(candidatePath, { recursive: true, force: true });
+  }
+}
+
+async function acquireAuthLockAsync(
+  lockPath: string,
+  signal?: AbortSignal,
+): Promise<AuthLockOwner> {
+  const { owner, candidatePath } = createAuthLockCandidate(lockPath);
+  const startedAt = Date.now();
+
+  try {
+    while (true) {
+      signal?.throwIfAborted();
+      try {
+        renameSync(candidatePath, lockPath);
+        return owner;
+      } catch (error) {
+        if (!isLockExists(error)) {
+          throw error;
+        }
+        if (recoverStaleAuthLock(lockPath)) {
+          continue;
+        }
+        if (Date.now() - startedAt >= AUTH_LOCK_TIMEOUT_MS) {
+          throw new Error("timed out waiting for auth storage lock");
+        }
+        await setTimeout(AUTH_LOCK_RETRY_MS, undefined, { signal });
       }
     }
   } finally {
@@ -347,9 +411,23 @@ function validateAuthStorageData(value: unknown): {
     return invalidAuthStorage();
   }
 
-  return {
-    data: parsed.data,
-  };
+  const data = parsed.data;
+  for (const provider of Object.values(data.providers)) {
+    if (provider.activeAccountId === undefined) {
+      const enabled = provider.accounts.filter(
+        (account) => account.type === "oauth" && !account.disabled,
+      );
+      provider.activeAccountId = enabled.length === 1 ? enabled[0]!.accountId : null;
+    }
+    for (const account of provider.accounts) delete account.disabled;
+    if (
+      provider.activeAccountId !== null &&
+      !provider.accounts.some((account) => account.accountId === provider.activeAccountId)
+    ) {
+      return invalidAuthStorage();
+    }
+  }
+  return { data: data as AuthStorageData };
 }
 
 function invalidAuthStorage(): { data: AuthStorageData; invalidReason: string } {

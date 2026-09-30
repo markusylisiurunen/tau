@@ -4,31 +4,53 @@ import type {
   CredentialInfo,
   CredentialStore,
 } from "@earendil-works/pi-ai";
+import { defaultProviderAuthContext } from "@earendil-works/pi-ai";
+import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import type { Config } from "../config/schema.js";
 import { getApiKeyForProvider } from "../config/schema.js";
 import type { AuthStorage } from "./auth_storage.js";
-import { decodeJwtPayload } from "./jwt.js";
-import { OpenAICodexAdapter } from "./providers/openai_codex.js";
 import type { StoredAccount, StoredOAuthAccount } from "./types.js";
 
 const OPENAI_CODEX_PROVIDER_ID = "openai-codex";
-const FORCED_CODEX_ACCOUNT_ENV = "TAU_CODEX_ACCOUNT";
-const codexAdapter = new OpenAICodexAdapter();
-const codexSessionSelections = new Map<string, string>();
 
 type CredentialStoreOptions = {
   authStorage: AuthStorage;
   getConfig: () => Config;
   env?: NodeJS.ProcessEnv;
-  getSessionId?: () => string | undefined;
 };
 
 export class TauCredentialStore implements CredentialStore {
+  private codexAccountId?: string;
+
   constructor(private readonly options: CredentialStoreOptions) {}
+
+  bindCodexAccount(): TauCredentialStore {
+    const account = this.readStoredCredential(OPENAI_CODEX_PROVIDER_ID);
+    if (!account) throwMissingActiveAccount();
+    const store = new TauCredentialStore(this.options);
+    store.codexAccountId = account.accountId;
+    return store;
+  }
 
   async read(providerId: string, options?: AuthOperationOptions): Promise<Credential | undefined> {
     options?.signal?.throwIfAborted();
-    const stored = await this.readStoredCredential(providerId, options?.signal);
+    if (providerId !== OPENAI_CODEX_PROVIDER_ID) {
+      const base = defaultProviderAuthContext();
+      const env = this.options.env ?? process.env;
+      const ambient = await builtinProviders()
+        .find((provider) => provider.id === providerId)
+        ?.auth.apiKey?.resolve({
+          ctx: {
+            env: async (name) => env[name]?.trim() || undefined,
+            fileExists: (path) => base.fileExists(path),
+          },
+          signal: options?.signal ?? new AbortController().signal,
+        });
+      if (ambient) return undefined;
+      const configured = this.readConfiguredCredential(providerId);
+      if (configured) return configured;
+    }
+    const stored = this.readStoredCredential(providerId);
     options?.signal?.throwIfAborted();
     if (stored) {
       return stored.credential;
@@ -59,47 +81,58 @@ export class TauCredentialStore implements CredentialStore {
     options?: AuthOperationOptions,
   ): Promise<Credential | undefined> {
     options?.signal?.throwIfAborted();
-    const current = await this.readStoredCredential(providerId, options?.signal);
-    options?.signal?.throwIfAborted();
-    const next = await fn(current?.credential);
-    options?.signal?.throwIfAborted();
-    if (!next) {
-      return current?.credential;
-    }
-
-    const accountId =
-      current?.accountId ?? getCredentialAccountId(next) ?? getDefaultAccountId(providerId);
-    const expected = current?.account;
-    const nextAccount = storedAccountFromCredential(next, accountId, current?.account);
-    const stored = this.options.authStorage.update((data): StoredAccount | undefined => {
-      const provider = data.providers[providerId];
-      const existing = provider?.accounts.find((entry) => entry.accountId === accountId);
-      if (expected) {
-        if (!existing) {
-          return undefined;
+    const store =
+      providerId === OPENAI_CODEX_PROVIDER_ID && !this.codexAccountId
+        ? this.bindCodexAccount()
+        : this;
+    const account = store.readStoredCredential(providerId);
+    const accountId = account?.accountId ?? store.codexAccountId ?? getDefaultAccountId(providerId);
+    return await this.options.authStorage.withAccountLock(
+      providerId,
+      accountId,
+      async () => {
+        const current = store.readStoredCredential(providerId);
+        if (store.codexAccountId && !current) return undefined;
+        options?.signal?.throwIfAborted();
+        const next = await fn(current?.credential);
+        options?.signal?.throwIfAborted();
+        if (!next) {
+          return current?.credential;
         }
-        if (!hasSameStoredCredentialGeneration(existing, expected)) {
-          return existing;
-        }
-      } else if (existing) {
-        return existing;
-      }
 
-      const target = provider ?? { accounts: [] };
-      data.providers[providerId] = target;
-      const existingIndex = target.accounts.findIndex((entry) => entry.accountId === accountId);
-      if (existingIndex >= 0) {
-        target.accounts[existingIndex] = nextAccount;
-      } else {
-        target.accounts.push(nextAccount);
-      }
-      return nextAccount;
-    });
+        const accountId =
+          current?.accountId ?? getCredentialAccountId(next) ?? getDefaultAccountId(providerId);
+        const expected = current?.account;
+        const nextAccount = storedAccountFromCredential(next, accountId, current?.account);
+        const stored = this.options.authStorage.update((data): StoredAccount | undefined => {
+          const provider = data.providers[providerId];
+          const existing = provider?.accounts.find((entry) => entry.accountId === accountId);
+          if (expected) {
+            if (!existing) {
+              return undefined;
+            }
+            if (!hasSameStoredCredentialGeneration(existing, expected)) {
+              return existing;
+            }
+          } else if (existing) {
+            return existing;
+          }
 
-    if (providerId === OPENAI_CODEX_PROVIDER_ID && stored?.type === "oauth" && stored.disabled) {
-      return undefined;
-    }
-    return stored ? credentialFromStoredAccount(stored) : undefined;
+          const target = provider ?? { accounts: [], activeAccountId: null };
+          data.providers[providerId] = target;
+          const existingIndex = target.accounts.findIndex((entry) => entry.accountId === accountId);
+          if (existingIndex >= 0) {
+            target.accounts[existingIndex] = nextAccount;
+          } else {
+            target.accounts.push(nextAccount);
+          }
+          return nextAccount;
+        });
+
+        return stored ? credentialFromStoredAccount(stored) : undefined;
+      },
+      options?.signal,
+    );
   }
 
   async delete(providerId: string, options?: AuthOperationOptions): Promise<void> {
@@ -109,50 +142,9 @@ export class TauCredentialStore implements CredentialStore {
     });
   }
 
-  async noteProviderError(
+  private readStoredCredential(
     providerId: string,
-    options?: { sessionId?: string; error?: unknown },
-  ): Promise<void> {
-    if (providerId !== OPENAI_CODEX_PROVIDER_ID) {
-      return;
-    }
-
-    this.options.authStorage.reload();
-    const invalidReason = this.options.authStorage.getInvalidReason();
-    if (invalidReason) {
-      throw new Error(invalidReason);
-    }
-
-    const sessionId = options?.sessionId ?? this.options.getSessionId?.();
-    if (!sessionId) {
-      return;
-    }
-
-    const forcedAccount = getForcedCodexAccount(
-      this.options.authStorage,
-      this.options.env ?? process.env,
-    );
-    const selectedAccountId =
-      forcedAccount?.accountId ??
-      codexSessionSelections.get(getCodexSessionSelectionKey(sessionId));
-    if (!selectedAccountId) {
-      return;
-    }
-
-    const shouldClear = await codexAdapter.handleProviderError(
-      this.options.authStorage,
-      selectedAccountId,
-      options?.error,
-    );
-    if (shouldClear && !forcedAccount) {
-      clearCodexSessionSelection(sessionId);
-    }
-  }
-
-  private async readStoredCredential(
-    providerId: string,
-    signal?: AbortSignal,
-  ): Promise<{ credential: Credential; accountId: string; account: StoredAccount } | undefined> {
+  ): { credential: Credential; accountId: string; account: StoredAccount } | undefined {
     this.options.authStorage.reload();
     const invalidReason = this.options.authStorage.getInvalidReason();
     if (invalidReason) {
@@ -161,21 +153,24 @@ export class TauCredentialStore implements CredentialStore {
 
     const provider = this.options.authStorage.getData().providers[providerId];
     if (!provider || provider.accounts.length === 0) {
+      if (providerId === OPENAI_CODEX_PROVIDER_ID && !this.codexAccountId)
+        throwMissingActiveAccount();
       return undefined;
     }
 
     const account =
       providerId === OPENAI_CODEX_PROVIDER_ID
-        ? await selectCodexAccount(
-            this.options.authStorage,
-            this.options.env ?? process.env,
-            this.options.getSessionId?.(),
-            signal,
+        ? provider.accounts.find(
+            (entry) => entry.accountId === (this.codexAccountId ?? provider.activeAccountId),
           )
         : provider.accounts[0];
     if (!account) {
+      if (providerId === OPENAI_CODEX_PROVIDER_ID && !this.codexAccountId)
+        throwMissingActiveAccount();
       return undefined;
     }
+    if (providerId === OPENAI_CODEX_PROVIDER_ID && account.type !== "oauth")
+      throwMissingActiveAccount();
 
     return {
       credential: credentialFromStoredAccount(account),
@@ -217,7 +212,6 @@ function hasSameStoredCredentialGeneration(a: StoredAccount, b: StoredAccount): 
     return false;
   }
   return (
-    a.disabled === b.disabled &&
     a.providerAccountId === b.providerAccountId &&
     a.access === b.access &&
     a.refresh === b.refresh &&
@@ -245,184 +239,24 @@ function storedAccountFromCredential(
     };
   }
 
+  const stored = current?.type === "oauth" ? current : undefined;
   return {
+    ...stored,
     type: "oauth",
     accountId,
-    disabled: current?.type === "oauth" ? current.disabled : false,
-    providerAccountId: stringValue(credential.accountId),
+    providerAccountId: stringValue(credential.accountId) ?? stored?.providerAccountId,
     access: credential.access,
     refresh: credential.refresh,
     expires: credential.expires,
-    enterpriseUrl: stringValue(credential.enterpriseUrl),
-    projectId: stringValue(credential.projectId),
+    enterpriseUrl: stringValue(credential.enterpriseUrl) ?? stored?.enterpriseUrl,
+    projectId: stringValue(credential.projectId) ?? stored?.projectId,
   } satisfies StoredOAuthAccount;
 }
 
-async function selectCodexAccount(
-  authStorage: AuthStorage,
-  env: NodeJS.ProcessEnv,
-  sessionId?: string,
-  signal?: AbortSignal,
-): Promise<StoredAccount | undefined> {
-  signal?.throwIfAborted();
-  const forcedAccount = getForcedCodexAccount(authStorage, env);
-  if (forcedAccount) {
-    if (sessionId) {
-      setCodexSessionSelection(sessionId, forcedAccount.accountId);
-    }
-    const apiKey = await codexAdapter.getApiKeyForAccount(authStorage, forcedAccount.accountId, {
-      signal,
-    });
-    if (!apiKey) {
-      if (sessionId) {
-        clearCodexSessionSelection(sessionId);
-      }
-      return undefined;
-    }
-    const currentAccount = getStoredAccountById(
-      authStorage,
-      OPENAI_CODEX_PROVIDER_ID,
-      forcedAccount.accountId,
-    );
-    if (currentAccount?.type === "oauth" && currentAccount.disabled) {
-      throwDisabledCodexAccountError(currentAccount.accountId);
-    }
-    return currentAccount;
-  }
-
-  if (sessionId) {
-    const selectedAccountId = codexSessionSelections.get(getCodexSessionSelectionKey(sessionId));
-    if (selectedAccountId) {
-      const selectedAccount = getStoredAccountById(
-        authStorage,
-        OPENAI_CODEX_PROVIDER_ID,
-        selectedAccountId,
-      );
-      if (selectedAccount?.type === "oauth" && !selectedAccount.disabled) {
-        const apiKey = await codexAdapter.getApiKeyForAccount(authStorage, selectedAccountId, {
-          signal,
-        });
-        const usable = apiKey
-          ? await codexAdapter.isAccountUsable(authStorage, selectedAccountId, { apiKey, signal })
-          : false;
-        if (usable) {
-          return getStoredAccountById(authStorage, OPENAI_CODEX_PROVIDER_ID, selectedAccountId);
-        }
-      }
-      clearCodexSessionSelection(sessionId);
-    }
-  }
-
-  const selection = await codexAdapter.selectAccount(authStorage, { signal });
-  signal?.throwIfAborted();
-  if (!selection) {
-    return undefined;
-  }
-
-  const selectedAccount = getStoredAccountById(
-    authStorage,
-    OPENAI_CODEX_PROVIDER_ID,
-    selection.accountId,
-  );
-  if (selectedAccount?.type !== "oauth" || selectedAccount.disabled) {
-    return undefined;
-  }
-
-  if (sessionId) {
-    setCodexSessionSelection(sessionId, selection.accountId);
-  }
-
-  return selectedAccount;
-}
-
-function getForcedCodexAccount(
-  authStorage: AuthStorage,
-  env: NodeJS.ProcessEnv,
-): StoredAccount | undefined {
-  const forced = env[FORCED_CODEX_ACCOUNT_ENV]?.trim().toLowerCase();
-  if (!forced) {
-    return undefined;
-  }
-
-  const account = getStoredAccounts(authStorage, OPENAI_CODEX_PROVIDER_ID).find((candidate) =>
-    accountMatchesCodexIdentifier(candidate, forced),
-  );
-  if (!account) {
-    throw new Error(
-      `${FORCED_CODEX_ACCOUNT_ENV} did not match any stored Codex account: "${env[FORCED_CODEX_ACCOUNT_ENV]}". ` +
-        'Run "tau auth list" to see available accounts.',
-    );
-  }
-  if (account.type === "oauth" && account.disabled) {
-    throwDisabledCodexAccountError(account.accountId);
-  }
-
-  return account;
-}
-
-function throwDisabledCodexAccountError(accountId: string): never {
+function throwMissingActiveAccount(): never {
   throw new Error(
-    `${FORCED_CODEX_ACCOUNT_ENV} matched disabled Codex account "${accountId}". ` +
-      `Run "tau auth enable codex --account ${accountId}" to enable it.`,
+    'no active Codex account; run "tau auth login codex" or "tau auth use codex --account <email-or-id>".',
   );
-}
-
-function getStoredAccountById(
-  authStorage: AuthStorage,
-  providerId: string,
-  accountId: string,
-): StoredAccount | undefined {
-  return getStoredAccounts(authStorage, providerId).find(
-    (account) => account.accountId === accountId,
-  );
-}
-
-function getStoredAccounts(authStorage: AuthStorage, providerId: string): StoredAccount[] {
-  return authStorage.getData().providers[providerId]?.accounts ?? [];
-}
-
-function getCodexSessionSelectionKey(sessionId: string): string {
-  return `${OPENAI_CODEX_PROVIDER_ID}:${sessionId}`;
-}
-
-function setCodexSessionSelection(sessionId: string, accountId: string): void {
-  codexSessionSelections.set(getCodexSessionSelectionKey(sessionId), accountId);
-}
-
-function clearCodexSessionSelection(sessionId: string): void {
-  codexSessionSelections.delete(getCodexSessionSelectionKey(sessionId));
-}
-
-function accountMatchesCodexIdentifier(account: StoredAccount, value: string): boolean {
-  if (account.accountId.trim().toLowerCase() === value) {
-    return true;
-  }
-
-  if (account.type !== "oauth") {
-    return false;
-  }
-
-  if (account.providerAccountId?.trim().toLowerCase() === value) {
-    return true;
-  }
-
-  return getCodexAccountEmail(account)?.toLowerCase() === value;
-}
-
-function getCodexAccountEmail(account: StoredOAuthAccount): string | undefined {
-  const payload = decodeJwtPayload(account.access);
-  if (!payload) {
-    return undefined;
-  }
-
-  const profile = asRecord(payload["https://api.openai.com/profile"]);
-  return stringValue(payload.email) ?? stringValue(profile?.email);
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
 }
 
 function getCredentialAccountId(credential: Credential): string | undefined {

@@ -63,10 +63,9 @@ Within the project, the effective default persona is `gpt-6.1-sol-coder:high`.
 
 A few fields intentionally use other rules:
 
-- `apiKeys` merges by provider id. A more-specific key replaces only the same provider's value.
+- `apiKeys` is global-only; project values are rejected.
 - `modelSystemNotices` merges by normalized `<provider>/<model>` key.
-- `flySprites.apis` merges by API id. A more-specific API replaces the complete API entry with that id.
-- `agentContextFiles` is additive across levels, resolves each entry at its owning level, and removes duplicate resolved paths while preserving order.
+- `flySprites` configures one connection; more-specific connection fields replace broader values.
 - `subagents.launchModels` selects the most-specific list.
 - `clientTools` is defined only at global scope. `enabledClientTools` at the most-specific project level is an exact selection from those definitions.
 - `history` is accepted only at global scope.
@@ -85,20 +84,8 @@ Without `enabledClientTools`, Tau selects global client tools whose `defaultEnab
 
 Relative path bases belong to the level that declares the value:
 
-- Global `agentContextFiles` entries resolve from home.
-- Project `agentContextFiles` entries resolve from the directory containing `.tau`.
 - A global `clientTools[].command` containing a slash resolves from home.
 - A bare command such as `git` is left bare and resolves through the owning process's `PATH`.
-
-For example, in `/home/ada/work/ledger/.tau/config.json`:
-
-```json
-{
-  "agentContextFiles": ["docs/AI_GUIDE.md"]
-}
-```
-
-Tau resolves the path as `/home/ada/work/ledger/docs/AI_GUIDE.md`.
 
 Other strings that happen to contain paths are not automatically rebased unless their field contract says so. In particular, hosted execution-environment `home` values are passed as configured.
 
@@ -169,7 +156,7 @@ A logical turn captures its persona, model settings, and tools when it starts. R
 
 Restart the host process to apply settings used to construct host-wide services, including:
 
-- `flySprites.apis`
+- `flySprites`
 - `history`
 - host environment variables and Codex account forcing
 

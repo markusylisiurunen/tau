@@ -72,9 +72,9 @@ This list is layered configuration. The nearest defined `launchModels` array rep
 
 `spawn_agent` normally runs the child in the main session's `cwd`. Its optional `workingDirectory` may be absolute or relative to that `cwd`; Tau resolves it to an absolute execution-environment path.
 
-When the resolved path differs from the parent `cwd`, Tau rebuilds prompt context from that target directory. It discovers the target platform and repository metadata, reads applicable `AGENTS.md` and configured context files, discovers target skills, and filters those skills through the parent persona's skill selection.
+When the resolved path differs from the parent `cwd`, Tau rebuilds prompt context from that target directory. It discovers the target platform and repository metadata, reads applicable `AGENTS.md`, and discovers all target skills.
 
-The target directory does **not** select a different persona, model catalog, runtime configuration, credential source, or tool policy for the child. Those remain under parent-session authority. Target configuration is consulted only where needed to rebuild target prompt context, such as target `agentContextFiles` and skill discovery.
+The target directory does **not** select a different persona, model catalog, runtime configuration, credential source, or tool policy for the child. Those remain under parent-session authority. Target configuration is consulted only where needed to rebuild target prompt context, such as skill discovery.
 
 This distinction matters in monorepos and hosted environments. `workingDirectory` is an execution-environment path. The host and attached client must not reinterpret it against their own filesystems.
 

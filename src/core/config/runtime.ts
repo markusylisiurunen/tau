@@ -40,7 +40,7 @@ export function loadRuntimeBootstrap(
   options: { remoteCatalog?: RemoteModelCatalogSnapshot } = {},
 ): RuntimeBootstrap {
   const levels = resolveConfigLevels(deps, { cwd });
-  const modelResolver = loadModelResolver({ deps, levels, remoteCatalog: options.remoteCatalog });
+  const modelResolver = loadModelResolver({ remoteCatalog: options.remoteCatalog });
   const configResult = loadConfigWithDiagnostics(deps, {
     levels,
     modelResolver,

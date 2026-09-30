@@ -56,6 +56,38 @@ async function withTempStore(test) {
 }
 
 describe("FileSessionStore", () => {
+  it("normalizes obsolete Fly selection and presentation metadata from version 9", async () => {
+    await withTempStore(async (store, directory) => {
+      await mkdir(directory, { recursive: true });
+      const snapshot = createSnapshot("legacy-fly", "recoverable text");
+      snapshot.executionEnvironment = {
+        kind: "fly-sprite",
+        apiId: "old-api",
+        spriteName: "existing",
+        cwd: "/repo",
+        home: "/home/sprite",
+      };
+      delete snapshot.catalog.mcpServers;
+      snapshot.catalog.prompts = [{ id: "review", description: "old description" }];
+      for (const persona of snapshot.catalog.personas) persona.skills = ["old-selection"];
+      await writeFile(
+        join(directory, `${Buffer.from(snapshot.sessionId).toString("base64url")}.json`),
+        JSON.stringify({ format: STORED_SESSION_DOCUMENT_FORMAT, version: 9, snapshot }),
+      );
+      const loaded = await store.loadSession(snapshot.sessionId);
+      expect(loaded.messages).toEqual(snapshot.messages);
+      expect(loaded.executionEnvironment).toEqual({
+        kind: "fly-sprite",
+        spriteName: "existing",
+        cwd: "/repo",
+        home: "/home/sprite",
+      });
+      expect(loaded.catalog.prompts).toEqual([{ id: "review", label: "review" }]);
+      expect(loaded.catalog.mcpServers).toEqual([]);
+      for (const persona of loaded.catalog.personas) expect(persona).not.toHaveProperty("skills");
+    });
+  });
+
   it("persists, loads, and lists snapshots", async () => {
     await withTempStore(async (store) => {
       await expect(

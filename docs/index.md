@@ -16,7 +16,7 @@ The intrinsic `tau_docs` tool reads one exact Markdown path at a time. It does n
 - [Configuration](configuration.md) explains discovery, precedence, safe edits, reload behavior, and common scope mistakes.
 - [Configuration reference](config-reference.md) defines every current top-level `config.json` field and its apply boundary.
 - [Credentials](credentials.md) covers API keys, Codex OAuth accounts, secret precedence, and credential ownership.
-- [Models](models.md) explains the model catalog and layered `models.json` overrides.
+- [Models](models.md) explains the bundled and remotely refreshed model catalog.
 - [Personas](personas.md) covers model-facing behavior, reasoning, tools, and persona files.
 - [Subagents](subagents.md) explains available subagents, launch policy, model overrides, and supervision.
 - [Skills](skills.md) covers discovery, frontmatter, trigger sensitivity, and tool eligibility.

@@ -1,7 +1,5 @@
 ---
-id: "deep-review-branch"
 label: "code review of current branch using parallel subagents"
-description: "thorough code review of the current branch via parallel subagents"
 ---
 
 Launch two subagents in parallel for code review, using `openai-codex/gpt-5.4:high` and `anthropic/claude-opus-4-6:xhigh`. Send both the same prompt, verbatim:

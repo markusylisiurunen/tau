@@ -11,15 +11,13 @@ export function createExecutionEnvironmentSubagentPromptResolver(options: {
   sessionStartedAt: number;
 }): ResolveSubagentPrompt {
   return async ({ cwd, persona }) => {
-    const { config, skills } = await options.executionEnvironment.resolveRuntimeConfig(cwd, {
+    const { skills } = await options.executionEnvironment.resolveRuntimeConfig(cwd, {
       remoteCatalog: options.getRemoteModelCatalog(),
     });
     const runtimeContext = await options.executionEnvironment.resolveRuntimeContext({
       cwd,
-      persona,
       discoveredSkills: skills,
       includeAgentContext: options.includeAgentContext,
-      agentContextFiles: config.agentContextFiles ?? [],
     });
     const promptContext = runtimeContext.promptBootstrap.promptContext;
     return composeSessionPrompts({

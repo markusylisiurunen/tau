@@ -131,7 +131,7 @@ Neither tool provides a general read operation. Use a scoped non-interactive Bas
 
 `view_image` reads an image from the execution environment and returns it to a multimodal model. Tau's built-in instruction limits use to cases where the user explicitly asks to view or analyze an image.
 
-The supported formats are JPEG, PNG, and WebP. Source reads are capped at 50 MiB. Images larger than 2,000 pixels in either dimension or 2.5 MiB of model payload are resized or re-encoded while preserving aspect ratio. If Tau cannot reduce a valid image below the model payload limit, the call fails. Relative paths resolve from the execution-environment working directory.
+The supported formats are JPEG, PNG, and WebP. Source reads are capped at 50 MiB. Images with both dimensions at most 4,096 pixels and a model payload at most 3.5 MiB are returned unchanged. Images exceeding the dimension limit are resized to fit within 4,096 pixels while preserving aspect ratio, without upscaling. Tau tries lossless encoding before lossy compression and reduces dimensions further only if needed to meet the payload limit. Transparency is preserved. If Tau cannot reduce a valid image below the model payload limit, the call fails. Relative paths resolve from the execution-environment working directory.
 
 ## Command-line tools
 

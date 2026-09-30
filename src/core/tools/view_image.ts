@@ -24,12 +24,13 @@ const VIEW_IMAGE_DESCRIPTION = [
 const VIEW_IMAGE_PATH_DESCRIPTION = "Single-line path to the image file to view.";
 
 const VIEW_IMAGE_READ_MAX_BYTES = 50 * 1024 * 1024;
-const VIEW_IMAGE_MODEL_MAX_BYTES = 2.5 * 1024 * 1024;
-const VIEW_IMAGE_MAX_DIMENSION_PX = 2000;
+const VIEW_IMAGE_MODEL_MAX_BYTES = 3.5 * 1024 * 1024;
+const VIEW_IMAGE_MAX_DIMENSION_PX = 4096;
 const VIEW_IMAGE_DIMENSION_STEPS = [
-  2000, 1920, 1792, 1664, 1536, 1408, 1280, 1152, 1024, 896, 768, 640, 512,
+  4096, 3840, 3584, 3072, 2560, 2048, 2000, 1920, 1792, 1664, 1536, 1408, 1280, 1152, 1024, 896,
+  768, 640, 512,
 ] as const;
-const VIEW_IMAGE_LOSSY_QUALITY_STEPS = [95, 90, 85, 80, 75] as const;
+const VIEW_IMAGE_LOSSY_QUALITY_STEPS = [95, 90, 85] as const;
 const SUPPORTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"] as const;
 
 export const VIEW_IMAGE_TOOL: Tool = {
@@ -109,10 +110,6 @@ function buildDimensionCaps(maxDimension: number): number[] {
   return [...caps];
 }
 
-function buildLossyEncodePlans(mimeType: "image/jpeg" | "image/webp"): ImageEncodePlan[] {
-  return VIEW_IMAGE_LOSSY_QUALITY_STEPS.map((quality) => ({ mimeType, quality }));
-}
-
 function buildEncodePlans(args: {
   sourceMimeType: SupportedImageType;
   hasAlpha: boolean;
@@ -120,19 +117,16 @@ function buildEncodePlans(args: {
   const { sourceMimeType, hasAlpha } = args;
   const plans: ImageEncodePlan[] = [];
 
-  if (sourceMimeType === "image/png") {
-    plans.push({ mimeType: "image/png" });
-  } else {
-    plans.push(...buildLossyEncodePlans(sourceMimeType));
-  }
-
   if (sourceMimeType !== "image/webp") {
-    plans.push({ mimeType: "image/webp", quality: 100, lossless: true });
-    plans.push(...buildLossyEncodePlans("image/webp"));
+    plans.push({ mimeType: "image/png" });
   }
+  plans.push({ mimeType: "image/webp", quality: 100, lossless: true });
 
-  if (!hasAlpha && sourceMimeType !== "image/jpeg") {
-    plans.push(...buildLossyEncodePlans("image/jpeg"));
+  for (const quality of VIEW_IMAGE_LOSSY_QUALITY_STEPS) {
+    plans.push({ mimeType: "image/webp", quality });
+    if (!hasAlpha) {
+      plans.push({ mimeType: "image/jpeg", quality });
+    }
   }
 
   return plans;

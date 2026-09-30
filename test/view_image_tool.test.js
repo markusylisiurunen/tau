@@ -8,7 +8,7 @@ import { createLocalToolExecutionBackend } from "../dist/core/tools/execution_ba
 import { TOOL_NAME_VIEW_IMAGE } from "../dist/core/tools/tool_names.js";
 import { createViewImageToolDefinition } from "../dist/core/tools/view_image.js";
 
-const VIEW_IMAGE_MODEL_MAX_BYTES = 2.5 * 1024 * 1024;
+const VIEW_IMAGE_MODEL_MAX_BYTES = 3.5 * 1024 * 1024;
 
 function setupFixture() {
   const dir = mkdtempSync(join(tmpdir(), "tau-view-image-tool-"));
@@ -102,12 +102,12 @@ describe("view_image tool", () => {
     expect(result.uiEvent.presentation.details[0].tone).toBeUndefined();
   });
 
-  it("downscales images to fit inside a 2000x2000 square", async () => {
+  it("downscales images to fit inside a 4096x4096 square", async () => {
     const fx = setupFixture();
 
     try {
       const filePath = join(fx.dir, "large.png");
-      await createPng(filePath, 4096, 3072);
+      await createPng(filePath, 8192, 6144);
 
       const backend = createLocalToolExecutionBackend();
       const tool = createViewImageToolDefinition(backend);
@@ -122,25 +122,25 @@ describe("view_image tool", () => {
         throw new Error("expected success ui event");
       }
 
-      expect(result.uiEvent.presentation.metadata).toEqual(["image/png", "2000×1500"]);
+      expect(result.uiEvent.presentation.metadata).toEqual(["image/png", "4096×3072"]);
       expect(getTextBlock(result.toolResult.content)).toBe(`Successfully viewed ${filePath}.`);
 
       const imageBlock = getImageBlock(result.toolResult.content);
       const outputBuffer = Buffer.from(imageBlock.data, "base64");
       const outputMetadata = await sharp(outputBuffer).metadata();
-      expect(outputMetadata.width).toBe(2000);
-      expect(outputMetadata.height).toBe(1500);
+      expect(outputMetadata.width).toBe(4096);
+      expect(outputMetadata.height).toBe(3072);
     } finally {
       fx.cleanup();
     }
   });
 
-  it("keeps small images as-is", async () => {
+  it("keeps 4K images as-is", async () => {
     const fx = setupFixture();
 
     try {
       const filePath = join(fx.dir, "small.png");
-      await createPng(filePath, 640, 480);
+      await createPng(filePath, 3840, 2160);
       const original = readFileSync(filePath);
 
       const backend = createLocalToolExecutionBackend({ env: { cwd: () => fx.dir } });
@@ -157,7 +157,7 @@ describe("view_image tool", () => {
       }
 
       expect(result.uiEvent.presentation.subject).toBe("small.png");
-      expect(result.uiEvent.presentation.metadata).toEqual(["image/png", "640×480"]);
+      expect(result.uiEvent.presentation.metadata).toEqual(["image/png", "3840×2160"]);
       const imageBlock = getImageBlock(result.toolResult.content);
       const outputBuffer = Buffer.from(imageBlock.data, "base64");
       expect(outputBuffer.equals(original)).toBe(true);
@@ -198,14 +198,50 @@ describe("view_image tool", () => {
         imageBlock.mimeType,
         `${outputMetadata.width}×${outputMetadata.height}`,
       ]);
-      expect(Math.max(outputMetadata.width ?? 0, outputMetadata.height ?? 0)).toBeLessThanOrEqual(
-        2000,
-      );
+      expect(outputMetadata.width).toBe(1536);
+      expect(outputMetadata.height).toBe(1536);
       expect(getTextBlock(result.toolResult.content)).toBe(`Successfully viewed ${filePath}.`);
     } finally {
       fx.cleanup();
     }
   }, 10_000);
+
+  it("losslessly recompresses oversized transparent images without resizing", async () => {
+    const fx = setupFixture();
+
+    try {
+      const filePath = join(fx.dir, "transparent.png");
+      const pixels = Buffer.alloc(1920 * 1080 * 4);
+      for (let offset = 0; offset < pixels.length; offset += 4) {
+        pixels[offset] = 21;
+        pixels[offset + 1] = 42;
+        pixels[offset + 2] = 84;
+        pixels[offset + 3] = 128;
+      }
+      await sharp(pixels, { raw: { width: 1920, height: 1080, channels: 4 } })
+        .png({ compressionLevel: 0 })
+        .toFile(filePath);
+      expect(readFileSync(filePath).byteLength).toBeGreaterThan(VIEW_IMAGE_MODEL_MAX_BYTES);
+
+      const tool = createViewImageToolDefinition(createLocalToolExecutionBackend());
+      const result = await runTool(tool, {
+        id: "tool-transparent",
+        name: TOOL_NAME_VIEW_IMAGE,
+        arguments: { path: filePath },
+      });
+
+      expect(result.toolResult.outcome).toBe("succeeded");
+      const imageBlock = getImageBlock(result.toolResult.content);
+      const outputBuffer = Buffer.from(imageBlock.data, "base64");
+      expect(outputBuffer.byteLength).toBeLessThanOrEqual(VIEW_IMAGE_MODEL_MAX_BYTES);
+      const metadata = await sharp(outputBuffer).metadata();
+      expect([metadata.width, metadata.height, metadata.hasAlpha]).toEqual([1920, 1080, true]);
+      const outputPixels = await sharp(outputBuffer).raw().toBuffer();
+      expect(outputPixels.equals(pixels)).toBe(true);
+    } finally {
+      fx.cleanup();
+    }
+  });
 
   it("returns a focused missing-file result", async () => {
     const tool = createViewImageToolDefinition(createLocalToolExecutionBackend());

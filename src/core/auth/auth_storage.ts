@@ -13,6 +13,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import type { AuthStorageData } from "./types.js";
 
@@ -24,6 +25,7 @@ const finiteNumberSchema = z.number().finite();
 
 const authStorageDataSchema = z
   .object({
+    deviceId: z.uuid().optional(),
     providers: z.record(
       z.string().refine((value) => value.trim().length > 0),
       z
@@ -41,6 +43,8 @@ const authStorageDataSchema = z
                   expires: finiteNumberSchema,
                   enterpriseUrl: nonEmptyStringSchema.optional(),
                   projectId: nonEmptyStringSchema.optional(),
+                  clientId: nonEmptyStringSchema.optional(),
+                  scopes: z.array(nonEmptyStringSchema).optional(),
                   usage: z
                     .object({
                       windows: z.array(
@@ -127,6 +131,33 @@ export class AuthStorage {
       this.invalidReason = undefined;
       this.saveUnlocked();
       return result;
+    });
+  }
+
+  async withCredentialLock<T>(handler: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    signal?.throwIfAborted();
+    ensureSecureDirectory(this.authDirectory);
+    const lockPath = `${this.authPath}.credentials.lock`;
+    for (const owner of authLockAttempts(lockPath)) {
+      if (!owner) {
+        await delay(AUTH_LOCK_RETRY_MS, undefined, { signal });
+        continue;
+      }
+      try {
+        signal?.throwIfAborted();
+        return await handler();
+      } finally {
+        releaseAuthLock(lockPath, owner);
+      }
+    }
+    throw new Error("failed to acquire credential lock");
+  }
+
+  getOrCreateDeviceId(): string {
+    return this.update((data) => {
+      if (this.invalidReason) throw new Error(this.invalidReason);
+      data.deviceId ??= randomUUID();
+      return data.deviceId;
     });
   }
 
@@ -222,6 +253,14 @@ function assertSafeStorageEntry(path: string, metadata: Stats, type: "file" | "d
 }
 
 function acquireAuthLock(lockPath: string): AuthLockOwner {
+  for (const owner of authLockAttempts(lockPath)) {
+    if (owner) return owner;
+    sleepSync(AUTH_LOCK_RETRY_MS);
+  }
+  throw new Error("failed to acquire auth storage lock");
+}
+
+function* authLockAttempts(lockPath: string): Generator<AuthLockOwner | undefined> {
   const owner: AuthLockOwner = {
     pid: process.pid,
     token: randomUUID(),
@@ -244,7 +283,6 @@ function acquireAuthLock(lockPath: string): AuthLockOwner {
     while (true) {
       try {
         renameSync(candidatePath, lockPath);
-        return owner;
       } catch (error) {
         if (!isLockExists(error)) {
           throw error;
@@ -255,8 +293,11 @@ function acquireAuthLock(lockPath: string): AuthLockOwner {
         if (Date.now() - startedAt >= AUTH_LOCK_TIMEOUT_MS) {
           throw new Error("timed out waiting for auth storage lock");
         }
-        sleepSync(AUTH_LOCK_RETRY_MS);
+        yield undefined;
+        continue;
       }
+      yield owner;
+      return;
     }
   } finally {
     rmSync(candidatePath, { recursive: true, force: true });

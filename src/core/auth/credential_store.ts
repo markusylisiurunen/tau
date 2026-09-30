@@ -4,6 +4,7 @@ import type {
   CredentialInfo,
   CredentialStore,
 } from "@earendil-works/pi-ai";
+import { z } from "zod";
 import type { Config } from "../config/schema.js";
 import { getApiKeyForProvider } from "../config/schema.js";
 import type { AuthStorage } from "./auth_storage.js";
@@ -58,6 +59,17 @@ export class TauCredentialStore implements CredentialStore {
     fn: (current: Credential | undefined) => Promise<Credential | undefined>,
     options?: AuthOperationOptions,
   ): Promise<Credential | undefined> {
+    return this.options.authStorage.withCredentialLock(
+      () => this.modifyLocked(providerId, fn, options),
+      options?.signal,
+    );
+  }
+
+  private async modifyLocked(
+    providerId: string,
+    fn: (current: Credential | undefined) => Promise<Credential | undefined>,
+    options?: AuthOperationOptions,
+  ): Promise<Credential | undefined> {
     options?.signal?.throwIfAborted();
     const current = await this.readStoredCredential(providerId, options?.signal);
     options?.signal?.throwIfAborted();
@@ -96,7 +108,7 @@ export class TauCredentialStore implements CredentialStore {
       return nextAccount;
     });
 
-    if (providerId === OPENAI_CODEX_PROVIDER_ID && stored?.type === "oauth" && stored.disabled) {
+    if (stored?.type === "oauth" && stored.disabled) {
       return undefined;
     }
     return stored ? credentialFromStoredAccount(stored) : undefined;
@@ -172,7 +184,7 @@ export class TauCredentialStore implements CredentialStore {
             this.options.getSessionId?.(),
             signal,
           )
-        : provider.accounts[0];
+        : provider.accounts.find((entry) => entry.type !== "oauth" || !entry.disabled);
     if (!account) {
       return undefined;
     }
@@ -203,6 +215,8 @@ function credentialFromStoredAccount(account: StoredAccount): Credential {
     ...(account.providerAccountId ? { accountId: account.providerAccountId } : {}),
     ...(account.enterpriseUrl ? { enterpriseUrl: account.enterpriseUrl } : {}),
     ...(account.projectId ? { projectId: account.projectId } : {}),
+    ...(account.clientId ? { clientId: account.clientId } : {}),
+    ...(account.scopes ? { scopes: account.scopes } : {}),
   };
 }
 
@@ -223,7 +237,9 @@ function hasSameStoredCredentialGeneration(a: StoredAccount, b: StoredAccount): 
     a.refresh === b.refresh &&
     a.expires === b.expires &&
     a.enterpriseUrl === b.enterpriseUrl &&
-    a.projectId === b.projectId
+    a.projectId === b.projectId &&
+    a.clientId === b.clientId &&
+    JSON.stringify(a.scopes) === JSON.stringify(b.scopes)
   );
 }
 
@@ -255,6 +271,11 @@ function storedAccountFromCredential(
     expires: credential.expires,
     enterpriseUrl: stringValue(credential.enterpriseUrl),
     projectId: stringValue(credential.projectId),
+    clientId: stringValue(credential.clientId),
+    scopes:
+      credential.scopes === undefined
+        ? undefined
+        : z.array(z.string().min(1)).parse(credential.scopes),
   } satisfies StoredOAuthAccount;
 }
 

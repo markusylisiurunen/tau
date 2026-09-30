@@ -15,16 +15,7 @@ export interface AuthProviderAdapter {
   removeAccount: (authStorage: AuthStorage, accountId: string) => boolean;
   setAccountEnabled: (authStorage: AuthStorage, accountId: string, enabled: boolean) => boolean;
   listAccountInfo: (authStorage: AuthStorage) => Promise<AuthAccountInfo[]>;
-  selectAccount: (
-    authStorage: AuthStorage,
-    options?: { signal?: AbortSignal },
-  ) => Promise<AuthProviderSelection | undefined>;
   selectAccountFromList?: (accounts: AuthAccountInfo[]) => string | undefined;
-  getApiKeyForAccount: (
-    authStorage: AuthStorage,
-    accountId: string,
-    options?: { signal?: AbortSignal },
-  ) => Promise<string | undefined>;
   getForcedAccountId?: (authStorage: AuthStorage) => string | undefined;
   isAccountUsable?: (
     authStorage: AuthStorage,

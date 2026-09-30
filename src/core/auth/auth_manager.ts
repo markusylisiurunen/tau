@@ -1,6 +1,7 @@
 import type { OAuthCredential } from "@earendil-works/pi-ai";
 import type { AuthStorage } from "./auth_storage.js";
 import type { AuthProviderAdapter } from "./provider_adapter.js";
+import { OpenAIAdapter } from "./providers/openai.js";
 import { OpenAICodexAdapter } from "./providers/openai_codex.js";
 import type { AuthAccountInfo } from "./types.js";
 
@@ -18,7 +19,7 @@ export class AuthManager {
     private readonly authStorage: AuthStorage,
     adapters?: AuthProviderAdapter[],
   ) {
-    const defaultAdapters = adapters ?? [new OpenAICodexAdapter()];
+    const defaultAdapters = adapters ?? [new OpenAICodexAdapter(), new OpenAIAdapter()];
     this.adapters = new Map(defaultAdapters.map((adapter) => [adapter.id, adapter]));
   }
 

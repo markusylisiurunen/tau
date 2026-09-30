@@ -233,6 +233,8 @@ Do not directly edit or casually delete implementation-owned durable files such 
 
 Tests should protect critical paths, cross-boundary contracts, recovery, concurrency, and likely regressions. Prefer one high-impact behavioral test over broad low-value assertion churn. When a contract changes, test the owner and at least one important consumer. For stored sessions, include a representative old document and normal recovery. For protocol state, verify delta application and observer behavior, not only parser acceptance.
 
+Avoid tests coupled to implementation wording. Do not assert human-facing error prose: intentional copy changes should not require test updates. Test meaningful behavior instead, such as rejection before side effects, artifact preservation, cleanup, and retry behavior. Assert exact text only when it is an explicit machine-consumed contract.
+
 ## Formatting and verification
 
 A fresh checkout needs dependencies in both package roots:

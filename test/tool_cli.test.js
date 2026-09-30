@@ -86,6 +86,7 @@ describe("pdf-unpack", () => {
         throw error;
       });
 
+      const ocrImpl = vi.fn();
       await expect(
         runPdfUnpackCommand([fixture.inputPdfPath], {
           config: { apiKeys: { mistral: "mistral-key" } },
@@ -93,10 +94,11 @@ describe("pdf-unpack", () => {
           env: {},
           stdout: () => {},
           spawnImpl,
+          ocrImpl,
         }),
-      ).rejects.toMatchObject({
-        message: expect.stringContaining("pdftoppm not found. install Poppler"),
-      });
+      ).rejects.toThrow();
+      expect(ocrImpl).not.toHaveBeenCalled();
+      expect(await readdir(fixture.root)).toEqual(["input.pdf"]);
     } finally {
       await fixture.cleanup();
     }
@@ -122,11 +124,56 @@ describe("pdf-unpack", () => {
           },
           spawnImpl: createRenderSpawnMock([{ width: 400, height: 300 }]),
         }),
-      ).rejects.toMatchObject({
-        message: "pdf-unpack failed: Service unavailable.",
-        helpPrinter: undefined,
-      });
+      ).rejects.toThrow();
 
+      await expect(access(outputDir)).rejects.toThrow();
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("rejects output preparation failures without starting OCR", async () => {
+    const fixture = await createFixture();
+    const ocrImpl = vi.fn();
+    try {
+      await expect(
+        runPdfUnpackCommand([fixture.inputPdfPath], {
+          config: { apiKeys: { mistral: "mistral-key" } },
+          env: {},
+          spawnImpl: createRenderSpawnMock([]),
+          mkdtempImpl: async () => {
+            throw Object.assign(new Error("EACCES"), { code: "EACCES", path: fixture.root });
+          },
+          ocrImpl,
+        }),
+      ).rejects.toThrow();
+      expect(ocrImpl).not.toHaveBeenCalled();
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("removes artifacts on rendering failure after OCR", async () => {
+    const fixture = await createFixture();
+    const outputDir = join(fixture.root, "output");
+    const ocrImpl = vi.fn(async () => ({ pages: [] }));
+    try {
+      await expect(
+        runPdfUnpackCommand([fixture.inputPdfPath], {
+          config: { apiKeys: { mistral: "mistral-key" } },
+          env: {},
+          mkdtempImpl: async () => {
+            await mkdir(outputDir);
+            return outputDir;
+          },
+          ocrImpl,
+          spawnImpl: async (_command, args) =>
+            args[0] === "-v"
+              ? createSpawnResult()
+              : { ...createSpawnResult(), exitCode: 1, stderr: "damaged PDF" },
+        }),
+      ).rejects.toThrow();
+      expect(ocrImpl).toHaveBeenCalledTimes(1);
       await expect(access(outputDir)).rejects.toThrow();
     } finally {
       await fixture.cleanup();

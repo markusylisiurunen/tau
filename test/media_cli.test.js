@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
@@ -107,12 +107,47 @@ describe("standalone tool help", () => {
   });
 });
 
+describe("media output preparation", () => {
+  it.each([imageArgs, speechArgs])(
+    "protects output and artifacts before requests: %s",
+    async (...args) => {
+      const options = await fixture();
+      await script(options, [[{ speaker: "host", text: "hello" }]]);
+      const output = join(options.cwd, args.at(-1));
+      await writeFile(output, "existing output");
+      await expect(runToolCommand(args, options)).rejects.toThrow();
+      expect(await readFile(output, "utf8")).toBe("existing output");
+      const freshArgs = [...args.slice(0, -1), `fresh-${args.at(-1)}`];
+      const parts = join(options.cwd, `${freshArgs.at(-1)}.parts`);
+      await mkdir(parts);
+      await writeFile(join(parts, "recovery"), "retained");
+      await expect(runToolCommand(freshArgs, options)).rejects.toThrow();
+      expect(await readFile(join(parts, "recovery"), "utf8")).toBe("retained");
+      await expect(
+        runToolCommand([...args.slice(0, -1), `missing/${args.at(-1)}`], options),
+      ).rejects.toThrow();
+      expect(options.fetchImpl).not.toHaveBeenCalled();
+      expect(options.stdout).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects unreadable input before requests or artifact creation", async () => {
+    const options = await fixture();
+    await expect(
+      runToolCommand(
+        [...imageArgs.slice(0, 3), "--prompt-file", "missing.txt", ...imageArgs.slice(5)],
+        options,
+      ),
+    ).rejects.toThrow();
+    expect(options.fetchImpl).not.toHaveBeenCalled();
+    expect(await readdir(options.cwd)).toEqual([]);
+  });
+});
+
 describe("image generation CLI", () => {
   it("requires an explicit model before generating or creating artifacts", async () => {
     const options = await fixture();
-    await expect(runToolCommand([imageArgs[0], ...imageArgs.slice(3)], options)).rejects.toThrow(
-      "--model is required",
-    );
+    await expect(runToolCommand([imageArgs[0], ...imageArgs.slice(3)], options)).rejects.toThrow();
     expect(options.fetchImpl).not.toHaveBeenCalled();
     expect(await readdir(options.cwd)).toEqual([]);
   });
@@ -141,7 +176,7 @@ describe("image generation CLI", () => {
     });
     expect(await readFile(join(options.cwd, "image.png"))).toEqual(image);
     expect(JSON.parse(options.stdout.mock.calls[0][0]).usage).toEqual({ output_tokens: 1000 });
-    await expect(runToolCommand(imageArgs, options)).rejects.toThrow("already exists");
+    await expect(runToolCommand(imageArgs, options)).rejects.toThrow();
     expect(options.fetchImpl).toHaveBeenCalledTimes(1);
   });
 
@@ -290,7 +325,7 @@ describe("image generation CLI", () => {
         [...imageArgs.slice(0, 2), "gemini-3.1-flash-lite-image", ...imageArgs.slice(3)],
         options,
       ),
-    ).rejects.toThrow("artifacts:");
+    ).rejects.toThrow();
     await expect(stat(join(options.cwd, "image.png"))).rejects.toThrow();
     expect(await readFile(join(options.cwd, "image.png.parts", "original.bin"))).toEqual(image);
     const manifest = await readManifest(options, "image.png");
@@ -332,7 +367,7 @@ describe("image generation CLI", () => {
           ],
           options,
         ),
-      ).rejects.toThrow("19 MB inline request limit");
+      ).rejects.toThrow();
       expect(options.fetchImpl).not.toHaveBeenCalled();
       expect(await readdir(options.cwd)).toEqual(["prompt.txt"]);
     },
@@ -344,6 +379,7 @@ describe("image generation CLI", () => {
       [...imageArgs, "--resolution", "4K"],
       [...imageArgs, "--size", "2048x2049"],
       [...imageArgs, "--compression", "50"],
+      [...imageArgs, "--compression", "101", "--format", "jpeg"],
       [...imageArgs, "--mask", "mask.png"],
       [...imageArgs, "--continue", "state.json"],
       [...imageArgs, "--grounding"],
@@ -392,19 +428,31 @@ describe("image generation CLI", () => {
     expect(await readdir(options.cwd)).toEqual([]);
   });
 
+  it.each(["not json", JSON.stringify({ data: [{}] })])(
+    "rejects malformed provider responses without publishing output or retrying",
+    async (body) => {
+      const options = await fixture();
+      options.fetchImpl.mockResolvedValue(new Response(body));
+      await expect(runToolCommand(imageArgs, options)).rejects.toThrow();
+      expect(options.fetchImpl).toHaveBeenCalledTimes(1);
+      expect(options.stdout).not.toHaveBeenCalled();
+      await expect(stat(join(options.cwd, "image.png"))).rejects.toThrow();
+    },
+  );
+
   it("does not retry failures or publish refusals and cannot clobber a concurrently created output", async () => {
     const options = await fixture();
     options.fetchImpl.mockImplementation(async () => {
       await writeFile(join(options.cwd, "image.png"), "other writer");
       return Response.json({ data: [{ b64_json: (await png()).toString("base64") }] });
     });
-    await expect(runToolCommand(imageArgs, options)).rejects.toThrow("artifacts:");
+    await expect(runToolCommand(imageArgs, options)).rejects.toThrow();
     expect(await readFile(join(options.cwd, "image.png"), "utf8")).toBe("other writer");
     expect(await stat(join(options.cwd, "image.png.parts", "image.png"))).toBeDefined();
     expect(options.fetchImpl).toHaveBeenCalledTimes(1);
     const failed = await fixture();
     failed.fetchImpl.mockResolvedValue(new Response("private error", { status: 429 }));
-    await expect(runToolCommand(imageArgs, failed)).rejects.toThrow("HTTP 429");
+    await expect(runToolCommand(imageArgs, failed)).rejects.toThrow();
     expect(failed.fetchImpl).toHaveBeenCalledTimes(1);
     await expect(stat(join(failed.cwd, "image.png"))).rejects.toThrow();
     const blocked = await fixture();
@@ -424,7 +472,7 @@ describe("image generation CLI", () => {
         ],
         blocked,
       ),
-    ).rejects.toThrow("did not return one completed image");
+    ).rejects.toThrow();
     await expect(stat(join(blocked.cwd, "image.png"))).rejects.toThrow();
     expect(blocked.fetchImpl).toHaveBeenCalledTimes(1);
   });
@@ -487,12 +535,12 @@ describe("speech generation CLI", () => {
 
   it("requires an explicit supported model before generating or creating artifacts", async () => {
     const options = await fixture();
-    await expect(runToolCommand([speechArgs[0], ...speechArgs.slice(3)], options)).rejects.toThrow(
-      "--model is required",
-    );
+    await expect(
+      runToolCommand([speechArgs[0], ...speechArgs.slice(3)], options),
+    ).rejects.toThrow();
     await expect(
       runToolCommand([...speechArgs.slice(0, 2), "unknown", ...speechArgs.slice(3)], options),
-    ).rejects.toThrow("unsupported speech model: unknown");
+    ).rejects.toThrow();
     expect(options.fetchImpl).not.toHaveBeenCalled();
     expect(await readdir(options.cwd)).toEqual([]);
   });
@@ -503,14 +551,51 @@ describe("speech generation CLI", () => {
       [{ speaker: "host", text: "valid" }],
       [{ speaker: "guest", text: "x".repeat(2001) }],
     ]);
-    await expect(runToolCommand(speechArgs, options)).rejects.toThrow("chunk 2 has 2001");
+    await expect(runToolCommand(speechArgs, options)).rejects.toThrow();
     await script(options, [
       [{ speaker: "host", text: "valid" }],
       [{ speaker: "missing", text: "hi" }],
     ]);
-    await expect(runToolCommand(speechArgs, options)).rejects.toThrow("unknown speaker");
+    await expect(runToolCommand(speechArgs, options)).rejects.toThrow();
     expect(options.fetchImpl).not.toHaveBeenCalled();
     expect(await readdir(options.cwd)).toEqual(["script.json"]);
+  });
+
+  it.each([
+    "{broken",
+    JSON.stringify({ voices: { host: "voice" }, chunks: [[{ speaker: "host" }]] }),
+  ])("rejects malformed scripts before requests or artifact creation", async (text) => {
+    const options = await fixture();
+    await writeFile(join(options.cwd, "script.json"), text);
+    await expect(runToolCommand(speechArgs, options)).rejects.toThrow();
+    expect(options.fetchImpl).not.toHaveBeenCalled();
+    expect(await readdir(options.cwd)).toEqual(["script.json"]);
+  });
+
+  it("retains the completed WAV without overwriting concurrently created output", async () => {
+    const options = await fixture();
+    await script(options, [[{ speaker: "host", text: "hello" }]]);
+    options.fetchImpl.mockImplementation(async () => {
+      await writeFile(join(options.cwd, "speech.wav"), "other writer");
+      return pcmResponse([42], "first");
+    });
+    await expect(runToolCommand(speechArgs, options)).rejects.toThrow();
+    expect(await readFile(join(options.cwd, "speech.wav"), "utf8")).toBe("other writer");
+    expect(
+      (await readFile(join(options.cwd, "speech.wav.parts", "assembled.wav")))
+        .subarray(0, 4)
+        .toString(),
+    ).toBe("RIFF");
+    expect(options.fetchImpl).toHaveBeenCalledTimes(1);
+    expect(options.stdout).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed voice listings without emitting invalid JSON lines", async () => {
+    const options = await fixture();
+    options.fetchImpl.mockResolvedValue(Response.json({ voices: [{}] }));
+    await expect(runToolCommand(["speech-generate", "--list-voices"], options)).rejects.toThrow();
+    expect(options.stdout).not.toHaveBeenCalled();
+    expect(options.fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it("stitches only the last three completed requests and counts Unicode code points", async () => {
@@ -548,9 +633,7 @@ describe("speech generation CLI", () => {
     const response = pcmResponse([42], "first");
     response.headers.delete("request-id");
     options.fetchImpl.mockResolvedValue(response);
-    await expect(runToolCommand(speechArgs, options)).rejects.toThrow(
-      "provider omitted request-id",
-    );
+    await expect(runToolCommand(speechArgs, options)).rejects.toThrow();
     expect(options.fetchImpl).toHaveBeenCalledTimes(1);
     const manifest = await readManifest(options, "speech.wav");
     expect(manifest.batches[0]).toMatchObject({
@@ -574,9 +657,7 @@ describe("speech generation CLI", () => {
     options.fetchImpl
       .mockResolvedValueOnce(pcmResponse([42], "first"))
       .mockResolvedValueOnce(new Response("error", { status: 503 }));
-    await expect(runToolCommand(speechArgs, options)).rejects.toThrow(
-      "completed batches and manifest retained",
-    );
+    await expect(runToolCommand(speechArgs, options)).rejects.toThrow();
     expect(options.fetchImpl).toHaveBeenCalledTimes(2);
     await expect(stat(join(options.cwd, "speech.wav"))).rejects.toThrow();
     expect(

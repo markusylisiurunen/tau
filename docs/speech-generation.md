@@ -152,7 +152,7 @@ The output parent directory must exist. Neither the requested WAV nor `<output>.
 
 Stdout on success is one JSON object with absolute `output`, `artifacts`, and the number of `batches`. The manifest contains the script text; keep artifacts private for sensitive scripts.
 
-Failures exit nonzero and report the retained directory. Requests are not automatically retried because a failed request may already have incurred a charge.
+Failures exit nonzero and identify invalid script fields, chunks, or turns before generation, or the failed batch and processing stage afterward. Existing output or artifact paths require a fresh `--output` path; preserve recovery artifacts. Errors after output preparation report the retained directory, which may be incomplete. If final publication fails, copy the completed `assembled.wav` to a fresh path instead of generating again. Requests are not automatically retried because a failed request may already have incurred a charge; another generation request may incur another charge.
 
 To recover after a later batch fails, inspect the manifest's `completed` flags and chunk mapping. Generate only the unfinished chunks to a fresh output path, then assemble the completed PCM files from both runs in script order. Request stitching does not carry over between invocations.
 

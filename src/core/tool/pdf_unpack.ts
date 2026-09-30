@@ -1,5 +1,5 @@
 import { constants as fsConstants } from "node:fs";
-import { access, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, relative, resolve } from "node:path";
 import sharp from "sharp";
@@ -12,6 +12,7 @@ import {
 } from "../utils/mistral_document_ocr.js";
 import { type SpawnCaptureResult, spawnWithCapture } from "../utils/spawn_capture.js";
 import { ToolCliError } from "./errors.js";
+import { describeMediaError, readMediaInput } from "./media.js";
 
 const OUTPUT_DIR_PREFIX = "tau-pdf-unpack-";
 const RENDER_DIR_NAME = ".rendered-pages";
@@ -158,7 +159,7 @@ async function resolveInputPdfPath(inputPath: string, cwd: string): Promise<stri
     if (nodeError.code === "ENOENT") {
       throw new ToolCliError(`pdf not found: ${resolvedPath}`, { helpPrinter: printPdfUnpackHelp });
     }
-    throw error;
+    throw new ToolCliError(`cannot inspect PDF: ${describeMediaError(error)}`);
   }
 
   if (!fileStat.isFile()) {
@@ -203,7 +204,7 @@ async function assertPdftoppmAvailable(args: {
       );
     }
 
-    throw error;
+    throw new ToolCliError(`cannot run pdftoppm: ${describeMediaError(error)}`);
   }
 }
 
@@ -469,6 +470,8 @@ export async function runPdfUnpackCommand(
   await assertPdftoppmAvailable({ cwd, spawnImpl });
 
   let outputDir: string | undefined;
+  let requestStarted = false;
+  let stage = "creating the output directory";
 
   try {
     outputDir = resolve(await mkdtempImpl(join(tmpdir(), OUTPUT_DIR_PREFIX)));
@@ -480,8 +483,11 @@ export async function runPdfUnpackCommand(
     await mkdir(imagesDir, { recursive: true });
     await mkdir(renderDir, { recursive: true });
 
-    const documentBuffer = await readFile(pdfPath);
+    stage = "reading the PDF";
+    const documentBuffer = await readMediaInput(pdfPath, "PDF");
     const ocrImpl = options.ocrImpl ?? ocrMistralDocument;
+    stage = "requesting OCR";
+    requestStarted = true;
     const ocrResult = await ocrImpl({
       apiKey,
       document: documentBuffer,
@@ -489,6 +495,7 @@ export async function runPdfUnpackCommand(
       fetchImpl: options.fetchImpl,
     });
     const ocrPages = ocrResult.pages;
+    stage = "rendering PDF pages with pdftoppm";
     const renderedPagePaths = await renderPdfPages({
       inputPath: pdfPath,
       renderDir,
@@ -503,6 +510,7 @@ export async function runPdfUnpackCommand(
       );
     }
 
+    stage = "writing Markdown and page-image patches";
     const inlinedPages = ocrPages.map((page, index) => {
       const pageName = formatPageName(index + 1);
       const markdownWithTables = inlinePageTables(page);
@@ -539,20 +547,18 @@ export async function runPdfUnpackCommand(
       }),
     );
   } catch (error) {
+    let cleanup = "no local output directory was created";
     if (outputDir) {
       try {
         await rm(outputDir, { recursive: true, force: true });
-      } catch {
-        // ignore cleanup failures and preserve the original error
+        cleanup = "partial local output was removed; no local artifacts were retained";
+      } catch (cleanupError) {
+        cleanup = `could not remove partial local output at ${outputDir}: ${describeMediaError(cleanupError)}; inspect it before use`;
       }
     }
 
-    if (error instanceof ToolCliError) {
-      throw error;
-    }
-
     throw new ToolCliError(
-      `pdf-unpack failed: ${error instanceof Error ? error.message : String(error)}`,
+      `pdf-unpack failed while ${stage}: ${describeMediaError(error)}; ${cleanup}; ${requestStarted ? "another OCR request may incur another charge" : "no OCR request was sent"}`,
     );
   }
 }

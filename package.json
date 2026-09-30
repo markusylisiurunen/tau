@@ -49,14 +49,14 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.14",
-    "@cloudflare/workers-types": "^5.20260929.1",
+    "@biomejs/biome": "2.5.15",
+    "@cloudflare/workers-types": "^5.20260930.2",
     "@types/node": "^24.19.0",
     "@types/ws": "^8.18.2",
     "prettier": "^3.9.9",
     "typescript": "^7.0.2",
-    "vitest": "^5.0.2",
-    "wrangler": "^4.143.1"
+    "vitest": "^5.0.3",
+    "wrangler": "^4.145.0"
   },
   "engines": {
     "node": ">=24.0.0"
@@ -66,6 +66,6 @@
     "protobufjs@7.6.6": false,
     "fsevents@2.3.3": true,
     "@google/genai@2.21.0": false,
-    "workerd@1.20260926.1": true
+    "workerd@1.20260930.2": true
   }
 }

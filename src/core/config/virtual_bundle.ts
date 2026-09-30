@@ -8,19 +8,14 @@ import { getVirtualConfigDefaults } from "./virtual_defaults.js";
 
 export type VirtualBundle = {
   config: Config;
-  builtinPersonas: Persona[];
   personas: Persona[];
   themes: ThemeDefinition[];
 };
 
-export function buildVirtualBundle(config: Config, modelResolver?: ModelResolver): VirtualBundle {
-  const includeBuiltinPersonas = !config.disableBuiltinPersonas;
-  const builtinPersonas = createBuiltinPersonas(modelResolver);
-
+export function buildVirtualBundle(modelResolver?: ModelResolver): VirtualBundle {
   return {
     config: getVirtualConfigDefaults(),
-    builtinPersonas,
-    personas: includeBuiltinPersonas ? builtinPersonas : [],
+    personas: createBuiltinPersonas(modelResolver),
     themes: builtinThemes,
   };
 }

@@ -488,7 +488,7 @@ describe("custom personas", () => {
     }
   });
 
-  it("can disable built-in personas and still load custom personas (including builtin ids)", async () => {
+  it("lets custom personas replace built-in ids while retaining other built-ins", async () => {
     const fx = setupFixture();
 
     try {
@@ -507,15 +507,13 @@ describe("custom personas", () => {
       );
 
       const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
-      const { personas, errors } = await loadAllContentWithModelResolver(
-        { disableBuiltinPersonas: true },
-        { deps, cwd: fx.cwd },
-      );
+      const { personas, errors } = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
       expect(errors).toEqual([]);
 
-      expect(personas.map((p) => p.id)).toEqual(["gpt-6.1-sol-chat"]);
-      expect(personas[0].source).toBe("user");
-      expect(personas[0].skills).toBe("*");
+      const custom = personas.find((persona) => persona.id === "gpt-6.1-sol-chat");
+      expect(custom.source).toBe("user");
+      expect(custom.skills).toBe("*");
+      expect(personas.some((persona) => persona.source === "builtin")).toBe(true);
     } finally {
       fx.cleanup();
     }

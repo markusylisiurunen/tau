@@ -3,7 +3,6 @@ import { z } from "zod";
 import type { DiffReviewFile, DiffReviewSessionContextResult } from "../core/diff_review/index.js";
 import type { DiffToolReviewState } from "./shared_types.js";
 import {
-  DIFF_TOOL_CODE_THEMES,
   DIFF_TOOL_GUIDE_QUESTION_LIMIT,
   DIFF_TOOL_GUIDE_TOPIC_LIMIT,
   guideCommentTargetKey,
@@ -14,7 +13,7 @@ export type DiffToolReviewStateStorage = {
   save(document: unknown): Promise<void>;
 };
 
-const DIFF_TOOL_REVIEW_STATE_VERSION = 2;
+const DIFF_TOOL_REVIEW_STATE_VERSION = 3;
 const MAX_PERSISTED_REVIEW_STATE_BYTES = 2 * 1024 * 1024;
 const MAX_THREADS = 1_000;
 const MAX_MESSAGES_PER_THREAD = 1_000;
@@ -154,7 +153,6 @@ const persistedStateSchema = z
   .object({
     diffStyle: z.enum(["stacked", "split"]),
     overflowMode: z.enum(["wrap", "scroll"]),
-    codeTheme: z.enum(DIFF_TOOL_CODE_THEMES),
     collapsedFileIds: z.array(idSchema).max(MAX_FILE_IDS),
     viewedFileIds: z.array(idSchema).max(MAX_FILE_IDS),
     threads: persistedThreadsSchema,
@@ -168,6 +166,10 @@ const persistedDocumentSchema = z
     state: persistedStateSchema,
   })
   .strict();
+const previousDocumentSchema = persistedDocumentSchema.extend({
+  version: z.literal(2),
+  state: persistedStateSchema.extend({ codeTheme: z.string() }),
+});
 const legacyDocumentSchema = z
   .object({
     version: z.literal(1),
@@ -176,7 +178,7 @@ const legacyDocumentSchema = z
       .object({
         diffStyle: z.enum(["stacked", "split"]),
         overflowMode: z.enum(["wrap", "scroll"]),
-        codeTheme: z.enum(DIFF_TOOL_CODE_THEMES),
+        codeTheme: z.string(),
         sidebarOpen: z.boolean(),
         collapsedFileIds: z.array(idSchema).max(MAX_FILE_IDS),
         viewedFileIds: z.array(idSchema).max(MAX_FILE_IDS),
@@ -219,7 +221,6 @@ export function createDiffToolPersistedReviewStateDocument(
     state: {
       diffStyle: state.diffStyle,
       overflowMode: state.overflowMode,
-      codeTheme: state.codeTheme,
       collapsedFileIds: [...state.collapsedFileIds],
       viewedFileIds: [...state.viewedFileIds],
       threads: state.threads.map((thread) => ({
@@ -259,6 +260,12 @@ export function parseDiffToolPersistedReviewStateDocument(
     return toReviewState(current.data.state);
   }
 
+  const previous = previousDocumentSchema.safeParse(document);
+  if (previous.success) {
+    assertScopeFingerprint(previous.data.scopeFingerprint, scopeFingerprint);
+    return toReviewState(previous.data.state);
+  }
+
   const legacy = legacyDocumentSchema.safeParse(document);
   if (!legacy.success) {
     throw new Error(`stored diff review state is invalid: ${z.prettifyError(current.error)}`);
@@ -267,7 +274,6 @@ export function parseDiffToolPersistedReviewStateDocument(
   return toReviewState({
     diffStyle: legacy.data.state.diffStyle,
     overflowMode: legacy.data.state.overflowMode,
-    codeTheme: legacy.data.state.codeTheme,
     collapsedFileIds: legacy.data.state.collapsedFileIds,
     viewedFileIds: legacy.data.state.viewedFileIds,
     threads: legacy.data.state.threads,
@@ -279,7 +285,6 @@ function toReviewState(state: PersistedState): DiffToolReviewState {
   return {
     diffStyle: state.diffStyle,
     overflowMode: state.overflowMode,
-    codeTheme: state.codeTheme,
     collapsedFileIds: [...state.collapsedFileIds],
     viewedFileIds: [...state.viewedFileIds],
     threads: state.threads.map((thread) => ({

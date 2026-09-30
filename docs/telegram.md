@@ -56,7 +56,6 @@ Unknown object fields are stripped, so a misspelled field can have no effect wit
 | `projects` | Yes | Object keyed by project ID. Bots select from these definitions. |
 | `workspaceRoot` | No | Base for managed workspaces; defaults to `.tau/telegram-workspaces` beside the Telegram config file. |
 | `maxSessions` | No | Positive integer cap on active sessions across the whole runner. |
-| `systemMessage` | No | Non-empty model-facing instruction prepended to every Telegram turn. |
 
 A relative top-level `workspaceRoot` resolves from the Telegram config file's directory. Tau persists runner session records at `<workspaceRoot>-sessions.json` and per-chat preferences at `<workspaceRoot>-project-preferences.json`. These are runner-owned state files, not operator editing surfaces. Session snapshots remain in the normal host store under the runner user's Tau home.
 
@@ -74,8 +73,8 @@ Each `bots.<id>` object supports:
 | `allowedChatIds` | No | Integer chat IDs allowed to interact with the bot; also opts groups in. |
 | `defaultProjectId` | No | Initial project preference, and must be allowed for this bot. |
 | `systemMessage` | No | Additional instruction for turns from this bot. |
-| `pollIntervalMs` | No | Positive polling retry interval, default 1,000 ms. |
-| `requestTimeoutSeconds` | No | Positive Telegram long-poll timeout, default 30 seconds. |
+
+The runner retries failed polling after 1,000 ms and uses a 30-second Telegram long-poll timeout.
 
 An absent or empty `allowedUserIds` means no user restriction. An absent or empty `allowedChatIds` allows DMs but allows no groups. When `allowedChatIds` is non-empty, it restricts DMs to listed chat IDs and enables only listed groups. Group IDs are usually negative integers.
 
@@ -95,7 +94,7 @@ platform_api
 release2026
 ```
 
-Every project can have an optional non-empty `description`. Repository and persistent-directory projects can select `persona` as `<id>` or `<id>:<reasoning>`, and can set `noAgentContextFiles` to disable `AGENTS.md` injection for that session. Composite projects require their own persona and do not support `noAgentContextFiles`.
+Every project can have an optional non-empty `description`. Repository and persistent-directory projects can select `persona` as `<id>` or `<id>:<reasoning>`. Composite projects require their own persona. Sessions load applicable `AGENTS.md` instructions.
 
 Each project must define exactly one workspace source: `repo`, `directory`, or `projectIds`.
 
@@ -110,9 +109,7 @@ A repository project clones one GitHub repository into a session-specific manage
       "repo": "acme/ledger",
       "ref": "main",
       "workingDirectory": "packages/api",
-      "workspaceRoot": "/var/lib/tau/ledger-workspaces",
-      "persona": "gpt-6.1-sol-coder",
-      "noAgentContextFiles": false
+      "persona": "gpt-6.1-sol-coder"
     }
   }
 }
@@ -120,7 +117,7 @@ A repository project clones one GitHub repository into a session-specific manage
 
 `repo` must use GitHub `owner/repo` syntax. Arbitrary Git URLs are not accepted. The runner needs `gh` and `git` on its login-shell `PATH`, and `gh` must already be authenticated for the repository.
 
-A relative project `workspaceRoot` resolves from the Telegram config file's directory and replaces the top-level root for that project's managed workspaces. A session workspace is:
+All managed projects use the top-level `workspaceRoot`. A session workspace is:
 
 ```text
 <effective-workspace-root>/<project-id>/<telegram-session-id>
@@ -194,7 +191,7 @@ Members live at `<composite-root>/<member-project-id>` and use each repository's
 
 The composite owns the parent persona, subagents, model catalog, config, settings, and tools. Child `.tau/config.json` files are not merged. A subagent in a member directory rebuilds only target context: environment and repository metadata, applicable `AGENTS.md` and `agentContextFiles`, and skills filtered by the parent persona.
 
-Composite preparation is all-or-nothing. If one member cannot be prepared, Tau removes the generated composite workspace. The composite's optional `workspaceRoot` controls the generated root; member repository caches continue to use each member's configured root or the top-level default.
+Composite preparation is all-or-nothing. If one member cannot be prepared, Tau removes the generated composite workspace. Composite workspaces and member repository caches use the top-level `workspaceRoot`.
 
 ## Managed workspace lifecycle
 
@@ -218,11 +215,11 @@ New and reconstructed workspaces run their hooks; preserved workspaces and persi
 
 After preparation, Tau creates an ordinary local session at the workspace `cwd`. Runtime discovery reads normal `~/.config/tau` and ancestor `.tau` content visible from that path: models, personas, prompts, skills, project context, host tools, and other session settings work as they do in the TUI.
 
-A project `persona` overrides the normal default for that session. `noAgentContextFiles: true` suppresses `AGENTS.md` injection for repository or persistent-directory sessions. Composite root context is generated deliberately and uses its required persona.
+A project `persona` overrides the normal default for that session. Sessions include applicable `AGENTS.md` instructions. Composite root context is generated deliberately and uses its required persona.
 
 Every Telegram turn starts with hidden `<system>` guidance identifying Telegram as the source and reply destination. It favors direct simple answers and brief acknowledgements or meaningful progress updates for tool-driven or multi-step work, since users cannot see tool activity.
 
-Top-level and per-bot `systemMessage` values share a second hidden block after the default, in that order. Audio transcripts receive another warning that they may contain noise or errors. Unlike project context, hidden guidance is persisted with user turns and can appear in history, so never put credentials in configured messages.
+A per-bot `systemMessage` appears in a second hidden block after the default. Audio transcripts receive another warning that they may contain noise or errors. Unlike project context, hidden guidance is persisted with user turns and can appear in history, so never put credentials in configured messages.
 
 The runner's speech credentials and `speech.voiceId` are loaded at startup from its environment and normal Tau config, based on the runner process's startup `cwd`. Restart the runner after changing those settings.
 

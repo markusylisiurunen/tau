@@ -96,38 +96,6 @@ describe("diffTool config", () => {
     }
   });
 
-  it("loads the most-specific built-in diff tool config", () => {
-    const fx = setupFixture();
-
-    try {
-      const repo = join(fx.home, "repo");
-      const nested = join(repo, "packages", "pkg1");
-      mkdirSync(nested, { recursive: true });
-      mkdirSync(join(fx.home, ".config", "tau"), { recursive: true });
-      mkdirSync(join(repo, ".tau"), { recursive: true });
-
-      writeFileSync(
-        join(fx.home, ".config", "tau", "config.json"),
-        JSON.stringify({
-          builtInDiffTool: { codeTheme: "dark-plus" },
-        }),
-      );
-      writeFileSync(
-        join(repo, ".tau", "config.json"),
-        JSON.stringify({
-          builtInDiffTool: { codeTheme: "github-dark" },
-        }),
-      );
-
-      const deps = createConfigDeps({ cwd: nested, home: fx.home, env: {} });
-      const config = loadConfig(nested, deps);
-
-      expect(config.builtInDiffTool).toEqual({ codeTheme: "github-dark" });
-    } finally {
-      fx.cleanup();
-    }
-  });
-
   it("reports invalid diff tool fields without dropping valid config", () => {
     const fx = setupFixture();
 
@@ -137,7 +105,6 @@ describe("diffTool config", () => {
         join(fx.repo, ".tau", "config.json"),
         JSON.stringify({
           diffTool: { command: "", args: ["--ok"] },
-          builtInDiffTool: { codeTheme: "not-a-theme" },
         }),
       );
 
@@ -147,12 +114,8 @@ describe("diffTool config", () => {
       const result = loadConfigWithDiagnostics(deps, { levels, modelResolver });
 
       expect(result.config.diffTool).toBeUndefined();
-      expect(result.config.builtInDiffTool).toBeUndefined();
       expect(result.errors).toContain(
         `${join(fx.repo, ".tau", "config.json")}: diffTool.command must be a non-empty string.`,
-      );
-      expect(result.errors).toContain(
-        `${join(fx.repo, ".tau", "config.json")}: builtInDiffTool.codeTheme is not supported.`,
       );
     } finally {
       fx.cleanup();

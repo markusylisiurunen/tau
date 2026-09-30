@@ -56,7 +56,6 @@ export function DiffWorkspace({
               file={file}
               diffStyle={reviewState.diffStyle}
               overflowMode={reviewState.overflowMode}
-              codeTheme={reviewState.codeTheme}
               collapsed={fileState.collapsed[file.id] ?? false}
               viewed={fileState.viewed[file.id] ?? false}
               annotations={annotations}

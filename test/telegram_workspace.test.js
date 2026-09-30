@@ -12,7 +12,7 @@ vi.mock("../dist/core/utils/spawn_capture.js", () => ({
 }));
 
 import {
-  cleanupWorkspaceRootsOnStartup,
+  cleanupWorkspaceRootOnStartup,
   prepareWorkspace,
 } from "../dist/core/telegram/workspace.js";
 
@@ -42,10 +42,7 @@ describe("telegram workspace", () => {
     await mkdir(join(workspaceRoot, "other", "stale"), { recursive: true });
     await writeFile(join(workspaceRoot, "stale-file.txt"), "remove");
 
-    const [result] = await cleanupWorkspaceRootsOnStartup(
-      [workspaceRoot, workspaceRoot],
-      [activeWorkspace],
-    );
+    const result = await cleanupWorkspaceRootOnStartup(workspaceRoot, [activeWorkspace]);
 
     expect(result).toEqual({
       workspaceRoot,
@@ -62,28 +59,22 @@ describe("telegram workspace", () => {
     await mkdir(workspaceRoot, { recursive: true });
     await writeFile(join(workspaceRoot, "keep.txt"), "keep");
 
-    await expect(cleanupWorkspaceRootsOnStartup([workspaceRoot], [workspaceRoot])).resolves.toEqual(
-      [
-        {
-          workspaceRoot,
-          deletedEntries: 0,
-          failures: [],
-        },
-      ],
-    );
+    await expect(cleanupWorkspaceRootOnStartup(workspaceRoot, [workspaceRoot])).resolves.toEqual({
+      workspaceRoot,
+      deletedEntries: 0,
+      failures: [],
+    });
     expect(await readFile(join(workspaceRoot, "keep.txt"), "utf8")).toBe("keep");
   });
 
   it("treats a missing workspace root as already clean", async () => {
     const workspaceRoot = await createWorkspaceRoot();
 
-    await expect(cleanupWorkspaceRootsOnStartup([workspaceRoot], [])).resolves.toEqual([
-      {
-        workspaceRoot,
-        deletedEntries: 0,
-        failures: [],
-      },
-    ]);
+    await expect(cleanupWorkspaceRootOnStartup(workspaceRoot, [])).resolves.toEqual({
+      workspaceRoot,
+      deletedEntries: 0,
+      failures: [],
+    });
   });
 
   it("reuses a persistent project directory without modifying it", async () => {
@@ -98,7 +89,6 @@ describe("telegram workspace", () => {
       project: { directory },
       projects: {},
       workspaceRoot,
-      defaultWorkspaceRoot: workspaceRoot,
     });
 
     expect(result).toEqual({
@@ -121,7 +111,6 @@ describe("telegram workspace", () => {
         project: { directory },
         projects: {},
         workspaceRoot,
-        defaultWorkspaceRoot: workspaceRoot,
       }),
     ).rejects.toThrow(`project directory does not exist: ${directory}`);
     expect(spawnWithCaptureMock).not.toHaveBeenCalled();
@@ -260,7 +249,6 @@ describe("telegram workspace", () => {
       project: projects.platform,
       projects,
       workspaceRoot,
-      defaultWorkspaceRoot: workspaceRoot,
     });
 
     expect(result.sessionCwd).toBe(result.workspacePath);
@@ -303,7 +291,6 @@ describe("telegram workspace", () => {
       project: configuredProject,
       projects: { ...projects, platform: configuredProject },
       workspaceRoot,
-      defaultWorkspaceRoot: workspaceRoot,
     });
 
     expect(
@@ -354,7 +341,6 @@ describe("telegram workspace", () => {
         project: projects.platform,
         projects,
         workspaceRoot,
-        defaultWorkspaceRoot: workspaceRoot,
       }),
     ).rejects.toThrow("repository clone from cache failed");
     await expect(readdir(workspacePath)).rejects.toMatchObject({ code: "ENOENT" });

@@ -48,7 +48,7 @@ export function loadRuntimeBootstrap(
     modelResolver,
   });
   const config = configResult.config;
-  const virtualBundle = buildVirtualBundle(config, modelResolver.resolveConfiguredModel);
+  const virtualBundle = buildVirtualBundle(modelResolver.resolveConfiguredModel);
 
   return {
     config,

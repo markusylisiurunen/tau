@@ -756,13 +756,11 @@ describe("telegram session manager", () => {
   });
 
   it.each([
-    ["configured", undefined],
+    ["default", undefined],
     ["per-submit", "this message came from telegram"],
   ])("prepends default and %s system messages", async (_kind, additionalSystemMessage) => {
     const clientHarness = createClientHarness();
-    const manager = createDemoSessionManager(clientHarness, {
-      systemMessage: "follow project conventions",
-    });
+    const manager = createDemoSessionManager(clientHarness);
     const created = await manager.createSession({ projectId: "demo" });
     await waitFor(() => manager.getSession(created.id)?.state === "waiting-input");
 
@@ -774,7 +772,6 @@ describe("telegram session manager", () => {
     expect(clientHarness.session.submit).toHaveBeenCalledWith(
       telegramUserText(
         "write issue about X",
-        "follow project conventions",
         ...(additionalSystemMessage ? [additionalSystemMessage] : []),
       ),
       { historyEntryId: expect.stringMatching(/^telegram-turn-/) },
@@ -1460,7 +1457,6 @@ describe("telegram session manager", () => {
       projects: {
         demo: {
           repo: "git@example.com:demo.git",
-          workspaceRoot: "/tmp/project-root",
         },
       },
       workspaceRoot: "/tmp/global-root",
@@ -1483,7 +1479,7 @@ describe("telegram session manager", () => {
     await closedPromise;
 
     await waitFor(() => cleanupWorkspacePath.mock.calls.length === 1);
-    expect(cleanupWorkspacePath).toHaveBeenCalledWith(`/tmp/project-root/demo/${created.id}`);
+    expect(cleanupWorkspacePath).toHaveBeenCalledWith(`/tmp/global-root/demo/${created.id}`);
     expect(manager.getSession(created.id)).toBeUndefined();
   });
 
@@ -1524,7 +1520,6 @@ describe("telegram session manager", () => {
         me: {
           directory,
           persona: "gpt-5.6-sol-coder:high",
-          noAgentContextFiles: true,
         },
       },
       workspaceRoot: join(tempRoot, "managed"),
@@ -1545,12 +1540,10 @@ describe("telegram session manager", () => {
       expect(createClient).toHaveBeenNthCalledWith(1, {
         cwd: directory,
         persona: "gpt-5.6-sol-coder:high",
-        noAgentContextFiles: true,
       });
       expect(createClient).toHaveBeenNthCalledWith(2, {
         cwd: directory,
         persona: "gpt-5.6-sol-coder:high",
-        noAgentContextFiles: true,
       });
       expect(clientHarness.client.sessions.create).toHaveBeenCalledTimes(2);
       expect(clientHarness.client.sessions.create).toHaveBeenCalledWith({
@@ -2249,12 +2242,11 @@ describe("telegram session manager", () => {
   it("prunes orphaned workspaces while preserving recoverable workspaces", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "tau-telegram-session-cleanup-"));
     const workspaceRoot = join(tempRoot, "workspaces");
-    const projectWorkspaceRoot = join(tempRoot, "project-workspaces");
-    const activeWorkspace = join(projectWorkspaceRoot, "demo", "active");
+    const activeWorkspace = join(workspaceRoot, "demo", "active");
     const persistencePath = join(tempRoot, "sessions.json");
     await mkdir(activeWorkspace, { recursive: true });
     await writeFile(join(activeWorkspace, "keep.txt"), "keep");
-    await mkdir(join(projectWorkspaceRoot, "demo", "orphan"), { recursive: true });
+    await mkdir(join(workspaceRoot, "demo", "orphan"), { recursive: true });
     await mkdir(join(workspaceRoot, "stale"), { recursive: true });
     await writeFile(
       persistencePath,
@@ -2280,7 +2272,6 @@ describe("telegram session manager", () => {
       projects: {
         demo: {
           repo: "git@example.com:demo.git",
-          workspaceRoot: projectWorkspaceRoot,
         },
       },
       workspaceRoot,
@@ -2292,8 +2283,8 @@ describe("telegram session manager", () => {
       await manager.initialize();
 
       expect(await readFile(join(activeWorkspace, "keep.txt"), "utf8")).toBe("keep");
-      expect(await readdir(join(projectWorkspaceRoot, "demo"))).toEqual(["active"]);
-      expect(await readdir(workspaceRoot)).toEqual([]);
+      expect(await readdir(join(workspaceRoot, "demo"))).toEqual(["active"]);
+      expect(await readdir(workspaceRoot)).toEqual(["demo"]);
       expect(prepareWorkspace).not.toHaveBeenCalled();
       expect(clientHarness.session.exec).not.toHaveBeenCalled();
       expect(clientHarness.client.sessions.observe).toHaveBeenCalledWith("session-1");

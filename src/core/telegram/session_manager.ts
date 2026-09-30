@@ -32,7 +32,7 @@ import { formatTauUserText } from "../utils/user_metadata.js";
 import { storeTelegramAttachment } from "./attachments.js";
 import {
   cleanupWorkspacePath as cleanupWorkspacePathOnDisk,
-  cleanupWorkspaceRootsOnStartup,
+  cleanupWorkspaceRootOnStartup,
   type PreparedWorkspace,
   type PrepareWorkspaceOptions,
   prepareWorkspace,
@@ -457,7 +457,6 @@ export type TelegramSessionClientOptions = {
   ownerId?: string;
   clientTools?: TauSdkClientTool[];
   persona?: string;
-  noAgentContextFiles?: boolean;
 };
 
 export type TelegramSessionClientEvent = SessionProtocolDeltaMessage;
@@ -533,7 +532,6 @@ export type TelegramSessionManagerOptions = {
   projects: Record<string, TelegramProjectConfig>;
   workspaceRoot?: string;
   maxSessions?: number;
-  systemMessage?: string;
   persistencePath?: string;
   now?: () => Date;
   onLog?: (entry: WorkspaceLogEntry) => void;
@@ -549,7 +547,6 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
   private readonly projects: Record<string, TelegramProjectConfig>;
   private readonly workspaceRoot: string;
   private readonly maxSessions?: number;
-  private readonly configuredSystemMessage?: string;
   private readonly persistencePath?: string;
   private readonly now: () => Date;
   private readonly onLog?: (entry: WorkspaceLogEntry) => void;
@@ -570,7 +567,6 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       options.workspaceRoot ?? resolve(process.cwd(), ".tau/telegram-workspaces"),
     );
     this.maxSessions = options.maxSessions;
-    this.configuredSystemMessage = options.systemMessage?.trim() || undefined;
     this.persistencePath = options.persistencePath ? resolve(options.persistencePath) : undefined;
     this.now = options.now ?? (() => new Date());
     this.onLog = options.onLog;
@@ -976,7 +972,6 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
   }
 
   private async cleanupOrphanedWorkspaces(): Promise<void> {
-    const workspaceRoots = new Set<string>([this.workspaceRoot]);
     const preservedWorkspacePaths: string[] = [];
 
     for (const entry of this.sessions.values()) {
@@ -985,11 +980,9 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
         continue;
       }
 
-      const workspaceRoot = resolve(entry.project.workspaceRoot ?? this.workspaceRoot);
-      workspaceRoots.add(workspaceRoot);
       preservedWorkspacePaths.push(
         resolveWorkspacePath({
-          workspaceRoot,
+          workspaceRoot: this.workspaceRoot,
           projectId: entry.record.projectId,
           sessionId: entry.record.id,
         }),
@@ -999,37 +992,30 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     for (const project of Object.values(this.projects)) {
       if (isDirectoryProject(project)) {
         preservedWorkspacePaths.push(project.directory);
-      } else if (project.workspaceRoot) {
-        workspaceRoots.add(resolve(project.workspaceRoot));
       }
     }
 
-    const results = await cleanupWorkspaceRootsOnStartup(
-      Array.from(workspaceRoots),
-      preservedWorkspacePaths,
-    );
-    for (const result of results) {
-      if (result.deletedEntries > 0) {
-        this.onLog?.({
-          level: "info",
-          message: "startup workspace cleanup complete",
-          data: {
-            workspaceRoot: result.workspaceRoot,
-            deletedEntries: result.deletedEntries,
-          },
-        });
-      }
-      for (const failure of result.failures) {
-        this.onLog?.({
-          level: "error",
-          message: "startup workspace cleanup failed",
-          data: {
-            workspaceRoot: result.workspaceRoot,
-            path: failure.path,
-            cause: failure.cause,
-          },
-        });
-      }
+    const result = await cleanupWorkspaceRootOnStartup(this.workspaceRoot, preservedWorkspacePaths);
+    if (result.deletedEntries > 0) {
+      this.onLog?.({
+        level: "info",
+        message: "startup workspace cleanup complete",
+        data: {
+          workspaceRoot: result.workspaceRoot,
+          deletedEntries: result.deletedEntries,
+        },
+      });
+    }
+    for (const failure of result.failures) {
+      this.onLog?.({
+        level: "error",
+        message: "startup workspace cleanup failed",
+        data: {
+          workspaceRoot: result.workspaceRoot,
+          path: failure.path,
+          cause: failure.cause,
+        },
+      });
     }
   }
 
@@ -1039,13 +1025,10 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
       throw new Error("persisted session is missing its Tau session id");
     }
 
-    const projectWorkspaceRoot = isDirectoryProject(entry.project)
-      ? this.workspaceRoot
-      : (entry.project.workspaceRoot ?? this.workspaceRoot);
     let workspacePath = isDirectoryProject(entry.project)
       ? entry.project.directory
       : resolveWorkspacePath({
-          workspaceRoot: projectWorkspaceRoot,
+          workspaceRoot: this.workspaceRoot,
           projectId: entry.record.projectId,
           sessionId: entry.record.id,
         });
@@ -1061,8 +1044,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
         projectId: entry.record.projectId,
         project: entry.project,
         projects: this.projects,
-        workspaceRoot: projectWorkspaceRoot,
-        defaultWorkspaceRoot: this.workspaceRoot,
+        workspaceRoot: this.workspaceRoot,
         signal: entry.abortController.signal,
         onLog: (workspaceLog) => {
           this.log(
@@ -1157,10 +1139,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
         projectId: entry.record.projectId,
         project: entry.project,
         projects: this.projects,
-        workspaceRoot: isDirectoryProject(entry.project)
-          ? this.workspaceRoot
-          : (entry.project.workspaceRoot ?? this.workspaceRoot),
-        defaultWorkspaceRoot: this.workspaceRoot,
+        workspaceRoot: this.workspaceRoot,
         signal: entry.abortController.signal,
         onLog: (workspaceLog) => {
           this.log(
@@ -1779,9 +1758,6 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     if (entry.project.persona) {
       options.persona = entry.project.persona;
     }
-    if ("noAgentContextFiles" in entry.project && entry.project.noAgentContextFiles !== undefined) {
-      options.noAgentContextFiles = entry.project.noAgentContextFiles;
-    }
     return options;
   }
 
@@ -1882,7 +1858,7 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
     }
 
     return resolveWorkspacePath({
-      workspaceRoot: entry.project.workspaceRoot ?? this.workspaceRoot,
+      workspaceRoot: this.workspaceRoot,
       projectId: entry.record.projectId,
       sessionId: entry.record.id,
     });
@@ -2000,15 +1976,12 @@ class TelegramSessionManagerImpl implements TelegramSessionManager {
   }
 
   private buildSubmitPayload(text: string, additionalSystemMessage?: string): string {
-    const configuredMessages = [
-      this.configuredSystemMessage,
-      additionalSystemMessage?.trim() || undefined,
-    ].filter((message): message is string => Boolean(message));
+    const systemMessage = additionalSystemMessage?.trim();
     return formatTauUserText({
       text,
       hiddenSystemMessages: [
         DEFAULT_TELEGRAM_SYSTEM_MESSAGE,
-        ...(configuredMessages.length > 0 ? [configuredMessages.join("\n")] : []),
+        ...(systemMessage ? [systemMessage] : []),
       ],
     });
   }

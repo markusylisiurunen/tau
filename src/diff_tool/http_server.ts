@@ -25,7 +25,6 @@ import {
 } from "./review_state_persistence.js";
 import type {
   DiffToolBootstrapPayload,
-  DiffToolCodeTheme,
   DiffToolCreateThreadPayload,
   DiffToolCreateThreadResponse,
   DiffToolGetDiffResult,
@@ -36,11 +35,7 @@ import type {
   DiffToolReviewSubmissionPayload,
   DiffToolStatePatch,
 } from "./shared_types.js";
-import {
-  DIFF_TOOL_CODE_THEMES,
-  DIFF_TOOL_GUIDE_QUESTION_LIMIT,
-  DIFF_TOOL_GUIDE_TOPIC_LIMIT,
-} from "./shared_types.js";
+import { DIFF_TOOL_GUIDE_QUESTION_LIMIT, DIFF_TOOL_GUIDE_TOPIC_LIMIT } from "./shared_types.js";
 
 export type {
   DiffToolBootstrapPayload,
@@ -62,7 +57,6 @@ export type DiffToolReviewSubmission = DiffReviewSubmission & {
 
 export type StartDiffToolHttpServerOptions = {
   client: DiffReviewProtocolClient;
-  codeTheme?: DiffToolCodeTheme;
   host?: string;
   port?: number;
   storage?: DiffToolReviewStateStorage;
@@ -144,9 +138,7 @@ export class DiffToolHttpServer {
 
   constructor(options: StartDiffToolHttpServerOptions) {
     this.client = options.client;
-    this.reviewState = new DiffToolReviewStateStore({
-      codeTheme: options.codeTheme,
-    });
+    this.reviewState = new DiffToolReviewStateStore();
     this.host = options.host ?? "127.0.0.1";
     this.port = options.port ?? 0;
     this.storage = options.storage;
@@ -982,8 +974,6 @@ function guideCommentTargetExists(
   }
 }
 
-const codeThemes = new Set<NonNullable<DiffToolStatePatch["codeTheme"]>>(DIFF_TOOL_CODE_THEMES);
-
 function parseStatePatch(payload: Record<string, unknown>): DiffToolStatePatch {
   return {
     ...(payload.diffStyle === "split" || payload.diffStyle === "stacked"
@@ -991,10 +981,6 @@ function parseStatePatch(payload: Record<string, unknown>): DiffToolStatePatch {
       : {}),
     ...(payload.overflowMode === "wrap" || payload.overflowMode === "scroll"
       ? { overflowMode: payload.overflowMode }
-      : {}),
-    ...(typeof payload.codeTheme === "string" &&
-    codeThemes.has(payload.codeTheme as NonNullable<DiffToolStatePatch["codeTheme"]>)
-      ? { codeTheme: payload.codeTheme as NonNullable<DiffToolStatePatch["codeTheme"]> }
       : {}),
     ...(Array.isArray(payload.collapsedFileIds)
       ? {

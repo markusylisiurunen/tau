@@ -53,31 +53,6 @@ describe("cli", () => {
     }
   });
 
-  it("prints debug diagnostics when no personas are loaded", () => {
-    const home = realpathSync(mkdtempSync(join(tmpdir(), "tau-debug-cli-home-")));
-    try {
-      const configDirectory = join(home, ".config", "tau");
-      mkdirSync(configDirectory, { recursive: true });
-      writeFileSync(
-        join(configDirectory, "config.json"),
-        JSON.stringify({ disableBuiltinPersonas: true }),
-      );
-      const mainPath = resolve(process.cwd(), "dist/main.js");
-      const result = spawnSync(process.execPath, [mainPath, "--debug"], {
-        cwd: home,
-        encoding: "utf8",
-        env: { ...process.env, HOME: home },
-      });
-
-      expect(result.status).toBe(0);
-      expect(result.stdout).toContain("tau debug info");
-      expect(result.stdout).toContain("personas (0)");
-      expect(result.stderr).toContain("defaultPersona 'sonnet-5.5-coder' not found");
-    } finally {
-      rmSync(home, { recursive: true, force: true });
-    }
-  });
-
   it("uses runtime prompt bootstrap for debug project context", () => {
     const home = realpathSync(mkdtempSync(join(tmpdir(), "tau-debug-context-home-")));
     let current = home;

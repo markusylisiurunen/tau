@@ -152,7 +152,6 @@ describe("config paths", () => {
               },
             },
           },
-          autoCompact: { enabled: false, reserveTokens: 1000 },
           modelSystemNotices: {
             "openai/gpt-5.4": "global codex notice",
             "anthropic/claude-sonnet-4-5": "global anthropic notice",
@@ -183,7 +182,6 @@ describe("config paths", () => {
               },
             },
           },
-          autoCompact: { keepRecentTokens: 2000 },
           modelSystemNotices: {
             "openai/gpt-5.4": "repo codex notice",
           },
@@ -242,11 +240,6 @@ describe("config paths", () => {
           },
         },
       });
-      expect(config.autoCompact).toEqual({
-        enabled: false,
-        reserveTokens: 1000,
-        keepRecentTokens: 2000,
-      });
       expect(config.modelSystemNotices).toEqual({
         "openai/gpt-5.4": "repo codex notice",
         "anthropic/claude-sonnet-4-5": "global anthropic notice",
@@ -269,11 +262,6 @@ describe("config paths", () => {
       const config = loadConfig(fx.repo, deps);
       expect(config).toMatchObject({
         defaultPersona: "sonnet-5.5-coder",
-        autoCompact: {
-          enabled: true,
-          reserveTokens: 16384,
-          keepRecentTokens: 20000,
-        },
       });
     } finally {
       fx.cleanup();
@@ -332,7 +320,7 @@ describe("config paths", () => {
       writeFileSync(
         join(fx.repo, ".tau", "config.json"),
         JSON.stringify({
-          disableBuiltinPersonas: "yes",
+          speech: "invalid",
           defaultTheme: " midnight ",
         }),
       );
@@ -346,11 +334,9 @@ describe("config paths", () => {
       const levels = resolveConfigLevels(deps, { cwd: fx.repo });
       const modelResolver = loadModelResolver({ deps, levels });
       const result = loadConfigWithDiagnostics(deps, { levels, modelResolver });
-      expect(result.config.disableBuiltinPersonas).toBeUndefined();
+      expect(result.config.speech).toBeUndefined();
       expect(result.config.defaultTheme).toBe("midnight");
-      expect(result.errors).toContain(
-        `${join(fx.repo, ".tau", "config.json")}: 'disableBuiltinPersonas' must be a boolean.`,
-      );
+      expect(result.errors.length).toBeGreaterThan(0);
     } finally {
       fx.cleanup();
     }
@@ -512,14 +498,18 @@ describe("config paths", () => {
     }
   });
 
-  it("strips unknown autoCompact keys", () => {
+  it("ignores removed configuration fields", () => {
     const fx = setupFixture();
 
     try {
       mkdirSync(join(fx.repo, ".tau"), { recursive: true });
       writeFileSync(
         join(fx.repo, ".tau", "config.json"),
-        JSON.stringify({ autoCompact: { reserveTokens: 1000, bogus: true } }),
+        JSON.stringify({
+          disableBuiltinPersonas: true,
+          autoCompact: { enabled: false, reserveTokens: 1000 },
+          builtInDiffTool: { codeTheme: "dark-plus" },
+        }),
         "utf-8",
       );
 
@@ -533,11 +523,9 @@ describe("config paths", () => {
       const modelResolver = loadModelResolver({ deps, levels });
       const result = loadConfigWithDiagnostics(deps, { levels, modelResolver });
 
-      expect(result.config.autoCompact).toEqual({
-        enabled: true,
-        reserveTokens: 1000,
-        keepRecentTokens: 20000,
-      });
+      expect(result.config).not.toHaveProperty("disableBuiltinPersonas");
+      expect(result.config).not.toHaveProperty("autoCompact");
+      expect(result.config).not.toHaveProperty("builtInDiffTool");
       expect(result.errors).toEqual([]);
     } finally {
       fx.cleanup();

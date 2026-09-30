@@ -94,7 +94,6 @@ describe("local Telegram session client", () => {
               123,
             ),
             persona: "gpt-5.6-sol-coder",
-            noAgentContextFiles: true,
           },
           hostConfig,
           configDeps,
@@ -116,10 +115,10 @@ describe("local Telegram session client", () => {
         join(home, "tools", "deploy"),
       );
       expect(createSdkClient).toHaveBeenCalledTimes(3);
+      expect(createSdkClient.mock.calls[1][0]).not.toHaveProperty("noAgentContextFiles");
       expect(createSdkClient.mock.calls[1][0]).toMatchObject({
         cwd: selectedWorkspace,
         persona: "gpt-5.6-sol-coder",
-        noAgentContextFiles: true,
         initialize: { client: { name: "tau-telegram", version: "1" } },
       });
       expect(createSdkClient.mock.calls[1][0].clientTools.map((tool) => tool.schema.name)).toEqual([

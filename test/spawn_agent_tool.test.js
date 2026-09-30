@@ -652,7 +652,7 @@ describe("spawn_agent tool", () => {
     const resolveSubagentPrompts = vi.fn(async ({ cwd }) => ({
       researcher: `target prompt: ${cwd}`,
     }));
-    const sourceConfig = { autoCompact: { enabled: false } };
+    const sourceConfig = { modelSystemNotices: { "openai/gpt-5.4": "parent notice" } };
     const { tool, supervisor, persona } = createFixture({
       config: sourceConfig,
       resolveSubagentPrompts,

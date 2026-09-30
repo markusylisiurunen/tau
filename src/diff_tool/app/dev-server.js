@@ -277,60 +277,11 @@ const mockThreads = [
   },
 ];
 
-const codeThemes = new Set([
-  "andromeeda",
-  "aurora-x",
-  "ayu-dark",
-  "ayu-mirage",
-  "catppuccin-frappe",
-  "catppuccin-macchiato",
-  "catppuccin-mocha",
-  "dark-plus",
-  "dracula",
-  "dracula-soft",
-  "everforest-dark",
-  "github-dark",
-  "github-dark-default",
-  "github-dark-dimmed",
-  "github-dark-high-contrast",
-  "gruvbox-dark-hard",
-  "gruvbox-dark-medium",
-  "gruvbox-dark-soft",
-  "horizon",
-  "horizon-bright",
-  "houston",
-  "kanagawa-dragon",
-  "kanagawa-wave",
-  "laserwave",
-  "material-theme",
-  "material-theme-darker",
-  "material-theme-ocean",
-  "material-theme-palenight",
-  "min-dark",
-  "monokai",
-  "night-owl",
-  "nord",
-  "one-dark-pro",
-  "plastic",
-  "poimandres",
-  "red",
-  "rose-pine",
-  "rose-pine-moon",
-  "slack-dark",
-  "solarized-dark",
-  "synthwave-84",
-  "tokyo-night",
-  "vesper",
-  "vitesse-black",
-  "vitesse-dark",
-]);
-
 let reviewPreview;
 
 const state = {
   diffStyle: "stacked",
   overflowMode: "wrap",
-  codeTheme: "github-dark-dimmed",
   collapsedFileIds: [],
   viewedFileIds: ["dev-session-001-0-0"],
   threads: mockThreads,
@@ -548,9 +499,6 @@ const server = createServer(async (req, res) => {
       }
       if (body.overflowMode === "wrap" || body.overflowMode === "scroll") {
         state.overflowMode = body.overflowMode;
-      }
-      if (codeThemes.has(body.codeTheme)) {
-        state.codeTheme = body.codeTheme;
       }
       if (Array.isArray(body.collapsedFileIds)) {
         state.collapsedFileIds = body.collapsedFileIds.filter(

@@ -17,7 +17,6 @@ import {
   projectSystemMessage,
   type SystemMessageMetadata,
 } from "../../protocol/system_message.js";
-import type { NormalizedAutoCompactConfig } from "../config/index.js";
 import type { CoreClock } from "../runtime/deps.js";
 import type { ModelExecutor } from "../runtime/model_executor.js";
 import { formatSteeringUserMessage } from "../runtime/steering.js";
@@ -71,6 +70,8 @@ import type {
 
 const DEFAULT_RETRY_POLICY = { maxRetries: 1, delayMs: 3_000 } as const;
 const COMPACTION_MAX_ATTEMPTS = 2;
+const AUTO_COMPACTION_RESERVE_TOKENS = 16_384;
+const AUTO_COMPACTION_KEEP_RECENT_TOKENS = 20_000;
 const DEFAULT_MAX_MODEL_SUBTURNS = 1024;
 
 export type HistoryEntry = {
@@ -114,7 +115,6 @@ export type AgentSpec = {
     maxRetries: number;
     delayMs: number;
   };
-  compactionPolicy: NormalizedAutoCompactConfig;
   maxModelSubturns: number;
 };
 
@@ -202,7 +202,6 @@ type AgentTurnSpec = {
   tools: ToolRegistry;
   streamOptions: TauStreamOptions;
   retryPolicy: AgentSpec["retryPolicy"];
-  compactionPolicy: AgentSpec["compactionPolicy"];
   maxModelSubturns: number;
 };
 
@@ -222,7 +221,6 @@ export function createAgentSpec(options: {
   systemPrompt: string;
   tools: ToolRegistry;
   streamOptions: TauStreamOptions;
-  compactionPolicy: NormalizedAutoCompactConfig;
 }): AgentSpec {
   return {
     model: options.model,
@@ -232,7 +230,6 @@ export function createAgentSpec(options: {
     tools: options.tools,
     streamOptions: structuredClone(options.streamOptions),
     retryPolicy: { ...DEFAULT_RETRY_POLICY },
-    compactionPolicy: { ...options.compactionPolicy },
     maxModelSubturns: DEFAULT_MAX_MODEL_SUBTURNS,
   };
 }
@@ -1157,7 +1154,6 @@ export class AgentRuntime {
       tools: this.currentSpec.tools,
       streamOptions: structuredClone(this.currentSpec.streamOptions),
       retryPolicy: { ...this.currentSpec.retryPolicy },
-      compactionPolicy: { ...this.currentSpec.compactionPolicy },
       maxModelSubturns: this.currentSpec.maxModelSubturns,
     };
   }
@@ -1292,11 +1288,10 @@ export class AgentRuntime {
     signal: AbortSignal,
     turnSettings: AgentTurnSpec,
   ): Promise<AgentAutoCompactionResult | undefined> {
-    const settings = turnSettings.compactionPolicy;
     const preparation = prepareAutoCompaction(this.historyEntries, {
       keepRecentTokens: Math.min(
-        settings.keepRecentTokens,
-        this.getAutoCompactionThresholdTokens(settings, turnSettings),
+        AUTO_COMPACTION_KEEP_RECENT_TOKENS,
+        this.getAutoCompactionThresholdTokens(turnSettings),
       ),
       systemPrompt: turnSettings.systemPrompt,
     });
@@ -1403,12 +1398,7 @@ export class AgentRuntime {
   }
 
   private shouldRunAutoCompaction(turnSettings: AgentTurnSpec): boolean {
-    const settings = turnSettings.compactionPolicy;
-    if (!settings.enabled) {
-      return false;
-    }
-
-    const thresholdTokens = this.getAutoCompactionThresholdTokens(settings, turnSettings);
+    const thresholdTokens = this.getAutoCompactionThresholdTokens(turnSettings);
     if (thresholdTokens <= 0) {
       return false;
     }
@@ -1417,11 +1407,8 @@ export class AgentRuntime {
     return usageTokens !== undefined && usageTokens > thresholdTokens;
   }
 
-  private getAutoCompactionThresholdTokens(
-    settings: NormalizedAutoCompactConfig,
-    turnSettings: AgentTurnSpec,
-  ): number {
-    return (turnSettings.model.model.contextWindow ?? 0) - settings.reserveTokens;
+  private getAutoCompactionThresholdTokens(turnSettings: AgentTurnSpec): number {
+    return (turnSettings.model.model.contextWindow ?? 0) - AUTO_COMPACTION_RESERVE_TOKENS;
   }
 
   private getFreshContextUsageEstimateTokens(modelContextKey: string): number | undefined {

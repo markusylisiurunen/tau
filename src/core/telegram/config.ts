@@ -14,7 +14,6 @@ export type TelegramProjectConfig = SchemaTelegramProjectConfig;
 export type TelegramConfig = {
   maxSessions?: number;
   workspaceRoot: string;
-  systemMessage?: string;
   bots: Record<string, TelegramBotConfig>;
   projects: Record<string, TelegramProjectConfig>;
 };
@@ -52,7 +51,6 @@ const telegramTopLevelSchema = z
   .object({
     maxSessions: positiveIntegerSchema.optional(),
     workspaceRoot: nonEmptyStringSchema.optional(),
-    systemMessage: nonEmptyStringSchema.optional(),
     bots: z.unknown().optional(),
     projects: z.unknown().optional(),
   })
@@ -66,8 +64,6 @@ const telegramBotSchema = z
     allowedChatIds: idListSchema.optional(),
     defaultProjectId: nonEmptyStringSchema.optional(),
     systemMessage: nonEmptyStringSchema.optional(),
-    pollIntervalMs: positiveIntegerSchema.optional(),
-    requestTimeoutSeconds: positiveIntegerSchema.optional(),
   })
   .strip();
 
@@ -77,31 +73,21 @@ function createProjectBaseShape() {
   };
 }
 
-function createManagedProjectBaseShape(configDir: string) {
-  return {
+const telegramRepositoryProjectSchema = z
+  .object({
     ...createProjectBaseShape(),
-    workspaceRoot: nonEmptyStringSchema.transform((value) => resolve(configDir, value)).optional(),
-  };
-}
-
-function createRepositoryProjectSchema(configDir: string) {
-  return z
-    .object({
-      ...createManagedProjectBaseShape(configDir),
-      repo: nonEmptyStringSchema.refine((value) => isGithubRepoRef(value), {
-        message: "must be in owner/repo format (GitHub).",
-      }),
-      ref: nonEmptyStringSchema.optional(),
-      workingDirectory: nonEmptyStringSchema
-        .refine((value) => !isAbsolute(value), {
-          message: "must be a relative path.",
-        })
-        .optional(),
-      persona: z.string().optional(),
-      noAgentContextFiles: z.boolean().optional(),
-    })
-    .strip();
-}
+    repo: nonEmptyStringSchema.refine((value) => isGithubRepoRef(value), {
+      message: "must be in owner/repo format (GitHub).",
+    }),
+    ref: nonEmptyStringSchema.optional(),
+    workingDirectory: nonEmptyStringSchema
+      .refine((value) => !isAbsolute(value), {
+        message: "must be a relative path.",
+      })
+      .optional(),
+    persona: z.string().optional(),
+  })
+  .strip();
 
 function createDirectoryProjectSchema(configDir: string) {
   return z
@@ -109,31 +95,28 @@ function createDirectoryProjectSchema(configDir: string) {
       ...createProjectBaseShape(),
       directory: nonEmptyStringSchema.transform((value) => resolve(configDir, value)),
       persona: z.string().optional(),
-      noAgentContextFiles: z.boolean().optional(),
     })
     .strip();
 }
 
-function createCompositeProjectSchema(configDir: string) {
-  return z
-    .object({
-      ...createManagedProjectBaseShape(configDir),
-      projectIds: stringListSchema.min(2, "must contain at least two project ids."),
-      persona: z.string(),
-      instructions: nonEmptyStringSchema.optional(),
-      subagents: z
-        .object({
-          defaultLaunchModels: z
-            .array(z.string(), {
-              message: "must be an array of strings.",
-            })
-            .optional(),
-        })
-        .strip()
-        .optional(),
-    })
-    .strip();
-}
+const telegramCompositeProjectSchema = z
+  .object({
+    ...createProjectBaseShape(),
+    projectIds: stringListSchema.min(2, "must contain at least two project ids."),
+    persona: z.string(),
+    instructions: nonEmptyStringSchema.optional(),
+    subagents: z
+      .object({
+        defaultLaunchModels: z
+          .array(z.string(), {
+            message: "must be an array of strings.",
+          })
+          .optional(),
+      })
+      .strip()
+      .optional(),
+  })
+  .strip();
 
 function formatSectionZodErrors(
   error: z.ZodError,
@@ -310,16 +293,8 @@ function parseProject(
   const incompatibleFields = hasRepo
     ? ["directory", "projectIds", "instructions", "subagents"]
     : hasDirectory
-      ? [
-          "repo",
-          "ref",
-          "workingDirectory",
-          "workspaceRoot",
-          "projectIds",
-          "instructions",
-          "subagents",
-        ]
-      : ["repo", "directory", "ref", "workingDirectory", "noAgentContextFiles"];
+      ? ["repo", "ref", "workingDirectory", "projectIds", "instructions", "subagents"]
+      : ["repo", "directory", "ref", "workingDirectory"];
   const configuredIncompatibleFields = incompatibleFields.filter((field) =>
     Object.hasOwn(rawObject.data, field),
   );
@@ -332,10 +307,10 @@ function parseProject(
   }
 
   const schema = hasRepo
-    ? createRepositoryProjectSchema(configDir)
+    ? telegramRepositoryProjectSchema
     : hasDirectory
       ? createDirectoryProjectSchema(configDir)
-      : createCompositeProjectSchema(configDir);
+      : telegramCompositeProjectSchema;
   const parsed = schema.safeParse(rawObject.data);
   if (!parsed.success) {
     return { errors: formatSectionZodErrors(parsed.error, sourceLabel, fieldPath) };
@@ -439,7 +414,6 @@ export function loadTelegramConfig(configFilePath: string): TelegramConfig {
   const topLevel = topLevelResult.success ? topLevelResult.data : {};
   const maxSessions = topLevel.maxSessions;
   const workspaceRoot = resolve(configDir, topLevel.workspaceRoot ?? ".tau/telegram-workspaces");
-  const systemMessage = topLevel.systemMessage;
 
   const projectsResult = parseProjects(data.projects, sourceLabel, configDir);
   const botsResult = parseBots(
@@ -457,7 +431,6 @@ export function loadTelegramConfig(configFilePath: string): TelegramConfig {
   return {
     ...(maxSessions === undefined ? {} : { maxSessions }),
     workspaceRoot,
-    ...(systemMessage ? { systemMessage } : {}),
     bots: botsResult.config ?? {},
     projects: projectsResult.projects,
   };

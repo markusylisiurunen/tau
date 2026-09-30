@@ -1,5 +1,4 @@
 import {
-  DEFAULT_DIFF_TOOL_CODE_THEME,
   guideCommentTargetKey,
   hasDiffToolReviewComments,
 } from "../../shared_types.js";
@@ -32,11 +31,7 @@ import type {
   DiffToolThreadReplyPayload,
 } from "../../shared_types.js";
 
-export {
-  DEFAULT_DIFF_TOOL_CODE_THEME,
-  guideCommentTargetKey,
-  hasDiffToolReviewComments,
-};
+export { guideCommentTargetKey, hasDiffToolReviewComments };
 
 export type {
   DiffReviewFile,
@@ -69,7 +64,6 @@ export type GuideCommentPayload = DiffToolGuideCommentPayload;
 export type LineSide = DiffToolLineSide;
 export type DiffStyle = DiffToolReviewState["diffStyle"];
 export type OverflowMode = DiffToolReviewState["overflowMode"];
-export type CodeTheme = DiffToolReviewState["codeTheme"];
 
 export type ResolveThreadPayload = {
   id: string;

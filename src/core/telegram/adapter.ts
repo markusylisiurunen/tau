@@ -157,8 +157,6 @@ export type TelegramAdapterOptions = {
   systemMessage?: string;
   allowedUserIds?: number[];
   allowedChatIds?: number[];
-  pollIntervalMs?: number;
-  requestTimeoutSeconds?: number;
   geminiApiKey?: string;
   openAIApiKey?: string;
   elevenLabsApiKey?: string;
@@ -232,8 +230,8 @@ type ResolvedTelegramAdapterOptions = TelegramAdapterOptions & {
 
 type TelegramNotificationOptions = { rich?: false } | { rich: true; messageId: string };
 
-const DEFAULT_POLL_INTERVAL_MS = 1000;
-const DEFAULT_REQUEST_TIMEOUT_SECONDS = 30;
+const TELEGRAM_POLL_RETRY_INTERVAL_MS = 1000;
+const TELEGRAM_LONG_POLL_TIMEOUT_SECONDS = 30;
 const TELEGRAM_AUDIO_TRANSCRIPTION_SYSTEM_MESSAGE =
   "This text was transcribed from Telegram audio and may contain noise, misheard words, or transcription errors.";
 const MAX_COMMAND_PREVIEW_CHARS = 128;
@@ -1275,8 +1273,6 @@ class TelegramAdapterImpl {
   private readonly allowedUserIds?: Set<number>;
   private readonly allowedChatIds?: Set<number>;
   private readonly botUsername: string;
-  private readonly pollIntervalMs: number;
-  private readonly requestTimeoutSeconds: number;
   private readonly geminiApiKey?: string;
   private readonly openAIApiKey?: string;
   private readonly elevenLabsApiKey?: string;
@@ -1354,8 +1350,6 @@ class TelegramAdapterImpl {
         ? new Set(options.allowedChatIds)
         : undefined;
     this.botUsername = options.botUsername;
-    this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
-    this.requestTimeoutSeconds = options.requestTimeoutSeconds ?? DEFAULT_REQUEST_TIMEOUT_SECONDS;
     this.geminiApiKey = options.geminiApiKey?.trim() || undefined;
     this.openAIApiKey = options.openAIApiKey?.trim() || undefined;
     this.elevenLabsApiKey = options.elevenLabsApiKey?.trim() || undefined;
@@ -1397,8 +1391,8 @@ class TelegramAdapterImpl {
     void this.syncCommands();
     this.loopPromise = this.runLoop();
     this.log("info", "telegram adapter started", {
-      pollIntervalMs: this.pollIntervalMs,
-      requestTimeoutSeconds: this.requestTimeoutSeconds,
+      pollIntervalMs: TELEGRAM_POLL_RETRY_INTERVAL_MS,
+      requestTimeoutSeconds: TELEGRAM_LONG_POLL_TIMEOUT_SECONDS,
     });
   }
 
@@ -1539,7 +1533,7 @@ class TelegramAdapterImpl {
         this.log("warn", "telegram poll failed", {
           cause: error instanceof Error ? error.message : String(error),
         });
-        await this.wait(this.pollIntervalMs);
+        await this.wait(TELEGRAM_POLL_RETRY_INTERVAL_MS);
       }
     }
   }
@@ -1608,7 +1602,7 @@ class TelegramAdapterImpl {
     const updates = await this.raceWithAbort(
       this.api.getUpdates({
         offset: this.nextUpdateOffset,
-        timeoutSeconds: this.requestTimeoutSeconds,
+        timeoutSeconds: TELEGRAM_LONG_POLL_TIMEOUT_SECONDS,
         allowedUpdates: ["message", "callback_query"],
       }),
     );

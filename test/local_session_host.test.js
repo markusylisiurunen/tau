@@ -4883,7 +4883,11 @@ describe("LocalSessionHost", () => {
     });
     const resolveRuntimeConfig = vi.fn(async () => ({
       bootstrap: { modelResolver: { resolveModel } },
-      config: { autoCompact: { enabled: false } },
+      config: {
+        modelSystemNotices: {
+          [`${personas[0].model.provider}/${personas[0].model.id}`]: "target notice",
+        },
+      },
       personas: [personas[0]],
       prompts: [],
       skills: [],
@@ -4902,7 +4906,11 @@ describe("LocalSessionHost", () => {
     };
 
     const recoveredHost = createHost(store, {
-      config: { autoCompact: { enabled: true } },
+      config: {
+        modelSystemNotices: {
+          [`${personas[0].model.provider}/${personas[0].model.id}`]: "host notice",
+        },
+      },
       executionEnvironmentResolver: {
         resolve: async () => restoredEnvironment,
         canRestore: () => true,
@@ -4930,21 +4938,16 @@ describe("LocalSessionHost", () => {
       throw new Error("expected stored session to recover");
     }
     expect(resolveRuntimeConfig).toHaveBeenCalledTimes(1);
-    expect(recoveredSession.runtime.agent.spec.compactionPolicy).toMatchObject({
-      enabled: false,
-    });
+    expect(recoveredSession.runtime.agent.spec.modelNotice).toBe("target notice");
   });
 
   it("restores agent revisions and usage checkpoints for first-turn auto-compaction", async () => {
     const store = new MemorySessionStore();
     const persona = {
       ...personas[0],
-      model: { ...personas[0].model, contextWindow: 100 },
+      model: { ...personas[0].model, contextWindow: 16_404 },
     };
-    const config = {
-      autoCompact: { enabled: true, reserveTokens: 10, keepRecentTokens: 20 },
-    };
-    const originalHost = createHost(store, { persona, personas: [persona], config });
+    const originalHost = createHost(store, { persona, personas: [persona] });
     const originalSession = await originalHost.createSession(localCreateInput);
     const firstMessage = {
       ...assistantMessageWithToolCalls([]),
@@ -4976,7 +4979,7 @@ describe("LocalSessionHost", () => {
     expect(storedSnapshot.agentState.usageCheckpoint).toMatchObject({ tokens: 91 });
     await originalHost.shutdown();
 
-    const recoveredHost = createHost(store, { persona, personas: [persona], config });
+    const recoveredHost = createHost(store, { persona, personas: [persona] });
     const recoveredSession = await recoveredHost.observeSession(storedSnapshot.sessionId);
     if (!recoveredSession) throw new Error("expected stored session to recover");
     expect(recoveredSession.runtime.snapshot()).toMatchObject({

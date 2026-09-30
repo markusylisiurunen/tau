@@ -2,7 +2,7 @@ import { cleanupSessionResources } from "@earendil-works/pi-ai";
 import type { AgentSpec } from "../agent/agent_runtime.js";
 import { getAuthPath } from "../auth/auth_paths.js";
 import { AuthStorage } from "../auth/auth_storage.js";
-import { type Config, normalizeAutoCompactConfig } from "../config/index.js";
+import type { Config } from "../config/index.js";
 import type { Persona } from "../types.js";
 import { CODEX_ORIGINATOR, CODEX_USER_AGENT } from "../utils/codex.js";
 import { resolveModelNotice } from "../utils/model_notices.js";
@@ -13,7 +13,7 @@ import type { ModelExecutor } from "./model_executor.js";
 
 export type ResolvedAgentModel = Pick<
   AgentSpec,
-  "model" | "modelNotice" | "attribution" | "streamOptions" | "compactionPolicy"
+  "model" | "modelNotice" | "attribution" | "streamOptions"
 >;
 
 export function resolveAgentModel(
@@ -57,6 +57,5 @@ export function resolveAgentModel(
       reasoningEffort: persona.settings.reasoning ?? "none",
     },
     streamOptions,
-    compactionPolicy: normalizeAutoCompactConfig(resolvedConfig.autoCompact),
   };
 }

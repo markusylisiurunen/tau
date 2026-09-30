@@ -7,21 +7,17 @@ import type {
   LineSide,
 } from "./comments.js";
 import type { DiffFile } from "./parse_diff.js";
-import {
-  DEFAULT_DIFF_TOOL_CODE_THEME,
-  type CodeTheme,
-  type DiffStyle,
-  type OverflowMode,
-} from "../../types.js";
+import { type DiffStyle, type OverflowMode } from "../../types.js";
 import { Checkbox } from "../../ui/checkbox.js";
 import { CommentEditor } from "../threads/comment_editor.js";
 import { DiffStats } from "./diff_stats.js";
 import { ThreadCard } from "../threads/thread_card.js";
 import "./file_section.css";
+import { DIFF_CODE_THEME } from "./use_diff_renderer_ready.js";
 import { Button } from "../../ui/button.js";
 
 const baseDiffOptions = {
-  theme: DEFAULT_DIFF_TOOL_CODE_THEME,
+  theme: DIFF_CODE_THEME,
   themeType: "dark",
   diffStyle: "unified",
   diffIndicators: "none",
@@ -43,7 +39,6 @@ type FileSectionProps = {
   file: DiffFile;
   diffStyle: DiffStyle;
   overflowMode: OverflowMode;
-  codeTheme: CodeTheme;
   collapsed: boolean;
   viewed: boolean;
   annotations: LineAnnotation[];
@@ -65,7 +60,6 @@ export const FileSection = memo(function FileSection({
   file,
   diffStyle,
   overflowMode,
-  codeTheme,
   collapsed,
   viewed,
   annotations,
@@ -88,7 +82,6 @@ export const FileSection = memo(function FileSection({
 
     return {
       ...baseDiffOptions,
-      theme: codeTheme,
       diffStyle: resolvedDiffStyle,
       overflow: overflowMode,
       onLineNumberClick: ({
@@ -101,7 +94,7 @@ export const FileSection = memo(function FileSection({
         onLineActivate(file.id, lineNumber, annotationSide);
       },
     };
-  }, [codeTheme, diffStyle, file.id, onLineActivate, overflowMode]);
+  }, [diffStyle, file.id, onLineActivate, overflowMode]);
 
   const renderAnnotation = useCallback(
     (annotation: LineAnnotation) => {

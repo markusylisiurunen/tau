@@ -16,7 +16,7 @@ All built-in personas default to medium reasoning. The startup default is `sonne
 
 After a remote catalog refresh, `/reload` adopts the updated catalog for an existing session.
 
-Set `disableBuiltinPersonas: true` in `config.json` to omit built-ins from the effective catalog. Custom personas can also replace a built-in by using the same ID. A shipped built-in is therefore not necessarily available in a particular session.
+Built-in personas are always included in the catalog. Custom personas can replace a built-in by using the same ID.
 
 Use one of these to inspect the current effective list:
 
@@ -135,7 +135,6 @@ Important boundaries are:
 
 - `extends` resolves shipped built-ins, not another custom persona.
 - Lookup of the built-in ID is case-insensitive.
-- It remains available as an inheritance base even when `disableBuiltinPersonas` hides built-ins from the effective catalog.
 - A non-empty Markdown body replaces the inherited base prompt.
 - Explicit `skills` or `tools` replaces the inherited selection.
 - Explicit `subagents` builds a new subagent map rather than merging custom entries into the inherited map. Unless that map contains `default: false`, Tau adds the built-in `default` subagent.

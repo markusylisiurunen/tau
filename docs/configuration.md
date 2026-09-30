@@ -64,11 +64,10 @@ Within the project, the effective default persona is `gpt-6.1-sol-coder:high`.
 A few fields intentionally use other rules:
 
 - `apiKeys` merges by provider id. A more-specific key replaces only the same provider's value.
-- `autoCompact` merges by field on top of shipped defaults.
 - `modelSystemNotices` merges by normalized `<provider>/<model>` key.
 - `flySprites.apis` merges by API id. A more-specific API replaces the complete API entry with that id.
 - `agentContextFiles` is additive across levels, resolves each entry at its owning level, and removes duplicate resolved paths while preserving order.
-- `diffTool` and `builtInDiffTool` select the complete object from the most-specific level that defines them.
+- `diffTool` selects the complete object from the most-specific level that defines it.
 - `subagents.defaultLaunchModels` selects the most-specific list.
 - `clientTools` is defined only at global scope. `enabledClientTools` at the most-specific project level is an exact selection from those definitions.
 - `history` is accepted only at global scope.
@@ -158,7 +157,7 @@ Never verify a secret by printing the full config or environment into a shared t
 Tau loads startup configuration and content before opening the TUI. Restart the local TUI or `tau attach` to apply client-owned changes such as:
 
 - `defaultTheme`
-- `diffTool` and `builtInDiffTool`
+- `diffTool`
 - `clientTools` and `enabledClientTools`
 - client environment variables
 

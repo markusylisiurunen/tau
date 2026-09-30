@@ -46,10 +46,7 @@ export function App() {
   const submission = useReviewSubmission({
     applyReviewState: session.applyReviewState,
   });
-  const diffRendererReady = useDiffRendererReady(
-    session.files,
-    session.reviewState.codeTheme,
-  );
+  const diffRendererReady = useDiffRendererReady(session.files);
   const hasReviewComments = hasDiffToolReviewComments(session.reviewState);
 
   return (

@@ -65,7 +65,7 @@ function createSpawnOptions(overrides = {}) {
     prompt: "do work",
     title: "child task",
     originHistoryEntryId: "parent-origin",
-    config: { autoCompact: { enabled: false } },
+    config: {},
     backend: createLocalToolExecutionBackend(),
     personaId: "parent-persona",
     ...overrides,
@@ -270,7 +270,7 @@ describe("AgentSupervisor", () => {
       exitCode: 0,
       truncated: false,
     });
-    const model = { ...personas[0].model, contextWindow: 100 };
+    const model = { ...personas[0].model, contextWindow: 16_474 };
     const events = [];
     const supervisor = new AgentSupervisor({
       onEvent: async (event) => events.push(event),
@@ -279,9 +279,6 @@ describe("AgentSupervisor", () => {
     const spawned = supervisor.spawn(
       createSpawnOptions({
         backend,
-        config: {
-          autoCompact: { enabled: true, reserveTokens: 10, keepRecentTokens: 1 },
-        },
         runtimeConfig: {
           ...createSpawnOptions().runtimeConfig,
           model,

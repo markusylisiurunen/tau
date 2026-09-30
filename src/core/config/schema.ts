@@ -29,26 +29,19 @@ export interface Config {
   apiKeys?: Record<string, string>;
   speech?: { voiceId?: string };
   defaultPersona?: string;
-  disableBuiltinPersonas?: boolean;
   defaultTheme?: string;
   diffTool?: DiffToolConfig;
-  builtInDiffTool?: BuiltInDiffToolConfig;
   clientTools?: CommandClientToolConfig[];
   enabledClientTools?: string[];
   agentContextFiles?: string[];
   subagents?: {
     defaultLaunchModels?: string[];
   };
-  autoCompact?: AutoCompactConfig;
   modelSystemNotices?: Record<string, string>;
   flySprites?: FlySpritesConfig;
   nook?: NookConfig;
   history?: HistoryConfig;
 }
-
-export type BuiltInDiffToolConfig = {
-  codeTheme?: string;
-};
 
 export type FlySpritesApiConfig = {
   baseURL?: string;
@@ -74,26 +67,6 @@ export type HistoryConfig = {
   apiKeyEnv?: string;
 };
 
-export type AutoCompactConfig = {
-  enabled?: boolean;
-  reserveTokens?: number;
-  keepRecentTokens?: number;
-};
-
-export type NormalizedAutoCompactConfig = Required<AutoCompactConfig>;
-
-export const DEFAULT_AUTO_COMPACT_CONFIG: NormalizedAutoCompactConfig = {
-  enabled: true,
-  reserveTokens: 16384,
-  keepRecentTokens: 20000,
-};
-
-export function normalizeAutoCompactConfig(
-  config: AutoCompactConfig | undefined,
-): NormalizedAutoCompactConfig {
-  return { ...DEFAULT_AUTO_COMPACT_CONFIG, ...config };
-}
-
 export type TelegramBotConfig = {
   botToken?: string;
   allowedProjectIds?: string[];
@@ -101,8 +74,6 @@ export type TelegramBotConfig = {
   allowedChatIds?: number[];
   defaultProjectId?: string;
   systemMessage?: string;
-  pollIntervalMs?: number;
-  requestTimeoutSeconds?: number;
 };
 
 export type TelegramBotConfigMap = Record<string, TelegramBotConfig>;
@@ -111,25 +82,19 @@ type TelegramProjectBaseConfig = {
   description?: string;
 };
 
-type TelegramManagedProjectBaseConfig = TelegramProjectBaseConfig & {
-  workspaceRoot?: string;
-};
-
-export type TelegramRepositoryProjectConfig = TelegramManagedProjectBaseConfig & {
+export type TelegramRepositoryProjectConfig = TelegramProjectBaseConfig & {
   repo: string;
   ref?: string;
   workingDirectory?: string;
   persona?: string;
-  noAgentContextFiles?: boolean;
 };
 
 export type TelegramDirectoryProjectConfig = TelegramProjectBaseConfig & {
   directory: string;
   persona?: string;
-  noAgentContextFiles?: boolean;
 };
 
-export type TelegramCompositeProjectConfig = TelegramManagedProjectBaseConfig & {
+export type TelegramCompositeProjectConfig = TelegramProjectBaseConfig & {
   projectIds: string[];
   persona: string;
   instructions?: string;
@@ -148,62 +113,7 @@ type ConfigDiagnostics = {
   errors: string[];
 };
 
-const BUILT_IN_DIFF_TOOL_CODE_THEMES = new Set([
-  "andromeeda",
-  "aurora-x",
-  "ayu-dark",
-  "ayu-mirage",
-  "catppuccin-frappe",
-  "catppuccin-macchiato",
-  "catppuccin-mocha",
-  "dark-plus",
-  "dracula",
-  "dracula-soft",
-  "everforest-dark",
-  "github-dark",
-  "github-dark-default",
-  "github-dark-dimmed",
-  "github-dark-high-contrast",
-  "gruvbox-dark-hard",
-  "gruvbox-dark-medium",
-  "gruvbox-dark-soft",
-  "horizon",
-  "horizon-bright",
-  "houston",
-  "kanagawa-dragon",
-  "kanagawa-wave",
-  "laserwave",
-  "material-theme",
-  "material-theme-darker",
-  "material-theme-ocean",
-  "material-theme-palenight",
-  "min-dark",
-  "monokai",
-  "night-owl",
-  "nord",
-  "one-dark-pro",
-  "plastic",
-  "poimandres",
-  "red",
-  "rose-pine",
-  "rose-pine-moon",
-  "slack-dark",
-  "solarized-dark",
-  "synthwave-84",
-  "tokyo-night",
-  "vesper",
-  "vitesse-black",
-  "vitesse-dark",
-]);
-
-const BuiltInDiffToolSchema = z
-  .object({
-    codeTheme: z.string().trim().min(1).optional(),
-  })
-  .strip();
-
 const NonEmptyStringSchema = z.string().trim().min(1);
-const BooleanSchema = z.boolean();
 const AgentContextFilesSchema = z.array(NonEmptyStringSchema);
 const ApiKeyProviderSchema = z.string();
 const ApiKeysSchema = z.object({}).catchall(z.unknown());
@@ -241,14 +151,6 @@ const SubagentsConfigSchema = z
   })
   .strip();
 const StringRecordSchema = z.object({}).catchall(z.unknown());
-const PositiveIntegerSchema = z.number().int().finite().gt(0);
-const AutoCompactConfigSchema = z
-  .object({
-    enabled: BooleanSchema.optional(),
-    reserveTokens: PositiveIntegerSchema.optional(),
-    keepRecentTokens: PositiveIntegerSchema.optional(),
-  })
-  .strip();
 
 function parseOptionalFields(
   data: Record<string, unknown>,
@@ -418,7 +320,6 @@ function validateConfigData(
   );
 
   const scalarResult = parseOptionalFields(data, sourceLabel, [
-    ["disableBuiltinPersonas", BooleanSchema, "'disableBuiltinPersonas' must be a boolean."],
     ["defaultTheme", NonEmptyStringSchema, "'defaultTheme' must be a non-empty string."],
     [
       "speech",
@@ -431,15 +332,6 @@ function validateConfigData(
 
   const diffToolResult = parseDiffToolConfig(data.diffTool, sourceLabel);
   assignParsedConfigValue(config, errors, "diffTool", diffToolResult.config, diffToolResult.errors);
-
-  const builtInDiffToolResult = parseBuiltInDiffToolConfig(data.builtInDiffTool, sourceLabel);
-  assignParsedConfigValue(
-    config,
-    errors,
-    "builtInDiffTool",
-    builtInDiffToolResult.config,
-    builtInDiffToolResult.errors,
-  );
 
   if (data.clientTools !== undefined && options.scope !== "global") {
     errors.push(`${sourceLabel}: 'clientTools' may only be configured in the global config.`);
@@ -486,15 +378,6 @@ function validateConfigData(
     "subagents",
     subagentsResult.config,
     subagentsResult.errors,
-  );
-
-  const autoCompactResult = parseAutoCompactConfig(data.autoCompact, sourceLabel);
-  assignParsedConfigValue(
-    config,
-    errors,
-    "autoCompact",
-    autoCompactResult.config,
-    autoCompactResult.errors,
   );
 
   const modelSystemNoticesResult = parseModelSystemNotices(
@@ -549,31 +432,6 @@ function parseAgentContextFiles(
   }
 
   return { paths: parsed.data, errors: [] };
-}
-
-function parseBuiltInDiffToolConfig(
-  raw: unknown,
-  sourceLabel: string,
-): { config?: BuiltInDiffToolConfig; errors: string[] } {
-  if (raw === undefined) {
-    return { errors: [] };
-  }
-
-  const parsed = BuiltInDiffToolSchema.safeParse(raw);
-  if (!parsed.success) {
-    return { errors: [`${sourceLabel}: 'builtInDiffTool' must be an object.`] };
-  }
-
-  const config: BuiltInDiffToolConfig = {};
-  const codeTheme = parsed.data.codeTheme;
-  if (codeTheme !== undefined) {
-    if (!BUILT_IN_DIFF_TOOL_CODE_THEMES.has(codeTheme)) {
-      return { errors: [`${sourceLabel}: builtInDiffTool.codeTheme is not supported.`] };
-    }
-    config.codeTheme = codeTheme;
-  }
-
-  return { config: Object.keys(config).length > 0 ? config : undefined, errors: [] };
 }
 
 function parseFlySpritesConfig(
@@ -730,39 +588,6 @@ function parseSubagentsConfig(
     },
     errors: [],
   };
-}
-
-function parseAutoCompactConfig(
-  raw: unknown,
-  sourceLabel: string,
-): { config?: AutoCompactConfig; errors: string[] } {
-  if (raw === undefined) {
-    return { errors: [] };
-  }
-
-  const parsed = AutoCompactConfigSchema.safeParse(raw);
-  if (!parsed.success) {
-    const errors = new Set<string>();
-    if (parsed.error.issues.some((issue) => issue.path[0] === "enabled")) {
-      errors.add(`${sourceLabel}: autoCompact.enabled must be a boolean.`);
-    }
-    if (parsed.error.issues.some((issue) => issue.path[0] === "reserveTokens")) {
-      errors.add(`${sourceLabel}: autoCompact.reserveTokens must be a positive integer.`);
-    }
-    if (parsed.error.issues.some((issue) => issue.path[0] === "keepRecentTokens")) {
-      errors.add(`${sourceLabel}: autoCompact.keepRecentTokens must be a positive integer.`);
-    }
-    if (errors.size === 0) {
-      errors.add(`${sourceLabel}: 'autoCompact' must be an object.`);
-    }
-    return { errors: [...errors] };
-  }
-
-  if (Object.keys(parsed.data).length === 0) {
-    return { errors: [] };
-  }
-
-  return { config: parsed.data, errors: [] };
 }
 
 function parseModelNoticeTarget(
@@ -942,7 +767,6 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
   const merged: Config = getVirtualConfigDefaults();
   let apiKeys: Config["apiKeys"] | undefined;
   let diffTool: DiffToolConfig | undefined;
-  let builtInDiffTool: BuiltInDiffToolConfig | undefined;
   let clientTools: CommandClientToolConfig[] | undefined;
   let enabledClientTools: string[] | undefined;
   let subagents: Config["subagents"] | undefined;
@@ -963,9 +787,6 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
     if (config.diffTool !== undefined) {
       diffTool = resolveDiffToolConfig(level, config.diffTool);
     }
-    if (config.builtInDiffTool !== undefined) {
-      builtInDiffTool = { ...config.builtInDiffTool };
-    }
     if (config.clientTools !== undefined) {
       clientTools = resolveCommandClientToolsConfig(level, config.clientTools);
     }
@@ -973,9 +794,6 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
       enabledClientTools = [...config.enabledClientTools];
     }
     subagents = mergeSubagentsConfig(subagents, config.subagents);
-    if (config.autoCompact !== undefined) {
-      merged.autoCompact = mergeOptionalObject(merged.autoCompact, config.autoCompact);
-    }
     modelSystemNotices = mergeOptionalObject(modelSystemNotices, config.modelSystemNotices);
     flySprites = mergeFlySpritesConfig(flySprites, config.flySprites);
     if (config.nook !== undefined) {
@@ -987,10 +805,6 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
 
     if (config.defaultPersona !== undefined) {
       merged.defaultPersona = config.defaultPersona;
-    }
-
-    if (config.disableBuiltinPersonas !== undefined) {
-      merged.disableBuiltinPersonas = config.disableBuiltinPersonas;
     }
 
     if (config.defaultTheme !== undefined) {
@@ -1008,10 +822,6 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
 
   if (diffTool) {
     merged.diffTool = diffTool;
-  }
-
-  if (builtInDiffTool) {
-    merged.builtInDiffTool = builtInDiffTool;
   }
 
   if (clientTools) {

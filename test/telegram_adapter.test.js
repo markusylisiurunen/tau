@@ -43,8 +43,6 @@ async function startAdapter(options) {
     botId: "bot-default",
     botToken: "token",
     projects: { demo: { repo: "git@example.com:demo.git" } },
-    pollIntervalMs: 1,
-    requestTimeoutSeconds: 1,
     ...options,
     projectPreferences,
   });
@@ -461,6 +459,11 @@ describe("telegram adapter", () => {
 
     try {
       await waitFor(() => apiHarness.setCommandsCalls.length === 1);
+      expect(apiHarness.api.getUpdates).toHaveBeenCalledWith({
+        offset: 0,
+        timeoutSeconds: 30,
+        allowedUpdates: ["message", "callback_query"],
+      });
       expect(apiHarness.setCommandsCalls[0]).toEqual([
         { command: "new", description: "start a new session" },
         { command: "status", description: "show active session status" },
@@ -2071,7 +2074,6 @@ describe("telegram adapter", () => {
           ];
         });
       const adapter = await startAdapter({
-        requestTimeoutSeconds: undefined,
         projects: { demo: { repo: "owner/demo" } },
         allowedChatIds: [chat.id],
         sessionManager: managerHarness.manager,
@@ -2116,7 +2118,6 @@ describe("telegram adapter", () => {
     const managerHarness = createSessionManagerHarness();
     managerHarness.manager.sendMessage.mockRejectedValueOnce(new Error("not ready"));
     const adapter = await startAdapter({
-      requestTimeoutSeconds: undefined,
       projects: { demo: { repo: "owner/demo" } },
       defaultProjectId: "demo",
       sessionManager: managerHarness.manager,
@@ -2175,7 +2176,6 @@ describe("telegram adapter", () => {
       });
     const transcribe = vi.fn();
     const adapter = await startAdapter({
-      requestTimeoutSeconds: undefined,
       projects: { demo: { repo: "owner/demo" } },
       defaultProjectId: "demo",
       sessionManager: managerHarness.manager,
@@ -2236,7 +2236,6 @@ describe("telegram adapter", () => {
     ]);
     const managerHarness = createSessionManagerHarness();
     const adapter = await startAdapter({
-      requestTimeoutSeconds: undefined,
       projects: { demo: { repo: "owner/demo" } },
       defaultProjectId: "demo",
       sessionManager: managerHarness.manager,
@@ -2307,7 +2306,6 @@ describe("telegram adapter", () => {
       return `/execution/${fileName}`;
     });
     const adapter = await startAdapter({
-      requestTimeoutSeconds: undefined,
       projects: { demo: { repo: "owner/demo" } },
       defaultProjectId: "demo",
       sessionManager: managerHarness.manager,
@@ -2867,8 +2865,6 @@ describe("telegram adapter", () => {
       })
       .mockImplementation(async () => await new Promise(() => {}));
     const adapter = await startAdapter({
-      pollIntervalMs: undefined,
-      requestTimeoutSeconds: undefined,
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
     });

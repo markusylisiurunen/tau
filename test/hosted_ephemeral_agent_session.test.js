@@ -47,11 +47,7 @@ function createFailingStream(partialText, error) {
   };
 }
 
-function createSession(
-  recordUsage = vi.fn(),
-  config = { autoCompact: { enabled: false } },
-  reasoning = "medium",
-) {
+function createSession(recordUsage = vi.fn(), config = {}, reasoning = "medium") {
   const backend = createLocalToolExecutionBackend();
   const executionEnvironment = {
     snapshot: () => ({ kind: "local", cwd: "/repo", home: "/home/user" }),
@@ -124,11 +120,7 @@ describe("HostedEphemeralAgentSession", () => {
   });
 
   it("continues and forks thread state", async () => {
-    const { session, recordUsage, emitUpdate } = createSession(
-      vi.fn(),
-      { autoCompact: { enabled: false } },
-      "low",
-    );
+    const { session, recordUsage, emitUpdate } = createSession(vi.fn(), {}, "low");
     const source = await session.getOrCreateThread("source");
     expect(source.runtime).toBeInstanceOf(AgentRuntime);
     expect(source.runtime.spec.attribution.reasoningEffort).toBe("low");
@@ -222,7 +214,6 @@ describe("HostedEphemeralAgentSession", () => {
     const model = personas[0].model;
     const notice = "main and subagent notice";
     const { session } = createSession(vi.fn(), {
-      autoCompact: { enabled: false },
       modelSystemNotices: { [`${model.provider}/${model.id}`]: notice },
     });
     const thread = await session.getOrCreateThread("source");

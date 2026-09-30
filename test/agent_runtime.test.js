@@ -91,7 +91,6 @@ function createRuntime(options = {}) {
   const tools = new ToolRegistry(options.tools ?? []);
   const events = [];
   const eventSink = options.eventSink ?? (async (event) => events.push(event));
-  const autoCompact = options.config?.autoCompact ?? { enabled: false };
   const spec = createAgentSpec({
     model: {
       model: persona.model,
@@ -108,11 +107,6 @@ function createRuntime(options = {}) {
     systemPrompt: options.systemPrompt ?? "system",
     tools,
     streamOptions: { reasoning: persona.settings.reasoning },
-    compactionPolicy: {
-      enabled: autoCompact.enabled ?? true,
-      reserveTokens: autoCompact.reserveTokens ?? 16_384,
-      keepRecentTokens: autoCompact.keepRecentTokens ?? 20_000,
-    },
   });
   if (options.retryPolicy) spec.retryPolicy = options.retryPolicy;
   if (options.maxModelSubturns) spec.maxModelSubturns = options.maxModelSubturns;
@@ -787,14 +781,11 @@ describe("AgentRuntime", () => {
   ])(
     "handles a multi-megabyte image estimate %s the compaction threshold",
     async (_position, checkpointTokens, shouldCompact) => {
-      const model = { ...personas[0].model, contextWindow: 11_000 };
+      const model = { ...personas[0].model, contextWindow: 26_384 };
       const persona = createPersona({ model });
       const call = fauxToolCall("image_tool", {}, { id: "image-call" });
       const { runtime, events } = createRuntime({
         persona,
-        config: {
-          autoCompact: { enabled: true, reserveTokens: 1_000, keepRecentTokens: 5_500 },
-        },
         tools: [
           createTool("image_tool", async () => ({
             content: [{ type: "image", data: "a".repeat(2 * 1024 * 1024), mimeType: "image/png" }],
@@ -832,7 +823,7 @@ describe("AgentRuntime", () => {
       streams.push(createStream([], createAssistant(persona, finalText)));
       const streamModel = setStreams(runtime, streams);
 
-      await runtime.submit(`old request ${"x".repeat(6_000)}`);
+      await runtime.submit(`old request ${"x".repeat(32_000)}`);
       const result = await runtime.submit("inspect image");
 
       expect(result.finalMessage.content[0].text).toBe(finalText);
@@ -851,13 +842,10 @@ describe("AgentRuntime", () => {
   );
 
   it("blocks a turn when required automatic compaction fails after input commit", async () => {
-    const model = { ...personas[0].model, contextWindow: 100 };
+    const model = { ...personas[0].model, contextWindow: 16_404 };
     const persona = createPersona({ model });
     const { runtime, events } = createRuntime({
       persona,
-      config: {
-        autoCompact: { enabled: true, reserveTokens: 10, keepRecentTokens: 20 },
-      },
     });
     const first = createAssistant(persona, "first response", {
       usage: {
@@ -902,13 +890,10 @@ describe("AgentRuntime", () => {
   });
 
   it("retries an automatic compaction summary once", async () => {
-    const model = { ...personas[0].model, contextWindow: 100 };
+    const model = { ...personas[0].model, contextWindow: 16_404 };
     const persona = createPersona({ model });
     const { runtime } = createRuntime({
       persona,
-      config: {
-        autoCompact: { enabled: true, reserveTokens: 10, keepRecentTokens: 20 },
-      },
     });
     const first = createAssistant(persona, "first response", {
       usage: {
@@ -942,7 +927,7 @@ describe("AgentRuntime", () => {
   });
 
   it("archives conversation context and injects archive guidance after automatic compaction", async () => {
-    const model = { ...personas[0].model, contextWindow: 100 };
+    const model = { ...personas[0].model, contextWindow: 16_404 };
     const persona = createPersona({ model });
     const archiveAutoCompaction = vi.fn(async () => ({
       textPath: "/tmp/tau-auto-compaction-agent/000004.txt",
@@ -951,9 +936,6 @@ describe("AgentRuntime", () => {
     }));
     const { runtime } = createRuntime({
       persona,
-      config: {
-        autoCompact: { enabled: true, reserveTokens: 10, keepRecentTokens: 20 },
-      },
       archiveAutoCompaction,
       getCompactionContinuationSystemMessages: () => [
         "<active-subagents>\n- child-1: running repository scan\n</active-subagents>",
@@ -1019,16 +1001,13 @@ describe("AgentRuntime", () => {
   });
 
   it("continues automatic compaction without archive guidance when archiving fails", async () => {
-    const model = { ...personas[0].model, contextWindow: 100 };
+    const model = { ...personas[0].model, contextWindow: 16_404 };
     const persona = createPersona({ model });
     const archiveAutoCompaction = vi.fn(async () => {
       throw new Error("temporary storage unavailable");
     });
     const { runtime } = createRuntime({
       persona,
-      config: {
-        autoCompact: { enabled: true, reserveTokens: 10, keepRecentTokens: 20 },
-      },
       archiveAutoCompaction,
     });
     const first = createAssistant(persona, "first response", {

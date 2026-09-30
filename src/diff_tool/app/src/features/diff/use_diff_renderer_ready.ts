@@ -5,12 +5,10 @@ import {
 } from "@pierre/diffs";
 import { useEffect, useState } from "react";
 import type { DiffFile } from "./parse_diff.js";
-import type { CodeTheme } from "../../types.js";
 
-export function useDiffRendererReady(
-  files: DiffFile[],
-  codeTheme: CodeTheme,
-): boolean {
+export const DIFF_CODE_THEME = "github-dark-dimmed";
+
+export function useDiffRendererReady(files: DiffFile[]): boolean {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -22,7 +20,7 @@ export function useDiffRendererReady(
     let active = true;
     setReady(false);
 
-    void prepareDiffRenderer(files, codeTheme).then(() => {
+    void prepareDiffRenderer(files).then(() => {
       if (active) {
         setReady(true);
       }
@@ -31,19 +29,16 @@ export function useDiffRendererReady(
     return () => {
       active = false;
     };
-  }, [codeTheme, files]);
+  }, [files]);
 
   return ready;
 }
 
-async function prepareDiffRenderer(
-  files: DiffFile[],
-  codeTheme: CodeTheme,
-): Promise<void> {
+async function prepareDiffRenderer(files: DiffFile[]): Promise<void> {
   await Promise.all([
     document.fonts?.ready ?? Promise.resolve(),
     preloadHighlighter({
-      themes: [codeTheme],
+      themes: [DIFF_CODE_THEME],
       langs: collectDiffLanguages(files),
     }).catch(() => undefined),
   ]);

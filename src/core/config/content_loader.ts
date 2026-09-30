@@ -802,16 +802,13 @@ export async function loadAllContent(
     levels: options.levels,
   });
 
-  const virtualBundle = buildVirtualBundle(
-    config ?? {},
-    options.modelResolver.resolveConfiguredModel,
-  );
+  const virtualBundle = buildVirtualBundle(options.modelResolver.resolveConfiguredModel);
 
   try {
     const builtinPersonaErrors: string[] = [];
     const resolvedBuiltinPersonas: Persona[] = [];
 
-    for (const persona of virtualBundle.builtinPersonas) {
+    for (const persona of virtualBundle.personas) {
       const resolved = resolvePersonaModels(persona, options.modelResolver.resolveModel);
       if (resolved.persona) {
         resolvedBuiltinPersonas.push(resolved.persona);
@@ -819,9 +816,6 @@ export async function loadAllContent(
         builtinPersonaErrors.push(`builtin persona '${persona.id}': ${resolved.error}`);
       }
     }
-
-    const resolvedVirtualBundlePersonas =
-      virtualBundle.personas.length === 0 ? [] : resolvedBuiltinPersonas;
 
     const basePersonasById = new Map(
       resolvedBuiltinPersonas.map((persona) => [persona.id.toLowerCase(), persona] as const),
@@ -858,7 +852,7 @@ export async function loadAllContent(
     // Precedence: virtual bundle < global < nearest .tau levels.
     const defaultLaunchModels = config?.subagents?.defaultLaunchModels;
     const personas = mergeById(
-      resolvedVirtualBundlePersonas,
+      resolvedBuiltinPersonas,
       userPersonasResult.personas,
       projectPersonasResult.personas,
     ).map((persona) => withDefaultSubagentLaunchModels(persona, defaultLaunchModels));

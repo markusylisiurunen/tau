@@ -13,7 +13,6 @@ import type {
   DiffToolThreadAnchor,
 } from "./shared_types.js";
 import {
-  DEFAULT_DIFF_TOOL_CODE_THEME,
   DIFF_TOOL_GUIDE_QUESTION_LIMIT,
   DIFF_TOOL_GUIDE_TOPIC_LIMIT,
   guideCommentTargetKey,
@@ -36,13 +35,10 @@ type GuideInput = {
   questions: GuideQuestionInput[];
 };
 
-function createInitialState(options: {
-  codeTheme?: DiffToolReviewState["codeTheme"];
-}): DiffToolReviewState {
+function createInitialState(): DiffToolReviewState {
   return {
     diffStyle: "stacked",
     overflowMode: "wrap",
-    codeTheme: options.codeTheme ?? DEFAULT_DIFF_TOOL_CODE_THEME,
     collapsedFileIds: [],
     viewedFileIds: [],
     threads: [],
@@ -53,15 +49,14 @@ function createInitialState(options: {
 export class DiffToolReviewStateStore {
   private readonly state: DiffToolReviewState;
 
-  constructor(options: { codeTheme?: DiffToolReviewState["codeTheme"] } = {}) {
-    this.state = createInitialState(options);
+  constructor() {
+    this.state = createInitialState();
   }
 
   getState(): DiffToolReviewState {
     return {
       diffStyle: this.state.diffStyle,
       overflowMode: this.state.overflowMode,
-      codeTheme: this.state.codeTheme,
       collapsedFileIds: [...this.state.collapsedFileIds],
       viewedFileIds: [...this.state.viewedFileIds],
       threads: this.state.threads.map(cloneThread),
@@ -78,7 +73,6 @@ export class DiffToolReviewStateStore {
   replaceState(state: DiffToolReviewState): void {
     this.state.diffStyle = state.diffStyle;
     this.state.overflowMode = state.overflowMode;
-    this.state.codeTheme = state.codeTheme;
     this.state.collapsedFileIds = [...state.collapsedFileIds];
     this.state.viewedFileIds = [...state.viewedFileIds];
     this.state.threads = state.threads.map(cloneThread);
@@ -113,9 +107,6 @@ export class DiffToolReviewStateStore {
     }
     if (patch.overflowMode) {
       this.state.overflowMode = patch.overflowMode;
-    }
-    if (patch.codeTheme) {
-      this.state.codeTheme = patch.codeTheme;
     }
     if (patch.collapsedFileIds) {
       this.state.collapsedFileIds = [...patch.collapsedFileIds];

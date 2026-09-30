@@ -140,7 +140,6 @@ export async function startTelegramRuntime(
     projects: options.config.projects,
     workspaceRoot: options.config.workspaceRoot,
     maxSessions: options.config.maxSessions,
-    systemMessage: options.config.systemMessage,
     persistencePath: resolveTelegramSessionStatePath(options.config.workspaceRoot),
     onLog: (entry) => {
       options.onLog?.(formatRuntimeLog("telegram", entry));
@@ -197,8 +196,6 @@ export async function startTelegramRuntime(
         systemMessage: botConfig.systemMessage,
         allowedUserIds: botConfig.allowedUserIds,
         allowedChatIds: botConfig.allowedChatIds,
-        pollIntervalMs: botConfig.pollIntervalMs,
-        requestTimeoutSeconds: botConfig.requestTimeoutSeconds,
         geminiApiKey: options.geminiApiKey,
         openAIApiKey: options.openAIApiKey,
         elevenLabsApiKey: options.elevenLabsApiKey,

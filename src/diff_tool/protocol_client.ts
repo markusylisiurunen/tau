@@ -18,9 +18,6 @@ import {
   parseDiffReviewMessageLine,
   serializeDiffReviewMessage,
 } from "../core/diff_review/index.js";
-import { DIFF_TOOL_CODE_THEMES, type DiffToolCodeTheme } from "./shared_types.js";
-
-const codeThemes = new Set<DiffToolCodeTheme>(DIFF_TOOL_CODE_THEMES);
 
 export type DiffToolLaunchEnvironment = {
   protocolVersion: number;
@@ -30,7 +27,6 @@ export type DiffToolLaunchEnvironment = {
   repoRoot?: string;
   cwd?: string;
   diffArgs: string[];
-  codeTheme?: DiffToolCodeTheme;
 };
 
 export class DiffToolLaunchEnvironmentError extends Error {
@@ -500,11 +496,6 @@ export function parseDiffToolLaunchEnvironment(
     diffArgs = [...parsed];
   }
 
-  const codeTheme = env.TAU_DIFF_CODE_THEME?.trim();
-  if (codeTheme && !codeThemes.has(codeTheme as DiffToolCodeTheme)) {
-    throw new DiffToolLaunchEnvironmentError("TAU_DIFF_CODE_THEME is not supported");
-  }
-
   return {
     protocolVersion,
     socketPath,
@@ -513,6 +504,5 @@ export function parseDiffToolLaunchEnvironment(
     repoRoot: env.TAU_DIFF_REPO_ROOT?.trim() || undefined,
     cwd: env.TAU_DIFF_CWD?.trim() || undefined,
     diffArgs,
-    ...(codeTheme ? { codeTheme: codeTheme as DiffToolCodeTheme } : {}),
   };
 }

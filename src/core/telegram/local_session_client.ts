@@ -37,9 +37,6 @@ export async function createLocalTelegramSessionClient(options: {
     {
       cwd: options.client.cwd,
       ...(options.client.persona !== undefined ? { persona: options.client.persona } : {}),
-      ...(options.client.noAgentContextFiles !== undefined
-        ? { noAgentContextFiles: options.client.noAgentContextFiles }
-        : {}),
       initialize: { client: { name: "tau-telegram", version: "1" } },
       clientTools,
       ...(options.reportDiagnostic ? { onDiagnostic: options.reportDiagnostic } : {}),

@@ -8,15 +8,14 @@ Read [configuration](configuration.md) first for discovery and precedence. In th
 
 These are defaults built into this Tau version, not a dump of the effective configuration:
 
-| Behavior | Shipped default |
-| --- | --- |
-| Default persona | `sonnet-5.5-coder` |
-| Default TUI theme | `gold` |
-| Built-in personas | Enabled |
-| Automatic compaction | `{ "enabled": true, "reserveTokens": 16384, "keepRecentTokens": 20000 }` |
-| Speech-to-text provider when unset | `openai` |
-| Built-in diff tool code theme | `github-dark-dimmed` |
-| Command client tool timeout when unset | `60000` ms |
+| Behavior                               | Shipped default      |
+| -------------------------------------- | -------------------- |
+| Default persona                        | `sonnet-5.5-coder`   |
+| Default TUI theme                      | `gold`               |
+| Built-in personas                      | Enabled              |
+| Speech-to-text provider when unset     | `openai`             |
+| Built-in diff tool code theme          | `github-dark-dimmed` |
+| Command client tool timeout when unset | `60000` ms           |
 
 Project and global content can change which persona ids are available. A configured default must match an available persona or built-in theme; otherwise Tau reports a warning.
 
@@ -26,16 +25,13 @@ Project and global content can change which persona ids are available. A configu
 | --- | --- | --- | --- | --- |
 | `apiKeys` | Object of string values | Global, project | Merge by provider id | Host or feature consumer; `/reload` for session runtime keys, process restart for environment changes |
 | `defaultPersona` | Non-empty string | Global, project | Most-specific wins | Session host; new session |
-| `disableBuiltinPersonas` | Boolean | Global, project | Most-specific wins | Session runtime; `/reload` or new session |
 | `speech` | Object with optional `voiceId` | Global, project | Merge by field | TUI client or Telegram runner; process restart |
 | `defaultTheme` | Non-empty string | Global, project | Most-specific wins | TUI client; client restart |
 | `diffTool` | Object | Global, project | Most-specific complete object | TUI client; client restart |
-| `builtInDiffTool` | Object | Global, project | Most-specific complete object | TUI client; client restart |
 | `clientTools` | Array of objects | Global only | One global definition list | Owning client; TUI restart or new Telegram session client |
 | `enabledClientTools` | String array | Project only | Most-specific project list | Owning client; TUI restart or new Telegram session client |
 | `agentContextFiles` | String array | Global, project | Additive, resolved and deduplicated | Execution environment and session host; `/reload` or new session |
 | `subagents` | Object | Global, project | Field-wise, currently one selectable list | Session runtime; `/reload` or new session |
-| `autoCompact` | Object | Global, project | Merge by field over shipped defaults | Session runtime; `/reload` or new session |
 | `modelSystemNotices` | String map | Global, project | Merge by model target | Session runtime; `/reload`, affects later inputs |
 | `flySprites` | Object | Global, project | Merge APIs by id | Host startup; host restart |
 | `nook` | Object | Global, project | Most-specific complete object | Host tool runtime; `/reload` or new session |
@@ -58,18 +54,6 @@ A persona id, optionally followed by `:` and a reasoning level:
 Allowed reasoning suffixes are `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. The persona id is matched exactly and case-sensitively during startup selection. The id must exist after built-in, global, and project personas are loaded.
 
 `defaultPersona` selects a new session when no CLI or session-creation override is supplied. Reloading an existing session retains its current persona id when possible. See [personas](personas.md).
-
-### `disableBuiltinPersonas`
-
-A boolean that removes shipped personas from the loaded persona catalog:
-
-```json
-{
-  "disableBuiltinPersonas": true
-}
-```
-
-The default is `false`. When enabled, at least one valid custom persona must be available or session startup fails. This field does not disable user or project personas.
 
 ### `agentContextFiles`
 
@@ -107,28 +91,6 @@ Each entry must use `<provider>/<model>:<effort>` and resolve against the merged
 ```
 
 A more-specific list replaces the broader list. Custom subagent definitions belong in persona frontmatter, not this object. See [subagents](subagents.md).
-
-### `autoCompact`
-
-Automatic compaction settings:
-
-| Nested field | Type | Default | Meaning |
-| --- | --- | --- | --- |
-| `enabled` | Boolean | `true` | Whether Tau checks and compacts before model subturns |
-| `reserveTokens` | Positive integer | `16384` | Context reserved below the model's context-window limit |
-| `keepRecentTokens` | Positive integer | `20000` | Target budget for the recent retained tail |
-
-Fields merge independently across levels:
-
-```json
-{
-  "autoCompact": {
-    "reserveTokens": 24000
-  }
-}
-```
-
-The omitted fields retain their broader or shipped values. This setting changes Tau's automatic policy; manual `/compact-all` and `/compact-keep-last` remain available. See [sessions](sessions.md).
 
 ### `modelSystemNotices`
 
@@ -273,24 +235,6 @@ A custom client-local diff-review launcher:
 ```
 
 The most-specific complete object wins. A relative command containing `/` resolves from the declaring level root; a bare command resolves through client `PATH`. The TUI launches this process on the client machine. If this field is absent, the TUI uses Tau's built-in diff tool. See [TUI](tui.md) and [client tools](client-tools.md) for the broader client-local distinction.
-
-### `builtInDiffTool`
-
-Settings for the built-in fallback diff tool:
-
-```json
-{
-  "builtInDiffTool": {
-    "codeTheme": "nord"
-  }
-}
-```
-
-`codeTheme` defaults to `github-dark-dimmed`. Supported values are:
-
-`andromeeda`, `aurora-x`, `ayu-dark`, `ayu-mirage`, `catppuccin-frappe`, `catppuccin-macchiato`, `catppuccin-mocha`, `dark-plus`, `dracula`, `dracula-soft`, `everforest-dark`, `github-dark`, `github-dark-default`, `github-dark-dimmed`, `github-dark-high-contrast`, `gruvbox-dark-hard`, `gruvbox-dark-medium`, `gruvbox-dark-soft`, `horizon`, `horizon-bright`, `houston`, `kanagawa-dragon`, `kanagawa-wave`, `laserwave`, `material-theme`, `material-theme-darker`, `material-theme-ocean`, `material-theme-palenight`, `min-dark`, `monokai`, `night-owl`, `nord`, `one-dark-pro`, `plastic`, `poimandres`, `red`, `rose-pine`, `rose-pine-moon`, `slack-dark`, `solarized-dark`, `synthwave-84`, `tokyo-night`, `vesper`, `vitesse-black`, and `vitesse-dark`.
-
-This object does not configure a custom `diffTool` process.
 
 ## Command client tools
 

@@ -22,11 +22,14 @@ describe("telegram cli", () => {
   it("loads telegram runner config", () => {
     const { dir, path } = writeConfig({
       workspaceRoot: "workspaces",
-      systemMessage: "telegram guidance",
+      systemMessage: "ignored top-level guidance",
       maxSessions: 2,
       bots: {
         ops: {
           botToken: "token",
+          systemMessage: "bot guidance",
+          pollIntervalMs: 1,
+          requestTimeoutSeconds: 1,
           defaultProjectId: "tau",
           allowedProjectIds: ["tau"],
         },
@@ -36,6 +39,7 @@ describe("telegram cli", () => {
           repo: "markusylisiurunen/tau",
           ref: "main",
           workspaceRoot: "project-workspaces",
+          noAgentContextFiles: true,
           workingDirectory: "packages/core",
           persona: "gpt-5.6-sol-coder:high",
         },
@@ -44,11 +48,11 @@ describe("telegram cli", () => {
 
     expect(loadTelegramConfig(path)).toEqual({
       workspaceRoot: join(dir, "workspaces"),
-      systemMessage: "telegram guidance",
       maxSessions: 2,
       bots: {
         ops: {
           botToken: "token",
+          systemMessage: "bot guidance",
           defaultProjectId: "tau",
           allowedProjectIds: ["tau"],
         },
@@ -57,7 +61,6 @@ describe("telegram cli", () => {
         tau: {
           repo: "markusylisiurunen/tau",
           ref: "main",
-          workspaceRoot: join(dir, "project-workspaces"),
           workingDirectory: "packages/core",
           persona: "gpt-5.6-sol-coder:high",
         },
@@ -76,8 +79,8 @@ describe("telegram cli", () => {
       projects: {
         me: {
           directory: "workspaces/me",
-          persona: "gpt-5.6-sol-coder:high",
           noAgentContextFiles: true,
+          persona: "gpt-5.6-sol-coder:high",
         },
       },
     });
@@ -85,7 +88,6 @@ describe("telegram cli", () => {
     expect(loadTelegramConfig(path).projects.me).toEqual({
       directory: join(dir, "workspaces/me"),
       persona: "gpt-5.6-sol-coder:high",
-      noAgentContextFiles: true,
     });
   });
 
@@ -123,6 +125,8 @@ describe("telegram cli", () => {
           workingDirectory: "packages/server",
         },
         tau_cowork: {
+          workspaceRoot: "composite-workspaces",
+          noAgentContextFiles: true,
           projectIds: ["tau", "cowork"],
           persona: "gpt-5.6-sol-coder:high",
           instructions: "Keep changes coordinated.",

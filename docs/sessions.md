@@ -107,7 +107,7 @@ Compaction replaces older model-visible conversation context with a synthetic su
 
 ### Automatic compaction
 
-Automatic compaction runs before a model subturn when fresh provider usage plus newly added estimated context exceeds the configured threshold. The threshold is the model context window minus `autoCompact.reserveTokens`. Tau keeps a recent tail bounded by `autoCompact.keepRecentTokens`, summarizes older context, and can compact more than once during a long logical turn.
+Automatic compaction runs before a model subturn when fresh provider usage plus newly added estimated context exceeds the fixed threshold. The threshold is the model context window minus 16,384 tokens. Tau keeps a recent tail with a target budget of 20,000 tokens, capped by that threshold, summarizes older context, and can compact more than once during a long logical turn.
 
 The summary model may copy important original user messages verbatim into the summary. Recent retained messages stay available to the model, although unusually large textual tool and recovery results may be truncated in retained context. Tau records the compaction as a new active context segment.
 
@@ -118,18 +118,6 @@ These files recover details removed from the current session’s model context. 
 The continuation also requires the archive guide to be present in model context before work resumes, even when no immediate lookup is planned. Its retrieval guidance favors bounded access by known entry id or distinctive evidence, with a concise chronological overview as an optional discovery step. Earlier numbered pairs can contain details that predate the current compaction. Tau does not generate or require a fixed overview projection.
 
 These archives are temporary recovery aids, not backups. Archive failure does not block compaction, and execution-environment cleanup may remove them.
-
-Configure the policy in [configuration](configuration.md):
-
-```json
-{
-  "autoCompact": {
-    "enabled": true,
-    "reserveTokens": 16384,
-    "keepRecentTokens": 20000
-  }
-}
-```
 
 ### Intermediate system instructions
 

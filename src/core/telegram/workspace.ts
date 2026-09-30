@@ -21,7 +21,6 @@ export type PrepareWorkspaceOptions = {
   project: TelegramProjectConfig;
   projects: Record<string, TelegramProjectConfig>;
   workspaceRoot: string;
-  defaultWorkspaceRoot: string;
   signal?: AbortSignal;
   onLog?: (entry: WorkspaceLogEntry) => void;
 };
@@ -478,34 +477,27 @@ async function pruneWorkspaceDirectory(
   }
 }
 
-export async function cleanupWorkspaceRootsOnStartup(
-  workspaceRoots: string[],
+export async function cleanupWorkspaceRootOnStartup(
+  workspaceRoot: string,
   preservedWorkspacePaths: string[],
-): Promise<WorkspaceRootCleanupResult[]> {
-  const roots = Array.from(new Set(workspaceRoots.map((workspaceRoot) => resolve(workspaceRoot))));
+): Promise<WorkspaceRootCleanupResult> {
+  const root = resolve(workspaceRoot);
   const preservedPaths = Array.from(
     new Set(preservedWorkspacePaths.map((workspacePath) => resolve(workspacePath))),
   );
-  const results: WorkspaceRootCleanupResult[] = [];
-
-  for (const workspaceRoot of roots) {
-    const result: WorkspaceRootCleanupResult = {
-      workspaceRoot,
-      deletedEntries: 0,
-      failures: [],
-    };
-    if (preservedPaths.includes(workspaceRoot)) {
-      results.push(result);
-      continue;
-    }
-    const preservedUnderRoot = preservedPaths.filter((workspacePath) =>
-      isInsideWorkspace(workspaceRoot, workspacePath),
-    );
-    await pruneWorkspaceDirectory(workspaceRoot, preservedUnderRoot, result);
-    results.push(result);
+  const result: WorkspaceRootCleanupResult = {
+    workspaceRoot: root,
+    deletedEntries: 0,
+    failures: [],
+  };
+  if (preservedPaths.includes(root)) {
+    return result;
   }
-
-  return results;
+  const preservedUnderRoot = preservedPaths.filter((workspacePath) =>
+    isInsideWorkspace(root, workspacePath),
+  );
+  await pruneWorkspaceDirectory(root, preservedUnderRoot, result);
+  return result;
 }
 
 export async function cleanupWorkspacePath(workspacePath: string): Promise<void> {
@@ -744,7 +736,7 @@ export async function prepareWorkspace(
 
       const memberCwd = await prepareRepositoryWorkspace({
         workspacePath: join(workspacePath, memberProjectId),
-        cacheWorkspaceRoot: memberProject.workspaceRoot ?? options.defaultWorkspaceRoot,
+        cacheWorkspaceRoot: options.workspaceRoot,
         projectId: memberProjectId,
         project: memberProject,
         signal: options.signal,

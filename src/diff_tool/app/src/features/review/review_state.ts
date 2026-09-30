@@ -1,12 +1,8 @@
-import {
-  DEFAULT_DIFF_TOOL_CODE_THEME,
-  type DiffToolReviewState,
-} from "../../types.js";
+import type { DiffToolReviewState } from "../../types.js";
 
 export const emptyReviewState: DiffToolReviewState = {
   diffStyle: "stacked",
   overflowMode: "wrap",
-  codeTheme: DEFAULT_DIFF_TOOL_CODE_THEME,
   collapsedFileIds: [],
   viewedFileIds: [],
   threads: [],

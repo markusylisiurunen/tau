@@ -246,7 +246,6 @@ describe("built-in diff tool", () => {
       expect(bootstrap.state).toEqual({
         diffStyle: "stacked",
         overflowMode: "wrap",
-        codeTheme: "github-dark-dimmed",
         collapsedFileIds: [],
         viewedFileIds: [],
         threads: [],
@@ -866,7 +865,7 @@ describe("built-in diff tool", () => {
     }
   });
 
-  it("persists review state and rehydrates follow-up agent context", async () => {
+  it.each([2, 3])("rehydrates v%s review state and follow-up agent context", async (version) => {
     let storedDocument;
     const storage = {
       load: vi.fn(async () => storedDocument),
@@ -923,11 +922,15 @@ describe("built-in diff tool", () => {
       await firstServer.close();
     }
 
-    expect(storedDocument.version).toBe(2);
+    expect(storedDocument.version).toBe(3);
     expect(storedDocument.state.threads[0]).not.toHaveProperty("threadId");
     expect(storedDocument.state.threads[0]).not.toHaveProperty("loading");
     expect(storedDocument.state.guide).not.toHaveProperty("threadId");
     expect(storedDocument.state.guide).not.toHaveProperty("loading");
+    storedDocument.version = version;
+    if (version === 2) {
+      storedDocument.state.codeTheme = "nord";
+    }
 
     const secondClient = createClientStub({
       getContext: firstClient.getContext,
@@ -967,6 +970,7 @@ describe("built-in diff tool", () => {
           { role: "assistant", text: expect.stringContaining("first reply") },
         ],
       });
+      expect(bootstrap.state).not.toHaveProperty("codeTheme");
       expect(bootstrap.state.threads[0]).not.toHaveProperty("threadId");
       expect(bootstrap.state.guide).toMatchObject({
         orientation: "Review orientation",
@@ -1421,7 +1425,7 @@ describe("built-in diff tool", () => {
     }
   });
 
-  it("opens shipped v1 review state and writes the canonical v2 document", async () => {
+  it("opens shipped v1 review state and writes the canonical document", async () => {
     let storedDocument;
     const storage = {
       load: vi.fn(async () => storedDocument),
@@ -1465,6 +1469,7 @@ describe("built-in diff tool", () => {
           loading: expect.any(Boolean),
         },
       });
+      expect(bootstrap.state).not.toHaveProperty("codeTheme");
       expect(bootstrap.state).not.toHaveProperty("sidebarOpen");
       expect(bootstrap.state).not.toHaveProperty("brief");
 
@@ -1474,7 +1479,7 @@ describe("built-in diff tool", () => {
         body: JSON.stringify({ overflowMode: "scroll" }),
       });
       expect(storedDocument).toMatchObject({
-        version: 2,
+        version: 3,
         state: {
           diffStyle: "split",
           overflowMode: "scroll",

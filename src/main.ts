@@ -887,7 +887,6 @@ if (isAttachSubcommand) {
   const defaultDiffTool = createBuiltInDiffToolConfig({
     nodeExecutablePath: process.execPath,
     cliEntryPath: fileURLToPath(import.meta.url),
-    codeTheme: config.builtInDiffTool?.codeTheme,
   });
   const sessionSelection = attach.sessionId
     ? ({ mode: "attach", sessionId: attach.sessionId } as const)
@@ -1121,7 +1120,7 @@ if (isServeSubcommand) {
 if (personas.length === 0) {
   // eslint-disable-next-line no-console
   console.error(
-    "no personas available. add a custom persona in ~/.config/tau/personas or .tau/personas, or unset disableBuiltinPersonas.",
+    "no personas available. add a custom persona in ~/.config/tau/personas or .tau/personas.",
   );
   process.exit(1);
 }
@@ -1132,7 +1131,6 @@ const terminalColors = detectTerminalColors();
 const defaultDiffTool = createBuiltInDiffToolConfig({
   nodeExecutablePath: process.execPath,
   cliEntryPath: fileURLToPath(import.meta.url),
-  codeTheme: config.builtInDiffTool?.codeTheme,
 });
 
 let sessionChatApp: SessionChatApp | undefined;

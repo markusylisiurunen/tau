@@ -16,13 +16,11 @@ export type {
   FlySpritesConfig,
   HistoryConfig,
   NookConfig,
-  NormalizedAutoCompactConfig,
   TelegramBotConfig,
   TelegramBotConfigMap,
   TelegramProjectConfig,
 } from "./schema.js";
 export {
-  DEFAULT_AUTO_COMPACT_CONFIG,
   getApiKeyForProvider,
   getElevenLabsApiKey,
   getExaApiKey,
@@ -32,7 +30,6 @@ export {
   getNookAccessClientSecret,
   getOpenAIApiKey,
   loadConfig,
-  normalizeAutoCompactConfig,
 } from "./schema.js";
 export type { ThemeAppearance, ThemeDefinition, ThemeVariantTokens } from "./theme_variants.js";
 export { resolveThemeTokensById, resolveThemeTokensForAppearance } from "./theme_variants.js";

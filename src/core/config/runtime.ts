@@ -7,13 +7,14 @@ import {
   type ToolExecutionBackend,
 } from "../tools/execution_backend.js";
 import type { Persona, Skill } from "../types.js";
-import { loadAllContent, parsePrompt, type ThemeDefinition } from "./content_loader.js";
+import { loadAllContent, parsePrompt } from "./content_loader.js";
 import type { ConfigDeps } from "./deps.js";
 import type { DiffToolConfig } from "./diff_tool.js";
 import type { ConfigLevel } from "./paths.js";
 import { resolveConfigLevels } from "./paths.js";
 import type { Config } from "./schema.js";
 import { loadConfigWithDiagnostics } from "./schema.js";
+import type { ThemeDefinition } from "./theme_variants.js";
 import { buildVirtualBundle, type VirtualBundle } from "./virtual_bundle.js";
 
 export interface RuntimeBootstrap {
@@ -227,7 +228,7 @@ export async function loadRuntimeConfig(
     const matched = content.themes.some((theme) => theme.id === bootstrap.config.defaultTheme);
     if (!matched) {
       warnings.push(
-        `defaultTheme '${bootstrap.config.defaultTheme}' not found in built-in themes, .tau/themes, or ~/.config/tau/themes.`,
+        `defaultTheme '${bootstrap.config.defaultTheme}' not found in built-in themes.`,
       );
     }
   }

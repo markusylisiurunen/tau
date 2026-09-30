@@ -1,4 +1,12 @@
-import type { ThemeAppearance, ThemeDefinition } from "./content_loader.js";
+export type ThemeAppearance = "dark" | "light";
+
+export type ThemeVariantTokens = Partial<Record<ThemeAppearance, Record<string, string>>>;
+
+export interface ThemeDefinition {
+  id: string;
+  tokens: Record<string, string>;
+  variants: ThemeVariantTokens;
+}
 
 function findTheme(
   themeId: string | undefined,

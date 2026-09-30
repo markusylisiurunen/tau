@@ -11,7 +11,9 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { builtinThemes } from "../dist/core/config/builtin_themes.js";
 import { resolveConfigLevels } from "../dist/core/config/paths.js";
+import { loadRuntimeConfig } from "../dist/core/config/runtime.js";
 import {
   getApiKeyForProvider,
   getOpenAIApiKey,
@@ -77,6 +79,39 @@ describe("config paths", () => {
     }
   });
 
+  it("uses the built-in theme catalog across configuration levels", async () => {
+    const fx = setupFixture();
+
+    try {
+      const repo = join(fx.home, "repo");
+      for (const directory of [join(fx.home, ".config", "tau"), join(repo, ".tau")]) {
+        mkdirSync(join(directory, "themes"), { recursive: true });
+        writeFileSync(join(directory, "themes", "gold.json"), "invalid JSON");
+        writeFileSync(join(directory, "themes", "extra.json"), "{}");
+      }
+      writeFileSync(join(repo, ".tau", "config.json"), '{"defaultTheme":"azure"}');
+      const deps = createConfigDeps({ cwd: repo, home: fx.home, env: {} });
+      const inspectedPaths = [];
+      for (const [name, operation] of Object.entries(deps.fs)) {
+        deps.fs[name] = (path) => {
+          inspectedPaths.push(path);
+          return operation(path);
+        };
+      }
+
+      const runtime = await loadRuntimeConfig(repo, deps);
+
+      expect(runtime.themes).toEqual(builtinThemes);
+      expect(runtime.config.defaultTheme).toBe("azure");
+      expect(runtime.warnings).toEqual([]);
+      expect(inspectedPaths.some((path) => path.includes("/themes"))).toBe(false);
+      expect(runtime.prompts).toEqual([]);
+      expect(runtime.skills).toEqual([]);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
   it("merges levels with most-specific wins", () => {
     const fx = setupFixture();
 
@@ -104,17 +139,6 @@ describe("config paths", () => {
           history: {
             endpoint: "https://history.example.com/",
             apiKeyEnv: "HISTORY_KEY",
-          },
-          cloudflareSandbox: {
-            bridges: {
-              default: {
-                url: "https://global.example.workers.dev",
-                apiKeyEnv: "GLOBAL_SANDBOX_KEY",
-              },
-              shared: {
-                url: "https://shared.example.workers.dev",
-              },
-            },
           },
           flySprites: {
             apis: {
@@ -147,15 +171,6 @@ describe("config paths", () => {
           agentContextFiles: ["docs/AGENTS.md"],
           subagents: {
             defaultLaunchModels: ["openai/gpt-5.4:high"],
-          },
-          cloudflareSandbox: {
-            bridges: {
-              default: {
-                url: "https://repo.example.workers.dev",
-                apiKeyEnv: "REPO_SANDBOX_KEY",
-                home: "/home/sandbox",
-              },
-            },
           },
           flySprites: {
             apis: {
@@ -211,18 +226,6 @@ describe("config paths", () => {
       expect(config.history).toEqual({
         endpoint: "https://history.example.com",
         apiKeyEnv: "HISTORY_KEY",
-      });
-      expect(config.cloudflareSandbox).toEqual({
-        bridges: {
-          default: {
-            url: "https://repo.example.workers.dev",
-            apiKeyEnv: "REPO_SANDBOX_KEY",
-            home: "/home/sandbox",
-          },
-          shared: {
-            url: "https://shared.example.workers.dev",
-          },
-        },
       });
       expect(config.flySprites).toEqual({
         apis: {
@@ -307,8 +310,7 @@ describe("config paths", () => {
       writeFileSync(
         join(fx.repo, ".tau", "config.json"),
         JSON.stringify({
-          disableBuiltinPersonas: true,
-          disableBuiltinThemes: "yes",
+          disableBuiltinPersonas: "yes",
           defaultTheme: " midnight ",
         }),
       );
@@ -322,11 +324,10 @@ describe("config paths", () => {
       const levels = resolveConfigLevels(deps, { cwd: fx.repo });
       const modelResolver = loadModelResolver({ deps, levels });
       const result = loadConfigWithDiagnostics(deps, { levels, modelResolver });
-      expect(result.config.disableBuiltinPersonas).toBe(true);
-      expect(result.config.disableBuiltinThemes).toBeUndefined();
+      expect(result.config.disableBuiltinPersonas).toBeUndefined();
       expect(result.config.defaultTheme).toBe("midnight");
       expect(result.errors).toContain(
-        `${join(fx.repo, ".tau", "config.json")}: 'disableBuiltinThemes' must be a boolean.`,
+        `${join(fx.repo, ".tau", "config.json")}: 'disableBuiltinPersonas' must be a boolean.`,
       );
     } finally {
       fx.cleanup();

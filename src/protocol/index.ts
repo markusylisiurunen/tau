@@ -12,8 +12,6 @@ export type {
   SessionProtocolChange,
   SessionProtocolClearGoalParams,
   SessionProtocolClearGoalResult,
-  SessionProtocolCloudflareSandboxExecutionEnvironmentInput,
-  SessionProtocolCloudflareSandboxExecutionEnvironmentSnapshot,
   SessionProtocolCompactParams,
   SessionProtocolCompactResult,
   SessionProtocolContentCatalogSnapshot,

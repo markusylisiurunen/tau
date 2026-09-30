@@ -15,25 +15,10 @@ describe("theme variants", () => {
         dark: darkTokens,
         light: lightTokens,
       },
-      sourcePath: "builtin:themes/gold.json",
-      scope: "builtin",
     };
 
     expect(resolveThemeTokensForAppearance(theme, "dark")).toEqual(darkTokens);
     expect(resolveThemeTokensForAppearance(theme, "light")).toEqual(lightTokens);
-  });
-
-  it("falls back to base tokens when theme has no variants", () => {
-    const tokens = { brandAccent: "#123456" };
-    const theme = {
-      id: "custom",
-      tokens,
-      sourcePath: "/tmp/custom.json",
-      scope: "project",
-    };
-
-    expect(resolveThemeTokensForAppearance(theme, "dark")).toEqual(tokens);
-    expect(resolveThemeTokensForAppearance(theme, "light")).toEqual(tokens);
   });
 
   it("finds theme ids by exact match", () => {
@@ -47,8 +32,6 @@ describe("theme variants", () => {
           dark: darkTokens,
           light: lightTokens,
         },
-        sourcePath: "builtin:themes/gold.json",
-        scope: "builtin",
       },
     ];
 

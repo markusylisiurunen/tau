@@ -64,12 +64,6 @@ params: {
   executionEnvironment:
     | { kind: "local"; cwd: string; env?: Record<string, string> }
     | {
-        kind: "cloudflare-sandbox";
-        bridgeId: string;
-        sandboxId: string;
-        cwd: string;
-      }
-    | {
         kind: "fly-sprite";
         apiId: string;
         spriteName: string;
@@ -83,7 +77,7 @@ params: {
 result: { sessionId: string }
 ```
 
-`cwd` must be absolute inside the selected execution environment. Cloudflare sandboxes and Fly Sprites must already exist and be reachable through a host-configured resolver. Tau does not provision a target or repository.
+`cwd` must be absolute inside the selected execution environment. Fly Sprites must already exist and be reachable through a host-configured resolver. Tau does not provision a target or repository.
 
 `attributes` is required, including when empty. It accepts at most 32 immutable pairs; keys are 1 to 64 characters and values at most 1,024 characters. Tau stores the supplied strings without inferring missing provenance. Conventional attributes and their use are covered in [sessions](sessions.md) and [history](history.md).
 

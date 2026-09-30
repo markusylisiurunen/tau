@@ -395,9 +395,7 @@ export class TuiChatView implements ChatView {
     const theme = this.themes.find((candidate) => candidate.id === themeId);
     const tokens = resolveThemeTokensForAppearance(theme, this.terminalColors.appearance);
     const seeds = coercePaletteOverrides(tokens);
-    return theme?.scope === "builtin"
-      ? deriveBuiltinPaletteOverrides(seeds, this.terminalColors)
-      : seeds;
+    return deriveBuiltinPaletteOverrides(seeds, this.terminalColors);
   }
 
   updateTheme(themeId: string): void {

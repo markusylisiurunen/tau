@@ -149,7 +149,7 @@ try {
 
 `client.sessions.create(input)` sends `session.create`, then observes the new session before resolving. `client.sessions.observe(sessionId)` does the same observation handshake for an existing session. `client.sessions.list()` returns `{ sessionId, lifecycle }` summaries.
 
-Creation requires complete execution-environment input and immutable attributes. The execution `cwd` must be absolute and belongs to the selected environment, not necessarily the SDK process. Cloudflare Sandbox and Fly Sprite sessions refer to already-provisioned targets configured on the host. See [sessions](sessions.md) for creation attributes and [ownership and scope](ownership-and-scope.md) for path ownership.
+Creation requires complete execution-environment input and immutable attributes. The execution `cwd` must be absolute and belongs to the selected environment, not necessarily the SDK process. Fly Sprite sessions refer to already-provisioned targets configured on the host. See [sessions](sessions.md) for creation attributes and [ownership and scope](ownership-and-scope.md) for path ownership.
 
 `session.unobserve()` stops observation and makes that `TauSdkSession` facade terminal. It does not delete the hosted session. `client.close()` is idempotent and closes the whole client.
 

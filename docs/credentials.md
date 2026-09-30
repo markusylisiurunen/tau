@@ -17,7 +17,7 @@ Common cases are:
 | Exa-backed `web.search` and `web.fetch` | Session host |
 | Remote history replication and queries | Session host |
 | Nook host tool | Session host |
-| Cloudflare Sandbox bridge and Fly Sprite API | Session host startup |
+| Fly Sprite API | Session host startup |
 | `/listen` and `/speak` | TUI client |
 | Telegram transcription and voice responses | Telegram runner |
 | `tau tool pdf-unpack`, `image-generate`, and `speech-generate` | The process running that command |
@@ -153,26 +153,7 @@ If the named `accessClientSecretEnv` has a non-empty value, it wins over inline 
 
 ## Hosted execution credentials
 
-Cloudflare Sandbox bridges and Fly Sprite APIs are host-owned resolver configuration. They must be available when the host is constructed, before a client asks it to create one of those execution environments.
-
-A Cloudflare bridge can use an inline key or name a host environment variable:
-
-```json
-{
-  "cloudflareSandbox": {
-    "bridges": {
-      "engineering": {
-        "url": "https://sandbox-bridge.example.workers.dev",
-        "apiKeyEnv": "TAU_SANDBOX_BRIDGE_KEY"
-      }
-    }
-  }
-}
-```
-
-For a bridge, inline `apiKey` wins when present; `apiKeyEnv` is consulted only when no inline key exists. A bridge may also be configured without authentication.
-
-A Fly API requires a token:
+Fly Sprite APIs are host-owned resolver configuration. They must be available when the host starts, before a client asks it to create a Sprite session. Each API requires a token:
 
 ```json
 {
@@ -189,7 +170,7 @@ A Fly API requires a token:
 
 For Fly, inline `token` wins when present; `tokenEnv` is the fallback. Session creation fails if neither resolves.
 
-These target definitions are read from the host's startup configuration, not from an attached client. `/reload` refreshes session runtime content but does not rebuild the host's execution-environment resolvers. Restart the host after changing bridge definitions, Sprite API definitions, or their environment.
+These target definitions are read from the host's startup configuration, not from an attached client. `/reload` refreshes session runtime content but does not rebuild the host's execution-environment resolvers. Restart the host after changing Sprite API definitions or their environment.
 
 ## Safe verification
 
@@ -198,7 +179,7 @@ Verify credentials through the operation that owns them, without printing secret
 - Run `tau auth list` to check Codex identities, enabled state, refresh health, and quota windows.
 - Run `/reload` while the session is idle after changing runtime `apiKeys`; review every configuration warning.
 - Make a small request with the intended persona to verify model authentication and endpoint access.
-- Exercise the specific feature after setting Exa, speech, History, Nook, Cloudflare, or Fly credentials. Their missing-credential errors name the accepted source.
+- Exercise the specific feature after setting Exa, speech, History, Nook or Fly credentials. Their missing-credential errors name the accepted source.
 - For remote sessions, first confirm which machine is the host and which process owns the feature.
 
 Do not verify by printing the process environment, dumping `config.json`, or reading `auth.json` into a transcript. If a secret was exposed in shell history, logs, a session, or version control, rotate it at the provider and replace the compromised value. Broader handling guidance is in [security](security.md) and failure checks are in [troubleshooting](troubleshooting.md).

@@ -545,18 +545,6 @@ describe("session_protocol", () => {
         "session.create",
         {
           executionEnvironment: {
-            kind: "cloudflare-sandbox",
-            bridgeId: "default",
-            sandboxId: "sandbox-1",
-            cwd: "/workspace/repo",
-          },
-          attributes: { source: "test" },
-        },
-      ],
-      [
-        "session.create",
-        {
-          executionEnvironment: {
             kind: "fly-sprite",
             apiId: "default",
             spriteName: "sprite-1",
@@ -1095,16 +1083,6 @@ describe("session_protocol", () => {
       },
     });
 
-    const cloudflareSnapshot = createProtocolSnapshot({
-      executionEnvironment: {
-        kind: "cloudflare-sandbox",
-        bridgeId: "default",
-        sandboxId: "sandbox-1",
-        cwd: "/workspace/repo",
-        home: "/home/sandbox",
-      },
-    });
-
     const promptSnapshot = createProtocolSnapshot({
       bootstrap: {
         ...bootstrap,
@@ -1460,7 +1438,6 @@ describe("session_protocol", () => {
       ],
       ["session.snapshot", tieredSnapshot],
       ["session.snapshot", flySnapshot],
-      ["session.snapshot", cloudflareSnapshot],
       ["session.snapshot", promptSnapshot],
       ["session.snapshot", runningDraftSnapshot],
       ["session.snapshot", hiddenMessageSnapshot],

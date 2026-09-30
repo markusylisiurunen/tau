@@ -143,22 +143,7 @@ Direct commands require the session to be idle. In an attached TUI, `!pwd` repor
 
 ## Use themes
 
-Themes belong to the TUI process and never become session state. Tau loads built-in themes plus JSON files from these locations:
-
-- `~/.config/tau/themes/<id>.json` for user themes, when the TUI cwd is under the user’s home.
-- `.tau/themes/<id>.json` at discovered project configuration levels, with the nearest project definition winning by id.
-
-The filename is the theme id. A custom theme is a flat JSON object from semantic palette token names to colors:
-
-```json
-{
-  "brandAccent": "#8fb3ff",
-  "textMuted": "rgb(145, 151, 166)",
-  "feedbackError": "hsl(354, 70%, 72%)"
-}
-```
-
-Colors accept `#rgb`, `#rrggbb`, `rgb(r, g, b)`, and `hsl(h, s%, l%)`. Unknown tokens, non-string values, and invalid colors are ignored. Missing tokens render without a custom color. Custom themes are single-variant; built-in themes adapt to detected terminal appearance.
+Themes belong to the TUI process and never become session state. Tau’s built-in themes adapt to detected terminal appearance.
 
 Set the startup theme with `defaultTheme` in the attaching client’s [configuration](configuration.md), or switch for the current run:
 
@@ -166,7 +151,7 @@ Set the startup theme with `defaultTheme` in the attaching client’s [configura
 /theme:gold
 ```
 
-Theme ids are exact and case-sensitive. `/theme` does not persist the selection. `/reload` refreshes the hosted session, not the attaching client’s loaded theme files, so restart the TUI after adding or changing a theme. In remote use, changing theme files on the host has no effect unless the host and TUI are the same physical machine and the TUI loaded those files itself.
+Theme ids are exact and case-sensitive. `/theme` does not persist the selection. Restart the TUI to apply a new `defaultTheme`. A remote host’s theme selection does not affect an attached client.
 
 ## Review a diff
 

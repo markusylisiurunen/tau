@@ -29,41 +29,21 @@ import { ReasoningEffortSchema, ServiceTierSchema } from "../types.js";
 import { formatZodError } from "../utils/zod.js";
 import type { ConfigDeps } from "./deps.js";
 import { parseMarkdownFrontMatter } from "./markdown_frontmatter.js";
-import type { ConfigLevel, ConfigLevelScope } from "./paths.js";
+import type { ConfigLevel } from "./paths.js";
 import type { Config } from "./schema.js";
 import { loadSkillsContent as loadCanonicalSkillsContent } from "./skills_loader.js";
+import type { ThemeDefinition } from "./theme_variants.js";
 import { buildVirtualBundle } from "./virtual_bundle.js";
 
-interface FileEntry {
+interface MarkdownEntry {
   path: string;
   content: string;
 }
-
-type MarkdownEntry = FileEntry;
 
 type MarkdownPathsResult = {
   paths: string[];
   errors: string[];
 };
-
-type JsonEntry = FileEntry;
-
-type JsonPathsResult = {
-  paths: string[];
-  errors: string[];
-};
-
-export type ThemeAppearance = "dark" | "light";
-
-export type ThemeVariantTokens = Partial<Record<ThemeAppearance, Record<string, string>>>;
-
-export interface ThemeDefinition {
-  id: string;
-  tokens: Record<string, string>;
-  variants?: ThemeVariantTokens;
-  sourcePath: string;
-  scope: ConfigLevelScope;
-}
 
 const SubagentNameSchema = z
   .string()
@@ -353,26 +333,16 @@ function listMarkdownFiles(dir: string, deps: ConfigDeps): MarkdownPathsResult {
   }
 }
 
-function listJsonFiles(dir: string, deps: ConfigDeps): JsonPathsResult {
-  try {
-    const names = deps.fs.listDir(dir).filter((f) => f.endsWith(".json"));
-    return { paths: names.map((name) => join(dir, name)), errors: [] };
-  } catch {
-    return { paths: [], errors: [`failed to read directory: ${dir}`] };
-  }
-}
-
-function loadEntries(
+function loadMarkdownEntries(
   dir: string,
   deps: ConfigDeps,
-  listFiles: (dir: string, deps: ConfigDeps) => { paths: string[]; errors: string[] },
-): { entries: FileEntry[]; errors: string[] } {
+): { entries: MarkdownEntry[]; errors: string[] } {
   if (!deps.fs.exists(dir)) {
     return { entries: [], errors: [] };
   }
 
-  const { paths, errors } = listFiles(dir, deps);
-  const entries: FileEntry[] = [];
+  const { paths, errors } = listMarkdownFiles(dir, deps);
+  const entries: MarkdownEntry[] = [];
 
   for (const path of paths) {
     try {
@@ -383,22 +353,6 @@ function loadEntries(
   }
 
   return { entries, errors };
-}
-
-function loadMarkdownEntries(
-  dir: string,
-  deps: ConfigDeps,
-  listFiles: (dir: string, deps: ConfigDeps) => MarkdownPathsResult,
-): { entries: MarkdownEntry[]; errors: string[] } {
-  return loadEntries(dir, deps, listFiles);
-}
-
-function loadJsonEntries(
-  dir: string,
-  deps: ConfigDeps,
-  listFiles: (dir: string, deps: ConfigDeps) => JsonPathsResult,
-): { entries: JsonEntry[]; errors: string[] } {
-  return loadEntries(dir, deps, listFiles);
 }
 
 function resolveContentContext(options: { deps: ConfigDeps; levels: ConfigLevel[] }): {
@@ -669,52 +623,6 @@ export function parsePrompt(
   return { prompt };
 }
 
-function parseTheme(
-  entry: JsonEntry,
-  scope: ConfigLevelScope,
-): {
-  theme?: ThemeDefinition;
-  error?: string;
-} {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(entry.content) as unknown;
-  } catch (err) {
-    return {
-      error: `${entry.path}: failed to parse json: ${err instanceof Error ? err.message : String(err)}`,
-    };
-  }
-
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return { error: `${entry.path}: theme must be a json object of palette tokens.` };
-  }
-
-  const tokens: Record<string, string> = {};
-  for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
-    if (typeof value !== "string") {
-      continue;
-    }
-    const cleanedKey = key.trim();
-    const cleanedValue = value.trim();
-    if (!cleanedKey) continue;
-    tokens[cleanedKey] = cleanedValue;
-  }
-
-  const id = basename(entry.path, ".json").trim();
-  if (!id) {
-    return { error: `${entry.path}: theme id is missing.` };
-  }
-
-  return {
-    theme: {
-      id,
-      tokens,
-      sourcePath: entry.path,
-      scope,
-    },
-  };
-}
-
 export async function loadUserPersonas(args: {
   basePersonasById: Map<string, Persona>;
   modelResolver: ModelResolver;
@@ -734,7 +642,7 @@ export async function loadUserPersonas(args: {
   }
 
   const personasDir = globalLevel.personasDir;
-  const { entries, errors } = loadMarkdownEntries(personasDir, deps, listMarkdownFiles);
+  const { entries, errors } = loadMarkdownEntries(personasDir, deps);
   const personas: Persona[] = [];
 
   for (const file of entries) {
@@ -779,11 +687,7 @@ export async function loadProjectPersonas(args: {
 
   // Parent-first order, closest directory wins on conflicts.
   for (const level of projectLevels) {
-    const { entries, errors: entryErrors } = loadMarkdownEntries(
-      level.personasDir,
-      deps,
-      listMarkdownFiles,
-    );
+    const { entries, errors: entryErrors } = loadMarkdownEntries(level.personasDir, deps);
     errors.push(...entryErrors);
 
     for (const file of entries) {
@@ -818,7 +722,7 @@ export async function loadUserPrompts(args: { deps: ConfigDeps; levels: ConfigLe
     return { prompts: [], errors: [] };
   }
   const promptsDir = globalLevel.promptsDir;
-  const { entries, errors } = loadMarkdownEntries(promptsDir, deps, listMarkdownFiles);
+  const { entries, errors } = loadMarkdownEntries(promptsDir, deps);
 
   const prompts: PromptTemplate[] = [];
 
@@ -856,11 +760,7 @@ export async function loadProjectPrompts(args: {
 
   // Parent-first order, closest directory wins on conflicts.
   for (const level of projectLevels) {
-    const { entries, errors: entryErrors } = loadMarkdownEntries(
-      level.promptsDir,
-      deps,
-      listMarkdownFiles,
-    );
+    const { entries, errors: entryErrors } = loadMarkdownEntries(level.promptsDir, deps);
     errors.push(...entryErrors);
 
     for (const file of entries) {
@@ -874,72 +774,6 @@ export async function loadProjectPrompts(args: {
   }
 
   return { prompts, errors };
-}
-
-export async function loadUserThemes(args: { deps: ConfigDeps; levels: ConfigLevel[] }): Promise<{
-  themes: ThemeDefinition[];
-  errors: string[];
-}> {
-  const { deps, levels } = resolveContentContext({
-    deps: args.deps,
-    levels: args.levels,
-  });
-  const globalLevel = levels.find((level) => level.scope === "global");
-  if (!globalLevel) {
-    return { themes: [], errors: [] };
-  }
-  const { entries, errors } = loadJsonEntries(globalLevel.themesDir, deps, listJsonFiles);
-
-  const themes: ThemeDefinition[] = [];
-
-  for (const entry of entries) {
-    const result = parseTheme(entry, "global");
-    if (result.theme) {
-      themes.push(result.theme);
-    } else if (result.error) {
-      errors.push(result.error);
-    }
-  }
-
-  return { themes, errors };
-}
-
-export async function loadProjectThemes(args: {
-  deps: ConfigDeps;
-  levels: ConfigLevel[];
-}): Promise<{
-  themes: ThemeDefinition[];
-  errors: string[];
-}> {
-  const { deps, levels } = resolveContentContext({
-    deps: args.deps,
-    levels: args.levels,
-  });
-
-  const projectLevels = levels.filter((level) => level.scope === "project");
-  if (projectLevels.length === 0) {
-    return { themes: [], errors: [] };
-  }
-
-  const themes: ThemeDefinition[] = [];
-  const errors: string[] = [];
-
-  // Parent-first order, closest directory wins on conflicts.
-  for (const level of projectLevels) {
-    const { entries, errors: entryErrors } = loadJsonEntries(level.themesDir, deps, listJsonFiles);
-    errors.push(...entryErrors);
-
-    for (const entry of entries) {
-      const result = parseTheme(entry, "project");
-      if (result.theme) {
-        themes.push(result.theme);
-      } else if (result.error) {
-        errors.push(result.error);
-      }
-    }
-  }
-
-  return { themes, errors };
 }
 
 export async function loadSkillsContent(
@@ -1008,8 +842,6 @@ export async function loadAllContent(
     const userPromptsResult = await loadUserPrompts({ deps, levels });
     const projectPromptsResult = await loadProjectPrompts({ deps, levels });
     const skillsResult = await loadSkillsContent(config, { deps, levels });
-    const userThemesResult = await loadUserThemes({ deps, levels });
-    const projectThemesResult = await loadProjectThemes({ deps, levels });
 
     const allErrors = [
       ...options.modelResolver.errors,
@@ -1019,8 +851,6 @@ export async function loadAllContent(
       ...userPromptsResult.errors,
       ...projectPromptsResult.errors,
       ...skillsResult.errors,
-      ...userThemesResult.errors,
-      ...projectThemesResult.errors,
     ];
 
     const skills = skillsResult.skills;
@@ -1035,20 +865,16 @@ export async function loadAllContent(
 
     return {
       personas,
-      prompts: mergeById(
-        virtualBundle.prompts,
-        userPromptsResult.prompts,
-        projectPromptsResult.prompts,
-      ),
+      prompts: mergeById(userPromptsResult.prompts, projectPromptsResult.prompts),
       skills,
-      themes: mergeById(virtualBundle.themes, userThemesResult.themes, projectThemesResult.themes),
+      themes: virtualBundle.themes,
       errors: allErrors,
     };
   } catch (err) {
     return {
       personas: virtualBundle.personas,
-      prompts: virtualBundle.prompts,
-      skills: virtualBundle.skills,
+      prompts: [],
+      skills: [],
       themes: virtualBundle.themes,
       errors: [`unexpected error loading user content: ${(err as Error).message}`],
     };

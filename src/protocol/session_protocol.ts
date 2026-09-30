@@ -129,13 +129,6 @@ export type SessionProtocolLocalExecutionEnvironmentInput = {
   env?: Record<string, string>;
 };
 
-export type SessionProtocolCloudflareSandboxExecutionEnvironmentInput = {
-  kind: "cloudflare-sandbox";
-  bridgeId: string;
-  sandboxId: string;
-  cwd: string;
-};
-
 export type SessionProtocolFlySpriteExecutionEnvironmentInput = {
   kind: "fly-sprite";
   apiId: string;
@@ -145,7 +138,6 @@ export type SessionProtocolFlySpriteExecutionEnvironmentInput = {
 
 export type SessionProtocolExecutionEnvironmentInput =
   | SessionProtocolLocalExecutionEnvironmentInput
-  | SessionProtocolCloudflareSandboxExecutionEnvironmentInput
   | SessionProtocolFlySpriteExecutionEnvironmentInput;
 
 export type SessionProtocolCreateParams = {
@@ -911,14 +903,6 @@ export type SessionProtocolLocalExecutionEnvironmentSnapshot = {
   env?: Record<string, string>;
 };
 
-export type SessionProtocolCloudflareSandboxExecutionEnvironmentSnapshot = {
-  kind: "cloudflare-sandbox";
-  bridgeId: string;
-  sandboxId: string;
-  cwd: string;
-  home: string;
-};
-
 export type SessionProtocolFlySpriteExecutionEnvironmentSnapshot = {
   kind: "fly-sprite";
   apiId: string;
@@ -929,7 +913,6 @@ export type SessionProtocolFlySpriteExecutionEnvironmentSnapshot = {
 
 export type SessionProtocolExecutionEnvironmentSnapshot =
   | SessionProtocolLocalExecutionEnvironmentSnapshot
-  | SessionProtocolCloudflareSandboxExecutionEnvironmentSnapshot
   | SessionProtocolFlySpriteExecutionEnvironmentSnapshot;
 
 export type SessionProtocolAgentStateSnapshot = {
@@ -2026,15 +2009,6 @@ const sessionProtocolLocalExecutionEnvironmentInputSchema = z
   })
   .strip();
 
-const sessionProtocolCloudflareSandboxExecutionEnvironmentInputSchema = z
-  .object({
-    kind: z.literal("cloudflare-sandbox"),
-    bridgeId: nonEmptyStringSchema,
-    sandboxId: nonEmptyStringSchema,
-    cwd: absolutePathSchema,
-  })
-  .strip();
-
 const sessionProtocolFlySpriteExecutionEnvironmentInputSchema = z
   .object({
     kind: z.literal("fly-sprite"),
@@ -2046,7 +2020,6 @@ const sessionProtocolFlySpriteExecutionEnvironmentInputSchema = z
 
 const sessionProtocolExecutionEnvironmentInputSchema = z.discriminatedUnion("kind", [
   sessionProtocolLocalExecutionEnvironmentInputSchema,
-  sessionProtocolCloudflareSandboxExecutionEnvironmentInputSchema,
   sessionProtocolFlySpriteExecutionEnvironmentInputSchema,
 ]);
 
@@ -2194,16 +2167,6 @@ const sessionProtocolLocalExecutionEnvironmentSnapshotSchema = z
   })
   .strip();
 
-const sessionProtocolCloudflareSandboxExecutionEnvironmentSnapshotSchema = z
-  .object({
-    kind: z.literal("cloudflare-sandbox"),
-    bridgeId: nonEmptyStringSchema,
-    sandboxId: nonEmptyStringSchema,
-    cwd: nonEmptyStringSchema,
-    home: nonEmptyStringSchema,
-  })
-  .strip();
-
 const sessionProtocolFlySpriteExecutionEnvironmentSnapshotSchema = z
   .object({
     kind: z.literal("fly-sprite"),
@@ -2216,7 +2179,6 @@ const sessionProtocolFlySpriteExecutionEnvironmentSnapshotSchema = z
 
 const sessionProtocolExecutionEnvironmentSnapshotSchema = z.discriminatedUnion("kind", [
   sessionProtocolLocalExecutionEnvironmentSnapshotSchema,
-  sessionProtocolCloudflareSandboxExecutionEnvironmentSnapshotSchema,
   sessionProtocolFlySpriteExecutionEnvironmentSnapshotSchema,
 ]);
 
@@ -5335,7 +5297,7 @@ function validateCreateParams(
       : hasIssue(parsed.error, ["executionEnvironment"])
         ? "session.create params.executionEnvironment must be an object"
         : hasIssue(parsed.error, ["executionEnvironment", "kind"])
-          ? "session.create params.executionEnvironment.kind must be 'local', 'cloudflare-sandbox', or 'fly-sprite'"
+          ? "session.create params.executionEnvironment.kind must be 'local' or 'fly-sprite'"
           : hasIssue(parsed.error, ["executionEnvironment", "cwd"])
             ? "session.create params.executionEnvironment.cwd must be an absolute path"
             : hasIssue(parsed.error, ["executionEnvironment", "env"])

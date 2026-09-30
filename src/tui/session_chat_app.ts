@@ -368,19 +368,17 @@ async function createSessionFromPrompt(
   client: TauSdkClient,
   rl: ReturnType<typeof createInterface>,
 ): Promise<TauSdkSession> {
-  const rawKind = (
-    await rl.question("execution kind [local/cloudflare-sandbox/fly-sprite, default local]: ")
-  )
+  const rawKind = (await rl.question("execution kind [local/fly-sprite, default local]: "))
     .trim()
     .toLowerCase();
   const kind =
     rawKind === ""
       ? "local"
-      : rawKind === "local" || rawKind === "cloudflare-sandbox" || rawKind === "fly-sprite"
+      : rawKind === "local" || rawKind === "fly-sprite"
         ? rawKind
         : undefined;
   if (!kind) {
-    throw new Error("execution kind must be local, cloudflare-sandbox, or fly-sprite");
+    throw new Error("execution kind must be local or fly-sprite");
   }
 
   const cwd = (await rl.question("execution cwd: ")).trim();
@@ -392,23 +390,6 @@ async function createSessionFromPrompt(
     return await client.sessions.create({
       executionEnvironment: {
         kind,
-        cwd,
-      },
-      attributes: { source: "tui" },
-    });
-  }
-
-  if (kind === "cloudflare-sandbox") {
-    const bridgeId = (await rl.question("Cloudflare bridge id: ")).trim();
-    const sandboxId = (await rl.question("Cloudflare sandbox id: ")).trim();
-    if (!bridgeId || !sandboxId) {
-      throw new Error("Cloudflare bridge id and sandbox id are required");
-    }
-    return await client.sessions.create({
-      executionEnvironment: {
-        kind,
-        bridgeId,
-        sandboxId,
         cwd,
       },
       attributes: { source: "tui" },

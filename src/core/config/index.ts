@@ -1,5 +1,4 @@
 export type { CommandClientToolConfig } from "./client_tools.js";
-export type { ThemeAppearance, ThemeDefinition, ThemeVariantTokens } from "./content_loader.js";
 export { loadAllContent } from "./content_loader.js";
 export type { ConfigDeps } from "./deps.js";
 export { createDefaultConfigDeps } from "./deps.js";
@@ -12,8 +11,6 @@ export {
   resolvePromptTemplateWithBackend,
 } from "./runtime.js";
 export type {
-  CloudflareSandboxBridgeConfig,
-  CloudflareSandboxConfig,
   Config,
   FlySpritesApiConfig,
   FlySpritesConfig,
@@ -36,6 +33,7 @@ export {
   loadConfig,
   normalizeAutoCompactConfig,
 } from "./schema.js";
+export type { ThemeAppearance, ThemeDefinition, ThemeVariantTokens } from "./theme_variants.js";
 export { resolveThemeTokensById, resolveThemeTokensForAppearance } from "./theme_variants.js";
 export type { VirtualBundle } from "./virtual_bundle.js";
 export { buildVirtualBundle } from "./virtual_bundle.js";

@@ -4290,14 +4290,7 @@ describe("LocalSessionHost", () => {
           path: "/repo/skill",
         },
       ],
-      themes: [
-        {
-          id: "reload-theme",
-          tokens: {},
-          sourcePath: "/repo/.tau/themes/reload-theme.json",
-          scope: "project",
-        },
-      ],
+      themes: [],
       warnings: ["config warning"],
     }));
     const runNodeScript = vi.fn(async () => ({
@@ -5916,11 +5909,11 @@ describe("LocalSessionHost", () => {
         sessionId: "unsupported-env",
         revision: 1,
         executionEnvironment: {
-          kind: "cloudflare-sandbox",
-          bridgeId: "missing",
-          sandboxId: "sandbox-1",
+          kind: "fly-sprite",
+          apiId: "missing",
+          spriteName: "sprite-1",
           cwd: "/repo",
-          home: "/home/sandbox",
+          home: "/home/sprite",
         },
         historyEntries: [],
       }),

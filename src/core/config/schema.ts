@@ -29,7 +29,6 @@ export interface Config {
   apiKeys?: Record<string, string>;
   defaultPersona?: string;
   disableBuiltinPersonas?: boolean;
-  disableBuiltinThemes?: boolean;
   defaultTheme?: string;
   diffTool?: DiffToolConfig;
   builtInDiffTool?: BuiltInDiffToolConfig;
@@ -41,7 +40,6 @@ export interface Config {
   };
   autoCompact?: AutoCompactConfig;
   modelSystemNotices?: Record<string, string>;
-  cloudflareSandbox?: CloudflareSandboxConfig;
   flySprites?: FlySpritesConfig;
   nook?: NookConfig;
   history?: HistoryConfig;
@@ -49,17 +47,6 @@ export interface Config {
 
 export type BuiltInDiffToolConfig = {
   codeTheme?: string;
-};
-
-export type CloudflareSandboxBridgeConfig = {
-  url: string;
-  apiKey?: string;
-  apiKeyEnv?: string;
-  home?: string;
-};
-
-export type CloudflareSandboxConfig = {
-  bridges?: Record<string, CloudflareSandboxBridgeConfig>;
 };
 
 export type FlySpritesApiConfig = {
@@ -219,19 +206,6 @@ const BooleanSchema = z.boolean();
 const AgentContextFilesSchema = z.array(NonEmptyStringSchema);
 const ApiKeyProviderSchema = z.string();
 const ApiKeysSchema = z.object({}).catchall(z.unknown());
-const CloudflareSandboxBridgeSchema = z
-  .object({
-    url: NonEmptyStringSchema,
-    apiKey: NonEmptyStringSchema.optional(),
-    apiKeyEnv: NonEmptyStringSchema.optional(),
-    home: NonEmptyStringSchema.optional(),
-  })
-  .strip();
-const CloudflareSandboxConfigSchema = z
-  .object({
-    bridges: z.record(NonEmptyStringSchema, CloudflareSandboxBridgeSchema).optional(),
-  })
-  .strip();
 const FlySpritesApiSchema = z
   .object({
     baseURL: NonEmptyStringSchema.optional(),
@@ -444,7 +418,6 @@ function validateConfigData(
 
   const scalarResult = parseOptionalFields(data, sourceLabel, [
     ["disableBuiltinPersonas", BooleanSchema, "'disableBuiltinPersonas' must be a boolean."],
-    ["disableBuiltinThemes", BooleanSchema, "'disableBuiltinThemes' must be a boolean."],
     ["defaultTheme", NonEmptyStringSchema, "'defaultTheme' must be a non-empty string."],
   ]);
   Object.assign(config as Record<string, unknown>, scalarResult.values);
@@ -531,15 +504,6 @@ function validateConfigData(
     modelSystemNoticesResult.errors,
   );
 
-  const cloudflareSandboxResult = parseCloudflareSandboxConfig(data.cloudflareSandbox, sourceLabel);
-  assignParsedConfigValue(
-    config,
-    errors,
-    "cloudflareSandbox",
-    cloudflareSandboxResult.config,
-    cloudflareSandboxResult.errors,
-  );
-
   const flySpritesResult = parseFlySpritesConfig(data.flySprites, sourceLabel);
   assignParsedConfigValue(
     config,
@@ -604,30 +568,6 @@ function parseBuiltInDiffToolConfig(
   }
 
   return { config: Object.keys(config).length > 0 ? config : undefined, errors: [] };
-}
-
-function parseCloudflareSandboxConfig(
-  raw: unknown,
-  sourceLabel: string,
-): { config?: CloudflareSandboxConfig; errors: string[] } {
-  if (raw === undefined) {
-    return { errors: [] };
-  }
-
-  const parsed = CloudflareSandboxConfigSchema.safeParse(raw);
-  if (!parsed.success) {
-    return {
-      errors: [
-        `${sourceLabel}: 'cloudflareSandbox' must be an object with a 'bridges' map of bridge configs.`,
-      ],
-    };
-  }
-
-  const bridges = parsed.data.bridges;
-  return {
-    config: bridges && Object.keys(bridges).length > 0 ? { bridges } : undefined,
-    errors: [],
-  };
 }
 
 function parseFlySpritesConfig(
@@ -957,25 +897,6 @@ function mergeSubagentsConfig(
   return merged;
 }
 
-function mergeCloudflareSandboxConfig(
-  target: CloudflareSandboxConfig | undefined,
-  overlay: CloudflareSandboxConfig | undefined,
-): CloudflareSandboxConfig | undefined {
-  if (!target && !overlay) {
-    return undefined;
-  }
-
-  const bridges = new Map<string, CloudflareSandboxBridgeConfig>();
-  for (const [id, bridge] of Object.entries(target?.bridges ?? {})) {
-    bridges.set(id, { ...bridge });
-  }
-  for (const [id, bridge] of Object.entries(overlay?.bridges ?? {})) {
-    bridges.set(id, { ...bridge });
-  }
-
-  return bridges.size > 0 ? { bridges: Object.fromEntries(bridges.entries()) } : undefined;
-}
-
 function mergeFlySpritesConfig(
   target: FlySpritesConfig | undefined,
   overlay: FlySpritesConfig | undefined,
@@ -1020,7 +941,6 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
   let enabledClientTools: string[] | undefined;
   let subagents: Config["subagents"] | undefined;
   let modelSystemNotices: Config["modelSystemNotices"] | undefined;
-  let cloudflareSandbox: CloudflareSandboxConfig | undefined;
   let flySprites: FlySpritesConfig | undefined;
   let nook: NookConfig | undefined;
   let history: HistoryConfig | undefined;
@@ -1048,7 +968,6 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
       merged.autoCompact = mergeOptionalObject(merged.autoCompact, config.autoCompact);
     }
     modelSystemNotices = mergeOptionalObject(modelSystemNotices, config.modelSystemNotices);
-    cloudflareSandbox = mergeCloudflareSandboxConfig(cloudflareSandbox, config.cloudflareSandbox);
     flySprites = mergeFlySpritesConfig(flySprites, config.flySprites);
     if (config.nook !== undefined) {
       nook = { ...config.nook };
@@ -1063,10 +982,6 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
 
     if (config.disableBuiltinPersonas !== undefined) {
       merged.disableBuiltinPersonas = config.disableBuiltinPersonas;
-    }
-
-    if (config.disableBuiltinThemes !== undefined) {
-      merged.disableBuiltinThemes = config.disableBuiltinThemes;
     }
 
     if (config.defaultTheme !== undefined) {
@@ -1103,10 +1018,6 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
 
   if (modelSystemNotices && Object.keys(modelSystemNotices).length > 0) {
     merged.modelSystemNotices = modelSystemNotices;
-  }
-
-  if (cloudflareSandbox) {
-    merged.cloudflareSandbox = cloudflareSandbox;
   }
 
   if (flySprites) {

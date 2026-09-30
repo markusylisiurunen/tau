@@ -54,14 +54,6 @@ async function createInProcessSdkHost(
   const resolvers: ConstructorParameters<typeof CompositeExecutionEnvironmentResolver>[0] = {
     local: localResolver,
   };
-  if (config.cloudflareSandbox?.bridges) {
-    const { CloudflareSandboxExecutionEnvironmentResolver } = await import(
-      "../execution/cloudflare_sandbox_execution_environment.js"
-    );
-    resolvers["cloudflare-sandbox"] = new CloudflareSandboxExecutionEnvironmentResolver({
-      bridges: config.cloudflareSandbox.bridges,
-    });
-  }
   if (config.flySprites?.apis) {
     const { FlySpriteExecutionEnvironmentResolver } = await import(
       "../execution/fly_sprite_execution_environment.js"

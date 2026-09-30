@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { loadAllContent, resolveConfigLevels } from "../dist/core/config/index.js";
-import { loadSkillsForPromptContext } from "../dist/core/config/skills_loader.js";
+import { loadSkillsContent } from "../dist/core/config/skills_loader.js";
 import { loadModelResolver } from "../dist/core/models/catalog.js";
 
 function createConfigDeps({ cwd, home }) {
@@ -149,32 +149,7 @@ describe("skills discovery", () => {
     }
   });
 
-  it("uses the same precedence rules for prompt-context skill loading", async () => {
-    const fx = setupFixture();
-
-    try {
-      const repoRoot = join(fx.home, "repo");
-      writeSkill(join(repoRoot, ".tau", "skills"), "shared", "from tau");
-      writeSkill(join(repoRoot, ".agents", "skills"), "shared", "from agents");
-
-      const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
-      const { skills, errors } = await loadSkillsForPromptContext({
-        config: {},
-        cwd: fx.cwd,
-        deps,
-      });
-      expect(errors).toEqual([]);
-
-      const shared = skills.find((skill) => skill.name === "shared");
-      expect(shared).toBeTruthy();
-      expect(shared.description).toBe("from agents");
-      expect(shared.path).toBe(join(repoRoot, ".agents", "skills", "shared", "SKILL.md"));
-    } finally {
-      fx.cleanup();
-    }
-  });
-
-  it("returns explicit diagnostics for prompt-context parse failures", async () => {
+  it("returns explicit diagnostics for invalid skill names", async () => {
     const fx = setupFixture();
 
     try {
@@ -186,11 +161,13 @@ describe("skills discovery", () => {
       );
 
       const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
-      const { skills, errors } = await loadSkillsForPromptContext({
-        config: {},
-        cwd: fx.cwd,
-        deps,
-      });
+      const { skills, errors } = await loadSkillsContent(
+        {},
+        {
+          deps,
+          levels: resolveConfigLevels(deps, { cwd: fx.cwd }),
+        },
+      );
 
       expect(skills).toEqual([]);
       expect(errors).toHaveLength(1);
@@ -212,11 +189,13 @@ describe("skills discovery", () => {
       );
 
       const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
-      const { skills, errors } = await loadSkillsForPromptContext({
-        config: {},
-        cwd: fx.cwd,
-        deps,
-      });
+      const { skills, errors } = await loadSkillsContent(
+        {},
+        {
+          deps,
+          levels: resolveConfigLevels(deps, { cwd: fx.cwd }),
+        },
+      );
 
       expect(skills).toEqual([]);
       expect(errors).toHaveLength(1);
@@ -238,11 +217,13 @@ describe("skills discovery", () => {
       );
 
       const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
-      const { skills, errors } = await loadSkillsForPromptContext({
-        config: {},
-        cwd: fx.cwd,
-        deps,
-      });
+      const { skills, errors } = await loadSkillsContent(
+        {},
+        {
+          deps,
+          levels: resolveConfigLevels(deps, { cwd: fx.cwd }),
+        },
+      );
 
       expect(skills).toEqual([]);
       expect(errors).toHaveLength(1);

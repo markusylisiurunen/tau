@@ -4,7 +4,6 @@ import { z } from "zod";
 import type { ConfigDeps } from "../config/deps.js";
 import type { ConfigLevel } from "../config/paths.js";
 import type { RemoteModelCatalogSnapshot } from "./remote_catalog.js";
-import { applyTauModelOverrides } from "./tau_model_overrides.js";
 
 type CatalogState = {
   providers: Map<string, Map<string, Model<Api>>>;
@@ -134,7 +133,7 @@ function createCatalogState(remoteCatalog?: RemoteModelCatalogSnapshot): Catalog
       registerModel({
         providers,
         provider,
-        model: applyTauModelOverrides(model),
+        model,
         source: "pi-ai",
       });
     }
@@ -144,7 +143,7 @@ function createCatalogState(remoteCatalog?: RemoteModelCatalogSnapshot): Catalog
     const providerModels = providers.get(provider);
     if (!providerModels) continue;
     for (const model of models) {
-      providerModels.set(model.id, applyTauModelOverrides(structuredClone(model)));
+      providerModels.set(model.id, structuredClone(model));
     }
   }
 

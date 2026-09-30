@@ -18,7 +18,6 @@ import {
   loadModelResolver,
   resolveModel,
 } from "../dist/core/models/catalog.js";
-import { applyTauModelOverrides } from "../dist/core/models/tau_model_overrides.js";
 
 describe("model catalog", () => {
   it("loads pi-ai providers and models", () => {
@@ -33,109 +32,6 @@ describe("model catalog", () => {
     expect(model).toBeTruthy();
     expect(model.provider).toBe("openai");
     expect(model.id).toBe("gpt-5.4");
-  });
-
-  it("loads GPT-5.6 models from pi-ai", () => {
-    const sol = resolveModel("openai", "gpt-5.6-sol");
-    expect(sol).toBeTruthy();
-    expect(sol.provider).toBe("openai");
-    expect(sol.api).toBe("openai-responses");
-    expect(sol.cost).toEqual({
-      input: 4,
-      output: 20,
-      cacheRead: 0.4,
-      cacheWrite: 5,
-      tiers: [
-        {
-          inputTokensAbove: 272000,
-          input: 8,
-          output: 30,
-          cacheRead: 0.8,
-          cacheWrite: 10,
-        },
-      ],
-    });
-    expect(sol.contextWindow).toBe(272000);
-    expect(sol.maxTokens).toBe(128000);
-
-    const terra = resolveModel("openai-codex", "gpt-5.6-terra");
-    expect(terra).toBeTruthy();
-    expect(terra.provider).toBe("openai-codex");
-    expect(terra.api).toBe("openai-codex-responses");
-    expect(terra.cost).toEqual({
-      input: 2,
-      output: 12,
-      cacheRead: 0.2,
-      cacheWrite: 2.5,
-      tiers: [
-        {
-          inputTokensAbove: 272000,
-          input: 4,
-          output: 18,
-          cacheRead: 0.4,
-          cacheWrite: 5,
-        },
-      ],
-    });
-    expect(terra.contextWindow).toBe(272000);
-  });
-
-  it("uses corrected GPT-5.6 Terra and Luna costs across OpenAI providers", () => {
-    const expectedCosts = {
-      "gpt-5.6-terra": {
-        input: 2,
-        output: 12,
-        cacheRead: 0.2,
-        cacheWrite: 2.5,
-        tiers: [
-          {
-            inputTokensAbove: 272000,
-            input: 4,
-            output: 18,
-            cacheRead: 0.4,
-            cacheWrite: 5,
-          },
-        ],
-      },
-      "gpt-5.6-luna": {
-        input: 0.2,
-        output: 1.2,
-        cacheRead: 0.02,
-        cacheWrite: 0.25,
-        tiers: [
-          {
-            inputTokensAbove: 272000,
-            input: 0.4,
-            output: 1.8,
-            cacheRead: 0.04,
-            cacheWrite: 0.5,
-          },
-        ],
-      },
-    };
-
-    for (const provider of ["openai", "openai-codex"]) {
-      for (const [modelId, expectedCost] of Object.entries(expectedCosts)) {
-        expect(resolveModel(provider, modelId)?.cost).toEqual(expectedCost);
-      }
-    }
-  });
-
-  it("keeps GPT-5.6 context windows at 272k across OpenAI providers", () => {
-    for (const modelId of ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]) {
-      expect(resolveModel("openai-codex", modelId)?.contextWindow).toBe(272000);
-      expect(resolveModel("openai", modelId)?.contextWindow).toBe(272000);
-    }
-  });
-
-  it("keeps the Tau model override hook inert", () => {
-    const model = {
-      provider: "openai-codex",
-      id: "gpt-5.6-sol",
-      contextWindow: 272000,
-    };
-
-    expect(applyTauModelOverrides(model)).toBe(model);
   });
 
   it("uses remote pi models as the base catalog", () => {

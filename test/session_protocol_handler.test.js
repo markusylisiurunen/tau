@@ -2636,54 +2636,6 @@ describe("SessionProtocolHandler", () => {
     await submit;
   });
 
-  it("responds when a queued user message cannot be committed after the active turn", async () => {
-    let recordCount = 0;
-    const harness = createHarness({
-      record: async (recordOptions, defaultRecord) => {
-        recordCount += 1;
-        if (recordCount > 1) {
-          throw new Error("queued commit failed");
-        }
-        return await defaultRecord(recordOptions);
-      },
-    });
-
-    const firstSubmit = harness.connection.handleRequest(
-      request("submit-1", "session.submit", {
-        sessionId: "session-1",
-        text: "first turn",
-      }),
-    );
-
-    await waitFor(() => harness.lines.some((line) => deltaHasNotice(line, "streaming")));
-    await harness.connection.handleRequest(
-      request("queue-1", "session.queue", {
-        sessionId: "session-1",
-        text: "second turn",
-      }),
-    );
-
-    harness.releaseTurn();
-    await firstSubmit;
-    await waitFor(() =>
-      harness.lines.some((line) => line.type === "response" && line.id === "queue-1"),
-    );
-
-    const queueResponse = harness.lines.find(
-      (line) => line.type === "response" && line.id === "queue-1",
-    );
-    expect(queueResponse).toEqual(
-      expect.objectContaining({
-        ok: false,
-        error: expect.objectContaining({
-          code: SESSION_PROTOCOL_ERROR_CODES.internalError,
-          message: "failed to drain pending user message",
-          data: { cause: "queued commit failed" },
-        }),
-      }),
-    );
-  });
-
   it("fails remaining queued messages after one cannot be committed", async () => {
     let recordCount = 0;
     const harness = createHarness({

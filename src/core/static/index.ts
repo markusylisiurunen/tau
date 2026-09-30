@@ -42,10 +42,6 @@ function interpolateTemplate(template: string, values: Record<string, string>): 
 
 const DEFAULT_SUBAGENT_WRAPPER_PROMPT = loadStaticPrompt("default-subagent-wrapper").trim();
 
-export function loadDefaultSubagentWrapperPrompt(): string {
-  return DEFAULT_SUBAGENT_WRAPPER_PROMPT;
-}
-
 export function renderDefaultSubagentWrapperPrompt(args: {
   inheritedInstructions: string;
 }): string {

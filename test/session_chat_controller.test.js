@@ -934,6 +934,35 @@ function createIdleSpeechWebSocketFactory() {
   return vi.fn(() => socket);
 }
 
+function createSpawnResult(overrides = {}) {
+  return {
+    stdout: "",
+    stderr: "",
+    output: undefined,
+    exitCode: 0,
+    captureLimitExceeded: false,
+    timedOut: false,
+    aborted: false,
+    closeSignal: null,
+    ...overrides,
+  };
+}
+
+async function createControllerHarness({
+  session = new FakeSession(),
+  view = new FakeView(),
+  ...options
+} = {}) {
+  const controller = new SessionChatController({
+    view,
+    session,
+    snapshot: await session.snapshot(),
+    targetLabel: "ws://host",
+    ...options,
+  });
+  return { session, view, controller };
+}
+
 describe("formatRewindCandidateAge", () => {
   const now = 10 * 24 * 60 * 60 * 1000;
 
@@ -947,12 +976,7 @@ describe("formatRewindCandidateAge", () => {
 
 describe("SessionChatController", () => {
   it("shows delayed history replication through the footer", async () => {
-    const session = new FakeSession();
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      view,
-      session,
-      snapshot: await session.snapshot(),
+    const { session, view, controller } = await createControllerHarness({
       targetLabel: "in-process",
     });
 
@@ -1010,11 +1034,9 @@ describe("SessionChatController", () => {
     });
     const session = new FakeSession(snapshot);
     const view = new FakeView();
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view,
       session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
       configuredClientToolNames: ["notify"],
       themeIds: ["gold"],
     });
@@ -1064,10 +1086,9 @@ describe("SessionChatController", () => {
     });
     const session = new FakeSession(snapshot);
     const view = new FakeView();
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view,
       session,
-      snapshot: await session.snapshot(),
       targetLabel: "in-process",
     });
 
@@ -1119,12 +1140,7 @@ describe("SessionChatController", () => {
   });
 
   it("renders host feedback across a revision gap without adding it to the timeline", async () => {
-    const session = new FakeSession();
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      view,
-      session,
-      snapshot: await session.snapshot(),
+    const { session, view, controller } = await createControllerHarness({
       targetLabel: "in-process",
     });
     controller.start();
@@ -1692,10 +1708,9 @@ describe("SessionChatController", () => {
     });
     const session = new FakeSession(snapshot);
     const view = new FakeView();
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view,
       session,
-      snapshot: await session.snapshot(),
       targetLabel: "in-process",
     });
 
@@ -1791,10 +1806,9 @@ describe("SessionChatController", () => {
     compactedSnapshot.timeline.epoch = 2;
     const session = new FakeSession(runningSnapshot);
     const view = new FakeView();
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view,
       session,
-      snapshot: await session.snapshot(),
       targetLabel: "in-process",
     });
     controller.start();
@@ -2020,10 +2034,9 @@ describe("SessionChatController", () => {
     compactedSnapshot.timeline.epoch = 2;
     const session = new FakeSession(runningSnapshot);
     const view = new FakeView();
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view,
       session,
-      snapshot: await session.snapshot(),
       targetLabel: "in-process",
     });
     controller.start();
@@ -2066,11 +2079,9 @@ describe("SessionChatController", () => {
       ]),
     );
     const view = new FakeView();
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view,
       session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
       themeIds: ["gold"],
     });
 
@@ -2143,11 +2154,9 @@ describe("SessionChatController", () => {
     const submitted = deferred();
     session.submit = vi.fn(async () => await submitted.promise);
     const view = new FakeView();
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view,
       session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -2193,11 +2202,9 @@ describe("SessionChatController", () => {
     const session = new FakeSession();
     session.rejectSubmit = true;
     const view = new FakeView();
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view,
       session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
       themeIds: ["gold"],
     });
 
@@ -2236,11 +2243,9 @@ describe("SessionChatController", () => {
       });
     });
     const view = new FakeView();
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view,
       session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
     });
 
     controller.start();
@@ -2260,11 +2265,9 @@ describe("SessionChatController", () => {
     const session = new FakeSession();
     session.rejectSubmit = true;
     const view = new FakeView();
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view,
       session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
       themeIds: ["gold"],
     });
 
@@ -2322,12 +2325,7 @@ describe("SessionChatController", () => {
   });
 
   it("leaves interrupted-turn feedback to the synchronized session", async () => {
-    const session = new FakeSession();
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      view,
-      session,
-      snapshot: await session.snapshot(),
+    const { session, view, controller } = await createControllerHarness({
       targetLabel: "in-process",
     });
     controller.start();
@@ -2346,11 +2344,9 @@ describe("SessionChatController", () => {
     const session = new FakeSession();
     session.emitSubmitEvents = false;
     const view = new FakeView();
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view,
       session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -2432,11 +2428,9 @@ describe("SessionChatController", () => {
       ]),
     );
     const view = new FakeView();
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view,
       session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
     });
 
     controller.start();
@@ -2471,11 +2465,9 @@ describe("SessionChatController", () => {
       ]),
     );
     const view = new FakeView();
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view,
       session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
     });
 
     controller.start();
@@ -2491,14 +2483,7 @@ describe("SessionChatController", () => {
   });
 
   it("syncs rendered history when a session update arrives from another client", async () => {
-    const session = new FakeSession();
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      view,
-      session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
-    });
+    const { session, view, controller } = await createControllerHarness();
     controller.start();
 
     session.snapshotValue = updateSnapshot(session.snapshotValue, {
@@ -2556,11 +2541,9 @@ describe("SessionChatController", () => {
     });
     const session = new FakeSession(currentSnapshot);
     const view = new FakeView();
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view,
       session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -2587,11 +2570,9 @@ describe("SessionChatController", () => {
     const session = new FakeSession();
     session.snapshot = vi.fn(async () => session.snapshotValue);
     const view = new FakeView();
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view,
       session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -2647,12 +2628,7 @@ describe("SessionChatController", () => {
   });
 
   it("stops visible running state on idle delta before a submitted turn response resolves", async () => {
-    const session = new FakeSession();
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      view,
-      session,
-      snapshot: await session.snapshot(),
+    const { session, view, controller } = await createControllerHarness({
       targetLabel: "in-process",
     });
     controller.start();
@@ -2716,12 +2692,7 @@ describe("SessionChatController", () => {
   });
 
   it("retains editor submissions while manual compaction is active", async () => {
-    const session = new FakeSession();
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      view,
-      session,
-      snapshot: await session.snapshot(),
+    const { session, view, controller } = await createControllerHarness({
       targetLabel: "in-process",
     });
     controller.start();
@@ -2733,12 +2704,7 @@ describe("SessionChatController", () => {
   });
 
   it("submits directly while local speech playback is active", async () => {
-    const session = new FakeSession();
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      view,
-      session,
-      snapshot: await session.snapshot(),
+    const { session, view, controller } = await createControllerHarness({
       targetLabel: "in-process",
     });
     controller.start();
@@ -2756,12 +2722,7 @@ describe("SessionChatController", () => {
   });
 
   it("notifies when a session turn becomes idle", async () => {
-    const session = new FakeSession();
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      view,
-      session,
-      snapshot: await session.snapshot(),
+    const { session, view, controller } = await createControllerHarness({
       targetLabel: "in-process",
     });
     controller.start();
@@ -2777,12 +2738,7 @@ describe("SessionChatController", () => {
   });
 
   it("renders pending queue and steering messages from session pending state", async () => {
-    const session = new FakeSession();
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      view,
-      session,
-      snapshot: await session.snapshot(),
+    const { session, view, controller } = await createControllerHarness({
       targetLabel: "in-process",
     });
     controller.start();
@@ -2816,10 +2772,9 @@ describe("SessionChatController", () => {
     }));
     const view = new FakeView();
     view.editorText = "existing";
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view,
       session,
-      snapshot: await session.snapshot(),
       targetLabel: "in-process",
     });
     controller.start();
@@ -2832,12 +2787,7 @@ describe("SessionChatController", () => {
   });
 
   it("submits steering text as a normal turn while idle", async () => {
-    const session = new FakeSession();
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      view,
-      session,
-      snapshot: await session.snapshot(),
+    const { session, view, controller } = await createControllerHarness({
       targetLabel: "in-process",
     });
     controller.start();
@@ -2850,12 +2800,7 @@ describe("SessionChatController", () => {
   });
 
   it("routes steering through the session protocol while a submitted turn is active", async () => {
-    const session = new FakeSession();
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      view,
-      session,
-      snapshot: await session.snapshot(),
+    const { session, view, controller } = await createControllerHarness({
       targetLabel: "in-process",
     });
     controller.start();
@@ -2892,10 +2837,9 @@ describe("SessionChatController", () => {
       });
     });
     const view = new FakeView();
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view,
       session,
-      snapshot: await session.snapshot(),
       targetLabel: "in-process",
     });
     controller.start();
@@ -2923,12 +2867,7 @@ describe("SessionChatController", () => {
   });
 
   it("does not dispatch or queue commands while a submitted turn response is pending", async () => {
-    const session = new FakeSession();
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      view,
-      session,
-      snapshot: await session.snapshot(),
+    const { session, view, controller } = await createControllerHarness({
       targetLabel: "in-process",
     });
     controller.start();
@@ -3000,11 +2939,9 @@ describe("SessionChatController", () => {
       ]),
     );
     const view = new FakeView();
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view,
       session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -3068,11 +3005,9 @@ describe("SessionChatController", () => {
       }),
     );
     const view = new FakeView();
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view,
       session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
       themeIds: ["gold"],
     });
 
@@ -3889,11 +3824,9 @@ describe("SessionChatController", () => {
     });
     const session = new FakeSession(snapshot);
     const view = new FakeView();
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view,
       session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
     });
 
     controller.start();
@@ -4039,11 +3972,9 @@ describe("SessionChatController", () => {
     });
     const session = new FakeSession(snapshot);
     const view = new FakeView();
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view,
       session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
     });
 
     controller.start();
@@ -4149,11 +4080,9 @@ describe("SessionChatController", () => {
     });
     const session = new FakeSession(snapshot);
     const view = new FakeView();
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view,
       session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
     });
 
     controller.start();
@@ -4260,11 +4189,9 @@ describe("SessionChatController", () => {
 
       const session = new FakeSession(storedSnapshot);
       const view = new FakeView();
-      const controller = new SessionChatController({
+      const { controller } = await createControllerHarness({
         view,
         session,
-        snapshot: await session.snapshot(),
-        targetLabel: "ws://host",
       });
 
       controller.start();
@@ -4457,11 +4384,9 @@ describe("SessionChatController", () => {
     });
     const session = new FakeSession(snapshot);
     const view = new FakeView();
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view,
       session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
     });
 
     controller.start();
@@ -4617,11 +4542,9 @@ describe("SessionChatController", () => {
       },
     };
     const view = new FakeView();
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view,
       session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
     });
 
     controller.start();
@@ -4652,11 +4575,9 @@ describe("SessionChatController", () => {
       }),
     );
     const view = new FakeView();
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view,
       session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
     });
 
     controller.start();
@@ -4701,11 +4622,9 @@ describe("SessionChatController", () => {
       },
     };
     const view = new FakeView();
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view,
       session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
     });
 
     controller.start();
@@ -4781,11 +4700,9 @@ describe("SessionChatController", () => {
       createProtocolExecResult({ output: `${outputLines.join("\n")}\n` }),
     );
     const view = new FakeView();
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view,
       session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -4840,11 +4757,9 @@ describe("SessionChatController", () => {
       createProtocolExecResult({ output: `${outputLines.join("\n")}\n` }),
     );
     const view = new FakeView();
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view,
       session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -4887,11 +4802,9 @@ describe("SessionChatController", () => {
       ]),
     );
     const view = new FakeView();
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view,
       session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -4996,10 +4909,9 @@ describe("SessionChatController", () => {
       };
     });
     const view = new FakeView();
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view,
       session,
-      snapshot: await session.snapshot(),
       targetLabel: "in-process",
     });
     controller.start();
@@ -5062,10 +4974,9 @@ describe("SessionChatController", () => {
       throw new Error("no conversation to compact.");
     });
     const view = new FakeView();
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view,
       session,
-      snapshot: await session.snapshot(),
       targetLabel: "in-process",
     });
     controller.start();
@@ -5085,14 +4996,7 @@ describe("SessionChatController", () => {
   });
 
   it("routes goal controls through the session protocol and reflects goal status", async () => {
-    const session = new FakeSession();
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      view,
-      session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
-    });
+    const { session, view, controller } = await createControllerHarness();
     controller.start();
 
     controller.getInputHandlers().onSubmit("/goal Ship the feature");
@@ -5138,11 +5042,9 @@ describe("SessionChatController", () => {
       return { interrupted: true, isTurnRunning: false };
     });
     const view = new FakeView();
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view,
       session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -5186,11 +5088,9 @@ describe("SessionChatController", () => {
       };
     });
     const view = new FakeView();
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view,
       session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -5208,14 +5108,7 @@ describe("SessionChatController", () => {
   });
 
   it("uses the shared slash command parser for session command dispatch", async () => {
-    const session = new FakeSession();
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      view,
-      session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
-    });
+    const { session, view, controller } = await createControllerHarness();
     controller.start();
 
     controller.getInputHandlers().onSubmit("/reload ignored");
@@ -5235,14 +5128,7 @@ describe("SessionChatController", () => {
   });
 
   it("tracks session editor input modes without command hints", async () => {
-    const session = new FakeSession();
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      view,
-      session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
-    });
+    const { session, view, controller } = await createControllerHarness();
     controller.start();
     const handlers = controller.getInputHandlers();
 
@@ -5261,14 +5147,7 @@ describe("SessionChatController", () => {
   });
 
   it("switches session personas through the session protocol", async () => {
-    const session = new FakeSession();
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      view,
-      session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
-    });
+    const { session, view, controller } = await createControllerHarness();
     controller.start();
 
     controller.getInputHandlers().onSubmit("/persona:persona-2");
@@ -5285,14 +5164,7 @@ describe("SessionChatController", () => {
   });
 
   it("cycles session personas with ctrl+p", async () => {
-    const session = new FakeSession();
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      view,
-      session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
-    });
+    const { session, view, controller } = await createControllerHarness();
     controller.start();
 
     controller.getInputHandlers().onCtrlP();
@@ -5302,57 +5174,28 @@ describe("SessionChatController", () => {
     expect(view.status.editor.personaName).toBe("Persona 2");
   });
 
-  it("cycles session reasoning with shift+tab", async () => {
-    const session = new FakeSession();
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      view,
-      session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
-    });
-    controller.start();
+  it.each([false, true])(
+    "cycles reasoning with shift+tab while streaming=%s",
+    async (isStreaming) => {
+      const { session, view, controller } = await createControllerHarness();
+      controller.start();
+      controller.isStreaming = isStreaming;
 
-    controller.getInputHandlers().onShiftTab();
-    await flush();
+      controller.getInputHandlers().onShiftTab();
+      await flush();
 
-    expect(session.setReasoning).toHaveBeenCalledWith("minimal");
-    expect(view.status.editor.reasoningLabel).toBe("minimal");
-    expect(view.status.editor.reasoning).toBe("minimal");
-  });
-
-  it("changes session reasoning while a turn is running", async () => {
-    const session = new FakeSession();
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      view,
-      session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
-    });
-    controller.start();
-
-    controller.isStreaming = true;
-    controller.getInputHandlers().onShiftTab();
-    await flush();
-
-    expect(session.setReasoning).toHaveBeenCalledWith("minimal");
-    expect(view.status.editor.reasoningLabel).toBe("minimal");
-    expect(view.feedback).not.toContainEqual({
-      text: "cannot change reasoning while a session turn is running",
-      tone: "default",
-    });
-  });
+      expect(session.setReasoning).toHaveBeenCalledWith("minimal");
+      expect(view.status.editor.reasoningLabel).toBe("minimal");
+      expect(view.status.editor.reasoning).toBe("minimal");
+      expect(view.feedback).not.toContainEqual({
+        text: "cannot change reasoning while a session turn is running",
+        tone: "default",
+      });
+    },
+  );
 
   it("inserts session prompt templates locally in the editor", async () => {
-    const session = new FakeSession();
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      view,
-      session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
-    });
+    const { session, view, controller } = await createControllerHarness();
     controller.start();
 
     controller.getInputHandlers().onSubmit("/prompt:fix");
@@ -5364,14 +5207,7 @@ describe("SessionChatController", () => {
   });
 
   it("reloads session content through the session protocol", async () => {
-    const session = new FakeSession();
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      view,
-      session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
-    });
+    const { session, view, controller } = await createControllerHarness();
     controller.start();
 
     controller.getInputHandlers().onSubmit("/reload");
@@ -5404,11 +5240,9 @@ describe("SessionChatController", () => {
     const view = new FakeView();
     view.editorText = "[paste #1 +12 lines]";
     view.getExpandedEditorText = () => "line 1\nline 2";
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view,
       session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -5427,11 +5261,9 @@ describe("SessionChatController", () => {
     const session = new FakeSession();
     const view = new FakeView();
     view.editorText = "   ";
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view,
       session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -5445,14 +5277,7 @@ describe("SessionChatController", () => {
   });
 
   it("cycles session subagent selection with alt+down", async () => {
-    const session = new FakeSession();
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      view,
-      session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
-    });
+    const { session, view, controller } = await createControllerHarness();
     controller.start();
 
     controller.getInputHandlers().onAltDown();
@@ -5465,11 +5290,9 @@ describe("SessionChatController", () => {
     const session = new FakeSession();
     const view = new FakeView();
     view.selectedSubagentId = "subagent-1";
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view,
       session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -5485,14 +5308,7 @@ describe("SessionChatController", () => {
   });
 
   it("warns when ctrl+g has no selected session subagent", async () => {
-    const session = new FakeSession();
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      view,
-      session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
-    });
+    const { session, view, controller } = await createControllerHarness();
     controller.start();
 
     controller.getInputHandlers().onCtrlG();
@@ -5509,11 +5325,9 @@ describe("SessionChatController", () => {
     const session = new FakeSession();
     const view = new FakeView();
     view.selectedSubagentId = "missing-subagent";
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view,
       session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -5528,14 +5342,7 @@ describe("SessionChatController", () => {
   });
 
   it("submits hash-prefixed text as an ordinary user message", async () => {
-    const session = new FakeSession();
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      view,
-      session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
-    });
+    const { session, view, controller } = await createControllerHarness();
     controller.start();
 
     controller.getInputHandlers().onSubmit("# remember to run npm test");
@@ -5554,13 +5361,7 @@ describe("SessionChatController", () => {
   });
 
   it("runs /diff locally while delegating review work through the session protocol", async () => {
-    const session = new FakeSession();
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      view,
-      session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
+    const { session, view, controller } = await createControllerHarness({
       defaultDiffTool: { command: "inline-diff-tool" },
       diffToolLauncher: launchInlineDiffTool,
     });
@@ -5601,11 +5402,9 @@ describe("SessionChatController", () => {
       throw new Error("record failed");
     });
     const view = new FakeView();
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view,
       session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
       defaultDiffTool: { command: "inline-diff-tool" },
       diffToolLauncher: launchInlineDiffTool,
     });
@@ -5659,11 +5458,9 @@ describe("SessionChatController", () => {
       throw new Error("connection closed");
     });
     const view = new FakeView();
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view,
       session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
       defaultDiffTool: { command: "inline-diff-tool" },
       diffToolLauncher: launchInlineDiffTool,
     });
@@ -5743,12 +5540,7 @@ describe("SessionChatController", () => {
   });
 
   it("prefills only an empty TUI editor through the client tool", async () => {
-    const session = new FakeSession();
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      view,
-      session,
-      snapshot: await session.snapshot(),
+    const { session, view, controller } = await createControllerHarness({
       targetLabel: "in-process",
     });
     const tools = createTuiClientTools({ enabled: true, getController: () => controller });
@@ -5887,13 +5679,7 @@ describe("SessionChatController", () => {
   });
 
   it("keeps an active model-launched diff review visible and steerable", async () => {
-    const session = new FakeSession();
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      view,
-      session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
+    const { session, view, controller } = await createControllerHarness({
       defaultDiffTool: { command: "inline-diff-tool" },
       diffToolLauncher: (args) => launchInlineDiffTool({ ...args, returnDelayMs: 100 }),
     });
@@ -5945,13 +5731,7 @@ describe("SessionChatController", () => {
 
   it("routes /listen as a client-side command in session attach", async () => {
     const spawn = vi.fn();
-    const session = new FakeSession();
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      view,
-      session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
+    const { session, view, controller } = await createControllerHarness({
       deps: createMockDeps(spawn, "linux"),
       config: { apiKeys: { openai: "openai-key" } },
     });
@@ -5980,10 +5760,9 @@ describe("SessionChatController", () => {
       const session = new FakeSession();
       const view = new FakeView();
       view.editorText = "draft";
-      const controller = new SessionChatController({
+      const { controller } = await createControllerHarness({
         view,
         session,
-        snapshot: await session.snapshot(),
         targetLabel: "in-process",
       });
       const deferred = Promise.withResolvers();
@@ -6047,16 +5826,7 @@ describe("SessionChatController", () => {
     const webSocketFactory = vi.fn(() => socket);
     const spawn = vi.fn(async (command, _args, options = {}) => {
       if (command === "mktemp") {
-        return {
-          stdout: `${audioPath}\n`,
-          stderr: "",
-          output: undefined,
-          exitCode: 0,
-          captureLimitExceeded: false,
-          timedOut: false,
-          aborted: false,
-          closeSignal: null,
-        };
+        return createSpawnResult({ stdout: `${audioPath}\n` });
       }
       if (command === "ffmpeg") {
         const stdout = new EventEmitter();
@@ -6065,16 +5835,7 @@ describe("SessionChatController", () => {
         return await new Promise((resolve) => {
           options.signal.addEventListener("abort", () => {
             stdout.emit("data", Buffer.from([5, 6]));
-            resolve({
-              stdout: "",
-              stderr: "",
-              output: undefined,
-              exitCode: 0,
-              captureLimitExceeded: false,
-              timedOut: false,
-              aborted: true,
-              closeSignal: null,
-            });
+            resolve(createSpawnResult({ aborted: true }));
           });
         });
       }
@@ -6096,11 +5857,9 @@ describe("SessionChatController", () => {
       view.editorEnabledUpdates.push(enabled);
       editor.setInputEnabled(enabled);
     };
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view,
       session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
       deps: createMockDeps(spawn),
       config: {
         speechToText: { provider: "gemini" },
@@ -6215,16 +5974,7 @@ describe("SessionChatController", () => {
     const pcm = Buffer.from([1, 2, 3, 4]);
     const spawn = vi.fn(async (command, _args, options = {}) => {
       if (command === "mktemp") {
-        return {
-          stdout: `${audioPath}\n`,
-          stderr: "",
-          output: undefined,
-          exitCode: 0,
-          captureLimitExceeded: false,
-          timedOut: false,
-          aborted: false,
-          closeSignal: null,
-        };
+        return createSpawnResult({ stdout: `${audioPath}\n` });
       }
       if (command === "ffmpeg") {
         const stdout = new EventEmitter();
@@ -6232,27 +5982,13 @@ describe("SessionChatController", () => {
         queueMicrotask(() => stdout.emit("data", pcm));
         return await new Promise((resolve) => {
           options.signal.addEventListener("abort", () => {
-            resolve({
-              stdout: "",
-              stderr: "",
-              output: undefined,
-              exitCode: 0,
-              captureLimitExceeded: false,
-              timedOut: false,
-              aborted: true,
-              closeSignal: null,
-            });
+            resolve(createSpawnResult({ aborted: true }));
           });
         });
       }
       throw new Error(`unexpected command: ${command}`);
     });
-    const session = new FakeSession();
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      view,
-      session,
-      snapshot: await session.snapshot(),
+    const { session, view, controller } = await createControllerHarness({
       targetLabel: "in-process",
       deps: createMockDeps(spawn),
       config: { apiKeys: { openai: "openai-key" } },
@@ -6302,16 +6038,7 @@ describe("SessionChatController", () => {
       await writeFile(audioPath, Buffer.alloc(2048, 1));
       const spawn = vi.fn(async (command, _args, options = {}) => {
         if (command === "mktemp") {
-          return {
-            stdout: `${audioPath}\n`,
-            stderr: "",
-            output: undefined,
-            exitCode: 0,
-            captureLimitExceeded: false,
-            timedOut: false,
-            aborted: false,
-            closeSignal: null,
-          };
+          return createSpawnResult({ stdout: `${audioPath}\n` });
         }
         if (command === "ffmpeg") {
           const stdout = new EventEmitter();
@@ -6319,16 +6046,7 @@ describe("SessionChatController", () => {
           queueMicrotask(() => stdout.emit("data", Buffer.from([1, 2])));
           return await new Promise((resolve) => {
             options.signal.addEventListener("abort", () => {
-              resolve({
-                stdout: "",
-                stderr: "",
-                output: undefined,
-                exitCode: 0,
-                captureLimitExceeded: false,
-                timedOut: false,
-                aborted: true,
-                closeSignal: null,
-              });
+              resolve(createSpawnResult({ aborted: true }));
             });
           });
         }
@@ -6339,12 +6057,7 @@ describe("SessionChatController", () => {
         finish: vi.fn(async () => "automatic transcript"),
         abort: vi.fn(),
       };
-      const session = new FakeSession();
-      const view = new FakeView();
-      const controller = new SessionChatController({
-        view,
-        session,
-        snapshot: await session.snapshot(),
+      const { session, view, controller } = await createControllerHarness({
         targetLabel: "in-process",
         deps: createMockDeps(spawn),
         config: { speechToText: { provider }, apiKeys: { openai: "key", google: "key" } },
@@ -6373,11 +6086,9 @@ describe("SessionChatController", () => {
     const session = new FakeSession();
     const view = new FakeView();
     view.editorText = "draft ";
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view,
       session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
     });
     const result = Promise.withResolvers();
     const transcription = { finish: () => result.promise, abort: vi.fn() };
@@ -6418,10 +6129,9 @@ describe("SessionChatController", () => {
       const originalCursor = editor.getCursor();
       view.beginEditorTextPreview = () => editor.beginTextPreview();
       view.setEditorInputEnabled = (enabled) => editor.setInputEnabled(enabled);
-      const controller = new SessionChatController({
+      const { controller } = await createControllerHarness({
         view,
         session,
-        snapshot: await session.snapshot(),
         targetLabel: "in-process",
       });
       const result = Promise.withResolvers();
@@ -6464,27 +6174,13 @@ describe("SessionChatController", () => {
       const stdout = new EventEmitter();
       options.onSpawn({ stdout });
       stdout.emit("data", Buffer.from([1, 2, 3, 4]));
-      return {
-        stdout: "",
-        stderr: "",
-        output: undefined,
-        exitCode: 0,
-        captureLimitExceeded: false,
-        timedOut: false,
-        aborted: false,
-        closeSignal: null,
-      };
+      return createSpawnResult();
     });
     const fetchImpl = vi.fn(
       async () => new Response(JSON.stringify({ text: "retried file transcript" })),
     );
     const webSocketFactory = vi.fn();
-    const session = new FakeSession();
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      view,
-      session,
-      snapshot: await session.snapshot(),
+    const { session, view, controller } = await createControllerHarness({
       targetLabel: "in-process",
       deps: createMockDeps(),
       config: { apiKeys: { openai: "openai-key" } },
@@ -6510,12 +6206,7 @@ describe("SessionChatController", () => {
   it("rejects retained voice input longer than 20 minutes before provider work", async () => {
     const audioPath = join(tmpdir(), `tau-session-listen-too-long-${Date.now()}.wav`);
     await writeFile(audioPath, Buffer.alloc(2048, 1));
-    const session = new FakeSession();
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      view,
-      session,
-      snapshot: await session.snapshot(),
+    const { session, view, controller } = await createControllerHarness({
       targetLabel: "in-process",
       deps: createMockDeps(),
     });
@@ -6543,35 +6234,24 @@ describe("SessionChatController", () => {
     });
   });
 
-  it("retains failed voice input and retries it into the editor", async () => {
-    const audioPath = join(tmpdir(), `tau-session-listen-failure-${Date.now()}.wav`);
+  it.each([
+    ["failure", "service unavailable"],
+    ["empty transcript", "transcription result was empty or malformed"],
+  ])("retains voice input after %s and retries it into the editor", async (outcome, error) => {
+    const audioPath = join(tmpdir(), `tau-session-listen-${outcome}-${Date.now()}.wav`);
     await writeFile(audioPath, Buffer.alloc(2048, 1));
-    const fetchMock = vi
-      .fn()
-      .mockRejectedValueOnce(new Error("service unavailable"))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ text: "recovered transcript" })));
+    const fetchMock = vi.fn();
+    if (outcome === "failure") fetchMock.mockRejectedValueOnce(new Error(error));
+    else fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ text: "" })));
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ text: "recovered transcript" })));
     const spawnImpl = vi.fn(async (_command, _args, options) => {
       const stdout = new EventEmitter();
       options.onSpawn({ stdout });
       stdout.emit("data", Buffer.from([1, 2, 3, 4]));
-      return {
-        stdout: "",
-        stderr: "",
-        output: undefined,
-        exitCode: 0,
-        captureLimitExceeded: false,
-        timedOut: false,
-        aborted: false,
-        closeSignal: null,
-      };
+      return createSpawnResult();
     });
 
-    const session = new FakeSession();
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      view,
-      session,
-      snapshot: await session.snapshot(),
+    const { session, view, controller } = await createControllerHarness({
       targetLabel: "in-process",
       deps: createMockDeps(spawnImpl),
       config: { apiKeys: { openai: "openai-key" } },
@@ -6592,7 +6272,7 @@ describe("SessionChatController", () => {
         text: "failed to transcribe speech",
         tone: "error",
         content: [
-          "service unavailable",
+          error,
           `recording retained at ${audioPath}`,
           "run /listen retry to try again, or /listen discard to delete it",
         ],
@@ -6608,70 +6288,10 @@ describe("SessionChatController", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("retains voice input when a provider returns an empty transcript", async () => {
-    const audioPath = join(tmpdir(), `tau-session-listen-empty-${Date.now()}.wav`);
-    await writeFile(audioPath, Buffer.alloc(2048, 1));
-    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ text: "" })));
-    const spawnImpl = vi.fn(async (_command, _args, options) => {
-      const stdout = new EventEmitter();
-      options.onSpawn({ stdout });
-      stdout.emit("data", Buffer.from([1, 2, 3, 4]));
-      return {
-        stdout: "",
-        stderr: "",
-        output: undefined,
-        exitCode: 0,
-        captureLimitExceeded: false,
-        timedOut: false,
-        aborted: false,
-        closeSignal: null,
-      };
-    });
-    const session = new FakeSession();
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      view,
-      session,
-      snapshot: await session.snapshot(),
-      targetLabel: "in-process",
-      deps: createMockDeps(spawnImpl),
-      config: { apiKeys: { openai: "openai-key" } },
-      speechToTextDeps: { fetchImpl },
-    });
-    controller.listenRecording = {
-      audioPath,
-      startedAt: Date.now(),
-      stopRequested: false,
-      abortController: new AbortController(),
-      completion: Promise.resolve(),
-    };
-
-    try {
-      await controller.stopListenCapture();
-      await expect(readFile(audioPath)).resolves.toHaveLength(2048);
-    } finally {
-      await rm(audioPath, { force: true });
-    }
-
-    expect(view.transcriptNotices.at(-1)).toMatchObject({
-      text: "failed to transcribe speech",
-      content: [
-        "transcription result was empty or malformed",
-        `recording retained at ${audioPath}`,
-        "run /listen retry to try again, or /listen discard to delete it",
-      ],
-    });
-  });
-
   it("discards retained voice input only when requested", async () => {
     const audioPath = join(tmpdir(), `tau-session-listen-discard-${Date.now()}.wav`);
     await writeFile(audioPath, Buffer.alloc(2048, 1));
-    const session = new FakeSession();
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      view,
-      session,
-      snapshot: await session.snapshot(),
+    const { session, view, controller } = await createControllerHarness({
       targetLabel: "in-process",
       deps: createMockDeps(),
     });
@@ -6698,16 +6318,7 @@ describe("SessionChatController", () => {
     await writeFile(retainedPath, Buffer.alloc(2048, 1));
     const spawn = vi.fn(async (command, _args, options = {}) => {
       if (command === "mktemp") {
-        return {
-          stdout: `${nextPath}\n`,
-          stderr: "",
-          output: undefined,
-          exitCode: 0,
-          captureLimitExceeded: false,
-          timedOut: false,
-          aborted: false,
-          closeSignal: null,
-        };
+        return createSpawnResult({ stdout: `${nextPath}\n` });
       }
       if (command === "ffmpeg") {
         const stdout = new EventEmitter();
@@ -6715,26 +6326,16 @@ describe("SessionChatController", () => {
         queueMicrotask(() => stdout.emit("data", Buffer.from([1, 2, 3, 4])));
         return await new Promise((resolve) => {
           options.signal.addEventListener("abort", () => {
-            resolve({
-              stdout: "",
-              stderr: "",
-              output: undefined,
-              exitCode: 0,
-              captureLimitExceeded: false,
-              timedOut: false,
-              aborted: true,
-              closeSignal: null,
-            });
+            resolve(createSpawnResult({ aborted: true }));
           });
         });
       }
       throw new Error(`unexpected command: ${command}`);
     });
     const session = new FakeSession();
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view: new FakeView(),
       session,
-      snapshot: await session.snapshot(),
       targetLabel: "in-process",
       deps: createMockDeps(spawn),
       config: {
@@ -6756,212 +6357,72 @@ describe("SessionChatController", () => {
     }
   });
 
-  it("keeps retained voice input when replacement capture fails to start", async () => {
-    const retainedPath = join(tmpdir(), `tau-session-listen-preserved-${Date.now()}.wav`);
-    const nextPath = join(tmpdir(), `tau-session-listen-failed-${Date.now()}.wav`);
-    await writeFile(retainedPath, Buffer.alloc(2048, 1));
-    const spawn = vi.fn(async (command) => {
-      if (command === "mktemp") {
-        return {
-          stdout: `${nextPath}\n`,
-          stderr: "",
-          output: undefined,
-          exitCode: 0,
-          captureLimitExceeded: false,
-          timedOut: false,
-          aborted: false,
-          closeSignal: null,
-        };
-      }
-      if (command === "ffmpeg") {
-        return {
-          stdout: "",
-          stderr: "audio device unavailable",
-          output: undefined,
-          exitCode: 1,
-          captureLimitExceeded: false,
-          timedOut: false,
-          aborted: false,
-          closeSignal: null,
-        };
-      }
-      throw new Error(`unexpected command: ${command}`);
-    });
-    const session = new FakeSession();
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      view,
-      session,
-      snapshot: await session.snapshot(),
-      targetLabel: "in-process",
-      deps: createMockDeps(spawn),
-      config: {
-        speechToText: { provider: "gemini" },
-        apiKeys: { google: "gemini-key" },
-      },
-      speechToTextDeps: { webSocketFactory: createIdleSpeechWebSocketFactory() },
-    });
-    controller.retainedListenAudio = { audioPath: retainedPath, durationMs: 1_000 };
-
-    try {
-      await controller.onUserInput("/listen");
-      await expect(readFile(retainedPath)).resolves.toHaveLength(2048);
-    } finally {
-      await rm(retainedPath, { force: true });
-      await rm(nextPath, { force: true });
-    }
-
-    expect(controller.retainedListenAudio).toEqual({ audioPath: retainedPath, durationMs: 1_000 });
-    expect(view.transcriptNotices.at(-1)).toEqual({
-      text: "failed to start recording",
-      tone: "error",
-      content: ["ffmpeg failed to start recording: audio device unavailable"],
-    });
-  });
-
-  it("times out stalled recording startup without deleting retained voice input", async () => {
-    const retainedPath = join(tmpdir(), `tau-session-listen-timeout-retained-${Date.now()}.wav`);
-    const nextPath = join(tmpdir(), `tau-session-listen-timeout-next-${Date.now()}.wav`);
-    await writeFile(retainedPath, Buffer.alloc(2048, 1));
-    const spawn = vi.fn(async (command, _args, options = {}) => {
-      if (command === "mktemp") {
-        return {
-          stdout: `${nextPath}\n`,
-          stderr: "",
-          output: undefined,
-          exitCode: 0,
-          captureLimitExceeded: false,
-          timedOut: false,
-          aborted: false,
-          closeSignal: null,
-        };
-      }
-      if (command === "ffmpeg") {
-        options.onSpawn({ stdout: new EventEmitter() });
-        return await new Promise((resolve) => {
-          options.signal.addEventListener("abort", () => {
-            resolve({
-              stdout: "",
-              stderr: "",
-              output: undefined,
-              exitCode: null,
-              captureLimitExceeded: false,
-              timedOut: false,
-              aborted: true,
-              closeSignal: "SIGTERM",
-            });
-          });
-        });
-      }
-      throw new Error(`unexpected command: ${command}`);
-    });
-    const session = new FakeSession();
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      view,
-      session,
-      snapshot: await session.snapshot(),
-      targetLabel: "in-process",
-      deps: createMockDeps(spawn),
-      config: {
-        speechToText: { provider: "gemini" },
-        apiKeys: { google: "gemini-key" },
-      },
-      speechToTextDeps: { webSocketFactory: createIdleSpeechWebSocketFactory() },
-    });
-    controller.retainedListenAudio = { audioPath: retainedPath, durationMs: 1_000 };
-
-    vi.useFakeTimers();
-    try {
-      const start = controller.onUserInput("/listen");
-      await vi.advanceTimersByTimeAsync(0);
-      await vi.advanceTimersByTimeAsync(LISTEN_CAPTURE_START_TIMEOUT_MS);
-      await start;
-      await expect(readFile(retainedPath)).resolves.toHaveLength(2048);
-    } finally {
-      vi.useRealTimers();
-      await rm(retainedPath, { force: true });
-      await rm(nextPath, { force: true });
-    }
-
-    expect(controller.retainedListenAudio).toEqual({ audioPath: retainedPath, durationMs: 1_000 });
-    expect(view.transcriptNotices.at(-1)).toEqual({
-      text: "failed to start recording",
-      tone: "error",
-      content: ["timed out waiting for microphone audio"],
-    });
-  });
-
-  it("cancels stalled recording startup during shutdown", async () => {
-    const retainedPath = join(tmpdir(), `tau-session-listen-cancel-retained-${Date.now()}.wav`);
-    const nextPath = join(tmpdir(), `tau-session-listen-cancel-next-${Date.now()}.wav`);
+  it.each([
+    ["failure", "ffmpeg failed to start recording: audio device unavailable"],
+    ["timeout", "timed out waiting for microphone audio"],
+    ["shutdown", undefined],
+  ])("keeps retained voice input after recording startup %s", async (outcome, error) => {
+    const retainedPath = join(tmpdir(), `tau-session-listen-${outcome}-retained-${Date.now()}.wav`);
+    const nextPath = join(tmpdir(), `tau-session-listen-${outcome}-next-${Date.now()}.wav`);
     await writeFile(retainedPath, Buffer.alloc(2048, 1));
     let captureSignal;
     const spawn = vi.fn(async (command, _args, options = {}) => {
-      if (command === "mktemp") {
-        return {
-          stdout: `${nextPath}\n`,
-          stderr: "",
-          output: undefined,
-          exitCode: 0,
-          captureLimitExceeded: false,
-          timedOut: false,
-          aborted: false,
-          closeSignal: null,
-        };
-      }
+      if (command === "mktemp") return createSpawnResult({ stdout: `${nextPath}\n` });
       if (command === "ffmpeg") {
+        if (outcome === "failure") {
+          return createSpawnResult({ stderr: "audio device unavailable", exitCode: 1 });
+        }
         captureSignal = options.signal;
         options.onSpawn({ stdout: new EventEmitter() });
         return await new Promise((resolve) => {
           options.signal.addEventListener("abort", () => {
-            resolve({
-              stdout: "",
-              stderr: "",
-              output: undefined,
-              exitCode: null,
-              captureLimitExceeded: false,
-              timedOut: false,
-              aborted: true,
-              closeSignal: "SIGTERM",
-            });
+            resolve(createSpawnResult({ exitCode: null, aborted: true, closeSignal: "SIGTERM" }));
           });
         });
       }
       throw new Error(`unexpected command: ${command}`);
     });
-    const session = new FakeSession();
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      view,
-      session,
-      snapshot: await session.snapshot(),
+    const { view, controller } = await createControllerHarness({
       targetLabel: "in-process",
       deps: createMockDeps(spawn),
-      config: {
-        speechToText: { provider: "gemini" },
-        apiKeys: { google: "gemini-key" },
-      },
+      config: { speechToText: { provider: "gemini" }, apiKeys: { google: "gemini-key" } },
       speechToTextDeps: { webSocketFactory: createIdleSpeechWebSocketFactory() },
     });
     controller.retainedListenAudio = { audioPath: retainedPath, durationMs: 1_000 };
 
+    if (outcome === "timeout") vi.useFakeTimers();
     try {
       const start = controller.onUserInput("/listen");
-      await waitUntil(() => captureSignal !== undefined);
-      await controller.dispose();
+      if (outcome === "timeout") {
+        await vi.advanceTimersByTimeAsync(0);
+        await vi.advanceTimersByTimeAsync(LISTEN_CAPTURE_START_TIMEOUT_MS);
+      } else if (outcome === "shutdown") {
+        await waitUntil(() => captureSignal !== undefined);
+        await controller.dispose();
+        expect(captureSignal.aborted).toBe(true);
+      }
       await start;
       await expect(readFile(retainedPath)).resolves.toHaveLength(2048);
+      expect(controller.retainedListenAudio).toEqual({
+        audioPath: retainedPath,
+        durationMs: 1_000,
+      });
+      if (error) {
+        expect(view.transcriptNotices.at(-1)).toEqual({
+          text: "failed to start recording",
+          tone: "error",
+          content: [error],
+        });
+      } else {
+        expect(view.transcriptNotices).not.toContainEqual(
+          expect.objectContaining({ text: "failed to start recording" }),
+        );
+      }
     } finally {
+      if (outcome === "timeout") vi.useRealTimers();
       await rm(retainedPath, { force: true });
       await rm(nextPath, { force: true });
     }
-
-    expect(captureSignal.aborted).toBe(true);
-    expect(controller.retainedListenAudio).toEqual({ audioPath: retainedPath, durationMs: 1_000 });
-    expect(view.transcriptNotices).not.toContainEqual(
-      expect.objectContaining({ text: "failed to start recording" }),
-    );
   });
 
   it.each(["capture shutdown", "audio read"])(
@@ -6973,10 +6434,9 @@ describe("SessionChatController", () => {
       const session = new FakeSession();
       const view = new FakeView();
       view.editorText = "draft ";
-      const controller = new SessionChatController({
+      const { controller } = await createControllerHarness({
         view,
         session,
-        snapshot: await session.snapshot(),
         targetLabel: "in-process",
       });
       const capture = Promise.withResolvers();
@@ -7034,10 +6494,9 @@ describe("SessionChatController", () => {
     const audioPath = join(tmpdir(), `tau-session-listen-shutdown-${Date.now()}.wav`);
     await writeFile(audioPath, Buffer.alloc(2048, 1));
     const session = new FakeSession();
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view: new FakeView(),
       session,
-      snapshot: await session.snapshot(),
       targetLabel: "in-process",
       deps: createMockDeps(),
     });
@@ -7052,13 +6511,7 @@ describe("SessionChatController", () => {
   });
 
   it("routes /speak as a client-side command in session attach", async () => {
-    const session = new FakeSession();
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      view,
-      session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
+    const { session, view, controller } = await createControllerHarness({
       deps: createMockDeps(),
     });
     controller.start();
@@ -7093,16 +6546,7 @@ describe("SessionChatController", () => {
     stdin.end = vi.fn((callback) => {
       stdin.writableEnded = true;
       callback();
-      player.resolve({
-        stdout: "",
-        stderr: "",
-        output: undefined,
-        exitCode: 0,
-        captureLimitExceeded: false,
-        timedOut: false,
-        aborted: false,
-        closeSignal: null,
-      });
+      player.resolve(createSpawnResult());
     });
     const spawn = vi.fn((_cmd, _args, options) => {
       options.onSpawn?.({ stdin });
@@ -7123,11 +6567,9 @@ describe("SessionChatController", () => {
       ]),
     );
     const view = new FakeView();
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view,
       session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
       deps: createMockDeps(spawn),
       config: { apiKeys: { google: "gemini-key" } },
     });
@@ -7239,16 +6681,9 @@ describe("SessionChatController", () => {
             "abort",
             () => {
               releasePlayback = () =>
-                resolve({
-                  stdout: "",
-                  stderr: "",
-                  output: undefined,
-                  exitCode: null,
-                  captureLimitExceeded: false,
-                  timedOut: false,
-                  aborted: true,
-                  closeSignal: "SIGTERM",
-                });
+                resolve(
+                  createSpawnResult({ exitCode: null, aborted: true, closeSignal: "SIGTERM" }),
+                );
             },
             { once: true },
           );
@@ -7395,16 +6830,7 @@ describe("SessionChatController", () => {
       const rejection = expect(playback).rejects.toThrow("ffplay failed: audio sink closed");
 
       await vi.waitFor(() => expect(stdin.write).toHaveBeenCalledOnce());
-      player.resolve({
-        stdout: "",
-        stderr: "audio sink closed",
-        output: undefined,
-        exitCode: 1,
-        captureLimitExceeded: false,
-        timedOut: false,
-        aborted: false,
-        closeSignal: null,
-      });
+      player.resolve(createSpawnResult({ stderr: "audio sink closed", exitCode: 1 }));
 
       await rejection;
     } finally {
@@ -7426,16 +6852,7 @@ describe("SessionChatController", () => {
     });
     const spawn = vi.fn(async (_command, _args, options) => {
       options.onSpawn?.({ stdin });
-      return {
-        stdout: "",
-        stderr: "audio open failed",
-        output: undefined,
-        exitCode: 0,
-        captureLimitExceeded: false,
-        timedOut: false,
-        aborted: false,
-        closeSignal: null,
-      };
+      return createSpawnResult({ stderr: "audio open failed" });
     });
     const fetchMock = vi
       .fn()
@@ -7480,13 +6897,7 @@ describe("SessionChatController", () => {
   });
 
   it("exposes session catalog data for autocomplete", async () => {
-    const session = new FakeSession();
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      view,
-      session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
+    const { session, view, controller } = await createControllerHarness({
       themeIds: ["gold"],
     });
 
@@ -7798,11 +7209,9 @@ describe("SessionChatController", () => {
       ]),
     );
     const view = new FakeView();
-    const controller = new SessionChatController({
+    const { controller } = await createControllerHarness({
       view,
       session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
     });
     controller.start();
 
@@ -7828,14 +7237,7 @@ describe("SessionChatController", () => {
   });
 
   it("warns when there are no session user messages to rewind", async () => {
-    const session = new FakeSession();
-    const view = new FakeView();
-    const controller = new SessionChatController({
-      view,
-      session,
-      snapshot: await session.snapshot(),
-      targetLabel: "ws://host",
-    });
+    const { session, view, controller } = await createControllerHarness();
     controller.start();
 
     controller.getInputHandlers().onSubmit("/rewind");

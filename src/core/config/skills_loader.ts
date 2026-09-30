@@ -2,7 +2,6 @@ import { join } from "node:path";
 import type { Skill } from "../types.js";
 import type { ConfigDeps } from "./deps.js";
 import type { ConfigLevel } from "./paths.js";
-import { resolveConfigLevels } from "./paths.js";
 import type { Config } from "./schema.js";
 import { parseSkill } from "./skill_parser.js";
 
@@ -91,16 +90,4 @@ export async function loadSkillsContent(
   );
 
   return { skills, errors };
-}
-
-export async function loadSkillsForPromptContext(args: {
-  config?: Config;
-  cwd: string;
-  deps: ConfigDeps;
-}): Promise<SkillsLoadResult> {
-  const levels = resolveConfigLevels(args.deps, { cwd: args.cwd });
-  return loadSkillsContent(args.config, {
-    deps: args.deps,
-    levels,
-  });
 }

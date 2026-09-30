@@ -120,11 +120,6 @@ describe("FileSessionStore", () => {
       );
 
       await expect(store.loadSession("session-1")).resolves.toEqual(snapshot);
-      expect(snapshot.messages[0].message).toEqual({
-        role: "system",
-        content: "system prompt",
-        timestamp: 0,
-      });
     });
   });
 

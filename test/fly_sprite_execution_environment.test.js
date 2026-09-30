@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
-import { personas } from "../dist/core/personas.js";
 import {
   createFlySpriteToolExecutionBackend,
   FlySpriteExecutionEnvironment,
@@ -263,89 +262,6 @@ describe("Fly Sprite execution environment", () => {
       spriteName: "sprite-1",
       cwd: "/home/sprite/repo",
       home: "/home/sprite",
-    });
-  });
-
-  it("resolves prompt context and machine metadata through the execution backend", async () => {
-    const nodeScriptCalls = [];
-    const backend = {
-      async runNodeScript(script, args, options) {
-        nodeScriptCalls.push({ script, args, options });
-        return {
-          output: JSON.stringify({
-            platform: "linux",
-            repoRoot: "/home/sprite/repo",
-            agentsFiles: [
-              { path: "/home/sprite/repo/AGENTS.md", content: "repo instructions" },
-              { path: "/home/sprite/AGENTS.md", content: "sprite home instructions" },
-            ],
-            childAgentsFiles: ["/home/sprite/repo/src/AGENTS.md"],
-          }),
-          exitCode: 0,
-          truncated: false,
-        };
-      },
-      async readFile(path) {
-        if (path === "/home/sprite/repo/AGENTS.md") {
-          return { path, content: "repo instructions" };
-        }
-        if (path === "/home/sprite/AGENTS.md") {
-          return { path, content: "sprite home instructions" };
-        }
-        if (path === "/home/sprite/repo/src/AGENTS.md") {
-          return { path, content: "nested instructions" };
-        }
-        throw new Error(`missing ${path}`);
-      },
-      async readFileBinary() {
-        throw new Error("readFileBinary should not be called for prompt context");
-      },
-      async writeFile() {
-        throw new Error("writeFile should not be called for prompt context");
-      },
-      async listDir(path) {
-        throw new Error(`listDir should not be called for prompt context: ${path}`);
-      },
-    };
-    const environment = new FlySpriteExecutionEnvironment({
-      apiId: "default",
-      spriteName: "sprite-1",
-      cwd: "/home/sprite/repo",
-      home: "/home/sprite",
-      backend,
-    });
-
-    const runtimeContext = await environment.resolveRuntimeContext({
-      cwd: "/home/sprite/repo",
-      persona: personas[0],
-      discoveredSkills: [],
-      includeAgentContext: true,
-      agentContextFiles: [],
-    });
-
-    expect(runtimeContext.promptBootstrap.promptContext.cwd).toBe("/home/sprite/repo");
-    expect(runtimeContext.promptBootstrap.agentsFiles).toEqual([
-      "/home/sprite/repo/AGENTS.md",
-      "/home/sprite/AGENTS.md",
-    ]);
-    expect(runtimeContext.promptBootstrap.promptContext.projectContextBlock).toContain(
-      "repo instructions",
-    );
-    expect(runtimeContext.promptBootstrap.promptContext.projectContextBlock).toContain(
-      "sprite home instructions",
-    );
-    expect(runtimeContext.promptBootstrap.promptContext.projectContextBlock).toContain(
-      "/home/sprite/repo/src/AGENTS.md",
-    );
-    expect(runtimeContext.promptBootstrap.promptContext).toMatchObject({
-      repoRoot: "/home/sprite/repo",
-      platform: "linux",
-    });
-    expect(nodeScriptCalls).toHaveLength(1);
-    expect(nodeScriptCalls[0].args[0]).toBe("/home/sprite/repo");
-    expect(nodeScriptCalls[0].options).toMatchObject({
-      cwd: "/home/sprite/repo",
-      maxCaptureBytes: 24 * 1024 * 1024,
     });
   });
 

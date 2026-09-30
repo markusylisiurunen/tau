@@ -1,12 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  createDiffReviewErrorResponse,
-  createDiffReviewSuccessResponse,
   DIFF_REVIEW_ERROR_CODES,
-  DIFF_REVIEW_METHODS,
   DIFF_REVIEW_PROTOCOL_VERSION,
   parseDiffReviewRequestLine,
-  serializeDiffReviewMessage,
   validateDiffReviewParams,
 } from "../src/core/diff_review/protocol.ts";
 
@@ -174,22 +170,5 @@ describe("diff_review protocol", () => {
       ok: false,
       error: expect.objectContaining({ code: DIFF_REVIEW_ERROR_CODES.invalidParams }),
     });
-  });
-
-  it("serializes success and error responses", () => {
-    const success = createDiffReviewSuccessResponse("req-1", {
-      protocolVersion: DIFF_REVIEW_PROTOCOL_VERSION,
-      sessionId: "session-1",
-      methods: [...DIFF_REVIEW_METHODS],
-      alreadyInitialized: false,
-    });
-    const failure = createDiffReviewErrorResponse(
-      "req-2",
-      DIFF_REVIEW_ERROR_CODES.unauthorized,
-      "bad token",
-    );
-
-    expect(JSON.parse(serializeDiffReviewMessage(success))).toEqual(success);
-    expect(JSON.parse(serializeDiffReviewMessage(failure))).toEqual(failure);
   });
 });

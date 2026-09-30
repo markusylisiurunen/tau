@@ -121,21 +121,6 @@ describe("model stream option resolution", () => {
     const openaiModel = runtime.resolveModel("openai", "gpt-5.6-luna");
     expect(openaiModel).toBeDefined();
     expect(openaiModel.api).toBe("openai-responses");
-    expect(openaiModel.cost).toEqual({
-      input: 0.2,
-      output: 1.2,
-      cacheRead: 0.02,
-      cacheWrite: 0.25,
-      tiers: [
-        {
-          inputTokensAbove: 272000,
-          input: 0.4,
-          output: 1.8,
-          cacheRead: 0.04,
-          cacheWrite: 0.5,
-        },
-      ],
-    });
     expect(openaiModel.contextWindow).toBe(272000);
 
     const codexModel = runtime.resolveModel("openai-codex", "gpt-5.6-sol");

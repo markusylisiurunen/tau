@@ -25,7 +25,7 @@ Project and global content can change which persona ids are available. A configu
 | --- | --- | --- | --- | --- |
 | `apiKeys` | Object of string values | Global, project | Merge by provider id | Host or feature consumer; `/reload` for session runtime keys, process restart for environment changes |
 | `defaultPersona` | Non-empty string | Global, project | Most-specific wins | Session host; new session |
-| `speech` | Object with optional `voiceId` | Global, project | Merge by field | TUI client or Telegram runner; process restart |
+| `speech` | Object with optional `voiceId` and `recordingShortcut` | Global, project | Merge by field | TUI client or Telegram runner; process restart |
 | `defaultTheme` | Non-empty string | Global, project | Most-specific wins | TUI client; client restart |
 | `clientTools` | Array of objects | Global only | One global definition list | Owning client; TUI restart or new Telegram session client |
 | `enabledClientTools` | String array | Project only | Most-specific project list | Owning client; TUI restart or new Telegram session client |
@@ -144,6 +144,18 @@ Controls `/speak` and Telegram `/tts_on` voice selection. Set `voiceId` to a non
   }
 }
 ```
+
+For terminal recording, `recordingShortcut` replaces Ctrl+Y. Its required `key` is a single printable, non-whitespace character, `ctrl+y`, or `f1` through `f12`. Its required `gesture` is `press` or `double-tap`:
+
+```json
+{
+  "speech": {
+    "recordingShortcut": { "key": "§", "gesture": "double-tap" }
+  }
+}
+```
+
+A double tap must arrive within 300 ms. For printable double-tap bindings, an unmatched first tap inserts the character after that delay; another key inserts it immediately before processing the new input. Single-press bindings reserve the character. Bracketed paste never triggers recording. Keyboard auto-repeat can count as repeated taps. Recording shortcuts apply only to the TUI, not Telegram.
 
 Without an override, Tau looks up Maisie (`QtY3JBOUKEB5xzrRfOKc`) before synthesis and tries Caleb (`AaOhDHYJ1XLZk74lXhdE`) only if ElevenLabs reports that Maisie was not found. If neither is available, speech fails. A configured voice is used exclusively: an unavailable custom voice is an error, not a request to use a default.
 

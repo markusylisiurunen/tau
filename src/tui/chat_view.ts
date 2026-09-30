@@ -1,6 +1,7 @@
 import type { AutocompleteProvider, Component } from "@earendil-works/pi-tui";
 import { Spacer, TuiMainScreen } from "@earendil-works/pi-tui";
 import { resolveThemeTokensForAppearance, type ThemeDefinition } from "../core/config/index.js";
+import type { RecordingShortcut } from "../core/config/schema.js";
 import type { SubagentEvent } from "../core/subagents/types.js";
 import type { ReasoningEffort } from "../core/types.js";
 import type {
@@ -50,7 +51,8 @@ export type ChatViewInputHandlers = {
   onShiftTab?: () => void;
   onCtrlP?: () => void;
   onCtrlS?: () => void;
-  onCtrlY?: () => void;
+  onToggleRecording?: () => void;
+  recordingShortcut?: RecordingShortcut;
   onEscape?: () => void;
   onAltUp?: () => void;
   onAltDown?: () => void;
@@ -163,6 +165,7 @@ export class TuiChatView implements ChatView {
   }
 
   stop(): void {
+    this.editor.setInputEnabled(false);
     this.setRecordingIndicatorActive(false);
     this.footer.dispose();
 
@@ -382,7 +385,8 @@ export class TuiChatView implements ChatView {
     this.editor.onShiftTab = handlers.onShiftTab;
     this.editor.onCtrlP = handlers.onCtrlP;
     this.editor.onCtrlS = handlers.onCtrlS;
-    this.editor.onCtrlY = handlers.onCtrlY;
+    this.editor.onToggleRecording = handlers.onToggleRecording;
+    this.editor.setRecordingShortcut(handlers.recordingShortcut);
     this.editor.onEscape = handlers.onEscape;
     this.editor.onAltUp = handlers.onAltUp;
     this.editor.onAltDown = handlers.onAltDown;

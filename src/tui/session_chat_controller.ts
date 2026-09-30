@@ -191,6 +191,9 @@ export class SessionChatController {
   private submissionHiddenSystemMessages: string[] = [];
   private pendingEditorMutations = 0;
   private speechActivityLabel?: string;
+  private autoSpeak = false;
+  private pendingAutoSpeak?: AssistantMessage;
+  private lastAutoSpeakMessageId?: string;
   private speakTask?: {
     abortController: AbortController;
     completion: Promise<void>;
@@ -225,6 +228,7 @@ export class SessionChatController {
       reload: () => this.reloadContent(),
       listen: (action) => this.handleListenCommand(action),
       speak: () => this.speakLastAssistantMessage(),
+      autoSpeak: (enabled) => this.setAutoSpeak(enabled),
       persona: (id) => this.setPersona(id),
       prompt: (id) => this.insertPrompt(id),
       theme: (id) => this.switchTheme(id),
@@ -300,7 +304,8 @@ export class SessionChatController {
       onShiftTab: () => void this.cycleReasoningLevel(),
       onCtrlP: () => void this.cyclePersonality(),
       onCtrlS: () => void this.stashEditorToClipboard(),
-      onCtrlY: () => void this.toggleListenCapture(),
+      onToggleRecording: () => void this.toggleListenCapture(),
+      recordingShortcut: this.config.speech?.recordingShortcut,
       onDisabledSubmit: (mode) => {
         if (this.listenRecording && !this.listenTransition) {
           void this.runListenTransition(() => this.stopListenCapture(mode));
@@ -462,6 +467,9 @@ export class SessionChatController {
         contextFiles: this.getContextFilePaths(),
         skills: this.snapshot.catalog.skills,
         themes: this.themeIds,
+        recordingShortcut: this.config.speech?.recordingShortcut
+          ? `${this.config.speech.recordingShortcut.gesture === "double-tap" ? "double-tap " : ""}${this.config.speech.recordingShortcut.key}`
+          : "ctrl+y",
         formatPath: (path) =>
           formatPathForSessionDisplay(path, this.snapshot.executionEnvironment.home),
       }),
@@ -730,8 +738,9 @@ export class SessionChatController {
     this.refreshStatus();
 
     try {
-      await task();
+      const result = await task();
       await this.syncFromSessionSnapshot();
+      if (result.turn.status === "completed") this.queueAutoSpeak();
     } catch (error) {
       this.view.addTranscriptNotice("failed to run assistant turn", "error", [
         formatSessionError(error),
@@ -746,6 +755,7 @@ export class SessionChatController {
   }
 
   private async interrupt(): Promise<void> {
+    this.pendingAutoSpeak = undefined;
     if (this.interruptLifecycle.interruptActiveTask()) {
       this.view.showFooterNotice("interrupted", "default");
       return;
@@ -844,7 +854,14 @@ export class SessionChatController {
       return;
     }
 
-    await this.runListenTransition(() => this.startListenCapture());
+    this.pendingAutoSpeak = undefined;
+    await this.runListenTransition(async () => {
+      if (this.speakTask) {
+        this.speakTask.abortController.abort();
+        await this.speakTask.completion.catch(() => {});
+      }
+      if (!this.disposed) await this.startListenCapture();
+    });
   }
 
   private async runListenTransition(task: () => Promise<void>): Promise<void> {
@@ -1338,6 +1355,9 @@ export class SessionChatController {
       this.ephemeralUnsubscribe?.();
       this.pendingUserMessagesUnsubscribe?.();
       this.subagentActivitiesUnsubscribe?.();
+      this.autoSpeak = false;
+      this.pendingAutoSpeak = undefined;
+      this.lastAutoSpeakMessageId = undefined;
       this.session = nextSession;
       this.snapshot = nextSnapshot;
       this.subagentActivities = nextSession.subagentActivities();
@@ -1447,7 +1467,29 @@ export class SessionChatController {
       return;
     }
 
+    if (delta.toRevision <= this.snapshot.revision) return;
+    if (delta.delta.type === "snapshot.reset") this.pendingAutoSpeak = undefined;
+    const previousTurns = this.snapshot.turns;
     if (this.tryApplySdkDelta(delta)) {
+      if (this.autoSpeak && delta.delta.type === "snapshot.patch") {
+        for (const change of delta.delta.changes) {
+          if (change.type !== "turn.set") continue;
+          if (change.turn.state === "running") {
+            this.pendingAutoSpeak = undefined;
+            this.speakTask?.abortController.abort();
+            continue;
+          }
+          const turn = this.snapshot.turns[change.turn.userHistoryEntryId];
+          if (
+            turn?.state !== "settled" ||
+            previousTurns[turn.userHistoryEntryId]?.state !== "running"
+          )
+            continue;
+          if (turn.outcome.status !== "completed") continue;
+          this.queueAutoSpeak();
+        }
+        this.drainAutoSpeak();
+      }
       return;
     }
 
@@ -2359,7 +2401,55 @@ export class SessionChatController {
     }
   }
 
-  private async speakLastAssistantMessage(): Promise<void> {
+  private setAutoSpeak(enabled: boolean | undefined): void {
+    if ((enabled ?? !this.autoSpeak) && this.deps.env.platform() !== "darwin") {
+      this.view.showFooterNotice("auto-speak is currently supported only on macOS", "default");
+      return;
+    }
+    const next = enabled ?? !this.autoSpeak;
+    if (next && !this.autoSpeak) {
+      this.lastAutoSpeakMessageId = this.snapshot.messages.findLast((entry) =>
+        isAssistantMessage(entry.message),
+      )?.id;
+    }
+    this.autoSpeak = next;
+    if (!this.autoSpeak) {
+      this.pendingAutoSpeak = undefined;
+      this.speakTask?.abortController.abort();
+    }
+    this.view.showFooterNotice(`auto-speak ${this.autoSpeak ? "on" : "off"}`, "default");
+    this.refreshStatus();
+  }
+
+  private queueAutoSpeak(): void {
+    if (!this.autoSpeak) return;
+    const entry = this.snapshot.messages.findLast((entry) => isAssistantMessage(entry.message));
+    if (!entry || entry.id === this.lastAutoSpeakMessageId || !isAssistantMessage(entry.message))
+      return;
+    this.lastAutoSpeakMessageId = entry.id;
+    if (entry.message.stopReason === "stop" || entry.message.stopReason === "length") {
+      this.pendingAutoSpeak = entry.message;
+    }
+  }
+
+  private drainAutoSpeak(): void {
+    if (!this.pendingAutoSpeak || this.isSessionOperationActive()) return;
+    const message = this.pendingAutoSpeak;
+    this.pendingAutoSpeak = undefined;
+    if (
+      !this.autoSpeak ||
+      this.disposed ||
+      this.listenRecording ||
+      this.listenTransition ||
+      this.listenActivityLabel ||
+      this.speakTask ||
+      this.hasPendingUserMessages
+    )
+      return;
+    void this.speakLastAssistantMessage(message);
+  }
+
+  private async speakLastAssistantMessage(message?: AssistantMessage): Promise<void> {
     if (this.speakTask) {
       this.view.showFooterNotice("speech playback already in progress", "default");
       return;
@@ -2375,7 +2465,7 @@ export class SessionChatController {
       return;
     }
 
-    const lastAssistant = this.getLastAssistantMessage();
+    const lastAssistant = message ?? this.getLastAssistantMessage();
     if (!lastAssistant) {
       this.view.showFooterNotice("no assistant message to speak yet.", "default");
       return;
@@ -2451,6 +2541,7 @@ export class SessionChatController {
   }
 
   private refreshStatus(): void {
+    this.drainAutoSpeak();
     const activityLabel = this.getActivityLabel();
     this.view.updateStatus({
       footer: activityLabel
@@ -2462,6 +2553,7 @@ export class SessionChatController {
             sessionCost: this.getSessionCostString(),
             duration: this.getTurnDurationString(),
             pursuingGoal: this.snapshot.goal?.status === "active",
+            autoSpeak: this.autoSpeak,
           },
       editor: {
         mode: this.getInputMode(),

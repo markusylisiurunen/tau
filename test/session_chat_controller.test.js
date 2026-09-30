@@ -5982,7 +5982,7 @@ describe("SessionChatController", () => {
         expect(editor.getText()).toBe(prefix + text + suffix);
         expect(editor.getCursor()).toEqual(previewCursor);
       }
-      controller.getInputHandlers().onCtrlY();
+      controller.getInputHandlers().onToggleRecording();
       for (
         let i = 0;
         i < 50 && editor.getText() !== `${prefix}session transcript${suffix}`;
@@ -6637,6 +6637,97 @@ describe("SessionChatController", () => {
     } finally {
       await rm(audioPath, { force: true });
     }
+  });
+
+  it.each(["completed", "failed", "aborted"])(
+    "auto-speaks only a live successful settled turn (%s)",
+    async (status) => {
+      const { session, controller } = await createControllerHarness({ deps: createMockDeps() });
+      const speak = vi.spyOn(controller, "speakLastAssistantMessage").mockResolvedValue();
+      controller.start();
+      await controller.onUserInput("/auto-speak on");
+      expect(speak).not.toHaveBeenCalled();
+      const publish = (changes) => {
+        const delta = {
+          version: SESSION_PROTOCOL_VERSION,
+          type: "session.delta",
+          sessionId: session.id,
+          fromRevision: session.snapshotValue.revision,
+          toRevision: session.snapshotValue.revision + 1,
+          cause: { type: "notice" },
+          delta: { type: "snapshot.patch", changes },
+        };
+        session.snapshotValue = applySessionProtocolDelta(session.snapshotValue, delta);
+        for (const listener of session.listeners) listener(delta);
+        return delta;
+      };
+      publish([{ type: "turn.set", turn: { userHistoryEntryId: "user-1", state: "running" } }]);
+      session.emit({ type: "assistant_start", historyEntryId: "answer" });
+      session.emit({
+        type: "assistant_final",
+        historyEntryId: "answer",
+        message: createAssistantMessage("answer"),
+      });
+      expect(speak).not.toHaveBeenCalled();
+      const delta = publish([
+        {
+          type: "turn.set",
+          turn: {
+            userHistoryEntryId: "user-1",
+            state: "settled",
+            outcome: {
+              status,
+              stopReason:
+                status === "completed" ? "stop" : status === "failed" ? "error" : "aborted",
+            },
+          },
+        },
+      ]);
+      expect(speak).toHaveBeenCalledTimes(status === "completed" ? 1 : 0);
+      for (const listener of session.listeners) listener(delta);
+      session.emitUpdate({});
+      expect(speak).toHaveBeenCalledTimes(status === "completed" ? 1 : 0);
+      await controller.onUserInput("/auto-speak off");
+      expect(controller.autoSpeak).toBe(false);
+      await controller.onUserInput("/auto-speak");
+      expect(controller.autoSpeak).toBe(true);
+      await controller.dispose();
+    },
+  );
+
+  it("auto-speaks local submissions and retries without speaking on enable", async () => {
+    const { controller } = await createControllerHarness({ deps: createMockDeps() });
+    const speak = vi.spyOn(controller, "speakLastAssistantMessage").mockResolvedValue();
+    controller.start();
+    await controller.onUserInput("old question");
+    await controller.onUserInput("/auto-speak on");
+    expect(speak).not.toHaveBeenCalled();
+    await controller.retryTurn();
+    expect(speak).toHaveBeenCalledTimes(1);
+    await controller.onUserInput("new question");
+    expect(speak).toHaveBeenCalledTimes(2);
+    await controller.onUserInput("/auto-speak off");
+    await controller.retryTurn();
+    expect(speak).toHaveBeenCalledTimes(2);
+    await controller.dispose();
+  });
+
+  it("stops speech on auto-speak off and before recording starts", async () => {
+    const { controller } = await createControllerHarness({ deps: createMockDeps() });
+    controller.start();
+    const abortController = new AbortController();
+    controller.speakTask = { abortController, completion: Promise.resolve() };
+    await controller.onUserInput("/auto-speak off");
+    expect(abortController.signal.aborted).toBe(true);
+    const recordingAbort = new AbortController();
+    controller.speakTask = { abortController: recordingAbort, completion: Promise.resolve() };
+    const start = vi.spyOn(controller, "startListenCapture").mockImplementation(async () => {
+      expect(recordingAbort.signal.aborted).toBe(true);
+    });
+    await controller.onUserInput("/listen");
+    expect(start).toHaveBeenCalledTimes(1);
+    controller.speakTask = undefined;
+    await controller.dispose();
   });
 
   it("routes /speak as a client-side command in session attach", async () => {

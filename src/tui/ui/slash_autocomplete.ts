@@ -95,6 +95,8 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
     if (!beforeCursor.startsWith("/")) return null;
 
     const afterSlash = beforeCursor.slice(1);
+    const autoSpeak = afterSlash.match(/^auto-speak\s+(\S*)$/);
+    if (autoSpeak) return this.buildArgSuggestions(autoSpeak[1]!, [{ id: "on" }, { id: "off" }]);
     if (afterSlash.includes(" ") || afterSlash.includes("\t")) {
       return null;
     }
@@ -331,7 +333,8 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
     const isArgCompletion =
       lowerBeforePrefix.endsWith("/persona:") ||
       lowerBeforePrefix.endsWith("/prompt:") ||
-      lowerBeforePrefix.endsWith("/theme:");
+      lowerBeforePrefix.endsWith("/theme:") ||
+      /\/auto-speak\s+$/.test(lowerBeforePrefix);
 
     if (isArgCompletion) {
       return item.value;

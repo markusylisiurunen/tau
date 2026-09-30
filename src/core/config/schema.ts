@@ -25,7 +25,7 @@ import { getVirtualConfigDefaults } from "./virtual_defaults.js";
 
 export interface Config {
   apiKeys?: Record<string, string>;
-  speech?: { voiceId?: string };
+  speech?: { voiceId?: string; recordingShortcut?: RecordingShortcut };
   defaultPersona?: string;
   defaultTheme?: string;
   clientTools?: CommandClientToolConfig[];
@@ -39,6 +39,11 @@ export interface Config {
   nook?: NookConfig;
   history?: HistoryConfig;
 }
+
+export type RecordingShortcut = {
+  key: string;
+  gesture: "press" | "double-tap";
+};
 
 export type FlySpritesApiConfig = {
   baseURL?: string;
@@ -320,8 +325,23 @@ function validateConfigData(
     ["defaultTheme", NonEmptyStringSchema, "'defaultTheme' must be a non-empty string."],
     [
       "speech",
-      z.object({ voiceId: NonEmptyStringSchema.optional() }).strip(),
-      "'speech' must be an object with an optional non-empty voiceId string.",
+      z
+        .object({
+          voiceId: NonEmptyStringSchema.optional(),
+          recordingShortcut: z
+            .object({
+              key: z
+                .string()
+                .refine(
+                  (key) => /^[^\s\p{C}]$/u.test(key) || /^(ctrl\+y|f([1-9]|1[0-2]))$/.test(key),
+                ),
+              gesture: z.enum(["press", "double-tap"]),
+            })
+            .strict()
+            .optional(),
+        })
+        .strip(),
+      "'speech' must contain a non-empty voiceId or a recordingShortcut with a printable key, ctrl+y, or f1–f12 and a press or double-tap gesture.",
     ],
   ]);
   Object.assign(config as Record<string, unknown>, scalarResult.values);

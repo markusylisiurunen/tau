@@ -112,3 +112,29 @@ describe("getFileAutocompleteToken", () => {
     expect(getFileAutocompleteToken("@@agent:default")).toBeNull();
   });
 });
+
+it("parses, dispatches, and completes auto-speak modes", async () => {
+  const registry = createCommandRegistry();
+  const calls = [];
+  for (const [input, enabled] of [
+    ["/auto-speak", undefined],
+    ["/auto-speak on", true],
+    ["/auto-speak off", false],
+  ]) {
+    const command = registry.parse(input);
+    expect(command).toEqual({ type: "autoSpeak", enabled });
+    await registry.dispatch(command, { autoSpeak: (value) => calls.push(value) });
+  }
+  expect(calls).toEqual([undefined, true, false]);
+  expect(registry.parse("/auto-speak invalid").type).toBe("unknown");
+  const provider = createProvider();
+  expect(await getSlashValues(provider, "/auto-speak ")).toEqual(["off", "on"]);
+  const completion = provider.applyCompletion(
+    ["/auto-speak o"],
+    0,
+    13,
+    { value: "on", label: "on" },
+    "o",
+  );
+  expect(completion.lines).toEqual(["/auto-speak on"]);
+});

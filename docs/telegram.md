@@ -280,7 +280,7 @@ Uploads only queue files; captions are metadata. The next text or voice transcri
 
 Files use native temporary directories in the execution environment; OS cleanup can invalidate their paths. Pending queues and group context clear on shutdown. File contents and metadata are untrusted.
 
-Voice transcription uses Gemini with `GEMINI_API_KEY`, then `apiKeys.google`. Gemini extracts spelling hints with Gemini 3.8 Flash and transcribes uploaded audio verbatim with `gemini-3.5-transcribe`, using English (`en-US`) and Finnish (`fi-FI`) hints. It attempts remote file deletion afterward. Missing keys prevent transcription, not file delivery. See [credentials](credentials.md).
+Voice transcription uses Gemini with `GEMINI_API_KEY`, then `apiKeys.google`. Optional hints use GPT-6 Luna (reasoning disabled) and OpenAI credentials. Gemini transcribes audio verbatim with `gemini-3.5-transcribe`, using English (`en-US`) and Finnish (`fi-FI`) hints. It attempts remote file deletion. File delivery needs no Google key. See [credentials](credentials.md).
 
 `/tts_on` rewrites text with `gpt-6-luna` (reasoning disabled) and generates speech with Eleven v4 Turbo. It requires both OpenAI and ElevenLabs credentials and runner `ffmpeg` with Opus. Voice notes use brisk delivery and 1.15× speed. See [`speech` configuration](config-reference.md#speech) for default and custom voice selection. Source and rewritten text each allow 10,000 Unicode characters; audio allows 32 MiB. Rewrite and job timeouts are one and five minutes. Jobs are ephemeral. Failure sends `voice response failed. please try again.` without affecting text; details stay in logs.
 

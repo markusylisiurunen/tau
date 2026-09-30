@@ -80,13 +80,14 @@ function createJsonResponse(payload, status = 200) {
 function createGeminiTranscriptionFetchMock(transcript) {
   return vi.fn(async (input, options = {}) => {
     const url = getRequestUrl(input);
-    if (url.endsWith("/gemini-3.8-flash:generateContent")) {
+    if (url === "https://api.openai.com/v1/responses") {
       return createJsonResponse({
-        candidates: [
+        status: "completed",
+        output: [
           {
-            content: {
-              parts: [{ text: JSON.stringify({ keywords: ["Tau"] }) }],
-            },
+            type: "message",
+            status: "completed",
+            content: [{ type: "output_text", text: JSON.stringify({ keywords: ["Tau"] }) }],
           },
         ],
       });

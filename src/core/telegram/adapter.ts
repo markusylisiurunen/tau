@@ -2820,6 +2820,7 @@ class TelegramAdapterImpl {
       const transcription = createSpeechToTextTranscription({
         mode: "file",
         apiKey,
+        openAIApiKey: this.openAIApiKey,
         context: await this.resolveSpeechToTextContext(chatId),
         deps: {
           ...this.speechToTextDeps,

@@ -26,6 +26,7 @@ export type SpeechToTextDependencies = {
 export type SpeechToTextTranscriptionOptions = {
   mode: "streaming" | "file";
   apiKey: string;
+  openAIApiKey?: string;
   context?: SpeechToTextContext;
   deps?: SpeechToTextDependencies;
   onProgress?: (text: string) => void;
@@ -64,6 +65,7 @@ export function createSpeechToTextTranscription(
       startGeminiTranscription({
         onProgress: options.onProgress,
         apiKey: options.apiKey,
+        openAIApiKey: options.openAIApiKey,
         context: options.context,
         fetchImpl: options.deps?.fetchImpl,
         webSocketFactory: options.deps?.webSocketFactory,
@@ -74,6 +76,7 @@ export function createSpeechToTextTranscription(
   return createBatchTranscription(async (recording, signal) => {
     return await transcribeGeminiAudio({
       apiKey: options.apiKey,
+      openAIApiKey: options.openAIApiKey,
       audio: recording.audio,
       mimeType: recording.mimeType,
       context: options.context,

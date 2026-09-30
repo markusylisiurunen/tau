@@ -5,7 +5,12 @@ import {
   type CommandRegistry,
   createCommandRegistry,
 } from "../core/commands/index.js";
-import { type Config, type DiffToolConfig, getGoogleApiKey } from "../core/config/index.js";
+import {
+  type Config,
+  type DiffToolConfig,
+  getElevenLabsApiKey,
+  getGoogleApiKey,
+} from "../core/config/index.js";
 import type {
   DiffReviewSnapshotSource,
   StartedDiffReviewBridge,
@@ -2351,10 +2356,11 @@ export class SessionChatController {
       return;
     }
 
-    const apiKey = getGoogleApiKey(this.config, this.deps.env.env());
-    if (!apiKey) {
+    const googleApiKey = getGoogleApiKey(this.config, this.deps.env.env());
+    const elevenLabsApiKey = getElevenLabsApiKey(this.config, this.deps.env.env());
+    if (!googleApiKey || !elevenLabsApiKey) {
       this.view.addTranscriptNotice("speech synthesis is not configured", "error", [
-        "set GEMINI_API_KEY or apiKeys.google to use /speak",
+        "set GEMINI_API_KEY or apiKeys.google for rewriting and ELEVENLABS_API_KEY or apiKeys.elevenlabs for synthesis to use /speak",
       ]);
       return;
     }
@@ -2365,7 +2371,8 @@ export class SessionChatController {
 
     const abortController = new AbortController();
     const completion = this.runSpeakTask({
-      apiKey,
+      googleApiKey,
+      elevenLabsApiKey,
       sourceText,
       signal: abortController.signal,
     });
@@ -2393,13 +2400,16 @@ export class SessionChatController {
   }
 
   private async runSpeakTask(args: {
-    apiKey: string;
+    googleApiKey: string;
+    elevenLabsApiKey: string;
     sourceText: string;
     signal: AbortSignal;
   }): Promise<void> {
     await runSpeechPlaybackTask({
       deps: this.deps,
-      apiKey: args.apiKey,
+      googleApiKey: args.googleApiKey,
+      elevenLabsApiKey: args.elevenLabsApiKey,
+      voiceId: this.config.speech?.voiceId,
       sourceText: args.sourceText,
       signal: args.signal,
       onActivityLabel: (hint) => {

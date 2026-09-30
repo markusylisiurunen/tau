@@ -27,6 +27,7 @@ import { getVirtualConfigDefaults } from "./virtual_defaults.js";
 
 export interface Config {
   apiKeys?: Record<string, string>;
+  speech?: { voiceId?: string };
   defaultPersona?: string;
   disableBuiltinPersonas?: boolean;
   defaultTheme?: string;
@@ -419,6 +420,11 @@ function validateConfigData(
   const scalarResult = parseOptionalFields(data, sourceLabel, [
     ["disableBuiltinPersonas", BooleanSchema, "'disableBuiltinPersonas' must be a boolean."],
     ["defaultTheme", NonEmptyStringSchema, "'defaultTheme' must be a non-empty string."],
+    [
+      "speech",
+      z.object({ voiceId: NonEmptyStringSchema.optional() }).strip(),
+      "'speech' must be an object with an optional non-empty voiceId string.",
+    ],
   ]);
   Object.assign(config as Record<string, unknown>, scalarResult.values);
   errors.push(...scalarResult.errors);
@@ -951,6 +957,9 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
     const config = configs[i] ?? {};
 
     apiKeys = mergeOptionalObject(apiKeys, config.apiKeys);
+    if (config.speech !== undefined) {
+      merged.speech = mergeOptionalObject(merged.speech, config.speech);
+    }
     if (config.diffTool !== undefined) {
       diffTool = resolveDiffToolConfig(level, config.diffTool);
     }

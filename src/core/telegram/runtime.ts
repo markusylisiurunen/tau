@@ -21,6 +21,8 @@ export type TelegramRuntimeDependencies = {
 export type StartTelegramRuntimeOptions = {
   config: TelegramConfig;
   geminiApiKey?: string;
+  elevenLabsApiKey?: string;
+  speechVoiceId?: string;
   createSessionClient: (options: TelegramSessionClientOptions) => Promise<TelegramSessionClient>;
   onLog?: (line: string) => void;
   deps?: Partial<TelegramRuntimeDependencies>;
@@ -197,6 +199,8 @@ export async function startTelegramRuntime(
         pollIntervalMs: botConfig.pollIntervalMs,
         requestTimeoutSeconds: botConfig.requestTimeoutSeconds,
         geminiApiKey: options.geminiApiKey,
+        elevenLabsApiKey: options.elevenLabsApiKey,
+        speechVoiceId: options.speechVoiceId,
         sessionManager,
         projectPreferences,
         onLog: (entry) => {

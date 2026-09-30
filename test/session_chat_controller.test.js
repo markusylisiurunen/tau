@@ -6472,33 +6472,14 @@ describe("SessionChatController", () => {
       view,
       session,
       deps: createMockDeps(spawn),
-      config: { apiKeys: { google: "gemini-key" } },
+      config: {
+        apiKeys: { google: "gemini-key", elevenlabs: "eleven-key" },
+        speech: { voiceId: "custom-voice" },
+      },
     });
     const firstAudio = Buffer.alloc(12_000, 1);
     const secondAudio = Buffer.alloc(12_000, 2);
-    const streamingBody = [
-      {
-        candidates: [
-          {
-            content: {
-              parts: [{ inlineData: { data: firstAudio.toString("base64") } }],
-            },
-          },
-        ],
-      },
-      {
-        candidates: [
-          {
-            finishReason: "STOP",
-            content: {
-              parts: [{ inlineData: { data: secondAudio.toString("base64") } }],
-            },
-          },
-        ],
-      },
-    ]
-      .map((payload) => `data: ${JSON.stringify(payload)}\n\n`)
-      .join("");
+    const streamingBody = Buffer.concat([firstAudio, secondAudio]);
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
@@ -6519,10 +6500,11 @@ describe("SessionChatController", () => {
           { status: 200, headers: { "Content-Type": "application/json" } },
         ),
       )
+      .mockResolvedValueOnce(Response.json({ voice_id: "custom-voice" }))
       .mockResolvedValueOnce(
         new Response(streamingBody, {
           status: 200,
-          headers: { "Content-Type": "text/event-stream" },
+          headers: { "Content-Type": "audio/pcm" },
         }),
       );
     vi.stubGlobal("fetch", fetchMock);
@@ -6534,7 +6516,9 @@ describe("SessionChatController", () => {
       vi.unstubAllGlobals();
     }
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock.mock.calls[1][0]).toContain("/voices/custom-voice");
+    expect(fetchMock.mock.calls[2][0]).toContain("/text-to-speech/custom-voice/stream");
     const speechHints = view.statusUpdates
       .map((status) => (status.footer.type === "activity" ? status.footer.label : undefined))
       .filter((hint) => hint !== undefined);
@@ -6602,33 +6586,17 @@ describe("SessionChatController", () => {
           { status: 200, headers: { "Content-Type": "application/json" } },
         ),
       )
+      .mockResolvedValueOnce(Response.json({ voice_id: "QtY3JBOUKEB5xzrRfOKc" }))
       .mockResolvedValueOnce(
-        new Response(
-          `data: ${JSON.stringify({
-            candidates: [
-              {
-                finishReason: "STOP",
-                content: {
-                  parts: [
-                    {
-                      inlineData: {
-                        data: Buffer.alloc(24_000, 1).toString("base64"),
-                      },
-                    },
-                  ],
-                },
-              },
-            ],
-          })}\n\n`,
-          { status: 200, headers: { "Content-Type": "text/event-stream" } },
-        ),
+        new Response(Buffer.alloc(24_000, 1), { headers: { "Content-Type": "audio/pcm" } }),
       );
     vi.stubGlobal("fetch", fetchMock);
 
     try {
       const playback = runSpeechPlaybackTask({
         deps: createMockDeps(spawn),
-        apiKey: "gemini-key",
+        googleApiKey: "gemini-key",
+        elevenLabsApiKey: "eleven-key",
         sourceText: "Original response.",
         signal: abortController.signal,
         onActivityLabel: vi.fn(),
@@ -6679,30 +6647,12 @@ describe("SessionChatController", () => {
           { status: 200, headers: { "Content-Type": "application/json" } },
         ),
       )
+      .mockResolvedValueOnce(Response.json({ voice_id: "QtY3JBOUKEB5xzrRfOKc" }))
       .mockImplementationOnce(async (_url, init) => {
-        const encoder = new TextEncoder();
         return new Response(
           new ReadableStream({
             start(controller) {
-              controller.enqueue(
-                encoder.encode(
-                  `data: ${JSON.stringify({
-                    candidates: [
-                      {
-                        content: {
-                          parts: [
-                            {
-                              inlineData: {
-                                data: Buffer.alloc(24_000, 1).toString("base64"),
-                              },
-                            },
-                          ],
-                        },
-                      },
-                    ],
-                  })}\n\n`,
-                ),
-              );
+              controller.enqueue(Buffer.alloc(24_000, 1));
               init.signal.addEventListener(
                 "abort",
                 () => {
@@ -6715,7 +6665,7 @@ describe("SessionChatController", () => {
               );
             },
           }),
-          { status: 200, headers: { "Content-Type": "text/event-stream" } },
+          { status: 200, headers: { "Content-Type": "audio/pcm" } },
         );
       });
     vi.stubGlobal("fetch", fetchMock);
@@ -6723,7 +6673,8 @@ describe("SessionChatController", () => {
     try {
       const playback = runSpeechPlaybackTask({
         deps: createMockDeps(spawn),
-        apiKey: "gemini-key",
+        googleApiKey: "gemini-key",
+        elevenLabsApiKey: "eleven-key",
         sourceText: "Original response.",
         signal: new AbortController().signal,
         onActivityLabel: vi.fn(),
@@ -6765,20 +6716,9 @@ describe("SessionChatController", () => {
           { status: 200, headers: { "Content-Type": "application/json" } },
         ),
       )
+      .mockResolvedValueOnce(Response.json({ voice_id: "QtY3JBOUKEB5xzrRfOKc" }))
       .mockResolvedValueOnce(
-        new Response(
-          `data: ${JSON.stringify({
-            candidates: [
-              {
-                finishReason: "STOP",
-                content: {
-                  parts: [{ inlineData: { data: Buffer.from([1, 2]).toString("base64") } }],
-                },
-              },
-            ],
-          })}\n\n`,
-          { status: 200, headers: { "Content-Type": "text/event-stream" } },
-        ),
+        new Response(Buffer.alloc(24_000, 1), { headers: { "Content-Type": "audio/pcm" } }),
       );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -6786,7 +6726,8 @@ describe("SessionChatController", () => {
       await expect(
         runSpeechPlaybackTask({
           deps: createMockDeps(spawn),
-          apiKey: "gemini-key",
+          googleApiKey: "gemini-key",
+          elevenLabsApiKey: "eleven-key",
           sourceText: "Original response.",
           signal: new AbortController().signal,
           onActivityLabel: vi.fn(),

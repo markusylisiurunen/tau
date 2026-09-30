@@ -27,6 +27,7 @@ Project and global content can change which persona ids are available. A configu
 | `apiKeys` | Object of string values | Global, project | Merge by provider id | Host or feature consumer; `/reload` for session runtime keys, process restart for environment changes |
 | `defaultPersona` | Non-empty string | Global, project | Most-specific wins | Session host; new session |
 | `disableBuiltinPersonas` | Boolean | Global, project | Most-specific wins | Session runtime; `/reload` or new session |
+| `speech` | Object with optional `voiceId` | Global, project | Merge by field | TUI client or Telegram runner; process restart |
 | `defaultTheme` | Non-empty string | Global, project | Most-specific wins | TUI client; client restart |
 | `diffTool` | Object | Global, project | Most-specific complete object | TUI client; client restart |
 | `builtInDiffTool` | Object | Global, project | Most-specific complete object | TUI client; client restart |
@@ -170,6 +171,26 @@ For model requests, credential precedence is an explicit request override, confi
 Feature-specific helpers use different precedence: `EXA_API_KEY`, `GEMINI_API_KEY`, `MISTRAL_API_KEY`, and `OPENAI_API_KEY` take precedence over their matching `apiKeys` entries for the features that consume those helpers. See [credentials](credentials.md) for the exact feature matrix.
 
 Credentials are consumed where the model or feature runs. In an attached session that is usually the host, not the TUI client. Avoid committing project API keys. See [credentials](credentials.md).
+
+### `speech`
+
+Controls `/speak` and Telegram `/tts_on` voice selection. Set `voiceId` to a non-empty ElevenLabs voice ID:
+
+```json
+{
+  "speech": {
+    "voiceId": "QtY3JBOUKEB5xzrRfOKc"
+  }
+}
+```
+
+Without an override, Tau looks up Maisie (`QtY3JBOUKEB5xzrRfOKc`) before synthesis and tries Caleb (`AaOhDHYJ1XLZk74lXhdE`) only if ElevenLabs reports that Maisie was not found. If neither is available, speech fails. A configured voice is used exclusively: an unavailable custom voice is an error, not a request to use a default.
+
+Voice lookup authentication, permission, rate-limit, and network errors do not trigger fallback. Successful metadata lookup fixes the voice for the entire reply; it does not guarantee synthesis permission. Synthesis failures never switch voices or automatically retry a potentially billable request.
+
+Speech uses Eleven v4 Turbo, the delivery note `[Brisk but relaxed, speaking naturally to a colleague]`, and a 1.15× tempo adjustment. Google rewrites the text for speech before ElevenLabs synthesis, so both Google and ElevenLabs credentials are required. Voice Library API access may require a paid ElevenLabs plan, and shared voices can become unavailable.
+
+The TUI reads this setting from its client-side configuration, including during remote attachment. Telegram reads it from the runner's startup configuration, not individual session workspaces. Restart the respective process after changes. This setting does not affect the explicit voices supplied to `tau tool speech-generate`.
 
 ### `nook`
 

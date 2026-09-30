@@ -130,6 +130,8 @@ describe("telegram runtime", () => {
       }),
       createSessionClient: vi.fn(),
       geminiApiKey: "gemini-key",
+      elevenLabsApiKey: "eleven-key",
+      speechVoiceId: "custom-voice",
       onLog: (line) => {
         logs.push(line);
       },
@@ -137,6 +139,8 @@ describe("telegram runtime", () => {
         startTelegramAdapter: vi.fn(async (options) => {
           events.push(`start-telegram:${options.botToken}:${options.botId}`);
           expect(Object.keys(options.projects)).toEqual(["alpha"]);
+          expect(options.elevenLabsApiKey).toBe("eleven-key");
+          expect(options.speechVoiceId).toBe("custom-voice");
           options.onLog?.({
             level: "warn",
             message: "telegram poll failed",

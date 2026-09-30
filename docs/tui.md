@@ -196,7 +196,7 @@ brew install ffmpeg
 
 Speech transcription uses Gemini and requires `GEMINI_API_KEY` or `apiKeys.google`. Credentials are read by the TUI process, including during remote attachment.
 
-`/speak` is also macOS-only. It rewrites the last assistant response for speech, streams audio from Gemini, and plays it through the local `ffplay` command included with `ffmpeg`. It requires `GEMINI_API_KEY` or `apiKeys.google`, runs only while the session is idle, and can be stopped with Escape. Longer responses are divided into balanced segments targeting at most two minutes of generated speech each. Speech source and rewritten text are limited to 10,000 Unicode characters, and generation stops after 32 MiB of raw audio.
+`/speak` is also macOS-only. It rewrites the last assistant response with Gemini, streams Eleven v4 Turbo audio, and plays it at 1.15× speed through the local `ffplay` command included with `ffmpeg`. It requires both `GEMINI_API_KEY` or `apiKeys.google` for rewriting and `ELEVENLABS_API_KEY` or `apiKeys.elevenlabs` for synthesis, runs only while the session is idle, and can be stopped with Escape. Longer responses are divided into balanced segments targeting at most two minutes of generated speech each. Speech source and rewritten text are limited to 10,000 Unicode characters, and generation stops after 32 MiB of raw audio. Voice lookups and synthesis requests have a two-minute deadline. See [`speech` configuration](config-reference.md#speech) for the default Maisie/Caleb lookup and custom voice selection.
 
 ## Reload the right component
 

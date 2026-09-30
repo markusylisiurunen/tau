@@ -24,6 +24,7 @@ export type {
 export {
   DEFAULT_AUTO_COMPACT_CONFIG,
   getApiKeyForProvider,
+  getElevenLabsApiKey,
   getExaApiKey,
   getGoogleApiKey,
   getHistoryApiKey,

@@ -1,20 +1,20 @@
 import type { ChildProcess } from "node:child_process";
 import type { Writable } from "node:stream";
 import type { CoreDeps } from "../core/runtime/deps.js";
-import {
-  GEMINI_SPEECH_BITS_PER_SAMPLE,
-  GEMINI_SPEECH_CHANNEL_COUNT,
-  GEMINI_SPEECH_PLAYBACK_RATE,
-  GEMINI_SPEECH_SAMPLE_RATE_HZ,
-  streamGeminiSpeechPcm,
-} from "../core/utils/gemini_speech.js";
 import type { SpawnCaptureResult } from "../core/utils/spawn_capture.js";
+import {
+  SPEECH_BITS_PER_SAMPLE,
+  SPEECH_CHANNEL_COUNT,
+  SPEECH_PLAYBACK_RATE,
+  SPEECH_SAMPLE_RATE_HZ,
+  streamSpeechPcm,
+} from "../core/utils/speech.js";
 
 const SPEECH_PLAYBACK_START_BUFFER_MS = 500;
 const SPEECH_PLAYBACK_START_BUFFER_BYTES = Math.ceil(
-  GEMINI_SPEECH_SAMPLE_RATE_HZ *
-    GEMINI_SPEECH_CHANNEL_COUNT *
-    (GEMINI_SPEECH_BITS_PER_SAMPLE / 8) *
+  SPEECH_SAMPLE_RATE_HZ *
+    SPEECH_CHANNEL_COUNT *
+    (SPEECH_BITS_PER_SAMPLE / 8) *
     (SPEECH_PLAYBACK_START_BUFFER_MS / 1000),
 );
 
@@ -22,7 +22,9 @@ type PlaybackOutcome = { result: SpawnCaptureResult } | { error: unknown };
 
 export async function runSpeechPlaybackTask(args: {
   deps: CoreDeps;
-  apiKey: string;
+  googleApiKey: string;
+  elevenLabsApiKey: string;
+  voiceId?: string;
   sourceText: string;
   signal: AbortSignal;
   onActivityLabel: (hint: string) => void;
@@ -46,11 +48,11 @@ export async function runSpeechPlaybackTask(args: {
             "-f",
             "s16le",
             "-ar",
-            String(GEMINI_SPEECH_SAMPLE_RATE_HZ),
+            String(SPEECH_SAMPLE_RATE_HZ),
             "-ch_layout",
             "mono",
             "-af",
-            `atempo=${GEMINI_SPEECH_PLAYBACK_RATE}`,
+            `atempo=${SPEECH_PLAYBACK_RATE}`,
             "pipe:0",
           ],
           {
@@ -88,8 +90,10 @@ export async function runSpeechPlaybackTask(args: {
   };
 
   try {
-    for await (const chunk of streamGeminiSpeechPcm({
-      apiKey: args.apiKey,
+    for await (const chunk of streamSpeechPcm({
+      googleApiKey: args.googleApiKey,
+      elevenLabsApiKey: args.elevenLabsApiKey,
+      voiceId: args.voiceId,
       sourceText: args.sourceText,
       signal: abortController.signal,
       initialBufferBytes: SPEECH_PLAYBACK_START_BUFFER_BYTES,

@@ -1,4 +1,3 @@
-import type { SpeechToTextProvider } from "../config/schema.js";
 import { createTelegramApi, startTelegramAdapter, type TelegramAdapterHandle } from "./adapter.js";
 import type { TelegramConfig } from "./config.js";
 import {
@@ -21,9 +20,7 @@ export type TelegramRuntimeDependencies = {
 
 export type StartTelegramRuntimeOptions = {
   config: TelegramConfig;
-  speechToTextProvider?: SpeechToTextProvider;
   geminiApiKey?: string;
-  openaiApiKey?: string;
   createSessionClient: (options: TelegramSessionClientOptions) => Promise<TelegramSessionClient>;
   onLog?: (line: string) => void;
   deps?: Partial<TelegramRuntimeDependencies>;
@@ -199,9 +196,7 @@ export async function startTelegramRuntime(
         allowedChatIds: botConfig.allowedChatIds,
         pollIntervalMs: botConfig.pollIntervalMs,
         requestTimeoutSeconds: botConfig.requestTimeoutSeconds,
-        speechToTextProvider: options.speechToTextProvider,
         geminiApiKey: options.geminiApiKey,
-        openaiApiKey: options.openaiApiKey,
         sessionManager,
         projectPreferences,
         onLog: (entry) => {

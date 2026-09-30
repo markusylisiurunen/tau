@@ -5733,7 +5733,7 @@ describe("SessionChatController", () => {
     const spawn = vi.fn();
     const { session, view, controller } = await createControllerHarness({
       deps: createMockDeps(spawn, "linux"),
-      config: { apiKeys: { openai: "openai-key" } },
+      config: { apiKeys: { google: "gemini-key" } },
     });
     controller.start();
 
@@ -5862,7 +5862,6 @@ describe("SessionChatController", () => {
       session,
       deps: createMockDeps(spawn),
       config: {
-        speechToText: { provider: "gemini" },
         apiKeys: { google: "gemini-key" },
       },
       speechToTextDeps: { webSocketFactory },
@@ -5945,33 +5944,9 @@ describe("SessionChatController", () => {
     expect(session.submit).not.toHaveBeenCalled();
   });
 
-  it("streams OpenAI transcription while recording and inserts only the final transcript", async () => {
-    const audioPath = join(tmpdir(), `tau-session-listen-openai-${Date.now()}.wav`);
-    const socket = new EventEmitter();
-    const socketEvents = [];
-    socket.send = vi.fn((data, callback) => {
-      const event = JSON.parse(data);
-      socketEvents.push(event);
-      callback?.();
-      if (event.type === "session.update") {
-        queueMicrotask(() => socket.emit("message", JSON.stringify({ type: "session.updated" })));
-      }
-      if (event.type === "input_audio_buffer.commit") {
-        queueMicrotask(() =>
-          socket.emit(
-            "message",
-            JSON.stringify({
-              type: "conversation.item.input_audio_transcription.completed",
-              transcript: "live transcript",
-            }),
-          ),
-        );
-      }
-    });
-    socket.close = vi.fn();
-    socket.terminate = vi.fn();
-    const webSocketFactory = vi.fn(() => socket);
-    const pcm = Buffer.from([1, 2, 3, 4]);
+  it("finishes voice input at its recording limit", async () => {
+    const audioPath = join(tmpdir(), `tau-session-listen-limit-${Date.now()}.wav`);
+    await writeFile(audioPath, Buffer.alloc(2048, 1));
     const spawn = vi.fn(async (command, _args, options = {}) => {
       if (command === "mktemp") {
         return createSpawnResult({ stdout: `${audioPath}\n` });
@@ -5979,7 +5954,7 @@ describe("SessionChatController", () => {
       if (command === "ffmpeg") {
         const stdout = new EventEmitter();
         options.onSpawn({ stdout });
-        queueMicrotask(() => stdout.emit("data", pcm));
+        queueMicrotask(() => stdout.emit("data", Buffer.from([1, 2])));
         return await new Promise((resolve) => {
           options.signal.addEventListener("abort", () => {
             resolve(createSpawnResult({ aborted: true }));
@@ -5988,97 +5963,32 @@ describe("SessionChatController", () => {
       }
       throw new Error(`unexpected command: ${command}`);
     });
+    const transcription = {
+      appendAudio: vi.fn(),
+      finish: vi.fn(async () => "automatic transcript"),
+      abort: vi.fn(),
+    };
     const { session, view, controller } = await createControllerHarness({
       targetLabel: "in-process",
       deps: createMockDeps(spawn),
-      config: { apiKeys: { openai: "openai-key" } },
-      speechToTextDeps: { webSocketFactory },
+      config: { apiKeys: { google: "key" } },
     });
+    controller.createSpeechTranscription = vi.fn(() => transcription);
 
+    vi.useFakeTimers();
     try {
-      controller.start();
       await controller.onUserInput("/listen");
-      expect(view.status.editor.mode).toBe("recording");
-      expect(socketEvents).toEqual([]);
-      await writeFile(audioPath, Buffer.alloc(2048, 1));
-
-      controller.getInputHandlers().onCtrlY();
-      socket.emit("open");
-      for (let i = 0; i < 50 && view.editorText !== "live transcript"; i += 1) {
-        await flush();
-        await waitMs(1);
-      }
+      await vi.advanceTimersByTimeAsync(getSpeechToTextRecordingMaxDurationMs());
+      await controller.listenTransition;
     } finally {
+      vi.useRealTimers();
       await controller.dispose();
       await rm(audioPath, { force: true });
     }
 
-    expect(view.editorText).toBe("live transcript");
-    expect(socketEvents.map((event) => event.type)).toEqual([
-      "session.update",
-      "input_audio_buffer.append",
-      "input_audio_buffer.commit",
-    ]);
-    expect(socketEvents[1].audio).toBe(pcm.toString("base64"));
-    expect(spawn).toHaveBeenNthCalledWith(
-      2,
-      "ffmpeg",
-      expect.arrayContaining(["-ar", "24000", "-f", "s16le", "pipe:1"]),
-      expect.objectContaining({
-        captureOutput: "stderr",
-        stdio: ["ignore", "pipe", "pipe"],
-      }),
-    );
+    expect(session.submit).not.toHaveBeenCalled();
+    expect(view.editorText).toBe("automatic transcript");
   });
-
-  it.each(["openai", "gemini"])(
-    "finishes %s voice input at its recording limit",
-    async (provider) => {
-      const audioPath = join(tmpdir(), `tau-session-listen-limit-${Date.now()}.wav`);
-      await writeFile(audioPath, Buffer.alloc(2048, 1));
-      const spawn = vi.fn(async (command, _args, options = {}) => {
-        if (command === "mktemp") {
-          return createSpawnResult({ stdout: `${audioPath}\n` });
-        }
-        if (command === "ffmpeg") {
-          const stdout = new EventEmitter();
-          options.onSpawn({ stdout });
-          queueMicrotask(() => stdout.emit("data", Buffer.from([1, 2])));
-          return await new Promise((resolve) => {
-            options.signal.addEventListener("abort", () => {
-              resolve(createSpawnResult({ aborted: true }));
-            });
-          });
-        }
-        throw new Error(`unexpected command: ${command}`);
-      });
-      const transcription = {
-        appendAudio: vi.fn(),
-        finish: vi.fn(async () => "automatic transcript"),
-        abort: vi.fn(),
-      };
-      const { session, view, controller } = await createControllerHarness({
-        targetLabel: "in-process",
-        deps: createMockDeps(spawn),
-        config: { speechToText: { provider }, apiKeys: { openai: "key", google: "key" } },
-      });
-      controller.createSpeechTranscription = vi.fn(() => transcription);
-
-      vi.useFakeTimers();
-      try {
-        await controller.onUserInput("/listen");
-        await vi.advanceTimersByTimeAsync(getSpeechToTextRecordingMaxDurationMs(provider));
-        await controller.listenTransition;
-      } finally {
-        vi.useRealTimers();
-        await controller.dispose();
-        await rm(audioPath, { force: true });
-      }
-
-      expect(session.submit).not.toHaveBeenCalled();
-      expect(view.editorText).toBe("automatic transcript");
-    },
-  );
 
   it("restores the draft after a failed preview and retries without duplicating it", async () => {
     const audioPath = join(tmpdir(), `tau-preview-retry-${Date.now()}.wav`);
@@ -6167,42 +6077,6 @@ describe("SessionChatController", () => {
     },
   );
 
-  it("retries retained OpenAI audio through file transcription", async () => {
-    const audioPath = join(tmpdir(), `tau-session-listen-openai-retry-${Date.now()}.wav`);
-    await writeFile(audioPath, Buffer.alloc(2048, 1));
-    const spawnImpl = vi.fn(async (_command, _args, options) => {
-      const stdout = new EventEmitter();
-      options.onSpawn({ stdout });
-      stdout.emit("data", Buffer.from([1, 2, 3, 4]));
-      return createSpawnResult();
-    });
-    const fetchImpl = vi.fn(
-      async () => new Response(JSON.stringify({ text: "retried file transcript" })),
-    );
-    const webSocketFactory = vi.fn();
-    const { session, view, controller } = await createControllerHarness({
-      targetLabel: "in-process",
-      deps: createMockDeps(),
-      config: { apiKeys: { openai: "openai-key" } },
-      speechToTextDeps: { fetchImpl, spawnImpl, webSocketFactory },
-    });
-    controller.retainedListenAudio = { audioPath, durationMs: 1_000 };
-
-    try {
-      await controller.onUserInput("/listen retry");
-      await expect(readFile(audioPath)).rejects.toMatchObject({ code: "ENOENT" });
-    } finally {
-      await rm(audioPath, { force: true });
-    }
-
-    expect(view.editorText).toBe("retried file transcript");
-    expect(webSocketFactory).not.toHaveBeenCalled();
-    expect(fetchImpl).toHaveBeenCalledWith(
-      "https://api.openai.com/v1/audio/transcriptions",
-      expect.objectContaining({ body: expect.any(FormData) }),
-    );
-  });
-
   it("rejects retained voice input longer than 20 minutes before provider work", async () => {
     const audioPath = join(tmpdir(), `tau-session-listen-too-long-${Date.now()}.wav`);
     await writeFile(audioPath, Buffer.alloc(2048, 1));
@@ -6240,22 +6114,49 @@ describe("SessionChatController", () => {
   ])("retains voice input after %s and retries it into the editor", async (outcome, error) => {
     const audioPath = join(tmpdir(), `tau-session-listen-${outcome}-${Date.now()}.wav`);
     await writeFile(audioPath, Buffer.alloc(2048, 1));
-    const fetchMock = vi.fn();
-    if (outcome === "failure") fetchMock.mockRejectedValueOnce(new Error(error));
-    else fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ text: "" })));
-    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ text: "recovered transcript" })));
-    const spawnImpl = vi.fn(async (_command, _args, options) => {
-      const stdout = new EventEmitter();
-      options.onSpawn({ stdout });
-      stdout.emit("data", Buffer.from([1, 2, 3, 4]));
-      return createSpawnResult();
+    let interactionCount = 0;
+    const fetchMock = vi.fn(async (input, options = {}) => {
+      const url = String(input);
+      if (url.endsWith("/upload/v1beta/files")) {
+        return new Response(null, {
+          headers: { "x-goog-upload-url": "https://upload.example.test/audio" },
+        });
+      }
+      if (url === "https://upload.example.test/audio") {
+        return new Response(
+          JSON.stringify({
+            file: { name: "files/audio", uri: "https://example.test/audio" },
+          }),
+        );
+      }
+      if (url.endsWith("/interactions")) {
+        interactionCount += 1;
+        if (interactionCount === 1 && outcome === "failure") throw new Error(error);
+        return new Response(
+          JSON.stringify({
+            steps: [
+              {
+                type: "model_output",
+                content: [
+                  {
+                    type: "text",
+                    text: interactionCount === 1 ? "" : "recovered transcript",
+                  },
+                ],
+              },
+            ],
+          }),
+        );
+      }
+      if (options.method === "DELETE") return new Response(null, { status: 204 });
+      throw new Error(`unexpected request: ${url}`);
     });
-
+    const webSocketFactory = vi.fn();
     const { session, view, controller } = await createControllerHarness({
       targetLabel: "in-process",
-      deps: createMockDeps(spawnImpl),
-      config: { apiKeys: { openai: "openai-key" } },
-      speechToTextDeps: { fetchImpl: fetchMock },
+      deps: createMockDeps(),
+      config: { apiKeys: { google: "gemini-key" } },
+      speechToTextDeps: { fetchImpl: fetchMock, webSocketFactory },
     });
     controller.listenRecording = {
       audioPath,
@@ -6285,7 +6186,8 @@ describe("SessionChatController", () => {
       await rm(audioPath, { force: true });
     }
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(interactionCount).toBe(2);
+    expect(webSocketFactory).not.toHaveBeenCalled();
   });
 
   it("discards retained voice input only when requested", async () => {
@@ -6339,7 +6241,6 @@ describe("SessionChatController", () => {
       targetLabel: "in-process",
       deps: createMockDeps(spawn),
       config: {
-        speechToText: { provider: "gemini" },
         apiKeys: { google: "gemini-key" },
       },
       speechToTextDeps: { webSocketFactory: createIdleSpeechWebSocketFactory() },
@@ -6385,7 +6286,7 @@ describe("SessionChatController", () => {
     const { view, controller } = await createControllerHarness({
       targetLabel: "in-process",
       deps: createMockDeps(spawn),
-      config: { speechToText: { provider: "gemini" }, apiKeys: { google: "gemini-key" } },
+      config: { apiKeys: { google: "gemini-key" } },
       speechToTextDeps: { webSocketFactory: createIdleSpeechWebSocketFactory() },
     });
     controller.retainedListenAudio = { audioPath: retainedPath, durationMs: 1_000 };

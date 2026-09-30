@@ -38,7 +38,6 @@ Project and global content can change which ids are actually available. A config
 | `subagents` | Object | Global, project | Field-wise, currently one selectable list | Session runtime; `/reload` or new session |
 | `autoCompact` | Object | Global, project | Merge by field over shipped defaults | Session runtime; `/reload` or new session |
 | `modelSystemNotices` | String map | Global, project | Merge by model target | Session runtime; `/reload`, affects later inputs |
-| `speechToText` | Object | Global, project | Most-specific wins | TUI client or Telegram runner; process restart |
 | `cloudflareSandbox` | Object | Global, project | Merge bridges by id | Host startup; host restart |
 | `flySprites` | Object | Global, project | Merge APIs by id | Host startup; host restart |
 | `nook` | Object | Global, project | Most-specific complete object | Host tool runtime; `/reload` or new session |
@@ -174,24 +173,6 @@ For model requests, credential precedence is an explicit request override, confi
 Feature-specific helpers use different precedence: `EXA_API_KEY`, `GEMINI_API_KEY`, `MISTRAL_API_KEY`, and `OPENAI_API_KEY` take precedence over their matching `apiKeys` entries for the features that consume those helpers. See [credentials](credentials.md) for the exact feature matrix.
 
 Credentials are consumed where the model or feature runs. In an attached session that is usually the host, not the TUI client. Avoid committing project API keys. See [credentials](credentials.md).
-
-### `speechToText`
-
-An object with one required field when present:
-
-| Nested field | Type   | Values               |
-| ------------ | ------ | -------------------- |
-| `provider`   | String | `gemini` or `openai` |
-
-```json
-{
-  "speechToText": {
-    "provider": "gemini"
-  }
-}
-```
-
-When the object is absent, `/listen` and Telegram transcription use `openai`. The TUI consumes this setting for client-local recording; the Telegram runner consumes it for Telegram audio. Restart the owning process after changing it.
 
 ### `nook`
 

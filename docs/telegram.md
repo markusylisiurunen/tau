@@ -224,7 +224,7 @@ Every Telegram turn starts with hidden `<system>` guidance identifying Telegram 
 
 Top-level and per-bot `systemMessage` values share a second hidden block after the default, in that order. Audio transcripts receive another warning that they may contain noise or errors. Unlike project context, hidden guidance is persisted with user turns and can appear in history, so never put credentials in configured messages.
 
-The runner's speech-to-text provider is loaded from normal Tau config at runner startup, based on the runner process's startup `cwd`. Restart the runner after changing that provider or its environment.
+The runner's speech credentials are loaded at startup from its environment and normal Tau config, based on the runner process's startup `cwd`. Restart the runner after changing those credentials.
 
 ## Chat commands
 
@@ -280,12 +280,7 @@ Uploads only queue files; captions are metadata. The next text or voice transcri
 
 Files use native temporary directories in the execution environment; OS cleanup can invalidate their paths. Pending queues and group context clear on shutdown. File contents and metadata are untrusted.
 
-OpenAI is the default. Select Gemini with `speechToText.provider`. Runner credentials are:
-
-- Gemini: `GEMINI_API_KEY`, then `apiKeys.google`
-- OpenAI: `OPENAI_API_KEY`, then `apiKeys.openai`
-
-Gemini extracts spelling hints with Gemini 3.8 Flash and transcribes uploaded audio verbatim with `gemini-3.5-transcribe`, using English (`en-US`) and Finnish (`fi-FI`) hints. It attempts remote file deletion afterward. OpenAI normalizes downloaded audio with runner-side `ffmpeg` and uploads it to `gpt-transcribe`. Missing keys prevent transcription, not file delivery. See [credentials](credentials.md).
+Voice transcription uses Gemini with `GEMINI_API_KEY`, then `apiKeys.google`. Gemini extracts spelling hints with Gemini 3.8 Flash and transcribes uploaded audio verbatim with `gemini-3.5-transcribe`, using English (`en-US`) and Finnish (`fi-FI`) hints. It attempts remote file deletion afterward. Missing keys prevent transcription, not file delivery. See [credentials](credentials.md).
 
 `/tts_on` uses `gemini-3.8-flash`, `gemini-3.1-flash-tts-preview`, Despina, the Google key, and runner `ffmpeg` with Opus. Source and rewritten text each allow 10,000 Unicode characters; audio allows 32 MiB. Rewrite and job timeouts are one and five minutes. Jobs are ephemeral. Failure sends `voice response failed. please try again.` without affecting text; details stay in logs.
 
@@ -338,7 +333,7 @@ Do not verify bot tokens, provider keys, Access secrets, transcript contents, or
 
 **A persistent-directory session fails recovery.** Restore the configured directory and its original path, or return the project config to the snapshot's durable `cwd`. Tau does not migrate an existing session to a new persistent directory.
 
-**Audio reports a missing key.** Set the credential for the configured speech provider in the runner process and restart it. A workspace-only environment change does not update the runner's startup speech configuration.
+**Audio reports a missing key.** Set the credential for the Gemini in the runner process and restart it. A workspace-only environment change does not update the runner's startup speech configuration.
 
 **A message sent during active work changes direction.** Telegram uses steering, not ordinary queueing, while a turn is running. Wait for completion before sending an independent next task, or use `/interrupt` to stop the current run first.
 

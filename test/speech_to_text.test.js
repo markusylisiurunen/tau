@@ -14,7 +14,6 @@ describe("speech-to-text transcription", () => {
         }),
     );
     const transcription = createSpeechToTextTranscription({
-      provider: "gemini",
       mode: "file",
       apiKey: "provider-key",
       deps: { fetchImpl: fetchMock },

@@ -1,4 +1,3 @@
-import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import {
   createTelegramApi,
@@ -1649,7 +1648,6 @@ describe("telegram adapter", () => {
 
     const adapter = await startAdapter({
       allowedChatIds: [groupChatId],
-      speechToTextProvider: "gemini",
       geminiApiKey: "gemini-key",
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
@@ -2544,7 +2542,6 @@ describe("telegram adapter", () => {
     const geminiFetch = createGeminiTranscriptionFetchMock("ship the fix");
 
     const adapter = await startAdapter({
-      speechToTextProvider: "gemini",
       geminiApiKey: "gemini-key",
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
@@ -2614,7 +2611,7 @@ describe("telegram adapter", () => {
       { defaultOwnerId: ownerIdForChat(211) },
     );
     const adapter = await startAdapter({
-      openaiApiKey: "openai-key",
+      geminiApiKey: "gemini-key",
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
     });
@@ -2633,7 +2630,7 @@ describe("telegram adapter", () => {
     }
   });
 
-  it("transcribes voice messages with Gemini when configured", async () => {
+  it("transcribes voice messages with Gemini", async () => {
     const apiHarness = createApiHarness([
       [
         {
@@ -2664,7 +2661,6 @@ describe("telegram adapter", () => {
     const geminiFetch = createGeminiTranscriptionFetchMock("use google transcription");
 
     const adapter = await startAdapter({
-      speechToTextProvider: "gemini",
       geminiApiKey: "gemini-key",
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
@@ -2690,86 +2686,6 @@ describe("telegram adapter", () => {
         mode: { type: "verbatim" },
       });
       expect(request.input[0].mime_type).toBe("audio/ogg");
-    } finally {
-      await adapter.close();
-    }
-  });
-
-  it("transcribes Telegram audio with OpenAI file transcription by default", async () => {
-    const apiHarness = createApiHarness([
-      [
-        {
-          update_id: 1,
-          message: {
-            chat: { id: 212, type: "private" },
-            from: { id: 7 },
-            voice: {
-              duration: 1,
-              file_id: "voice-789",
-              mime_type: "audio/ogg",
-            },
-          },
-        },
-      ],
-    ]);
-    const managerHarness = createSessionManagerHarness(
-      [
-        createManagedSession({
-          id: "s23",
-          state: "waiting-input",
-        }),
-      ],
-      { defaultOwnerId: ownerIdForChat(212) },
-    );
-    const spawnImpl = vi.fn(async (_command, _args, options) => {
-      const stdout = new EventEmitter();
-      options.onSpawn({ stdout });
-      stdout.emit("data", Buffer.from([1, 2, 3, 4]));
-      return {
-        stdout: "",
-        stderr: "",
-        output: undefined,
-        exitCode: 0,
-        captureLimitExceeded: false,
-        timedOut: false,
-        aborted: false,
-        closeSignal: null,
-      };
-    });
-    const openaiFetch = vi.fn(async () =>
-      createJsonResponse({ text: "use file transcription", languages: [{ code: "en" }] }),
-    );
-    const adapter = await startAdapter({
-      openaiApiKey: "openai-key",
-      speechToTextDeps: { spawnImpl },
-      sessionManager: managerHarness.manager,
-      api: apiHarness.api,
-      fetchImpl: openaiFetch,
-    });
-
-    try {
-      await waitFor(() => managerHarness.manager.sendMessage.mock.calls.length === 1);
-      expect(managerHarness.manager.sendMessage).toHaveBeenCalledWith(
-        "s23",
-        transcribedTelegramUserText("use file transcription"),
-        { mode: "auto" },
-      );
-      expect(spawnImpl).toHaveBeenCalledWith(
-        "ffmpeg",
-        expect.arrayContaining(["-i", "pipe:0", "-ar", "16000", "pipe:1"]),
-        expect.objectContaining({ input: Buffer.from("telegram audio payload") }),
-      );
-      expect(openaiFetch).toHaveBeenCalledWith(
-        "https://api.openai.com/v1/audio/transcriptions",
-        expect.objectContaining({
-          method: "POST",
-          headers: { Authorization: "Bearer openai-key" },
-          body: expect.any(FormData),
-        }),
-      );
-      const form = openaiFetch.mock.calls[0][1].body;
-      expect(form.get("model")).toBe("gpt-transcribe");
-      expect(form.get("file").type).toBe("audio/wav");
     } finally {
       await adapter.close();
     }

@@ -273,9 +273,9 @@ Recovery needs the same `workspaceRoot`, project definitions, host home, and Tau
 
 ## Telegram audio or attachment processing fails
 
-Telegram audio transcription uses the runner's `speechToText.provider`, which defaults to OpenAI. OpenAI needs `OPENAI_API_KEY` or `apiKeys.openai` and runner-side `ffmpeg`; Gemini needs `GEMINI_API_KEY` or `apiKeys.google`. Set the credential for the runner process and restart it after changing the environment or provider.
+Telegram audio transcription uses Gemini and needs `GEMINI_API_KEY` or `apiKeys.google`. Set the credential for the runner process and restart it after changing the environment or configured key.
 
-Distinguish download, materialization, format, and transcription errors. The reply or runner log states which stage failed. Confirm Telegram can deliver the file to the bot, the attachment type is supported, the runner can write its temporary directory, and the selected provider accepts the media type. Do not log media bytes or transcripts merely to prove they exist.
+Distinguish download, materialization, format, and transcription errors. The reply or runner log states which stage failed. Confirm Telegram can deliver the file to the bot, the attachment type is supported, the runner can write its temporary directory, and Gemini accepts the media type. Do not log media bytes or transcripts merely to prove they exist.
 
 Successful audio turns echo `transcribed: …` before submission. In groups, non-triggering audio can be buffered for later mentioned context. If that is inappropriate for the chat, narrow `allowedChatIds` or avoid enabling the group.
 

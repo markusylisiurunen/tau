@@ -1,4 +1,3 @@
-import type { DiffToolConfig } from "../../core/config/index.js";
 import type {
   DiffReviewBridge,
   DiffReviewBridgeUiState,
@@ -38,10 +37,8 @@ export type DiffReviewServiceOptions = {
   refreshStatus: () => void;
   startTurnTimer: () => void;
   stopTurnTimer: () => void;
-  getDiffToolConfig: () => DiffToolConfig | undefined;
   startSession: (args: {
     source: DiffReviewSnapshotSource;
-    diffTool: DiffToolConfig;
     signal: AbortSignal;
   }) => Promise<StartedDiffReviewBridge>;
   onReviewReturned: (review: DiffReviewReturnedReview) => Promise<void>;
@@ -70,10 +67,8 @@ export class DiffReviewService {
   private readonly refreshStatus: () => void;
   private readonly startTurnTimer: () => void;
   private readonly stopTurnTimer: () => void;
-  private readonly getDiffToolConfig: () => DiffToolConfig | undefined;
   private readonly startSession: (args: {
     source: DiffReviewSnapshotSource;
-    diffTool: DiffToolConfig;
     signal: AbortSignal;
   }) => Promise<StartedDiffReviewBridge>;
   private readonly onReviewReturned: (review: DiffReviewReturnedReview) => Promise<void>;
@@ -85,7 +80,6 @@ export class DiffReviewService {
     this.refreshStatus = options.refreshStatus;
     this.startTurnTimer = options.startTurnTimer;
     this.stopTurnTimer = options.stopTurnTimer;
-    this.getDiffToolConfig = options.getDiffToolConfig;
     this.startSession = options.startSession;
     this.onReviewReturned = options.onReviewReturned;
   }
@@ -113,14 +107,6 @@ export class DiffReviewService {
   ): Promise<void> {
     if (this.state) {
       this.view.showFooterNotice("diff review is already active.", "default");
-      return;
-    }
-
-    const diffTool = this.getDiffToolConfig();
-    if (!diffTool) {
-      this.view.addTranscriptNotice("diff tool is not configured", "error", [
-        "configure diffTool in config.json before using /diff",
-      ]);
       return;
     }
 
@@ -177,7 +163,6 @@ export class DiffReviewService {
     try {
       const started = await callbacks.startSession({
         source: { kind: "git_diff", diffArgs },
-        diffTool,
         signal: abortController.signal,
       });
       if (abortController.signal.aborted) {
@@ -223,13 +208,6 @@ export class DiffReviewService {
       throw new Error("diff review is already active");
     }
 
-    const diffTool = this.getDiffToolConfig();
-    if (!diffTool) {
-      throw new Error(
-        "diff_review is unavailable because diffTool is not configured in config.json",
-      );
-    }
-
     const parsedArgs = parseDiffReviewToolArgs(rawArgs);
     if (!parsedArgs.ok) {
       throw new Error(`Invalid arguments: ${parsedArgs.error}`);
@@ -260,7 +238,6 @@ export class DiffReviewService {
     try {
       const started = await callbacks.startSession({
         source: parsedArgs.data.source,
-        diffTool,
         signal,
       });
       if (signal.aborted) {

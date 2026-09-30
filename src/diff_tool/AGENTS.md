@@ -1,6 +1,6 @@
 # Diff tool
 
-Built-in browser-based diff review tool and reference implementation for the diff-review protocol. The session TUI launches this tool locally for `/diff`.
+Built-in browser-based diff review tool using the diff-review protocol. The session TUI launches this tool locally for `/diff`.
 
 Keep `src/diff_tool/` as an isolated island. Diff-tool-specific prompts, HTTP handlers, review state, and browser UI code stay here. Shared contracts with Tau core should stay narrow and explicit: the diff-review protocol client plus shared protocol/types. Do not import diff-tool-only logic from `src/core/`.
 
@@ -10,7 +10,7 @@ Keep `src/diff_tool/` as an isolated island. Diff-tool-specific prompts, HTTP ha
 - `protocol_client.ts` — TCP/NDJSON client that talks to Tau's diff review protocol server over a Unix socket. Supports concurrent in-flight requests over one initialized connection, plus the server-initiated `session.close` shutdown handshake. Methods: `getContext`, `listFiles`, `getDiff`, `submitThreadMessage`, `returnReview`, `cancelSession`, `setUiText`
 - `http_server.ts` — local HTTP server that serves the React app's static build and exposes the review REST API. It starts an internal bootstrap review thread eagerly, generates the reviewer guide from that context, forks later guide and comment work from the prepared threads, optionally persists review state through a client-owned opaque storage adapter, and shuts down in response to Tau's `session.close` request before the protocol client disconnects.
 - `review_state_persistence.ts` — validates and versions persisted review documents, fingerprints their captured diff scope, and separates durable review transcripts from runtime-only ephemeral agent state.
-- `launcher.ts` — creates a `DiffToolConfig` pointing at `node <cli> diff-tool`
+- `launcher.ts` — launches `node <cli> diff-tool` with the client-local working directory and diff-review session environment
 - `browser.ts` — opens the URL via `open` (macOS) or `xdg-open` (Linux)
 - `app/` — Vite + React TypeScript app (the browser UI)
 

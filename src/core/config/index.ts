@@ -2,7 +2,6 @@ export type { CommandClientToolConfig } from "./client_tools.js";
 export { loadAllContent } from "./content_loader.js";
 export type { ConfigDeps } from "./deps.js";
 export { createDefaultConfigDeps } from "./deps.js";
-export type { DiffToolConfig } from "./diff_tool.js";
 export { resolveConfigLevels } from "./paths.js";
 export type { RuntimeBootstrap, RuntimeConfigResult } from "./runtime.js";
 export {

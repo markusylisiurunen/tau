@@ -27,7 +27,6 @@ Project and global content can change which persona ids are available. A configu
 | `defaultPersona` | Non-empty string | Global, project | Most-specific wins | Session host; new session |
 | `speech` | Object with optional `voiceId` | Global, project | Merge by field | TUI client or Telegram runner; process restart |
 | `defaultTheme` | Non-empty string | Global, project | Most-specific wins | TUI client; client restart |
-| `diffTool` | Object | Global, project | Most-specific complete object | TUI client; client restart |
 | `clientTools` | Array of objects | Global only | One global definition list | Owning client; TUI restart or new Telegram session client |
 | `enabledClientTools` | String array | Project only | Most-specific project list | Owning client; TUI restart or new Telegram session client |
 | `agentContextFiles` | String array | Global, project | Additive, resolved and deduplicated | Execution environment and session host; `/reload` or new session |
@@ -211,30 +210,6 @@ The exact, case-sensitive id of a built-in theme. The shipped default is `gold`:
 ```
 
 The attached TUI uses its client-local configuration. `/theme:<id>` changes the current client only and is not persisted into the session. See [TUI](tui.md).
-
-### `diffTool`
-
-A custom client-local diff-review launcher:
-
-| Nested field | Type | Required | Contract |
-| --- | --- | --- | --- |
-| `command` | Non-empty string | Yes | Executable name or path |
-| `args` | String array | No | Arguments passed to the executable |
-| `env` | Object of string values | No | Extra environment entries for the tool process |
-
-```json
-{
-  "diffTool": {
-    "command": "./tools/review-ui",
-    "args": ["--browser", "firefox"],
-    "env": {
-      "REVIEW_LOG_LEVEL": "warn"
-    }
-  }
-}
-```
-
-The most-specific complete object wins. A relative command containing `/` resolves from the declaring level root; a bare command resolves through client `PATH`. The TUI launches this process on the client machine. If this field is absent, the TUI uses Tau's built-in diff tool. See [TUI](tui.md) and [client tools](client-tools.md) for the broader client-local distinction.
 
 ## Command client tools
 

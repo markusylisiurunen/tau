@@ -5,12 +5,7 @@ import {
   type CommandRegistry,
   createCommandRegistry,
 } from "../core/commands/index.js";
-import {
-  type Config,
-  type DiffToolConfig,
-  getElevenLabsApiKey,
-  getOpenAIApiKey,
-} from "../core/config/index.js";
+import { type Config, getElevenLabsApiKey, getOpenAIApiKey } from "../core/config/index.js";
 import type {
   DiffReviewSnapshotSource,
   StartedDiffReviewBridge,
@@ -46,6 +41,7 @@ import {
   splitTauUserText,
 } from "../core/utils/user_metadata.js";
 import { APP_VERSION } from "../core/version.js";
+import { launchBuiltInDiffTool } from "../diff_tool/launcher.js";
 import type {
   SessionProtocolCreateParams,
   SessionProtocolDeltaMessage,
@@ -126,7 +122,6 @@ export type SessionChatControllerOptions = {
   targetLabel: string;
   configuredClientToolNames?: string[];
   config?: Config;
-  defaultDiffTool?: DiffToolConfig;
   diffToolLauncher?: DiffReviewToolLauncher;
   deps?: CoreDeps;
   speechToTextDeps?: SpeechToTextDependencies;
@@ -146,7 +141,6 @@ export class SessionChatController {
   private readonly targetLabel: string;
   private readonly configuredClientToolNames: string[];
   private readonly config: Config;
-  private readonly defaultDiffTool?: DiffToolConfig;
   private readonly diffToolLauncher?: DiffReviewToolLauncher;
   private readonly deps: CoreDeps;
   private readonly speechToTextDeps?: SpeechToTextDependencies;
@@ -211,7 +205,6 @@ export class SessionChatController {
     this.targetLabel = options.targetLabel;
     this.configuredClientToolNames = options.configuredClientToolNames ?? [];
     this.config = options.config ?? {};
-    this.defaultDiffTool = options.defaultDiffTool;
     this.diffToolLauncher = options.diffToolLauncher;
     this.deps = options.deps ?? createDefaultCoreDeps();
     this.speechToTextDeps = options.speechToTextDeps;
@@ -244,7 +237,6 @@ export class SessionChatController {
       refreshStatus: () => this.refreshStatus(),
       startTurnTimer: () => this.startTurnTimer(),
       stopTurnTimer: () => this.stopTurnTimer(),
-      getDiffToolConfig: () => this.resolveDiffToolConfig(),
       startSession: (args) => this.startDiffReviewBridge(args, this.session, this.snapshot),
       onReviewReturned: (review) => this.handleReturnedDiffReview(review, this.session),
     });
@@ -2712,14 +2704,9 @@ export class SessionChatController {
     );
   }
 
-  private resolveDiffToolConfig(): DiffToolConfig | undefined {
-    return this.config.diffTool ?? this.defaultDiffTool;
-  }
-
   private async startDiffReviewBridge(
     args: {
       source: DiffReviewSnapshotSource;
-      diffTool: DiffToolConfig;
       signal: AbortSignal;
     },
     session: TauSdkSession,
@@ -2750,7 +2737,6 @@ export class SessionChatController {
           ...(options.reasoning !== undefined ? { reasoning: options.reasoning } : {}),
         }),
       deps: this.deps,
-      ...(this.diffToolLauncher ? { toolLauncher: this.diffToolLauncher } : {}),
     });
     const unsubscribeEphemeral = session.onEphemeral((message) => {
       const event = message.event;
@@ -2773,7 +2759,7 @@ export class SessionChatController {
       if (args.signal.aborted) {
         throw new Error("diff review start aborted");
       }
-      await bridge.launchTool(args.diffTool);
+      await bridge.launchTool(this.diffToolLauncher ?? launchBuiltInDiffTool);
     } catch (error) {
       unsubscribeEphemeral();
       await session.closeEphemeralContext(ephemeral.contextId).catch(() => undefined);

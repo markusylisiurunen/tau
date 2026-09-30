@@ -3,7 +3,6 @@ import { writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute } from "node:path";
 import { createInterface } from "node:readline";
-import { fileURLToPath } from "node:url";
 import type { AuthCliCommand, AuthPromptFn } from "./core/auth/cli.js";
 import type { CliOptions } from "./core/cli.js";
 import {
@@ -34,7 +33,6 @@ import type { PromptTemplate } from "./core/prompts.js";
 import { createDefaultCoreDeps } from "./core/runtime/deps.js";
 import { createLocalToolExecutionBackend } from "./core/tools/execution_backend.js";
 import type { Persona, ReasoningEffort, Skill } from "./core/types.js";
-import { createBuiltInDiffToolConfig } from "./diff_tool/launcher.js";
 import { CompositeExecutionEnvironmentResolver } from "./execution/execution_environment.js";
 import { LocalExecutionEnvironmentResolver } from "./execution/local_execution_environment.js";
 import { LocalSessionHost } from "./host/local_session_host.js";
@@ -884,10 +882,6 @@ if (isAttachSubcommand) {
   }
 
   const terminalColors = await detectTerminalColors();
-  const defaultDiffTool = createBuiltInDiffToolConfig({
-    nodeExecutablePath: process.execPath,
-    cliEntryPath: fileURLToPath(import.meta.url),
-  });
   const sessionSelection = attach.sessionId
     ? ({ mode: "attach", sessionId: attach.sessionId } as const)
     : attach.createNew
@@ -905,7 +899,6 @@ if (isAttachSubcommand) {
     themeId: config.defaultTheme,
     themes,
     config,
-    defaultDiffTool,
     clientToolsEnabled: !attach.noClientTools,
   });
 
@@ -1128,10 +1121,6 @@ if (personas.length === 0) {
 const initialUserMessage = await readPipedStdin();
 
 const terminalColors = detectTerminalColors();
-const defaultDiffTool = createBuiltInDiffToolConfig({
-  nodeExecutablePath: process.execPath,
-  cliEntryPath: fileURLToPath(import.meta.url),
-});
 
 let sessionChatApp: SessionChatApp | undefined;
 let historyReplicationDelayed = false;
@@ -1181,7 +1170,6 @@ const app = await SessionChatApp.open({
   themeId: config.defaultTheme,
   initialUserMessage,
   config,
-  defaultDiffTool,
 });
 sessionChatApp = app;
 if (historyReplicationDelayed) {

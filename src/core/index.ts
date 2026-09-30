@@ -33,7 +33,6 @@ export { CliError, parseCliArgs, parsePersonaString, printDiffToolHelp, printHel
 export type {
   Config,
   ConfigDeps,
-  DiffToolConfig,
   FlySpritesApiConfig,
   FlySpritesConfig,
   RuntimeBootstrap,

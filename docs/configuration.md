@@ -67,7 +67,6 @@ A few fields intentionally use other rules:
 - `modelSystemNotices` merges by normalized `<provider>/<model>` key.
 - `flySprites.apis` merges by API id. A more-specific API replaces the complete API entry with that id.
 - `agentContextFiles` is additive across levels, resolves each entry at its owning level, and removes duplicate resolved paths while preserving order.
-- `diffTool` selects the complete object from the most-specific level that defines it.
 - `subagents.defaultLaunchModels` selects the most-specific list.
 - `clientTools` is defined only at global scope. `enabledClientTools` at the most-specific project level is an exact selection from those definitions.
 - `history` is accepted only at global scope.
@@ -88,22 +87,18 @@ Relative path bases belong to the level that declares the value:
 
 - Global `agentContextFiles` entries resolve from home.
 - Project `agentContextFiles` entries resolve from the directory containing `.tau`.
-- A relative `diffTool.command` containing a slash resolves from the same level root.
 - A global `clientTools[].command` containing a slash resolves from home.
-- A bare command such as `review-ui` is left bare and resolves through the owning process's `PATH`.
+- A bare command such as `git` is left bare and resolves through the owning process's `PATH`.
 
 For example, in `/home/ada/work/ledger/.tau/config.json`:
 
 ```json
 {
-  "agentContextFiles": ["docs/AI_GUIDE.md"],
-  "diffTool": {
-    "command": "./tools/review-ui"
-  }
+  "agentContextFiles": ["docs/AI_GUIDE.md"]
 }
 ```
 
-Tau resolves the paths as `/home/ada/work/ledger/docs/AI_GUIDE.md` and `/home/ada/work/ledger/tools/review-ui`. In an attached session, `diffTool` used by the TUI comes from the client-local load, so this resolved command is a client path.
+Tau resolves the path as `/home/ada/work/ledger/docs/AI_GUIDE.md`.
 
 Other strings that happen to contain paths are not automatically rebased unless their field contract says so. In particular, hosted execution-environment `home` values are passed as configured.
 
@@ -157,7 +152,6 @@ Never verify a secret by printing the full config or environment into a shared t
 Tau loads startup configuration and content before opening the TUI. Restart the local TUI or `tau attach` to apply client-owned changes such as:
 
 - `defaultTheme`
-- `diffTool`
 - `clientTools` and `enabledClientTools`
 - client environment variables
 

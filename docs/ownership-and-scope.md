@@ -57,7 +57,7 @@ A Fly Sprite can place the execution environment on another target while the hos
 | Session snapshots | Host home | Local defaults live under the host's Tau config directory. Do not edit session files. |
 | Local transcript history and remote history outbox | Host home | History follows the host, not an attached TUI or execution target. |
 | Terminal theme and `/theme` | TUI client | An attached client selects from Tau’s built-in themes. Themes are not session state. |
-| `/diff` process | TUI client | `diffTool.command` must exist on the client machine. Repository capture still runs through the session execution environment. |
+| `/diff` process | TUI client | Tau’s built-in browser tool runs on the client machine. Repository capture still runs through the session execution environment. |
 | Configured command client tools | Owning client | Commands and their environment are client-local; their execution-environment facade reaches the session target explicitly. |
 | `/listen` and `/speak` capture or playback | TUI client | Required programs, devices, and media credentials belong on the client machine. |
 | Host execution-environment targets | Host startup | Fly Sprite API definitions must be available to the host before it accepts sessions using them. |
@@ -84,7 +84,7 @@ tau attach --new --cwd /srv/ledger ws://devbox.example:8787
 
 The path `/srv/ledger` is interpreted by the host and its local execution environment. Project personas and `.tau/config.json` are read from `/srv/ledger` and its ancestors on `devbox.example`. The laptop's current directory does not influence that session runtime.
 
-The laptop still loads its own theme, `diffTool`, and command client tools before attaching. If `/diff` launches `review-ui`, that executable must exist on the laptop. Git snapshot commands for the review run through the session and therefore see `/srv/ledger` on the execution environment.
+The laptop still loads its own theme and command client tools before attaching. `/diff` launches Tau’s built-in browser tool on the laptop. Git snapshot commands for the review run through the session and therefore see `/srv/ledger` on the execution environment.
 
 If the selected persona needs a provider credential, the host on `devbox.example` makes the model call. Export the provider environment variable for `tau serve` there, or make the appropriate runtime configuration available to that host. Setting it only in the laptop shell does not authenticate the remote host.
 

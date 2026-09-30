@@ -19,8 +19,6 @@ import {
   selectCommandClientTools,
 } from "./client_tools.js";
 import type { ConfigDeps } from "./deps.js";
-import type { DiffToolConfig } from "./diff_tool.js";
-import { parseDiffToolConfig, resolveDiffToolConfig } from "./diff_tool.js";
 import type { ConfigLevel } from "./paths.js";
 import { resolveConfigLevels } from "./paths.js";
 import { getVirtualConfigDefaults } from "./virtual_defaults.js";
@@ -30,7 +28,6 @@ export interface Config {
   speech?: { voiceId?: string };
   defaultPersona?: string;
   defaultTheme?: string;
-  diffTool?: DiffToolConfig;
   clientTools?: CommandClientToolConfig[];
   enabledClientTools?: string[];
   agentContextFiles?: string[];
@@ -329,9 +326,6 @@ function validateConfigData(
   ]);
   Object.assign(config as Record<string, unknown>, scalarResult.values);
   errors.push(...scalarResult.errors);
-
-  const diffToolResult = parseDiffToolConfig(data.diffTool, sourceLabel);
-  assignParsedConfigValue(config, errors, "diffTool", diffToolResult.config, diffToolResult.errors);
 
   if (data.clientTools !== undefined && options.scope !== "global") {
     errors.push(`${sourceLabel}: 'clientTools' may only be configured in the global config.`);
@@ -766,7 +760,6 @@ function dedupePaths(paths: string[]): string[] {
 function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
   const merged: Config = getVirtualConfigDefaults();
   let apiKeys: Config["apiKeys"] | undefined;
-  let diffTool: DiffToolConfig | undefined;
   let clientTools: CommandClientToolConfig[] | undefined;
   let enabledClientTools: string[] | undefined;
   let subagents: Config["subagents"] | undefined;
@@ -783,9 +776,6 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
     apiKeys = mergeOptionalObject(apiKeys, config.apiKeys);
     if (config.speech !== undefined) {
       merged.speech = mergeOptionalObject(merged.speech, config.speech);
-    }
-    if (config.diffTool !== undefined) {
-      diffTool = resolveDiffToolConfig(level, config.diffTool);
     }
     if (config.clientTools !== undefined) {
       clientTools = resolveCommandClientToolsConfig(level, config.clientTools);
@@ -818,10 +808,6 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
 
   if (apiKeys && Object.keys(apiKeys).length > 0) {
     merged.apiKeys = apiKeys;
-  }
-
-  if (diffTool) {
-    merged.diffTool = diffTool;
   }
 
   if (clientTools) {

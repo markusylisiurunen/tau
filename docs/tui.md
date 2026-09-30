@@ -25,7 +25,7 @@ Piped stdin becomes the first message in a local TUI session:
 printf 'summarize the current changes' | tau
 ```
 
-Use `tau attach` for a session hosted elsewhere. The terminal, themes, clipboard, speech commands, custom diff launcher, and command-backed client tools still belong to the attaching machine. Bash tools, file access, project configuration, and model work use the session’s execution environment. See [remote sessions](remote-sessions.md) for transport and creation examples.
+Use `tau attach` for a session hosted elsewhere. The terminal, themes, clipboard, speech commands, built-in diff review tool, and command-backed client tools still belong to the attaching machine. Bash tools, file access, project configuration, and model work use the session’s execution environment. See [remote sessions](remote-sessions.md) for transport and creation examples.
 
 ## Work in the editor
 
@@ -156,24 +156,13 @@ Theme ids are exact and case-sensitive. `/theme` does not persist the selection.
 
 ## Review a diff
 
-`/diff` captures a Git snapshot through the session execution environment, then launches a diff-tool process on the TUI machine. The built-in browser tool is the default. `tau diff-tool` is the standalone command for the built-in demo and diff-review protocol reference. `tau diff-tool --help` shows its help, while `/diff` supplies the environment required for normal reviews. Arguments are passed as Git diff arguments, for example:
+`/diff` captures a Git snapshot through the session execution environment, then launches a diff-tool process on the TUI machine. The built-in browser tool is the review interface. `tau diff-tool` is its process entry point. `tau diff-tool --help` shows its help, while `/diff` supplies the environment required for normal reviews. Arguments are passed as Git diff arguments, for example:
 
 ```text
 /diff --staged
 ```
 
 Captured snapshot patches are limited to 16 MiB. Narrow the Git arguments when a larger scope is rejected. A plain working-tree snapshot includes non-binary untracked files up to 4 MiB each within that aggregate limit.
-
-A `diffTool` entry in the attaching client’s configuration replaces the launcher. Relative commands resolve from the configuration level that defines them:
-
-```json
-{
-  "diffTool": {
-    "command": "/usr/local/bin/team-diff-review",
-    "args": ["--open"]
-  }
-}
-```
 
 The built-in tool opens in Guide mode and starts preparing reviewer orientation, focused topics, and likely questions as soon as its shared review context is ready. Reviewers can comment on that guide, ask for another topic or question, or switch to Diff mode for file and line-level review threads. Guide comments and unresolved diff threads are included in self-contained returned Markdown that identifies the reviewed scope, gives change-level comments their relevant context, and explains the participants and roles in review discussions. Submit first opens the exact return-text preview, where included feedback can be excluded and the full review can be copied before submission. Approve returns immediately when no feedback remains; if feedback appears while approval is being checked, the preview opens instead.
 

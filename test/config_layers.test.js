@@ -128,11 +128,6 @@ describe("config paths", () => {
         JSON.stringify({
           apiKeys: { openai: "global", anthropic: "anthropic-key", mistral: "mistral-key" },
           speech: { voiceId: "global-voice" },
-          diffTool: {
-            command: "./scripts/global-diff-tool",
-            args: ["--global"],
-            env: { GLOBAL_ONLY: "1" },
-          },
           agentContextFiles: ["AGENTS.md"],
           subagents: {
             defaultLaunchModels: ["anthropic/claude-haiku-4-5:low"],
@@ -164,11 +159,6 @@ describe("config paths", () => {
         JSON.stringify({
           apiKeys: { openai: "repo", google: "google-key" },
           speech: { voiceId: " project-voice " },
-          diffTool: {
-            command: "./scripts/repo-diff-tool",
-            args: ["--repo"],
-            env: { REPO_ONLY: "1" },
-          },
           agentContextFiles: ["docs/AGENTS.md"],
           subagents: {
             defaultLaunchModels: ["openai/gpt-5.4:high"],
@@ -210,11 +200,6 @@ describe("config paths", () => {
         anthropic: "anthropic-key",
         google: "google-key",
         mistral: "mistral-key",
-      });
-      expect(config.diffTool).toEqual({
-        command: join(repo, "scripts", "repo-diff-tool"),
-        args: ["--repo"],
-        env: { REPO_ONLY: "1" },
       });
       expect(config.agentContextFiles).toEqual([
         join(fx.home, "AGENTS.md"),
@@ -509,6 +494,7 @@ describe("config paths", () => {
           disableBuiltinPersonas: true,
           autoCompact: { enabled: false, reserveTokens: 1000 },
           builtInDiffTool: { codeTheme: "dark-plus" },
+          diffTool: { command: "./tools/review-ui" },
         }),
         "utf-8",
       );
@@ -526,6 +512,7 @@ describe("config paths", () => {
       expect(result.config).not.toHaveProperty("disableBuiltinPersonas");
       expect(result.config).not.toHaveProperty("autoCompact");
       expect(result.config).not.toHaveProperty("builtInDiffTool");
+      expect(result.config).not.toHaveProperty("diffTool");
       expect(result.errors).toEqual([]);
     } finally {
       fx.cleanup();

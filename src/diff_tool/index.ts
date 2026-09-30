@@ -17,8 +17,7 @@ export type {
   StartedDiffToolHttpServer,
 } from "./http_server.js";
 export { DiffToolHttpServer } from "./http_server.js";
-export type { CreateBuiltInDiffToolConfigOptions } from "./launcher.js";
-export { createBuiltInDiffToolConfig } from "./launcher.js";
+export { launchBuiltInDiffTool } from "./launcher.js";
 export {
   DiffReviewProtocolClient,
   DiffReviewProtocolClientError,

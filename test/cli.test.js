@@ -177,7 +177,7 @@ describe("cli", () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("tau diff-tool [--help]");
-    expect(result.stdout).toContain("built-in browser diff review demo tool");
+    expect(result.stdout).toContain("built-in browser diff review tool");
     expect(result.stderr).toBe("");
   });
 

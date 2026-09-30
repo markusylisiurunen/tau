@@ -194,7 +194,7 @@ For public content contracts, follow `docs/models.md`, `docs/personas.md`, `docs
 
 When adding a slash command, update the command union and registry in `src/core/commands/registry.ts`, wire its handler in `src/tui/session_chat_controller.ts`, and add argument suggestions in `src/tui/ui/slash_autocomplete.ts` when needed. Cover parsing, dispatch, and public behavior in the matching tests and `docs/tui.md`.
 
-The built-in diff tool is an isolated reference implementation. Keep its prompts, HTTP handlers, review state, and browser UI inside `src/diff_tool/`; share only narrow protocol types with core and preserve the server-initiated `session.close` handshake. Follow its nested guide, including its prohibition on agents starting interactive dev servers.
+The built-in diff tool is the only supported review interface and remains isolated from core. The client launches it directly; the core bridge supplies the protocol session environment without owning executable configuration. Keep its prompts, HTTP handlers, review state, and browser UI inside `src/diff_tool/`; share only narrow protocol types with core and preserve the server-initiated `session.close` handshake. Follow its nested guide, including its prohibition on agents starting interactive dev servers.
 
 Nook is a deliberately narrow Cloudflare V0 platform. Its Worker, security topology, asset and KV scope, and unsupported features are governed by `src/nook/AGENTS.md`; do not infer a broader provider abstraction from public service code.
 

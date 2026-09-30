@@ -188,7 +188,6 @@ describe("diff review bridge", () => {
     const toolLauncher = vi.fn(async () => {});
     const bridge = createDiffReviewBridge({
       snapshot: createSnapshot(),
-      toolLauncher,
       deps: {
         env: {
           cwd: () => "/client/workspace",
@@ -197,10 +196,9 @@ describe("diff review bridge", () => {
       },
     });
 
-    await bridge.launchTool({ command: "diff-tool" });
+    await bridge.launchTool(toolLauncher);
 
     expect(toolLauncher).toHaveBeenCalledWith({
-      diffTool: { command: "diff-tool" },
       cwd: "/client/workspace",
       env: expect.objectContaining({
         TAU_DIFF_CWD: "/repo/packages/app",

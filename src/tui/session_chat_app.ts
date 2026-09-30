@@ -3,12 +3,7 @@ import { Type } from "typebox";
 import { z } from "zod";
 import { createCommandClientTools } from "../core/client_tools/command_client_tools.js";
 import { createCommandRegistry } from "../core/commands/index.js";
-import type {
-  CommandClientToolConfig,
-  Config,
-  DiffToolConfig,
-  ThemeDefinition,
-} from "../core/config/index.js";
+import type { CommandClientToolConfig, Config, ThemeDefinition } from "../core/config/index.js";
 import { DIFF_REVIEW_TOOL, parseDiffReviewToolArgs } from "../core/diff_review/index.js";
 import type { CoreDeps } from "../core/runtime/deps.js";
 import { TOOL_NAME_PREFILL_INPUT } from "../core/tools/tool_names.js";
@@ -33,7 +28,6 @@ export type SessionChatAppOptions = {
   themeId?: string;
   themes?: ThemeDefinition[];
   config?: Config;
-  defaultDiffTool?: DiffToolConfig;
   deps?: CoreDeps;
   initialUserMessage?: string;
 };
@@ -231,7 +225,6 @@ export class SessionChatApp {
         targetLabel: options.targetLabel,
         configuredClientToolNames: options.configuredClientToolNames,
         config: options.config,
-        defaultDiffTool: options.defaultDiffTool,
         deps: options.deps,
         themeIds: (options.themes ?? []).map((theme) => theme.id),
         onExit: () => app.exit(),

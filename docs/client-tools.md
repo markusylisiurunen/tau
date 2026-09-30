@@ -113,7 +113,7 @@ This disables both configured command tools and the TUI's built-in `diff_review`
 
 Client tools are selected and advertised when the owning client starts and connects. `/reload` refreshes host-side session configuration and content but does not recreate the TUI or Telegram client's advertised tool set. Restart or reconnect the owning client after changing `clientTools`, `enabledClientTools`, or `--no-client-tools` behavior.
 
-Diff-tool launcher settings are separate from command client-tool definitions. They choose how the TUI starts its local diff review application. See [TUI](tui.md).
+Diff review uses Tau’s built-in browser tool on the TUI machine, separately from command client-tool definitions. See [TUI](tui.md).
 
 ## Implement a command tool with Tau's helper
 

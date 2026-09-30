@@ -1,11 +1,9 @@
-import { spawn } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync, rmSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface, type Interface } from "node:readline";
-import type { DiffToolConfig } from "../config/index.js";
 import type { CoreDeps } from "../runtime/deps.js";
 import { createDefaultCoreDeps } from "../runtime/deps.js";
 import type { ReasoningEffort } from "../types.js";
@@ -69,7 +67,6 @@ export type DiffReviewSubmitThreadMessage = (
 ) => Promise<DiffReviewSubmitThreadMessageResult>;
 
 export type DiffReviewToolLauncher = (options: {
-  diffTool: DiffToolConfig;
   cwd: string;
   env: NodeJS.ProcessEnv;
 }) => Promise<void>;
@@ -79,7 +76,6 @@ export type DiffReviewBridgeOptions = {
   contextWindow: number;
   submitThreadMessage: DiffReviewSubmitThreadMessage;
   deps?: CoreDeps;
-  toolLauncher?: DiffReviewToolLauncher;
 };
 
 export type StartedDiffReviewBridge = {
@@ -151,36 +147,12 @@ class DiffReviewRequestError extends Error {
 const DIFF_REVIEW_INITIALIZE_TIMEOUT_MS = 10_000;
 const DIFF_REVIEW_CLOSE_TIMEOUT_MS = 1_000;
 
-async function launchDiffToolProcess(options: {
-  diffTool: DiffToolConfig;
-  cwd: string;
-  env: NodeJS.ProcessEnv;
-}): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(options.diffTool.command, options.diffTool.args ?? [], {
-      cwd: options.cwd,
-      env: options.env,
-      stdio: "ignore",
-      detached: true,
-    });
-
-    const onError = (error: Error) => reject(error);
-    child.once("error", onError);
-    child.once("spawn", () => {
-      child.off("error", onError);
-      child.unref();
-      resolve();
-    });
-  });
-}
-
 export class DiffReviewBridge {
   readonly sessionId: string;
   readonly snapshot: DiffReviewSnapshot;
   private readonly contextWindow: number;
   private readonly submitThreadMessage: DiffReviewSubmitThreadMessage;
   private readonly deps: CoreDeps;
-  private readonly toolLauncher: DiffReviewToolLauncher;
   private readonly socketPath: string;
   private readonly authToken: string;
   private server?: Server;
@@ -203,7 +175,6 @@ export class DiffReviewBridge {
     this.contextWindow = options.contextWindow;
     this.submitThreadMessage = options.submitThreadMessage;
     this.deps = options.deps ?? createDefaultCoreDeps();
-    this.toolLauncher = options.toolLauncher ?? launchDiffToolProcess;
     this.socketPath = join(tmpdir(), `tau-diff-${randomBytes(8).toString("hex")}.sock`);
     this.authToken = randomBytes(24).toString("hex");
     this.completionPromise = new Promise<DiffReviewResult>((resolve) => {
@@ -277,15 +248,13 @@ export class DiffReviewBridge {
     this.armInitializeTimeout();
   }
 
-  async launchTool(diffTool: DiffToolConfig): Promise<void> {
+  async launchTool(toolLauncher: DiffReviewToolLauncher): Promise<void> {
     const env = {
       ...this.deps.env.env(),
-      ...(diffTool.env ?? {}),
       ...this.launchEnvironment,
     };
 
-    await this.toolLauncher({
-      diffTool,
+    await toolLauncher({
       cwd: this.deps.env.cwd(),
       env,
     });

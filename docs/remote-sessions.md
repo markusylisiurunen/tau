@@ -150,7 +150,7 @@ An attached session spans three logical machines even when two happen to share o
 - command execution, platform, PATH, and runtime dependencies
 - automatic-compaction archives and other target-side temporary files
 
-This is why changing a host’s theme selection does not affect a remote TUI, why `!git status` runs against the execution environment, and why a custom diff application opens on the attaching machine. [Ownership and scope](ownership-and-scope.md) applies the same model across Tau.
+This is why changing a host’s theme selection does not affect a remote TUI, why `!git status` runs against the execution environment, and why the built-in diff review tool opens on the attaching machine. [Ownership and scope](ownership-and-scope.md) applies the same model across Tau.
 
 ## Reload or restart the correct process
 
@@ -161,7 +161,7 @@ Different changes have different owners:
 | Project config, model overlays, personas, prompts, skills, or AGENTS.md in the execution environment | Wait for idle, then run `/reload`. |
 | Effective model `apiKeys` in execution-environment or session configuration | Wait for idle, then run `/reload`; new sessions also resolve the current values. |
 | Managed Codex auth changed with `tau auth` | No host restart; auth storage is read again on later credential resolutions. |
-| Attaching themes, diff launcher, speech config, or configured client tools | Restart `tau attach`. |
+| Attaching themes, speech config, or configured client tools | Restart `tau attach`. |
 | Host process environment variables, history target, WebSocket listener, Fly API target, or host startup flags | Restart `tau serve`. |
 | Host Tau package, built-in tools, protocol, session recovery code, or built-in documentation | Upgrade and restart the host. |
 | TUI package, keybindings, rendering, local speech, or client-tool implementation | Upgrade and restart the attaching client. |

@@ -5458,7 +5458,6 @@ describe("SessionChatController", () => {
 
   it("runs /diff locally while delegating review work through the session protocol", async () => {
     const { session, view, controller } = await createControllerHarness({
-      defaultDiffTool: { command: "inline-diff-tool" },
       diffToolLauncher: launchInlineDiffTool,
     });
     controller.start();
@@ -5501,7 +5500,6 @@ describe("SessionChatController", () => {
     const { controller } = await createControllerHarness({
       view,
       session,
-      defaultDiffTool: { command: "inline-diff-tool" },
       diffToolLauncher: launchInlineDiffTool,
     });
     controller.start();
@@ -5557,7 +5555,6 @@ describe("SessionChatController", () => {
     const { controller } = await createControllerHarness({
       view,
       session,
-      defaultDiffTool: { command: "inline-diff-tool" },
       diffToolLauncher: launchInlineDiffTool,
     });
     controller.start();
@@ -5609,7 +5606,6 @@ describe("SessionChatController", () => {
       snapshot: await session.snapshot(),
       createSession,
       targetLabel: "ws://host",
-      defaultDiffTool: { command: "inline-diff-tool" },
       diffToolLauncher: launchInlineDiffTool,
     });
     controller.start();
@@ -5776,7 +5772,6 @@ describe("SessionChatController", () => {
 
   it("keeps an active model-launched diff review visible and steerable", async () => {
     const { session, view, controller } = await createControllerHarness({
-      defaultDiffTool: { command: "inline-diff-tool" },
       diffToolLauncher: (args) => launchInlineDiffTool({ ...args, returnDelayMs: 100 }),
     });
     controller.start();

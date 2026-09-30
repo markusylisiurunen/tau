@@ -100,7 +100,7 @@ Before enabling one:
 
 A project `enabledClientTools` list is permission to select an already trusted global definition. Unknown selected names are ignored, so verify effective advertisement after changes. Start an untrusted project with `--no-client-tools` until its selection has been reviewed.
 
-The TUI's diff launcher is also a client-local process. A custom `diffTool.command` and its configured environment should be treated as trusted code.
+The TUI's built-in diff review tool is also a client-local process.
 
 ## Use code mode as a capability boundary
 

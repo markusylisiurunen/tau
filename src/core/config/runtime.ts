@@ -9,7 +9,6 @@ import {
 import type { Persona, Skill } from "../types.js";
 import { loadAllContent, parsePrompt } from "./content_loader.js";
 import type { ConfigDeps } from "./deps.js";
-import type { DiffToolConfig } from "./diff_tool.js";
 import type { ConfigLevel } from "./paths.js";
 import { resolveConfigLevels } from "./paths.js";
 import type { Config } from "./schema.js";
@@ -32,7 +31,6 @@ export interface RuntimeConfigResult {
   prompts: PromptTemplate[];
   skills: Skill[];
   themes: ThemeDefinition[];
-  diffTool?: DiffToolConfig;
   warnings: string[];
 }
 
@@ -240,7 +238,6 @@ export async function loadRuntimeConfig(
     prompts: content.prompts,
     skills: content.skills,
     themes: content.themes,
-    diffTool: bootstrap.config.diffTool,
     warnings,
   };
 }

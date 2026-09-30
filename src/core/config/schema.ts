@@ -41,7 +41,6 @@ export interface Config {
   };
   autoCompact?: AutoCompactConfig;
   modelSystemNotices?: Record<string, string>;
-  speechToText?: SpeechToTextConfig;
   cloudflareSandbox?: CloudflareSandboxConfig;
   flySprites?: FlySpritesConfig;
   nook?: NookConfig;
@@ -50,12 +49,6 @@ export interface Config {
 
 export type BuiltInDiffToolConfig = {
   codeTheme?: string;
-};
-
-export type SpeechToTextProvider = "gemini" | "openai";
-
-export type SpeechToTextConfig = {
-  provider: SpeechToTextProvider;
 };
 
 export type CloudflareSandboxBridgeConfig = {
@@ -226,11 +219,6 @@ const BooleanSchema = z.boolean();
 const AgentContextFilesSchema = z.array(NonEmptyStringSchema);
 const ApiKeyProviderSchema = z.string();
 const ApiKeysSchema = z.object({}).catchall(z.unknown());
-const SpeechToTextConfigSchema = z
-  .object({
-    provider: z.enum(["gemini", "openai"]),
-  })
-  .strip();
 const CloudflareSandboxBridgeSchema = z
   .object({
     url: NonEmptyStringSchema,
@@ -543,15 +531,6 @@ function validateConfigData(
     modelSystemNoticesResult.errors,
   );
 
-  const speechToTextResult = parseSpeechToTextConfig(data.speechToText, sourceLabel);
-  assignParsedConfigValue(
-    config,
-    errors,
-    "speechToText",
-    speechToTextResult.config,
-    speechToTextResult.errors,
-  );
-
   const cloudflareSandboxResult = parseCloudflareSandboxConfig(data.cloudflareSandbox, sourceLabel);
   assignParsedConfigValue(
     config,
@@ -625,27 +604,6 @@ function parseBuiltInDiffToolConfig(
   }
 
   return { config: Object.keys(config).length > 0 ? config : undefined, errors: [] };
-}
-
-function parseSpeechToTextConfig(
-  raw: unknown,
-  sourceLabel: string,
-): { config?: SpeechToTextConfig; errors: string[] } {
-  if (raw === undefined) {
-    return { errors: [] };
-  }
-
-  const parsed = SpeechToTextConfigSchema.safeParse(raw);
-  if (!parsed.success) {
-    if (parsed.error.issues.some((issue) => issue.path[0] === "provider")) {
-      return {
-        errors: [`${sourceLabel}: speechToText.provider must be 'gemini' or 'openai'.`],
-      };
-    }
-    return { errors: [`${sourceLabel}: 'speechToText' must be an object.`] };
-  }
-
-  return { config: { provider: parsed.data.provider }, errors: [] };
 }
 
 function parseCloudflareSandboxConfig(
@@ -1062,7 +1020,6 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
   let enabledClientTools: string[] | undefined;
   let subagents: Config["subagents"] | undefined;
   let modelSystemNotices: Config["modelSystemNotices"] | undefined;
-  let speechToText: SpeechToTextConfig | undefined;
   let cloudflareSandbox: CloudflareSandboxConfig | undefined;
   let flySprites: FlySpritesConfig | undefined;
   let nook: NookConfig | undefined;
@@ -1091,9 +1048,6 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
       merged.autoCompact = mergeOptionalObject(merged.autoCompact, config.autoCompact);
     }
     modelSystemNotices = mergeOptionalObject(modelSystemNotices, config.modelSystemNotices);
-    if (config.speechToText !== undefined) {
-      speechToText = { ...config.speechToText };
-    }
     cloudflareSandbox = mergeCloudflareSandboxConfig(cloudflareSandbox, config.cloudflareSandbox);
     flySprites = mergeFlySpritesConfig(flySprites, config.flySprites);
     if (config.nook !== undefined) {
@@ -1149,10 +1103,6 @@ function mergeConfigLevels(levels: ConfigLevel[], configs: Config[]): Config {
 
   if (modelSystemNotices && Object.keys(modelSystemNotices).length > 0) {
     merged.modelSystemNotices = modelSystemNotices;
-  }
-
-  if (speechToText) {
-    merged.speechToText = speechToText;
   }
 
   if (cloudflareSandbox) {

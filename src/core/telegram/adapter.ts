@@ -7,7 +7,7 @@ import type {
   SessionProtocolSnapshot,
 } from "../../protocol/session_protocol.js";
 import { TauSessionProtocolResponseError } from "../../transport/errors.js";
-import type { SpeechToTextProvider, TelegramProjectConfig } from "../config/schema.js";
+import type { TelegramProjectConfig } from "../config/schema.js";
 import { formatAdaptiveNumber, formatTokenWindow } from "../utils/format.js";
 import {
   createSpeechToTextTranscription,
@@ -159,9 +159,7 @@ export type TelegramAdapterOptions = {
   allowedChatIds?: number[];
   pollIntervalMs?: number;
   requestTimeoutSeconds?: number;
-  speechToTextProvider?: SpeechToTextProvider;
   geminiApiKey?: string;
-  openaiApiKey?: string;
   speechToTextDeps?: SpeechToTextDependencies;
   sessionManager: TelegramSessionManager;
   projectPreferences: TelegramProjectPreferenceStore;
@@ -1276,9 +1274,7 @@ class TelegramAdapterImpl {
   private readonly botUsername: string;
   private readonly pollIntervalMs: number;
   private readonly requestTimeoutSeconds: number;
-  private readonly speechToTextProvider: SpeechToTextProvider;
   private readonly geminiApiKey?: string;
-  private readonly openaiApiKey?: string;
   private readonly speechToTextDeps?: SpeechToTextDependencies;
   private readonly sessionManager: TelegramSessionManager;
   private readonly projectPreferences: TelegramProjectPreferenceStore;
@@ -1354,9 +1350,7 @@ class TelegramAdapterImpl {
     this.botUsername = options.botUsername;
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     this.requestTimeoutSeconds = options.requestTimeoutSeconds ?? DEFAULT_REQUEST_TIMEOUT_SECONDS;
-    this.speechToTextProvider = options.speechToTextProvider ?? "openai";
     this.geminiApiKey = options.geminiApiKey?.trim() || undefined;
-    this.openaiApiKey = options.openaiApiKey?.trim() || undefined;
     this.speechToTextDeps = options.speechToTextDeps;
     this.sessionManager = options.sessionManager;
     this.projectPreferences = options.projectPreferences;
@@ -2783,21 +2777,11 @@ class TelegramAdapterImpl {
   }
 
   private getSpeechToTextApiKey(): string | undefined {
-    switch (this.speechToTextProvider) {
-      case "gemini":
-        return this.geminiApiKey;
-      case "openai":
-        return this.openaiApiKey;
-    }
+    return this.geminiApiKey;
   }
 
   private getSpeechToTextApiKeyErrorMessage(action: string): string {
-    switch (this.speechToTextProvider) {
-      case "gemini":
-        return `set GEMINI_API_KEY or apiKeys.google to ${action}`;
-      case "openai":
-        return `set OPENAI_API_KEY or apiKeys.openai to ${action}`;
-    }
+    return `set GEMINI_API_KEY or apiKeys.google to ${action}`;
   }
 
   private async transcribeTelegramVoice(
@@ -2825,7 +2809,6 @@ class TelegramAdapterImpl {
     let transcript: string;
     try {
       const transcription = createSpeechToTextTranscription({
-        provider: this.speechToTextProvider,
         mode: "file",
         apiKey,
         context: await this.resolveSpeechToTextContext(chatId),

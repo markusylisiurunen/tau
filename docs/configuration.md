@@ -47,8 +47,7 @@ In `~/.config/tau/config.json`:
 
 ```json
 {
-  "defaultPersona": "sonnet-5.5-coder",
-  "speechToText": { "provider": "openai" }
+  "defaultPersona": "sonnet-5.5-coder"
 }
 ```
 
@@ -56,12 +55,11 @@ In `~/work/ledger/.tau/config.json`:
 
 ```json
 {
-  "defaultPersona": "gpt-6.1-sol-coder:high",
-  "speechToText": { "provider": "gemini" }
+  "defaultPersona": "gpt-6.1-sol-coder:high"
 }
 ```
 
-Within the project, the effective values are the coder persona and the Gemini speech provider. Tau does not recursively combine `speechToText`; the project object replaces the global object.
+Within the project, the effective default persona is `gpt-6.1-sol-coder:high`.
 
 A few fields intentionally use other rules:
 
@@ -163,7 +161,6 @@ Tau loads startup configuration and content before opening the TUI. Restart the 
 - `defaultTheme`, `disableBuiltinThemes`, and theme files
 - `diffTool` and `builtInDiffTool`
 - `clientTools` and `enabledClientTools`
-- `speechToText` for `/listen`
 - client environment variables
 
 Changing `/theme:<id>` updates only the current client presentation. Themes are not persisted in session snapshots.

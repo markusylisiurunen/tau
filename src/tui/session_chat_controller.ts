@@ -94,7 +94,6 @@ import {
   deleteListenTempFile,
   getSpeechToTextApiKey,
   getSpeechToTextApiKeyErrorMessage,
-  getSpeechToTextProvider,
   LISTEN_CAPTURE_START_TIMEOUT_MS,
   LISTEN_RECORDING_MIN_BYTES,
   type ListenRecording,
@@ -848,7 +847,7 @@ export class SessionChatController {
     const apiKey = getSpeechToTextApiKey(this.config, this.deps);
     if (!apiKey) {
       this.view.addTranscriptNotice("speech-to-text is not configured", "error", [
-        getSpeechToTextApiKeyErrorMessage(this.config, "use /listen"),
+        getSpeechToTextApiKeyErrorMessage("use /listen"),
       ]);
       return;
     }
@@ -869,9 +868,7 @@ export class SessionChatController {
         deps: this.deps,
         audioPath,
         signal: abortController.signal,
-        streamingSampleRate: getSpeechToTextStreamingSampleRate(
-          getSpeechToTextProvider(this.config),
-        ),
+        streamingSampleRate: getSpeechToTextStreamingSampleRate(),
         onAudioChunk: (audio) => transcription?.appendAudio(audio),
       });
       completion = capture.completion;
@@ -910,13 +907,10 @@ export class SessionChatController {
         completion,
         transcription,
       };
-      recording.maxDurationTimeout = setTimeout(
-        () => {
-          if (this.listenRecording !== recording || this.listenTransition) return;
-          void this.runListenTransition(() => this.stopListenCapture());
-        },
-        getSpeechToTextRecordingMaxDurationMs(getSpeechToTextProvider(this.config)),
-      );
+      recording.maxDurationTimeout = setTimeout(() => {
+        if (this.listenRecording !== recording || this.listenTransition) return;
+        void this.runListenTransition(() => this.stopListenCapture());
+      }, getSpeechToTextRecordingMaxDurationMs());
       this.listenRecording = recording;
       this.refreshStatus();
       void this.watchListenRecording(recording);

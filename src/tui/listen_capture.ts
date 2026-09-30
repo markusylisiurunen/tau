@@ -2,12 +2,7 @@ import type { ChildProcess } from "node:child_process";
 import { readFile, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  type Config,
-  getGoogleApiKey,
-  getOpenAIApiKey,
-  type SpeechToTextProvider,
-} from "../core/config/index.js";
+import { type Config, getGoogleApiKey } from "../core/config/index.js";
 import type { CoreDeps } from "../core/runtime/deps.js";
 import type { SpawnCaptureResult } from "../core/utils/spawn_capture.js";
 import {
@@ -156,28 +151,12 @@ export async function cleanupListenTempFile(path: string): Promise<void> {
   }
 }
 
-export function getSpeechToTextProvider(config: Config): SpeechToTextProvider {
-  return config.speechToText?.provider ?? "openai";
-}
-
 export function getSpeechToTextApiKey(config: Config, deps: CoreDeps): string | undefined {
-  const provider = getSpeechToTextProvider(config);
-  switch (provider) {
-    case "gemini":
-      return getGoogleApiKey(config, deps.env.env());
-    case "openai":
-      return getOpenAIApiKey(config, deps.env.env());
-  }
+  return getGoogleApiKey(config, deps.env.env());
 }
 
-export function getSpeechToTextApiKeyErrorMessage(config: Config, action: string): string {
-  const provider = getSpeechToTextProvider(config);
-  switch (provider) {
-    case "gemini":
-      return `set GEMINI_API_KEY or apiKeys.google to ${action}`;
-    case "openai":
-      return `set OPENAI_API_KEY or apiKeys.openai to ${action}`;
-  }
+export function getSpeechToTextApiKeyErrorMessage(action: string): string {
+  return `set GEMINI_API_KEY or apiKeys.google to ${action}`;
 }
 
 export function createListenTranscription(args: {
@@ -188,21 +167,16 @@ export function createListenTranscription(args: {
   speechToTextDeps?: SpeechToTextDependencies;
   onProgress?: (text: string) => void;
 }): SpeechToTextTranscription {
-  const provider = getSpeechToTextProvider(args.config);
   const apiKey = getSpeechToTextApiKey(args.config, args.deps);
   if (!apiKey) {
-    throw new Error(getSpeechToTextApiKeyErrorMessage(args.config, "transcribe speech"));
+    throw new Error(getSpeechToTextApiKeyErrorMessage("transcribe speech"));
   }
 
   return createSpeechToTextTranscription({
-    provider,
     onProgress: args.onProgress,
     mode: args.mode,
     apiKey,
     context: args.context,
-    deps: {
-      ...args.speechToTextDeps,
-      spawnImpl: args.speechToTextDeps?.spawnImpl ?? args.deps.spawn,
-    },
+    deps: args.speechToTextDeps,
   });
 }

@@ -20,8 +20,6 @@ export type {
   HistoryConfig,
   NookConfig,
   NormalizedAutoCompactConfig,
-  SpeechToTextConfig,
-  SpeechToTextProvider,
   TelegramBotConfig,
   TelegramBotConfigMap,
   TelegramProjectConfig,

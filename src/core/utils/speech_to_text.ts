@@ -1,7 +1,4 @@
-import type { SpeechToTextProvider } from "../config/schema.js";
 import { startGeminiTranscription, transcribeGeminiAudio } from "./gemini_transcription.js";
-import { startOpenAITranscription, transcribeOpenAIAudio } from "./openai_transcription.js";
-import type { spawnWithCapture } from "./spawn_capture.js";
 import type { SpeechToTextContext } from "./speech_to_text_context.js";
 
 export const SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS = 20 * 60 * 1_000;
@@ -24,11 +21,9 @@ export type SpeechToTextWebSocketFactory = (
 export type SpeechToTextDependencies = {
   fetchImpl?: typeof fetch;
   webSocketFactory?: SpeechToTextWebSocketFactory;
-  spawnImpl?: typeof spawnWithCapture;
 };
 
 export type SpeechToTextTranscriptionOptions = {
-  provider: SpeechToTextProvider;
   mode: "streaming" | "file";
   apiKey: string;
   context?: SpeechToTextContext;
@@ -53,71 +48,39 @@ type ProviderStreamingTranscription = {
   abort(): void;
 };
 
-export function getSpeechToTextRecordingMaxDurationMs(provider: SpeechToTextProvider): number {
-  return provider === "gemini" ? 9 * 60 * 1_000 : SPEECH_TO_TEXT_CLIENT_MAX_DURATION_MS;
+export function getSpeechToTextRecordingMaxDurationMs(): number {
+  return 9 * 60 * 1_000;
 }
 
-export function getSpeechToTextStreamingSampleRate(provider: SpeechToTextProvider): number {
-  switch (provider) {
-    case "gemini":
-      return 16_000;
-    case "openai":
-      return 24_000;
-  }
+export function getSpeechToTextStreamingSampleRate(): number {
+  return 16_000;
 }
 
 export function createSpeechToTextTranscription(
   options: SpeechToTextTranscriptionOptions,
 ): SpeechToTextTranscription {
-  switch (options.provider) {
-    case "gemini": {
-      if (options.mode === "streaming") {
-        return createStreamingTranscription(
-          startGeminiTranscription({
-            onProgress: options.onProgress,
-            apiKey: options.apiKey,
-            context: options.context,
-            fetchImpl: options.deps?.fetchImpl,
-            webSocketFactory: options.deps?.webSocketFactory,
-          }),
-        );
-      }
-
-      return createBatchTranscription(async (recording, signal) => {
-        return await transcribeGeminiAudio({
-          apiKey: options.apiKey,
-          audio: recording.audio,
-          mimeType: recording.mimeType,
-          context: options.context,
-          signal,
-          fetchImpl: options.deps?.fetchImpl,
-        });
-      });
-    }
-    case "openai": {
-      if (options.mode === "streaming") {
-        return createStreamingTranscription(
-          startOpenAITranscription({
-            apiKey: options.apiKey,
-            context: options.context,
-            fetchImpl: options.deps?.fetchImpl,
-            webSocketFactory: options.deps?.webSocketFactory,
-          }),
-        );
-      }
-
-      return createBatchTranscription(async (recording, signal) => {
-        return await transcribeOpenAIAudio({
-          apiKey: options.apiKey,
-          audio: recording.audio,
-          context: options.context,
-          signal,
-          fetchImpl: options.deps?.fetchImpl,
-          spawnImpl: options.deps?.spawnImpl,
-        });
-      });
-    }
+  if (options.mode === "streaming") {
+    return createStreamingTranscription(
+      startGeminiTranscription({
+        onProgress: options.onProgress,
+        apiKey: options.apiKey,
+        context: options.context,
+        fetchImpl: options.deps?.fetchImpl,
+        webSocketFactory: options.deps?.webSocketFactory,
+      }),
+    );
   }
+
+  return createBatchTranscription(async (recording, signal) => {
+    return await transcribeGeminiAudio({
+      apiKey: options.apiKey,
+      audio: recording.audio,
+      mimeType: recording.mimeType,
+      context: options.context,
+      signal,
+      fetchImpl: options.deps?.fetchImpl,
+    });
+  });
 }
 
 function createStreamingTranscription(

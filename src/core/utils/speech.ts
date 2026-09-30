@@ -1,9 +1,8 @@
 import { z } from "zod";
 
-const GEMINI_GENERATE_CONTENT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
+const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 export const SPEECH_PLAYBACK_RATE = 1.15;
-const DEFAULT_SPEECH_REWRITE_MODEL = "gemini-3.8-flash";
-const DEFAULT_SPEECH_REWRITE_THINKING_LEVEL = "low";
+const SPEECH_REWRITE_MODEL = "gpt-6-luna";
 const ELEVENLABS_BASE_URL = "https://api.elevenlabs.io/v1";
 const SPEECH_MODEL = "eleven_v4_turbo";
 const DEFAULT_VOICE_ID = "QtY3JBOUKEB5xzrRfOKc";
@@ -27,8 +26,6 @@ const errorPayloadSchema = z.object({
   error: z
     .object({
       message: z.string().trim().min(1).optional(),
-      status: z.string().trim().min(1).optional(),
-      code: z.number().int().optional(),
     })
     .optional(),
 });
@@ -41,7 +38,7 @@ export type SpeechSegmentProgress = {
 };
 
 export type SpeechOptions = {
-  googleApiKey: string;
+  openAIApiKey: string;
   elevenLabsApiKey: string;
   sourceText: string;
   voiceId?: string;
@@ -67,16 +64,6 @@ export type SpeechPcmChunk = {
   total: number;
   audio: Buffer;
 };
-
-class GeminiApiError extends Error {
-  readonly status?: number;
-
-  constructor(message: string, status?: number) {
-    super(message);
-    this.name = "GeminiApiError";
-    this.status = status;
-  }
-}
 
 type PreparedSpeech = {
   apiKey: string;
@@ -199,9 +186,9 @@ async function prepareSpeech(options: SpeechOptions, signal: AbortSignal): Promi
   }
 
   const apiKey = options.elevenLabsApiKey.trim();
-  const googleApiKey = options.googleApiKey.trim();
-  if (!apiKey || !googleApiKey) {
-    throw new Error("Google and ElevenLabs API keys are required for speech");
+  const openAIApiKey = options.openAIApiKey.trim();
+  if (!apiKey || !openAIApiKey) {
+    throw new Error("OpenAI and ElevenLabs API keys are required for speech");
   }
   if (options.voiceId !== undefined && !options.voiceId.trim()) {
     throw new Error("speech voice ID must not be empty");
@@ -215,8 +202,7 @@ async function prepareSpeech(options: SpeechOptions, signal: AbortSignal): Promi
   let spokenText: string;
   try {
     spokenText = await rewriteTextForSpeech({
-      apiKey: googleApiKey,
-      model: DEFAULT_SPEECH_REWRITE_MODEL,
+      apiKey: openAIApiKey,
       sourceText,
       fetchImpl,
       signal: rewriteController.signal,
@@ -255,40 +241,53 @@ async function prepareSpeech(options: SpeechOptions, signal: AbortSignal): Promi
 
 type RewriteTextForSpeechArgs = {
   apiKey: string;
-  model: string;
   sourceText: string;
   fetchImpl: typeof fetch;
   signal?: AbortSignal;
 };
 
 async function rewriteTextForSpeech(args: RewriteTextForSpeechArgs): Promise<string> {
-  const payload = await requestGeminiGenerateContent({
-    apiKey: args.apiKey,
-    model: args.model,
-    fetchImpl: args.fetchImpl,
-    signal: args.signal,
-    body: {
-      contents: [
-        {
-          parts: [
-            {
-              text: buildSpeechRewritePrompt(args.sourceText),
-            },
-          ],
-        },
-      ],
-      generationConfig: {
-        thinkingConfig: {
-          thinkingLevel: DEFAULT_SPEECH_REWRITE_THINKING_LEVEL,
-        },
-      },
+  const response = await args.fetchImpl(OPENAI_RESPONSES_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${args.apiKey}`,
     },
+    body: JSON.stringify({
+      model: SPEECH_REWRITE_MODEL,
+      input: buildSpeechRewritePrompt(args.sourceText),
+      reasoning: { effort: "none" },
+      store: false,
+    }),
+    signal: args.signal,
   });
-
-  const rewrittenText = extractGeminiText(payload).trim();
-  if (!rewrittenText) {
-    throw new Error("Gemini rewrite returned empty text");
+  const payload: unknown = await response.json();
+  if (!response.ok) {
+    const parsed = errorPayloadSchema.safeParse(payload);
+    throw new Error(
+      parsed.success && parsed.data.error?.message
+        ? parsed.data.error.message
+        : `OpenAI speech rewrite failed (HTTP ${response.status})`,
+    );
   }
+  if (!isObject(payload) || payload.status !== "completed" || !Array.isArray(payload.output)) {
+    throw new Error("OpenAI speech rewrite did not complete");
+  }
+  const text: string[] = [];
+  for (const item of payload.output) {
+    if (!isObject(item) || item.type !== "message") continue;
+    if (item.status !== "completed" || !Array.isArray(item.content)) {
+      throw new Error("OpenAI speech rewrite returned an incomplete message");
+    }
+    for (const part of item.content) {
+      if (!isObject(part) || part.type !== "output_text" || typeof part.text !== "string") {
+        throw new Error("OpenAI speech rewrite did not return text");
+      }
+      text.push(part.text);
+    }
+  }
+  const rewrittenText = text.join("").trim();
+  if (!rewrittenText) throw new Error("OpenAI speech rewrite returned empty text");
   return rewrittenText;
 }
 
@@ -545,88 +544,6 @@ async function* requestSpeechStream(args: StreamSpeechSegmentArgs): AsyncGenerat
     if (!completed) await reader.cancel().catch(() => {});
     reader.releaseLock();
   }
-}
-
-type RequestGeminiGenerateContentArgs = {
-  apiKey: string;
-  model: string;
-  body: Record<string, unknown>;
-  fetchImpl: typeof fetch;
-  signal?: AbortSignal;
-};
-
-type RequestGeminiResponseArgs = RequestGeminiGenerateContentArgs & {
-  method: string;
-};
-
-async function requestGeminiGenerateContent(
-  args: RequestGeminiGenerateContentArgs,
-): Promise<unknown> {
-  const response = await requestGeminiResponse({ ...args, method: "generateContent" });
-  const responseText = await response.text();
-  try {
-    return responseText ? (JSON.parse(responseText) as unknown) : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-async function requestGeminiResponse(args: RequestGeminiResponseArgs): Promise<Response> {
-  const response = await args.fetchImpl(
-    `${GEMINI_GENERATE_CONTENT_BASE_URL}/${encodeURIComponent(args.model)}:${args.method}`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-goog-api-key": args.apiKey,
-      },
-      body: JSON.stringify(args.body),
-      signal: args.signal,
-    },
-  );
-  if (response.ok) {
-    return response;
-  }
-
-  const responseText = await response.text();
-  let payload: unknown;
-  try {
-    payload = responseText ? (JSON.parse(responseText) as unknown) : undefined;
-  } catch {
-    payload = undefined;
-  }
-  const parsed = errorPayloadSchema.safeParse(payload);
-  const fallbackMessage = responseText.trim() || `HTTP ${response.status}`;
-  const message = parsed.success
-    ? (parsed.data.error?.message ?? fallbackMessage)
-    : fallbackMessage;
-  throw new GeminiApiError(message, response.status);
-}
-
-function extractGeminiText(payload: unknown): string {
-  if (!isObject(payload) || !Array.isArray(payload.candidates)) {
-    return "";
-  }
-
-  for (const candidate of payload.candidates) {
-    if (
-      !isObject(candidate) ||
-      !isObject(candidate.content) ||
-      !Array.isArray(candidate.content.parts)
-    ) {
-      continue;
-    }
-
-    const text = candidate.content.parts
-      .map((part) => (isObject(part) && typeof part.text === "string" ? part.text : ""))
-      .join("")
-      .trim();
-    if (text) {
-      return text;
-    }
-  }
-
-  return "";
 }
 
 function buildSpeechRewritePrompt(sourceText: string): string {

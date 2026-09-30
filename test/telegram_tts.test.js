@@ -64,7 +64,7 @@ describe("telegram TTS", () => {
     });
 
     const voice = await generateTelegramVoice({
-      googleApiKey: "gemini-key",
+      openAIApiKey: "openai-key",
       elevenLabsApiKey: "eleven-key",
       voiceId: "custom-voice",
       sourceText: "final answer",
@@ -74,7 +74,7 @@ describe("telegram TTS", () => {
     expect(voice).toEqual(Buffer.from("OggS voice"));
     expect(generateSpeechAudio).toHaveBeenCalledWith(
       expect.objectContaining({
-        googleApiKey: "gemini-key",
+        openAIApiKey: "openai-key",
         elevenLabsApiKey: "eleven-key",
         voiceId: "custom-voice",
         sourceText: "final answer",

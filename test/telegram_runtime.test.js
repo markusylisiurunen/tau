@@ -131,6 +131,7 @@ describe("telegram runtime", () => {
       createSessionClient: vi.fn(),
       geminiApiKey: "gemini-key",
       elevenLabsApiKey: "eleven-key",
+      openAIApiKey: "openai-key",
       speechVoiceId: "custom-voice",
       onLog: (line) => {
         logs.push(line);
@@ -140,6 +141,7 @@ describe("telegram runtime", () => {
           events.push(`start-telegram:${options.botToken}:${options.botId}`);
           expect(Object.keys(options.projects)).toEqual(["alpha"]);
           expect(options.elevenLabsApiKey).toBe("eleven-key");
+          expect(options.openAIApiKey).toBe("openai-key");
           expect(options.speechVoiceId).toBe("custom-voice");
           options.onLog?.({
             level: "warn",

@@ -28,7 +28,7 @@ export async function sweepStaleTelegramTtsTempDirs(): Promise<void> {
 }
 
 export type GenerateTelegramVoiceOptions = {
-  googleApiKey: string;
+  openAIApiKey: string;
   elevenLabsApiKey: string;
   voiceId?: string;
   sourceText: string;
@@ -54,7 +54,7 @@ export async function generateTelegramVoice(
     let waveFormat: Buffer | undefined;
 
     for await (const chunk of generateAudio({
-      googleApiKey: options.googleApiKey,
+      openAIApiKey: options.openAIApiKey,
       elevenLabsApiKey: options.elevenLabsApiKey,
       voiceId: options.voiceId,
       sourceText: options.sourceText,

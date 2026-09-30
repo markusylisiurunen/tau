@@ -11,19 +11,23 @@ const unavailableVoice = () =>
 const maisie = "QtY3JBOUKEB5xzrRfOKc";
 const caleb = "AaOhDHYJ1XLZk74lXhdE";
 const delivery = "[Brisk but relaxed, speaking naturally to a colleague] ";
-const credentials = { googleApiKey: "google-key", elevenLabsApiKey: "eleven-key" };
+const credentials = { openAIApiKey: "openai-key", elevenLabsApiKey: "eleven-key" };
 
 function audioResponse(body) {
   return new Response(body, { headers: { "Content-Type": "audio/pcm" } });
 }
 
 function rewriteResponse(text) {
-  return Response.json({ candidates: [{ content: { parts: [{ text }] } }] });
+  return Response.json({
+    status: "completed",
+    output: [{ type: "message", status: "completed", content: [{ type: "output_text", text }] }],
+  });
 }
 
 function speechFetch(text = "Spoken response.", handlers = {}) {
   return vi.fn(async (url, init) => {
-    if (url.includes("generativelanguage")) return rewriteResponse(text);
+    if (url.includes("api.openai.com"))
+      return handlers.rewrite ? handlers.rewrite(url, init) : rewriteResponse(text);
     if (url.includes("/voices/")) {
       const voiceId = decodeURIComponent(url.split("/").at(-1));
       return handlers.voice ? handlers.voice(voiceId, init) : Response.json({ voice_id: voiceId });
@@ -69,7 +73,7 @@ function pcm(fetchImpl, options = {}) {
 }
 
 describe("speech synthesis", () => {
-  it("rewrites with Google and selects Maisie once before ElevenLabs synthesis", async () => {
+  it("rewrites with Luna without reasoning and selects Maisie once before ElevenLabs synthesis", async () => {
     const fetchMock = speechFetch(undefined, {
       voice: () => Response.json(recorded.available.body),
     });
@@ -86,9 +90,14 @@ describe("speech synthesis", () => {
     ]);
     expect(fetchMock).toHaveBeenCalledTimes(3);
     const [rewriteUrl, rewrite] = fetchMock.mock.calls[0];
-    expect(rewriteUrl).toContain("gemini-3.8-flash:generateContent");
-    expect(rewrite.headers["x-goog-api-key"]).toBe("google-key");
-    expect(JSON.parse(rewrite.body).generationConfig.thinkingConfig.thinkingLevel).toBe("low");
+    expect(rewriteUrl).toBe("https://api.openai.com/v1/responses");
+    expect(rewrite.headers.Authorization).toBe("Bearer openai-key");
+    expect(JSON.parse(rewrite.body)).toEqual({
+      model: "gpt-6-luna",
+      reasoning: { effort: "none" },
+      store: false,
+      input: expect.stringContaining("Original response."),
+    });
     const [url, init] = fetchMock.mock.calls[2];
     expect(url).toBe(
       `https://api.elevenlabs.io/v1/text-to-speech/${maisie}/stream?output_format=pcm_24000`,
@@ -102,6 +111,56 @@ describe("speech synthesis", () => {
     expect(chunks[0].audio.toString("ascii", 0, 4)).toBe("RIFF");
     expect(chunks[0].audio.readUInt32LE(24)).toBe(24000);
     expect(chunks[0].audio.subarray(44)).toEqual(Buffer.from([1, 2, 3, 4]));
+  });
+
+  it.each([
+    {
+      status: "incomplete",
+      output: [
+        {
+          type: "message",
+          status: "incomplete",
+          content: [{ type: "output_text", text: "Partial" }],
+        },
+      ],
+    },
+    {
+      status: "completed",
+      output: [
+        {
+          type: "message",
+          status: "completed",
+          content: [{ type: "refusal", refusal: "Refused" }],
+        },
+      ],
+    },
+    { status: "completed", output: [] },
+    {
+      status: "completed",
+      output: [
+        {
+          type: "message",
+          status: "incomplete",
+          content: [{ type: "output_text", text: "Partial" }],
+        },
+      ],
+    },
+  ])("rejects incomplete, refused, or empty rewrites before synthesis", async (payload) => {
+    const fetchMock = speechFetch(undefined, { rewrite: () => Response.json(payload) });
+    await expect(generate(fetchMock)).rejects.toThrow();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("propagates rewrite failures without starting voice lookup or synthesis", async () => {
+    const fetchMock = speechFetch(undefined, {
+      rewrite: () =>
+        Response.json(
+          { error: { message: "Rate limit", code: "rate_limit_exceeded" } },
+          { status: 429 },
+        ),
+    });
+    await expect(generate(fetchMock)).rejects.toThrow();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("falls back only during lookup and locks Caleb for every segment", async () => {

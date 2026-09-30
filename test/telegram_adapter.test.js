@@ -519,6 +519,7 @@ describe("telegram adapter", () => {
       api: apiHarness.api,
       geminiApiKey: "gemini-key",
       elevenLabsApiKey: "eleven-key",
+      openAIApiKey: "openai-key",
       generateVoice,
     });
 
@@ -570,8 +571,8 @@ describe("telegram adapter", () => {
 
       await waitFor(() => apiHarness.sendVoices.length === 1);
       expect(generateVoice).toHaveBeenCalledWith({
-        googleApiKey: "gemini-key",
         elevenLabsApiKey: "eleven-key",
+        openAIApiKey: "openai-key",
         voiceId: undefined,
         sourceText: "final answer",
         fetchImpl: undefined,
@@ -592,7 +593,7 @@ describe("telegram adapter", () => {
     }
   });
 
-  it.each([{}, { geminiApiKey: "gemini-key" }])(
+  it.each([{}, { openAIApiKey: "openai-key" }])(
     "reports a persisted TTS opt-in when a speech credential is missing: %j",
     async (credentials) => {
       const chatId = 20;
@@ -663,6 +664,7 @@ describe("telegram adapter", () => {
       api: apiHarness.api,
       geminiApiKey: "gemini-key",
       elevenLabsApiKey: "eleven-key",
+      openAIApiKey: "openai-key",
       generateVoice,
     });
 
@@ -738,6 +740,7 @@ describe("telegram adapter", () => {
       api: apiHarness.api,
       geminiApiKey: "gemini-key",
       elevenLabsApiKey: "eleven-key",
+      openAIApiKey: "openai-key",
       generateVoice,
       onLog: (entry) => logs.push(entry),
     });
@@ -805,6 +808,7 @@ describe("telegram adapter", () => {
       api: apiHarness.api,
       geminiApiKey: "gemini-key",
       elevenLabsApiKey: "eleven-key",
+      openAIApiKey: "openai-key",
       generateVoice: vi.fn(async () => Buffer.from("voice")),
       onLog: (entry) => logs.push(entry),
     });
@@ -861,6 +865,7 @@ describe("telegram adapter", () => {
       api: apiHarness.api,
       geminiApiKey: "gemini-key",
       elevenLabsApiKey: "eleven-key",
+      openAIApiKey: "openai-key",
       generateVoice: vi.fn(async () => Buffer.from("voice")),
       onLog: (entry) => logs.push(entry),
     });
@@ -911,6 +916,7 @@ describe("telegram adapter", () => {
       api: apiHarness.api,
       geminiApiKey: "gemini-key",
       elevenLabsApiKey: "eleven-key",
+      openAIApiKey: "openai-key",
       generateVoice: vi.fn(async () => await voice.promise),
     });
 
@@ -1660,6 +1666,7 @@ describe("telegram adapter", () => {
       allowedChatIds: [groupChatId],
       geminiApiKey: "gemini-key",
       elevenLabsApiKey: "eleven-key",
+      openAIApiKey: "openai-key",
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
       fetchImpl: geminiFetch,
@@ -2555,6 +2562,7 @@ describe("telegram adapter", () => {
     const adapter = await startAdapter({
       geminiApiKey: "gemini-key",
       elevenLabsApiKey: "eleven-key",
+      openAIApiKey: "openai-key",
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
       fetchImpl: geminiFetch,
@@ -2625,6 +2633,7 @@ describe("telegram adapter", () => {
     const adapter = await startAdapter({
       geminiApiKey: "gemini-key",
       elevenLabsApiKey: "eleven-key",
+      openAIApiKey: "openai-key",
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
     });
@@ -2676,6 +2685,7 @@ describe("telegram adapter", () => {
     const adapter = await startAdapter({
       geminiApiKey: "gemini-key",
       elevenLabsApiKey: "eleven-key",
+      openAIApiKey: "openai-key",
       sessionManager: managerHarness.manager,
       api: apiHarness.api,
       fetchImpl: geminiFetch,
@@ -3933,6 +3943,7 @@ describe("telegram adapter", () => {
       projectPreferences: createTtsPreferences(vi.fn((id) => id === ownerId)),
       geminiApiKey: "gemini-key",
       elevenLabsApiKey: "eleven-key",
+      openAIApiKey: "openai-key",
       generateVoice: vi.fn(async () => Buffer.from("OggS voice")),
     });
 

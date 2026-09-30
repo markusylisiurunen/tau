@@ -188,7 +188,7 @@ Without an override, Tau looks up Maisie (`QtY3JBOUKEB5xzrRfOKc`) before synthes
 
 Voice lookup authentication, permission, rate-limit, and network errors do not trigger fallback. Successful metadata lookup fixes the voice for the entire reply; it does not guarantee synthesis permission. Synthesis failures never switch voices or automatically retry a potentially billable request.
 
-Speech uses Eleven v4 Turbo, the delivery note `[Brisk but relaxed, speaking naturally to a colleague]`, and a 1.15× tempo adjustment. Google rewrites the text for speech before ElevenLabs synthesis, so both Google and ElevenLabs credentials are required. Voice Library API access may require a paid ElevenLabs plan, and shared voices can become unavailable.
+Speech uses Eleven v4 Turbo, the delivery note `[Brisk but relaxed, speaking naturally to a colleague]`, and a 1.15× tempo adjustment. GPT-6 Luna rewrites the text with reasoning disabled before ElevenLabs synthesis, so both OpenAI and ElevenLabs credentials are required. Voice Library API access may require a paid ElevenLabs plan, and shared voices can become unavailable.
 
 The TUI reads this setting from its client-side configuration, including during remote attachment. Telegram reads it from the runner's startup configuration, not individual session workspaces. Restart the respective process after changes. This setting does not affect the explicit voices supplied to `tau tool speech-generate`.
 

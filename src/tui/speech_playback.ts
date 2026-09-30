@@ -22,7 +22,7 @@ type PlaybackOutcome = { result: SpawnCaptureResult } | { error: unknown };
 
 export async function runSpeechPlaybackTask(args: {
   deps: CoreDeps;
-  googleApiKey: string;
+  openAIApiKey: string;
   elevenLabsApiKey: string;
   voiceId?: string;
   sourceText: string;
@@ -91,7 +91,7 @@ export async function runSpeechPlaybackTask(args: {
 
   try {
     for await (const chunk of streamSpeechPcm({
-      googleApiKey: args.googleApiKey,
+      openAIApiKey: args.openAIApiKey,
       elevenLabsApiKey: args.elevenLabsApiKey,
       voiceId: args.voiceId,
       sourceText: args.sourceText,

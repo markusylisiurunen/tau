@@ -5990,6 +5990,51 @@ describe("SessionChatController", () => {
     expect(view.editorText).toBe("automatic transcript");
   });
 
+  it.each([
+    ["submit", false],
+    ["queue", false],
+    ["steer", false],
+    ["submit", true],
+  ])("tracks dictation guidance through %s with draft cleared=%s", async (method, clearDraft) => {
+    const audioPath = join(tmpdir(), `tau-provenance-${method}-${Date.now()}.wav`);
+    await writeFile(audioPath, Buffer.alloc(2048, 1));
+    const { session, view, controller } = await createControllerHarness({});
+    const editor = new CustomEditor(createUiTheme("plain"));
+    const handlers = controller.getInputHandlers();
+    editor.onChange = handlers.onChange;
+    editor.beforeSubmit = handlers.beforeSubmit;
+    editor.onSubmit = handlers.onSubmit;
+    editor.onSteerSubmit = handlers.onSteerSubmit;
+    view.beginEditorTextPreview = () => editor.beginTextPreview();
+    view.setEditorInputEnabled = (enabled) => editor.setInputEnabled(enabled);
+    try {
+      editor.setText("typed ");
+      controller.beginListenPreview();
+      await controller.transcribeListenAudioFile(audioPath, 1000, {
+        finish: async () => "dictated",
+        abort() {},
+      });
+      if (clearDraft) editor.setText("");
+      editor.handleInput(" and edited");
+      controller.isStreaming = method !== "submit";
+      editor.handleInput(method === "steer" ? "\x1b[13;5u" : "\r");
+      await waitUntil(() => session[method].mock.calls.length === 1);
+      const submitted = session[method].mock.calls[0][0];
+      expect(stripTauUserDisplayText(submitted)).toBe(
+        clearDraft ? "and edited" : "typed dictated and edited",
+      );
+      expect(submitted.startsWith("<system>")).toBe(!clearDraft);
+      if (method === "submit") await waitUntil(() => !controller.submittedTurnInProgress);
+      editor.handleInput("only typed");
+      editor.handleInput(method === "steer" ? "\x1b[13;5u" : "\r");
+      await waitUntil(() => session[method].mock.calls.length === 2);
+      expect(session[method].mock.calls[1][0]).toBe("only typed");
+    } finally {
+      await controller.dispose();
+      await rm(audioPath, { force: true });
+    }
+  });
+
   it("restores the draft after a failed preview and retries without duplicating it", async () => {
     const audioPath = join(tmpdir(), `tau-preview-retry-${Date.now()}.wav`);
     await writeFile(audioPath, Buffer.alloc(2048, 1));
@@ -6473,7 +6518,7 @@ describe("SessionChatController", () => {
       session,
       deps: createMockDeps(spawn),
       config: {
-        apiKeys: { google: "gemini-key", elevenlabs: "eleven-key" },
+        apiKeys: { openai: "openai-key", elevenlabs: "eleven-key" },
         speech: { voiceId: "custom-voice" },
       },
     });
@@ -6485,15 +6530,14 @@ describe("SessionChatController", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            candidates: [
+            status: "completed",
+            output: [
               {
-                content: {
-                  parts: [
-                    {
-                      text: "Use src slash app dot t s, line 42, for the fix.",
-                    },
-                  ],
-                },
+                type: "message",
+                status: "completed",
+                content: [
+                  { type: "output_text", text: "Use src slash app dot t s, line 42, for the fix." },
+                ],
               },
             ],
           }),
@@ -6581,7 +6625,14 @@ describe("SessionChatController", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            candidates: [{ content: { parts: [{ text: "Spoken version." }] } }],
+            status: "completed",
+            output: [
+              {
+                type: "message",
+                status: "completed",
+                content: [{ type: "output_text", text: "Spoken version." }],
+              },
+            ],
           }),
           { status: 200, headers: { "Content-Type": "application/json" } },
         ),
@@ -6595,7 +6646,7 @@ describe("SessionChatController", () => {
     try {
       const playback = runSpeechPlaybackTask({
         deps: createMockDeps(spawn),
-        googleApiKey: "gemini-key",
+        openAIApiKey: "openai-key",
         elevenLabsApiKey: "eleven-key",
         sourceText: "Original response.",
         signal: abortController.signal,
@@ -6642,7 +6693,14 @@ describe("SessionChatController", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            candidates: [{ content: { parts: [{ text: "Spoken version." }] } }],
+            status: "completed",
+            output: [
+              {
+                type: "message",
+                status: "completed",
+                content: [{ type: "output_text", text: "Spoken version." }],
+              },
+            ],
           }),
           { status: 200, headers: { "Content-Type": "application/json" } },
         ),
@@ -6673,7 +6731,7 @@ describe("SessionChatController", () => {
     try {
       const playback = runSpeechPlaybackTask({
         deps: createMockDeps(spawn),
-        googleApiKey: "gemini-key",
+        openAIApiKey: "openai-key",
         elevenLabsApiKey: "eleven-key",
         sourceText: "Original response.",
         signal: new AbortController().signal,
@@ -6711,7 +6769,14 @@ describe("SessionChatController", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            candidates: [{ content: { parts: [{ text: "Spoken version." }] } }],
+            status: "completed",
+            output: [
+              {
+                type: "message",
+                status: "completed",
+                content: [{ type: "output_text", text: "Spoken version." }],
+              },
+            ],
           }),
           { status: 200, headers: { "Content-Type": "application/json" } },
         ),
@@ -6726,7 +6791,7 @@ describe("SessionChatController", () => {
       await expect(
         runSpeechPlaybackTask({
           deps: createMockDeps(spawn),
-          googleApiKey: "gemini-key",
+          openAIApiKey: "openai-key",
           elevenLabsApiKey: "eleven-key",
           sourceText: "Original response.",
           signal: new AbortController().signal,

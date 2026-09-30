@@ -1088,7 +1088,7 @@ describe("session_protocol", () => {
         ...bootstrap,
         prompt: {
           environmentTag: "\n<environment></environment>\n",
-          subagentPrompts: { reviewer: "\nsubagent prompt\n" },
+          subagentSystemPrompt: "\nsubagent prompt\n",
         },
       },
       executionEnvironment: {
@@ -1602,7 +1602,7 @@ describe("session_protocol", () => {
     };
     const agent = {
       id: "agent-1",
-      name: "default",
+
       title: "research",
       availability: "idle",
       model: { provider: "anthropic", id: "claude-opus-4-8", reasoning: "medium" },

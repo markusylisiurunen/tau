@@ -23,7 +23,7 @@ function getText(toolResult) {
 function createSubagentState(overrides = {}) {
   return {
     id: "agent-1",
-    name: "default",
+
     title: "child task",
     availability: "running",
     model: { provider: "anthropic", id: "claude-opus-5", reasoning: "medium" },
@@ -72,7 +72,6 @@ function createFixture(overrides = {}) {
     spawn: vi.fn(({ runtimeConfig, title }) => ({
       ok: true,
       state: createSubagentState({
-        name: runtimeConfig.name,
         title,
         model: {
           provider: runtimeConfig.model.provider,
@@ -93,14 +92,7 @@ function createFixture(overrides = {}) {
     tools: ["bash", "write", "edit", "history"],
     skills: "*",
     source: "project",
-    subagents: {
-      default: { launchModels: ["openai/gpt-5.6-sol:high"] },
-      researcher: {
-        systemPrompt: "research",
-        launchModels: ["openai/gpt-5.6-sol:high"],
-      },
-      fixed: { systemPrompt: "fixed" },
-    },
+    subagentLaunchModels: ["openai/gpt-5.6-sol:high"],
   };
   const modelResolver = createModelResolver();
   const options = {
@@ -109,11 +101,7 @@ function createFixture(overrides = {}) {
     persona,
     config: {},
     modelResolver,
-    subagentPrompts: {
-      default: "default prompt",
-      researcher: "research prompt",
-      fixed: "fixed prompt",
-    },
+    subagentSystemPrompt: "subagent prompt",
     history: {
       search: vi.fn(),
       read: vi.fn(),
@@ -149,7 +137,6 @@ async function execute(
 }
 
 const baseArguments = {
-  name: "researcher",
   title: "research task",
   prompt: "investigate this",
 };
@@ -564,7 +551,7 @@ describe("spawn_agent tool", () => {
     expect(getText(result.toolResult)).toBe(
       [
         "Spawned `agent-1` · research task",
-        "researcher · openai/gpt-5.6-sol:high · /repo/current",
+        "openai/gpt-5.6-sol:high · /repo/current",
         "run 1 running · capacity 1/8",
       ].join("\n"),
     );
@@ -573,7 +560,6 @@ describe("spawn_agent tool", () => {
         prompt: "investigate this",
         originHistoryEntryId: "history-1",
         runtimeConfig: expect.objectContaining({
-          name: "researcher",
           workingDirectory: "/repo/current",
           settings: expect.objectContaining({ reasoning: "high" }),
         }),
@@ -610,10 +596,12 @@ describe("spawn_agent tool", () => {
   });
 
   it("rejects launch model overrides that are absent or outside the allowlist", async () => {
-    const { tool, supervisor } = createFixture();
-    const missing = await execute(tool, {
+    const { tool, supervisor, persona } = createFixture();
+    const withoutOverrides = createFixture({
+      persona: { ...persona, subagentLaunchModels: [] },
+    });
+    const missing = await execute(withoutOverrides.tool, {
       ...baseArguments,
-      name: "fixed",
       model: "openai/gpt-5.6-sol:high",
     });
     const disallowed = await execute(tool, {
@@ -622,10 +610,35 @@ describe("spawn_agent tool", () => {
     });
 
     expect(missing.result.toolResult.outcome).toBe("blocked");
-    expect(getText(missing.result.toolResult)).toContain("does not allow launch model overrides");
     expect(disallowed.result.toolResult.outcome).toBe("blocked");
-    expect(getText(disallowed.result.toolResult)).toContain("is not allowed");
     expect(supervisor.spawn).not.toHaveBeenCalled();
+    expect(withoutOverrides.supervisor.spawn).not.toHaveBeenCalled();
+  });
+
+  it("rejects obsolete worker name arguments before launching", async () => {
+    const { tool, supervisor } = createFixture();
+    const { result } = await execute(tool, { ...baseArguments, name: "researcher" });
+
+    expect(result.toolResult.outcome).toBe("blocked");
+    expect(supervisor.spawn).not.toHaveBeenCalled();
+  });
+
+  it("inherits only eligible parent tools without recursive supervision", async () => {
+    const { persona } = createFixture();
+    const { tool, supervisor } = createFixture({
+      persona: {
+        ...persona,
+        tools: ["bash", "edit", "spawn_agent", "list_agents", "nook", "history"],
+      },
+    });
+    const { result } = await execute(tool, baseArguments);
+
+    expect(result.toolResult.outcome).toBe("succeeded");
+    expect(supervisor.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runtimeConfig: expect.objectContaining({ tools: ["bash", "edit", "nook", "history"] }),
+      }),
+    );
   });
 
   it("inherits the bound parent model and settings without a launch override", async () => {
@@ -649,13 +662,11 @@ describe("spawn_agent tool", () => {
   });
 
   it("rebuilds prompts for a different working directory without replacing the parent runtime", async () => {
-    const resolveSubagentPrompts = vi.fn(async ({ cwd }) => ({
-      researcher: `target prompt: ${cwd}`,
-    }));
+    const resolveSubagentPrompt = vi.fn(async ({ cwd }) => `target prompt: ${cwd}`);
     const sourceConfig = { modelSystemNotices: { "openai/gpt-5.4": "parent notice" } };
     const { tool, supervisor, persona } = createFixture({
       config: sourceConfig,
-      resolveSubagentPrompts,
+      resolveSubagentPrompt,
     });
     const { result } = await execute(tool, {
       ...baseArguments,
@@ -663,7 +674,7 @@ describe("spawn_agent tool", () => {
     });
 
     expect(result.toolResult.outcome).toBe("succeeded");
-    expect(resolveSubagentPrompts).toHaveBeenCalledWith({
+    expect(resolveSubagentPrompt).toHaveBeenCalledWith({
       cwd: "/repo/current/packages/api",
       persona,
     });
@@ -682,21 +693,21 @@ describe("spawn_agent tool", () => {
   });
 
   it("treats a working directory resolving to the parent cwd as omission", async () => {
-    const resolveSubagentPrompts = vi.fn();
-    const { tool, supervisor, persona } = createFixture({ resolveSubagentPrompts });
+    const resolveSubagentPrompt = vi.fn();
+    const { tool, supervisor, persona } = createFixture({ resolveSubagentPrompt });
     const { result } = await execute(tool, {
       ...baseArguments,
       workingDirectory: ".",
     });
 
     expect(result.toolResult.outcome).toBe("succeeded");
-    expect(resolveSubagentPrompts).not.toHaveBeenCalled();
+    expect(resolveSubagentPrompt).not.toHaveBeenCalled();
     expect(supervisor.spawn).toHaveBeenCalledWith(
       expect.objectContaining({
         runtimeConfig: expect.objectContaining({
           model: persona.model,
           settings: persona.settings,
-          systemPrompt: "research prompt",
+          systemPrompt: "subagent prompt",
           workingDirectory: "/repo/current",
         }),
       }),
@@ -716,10 +727,10 @@ describe("spawn_agent tool", () => {
   });
 
   it("blocks without falling back when target prompt resolution fails", async () => {
-    const resolveSubagentPrompts = vi.fn(async () => {
+    const resolveSubagentPrompt = vi.fn(async () => {
       throw new Error("target context failed");
     });
-    const { tool, supervisor } = createFixture({ resolveSubagentPrompts });
+    const { tool, supervisor } = createFixture({ resolveSubagentPrompt });
     const { result } = await execute(tool, {
       ...baseArguments,
       workingDirectory: "/tmp/project",

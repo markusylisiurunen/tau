@@ -35,9 +35,8 @@ Tau recognizes these mention forms and offers Tab completion:
 
 - `@src/main.ts` mentions a file in the execution environment.
 - `@@skill:code-review` explicitly activates an available skill.
-- `@@agent:default` explicitly selects an available subagent.
 
-The older `@file:`, `@skill:`, and `@agent:` forms are not mention syntax. Paths and available skill or agent names come from the hosted session, not from the attaching TUI’s filesystem.
+The older `@file:`, `@skill:`, and `@agent:` forms are not mention syntax. Paths and available skill names come from the hosted session, not from the attaching TUI’s filesystem.
 
 Typing `/` at the start of a line opens command completion. Slash commands are recognized only for single-line submissions. A multiline input beginning with `/`, or an unknown slash-prefixed input, is sent to the agent as an ordinary message.
 

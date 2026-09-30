@@ -19,13 +19,13 @@ export function createProtocolBootstrap(overrides = {}) {
       model,
       systemPrompt: "system prompt",
       settings: { reasoning: "none" },
+      subagentLaunchModels: [],
       skills: "*",
       source: "builtin",
     },
     prompt: {
       environmentTag: "<environment></environment>",
       baseSystemPrompt: "system prompt",
-      subagentPrompts: {},
     },
     ...overrides,
   };
@@ -110,7 +110,9 @@ export function createProtocolSnapshot(overrides = {}) {
       model: bootstrap.model ?? bootstrap.persona?.model ?? model,
       prompt: {
         environmentTag: bootstrap.prompt?.environmentTag ?? "<environment></environment>",
-        subagentPrompts: bootstrap.prompt?.subagentPrompts ?? {},
+        ...(bootstrap.prompt?.subagentSystemPrompt !== undefined
+          ? { subagentSystemPrompt: bootstrap.prompt.subagentSystemPrompt }
+          : {}),
       },
     },
     catalog: {
@@ -121,7 +123,7 @@ export function createProtocolSnapshot(overrides = {}) {
         ...(persona.allowedReasoningLevels
           ? { allowedReasoningLevels: [...persona.allowedReasoningLevels] }
           : {}),
-        ...(persona.subagents ? { subagents: persona.subagents } : {}),
+        subagentLaunchModels: [...(persona.subagentLaunchModels ?? [])],
         ...(persona.tools ? { tools: [...persona.tools] } : {}),
         skills: Array.isArray(persona.skills) ? [...persona.skills] : (persona.skills ?? "*"),
         source: persona.source ?? "builtin",

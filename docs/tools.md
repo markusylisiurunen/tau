@@ -47,7 +47,7 @@ list_agents
 interrupt_agent
 ```
 
-When a custom persona extends another persona and omits `tools`, it inherits the base persona's list. A non-extending custom persona that omits `tools` enables `bash`, `write`, `edit`, `view_image`, `web`, `nook`, and `history`. If that persona has any enabled subagents, Tau also enables the five subagent-management tools. Built-in personas enable the same base and subagent tool sets.
+When a custom persona extends another persona and omits `tools`, it inherits the base persona's list. A non-extending custom persona that omits `tools` enables `bash`, `write`, `edit`, `view_image`, `web`, `nook`, and `history`. It also enables the five subagent-management tools. Built-in personas enable the same base and subagent tool sets.
 
 An empty list disables every persona-controlled host tool:
 
@@ -175,7 +175,7 @@ The effective history query may be machine-local or backed by a configured remot
 
 ### Nook
 
-`nook` manages the configured Nook static mini-app platform. It is available only to a main-session persona that lists `nook` and only when Nook is configured. Subagents cannot receive it.
+`nook` manages the configured Nook static mini-app platform. It is available when the main persona lists `nook` and Nook is configured. Subagents inherit it under the same conditions.
 
 The tool is intended for explicit requests to inspect or manage Nook, publish a static artifact or mini-app, or work with Nook KV. Once the built-in documentation is visible, app-authoring work requires a second separate documentation-only call that prints the Nook authoring skill. The agent reads that guide before creating or modifying app files. Nook setup and platform behavior are covered in [Nook](nook.md).
 
@@ -184,12 +184,12 @@ The tool is intended for explicit requests to inspect or manage Nook, publish a 
 A subagent can receive only:
 
 ```text
-bash  write  edit  view_image  web  history
+bash  write  edit  view_image  web  history  nook
 ```
 
-A subagent definition may list an exact subset. If it omits `tools`, Tau inherits the intersection of the main persona's tools and those six eligible names. Duplicate names are normalized. `tau_docs` is then added intrinsically regardless of the subset.
+Tau inherits the intersection of the main persona’s tools and those seven eligible names. `tau_docs` is then added intrinsically. There is no separate child tool selection. Nook is bound only when configured, just as for the parent.
 
-Subagents do not receive Nook, goal tools, subagent-management tools, or client-provided tools. Their Bash and file tools are scoped to the subagent working directory, including an alternate directory selected at launch. See [subagents](subagents.md) for configuration and working-directory context rebuilding.
+Subagents do not receive goal tools, subagent-management tools, or client-provided tools. Their Bash and file tools are scoped to the subagent working directory, including an alternate directory selected at launch. See [subagents](subagents.md) for configuration and working-directory context rebuilding.
 
 ## Client-owned tools
 

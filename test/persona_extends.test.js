@@ -93,13 +93,7 @@ describe("custom personas", () => {
 
       expect(clone.tools).toEqual(base.tools);
 
-      expect(Object.keys(clone.subagents ?? {})).toEqual(Object.keys(base.subagents ?? {}));
-
-      for (const [name, cfg] of Object.entries(clone.subagents ?? {})) {
-        const baseCfg = base.subagents?.[name];
-        expect(baseCfg).toBeTruthy();
-        expect(cfg).toEqual(baseCfg);
-      }
+      expect(clone.subagentLaunchModels).toEqual(base.subagentLaunchModels);
     } finally {
       fx.cleanup();
     }
@@ -614,7 +608,40 @@ describe("custom personas", () => {
     }
   });
 
-  it("does not create custom subagent model or settings overrides", async () => {
+  it("disables subagents through an explicit persona tool selection", async () => {
+    const fx = setupFixture();
+
+    try {
+      mkdirSync(join(fx.home, ".config", "tau", "personas"), { recursive: true });
+      writeFileSync(
+        join(fx.home, ".config", "tau", "personas", "no-subagents.md"),
+        [
+          "---",
+          "id: no-subagents",
+          "extends: gpt-6.1-sol-coder",
+          "provider: anthropic",
+          "model: claude-haiku-4-5",
+          "tools: [bash, edit]",
+          "---",
+          "work without background workers",
+        ].join("\n"),
+      );
+
+      const deps = createConfigDeps({ cwd: fx.cwd, home: fx.home });
+      const { personas, errors } = await loadAllContentWithModelResolver(
+        { subagents: { launchModels: ["openai/gpt-5.6-sol:low"] } },
+        { deps, cwd: fx.cwd },
+      );
+      expect(errors).toEqual([]);
+      const persona = personas.find((entry) => entry.id === "no-subagents");
+      expect(persona.tools).toEqual(["bash", "edit"]);
+      expect(persona.tools).not.toContain("spawn_agent");
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("ignores custom subagent definitions", async () => {
     const fx = setupFixture();
 
     try {
@@ -645,15 +672,13 @@ describe("custom personas", () => {
 
       const persona = personas.find((entry) => entry.id === "subagent-runtime");
       expect(persona).toBeTruthy();
-      expect(persona.subagents?.analyst).toEqual({
-        systemPrompt: "analyze repository state",
-      });
+      expect(persona.subagentLaunchModels).toEqual([]);
     } finally {
       fx.cleanup();
     }
   });
 
-  it("parses custom subagent launch models and applies config launch models for default", async () => {
+  it("applies config launch models only to the built-in subagent", async () => {
     const fx = setupFixture();
 
     try {
@@ -681,7 +706,7 @@ describe("custom personas", () => {
       const { personas, errors } = await loadAllContentWithModelResolver(
         {
           subagents: {
-            defaultLaunchModels: ["openai/gpt-5.6-sol:low"],
+            launchModels: ["openai/gpt-5.6-sol:low"],
           },
         },
         { deps, cwd: fx.cwd },
@@ -690,14 +715,13 @@ describe("custom personas", () => {
 
       const customPersona = personas.find((persona) => persona.id === "launch-models");
       expect(customPersona).toBeTruthy();
-      expect(customPersona.subagents.analyst.launchModels).toEqual(["openai/gpt-5.6-sol:high"]);
-      expect(customPersona.subagents.default.launchModels).toEqual(["openai/gpt-5.6-sol:low"]);
+      expect(customPersona.subagentLaunchModels).toEqual(["openai/gpt-5.6-sol:low"]);
     } finally {
       fx.cleanup();
     }
   });
 
-  it("does not mutate built-in default subagent launch models between loads", async () => {
+  it("does not mutate subagent launch models between loads", async () => {
     const fx = setupFixture();
 
     try {
@@ -705,7 +729,7 @@ describe("custom personas", () => {
       const withOverrides = await loadAllContentWithModelResolver(
         {
           subagents: {
-            defaultLaunchModels: ["openai/gpt-5.6-sol:low"],
+            launchModels: ["openai/gpt-5.6-sol:low"],
           },
         },
         { deps, cwd: fx.cwd },
@@ -714,15 +738,13 @@ describe("custom personas", () => {
       const withOverridesPersona = withOverrides.personas.find(
         (persona) => persona.id === "gpt-6.1-sol-chat",
       );
-      expect(withOverridesPersona.subagents.default.launchModels).toEqual([
-        "openai/gpt-5.6-sol:low",
-      ]);
+      expect(withOverridesPersona.subagentLaunchModels).toEqual(["openai/gpt-5.6-sol:low"]);
 
       const withoutOverrides = await loadAllContentWithModelResolver({}, { deps, cwd: fx.cwd });
       const withoutOverridesPersona = withoutOverrides.personas.find(
         (persona) => persona.id === "gpt-6.1-sol-chat",
       );
-      expect(withoutOverridesPersona.subagents.default.launchModels).toBeUndefined();
+      expect(withoutOverridesPersona.subagentLaunchModels).toEqual([]);
     } finally {
       fx.cleanup();
     }

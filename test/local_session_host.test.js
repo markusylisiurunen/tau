@@ -139,14 +139,13 @@ function promptFixture() {
   return {
     environmentTag: "<environment></environment>",
     baseSystemPrompt: "system prompt",
-    subagentPrompts: {},
   };
 }
 
 function createRunningSubagentState(id = "child-1") {
   return {
     id,
-    name: "default",
+
     title: "long task",
     availability: "running",
     model: {
@@ -206,7 +205,7 @@ function expectedCatalogPersona(persona = personas[0]) {
     ...(persona.allowedReasoningLevels
       ? { allowedReasoningLevels: [...persona.allowedReasoningLevels] }
       : {}),
-    ...(persona.subagents ? { subagents: structuredClone(persona.subagents) } : {}),
+    subagentLaunchModels: [...(persona.subagentLaunchModels ?? [])],
     ...(persona.tools ? { tools: [...persona.tools] } : {}),
     skills: Array.isArray(persona.skills) ? [...persona.skills] : persona.skills,
     source: persona.source,
@@ -263,7 +262,7 @@ function createStoredSnapshot(overrides = {}) {
       model: expectedModel(persona),
       prompt: {
         environmentTag: promptFixture().environmentTag,
-        subagentPrompts: promptFixture().subagentPrompts,
+        subagentSystemPrompt: promptFixture().subagentSystemPrompt,
       },
     },
     catalog: overrides.catalog ?? expectedCatalog(persona),
@@ -1230,7 +1229,7 @@ describe("LocalSessionHost", () => {
           model: expectedModel(),
           prompt: {
             environmentTag: hostedSession.runtime.promptComposition.environmentTag,
-            subagentPrompts: hostedSession.runtime.promptComposition.subagentPrompts,
+            subagentSystemPrompt: hostedSession.runtime.promptComposition.subagentSystemPrompt,
           },
         },
         catalog: expectedCatalog(),
@@ -3600,7 +3599,7 @@ describe("LocalSessionHost", () => {
         type: "subagent_spawned",
         state: {
           id: "child-1",
-          name: "default",
+
           title: "long task",
           availability: "running",
           model: {
@@ -4544,8 +4543,74 @@ describe("LocalSessionHost", () => {
     expect(recoveredSession.runtime.promptComposition).toEqual({
       baseSystemPrompt: storedSnapshot.messages[0].message.content,
       environmentTag: storedSnapshot.bootstrap.prompt.environmentTag,
-      subagentPrompts: storedSnapshot.bootstrap.prompt.subagentPrompts,
+      subagentSystemPrompt: storedSnapshot.bootstrap.prompt.subagentSystemPrompt,
     });
+  });
+
+  it("recovers a version 8 default-worker session and accepts nameless launches", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "tau-subagent-recovery-"));
+    const originalHost = createHost(new FileSessionStore({ directory }));
+    let recoveredHost;
+
+    try {
+      const originalSession = await originalHost.createSession(localCreateInput);
+      await originalSession.record({ text: "persisted request" });
+      const snapshot = await originalSession.snapshot();
+      await originalHost.shutdown();
+      const legacy = structuredClone(snapshot);
+      legacy.bootstrap.prompt.subagentPrompts = {
+        default: legacy.bootstrap.prompt.subagentSystemPrompt,
+      };
+      delete legacy.bootstrap.prompt.subagentSystemPrompt;
+      for (const persona of legacy.catalog.personas) {
+        persona.subagents = { default: { launchModels: persona.subagentLaunchModels } };
+        delete persona.subagentLaunchModels;
+      }
+      writeFileSync(
+        join(directory, `${Buffer.from(snapshot.sessionId).toString("base64url")}.json`),
+        JSON.stringify({ format: STORED_SESSION_DOCUMENT_FORMAT, version: 8, snapshot: legacy }),
+      );
+      recoveredHost = createHost(new FileSessionStore({ directory }));
+      const recovered = await recoveredHost.observeSession(snapshot.sessionId);
+      expect(recovered.runtime.promptComposition.subagentSystemPrompt).toBe(
+        snapshot.bootstrap.prompt.subagentSystemPrompt,
+      );
+      expect((await recovered.snapshot()).messages).toEqual(snapshot.messages);
+      const spawn = vi.spyOn(recovered.runtime.supervisor, "spawn").mockReturnValue({
+        ok: true,
+        state: createRunningSubagentState(),
+        capacity: { running: 1, limit: 8 },
+      });
+      const tool = recovered.runtime.agent.spec.tools.get("spawn_agent");
+      const result = await tool.execute(
+        {
+          type: "toolCall",
+          id: "spawn-call",
+          name: "spawn_agent",
+          arguments: { title: "independent task", prompt: "inspect the changes" },
+        },
+        {
+          agentId: "main",
+          turnId: "turn-1",
+          assistantMessageId: "assistant-1",
+          signal: new AbortController().signal,
+          emitActivity: async () => {},
+        },
+      );
+      expect(result.outcome).toBe("succeeded");
+      expect(spawn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          runtimeConfig: expect.objectContaining({
+            systemPrompt: snapshot.bootstrap.prompt.subagentSystemPrompt,
+          }),
+        }),
+      );
+      expect(spawn.mock.calls[0][0].runtimeConfig).not.toHaveProperty("name");
+    } finally {
+      await recoveredHost?.shutdown();
+      await originalHost.shutdown();
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it("discards and persists unrecoverable subagent presentation on every recovery", async () => {
@@ -4557,7 +4622,7 @@ describe("LocalSessionHost", () => {
       agents: {
         "agent-1": {
           id: "agent-1",
-          name: "default",
+
           title: "stale child",
           availability: "idle",
           model: {
@@ -4865,7 +4930,7 @@ describe("LocalSessionHost", () => {
     expect(recoveredSession.runtime.promptComposition).toEqual({
       baseSystemPrompt: storedSnapshot.messages[0].message.content,
       environmentTag: storedSnapshot.bootstrap.prompt.environmentTag,
-      subagentPrompts: storedSnapshot.bootstrap.prompt.subagentPrompts,
+      subagentSystemPrompt: storedSnapshot.bootstrap.prompt.subagentSystemPrompt,
     });
     expect(recoveredSession.runtime.promptComposition.baseSystemPrompt).toContain(
       "- Session started at: 2026-01-01T00:00:00.000Z",
@@ -5608,7 +5673,7 @@ describe("LocalSessionHost", () => {
           model: expectedModel(),
           prompt: {
             environmentTag: recoveredSession.runtime.promptComposition.environmentTag,
-            subagentPrompts: recoveredSession.runtime.promptComposition.subagentPrompts,
+            subagentSystemPrompt: recoveredSession.runtime.promptComposition.subagentSystemPrompt,
           },
         },
       }),

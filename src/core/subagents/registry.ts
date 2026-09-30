@@ -2,19 +2,14 @@ import {
   TOOL_NAME_BASH,
   TOOL_NAME_EDIT,
   TOOL_NAME_HISTORY,
+  TOOL_NAME_NOOK,
+  TOOL_NAME_SPAWN_AGENT,
   TOOL_NAME_VIEW_IMAGE,
   TOOL_NAME_WEB,
   TOOL_NAME_WRITE,
 } from "../tools/tool_names.js";
 import type { Persona } from "../types.js";
-import { buildDefaultSubagentSystemPrompt, DEFAULT_SUBAGENT_DESCRIPTION } from "./default.js";
-import {
-  DEFAULT_SUBAGENT_NAME,
-  type SubagentLaunchModel,
-  type SubagentPersonaConfig,
-  type SubagentRuntimeConfig,
-  type SubagentToolName,
-} from "./types.js";
+import type { SubagentLaunchModel, SubagentRuntimeConfig, SubagentToolName } from "./types.js";
 
 const INHERITABLE_TOOL_NAMES = new Set<SubagentToolName>([
   TOOL_NAME_BASH,
@@ -23,6 +18,7 @@ const INHERITABLE_TOOL_NAMES = new Set<SubagentToolName>([
   TOOL_NAME_VIEW_IMAGE,
   TOOL_NAME_WEB,
   TOOL_NAME_HISTORY,
+  TOOL_NAME_NOOK,
 ]);
 
 function normalizeTools(tools: SubagentToolName[]): SubagentToolName[] {
@@ -39,7 +35,7 @@ function normalizeTools(tools: SubagentToolName[]): SubagentToolName[] {
 }
 
 function getInheritedSubagentTools(persona: Persona): SubagentToolName[] {
-  const toolNames = persona.tools ?? [TOOL_NAME_BASH, TOOL_NAME_WRITE, TOOL_NAME_EDIT];
+  const toolNames = persona.tools;
   const selected: SubagentToolName[] = [];
 
   for (const name of toolNames) {
@@ -55,16 +51,13 @@ export type SubagentEffectiveSettings = Pick<SubagentRuntimeConfig, "model" | "s
 
 export function resolveSubagentEffectiveSettings(args: {
   persona: Persona;
-  config: SubagentPersonaConfig;
   launchModel?: SubagentLaunchModel;
 }): SubagentEffectiveSettings {
   const settings = { ...args.persona.settings };
   if (args.launchModel) {
     settings.reasoning = args.launchModel.reasoning;
   }
-  const tools = args.config.tools
-    ? normalizeTools(args.config.tools)
-    : getInheritedSubagentTools(args.persona);
+  const tools = getInheritedSubagentTools(args.persona);
   return {
     model: args.launchModel?.model ?? args.persona.model,
     settings,
@@ -72,64 +65,27 @@ export function resolveSubagentEffectiveSettings(args: {
   };
 }
 
-export function getSubagentBasePrompt(args: {
-  name: string;
-  config: SubagentPersonaConfig;
-  mainPersonaSystemPrompt: string;
-}): string {
-  if (args.name === DEFAULT_SUBAGENT_NAME) {
-    return buildDefaultSubagentSystemPrompt(args.mainPersonaSystemPrompt);
-  }
-
-  if (!args.config.systemPrompt) {
-    throw new Error(`Subagent '${args.name}' is missing a system prompt.`);
-  }
-
-  return args.config.systemPrompt;
-}
-
-export function getSubagentDescription(
-  name: string,
-  config: SubagentPersonaConfig,
-): string | undefined {
-  if (config.description) return config.description;
-  if (name === DEFAULT_SUBAGENT_NAME) {
-    return DEFAULT_SUBAGENT_DESCRIPTION;
-  }
-  return undefined;
-}
-
 export function formatSubagentsForPrompt(persona: Persona): string | undefined {
-  if (!persona.subagents) {
+  if (!persona.tools.includes(TOOL_NAME_SPAWN_AGENT)) {
     return undefined;
   }
 
-  const subagentLines = Object.entries(persona.subagents).map(([name, config]) => {
-    const description = getSubagentDescription(name, config) ?? "(No description provided.)";
-    const effective = resolveSubagentEffectiveSettings({ persona, config });
-    const reasoning = effective.settings.reasoning ?? "none";
-    const launchModels = config.launchModels ?? [];
-    const launchModelsText =
-      launchModels.length > 0
-        ? `\n  - Launch model overrides: ${launchModels.map((entry) => `\`${entry}\``).join(", ")}\n    By default, launch the subagent without a model override unless the user explicitly asks to use a specific model.`
-        : "";
-    return `- \`${name}\`: ${description}\n  - Default runtime: \`${effective.model.provider}/${effective.model.id}:${reasoning}\`${launchModelsText}`;
-  });
-
-  if (subagentLines.length === 0) {
-    return undefined;
-  }
+  const effective = resolveSubagentEffectiveSettings({ persona });
+  const reasoning = effective.settings.reasoning ?? "none";
+  const launchModels = persona.subagentLaunchModels;
+  const launchModelsText =
+    launchModels.length > 0 ? launchModels.map((entry) => `\`${entry}\``).join(", ") : "none";
 
   return [
     "",
     "",
-    "### Available sub-agents",
+    "### Subagents",
     "",
-    "You have access to the following sub-agents:",
+    "You can spawn general-purpose background subagents to work on independent tasks. Spawn them only when the user or active instructions explicitly request delegation; do not infer authorization from generic task overlap.",
     "",
-    subagentLines.join("\n"),
+    `Inherited model: \`${effective.model.provider}/${effective.model.id}:${reasoning}\``,
+    `Allowed model overrides: ${launchModelsText}`,
     "",
-    "Guidelines:",
-    "- Trigger: Follow the sub-agent's trigger sensitivity if specified; default is balanced. An exact `@@agent:<name>` reference in the user request, active AGENTS.md instructions, or instructions of an already-active skill explicitly activates that sub-agent. Do not infer sub-agent activation from generic language, keyword, or task overlap.",
+    "Omit the model override unless the user explicitly requests a specific model.",
   ].join("\n");
 }

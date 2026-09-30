@@ -1,5 +1,4 @@
 import { type ModelResolver, resolveModel } from "./models/catalog.js";
-import { DEFAULT_SUBAGENT_NAME, type SubagentConfigMap } from "./subagents/types.js";
 import {
   TOOL_NAME_BASH,
   TOOL_NAME_EDIT,
@@ -91,7 +90,7 @@ The user may refer to files by typing \`@\` followed by a path relative to the c
 
 The user may refer to skills by typing \`@@skill:\` followed by a skill name (e.g., \`@@skill:skill-name\`). The \`@@skill:\` prefix indicates a skill reference. When you see this notation, follow the skill guidelines and open its \`SKILL.md\` if needed.
 
-The user may tag subagents by typing \`@@agent:\` followed by a subagent name (e.g., \`@@agent:default\`). Tags identify the intended subagent for a task but do not automatically spawn a subagent. Use \`spawn_agent\` to start a subagent, and \`send_input_to_agent\` for follow-up inputs once it is idle.
+Use \`spawn_agent\` to start a subagent when the user or active instructions explicitly request delegation, and \`send_input_to_agent\` for follow-up inputs once it is idle.
 `.trim();
 
 const BLOCK_FILE_EDIT_GUIDELINES = `
@@ -154,11 +153,11 @@ const BLOCK_CODER_DISCIPLINE = `
 const BLOCK_TRIGGER_SENSITIVITY = `
 ### Trigger sensitivity
 
-Skills and sub-agents specify when they should be activated:
+Skills specify when they should be activated:
 
 - **eager**: Use proactively whenever the capability would help, even if not explicitly requested.
 - **balanced**: Use when the request clearly matches. This is the default when not specified.
-- **explicit**: Use only when explicitly named. For skills and sub-agents, an exact \`@@skill:<name>\` reference or \`@@agent:<name>\` reference in the user request, active AGENTS.md instructions, or instructions of an already-active skill counts as explicit activation. Skill references compose transitively; activate each skill at most once per request so repeated or cyclic references do not reopen it. Do not infer from generic language, keyword, or task overlap.
+- **explicit**: Use only when explicitly named. For skills, an exact \`@@skill:<name>\` reference in the user request, active AGENTS.md instructions, or instructions of an already-active skill counts as explicit activation. Skill references compose transitively; activate each skill at most once per request so repeated or cyclic references do not reopen it. Do not infer from generic language, keyword, or task overlap.
 `.trim();
 
 const BLOCK_PROJECT_CONTEXT = `
@@ -369,9 +368,6 @@ function buildPersona(spec: PersonaSpec, variant: Variant, modelResolver: ModelR
   const config = VARIANT_CONFIG[variant];
   const skills = spec.skills;
   const settings = structuredClone(spec.settings);
-  const subagents: SubagentConfigMap = {
-    [DEFAULT_SUBAGENT_NAME]: {},
-  };
 
   const tools = [...BASE_TOOLS, ...SUBAGENT_TOOLS];
 
@@ -384,7 +380,7 @@ function buildPersona(spec: PersonaSpec, variant: Variant, modelResolver: ModelR
     allowedReasoningLevels: spec.allowedReasoningLevels,
     settings,
     skills,
-    subagents,
+    subagentLaunchModels: [],
     tools,
     source: "builtin",
   };

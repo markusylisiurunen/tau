@@ -4,15 +4,12 @@ import {
   TOOL_NAME_BASH,
   TOOL_NAME_EDIT,
   TOOL_NAME_HISTORY,
+  TOOL_NAME_NOOK,
   TOOL_NAME_VIEW_IMAGE,
   TOOL_NAME_WEB,
   TOOL_NAME_WRITE,
 } from "../tools/tool_names.js";
 import type { PersonaSettings, ReasoningEffort } from "../types.js";
-
-export const DEFAULT_SUBAGENT_NAME = "default";
-
-export type SubagentName = string;
 
 export const SUBAGENT_TOOL_NAMES = [
   TOOL_NAME_BASH,
@@ -21,6 +18,7 @@ export const SUBAGENT_TOOL_NAMES = [
   TOOL_NAME_VIEW_IMAGE,
   TOOL_NAME_WEB,
   TOOL_NAME_HISTORY,
+  TOOL_NAME_NOOK,
 ] as const;
 
 export type SubagentToolName = (typeof SUBAGENT_TOOL_NAMES)[number];
@@ -30,15 +28,6 @@ export type SubagentLaunchModel = {
   reasoning: ReasoningEffort;
   normalized: string;
 };
-
-export type SubagentPersonaConfig = {
-  systemPrompt?: string;
-  description?: string;
-  tools?: SubagentToolName[];
-  launchModels?: string[];
-};
-
-export type SubagentConfigMap = Record<SubagentName, SubagentPersonaConfig>;
 
 export type SubagentUsageSnapshot = {
   input: number;
@@ -90,7 +79,6 @@ export type SubagentRunSnapshot =
 
 export type SubagentStateSnapshot = {
   id: string;
-  name: SubagentName;
   title: string;
   availability: "running" | "idle";
   model: {
@@ -148,9 +136,7 @@ export type SubagentEvent =
   | { type: "subagent_finished"; state: SubagentStateSnapshot };
 
 export type SubagentRuntimeConfig = {
-  name: SubagentName;
   systemPrompt: string;
-  description?: string;
   model: Model<Api>;
   settings: PersonaSettings;
   tools: SubagentToolName[];

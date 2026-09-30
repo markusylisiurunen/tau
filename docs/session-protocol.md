@@ -108,6 +108,8 @@ Observation controls delivery, not session ownership. `session.unobserve` stops 
 | `tools`, `operations`, `agents` | Mutable semantic state referenced by timeline items or client views. |
 | `facets` | Versioned client-facing metadata. Unknown facet kinds and versions should be ignored. |
 
+`bootstrap.prompt.subagentSystemPrompt` is present when subagent launches are enabled. Each catalog persona has a `subagentLaunchModels` allowlist. Subagent records have task titles and IDs, not worker-type names.
+
 Render active transcript order from `timeline.items`, not by sorting or filtering `messages`. A timeline item either contains a notice or references a message, tool, or operation in the corresponding snapshot collection. Some model-visible messages intentionally have no timeline item.
 
 The timeline has an `epoch`, a per-epoch sequence high-water mark, and ordered items. Successful compaction replaces the active recoverable timeline and advances the epoch. Rewind stays in the same epoch, removes later items, and preserves the sequence high-water mark so sequence numbers are not reused.

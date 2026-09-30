@@ -241,7 +241,6 @@ export class SessionChatApp {
             return await sources.autocompletePaths(query, limit);
           },
           sources.skills,
-          sources.subagents,
         ),
       );
       const handlers = controller.getInputHandlers();

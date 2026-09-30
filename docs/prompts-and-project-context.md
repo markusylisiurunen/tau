@@ -149,7 +149,7 @@ The alternate directory controls:
 - target applicable `AGENTS.md` and `agentContextFiles`,
 - target-discovered skills filtered by the parent persona.
 
-The parent session remains the source of truth for the selected persona, subagent definition, model catalog, model settings, and tool policy. Tau filters skills discovered at the alternate directory through the parent persona's skill selection. It does not replace the source persona with a persona found in the target directory. See [subagents](subagents.md) for the full launch contract.
+The parent session remains the source of truth for the selected persona, model catalog, model settings, and tool policy. Tau filters skills discovered at the alternate directory through the parent persona's skill selection. It does not replace the source persona with a persona found in the target directory. See [subagents](subagents.md) for the full launch contract.
 
 ## Leading hidden system blocks
 

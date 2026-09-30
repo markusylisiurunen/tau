@@ -15,12 +15,13 @@ import { createListAgentsToolDefinition } from "./list_agents.js";
 import { createNookToolDefinition } from "./nook.js";
 import { ToolRegistry } from "./registry.js";
 import { createSendInputToAgentToolDefinition } from "./send_input_to_agent.js";
-import { createSpawnAgentToolDefinition, type ResolveSubagentPrompts } from "./spawn_agent.js";
+import { createSpawnAgentToolDefinition, type ResolveSubagentPrompt } from "./spawn_agent.js";
 import { createTauDocsToolDefinition } from "./tau_docs.js";
 import {
   TOOL_NAME_BASH,
   TOOL_NAME_EDIT,
   TOOL_NAME_HISTORY,
+  TOOL_NAME_NOOK,
   TOOL_NAME_VIEW_IMAGE,
   TOOL_NAME_WEB,
   TOOL_NAME_WRITE,
@@ -51,7 +52,7 @@ export const ToolCatalog = {
           throw new Error("goal mutations are unavailable in the debug registry");
         },
       },
-      subagentPrompts: {},
+      subagentSystemPrompt: undefined,
       supervisor: new AgentSupervisor({ onEvent: () => {} }),
     });
   },
@@ -61,13 +62,13 @@ export const ToolCatalog = {
     cwd: string;
     config: Config;
     persona: Persona;
-    subagentPrompts: Record<string, string>;
+    subagentSystemPrompt: string | undefined;
     modelResolver: ModelResolver;
     supervisor: AgentSupervisor;
     goalManager: GoalManager;
     bashJobs: BashJobRegistry;
     history: HistoryQuery;
-    resolveSubagentPrompts?: ResolveSubagentPrompts;
+    resolveSubagentPrompt?: ResolveSubagentPrompt;
   }): ToolRegistry {
     const tools = [
       createBashToolDefinition(options.backend, options.cwd, options.bashJobs),
@@ -83,11 +84,11 @@ export const ToolCatalog = {
         persona: options.persona,
         config: options.config,
         modelResolver: options.modelResolver,
-        subagentPrompts: options.subagentPrompts,
+        subagentSystemPrompt: options.subagentSystemPrompt,
         history: options.history,
         cwd: options.cwd,
-        ...(options.resolveSubagentPrompts
-          ? { resolveSubagentPrompts: options.resolveSubagentPrompts }
+        ...(options.resolveSubagentPrompt
+          ? { resolveSubagentPrompt: options.resolveSubagentPrompt }
           : {}),
       }),
       createSendInputToAgentToolDefinition(options.supervisor),
@@ -139,6 +140,11 @@ export const ToolCatalog = {
           break;
         case TOOL_NAME_WEB:
           definitions.push(createWebToolDefinition(scopedBackend, config));
+          break;
+        case TOOL_NAME_NOOK:
+          if (config.nook) {
+            definitions.push(createNookToolDefinition(scopedBackend, config));
+          }
           break;
         case TOOL_NAME_HISTORY:
           if (!history) {

@@ -137,7 +137,7 @@ function createAssistantToolCallMessage(toolCalls) {
 function createAgentRun({ status = "running", finalText = "", finishedAt = 2, ...overrides } = {}) {
   return {
     id: "agent-1",
-    name: "default",
+
     title: "Inspect state",
     availability: status === "running" ? "running" : "idle",
     model: { provider: "anthropic", id: "claude-opus-4-8", reasoning: "medium" },

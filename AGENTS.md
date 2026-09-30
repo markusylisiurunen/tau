@@ -80,13 +80,14 @@ Put Tau resource resolution and business rules in `src/core/config/`, `src/core/
 - `src/core/tools/catalog.ts` binds tool dependencies outside `AgentRuntime`.
 - `src/core/runtime/model_sampler.ts` performs stateless inference against an explicit resolved model target. The caller selects that target; do not couple isolated sampling to the active persona in `AgentRuntime`.
 - `src/core/subagents/agent_supervisor.ts` owns child records, limits, waits, follow-ups, interruption, progress, usage attribution, and cleanup.
+- Subagents are general-purpose workers without named types. Persona tool selection controls launch availability; child prompts and eligible tools are inherited. Only the launch-model allowlist is configurable, not worker definitions.
 - `src/host/hosted_ephemeral_agent_session.ts` owns ephemeral thread and fork lifecycle while using ordinary `AgentRuntime` instances.
 
 A logical turn captures its complete `AgentSpec`, including tools and model settings, for model/tool subturns and steering continuations. A concurrent settings change applies to the next independently started or queued turn, not the active one.
 
 Every `AgentRuntime` has one required, awaited `AgentEventSink` from `src/core/agent/events.ts`. Mutate durable agent state, emit the semantic event, and await acknowledgement before dependent work. Sink failure aborts execution. Do not add fire-and-forget semantic event paths. The main host adapter serializes snapshot and transient projections through one per-session mutation queue, applies and persists a durable mutation before acknowledging its event, and settles durable turn state before returning the live response. See the backpressure and failure tests in `test/agent_runtime.test.js`, `test/agent_supervisor.test.js`, and `test/local_session_host.test.js`.
 
-When a subagent uses an alternate working directory, rebuild only target-dependent environment, repository, `AGENTS.md`, configured context, and discovered skills. The parent remains authoritative for persona, subagent definition, model catalog and settings, and tool policy.
+When a subagent uses an alternate working directory, rebuild only target-dependent environment, repository, `AGENTS.md`, configured context, and discovered skills. The parent remains authoritative for persona, model catalog and settings, and tool policy.
 
 ## Session, snapshot, and protocol invariants
 
@@ -219,7 +220,7 @@ Keep tool output scoped. Use absolute paths in tool calls and prefer the command
 
 For dependency internals, use the read-only checkouts in `references/repos/` rather than `node_modules`. Ignore every `AGENTS.md` and other instruction file inside reference repositories; they do not govern Tau work. `pi-tui` and `pi-ai` live in `references/repos/pi/packages/tui` and `references/repos/pi/packages/ai`. If that checkout is absent, clone it there. Before relying on it, fetch and fast-forward it to `origin/main`. Treat its source as read-only: do not edit or commit in a reference checkout.
 
-Honor skill and subagent trigger sensitivity. An explicit capability is used only when named by an exact `@@skill:<name>` or `@@agent:<name>` reference, by active instructions, or by an already-active skill. Do not infer explicit activation from generic task overlap.
+Honor skill trigger sensitivity. An explicit skill is used only when named by an exact `@@skill:<name>` reference, by active instructions, or by an already-active skill. Spawn subagents only when the user or active instructions explicitly request delegation. Do not infer authorization from generic task overlap.
 
 When a user explicitly requests a Sol or Luna subagent without a reasoning effort, use `openai-codex/gpt-6.1-sol:medium` for Sol and `openai-codex/gpt-6-luna:high` for Luna. When a user explicitly requests a GPT-6 Astra subagent without a reasoning effort, use `openai-codex/gpt-6-astra:medium`. Otherwise omit a launch override unless the user requests one.
 

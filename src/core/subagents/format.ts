@@ -6,7 +6,7 @@ function formatCapacity(capacity: SubagentCapacitySnapshot): string {
 }
 
 function formatRuntime(state: SubagentStateSnapshot): string {
-  return `${state.name} · ${state.model.provider}/${state.model.id}:${state.model.reasoning}`;
+  return `${state.model.provider}/${state.model.id}:${state.model.reasoning}`;
 }
 
 function formatContext(state: SubagentStateSnapshot): string {

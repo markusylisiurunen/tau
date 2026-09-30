@@ -123,6 +123,31 @@ describe("FileSessionStore", () => {
     });
   });
 
+  it("migrates version 8 default-worker prompts and catalog metadata", async () => {
+    await withTempStore(async (store, directory) => {
+      const snapshot = createSnapshot("session-1", "persisted request");
+      snapshot.bootstrap.prompt.subagentSystemPrompt = "prepared child instructions";
+      snapshot.catalog.personas[0].subagentLaunchModels = ["openai/gpt-5.4:high"];
+      const legacy = structuredClone(snapshot);
+      legacy.bootstrap.prompt.subagentPrompts = {
+        default: legacy.bootstrap.prompt.subagentSystemPrompt,
+      };
+      delete legacy.bootstrap.prompt.subagentSystemPrompt;
+      for (const persona of legacy.catalog.personas) {
+        persona.subagents = { default: { launchModels: persona.subagentLaunchModels } };
+        delete persona.subagentLaunchModels;
+      }
+      await mkdir(directory, { recursive: true });
+      await writeFile(
+        join(directory, "c2Vzc2lvbi0x.json"),
+        JSON.stringify({ format: STORED_SESSION_DOCUMENT_FORMAT, version: 8, snapshot: legacy }),
+        "utf8",
+      );
+
+      await expect(store.loadSession("session-1")).resolves.toEqual(snapshot);
+    });
+  });
+
   it("writes the current versioned storage document", async () => {
     await withTempStore(async (store, directory) => {
       const snapshot = createSnapshot("session-1", "hello");
@@ -315,7 +340,7 @@ describe("FileSessionStore", () => {
         agents: {
           "agent-1": {
             id: "agent-1",
-            name: "default",
+
             title: "old run",
             status: "succeeded",
             costTotal: 0.01,

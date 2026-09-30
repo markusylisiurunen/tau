@@ -60,7 +60,7 @@ function createNoticeDelta(sessionId, revision, text) {
 function createAgentDelta(sessionId, revision, event) {
   const agent = {
     id: event.id,
-    name: "default",
+
     title: event.title ?? event.id,
     availability: event.type === "finished" ? "idle" : "running",
     model: { provider: "anthropic", id: "claude-opus-4-8", reasoning: "medium" },

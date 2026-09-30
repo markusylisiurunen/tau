@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { renderDefaultSubagentWrapperPrompt } from "../dist/core/static/index.js";
+import { renderSubagentWrapperPrompt } from "../dist/core/static/index.js";
 
 describe("static prompts", () => {
-  it("interpolates inherited main prompt into the default subagent wrapper", () => {
-    const prompt = renderDefaultSubagentWrapperPrompt({
+  it("interpolates inherited main prompt into the subagent wrapper", () => {
+    const prompt = renderSubagentWrapperPrompt({
       inheritedInstructions: "main system prompt",
     });
 
@@ -13,7 +13,7 @@ describe("static prompts", () => {
   });
 
   it("preserves literal replacement syntax characters", () => {
-    const prompt = renderDefaultSubagentWrapperPrompt({
+    const prompt = renderSubagentWrapperPrompt({
       inheritedInstructions: "$& $$ $1",
     });
 
@@ -21,7 +21,7 @@ describe("static prompts", () => {
   });
 
   it("allows placeholder-like text in replacement values", () => {
-    const prompt = renderDefaultSubagentWrapperPrompt({
+    const prompt = renderSubagentWrapperPrompt({
       inheritedInstructions: "keep {{this}} literal",
     });
 

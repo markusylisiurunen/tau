@@ -12,12 +12,7 @@ function createPersona(overrides = {}) {
     skills: "*",
     source: "project",
     tools: ["bash", "spawn_agent"],
-    subagents: {
-      reviewer: {
-        systemPrompt: "source reviewer instructions",
-        tools: ["bash"],
-      },
-    },
+    subagentLaunchModels: [],
     ...overrides,
   };
 }
@@ -44,12 +39,7 @@ describe("execution environment subagent prompt resolver", () => {
     const targetPersona = createPersona({
       systemPrompt: "conflicting target main instructions",
       settings: { reasoning: "low" },
-      subagents: {
-        reviewer: {
-          systemPrompt: "conflicting target reviewer instructions",
-          tools: ["web"],
-        },
-      },
+      subagentLaunchModels: [],
     });
     const skills = [
       {
@@ -101,12 +91,12 @@ describe("execution environment subagent prompt resolver", () => {
       includeAgentContext: true,
       agentContextFiles: config.agentContextFiles,
     });
-    expect(prompts.reviewer).toContain("source reviewer instructions");
-    expect(prompts.reviewer).not.toContain("conflicting target reviewer instructions");
-    expect(prompts.reviewer).toContain("target AGENTS context");
-    expect(prompts.reviewer).toContain("target skill context");
-    expect(prompts.reviewer).toContain("- Current working directory: `/workspace/repo`");
-    expect(prompts.reviewer).toContain("- Platform: Linux");
+    expect(prompts).toContain("source main instructions");
+    expect(prompts).not.toContain("conflicting target main instructions");
+    expect(prompts).toContain("target AGENTS context");
+    expect(prompts).toContain("target skill context");
+    expect(prompts).toContain("- Current working directory: `/workspace/repo`");
+    expect(prompts).toContain("- Platform: Linux");
   });
 
   it("does not require the source persona to exist in the target catalog", async () => {
@@ -136,9 +126,7 @@ describe("execution environment subagent prompt resolver", () => {
 
     await expect(
       resolvePrompts({ cwd: "/workspace/other", persona: sourcePersona }),
-    ).resolves.toEqual({
-      reviewer: expect.stringContaining("source reviewer instructions"),
-    });
+    ).resolves.toEqual(expect.stringContaining("source main instructions"));
     expect(resolveRuntimeContext).toHaveBeenCalledWith(
       expect.objectContaining({ persona: sourcePersona }),
     );

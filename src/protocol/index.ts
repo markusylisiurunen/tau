@@ -123,7 +123,6 @@ export type {
   SessionProtocolSubagentActivitiesMessage,
   SessionProtocolSubagentActivitiesState,
   SessionProtocolSubagentActivity,
-  SessionProtocolSubagentSnapshot,
   SessionProtocolSubject,
   SessionProtocolSubmitParams,
   SessionProtocolSubmitResult,

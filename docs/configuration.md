@@ -67,7 +67,7 @@ A few fields intentionally use other rules:
 - `modelSystemNotices` merges by normalized `<provider>/<model>` key.
 - `flySprites.apis` merges by API id. A more-specific API replaces the complete API entry with that id.
 - `agentContextFiles` is additive across levels, resolves each entry at its owning level, and removes duplicate resolved paths while preserving order.
-- `subagents.defaultLaunchModels` selects the most-specific list.
+- `subagents.launchModels` selects the most-specific list.
 - `clientTools` is defined only at global scope. `enabledClientTools` at the most-specific project level is an exact selection from those definitions.
 - `history` is accepted only at global scope.
 

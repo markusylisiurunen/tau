@@ -14,7 +14,6 @@ function createProvider(options = {}) {
     async (query, limit) =>
       (options.files ?? []).filter((path) => path.includes(query)).slice(0, limit),
     () => options.skills ?? [],
-    () => options.agents ?? [],
   );
 }
 
@@ -49,20 +48,18 @@ describe("slash mention autocomplete", () => {
     const provider = createProvider({
       files: ["src/core.ts"],
       skills: ["foo-skill", "bar-skill"],
-      agents: ["default", "reviewer"],
     });
 
-    expect(await getMentionValues(provider, "@@")).toEqual(["agent:", "skill:"]);
+    expect(await getMentionValues(provider, "@@")).toEqual(["skill:"]);
     expect(await getMentionValues(provider, "@@sk")).toEqual(["skill:"]);
     expect(await getMentionValues(provider, "@@skill:")).toEqual(["bar-skill", "foo-skill"]);
-    expect(await getMentionValues(provider, "@@agent:d")).toEqual(["default"]);
+    expect(await getMentionValues(provider, "@@agent:d")).toBeNull();
   });
 
   it("inserts mentions using @path and @@kind:name", () => {
     const provider = createProvider({
       files: ["src/core.ts"],
       skills: ["foo-skill"],
-      agents: ["default"],
     });
 
     const file = provider.applyCompletion(
@@ -91,7 +88,6 @@ describe("slash mention autocomplete", () => {
     const provider = createProvider({
       files: ["src/core.ts"],
       skills: ["foo-skill"],
-      agents: ["default"],
     });
 
     expect(await getMentionValues(provider, "@@file:")).toBeNull();

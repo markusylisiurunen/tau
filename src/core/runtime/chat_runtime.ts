@@ -25,7 +25,7 @@ import { ToolCatalog } from "../tools/catalog.js";
 import type { ToolExecutionBackend } from "../tools/execution_backend.js";
 import type { GoalManager } from "../tools/goal.js";
 import { ToolRegistry } from "../tools/registry.js";
-import type { ResolveSubagentPrompts } from "../tools/spawn_agent.js";
+import type { ResolveSubagentPrompt } from "../tools/spawn_agent.js";
 import type { Persona, ReasoningEffort } from "../types.js";
 import type { UsageRecorder } from "../usage/logs.js";
 import { type ResolvedAgentModel, resolveAgentModel } from "./agent_model.js";
@@ -53,7 +53,7 @@ export type CreateChatRuntimeOptions = {
   backend: ToolExecutionBackend;
   clientTools?: () => ReturnType<ToolRegistry["getEnabledTools"]>;
   modelResolver: ModelResolver;
-  resolveSubagentPrompts?: ResolveSubagentPrompts;
+  resolveSubagentPrompt?: ResolveSubagentPrompt;
   promptContext: ChatRuntimePromptContext;
   eventSink: AgentEventSink;
   subagentEventSink: (event: SubagentEvent) => void | Promise<void>;
@@ -79,7 +79,7 @@ export class ChatRuntime {
   private readonly deps: CoreDeps;
   private resolvedModel: ResolvedAgentModel;
   private readonly clientTools?: CreateChatRuntimeOptions["clientTools"];
-  private readonly resolveSubagentPrompts?: ResolveSubagentPrompts;
+  private readonly resolveSubagentPrompt?: ResolveSubagentPrompt;
   private readonly goalManager: GoalManager;
   private readonly historyQuery: HistoryQuery;
   private latestPromptComposition: SessionPromptComposition;
@@ -115,7 +115,7 @@ export class ChatRuntime {
       deps: this.deps,
     });
     this.clientTools = options.clientTools;
-    this.resolveSubagentPrompts = options.resolveSubagentPrompts;
+    this.resolveSubagentPrompt = options.resolveSubagentPrompt;
     this.goalManager = options.goalManager;
     this.historyQuery = options.history;
     this.latestPromptComposition = composition;
@@ -332,15 +332,13 @@ export class ChatRuntime {
       cwd: this.promptContext.cwd,
       config: this.currentConfig,
       persona: this.currentPersona,
-      subagentPrompts: composition.subagentPrompts,
+      subagentSystemPrompt: composition.subagentSystemPrompt,
       modelResolver: this.currentModelResolver,
       supervisor: this.supervisor,
       goalManager: this.goalManager,
       bashJobs: this.bashJobs,
       history: this.historyQuery,
-      ...(this.resolveSubagentPrompts
-        ? { resolveSubagentPrompts: this.resolveSubagentPrompts }
-        : {}),
+      ...(this.resolveSubagentPrompt ? { resolveSubagentPrompt: this.resolveSubagentPrompt } : {}),
     });
     const clientTools = this.clientTools?.() ?? [];
     return clientTools.length === 0

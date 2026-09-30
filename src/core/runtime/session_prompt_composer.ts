@@ -1,4 +1,6 @@
-import { formatSubagentsForPrompt, getSubagentBasePrompt } from "../subagents/registry.js";
+import { buildSubagentSystemPrompt } from "../subagents/prompt.js";
+import { formatSubagentsForPrompt } from "../subagents/registry.js";
+import { TOOL_NAME_SPAWN_AGENT } from "../tools/tool_names.js";
 import type { Persona } from "../types.js";
 import { buildBaseSystemPrompt, buildEnvironmentTag } from "../utils/context.js";
 export type ComposeSessionPromptsArgs = {
@@ -16,7 +18,7 @@ export type ComposeSessionPromptsArgs = {
 export type SessionPromptComposition = {
   environmentTag: string;
   baseSystemPrompt: string;
-  subagentPrompts: Record<string, string>;
+  subagentSystemPrompt?: string;
 };
 
 export function composeSessionPrompts(args: ComposeSessionPromptsArgs): SessionPromptComposition {
@@ -37,37 +39,18 @@ export function composeSessionPrompts(args: ComposeSessionPromptsArgs): SessionP
     subagentsBlock: formatSubagentsForPrompt(args.persona),
   });
 
-  const subagentPrompts: Record<string, string> = {};
-  const subagents = args.persona.subagents;
-  if (subagents) {
-    for (const [name, config] of Object.entries(subagents)) {
-      const personaSystemPrompt = getSubagentBasePrompt({
-        name,
-        config,
-        mainPersonaSystemPrompt: args.persona.systemPrompt,
-      });
-
-      const subagentEnvironmentTag = buildEnvironmentTag({
-        sessionId: args.sessionId,
-        cwd: args.cwd,
-        repoRoot: args.repoRoot,
-        repository: args.repository,
-        sessionStartedAt: args.sessionStartedAt,
-        platform: args.platform,
-      });
-
-      subagentPrompts[name] = buildBaseSystemPrompt({
-        personaSystemPrompt,
+  const subagentSystemPrompt = args.persona.tools.includes(TOOL_NAME_SPAWN_AGENT)
+    ? buildBaseSystemPrompt({
+        personaSystemPrompt: buildSubagentSystemPrompt(args.persona.systemPrompt),
         skillsBlock: args.skillsBlock,
         projectContextBlock: args.projectContextBlock,
-        environmentTag: subagentEnvironmentTag,
-      });
-    }
-  }
+        environmentTag,
+      })
+    : undefined;
 
   return {
     environmentTag,
     baseSystemPrompt,
-    subagentPrompts,
+    ...(subagentSystemPrompt !== undefined ? { subagentSystemPrompt } : {}),
   };
 }

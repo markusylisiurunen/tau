@@ -37,7 +37,7 @@ function stripTags(text) {
 function createSubagentState(id, title) {
   return {
     id,
-    name: "default",
+
     title,
     availability: "running",
     model: { provider: "anthropic", id: "claude-opus-4-8", reasoning: "medium" },

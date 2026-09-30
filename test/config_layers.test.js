@@ -130,7 +130,7 @@ describe("config paths", () => {
           speech: { voiceId: "global-voice" },
           agentContextFiles: ["AGENTS.md"],
           subagents: {
-            defaultLaunchModels: ["anthropic/claude-haiku-4-5:low"],
+            launchModels: ["anthropic/claude-haiku-4-5:low"],
           },
           history: {
             endpoint: "https://history.example.com/",
@@ -161,7 +161,7 @@ describe("config paths", () => {
           speech: { voiceId: " project-voice " },
           agentContextFiles: ["docs/AGENTS.md"],
           subagents: {
-            defaultLaunchModels: ["openai/gpt-5.4:high"],
+            launchModels: ["openai/gpt-5.4:high"],
           },
           flySprites: {
             apis: {
@@ -207,7 +207,7 @@ describe("config paths", () => {
         join(nested, "AGENTS.md"),
       ]);
       expect(config.subagents).toEqual({
-        defaultLaunchModels: ["openai/gpt-5.4:high"],
+        launchModels: ["openai/gpt-5.4:high"],
       });
       expect(config.history).toEqual({
         endpoint: "https://history.example.com",

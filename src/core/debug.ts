@@ -4,7 +4,6 @@ import type { PromptTemplate } from "./prompts.js";
 import type { ChatRuntimePromptContext } from "./runtime/chat_runtime.js";
 import { composeSessionPrompts } from "./runtime/session_prompt_composer.js";
 import { resolveSubagentEffectiveSettings } from "./subagents/registry.js";
-import type { SubagentPersonaConfig } from "./subagents/types.js";
 import type { ToolRegistry } from "./tools/registry.js";
 import type { Persona, Skill } from "./types.js";
 
@@ -28,10 +27,6 @@ function formatPersona(p: Persona): string {
   }
   if (p.skills) {
     lines.push(`  skills: ${p.skills === "*" ? "*" : p.skills.join(", ")}`);
-  }
-  if (p.subagents) {
-    const names = Object.keys(p.subagents).join(", ");
-    lines.push(`  subagents: ${names}`);
   }
   if (p.tools && p.tools.length > 0) {
     lines.push(`  tools: ${p.tools.join(", ")}`);
@@ -165,29 +160,16 @@ export function printDebugInfo(args: {
   console.log(`\n${promptComposition.baseSystemPrompt}`);
 
   // Sub-agents
-  const activeSubagents = selectedPersona.subagents
-    ? Object.entries(selectedPersona.subagents)
-    : [];
-  const enabledSubagents = activeSubagents.filter(
-    (entry): entry is [string, SubagentPersonaConfig] => Boolean(entry[1]),
-  );
-  section(`active sub-agents (${enabledSubagents.length})`);
-  if (enabledSubagents.length === 0) {
+  section(`active sub-agents (${selectedPersona.tools.includes("spawn_agent") ? 1 : 0})`);
+  if (!selectedPersona.tools.includes("spawn_agent")) {
     console.log("\n  (none)");
   } else {
-    for (const [name, cfg] of enabledSubagents) {
-      console.log(`\n- ${name}`);
-      const effective = resolveSubagentEffectiveSettings({
-        persona: selectedPersona,
-        config: cfg,
-      });
-      console.log(`  model: ${effective.model.provider}:${effective.model.id}`);
-      if (effective.settings) {
-        console.log(`  settings: ${JSON.stringify(effective.settings)}`);
-      }
-      if (effective.tools.length > 0) {
-        console.log(`  tools: ${effective.tools.join(", ")}`);
-      }
+    console.log("\n- subagent");
+    const effective = resolveSubagentEffectiveSettings({ persona: selectedPersona });
+    console.log(`  model: ${effective.model.provider}:${effective.model.id}`);
+    console.log(`  settings: ${JSON.stringify(effective.settings)}`);
+    if (effective.tools.length > 0) {
+      console.log(`  tools: ${effective.tools.join(", ")}`);
     }
   }
 

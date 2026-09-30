@@ -384,7 +384,7 @@ function createEphemeralPersona(
     description: "Ephemeral assistant",
     systemPrompt,
     settings: { ...persona.settings, reasoning },
-    subagents: undefined,
+    subagentLaunchModels: [],
     tools,
   };
 }

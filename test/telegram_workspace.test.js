@@ -282,7 +282,7 @@ describe("telegram workspace", () => {
     const configuredProject = {
       ...projects.platform,
       subagents: {
-        defaultLaunchModels: ["openai/gpt-5.6-sol:high", "anthropic/claude-haiku-4-5:low"],
+        launchModels: ["openai/gpt-5.6-sol:high", "anthropic/claude-haiku-4-5:low"],
       },
     };
     const configuredResult = await prepareWorkspace({
@@ -299,7 +299,7 @@ describe("telegram workspace", () => {
       ),
     ).toEqual({
       subagents: {
-        defaultLaunchModels: ["openai/gpt-5.6-sol:high", "anthropic/claude-haiku-4-5:low"],
+        launchModels: ["openai/gpt-5.6-sol:high", "anthropic/claude-haiku-4-5:low"],
       },
     });
   });

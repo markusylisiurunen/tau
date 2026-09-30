@@ -58,6 +58,37 @@ describe("ToolCatalog", () => {
     expect(registry.schemas.map((tool) => tool.name)).toEqual(["history", "tau_docs"]);
   });
 
+  it("binds inherited Nook only when configured", () => {
+    const backend = createBackend();
+    const jobs = new BashJobRegistry();
+    const config = { nook: { domain: "nook.example.com" } };
+    const inherited = ToolCatalog.createSubagentRegistry(
+      ["nook"],
+      backend,
+      "/workspace/child",
+      config,
+      jobs,
+    );
+    const unconfigured = ToolCatalog.createSubagentRegistry(
+      ["nook"],
+      backend,
+      "/workspace/child",
+      {},
+      jobs,
+    );
+    const excluded = ToolCatalog.createSubagentRegistry(
+      [],
+      backend,
+      "/workspace/child",
+      config,
+      jobs,
+    );
+
+    expect(inherited.schemas.map((tool) => tool.name)).toEqual(["nook", "tau_docs"]);
+    expect(unconfigured.schemas.map((tool) => tool.name)).toEqual(["tau_docs"]);
+    expect(excluded.schemas.map((tool) => tool.name)).toEqual(["tau_docs"]);
+  });
+
   it("shares Bash jobs across child registries without losing their working directory", async () => {
     const jobs = new BashJobRegistry();
     const backend = createBackend();

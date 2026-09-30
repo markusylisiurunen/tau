@@ -11,7 +11,6 @@ import type { Theme } from "./theme/index.js";
 
 type SubagentPanelEntry = {
   id: string;
-  name: string;
   title: string;
   runRevision: number;
   status: SubagentStateSnapshot["run"]["status"];
@@ -165,18 +164,8 @@ export class SubagentPanelComponent implements Component {
 
   private buildHeaderLine(entry: SubagentPanelEntry): string {
     const { palette } = this.theme;
-    const name = entry.name.trim();
     const title = entry.title.trim();
-    const arrowStyle = name ? palette.textDim : palette.brandAccent;
-    const arrow = arrowStyle("⏵");
-
-    if (name && title) {
-      return `${arrow} ${palette.textDim(name)} ${palette.brandAccent(title)}`;
-    }
-    if (name) {
-      return `${arrow} ${palette.textDim(name)}`;
-    }
-    return `${arrow} ${palette.brandAccent(title || "(subagent)")}`;
+    return `${palette.brandAccent("⏵")} ${palette.brandAccent(title || "(subagent)")}`;
   }
 
   private buildOutputLines(entry: SubagentPanelEntry): string[] {
@@ -235,7 +224,6 @@ export class SubagentPanelComponent implements Component {
   private buildEntry(state: SubagentStateSnapshot): SubagentPanelEntry {
     return {
       id: state.id,
-      name: state.name,
       title: state.title,
       runRevision: state.run.revision,
       status: state.run.status,
@@ -253,7 +241,6 @@ export class SubagentPanelComponent implements Component {
     entry.status = state.run.status;
     entry.costTotal = state.costTotal;
     entry.usage = state.usage;
-    entry.name = state.name;
     entry.title = state.title;
   }
 }

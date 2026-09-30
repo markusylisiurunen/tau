@@ -58,7 +58,7 @@ const sendInputArgsSchema = z
   .strict();
 
 function resolveSnapshotTarget(snapshot: SubagentStateSnapshot) {
-  return { name: snapshot.name, title: snapshot.title };
+  return { title: snapshot.title };
 }
 
 function getSendInputSubject(raw: unknown, supervisor: AgentSupervisor): string {

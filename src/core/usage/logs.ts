@@ -20,11 +20,7 @@ export type UsageLogEntry = {
   cost: {
     total: number;
   };
-  agent:
-    | { type: "main" }
-    | { type: "subagent"; name: string }
-    | { type: "review" }
-    | { type: "ephemeral" };
+  agent: { type: "main" } | { type: "subagent" } | { type: "review" } | { type: "ephemeral" };
 };
 
 export type UsageRecorder = (entry: UsageLogEntry) => void;

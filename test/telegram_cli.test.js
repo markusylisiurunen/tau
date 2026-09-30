@@ -131,7 +131,7 @@ describe("telegram cli", () => {
           persona: "gpt-5.6-sol-coder:high",
           instructions: "Keep changes coordinated.",
           subagents: {
-            defaultLaunchModels: ["openai/gpt-5.6-sol:high"],
+            launchModels: ["openai/gpt-5.6-sol:high"],
           },
         },
       },
@@ -142,7 +142,7 @@ describe("telegram cli", () => {
       persona: "gpt-5.6-sol-coder:high",
       instructions: "Keep changes coordinated.",
       subagents: {
-        defaultLaunchModels: ["openai/gpt-5.6-sol:high"],
+        launchModels: ["openai/gpt-5.6-sol:high"],
       },
     });
   });
@@ -153,7 +153,7 @@ describe("telegram cli", () => {
       projects: {
         me: {
           repo: "owner/repo",
-          subagents: { defaultLaunchModels: ["openai/gpt-5.6-sol:high"] },
+          subagents: { launchModels: ["openai/gpt-5.6-sol:high"] },
         },
       },
     });

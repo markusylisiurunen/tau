@@ -107,7 +107,7 @@ const telegramCompositeProjectSchema = z
     instructions: nonEmptyStringSchema.optional(),
     subagents: z
       .object({
-        defaultLaunchModels: z
+        launchModels: z
           .array(z.string(), {
             message: "must be an array of strings.",
           })

@@ -176,7 +176,7 @@ A composite project creates a root containing multiple repositories:
       "persona": "gpt-6.1-sol-coder:high",
       "instructions": "Keep shared contracts synchronized.",
       "subagents": {
-        "defaultLaunchModels": ["openai/gpt-6.1-sol:high"]
+        "launchModels": ["openai/gpt-6.1-sol:high"]
       }
     }
   }
@@ -187,7 +187,7 @@ A composite project creates a root containing multiple repositories:
 
 Members live at `<composite-root>/<member-project-id>` and use each repository's cache, ref, and working directory. The root is the session `cwd`. At creation, Tau writes a root `AGENTS.md` listing the members and optional `instructions`, plus root `.tau/config.json` containing `subagents` or `{}`. These are workspace files, not synchronized mirrors of Telegram configuration, and are not regenerated when a preserved session reconnects.
 
-`subagents.defaultLaunchModels` sets the built-in `default` launch override allowlist. Runtime config resolves and enforces entries. See [subagents](subagents.md) for model syntax and custom policy.
+`subagents.launchModels` sets the subagent launch override allowlist. Runtime config resolves and enforces entries. See [subagents](subagents.md) for model syntax and inheritance.
 
 The composite owns the parent persona, subagents, model catalog, config, settings, and tools. Child `.tau/config.json` files are not merged. A subagent in a member directory rebuilds only target context: environment and repository metadata, applicable `AGENTS.md` and `agentContextFiles`, and skills filtered by the parent persona.
 

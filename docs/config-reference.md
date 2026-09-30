@@ -72,16 +72,16 @@ The startup flag `--no-agent-context-files` disables context injection independe
 
 The top-level subagent configuration currently accepts one optional field:
 
-| Nested field | Type | Contract |
-| --- | --- | --- |
-| `defaultLaunchModels` | String array | Allowlist for launch overrides of the built-in `default` subagent |
+| Nested field   | Type         | Contract                                     |
+| -------------- | ------------ | -------------------------------------------- |
+| `launchModels` | String array | Allowlist for launch overrides for subagents |
 
 Each entry must use `<provider>/<model>:<effort>` and resolve against the merged model catalog:
 
 ```json
 {
   "subagents": {
-    "defaultLaunchModels": [
+    "launchModels": [
       "openai-codex/gpt-6.1-sol:high",
       "anthropic/claude-haiku-4-5:low"
     ]
@@ -89,7 +89,7 @@ Each entry must use `<provider>/<model>:<effort>` and resolve against the merged
 }
 ```
 
-A more-specific list replaces the broader list. Custom subagent definitions belong in persona frontmatter, not this object. See [subagents](subagents.md).
+A more-specific list replaces the broader list. The worker’s instructions and tools are inherited from the main persona; custom worker definitions are not supported. See [subagents](subagents.md).
 
 ### `modelSystemNotices`
 

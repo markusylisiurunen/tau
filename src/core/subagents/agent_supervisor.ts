@@ -22,7 +22,6 @@ import { formatActiveSubagentsForCompaction } from "./format.js";
 import type {
   SubagentCapacitySnapshot,
   SubagentEvent,
-  SubagentName,
   SubagentRunFailure,
   SubagentRunSnapshot,
   SubagentRuntimeConfig,
@@ -42,7 +41,6 @@ export type SubagentSendInputResult =
 
 type SubagentRecord = {
   id: string;
-  name: SubagentName;
   title: string;
   model: {
     provider: string;
@@ -149,15 +147,16 @@ export class AgentSupervisor {
     const id = randomUUID();
     const runtimeConfig = { ...options.runtimeConfig, workingDirectory };
     const persona: Persona = {
-      id: `${options.personaId ?? "subagent"}-${runtimeConfig.name}`,
-      label: runtimeConfig.name,
-      description: runtimeConfig.description ?? "Background agent",
+      id: `${options.personaId ?? "agent"}-subagent`,
+      label: "subagent",
+      description: "Background agent",
       source: "project",
       systemPrompt: runtimeConfig.systemPrompt,
       model: runtimeConfig.model,
       settings: runtimeConfig.settings,
       tools: runtimeConfig.tools,
       skills: [],
+      subagentLaunchModels: [],
     };
     const runtime = new AgentRuntime({
       spec: createAgentSpec({
@@ -182,7 +181,6 @@ export class AgentSupervisor {
     const createdAt = this.deps.clock.now();
     const record: SubagentRecord = {
       id,
-      name: runtimeConfig.name,
       title: options.title,
       model: {
         provider: runtimeConfig.model.provider,
@@ -416,7 +414,7 @@ export class AgentSupervisor {
         reasoningEffort: event.reasoningEffort,
         usage,
         cost: { total: cost },
-        agent: { type: "subagent", name: record.name },
+        agent: { type: "subagent" },
       });
       await this.emit({ type: "subagent_updated", state: this.toSnapshot(record) });
       const text = extractAssistantText(event.message).trim();
@@ -514,7 +512,6 @@ export class AgentSupervisor {
   private toSnapshot(record: SubagentRecord): SubagentStateSnapshot {
     return {
       id: record.id,
-      name: record.name,
       title: record.title,
       availability: record.run.status === "running" ? "running" : "idle",
       model: { ...record.model },

@@ -79,7 +79,7 @@ The frontmatter contract is:
 | `metadata` | Optional map whose keys and values are strings. |
 | `allowed-tools` | Optional non-empty string. It is accepted for skills-format compatibility but currently ignored by Tau. |
 
-Unknown frontmatter fields are discarded. `allowed-tools` does not enable, disable, or restrict any tool. Tool availability comes from the active persona and, for a subagent, its subagent definition. See [tools](tools.md) and [subagents](subagents.md).
+Unknown frontmatter fields are discarded. `allowed-tools` does not enable, disable, or restrict any tool. Tool availability comes from the active persona; subagents inherit its eligible tools. See [tools](tools.md) and [subagents](subagents.md).
 
 Keep the description useful without copying the full workflow into it. Tau initially exposes the name, description, and `SKILL.md` path. The agent opens the file after activation, then reads only the referenced resources needed for the task.
 

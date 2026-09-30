@@ -794,7 +794,7 @@ export type SessionProtocolOperation = SessionProtocolOperationBase &
 
 export type SessionProtocolPromptCompositionSnapshot = {
   environmentTag: string;
-  subagentPrompts: Record<string, string>;
+  subagentSystemPrompt?: string;
 };
 
 export type SessionProtocolReasoningEffort =
@@ -850,18 +850,12 @@ export type SessionProtocolPersonaSettingsSnapshot = {
   serviceTier?: SessionProtocolServiceTier;
 };
 
-export type SessionProtocolSubagentSnapshot = {
-  description?: string;
-  tools?: string[];
-  launchModels?: string[];
-};
-
 export type SessionProtocolPersonaSnapshot = {
   id: string;
   label: string;
   description?: string;
   allowedReasoningLevels?: SessionProtocolReasoningEffort[];
-  subagents?: Record<string, SessionProtocolSubagentSnapshot>;
+  subagentLaunchModels: string[];
   tools?: string[];
   skills: string[] | "*";
   source: "builtin" | "user" | "project";
@@ -1026,7 +1020,6 @@ export type SessionProtocolAgentRunState =
 
 export type SessionProtocolAgentRun = {
   id: string;
-  name: string;
   title: string;
   availability: "running" | "idle";
   model: {
@@ -2093,21 +2086,13 @@ const sessionProtocolPersonaSettingsSnapshotSchema = z
   })
   .strip();
 
-const sessionProtocolSubagentSnapshotSchema = z
-  .object({
-    description: z.string().optional(),
-    tools: z.array(nonEmptyStringSchema).optional(),
-    launchModels: z.array(nonEmptyStringSchema).optional(),
-  })
-  .strip();
-
 const sessionProtocolPersonaSnapshotSchema = z
   .object({
     id: nonEmptyStringSchema,
     label: nonEmptyStringSchema,
     description: z.string().optional(),
     allowedReasoningLevels: z.array(sessionProtocolReasoningEffortSchema).optional(),
-    subagents: z.record(nonEmptyStringSchema, sessionProtocolSubagentSnapshotSchema).optional(),
+    subagentLaunchModels: z.array(nonEmptyStringSchema),
     tools: z.array(nonEmptyStringSchema).optional(),
     skills: z.union([z.literal("*"), z.array(nonEmptyStringSchema)]),
     source: z.enum(["builtin", "user", "project"]),
@@ -2152,7 +2137,7 @@ const sessionProtocolBootstrapSnapshotSchema = z
     prompt: z
       .object({
         environmentTag: nonEmptyStringSchema,
-        subagentPrompts: z.record(z.string(), z.string()),
+        subagentSystemPrompt: nonEmptyStringSchema.optional(),
       })
       .strip(),
   })
@@ -2481,7 +2466,6 @@ const sessionProtocolAgentRunStateSchema = z.discriminatedUnion("status", [
 const sessionProtocolAgentRunSchema = z
   .object({
     id: nonEmptyStringSchema,
-    name: nonEmptyStringSchema,
     title: nonEmptyStringSchema,
     availability: z.enum(["running", "idle"]),
     model: z

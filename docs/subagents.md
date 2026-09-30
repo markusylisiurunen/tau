@@ -1,87 +1,24 @@
 # Subagents
 
-Subagents are host-supervised background agent threads created by the main agent. They are useful when work can proceed independently, needs a separate context, or benefits from a deliberately narrower tool set. A subagent is not a second session and does not have its own persona file. Its definition belongs to the active persona.
+Subagents are host-supervised background agent threads created by the main agent. They are useful when work can proceed independently or needs a separate context. A subagent is not a second session and does not have its own persona file.
 
-The persona decides which subagent names exist. The host enforces launch models, tools, working directory, concurrency, follow-up state, interruption, and cleanup.
+## Background workers
 
-## The built-in `default` subagent
+Subagents are general-purpose background workers with no named types. Multiple instances can run concurrently, each with its own task and conversation.
 
-Tau provides one built-in subagent named `default`. It is a general-purpose background worker and has explicit trigger sensitivity. Built-in personas enable it, and a standalone custom persona also enables it when `subagents` is omitted.
+The worker inherits the active main persona's model-facing behavior through Tau's maintained wrapper. Its instructions and description are not configuration surfaces. Supply task-specific instructions in the launch prompt, including any relevant skill guidance.
 
-The `default` subagent inherits the active main persona's model-facing behavior through Tau's maintained wrapper. Its wrapper and built-in prompt are implementation-owned and are not configuration surfaces. It cannot be overridden in persona frontmatter.
-
-Disable it explicitly when a persona should expose only named custom workers or no subagents:
-
-```yaml
-subagents:
-  default: false
-```
-
-If `subagents` is omitted by a persona that extends a built-in, Tau inherits the base persona's entire subagent map. If a persona supplies a `subagents` map, Tau builds a new map from it and adds `default` unless the map says `default: false`.
-
-## Defining custom subagents
-
-Custom definitions live under `subagents` in a [persona](personas.md):
-
-```yaml
-subagents:
-  default: false
-  dependency-auditor:
-    description: Audit dependency changes and report concrete risks. Trigger: explicit.
-    systemPrompt: >-
-      Inspect the requested dependency change. Verify lockfile and release implications,
-      then return prioritized findings with paths.
-    tools:
-      - bash
-      - history
-    launchModels:
-      - anthropic/claude-haiku-4-5:low
-      - openai/gpt-6.1-sol:high
-```
-
-A custom subagent name must:
-
-- contain 1 to 64 characters;
-- use lowercase letters and digits;
-- use single dashes between segments; and
-- begin and end with a letter or digit.
-
-`dependency-auditor` and `review2` are valid. `DependencyAuditor`, `dependency_auditor`, and `-review` are not.
-
-Each custom definition accepts:
-
-| Field | Contract |
-| --- | --- |
-| `systemPrompt` | Required non-empty string containing the subagent's base instructions. |
-| `description` | Optional non-empty catalog description. Include trigger sensitivity here when needed. |
-| `tools` | Optional list of eligible subagent tools. Omission inherits eligible tools from the main persona. |
-| `launchModels` | Optional allowlist of exact model overrides accepted by `spawn_agent`. |
-
-Unknown fields are discarded. In particular, `provider`, `model`, `reasoning`, and `serviceTier` inside a subagent definition do not configure its runtime. Use `launchModels` for approved launch-time model changes.
-
-A custom entry cannot be `false`; only `default: false` has disable semantics. Every custom entry requires `systemPrompt`.
+Availability follows the main persona's tool list. Built-in personas and standalone custom personas that omit `tools` enable the five supervision tools. A custom persona can prevent launches by providing an explicit `tools` list without `spawn_agent`; omit all five supervision tools when no subagent interaction is wanted. There is no separate subagent enable or disable setting. See [personas](personas.md).
 
 ## Trigger sensitivity
 
-Trigger sensitivity is expressed in the `description`, not in a separate field:
+The main agent launches subagents only when the user or active instructions explicitly request delegation. Ask for a subagent in ordinary language; no named agent tag is needed. A request does not itself create a thread: the main agent still calls `spawn_agent`.
 
-- **eager**: use proactively whenever the capability would help;
-- **balanced**: use when the request clearly matches, which is the default when no trigger is stated;
-- **explicit**: use only when an active instruction names the subagent.
-
-Use a clear phrase such as `Trigger: explicit.`. An exact user reference looks like:
-
-```text
-@@agent:dependency-auditor
-```
-
-An exact reference in the user request, an active `AGENTS.md` instruction, or the instructions of an already-active skill explicitly activates that subagent. A subagent reference tells the main agent which capability to use; it does not itself create a thread. The main agent still calls `spawn_agent`.
-
-Trigger sensitivity is agent-facing policy. The host enforces whether the named subagent exists, but it does not infer whether a prompt semantically satisfied `eager`, `balanced`, or `explicit`.
+This is agent-facing policy. The host validates launches but does not infer whether a prompt semantically authorized delegation.
 
 ## Tool inheritance and restriction
 
-The persona-configurable subagent tool subset contains only:
+The eligible inherited tools are:
 
 - `bash`
 - `write`
@@ -89,14 +26,13 @@ The persona-configurable subagent tool subset contains only:
 - `view_image`
 - `web`
 - `history`
+- `nook`, when Nook is configured
 
-Tau then adds intrinsic `tau_docs` to every subagent registry, independently of this subset. Neither a persona nor a subagent `tools` list can disable it. Apart from `tau_docs`, subagents do not receive Nook, goal controls, subagent supervision tools, client tools, or TUI-local tools.
+Tau then adds intrinsic `tau_docs` to every subagent registry, independently of this subset. A persona’s `tools` list cannot disable it. Apart from `tau_docs`, subagents do not receive goal controls, subagent supervision tools, client tools, or TUI-local tools.
 
-When `tools` is omitted, Tau filters the main persona's tool list to the eligible names above. For example, a main persona with `bash`, `edit`, `history`, and `spawn_agent` gives an omitted subagent list of `bash`, `edit`, and `history`.
+The worker inherits the intersection of the main persona's tools and those seven eligible names. For example, a main persona with `bash`, `edit`, `history`, and `spawn_agent` gives the child `bash`, `edit`, and `history`, plus intrinsic `tau_docs`. There is no separate child tool allowlist.
 
-An explicit `tools` list replaces inheritance. It may select any of the six eligible subagent tools, even if that name is absent from the main persona's own list. Use `tools: []` for a worker with no persona-configurable tools; it still receives `tau_docs`. Names are normalized to lowercase, duplicate entries are removed, and an unknown name rejects the containing persona.
-
-The main persona must itself expose the subagent supervision tools for the model to operate subagents. Defining a subagent while omitting `spawn_agent` from an explicit persona `tools` list leaves the definition present but not launchable by the main agent. See [tools](tools.md) for the broader availability contract.
+Subagents cannot launch other subagents: supervision tools are never included in a child's registry. See [tools](tools.md) for the broader availability contract.
 
 ## Models and settings
 
@@ -110,18 +46,18 @@ A launch override must use exact form:
 
 The provider is normalized to lowercase. The model ID remains exact and case-sensitive. Effort is one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`.
 
-`launchModels` is an allowlist, not a default selection. The main agent should normally omit the `model` argument to `spawn_agent`; when omitted, the subagent inherits the active persona model and reasoning. When supplied, the normalized value must exactly match an entry in the selected subagent's allowlist. The override changes provider, model, and reasoning. Other inherited settings remain.
+The configured launch-model list is an allowlist, not a default selection. The main agent should normally omit the `model` argument to `spawn_agent`; when omitted, the subagent inherits the active persona model and reasoning. When supplied, the normalized value must exactly match an entry in the configured allowlist. The override changes provider, model, and reasoning. Other inherited settings remain.
 
-Model IDs may be unbundled when their provider is known, following the synthesis rules in [models](models.md). Invalid provider, model, effort, or format rejects the persona during content loading. Duplicate normalized entries are removed.
+Model IDs may be unbundled when their provider is known, following the synthesis rules in [models](models.md). Invalid provider, model, effort, or format rejects the configuration field. Duplicate normalized entries are removed.
 
-### Allowing overrides for `default`
+### Allowing model overrides
 
-The built-in `default` definition cannot be edited in persona frontmatter. Configure its launch allowlist through `subagents.defaultLaunchModels` in `config.json`:
+Configure the built-in worker’s launch allowlist through `subagents.launchModels` in `config.json`:
 
 ```json
 {
   "subagents": {
-    "defaultLaunchModels": [
+    "launchModels": [
       "anthropic/claude-haiku-4-5:low",
       "openai/gpt-6.1-sol:high"
     ]
@@ -129,7 +65,7 @@ The built-in `default` definition cannot be edited in persona frontmatter. Confi
 }
 ```
 
-This list is layered configuration. The nearest defined `defaultLaunchModels` array replaces the broader array rather than appending to it. Tau applies the effective list to every persona that currently enables `default`; it does not add `default` to a persona that disabled it.
+This list is layered configuration. The nearest defined `launchModels` array replaces the broader array rather than appending to it. Tau applies the effective list to every persona that exposes `spawn_agent`.
 
 ## Working-directory context
 
@@ -137,7 +73,7 @@ This list is layered configuration. The nearest defined `defaultLaunchModels` ar
 
 When the resolved path differs from the parent `cwd`, Tau rebuilds prompt context from that target directory. It discovers the target platform and repository metadata, reads applicable `AGENTS.md` and configured context files, discovers target skills, and filters those skills through the parent persona's skill selection.
 
-The target directory does **not** select a different persona, subagent definition, model catalog, runtime configuration, credential source, or tool policy for the child. Those remain under parent-session authority. Target configuration is consulted only where needed to rebuild target prompt context, such as target `agentContextFiles` and skill discovery.
+The target directory does **not** select a different persona, model catalog, runtime configuration, credential source, or tool policy for the child. Those remain under parent-session authority. Target configuration is consulted only where needed to rebuild target prompt context, such as target `agentContextFiles` and skill discovery.
 
 This distinction matters in monorepos and hosted environments. `workingDirectory` is an execution-environment path. The host and attached client must not reinterpret it against their own filesystems.
 
@@ -145,11 +81,11 @@ A launch is blocked if Tau cannot build target context, the directory is invalid
 
 ## Lifecycle and supervision tools
 
-Subagent threads are addressed by host-generated IDs. Names identify configurations; IDs identify live thread records.
+Subagent threads are addressed by host-generated IDs. IDs identify individual live thread records.
 
 ### Spawn
 
-`spawn_agent` validates the configured name, optional launch model, title, prompt, and working directory. The prompt is the child's only initial user input, so it should be self-contained. A successful call returns immediately with the new ID while the child continues in the background.
+`spawn_agent` accepts a title, prompt, optional launch model, and optional working directory. The prompt is the child's only initial user input, so it should be self-contained. A successful call returns immediately with the new ID while the child continues in the background.
 
 At most eight subagent runs may be active concurrently within one main session. Completed or interrupted idle threads do not consume active capacity.
 
@@ -165,7 +101,7 @@ The host also publishes bounded live subagent activity to observing clients. Tha
 
 `send_input_to_agent` starts another run on an existing idle thread. The thread retains its conversation state, model, settings, tools, and working directory. It must finish or be interrupted before another input is accepted.
 
-Starting a follow-up replaces the previously retained response in the thread's latest-run state. Read any needed result before sending the next input. Follow-ups do not reread a changed persona definition or adopt a newly reloaded launch model.
+Starting a follow-up replaces the previously retained response in the thread's latest-run state. Read any needed result before sending the next input. Follow-ups do not reread a changed persona definition or adopt a newly reloaded launch allowlist.
 
 ### Interrupt
 
@@ -185,19 +121,10 @@ Plan durable work accordingly. Important conclusions should be returned to the m
 
 ## Reloading and validation
 
-Persona and global launch-policy changes take effect after `/reload` in an idle TUI session or in a newly created session. Reload updates which subagent definitions new `spawn_agent` calls see. It does not kill, rename, or reconfigure already spawned threads, and follow-ups continue on their captured runtime.
+Persona tool selections and launch-policy changes take effect after `/reload` in an idle TUI session or in a newly created session. Reload updates new launches without reconfiguring already spawned threads. Follow-ups continue on their captured runtime.
 
-An invalid subagent definition rejects its containing persona. Common content warnings include:
+`subagents.launchModels` must be a string array of valid `<provider>/<model>:<effort>` values. Unknown providers, invalid efforts, and malformed entries produce configuration diagnostics.
 
-- a name outside the lowercase-dash contract or longer than 64 characters;
-- `subagents` that is not an object;
-- `default` set to anything other than `false`;
-- a custom entry set to `false` or missing `systemPrompt`;
-- blank descriptions, prompts, or list entries;
-- unknown subagent tools;
-- `launchModels` or `defaultLaunchModels` that is not a string array; and
-- an unknown provider or model, invalid effort, or malformed `<provider>/<model>:<effort>` value.
+At execution time, launches can be blocked by invalid arguments, a model outside the allowlist, exhausted concurrency, missing prompt composition, or target-context failure. Follow-up, wait, and interrupt calls reject unknown IDs; follow-up also rejects a thread that is still running.
 
-At execution time, launches can still be blocked by an unenabled name, a model outside the allowlist, exhausted concurrency, invalid arguments, missing prompt composition, or target-context failure. Follow-up, wait, and interrupt calls reject unknown IDs; follow-up also rejects a thread that is still running.
-
-Use `tau --debug --persona <id>` before starting a local TUI to inspect effective subagent names, inherited model and settings, and tool lists. It does not reveal managed prompt bodies for built-in subagents. In a running session, `/reload` reports exact file warnings and `list_agents` verifies live runtime choices.
+Use `tau --debug --persona <id>` before starting a local TUI to inspect effective tool availability, inherited model and settings, and the child tool list. In a running session, `/reload` reports file warnings and `list_agents` shows live thread state.

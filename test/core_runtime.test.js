@@ -330,18 +330,12 @@ describe("session prompt composer", () => {
       id: "test-persona",
       label: "test persona",
       description: "test",
+      tools: personas[0].tools,
       model: personas[0].model,
       systemPrompt: "main system prompt",
       settings: {},
       source: "project",
-      subagents: {
-        default: {},
-        researcher: {
-          systemPrompt: "research subagent prompt",
-          description: "deep research helper",
-          launchModels: ["openai/gpt-5.4:high"],
-        },
-      },
+      subagentLaunchModels: ["openai/gpt-5.4:high"],
     };
 
     const result = composeSessionPrompts({
@@ -357,25 +351,23 @@ describe("session prompt composer", () => {
     expect(result.baseSystemPrompt).toContain("main system prompt");
     expect(result.baseSystemPrompt).toContain("### Skills");
     expect(result.baseSystemPrompt).toContain("### Project context");
-    expect(result.baseSystemPrompt).toContain("### Available sub-agents");
-    expect(result.baseSystemPrompt).toContain("`researcher`");
-    expect(result.baseSystemPrompt).toContain("Default runtime:");
+    expect(result.baseSystemPrompt).toContain("### Subagents");
+    expect(result.baseSystemPrompt).not.toContain("`default`");
+    expect(result.baseSystemPrompt).toContain("Inherited model:");
     expect(result.baseSystemPrompt).toContain(`${persona.model.provider}/${persona.model.id}:none`);
     expect(result.baseSystemPrompt).not.toContain("context tokens");
-    expect(result.baseSystemPrompt).toContain("Launch model overrides");
+    expect(result.baseSystemPrompt).toContain("Allowed model overrides:");
     expect(result.baseSystemPrompt).toContain("openai/gpt-5.4:high");
     expect(result.baseSystemPrompt).toContain(
-      "By default, launch the subagent without a model override unless the user explicitly asks to use a specific model.",
+      "Omit the model override unless the user explicitly requests a specific model.",
     );
 
-    expect(result.subagentPrompts.default).toContain("<inherited-instructions>");
-    expect(result.subagentPrompts.default).toContain("main system prompt");
-    expect(result.subagentPrompts.default).toContain("- Session ID: `session-1`");
-    expect(result.subagentPrompts.default).not.toContain("{{inherited_instructions}}");
-    expect(result.subagentPrompts.default).toContain(
-      "You are a subagent supporting the main agent.",
-    );
-    expect(result.subagentPrompts.researcher).toContain("research subagent prompt");
+    expect(result.subagentSystemPrompt).toContain("<inherited-instructions>");
+    expect(result.subagentSystemPrompt).toContain("main system prompt");
+    expect(result.subagentSystemPrompt).toContain("- Session ID: `session-1`");
+    expect(result.subagentSystemPrompt).not.toContain("{{inherited_instructions}}");
+    expect(result.subagentSystemPrompt).toContain("You are a subagent supporting the main agent.");
+    expect(typeof result.subagentSystemPrompt).toBe("string");
   });
 
   it("includes repo root in the environment tag when inside a git repo", () => {
@@ -391,6 +383,8 @@ describe("session prompt composer", () => {
 
     const persona = {
       id: "plain-persona",
+      tools: [],
+      subagentLaunchModels: [],
       label: "plain persona",
       model: personas[0].model,
       systemPrompt: "plain prompt",
@@ -414,6 +408,8 @@ describe("session prompt composer", () => {
   it("omits subagent prompts when not applicable", () => {
     const persona = {
       id: "plain-persona",
+      tools: [],
+      subagentLaunchModels: [],
       label: "plain persona",
       model: personas[0].model,
       systemPrompt: "plain prompt",
@@ -429,7 +425,7 @@ describe("session prompt composer", () => {
     });
 
     expect(result.baseSystemPrompt).toContain("plain prompt");
-    expect(result.subagentPrompts).toEqual({});
+    expect(result.subagentSystemPrompt).toBeUndefined();
   });
 });
 

@@ -2,13 +2,6 @@ import { basename, join } from "node:path";
 import { z } from "zod";
 import type { LoadedModelResolver, ModelResolver } from "../models/catalog.js";
 import type { PromptTemplate } from "../prompts.js";
-import { parseSubagentLaunchModelList } from "../subagents/launch_model.js";
-import type {
-  SubagentConfigMap,
-  SubagentPersonaConfig,
-  SubagentToolName,
-} from "../subagents/types.js";
-import { DEFAULT_SUBAGENT_NAME, SUBAGENT_TOOL_NAMES } from "../subagents/types.js";
 import {
   TOOL_NAME_BASH,
   TOOL_NAME_EDIT,
@@ -26,7 +19,6 @@ import {
 } from "../tools/tool_names.js";
 import type { Persona, Skill } from "../types.js";
 import { ReasoningEffortSchema, ServiceTierSchema } from "../types.js";
-import { formatZodError } from "../utils/zod.js";
 import type { ConfigDeps } from "./deps.js";
 import { parseMarkdownFrontMatter } from "./markdown_frontmatter.js";
 import type { ConfigLevel } from "./paths.js";
@@ -45,172 +37,12 @@ type MarkdownPathsResult = {
   errors: string[];
 };
 
-const SubagentNameSchema = z
-  .string()
-  .trim()
-  .min(1)
-  .max(64)
-  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
-
-type SubagentName = z.infer<typeof SubagentNameSchema>;
-
-const SubagentSpecSchema = z
-  .object({
-    tools: z.array(z.string()).optional(),
-    launchModels: z.array(z.string()).optional(),
-    systemPrompt: z.string().trim().min(1).optional(),
-    description: z.string().trim().min(1).optional(),
-  })
-  .strip();
-
-const SUBAGENT_TOOL_NAME_SET = new Set<SubagentToolName>(SUBAGENT_TOOL_NAMES);
-
-const SubagentConfigInputSchema = z.record(
-  SubagentNameSchema,
-  z.union([z.literal(false), SubagentSpecSchema]),
-);
-
 const TrimmedNonEmptyStringListSchema = z
   .array(z.string())
   .transform((list) => list.map((item) => item.trim()))
   .refine((list) => list.every(Boolean), {
     message: "entries must be non-empty strings",
   });
-
-function parseSubagentTools(toolsRaw: string[] | undefined): {
-  tools?: SubagentToolName[];
-  error?: string;
-} {
-  if (toolsRaw === undefined) {
-    return {};
-  }
-
-  const parsed = TrimmedNonEmptyStringListSchema.safeParse(toolsRaw);
-  if (!parsed.success) {
-    return {
-      error:
-        parsed.error.issues[0]?.message === "entries must be non-empty strings"
-          ? "tools entries must be non-empty strings"
-          : "tools must be a list of strings",
-    };
-  }
-
-  const cleaned = parsed.data.map((tool) => tool.toLowerCase());
-
-  if (cleaned.length === 0) {
-    return { tools: [] };
-  }
-
-  const selected: SubagentToolName[] = [];
-  const unknown: string[] = [];
-  const seen = new Set<string>();
-
-  for (const name of cleaned) {
-    if (seen.has(name)) continue;
-    seen.add(name);
-
-    if (SUBAGENT_TOOL_NAME_SET.has(name as SubagentToolName)) {
-      selected.push(name as SubagentToolName);
-      continue;
-    }
-
-    unknown.push(name);
-  }
-
-  if (unknown.length > 0) {
-    const allowed = SUBAGENT_TOOL_NAMES.join(", ");
-    return { error: `unknown subagent tool(s): ${unknown.join(", ")}. allowed: ${allowed}` };
-  }
-
-  return { tools: selected };
-}
-
-function cloneSubagentPersonaConfig(config: SubagentPersonaConfig): SubagentPersonaConfig {
-  return {
-    ...config,
-    ...(config.tools ? { tools: [...config.tools] } : {}),
-    ...(config.launchModels ? { launchModels: [...config.launchModels] } : {}),
-  };
-}
-
-function parseSubagentConfig(
-  subagentsRaw: unknown,
-  modelResolver: ModelResolver,
-): {
-  config?: SubagentConfigMap;
-  defaultDisabled?: boolean;
-  error?: string;
-} {
-  if (subagentsRaw === undefined) {
-    return {};
-  }
-
-  const config: SubagentConfigMap = {};
-  let defaultDisabled = false;
-
-  const configParsed = SubagentConfigInputSchema.safeParse(subagentsRaw);
-  if (!configParsed.success) {
-    const invalidName = configParsed.error.issues.some(
-      (issue) => issue.path.length > 0 && issue.path[0] !== undefined,
-    );
-    return {
-      error: invalidName
-        ? `invalid subagent: ${formatZodError(configParsed.error)}`
-        : "subagents must be an object",
-    };
-  }
-
-  for (const [name, specRaw] of Object.entries(configParsed.data)) {
-    const validatedName = name as SubagentName;
-
-    if (validatedName === DEFAULT_SUBAGENT_NAME) {
-      if (specRaw === false) {
-        defaultDisabled = true;
-        continue;
-      }
-      return {
-        error: `subagent ${validatedName}: default subagent does not accept overrides (use default: false to disable)`,
-      };
-    }
-
-    if (specRaw === false) {
-      return {
-        error: `subagent ${validatedName}: systemPrompt is required for custom subagents`,
-      };
-    }
-
-    if (!specRaw.systemPrompt) {
-      return {
-        error: `subagent ${validatedName}: systemPrompt is required for custom subagents`,
-      };
-    }
-
-    const toolsResult = parseSubagentTools(specRaw.tools);
-    if (toolsResult.error) {
-      return { error: `subagent ${validatedName}: ${toolsResult.error}` };
-    }
-    const launchModelsResult = parseSubagentLaunchModelList(specRaw.launchModels, {
-      resolveModel: modelResolver,
-    });
-    if (launchModelsResult.error) {
-      return {
-        error: `subagent ${validatedName}: launchModels ${launchModelsResult.error}`,
-      };
-    }
-    const tools = toolsResult.tools;
-    const launchModels = launchModelsResult.launchModels;
-    const entry: SubagentPersonaConfig = {
-      systemPrompt: specRaw.systemPrompt,
-      ...(specRaw.description ? { description: specRaw.description } : {}),
-      ...(tools !== undefined ? { tools } : {}),
-      ...(launchModels !== undefined ? { launchModels } : {}),
-    };
-
-    config[validatedName] = entry;
-  }
-
-  return { config, defaultDisabled };
-}
 
 function parsePersonaTools(toolsRaw: unknown): { tools?: ToolName[]; error?: string } {
   if (toolsRaw === undefined) {
@@ -294,33 +126,14 @@ function mergeById<T extends { id: string }>(base: T[], overlay: T[], overlay2?:
   return Array.from(map.values());
 }
 
-function withDefaultSubagentLaunchModels(
-  persona: Persona,
-  defaultLaunchModels: string[] | undefined,
-): Persona {
-  if (!defaultLaunchModels) {
+function withSubagentLaunchModels(persona: Persona, launchModels: string[] | undefined): Persona {
+  if (!launchModels) {
     return persona;
   }
-
-  const defaultConfig = persona.subagents?.[DEFAULT_SUBAGENT_NAME];
-  if (!defaultConfig || !persona.subagents) {
-    return persona;
-  }
-
-  const clonedSubagents: SubagentConfigMap = {};
-  for (const [name, config] of Object.entries(persona.subagents)) {
-    clonedSubagents[name] = cloneSubagentPersonaConfig(config);
-  }
-
-  const defaultSubagent = clonedSubagents[DEFAULT_SUBAGENT_NAME] ?? {};
-  clonedSubagents[DEFAULT_SUBAGENT_NAME] = {
-    ...defaultSubagent,
-    launchModels: [...defaultLaunchModels],
-  };
 
   return {
     ...persona,
-    subagents: clonedSubagents,
+    subagentLaunchModels: [...launchModels],
   };
 }
 
@@ -377,7 +190,6 @@ const personaFrontMatterSchema = z
     serviceTier: ServiceTierSchema.optional(),
     allowedReasoningLevels: z.array(ReasoningEffortSchema).optional(),
     skills: z.unknown().optional(),
-    subagents: z.unknown().optional(),
     tools: z.unknown().optional(),
   })
   .strip();
@@ -453,7 +265,6 @@ function parsePersona(
   const serviceTier = parsedFrontMatter.data.serviceTier;
   const allowedReasoningLevels = parsedFrontMatter.data.allowedReasoningLevels;
   const skillsRaw = parsedFrontMatter.data.skills;
-  const subagentsRaw = parsedFrontMatter.data.subagents;
   const toolsRaw = parsedFrontMatter.data.tools;
 
   const basePersona = extendsId ? basePersonasById?.get(extendsId.toLowerCase()) : undefined;
@@ -500,64 +311,12 @@ function parsePersona(
     }
   }
 
-  // Parse subagents
-  const subagentsResult = parseSubagentConfig(subagentsRaw, modelResolver);
-  if (subagentsResult.error) {
-    return { error: `${file}: ${subagentsResult.error}. skipped.` };
-  }
-
   const toolsResult = parsePersonaTools(toolsRaw);
   if (toolsResult.error) {
     return { error: `${file}: ${toolsResult.error}. skipped.` };
   }
 
-  let finalSubagents: SubagentConfigMap | undefined;
-  if (subagentsRaw === undefined) {
-    if (basePersona?.subagents) {
-      finalSubagents = {};
-
-      for (const [name, cfg] of Object.entries(basePersona.subagents)) {
-        finalSubagents[name] = cloneSubagentPersonaConfig(cfg);
-      }
-
-      if (Object.keys(finalSubagents).length === 0) {
-        finalSubagents = undefined;
-      }
-    }
-  } else if (subagentsResult.config && Object.keys(subagentsResult.config).length > 0) {
-    finalSubagents = {};
-
-    for (const [name, cfg] of Object.entries(subagentsResult.config)) {
-      finalSubagents[name] = cloneSubagentPersonaConfig(cfg);
-    }
-
-    if (Object.keys(finalSubagents).length === 0) {
-      finalSubagents = undefined;
-    }
-  }
-
-  if (subagentsRaw !== undefined) {
-    if (!subagentsResult.defaultDisabled) {
-      if (!finalSubagents) {
-        finalSubagents = {};
-      }
-      if (!finalSubagents[DEFAULT_SUBAGENT_NAME]) {
-        finalSubagents[DEFAULT_SUBAGENT_NAME] = {};
-      }
-    } else if (finalSubagents?.[DEFAULT_SUBAGENT_NAME]) {
-      delete finalSubagents[DEFAULT_SUBAGENT_NAME];
-    }
-  } else if (!finalSubagents) {
-    finalSubagents = { [DEFAULT_SUBAGENT_NAME]: {} };
-  }
-
-  if (finalSubagents && Object.keys(finalSubagents).length === 0) {
-    finalSubagents = undefined;
-  }
-
-  const defaultTools = finalSubagents
-    ? [...DEFAULT_PERSONA_TOOLS, ...DEFAULT_SUBAGENT_TOOLS]
-    : [...DEFAULT_PERSONA_TOOLS];
+  const defaultTools = [...DEFAULT_PERSONA_TOOLS, ...DEFAULT_SUBAGENT_TOOLS];
 
   const inheritedTools =
     toolsRaw === undefined && basePersona?.tools ? [...basePersona.tools] : undefined;
@@ -583,7 +342,7 @@ function parsePersona(
     tools,
     ...(finalDescription && { description: finalDescription }),
     ...(finalAllowedReasoningLevels ? { allowedReasoningLevels: finalAllowedReasoningLevels } : {}),
-    ...(finalSubagents && { subagents: finalSubagents }),
+    subagentLaunchModels: [],
     skills,
     source,
   };
@@ -850,12 +609,12 @@ export async function loadAllContent(
     const skills = skillsResult.skills;
 
     // Precedence: virtual bundle < global < nearest .tau levels.
-    const defaultLaunchModels = config?.subagents?.defaultLaunchModels;
+    const launchModels = config?.subagents?.launchModels;
     const personas = mergeById(
       resolvedBuiltinPersonas,
       userPersonasResult.personas,
       projectPersonasResult.personas,
-    ).map((persona) => withDefaultSubagentLaunchModels(persona, defaultLaunchModels));
+    ).map((persona) => withSubagentLaunchModels(persona, launchModels));
 
     return {
       personas,

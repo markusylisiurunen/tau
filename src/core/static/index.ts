@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 const TEMPLATE_PLACEHOLDER_PATTERN = /\{\{([a-zA-Z0-9_]+)\}\}/g;
 
 const STATIC_PROMPT_PATHS = {
-  "default-subagent-wrapper": "./prompts/default-subagent-wrapper.md",
+  "subagent-wrapper": "./prompts/subagent-wrapper.md",
 } as const;
 
 export type StaticPromptId = keyof typeof STATIC_PROMPT_PATHS;
@@ -40,12 +40,10 @@ function interpolateTemplate(template: string, values: Record<string, string>): 
   return template.replace(TEMPLATE_PLACEHOLDER_PATTERN, (_match, key: string) => values[key] ?? "");
 }
 
-const DEFAULT_SUBAGENT_WRAPPER_PROMPT = loadStaticPrompt("default-subagent-wrapper").trim();
+const SUBAGENT_WRAPPER_PROMPT = loadStaticPrompt("subagent-wrapper").trim();
 
-export function renderDefaultSubagentWrapperPrompt(args: {
-  inheritedInstructions: string;
-}): string {
-  return interpolateTemplate(DEFAULT_SUBAGENT_WRAPPER_PROMPT, {
+export function renderSubagentWrapperPrompt(args: { inheritedInstructions: string }): string {
+  return interpolateTemplate(SUBAGENT_WRAPPER_PROMPT, {
     inherited_instructions: args.inheritedInstructions.trim(),
   });
 }

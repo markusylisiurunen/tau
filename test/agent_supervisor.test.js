@@ -54,7 +54,6 @@ function createFailingStream(partialText, error) {
 function createSpawnOptions(overrides = {}) {
   return {
     runtimeConfig: {
-      name: "default",
       systemPrompt: "child system",
       description: "child",
       workingDirectory: "/repo",
@@ -154,7 +153,7 @@ describe("AgentSupervisor", () => {
     ]);
     expect(recordUsage).toHaveBeenCalledTimes(2);
     for (const [entry] of recordUsage.mock.calls) {
-      expect(entry.agent).toEqual({ type: "subagent", name: "default" });
+      expect(entry.agent).toEqual({ type: "subagent" });
       expect(entry.personaId).toBe("parent-persona");
     }
   });

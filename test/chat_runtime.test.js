@@ -14,14 +14,7 @@ function createPersona(overrides = {}) {
     settings: {},
     source: "project",
     tools: personas[0].tools,
-    subagents: {
-      default: {},
-      researcher: {
-        systemPrompt: "research subagent prompt",
-        description: "deep research helper",
-        launchModels: ["openai/gpt-5.4:high"],
-      },
-    },
+    subagentLaunchModels: ["openai/gpt-5.4:high"],
     ...overrides,
   };
 }
@@ -346,7 +339,7 @@ Ship &lt;all&gt; requirements
 
     const composition = runtime.promptComposition;
     expect(composition.baseSystemPrompt).toContain("skill-b");
-    expect(composition.subagentPrompts.researcher).toContain("research subagent prompt");
+    expect(composition.subagentSystemPrompt).toContain("main system prompt");
     expect(runtime.agent.spec.systemPrompt).toBe(composition.baseSystemPrompt);
   });
 });

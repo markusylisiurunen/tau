@@ -8,7 +8,7 @@ import type { ModelResolver } from "../models/catalog.js";
 import type { AgentSupervisor } from "../subagents/agent_supervisor.js";
 import { formatSpawnAgentResult } from "../subagents/format.js";
 import { parseSubagentLaunchModel } from "../subagents/launch_model.js";
-import { getSubagentDescription, resolveSubagentEffectiveSettings } from "../subagents/registry.js";
+import { resolveSubagentEffectiveSettings } from "../subagents/registry.js";
 import type { SubagentLaunchModel, SubagentRuntimeConfig } from "../subagents/types.js";
 import type { Persona } from "../types.js";
 import { formatCwd } from "../utils/format.js";
@@ -31,12 +31,7 @@ import { TOOL_NAME_SPAWN_AGENT } from "./tool_names.js";
 const SPAWN_AGENT_DESCRIPTION = [
   "Spawn a subagent to run in the background and return its id.",
   "Use wait_for_agents to read its latest response once it finishes.",
-  "See your system instructions for available subagents and their capabilities.",
-].join(" ");
-
-const SPAWN_AGENT_NAME_DESCRIPTION = [
-  "Subagent name to run.",
-  "Available subagents depend on the current persona configuration.",
+  "Follow your system instructions for delegation policy.",
 ].join(" ");
 
 const SPAWN_AGENT_TITLE_DESCRIPTION = [
@@ -54,7 +49,7 @@ const SPAWN_AGENT_PROMPT_DESCRIPTION = [
 const SPAWN_AGENT_MODEL_DESCRIPTION = [
   "Optional launch override in format <provider>/<model>:<effort>.",
   "By default, omit this field unless the user explicitly asks to use a specific model.",
-  "When provided, the value must match one of the selected subagent's configured launch models.",
+  "When provided, the value must match one of the configured subagent launch models.",
 ].join(" ");
 
 const SPAWN_AGENT_WORKING_DIRECTORY_DESCRIPTION = [
@@ -67,7 +62,6 @@ export const SPAWN_AGENT_TOOL: Tool = {
   description: SPAWN_AGENT_DESCRIPTION,
   parameters: Type.Object(
     {
-      name: Type.String({ description: SPAWN_AGENT_NAME_DESCRIPTION }),
       title: Type.String({
         description: SPAWN_AGENT_TITLE_DESCRIPTION,
         pattern: "^[^\\r\\n]+$",
@@ -87,7 +81,6 @@ export const SPAWN_AGENT_TOOL: Tool = {
 
 const spawnArgsSchema = z
   .object({
-    name: z.string().trim().min(1, "must not be empty."),
     title: z
       .string()
       .trim()
@@ -123,10 +116,10 @@ function getSpawnAgentWorkingDirectory(raw: unknown, baseCwd: string): string {
   return workingDirectory ? resolve(baseCwd, workingDirectory) : baseCwd;
 }
 
-export type ResolveSubagentPrompts = (options: {
+export type ResolveSubagentPrompt = (options: {
   cwd: string;
   persona: Persona;
-}) => Promise<Record<string, string>>;
+}) => Promise<string | undefined>;
 
 export function createSpawnAgentToolDefinition(options: {
   backend: ToolExecutionBackend;
@@ -135,10 +128,10 @@ export function createSpawnAgentToolDefinition(options: {
   persona: Persona;
   config: Config;
   modelResolver: ModelResolver;
-  subagentPrompts: Record<string, string>;
+  subagentSystemPrompt: string | undefined;
   history: HistoryQuery;
   cwd: string;
-  resolveSubagentPrompts?: ResolveSubagentPrompts;
+  resolveSubagentPrompt?: ResolveSubagentPrompt;
 }): AgentTool {
   const { backend, supervisor } = options;
   return {
@@ -159,7 +152,6 @@ export function createSpawnAgentToolDefinition(options: {
       context: ToolExecutionContext,
     ): Promise<ToolExecutionOutcome> {
       const { signal } = context;
-      let name = "";
       let title = "";
       const subject = getSpawnAgentSubject(toolCall.arguments);
       const presentationWorkingDirectory = formatCwd(
@@ -197,19 +189,9 @@ export function createSpawnAgentToolDefinition(options: {
       }
 
       const { prompt, model, workingDirectory } = parsedArgs.data;
-      name = parsedArgs.data.name;
       title = parsedArgs.data.title;
 
-      const { persona, cwd: baseCwd, subagentPrompts } = options;
-      const personaConfig = persona.subagents?.[name];
-      if (!personaConfig) {
-        return executeTool(context, () =>
-          blocked(`Subagent '${name}' is not enabled for the current persona.`, {
-            title,
-          }),
-        );
-      }
-
+      const { persona, cwd: baseCwd, subagentSystemPrompt } = options;
       let launchModelOverride: SubagentLaunchModel | undefined;
       if (model) {
         const parsedLaunchModel = parseSubagentLaunchModel(model, {
@@ -223,11 +205,11 @@ export function createSpawnAgentToolDefinition(options: {
           );
         }
 
-        const launchModels = personaConfig.launchModels ?? [];
+        const launchModels = persona.subagentLaunchModels;
         if (launchModels.length === 0) {
           return executeTool(context, () =>
             blocked(
-              `Subagent '${name}' does not allow launch model overrides. Allowed values: ${formatAllowedLaunchModels(launchModels)}.`,
+              `Subagents do not allow launch model overrides. Allowed values: ${formatAllowedLaunchModels(launchModels)}.`,
               {
                 title,
               },
@@ -239,7 +221,7 @@ export function createSpawnAgentToolDefinition(options: {
           return executeTool(
             context,
             blocked(
-              `Model '${parsedLaunchModel.launchModel.normalized}' is not allowed for subagent '${name}'. Allowed values: ${formatAllowedLaunchModels(launchModels)}.`,
+              `Model '${parsedLaunchModel.launchModel.normalized}' is not allowed for subagents. Allowed values: ${formatAllowedLaunchModels(launchModels)}.`,
               {
                 title,
               },
@@ -251,15 +233,15 @@ export function createSpawnAgentToolDefinition(options: {
       }
 
       const cwd = workingDirectory ? resolve(baseCwd, workingDirectory) : baseCwd;
-      let effectiveSubagentPrompts = subagentPrompts;
+      let effectiveSubagentPrompt = subagentSystemPrompt;
       if (workingDirectory && cwd !== resolve(baseCwd)) {
-        if (!options.resolveSubagentPrompts) {
+        if (!options.resolveSubagentPrompt) {
           return executeTool(context, () =>
             blocked("Working-directory context resolution is unavailable.", { title }),
           );
         }
         try {
-          effectiveSubagentPrompts = await options.resolveSubagentPrompts({ cwd, persona });
+          effectiveSubagentPrompt = await options.resolveSubagentPrompt({ cwd, persona });
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
           return executeTool(context, () =>
@@ -272,10 +254,10 @@ export function createSpawnAgentToolDefinition(options: {
         }
       }
 
-      const systemPrompt = effectiveSubagentPrompts[name];
+      const systemPrompt = effectiveSubagentPrompt;
       if (!systemPrompt) {
         return executeTool(context, () =>
-          blocked(`Subagent '${name}' is missing its system prompt.`, {
+          blocked(`The subagent system prompt is unavailable.`, {
             title,
           }),
         );
@@ -283,20 +265,17 @@ export function createSpawnAgentToolDefinition(options: {
 
       const effectiveSettings = resolveSubagentEffectiveSettings({
         persona,
-        config: personaConfig,
         launchModel: launchModelOverride,
       });
       const runtimeConfig: SubagentRuntimeConfig = {
-        name,
         systemPrompt,
-        description: getSubagentDescription(name, personaConfig),
         workingDirectory: cwd,
         ...effectiveSettings,
       };
 
       const modelLabel = `${runtimeConfig.model.provider}/${runtimeConfig.model.id}:${runtimeConfig.settings.reasoning ?? "none"}`;
       const statusWorkingDirectory = formatCwd(runtimeConfig.workingDirectory);
-      const statusPrefixParts = [name, modelLabel, statusWorkingDirectory];
+      const statusPrefixParts = [modelLabel, statusWorkingDirectory];
 
       return executeTool(
         context,

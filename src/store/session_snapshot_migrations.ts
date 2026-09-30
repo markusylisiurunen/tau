@@ -5,7 +5,7 @@ import {
 } from "../protocol/session_protocol.js";
 
 export const STORED_SESSION_DOCUMENT_FORMAT = "tau-session" as const;
-export const STORED_SESSION_DOCUMENT_VERSION = 8 as const;
+export const STORED_SESSION_DOCUMENT_VERSION = 9 as const;
 export const LEGACY_SESSION_MODEL_CONTEXT_KEY = "legacy-v3";
 
 export type StoredSessionDocument = {
@@ -25,6 +25,7 @@ const storedSessionMigrations = new Map<number, StoredSessionMigration>([
   [5, migrateStoredSessionV5ToV6],
   [6, migrateStoredSessionV6ToV7],
   [7, migrateStoredSessionV7ToV8],
+  [8, migrateStoredSessionV8ToV9],
 ]);
 
 export class UnsupportedStoredSessionVersionError extends Error {
@@ -91,6 +92,36 @@ function decodeStoredSessionDocument(value: unknown): {
     version: value.version as number,
     snapshot: value.snapshot,
   };
+}
+
+function migrateStoredSessionV8ToV9(value: unknown): unknown {
+  if (!isRecord(value)) {
+    throw new Error("stored session snapshot must be an object");
+  }
+
+  const snapshot = structuredClone(value);
+  if (isRecord(snapshot.bootstrap) && isRecord(snapshot.bootstrap.prompt)) {
+    const prompt = snapshot.bootstrap.prompt;
+    if (isRecord(prompt.subagentPrompts) && typeof prompt.subagentPrompts.default === "string") {
+      prompt.subagentSystemPrompt = prompt.subagentPrompts.default;
+    }
+    delete prompt.subagentPrompts;
+  }
+  if (isRecord(snapshot.catalog) && Array.isArray(snapshot.catalog.personas)) {
+    for (const persona of snapshot.catalog.personas) {
+      if (!isRecord(persona)) continue;
+      const subagent = isRecord(persona.subagents) ? persona.subagents.default : undefined;
+      persona.subagentLaunchModels =
+        isRecord(subagent) && Array.isArray(subagent.launchModels) ? subagent.launchModels : [];
+      delete persona.subagents;
+    }
+  }
+  if (isRecord(snapshot.agents)) {
+    for (const agent of Object.values(snapshot.agents)) {
+      if (isRecord(agent)) delete agent.name;
+    }
+  }
+  return snapshot;
 }
 
 function migrateStoredSessionV0ToV1(value: unknown): unknown {

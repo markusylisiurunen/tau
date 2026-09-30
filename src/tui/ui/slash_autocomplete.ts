@@ -5,7 +5,7 @@ import type { TuiAutocompleteItem } from "./autocomplete_item.js";
 
 const MENTION_TOKEN_REGEX = /(?:^|[\t ])(@[^\t ]*)$/;
 
-type MentionKind = "skill" | "agent";
+type MentionKind = "skill";
 
 function sortAutocompleteItems(items: TuiAutocompleteItem[]): TuiAutocompleteItem[] {
   return [...items].sort((left, right) => {
@@ -59,7 +59,6 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
   private getThemes: () => ThemeSuggestion[];
   private getPaths: (query: string, limit: number, signal: AbortSignal) => Promise<string[]>;
   private getSkills: () => string[];
-  private getAgents: () => string[];
 
   constructor(
     commandRegistry: CommandRegistry<Ctx>,
@@ -72,7 +71,6 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
       signal: AbortSignal,
     ) => Promise<string[]> = async () => [],
     skills: () => string[] = () => [],
-    agents: () => string[] = () => [],
   ) {
     this.commandRegistry = commandRegistry;
     this.getPersonas = personas;
@@ -80,7 +78,6 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
     this.getThemes = themes;
     this.getPaths = paths;
     this.getSkills = skills;
-    this.getAgents = agents;
   }
 
   async getSuggestions(
@@ -224,9 +221,6 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
     if (this.getSkills().length > 0) {
       kinds.push({ kind: "skill", description: "available skills" });
     }
-    if (this.getAgents().length > 0) {
-      kinds.push({ kind: "agent", description: "available sub-agents" });
-    }
     return kinds;
   }
 
@@ -234,8 +228,6 @@ export class SlashAutocompleteProvider<Ctx = unknown> implements AutocompletePro
     switch (kind) {
       case "skill":
         return this.getSkills();
-      case "agent":
-        return this.getAgents();
     }
   }
 

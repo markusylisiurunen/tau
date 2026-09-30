@@ -26,7 +26,7 @@ The execution environment supplies more than source files. Tau can load project 
 
 A repository checkout is therefore part of Tau's trust boundary. Before using it with meaningful credentials or write access, inspect relevant `.tau/`, `.agents/`, and `AGENTS.md` content, including nearer nested levels. Pay particular attention to:
 
-- persona system prompts, tool lists, subagent definitions, and model launch allowlists;
+- persona system prompts, tool lists, and model launch allowlists;
 - skill instructions and any scripts they direct the agent to run;
 - model overlays that replace endpoints, headers, capabilities, or token limits;
 - project configuration that supplies API keys, Nook targets, model notices, or hosted-environment definitions;

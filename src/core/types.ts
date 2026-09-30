@@ -1,6 +1,5 @@
 import type { Api, Model, SimpleStreamOptions, ThinkingLevel } from "@earendil-works/pi-ai";
 import { z } from "zod";
-import type { SubagentConfigMap } from "./subagents/types.js";
 import type { ToolName } from "./tools/tool_names.js";
 
 export type ReasoningEffort = ThinkingLevel | "none";
@@ -43,7 +42,7 @@ export interface Persona {
   systemPrompt: string;
   settings: PersonaSettings;
   allowedReasoningLevels?: ReasoningEffort[];
-  subagents?: SubagentConfigMap;
+  subagentLaunchModels: string[];
   tools: ToolName[];
   skills: string[] | "*";
   source: PersonaSource;

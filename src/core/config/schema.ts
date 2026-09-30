@@ -32,7 +32,7 @@ export interface Config {
   enabledClientTools?: string[];
   agentContextFiles?: string[];
   subagents?: {
-    defaultLaunchModels?: string[];
+    launchModels?: string[];
   };
   modelSystemNotices?: Record<string, string>;
   flySprites?: FlySpritesConfig;
@@ -96,7 +96,7 @@ export type TelegramCompositeProjectConfig = TelegramProjectBaseConfig & {
   persona: string;
   instructions?: string;
   subagents?: {
-    defaultLaunchModels?: string[];
+    launchModels?: string[];
   };
 };
 
@@ -144,7 +144,7 @@ const HistoryConfigSchema = z
   .strip();
 const SubagentsConfigSchema = z
   .object({
-    defaultLaunchModels: z.array(z.string()).optional(),
+    launchModels: z.array(z.string()).optional(),
   })
   .strip();
 const StringRecordSchema = z.object({}).catchall(z.unknown());
@@ -554,31 +554,31 @@ function parseSubagentsConfig(
 
   const parsed = SubagentsConfigSchema.safeParse(raw);
   if (!parsed.success) {
-    if (parsed.error.issues.some((issue) => issue.path[0] === "defaultLaunchModels")) {
-      return { errors: [`${sourceLabel}: subagents.defaultLaunchModels must be a string array.`] };
+    if (parsed.error.issues.some((issue) => issue.path[0] === "launchModels")) {
+      return { errors: [`${sourceLabel}: subagents.launchModels must be a string array.`] };
     }
     return { errors: [`${sourceLabel}: 'subagents' must be an object.`] };
   }
 
-  const { defaultLaunchModels } = parsed.data;
-  if (defaultLaunchModels === undefined) {
+  const { launchModels } = parsed.data;
+  if (launchModels === undefined) {
     return { errors: [] };
   }
 
-  const launchModelsResult = parseSubagentLaunchModelList(defaultLaunchModels, {
+  const launchModelsResult = parseSubagentLaunchModelList(launchModels, {
     resolveModel: modelResolver,
   });
   if (launchModelsResult.error) {
     return {
       errors: [
-        `${sourceLabel}: subagents.defaultLaunchModels ${launchModelsResult.error}. expected <provider>/<model>:<effort>.`,
+        `${sourceLabel}: subagents.launchModels ${launchModelsResult.error}. expected <provider>/<model>:<effort>.`,
       ],
     };
   }
 
   return {
     config: {
-      defaultLaunchModels: launchModelsResult.launchModels,
+      launchModels: launchModelsResult.launchModels,
     },
     errors: [],
   };
@@ -715,8 +715,8 @@ function mergeSubagentsConfig(
     ...(target ?? {}),
   };
 
-  if (overlay?.defaultLaunchModels !== undefined) {
-    merged.defaultLaunchModels = [...overlay.defaultLaunchModels];
+  if (overlay?.launchModels !== undefined) {
+    merged.launchModels = [...overlay.launchModels];
   }
 
   return merged;

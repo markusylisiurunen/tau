@@ -116,12 +116,11 @@ Classify the missing capability before changing configuration.
 
 For a persona-controlled host tool, inspect the active persona's exact `tools` list. An explicit list replaces defaults. Run `tau --debug --persona <id>` for a new local session or reload the current session while idle. Credentials can make a selected tool fail, but usually do not remove its schema. Nook is the exception: it also requires effective `nook` configuration.
 
-For a subagent, check all four gates:
+For a subagent, check these three gates:
 
-1. The active persona defines or enables that subagent name.
-2. The main persona exposes `spawn_agent` and any other needed supervision tools.
-3. A requested launch model exactly matches the subagent's allowlist.
-4. Fewer than eight subagent runs are currently active.
+1. The main persona exposes `spawn_agent` and any other needed supervision tools.
+2. A requested launch model exactly matches the configured subagent allowlist.
+3. Fewer than eight subagent runs are currently active.
 
 An already spawned thread keeps its captured model, tools, and working directory after reload. Recovery does not restore subagent threads, so old agent IDs cannot receive follow-ups after a host restart. Use `list_agents` to inspect live records. See [subagents](subagents.md).
 

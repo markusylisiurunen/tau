@@ -1,12 +1,12 @@
 # Personas
 
-A persona is Tau's complete model-facing working profile. It chooses a provider and model, supplies the base system prompt, sets reasoning and service behavior, and selects tools, skills, and subagents. Changing persona changes how future turns run without creating a new session.
+A persona is Tau's complete model-facing working profile. It chooses a provider and model, supplies the base system prompt, sets reasoning and service behavior, and selects tools and skills. Changing persona changes how future turns run without creating a new session.
 
 Tau ships generated built-in personas and discovers custom persona Markdown from the execution environment. The effective list is version-specific and scope-specific, so inspect the current catalog rather than relying on a memorized list of names.
 
 ## Built-in and effective personas
 
-Built-in personas are generated from Tau's current model catalog. Most model families have separate chat and coder variants; some families expose only the variants Tau supports. Built-ins carry Tau-maintained prompts, defaults, tool selections, skills, and the built-in `default` subagent.
+Built-in personas are generated from Tau's current model catalog. Most model families have separate chat and coder variants; some families expose only the variants Tau supports. Built-ins carry Tau-maintained prompts, defaults, tool selections, skills, and subagent supervision tools.
 
 The Opus 5.5 chat and coder personas are available only when `anthropic/claude-opus-5-5` is present in the effective model catalog. The Sonnet 5.5 variants (`sonnet-5.5-chat` and `sonnet-5.5-coder`) likewise require `anthropic/claude-sonnet-5-5`.
 
@@ -67,14 +67,6 @@ tools:
   - view_image
   - web
   - history
-subagents:
-  default: false
-  verifier:
-    description: Verify release state independently. Trigger: balanced.
-    systemPrompt: Verify the requested release state and report concrete blockers.
-    tools:
-      - bash
-      - history
 ---
 
 Work as a release engineer. Inspect repository policy before changing release state.
@@ -104,9 +96,8 @@ The frontmatter must be a YAML object between valid delimiters. Unknown fields a
 | `allowedReasoningLevels` | Array of reasoning efforts offered by the TUI selector. |
 | `skills` | `"*"`, a list of discovered skill names, or `[]`. |
 | `tools` | Explicit list of persona-controlled tools. |
-| `subagents` | Map of enabled subagent definitions. |
 
-If a standalone custom persona omits `skills`, Tau selects all discovered skills with `"*"`. If it omits `subagents`, Tau enables the built-in `default` subagent. Tool defaults then include the ordinary host tools plus subagent supervision tools. See [skills](skills.md) and [subagents](subagents.md) for those contracts.
+If a standalone custom persona omits `skills`, Tau selects all discovered skills with `"*"`. If it omits `tools`, Tau enables the ordinary host tools plus subagent supervision tools. An explicit `tools` list without `spawn_agent` prevents subagent launches. See [skills](skills.md) and [subagents](subagents.md) for those contracts.
 
 The persona-controlled tool names are:
 
@@ -137,7 +128,6 @@ Important boundaries are:
 - Lookup of the built-in ID is case-insensitive.
 - A non-empty Markdown body replaces the inherited base prompt.
 - Explicit `skills` or `tools` replaces the inherited selection.
-- Explicit `subagents` builds a new subagent map rather than merging custom entries into the inherited map. Unless that map contains `default: false`, Tau adds the built-in `default` subagent.
 - `reasoning` and `serviceTier` override their individual inherited settings; omitted settings remain inherited.
 
 Extending a built-in is useful when Tau's maintained behavior is the desired base. A standalone body is more stable when the persona must not change as Tau updates its built-in prompts.
@@ -186,7 +176,7 @@ Run `/reload` while the TUI session is idle after editing personas, `models.json
 
 If the current persona ID still exists, Tau applies its newly loaded definition. This can reset runtime settings such as reasoning or service tier to the definition's values. If the ID disappeared, Tau selects the first effective persona. Existing session messages remain; changing a persona does not rewrite prior model-facing history.
 
-A reload does not alter a turn already in progress, and the TUI refuses the operation while one is running. Existing live subagent threads retain the runtime with which they were created; newly spawned subagents use the reloaded persona definition. See [subagents](subagents.md).
+A reload does not alter a turn already in progress, and the TUI refuses the operation while one is running. Existing live subagent threads retain the runtime with which they were created; newly spawned subagents inherit the reloaded persona. See [subagents](subagents.md).
 
 ## Validation and common mistakes
 
@@ -199,8 +189,6 @@ An invalid persona is skipped and reported as a configuration warning. Other val
 - an `extends` target that is not a shipped built-in;
 - an invalid reasoning effort or service tier;
 - `skills` that is neither `"*"` nor a string list, or contains a blank entry;
-- an unknown persona tool;
-- an invalid subagent name, missing custom `systemPrompt`, unsupported subagent tool, or invalid launch model; and
-- attempting to override the built-in `default` subagent instead of using `default: false`.
+- an unknown persona tool.
 
 `/reload` surfaces warning paths directly in the transcript. For a new local TUI session, `tau --debug --persona <id>` shows the selected model, settings, skills, subagents, tools, and complete effective prompt. If a remote edit appears to have no effect, confirm the session execution environment and `cwd` before changing another copy of the file. [Troubleshooting](troubleshooting.md) covers that check in more detail.

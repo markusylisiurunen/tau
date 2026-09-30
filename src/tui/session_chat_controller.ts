@@ -499,7 +499,6 @@ export class SessionChatController {
     themes: () => Array<{ id: string }>;
     autocompletePaths: (query: string, limit: number) => Promise<string[]>;
     skills: () => string[];
-    subagents: () => string[];
   } {
     return {
       personas: () =>
@@ -516,7 +515,6 @@ export class SessionChatController {
       autocompletePaths: async (query, limit) =>
         (await this.session.autocompletePaths({ query, limit })).paths,
       skills: () => this.snapshot.catalog.skills.map((skill) => skill.name),
-      subagents: () => Object.keys(this.getCurrentPersonaSnapshot()?.subagents ?? {}),
     };
   }
 

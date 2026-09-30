@@ -84,7 +84,6 @@ import type {
   SessionProtocolSubagentActivitiesChange,
   SessionProtocolSubagentActivitiesMessage,
   SessionProtocolSubagentActivitiesState,
-  SessionProtocolSubagentSnapshot,
   SessionProtocolTimelineItem,
   SessionProtocolTimelineNotice,
   SessionProtocolToolRun,
@@ -333,7 +332,7 @@ export class LocalSessionHost implements TauSessionHost {
       backend: executionEnvironment.getToolExecutionBackend(),
       clientTools: () => this.clientToolBroker.getToolDefinitions(sessionId),
       modelResolver: bootstrap.modelResolver,
-      resolveSubagentPrompts: createExecutionEnvironmentSubagentPromptResolver({
+      resolveSubagentPrompt: createExecutionEnvironmentSubagentPromptResolver({
         sessionId,
         executionEnvironment,
         getRemoteModelCatalog: () => hostedSession.getRemoteModelCatalog(),
@@ -2067,7 +2066,9 @@ class LocalHostedSessionHandle implements LocalHostedSession {
         model: modelSnapshotFromModel(this.runtime.persona.model),
         prompt: {
           environmentTag: this.runtime.promptComposition.environmentTag,
-          subagentPrompts: cloneSubagentPrompts(this.runtime.promptComposition.subagentPrompts),
+          ...(this.runtime.promptComposition.subagentSystemPrompt !== undefined
+            ? { subagentSystemPrompt: this.runtime.promptComposition.subagentSystemPrompt }
+            : {}),
         },
       },
       catalog: structuredClone(this.catalog),
@@ -3513,12 +3514,10 @@ function promptCompositionFromSnapshot(
   return {
     baseSystemPrompt: systemMessage.message.content,
     environmentTag: snapshot.bootstrap.prompt.environmentTag,
-    subagentPrompts: cloneSubagentPrompts(snapshot.bootstrap.prompt.subagentPrompts),
+    ...(snapshot.bootstrap.prompt.subagentSystemPrompt !== undefined
+      ? { subagentSystemPrompt: snapshot.bootstrap.prompt.subagentSystemPrompt }
+      : {}),
   };
-}
-
-function cloneSubagentPrompts(subagentPrompts: Record<string, string>): Record<string, string> {
-  return { ...subagentPrompts };
 }
 
 function isCoreMessage(
@@ -3650,7 +3649,7 @@ function personaSnapshotFromPersona(persona: Persona): SessionProtocolPersonaSna
     ...(persona.allowedReasoningLevels
       ? { allowedReasoningLevels: [...persona.allowedReasoningLevels] }
       : {}),
-    ...(persona.subagents ? { subagents: subagentSnapshotsFromConfig(persona.subagents) } : {}),
+    subagentLaunchModels: [...persona.subagentLaunchModels],
     ...(persona.tools ? { tools: [...persona.tools] } : {}),
     skills: Array.isArray(persona.skills) ? [...persona.skills] : persona.skills,
     source: persona.source,
@@ -3680,18 +3679,4 @@ function modelSnapshotFromModel(model: Model<Api>): SessionProtocolModelSnapshot
     maxTokens: model.maxTokens,
     ...(model.compat !== undefined ? { compat: structuredClone(model.compat) } : {}),
   };
-}
-
-function subagentSnapshotsFromConfig(
-  subagents: NonNullable<Persona["subagents"]>,
-): Record<string, SessionProtocolSubagentSnapshot> {
-  const snapshots: Record<string, SessionProtocolSubagentSnapshot> = {};
-  for (const [name, config] of Object.entries(subagents)) {
-    snapshots[name] = {
-      ...(config.description !== undefined ? { description: config.description } : {}),
-      ...(config.tools ? { tools: [...config.tools] } : {}),
-      ...(config.launchModels ? { launchModels: [...config.launchModels] } : {}),
-    };
-  }
-  return snapshots;
 }

@@ -1,6 +1,6 @@
 # Session protocol method reference
 
-This page defines every request method in protocol version 15. It is the compact wire reference for clients that already understand connection, observation, and delta application from the [session protocol](session-protocol.md).
+This page defines every request method in protocol version 14. It is the compact wire reference for clients that already understand connection, observation, and delta application from the [session protocol](session-protocol.md).
 
 Every request uses `{ version, type: "request", id, method, params }`. Every successful response uses `{ version, type: "response", id, ok: true, result }`. `params` is required even when empty, and unknown object fields are stripped.
 
@@ -47,7 +47,7 @@ params: {
 }
 
 result: {
-  protocolVersion: 15;
+  protocolVersion: 14;
   methods: string[];
   alreadyInitialized: boolean;
 }

@@ -9,7 +9,7 @@ import type {
 import { type ZodError, z } from "zod";
 import { type IntermediateSystemMessage, isIntermediateSystemMessage } from "./system_message.js";
 
-export const SESSION_PROTOCOL_VERSION = 15 as const;
+export const SESSION_PROTOCOL_VERSION = 14 as const;
 export const SESSION_PROTOCOL_MAX_EXEC_CAPTURE_BYTES = 24 * 1024 * 1024;
 export const SESSION_PROTOCOL_MAX_EXEC_STDIN_BYTES = 16 * 1024 * 1024;
 export const SESSION_PROTOCOL_MAX_CLIENT_TOOL_PRESENTATION_BYTES = 1024 * 1024;

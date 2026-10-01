@@ -77,6 +77,7 @@ describe("tau_docs tool", () => {
     ["pdf-unpack", "pdf-unpacking.md"],
     ["image-generate", "image-generation.md"],
     ["speech-generate", "speech-generation.md"],
+    ["openrouter", "openrouter.md"],
   ])("exposes the dedicated %s guide through the description and index", async (command, path) => {
     expect(TAU_DOCS_TOOL.description).toContain(`Documentation: ${path}.`);
     const tool = createTauDocsToolDefinition();

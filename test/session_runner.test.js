@@ -515,9 +515,7 @@ describe("session runner", () => {
       { id: "entry-2", message: userMessage("new request") },
     ];
 
-    const preparation = prepareSessionCompaction(entries, {
-      systemPrompt: "system",
-    });
+    const preparation = prepareSessionCompaction(entries);
 
     expect(preparation.userMessageCandidates).toEqual([
       {

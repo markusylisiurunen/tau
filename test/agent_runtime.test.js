@@ -990,7 +990,7 @@ describe("AgentRuntime", () => {
       "required even when no archive lookup is currently planned",
     );
     expect(continuationContext).toContain(
-      "use these execution-environment files rather than the separate history tool",
+      "use these local archive files rather than the separate history tool",
     );
     expect(continuationContext).toContain(
       "adaptable, bounded lookup examples, including how to inspect earlier numbered pairs",
@@ -1098,6 +1098,214 @@ describe("AgentRuntime", () => {
       }),
     );
     expect(cleanupSession).toHaveBeenCalledWith(streamModel.mock.calls[1][1].sessionId);
+  });
+
+  it("compacts native messages with reasoning and full tool results without exposing tools", async () => {
+    const execute = vi.fn(async () => ({
+      content: [{ type: "text", text: `result ${"x".repeat(60_000)}` }],
+      isError: false,
+    }));
+    const { runtime, persona } = createRuntime({ tools: [createTool("inspect", execute)] });
+    const assistant = createAssistant(
+      persona,
+      [
+        {
+          type: "thinking",
+          thinking: "important reasoning",
+          thinkingSignature: "opaque-signature",
+        },
+        { type: "toolCall", id: "inspect-1", name: "inspect", arguments: {} },
+      ],
+      { stopReason: "toolUse" },
+    );
+    const stream = setStreams(runtime, [
+      createToolStream(assistant),
+      createStream([], createAssistant(persona, "findings")),
+      createStream(
+        [],
+        createAssistant(
+          persona,
+          "checkpoint\n<preserved-user-message-ids>\n[]\n</preserved-user-message-ids>",
+        ),
+      ),
+    ]);
+    await runtime.submit("investigate");
+    await runtime.commitSystemMessage("keep validating", { type: "instruction", version: 1 });
+    await runtime.commitSystemMessage("obsolete", {
+      type: "auto-compaction-continuation",
+      version: 1,
+    });
+    const userId = runtime.rawHistoryEntriesSnapshot[0].id;
+    const before = structuredClone(runtime.rawHistory);
+    await runtime.compact({ mode: "summary-only" });
+    const [context, options] = stream.mock.calls[2];
+    expect(context.systemPrompt).toBe("system");
+    expect(context).not.toHaveProperty("tools");
+    expect(context.messages.map((message) => message.role)).toEqual([
+      "user",
+      "assistant",
+      "toolResult",
+      "assistant",
+      "system",
+      "user",
+    ]);
+    expect(context.messages[1]).toEqual(assistant);
+    expect(context.messages[2]).toEqual(before[2]);
+    expect(context.messages[4]).not.toHaveProperty("metadata");
+    expect(context.messages.at(-1).content[0].text).toContain(userId);
+    expect(context.messages.at(-1).content[0].text).toContain("investigate");
+    expect(options.maxTokens).toBe(8192);
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["tool-call", "malformed", "cancelled", "provider-error", "length"])(
+    "preserves original context when native compaction is %s",
+    async (failure) => {
+      const execute = vi.fn();
+      const { runtime, persona } = createRuntime({ tools: [createTool("mutate", execute)] });
+      await runtime.commitUserText("original request");
+      const before = runtime.snapshot();
+      const controller = new AbortController();
+      const response =
+        failure === "tool-call"
+          ? createAssistant(
+              persona,
+              [
+                { type: "text", text: "partial checkpoint" },
+                { type: "toolCall", id: "mutation", name: "mutate", arguments: {} },
+              ],
+              { stopReason: "toolUse" },
+            )
+          : createAssistant(
+              persona,
+              failure === "malformed"
+                ? "missing selection block"
+                : "checkpoint\n<preserved-user-message-ids>\n[]\n</preserved-user-message-ids>",
+              { stopReason: failure === "length" ? "length" : "stop" },
+            );
+      const stream = setStreams(runtime, [
+        {
+          async result() {
+            if (failure === "cancelled") controller.abort();
+            if (failure === "provider-error") throw new Error("provider failure");
+            return response;
+          },
+        },
+        createStream([], undefined, new Error("provider failure")),
+      ]);
+      await expect(
+        runtime.compact({ mode: "summary-only", signal: controller.signal }),
+      ).rejects.toThrow();
+      expect(runtime.snapshot()).toEqual(before);
+      expect(execute).not.toHaveBeenCalled();
+      expect(stream.mock.calls[0][0]).not.toHaveProperty("tools");
+    },
+  );
+
+  it("rejects oversized native checkpoint requests before inference", async () => {
+    const persona = createPersona({ model: { ...personas[0].model, contextWindow: 20_000 } });
+    const { runtime } = createRuntime({ persona });
+    await runtime.commitUserText("x".repeat(80_000));
+    const before = runtime.snapshot();
+    const stream = setStreams(runtime, []);
+    await expect(runtime.compact({ mode: "summary-only" })).rejects.toThrow();
+    expect(stream).not.toHaveBeenCalled();
+    expect(runtime.snapshot()).toEqual(before);
+  });
+
+  it("triggers early enough to reserve additive Anthropic reasoning for the checkpoint", async () => {
+    const persona = createPersona({
+      model: {
+        ...personas[0].model,
+        api: "anthropic-messages",
+        provider: "anthropic",
+        contextWindow: 60_000,
+        compat: { forceAdaptiveThinking: false },
+      },
+      settings: { reasoning: "high" },
+    });
+    const { runtime, events } = createRuntime({ persona });
+    const first = createAssistant(persona, `first response ${"x".repeat(130_000)}`, {
+      usage: {
+        input: 32_000,
+        output: 1,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 32_001,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+    });
+    const stream = setStreams(runtime, [
+      createStream([], first),
+      createStream(
+        [],
+        createAssistant(
+          persona,
+          "checkpoint\n<preserved-user-message-ids>\n[]\n</preserved-user-message-ids>",
+        ),
+      ),
+      createStream([], createAssistant(persona, "continued")),
+    ]);
+    await runtime.submit("first request");
+    await runtime.submit("second request");
+    expect(stream).toHaveBeenCalledTimes(3);
+    expect(stream.mock.calls[1][1]).toMatchObject({ maxTokens: 8192, reasoning: "high" });
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "compaction_end", outcome: "compacted" }),
+    );
+  });
+
+  it("continues with a checkpoint-only context after an oversized complete tool exchange", async () => {
+    const persona = createPersona({ model: { ...personas[0].model, contextWindow: 100_000 } });
+    const output = "x".repeat(150_000);
+    const { runtime, events } = createRuntime({
+      persona,
+      tools: [
+        createTool("inspect", async () => ({
+          content: [{ type: "text", text: output }],
+          isError: false,
+        })),
+      ],
+    });
+    const assistant = createAssistant(
+      persona,
+      [{ type: "toolCall", id: "inspect-1", name: "inspect", arguments: {} }],
+      {
+        stopReason: "toolUse",
+        usage: {
+          input: 60_000,
+          output: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 60_001,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+      },
+    );
+    const stream = setStreams(runtime, [
+      createToolStream(assistant),
+      createStream(
+        [],
+        createAssistant(
+          persona,
+          "findings and unfinished analysis\n<preserved-user-message-ids>\n[]\n</preserved-user-message-ids>",
+        ),
+      ),
+      createStream([], createAssistant(persona, "continued")),
+    ]);
+    await runtime.submit("investigate");
+    expect(stream.mock.calls[1][0].messages[2].content[0].text).toBe(output);
+    expect(stream.mock.calls[2][0].messages.map((message) => message.role)).toEqual([
+      "user",
+      "user",
+    ]);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "compaction_end",
+        outcome: "compacted",
+        result: expect.objectContaining({ retainedMessageCount: 0 }),
+      }),
+    );
   });
 
   it("does not report compaction failure after a committed success event cannot be delivered", async () => {

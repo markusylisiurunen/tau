@@ -6,6 +6,7 @@ import { describe, expect, test, vi } from "vitest";
 import { AuthManager } from "../dist/core/auth/auth_manager.js";
 import { AuthStorage } from "../dist/core/auth/auth_storage.js";
 import {
+  getModelOutputTokenAllowance,
   ModelRuntime,
   resolveOpenAIResponsesOptions,
   resolveSimpleStreamOptions,
@@ -20,6 +21,33 @@ function createTempAuthPath() {
 }
 
 describe("model stream option resolution", () => {
+  test("includes additive Anthropic thinking in the requested output allowance", () => {
+    const model = { api: "anthropic-messages", maxTokens: 32_000 };
+    expect(getModelOutputTokenAllowance(model, { maxTokens: 8192, reasoning: "high" })).toBe(
+      24_576,
+    );
+    expect(
+      getModelOutputTokenAllowance(model, {
+        maxTokens: 8192,
+        reasoning: "max",
+        thinkingBudgets: { high: 30_000 },
+      }),
+    ).toBe(32_000);
+    expect(
+      getModelOutputTokenAllowance(
+        { ...model, compat: { forceAdaptiveThinking: true } },
+        { maxTokens: 8192, reasoning: "high" },
+      ),
+    ).toBe(8192);
+    expect(getModelOutputTokenAllowance(model, { maxTokens: 8192, reasoning: "none" })).toBe(8192);
+    expect(
+      getModelOutputTokenAllowance(
+        { ...model, api: "bedrock-converse-stream" },
+        { maxTokens: 8192, reasoning: "high" },
+      ),
+    ).toBe(8192);
+  });
+
   test("drops disabled reasoning for simple stream options", () => {
     expect(
       resolveSimpleStreamOptions({

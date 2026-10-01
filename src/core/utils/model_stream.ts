@@ -215,6 +215,25 @@ export function resolveSimpleStreamOptions(options: TauStreamOptions): SimpleStr
   };
 }
 
+export function getModelOutputTokenAllowance(model: Model<Api>, options: TauStreamOptions): number {
+  const maxTokens = Math.min(options.maxTokens ?? model.maxTokens, model.maxTokens);
+  const reasoning = normalizeSimpleReasoning(options.reasoning);
+  if (
+    model.api !== "anthropic-messages" ||
+    (model.compat &&
+      "forceAdaptiveThinking" in model.compat &&
+      model.compat.forceAdaptiveThinking === true) ||
+    reasoning === undefined
+  ) {
+    return maxTokens;
+  }
+  const level = reasoning === "xhigh" || reasoning === "max" ? "high" : reasoning;
+  // Pi's non-adaptive Anthropic adapter adds thinking on top of an explicit answer cap.
+  const defaults = { minimal: 1024, low: 2048, medium: 8192, high: 16384 };
+  const thinkingTokens = options.thinkingBudgets?.[level] ?? defaults[level];
+  return Math.min(maxTokens + thinkingTokens, model.maxTokens);
+}
+
 function isBedrockModel(model: Model<Api>): model is Model<"bedrock-converse-stream"> {
   return model.api === "bedrock-converse-stream" || model.provider === "amazon-bedrock";
 }

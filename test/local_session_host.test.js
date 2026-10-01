@@ -927,16 +927,27 @@ describe("LocalSessionHost", () => {
     await host.shutdown();
   });
 
-  it("preserves a running root receipt through split-turn compaction", async () => {
-    const host = createHost(new MemorySessionStore());
+  it("persists and recovers checkpoint-only automatic compaction with its root receipt", async () => {
+    const store = new MemorySessionStore();
+    const host = createHost(store);
     const session = await host.createSession(localCreateInput);
     const accepted = await session.acceptTurn({
       text: "compact while running",
       historyEntryId: "split-turn-root",
     });
+    const previousSnapshot = await session.snapshot();
+    const deltas = [];
+    session.onDelta((delta) => deltas.push(delta));
     const previousState = session.runtime.agent.snapshot();
     const summaryText = prependTauUserMetadata("summary", [
-      { type: "compaction", version: 1, summary: "summary", preservedUserMessages: [] },
+      {
+        type: "auto-compaction",
+        version: 1,
+        summary: "summary",
+        preservedUserMessages: [],
+        cutType: "split-turn",
+        retainedMessageCount: 0,
+      },
     ]);
     const continuationText = prependTauUserMetadata("", [
       { type: "auto-compaction-continuation", version: 1 },
@@ -987,7 +998,28 @@ describe("LocalSessionHost", () => {
       userHistoryEntryId: accepted.userHistoryEntryId,
       state: "running",
     });
+    expect(deltas.reduce(applySessionProtocolDelta, previousSnapshot)).toEqual(snapshot);
     await host.shutdown();
+    const recoveredHost = createHost(store);
+    try {
+      const recovered = await recoveredHost.observeSession(session.sessionId);
+      expect(recovered.runtime.agent.rawHistoryEntriesSnapshot[0].message.content[0].text).toBe(
+        summaryText,
+      );
+      const stream = vi.fn(() => ({
+        async *[Symbol.asyncIterator]() {},
+        async result() {
+          return fauxAssistantMessage("continued from checkpoint");
+        },
+      }));
+      recovered.runtime.agent.spec.model.stream = stream;
+      await recovered.record({ text: "continue" });
+      await expect(recovered.runTurn()).resolves.toMatchObject({ status: "completed" });
+      expect(stream.mock.calls[0][0].messages[0].content[0].text).toBe("summary");
+      expect((await recovered.snapshot()).timeline.epoch).toBe(snapshot.timeline.epoch);
+    } finally {
+      await recoveredHost.shutdown();
+    }
   });
 
   it("preserves rewound turn receipts and rejects explicit id reuse", async () => {

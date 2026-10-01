@@ -190,10 +190,10 @@ function parseAutoCompactionMetadataRecord(
   if (
     typeof record.retainedMessageCount !== "number" ||
     !Number.isInteger(record.retainedMessageCount) ||
-    record.retainedMessageCount <= 0
+    record.retainedMessageCount < 0
   ) {
     throw new Error(
-      "invalid tau user metadata: auto-compaction retained message count must be a positive integer",
+      "invalid tau user metadata: auto-compaction retained message count must be a non-negative integer",
     );
   }
   return {

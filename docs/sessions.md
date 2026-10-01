@@ -103,13 +103,15 @@ A goal survives client detach and host restart because its objective and status 
 
 ## Compact model context
 
-Compaction replaces older model-visible conversation context with a synthetic summary so the session can continue within the model’s context window. It changes active model context, not the independent searchable transcript.
+Compaction replaces model-visible conversation context with a checkpoint so the same session can continue within the model’s context window. It changes active model context, not the independent searchable transcript.
+
+The working model creates the checkpoint from its native conversation context, including the base instructions, previous checkpoint, and reasoning state supported by its provider. The checkpoint covers the whole active context and does not depend on knowing which recent messages will remain. It is an isolated maintenance request with no tool execution, not a submitted user turn. Reasoning continuity depends on the provider; the checkpoint records useful conclusions and rationale rather than reproducing internal thinking.
 
 ### Automatic compaction
 
-Automatic compaction runs before a model subturn when fresh provider usage plus newly added estimated context exceeds the fixed threshold. The threshold is the model context window minus 16,384 tokens. Tau keeps a recent tail with a target budget of 20,000 tokens, capped by that threshold, summarizes older context, and can compact more than once during a long logical turn.
+Automatic compaction runs before a model subturn when fresh provider usage plus newly added estimated context exceeds the threshold. Tau reserves at least 16,384 tokens from the model context window, increasing that reserve when needed for the checkpoint instruction and bounded generation allowance. Tau requests an output limit of at most 8,192 tokens, subject to the model and configured output limits, and reserves additional thinking tokens for providers that add them on top. Output-limit enforcement is provider-dependent; Codex does not enforce this requested cap. Requests that cannot fit fail rather than falling back to a flattened transcript. Compaction can run more than once during a long logical turn.
 
-The summary model may copy important original user messages verbatim into the summary. Recent retained messages stay available to the model, although unusually large textual tool and recovery results may be truncated in retained context. Tau records the compaction as a new active context segment.
+The model may select important original user messages to copy into the checkpoint. Tau also retains a contiguous recent suffix within a budget of 20,000 estimated tokens, capped by the compaction threshold. Cuts can occur within a user turn, but messages are kept whole and an assistant tool-call message stays together with all its results. Retained messages, including tool-recovery messages, are not truncated. Tau does not skip an oversized exchange to fill unused budget with earlier messages. If the latest exchange cannot fit, only the checkpoint remains. Tau records the compaction as a new active context segment.
 
 Before replacing context, Tau makes a best-effort archive in the execution environment’s temporary directory. Each automatic compaction adds a numbered `.txt` and `.json` pair under a directory isolated by agent id. The text file supports bounded search and truncates large tool results; the JSON file retains the archived content without those tool-result truncations, excluding assistant thinking. A private `README.md` in the same directory describes the formats and adaptable lookup examples. The continuation message includes all three exact paths when archiving succeeds.
 

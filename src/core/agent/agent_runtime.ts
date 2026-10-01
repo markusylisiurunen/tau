@@ -30,7 +30,7 @@ import {
   buildCompactionSummary,
   buildSessionCompactionMessage,
   buildSessionCompactionPrompt,
-  COMPACTION_SUMMARIZATION_SYSTEM_PROMPT,
+  COMPACTION_CONTINUATION_GUIDANCE,
   parseCompactionSummaryResponse,
   prepareAutoCompaction,
   prepareSessionCompaction,
@@ -48,8 +48,9 @@ import { shouldAutoRetry } from "../utils/auto_retry.js";
 import { buildCompactionUserMessage } from "../utils/compact.js";
 import { extractAssistantText } from "../utils/messages.js";
 import { prependModelNotice } from "../utils/model_notices.js";
+import { getModelOutputTokenAllowance } from "../utils/model_stream.js";
 import type { TauStreamOptions } from "../utils/streaming_settings.js";
-import { estimateMessageTokens } from "../utils/token.js";
+import { bytesToTokens, estimateMessageTokens } from "../utils/token.js";
 import {
   formatTauUserText,
   getAutoCompactionMetadataFromMessage,
@@ -71,6 +72,9 @@ import type {
 const DEFAULT_RETRY_POLICY = { maxRetries: 1, delayMs: 3_000 } as const;
 const COMPACTION_MAX_ATTEMPTS = 2;
 const AUTO_COMPACTION_RESERVE_TOKENS = 16_384;
+const COMPACTION_MAX_OUTPUT_TOKENS = 8_192;
+const COMPACTION_REQUEST_OVERHEAD_TOKENS = 1_024;
+const AUTO_COMPACTION_HEADROOM_TOKENS = 4_096;
 const AUTO_COMPACTION_KEEP_RECENT_TOKENS = 20_000;
 const DEFAULT_MAX_MODEL_SUBTURNS = 1024;
 
@@ -963,9 +967,7 @@ export class AgentRuntime {
   }
 
   private async compactNow(options: AgentCompactionOptions): Promise<AgentCompactionResult> {
-    const preparation = prepareSessionCompaction(this.historyEntries, {
-      systemPrompt: this.currentSpec.systemPrompt,
-    });
+    const preparation = prepareSessionCompaction(this.historyEntries);
     if (!preparation) {
       throw new Error("no conversation to compact.");
     }
@@ -979,6 +981,9 @@ export class AgentRuntime {
       sessionId: `summary-${randomUUID()}`,
       signal: options.signal,
       streamOptions: this.currentSpec.streamOptions,
+      systemPrompt: this.currentSpec.systemPrompt,
+      messages: preparation.messagesToSummarize,
+      contextTokens: this.getFreshContextUsageEstimateTokens(this.modelContextKey),
     });
     const summaryResult = parseCompactionSummaryResponse({
       response: summaryResponse,
@@ -1025,32 +1030,70 @@ export class AgentRuntime {
       sessionId: string;
       signal?: AbortSignal;
       streamOptions: Readonly<TauStreamOptions>;
+      systemPrompt: string;
+      messages: readonly Message[];
+      contextTokens: number | undefined;
     },
     model: ModelExecutor = this.currentSpec.model,
   ): Promise<string> {
+    const maxTokens = Math.min(
+      COMPACTION_MAX_OUTPUT_TOKENS,
+      model.model.maxTokens,
+      options.streamOptions.maxTokens ?? COMPACTION_MAX_OUTPUT_TOKENS,
+    );
+    const outputTokens = getModelOutputTokenAllowance(model.model, {
+      ...options.streamOptions,
+      maxTokens,
+    });
+    const context: Context = {
+      systemPrompt: options.systemPrompt,
+      messages: [
+        ...options.messages.flatMap((message) => {
+          if (
+            message.role === "assistant" &&
+            (message.stopReason === "error" || message.stopReason === "aborted")
+          ) {
+            return [];
+          }
+          return [structuredClone(projectSystemMessage(stripTauUserMetadataFromMessage(message)))];
+        }),
+        {
+          role: "user",
+          content: [{ type: "text", text: summaryPrompt }],
+          timestamp: this.clock.now(),
+        },
+      ],
+    };
+    const instructionTokens = estimateMessageTokens(context.messages.at(-1)!);
+    const inputTokens =
+      Math.max(
+        bytesToTokens(Buffer.byteLength(options.systemPrompt, "utf8")) +
+          context.messages
+            .slice(0, -1)
+            .reduce((total, message) => total + estimateMessageTokens(message), 0),
+        options.contextTokens ?? 0,
+      ) +
+      instructionTokens +
+      COMPACTION_REQUEST_OVERHEAD_TOKENS;
+    if (
+      !Number.isInteger(maxTokens) ||
+      maxTokens <= 0 ||
+      inputTokens + outputTokens > model.model.contextWindow
+    ) {
+      throw new Error("native compaction context exceeds the model context budget");
+    }
     try {
       for (let attempt = 1; attempt <= COMPACTION_MAX_ATTEMPTS; attempt += 1) {
         options.signal?.throwIfAborted();
 
         let final: AssistantMessage;
         try {
-          const stream = model.stream(
-            {
-              systemPrompt: COMPACTION_SUMMARIZATION_SYSTEM_PROMPT,
-              messages: [
-                {
-                  role: "user",
-                  content: [{ type: "text", text: summaryPrompt }],
-                  timestamp: this.clock.now(),
-                },
-              ],
-            },
-            {
-              ...options.streamOptions,
-              sessionId: options.sessionId,
-              ...(options.signal ? { signal: options.signal } : {}),
-            },
-          );
+          const stream = model.stream(structuredClone(context), {
+            ...options.streamOptions,
+            maxTokens,
+            sessionId: options.sessionId,
+            ...(options.signal ? { signal: options.signal } : {}),
+          });
           final = await stream.result();
         } catch (error) {
           if (options.signal?.aborted || attempt === COMPACTION_MAX_ATTEMPTS) {
@@ -1064,8 +1107,14 @@ export class AgentRuntime {
           throw new Error(final.errorMessage || "summarization was aborted.");
         }
 
+        if (
+          final.content.some((block) => block.type === "toolCall") ||
+          final.stopReason === "toolUse"
+        ) {
+          throw new Error("compaction returned a tool call instead of a checkpoint");
+        }
         const summary = extractAssistantText(final).trim();
-        if (final.stopReason !== "error" && summary) {
+        if (final.stopReason === "stop" && summary) {
           return summary;
         }
 
@@ -1293,7 +1342,6 @@ export class AgentRuntime {
         AUTO_COMPACTION_KEEP_RECENT_TOKENS,
         this.getAutoCompactionThresholdTokens(turnSettings),
       ),
-      systemPrompt: turnSettings.systemPrompt,
     });
     if (!preparation) {
       return undefined;
@@ -1305,6 +1353,9 @@ export class AgentRuntime {
         sessionId: `auto-summary-${randomUUID()}`,
         signal,
         streamOptions: turnSettings.streamOptions,
+        systemPrompt: turnSettings.systemPrompt,
+        messages: preparation.messagesToSummarize,
+        contextTokens: this.getFreshContextUsageEstimateTokens(turnSettings.modelContextKey),
       },
       turnSettings.model,
     );
@@ -1391,16 +1442,16 @@ export class AgentRuntime {
   }
 
   private prependCompactionContext(text: string): string {
-    return prependTauHiddenSystemMessages(
-      text,
-      this.getCompactionContinuationSystemMessages?.() ?? [],
-    );
+    return prependTauHiddenSystemMessages(text, [
+      ...(this.getCompactionContinuationSystemMessages?.() ?? []),
+      COMPACTION_CONTINUATION_GUIDANCE,
+    ]);
   }
 
   private shouldRunAutoCompaction(turnSettings: AgentTurnSpec): boolean {
     const thresholdTokens = this.getAutoCompactionThresholdTokens(turnSettings);
     if (thresholdTokens <= 0) {
-      return false;
+      return this.modelHistory.length > 0;
     }
 
     const usageTokens = this.getFreshContextUsageEstimateTokens(turnSettings.modelContextKey);
@@ -1408,7 +1459,31 @@ export class AgentRuntime {
   }
 
   private getAutoCompactionThresholdTokens(turnSettings: AgentTurnSpec): number {
-    return (turnSettings.model.model.contextWindow ?? 0) - AUTO_COMPACTION_RESERVE_TOKENS;
+    const preparation = prepareSessionCompaction(this.historyEntries);
+    const instructionTokens = preparation
+      ? estimateMessageTokens({
+          role: "user",
+          content: buildAutoCompactionPrompt(preparation),
+          timestamp: 0,
+        })
+      : 0;
+    const outputTokens = getModelOutputTokenAllowance(turnSettings.model.model, {
+      ...turnSettings.streamOptions,
+      maxTokens: Math.min(
+        COMPACTION_MAX_OUTPUT_TOKENS,
+        turnSettings.streamOptions.maxTokens ?? COMPACTION_MAX_OUTPUT_TOKENS,
+      ),
+    });
+    return (
+      turnSettings.model.model.contextWindow -
+      Math.max(
+        AUTO_COMPACTION_RESERVE_TOKENS,
+        instructionTokens +
+          outputTokens +
+          COMPACTION_REQUEST_OVERHEAD_TOKENS +
+          AUTO_COMPACTION_HEADROOM_TOKENS,
+      )
+    );
   }
 
   private getFreshContextUsageEstimateTokens(modelContextKey: string): number | undefined {
